@@ -1,0 +1,17 @@
+{
+  "id": "shop-backend-engineer-otto",
+  "name": "Otto",
+  "project": "shop",
+  "role": "backend-engineer",
+  "title": "Backend Engineer",
+  "department": "Engineering",
+  "focus": null,
+  "reports_to": "user",
+  "model": "inherit",
+  "tools": "inherit",
+  "status": "offboarded",
+  "hired_on": "2026-01-02",
+  "home": "projects/shop/agents/shop-backend-engineer-otto",
+  "registration": ".claude/agents/shop-backend-engineer-otto.md",
+  "offboarded_on": "2026-01-20"
+}

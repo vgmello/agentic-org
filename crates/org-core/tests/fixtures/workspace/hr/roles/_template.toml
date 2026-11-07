@@ -1,0 +1,2 @@
+# A template, not a role: the loader must skip it (this line is not valid TOML on purpose)
+title =

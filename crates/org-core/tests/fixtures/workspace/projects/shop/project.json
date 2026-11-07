@@ -1,0 +1,7 @@
+{
+  "key": "shop",
+  "name": "Shop",
+  "description": "A synthetic online shop project used as a test fixture.",
+  "created_on": "2026-01-02",
+  "home": "projects/shop"
+}

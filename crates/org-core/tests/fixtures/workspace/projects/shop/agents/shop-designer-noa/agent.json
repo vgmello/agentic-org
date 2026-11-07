@@ -1,0 +1,16 @@
+{
+  "id": "shop-designer-noa",
+  "name": "Noa",
+  "project": "shop",
+  "role": "designer",
+  "title": "Designer",
+  "department": "Design",
+  "focus": null,
+  "reports_to": "shop-backend-engineer-ivo",
+  "model": "sonnet",
+  "tools": ["Read", "Write", "WebSearch", "Edit", "Agent"],
+  "status": "active",
+  "hired_on": "2026-01-04",
+  "home": "projects/shop/agents/shop-designer-noa",
+  "registration": ".claude/agents/shop-designer-noa.md"
+}

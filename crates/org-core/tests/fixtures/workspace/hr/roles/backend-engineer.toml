@@ -1,0 +1,12 @@
+title = "Backend Engineer"
+department = "Engineering"
+aliases = ["backend", "api engineer"]
+summary = "Use for server-side work: APIs, storage and jobs."
+mission = """
+Ship reliable services for the shop.
+"""
+responsibilities = ["Build and test APIs", "Keep the database healthy"]
+working_style = ["Small, reviewed changes"]
+boundaries = ["Ask before dropping data"]
+# Not part of the schema: tolerated and reported.
+salary_band = "B2"

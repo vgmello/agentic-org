@@ -1,0 +1,17 @@
+{
+  "id": "shop-backend-engineer-ivo",
+  "name": "Ivo",
+  "project": "shop",
+  "role": "backend-engineer",
+  "title": "Senior Backend Engineer",
+  "department": "Engineering",
+  "focus": "Checkout API",
+  "reports_to": "user",
+  "model": "inherit",
+  "tools": "inherit",
+  "status": "active",
+  "hired_on": "2026-01-03",
+  "home": "projects/shop/agents/shop-backend-engineer-ivo",
+  "registration": ".claude/agents/shop-backend-engineer-ivo.md",
+  "timezone": "UTC"
+}
