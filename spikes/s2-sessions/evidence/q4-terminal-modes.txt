@@ -1,0 +1,37 @@
+files scanned: 11
+DECSET/DECRST (mode, h=set/l=reset): count
+  ?25h 146
+  ?25l 133
+  ?1000h 24
+  ?1000l 12
+  ?1002h 24
+  ?1002l 12
+  ?1003h 24
+  ?1003l 12
+  ?1004h 16
+  ?1004l 9
+  ?1006h 24
+  ?1006l 12
+  ?1016l 6
+  ?1049h 12
+  ?1049l 7
+  ?2004h 19
+  ?2004l 9
+  ?2026h 4
+  ?2026l 8
+  ?2031h 16
+  ?2031l 9
+OSC (code, payload prefix): count
+   ('0', '◑ zz-spike-tester-max') 4
+   ('0', '◐ zz-spike-tester-max') 4
+   ('0', 'claude agents') 4
+   ('0', '') 3
+   ('0', '✳ zz-spike-tester-max') 2
+   ('7501', '?') 2
+   ('0', '1 awaiting input · claude agents') 2
+other sequences:
+   DA1 query 10
+   BEL total (incl OSC terminators) 21
+   kitty-kbd pop CSI <u 13
+   modifyOtherKeys CSI >4;Nm 13
+   kitty-kbd query CSI ?u 2

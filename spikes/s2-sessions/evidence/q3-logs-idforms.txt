@@ -1,0 +1,18 @@
+### claude logs 370c5656-58dc-4018-b00a-fdd1095e4d23
+exit=1 stdout_bytes=       0 stderr=No job matching '370c5656-58dc-4018-b00a-fdd1095e4d23'. Run 'claude agents' to list running sessions.
+### claude logs 370c5656
+exit=0 stdout_bytes=    8218 stderr=
+### claude logs 370C5656
+exit=1 stdout_bytes=       0 stderr=No job matching '370C5656'. Run 'claude agents' to list running sessions.
+### claude logs 370c56
+exit=0 stdout_bytes=    8218 stderr=
+### claude logs zz-spike-tester-max
+exit=1 stdout_bytes=       0 stderr=2 sessions match 'zz-spike-tester-max':
+  370c5656  zz-spike-tester-max
+  67894d6a  zz-spike-tester-max
+Use the id.
+### claude logs zz-spike-tester
+exit=1 stdout_bytes=       0 stderr=2 sessions match 'zz-spike-tester':
+  370c5656  zz-spike-tester-max
+  67894d6a  zz-spike-tester-max
+Use more of the name, or the id.

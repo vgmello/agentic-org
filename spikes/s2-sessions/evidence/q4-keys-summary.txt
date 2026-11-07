@@ -1,0 +1,47 @@
+##### key esc
+('expect', 'zz-spike-a ─', True, 0.72)
+('mark', 'before-key', 2940)
+('send', "b'\\x1b'", 2.756)
+('mark', 'after-key', 2940)
+('shell', '/tmp/ac-spike-s2/tools/cc agents --json --all | python3 -c "import json,sys;[print(s.get(\'pid\'),s.get(\'status\'),s.get(\'state\')) for s in json.load(sys.stdin) if s.get(\'id\')==\'77633acd\']"', 0, '63026 idle done', '', 5.909)
+('still_running_killing_hup',)
+('exit', 'signal', 1)
+bytes: 2940
+##### key ctrlc
+('expect', 'zz-spike-a ─', True, 0.235)
+('mark', 'before-key', 1920)
+('send', "b'\\x03'", 2.27)
+('mark', 'after-key', 4484)
+('shell', '/tmp/ac-spike-s2/tools/cc agents --json --all | python3 -c "import json,sys;[print(s.get(\'pid\'),s.get(\'status\'),s.get(\'state\')) for s in json.load(sys.stdin) if s.get(\'id\')==\'77633acd\']"', 0, '63026 idle done', '', 5.449)
+('still_running_killing_hup',)
+('exit', 'signal', 1)
+bytes: 4484
+##### key ctrlc2
+('expect', 'zz-spike-a ─', True, 0.237)
+('mark', 'before-key', 2118)
+('send', "b'\\x03'", 2.268)
+('send', "b'\\x03'", 2.604)
+('mark', 'after-key', 7727)
+('shell', '/tmp/ac-spike-s2/tools/cc agents --json --all | python3 -c "import json,sys;[print(s.get(\'pid\'),s.get(\'status\'),s.get(\'state\')) for s in json.load(sys.stdin) if s.get(\'id\')==\'77633acd\']"', 0, '63026 idle done', '', 5.761)
+('still_running_killing_hup',)
+('exit', 'code', 129)
+bytes: 8247
+##### key ctrlz
+('expect', 'zz-spike-a ─', True, 0.24)
+('mark', 'before-key', 2062)
+('send', "b'\\x1a'", 2.278)
+('mark', 'after-key', 2160)
+('shell', '/tmp/ac-spike-s2/tools/cc agents --json --all | python3 -c "import json,sys;[print(s.get(\'pid\'),s.get(\'status\'),s.get(\'state\')) for s in json.load(sys.stdin) if s.get(\'id\')==\'77633acd\']"', 0, '63026 idle done', '', 2.819)
+('exit', 'code', 0)
+bytes: 2160
+('expect', 'zz-spike-a ─', True, 0.239)
+('mark', 'before-left', 2106)
+('send', "b'\\x1b[D'", 2.281)
+('mark', 'after-left', 7015)
+('send', "b'\\x1b'", 5.284)
+('mark', 'after-esc', 7261)
+('send_failed', "b'\\x1a'", '[Errno 5] Input/output error')
+('mark', 'after-ctrlz', 7261)
+('shell', '/tmp/ac-spike-s2/tools/cc agents --json --all | python3 -c "import json,sys;[print(s.get(\'pid\'),s.get(\'status\'),s.get(\'state\')) for s in json.load(sys.stdin) if s.get(\'id\')==\'77633acd\']"', 0, '63026 idle done', '', 6.138)
+('exit', 'code', 0)
+bytes: 7261

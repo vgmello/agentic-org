@@ -1,0 +1,33 @@
+Waking session 77633acd…
+
+  Attaching…
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+⏺ Hi there!
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Session is starting — showing its transcript until it appears. Ctrl+Z to detach ▐▛███▛█Claude Codev2.1.311▝▜██████▀Haiku 5.5 · Claude <plan> ▝▝   ▝▝ /private/tmp/ac-spike-s2/ws❯ Say hi in two words.                                                                              ⏺Hithere!✻Sautéed for 4s · done 15:38                                                                                ◐ medium · /effort─────────────────────────────────────────────────────────────────────────────────────── zz-spike-a ─❯ ────────────────────────────────────────────────────────────────────────────────────────────────────  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents                                           1 agent  Haiku 5.5 medium · ctx 5%/1000k · $<cost> · ⏱ 0h01m · ⎇ main · ws

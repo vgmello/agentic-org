@@ -1,0 +1,5 @@
+[  0.004s] opened attach 67894d6a at 80x24, pid Some(70362)
+[ 14.027s] exit frame: {"kind":"exit","code":1,"signal":Some("Hangup: 1"),"reason":"closed"}
+[ 14.027s] close() returned in 20 ms
+[ 14.027s] summary: frames=50 bytes=14032 max_chunk=1024 seq_contiguous=true first_byte_ms=Some(319) first_settled_frame_ms=Some(350) exit={"kind":"exit","code":1,"signal":Some("Hangup: 1"),"reason":"closed"}
+[ 14.027s] raw output written to /tmp/ac-spike-s2/evidence/q4-two-B.raw

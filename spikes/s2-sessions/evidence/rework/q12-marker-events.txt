@@ -1,0 +1,11 @@
+e6545701 SessionStart None
+e6545701 UserPromptSubmit None
+e6545701 Stop None
+ed985f47 SessionStart None
+ed985f47 UserPromptSubmit None
+e1e8c716 SessionStart None
+e1e8c716 UserPromptSubmit None
+ed985f47 PreToolUse Write
+e1e8c716 PreToolUse Write
+ed985f47 Stop None
+e1e8c716 Stop None

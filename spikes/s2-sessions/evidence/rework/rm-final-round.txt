@@ -1,0 +1,14 @@
+# Final round (2026-11-07T18:39:49Z). Every claude call ran through kit/tools/cc (inherited CLAUDE_* env stripped).
+$ claude stop a0fc75bb
+stopped a0fc75bb
+$ claude rm a0fc75bb
+removed a0fc75bb
+exit=0
+$ claude rm 9d3e2529   (PATH-test session, removed in the previous round; proof it is gone)
+No job matching '9d3e2529'
+exit=1
+$ claude agents --json --all, filtered to cwd /private/tmp/ac-spike-s2*
+[]
+count: 0 | total sessions listed (any cwd, not shown): 6
+$ ls ~/.claude/jobs | grep -E '^(9d3e2529|a0fc75bb)$'
+(none)

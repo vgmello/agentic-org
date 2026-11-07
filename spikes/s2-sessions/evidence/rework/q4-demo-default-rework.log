@@ -1,0 +1,15 @@
+[  0.133s] opened attach d41dc27d at 100x30, pid 25260
+[  3.134s] write 26 bytes
+[  3.436s] write CR
+[  3.457s] title frame: "◐ zz-spike-live"
+[  4.419s] title frame: "◑ zz-spike-live"
+[  4.579s] expect "MAXMARK": found
+[  4.579s] resize 60x20
+[  5.381s] title frame: "◐ zz-spike-live"
+[  5.582s]   2458 bytes within 1s of resize
+[  7.585s] resize 140x40
+[  8.587s]   3042 bytes within 1s of resize
+[ 10.613s] exit frame: {"kind":"exit","code":1,"signal":Some("Hangup: 1"),"reason":"closed"}
+[ 10.613s] close() returned in 17 ms
+[ 10.613s] summary: titles=4 frames=52 bytes=12918 max_chunk=1024 seq_contiguous=true first_byte_ms=Some(249) first_settled_frame_ms=Some(270) exit={"kind":"exit","code":1,"signal":Some("Hangup: 1"),"reason":"closed"}
+[ 10.613s] raw output written to /tmp/ac-spike-s2/evidence2/q4-demo-default-rework.raw

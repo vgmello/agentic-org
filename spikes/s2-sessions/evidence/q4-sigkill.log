@@ -1,0 +1,6 @@
+('expect', 'zz-spike-tester-max ─', True, 0.228)
+('signal', 9, 1.247)
+('shell', '/tmp/ac-spike-s2/tools/cc agents --json | python3 -c "import json,sys;[print(s.get(\'pid\'),s.get(\'status\'),s.get(\'state\')) for s in json.load(sys.stdin) if s.get(\'id\')==\'67894d6a\']"', 0, '51343 idle done', '', 1.451)
+('shell', "ps -axo pid,command | grep 'claude attach 67894d6a' | grep -v grep || echo 'no leftover attach processes'", 0, 'no leftover attach processes', '', 1.489)
+('exit', 'signal', 9)
+bytes: 5965

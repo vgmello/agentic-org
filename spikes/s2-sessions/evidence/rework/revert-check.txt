@@ -1,0 +1,7 @@
+## with the fix temporarily reverted (continue after a read restored):
+test close_finishes_when_client_ignores_sighup_and_keeps_printing ... FAILED
+close() did not return within 4 s: Timeout
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 14 filtered out; finished in 4.66s
+## with the fix:
+test close_finishes_when_client_ignores_sighup_and_keeps_printing ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 2.84s

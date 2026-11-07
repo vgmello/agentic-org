@@ -1,0 +1,8 @@
+{ "hooks": {
+  "SessionStart": [{"hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/mark.sh SessionStart"}]}],
+  "UserPromptSubmit": [{"hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/mark.sh UserPromptSubmit"}]}],
+  "PreToolUse": [{"matcher":"*","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/mark.sh PreToolUse"}]}],
+  "Notification": [{"hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/mark.sh Notification"}]}],
+  "Stop": [{"hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/mark.sh Stop"}]}],
+  "SessionEnd": [{"hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/hooks/mark.sh SessionEnd"}]}]
+}}

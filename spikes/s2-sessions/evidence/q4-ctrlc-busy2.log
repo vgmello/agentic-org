@@ -1,0 +1,10 @@
+[  0.003s] opened attach 67894d6a at 100x30, pid Some(68853)
+[  2.005s] write 66 bytes
+[  2.309s] write CR
+[  4.811s] mark before-ctrlc: total 14642 bytes
+[  4.811s] key ctrl-c
+[  7.816s] mark after-ctrlc: total 17124 bytes
+[  7.850s] exit frame: {"kind":"exit","code":1,"signal":Some("Hangup: 1"),"reason":"closed"}
+[  7.850s] close() returned in 33 ms
+[  7.850s] summary: frames=47 bytes=17124 max_chunk=1024 seq_contiguous=true first_byte_ms=Some(123) first_settled_frame_ms=Some(127) exit={"kind":"exit","code":1,"signal":Some("Hangup: 1"),"reason":"closed"}
+[  7.850s] raw output written to /tmp/ac-spike-s2/evidence/q4-ctrlc-busy2.raw

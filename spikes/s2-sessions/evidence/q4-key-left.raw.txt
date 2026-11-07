@@ -1,0 +1,69 @@
+# Redacted: rows of real agents' sessions replaced; raw bytes removed. Titles (OSC 0/2) are in q4-agent-view-titles.txt.
+
+  Attaching…
+ ▐▛███▛█Claude Codev2.1.311
+▝▜██████▀Haiku 5.5 · Claude <plan>
+ ▝▝   ▝▝ /private/tmp/ac-spike-s2/ws
+❯ Say hi in two words.                                                                              
+⏺Hithere!
+✻Sautéed for 4s · done 15:38
+─────────────────────────────────────────────────────────────────────────────────────── zz-spike-a ─
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Haiku 5.5 medium · ctx 5%/1000k · 5h NN% ↻XX · 7d NN% ↻XX · $<cost> · ⏱ 0h02m · ⎇ main · ws
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent
+ ▐▛███▛█Claude Codev2.1.311
+▝▜██████▀New sessions: Opus 5.5 · high effort · /private/tmp/ac-spike-s2/ws
+ ▝▝   ▝▝ 1 awaiting input · 1 working · 7 completed
+Needs input
+<redacted: an agent-view session row (name and task summary)>
+Working
+<redacted: an agent-view session row (name and task summary)>
+Completed
+∙ zz-spike-abstopped3m
+<redacted: an agent-view session row (name and task summary)>
+∙ zz-spike-a                  replied with a two-word greeting: "Hi there!"                       2m
+∙ zz-spike-tester-maxYour first request was a one-sentence statement of the agent's n…4s
+<redacted: an agent-view session row (name and task summary)>
+∙ zz-spike-tester-maxRecalled the user's first request: a one-sentence name intro plu…4s
+∙ zz-spike-tester-maxCreateGoal called with the DONE condition; assistant replied DONE6s
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯describe a task for a new session
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  enter to return · space to reply · ctrl+x to delete · ? for shortcuts
+           02
+Working
+<redacted: an agent-view session row (name and task summary)>
+<redacted: an agent-view session row (name and task summary)>
+Completed
+∙ zz-spike-abstopped3m
+<redacted: an agent-view session row (name and task summary)>
+✻ zz-spike-a                  replied with a two-word greeting: "Hi there!"                       2m
+  zz-spik-tester-x  Yourfirst request wasa one-sentence statement of the agent's n…4
+<redacted: an agent-view session row (name and task summary)>
+<redacted: an agent-view session row (name and task summary)>
+<redacted: an agent-view session row (name and task summary)>
+✽
+✽
+✻
+✻
+✶
+✶
+✳
+✳
+✢
+✢
+·
+·
+✢
+✢
+✳
+✳
+✻
+✻
+✽
+✽
+✻
+✻
+✶
+<redacted: an agent-view session row (name and task summary)>

@@ -1,0 +1,21 @@
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Accessingworkspace:
+
+/private/tmp/ac-spike-s2/ws
+
+Quicksafetycheck:Isthisaprojectyoucreatedoroneyoutrust?(Likeyourowncode,awell-knownopensource
+project,orworkfromyourteam).Ifnot,takeamomenttoreviewwhat'sinthisfolderfirst.
+
+ClaudeCode'llbeabletoread,edit,andexecutefileshere.
+
+Securityguide
+
+❯No,exit
+Yes,Itrustthisfolder
+
+Entertoconfirm·Esctocancel
+   No, exit ❯Yes, I trust this folder
+
+
+  ▐▛███▛█Claude Codev2.1.311▝▜██████▀Haiku 5.5 · Claude <plan> ▝▝   ▝▝ /private/tmp/ac-spike-s2/ws                                                                                                    ◐ medium · /effort────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────❯ Try "how does <filepath> work?"────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CLAUDE_CODE_FORCE_SESSION_PE…  ⏵⏵ auto mode on (shift+tab to cycle)                                                                                             <inherited-agent-name>   Haiku 5.5 medium · ctx 1000k · $<cost> · ⏱ 0h00m · ⎇ main · ws❯ /exit                                                                                                                 ✶Leavening… ❯ 

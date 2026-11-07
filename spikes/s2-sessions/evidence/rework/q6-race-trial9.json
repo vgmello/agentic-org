@@ -1,0 +1,525 @@
+{
+ "before": [
+  {
+   "id": "370c5656",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794065688840,
+   "sessionId": "370c5656-58dc-4018-b00a-fdd1095e4d23",
+   "name": "zz-spike-tester-max",
+   "state": "done"
+  },
+  {
+   "id": "67894d6a",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794065744071,
+   "sessionId": "67894d6a-cf5b-448b-8877-876e40501c9e",
+   "name": "zz-spike-tester-max",
+   "state": "done"
+  },
+  {
+   "id": "77633acd",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794065779570,
+   "sessionId": "77633acd-466c-4846-ba81-3ee57c65b716",
+   "name": "zz-spike-a",
+   "state": "done"
+  },
+  {
+   "id": "9031e664",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794065780329,
+   "sessionId": "9031e664-6e2f-4697-8456-13968b8762a9",
+   "name": "zz-spike-ab",
+   "state": "stopped"
+  },
+  {
+   "id": "833640e8",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794065838451,
+   "sessionId": "833640e8-215b-4e78-95f7-35a774174bd1",
+   "name": "maxmark-name-test-agent",
+   "state": "done"
+  },
+  {
+   "id": "33596af9",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794065920060,
+   "sessionId": "33596af9-a50a-4250-a448-63f4cbf588ce",
+   "name": "zz-spike-tester-max",
+   "state": "done"
+  },
+  {
+   "id": "4ab5c202",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794065988937,
+   "sessionId": "4ab5c202-ef0c-487f-80d8-c55583aec864",
+   "name": "bye-greeting-mismatch",
+   "state": "done"
+  },
+  {
+   "id": "09b420de",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794066210995,
+   "sessionId": "09b420de-969c-4fc5-b236-edb7171ab8d8",
+   "name": "zz-spike-perm",
+   "state": "stopped"
+  },
+  {
+   "pid": 88091,
+   "id": "7e69126b",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794067677367,
+   "sessionId": "7e69126b-b0d8-4788-bdbb-321e87e47c73",
+   "name": "zz-spike-env",
+   "status": "idle",
+   "state": "blocked"
+  },
+  {
+   "id": "8217c384",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794067677793,
+   "sessionId": "8217c384-cecb-4195-b8de-ad6173ce2382",
+   "name": "zz-spike-race",
+   "state": "done"
+  },
+  {
+   "id": "008ab73f",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794067719966,
+   "sessionId": "008ab73f-1e3b-4746-be25-dfef97272bbb",
+   "name": "agent-name-check",
+   "state": "done"
+  },
+  {
+   "id": "440b5032",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794067808678,
+   "sessionId": "440b5032-b579-4b0b-b381-6c0f8e469059",
+   "name": "agent-name-identity-check",
+   "state": "done"
+  },
+  {
+   "id": "3ac1cd1a",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794067824712,
+   "sessionId": "3ac1cd1a-52a6-40f4-8069-d7caad25995c",
+   "name": "agent-name-introduction-test",
+   "state": "done"
+  },
+  {
+   "id": "e8466d6f",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794067845627,
+   "sessionId": "e8466d6f-2aa4-4ac3-8d8c-b58f16e00294",
+   "name": "agent-name-check-max",
+   "state": "done"
+  },
+  {
+   "id": "7d15a09c",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794067858055,
+   "sessionId": "7d15a09c-a922-4d3b-9fe5-801a1e142fbb",
+   "name": "zz-spike-race8",
+   "state": "stopped"
+  },
+  {
+   "pid": 17107,
+   "id": "979a4368",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794067862157,
+   "sessionId": "979a4368-34c0-46a2-8fb9-8a763c654bb3",
+   "name": "maxmark-greeting-name-check",
+   "status": "idle",
+   "state": "done"
+  },
+  {
+   "pid": 17426,
+   "id": "a6a31bb3",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794067867298,
+   "sessionId": "a6a31bb3-d709-4806-9e5c-cfb0c9c0d837",
+   "name": "zz-spike-race9",
+   "status": "idle",
+   "state": "done"
+  }
+ ],
+ "stop": {
+  "argv": "claude stop a6a31bb3",
+  "exit": 0,
+  "elapsed_s": 0.635,
+  "at": 1794067871.29,
+  "stdout": "stopped a6a31bb3\n",
+  "stderr": ""
+ },
+ "resume": {
+  "argv": "claude --bg --resume a6a31bb3-d709-4806-9e5c-cfb0c9c0d837 Say your name again, one sentence.",
+  "exit": 0,
+  "elapsed_s": 0.64,
+  "at": 1794067871.925,
+  "stdout": "backgrounded \u00b7 a6a31bb3 \u00b7 zz-spike-race9\n  claude agents             list sessions\n  claude attach a6a31bb3    open in this terminal\n  claude logs a6a31bb3      show recent output\n  claude stop a6a31bb3      stop this session\n",
+  "stderr": "note: woke session a6a31bb3 with its saved options (--agent, --name, --plugin-dir, --model).\n"
+ },
+ "after_immediate": [
+  {
+   "id": "370c5656",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794065688840,
+   "sessionId": "370c5656-58dc-4018-b00a-fdd1095e4d23",
+   "name": "zz-spike-tester-max",
+   "state": "done"
+  },
+  {
+   "id": "67894d6a",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794065744071,
+   "sessionId": "67894d6a-cf5b-448b-8877-876e40501c9e",
+   "name": "zz-spike-tester-max",
+   "state": "done"
+  },
+  {
+   "id": "77633acd",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794065779570,
+   "sessionId": "77633acd-466c-4846-ba81-3ee57c65b716",
+   "name": "zz-spike-a",
+   "state": "done"
+  },
+  {
+   "id": "9031e664",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794065780329,
+   "sessionId": "9031e664-6e2f-4697-8456-13968b8762a9",
+   "name": "zz-spike-ab",
+   "state": "stopped"
+  },
+  {
+   "id": "833640e8",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794065838451,
+   "sessionId": "833640e8-215b-4e78-95f7-35a774174bd1",
+   "name": "maxmark-name-test-agent",
+   "state": "done"
+  },
+  {
+   "id": "33596af9",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794065920060,
+   "sessionId": "33596af9-a50a-4250-a448-63f4cbf588ce",
+   "name": "zz-spike-tester-max",
+   "state": "done"
+  },
+  {
+   "id": "4ab5c202",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794065988937,
+   "sessionId": "4ab5c202-ef0c-487f-80d8-c55583aec864",
+   "name": "bye-greeting-mismatch",
+   "state": "done"
+  },
+  {
+   "id": "09b420de",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794066210995,
+   "sessionId": "09b420de-969c-4fc5-b236-edb7171ab8d8",
+   "name": "zz-spike-perm",
+   "state": "stopped"
+  },
+  {
+   "pid": 88091,
+   "id": "7e69126b",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794067677367,
+   "sessionId": "7e69126b-b0d8-4788-bdbb-321e87e47c73",
+   "name": "zz-spike-env",
+   "status": "idle",
+   "state": "blocked"
+  },
+  {
+   "id": "8217c384",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794067677793,
+   "sessionId": "8217c384-cecb-4195-b8de-ad6173ce2382",
+   "name": "zz-spike-race",
+   "state": "done"
+  },
+  {
+   "id": "008ab73f",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794067719966,
+   "sessionId": "008ab73f-1e3b-4746-be25-dfef97272bbb",
+   "name": "agent-name-check",
+   "state": "done"
+  },
+  {
+   "id": "440b5032",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794067808678,
+   "sessionId": "440b5032-b579-4b0b-b381-6c0f8e469059",
+   "name": "agent-name-identity-check",
+   "state": "done"
+  },
+  {
+   "id": "3ac1cd1a",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794067824712,
+   "sessionId": "3ac1cd1a-52a6-40f4-8069-d7caad25995c",
+   "name": "agent-name-introduction-test",
+   "state": "done"
+  },
+  {
+   "id": "e8466d6f",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794067845627,
+   "sessionId": "e8466d6f-2aa4-4ac3-8d8c-b58f16e00294",
+   "name": "agent-name-check-max",
+   "state": "done"
+  },
+  {
+   "id": "7d15a09c",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794067858055,
+   "sessionId": "7d15a09c-a922-4d3b-9fe5-801a1e142fbb",
+   "name": "zz-spike-race8",
+   "state": "stopped"
+  },
+  {
+   "pid": 17107,
+   "id": "979a4368",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794067862157,
+   "sessionId": "979a4368-34c0-46a2-8fb9-8a763c654bb3",
+   "name": "maxmark-greeting-name-check",
+   "status": "idle",
+   "state": "done"
+  },
+  {
+   "pid": 17748,
+   "id": "a6a31bb3",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794067872316,
+   "sessionId": "a6a31bb3-d709-4806-9e5c-cfb0c9c0d837",
+   "name": "zz-spike-race9",
+   "status": "busy",
+   "state": "working"
+  }
+ ],
+ "after_4s": [
+  {
+   "id": "370c5656",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794065688840,
+   "sessionId": "370c5656-58dc-4018-b00a-fdd1095e4d23",
+   "name": "zz-spike-tester-max",
+   "state": "done"
+  },
+  {
+   "id": "67894d6a",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794065744071,
+   "sessionId": "67894d6a-cf5b-448b-8877-876e40501c9e",
+   "name": "zz-spike-tester-max",
+   "state": "done"
+  },
+  {
+   "id": "77633acd",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794065779570,
+   "sessionId": "77633acd-466c-4846-ba81-3ee57c65b716",
+   "name": "zz-spike-a",
+   "state": "done"
+  },
+  {
+   "id": "9031e664",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794065780329,
+   "sessionId": "9031e664-6e2f-4697-8456-13968b8762a9",
+   "name": "zz-spike-ab",
+   "state": "stopped"
+  },
+  {
+   "id": "833640e8",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794065838451,
+   "sessionId": "833640e8-215b-4e78-95f7-35a774174bd1",
+   "name": "maxmark-name-test-agent",
+   "state": "done"
+  },
+  {
+   "id": "33596af9",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794065920060,
+   "sessionId": "33596af9-a50a-4250-a448-63f4cbf588ce",
+   "name": "zz-spike-tester-max",
+   "state": "done"
+  },
+  {
+   "id": "4ab5c202",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794065988937,
+   "sessionId": "4ab5c202-ef0c-487f-80d8-c55583aec864",
+   "name": "bye-greeting-mismatch",
+   "state": "done"
+  },
+  {
+   "id": "09b420de",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794066210995,
+   "sessionId": "09b420de-969c-4fc5-b236-edb7171ab8d8",
+   "name": "zz-spike-perm",
+   "state": "stopped"
+  },
+  {
+   "pid": 88091,
+   "id": "7e69126b",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794067677367,
+   "sessionId": "7e69126b-b0d8-4788-bdbb-321e87e47c73",
+   "name": "zz-spike-env",
+   "status": "idle",
+   "state": "blocked"
+  },
+  {
+   "id": "8217c384",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794067677793,
+   "sessionId": "8217c384-cecb-4195-b8de-ad6173ce2382",
+   "name": "zz-spike-race",
+   "state": "done"
+  },
+  {
+   "id": "008ab73f",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794067719966,
+   "sessionId": "008ab73f-1e3b-4746-be25-dfef97272bbb",
+   "name": "agent-name-check",
+   "state": "done"
+  },
+  {
+   "id": "440b5032",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794067808678,
+   "sessionId": "440b5032-b579-4b0b-b381-6c0f8e469059",
+   "name": "agent-name-identity-check",
+   "state": "done"
+  },
+  {
+   "id": "3ac1cd1a",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794067824712,
+   "sessionId": "3ac1cd1a-52a6-40f4-8069-d7caad25995c",
+   "name": "agent-name-introduction-test",
+   "state": "done"
+  },
+  {
+   "id": "e8466d6f",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794067845627,
+   "sessionId": "e8466d6f-2aa4-4ac3-8d8c-b58f16e00294",
+   "name": "agent-name-check-max",
+   "state": "done"
+  },
+  {
+   "id": "7d15a09c",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794067858055,
+   "sessionId": "7d15a09c-a922-4d3b-9fe5-801a1e142fbb",
+   "name": "zz-spike-race8",
+   "state": "stopped"
+  },
+  {
+   "pid": 17107,
+   "id": "979a4368",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794067862157,
+   "sessionId": "979a4368-34c0-46a2-8fb9-8a763c654bb3",
+   "name": "maxmark-greeting-name-check",
+   "status": "idle",
+   "state": "done"
+  },
+  {
+   "pid": 17748,
+   "id": "a6a31bb3",
+   "cwd": "/private/tmp/ac-spike-s2/ws",
+   "kind": "background",
+   "startedAt": 1794067872316,
+   "sessionId": "a6a31bb3-d709-4806-9e5c-cfb0c9c0d837",
+   "name": "zz-spike-race9",
+   "status": "idle",
+   "state": "done"
+  }
+ ],
+ "new_ids": [],
+ "job_state": {
+  "a6a31bb3": {
+   "state": "done",
+   "tempo": "idle",
+   "name": "zz-spike-race9",
+   "nameSource": "user",
+   "respawnFlags": [
+    "--agent",
+    "zz-spike-tester-max",
+    "--name",
+    "zz-spike-race9",
+    "--plugin-dir",
+    "/tmp/ac-spike-s2/mods/marker",
+    "--model",
+    "haiku"
+   ],
+   "sessionId": "a6a31bb3-d709-4806-9e5c-cfb0c9c0d837",
+   "resumeSessionId": "a6a31bb3-d709-4806-9e5c-cfb0c9c0d837",
+   "intent": "Say hi.",
+   "createdAt": "2026-11-07T16:11:06.906Z",
+   "updatedAt": "2026-11-07T16:11:15.165Z"
+  }
+ }
+}

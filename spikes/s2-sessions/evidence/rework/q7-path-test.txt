@@ -1,0 +1,6 @@
+backgrounded · 9d3e2529 · zz-spike-path (idle — send a prompt to start)
+1794075649.922 SessionStart startup None ['/tmp/ac-spike-s2/pathA-bg-start']
+1794075659.837 SessionEnd None other ['/tmp/ac-spike-s2/pathA-bg-start']
+1794075665.561 SessionStart startup None ['/tmp/ac-spike-s2/pathB-attach']
+1794075670.319 SessionEnd None other ['/tmp/ac-spike-s2/pathB-attach']
+1794075675.31 SessionStart startup None ['/tmp/ac-spike-s2/pathC-bg-resume']

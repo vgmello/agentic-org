@@ -1,0 +1,12 @@
+=== attach #1
+[  0.002s] opened attach 09b420de at 100x30, pid Some(67645)
+[  3.031s] exit frame: {"kind":"exit","code":1,"signal":Some("Hangup: 1"),"reason":"closed"}
+[  3.031s] close() returned in 25 ms
+[  3.031s] summary: frames=15 bytes=6467 max_chunk=1024 seq_contiguous=true first_byte_ms=Some(126) first_settled_frame_ms=Some(432) exit={"kind":"exit","code":1,"signal":Some("Hangup: 1"),"reason":"closed"}
+[  3.031s] raw output written to /tmp/ac-spike-s2/evidence/q4-perm-attach1.raw
+=== attach #2
+[  0.002s] opened attach 09b420de at 100x30, pid Some(67736)
+[  3.034s] exit frame: {"kind":"exit","code":1,"signal":Some("Hangup: 1"),"reason":"closed"}
+[  3.034s] close() returned in 31 ms
+[  3.034s] summary: frames=11 bytes=2948 max_chunk=1024 seq_contiguous=true first_byte_ms=Some(129) first_settled_frame_ms=Some(436) exit={"kind":"exit","code":1,"signal":Some("Hangup: 1"),"reason":"closed"}
+[  3.035s] raw output written to /tmp/ac-spike-s2/evidence/q4-perm-attach2.raw

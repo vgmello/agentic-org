@@ -1,0 +1,8 @@
+[  0.002s] opened attach 09b420de at 100x30, pid Some(67970)
+[  2.003s] mark before-esc: total 2844 bytes
+[  2.003s] key esc
+[  6.003s] mark after-esc: total 4750 bytes
+[  6.041s] exit frame: {"kind":"exit","code":1,"signal":Some("Hangup: 1"),"reason":"closed"}
+[  6.041s] close() returned in 38 ms
+[  6.041s] summary: frames=11 bytes=4750 max_chunk=1024 seq_contiguous=true first_byte_ms=Some(121) first_settled_frame_ms=Some(123) exit={"kind":"exit","code":1,"signal":Some("Hangup: 1"),"reason":"closed"}
+[  6.042s] raw output written to /tmp/ac-spike-s2/evidence/q4-perm-esc.raw

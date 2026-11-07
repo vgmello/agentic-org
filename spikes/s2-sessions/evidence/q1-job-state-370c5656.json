@@ -1,0 +1,22 @@
+{
+ "intent": "Reply with one short sentence: what is your name?\nimport subprocess,sys,time,os\nu=sys.argv[1]\nargv=[\"/tmp/ac-spike-s2/tools/cc\",\"--bg\",\"--session-id\",u,\"--agent\",\"zz-spike-tester-max\",\"--name\",\"zz-spike-tester-max\",\"--plugin-dir\",\"/tmp/ac-spike-s2/mods/goals\",\"--plugin-dir\",\"/tmp/ac-spike-s2/mods/marker\",\"--model\",\"haiku\",\"Reply with one short sentence: what is your name?\"]\nenv=dict(os.environ,AC_AGENT=\"zz-spike-tester-max\")\nt=time.time(); p=subprocess.run(argv,capture_output=True,text=True,env=env,cwd=\"/tmp/ac-spike-s2/ws\"); dt=time.time()-t\nprint(\"--- attempt 2 (scrubbed env, after trust)\"); print(\"EXIT:\",p.returncode,\"ELAPSED_S:\",round(dt,3)); print(\"STDOUT:\",repr(p.stdout)); print(\"STDERR:\",repr(p.stderr))",
+ "respawnFlags": [
+  "--agent",
+  "zz-spike-tester-max",
+  "--name",
+  "zz-spike-tester-max",
+  "--plugin-dir",
+  "/tmp/ac-spike-s2/mods/goals",
+  "--plugin-dir",
+  "/tmp/ac-spike-s2/mods/marker",
+  "--model",
+  "haiku"
+ ],
+ "providerEnv": {},
+ "name": "zz-spike-tester-max",
+ "nameSource": "user",
+ "backend": "daemon",
+ "sessionId": "370c5656-58dc-4018-b00a-fdd1095e4d23",
+ "resumeSessionId": "370c5656-58dc-4018-b00a-fdd1095e4d23",
+ "daemonShort": "370c5656"
+}

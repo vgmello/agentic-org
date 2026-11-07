@@ -1,0 +1,3 @@
+{"argv":["/tmp/ac-spike-s2/tools/cc","attach","77633acd"],"cwd":"/tmp/ac-spike-s2/ws","out":"/tmp/ac-spike-s2/evidence/q4-key-left.raw","cols":100,"rows":30,
+ "steps":[["expect","zz-spike-a ─",20],["wait",2],["mark","before-left"],["send","\u001b[D"],["wait",3],["mark","after-left"],["send","\u001b"],["wait",3],["mark","after-esc"],["send","\u001a"],["wait",2],["mark","after-ctrlz"],
+ ["shell","/tmp/ac-spike-s2/tools/cc agents --json --all | python3 -c \"import json,sys;[print(s.get('pid'),s.get('status'),s.get('state')) for s in json.load(sys.stdin) if s.get('id')=='77633acd']\""]]}
