@@ -1,0 +1,41 @@
+1794065973 37369123-8433-4566-95c6-236000e2dbae smoke
+1794065988 3887873f-d720-46cd-a84f-8115782791f2 order-goals-first
+1794066003 57a6a89b-6ee5-4080-ac46-37f0c1dacbc9 goal-pause
+1794066033 130d2229-dea5-479f-9690-6796853e2735 tools-read
+1794066043 b1357688-3322-46cd-a286-5a078b19e157 subagent-bg
+1794066070 03713d34-344d-4c7c-a9ab-2b0f45aa49ec stopfailure-badmodel
+1794066086 ab8f9dcb-d186-4ed9-8da6-75df4a84f392 elicitation-p
+1794066105 3039b8a3-340c-4a26-9768-3d8475774a95 perm-p-nohook
+1794066117 b57290ef-acdc-40ce-97cf-4d679246aa8d perm-p-hook-allows
+1794066125 edc1b2ad-df57-452b-ba99-6a5609cabe2c perm-p-auto
+1794066172 39888f49-5b71-4dcb-8703-12f384147323 calib (interactive)
+1794066184 ad29c9ac-c5a5-4349-b166-b25d93cab82c calib2 (interactive)
+1794066325 6e5ffbbd-e350-4c0e-9d62-25e211677103 session-a (interactive)
+1794066426 09b93d00-508a-4f14-8cb7-6d64d376cf55 session-a2 (interactive)
+1794066543 202068d2-fa0f-47a5-94da-57c43a5f4eca session-a2 after /clear (new id)
+1794066543 d84714a9-9c8c-4de0-8dea-1d14ffbea175 session-b (interactive)
+1794066671 791b6c36-d324-446b-8013-d2aa734a6c86 bg-session (claude --bg)
+81666304-9318-4abf-a77e-213928e8a748 actual id of bg-session (requested 791b6c36-d324-446b-8013-d2aa734a6c86)
+1794066723 615eb535-8764-4a0c-a122-69bb48c660a1 session-c-url (interactive)
+1794066811 8b5c87ca-4b48-4b7c-ac1d-1529af200f07 hung-receiver
+1794066858 326cdb0c-c8bd-4633-b484-9df21cd2b36d absent-receiver
+1794066863 6459704a-2f32-4cef-a2dd-bf41c6758f89 normal-receiver-timing
+1794066908 9d4f3825-9705-43ad-b9d6-b88cd3492f91 bg-settings-env (claude --bg, requested id)
+28266f46-a61f-454c-bef0-f15b46104a9a actual id of bg-settings-env (requested 9d4f3825-9705-43ad-b9d6-b88cd3492f91 ignored)
+1794068348 22c7c00b-1c2f-4164-9309-cda29cdb2796 no-ac-agent-subagent
+1794068364 22c7c00b-1c2f-4164-9309-cda29cdb2796 no-ac-agent-subagent (-p; hit account session limit -> StopFailure rate_limit)
+1794074684 2134206a-a951-4283-813c-4e9d6257b4c3 hung-H1-fetch-guard
+1794074729 8d96337f-380a-42db-a373-79d1f187a7ee hung-H2-curl
+1794074765 368c06eb-e1a7-4a86-b1c6-f5812cc92bf3 hung-after-curl
+1794074780 e5c1c7c7-41e9-41f1-8fc2-7bb10859c23b hung-before-fetchraw
+1794074821 88b53e22-2ed7-4387-941f-8c50abece99f hung-fetch-guard
+1794074863 0dc66c36-5d38-48b5-a2e7-3582f576a06e healthy-curl
+1794074868 005e99f5-fcd5-466a-bf73-43553de40062 healthy-fetch
+1794074927 57fe3bd8-1dd7-4222-be10-5b61f9407e8a healthy-curl2
+1794074941 7d319a9f-e5c6-4467-bc1b-d7df952d70ee hung-after-curl-final
+1794074982 59e9fda0-a89f-4505-a00b-7c391991bfe0 order-goals-first-active-goal
+1794075005 4d279cdf-d3af-46e7-b654-38791750a8bc no-ac-agent-subagent-2
+1794075059 14e7f4fb-aa84-4e3e-8884-c4ee6ce0ce9f crash-rework (interactive)
+1794076348 d18f81ca-4fff-47db-a96e-84f8d842db1a subagent-read-loopid
+1794076371 2972f56d-8bd9-41db-bed8-734e8e46539d subagent-read-loopid-2
+1794076387 6d62fc5b-ff4f-4a4a-aad5-137ea86dcb45 hung-after-final

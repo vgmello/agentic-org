@@ -1,0 +1,29 @@
+1794076347634.834 LISTEN /tmp/ac-spike-s1/run/events.sock mode 600 (dir mode 700) state-dir=/tmp/ac-spike-s1/state notify=none uid=501
+1794076348723.401 zz-spike-tester-sam sess=d18f81ca seq=1 SessionStart source="startup" -> Idle | hook->recv 9.4 ms | peer pid=12277 session pid=12244 | 
+1794076348723.953 KQUEUE watching peer pid=12244 (zz-spike-tester-sam)
+1794076349614.678 zz-spike-tester-sam sess=d18f81ca seq=2 UserPromptSubmit  -> Working | hook->recv 11.7 ms | peer pid=12358 session pid=12244 | 
+1794076351307.204 zz-spike-tester-sam sess=d18f81ca seq=3 ToolCall tool="Agent" -> Working | hook->recv 10.2 ms | peer pid=12468 session pid=12244 | 
+1794076351325.762 zz-spike-tester-sam sess=d18f81ca seq=4 PreToolUse tool="Agent" -> Working | hook->recv 27.8 ms | peer pid=12474 session pid=12244 | 
+1794076351333.300 zz-spike-tester-sam sess=d18f81ca seq=5 SubagentStart subagent_type="general-purpose" -> Working | hook->recv 26.3 ms | peer pid=12475 session pid=12244 | 
+1794076352705.662 zz-spike-tester-sam sess=d18f81ca seq=6 ToolCall tool="Read" -> Working | hook->recv 13.7 ms | peer pid=12577 session pid=12244 | 
+1794076352716.702 zz-spike-tester-sam sess=d18f81ca seq=7 PreToolUse tool="Read" -> Working | hook->recv 22.7 ms | peer pid=12579 session pid=12244 | 
+1794076352727.697 zz-spike-tester-sam sess=d18f81ca seq=8 PostToolUse tool="Read" -> Working | hook->recv 18.7 ms | peer pid=12581 session pid=12244 | 
+1794076353530.940 zz-spike-tester-sam sess=d18f81ca seq=9 SubagentStop subagent_type="general-purpose" -> Working | hook->recv 14.9 ms | peer pid=12605 session pid=12244 | subagents=0; 
+1794076353561.034 zz-spike-tester-sam sess=d18f81ca seq=10 PostToolUse tool="Agent" -> Working | hook->recv 9.0 ms | peer pid=12606 session pid=12244 | 
+1794076354544.172 zz-spike-tester-sam sess=d18f81ca seq=11 Stop blocked=false background_tasks=0 -> Idle | hook->recv 13.2 ms | peer pid=12607 session pid=12244 | 
+1794076354563.040 zz-spike-tester-sam sess=d18f81ca seq=12 SessionEnd reason="other" -> Offline | hook->recv 9.0 ms | peer pid=12608 session pid=12244 | SessionEnd reason=other -> Offline; 
+1794076355578.424 KQUEUE NOTE_EXIT pid=12244 (exit at 1794076355072.810, data=0) zz-spike-tester-sam sess=d18f81ca -> Offline | exit after SessionEnd: clean
+1794076371608.823 zz-spike-tester-sam sess=2972f56d seq=1 SessionStart source="startup" -> Idle | hook->recv 8.8 ms | peer pid=12872 session pid=12857 | 
+1794076371609.260 KQUEUE watching peer pid=12857 (zz-spike-tester-sam)
+1794076372538.651 zz-spike-tester-sam sess=2972f56d seq=2 UserPromptSubmit  -> Working | hook->recv 11.7 ms | peer pid=13020 session pid=12857 | 
+1794076374094.546 zz-spike-tester-sam sess=2972f56d seq=3 ToolCall tool="Agent" -> Working | hook->recv 15.5 ms | peer pid=13114 session pid=12857 | 
+1794076374112.467 zz-spike-tester-sam sess=2972f56d seq=4 PreToolUse tool="Agent" -> Working | hook->recv 31.5 ms | peer pid=13118 session pid=12857 | 
+1794076374121.489 zz-spike-tester-sam sess=2972f56d seq=5 SubagentStart subagent_type="general-purpose" -> Working | hook->recv 28.5 ms | peer pid=13119 session pid=12857 | 
+1794076375250.067 zz-spike-tester-sam sess=2972f56d seq=6 ToolCall tool="Read" -> Working | hook->recv 10.1 ms | peer pid=13124 session pid=12857 | 
+1794076375258.944 zz-spike-tester-sam sess=2972f56d seq=7 PreToolUse tool="Read" -> Working | hook->recv 17.9 ms | peer pid=13125 session pid=12857 | 
+1794076375268.646 zz-spike-tester-sam sess=2972f56d seq=8 PostToolUse tool="Read" -> Working | hook->recv 15.6 ms | peer pid=13126 session pid=12857 | 
+1794076376634.806 zz-spike-tester-sam sess=2972f56d seq=9 SubagentStop subagent_type="general-purpose" -> Working | hook->recv 15.8 ms | peer pid=13148 session pid=12857 | subagents=0; 
+1794076376666.097 zz-spike-tester-sam sess=2972f56d seq=10 PostToolUse tool="Agent" -> Working | hook->recv 10.1 ms | peer pid=13149 session pid=12857 | 
+1794076377680.013 zz-spike-tester-sam sess=2972f56d seq=11 Stop blocked=false background_tasks=0 -> Idle | hook->recv 14.0 ms | peer pid=13150 session pid=12857 | 
+1794076377699.494 zz-spike-tester-sam sess=2972f56d seq=12 SessionEnd reason="other" -> Offline | hook->recv 10.5 ms | peer pid=13151 session pid=12857 | SessionEnd reason=other -> Offline; 
+1794076378708.721 KQUEUE NOTE_EXIT pid=12857 (exit at 1794076378203.126, data=0) zz-spike-tester-sam sess=2972f56d -> Offline | exit after SessionEnd: clean

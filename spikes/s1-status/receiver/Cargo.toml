@@ -1,0 +1,15 @@
+[package]
+name = "s1-receiver"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Spike S1 (throwaway): presence event receiver, status rules, native notification, kqueue crash watch"
+
+# Standalone crate: not part of any workspace.
+[workspace]
+
+[dependencies]
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+notify-rust = "4"

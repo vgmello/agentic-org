@@ -1,0 +1,6 @@
+1794066811762.9 accept #1 hook=SessionStart (never answering)
+1794066813013.2 accept #2 hook=UserPromptSubmit (never answering)
+1794066814281.0 accept #3 hook=PreToolUse (never answering)
+1794066814293.2 accept #4 hook=PostToolUse (never answering)
+1794066815143.9 accept #5 hook=Stop (never answering)
+1794066845163.7 accept #6 hook=SessionEnd (never answering)

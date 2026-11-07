@@ -1,0 +1,6 @@
+{
+  "name": "goals",
+  "version": "0.1.0",
+  "description": "Gives agents a CreateGoal tool: they set their own completion condition, and a Stop hook keeps them working until a separate evaluator confirms it is met, like /goal.",
+  "types": "./types/index.d.ts"
+}

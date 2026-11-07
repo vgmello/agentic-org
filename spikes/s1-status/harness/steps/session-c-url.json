@@ -1,0 +1,13 @@
+[
+ {"expect": "Quick safety check", "timeout": 8, "optional": true, "then": [{"sleep": 1}, {"send": "\u001b[B"}, {"sleep": 0.5}, {"send": "\r"}]},
+ {"sleep": 4},
+ {"mark": "URL elicitation"},
+ {"type": "Call the mcp__elic__ask_color tool once and then tell me what it returned."},
+ {"expect": "example.com|favourite", "timeout": 60, "fresh": true},
+ {"mark": "url elicitation on screen; waiting 9 s"},
+ {"sleep": 9},
+ {"send": "\u001b"},
+ {"sleep": 8},
+ {"type": "/exit"},
+ {"sleep": 5}
+]

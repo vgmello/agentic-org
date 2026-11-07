@@ -1,0 +1,10 @@
+exit=0 session=e5c1c7c7-41e9-41f1-8fc2-7bb10859c23b
+transport=fetch-raw start=1794074780493 process_exit=1794074815943 wall_ms=35450
+1794074781220.9 accept #1 hook=SessionStart (never answering)
+1794074783465.9 accept #2 hook=UserPromptSubmit (never answering)
+1794074784609.6 accept #3 hook=ToolCall (never answering)
+1794074784612.4 accept #4 hook=PreToolUse (never answering)
+1794074784626.6 accept #5 hook=PostToolUse (never answering)
+1794074785601.0 accept #6 hook=Stop (never answering)
+1794074815623.5 accept #7 hook=SessionEnd (never answering)
+state file e5c1c7c7-41e9-41f1-8fc2-7bb10859c23b.json: hook=SessionEnd reason=other seq=7 posts_skipped=0 written_at=1794074815622 (process exit 321 ms after SessionEnd hook)
