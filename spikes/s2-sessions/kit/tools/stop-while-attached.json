@@ -1,0 +1,2 @@
+{"argv":["/tmp/ac-spike-s2/tools/cc","attach","77633acd"],"cwd":"/tmp/ac-spike-s2/ws","out":"/tmp/ac-spike-s2/evidence/q4-stop-while-attached.raw","cols":100,"rows":30,
+ "steps":[["expect","zz-spike-a",15],["wait",2],["mark","before-stop"],["shell","/tmp/ac-spike-s2/tools/cc stop 77633acd"],["wait",6]]}

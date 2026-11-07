@@ -1,0 +1,52 @@
+2026-11-07 15:38:29.826 Df usernoted[659:2fca39] [com.apple.xpc:connection] [0x91f0ab900] activating connection: mach=false listener=false peer=true name=com.apple.usernoted.client.peer[58903].0x91f0ab900
+2026-11-07 15:38:29.826 E  usernoted[659:2fca39] [com.apple.unc:application] Legacy client com.apple.finder connecting to modern client. You can't mix modern clients with legacy clients. <ClientConnect: 0x000000091f860500 identifier: com.apple.Finder pid: 58903 type: NCCenterType(rawValue: 1)>
+2026-11-07 15:38:29.826 E  usernoted[659:2fca39] [com.apple.unc:application] Denying message 3 from connection <LegacyConnection identifier: com.apple.Finder type: NCCenterType(rawValue: 1)>
+2026-11-07 15:38:31.856 Df usernoted[659:2fca39] [com.apple.xpc:connection] [0x91f0ab900] invalidated because the client process (pid 58903) either cancelled the connection or exited
+2026-11-07 15:38:31.936 Df usernoted[659:2fca39] [com.apple.xpc:connection] [0x91f0ab900] activating connection: mach=false listener=false peer=true name=com.apple.usernoted.client.peer[59055].0x91f0ab900
+2026-11-07 15:38:31.936 E  usernoted[659:2fca39] [com.apple.unc:application] Legacy client com.apple.finder connecting to modern client. You can't mix modern clients with legacy clients. <ClientConnect: 0x000000091f860500 identifier: com.apple.Finder pid: 59055 type: NCCenterType(rawValue: 1)>
+2026-11-07 15:38:31.936 E  usernoted[659:2fca39] [com.apple.unc:application] Denying message 3 from connection <LegacyConnection identifier: com.apple.Finder type: NCCenterType(rawValue: 1)>
+2026-11-07 15:38:33.957 Df usernoted[659:2fca39] [com.apple.xpc:connection] [0x91f0ab900] invalidated because the client process (pid 59055) either cancelled the connection or exited
+2026-11-07 15:38:34.071 A  usernoted[659:2fca39] (Security) SecKeyVerifySignature
+2026-11-07 15:38:34.072 Df usernoted[659:2fca39] [com.apple.xpc:connection] [0x91f0ab900] activating connection: mach=false listener=false peer=true name=com.apple.usernoted.daemon_client.peer[59148].0x91f0ab900
+2026-11-07 15:38:34.072 I  usernoted[659:2fca39] [com.apple.unc:application] Added legacy connection for com.apple.ScriptEditor2 pid: 59148
+2026-11-07 15:38:34.073 A  usernoted[659:2fca39] (Security) SecKeyVerifySignature
+2026-11-07 15:38:34.074 Df usernoted[659:2fca39] [com.apple.unc:server] Connection com.apple.ScriptEditor2 with path: /usr/bin/osascript
+2026-11-07 15:38:34.074 I  usernoted[659:2fca39] [com.apple.unc:application] Allowing <private> to send notifications without requesting user permission. Legacy app of type 1
+2026-11-07 15:38:34.074 I  usernoted[659:2fca39] [com.apple.unc:application] com.apple.ScriptEditor2 asking for permissions not necessary
+2026-11-07 15:38:34.074 Df usernoted[659:302641] [com.apple.usernotificationsd:GroupService] Processing notification setting changes: <private>
+2026-11-07 15:38:34.086 I  usernoted[659:2fca39] [com.apple.unc:application] Added request <NotificationRecord app:"com.apple.ScriptEditor2" ident:"DA39-A3EE" req:"" uuid:"6798A8E8" source:"E89BAC31" staticCategory:"<LEGACY options=(legacyBehavior, hiddenPreviewShowsTitle) actions=[
+    <ACTION style=button title=''>
+  ]>" <response action: closed actIdent:  foreground: true text: nil> >
+2026-11-07 15:38:34.087 E  usernoted[659:2fca39] [com.apple.unc:application] Record <NotificationRecord app:"com.apple.ScriptEditor2" ident:"DA39-A3EE" req:"" uuid:"6798A8E8" source:"E89BAC31" staticCategory:"<LEGACY options=(legacyBehavior, hiddenPreviewShowsTitle) actions=[
+    <ACTION style=button title=''>
+  ]>" <response action: closed actIdent:  foreground: true text: nil> > ineligible for pipeline due to summarizationDisabled(globally)
+2026-11-07 15:38:34.087 Df usernoted[659:2fca39] [com.apple.unc:application] <NotificationRecord app:"com.apple.ScriptEditor2" ident:"DA39-A3EE" req:"" uuid:"6798A8E8" source:"E89BAC31" staticCategory:"<LEGACY options=(legacyBehavior, hiddenPreviewShowsTitle) actions=[
+    <ACTION style=button title=''>
+  ]>" <response action: closed actIdent:  foreground: true text: nil> > successfully processed by pipeline, scheduled for delivery.
+2026-11-07 15:38:34.087 Df usernoted[659:2fca39] [com.apple.unc:application] Delivering <NotificationRecord app:"com.apple.ScriptEditor2" ident:"DA39-A3EE" req:"" uuid:"6798A8E8" source:"E89BAC31" staticCategory:"<LEGACY options=(legacyBehavior, hiddenPreviewShowsTitle) actions=[
+    <ACTION style=button title=''>
+  ]>" <response action: closed actIdent:  foreground: true text: nil> > to [ .alert .lockScreen .notificationCenter ]: updatedExisting: false
+2026-11-07 15:38:34.087 Df usernoted[659:2fca39] [com.apple.unc:application] Presenting <NotificationRecord app:"com.apple.ScriptEditor2" ident:"DA39-A3EE" req:"" uuid:"6798A8E8" source:"E89BAC31" staticCategory:"<LEGACY options=(legacyBehavior, hiddenPreviewShowsTitle) actions=[
+    <ACTION style=button title=''>
+  ]>" <response action: closed actIdent:  foreground: true text: nil> > as banner (["badge", "sound", "alert"])
+2026-11-07 15:38:34.095 Df usernoted[659:2fca39] [com.apple.xpc:connection] [0x91f0ab900] invalidated because the client process (pid 59148) either cancelled the connection or exited
+2026-11-07 15:38:51.020 Df usernoted[659:302641] [com.apple.xpc:connection] [0x91f0ab900] activating connection: mach=false listener=false peer=true name=com.apple.usernoted.client.peer[60696].0x91f0ab900
+2026-11-07 15:38:51.020 E  usernoted[659:302641] [com.apple.unc:application] Legacy client com.apple.finder connecting to modern client. You can't mix modern clients with legacy clients. <ClientConnect: 0x000000091f860500 identifier: com.apple.Finder pid: 60696 type: NCCenterType(rawValue: 1)>
+2026-11-07 15:38:51.020 E  usernoted[659:302641] [com.apple.unc:application] Denying message 3 from connection <LegacyConnection identifier: com.apple.Finder type: NCCenterType(rawValue: 1)>
+2026-11-07 15:38:53.036 Df usernoted[659:302641] [com.apple.xpc:connection] [0x91f0ab900] invalidated because the client process (pid 60696) either cancelled the connection or exited
+2026-11-07 15:38:29.826 E  usernoted[659:2fca39] [com.apple.unc:application] Legacy client com.apple.finder connecting to modern client. You can't mix modern clients with legacy clients. <ClientConnect: 0x000000091f860500 identifier: com.apple.Finder pid: 5890
+2026-11-07 15:38:29.826 E  usernoted[659:2fca39] [com.apple.unc:application] Denying message 3 from connection <LegacyConnection identifier: com.apple.Finder type: NCCenterType(rawValue: 1)>
+2026-11-07 15:38:31.936 E  usernoted[659:2fca39] [com.apple.unc:application] Legacy client com.apple.finder connecting to modern client. You can't mix modern clients with legacy clients. <ClientConnect: 0x000000091f860500 identifier: com.apple.Finder pid: 5905
+2026-11-07 15:38:31.936 E  usernoted[659:2fca39] [com.apple.unc:application] Denying message 3 from connection <LegacyConnection identifier: com.apple.Finder type: NCCenterType(rawValue: 1)>
+2026-11-07 15:38:34.087 Df usernoted[659:2fca39] [com.apple.unc:application] Delivering <NotificationRecord app:"com.apple.ScriptEditor2" ident:"DA39-A3EE" req:"" uuid:"6798A8E8" source:"E89BAC31" staticCategory:"<LEGACY options=(legacyBehavior, hiddenPreviewS
+2026-11-07 15:38:34.087 Df usernoted[659:2fca39] [com.apple.unc:application] Presenting <NotificationRecord app:"com.apple.ScriptEditor2" ident:"DA39-A3EE" req:"" uuid:"6798A8E8" source:"E89BAC31" staticCategory:"<LEGACY options=(legacyBehavior, hiddenPreviewS
+2026-11-07 15:38:51.020 E  usernoted[659:302641] [com.apple.unc:application] Legacy client com.apple.finder connecting to modern client. You can't mix modern clients with legacy clients. <ClientConnect: 0x000000091f860500 identifier: com.apple.Finder pid: 6069
+2026-11-07 15:38:51.020 E  usernoted[659:302641] [com.apple.unc:application] Denying message 3 from connection <LegacyConnection identifier: com.apple.Finder type: NCCenterType(rawValue: 1)>
+2026-11-07 15:39:12.922 I  usernoted[659:302641] [com.apple.unc:application] Added request <NotificationRecord app:"com.apple.notificationcenter.askpermissions" ident:"C112-9CFE" req:"com.apple.Terminal" uuid:"EE4C34CA" source:"C44D5050" category:"permission">
+2026-11-07 15:39:12.933 E  usernoted[659:302641] [com.apple.unc:application] Record <NotificationRecord app:"com.apple.notificationcenter.askpermissions" ident:"C112-9CFE" req:"com.apple.Terminal" uuid:"EE4C34CA" source:"C44D5050" category:"permission"> inelig
+2026-11-07 15:39:12.933 Df usernoted[659:302641] [com.apple.unc:application] <NotificationRecord app:"com.apple.notificationcenter.askpermissions" ident:"C112-9CFE" req:"com.apple.Terminal" uuid:"EE4C34CA" source:"C44D5050" category:"permission"> successfully 
+2026-11-07 15:39:13.036 Df usernoted[659:303c7a] [com.apple.unc:application] Delivering <NotificationRecord app:"com.apple.notificationcenter.askpermissions" ident:"C112-9CFE" req:"com.apple.Terminal" uuid:"EE4C34CA" source:"C44D5050" category:"permission"> to
+2026-11-07 15:39:13.037 Df usernoted[659:303c7a] [com.apple.unc:application] Presenting <NotificationRecord app:"com.apple.notificationcenter.askpermissions" ident:"C112-9CFE" req:"com.apple.Terminal" uuid:"EE4C34CA" source:"C44D5050" category:"permission"> as
+2026-11-07 15:39:13.037 Df usernoted[659:303c7a] [com.apple.unc:application] Delivering <NotificationRecord app:"com.apple.Terminal" ident:"8577-8472" req:"4C9CEC2E-F57E-45A8-BE58-245DE05CA744" uuid:"776B7E3F" source:"B9C2E7E1" staticCategory:"<LEGACY options=
+2026-11-07 15:39:13.233 Df usernoted[659:303c7a] [com.apple.unc:application] Delivering <NotificationRecord app:"com.apple.ScriptEditor2" ident:"2EB2-435D" req:"0A97A9DB-9D10-43B0-A788-1EA2DC6B4745" uuid:"4217DA36" source:"00176BD6" staticCategory:"<LEGACY opt
+2026-11-07 15:39:13.234 Df usernoted[659:303c7a] [com.apple.unc:application] Presenting <NotificationRecord app:"com.apple.ScriptEditor2" ident:"2EB2-435D" req:"0A97A9DB-9D10-43B0-A788-1EA2DC6B4745" uuid:"4217DA36" source:"00176BD6" staticCategory:"<LEGACY opt

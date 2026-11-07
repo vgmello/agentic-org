@@ -1,0 +1,73 @@
+### ENV: no --agent, no prompt
+argv: claude --bg --name zz-spike-env --model haiku --plugin-dir /tmp/ac-spike-s2/mods/marker
+exit=0 elapsed_s=0.719
+backgrounded · 7e69126b · zz-spike-env (idle — send a prompt to start)
+  claude agents             list sessions
+  claude attach 7e69126b    open in this terminal
+  claude logs 7e69126b      show recent output
+  claude stop 7e69126b      stop this session
+### RACE: base session
+argv: claude --bg --agent zz-spike-tester-max --name zz-spike-race --plugin-dir /tmp/ac-spike-s2/mods/goals --plugin-dir /tmp/ac-spike-s2/mods/marker --model haiku What is your name? One sentence.
+exit=0 elapsed_s=0.704
+backgrounded · 8217c384 · zz-spike-race
+  claude agents             list sessions
+  claude attach 8217c384    open in this terminal
+  claude logs 8217c384      show recent output
+  claude stop 8217c384      stop this session
+### RACE trial 7 prep: wake via --bg --resume (no flags)
+argv: claude --bg --resume 8217c384-cecb-4195-b8de-ad6173ce2382 Say ok.
+exit=0 elapsed_s=0.637
+note: woke session 8217c384 with its saved options (--agent, --name, --plugin-dir, --model).
+backgrounded · 8217c384 · zz-spike-race
+  claude agents             list sessions
+  claude attach 8217c384    open in this terminal
+  claude logs 8217c384      show recent output
+  claude stop 8217c384      stop this session
+### RACE trial 8: fresh session
+argv: claude --bg --agent zz-spike-tester-max --name zz-spike-race8 --plugin-dir /tmp/ac-spike-s2/mods/marker --model haiku Say hi.
+exit=0 elapsed_s=0.706
+backgrounded · 7d15a09c · zz-spike-race8
+  claude agents             list sessions
+  claude attach 7d15a09c    open in this terminal
+  claude logs 7d15a09c      show recent output
+  claude stop 7d15a09c      stop this session
+### RACE trial 9: fresh session
+argv: claude --bg --agent zz-spike-tester-max --name zz-spike-race9 --plugin-dir /tmp/ac-spike-s2/mods/marker --model haiku Say hi.
+exit=0 elapsed_s=0.655
+backgrounded · a6a31bb3 · zz-spike-race9
+  claude agents             list sessions
+  claude attach a6a31bb3    open in this terminal
+  claude logs a6a31bb3      show recent output
+  claude stop a6a31bb3      stop this session
+### ISO A: no bgIsolation setting
+argv: claude --bg --agent zz-spike-tester-max --name zz-spike-iso-a --plugin-dir /tmp/ac-spike-s2/mods/marker --model haiku --permission-mode acceptEdits Use the Write tool to create the file /private/tmp/ac-spike-s2/ws/iso-a.txt containing the text A. Then quote the Write tool's result verbatim. Do not use any other tool.
+exit=0 elapsed_s=0.663
+backgrounded · e6545701 · zz-spike-iso-a
+  claude agents             list sessions
+  claude attach e6545701    open in this terminal
+  claude logs e6545701      show recent output
+  claude stop e6545701      stop this session
+### ISO B: --settings bgIsolation none
+argv: claude --bg --agent zz-spike-tester-max --name zz-spike-iso-b --plugin-dir /tmp/ac-spike-s2/mods/marker --model haiku --permission-mode acceptEdits --settings {"worktree":{"bgIsolation":"none"}} Use the Write tool to create the file /private/tmp/ac-spike-s2/ws/iso-b.txt containing the text X. Then quote the Write tool's result verbatim. Do not use any other tool.
+exit=0 elapsed_s=0.645
+backgrounded · ed985f47 · zz-spike-iso-b
+  claude agents             list sessions
+  claude attach ed985f47    open in this terminal
+  claude logs ed985f47      show recent output
+  claude stop ed985f47      stop this session
+### ISO C: ws/.claude/settings.local.json bgIsolation none
+argv: claude --bg --agent zz-spike-tester-max --name zz-spike-iso-c --plugin-dir /tmp/ac-spike-s2/mods/marker --model haiku --permission-mode acceptEdits Use the Write tool to create the file /private/tmp/ac-spike-s2/ws/iso-c.txt containing the text X. Then quote the Write tool's result verbatim. Do not use any other tool.
+exit=0 elapsed_s=0.653
+backgrounded · e1e8c716 · zz-spike-iso-c
+  claude agents             list sessions
+  claude attach e1e8c716    open in this terminal
+  claude logs e1e8c716      show recent output
+  claude stop e1e8c716      stop this session
+### LIVE tests session
+argv: claude --bg --agent zz-spike-tester-max --name zz-spike-live --plugin-dir /tmp/ac-spike-s2/mods/marker --model haiku Say ready.
+exit=0 elapsed_s=0.657
+backgrounded · d41dc27d · zz-spike-live
+  claude agents             list sessions
+  claude attach d41dc27d    open in this terminal
+  claude logs d41dc27d      show recent output
+  claude stop d41dc27d      stop this session

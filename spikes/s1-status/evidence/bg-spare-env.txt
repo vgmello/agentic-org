@@ -1,0 +1,3 @@
+CLAUDE_PID=99082
+CLAUDE_CODE_AGENT=<real-agent>
+PWD=~/projects/agentic-consulting/agents

@@ -1,0 +1,4 @@
+{"argv":["/tmp/ac-spike-s2/tools/cc","attach","67894d6a"],"cwd":"/tmp/ac-spike-s2/ws","out":"/tmp/ac-spike-s2/evidence/q4-sigkill.raw","cols":100,"rows":30,
+ "steps":[["expect","zz-spike-tester-max ─",15],["wait",1],["signal",9],["wait",2],
+ ["shell","/tmp/ac-spike-s2/tools/cc agents --json | python3 -c \"import json,sys;[print(s.get('pid'),s.get('status'),s.get('state')) for s in json.load(sys.stdin) if s.get('id')=='67894d6a']\""],
+ ["shell","ps -axo pid,command | grep 'claude attach 67894d6a' | grep -v grep || echo 'no leftover attach processes'"]]}

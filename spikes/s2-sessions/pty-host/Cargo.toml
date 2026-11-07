@@ -1,0 +1,18 @@
+[package]
+name = "pty-host"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Spike S2: `claude attach <id>` in a PTY, streamed as seq-prefixed byte frames"
+
+# Standalone crate: keep it out of any parent workspace.
+[workspace]
+
+[dependencies]
+portable-pty = "0.9"
+libc = "0.2"
+serde_json = "1"
+
+[[bin]]
+name = "pty-demo"
+path = "src/bin/pty-demo.rs"

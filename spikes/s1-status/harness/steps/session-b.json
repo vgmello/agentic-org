@@ -1,0 +1,16 @@
+[
+ {"expect": "Quick safety check", "timeout": 8, "optional": true, "then": [{"sleep": 1}, {"send": "\u001b[B"}, {"sleep": 0.5}, {"send": "\r"}]},
+ {"sleep": 4},
+ {"type": "Reply with the single word: ready"},
+ {"sleep": 8},
+ {"mark": "resume another of my sessions (session-a2 original id)"},
+ {"type": "/resume 09b93d00-508a-4f14-8cb7-6d64d376cf55"},
+ {"sleep": 4},
+ {"expect": "Resume|resume|session", "timeout": 3, "optional": true},
+ {"sleep": 6},
+ {"mark": "wait 70 s for idle_prompt"},
+ {"sleep": 70},
+ {"mark": "crash: SIGKILL our own child"},
+ {"kill9": true},
+ {"sleep": 3}
+]

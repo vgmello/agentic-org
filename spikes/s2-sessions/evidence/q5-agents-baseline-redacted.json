@@ -1,0 +1,60 @@
+[
+ {
+  "pid": "<redacted>",
+  "cwd": "<redacted>",
+  "kind": "interactive",
+  "startedAt": "<redacted>",
+  "sessionId": "<redacted>",
+  "name": "<redacted>",
+  "status": "idle"
+ },
+ {
+  "pid": "<redacted>",
+  "cwd": "<redacted>",
+  "kind": "interactive",
+  "startedAt": "<redacted>",
+  "sessionId": "<redacted>",
+  "name": "<redacted>",
+  "status": "busy"
+ },
+ {
+  "pid": "<redacted>",
+  "cwd": "<redacted>",
+  "kind": "interactive",
+  "startedAt": "<redacted>",
+  "sessionId": "<redacted>",
+  "name": "<redacted>",
+  "status": "busy"
+ },
+ {
+  "pid": "<redacted>",
+  "cwd": "<redacted>",
+  "kind": "interactive",
+  "startedAt": "<redacted>",
+  "sessionId": "<redacted>",
+  "name": "<redacted>",
+  "status": "idle"
+ },
+ {
+  "pid": "<redacted>",
+  "id": "<redacted>",
+  "cwd": "<redacted>",
+  "kind": "background",
+  "startedAt": "<redacted>",
+  "sessionId": "<redacted>",
+  "name": "<redacted>",
+  "status": "busy",
+  "state": "working"
+ },
+ {
+  "pid": "<redacted>",
+  "id": "<redacted>",
+  "cwd": "<redacted>",
+  "kind": "background",
+  "startedAt": "<redacted>",
+  "sessionId": "<redacted>",
+  "name": "<redacted>",
+  "status": "busy",
+  "state": "working"
+ }
+]

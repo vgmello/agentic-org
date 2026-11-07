@@ -1,0 +1,12 @@
+{"pid": 38232, "id": "370c5656", "cwd": "/private/tmp/ac-spike-s2/ws", "kind": "background", "startedAt": 1794065689151, "sessionId": "370c5656-58dc-4018-b00a-fdd1095e4d23", "name": "zz-spike-tester-max", "status": "busy", "state": "working"}
+---
+{"pid": 38232, "id": "370c5656", "cwd": "/private/tmp/ac-spike-s2/ws", "kind": "background", "startedAt": 1794065689151, "sessionId": "370c5656-58dc-4018-b00a-fdd1095e4d23", "name": "zz-spike-tester-max", "status": "idle", "state": "done"}
+---
+{"pid": 38232, "id": "370c5656", "cwd": "/private/tmp/ac-spike-s2/ws", "kind": "background", "startedAt": 1794065689151, "sessionId": "370c5656-58dc-4018-b00a-fdd1095e4d23", "name": "zz-spike-tester-max", "status": "idle", "state": "done"}
+---
+{"pid": 38232, "id": "370c5656", "cwd": "/private/tmp/ac-spike-s2/ws", "kind": "background", "startedAt": 1794065689151, "sessionId": "370c5656-58dc-4018-b00a-fdd1095e4d23", "name": "zz-spike-tester-max", "status": "idle", "state": "done"}
+---
+{"pid": 38232, "id": "370c5656", "cwd": "/private/tmp/ac-spike-s2/ws", "kind": "background", "startedAt": 1794065689151, "sessionId": "370c5656-58dc-4018-b00a-fdd1095e4d23", "name": "zz-spike-tester-max", "status": "idle", "state": "done"}
+---
+{"pid": 38232, "id": "370c5656", "cwd": "/private/tmp/ac-spike-s2/ws", "kind": "background", "startedAt": 1794065689151, "sessionId": "370c5656-58dc-4018-b00a-fdd1095e4d23", "name": "zz-spike-tester-max", "status": "idle", "state": "done"}
+---

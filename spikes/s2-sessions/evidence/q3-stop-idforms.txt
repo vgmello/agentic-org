@@ -1,0 +1,4 @@
+### claude stop 77633acd-466c-4846-ba81-3ee57c65b716
+exit=1 stdout= stderr=No job matching '77633acd-466c-4846-ba81-3ee57c65b716'. Run 'claude agents' to list running sessions.
+### claude stop zz-spike-a
+exit=1 stdout= stderr=No job matching 'zz-spike-a'. Run 'claude agents' to list running sessions.

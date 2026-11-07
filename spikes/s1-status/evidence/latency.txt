@@ -1,0 +1,31 @@
+hook -> receiver (all forwarded events): n=137 p50=1.8 ms p90=10.3 ms max=148.4 ms
+  Elicitation        n=3 p50=1.2 ms p90=1.6 ms max=1.6 ms
+  Notification       n=10 p50=2.4 ms p90=11.3 ms max=17.1 ms
+  PermissionRequest  n=6 p50=1.5 ms p90=1.8 ms max=2.1 ms
+  PostToolUse        n=15 p50=1.4 ms p90=12.0 ms max=17.0 ms
+  PreToolUse         n=18 p50=6.5 ms p90=12.3 ms max=12.8 ms
+  SessionEnd         n=18 p50=1.1 ms p90=2.1 ms max=8.1 ms
+  SessionStart       n=19 p50=7.5 ms p90=42.5 ms max=148.4 ms
+  Stop               n=18 p50=1.8 ms p90=2.8 ms max=6.6 ms
+  StopFailure        n=1 p50=3.8 ms p90=3.8 ms max=3.8 ms
+  SubagentStart      n=1 p50=12.2 ms p90=12.2 ms max=12.2 ms
+  SubagentStop       n=8 p50=2.8 ms p90=3.1 ms max=6.3 ms
+  UserPromptSubmit   n=20 p50=1.2 ms p90=3.0 ms max=10.3 ms
+  hook -> usernoted Presenting    88.0 ms  zz-spike-tester-sam: Goal paused (after 2 failed checks)
+  hook -> usernoted Presenting    70.0 ms  zz-spike-tester-sam: Stopped with an error: model_not_found 
+  hook -> usernoted Presenting    69.9 ms  zz-spike-tester-sam: Asked you a question (Elicitation from elic)
+  hook -> usernoted Presenting    68.9 ms  zz-spike-tester-sam: Wants to run Bash
+  hook -> usernoted Presenting    77.9 ms  zz-spike-tester-sam: Wants to run Bash
+  hook -> usernoted Presenting    67.9 ms  zz-spike-tester-sam: Wants to run (notification) Claude needs your permission
+  hook -> usernoted Presenting    76.0 ms  zz-spike-tester-sam: Wants to run Bash
+  hook -> usernoted Presenting    66.0 ms  zz-spike-tester-sam: Wants to run (notification) Claude needs your permission
+  hook -> usernoted Presenting   117.9 ms  zz-spike-tester-sam: Asked you a question (AskUserQuestion)
+  hook -> usernoted Presenting   103.0 ms  zz-spike-tester-sam: Wants to run AskUserQuestion
+  hook -> usernoted Presenting   116.0 ms  zz-spike-tester-sam: Wants to run (notification) Claude needs your permission
+  hook -> usernoted Presenting   102.9 ms  zz-spike-tester-sam: Asked you a question (Elicitation from elic)
+  hook -> usernoted Presenting   107.0 ms  zz-spike-tester-sam: Asked you a question (elicitation_dialog: Claude Code needs your input)
+  hook -> usernoted Presenting   155.0 ms  zz-spike-tester-sam: Wants to run Bash
+  hook -> usernoted Presenting   151.0 ms  zz-spike-tester-sam: Wants to run (notification) Claude needs your permission
+  hook -> usernoted Presenting   151.0 ms  zz-spike-tester-sam: Asked you a question (Elicitation from elic)
+  hook -> usernoted Presenting   151.0 ms  zz-spike-tester-sam: Asked you a question (elicitation_url_dialog: Claude Code needs your input)
+hook -> banner presented (usernoted): n=17 p50=102.9 ms p90=151.0 ms max=155.0 ms

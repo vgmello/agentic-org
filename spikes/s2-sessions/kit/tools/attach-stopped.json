@@ -1,0 +1,2 @@
+{"argv":["/tmp/ac-spike-s2/tools/cc","attach","370c5656"],"cwd":"/tmp/ac-spike-s2/ws","out":"/tmp/ac-spike-s2/evidence/q6-attach-stopped.raw","cols":120,"rows":40,
+ "steps":[["expect","MAXMARK",20],["wait",3],["mark","before-prompt"],["send","What did I ask you first? One sentence."],["wait",0.5],["send","\r"],["expect","MAXMARK[^\\n]*MAXMARK",40],["wait",3],["signal",1],["wait",1]]}

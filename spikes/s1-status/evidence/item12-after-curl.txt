@@ -1,0 +1,4 @@
+exit=0 session=7d319a9f-e5c6-4467-bc1b-d7df952d70ee
+transport=curl start=1794074941542 process_exit=1794074947839 wall_ms=6297
+1794074942319.2 accept #1 hook=SessionStart (never answering)
+state file 7d319a9f-e5c6-4467-bc1b-d7df952d70ee.json: hook=SessionEnd reason=other seq=7 posts_skipped=5 written_at=1794074947124 (process exit 715 ms after SessionEnd hook)

@@ -1,0 +1,5 @@
+{
+  "name": "presence",
+  "version": "0.0.1-spike",
+  "description": "Spike S1: forwards normalized hook events (no tool inputs/outputs) to the status receiver's Unix socket."
+}

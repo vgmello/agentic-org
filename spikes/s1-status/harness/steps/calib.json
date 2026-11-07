@@ -1,0 +1,53 @@
+[
+ {
+  "expect": "trust|Yes, proceed|safety",
+  "timeout": 20,
+  "optional": true
+ },
+ {
+  "sleep": 1.5
+ },
+ {
+  "send": "\u001b[B"
+ },
+ {
+  "sleep": 0.5
+ },
+ {
+  "send": "\r"
+ },
+ {
+  "sleep": 5
+ },
+ {
+  "mark": "permission"
+ },
+ {
+  "type": "Run this exact Bash command and nothing else: touch perm-i.txt"
+ },
+ {
+  "expect": "Do you want to proceed|proceed\\?",
+  "timeout": 60
+ },
+ {
+  "sleep": 9
+ },
+ {
+  "mark": "approve"
+ },
+ {
+  "send": "\r"
+ },
+ {
+  "sleep": 10
+ },
+ {
+  "mark": "exit"
+ },
+ {
+  "type": "/exit"
+ },
+ {
+  "sleep": 5
+ }
+]

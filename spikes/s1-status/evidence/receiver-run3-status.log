@@ -1,0 +1,1141 @@
+1794068340980.162 LISTEN /tmp/ac-spike-s1/run/events.sock mode 600 (dir mode 700) notify=native uid=501
+1794068342262.996 bad JSON (EOF while parsing a value at line 1 column 0): 
+1794068348968.013 zz-spike-tester-sam sess=22c7c00b seq=1 SessionStart source="startup" -> Idle | hook->recv 2.0 ms | peer pid=31355 | 
+1794068348968.420 KQUEUE watching peer pid=31355 (zz-spike-tester-sam)
+1794068350414.516 zz-spike-tester-sam sess=22c7c00b seq=2 UserPromptSubmit  -> Working | hook->recv 1.5 ms | peer pid=31355 | 
+1794068350728.462 zz-spike-tester-sam sess=22c7c00b seq=3 StopFailure  -> NeedsYou[Stopped with an error: rate_limit] | hook->recv 2.5 ms | peer pid=31355 | 
+1794068350736.977 zz-spike-tester-sam sess=22c7c00b seq=4 SessionEnd reason="other" -> Offline | hook->recv 1.0 ms | peer pid=31355 | SessionEnd reason=other -> Offline; 
+1794068351107.037 RECONCILE claude agents --json took 119 ms
+  zz-spike-tester-sam: agents.json pid=31355 status="idle" waitingFor=null | ours pid=Some(31355) Offline
+1794068351913.937 KQUEUE NOTE_EXIT pid=31355 (exit at 1794068351403.668, data=0) zz-spike-tester-sam sess=22c7c00b -> Offline | exit after SessionEnd: clean
+1794068352739.849 NOTIFY[native] zz-spike-tester-sam: Stopped with an error: rate_limit | ok | hook->notify-call-start 2.9 ms, call 2010.9 ms
+1794068361232.981 RECONCILE claude agents --json took 122 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068371367.416 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068381509.175 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068391653.291 RECONCILE claude agents --json took 134 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068401790.201 RECONCILE claude agents --json took 127 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068411922.642 RECONCILE claude agents --json took 125 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068422063.970 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068432203.418 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068442344.098 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068452485.821 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068462620.763 RECONCILE claude agents --json took 125 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068472768.534 RECONCILE claude agents --json took 135 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068482913.755 RECONCILE claude agents --json took 133 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068493028.121 RECONCILE claude agents --json took 104 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068503160.387 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068513297.366 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068523431.104 RECONCILE claude agents --json took 124 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068533563.919 RECONCILE claude agents --json took 123 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068543701.310 RECONCILE claude agents --json took 135 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068553844.689 RECONCILE claude agents --json took 133 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068563981.145 RECONCILE claude agents --json took 126 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068574120.910 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068584240.210 RECONCILE claude agents --json took 117 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068594376.951 RECONCILE claude agents --json took 134 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068604518.700 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068614652.922 RECONCILE claude agents --json took 124 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068624791.956 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068634934.378 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068645073.318 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068655212.387 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068665349.602 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068675490.913 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068685631.069 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068695775.605 RECONCILE claude agents --json took 134 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068705917.267 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068716045.715 RECONCILE claude agents --json took 118 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068726172.586 RECONCILE claude agents --json took 117 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068736318.057 RECONCILE claude agents --json took 135 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068746458.861 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068756600.688 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068766710.531 RECONCILE claude agents --json took 104 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068776853.334 RECONCILE claude agents --json took 133 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068786997.473 RECONCILE claude agents --json took 134 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068797118.894 RECONCILE claude agents --json took 111 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068807250.664 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068817390.232 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068827532.414 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068837673.255 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068847813.037 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068857946.935 RECONCILE claude agents --json took 124 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068868075.155 RECONCILE claude agents --json took 118 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068878211.359 RECONCILE claude agents --json took 126 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068888333.331 RECONCILE claude agents --json took 121 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068898473.150 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068908586.322 RECONCILE claude agents --json took 103 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068918718.887 RECONCILE claude agents --json took 122 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068928842.250 RECONCILE claude agents --json took 113 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068938966.799 RECONCILE claude agents --json took 114 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068949080.912 RECONCILE claude agents --json took 104 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068959201.692 RECONCILE claude agents --json took 111 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068969429.455 RECONCILE claude agents --json took 218 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068979571.497 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068989711.923 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794068999852.421 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069009968.077 RECONCILE claude agents --json took 106 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069020111.085 RECONCILE claude agents --json took 133 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069030245.450 RECONCILE claude agents --json took 124 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069040369.179 RECONCILE claude agents --json took 114 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069050508.187 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069060637.648 RECONCILE claude agents --json took 121 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069070754.157 RECONCILE claude agents --json took 106 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069080895.962 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069091036.331 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069101161.630 RECONCILE claude agents --json took 115 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069111293.880 RECONCILE claude agents --json took 122 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069121433.069 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069131573.358 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069141712.965 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069151852.027 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069161980.233 RECONCILE claude agents --json took 118 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069172115.228 RECONCILE claude agents --json took 134 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069182256.626 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069192393.647 RECONCILE claude agents --json took 127 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069202533.198 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069212675.286 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069222813.383 RECONCILE claude agents --json took 128 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069232946.750 RECONCILE claude agents --json took 123 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069243092.214 RECONCILE claude agents --json took 135 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069253230.621 RECONCILE claude agents --json took 128 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069263368.717 RECONCILE claude agents --json took 128 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069273499.473 RECONCILE claude agents --json took 126 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069283640.341 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069293781.407 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069303914.985 RECONCILE claude agents --json took 123 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069314037.136 RECONCILE claude agents --json took 112 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069324172.995 RECONCILE claude agents --json took 126 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069334293.749 RECONCILE claude agents --json took 111 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069344427.246 RECONCILE claude agents --json took 123 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069354557.425 RECONCILE claude agents --json took 120 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069364698.773 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069374840.133 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069384979.237 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069395116.354 RECONCILE claude agents --json took 127 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069405247.380 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069415383.993 RECONCILE claude agents --json took 127 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069425516.924 RECONCILE claude agents --json took 123 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069435656.018 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069445786.735 RECONCILE claude agents --json took 121 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069455912.597 RECONCILE claude agents --json took 116 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069466054.775 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069476181.778 RECONCILE claude agents --json took 117 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069486325.350 RECONCILE claude agents --json took 133 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069496461.727 RECONCILE claude agents --json took 126 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069506600.771 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069516729.869 RECONCILE claude agents --json took 119 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069526870.477 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069537011.877 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069547153.841 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069557292.381 RECONCILE claude agents --json took 128 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069567428.002 RECONCILE claude agents --json took 126 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069577567.169 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069587680.910 RECONCILE claude agents --json took 113 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069597817.787 RECONCILE claude agents --json took 127 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069607952.990 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069618070.730 RECONCILE claude agents --json took 117 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069628192.077 RECONCILE claude agents --json took 111 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069638332.614 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069648475.856 RECONCILE claude agents --json took 133 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069658616.167 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069668745.864 RECONCILE claude agents --json took 125 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069678881.695 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069689021.936 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069699165.780 RECONCILE claude agents --json took 134 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069709305.431 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069719442.231 RECONCILE claude agents --json took 127 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069729584.467 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069739719.893 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069749861.647 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069759969.102 RECONCILE claude agents --json took 107 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069770103.750 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069780241.755 RECONCILE claude agents --json took 133 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069790379.328 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069800501.764 RECONCILE claude agents --json took 122 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069810624.765 RECONCILE claude agents --json took 118 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069820758.499 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069830893.593 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069841029.224 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069851164.548 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069861299.607 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069871435.427 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069881572.081 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069891702.049 RECONCILE claude agents --json took 128 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069901830.087 RECONCILE claude agents --json took 123 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069911963.828 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069922099.821 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069932218.366 RECONCILE claude agents --json took 114 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069942347.269 RECONCILE claude agents --json took 124 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069952477.354 RECONCILE claude agents --json took 125 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069962612.030 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069972724.756 RECONCILE claude agents --json took 108 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069982862.256 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794069992964.620 RECONCILE claude agents --json took 98 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070003098.545 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070013230.893 RECONCILE claude agents --json took 127 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070023366.072 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070033498.156 RECONCILE claude agents --json took 127 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070043628.668 RECONCILE claude agents --json took 125 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070053754.376 RECONCILE claude agents --json took 121 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070063885.968 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070074018.460 RECONCILE claude agents --json took 127 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070084156.099 RECONCILE claude agents --json took 133 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070094282.937 RECONCILE claude agents --json took 122 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070104423.252 RECONCILE claude agents --json took 135 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070114553.838 RECONCILE claude agents --json took 125 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070124696.103 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070134832.863 RECONCILE claude agents --json took 127 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070144973.062 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070155114.219 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070165254.534 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070175391.888 RECONCILE claude agents --json took 127 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070185524.545 RECONCILE claude agents --json took 123 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070195636.184 RECONCILE claude agents --json took 102 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070205776.665 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070215917.035 RECONCILE claude agents --json took 135 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070226044.796 RECONCILE claude agents --json took 118 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070236164.691 RECONCILE claude agents --json took 110 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070246295.971 RECONCILE claude agents --json took 121 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070256441.117 RECONCILE claude agents --json took 135 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070266568.547 RECONCILE claude agents --json took 123 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070276691.493 RECONCILE claude agents --json took 122 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070286822.660 RECONCILE claude agents --json took 121 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070296961.925 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070307102.610 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070317234.783 RECONCILE claude agents --json took 122 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070327377.589 RECONCILE claude agents --json took 133 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070337514.278 RECONCILE claude agents --json took 127 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070347655.059 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070357773.703 RECONCILE claude agents --json took 118 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070367900.633 RECONCILE claude agents --json took 126 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070378031.869 RECONCILE claude agents --json took 121 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070388173.080 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070398305.907 RECONCILE claude agents --json took 122 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070408443.006 RECONCILE claude agents --json took 127 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070418579.250 RECONCILE claude agents --json took 126 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070428683.791 RECONCILE claude agents --json took 100 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070438812.278 RECONCILE claude agents --json took 118 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070448948.192 RECONCILE claude agents --json took 126 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070459091.922 RECONCILE claude agents --json took 134 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070469231.085 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070479371.197 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070489507.621 RECONCILE claude agents --json took 126 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070499641.805 RECONCILE claude agents --json took 124 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070509767.878 RECONCILE claude agents --json took 122 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070519909.680 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070530037.030 RECONCILE claude agents --json took 117 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070540175.401 RECONCILE claude agents --json took 128 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070550306.627 RECONCILE claude agents --json took 121 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070560442.158 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070570575.626 RECONCILE claude agents --json took 123 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070580716.886 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070590831.917 RECONCILE claude agents --json took 105 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070600970.597 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070611109.457 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070621251.942 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070631393.997 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070641523.184 RECONCILE claude agents --json took 119 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070651660.614 RECONCILE claude agents --json took 127 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070661800.786 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070671934.451 RECONCILE claude agents --json took 126 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070682068.819 RECONCILE claude agents --json took 124 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070692201.541 RECONCILE claude agents --json took 123 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070702320.787 RECONCILE claude agents --json took 109 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070712460.705 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070722597.602 RECONCILE claude agents --json took 127 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070732738.689 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070742879.601 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070753004.864 RECONCILE claude agents --json took 120 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070763147.715 RECONCILE claude agents --json took 133 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070773277.160 RECONCILE claude agents --json took 123 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070783415.525 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070793532.737 RECONCILE claude agents --json took 111 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070803667.673 RECONCILE claude agents --json took 125 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070813796.399 RECONCILE claude agents --json took 128 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070823928.973 RECONCILE claude agents --json took 122 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070834042.112 RECONCILE claude agents --json took 103 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070844171.957 RECONCILE claude agents --json took 120 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070854302.650 RECONCILE claude agents --json took 121 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070864442.866 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070874586.065 RECONCILE claude agents --json took 133 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070884727.037 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070894864.380 RECONCILE claude agents --json took 127 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070905003.051 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070915142.553 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070925283.710 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070935410.806 RECONCILE claude agents --json took 117 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070945549.401 RECONCILE claude agents --json took 128 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070955688.846 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070965817.349 RECONCILE claude agents --json took 128 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070975967.241 RECONCILE claude agents --json took 145 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070986112.866 RECONCILE claude agents --json took 141 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794070996233.588 RECONCILE claude agents --json took 117 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071006380.965 RECONCILE claude agents --json took 142 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071016521.993 RECONCILE claude agents --json took 137 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071026670.809 RECONCILE claude agents --json took 144 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071036820.208 RECONCILE claude agents --json took 148 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071046976.053 RECONCILE claude agents --json took 150 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071057129.459 RECONCILE claude agents --json took 148 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071067278.417 RECONCILE claude agents --json took 144 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071077386.954 RECONCILE claude agents --json took 105 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071087524.226 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071097661.855 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071107809.198 RECONCILE claude agents --json took 142 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071117964.332 RECONCILE claude agents --json took 150 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071128110.389 RECONCILE claude agents --json took 141 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071138238.830 RECONCILE claude agents --json took 123 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071148384.283 RECONCILE claude agents --json took 140 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071158531.501 RECONCILE claude agents --json took 143 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071168665.639 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071178811.312 RECONCILE claude agents --json took 145 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071188960.020 RECONCILE claude agents --json took 144 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071199138.430 RECONCILE claude agents --json took 177 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071209305.615 RECONCILE claude agents --json took 165 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071219456.456 RECONCILE claude agents --json took 146 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071229601.783 RECONCILE claude agents --json took 142 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071239745.757 RECONCILE claude agents --json took 139 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071249901.248 RECONCILE claude agents --json took 150 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071260042.884 RECONCILE claude agents --json took 137 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071270182.597 RECONCILE claude agents --json took 135 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071280343.107 RECONCILE claude agents --json took 156 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071290491.272 RECONCILE claude agents --json took 143 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071300623.913 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071310775.326 RECONCILE claude agents --json took 146 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071320910.625 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071331050.087 RECONCILE claude agents --json took 134 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071341185.268 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071351323.958 RECONCILE claude agents --json took 134 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071361455.217 RECONCILE claude agents --json took 126 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071371594.498 RECONCILE claude agents --json took 134 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071381733.201 RECONCILE claude agents --json took 134 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071391842.755 RECONCILE claude agents --json took 104 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071401979.599 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071412116.618 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071422253.533 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071432389.215 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071442526.213 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071452658.812 RECONCILE claude agents --json took 128 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071462793.754 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071472931.156 RECONCILE claude agents --json took 133 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071483073.374 RECONCILE claude agents --json took 137 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071493194.578 RECONCILE claude agents --json took 116 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071503335.869 RECONCILE claude agents --json took 136 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071513472.604 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071523610.189 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071533742.647 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071543870.939 RECONCILE claude agents --json took 123 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071553999.460 RECONCILE claude agents --json took 123 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071564139.548 RECONCILE claude agents --json took 135 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071574276.760 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071584415.869 RECONCILE claude agents --json took 134 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071594551.693 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071604687.487 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071614823.188 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071624952.298 RECONCILE claude agents --json took 124 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071635080.899 RECONCILE claude agents --json took 125 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071645211.971 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071655332.249 RECONCILE claude agents --json took 115 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071665467.325 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071675605.308 RECONCILE claude agents --json took 133 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071685742.803 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071695877.928 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071706015.506 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071716155.414 RECONCILE claude agents --json took 135 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071726288.328 RECONCILE claude agents --json took 128 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071736400.622 RECONCILE claude agents --json took 107 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071746526.719 RECONCILE claude agents --json took 124 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071756645.224 RECONCILE claude agents --json took 118 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071766776.191 RECONCILE claude agents --json took 126 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071776910.374 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071787046.638 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071797186.159 RECONCILE claude agents --json took 134 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071807320.554 RECONCILE claude agents --json took 133 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071817447.491 RECONCILE claude agents --json took 117 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071827589.981 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071837720.061 RECONCILE claude agents --json took 120 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071847858.734 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071857996.905 RECONCILE claude agents --json took 133 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071868123.434 RECONCILE claude agents --json took 116 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071878264.770 RECONCILE claude agents --json took 134 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071888400.825 RECONCILE claude agents --json took 126 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071898533.752 RECONCILE claude agents --json took 128 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071908660.266 RECONCILE claude agents --json took 116 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071918784.304 RECONCILE claude agents --json took 114 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071928926.600 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071939057.996 RECONCILE claude agents --json took 121 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071949197.548 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071959337.415 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071969478.297 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071979619.748 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071989752.218 RECONCILE claude agents --json took 123 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794071999866.040 RECONCILE claude agents --json took 113 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072010004.567 RECONCILE claude agents --json took 128 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072020144.364 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072030284.008 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072040425.254 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072050564.148 RECONCILE claude agents --json took 133 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072060692.383 RECONCILE claude agents --json took 118 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072070832.785 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072080972.118 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072091113.484 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072101254.809 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072111395.155 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072121528.497 RECONCILE claude agents --json took 123 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072131663.400 RECONCILE claude agents --json took 125 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072141804.189 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072151934.233 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072162062.811 RECONCILE claude agents --json took 118 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072172173.963 RECONCILE claude agents --json took 110 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072182315.630 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072192455.544 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072202593.149 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072212728.236 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072222867.757 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072232999.077 RECONCILE claude agents --json took 121 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072243138.574 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072253277.416 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072263408.454 RECONCILE claude agents --json took 125 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072273546.188 RECONCILE claude agents --json took 128 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072283687.013 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072293827.172 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072303959.943 RECONCILE claude agents --json took 123 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072314089.734 RECONCILE claude agents --json took 128 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072324224.283 RECONCILE claude agents --json took 124 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072334364.212 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072344475.779 RECONCILE claude agents --json took 111 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072354598.937 RECONCILE claude agents --json took 113 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072364738.449 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072374879.401 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072384992.800 RECONCILE claude agents --json took 103 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072395133.033 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072405255.720 RECONCILE claude agents --json took 113 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072415393.131 RECONCILE claude agents --json took 127 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072425531.670 RECONCILE claude agents --json took 128 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072435672.866 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072445807.977 RECONCILE claude agents --json took 125 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072455920.526 RECONCILE claude agents --json took 102 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072466061.210 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072476201.762 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072486330.969 RECONCILE claude agents --json took 120 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072496469.458 RECONCILE claude agents --json took 128 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072506623.597 RECONCILE claude agents --json took 144 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072516741.061 RECONCILE claude agents --json took 111 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072526878.252 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072537018.934 RECONCILE claude agents --json took 136 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072547157.811 RECONCILE claude agents --json took 134 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072557287.164 RECONCILE claude agents --json took 124 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072567411.265 RECONCILE claude agents --json took 121 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072577546.039 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072587689.925 RECONCILE claude agents --json took 139 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072597825.882 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072607958.658 RECONCILE claude agents --json took 128 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072618074.043 RECONCILE claude agents --json took 111 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072628198.366 RECONCILE claude agents --json took 124 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072638318.493 RECONCILE claude agents --json took 115 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072648454.004 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072658579.734 RECONCILE claude agents --json took 121 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072668709.090 RECONCILE claude agents --json took 124 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072678843.363 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072688959.128 RECONCILE claude agents --json took 113 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072699090.270 RECONCILE claude agents --json took 126 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072709224.618 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072719358.639 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072729485.765 RECONCILE claude agents --json took 122 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072739615.176 RECONCILE claude agents --json took 122 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072749743.332 RECONCILE claude agents --json took 123 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072759870.911 RECONCILE claude agents --json took 122 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072770001.012 RECONCILE claude agents --json took 125 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072780138.129 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072790274.861 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072800407.247 RECONCILE claude agents --json took 127 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072810530.284 RECONCILE claude agents --json took 121 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072820663.572 RECONCILE claude agents --json took 128 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072830799.186 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072840921.067 RECONCILE claude agents --json took 121 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072851046.330 RECONCILE claude agents --json took 120 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072861177.729 RECONCILE claude agents --json took 128 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072871313.065 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072881449.620 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072891572.214 RECONCILE claude agents --json took 117 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072901706.891 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072911844.560 RECONCILE claude agents --json took 133 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072921973.556 RECONCILE claude agents --json took 124 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072932109.214 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072942236.137 RECONCILE claude agents --json took 125 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072952378.194 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072962518.354 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072972658.031 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072982799.955 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794072992939.079 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073003081.232 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073013221.407 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073023350.801 RECONCILE claude agents --json took 128 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073033490.004 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073043629.687 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073053761.565 RECONCILE claude agents --json took 122 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073063893.036 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073074009.717 RECONCILE claude agents --json took 112 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073084117.717 RECONCILE claude agents --json took 98 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073094250.480 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073104363.370 RECONCILE claude agents --json took 103 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073114502.027 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073124624.475 RECONCILE claude agents --json took 112 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073134749.038 RECONCILE claude agents --json took 114 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073144889.959 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073155033.561 RECONCILE claude agents --json took 134 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073165169.628 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073175305.517 RECONCILE claude agents --json took 126 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073185447.070 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073195575.432 RECONCILE claude agents --json took 128 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073205713.951 RECONCILE claude agents --json took 135 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073215855.414 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073225989.256 RECONCILE claude agents --json took 124 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073236141.024 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073246294.006 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073256440.971 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073266584.038 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073276727.865 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073286842.356 RECONCILE claude agents --json took 103 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073296985.616 RECONCILE claude agents --json took 133 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073307106.620 RECONCILE claude agents --json took 111 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073317234.556 RECONCILE claude agents --json took 118 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073327375.861 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073337499.907 RECONCILE claude agents --json took 122 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073347632.556 RECONCILE claude agents --json took 122 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073357768.906 RECONCILE claude agents --json took 126 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073367901.201 RECONCILE claude agents --json took 123 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073378037.425 RECONCILE claude agents --json took 126 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073388170.516 RECONCILE claude agents --json took 123 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073398313.572 RECONCILE claude agents --json took 133 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073408445.397 RECONCILE claude agents --json took 122 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073418585.332 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073428727.761 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073438858.750 RECONCILE claude agents --json took 121 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073448986.981 RECONCILE claude agents --json took 118 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073459129.994 RECONCILE claude agents --json took 133 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073469241.622 RECONCILE claude agents --json took 101 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073479378.413 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073489519.813 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073499661.742 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073509803.622 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073519942.270 RECONCILE claude agents --json took 128 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073530078.165 RECONCILE claude agents --json took 126 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073540218.234 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073550341.708 RECONCILE claude agents --json took 113 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073560478.337 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073570620.475 RECONCILE claude agents --json took 137 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073580753.418 RECONCILE claude agents --json took 128 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073590892.004 RECONCILE claude agents --json took 134 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073601026.267 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073611153.441 RECONCILE claude agents --json took 122 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073621282.158 RECONCILE claude agents --json took 124 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073631407.266 RECONCILE claude agents --json took 124 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073641546.048 RECONCILE claude agents --json took 134 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073651659.194 RECONCILE claude agents --json took 113 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073661794.982 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073671933.668 RECONCILE claude agents --json took 133 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073682068.689 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073692203.844 RECONCILE claude agents --json took 130 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073702340.258 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073712462.651 RECONCILE claude agents --json took 117 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073722595.430 RECONCILE claude agents --json took 128 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073732735.085 RECONCILE claude agents --json took 134 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073742868.981 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073753002.714 RECONCILE claude agents --json took 129 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073763128.427 RECONCILE claude agents --json took 121 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073773235.599 RECONCILE claude agents --json took 107 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073783368.286 RECONCILE claude agents --json took 128 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073793493.481 RECONCILE claude agents --json took 120 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073803630.417 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073813767.974 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073823904.297 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073834040.297 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073844161.756 RECONCILE claude agents --json took 116 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073854286.985 RECONCILE claude agents --json took 120 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073864392.546 RECONCILE claude agents --json took 101 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073874530.481 RECONCILE claude agents --json took 133 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073884645.037 RECONCILE claude agents --json took 114 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073894775.799 RECONCILE claude agents --json took 127 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073904912.366 RECONCILE claude agents --json took 132 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073915048.246 RECONCILE claude agents --json took 131 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073925170.559 RECONCILE claude agents --json took 119 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794073935386.409 RECONCILE claude agents --json took 211 ms
+  zz-spike-tester-sam 22c7c00b: not in claude agents --json | ours Offline
+1794074862560.475 LISTEN /tmp/ac-spike-s1/run/events.sock mode 600 (dir mode 700) notify=native uid=501
+1794074864109.840 zz-spike-tester-sam sess=0dc66c36 seq=1 SessionStart source="startup" -> Idle | hook->recv 19.8 ms | peer pid=77656 | 
+1794074864111.996 KQUEUE watching peer pid=77656 (zz-spike-tester-sam)
+1794074864621.107 KQUEUE NOTE_EXIT pid=77656 (exit at 1794074864112.969, data=0) zz-spike-tester-sam sess=0dc66c36 -> NeedsYou[Session crashed] | exit with no SessionEnd -> crash
+1794074865669.914 zz-spike-tester-sam sess=0dc66c36 seq=2 UserPromptSubmit  -> NeedsYou[Session crashed] | hook->recv 15.9 ms | peer pid=77670 | 
+1794074865670.667 KQUEUE watching peer pid=77670 (zz-spike-tester-sam)
+1794074866177.544 KQUEUE NOTE_EXIT pid=77670 (exit at 1794074865671.717, data=0) zz-spike-tester-sam sess=0dc66c36 -> NeedsYou[Session crashed] | exit with no SessionEnd -> crash
+1794074866626.417 NOTIFY[native] zz-spike-tester-sam: Session crashed | ok | exit->notify-call-start 508.2 ms, call 2005.2 ms
+1794074866910.784 zz-spike-tester-sam sess=0dc66c36 seq=4 PreToolUse tool="Read" -> NeedsYou[Session crashed] | hook->recv 11.8 ms | peer pid=77680 | 
+1794074866911.259 KQUEUE watching peer pid=77680 (zz-spike-tester-sam)
+1794074866910.786 zz-spike-tester-sam sess=0dc66c36 seq=3 ToolCall tool="Read" -> NeedsYou[Session crashed] | hook->recv 14.8 ms | peer pid=77679 | DROPPED STALE seq=3 (last 4) dropped
+1794074866930.974 zz-spike-tester-sam sess=0dc66c36 seq=5 PostToolUse tool="Read" -> NeedsYou[Session crashed] | hook->recv 13.0 ms | peer pid=77681 | 
+1794074866931.670 KQUEUE watching peer pid=77681 (zz-spike-tester-sam)
+1794074867434.654 KQUEUE NOTE_EXIT pid=77681 (exit at 1794074866932.490, data=0) zz-spike-tester-sam sess=0dc66c36 -> NeedsYou[Session crashed] | exit with no SessionEnd -> crash
+1794074867936.982 zz-spike-tester-sam sess=0dc66c36 seq=6 Stop blocked=false background_tasks=0 -> NeedsYou[Session crashed] | hook->recv 11.0 ms | peer pid=77682 | 
+1794074867937.630 KQUEUE watching peer pid=77682 (zz-spike-tester-sam)
+1794074867956.174 zz-spike-tester-sam sess=0dc66c36 seq=7 SessionEnd reason="other" -> NeedsYou[Session crashed] | hook->recv 10.2 ms | peer pid=77683 | SessionEnd reason=other -> Offline; 
+1794074867956.629 KQUEUE watching peer pid=77683 (zz-spike-tester-sam)
+1794074868467.298 KQUEUE NOTE_EXIT pid=77683 (exit at 1794074867957.201, data=0) zz-spike-tester-sam sess=0dc66c36 -> NeedsYou[Session crashed] | exit after SessionEnd: clean
+1794074869103.081 zz-spike-tester-sam sess=005e99f5 seq=1 SessionStart source="startup" -> Idle | hook->recv 12.1 ms | peer pid=77702 | 
+1794074869103.921 KQUEUE watching peer pid=77702 (zz-spike-tester-sam)
+1794074870766.904 zz-spike-tester-sam sess=005e99f5 seq=2 UserPromptSubmit  -> Working | hook->recv 1.9 ms | peer pid=77702 | 
+1794074871885.766 zz-spike-tester-sam sess=005e99f5 seq=3 ToolCall tool="Read" -> Working | hook->recv 0.8 ms | peer pid=77702 | 
+1794074871888.355 zz-spike-tester-sam sess=005e99f5 seq=4 PreToolUse tool="Read" -> Working | hook->recv 1.4 ms | peer pid=77702 | 
+1794074871903.170 zz-spike-tester-sam sess=005e99f5 seq=5 PostToolUse tool="Read" -> Working | hook->recv 1.2 ms | peer pid=77702 | 
+1794074872686.872 zz-spike-tester-sam sess=005e99f5 seq=6 Stop blocked=false background_tasks=0 -> Idle | hook->recv 1.9 ms | peer pid=77702 | 
+1794074872697.301 zz-spike-tester-sam sess=005e99f5 seq=7 SessionEnd reason="other" -> Offline | hook->recv 1.3 ms | peer pid=77702 | SessionEnd reason=other -> Offline; 
+1794074873899.973 KQUEUE NOTE_EXIT pid=77702 (exit at 1794074873389.843, data=0) zz-spike-tester-sam sess=005e99f5 -> Offline | exit after SessionEnd: clean

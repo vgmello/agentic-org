@@ -1,0 +1,2 @@
+38114 /opt/homebrew/Caskroom/claude-code/2.1.311/claude daemon run --origin transient --spawned-by {"label":"claude --bg","cwd":"~/projects/agentic-consulting/agents","pid":38044}
+CLAUDE_CODE_AGENT=ac-staff-engineer-ada

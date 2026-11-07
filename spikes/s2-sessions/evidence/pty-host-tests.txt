@@ -1,0 +1,34 @@
+$ PTY_HOST_TEST_SESSION=a0fc75bb cargo test -- --ignored --test-threads=1   (final-round code, from app-remy/spikes/s2-sessions/pty-host, 2026-11-07T18:39:33Z)
+     Running unittests src/lib.rs (target/debug/deps/pty_host-aaf25ad94f9dc3bf)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+     Running unittests src/bin/pty-demo.rs (target/debug/deps/pty_demo-152cf1a4d7f5f852)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/live.rs (target/debug/deps/live-b332aaf5d371f374)
+
+running 3 tests
+test live_close_is_closed_and_quick ... ok
+test live_ctrl_z_detach_is_attach_exited_and_close_sends_nothing ... ok
+test live_delivery_failure_closes_attach_client ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.05s
+
+     Running tests/offline.rs (target/debug/deps/offline-8737019f280b740a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+   Doc-tests pty_host
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

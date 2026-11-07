@@ -1,0 +1,5 @@
+[  0.003s] opened attach 09b420de at 100x30, pid Some(72121)
+[  5.456s] exit frame: {"kind":"exit","code":0,"signal":None,"reason":"session_ended"}
+[  5.456s] attach client already exited; skipping remaining steps
+[  5.456s] summary: frames=14 bytes=2719 max_chunk=1024 seq_contiguous=true first_byte_ms=Some(127) first_settled_frame_ms=Some(143) exit={"kind":"exit","code":0,"signal":None,"reason":"session_ended"}
+[  5.456s] raw output written to /tmp/ac-spike-s2/evidence/q4-session-ended.raw

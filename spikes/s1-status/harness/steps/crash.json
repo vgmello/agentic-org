@@ -1,0 +1,7 @@
+[
+ {"expect": "Quick safety check", "timeout": 8, "optional": true, "then": [{"sleep": 1}, {"send": "\u001b[B"}, {"sleep": 0.5}, {"send": "\r"}]},
+ {"sleep": 5},
+ {"mark": "crash: SIGKILL our own child"},
+ {"kill9": true},
+ {"sleep": 2}
+]

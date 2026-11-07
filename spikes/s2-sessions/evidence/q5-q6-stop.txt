@@ -1,0 +1,16 @@
+### claude stop 77633acd
+stopped 77633acd
+exit=0 elapsed=0.66
+### again (already stopped)
+stopped 77633acd
+exit=0
+### agents --json (spike only)
+{"pid": 38232, "id": "370c5656", "cwd": "/private/tmp/ac-spike-s2/ws", "kind": "background", "startedAt": 1794065689151, "sessionId": "370c5656-58dc-4018-b00a-fdd1095e4d23", "name": "zz-spike-tester-max", "status": "idle", "state": "done"}
+{"pid": 51343, "id": "67894d6a", "cwd": "/private/tmp/ac-spike-s2/ws", "kind": "background", "startedAt": 1794065744419, "sessionId": "67894d6a-cf5b-448b-8877-876e40501c9e", "name": "zz-spike-tester-max", "status": "idle", "state": "done"}
+{"pid": 54585, "id": "9031e664", "cwd": "/private/tmp/ac-spike-s2/ws", "kind": "background", "startedAt": 1794065780614, "sessionId": "9031e664-6e2f-4697-8456-13968b8762a9", "name": "zz-spike-ab", "status": "idle", "state": "blocked"}
+### agents --json --all (spike only)
+{"pid": 38232, "id": "370c5656", "cwd": "/private/tmp/ac-spike-s2/ws", "kind": "background", "startedAt": 1794065689151, "sessionId": "370c5656-58dc-4018-b00a-fdd1095e4d23", "name": "zz-spike-tester-max", "status": "idle", "state": "done"}
+{"pid": 51343, "id": "67894d6a", "cwd": "/private/tmp/ac-spike-s2/ws", "kind": "background", "startedAt": 1794065744419, "sessionId": "67894d6a-cf5b-448b-8877-876e40501c9e", "name": "zz-spike-tester-max", "status": "idle", "state": "done"}
+{"id": "77633acd", "cwd": "/private/tmp/ac-spike-s2/ws", "kind": "background", "startedAt": 1794065779570, "sessionId": "77633acd-466c-4846-ba81-3ee57c65b716", "name": "zz-spike-a", "state": "stopped"}
+{"pid": 54585, "id": "9031e664", "cwd": "/private/tmp/ac-spike-s2/ws", "kind": "background", "startedAt": 1794065780614, "sessionId": "9031e664-6e2f-4697-8456-13968b8762a9", "name": "zz-spike-ab", "status": "idle", "state": "blocked"}
+pid 53463 gone

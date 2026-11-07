@@ -1,0 +1,12 @@
+[  0.003s] opened attach 67894d6a at 100x30, pid Some(66218)
+[  3.008s] write 26 bytes
+[  3.309s] write CR
+[  4.559s] expect "MAXMARK": found
+[  4.559s] resize 60x20
+[  5.564s]   2346 bytes within 1s of resize
+[  7.567s] resize 140x40
+[  8.571s]   3310 bytes within 1s of resize
+[ 10.609s] exit frame: {"kind":"exit","code":1,"signal":Some("Hangup: 1"),"reason":"closed"}
+[ 10.609s] close() returned in 35 ms
+[ 10.609s] summary: frames=59 bytes=15050 max_chunk=1024 seq_contiguous=true first_byte_ms=Some(137) first_settled_frame_ms=Some(154) exit={"kind":"exit","code":1,"signal":Some("Hangup: 1"),"reason":"closed"}
+[ 10.609s] raw output written to /tmp/ac-spike-s2/evidence/q4-demo-default.raw

@@ -1,0 +1,27 @@
+test tests::scrub_rules ... ok
+test tests::session_ended_needs_real_id_after_leaving_alt_screen ... ok
+test tests::titles_split_across_reads_with_bel_or_st ... ok
+test tests::rejects_bad_ids_and_small_sizes_before_spawning ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test live_close_is_closed_and_quick ... ignored, needs a live background session (PTY_HOST_TEST_SESSION)
+test live_ctrl_z_detach_is_attach_exited_and_close_sends_nothing ... ignored, needs a live background session (PTY_HOST_TEST_SESSION)
+test live_delivery_failure_closes_attach_client ... ignored, needs a live background session (PTY_HOST_TEST_SESSION)
+test result: ok. 0 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test frames_have_contiguous_seq_bounded_payload_and_one_exit ... ok
+test id_match_is_case_insensitive_and_own_name_may_contain_it ... ok
+test exit_is_prompt_when_a_grandchild_keeps_the_pty_open ... ok
+test failed_delivery_closes_the_client_itself ... ok
+test close_is_idempotent_and_hangs_up_once ... ok
+test panicking_callback_closes_the_client ... ok
+test other_id_or_bare_phrase_is_not_session_ended ... ok
+test rejects_small_resize ... ok
+test osc_titles_split_across_reads_become_title_frames ... ok
+test agents_listing_times_out_after_about_3_s ... ok
+test self_exit_reports_code_and_close_sends_no_signal ... ok
+test session_text_on_screen_is_not_session_ended ... ok
+test refuses_ids_not_listed_exactly_or_contained_in_another_name ... ok
+test close_finishes_when_client_ignores_sighup_and_keeps_printing ... ok
+test close_finishes_when_client_ignores_sighup ... ok
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.35s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

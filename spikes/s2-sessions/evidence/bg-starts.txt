@@ -1,0 +1,68 @@
+### S2 settings-env + goal
+argv: claude --bg --agent zz-spike-tester-max --name zz-spike-tester-max --plugin-dir /tmp/ac-spike-s2/mods/goals --plugin-dir /tmp/ac-spike-s2/mods/marker --model haiku --settings {"env":{"AC_AGENT":"zz-from-settings-env"}} Call your CreateGoal tool with condition: 'The assistant has replied with the word DONE'. Then reply DONE.
+exit=0 elapsed_s=0.771
+backgrounded · 67894d6a · zz-spike-tester-max
+  claude agents             list sessions
+  claude attach 67894d6a    open in this terminal
+  claude logs 67894d6a      show recent output
+  claude stop 67894d6a      stop this session
+### A: no prompt
+argv: claude --bg --name zz-spike-a --model haiku --plugin-dir /tmp/ac-spike-s2/mods/marker
+exit=0 elapsed_s=0.714
+backgrounded · 77633acd · zz-spike-a (idle — send a prompt to start)
+  claude agents             list sessions
+  claude attach 77633acd    open in this terminal
+  claude logs 77633acd      show recent output
+  claude stop 77633acd      stop this session
+### AB: no prompt
+argv: claude --bg --name zz-spike-ab --model haiku --plugin-dir /tmp/ac-spike-s2/mods/marker
+exit=0 elapsed_s=0.567
+backgrounded · 9031e664 · zz-spike-ab (idle — send a prompt to start)
+  claude agents             list sessions
+  claude attach 9031e664    open in this terminal
+  claude logs 9031e664      show recent output
+  claude stop 9031e664      stop this session
+### S1 --bg --resume full uuid on STOPPED, no other flags
+argv: claude --bg --resume 370c5656-58dc-4018-b00a-fdd1095e4d23 Say your name again, one sentence.
+exit=0 elapsed_s=0.587
+note: session 370c5656 is already running in the background, so this started a copy as 833640e8. `claude attach 370c5656` opens the original.
+backgrounded · 833640e8
+  claude agents             list sessions
+  claude attach 833640e8    open in this terminal
+  claude logs 833640e8      show recent output
+  claude stop 833640e8      stop this session
+### S1 --bg --resume full uuid on STOPPED (settled), with agent/name/plugin flags
+argv: claude --bg --resume 370c5656-58dc-4018-b00a-fdd1095e4d23 --agent zz-spike-tester-max --name zz-spike-tester-max --plugin-dir /tmp/ac-spike-s2/mods/goals --plugin-dir /tmp/ac-spike-s2/mods/marker --model haiku What was the very first thing I asked you? One sentence.
+exit=0 elapsed_s=0.687
+note: background session 370c5656 keeps its own saved options, so the flags you passed started a copy as 33596af9. Without flags, the same command continues 370c5656 itself.
+backgrounded · 33596af9 · zz-spike-tester-max
+  claude agents             list sessions
+  claude attach 33596af9    open in this terminal
+  claude logs 33596af9      show recent output
+  claude stop 33596af9      stop this session
+### zz-spike-a --bg --resume full uuid on STOPPED, no flags
+argv: claude --bg --resume 77633acd-466c-4846-ba81-3ee57c65b716 Say hi in two words.
+exit=0 elapsed_s=0.804
+note: woke session 77633acd with its saved options (--name, --plugin-dir, --model).
+backgrounded · 77633acd · zz-spike-a
+  claude agents             list sessions
+  claude attach 77633acd    open in this terminal
+  claude logs 77633acd      show recent output
+  claude stop 77633acd      stop this session
+### zz-spike-a --bg --resume on RUNNING (idle) session, no flags
+argv: claude --bg --resume 77633acd-466c-4846-ba81-3ee57c65b716 Say bye in two words.
+exit=0 elapsed_s=0.705
+note: session 77633acd is already running in the background, so this started a copy as 4ab5c202. `claude attach 77633acd` opens the original.
+backgrounded · 4ab5c202
+  claude agents             list sessions
+  claude attach 4ab5c202    open in this terminal
+  claude logs 4ab5c202      show recent output
+  claude stop 4ab5c202      stop this session
+### P: permission prompt session
+argv: claude --bg --agent zz-spike-tester-max --name zz-spike-perm --plugin-dir /tmp/ac-spike-s2/mods/goals --plugin-dir /tmp/ac-spike-s2/mods/marker --model haiku --permission-mode default Use the Bash tool to run exactly: date > /tmp/ac-spike-s2/ws/perm-test.txt
+exit=0 elapsed_s=0.614
+backgrounded · 09b420de · zz-spike-perm
+  claude agents             list sessions
+  claude attach 09b420de    open in this terminal
+  claude logs 09b420de      show recent output
+  claude stop 09b420de      stop this session

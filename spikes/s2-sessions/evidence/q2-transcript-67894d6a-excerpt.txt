@@ -1,0 +1,11 @@
+# Excerpt of the transcript of session 67894d6a (S2 run): metadata records and the first turn's tool use, result and reply. Other records omitted.
+{"type": "custom-title", "customTitle": "zz-spike-tester-max", "sessionId": "67894d6a-cf5b-448b-8877-876e40501c9e"}
+{"type": "agent-name", "agentName": "zz-spike-tester-max", "sessionId": "67894d6a-cf5b-448b-8877-876e40501c9e"}
+{"type": "agent-setting", "agentSetting": "zz-spike-tester-max", "sessionId": "67894d6a-cf5b-448b-8877-876e40501c9e"}
+{"type": "permission-mode", "permissionMode": "auto", "sessionId": "67894d6a-cf5b-448b-8877-876e40501c9e"}
+assistant tool_use: mcp__goals__CreateGoal {"condition": "The assistant has replied with the word DONE"}
+user tool_result: Goal set: The assistant has replied with the word DONE |  | Each time you are about to stop, a separate evaluator checks it against the conversation, and you are asked to keep working while it is unmet. Show the evidence in the conversation, because the evaluator sees only that.
+assistant text: MAXMARK DONE
+system stop_hook_summary hookCount: 1 ['${CLAUDE_PLUGIN_ROOT}/hooks/mark.sh Stop']
+assistant tool_use: Bash {"command": "sleep 30", "description": "Pause for 30 seconds"}
+user tool_result: <tool_use_error>Blocked: standalone sleep 30. To wait for a condition, use Monitor with an until-loop (e.g. `until <check>; do sleep 2; done`). To wait for a command you started, use run_in_background: true. Do not chain shorter sleeps to work around this block.</tool_use_error>

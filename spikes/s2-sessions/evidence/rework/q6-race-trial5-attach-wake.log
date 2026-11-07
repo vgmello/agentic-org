@@ -1,0 +1,4 @@
+[  0.173s] opened attach 8217c384 at 100x30, pid 14934
+[  6.201s] exit frame: {"kind":"exit","code":1,"signal":Some("Hangup: 1"),"reason":"closed"}
+[  6.201s] close() returned in 18 ms
+[  6.201s] summary: frames=10 bytes=3979 max_chunk=1024 seq_contiguous=true first_byte_ms=Some(395) first_settled_frame_ms=Some(610) exit={"kind":"exit","code":1,"signal":Some("Hangup: 1"),"reason":"closed"}

@@ -1,0 +1,5 @@
+# `claude agents --json` entry for my bg test session (requested --session-id 791b6c36-..., ignored by --bg)
+# while it sat at a permission prompt (2026-11-07 ~15:51 local). Captured from the spike run.
+{"pid": 67056, "id": "81666304", "cwd": "/private/tmp/ac-spike-s1/ws", "kind": "background", "startedAt": 1794066671895, "sessionId": "81666304-9318-4abf-a77e-213928e8a748", "name": "zz-spike-tester-sam", "status": "waiting", "waitingFor": "permission prompt", "state": "blocked"}
+# `claude stop 81666304-9318-4abf-a77e-213928e8a748` (full uuid) -> "No job matching '81666304-9318-...'"; `claude stop 81666304` -> "stopped 81666304"
+# `claude --bg --session-id <uuid>` (2nd bg run) printed: "warning: --bg manages the session id; ignoring --session-id (use --resume <id> to continue an existing session)"

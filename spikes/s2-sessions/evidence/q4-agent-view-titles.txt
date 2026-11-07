@@ -1,0 +1,3 @@
+OSC 0/2 window titles in the agent-view captures (raw bytes removed for privacy):
+q4-key-left.raw: ['claude agents', '1 awaiting input · claude agents', 'claude agents', '']
+q4-key-ctrlc2.raw: ['claude agents', '1 awaiting input · claude agents', 'claude agents', '']

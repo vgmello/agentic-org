@@ -1,0 +1,3 @@
+e6545701 ['--agent', 'zz-spike-tester-max', '--name', 'zz-spike-iso-a', '--plugin-dir', '/tmp/ac-spike-s2/mods/marker', '--permission-mode', 'acceptEdits', '--model', 'haiku']
+ed985f47 ['--agent', 'zz-spike-tester-max', '--name', 'zz-spike-iso-b', '--plugin-dir', '/tmp/ac-spike-s2/mods/marker', '--permission-mode', 'acceptEdits', '--settings', '{"worktree":{"bgIsolation":"none"}}', '--model', 'haiku']
+e1e8c716 ['--agent', 'zz-spike-tester-max', '--name', 'zz-spike-iso-c', '--plugin-dir', '/tmp/ac-spike-s2/mods/marker', '--permission-mode', 'acceptEdits', '--model', 'haiku']

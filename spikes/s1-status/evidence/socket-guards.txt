@@ -1,0 +1,2 @@
+refusing to start: /tmp/ac-spike-s1/run/events.sock is live (another receiver is listening); not removing it
+refusing to start: "/tmp/ac-spike-s1/opendir" must be a directory owned by uid 501 with mode 0700 (is uid 501 mode 755)

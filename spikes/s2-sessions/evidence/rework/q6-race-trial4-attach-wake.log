@@ -1,0 +1,8 @@
+[  0.175s] opened attach 8217c384 at 100x30, pid 12714
+[  6.201s] exit frame: {"kind":"exit","code":1,"signal":Some("Hangup: 1"),"reason":"closed"}
+[  6.201s] close() returned in 19 ms
+[  6.201s] summary: frames=9 bytes=5441 max_chunk=1024 seq_contiguous=true first_byte_ms=Some(401) first_settled_frame_ms=Some(420) exit={"kind":"exit","code":1,"signal":Some("Hangup: 1"),"reason":"closed"}
+[  0.124s] opened attach 8217c384 at 100x30, pid 13193
+[  6.152s] exit frame: {"kind":"exit","code":1,"signal":Some("Hangup: 1"),"reason":"closed"}
+[  6.152s] close() returned in 23 ms
+[  6.152s] summary: frames=9 bytes=3846 max_chunk=1024 seq_contiguous=true first_byte_ms=Some(244) first_settled_frame_ms=Some(890) exit={"kind":"exit","code":1,"signal":Some("Hangup: 1"),"reason":"closed"}

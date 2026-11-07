@@ -1,0 +1,1 @@
+{"argv": ["/tmp/ac-spike-s2/tools/cc", "--model", "haiku"], "cwd": "/tmp/ac-spike-s2/ws", "out": "/tmp/ac-spike-s2/evidence/trust-raw.bin", "steps": [["expect", "trust", 20], ["wait", 1], ["send", "\u001b[B"], ["wait", 0.5], ["send", "\r"], ["wait", 5], ["send", "/exit\r"], ["wait", 3]]}

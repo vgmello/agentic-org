@@ -1,0 +1,13 @@
+hook -> receiver (all forwarded events): n=29 p50=20.9 ms p90=61.8 ms max=67.4 ms
+  PostToolUse        n=3 p50=57.1 ms p90=65.8 ms max=65.8 ms
+  PreToolUse         n=3 p50=54.1 ms p90=61.8 ms max=61.8 ms
+  SessionEnd         n=3 p50=17.4 ms p90=20.9 ms max=20.9 ms
+  SessionStart       n=4 p50=22.2 ms p90=63.3 ms max=63.3 ms
+  Stop               n=5 p50=20.5 ms p90=33.9 ms max=33.9 ms
+  SubagentStart      n=1 p50=67.4 ms p90=67.4 ms max=67.4 ms
+  SubagentStop       n=3 p50=13.3 ms p90=13.8 ms max=13.8 ms
+  ToolCall           n=3 p50=14.8 ms p90=29.3 ms max=29.3 ms
+  UserPromptSubmit   n=4 p50=23.3 ms p90=25.4 ms max=25.4 ms
+  hook -> usernoted Presenting   110.9 ms  zz-spike-tester-sam: Goal paused (after 2 failed checks)
+  exit -> usernoted Presenting   595.1 ms  zz-spike-tester-sam: Session crashed
+hook -> banner presented (usernoted): n=1 p50=110.9 ms p90=110.9 ms max=110.9 ms

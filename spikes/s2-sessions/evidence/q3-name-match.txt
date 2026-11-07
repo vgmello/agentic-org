@@ -1,0 +1,13 @@
+### claude logs zz-spike-a
+exit=1 stdout_bytes=       0 stderr=2 sessions match 'zz-spike-a':
+  77633acd  zz-spike-a
+  9031e664  zz-spike-ab
+Use more of the name, or the id.
+### claude logs zz-spike-ab
+exit=0 stdout_bytes=    2179 stderr=Session 9031e664 · zz-spike-ab
+### claude logs spike-ab
+exit=0 stdout_bytes=    2179 stderr=Session 9031e664 · zz-spike-ab
+### claude logs zz-spike-nomatch
+exit=1 stdout_bytes=       0 stderr=No job matching 'zz-spike-nomatch'. Run 'claude agents' to list running sessions.
+### claude logs 9031e664-6e2f-4697-8456-13968b8762a9
+exit=1 stdout_bytes=       0 stderr=No job matching '9031e664-6e2f-4697-8456-13968b8762a9'. Run 'claude agents' to list running sessions.
