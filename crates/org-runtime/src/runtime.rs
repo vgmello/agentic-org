@@ -3,8 +3,8 @@
 use std::fmt;
 
 use crate::{
-    Capabilities, LaunchContext, LaunchPlan, Probe, ProbeContext, ProbeOutput, ProbePlan,
-    ProbeResult, RuntimeId, Session, SessionSpec,
+    Capabilities, LaunchContext, LaunchPlan, Probe, ProbeContext, ProbeOutput, ProbeResult,
+    ProbeRun, RuntimeId, Session, SessionSpec,
 };
 
 /// One runtime's adapter: a **stateless** factory. It never spawns and never does I/O.
@@ -58,9 +58,10 @@ pub trait AgentRuntime: Send + Sync {
     /// optional for its runtime (e.g. no quota probe where quota comes in-stream), or one it
     /// doesn't know. The office treats `None` for a probe it requires as the runtime being
     /// unusable, never as "skip it", so this fails closed.
-    fn plan_probe(&self, probe: Probe, ctx: &ProbeContext) -> Option<ProbePlan>;
+    fn plan_probe(&self, probe: Probe, ctx: &ProbeContext) -> Option<ProbeRun>;
 
-    /// Reads a probe's output. Pure: the same output always gives the same result.
+    /// Reads a one-shot probe's output ([`ProbeRun::OneShot`]). Pure: the same output always
+    /// gives the same result. (A conversation's result comes from its own session.)
     fn parse_probe(&self, probe: Probe, out: &ProbeOutput) -> ProbeResult;
 }
 

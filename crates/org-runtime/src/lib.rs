@@ -47,6 +47,10 @@
 //!   office recorded at preflight.
 //! - **Every protocol line is encoded, never formatted.** [`Output::Write`] and
 //!   [`ProbePlan::stdin_lines`] carry a [`Line`], which only [`encode_line`] makes.
+//! - **Escalations never ride on policy.** Every [`ApprovalRequest`] carries an
+//!   [`Escalation`]: the office always denies [`Escalation::SandboxBypass`] (the fixed denies
+//!   win, with no override in phase 1), and sends [`Escalation::PermissionChange`] and
+//!   [`Escalation::Unknown`] to the owner with a warning, never answering them from policy.
 //! - **Redaction is possible everywhere.** [`SessionEvent::redact`] reaches every free-text
 //!   string, including inside JSON values. Events carry no raw runtime messages: tool input
 //!   is their only JSON, and `redact` reaches all of it.
@@ -61,6 +65,16 @@
 //! - Turn a session id from the runtime that isn't a valid [`SessionId`] into a
 //!   [`SessionEvent::ProtocolError`].
 //! - Always add [`LaunchContext::tmpdir`] as a writable root.
+//! - List a [`StopPlan`]'s graceful steps ([`StopStep::CloseStdin`]) before its signals. They
+//!   keep their full grace; the first signal the supervisor sends is always `SIGTERM` to the
+//!   runtime's own process, before the plan's signal steps.
+//! - Refuse a spec whose `workspace` or a writable root is `/` (a stored spec with one
+//!   doesn't decode; one built in code reaches the adapter, which checks
+//!   [`SpecPath::is_root`] and returns [`PlanError::InvalidSpec`]).
+//! - Set every [`ApprovalRequest::escalation`] from what the runtime asks (see
+//!   [`Escalation`]).
+//! - Write every deny rule so it beats a matching allow, whatever the rules' order.
+//! - Run the `testkit` checks, [`Session`]'s and the plan's, in the adapter's own tests.
 //! - Name every [`CleanupPath`] by its real path (`/private/tmp/...`, not `/tmp/...` on
 //!   macOS): the supervisor follows no symlink, so a path through one is never cleaned up.
 //! - Never put a secret in argv, a [`PlannedFile`], an event or an error text.
@@ -103,9 +117,25 @@
 //!     [`Unavailable`]: a failure, or the runtime unusable, never a success;
 //!   - a runtime-side value that decoded as `Unknown` (an event, outcome, status, ...):
 //!     treat it as unknown, never as some known value.
+//! - Structs that may grow are `#[non_exhaustive]`, with a constructor: [`ApprovalRequest`]
+//!   ([`ApprovalRequest::new`]), [`Usage`] ([`Usage::new`]), [`RateLimit`]
+//!   ([`RateLimit::new`]), [`ProbeContext`] ([`ProbeContext::new`]) and [`ProbeOutput`]
+//!   ([`ProbeOutput::new`]). Build them that way and set the public fields after, so a field
+//!   added later isn't a breaking change.
+//! - Every other public struct is **exhaustive on purpose**, so a new field is a breaking
+//!   change that makes every builder and reader decide about it:
+//!   - [`SessionSpec`] and its parts ([`AgentIdentity`], [`PermissionPolicy`], [`Rule`],
+//!     [`SandboxSpec`], [`McpServer`]): a new field may be a restriction, and the office must
+//!     set it and every adapter enforce, drop or refuse it;
+//!   - [`LaunchContext`]: a new per-run value is one the office must supply;
+//!   - [`LaunchPlan`], [`PlannedFile`], [`PlannedDir`], [`StopPlan`], [`ProbePlan`]: the
+//!     supervisor must carry out every field;
+//!   - [`Capabilities`] (and [`VersionRange`]): every adapter must declare a new capability
+//!     rather than default it;
+//!   - [`ExitInfo`]: it mirrors the OS's exit status, which won't grow.
 //! - The enums that instruct the pump or the supervisor are **exhaustive** on purpose:
-//!   [`Output`], [`Frame`], [`FileLocation`], [`Stdio`], [`StopStep`], [`StopSignal`] and
-//!   [`SignalTarget`]. Their reader can't safely skip a variant it doesn't know, so a new one
+//!   [`Output`], [`Frame`], [`FileLocation`], [`Stdio`], [`StopStep`], [`StopSignal`],
+//!   [`SignalTarget`], [`ProbeRun`] and [`ProbeStep`]. Their reader can't safely skip a variant it doesn't know, so a new one
 //!   is a breaking change, and the reader's build fails until it handles it.
 //! - Values that originate in a runtime (events, usage, rate limits) decode unknown enum
 //!   values as `Unknown`, and an unknown event type as [`SessionEvent::Unknown`], so a newer
@@ -135,8 +165,8 @@ pub mod testkit;
 
 pub use caps::{Capabilities, VersionRange};
 pub use event::{
-    Activity, ApprovalId, ApprovalKind, ApprovalRequest, ExitInfo, LimitKind, NoticeKind,
-    SessionEvent, StartFailure, TurnOutcome,
+    Activity, ApprovalId, ApprovalKind, ApprovalRequest, Escalation, ExitInfo, LimitKind,
+    NoticeKind, SessionEvent, StartFailure, TurnOutcome,
 };
 pub use line::{encode_line, Frame, Line, LineFramer, MAX_LINE_BYTES};
 pub use path::{PathPattern, RelPath, SpecPath, SpecPathError};
@@ -144,7 +174,9 @@ pub use plan::{
     CleanupPath, FileLocation, LaunchPlan, PlannedDir, PlannedFile, ProbePlan, SignalTarget, Stdio,
     StopPlan, StopSignal, StopStep,
 };
-pub use probe::{Probe, ProbeContext, ProbeOutput, ProbeResult, Unavailable};
+pub use probe::{
+    Probe, ProbeContext, ProbeOutput, ProbeResult, ProbeRun, ProbeSession, ProbeStep, Unavailable,
+};
 pub use runtime::{AgentRuntime, PlanError};
 pub use session::{Control, ControlError, Decision, Output, Session};
 pub use spec::{

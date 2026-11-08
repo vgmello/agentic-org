@@ -85,7 +85,11 @@ pub struct Capabilities {
     /// The session can be taken over in the runtime's own interactive UI.
     pub take_over: bool,
     /// [`crate::SandboxSpec::writable_roots`] (and the session's `TMPDIR`) are the only
-    /// places the agent can write. Otherwise the list is dropped.
+    /// places the agent can write **by any path**: the runtime's own file tools (edit,
+    /// write, patch) included, not only commands in its shell sandbox. An adapter whose
+    /// runtime sandboxes only its shell sets this `true` only if it also confines the file
+    /// tools (e.g. with deny rules for everything else, like Claude's `Edit`/`Write` denies
+    /// for each read-only dir). Otherwise the list is dropped.
     pub enforces_writable_roots: bool,
     /// [`crate::SandboxSpec::deny_write`] is enforced. Otherwise it's dropped, and with it
     /// every allow rule if it wasn't empty (see [`crate::SessionSpec::keeps_allow_rules`]).
@@ -105,7 +109,8 @@ pub struct Capabilities {
     /// anything a deny would have covered, and the office applies its full policy at the
     /// approval bridge.
     pub enforces_deny_rules: bool,
-    /// How the runtime's [`crate::Usage`] events count.
+    /// How the runtime's [`crate::Usage`] token counts usually count, for planning. Each
+    /// event's own `token_scope` and `cost_scope` are what the office acts on.
     pub usage_scope: UsageScope,
     /// What the runtime's costs mean.
     pub cost: CostBasis,

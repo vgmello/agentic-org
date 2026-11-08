@@ -60,7 +60,9 @@ pub struct SessionSpec {
     pub effort: Option<Token>,
     /// The session's working directory: the agent's home for a home session, the task's
     /// worktree for a task session. Every resume uses it too (Codex and Antigravity filter
-    /// conversations by cwd).
+    /// conversations by cwd). Never `/`: a stored spec with it doesn't decode, and an adapter
+    /// refuses one built in code ([`crate::PlanError::InvalidSpec`]).
+    #[serde(deserialize_with = "not_root")]
     pub workspace: SpecPath,
     /// Directories the agent may read but never write: the agent's home, for a task session.
     /// A grant of read access (see [`crate::Capabilities`]); while the writable roots are
@@ -167,6 +169,26 @@ impl SessionSpec {
             mode => mode,
         }
     }
+}
+
+/// Decodes a path that may not be `/` (a workspace).
+fn not_root<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<SpecPath, D::Error> {
+    let path = SpecPath::deserialize(deserializer)?;
+    if path.is_root() {
+        return Err(serde::de::Error::custom("`/` can't be a workspace"));
+    }
+    Ok(path)
+}
+
+/// Decodes a list of paths none of which may be `/` (writable roots).
+fn none_is_root<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<SpecPath>, D::Error> {
+    let paths = Vec::<SpecPath>::deserialize(deserializer)?;
+    if paths.iter().any(SpecPath::is_root) {
+        return Err(serde::de::Error::custom("`/` can't be a writable root"));
+    }
+    Ok(paths)
 }
 
 /// Decodes an `Option` whose key must be present (`null` for `None`). Serde's derive treats a
@@ -291,6 +313,10 @@ pub enum PermissionMode {
 
 /// The rules the runtime applies itself, before anything reaches the office's approval
 /// bridge. The office answers bridged approvals from the same policy.
+///
+/// **A deny beats a matching allow, whatever the order of the rules**: the lists aren't
+/// ordered rule chains, and an adapter whose runtime is first-match-wins writes every deny
+/// before every allow.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PermissionPolicy {
@@ -349,11 +375,15 @@ pub struct SandboxSpec {
     pub enabled: bool,
     /// Where the agent may write: the workspace, and the parts of `work.git` a commit needs.
     /// Not the session's `TMPDIR`: it's per run, so it isn't in the spec, and **every adapter
-    /// always adds [`LaunchContext::tmpdir`] as a writable root** itself.
+    /// always adds [`LaunchContext::tmpdir`] as a writable root** itself. Never `/` (that
+    /// would make everything writable): a stored spec with it doesn't decode, and an adapter
+    /// refuses one built in code ([`crate::PlanError::InvalidSpec`]).
+    #[serde(deserialize_with = "none_is_root")]
     pub writable_roots: Vec<SpecPath>,
     /// Never writable, even inside a writable root (the fixed denies, git admin files).
     pub deny_write: Vec<PathPattern>,
-    /// Never readable (the office's databases, its run folder, runtime stores).
+    /// Never readable: every office's whole folder (`<office home>/offices/*/**`, not just
+    /// its databases), the office's run folder, runtime stores.
     pub deny_read: Vec<PathPattern>,
     /// Unix sockets the agent may connect to: its own office socket, for `org-agent`.
     pub allowed_unix_sockets: Vec<SpecPath>,
@@ -465,7 +495,7 @@ mod tests {
                 enabled: true,
                 writable_roots: vec![p("/work/t-1")],
                 deny_write: vec![pat("/work/t-1/.git/hooks/**")],
-                deny_read: vec![pat("/office/offices/*/office.db")],
+                deny_read: vec![pat("/office/offices/*/**")],
                 allowed_unix_sockets: vec![p("/office/run/ada.sock")],
             },
             mcp_servers,
@@ -490,7 +520,7 @@ mod tests {
             r#""deny":[{"scope":{"type":"path","value":"/office/**"},"tool":"*"}],"version":3},"#,
             r#""read_only_dirs":["/homes/ada"],"runtime":"claude","#,
             r#""sandbox":{"allowed_unix_sockets":["/office/run/ada.sock"],"#,
-            r#""deny_read":["/office/offices/*/office.db"],"deny_write":["/work/t-1/.git/hooks/**"],"#,
+            r#""deny_read":["/office/offices/*/**"],"deny_write":["/work/t-1/.git/hooks/**"],"#,
             r#""enabled":true,"writable_roots":["/work/t-1"]},"tools":["Bash","Edit"],"#,
             r#""workspace":"/work/t-1"}"#
         );
@@ -507,7 +537,7 @@ mod tests {
         let spec = sample_spec();
         // The sample's hash, computed independently (FNV-1a 64 over the golden canonical JSON
         // in `canonical_json_is_compact_with_sorted_keys`).
-        assert_eq!(spec.spec_hash(), "4e570149d3b9f564");
+        assert_eq!(spec.spec_hash(), "4ca16808942e59dc");
         assert_eq!(
             spec.spec_hash(),
             format!("{:016x}", fnv1a_64(&spec.canonical_json()))
@@ -948,6 +978,8 @@ mod tests {
             ("/mcp_servers/office/command", "org-mcp"),
             ("/sandbox/deny_write/0", "~/.claude/**"),
             ("/sandbox/deny_read/0", "/office/offices/*/*.db"),
+            ("/workspace", "/"),
+            ("/sandbox/writable_roots/0", "/"),
             ("/policy/deny/0/scope/value", "/office/**/x*"),
             ("/policy/allow/0/scope/value", "git (status)"),
             ("/agent/name", "Ada"),
