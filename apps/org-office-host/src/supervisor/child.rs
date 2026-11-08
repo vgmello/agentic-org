@@ -50,6 +50,11 @@ pub(crate) enum Signal {
 /// identity and home; `TMPDIR` is the user's temporary folder.
 const PASSED_ENV: [&str; 6] = ["HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG"];
 
+/// The key folder a `dev-keys` build of org-office-server reads (org-office-server's keys.rs).
+/// Passed through in debug builds only, so a release host never hands it on.
+#[cfg(debug_assertions)]
+const DEV_KEY_DIR_ENV: &str = "ORG_OFFICE_DEV_KEY_DIR";
+
 /// How to start a server: the program and the office home it is given.
 #[derive(Debug, Clone)]
 pub(crate) struct Spawner {
@@ -146,6 +151,11 @@ impl Spawner {
             if let Some(value) = std::env::var_os(name) {
                 command.env(name, value);
             }
+        }
+        // A dev-keys build of org-office-server needs its key folder; development only.
+        #[cfg(debug_assertions)]
+        if let Some(value) = std::env::var_os(DEV_KEY_DIR_ENV) {
+            command.env(DEV_KEY_DIR_ENV, value);
         }
         command
             .env(OFFICE_HOME_ENV, &self.home)

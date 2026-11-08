@@ -65,6 +65,8 @@ fn spawn_host(home: &TestHome, stderr_to: &str) -> HostProcess {
             .arg(fake_server())
             // Something of the login session's that must never reach a server.
             .env(CANARY, "from-the-host-environment")
+            // A dev-keys server's key folder: passed on in debug builds only.
+            .env("ORG_OFFICE_DEV_KEY_DIR", "/tmp/org-dev-keys-test")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(stderr)
@@ -315,12 +317,19 @@ fn servers_get_only_the_allowed_environment() {
         "TMPDIR",
         "LANG",
         "ORG_OFFICE_HOME",
+        // Debug builds only (these tests run the debug host).
+        "ORG_OFFICE_DEV_KEY_DIR",
     ];
     let runs = home.env_names(A);
     assert!(!runs.is_empty());
     for names in runs {
         assert!(names.iter().any(|n| n == "ORG_OFFICE_HOME"), "{names:?}");
         assert!(!names.iter().any(|n| n == CANARY), "the canary got through");
+        // The debug host passes a dev-keys server its key folder.
+        assert!(
+            names.iter().any(|n| n == "ORG_OFFICE_DEV_KEY_DIR"),
+            "the dev key folder wasn't passed on: {names:?}"
+        );
         for name in names.iter().filter(|n| !n.is_empty()) {
             assert!(allowed.contains(&name.as_str()), "{name} was passed on");
         }
