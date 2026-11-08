@@ -29,6 +29,10 @@ pub const MAX_SOCKET_PATH_BYTES: usize = 103;
 /// How many trailing characters of an office id name its socket.
 pub const OFFICE_SOCKET_HANDLE_CHARS: usize = 12;
 
+/// The longest office id this module takes, in characters. Ids stay opaque (a ULID today is
+/// 26); the cap only bounds what arrives over the wire.
+const MAX_OFFICE_ID_CHARS: usize = 64;
+
 /// The office home on this machine, or `None` if neither `ORG_OFFICE_HOME` nor `HOME` is set
 /// to an absolute path.
 pub fn default_office_home() -> Option<PathBuf> {
@@ -41,15 +45,23 @@ pub fn host_socket_path(office_home: &Path) -> PathBuf {
 }
 
 /// An office server's socket path inside an office home, or `None` if the office id isn't a
-/// plain id (non-empty, ASCII letters and digits only). Office ids arrive over the wire, so
-/// this never lets one point outside `run/`.
+/// plain id: 1 to 64 ASCII letters and digits. Ids stay opaque, so any length in that range
+/// passes, not just a ULID's 26. Office ids arrive over the wire, so this never lets one point
+/// outside `run/`.
 pub fn office_socket_path(office_home: &Path, office_id: &str) -> Option<PathBuf> {
-    if office_id.is_empty() || !office_id.bytes().all(|b| b.is_ascii_alphanumeric()) {
+    if !is_plain_office_id(office_id) {
         return None;
     }
     let start = office_id.len().saturating_sub(OFFICE_SOCKET_HANDLE_CHARS);
     let handle = &office_id[start..];
     Some(office_home.join("run").join(format!("{handle}.sock")))
+}
+
+/// Whether an office id is plain: 1..=[`MAX_OFFICE_ID_CHARS`] ASCII letters and digits. It
+/// checks the shape only, not that the office exists, and doesn't require a ULID.
+fn is_plain_office_id(office_id: &str) -> bool {
+    (1..=MAX_OFFICE_ID_CHARS).contains(&office_id.len())
+        && office_id.bytes().all(|b| b.is_ascii_alphanumeric())
 }
 
 /// A socket path longer than macOS allows.
@@ -154,6 +166,25 @@ mod tests {
                 "accepted {id:?}"
             );
         }
+    }
+
+    #[test]
+    fn office_ids_are_capped_at_64_characters() {
+        let at_cap = "a".repeat(MAX_OFFICE_ID_CHARS);
+        assert_eq!(MAX_OFFICE_ID_CHARS, 64);
+        assert!(is_plain_office_id(&at_cap));
+        assert_eq!(
+            office_socket_path(Path::new("/h"), &at_cap),
+            Some(PathBuf::from("/h/run/aaaaaaaaaaaa.sock"))
+        );
+        let over = "a".repeat(MAX_OFFICE_ID_CHARS + 1);
+        assert!(!is_plain_office_id(&over));
+        assert_eq!(office_socket_path(Path::new("/h"), &over), None);
+        assert!(!is_plain_office_id(""));
+        assert_eq!(office_socket_path(Path::new("/h"), ""), None);
+        // Any length up to the cap passes; a ULID's 26 isn't required.
+        assert!(is_plain_office_id("x"));
+        assert!(is_plain_office_id("01M6WGY1WJCC503RXF2NS0SH83"));
     }
 
     #[test]
