@@ -1,0 +1,1337 @@
+//! The store conformance suite: cases generic over any `MessageStore` + `MemberDirectory`
+//! backend. Run every case against a backend with [`crate::mailbox_conformance_tests!`].
+//!
+//! Each case opens a fresh, empty backend through [`OpenBackend`] seeded with
+//! [`members`](super::fixture::members) at [`POSITION`](super::fixture::POSITION). The `store_*` and `directory_*` cases check
+//! the ports' contracts (ADR-0003 §4.3, as amended by the store split); the `mailbox_*` cases
+//! run the slice-1 Mailbox (send, inbox, read, wait) over the backend, including the §2.2
+//! register-before-commit race and cancellation.
+
+use std::sync::{Arc, Barrier, Mutex, Weak};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use org_proto::msg::{
+    is_urgent, json_string_len, HeaderPage, Message, MessageHeader, MessageLifecycleState as State,
+    MessagePriority, Meta, MsgInboxParams, MsgReadParams, MsgSendParams, MsgWaitParams, SendResult,
+    KIND_MSG, KIND_REQUEST, MAX_WAIT_MS,
+};
+use org_proto::{Member, MemberKind, Position};
+
+use super::fixture::*;
+use crate::{
+    cancellation_pair, content_hash, format_utc, CommitMessageOutcome, HeaderQuery, HeaderScope,
+    Mailbox, MailboxError, MemberDirectory, MessageStore, NewStoredMessage, OfficeIdentity,
+    PeekUnreadOutcome, StoreError, StoredMessage,
+};
+
+/// Opens a fresh, empty backend whose directory holds `members` at `position`. Any
+/// `Fn(&[Member], Position) -> (S, D)` is one.
+pub trait OpenBackend {
+    type Store: MessageStore + Send + Sync + 'static;
+    type Directory: MemberDirectory + Send + Sync + 'static;
+    fn open(&self, members: &[Member], position: Position) -> (Self::Store, Self::Directory);
+}
+
+impl<F, S, D> OpenBackend for F
+where
+    F: Fn(&[Member], Position) -> (S, D),
+    S: MessageStore + Send + Sync + 'static,
+    D: MemberDirectory + Send + Sync + 'static,
+{
+    type Store = S;
+    type Directory = D;
+    fn open(&self, members: &[Member], position: Position) -> (S, D) {
+        self(members, position)
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------------------
+
+fn open_store(backend: &impl OpenBackend) -> impl MessageStore + Send + Sync {
+    backend.open(&members(), POSITION).0
+}
+
+/// A local message from `from` to `to`, as the Mailbox would commit it.
+fn new_message(n: u32, from: &str, to: &str, priority: MessagePriority) -> NewStoredMessage {
+    let id = msg_id(n);
+    let body = format!("body {n}");
+    let meta = Meta::new();
+    let hash = content_hash(to, KIND_MSG, priority, None, None, &body, &meta).unwrap();
+    NewStoredMessage {
+        message: Message {
+            header: MessageHeader {
+                id: id.clone(),
+                thread_id: id,
+                reply_to: None,
+                from_member_id: from.into(),
+                from_display_name: "Sender".into(),
+                to_member_id: to.into(),
+                to_display_name: "Recipient".into(),
+                kind: KIND_MSG.into(),
+                priority,
+                urgent: is_urgent(KIND_MSG, priority),
+                subject: None,
+                created_at: NOW_UTC.into(),
+                expires_at: None,
+                ttl_ms: None,
+                body_bytes: json_string_len(&body) as u64,
+                meta_bytes: 0,
+                local_seq: 0,
+                state: State::Unread,
+                triage_gen: 0,
+                snoozed_until: None,
+                snooze_after_task: false,
+                snooze_note: None,
+                read_at: None,
+                expired_waiting_person: false,
+            },
+            body,
+            meta,
+        },
+        origin_office_id: OFFICE_ID.into(),
+        origin_incarnation: INCARNATION.into(),
+        origin_seq: None,
+        org_position: POSITION,
+        content_hash: hash,
+        initial_state: State::Unread,
+    }
+}
+
+fn commit(store: &impl MessageStore, msg: NewStoredMessage) -> CommitMessageOutcome {
+    store.commit_message(msg).expect("commit_message")
+}
+
+fn inbox_query(member: &str, unread_only: bool, limit: u32) -> HeaderQuery {
+    HeaderQuery {
+        scope: HeaderScope::Inbox(member.into()),
+        from_member_id: None,
+        thread_id: None,
+        unread_only,
+        include_snoozed: !unread_only,
+        cursor: None,
+        limit,
+    }
+}
+
+fn ids(page: &HeaderPage) -> Vec<String> {
+    page.headers
+        .iter()
+        .map(|header| header.id.clone())
+        .collect()
+}
+
+fn state_of(store: &impl MessageStore, id: &str) -> State {
+    store
+        .get_message(id)
+        .expect("get_message")
+        .expect("message exists")
+        .message
+        .header
+        .state
+}
+
+fn peek(store: &impl MessageStore, member: &str) -> PeekUnreadOutcome {
+    store
+        .peek_next_unread(member, None, false, NOW_UTC)
+        .expect("peek_next_unread")
+}
+
+/// A store wrapper that runs a hook once, after a `peek_next_unread` returns and before
+/// its caller sees the result: a commit landing between the wait's check and its block.
+struct HookedStore<S> {
+    inner: S,
+    after_peek: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl<S: MessageStore> MessageStore for HookedStore<S> {
+    fn commit_message(&self, msg: NewStoredMessage) -> Result<CommitMessageOutcome, StoreError> {
+        self.inner.commit_message(msg)
+    }
+    fn claim_read(
+        &self,
+        to_member_id: &str,
+        id: Option<&str>,
+        now_utc: &str,
+    ) -> Result<Option<StoredMessage>, StoreError> {
+        self.inner.claim_read(to_member_id, id, now_utc)
+    }
+    fn peek_next_unread(
+        &self,
+        to_member_id: &str,
+        from_member_id: Option<&str>,
+        urgent_only: bool,
+        now_utc: &str,
+    ) -> Result<PeekUnreadOutcome, StoreError> {
+        let outcome =
+            self.inner
+                .peek_next_unread(to_member_id, from_member_id, urgent_only, now_utc);
+        let hook = self
+            .after_peek
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take();
+        if let Some(hook) = hook {
+            hook();
+        }
+        outcome
+    }
+    fn get_message(&self, id: &str) -> Result<Option<StoredMessage>, StoreError> {
+        self.inner.get_message(id)
+    }
+    fn list_headers(&self, query: HeaderQuery) -> Result<HeaderPage, StoreError> {
+        self.inner.list_headers(query)
+    }
+    fn find_reply_for_ask(
+        &self,
+        ask_id: &str,
+        responder_id: &str,
+    ) -> Result<Option<StoredMessage>, StoreError> {
+        self.inner.find_reply_for_ask(ask_id, responder_id)
+    }
+}
+
+/// A Mailbox over the backend, at HQ, with a manual clock and recorded events.
+struct Office<S> {
+    mailbox: Arc<Mailbox>,
+    store: Arc<HookedStore<S>>,
+    events: Arc<RecordingEvents>,
+    clock: Arc<ManualClock>,
+}
+
+fn office<B: OpenBackend>(backend: &B) -> Office<B::Store> {
+    let (store, directory) = backend.open(&members(), POSITION);
+    let store = Arc::new(HookedStore {
+        inner: store,
+        after_peek: Mutex::new(None),
+    });
+    let events = Arc::new(RecordingEvents::default());
+    let clock = Arc::new(ManualClock::new(NOW_MS));
+    let mailbox = Arc::new(Mailbox::new(
+        store.clone(),
+        Arc::new(directory),
+        OfficeIdentity {
+            office_id: OFFICE_ID.into(),
+            incarnation: INCARNATION.into(),
+            is_hq: true,
+        },
+        clock.clone(),
+        events.clone(),
+    ));
+    Office {
+        mailbox,
+        store,
+        events,
+        clock,
+    }
+}
+
+fn send_params(n: u32, to: &str) -> MsgSendParams {
+    MsgSendParams {
+        id: msg_id(n),
+        to: to.into(),
+        kind: KIND_MSG.into(),
+        priority: None,
+        subject: None,
+        body: format!("body {n}"),
+        meta: Meta::new(),
+        reply_to: None,
+    }
+}
+
+fn send(mailbox: &Mailbox, from: &str, n: u32, to: &str) -> Result<SendResult, MailboxError> {
+    mailbox.send(from, send_params(n, to))
+}
+
+fn wait_params(timeout_ms: u64) -> MsgWaitParams {
+    MsgWaitParams {
+        timeout_ms,
+        from: None,
+        urgent_only: false,
+    }
+}
+
+fn far_deadline() -> Instant {
+    Instant::now() + Duration::from_secs(60)
+}
+
+fn unread_inbox(mailbox: &Mailbox, member: &str) -> Vec<String> {
+    let page = mailbox
+        .inbox(member, MsgInboxParams::default())
+        .expect("inbox");
+    ids(&page)
+}
+
+/// Polls until `condition` holds, failing after a generous bound (the machine may be loaded).
+fn eventually(what: &str, condition: impl Fn() -> bool) {
+    let until = Instant::now() + Duration::from_secs(10);
+    while !condition() {
+        assert!(Instant::now() < until, "timed out waiting for {what}");
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// MessageStore
+// ---------------------------------------------------------------------------------------
+
+/// Commits allocate increasing `local_seq` and a local `origin_seq` (>= 1, increasing),
+/// keep the origin and content hash, and start Unread.
+pub fn store_commit_allocates_sequence_and_origin(backend: impl OpenBackend) {
+    let store = open_store(&backend);
+    let mut last = (0, 0);
+    for n in 1..=3 {
+        let input = new_message(n, PAT_ID, ADA_ID, MessagePriority::Normal);
+        let hash = input.content_hash;
+        let outcome = commit(&store, input);
+        assert!(outcome.inserted);
+        let stored = &outcome.message;
+        let header = &stored.message.header;
+        assert!(header.local_seq > last.0, "local_seq increases");
+        assert!(stored.origin_seq >= 1 && stored.origin_seq > last.1);
+        last = (header.local_seq, stored.origin_seq);
+        assert_eq!(stored.origin_office_id, OFFICE_ID);
+        assert_eq!(stored.origin_incarnation, INCARNATION);
+        assert_eq!(stored.org_position, POSITION);
+        assert_eq!(stored.content_hash, hash);
+        assert_eq!(header.state, State::Unread);
+        assert_eq!(header.read_at, None);
+        assert_eq!(
+            store.get_message(&header.id).unwrap().as_ref(),
+            Some(stored)
+        );
+    }
+    assert_eq!(store.get_message(&msg_id(99)).unwrap(), None);
+}
+
+/// A matching replay returns the first commit (`inserted: false`) and adds no row; the
+/// same id with other content or another sender is `AlreadyExists`.
+pub fn store_commit_replay_and_conflict(backend: impl OpenBackend) {
+    let store = open_store(&backend);
+    let first = commit(
+        &store,
+        new_message(1, PAT_ID, ADA_ID, MessagePriority::Normal),
+    );
+    let replay = commit(
+        &store,
+        new_message(1, PAT_ID, ADA_ID, MessagePriority::Normal),
+    );
+    assert!(!replay.inserted);
+    assert_eq!(replay.message, first.message);
+    assert_eq!(
+        ids(&store.list_headers(inbox_query(ADA_ID, false, 100)).unwrap()),
+        [msg_id(1)]
+    );
+
+    let mut other_content = new_message(1, PAT_ID, ADA_ID, MessagePriority::Normal);
+    other_content.content_hash[0] ^= 1;
+    assert!(matches!(
+        store.commit_message(other_content),
+        Err(StoreError::AlreadyExists)
+    ));
+    let other_sender = new_message(1, OWNER_ID, ADA_ID, MessagePriority::Normal);
+    assert!(matches!(
+        store.commit_message(other_sender),
+        Err(StoreError::AlreadyExists)
+    ));
+    assert_eq!(store.get_message(&msg_id(1)).unwrap(), Some(first.message));
+}
+
+/// A message committed Read (an ask reply claimed before commit) is never unread.
+pub fn store_initial_read_is_never_unread(backend: impl OpenBackend) {
+    let store = open_store(&backend);
+    let mut input = new_message(1, PAT_ID, ADA_ID, MessagePriority::Normal);
+    input.initial_state = State::Read;
+    let outcome = commit(&store, input);
+    assert_eq!(outcome.message.message.header.state, State::Read);
+    assert_eq!(peek(&store, ADA_ID).message, None);
+    assert_eq!(store.claim_read(ADA_ID, None, NOW_UTC).unwrap(), None);
+    assert!(ids(&store.list_headers(inbox_query(ADA_ID, true, 100)).unwrap()).is_empty());
+    assert_eq!(
+        ids(&store.list_headers(inbox_query(ADA_ID, false, 100)).unwrap()),
+        [msg_id(1)]
+    );
+}
+
+/// Peek returns the oldest matching unread message and changes nothing.
+pub fn store_peek_is_read_only_and_oldest_first(backend: impl OpenBackend) {
+    let store = open_store(&backend);
+    commit(
+        &store,
+        new_message(1, PAT_ID, ADA_ID, MessagePriority::Normal),
+    );
+    commit(
+        &store,
+        new_message(2, OWNER_ID, ADA_ID, MessagePriority::Urgent),
+    );
+    commit(
+        &store,
+        new_message(3, PAT_ID, ADA_ID, MessagePriority::Normal),
+    );
+    for _ in 0..2 {
+        let outcome = peek(&store, ADA_ID);
+        assert_eq!(outcome.message.unwrap().message.header.id, msg_id(1));
+        assert!(outcome.expired_ids.is_empty());
+    }
+    let from_owner = store
+        .peek_next_unread(ADA_ID, Some(OWNER_ID), false, NOW_UTC)
+        .unwrap();
+    assert_eq!(from_owner.message.unwrap().message.header.id, msg_id(2));
+    let urgent = store.peek_next_unread(ADA_ID, None, true, NOW_UTC).unwrap();
+    assert_eq!(urgent.message.unwrap().message.header.id, msg_id(2));
+    assert_eq!(peek(&store, REMY_ID).message, None);
+    for n in 1..=3 {
+        assert_eq!(state_of(&store, &msg_id(n)), State::Unread);
+    }
+}
+
+/// An expired unread message is passed over and reported, never deleted or changed.
+pub fn store_peek_reports_expired_without_deleting(backend: impl OpenBackend) {
+    let store = open_store(&backend);
+    let mut request = new_message(1, PAT_ID, ADA_ID, MessagePriority::Urgent);
+    let header = &mut request.message.header;
+    header.kind = KIND_REQUEST.into();
+    header.urgent = true;
+    header.ttl_ms = Some(60_000);
+    header.expires_at = format_utc(NOW_MS - 3_600_000);
+    commit(&store, request);
+    commit(
+        &store,
+        new_message(2, PAT_ID, ADA_ID, MessagePriority::Normal),
+    );
+    for _ in 0..2 {
+        let outcome = peek(&store, ADA_ID);
+        assert_eq!(outcome.message.unwrap().message.header.id, msg_id(2));
+        assert_eq!(outcome.expired_ids, [msg_id(1)]);
+    }
+    assert_eq!(state_of(&store, &msg_id(1)), State::Unread);
+}
+
+/// Claims go oldest first, only to the recipient, and an already read id comes back
+/// unchanged.
+pub fn store_claim_read_order_and_ownership(backend: impl OpenBackend) {
+    let store = open_store(&backend);
+    commit(
+        &store,
+        new_message(1, PAT_ID, ADA_ID, MessagePriority::Normal),
+    );
+    commit(
+        &store,
+        new_message(2, PAT_ID, ADA_ID, MessagePriority::Normal),
+    );
+    commit(
+        &store,
+        new_message(3, PAT_ID, REMY_ID, MessagePriority::Normal),
+    );
+    let first = store.claim_read(ADA_ID, None, NOW_UTC).unwrap().unwrap();
+    assert_eq!(first.message.header.id, msg_id(1));
+    assert_eq!(first.message.header.state, State::Read);
+    assert_eq!(first.message.header.read_at.as_deref(), Some(NOW_UTC));
+    let later = "2026-11-08T12:00:05.000Z";
+    let second = store.claim_read(ADA_ID, None, later).unwrap().unwrap();
+    assert_eq!(second.message.header.id, msg_id(2));
+    assert_eq!(store.claim_read(ADA_ID, None, later).unwrap(), None);
+    assert_eq!(
+        store.claim_read(ADA_ID, Some(&msg_id(3)), later).unwrap(),
+        None
+    );
+    assert_eq!(state_of(&store, &msg_id(3)), State::Unread);
+    assert_eq!(
+        store.claim_read(ADA_ID, Some(&msg_id(9)), later).unwrap(),
+        None
+    );
+    let again = store
+        .claim_read(ADA_ID, Some(&msg_id(1)), later)
+        .unwrap()
+        .unwrap();
+    assert_eq!(again.message.header.state, State::Read);
+    assert_eq!(again.message.header.read_at.as_deref(), Some(NOW_UTC));
+    let named = store
+        .claim_read(REMY_ID, Some(&msg_id(3)), later)
+        .unwrap()
+        .unwrap();
+    assert_eq!(named.message.header.read_at.as_deref(), Some(later));
+}
+
+/// Concurrent claims of one message succeed exactly once.
+pub fn store_claim_read_is_once_under_concurrency(backend: impl OpenBackend) {
+    let store = open_store(&backend);
+    for n in 1..=5 {
+        commit(
+            &store,
+            new_message(n, PAT_ID, ADA_ID, MessagePriority::Normal),
+        );
+    }
+    let barrier = Barrier::new(8);
+    let claimed: Vec<String> = thread::scope(|scope| {
+        let workers: Vec<_> = (0..8)
+            .map(|_| {
+                scope.spawn(|| {
+                    barrier.wait();
+                    let mut mine = Vec::new();
+                    while let Some(stored) = store.claim_read(ADA_ID, None, NOW_UTC).unwrap() {
+                        mine.push(stored.message.header.id);
+                    }
+                    mine
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|worker| worker.join().unwrap())
+            .collect()
+    });
+    let mut sorted = claimed.clone();
+    sorted.sort();
+    assert_eq!(sorted, (1..=5).map(msg_id).collect::<Vec<_>>());
+}
+
+/// Headers come newest first by `local_seq`, page by cursor without gaps or repeats, and
+/// filter by scope, sender, thread and read state.
+pub fn store_list_headers_order_paging_and_filters(backend: impl OpenBackend) {
+    let store = open_store(&backend);
+    for n in 1..=5 {
+        let from = if n % 2 == 0 { OWNER_ID } else { PAT_ID };
+        let mut input = new_message(n, from, ADA_ID, MessagePriority::Normal);
+        if n == 4 {
+            input.message.header.thread_id = msg_id(1);
+            input.message.header.reply_to = Some(msg_id(1));
+        }
+        commit(&store, input);
+    }
+    commit(
+        &store,
+        new_message(6, ADA_ID, PAT_ID, MessagePriority::Normal),
+    );
+
+    let mut query = inbox_query(ADA_ID, true, 2);
+    let mut pages = Vec::new();
+    loop {
+        let page = store.list_headers(query.clone()).unwrap();
+        pages.push(ids(&page));
+        let Some(cursor) = page.next_cursor else {
+            break;
+        };
+        query.cursor = Some(cursor);
+    }
+    assert_eq!(
+        pages,
+        [
+            vec![msg_id(5), msg_id(4)],
+            vec![msg_id(3), msg_id(2)],
+            vec![msg_id(1)]
+        ]
+    );
+
+    let mut from_owner = inbox_query(ADA_ID, true, 100);
+    from_owner.from_member_id = Some(OWNER_ID.into());
+    assert_eq!(
+        ids(&store.list_headers(from_owner).unwrap()),
+        [msg_id(4), msg_id(2)]
+    );
+    let mut thread = inbox_query(ADA_ID, true, 100);
+    thread.thread_id = Some(msg_id(1));
+    assert_eq!(
+        ids(&store.list_headers(thread).unwrap()),
+        [msg_id(4), msg_id(1)]
+    );
+    let participant = HeaderQuery {
+        scope: HeaderScope::Participant(PAT_ID.into()),
+        ..inbox_query(PAT_ID, false, 100)
+    };
+    assert_eq!(
+        ids(&store.list_headers(participant).unwrap()),
+        [msg_id(6), msg_id(5), msg_id(3), msg_id(1)]
+    );
+
+    store
+        .claim_read(ADA_ID, Some(&msg_id(2)), NOW_UTC)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        ids(&store.list_headers(inbox_query(ADA_ID, true, 100)).unwrap()),
+        [msg_id(5), msg_id(4), msg_id(3), msg_id(1)]
+    );
+    let all = store.list_headers(inbox_query(ADA_ID, false, 100)).unwrap();
+    assert_eq!(all.headers.len(), 5);
+    assert_eq!(all.next_cursor, None);
+    assert_eq!(all.headers[3].state, State::Read);
+}
+
+// ---------------------------------------------------------------------------------------
+// MemberDirectory
+// ---------------------------------------------------------------------------------------
+
+fn resolve(directory: &impl MemberDirectory, reference: &str) -> Option<String> {
+    directory
+        .resolve_member(reference)
+        .expect("resolve_member")
+        .map(|(member, position)| {
+            assert_eq!(position, POSITION);
+            member.id
+        })
+}
+
+/// "owner" first, then an exact id (which beats a handle), then a handle ignoring case;
+/// display names and "office" never resolve.
+pub fn directory_resolution_order(backend: impl OpenBackend) {
+    let (_, directory) = backend.open(&members(), POSITION);
+    for owner in ["owner", "OWNER", "Owner", OWNER_ID] {
+        assert_eq!(resolve(&directory, owner).as_deref(), Some(OWNER_ID));
+    }
+    assert_eq!(resolve(&directory, OWNER_NAME), None);
+    for handle in ["ada", "ADA", "Ada", ADA_ID] {
+        assert_eq!(resolve(&directory, handle).as_deref(), Some(ADA_ID));
+    }
+    assert_eq!(resolve(&directory, ADA_NAME), None);
+    for handle in ["pat", "PAT", PAT_ID] {
+        assert_eq!(resolve(&directory, handle).as_deref(), Some(PAT_ID));
+    }
+    assert_eq!(
+        resolve(&directory, &PAT_ID.to_ascii_lowercase()).as_deref(),
+        Some(SHADOW_ID),
+        "a lower-case spelling is not the exact id, so it is the shadow's handle"
+    );
+    for nobody in ["office", "OFFICE", "nobody", ""] {
+        assert_eq!(resolve(&directory, nobody), None);
+    }
+}
+
+/// The directory returns members with their stored status, whatever it is.
+pub fn directory_returns_status_unfiltered(backend: impl OpenBackend) {
+    let (_, directory) = backend.open(&members(), POSITION);
+    let status = |reference: &str| {
+        let (member, _) = directory.resolve_member(reference).unwrap().unwrap();
+        assert_eq!(member.kind, MemberKind::Agent);
+        (
+            member.id.clone(),
+            member.agent.unwrap().status,
+            member.office_id,
+        )
+    };
+    use org_proto::AgentStatus::*;
+    assert_eq!(
+        status(REMY_HANDLE),
+        (REMY_ID.into(), Paused, Some(OFFICE_ID.into()))
+    );
+    assert_eq!(
+        status(GONE_HANDLE),
+        (GONE_ID.into(), Offboarded, Some(OFFICE_ID.into()))
+    );
+    assert_eq!(
+        status(GONE_ID),
+        (GONE_ID.into(), Offboarded, Some(OFFICE_ID.into()))
+    );
+    assert_eq!(
+        status(ODD_HANDLE),
+        (ODD_ID.into(), Unknown, Some(OFFICE_ID.into()))
+    );
+    assert_eq!(
+        status(FAR_HANDLE),
+        (FAR_ID.into(), Active, Some(OTHER_OFFICE_ID.into()))
+    );
+}
+
+// ---------------------------------------------------------------------------------------
+// Mailbox over the backend
+// ---------------------------------------------------------------------------------------
+
+/// Send commits with this office's origin and a local origin_seq, hashes the resolved
+/// recipient id, and publishes one `message.received`.
+pub fn mailbox_send_commits_with_origin(backend: impl OpenBackend) {
+    let office = office(&backend);
+    let result = send(&office.mailbox, ADA_ID, 1, PAT_HANDLE).unwrap();
+    assert_eq!(result.id, msg_id(1));
+    assert_eq!(result.thread_id, msg_id(1));
+    assert!(result.local_seq >= 1 && result.origin_seq >= 1);
+    let stored = office.store.get_message(&msg_id(1)).unwrap().unwrap();
+    let header = &stored.message.header;
+    assert_eq!(stored.origin_office_id, OFFICE_ID);
+    assert_eq!(stored.origin_incarnation, INCARNATION);
+    assert_eq!(stored.origin_seq, result.origin_seq);
+    assert_eq!(stored.org_position, POSITION);
+    assert_eq!(
+        stored.content_hash,
+        content_hash(
+            PAT_ID,
+            KIND_MSG,
+            MessagePriority::Normal,
+            None,
+            None,
+            "body 1",
+            &Meta::new()
+        )
+        .unwrap()
+    );
+    assert_eq!(
+        (
+            header.from_member_id.as_str(),
+            header.from_display_name.as_str()
+        ),
+        (ADA_ID, ADA_NAME)
+    );
+    assert_eq!(
+        (
+            header.to_member_id.as_str(),
+            header.to_display_name.as_str()
+        ),
+        (PAT_ID, PAT_HANDLE)
+    );
+    assert_eq!(header.created_at, NOW_UTC);
+    assert_eq!(
+        header.expires_at, None,
+        "send never creates an expiring message"
+    );
+    assert_eq!(header.local_seq, result.local_seq);
+    assert_eq!(office.events.received(), [msg_id(1)]);
+
+    let second = send(&office.mailbox, ADA_ID, 2, PAT_HANDLE).unwrap();
+    assert!(second.local_seq > result.local_seq && second.origin_seq > result.origin_seq);
+}
+
+/// A retry with the same id and content returns the first result and publishes nothing;
+/// other content or another sender under that id is `already_exists`.
+pub fn mailbox_send_replay_and_conflict(backend: impl OpenBackend) {
+    let office = office(&backend);
+    let first = send(&office.mailbox, ADA_ID, 1, PAT_HANDLE).unwrap();
+    office.clock.set(NOW_MS + 5_000);
+    assert_eq!(send(&office.mailbox, ADA_ID, 1, " pat ").unwrap(), first);
+    assert_eq!(send(&office.mailbox, ADA_ID, 1, PAT_ID).unwrap(), first);
+    let mut changed = send_params(1, PAT_HANDLE);
+    changed.body = "other".into();
+    assert_eq!(
+        office.mailbox.send(ADA_ID, changed),
+        Err(MailboxError::AlreadyExists)
+    );
+    assert_eq!(
+        send(&office.mailbox, REMY_ID, 1, PAT_HANDLE),
+        Err(MailboxError::AlreadyExists)
+    );
+    assert_eq!(office.events.received(), [msg_id(1)]);
+}
+
+fn recipient(office: &Office<impl MessageStore>, n: u32, to: &str) -> Result<String, MailboxError> {
+    send(&office.mailbox, PAT_ID, n, to)?;
+    Ok(office
+        .store
+        .get_message(&msg_id(n))
+        .unwrap()
+        .unwrap()
+        .message
+        .header
+        .to_member_id)
+}
+
+/// Addresses are trimmed of leading and trailing ASCII whitespace only; nothing left names
+/// no member; `office` is refused.
+pub fn mailbox_addressing_trims_ascii_whitespace(backend: impl OpenBackend) {
+    let office = office(&backend);
+    assert_eq!(recipient(&office, 1, "  ada\t\r\n").as_deref(), Ok(ADA_ID));
+    assert_eq!(recipient(&office, 2, "\x0cADA ").as_deref(), Ok(ADA_ID));
+    assert_eq!(
+        recipient(&office, 3, "\u{a0}ada"),
+        Err(MailboxError::UnknownRecipient)
+    );
+    assert_eq!(
+        recipient(&office, 4, "ada\u{2003}"),
+        Err(MailboxError::UnknownRecipient)
+    );
+    assert_eq!(
+        recipient(&office, 5, " \t "),
+        Err(MailboxError::UnknownRecipient)
+    );
+    assert_eq!(
+        recipient(&office, 6, ""),
+        Err(MailboxError::UnknownRecipient)
+    );
+    assert_eq!(
+        recipient(&office, 7, " office "),
+        Err(MailboxError::InvalidRequest)
+    );
+    assert_eq!(
+        recipient(&office, 8, "Office"),
+        Err(MailboxError::InvalidRequest)
+    );
+    for n in 3..=8 {
+        assert_eq!(office.store.get_message(&msg_id(n)).unwrap(), None);
+    }
+}
+
+/// `owner` comes first, an exact id beats a handle, and display names never resolve.
+pub fn mailbox_addressing_owner_and_exact_id(backend: impl OpenBackend) {
+    let office = office(&backend);
+    assert_eq!(recipient(&office, 1, "OWNER").as_deref(), Ok(OWNER_ID));
+    assert_eq!(recipient(&office, 2, " owner ").as_deref(), Ok(OWNER_ID));
+    assert_eq!(recipient(&office, 3, PAT_ID).as_deref(), Ok(PAT_ID));
+    assert_eq!(recipient(&office, 4, ADA_ID).as_deref(), Ok(ADA_ID));
+    assert_eq!(
+        recipient(&office, 5, OWNER_NAME),
+        Err(MailboxError::UnknownRecipient)
+    );
+    assert_eq!(
+        recipient(&office, 6, ADA_NAME),
+        Err(MailboxError::UnknownRecipient)
+    );
+}
+
+/// A paused agent binds and receives; an offboarded or Unknown-status agent is refused as a
+/// recipient (`unknown_recipient`) and as the bound member (`not_bound`).
+pub fn mailbox_paused_receives_offboarded_refused(backend: impl OpenBackend) {
+    let office = office(&backend);
+    let mailbox = &office.mailbox;
+    send(mailbox, PAT_ID, 1, REMY_HANDLE).unwrap();
+    assert_eq!(unread_inbox(mailbox, REMY_ID), [msg_id(1)]);
+    let (_handle, cancel) = cancellation_pair();
+    let waited = mailbox
+        .wait(REMY_ID, wait_params(0), far_deadline(), &cancel)
+        .unwrap();
+    assert_eq!(waited.message.unwrap().header.id, msg_id(1));
+    send(mailbox, REMY_ID, 2, PAT_HANDLE).unwrap();
+    let read = mailbox.read(REMY_ID, MsgReadParams::default()).unwrap();
+    assert_eq!(read.message.unwrap().header.id, msg_id(1));
+
+    for (n, to) in [(3, GONE_HANDLE), (4, GONE_ID), (5, ODD_HANDLE), (6, ODD_ID)] {
+        assert_eq!(
+            send(mailbox, PAT_ID, n, to),
+            Err(MailboxError::UnknownRecipient),
+            "{to}"
+        );
+        assert_eq!(office.store.get_message(&msg_id(n)).unwrap(), None);
+    }
+    for bound in [GONE_ID, ODD_ID, FAR_ID, "nobody"] {
+        assert_eq!(
+            send(mailbox, bound, 7, ADA_HANDLE),
+            Err(MailboxError::NotBound)
+        );
+        assert_eq!(
+            mailbox.inbox(bound, MsgInboxParams::default()),
+            Err(MailboxError::NotBound)
+        );
+        assert_eq!(
+            mailbox.read(bound, MsgReadParams::default()),
+            Err(MailboxError::NotBound)
+        );
+        assert_eq!(
+            mailbox.wait(bound, wait_params(0), far_deadline(), &cancel),
+            Err(MailboxError::NotBound)
+        );
+    }
+    // Cross-office routing is not in slice 1.
+    assert_eq!(
+        send(mailbox, PAT_ID, 8, FAR_HANDLE),
+        Err(MailboxError::Unavailable)
+    );
+    assert_eq!(office.mailbox.held_waits(), 0);
+}
+
+/// The inbox lists newest first, pages by cursor, filters by a trimmed sender and hides
+/// read messages unless `include_all`.
+pub fn mailbox_inbox_order_paging_and_read_state(backend: impl OpenBackend) {
+    let office = office(&backend);
+    let mailbox = &office.mailbox;
+    for n in 1..=5 {
+        let from = if n % 2 == 0 { OWNER_ID } else { PAT_ID };
+        send(mailbox, from, n, ADA_HANDLE).unwrap();
+    }
+    let page = |params: MsgInboxParams| ids(&mailbox.inbox(ADA_ID, params).unwrap());
+    let first = mailbox
+        .inbox(
+            ADA_ID,
+            MsgInboxParams {
+                limit: Some(2),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(ids(&first), [msg_id(5), msg_id(4)]);
+    assert_eq!(
+        page(MsgInboxParams {
+            limit: Some(2),
+            cursor: first.next_cursor,
+            ..Default::default()
+        }),
+        [msg_id(3), msg_id(2)]
+    );
+    assert_eq!(
+        page(MsgInboxParams {
+            from: Some("  owner ".into()),
+            ..Default::default()
+        }),
+        [msg_id(4), msg_id(2)]
+    );
+    assert_eq!(
+        mailbox.inbox(
+            ADA_ID,
+            MsgInboxParams {
+                from: Some("nobody".into()),
+                ..Default::default()
+            }
+        ),
+        Err(MailboxError::NotFound)
+    );
+    assert_eq!(
+        mailbox.inbox(
+            ADA_ID,
+            MsgInboxParams {
+                from: Some(" ".into()),
+                ..Default::default()
+            }
+        ),
+        Err(MailboxError::NotFound)
+    );
+    assert_eq!(
+        mailbox.inbox(
+            ADA_ID,
+            MsgInboxParams {
+                from: Some("office".into()),
+                ..Default::default()
+            }
+        ),
+        Err(MailboxError::InvalidRequest)
+    );
+    assert_eq!(
+        mailbox.inbox(
+            ADA_ID,
+            MsgInboxParams {
+                limit: Some(101),
+                ..Default::default()
+            }
+        ),
+        Err(MailboxError::InvalidRequest)
+    );
+
+    mailbox
+        .read(
+            ADA_ID,
+            MsgReadParams {
+                id: Some(msg_id(3)),
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        unread_inbox(mailbox, ADA_ID),
+        [msg_id(5), msg_id(4), msg_id(2), msg_id(1)]
+    );
+    let all = mailbox
+        .inbox(
+            ADA_ID,
+            MsgInboxParams {
+                include_all: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        ids(&all),
+        [msg_id(5), msg_id(4), msg_id(3), msg_id(2), msg_id(1)]
+    );
+    assert_eq!(all.headers[2].state, State::Read);
+    assert!(unread_inbox(mailbox, PAT_ID).is_empty());
+}
+
+/// Read claims the oldest unread (or the named) message once, stamps it, and publishes
+/// one `message.state_changed`.
+pub fn mailbox_read_claims_and_marks_read(backend: impl OpenBackend) {
+    let office = office(&backend);
+    let mailbox = &office.mailbox;
+    send(mailbox, PAT_ID, 1, ADA_HANDLE).unwrap();
+    send(mailbox, PAT_ID, 2, ADA_HANDLE).unwrap();
+    send(mailbox, PAT_ID, 3, REMY_HANDLE).unwrap();
+    let read = mailbox.read(ADA_ID, MsgReadParams::default()).unwrap();
+    let header = read.message.unwrap().header;
+    assert_eq!(header.id, msg_id(1));
+    assert_eq!(header.state, State::Read);
+    assert_eq!(header.read_at.as_deref(), Some(NOW_UTC));
+    assert_eq!(office.events.state_changed(), [msg_id(1)]);
+
+    office.clock.set(NOW_MS + 1_000);
+    let again = mailbox
+        .read(
+            ADA_ID,
+            MsgReadParams {
+                id: Some(msg_id(1)),
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        again.message.unwrap().header.read_at.as_deref(),
+        Some(NOW_UTC)
+    );
+    assert_eq!(
+        office.events.state_changed(),
+        [msg_id(1)],
+        "a re-read publishes nothing"
+    );
+    assert_eq!(
+        mailbox.read(
+            ADA_ID,
+            MsgReadParams {
+                id: Some(msg_id(3))
+            }
+        ),
+        Err(MailboxError::NotFound)
+    );
+    assert_eq!(
+        mailbox.read(
+            ADA_ID,
+            MsgReadParams {
+                id: Some(msg_id(9))
+            }
+        ),
+        Err(MailboxError::NotFound)
+    );
+    let next = mailbox.read(ADA_ID, MsgReadParams::default()).unwrap();
+    assert_eq!(next.message.unwrap().header.id, msg_id(2));
+    assert_eq!(
+        mailbox
+            .read(ADA_ID, MsgReadParams::default())
+            .unwrap()
+            .message,
+        None
+    );
+    assert_eq!(office.events.state_changed(), [msg_id(1), msg_id(2)]);
+}
+
+/// Concurrent reads of one inbox claim each message exactly once.
+pub fn mailbox_concurrent_reads_claim_once(backend: impl OpenBackend) {
+    let office = office(&backend);
+    for n in 1..=4 {
+        send(&office.mailbox, PAT_ID, n, ADA_HANDLE).unwrap();
+    }
+    let barrier = Barrier::new(6);
+    let mut claimed: Vec<String> = thread::scope(|scope| {
+        let workers: Vec<_> = (0..6)
+            .map(|_| {
+                scope.spawn(|| {
+                    barrier.wait();
+                    let mut mine = Vec::new();
+                    while let Some(message) = office
+                        .mailbox
+                        .read(ADA_ID, MsgReadParams::default())
+                        .unwrap()
+                        .message
+                    {
+                        mine.push(message.header.id);
+                    }
+                    mine
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|w| w.join().unwrap())
+            .collect()
+    });
+    claimed.sort();
+    assert_eq!(claimed, (1..=4).map(msg_id).collect::<Vec<_>>());
+    let mut events = office.events.state_changed();
+    events.sort();
+    assert_eq!(events, claimed);
+}
+
+/// Wait returns the oldest matching unread message without marking it read.
+pub fn mailbox_wait_returns_unread_without_claiming(backend: impl OpenBackend) {
+    let office = office(&backend);
+    let mailbox = &office.mailbox;
+    send(mailbox, PAT_ID, 1, ADA_HANDLE).unwrap();
+    send(mailbox, OWNER_ID, 2, ADA_HANDLE).unwrap();
+    let (_handle, cancel) = cancellation_pair();
+    for _ in 0..2 {
+        let waited = mailbox
+            .wait(ADA_ID, wait_params(0), far_deadline(), &cancel)
+            .unwrap();
+        assert_eq!(waited.message.unwrap().header.state, State::Unread);
+    }
+    let from_owner = MsgWaitParams {
+        from: Some(" OWNER".into()),
+        ..wait_params(0)
+    };
+    let waited = mailbox
+        .wait(ADA_ID, from_owner, far_deadline(), &cancel)
+        .unwrap();
+    assert_eq!(waited.message.unwrap().header.id, msg_id(2));
+    let urgent = MsgWaitParams {
+        urgent_only: true,
+        ..wait_params(0)
+    };
+    assert_eq!(
+        mailbox
+            .wait(ADA_ID, urgent, far_deadline(), &cancel)
+            .unwrap()
+            .message,
+        None
+    );
+    let office_sender = MsgWaitParams {
+        from: Some("office".into()),
+        ..wait_params(0)
+    };
+    assert_eq!(
+        mailbox.wait(ADA_ID, office_sender, far_deadline(), &cancel),
+        Err(MailboxError::InvalidRequest)
+    );
+    assert_eq!(unread_inbox(mailbox, ADA_ID), [msg_id(2), msg_id(1)]);
+    assert_eq!(mailbox.held_waits(), 0);
+}
+
+/// §2.2: a waiter registered before a commit is woken by it and gets the message once;
+/// the message is delivered once (one event, one inbox row, one successful claim).
+pub fn mailbox_wait_registered_before_commit_delivers_once(backend: impl OpenBackend) {
+    let office = office(&backend);
+    let mailbox = office.mailbox.clone();
+    let (_handle, cancel) = cancellation_pair();
+    let started = Instant::now();
+    let waiter =
+        thread::spawn(move || mailbox.wait(ADA_ID, wait_params(30_000), far_deadline(), &cancel));
+    eventually("the waiter to register", || {
+        office.mailbox.held_waits() == 1
+    });
+    send(&office.mailbox, PAT_ID, 1, ADA_HANDLE).unwrap();
+    let waited = waiter.join().unwrap().unwrap();
+    assert_eq!(waited.message.unwrap().header.id, msg_id(1));
+    assert!(
+        started.elapsed() < Duration::from_secs(20),
+        "woken by the commit"
+    );
+    assert_eq!(office.mailbox.held_waits(), 0);
+    assert_eq!(office.events.received(), [msg_id(1)]);
+    assert_eq!(unread_inbox(&office.mailbox, ADA_ID), [msg_id(1)]);
+    let read = office
+        .mailbox
+        .read(ADA_ID, MsgReadParams::default())
+        .unwrap();
+    assert_eq!(read.message.unwrap().header.id, msg_id(1));
+    assert_eq!(
+        office
+            .mailbox
+            .read(ADA_ID, MsgReadParams::default())
+            .unwrap()
+            .message,
+        None
+    );
+}
+
+/// §2.2: a commit that lands after the wait's check found nothing, but before it blocks,
+/// still wakes it (the waiter was registered before the check).
+pub fn mailbox_wait_commit_between_check_and_block(backend: impl OpenBackend) {
+    let office = office(&backend);
+    let weak: Weak<Mailbox> = Arc::downgrade(&office.mailbox);
+    *office.store.after_peek.lock().unwrap() = Some(Box::new(move || {
+        let mailbox = weak.upgrade().expect("mailbox alive");
+        thread::spawn(move || send(&mailbox, PAT_ID, 1, ADA_HANDLE).unwrap())
+            .join()
+            .unwrap();
+    }));
+    let (_handle, cancel) = cancellation_pair();
+    let started = Instant::now();
+    let waited = office
+        .mailbox
+        .wait(ADA_ID, wait_params(3_000), far_deadline(), &cancel)
+        .unwrap();
+    assert_eq!(
+        waited.message.map(|message| message.header.id),
+        Some(msg_id(1)),
+        "the commit between check and block was lost"
+    );
+    assert!(started.elapsed() < Duration::from_millis(2_500));
+    assert_eq!(office.mailbox.held_waits(), 0);
+}
+
+/// Wait never blocks past the earlier of `timeout_ms` and the caller's deadline, and
+/// checks once even when the deadline has passed.
+pub fn mailbox_wait_deadline(backend: impl OpenBackend) {
+    let office = office(&backend);
+    let mailbox = &office.mailbox;
+    let (_handle, cancel) = cancellation_pair();
+
+    let started = Instant::now();
+    let waited = mailbox
+        .wait(ADA_ID, wait_params(50), far_deadline(), &cancel)
+        .unwrap();
+    assert_eq!(waited.message, None);
+    let elapsed = started.elapsed();
+    assert!(elapsed >= Duration::from_millis(50), "{elapsed:?}");
+    assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
+
+    let started = Instant::now();
+    let deadline = Instant::now() + Duration::from_millis(50);
+    let waited = mailbox
+        .wait(ADA_ID, wait_params(MAX_WAIT_MS), deadline, &cancel)
+        .unwrap();
+    assert_eq!(waited.message, None);
+    assert!(started.elapsed() >= Duration::from_millis(50));
+    assert!(started.elapsed() < Duration::from_secs(5));
+
+    let passed = Instant::now();
+    let started = Instant::now();
+    assert_eq!(
+        mailbox
+            .wait(ADA_ID, wait_params(MAX_WAIT_MS), passed, &cancel)
+            .unwrap()
+            .message,
+        None
+    );
+    assert!(started.elapsed() < Duration::from_secs(1));
+    send(mailbox, PAT_ID, 1, ADA_HANDLE).unwrap();
+    let waited = mailbox
+        .wait(ADA_ID, wait_params(MAX_WAIT_MS), passed, &cancel)
+        .unwrap();
+    assert_eq!(waited.message.unwrap().header.id, msg_id(1));
+
+    assert_eq!(
+        mailbox.wait(
+            ADA_ID,
+            wait_params(MAX_WAIT_MS + 1),
+            far_deadline(),
+            &cancel
+        ),
+        Err(MailboxError::InvalidRequest)
+    );
+    assert_eq!(mailbox.held_waits(), 0);
+}
+
+/// Dropping or cancelling the handle ends blocked waits at once with `not_bound` and
+/// removes their registrations; a cancelled handle refuses new waits.
+pub fn mailbox_wait_cancel_removes_waiter(backend: impl OpenBackend) {
+    let office = office(&backend);
+    let (handle, cancel) = cancellation_pair();
+    let workers: Vec<_> = (0..2)
+        .map(|_| {
+            let mailbox = office.mailbox.clone();
+            let cancel = cancel.clone();
+            thread::spawn(move || {
+                let started = Instant::now();
+                let result = mailbox.wait(ADA_ID, wait_params(5_000), far_deadline(), &cancel);
+                (result, started.elapsed())
+            })
+        })
+        .collect();
+    eventually("both waiters to register", || {
+        office.mailbox.held_waits() == 2
+    });
+    drop(handle);
+    // A worker caught between registering and attaching removes its own registration when
+    // it sees the cancel, so allow it a moment (waiters' unit tests pin the drop's removal).
+    eventually("the cancel to remove the registrations", || {
+        office.mailbox.held_waits() == 0
+    });
+    for worker in workers {
+        let (result, elapsed) = worker.join().unwrap();
+        assert_eq!(result, Err(MailboxError::NotBound));
+        assert!(
+            elapsed < Duration::from_secs(4),
+            "woken by the cancel, not the deadline"
+        );
+    }
+    assert_eq!(
+        office
+            .mailbox
+            .wait(ADA_ID, wait_params(5_000), far_deadline(), &cancel),
+        Err(MailboxError::NotBound)
+    );
+
+    let (handle, cancel) = cancellation_pair();
+    let mailbox = office.mailbox.clone();
+    let worker =
+        thread::spawn(move || mailbox.wait(ADA_ID, wait_params(5_000), far_deadline(), &cancel));
+    eventually("the waiter to register", || {
+        office.mailbox.held_waits() == 1
+    });
+    handle.cancel();
+    assert_eq!(worker.join().unwrap(), Err(MailboxError::NotBound));
+    assert_eq!(office.mailbox.held_waits(), 0);
+}
+
+/// A commit racing a cancel: the wait either returns the message or ends `not_bound`,
+/// never leaves a registration, and the message is in the inbox exactly once, unread.
+pub fn mailbox_wait_commit_racing_cancel(backend: impl OpenBackend) {
+    let office = office(&backend);
+    for n in 1..=100u32 {
+        let (handle, cancel) = cancellation_pair();
+        let mailbox = office.mailbox.clone();
+        let waiter = thread::spawn(move || {
+            mailbox.wait(ADA_ID, wait_params(10_000), far_deadline(), &cancel)
+        });
+        let mailbox = office.mailbox.clone();
+        let sender = thread::spawn(move || send(&mailbox, PAT_ID, n, ADA_HANDLE));
+        for _ in 0..n % 4 {
+            thread::yield_now();
+        }
+        drop(handle);
+        match waiter.join().unwrap() {
+            Ok(result) => {
+                assert_eq!(
+                    result.message.map(|message| message.header.id),
+                    Some(msg_id(n))
+                )
+            }
+            Err(error) => assert_eq!(error, MailboxError::NotBound),
+        }
+        sender.join().unwrap().unwrap();
+        assert_eq!(office.mailbox.held_waits(), 0);
+        assert_eq!(unread_inbox(&office.mailbox, ADA_ID), [msg_id(n)]);
+        let read = office
+            .mailbox
+            .read(ADA_ID, MsgReadParams::default())
+            .unwrap();
+        assert_eq!(read.message.unwrap().header.id, msg_id(n));
+    }
+    assert_eq!(office.events.received().len(), 100);
+}
+
+/// Every case, by name: what [`crate::mailbox_conformance_tests!`] runs.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __mailbox_conformance_cases {
+    ($open:expr; $($case:ident),* $(,)?) => {
+        $(
+            #[test]
+            fn $case() {
+                $crate::testkit::conformance::$case($open)
+            }
+        )*
+    };
+}
+
+/// Generates one `#[test]` per conformance case, each opening a fresh backend with
+/// `$open`, any `Fn(&[Member], Position) -> (impl MessageStore, impl MemberDirectory)`
+/// (both `Send + Sync + 'static`). Needs the `testkit` feature.
+///
+/// ```ignore
+/// mod conformance {
+///     org_mailbox::mailbox_conformance_tests!(super::open_sqlite);
+/// }
+/// ```
+#[macro_export]
+macro_rules! mailbox_conformance_tests {
+    ($open:expr) => {
+        $crate::__mailbox_conformance_cases! {
+            $open;
+            store_commit_allocates_sequence_and_origin,
+            store_commit_replay_and_conflict,
+            store_initial_read_is_never_unread,
+            store_peek_is_read_only_and_oldest_first,
+            store_peek_reports_expired_without_deleting,
+            store_claim_read_order_and_ownership,
+            store_claim_read_is_once_under_concurrency,
+            store_list_headers_order_paging_and_filters,
+            directory_resolution_order,
+            directory_returns_status_unfiltered,
+            mailbox_send_commits_with_origin,
+            mailbox_send_replay_and_conflict,
+            mailbox_addressing_trims_ascii_whitespace,
+            mailbox_addressing_owner_and_exact_id,
+            mailbox_paused_receives_offboarded_refused,
+            mailbox_inbox_order_paging_and_read_state,
+            mailbox_read_claims_and_marks_read,
+            mailbox_concurrent_reads_claim_once,
+            mailbox_wait_returns_unread_without_claiming,
+            mailbox_wait_registered_before_commit_delivers_once,
+            mailbox_wait_commit_between_check_and_block,
+            mailbox_wait_deadline,
+            mailbox_wait_cancel_removes_waiter,
+            mailbox_wait_commit_racing_cancel,
+        }
+    };
+}

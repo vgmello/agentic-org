@@ -318,3 +318,18 @@ fn expired(header: &MessageHeader, now: &str) -> bool {
     };
     now >= deadline.saturating_add((header.ttl_ms.unwrap_or(0) / 4).min(2000))
 }
+
+#[cfg(test)]
+mod conformance {
+    use super::{InMemoryDirectory, InMemoryStore};
+    use org_proto::{Member, Position};
+
+    fn open(members: &[Member], position: Position) -> (InMemoryStore, InMemoryDirectory) {
+        (
+            InMemoryStore::new(),
+            InMemoryDirectory::new(members.to_vec(), position),
+        )
+    }
+
+    crate::mailbox_conformance_tests!(open);
+}
