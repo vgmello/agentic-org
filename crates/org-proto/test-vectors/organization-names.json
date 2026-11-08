@@ -1,5 +1,5 @@
 {
- "comment": "The organization-name rule's vectors, owned by org-proto (OrganizationName::parse) and shared with the app's pre-check. An entry with no `name` must be rejected as invalid_name. \"Trimmed\" is Unicode White_Space (Rust str::trim), which differs from JavaScript's trim at U+0085 and U+FEFF. Format characters (General_Category=Cf) and Default_Ignorable_Code_Point code points, plus U+2028/U+2029, are refused, except U+200C, which Persian and Indic names need, and U+200D, U+FE0E and U+FE0F, which emoji need; so U+FEFF, tag characters, Hangul fillers and variation selectors other than U+FE0E/U+FE0F are refused.",
+ "comment": "The organization-name rule's vectors, owned by org-proto (OrganizationName::parse): the canonical vectors; the app's pre-check moves to this file (follow-up). An entry with no `name` must be rejected as invalid_name. \"Trimmed\" is Unicode White_Space (Rust str::trim), which differs from JavaScript's trim at U+0085 and U+FEFF. Format characters (General_Category=Cf) and Default_Ignorable_Code_Point code points, plus U+2028/U+2029, are refused, except U+200C, which Persian and Indic names need, and U+200D, U+FE0E and U+FE0F, which emoji need; so U+FEFF, tag characters, Hangul fillers and variation selectors other than U+FE0E/U+FE0F are refused.",
  "vectors": [
   {
    "input": "Acme",

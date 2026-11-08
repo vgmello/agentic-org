@@ -13,12 +13,21 @@
 //!
 //! Compare tokens with `==`, never through their strings: every token displays the same.
 //!
-//! Zeroing is best effort. Copies outside this type survive it: the array passed to
+//! It decodes from JSON only (it uses `deserialize_any`, which needs a self-describing format).
+//!
+//! Zeroing is defence in depth, not a guarantee that no copy of the token is left in memory. The
+//! typed envelopes ([`Request`](crate::Request), [`Response`](crate::Response) and
+//! [`ServerMessage`](crate::ServerMessage)) carry the token's hex through `serde_json::Value` and
+//! frame buffers, and leave freed copies of it behind that nothing can zero. Reading those copies
+//! needs local memory access as the same user.
+//!
+//! Other copies outside this type survive zeroing too: the array passed to
 //! [`AppToken::from_bytes`] (zero it yourself), the raw line a token was read from, the encoded
-//! output of a serialization and any reader or writer buffer it passed through, serde_json's scratch buffer (escaped strings, `from_reader`), serde's buffering for
-//! `flatten` and tagged or untagged enums, any `serde_json::Value` hop (e.g. a generic request
-//! envelope), and stack slots left behind by moves. To keep copies few, decode it with
-//! `serde_json::from_slice` from a line buffer you zero afterwards, into a plain struct field.
+//! output of a serialization and any reader or writer buffer it passed through, serde_json's
+//! scratch buffer (escaped strings, `from_reader`), serde's buffering for `flatten` and tagged or
+//! untagged enums, any other `serde_json::Value` hop, and stack slots left behind by moves. To
+//! keep copies few, decode it with `serde_json::from_slice` from a line buffer you zero
+//! afterwards, into a plain struct field.
 //! Never log or `Debug`-print anything that holds it in raw form (an envelope, a `Value`, a line),
 //! and never use it as a map key or an enum tag (serde echoes those in errors).
 
@@ -27,10 +36,17 @@ use std::fmt;
 use serde::de::{self, Deserializer, Visitor};
 use serde::{Deserialize, Serialize, Serializer};
 
-/// The token's length in bytes.
-const APP_TOKEN_BYTES: usize = 32;
+/// An app token's length in bytes (64 hex digits on the wire).
+pub const APP_TOKEN_BYTES: usize = 32;
 
 /// A per-office app token. See the module docs.
+///
+/// It isn't `Clone`:
+///
+/// ```compile_fail,E0599
+/// let token = org_proto::AppToken::from_bytes([0; org_proto::APP_TOKEN_BYTES]);
+/// let _copy = token.clone();
+/// ```
 pub struct AppToken([u8; APP_TOKEN_BYTES]);
 
 impl AppToken {
@@ -116,7 +132,7 @@ impl Visitor<'_> for TokenVisitor {
     type Value = AppToken;
 
     fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("64 lowercase hex digits")
+        f.write_str("an app token")
     }
 
     fn visit_str<E: de::Error>(self, text: &str) -> Result<AppToken, E> {
@@ -135,8 +151,12 @@ impl Visitor<'_> for TokenVisitor {
         Ok(token)
     }
 
-    // Other scalars: refuse without naming the value. (Null, arrays and objects fall to serde's
-    // default "invalid type" error, which names only the type.)
+    // Other scalars, 128-bit integers included (with serde_json's `arbitrary_precision` feature, a
+    // huge number read from a `Value` arrives there; read from text it arrives as a map, which
+    // fails as an invalid type without its digits): refuse without naming the value. Null, arrays
+    // and objects fall to serde's default "invalid type" error, which names only the type. One
+    // path stays out of reach: with `arbitrary_precision`, a `Value` holding a huge number decoded
+    // into an `#[serde(untagged)]` enum is echoed by serde's own visitor, before this one runs.
     fn visit_bool<E: de::Error>(self, _: bool) -> Result<AppToken, E> {
         Err(E::custom(BAD_TOKEN))
     }
@@ -147,6 +167,12 @@ impl Visitor<'_> for TokenVisitor {
         Err(E::custom(BAD_TOKEN))
     }
     fn visit_f64<E: de::Error>(self, _: f64) -> Result<AppToken, E> {
+        Err(E::custom(BAD_TOKEN))
+    }
+    fn visit_i128<E: de::Error>(self, _: i128) -> Result<AppToken, E> {
+        Err(E::custom(BAD_TOKEN))
+    }
+    fn visit_u128<E: de::Error>(self, _: u128) -> Result<AppToken, E> {
         Err(E::custom(BAD_TOKEN))
     }
 }
@@ -160,9 +186,6 @@ fn nibble(c: u8) -> Option<u8> {
 }
 
 /// Overwrite with zeros in a way the optimizer can't remove.
-// The crate denies unsafe code. This is the one exception: a plain write of zeros to bytes
-// that are about to be dropped is a dead store the optimizer may remove, and safe Rust has no
-// volatile write. `write_volatile` through an exclusive reference is sound.
 #[allow(unsafe_code)]
 fn zero(bytes: &mut [u8]) {
     for b in bytes.iter_mut() {
@@ -360,14 +383,40 @@ mod tests {
             let err = AppToken::deserialize(&value).unwrap_err().to_string();
             assert!(!err.contains(&digits[..6]), "echoed: {err}");
         }
-        let err = serde_json::from_str::<AppToken>("true")
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("64 lowercase hex digits"), "{err}");
+        // Every scalar fails with this module's own message, never serde's default one (which
+        // would name the value).
+        for scalar in [
+            "5",
+            "-5",
+            "1.5",
+            "true",
+            "2718281.8",
+            "31415926535897932384",
+        ] {
+            let err = serde_json::from_str::<AppToken>(scalar)
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(BAD_TOKEN), "{scalar}: {err}");
+            let value: serde_json::Value = serde_json::from_str(scalar).unwrap();
+            let err = AppToken::deserialize(&value).unwrap_err().to_string();
+            assert!(err.contains(BAD_TOKEN), "{scalar}: {err}");
+        }
+        // 128-bit integers (what serde_json's `arbitrary_precision` produces for huge numbers).
+        use serde::de::value::{Error as ValueError, I128Deserializer, U128Deserializer};
+        let err = AppToken::deserialize(U128Deserializer::<ValueError>::new(
+            31415926535897932384u128,
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains(BAD_TOKEN) && !err.contains("314159"), "{err}");
+        let err = AppToken::deserialize(I128Deserializer::<ValueError>::new(
+            -31415926535897932384i128,
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains(BAD_TOKEN) && !err.contains("314159"), "{err}");
     }
 
-    // Test-only: reading the bytes after `Drop` has run needs `ManuallyDrop::drop`, which is
-    // unsafe. The library's only unsafe code is still `zero`.
     #[test]
     #[allow(unsafe_code)]
     fn drop_zeroes_the_token() {

@@ -75,7 +75,7 @@ pub use org::{
     OrgChangedData, OrgRejected, OrgRejectedData, OrgSnapshot, OrgSnapshotCall, Position,
     ProjectSummary, ProjectTeam, Team,
 };
-pub use token::AppToken;
+pub use token::{AppToken, APP_TOKEN_BYTES};
 pub use types::{OfficeInfo, OfficeRole, OfficeStatus, Organization, ORGANIZATION_NAME_MAX_CHARS};
 pub use wire::{
     salvage_id, Event, Outcome, Request, Response, ServerMessage, UNREADABLE_REQUEST_ID,

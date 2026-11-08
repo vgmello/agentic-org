@@ -26,6 +26,17 @@ use crate::{ApiError, ErrorCode, ORGANIZATION_NAME_MAX_CHARS};
 ///
 /// It deliberately has no `PartialEq`, `Eq` or `Hash`: a derived comparison would be
 /// case-sensitive, which is the wrong test for duplicates. Compare [`OrganizationName::key`]s.
+///
+/// ```compile_fail,E0369
+/// let a = org_proto::OrganizationName::parse("Acme").unwrap();
+/// let b = org_proto::OrganizationName::parse("Acme").unwrap();
+/// let _same = a == b;
+/// ```
+///
+/// ```compile_fail,E0277
+/// fn needs_hash<T: std::hash::Hash>(_: &T) {}
+/// needs_hash(&org_proto::OrganizationName::parse("Acme").unwrap());
+/// ```
 #[derive(Debug, Clone)]
 pub struct OrganizationName {
     name: String,
@@ -397,7 +408,7 @@ mod tests {
         }
     }
 
-    /// The vectors the app's TypeScript pre-check is tested against too.
+    /// The canonical vectors; the app's pre-check moves to this file (follow-up).
     #[test]
     fn shared_vectors() {
         let file: serde_json::Value =
