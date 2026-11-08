@@ -1,6 +1,6 @@
 # Design: processes (how agents work, written down and inherited)
 
-Status: **proposed, rev 3** 2026-11-08. Owner: ada. It implements Eden's spec [`processes-ux.md`](../specs/processes-ux.md) rev 2 (PROC-1 to PROC-19) without redefining its UX, except decision 13, which spec rev 3 adopts, and builds on [`tasks-projects-docs.md`](tasks-projects-docs.md) (W7), [`agent-sessions.md`](agent-sessions.md), [`projects-git-github.md`](projects-git-github.md) and [`teams-and-org-chart.md`](teams-and-org-chart.md). The first process, [`branch-and-merge.md`](../processes/branch-and-merge.md), is the reference shape.
+Status: **proposed, rev 3** 2026-11-08. Owner: ada. It implements Eden's spec [`processes-ux.md`](../specs/processes-ux.md) rev 2 (PROC-1 to PROC-19) without redefining its UX, except decision 13, which Eden's spec rev 3 is to adopt, and builds on [`tasks-projects-docs.md`](tasks-projects-docs.md) (W7), [`agent-sessions.md`](agent-sessions.md), [`projects-git-github.md`](projects-git-github.md) and [`teams-and-org-chart.md`](teams-and-org-chart.md). The first process, [`branch-and-merge.md`](../processes/branch-and-merge.md), is the reference shape.
 
 A new pure library, **`org-process`**, holds the parsing, the resolution and the one-branch rule; the office does the I/O.
 
@@ -189,7 +189,7 @@ A new module, `crates/org-proto/src/process.rs`; `API_VERSION` stays 1. Any boun
 
 **Trusted binding** (decision 15). From a hand-run lead, `task.allow_second_branch`, `task.mark_branch_merged`, `process.approve`/`reject` and a guarded `task.set_status`/`task.assign` by a non-assignee answer `not_authorized` with reason `forwarded_to_owner`, and change nothing. The office adds a Needs you item for the owner ("<lead> asks to <action> on <task or change>: <reason>") with **Do it** (the owner makes the call) and **Dismiss**.
 
-**Errors.** One new code, **`one_branch_open`**; its message names the branch, task and stage, and `work.branch_state` gives them as data. Reused: `invalid_request`, `already_exists`, `not_found`, `not_authorized`, `conflict`, `unavailable` (reasons `handbook_unreachable`, `repository_busy`, `integration_branch_missing` on `ApiError.reason`, which the agent-sessions contract adds).
+**Errors.** One new code, **`one_branch_open`**; its message names the branch, task and stage, and `work.branch_state` gives them as data. Reused: `invalid_request`, `already_exists`, `not_found`, `not_authorized`, `conflict`, `unavailable` (reasons `handbook_unreachable`, `repository_busy`, `integration_branch_missing`, `forwarded_to_owner`, `sealed` and `private_only_adds` on `ApiError.reason`, which the agent-sessions contract adds; R1 and R2 depend on that field landing in `org-proto` first).
 
 **Organization data.** `OrgSnapshot.handbook: Option<ProjectRepo>` (`#[serde(default, skip_serializing_if = "Option::is_none")]`, no `path`), set by `OrgChange::HandbookSet { handbook }`. It changes `org-proto`'s tests, the desktop mock and `proto.ts` (not `#[non_exhaustive]`).
 
