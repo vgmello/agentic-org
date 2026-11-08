@@ -330,6 +330,9 @@ fn member_add_person(view: &dyn OrgView, now: &str, p: &MemberAddPersonParams) -
 // ---- agents ---------------------------------------------------------------------------
 
 fn member_add_agent(view: &dyn OrgView, now: &str, p: &MemberAddAgentParams) -> Decision {
+    // The office id is a client-made id like the others: a bad one is invalid_request, before
+    // the lookup that would say not_found.
+    check_id(&p.office_id)?;
     if !view.office_exists(&p.office_id) {
         return Err(fail(ErrorCode::NotFound, "no such office"));
     }
@@ -501,8 +504,9 @@ fn member_set_agent_status(view: &dyn OrgView, p: &MemberSetAgentStatusParams) -
 fn member_offboard(view: &dyn OrgView, now: &str, p: &MemberOffboardParams) -> Decision {
     let (member, mut profile) = live_agent(view, &p.member_id)?;
     check_version(member.version, p.expected_version)?;
-    // Its relations end as for a removal; the record and its handle stay, as history.
-    let mut changes = ending_relations(view, &member);
+    // Its relations end as for a removal, except that an already offboarded agent's record is
+    // history and keeps who it reported to; the record and its handle stay, as history.
+    let mut changes = ending_relations(view, &member, false);
     profile.status = AgentStatus::Offboarded;
     profile.offboarded_at = Some(now.to_owned());
     changes.push(OrgChange::MemberUpserted {
@@ -737,7 +741,7 @@ fn member_remove(view: &dyn OrgView, p: &MemberRemoveParams) -> Decision {
         return Err(owner_protected("the owner cannot be removed"));
     }
     check_version(member.version, p.expected_version)?;
-    let mut changes = ending_relations(view, &member);
+    let mut changes = ending_relations(view, &member, true);
     changes.push(OrgChange::MemberRemoved {
         member_id: member.id,
     });
@@ -747,7 +751,11 @@ fn member_remove(view: &dyn OrgView, p: &MemberRemoveParams) -> Decision {
 /// What ends when a member leaves (removed, or later offboarded): its memberships, the teams
 /// it led (they lose the lead), and its direct reports (they now report to its own manager, or
 /// to the owner if it had none). Each affected team and member gets a new version.
-pub(crate) fn ending_relations(view: &dyn OrgView, member: &Member) -> Vec<OrgChange> {
+pub(crate) fn ending_relations(
+    view: &dyn OrgView,
+    member: &Member,
+    repoint_offboarded: bool,
+) -> Vec<OrgChange> {
     let mut changes: Vec<OrgChange> = view
         .memberships_of_member(&member.id)
         .into_iter()
@@ -766,16 +774,29 @@ pub(crate) fn ending_relations(view: &dyn OrgView, member: &Member) -> Vec<OrgCh
                 },
             }),
     );
-    changes.extend(view.reports_of(&member.id).into_iter().map(|report| {
-        OrgChange::MemberUpserted {
-            member: Member {
-                reports_to_member_id: member.reports_to_member_id.clone(),
-                version: report.version + 1,
-                ..report
-            },
-        }
-    }));
+    changes.extend(
+        view.reports_of(&member.id)
+            .into_iter()
+            // A record that is history (an offboarded agent) is only re-pointed when its
+            // manager is deleted outright, never when the manager is offboarded.
+            .filter(|report| repoint_offboarded || !is_offboarded(report))
+            .map(|report| OrgChange::MemberUpserted {
+                member: Member {
+                    reports_to_member_id: member.reports_to_member_id.clone(),
+                    version: report.version + 1,
+                    ..report
+                },
+            }),
+    );
     changes
+}
+
+/// Whether `member` is an agent that was offboarded: a record that is history.
+fn is_offboarded(member: &Member) -> bool {
+    member
+        .agent
+        .as_ref()
+        .is_some_and(|agent| agent.status == AgentStatus::Offboarded)
 }
 
 // ---- projects -------------------------------------------------------------------------
@@ -921,11 +942,7 @@ fn check_text(text: Option<&str>, what: &str) -> Result<Option<String>, ApiError
 }
 
 fn refuse_offboarded(member: &Member) -> Result<(), ApiError> {
-    let offboarded = member
-        .agent
-        .as_ref()
-        .is_some_and(|agent| agent.status == AgentStatus::Offboarded);
-    if offboarded {
+    if is_offboarded(member) {
         Err(fail(ErrorCode::InvalidRequest, "that agent is offboarded"))
     } else {
         Ok(())

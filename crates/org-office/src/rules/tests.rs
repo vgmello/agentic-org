@@ -2761,9 +2761,21 @@ fn offboarding_ends_an_agents_relations_and_keeps_its_record_and_its_handle() {
     org.lead("t1", Some(&agent)).unwrap();
     org.reports(&agent, Some(&boss)).unwrap();
     org.reports(&report, Some(&agent)).unwrap();
+    // An agent that reported to it and was offboarded earlier: its record is history.
+    let gone = mid("GONE");
+    org.hire(&gone, "gone").unwrap();
+    org.reports(&gone, Some(&agent)).unwrap();
+    org.offboard(&gone).unwrap();
+    let gone_before = org.state.members[&gone].clone();
     let before = org.state.members[&agent].version;
 
     let changes = org.offboard(&agent).unwrap();
+    // It is left alone: it still reports to the agent, at the same version, and is not in the
+    // changes at all.
+    assert_eq!(org.state.members[&gone], gone_before);
+    assert!(!changes
+        .iter()
+        .any(|c| matches!(c, OrgChange::MemberUpserted { member } if member.id == gone)));
 
     // Its memberships end, the team it led loses its lead, whoever reported to it now reports
     // to its manager, and the record stays, offboarded, one version up.
@@ -3151,4 +3163,41 @@ fn clearing_a_field_alone_is_an_edit_and_removes_it() {
     let changes = org.edit_agent(&id, |p| p.clear_focus = true).unwrap();
     assert_eq!(agent_of(&changes, &id).focus, None);
     assert_eq!(org.state.members[&id].version, 4);
+}
+
+#[test]
+fn removing_a_member_outright_re_points_everyone_who_reported_to_it_even_offboarded_agents() {
+    let mut org = Org::new();
+    let (boss, mid_manager, old) = (mid("BOSS"), mid("MID"), mid("OLDA"));
+    org.person(&boss, "Bea").unwrap();
+    org.person(&mid_manager, "Max").unwrap();
+    org.reports(&mid_manager, Some(&boss)).unwrap();
+    org.hire(&old, "old").unwrap();
+    org.reports(&old, Some(&mid_manager)).unwrap();
+    org.offboard(&old).unwrap();
+
+    org.remove(&mid_manager).unwrap();
+
+    // member.remove is a hard delete: nobody may point at the deleted member.
+    assert_eq!(
+        org.state.members[&old].reports_to_member_id.as_deref(),
+        Some(boss.as_str())
+    );
+}
+
+#[test]
+fn an_agents_office_id_is_checked_for_its_shape_before_it_is_looked_up() {
+    let mut org = Org::new();
+    for bad in ["", "has space", "bad!", &"o".repeat(ID_MAX_CHARS + 1)] {
+        assert_eq!(
+            code(org.hire_with(&mid("AG1"), "Pixel", bad, profile("pixel"))),
+            ErrorCode::InvalidRequest,
+            "{bad:?}"
+        );
+    }
+    // A well-formed office that is not there is not_found.
+    assert_eq!(
+        code(org.hire_with(&mid("AG1"), "Pixel", "nowhere", profile("pixel"))),
+        ErrorCode::NotFound
+    );
 }
