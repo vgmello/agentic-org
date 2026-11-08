@@ -699,6 +699,23 @@ fn defer_racing_notify_never_loses_a_snooze() {
 }
 
 #[test]
+fn errors_come_in_the_order_they_used_to() {
+    let env = setup("error_order");
+    // Not authorized beats an unknown flag.
+    let r = env.run(ME, &["profile", "set", PEER, "--bogus"]);
+    assert_eq!(r.code, 1);
+    assert!(r.stderr.contains("can't edit"), "{}", r.stderr);
+    let r = env.run(ME, &["msg", "register", "carol", "--bogus"]);
+    assert!(r.stderr.contains("can't edit"), "{}", r.stderr);
+    assert!(!env.root.join("spool/inbox/carol").exists());
+    // A --timeout over 24h is refused as it's parsed: before a missing --to or reading stdin.
+    let r = env.run(ME, &["msg", "ask", "--timeout", "25h", "q"]);
+    assert!(r.stderr.contains("at most 24h"), "{}", r.stderr);
+    let r = env.run(ME, &["msg", "wait", "--timeout", "25h", "--bogus"]);
+    assert!(r.stderr.contains("at most 24h"), "{}", r.stderr);
+}
+
+#[test]
 fn register_refuses_bad_flags_before_creating_anything() {
     let env = TempOrgHome::new("register_flags");
     for args in [

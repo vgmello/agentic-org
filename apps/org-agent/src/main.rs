@@ -11,9 +11,10 @@ use std::process::ExitCode;
 use std::time::{Duration, SystemTime};
 
 use org_spool::{
-    format_iso8601_utc, json_quote, parse_duration_arg, request_interrupt, sanitize_inline_text,
-    validate_agent_id, DirectoryCard, Envelope, InboxQuery, MessagePriority, MetaValue,
-    NotifyOptions, Outgoing, ProfileUpdate, RelayOutcome, Spool, SpoolError,
+    authorize_profile_edit, check_wait_timeout, format_iso8601_utc, json_quote, parse_duration_arg,
+    request_interrupt, sanitize_inline_text, validate_agent_id, DirectoryCard, Envelope,
+    InboxQuery, MessagePriority, MetaValue, NotifyOptions, Outgoing, ProfileUpdate, RelayOutcome,
+    Spool, SpoolError,
 };
 
 const EXIT_OK: u8 = 0;
@@ -246,7 +247,10 @@ fn parse_outgoing(args: &[String], kind: OutgoingKind) -> Result<OutgoingArgs, C
             "--" => after_double_dash = true,
             "--to" if kind != OutgoingKind::Reply => out.to = Some(value()?),
             "--timeout" if kind == OutgoingKind::Ask => {
-                out.timeout = Some(parse_duration_arg(&value()?).map_err(CliError::Usage)?);
+                let timeout = parse_duration_arg(&value()?).map_err(CliError::Usage)?;
+                // Refused as it's parsed, before the other flags and the body (stdin).
+                check_wait_timeout(timeout).map_err(CliError::Usage)?;
+                out.timeout = Some(timeout);
             }
             "--subject" => out.subject = Some(value()?),
             "--priority" => {
@@ -661,8 +665,10 @@ fn run(args: Vec<String>) -> Result<u8, CliError> {
             } else {
                 (resolve_identity(as_agent.as_deref())?, rest)
             };
-            let update = parse_profile_flags(flag_slice)?;
+            // Authorized first, then the flags (the order v1-old's users see errors in).
             let me = resolve_identity(as_agent.as_deref())?;
+            authorize_profile_edit(&me, &target_id)?;
+            let update = parse_profile_flags(flag_slice)?;
             let updated = spool.edit_profile(&me, &target_id, &update)?;
             spool.touch_last_seen(&me);
             if json_flag {
@@ -789,12 +795,13 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
             } else {
                 (resolve_identity(as_agent.as_deref())?, sub_args)
             };
-            // Flags are parsed (and refused) before anything is created.
-            let update = parse_profile_flags(flag_slice)?;
-            if update.is_empty() {
+            // Authorized, then flags parsed (and refused), before anything is created.
+            if flag_slice.is_empty() {
                 spool.register(&id)?;
             } else {
                 let me = resolve_identity(as_agent.as_deref())?;
+                authorize_profile_edit(&me, &id)?;
+                let update = parse_profile_flags(flag_slice)?;
                 spool.edit_profile(&me, &id, &update)?;
             }
             if let Ok(me) = resolve_identity(as_agent.as_deref()) {
@@ -1239,6 +1246,7 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
                             .get(j)
                             .ok_or_else(|| CliError::Usage("missing value for --timeout".into()))?;
                         timeout = parse_duration_arg(raw).map_err(CliError::Usage)?;
+                        check_wait_timeout(timeout).map_err(CliError::Usage)?;
                     }
                     "--from" => {
                         j += 1;
