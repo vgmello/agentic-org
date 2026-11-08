@@ -619,7 +619,10 @@ impl Client {
             slot: Arc::clone(&self.shared.events),
         };
         let mut sent = false;
-        let params = SubscribeParams { from_position };
+        let params = SubscribeParams {
+            from_position,
+            from_work_position: None,
+        };
         match self.call_tracked::<Subscribe>(&params, timeout, &mut sent) {
             Ok(Empty {}) => Ok(subscription),
             Err(error) => {

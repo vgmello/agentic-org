@@ -936,6 +936,7 @@ fn several_teams_can_share_a_project_and_links_are_their_own_entities() {
         command_id,
         project_team_id: "l1".into(),
         expected_version: 5,
+        areas_to_team_id: None,
     }));
     assert_eq!(code(stale), ErrorCode::Conflict);
     let command_id = org.id();
@@ -944,6 +945,7 @@ fn several_teams_can_share_a_project_and_links_are_their_own_entities() {
             command_id,
             project_team_id: "l1".into(),
             expected_version: 1,
+            areas_to_team_id: None,
         }))
         .unwrap();
     assert_eq!(
@@ -1241,6 +1243,7 @@ fn a_stale_version_is_a_conflict_on_every_command_that_checks_one() {
             command_id: "c".into(),
             project_team_id: "l1".into(),
             expected_version: stale,
+            areas_to_team_id: None,
         }),
     ];
     for command in commands {
@@ -1697,6 +1700,7 @@ fn what_is_not_there_is_not_found_on_every_command_that_names_it() {
             command_id: "c".into(),
             project_team_id: "nope".into(),
             expected_version: 1,
+            areas_to_team_id: None,
         }),
     );
     assert_eq!(code(unlink), ErrorCode::NotFound);
