@@ -5,6 +5,7 @@ members = [
   "crates/org-client",
   "crates/org-office",
   "crates/org-spool",
+  "crates/org-copilot",
   "apps/org-office-server",
   "apps/org-agent",
   "apps/desktop/src-tauri",
@@ -16,6 +17,7 @@ default-members = [
   "crates/org-client",
   "crates/org-office",
   "crates/org-spool",
+  "crates/org-copilot",
   "apps/org-office-server",
   "apps/org-agent",
 ]
