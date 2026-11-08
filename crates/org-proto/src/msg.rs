@@ -51,8 +51,9 @@
 //!
 //! ## Addressing
 //! A recipient or member (`to`, `from`, `member`, `participant`) is first trimmed of
-//! leading and trailing whitespace (HQ compares handles trimmed), and an empty result names
-//! no member. It then resolves in this order (ADR-0003 §2.6):
+//! leading and trailing ASCII whitespace (space, tab, line feed, form feed, carriage return;
+//! HQ compares handles trimmed), and an empty result names no member. Other whitespace, such
+//! as U+00A0, is text. It then resolves in this order (ADR-0003 §2.6):
 //! 1. [`OWNER_HANDLE`](crate::OWNER_HANDLE) (`owner`, ignoring case) is the organization's
 //!    owner. It comes before ids, so a member whose id is `owner` can't capture it. The
 //!    owner is addressed only as `owner`: the owner's name is not a handle.
