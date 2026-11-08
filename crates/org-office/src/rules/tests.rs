@@ -3201,3 +3201,60 @@ fn an_agents_office_id_is_checked_for_its_shape_before_it_is_looked_up() {
         ErrorCode::NotFound
     );
 }
+
+#[test]
+fn an_agent_edit_tells_a_bad_value_before_a_stale_version() {
+    let mut org = Org::new();
+    let id = mid("AG1");
+    org.hire(&id, "pixel").unwrap();
+
+    // invalid_name, invalid_request: each comes before `conflict`.
+    assert_eq!(
+        code(org.edit_agent(&id, |p| {
+            p.name = Some(" ".into());
+            p.expected_version = 99;
+        })),
+        ErrorCode::InvalidName
+    );
+    assert_eq!(
+        code(org.edit_agent(&id, |p| {
+            p.messaging_name = Some("-bad".into());
+            p.expected_version = 99;
+        })),
+        ErrorCode::InvalidName
+    );
+    let command_id = org.id();
+    assert_eq!(
+        code(org.run(OrgCommand::MemberSetAgentStatus(
+            MemberSetAgentStatusParams {
+                command_id,
+                member_id: id.clone(),
+                expected_version: 99,
+                status: AgentStatus::Offboarded,
+            }
+        ))),
+        ErrorCode::InvalidRequest
+    );
+    let command_id = org.id();
+    assert_eq!(
+        code(
+            org.run(OrgCommand::MemberSetRunMode(MemberSetRunModeParams {
+                command_id,
+                member_id: id.clone(),
+                expected_version: 99,
+                run_mode: Some(RunMode::Scheduled),
+                schedule: None,
+            }))
+        ),
+        ErrorCode::InvalidRequest
+    );
+    // And a good value with a stale version is the conflict.
+    assert_eq!(
+        code(org.edit_agent(&id, |p| {
+            p.role = Some("x".into());
+            p.expected_version = 99;
+        })),
+        ErrorCode::Conflict
+    );
+    assert_eq!(org.state.members[&id].version, 1);
+}
