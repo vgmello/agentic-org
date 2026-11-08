@@ -114,6 +114,20 @@
 	const selectedMember = $derived(memberById(snapshot, selected));
 	const parents = (nodes: TeamNode[]): string[] => nodes.flatMap((n) => (n.children.length ? [n.team.id, ...parents(n.children)] : []));
 
+	/**
+	 * Arrow keys move between the member tiles in the chart you're in (TEAM-10), in reading order; Home and End go
+	 * to the first and last. Tab still visits every control (menus, toggles) as before.
+	 */
+	function onTileKey(e: KeyboardEvent) {
+		const here = (e.target as HTMLElement).closest('[data-member-tile]');
+		if (!here || !['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+		const tiles = Array.from((e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('[data-member-tile]'));
+		const i = tiles.indexOf(here as HTMLElement);
+		const next = e.key === 'Home' ? 0 : e.key === 'End' ? tiles.length - 1 : e.key === 'ArrowRight' || e.key === 'ArrowDown' ? Math.min(i + 1, tiles.length - 1) : Math.max(i - 1, 0);
+		e.preventDefault();
+		tiles[next]?.focus();
+	}
+
 	function onTabKey(e: KeyboardEvent) {
 		const i = TABS.findIndex((t) => t.id === tab);
 		const next =
@@ -391,6 +405,8 @@
 
 	<SelectedMember snapshot={live} member={selectedMember} offices={offices} organization={organizationName} onclear={() => (selected = undefined)} onedit={(m) => ((editingPerson = m), (editPersonOpen = true))} onremove={(m) => ((removingPerson = m), (removePersonOpen = true))} onmanager={(m) => ((managing = m), (managerOpen = true))} onteams={(m) => ((memberTeams = m), (memberTeamsOpen = true))} oneditagent={(m) => ((editingAgent = m), (editAgentOpen = true))} onpause={(m) => ((pausing = m), (pauseOpen = true))} onresume={resumeAgent} onhowitruns={(m) => ((howRuns = m), (howRunsOpen = true))} onoffboard={(m) => ((offboarding = m), (offboardOpen = true))} onmove={(m) => ((movingMember = m), (moveMemberOpen = true))} />
 
+	<!-- Arrow keys between tiles are a convenience on top of Tab: the tabpanels themselves stay plain. -->
+	<div role="presentation" onkeydown={onTileKey}>
 	{#if tab === 'teams'}
 		<div id="panel-teams" role="tabpanel" aria-labelledby="tab-teams" class="space-y-5">
 			<h2 class="sr-only">Teams</h2>
@@ -537,6 +553,7 @@
 			{/if}
 		</div>
 	{/if}
+	</div>
 </div>
 
 {#if former.length > 0}

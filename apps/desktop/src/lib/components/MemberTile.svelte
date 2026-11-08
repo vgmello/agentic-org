@@ -46,6 +46,7 @@
 
 <button
 	type="button"
+	data-member-tile
 	title={label}
 	aria-label={label}
 	aria-pressed={selected}

@@ -253,3 +253,24 @@ test('a stale edit: after HQ changed the agent, the dialog says so and a retry w
 	await expect(page.getByText('Saved Sam Okafor.')).toBeVisible();
 	await expect(strip(page).getByTestId('agent-line')).toContainText('Principal engineer');
 });
+
+test('TEAM-10: arrow keys move between the member tiles, Home and End go to the first and last', async ({ page }) => {
+	await openChart(page);
+	const tiles = page.locator('[data-member-tile]');
+	const count = await tiles.count();
+	await tiles.first().focus();
+	await page.keyboard.press('ArrowRight');
+	await expect(tiles.nth(1)).toBeFocused();
+	await page.keyboard.press('ArrowDown');
+	await expect(tiles.nth(2)).toBeFocused();
+	await page.keyboard.press('ArrowLeft');
+	await expect(tiles.nth(1)).toBeFocused();
+	await page.keyboard.press('End');
+	await expect(tiles.nth(count - 1)).toBeFocused();
+	await page.keyboard.press('ArrowRight'); // the end stays the end
+	await expect(tiles.nth(count - 1)).toBeFocused();
+	await page.keyboard.press('Home');
+	await expect(tiles.first()).toBeFocused();
+	await page.keyboard.press('Enter'); // a tile is a button: Enter selects it
+	await expect(page.getByTestId('selected-member')).toBeVisible();
+});
