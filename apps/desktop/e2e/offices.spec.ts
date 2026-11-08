@@ -20,6 +20,7 @@ test('OFC-1: the list shows HQ first with its status, where it runs, and how man
 	await expect(hq).toContainText('Online');
 	await expect(hq).toContainText("This Mac (you're here)");
 	await expect(hq).toContainText('7 agents');
+	await expect(page.getByTestId('sample-data-note')).toContainText('simulated');
 	await expect(page.getByTestId('add-hint')).toContainText('Add an office to run agents on another Mac');
 	await expect(page.getByTestId('unplaced-note')).toContainText('1 agent is not placed in an office: Inês Duarte');
 	await shot(page, 'offices');
@@ -95,13 +96,15 @@ test('OFC-8: removing an office names what happens, and removes it only after th
 	await expect(dialog).toContainText('Remove Office 2 from Acme?');
 	await expect(dialog).toContainText("Office 2 can't sync again");
 	await expect(dialog).toContainText('No agents run there');
+	await expect(dialog).toContainText('If Office 2 is offline when you remove it'); // OFC-8: the offline case is always explained
 	await expect(dialog).toContainText('You can add it to Acme again later');
+	await expect(dialog.getByTestId('sample-data-note-remove')).toBeVisible();
 	await shot(page, 'offices-remove');
 
 	await dialog.getByRole('button', { name: 'Cancel' }).click();
 	await expect(rows(page)).toHaveCount(2); // nothing happened
 	await page.getByRole('button', { name: 'Remove office…' }).click();
-	await page.getByRole('alertdialog').getByRole('button', { name: 'Remove office' }).click();
+	await page.getByRole('alertdialog').getByRole('button', { name: 'Remove Office 2' }).click();
 	await expect(rows(page)).toHaveCount(1);
 	await expect(page.getByTestId('add-hint')).toBeVisible();
 });
@@ -126,8 +129,37 @@ test('a long office name wraps in the remove dialog and the confirm button stays
 	await expect(rows(page)).toHaveCount(2, { timeout: 15_000 });
 	await rows(page).nth(1).getByRole('button').first().click();
 	await page.getByRole('button', { name: 'Remove office…' }).click();
-	const confirm = page.getByRole('alertdialog').getByRole('button', { name: 'Remove office' });
+	const confirm = page.getByRole('alertdialog').getByRole('button', { name: /^Remove W+$/ });
 	await expect(confirm).toBeInViewport();
 	const box = (await page.getByRole('alertdialog').boundingBox())!;
 	expect(box.width).toBeLessThanOrEqual(1440);
+});
+
+test('the Add office sheet says adding is simulated, and a long name wraps in the progress and failure messages', async ({ page }) => {
+	await openOffices(page, '?mock=office_start_fails');
+	await page.getByRole('button', { name: 'Add office' }).click();
+	await expect(page.getByTestId('sample-data-note-add')).toContainText('Sample data');
+	await page.getByLabel('Name').fill('W'.repeat(64));
+	await page.getByRole('button', { name: 'Continue' }).click();
+	await expect(page.getByRole('alert')).toContainText("couldn't start", { timeout: 15_000 });
+	await expect(page.getByLabel('Name')).toBeDisabled(); // Try again restarts that office; the name can't change now
+	const sheet = await page.getByRole('dialog').boundingBox();
+	for (const el of [page.getByTestId('add-steps'), page.getByRole('alert')]) {
+		const box = (await el.boundingBox())!;
+		expect(box.x + box.width).toBeLessThanOrEqual(sheet!.x + sheet!.width + 1);
+	}
+	await shot(page, 'offices-add-long-name');
+});
+
+test('a name that is already taken is fixed in the field, not shown as a Stopped office', async ({ page }) => {
+	await openOffices(page);
+	await page.getByRole('button', { name: 'Add office' }).click();
+	await page.getByLabel('Name').fill('Office 2');
+	await page.getByRole('button', { name: 'Continue' }).click();
+	await expect(rows(page)).toHaveCount(2, { timeout: 15_000 });
+	await page.getByRole('button', { name: 'Add office' }).click();
+	await page.getByLabel('Name').fill('office 2');
+	await page.getByRole('button', { name: 'Continue' }).click();
+	await expect(page.getByRole('alert')).toContainText('already an office called');
+	await expect(page.getByRole('button', { name: 'Try again' })).toHaveCount(0);
 });

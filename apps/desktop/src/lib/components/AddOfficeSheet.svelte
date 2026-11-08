@@ -4,6 +4,7 @@
 	import CircleAlert from '@lucide/svelte/icons/circle-alert';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import { Alert, AlertDescription, AlertTitle } from '$lib/components/ui/alert';
+	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
@@ -16,8 +17,9 @@
 	let {
 		open = $bindable(false),
 		offices,
+		sample = false,
 		onchanged
-	}: { open: boolean; offices: OfficeWithExtras[]; /** The list changed (an office was added, or was added but stopped): reload it. */ onchanged: () => void } = $props();
+	}: { open: boolean; offices: OfficeWithExtras[]; /** Adding is simulated (no real host yet): say so. */ sample?: boolean; /** The list changed (an office was added, or was added but stopped): reload it. */ onchanged: () => void } = $props();
 
 	let name = $state('');
 	let nameError = $state<string | undefined>();
@@ -64,10 +66,16 @@
 			onchanged();
 		} catch (error) {
 			failure = toAppError(error);
-			if (failure.code === 'invalid_name') nameError = failure.message;
-			else {
-				stoppedId = (failure as OfficeStartError).office_id ?? stoppedId;
-				onchanged(); // the office exists as Stopped: show it in the list
+			const officeId = (failure as Partial<OfficeStartError>).office_id;
+			if (failure.code === 'invalid_name' || failure.code === 'already_exists') {
+				nameError = failure.message; // about what was typed: fix it in the field
+				failure = undefined;
+			} else if (failure.code === 'not_found') {
+				stoppedId = undefined; // the stopped office is gone: the next try adds a new one
+				onchanged();
+			} else {
+				stoppedId = officeId ?? stoppedId; // only an error that names an office leaves a Stopped one
+				onchanged(); // show how things are now
 			}
 		} finally {
 			busy = false;
@@ -91,6 +99,7 @@
 		<SheetHeader>
 			<SheetTitle>Add office</SheetTitle>
 			<SheetDescription>An office is where agents run and a copy of the organization's records is kept.</SheetDescription>
+			{#if sample}<p class="flex items-center gap-x-2 text-xs/5 text-gray-400" data-testid="sample-data-note-add"><Badge variant="secondary">Sample data</Badge> Simulated: nothing is started on this Mac.</p>{/if}
 		</SheetHeader>
 
 		<form class="flex flex-1 flex-col gap-y-6 px-4" onsubmit={submit} novalidate>
@@ -99,7 +108,7 @@
 				<Input
 					id="office-name"
 					bind:value={name}
-					disabled={busy}
+					disabled={busy || !!stoppedId}
 					autocomplete="off"
 					aria-invalid={nameError ? true : undefined}
 					aria-describedby={nameError ? 'office-name-error' : undefined}
@@ -127,9 +136,9 @@
 			</fieldset>
 
 			{#if busy || failure}
-				<ol class="space-y-2" aria-live="polite" data-testid="add-steps">
+				<ol class="min-w-0 space-y-2" aria-live="polite" data-testid="add-steps">
 					{#each ADD_STEPS as s (s)}
-						<li class="flex items-center gap-x-3 text-sm/6 {step === s || reached(s) ? 'text-white' : 'text-gray-500'}">
+						<li class="flex min-w-0 items-center gap-x-3 text-sm/6 [overflow-wrap:anywhere] {step === s || reached(s) ? 'text-white' : 'text-gray-500'}">
 							{#if reached(s)}<Check class="size-4 text-green-400" aria-hidden="true" />
 							{:else if step === s && busy}<LoaderCircle class="size-4 animate-spin text-indigo-400" aria-hidden="true" />
 							{:else if step === s && failure}<CircleAlert class="size-4 text-red-400" aria-hidden="true" />
@@ -140,16 +149,16 @@
 				</ol>
 			{/if}
 
-			{#if failure && failure.code !== 'invalid_name'}
+			{#if failure}
 				<Alert variant="destructive">
 					<CircleAlert aria-hidden="true" />
-					<AlertTitle>{failure.message}</AlertTitle>
-					<AlertDescription>It is listed as Stopped. Try again, or remove it from the list.</AlertDescription>
+					<AlertTitle class="[overflow-wrap:anywhere]">{failure.message}</AlertTitle>
+					<AlertDescription>{stoppedId ? 'It is listed as Stopped. Try again, or remove it from the list.' : 'Try again in a moment.'}</AlertDescription>
 				</Alert>
 			{/if}
 
 			<SheetFooter class="mt-auto px-0">
-				{#if failure && failure.code !== 'invalid_name'}
+				{#if failure}
 					<Button type="button" variant="outline" onclick={copyDetails}>{copied ? 'Copied' : 'Copy details'}</Button>
 					<Button type="button" variant="outline" onclick={() => (open = false)}>Close</Button>
 					<Button type="submit" disabled={busy}>Try again</Button>

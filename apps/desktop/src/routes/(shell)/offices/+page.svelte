@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { invalidate } from '$app/navigation';
 	import Plus from '@lucide/svelte/icons/plus';
+	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import { onMount } from 'svelte';
 	import AddOfficeSheet from '$lib/components/AddOfficeSheet.svelte';
 	import OfficeDetailsSheet from '$lib/components/OfficeDetailsSheet.svelte';
@@ -13,8 +14,10 @@
 		AlertDialogDescription,
 		AlertDialogFooter,
 		AlertDialogHeader,
+		AlertDialogMedia,
 		AlertDialogTitle
 	} from '$lib/components/ui/alert-dialog';
+	import { Badge } from '$lib/components/ui/badge';
 	import { Button, buttonVariants } from '$lib/components/ui/button';
 	import { officesApi } from '$lib/offices/api';
 	import { agentsIn, isHq, orderOffices, removeSummary, secondaryText, unplacedAgents } from '$lib/offices/model';
@@ -31,13 +34,20 @@
 	const organization = $derived(data.connection.organization.name);
 
 	let now = $state(0);
-	onMount(() => (now = Date.now()));
+	onMount(() => {
+		now = Date.now();
+		const tick = setInterval(() => (now = Date.now()), 30_000); // "last seen 2 min ago" keeps counting
+		return () => clearInterval(tick);
+	});
 
 	let adding = $state(false);
 	let detailsId = $state<string | undefined>();
 	// The open sheet shows the latest data for its office, not the copy captured when it was clicked.
 	const detailsFor = $derived(data.offices.find((o) => o.id === detailsId));
 	let detailsOpen = $state(false);
+	$effect(() => {
+		if (detailsOpen && !detailsFor) detailsOpen = false; // the office went away (removed elsewhere): close its sheet
+	});
 	let removing = $state<OfficeWithExtras | undefined>();
 	let removingName = $state(''); // kept while the dialog closes, so its title doesn't flash empty
 	let removeBusy = $state(false);
@@ -78,9 +88,17 @@
 
 <div class="space-y-5 px-8 py-6">
 	<div class="flex flex-wrap items-start justify-between gap-3">
-		<p class="max-w-xl text-sm/6 text-gray-400">
-			Where {organization}'s agents run. HQ keeps the records and approves new offices; every other office keeps a copy.
-		</p>
+		<div class="max-w-xl space-y-2">
+			<p class="text-sm/6 text-gray-400">
+				Where {organization}'s agents run. HQ keeps the records and approves new offices; every other office keeps a copy.
+			</p>
+			{#if data.sample}
+				<!-- TEMPORARY: adding, starting and removing offices are simulated until the real host answers. -->
+				<p class="flex items-center gap-x-2 text-xs/5 text-gray-400" data-testid="sample-data-note">
+					<Badge variant="secondary">Sample data</Badge> Adding and removing offices is simulated here; nothing is started on this Mac.
+				</p>
+			{/if}
+		</div>
 		<div class="text-right">
 			<Button disabled={!canManage} aria-describedby={canManage ? undefined : 'add-reason'} onclick={() => (adding = true)}><Plus aria-hidden="true" /> Add office</Button>
 			{#if !canManage}<p id="add-reason" class="mt-1 text-xs/5 text-gray-400">Add offices from HQ's Mac ({offices.find(isHq)?.name ?? 'HQ'}).</p>{/if}
@@ -116,21 +134,23 @@
 	<p class="text-xs/5 text-gray-500">Shown from this Mac.</p>
 </div>
 
-<AddOfficeSheet bind:open={adding} offices={data.offices} onchanged={added} />
+<AddOfficeSheet bind:open={adding} offices={data.offices} sample={data.sample} onchanged={added} />
 <OfficeDetailsSheet bind:open={detailsOpen} office={detailsFor} snapshot={data.snapshot} now={now || Date.now()} canRemove={canManage} onremove={(o) => ((removing = o), (removingName = o.name), (removeError = undefined))} />
 
 <AlertDialog open={!!removing} onOpenChange={(o) => !o && (removing = undefined)}>
 	<AlertDialogContent>
 		<AlertDialogHeader>
+			<AlertDialogMedia class="bg-red-500/15 text-red-400"><Trash2 aria-hidden="true" /></AlertDialogMedia>
 			<AlertDialogTitle class="[overflow-wrap:anywhere]">Remove {removingName} from {organization}?</AlertDialogTitle>
 			<AlertDialogDescription class="[overflow-wrap:anywhere]">
 				{#each summary as line (line)}<span class="block">{line}</span>{/each}
 			</AlertDialogDescription>
+			{#if data.sample}<p class="text-xs/5 text-gray-400" data-testid="sample-data-note-remove"><Badge variant="secondary">Sample data</Badge> Simulated: nothing real is removed.</p>{/if}
 			{#if removeError}<p class="text-sm/6 text-red-400" role="alert">{removeError}</p>{/if}
 		</AlertDialogHeader>
 		<AlertDialogFooter>
 			<AlertDialogCancel>Cancel</AlertDialogCancel>
-			<AlertDialogAction class={buttonVariants({ variant: 'destructive' })} disabled={removeBusy} onclick={confirmRemove}>Remove office</AlertDialogAction>
+			<AlertDialogAction class={buttonVariants({ variant: 'destructive' })} disabled={removeBusy} onclick={confirmRemove}>Remove {removingName}</AlertDialogAction>
 		</AlertDialogFooter>
 	</AlertDialogContent>
 </AlertDialog>

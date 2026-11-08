@@ -126,7 +126,7 @@ describe('OFC-8 the removal wording', () => {
 	it('says no agents run there when none do, and explains the offline case', () => {
 		const empty = removeSummary(office('empty', 'Empty'), 'Acme', s).join(' ');
 		expect(empty).toContain('No agents run there.');
-		expect(empty).not.toContain('keeps its copy');
+		expect(empty).toContain('If Empty is offline when you remove it, it keeps its copy until it next connects');
 		const offline = removeSummary(office('empty', 'Empty', { status: 'offline' }), 'Acme', s).join(' ');
 		expect(offline).toContain('keeps its copy until it next connects, then deletes it');
 	});

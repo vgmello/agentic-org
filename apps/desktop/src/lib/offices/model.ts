@@ -124,7 +124,11 @@ export function removeSummary(o: OfficeWithExtras, orgName: string, s: OrgSnapsh
 	} else {
 		lines.push('No agents run there.');
 	}
-	if (offline) lines.push(`${o.name} is offline, so it keeps its copy until it next connects, then deletes it.`);
+	lines.push(
+		offline
+			? `${o.name} is offline, so it keeps its copy until it next connects, then deletes it.`
+			: `If ${o.name} is offline when you remove it, it keeps its copy until it next connects, then deletes it.`
+	);
 	lines.push(`You can add it to ${orgName} again later.`);
 	return lines;
 }

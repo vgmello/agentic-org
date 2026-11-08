@@ -1,7 +1,7 @@
 import { defineConfig } from '@playwright/test';
 
 // Several people (and agents) run this suite on one machine: PW_PORT picks another port when 4173 is taken.
-const port = Number(process.env.PW_PORT ?? 4173);
+const port = Number(process.env.PW_PORT) || 4173;
 
 // UI flows run in a browser against `bun run dev`, with the TypeScript office mock
 // (src/lib/office/mock.ts). The Rust shell is covered by `cargo test`.
