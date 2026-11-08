@@ -52,9 +52,11 @@ pub enum CopilotError {
     Unavailable,
     /// Wire: `invalid_request`; over a cap, `too_large`; an unknown feature, `copilot_unavailable`.
     Invalid(InvalidReason),
-    /// A run of this person's for this feature is still going, or too many runs are in flight.
-    /// Wire: `copilot_busy`.
+    /// A run of this person's for this feature is still going. Wire: `copilot_busy`.
     Busy,
+    /// Too many adapter calls are in flight (stuck ones count until they return). Wire:
+    /// `copilot_busy` too, with its own message and log line.
+    Overloaded,
     /// Wire: `timeout`.
     Timeout,
     /// Wire: `copilot_failed`.
@@ -71,7 +73,7 @@ impl CopilotError {
             }
             CopilotError::Invalid(InvalidReason::TooLarge) => "too_large",
             CopilotError::Invalid(_) => "invalid_request",
-            CopilotError::Busy => "copilot_busy",
+            CopilotError::Busy | CopilotError::Overloaded => "copilot_busy",
             CopilotError::Timeout => "timeout",
             CopilotError::Failed(_) => "copilot_failed",
         }
@@ -84,7 +86,7 @@ impl CopilotError {
                 Outcome::Unavailable
             }
             CopilotError::Invalid(_) => Outcome::InvalidInput,
-            CopilotError::Busy => Outcome::Busy,
+            CopilotError::Busy | CopilotError::Overloaded => Outcome::Busy,
             CopilotError::Timeout => Outcome::Timeout,
             CopilotError::Failed(_) => Outcome::Failed,
         }
@@ -105,6 +107,7 @@ impl fmt::Display for CopilotError {
                 "the input looks like it holds a secret"
             }
             CopilotError::Busy => "a run of this feature is still going",
+            CopilotError::Overloaded => "too many copilot runs are in flight",
             CopilotError::Timeout => "the copilot took too long",
             CopilotError::Failed(FailReason::Runtime) => "the runtime failed",
             CopilotError::Failed(FailReason::AnswerTooLarge) => "the answer was too large",
@@ -276,6 +279,20 @@ impl<R: CopilotRuntime> Copilot<R> {
         if contains_secret(&answer) {
             return Err(Failed(FailReason::SecretInAnswer));
         }
+        let mut answer = answer;
+        for (field, kind) in feature.context_refs() {
+            let offered = answer["draft"][field].as_str().is_some_and(|value| {
+                request
+                    .context
+                    .iter()
+                    .any(|c| c.kind == *kind && c.text == value)
+            });
+            if !offered {
+                if let Some(draft) = answer["draft"].as_object_mut() {
+                    draft.remove(field);
+                }
+            }
+        }
         let notes = answer["notes"]
             .as_array()
             .map(|n| {
@@ -298,7 +315,7 @@ impl<R: CopilotRuntime> Copilot<R> {
     /// this returns.
     fn run_with_deadline(&self, run: RunRequest) -> Result<RunOutput, CopilotError> {
         let flight = InFlight::start(&self.in_flight, self.limits.max_concurrent_runs)
-            .ok_or(CopilotError::Busy)?;
+            .ok_or(CopilotError::Overloaded)?;
         let timeout = self.limits.timeout;
         let cancel = CancelToken::new();
         let (done, answer) = mpsc::channel();

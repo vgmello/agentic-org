@@ -12,6 +12,9 @@ export interface BugFields {
 	environment: string;
 }
 
+/** The most characters a bug's environment may have (mirrors `WORK_ENVIRONMENT_MAX_CHARS` in `org-proto`). */
+export const BUG_ENVIRONMENT_MAX_CHARS = 2000;
+
 /** The longest each text field may be (the office's own caps; the dialog only pre-checks). */
 export interface BugFieldLimits {
 	title: number;
@@ -38,12 +41,30 @@ export function prefillFromDraft(current: BugFields, draft: BugDraft, areas: { i
 	};
 }
 
+/** The names of the fields whose draft was longer than the field allows, so the person is told it was cut. */
+export function clippedFields(draft: BugDraft, limits: BugFieldLimits): string[] {
+	const over = (value: string | undefined, max: number) => (value?.trim() ? fitTo(value, max).clipped : false);
+	return [
+		over(draft.title, limits.title) && 'Title',
+		over(draft.what_happened, limits.text) && 'What happened',
+		over(draft.expected, limits.text) && 'Expected',
+		over(draft.steps, limits.text) && 'Steps to reproduce',
+		over(draft.environment, limits.environment) && 'Environment'
+	].filter((x): x is string => typeof x === 'string');
+}
+
 /**
  * Fill the fields from a draft. `before` is what the person had before the FIRST draft: a second
  * draft keeps it, so Undo always brings back the person's own text and never an earlier draft.
  */
-export function applyDraft(before: BugFields | undefined, current: BugFields, draft: BugDraft, areas: { id: string }[], limits: BugFieldLimits): { fields: BugFields; before: BugFields } {
-	return { fields: prefillFromDraft(current, draft, areas, limits), before: before ?? { ...current } };
+export function applyDraft(
+	before: BugFields | undefined,
+	current: BugFields,
+	draft: BugDraft,
+	areas: { id: string }[],
+	limits: BugFieldLimits
+): { fields: BugFields; before: BugFields; clipped: string[] } {
+	return { fields: prefillFromDraft(current, draft, areas, limits), before: before ?? { ...current }, clipped: clippedFields(draft, limits) };
 }
 
 /** Undo: the person's own fields from before the first draft, or the fields as they are when there was no draft. */

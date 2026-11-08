@@ -135,6 +135,37 @@ test('report dialog: Draft or improve is on the title, what happened, expected a
 	await expect(field).toHaveValue('  the save  button does nothing');
 });
 
+test('report dialog field: Undo after two drafts brings back the person’s own text, not the first draft', async ({ page }) => {
+	const dialog = await openReportDialog(page);
+	const field = dialog.getByLabel('What happened');
+	await field.fill('foo');
+	for (const instruction of ['make it shorter', 'make it friendlier']) {
+		await dialog.getByRole('button', { name: 'Draft or improve What happened' }).click();
+		const panel = dialog.getByTestId('copilot-bug-happened');
+		await panel.getByLabel('Instruction (optional)').fill(instruction);
+		await panel.getByRole('button', { name: 'Improve' }).click();
+		await panel.getByRole('button', { name: 'Use this draft' }).click();
+	}
+	await expect(field).toHaveValue('Foo.');
+	await field.fill('Foo. And my own edit');
+	// The person edited the draft: that edit is their text now, and the next draft goes past it.
+	await dialog.getByRole('button', { name: 'Draft or improve What happened' }).click();
+	await dialog.getByTestId('copilot-bug-happened').getByRole('button', { name: 'Improve' }).click();
+	await dialog.getByTestId('copilot-bug-happened').getByRole('button', { name: 'Use this draft' }).click();
+	await dialog.getByRole('button', { name: 'Undo', exact: true }).click();
+	await expect(field).toHaveValue('Foo. And my own edit');
+});
+
+test('report dialog: the fields are locked while a draft is on its way, so it cannot overwrite typing', async ({ page }) => {
+	const dialog = await openReportDialog(page);
+	await dialog.getByLabel('What went wrong?').fill('It crashed on start');
+	await dialog.getByRole('button', { name: 'Draft the report' }).click();
+	await expect(dialog.getByLabel('Title')).toBeDisabled();
+	await expect(dialog.getByLabel('What happened')).toBeDisabled();
+	await expect(dialog.getByLabel('Title')).toBeEnabled();
+	await expect(dialog.getByLabel('Title')).toHaveValue('It crashed on start');
+});
+
 test('report dialog: Enter in the instruction field asks the copilot and does not submit the report', async ({ page }) => {
 	const dialog = await openReportDialog(page);
 	await dialog.getByLabel('Title').fill('Typed title');

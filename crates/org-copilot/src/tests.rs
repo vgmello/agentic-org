@@ -1090,7 +1090,7 @@ fn an_adapter_that_never_returns_cannot_hold_the_slot_or_the_caller() {
     let c = Copilot::new(
         builtin(),
         FakeRuntime::new([hang, Reply::Text(GOOD_TEXT_ANSWER.into())]),
-        spy_limits(50, 8),
+        spy_limits(400, 8),
     );
     let started = std::time::Instant::now();
     assert_eq!(
@@ -1109,7 +1109,7 @@ fn the_adapter_is_told_to_stop_at_the_deadline() {
     let c = Copilot::new(
         builtin(),
         FakeRuntime::new([Reply::HangUntilCancelled]),
-        spy_limits(30, 8),
+        spy_limits(100, 8),
     );
     assert_eq!(
         c.draft("ana", &improve_request("a")).unwrap_err(),
@@ -1147,7 +1147,7 @@ fn hung_adapters_that_ignore_cancel_cannot_pile_up_threads() {
     let c = Copilot::new(
         builtin(),
         FakeRuntime::new([Reply::Hang, Reply::Text(GOOD_TEXT_ANSWER.into())]),
-        spy_limits(30, 1),
+        spy_limits(100, 1),
     );
     assert_eq!(
         c.draft("ana", &improve_request("a")).unwrap_err(),
@@ -1155,7 +1155,9 @@ fn hung_adapters_that_ignore_cancel_cannot_pile_up_threads() {
     );
     // The first adapter is still stuck: with one run allowed in flight, another person is `busy`.
     let err = c.draft("bo", &improve_request("b")).unwrap_err();
-    assert_eq!(err, CopilotError::Busy);
+    assert_eq!(err, CopilotError::Overloaded);
+    assert_eq!(err.code(), "copilot_busy");
+    assert_ne!(err.to_string(), CopilotError::Busy.to_string());
     assert_eq!(c.runtime.started(), 1, "the second run was not started");
     // When the adapter finally returns, its slot is free again.
     c.runtime.release();
@@ -1259,4 +1261,69 @@ fn every_control_character_is_escaped_in_the_data() {
     let (_, data, _) = split_prompt(&prompt);
     let back: Value = serde_json::from_str(&data).unwrap();
     assert_eq!(back["input"]["text"], json!(nasty));
+}
+
+#[test]
+fn an_area_id_the_office_did_not_give_is_dropped_from_the_draft() {
+    let with_area = |id: &str| {
+        format!(
+            r#"{{"draft":{{"title":"t","what_happened":"w","severity":"minor","area_id":"{id}"}}}}"#
+        )
+    };
+    let area = |label: &str, id: &str| ContextItem {
+        kind: "area".into(),
+        label: label.into(),
+        text: id.into(),
+    };
+    // One the office gave: kept.
+    let c = copilot(FakeRuntime::answering(&with_area("area-files")));
+    let mut request = bug_request("x");
+    request.context = vec![area("Files", "area-files"), area("General", "area-general")];
+    assert_eq!(
+        c.draft("ana", &request).unwrap().draft["area_id"],
+        "area-files"
+    );
+    // An invented one, or one that is only a label: dropped, the rest of the draft stays.
+    for answer in [with_area("area-other-project"), with_area("Files")] {
+        let c = copilot(FakeRuntime::answering(&answer));
+        let r = c.draft("ana", &request).unwrap();
+        assert!(r.draft.get("area_id").is_none(), "{answer}");
+        assert_eq!(r.draft["title"], "t");
+    }
+    // No context at all: any area id is dropped.
+    let c = copilot(FakeRuntime::answering(&with_area("area-files")));
+    assert!(c
+        .draft("ana", &bug_request("x"))
+        .unwrap()
+        .draft
+        .get("area_id")
+        .is_none());
+}
+
+#[test]
+fn hidden_tag_characters_and_other_invisible_format_characters_are_escaped() {
+    let hidden: String = [
+        "\u{e0041}",
+        "\u{e007f}",
+        "\u{ad}",
+        "\u{61c}",
+        "\u{180e}",
+        "\u{2062}",
+        "\u{fff9}",
+    ]
+    .concat();
+    let prompt = render(&text_improve(), &input_of(&hidden), &[]).unwrap();
+    let (_, data, _) = split_prompt(&prompt);
+    assert!(data.chars().all(|c| c.is_ascii() || !c.is_control()));
+    assert!(!data.contains([
+        '\u{e0041}',
+        '\u{e007f}',
+        '\u{ad}',
+        '\u{61c}',
+        '\u{180e}',
+        '\u{2062}',
+        '\u{fff9}'
+    ]));
+    let back: Value = serde_json::from_str(&data).unwrap();
+    assert_eq!(back["input"]["text"], json!(hidden));
 }

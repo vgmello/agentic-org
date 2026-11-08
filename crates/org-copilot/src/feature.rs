@@ -57,6 +57,8 @@ pub struct Feature {
     title: String,
     template: Template,
     context_kinds: Vec<String>,
+    /// Draft fields that name something from the context: (draft field, context kind).
+    context_refs: Vec<(String, String)>,
     input: Schema,
     output: Schema,
 }
@@ -104,9 +106,26 @@ impl Feature {
             title: title.to_owned(),
             template,
             context_kinds: context_kinds.iter().map(|k| (*k).to_owned()).collect(),
+            context_refs: Vec::new(),
             input,
             output,
         })
+    }
+
+    /// Say that these top-level fields of the draft name something the office gave as context:
+    /// `("area_id", "area")` means `draft.area_id` must be the `text` of a context item of kind
+    /// `area`. The copilot drops a field whose value isn't one it was given, so a model can't
+    /// invent (or be talked into) an id.
+    pub fn with_context_refs(mut self, refs: &[(&str, &str)]) -> Self {
+        self.context_refs = refs
+            .iter()
+            .map(|(f, k)| ((*f).to_owned(), (*k).to_owned()))
+            .collect();
+        self
+    }
+
+    pub(crate) fn context_refs(&self) -> &[(String, String)] {
+        &self.context_refs
     }
 
     pub fn id(&self) -> &str {

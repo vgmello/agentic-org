@@ -21,3 +21,13 @@ export function fitTo(text: string, max: number | undefined): { text: string; cl
 	if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1); // half of a surrogate pair
 	return { text: cut, clipped: true };
 }
+
+/**
+ * What Undo should bring back when a draft is used. `previous` is what Undo would restore now,
+ * `value` the field's text, `lastApplied` the draft last put in the field. A field that still holds
+ * an unedited draft keeps its earlier `previous` (the person's own text), so Undo never restores an
+ * earlier draft. A field the person has edited since, or never drafted, is its own text.
+ */
+export function undoTarget(previous: string | undefined, value: string, lastApplied: string | undefined): string {
+	return previous !== undefined && lastApplied !== undefined && value === lastApplied ? previous : value;
+}

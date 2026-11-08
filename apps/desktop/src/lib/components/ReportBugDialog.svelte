@@ -12,7 +12,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import { copilotApi, copilotFeatures, describeCopilotFailure, offers, type CopilotApi } from '$lib/copilot/api';
-	import { applyDraft, undoDraft, type BugFields } from '$lib/copilot/bug-prefill';
+	import { applyDraft, BUG_ENVIRONMENT_MAX_CHARS, undoDraft, type BugFields } from '$lib/copilot/bug-prefill';
 	import { createDraftFlow, isDrafting, type DraftPhase } from '$lib/copilot/draft-flow';
 	import { COPILOT_LIMITS, type BugDraft, type CopilotFeature } from '$lib/copilot/types';
 	import { toAppError } from '$lib/office/api';
@@ -71,11 +71,13 @@
 	let phase = $state<DraftPhase<BugDraft>>({ kind: 'idle' });
 	// What the person had before the first draft: Undo brings this back, never an earlier draft.
 	let before = $state<BugFields | undefined>();
-	let drafted = $state<{ notes: string[] } | undefined>();
+	let drafted = $state<{ notes: string[]; clipped: string[] } | undefined>();
 	const canSentence = $derived(offers(features, 'bug.from_sentence'));
 	const drafting = $derived(isDrafting(phase));
 	const failure = $derived(phase.kind === 'failed' ? describeCopilotFailure(phase.error) : undefined);
-	const limits = { title: WORK_LIMITS.title, text: WORK_LIMITS.text, environment: 2000 };
+	// The fields are locked while a draft is on its way, so it can't overwrite what the person is typing.
+	const locked = $derived(busy || drafting);
+	const limits = { title: WORK_LIMITS.title, text: WORK_LIMITS.text, environment: BUG_ENVIRONMENT_MAX_CHARS };
 	const fields = (): BugFields => ({ title, happened, severity, area, expected, steps, environment });
 	// svelte-ignore state_referenced_locally
 	const flow = createDraftFlow(copilot, 'bug.from_sentence', (next) => {
@@ -84,7 +86,7 @@
 			const filled = applyDraft(before, fields(), next.response.draft, areas, limits);
 			({ title, happened, severity, area, expected, steps, environment } = filled.fields);
 			before = filled.before;
-			drafted = { notes: next.response.notes };
+			drafted = { notes: next.response.notes, clipped: filled.clipped };
 		}
 	});
 	onMount(() => {
@@ -200,6 +202,7 @@
 					<div class="rounded-md bg-indigo-500/10 px-3 py-2 text-sm/6 text-indigo-100 outline-1 -outline-offset-1 outline-indigo-400/30" data-testid="drafted-banner">
 						<p class="font-semibold">Drafted by the copilot. Nothing is reported yet.</p>
 						<p>Check every field and change what is wrong, then press Report bug.</p>
+						{#if drafted.clipped.length > 0}<p class="text-xs/5 text-amber-200" data-testid="drafted-clipped">Shortened to fit the limit: {drafted.clipped.join(', ')}.</p>{/if}
 						{#if drafted.notes.length > 0}
 							<ul class="mt-1 list-disc pl-5 text-xs/5 text-indigo-200">{#each drafted.notes as note, i (i)}<li>{note}</li>{/each}</ul>
 						{/if}
@@ -207,7 +210,7 @@
 				{/if}
 			{/if}
 			<div class="space-y-2">
-				<DraftableText id="bug-title" label="Title" multiline={false} bind:value={title} maxlength={WORK_LIMITS.title * 2} limit={WORK_LIMITS.title} disabled={busy} error={touched && title.trim() === '' ? 'Give the bug a title.' : undefined} api={copilot} />
+				<DraftableText id="bug-title" label="Title" multiline={false} bind:value={title} maxlength={WORK_LIMITS.title * 2} limit={WORK_LIMITS.title} disabled={locked} error={touched && title.trim() === '' ? 'Give the bug a title.' : undefined} api={copilot} />
 				{#if similar.length > 0}
 					<div class="rounded-md bg-white/5 p-2 text-sm/6 outline-1 -outline-offset-1 outline-white/10" data-testid="similar-bugs">
 						<p class="text-xs/5 text-gray-400">Similar open bugs. Is it one of these?</p>
@@ -219,8 +222,8 @@
 					</div>
 				{/if}
 			</div>
-			<DraftableText id="bug-happened" label="What happened" rows={3} bind:value={happened} limit={WORK_LIMITS.text} disabled={busy} error={touched && happened.trim() === '' ? 'Say what happened.' : undefined} api={copilot} />
-			<fieldset class="space-y-2" disabled={busy}>
+			<DraftableText id="bug-happened" label="What happened" rows={3} bind:value={happened} limit={WORK_LIMITS.text} disabled={locked} error={touched && happened.trim() === '' ? 'Say what happened.' : undefined} api={copilot} />
+			<fieldset class="space-y-2" disabled={locked}>
 				<legend class="text-sm/6 font-medium text-white">Severity</legend>
 				<div class="grid gap-2 sm:grid-cols-2">
 					{#each SEVERITIES as s (s.id)}
@@ -234,14 +237,14 @@
 			</fieldset>
 			<div class="space-y-2">
 				<Label for="bug-area">Area</Label>
-				<select id="bug-area" bind:value={area} disabled={busy} class={field}>{#each areas as a (a.id)}<option value={a.id}>{a.name}</option>{/each}</select>
+				<select id="bug-area" bind:value={area} disabled={locked} class={field}>{#each areas as a (a.id)}<option value={a.id}>{a.name}</option>{/each}</select>
 				<p class="text-xs/5 text-gray-400" data-testid="goes-to">Goes to: {triager}, who triages new bugs.</p>
 			</div>
-			<DraftableText id="bug-expected" label="Expected" hint="(optional)" rows={2} bind:value={expected} limit={WORK_LIMITS.text} disabled={busy} api={copilot} />
-			<DraftableText id="bug-steps" label="Steps to reproduce" hint="(optional)" rows={2} bind:value={steps} limit={WORK_LIMITS.text} disabled={busy} api={copilot} />
+			<DraftableText id="bug-expected" label="Expected" hint="(optional)" rows={2} bind:value={expected} limit={WORK_LIMITS.text} disabled={locked} api={copilot} />
+			<DraftableText id="bug-steps" label="Steps to reproduce" hint="(optional)" rows={2} bind:value={steps} limit={WORK_LIMITS.text} disabled={locked} api={copilot} />
 			<div class="space-y-2">
 				<Label for="bug-environment">Environment <span class="font-normal text-gray-400">(optional)</span></Label>
-				<Input id="bug-environment" bind:value={environment} disabled={busy} autocomplete="off" />
+				<Input id="bug-environment" bind:value={environment} disabled={locked} autocomplete="off" />
 			</div>
 			{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 			<DialogFooter>

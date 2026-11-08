@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkTextRequest, fitTo } from './check';
+import { checkTextRequest, fitTo, undoTarget } from './check';
 
 describe('checkTextRequest', () => {
 	it('lets a request through when there is something to work from', () => {
@@ -31,5 +31,19 @@ describe('fitTo', () => {
 	it('never leaves half of a character at the end', () => {
 		expect(fitTo('ab😀', 3)).toEqual({ text: 'ab', clipped: true });
 		expect(fitTo('ab😀', 4)).toEqual({ text: 'ab😀', clipped: false });
+	});
+});
+
+describe('undoTarget', () => {
+	it('is the field’s own text when nothing was drafted before', () => {
+		expect(undoTarget(undefined, 'foo', undefined)).toBe('foo');
+	});
+
+	it('keeps the person’s text while the field still holds the unedited draft', () => {
+		expect(undoTarget('foo', 'draft one', 'draft one')).toBe('foo');
+	});
+
+	it('takes the person’s edits to a draft as their own text', () => {
+		expect(undoTarget('foo', 'draft one, edited', 'draft one')).toBe('draft one, edited');
 	});
 });

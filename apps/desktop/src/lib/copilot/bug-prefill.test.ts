@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { applyDraft, prefillFromDraft, undoDraft, type BugFields } from './bug-prefill';
+import { applyDraft, BUG_ENVIRONMENT_MAX_CHARS, clippedFields, prefillFromDraft, undoDraft, type BugFields } from './bug-prefill';
 import { createMockCopilot } from './mock';
 import type { BugDraft } from './types';
 import { WORK_LIMITS } from '$lib/proto';
 
-const limits = { title: WORK_LIMITS.title, text: WORK_LIMITS.text, environment: 2000 };
+const limits = { title: WORK_LIMITS.title, text: WORK_LIMITS.text, environment: BUG_ENVIRONMENT_MAX_CHARS };
 const areas = [{ id: 'general' }, { id: 'files' }];
 const mine: BugFields = {
 	title: 'my title',
@@ -71,5 +71,14 @@ describe('Undo', () => {
 
 	it('does nothing when there was no draft', () => {
 		expect(undoDraft(undefined, mine)).toBe(mine);
+	});
+});
+
+describe('clippedFields', () => {
+	it('names the fields whose draft was cut to fit, and nothing when all fit', () => {
+		expect(clippedFields(draft(), limits)).toEqual([]);
+		const long = draft({ title: 'x'.repeat(WORK_LIMITS.title + 1), steps: 'y'.repeat(WORK_LIMITS.text + 1) });
+		expect(clippedFields(long, limits)).toEqual(['Title', 'Steps to reproduce']);
+		expect(applyDraft(undefined, mine, long, areas, limits).clipped).toEqual(['Title', 'Steps to reproduce']);
 	});
 });

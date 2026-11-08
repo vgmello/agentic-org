@@ -34,13 +34,23 @@ impl std::error::Error for RenderError {}
 
 /// Characters written as `\uXXXX` rather than raw: the ones a fence or a tag is made of, every
 /// control character (C0, DEL and C1, so U+0085 too), the Unicode line and paragraph separators,
-/// and the invisible direction and joiner controls that can hide text from a reader.
+/// and the invisible format characters that can hide text from a reader (soft hyphen, direction
+/// marks, zero-width and joiner characters, the word joiner block, annotation marks, and the
+/// "tag" characters U+E0000..U+E007F that can carry a hidden message).
 fn must_escape(c: char) -> bool {
     matches!(c, '<' | '>' | '&' | '`')
         || c.is_control()
         || matches!(
             c,
-            '\u{200B}'..='\u{200F}' | '\u{2028}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}'
+            '\u{00AD}'
+                | '\u{061C}'
+                | '\u{180E}'
+                | '\u{200B}'..='\u{200F}'
+                | '\u{2028}'..='\u{202E}'
+                | '\u{2060}'..='\u{206F}'
+                | '\u{FEFF}'
+                | '\u{FFF9}'..='\u{FFFB}'
+                | '\u{E0000}'..='\u{E007F}'
         )
 }
 
@@ -52,7 +62,10 @@ pub fn escape_json(value: &Value) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
         if must_escape(c) {
-            out.push_str(&format!("\\u{:04x}", c as u32));
+            // JSON escapes are UTF-16 units: a character past U+FFFF is a surrogate pair.
+            for unit in c.encode_utf16(&mut [0; 2]) {
+                out.push_str(&format!("\\u{unit:04x}"));
+            }
         } else {
             out.push(c);
         }

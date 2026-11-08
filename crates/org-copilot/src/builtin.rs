@@ -1,6 +1,6 @@
 //! The features this build offers. Changing a template or a schema bumps the feature's version.
 //!
-//! Built here: `text.improve` and `bug.report`. `team.staff` is designed in
+//! Built here: `text.improve` and `bug.from_sentence`. `team.staff` is designed in
 //! `docs/design/smart-features.md` and deliberately not registered.
 
 use serde_json::json;
@@ -9,7 +9,7 @@ use crate::feature::{Feature, Registry};
 
 /// `text.improve`: the cap on `text`, in characters.
 pub const TEXT_MAX_CHARS: u64 = 8_000;
-/// `bug.report`: the cap on `sentence`, in characters.
+/// `bug.from_sentence`: the cap on `sentence`, in characters.
 pub const SENTENCE_MAX_CHARS: u64 = 1_000;
 
 const PREAMBLE: &str = "\
@@ -134,4 +134,5 @@ fn bug_from_sentence() -> Feature {
         }),
     )
     .expect("bug.from_sentence is a valid feature")
+    .with_context_refs(&[("area_id", "area")])
 }

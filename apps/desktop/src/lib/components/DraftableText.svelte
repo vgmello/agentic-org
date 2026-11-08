@@ -10,7 +10,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import { copilotApi, copilotFeatures, describeCopilotFailure, offers, type CopilotApi } from '$lib/copilot/api';
-	import { checkTextRequest, fitTo } from '$lib/copilot/check';
+	import { checkTextRequest, fitTo, undoTarget } from '$lib/copilot/check';
 	import { createDraftFlow, isDrafting, type DraftPhase } from '$lib/copilot/draft-flow';
 	import { COPILOT_LIMITS, type CopilotFeature, type TextDraft } from '$lib/copilot/types';
 
@@ -64,6 +64,8 @@
 	let phase = $state<DraftPhase<TextDraft>>({ kind: 'idle' });
 	let previous = $state<string | undefined>();
 	let clipped = $state<number | undefined>();
+	// The draft last put in the field: while the field still holds it, Undo goes back past it.
+	let lastApplied: string | undefined;
 	// `api` is chosen once, when the field is made (a test passes its own); it is not meant to change.
 	// svelte-ignore state_referenced_locally
 	const flow = createDraftFlow(api, 'text.improve', (next) => (phase = next));
@@ -80,8 +82,6 @@
 	function toggle() {
 		if (open) return close();
 		open = true;
-		previous = undefined;
-		clipped = undefined;
 	}
 
 	function close() {
@@ -102,11 +102,12 @@
 
 	async function use() {
 		if (phase.kind !== 'ready') return;
-		previous = value;
+		previous = undoTarget(previous, value, lastApplied);
 		// A draft longer than the field allows is cut to fit, and the person is told.
 		const fitted = fitTo(phase.response.draft.text, Number.isFinite(cap) ? cap : undefined);
 		clipped = fitted.clipped ? cap : undefined;
 		value = fitted.text;
+		lastApplied = fitted.text;
 		close();
 		await tick();
 		onchange?.();
@@ -116,6 +117,7 @@
 		if (previous === undefined) return;
 		value = previous;
 		previous = undefined;
+		lastApplied = undefined;
 		clipped = undefined;
 		await tick();
 		onchange?.();
@@ -176,7 +178,7 @@
 	{#if previous !== undefined && !open}
 		<p class="flex items-center gap-x-2 text-xs/5 text-gray-400" data-testid="draft-used">
 			Draft used.{#if clipped !== undefined} Shortened to fit the limit of {clipped} characters.{/if}
-			<button type="button" class="inline-flex items-center gap-x-1 font-semibold text-indigo-300 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-indigo-400" onclick={undo}>
+			<button type="button" class="inline-flex items-center gap-x-1 font-semibold text-indigo-300 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-indigo-400" onclick={undo} {disabled}>
 				<Undo class="size-3" aria-hidden="true" /> Undo
 			</button>
 		</p>
@@ -202,7 +204,7 @@
 						oninput={() => (requestError = undefined)}
 					onkeydown={(e) => {
 						// Inside a form (a dialog), Enter here would submit the whole form.
-						if (e.key === 'Enter') {
+						if (e.key === 'Enter' && !e.isComposing) {
 							e.preventDefault();
 							if (!drafting) ask();
 						}
@@ -243,7 +245,7 @@
 
 			<div class="flex items-center gap-x-2">
 				{#if phase.kind === 'ready'}
-					<Button type="button" size="sm" onclick={use}>Use this draft</Button>
+					<Button type="button" size="sm" {disabled} onclick={use}>Use this draft</Button>
 					<Button type="button" size="sm" variant="outline" onclick={ask}>Try again</Button>
 				{:else}
 					<Button type="button" size="sm" disabled={drafting} onclick={ask}>
