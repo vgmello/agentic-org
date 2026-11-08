@@ -757,11 +757,8 @@ mod tests {
             Arc::new(move |r| {
                 if r.method == "hello" {
                     return Some(
-                        Response::ok::<Hello>(
-                            r.id,
-                            &HelloResult::host("test", "This Mac"),
-                        )
-                        .unwrap(),
+                        Response::ok::<Hello>(r.id, &HelloResult::host("test", "This Mac"))
+                            .unwrap(),
                     );
                 }
                 log.lock().unwrap().push(r.method.clone());
@@ -1230,11 +1227,8 @@ mod tests {
                 listener,
                 Arc::new(|r| {
                     Some(
-                        Response::ok::<Hello>(
-                            r.id,
-                            &HelloResult::host("test", "This Mac"),
-                        )
-                        .unwrap(),
+                        Response::ok::<Hello>(r.id, &HelloResult::host("test", "This Mac"))
+                            .unwrap(),
                     )
                 }),
             );
