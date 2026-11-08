@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The main window: dragging the overlay title bar (and double-click to zoom), listening for the menu bar's navigate events, the office commands, and opening an http or https link from a chat message in the browser (one checked command, no shell). Nothing else: no paths, menus or fs.",
+  "description": "The main window: dragging the overlay title bar (and double-click to zoom), listening for the menu bar's navigate events, the office commands, and opening an http or https link from a chat message in the browser (one checked command, no shell), and Bring in an existing team (three commands: the usual places, the system's folder picker, and a read-only scan of the folders the app itself handed out). Nothing else: no paths, menus or fs.",
   "windows": [
     "main"
   ],
@@ -20,6 +20,11 @@
     "allow-org-command",
     "allow-org-live-retry",
     "allow-org-live",
+    "allow-import-defaults",
+    "allow-import-scan",
+    "allow-import-pick-folder",
+    "allow-import-pick-file",
+    "allow-import-read-hints",
     "allow-work-snapshot",
     "allow-work-get",
     "allow-work-command",

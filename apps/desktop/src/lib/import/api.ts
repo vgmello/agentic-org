@@ -1,0 +1,20 @@
+import { inTauri } from '$lib/office/api';
+import { mockImport } from './mock';
+import { tauriImport } from './tauri';
+import type { Defaults, Hints, Scan } from './types';
+
+/** What "Bring in an existing team" needs from the shell: the usual places, a folder picker, and a read-only scan. */
+export interface ImportApi {
+	/** The usual places an existing team lives in. */
+	defaults(): Promise<Defaults>;
+	/** Read the HR workspace and the messaging spool. A source not given is not read; one that can't be read says why. */
+	scan(hrDir: string | undefined, spoolDir: string | undefined): Promise<Scan>;
+	/** Ask for a folder with the system's picker. `undefined`: cancelled. */
+	pickFolder(title: string): Promise<string | undefined>;
+	/** Ask for a file with the system's picker (the team hints). `undefined`: cancelled. */
+	pickFile(title: string): Promise<string | undefined>;
+	/** Read the team hints file the owner picked. A file that can't be used says why. */
+	readHints(path: string): Promise<Hints>;
+}
+
+export const importApi: ImportApi = inTauri() ? tauriImport : mockImport;
