@@ -23,6 +23,18 @@ fn hq() -> OfficeInfo {
         host: "This Mac".into(),
         endpoint: Some("/tmp/o1/run/3RXF2NS0SH83.sock".into()),
         status: OfficeStatus::Active,
+        status_reason: None,
+        next_restart_at: None,
+    }
+}
+
+fn offline_hq() -> OfficeInfo {
+    OfficeInfo {
+        status: OfficeStatus::Offline,
+        status_reason: Some(OfficeStatusReason::Crashed),
+        next_restart_at: Some("2026-11-08T02:10:04.000Z".into()),
+        endpoint: None,
+        ..hq()
     }
 }
 
@@ -455,6 +467,167 @@ fn office_fields_default_and_tolerate_unknown_values() {
         serde_json::to_value(OfficeRole::Satellite).unwrap(),
         "satellite"
     );
+}
+
+#[test]
+fn office_status_reason_and_next_restart_round_trip_and_are_omitted_when_absent() {
+    // Without them: neither key is on the wire, and the record reads back the same.
+    let v = serde_json::to_value(hq()).unwrap();
+    assert!(v.get("status_reason").is_none(), "{v}");
+    assert!(v.get("next_restart_at").is_none(), "{v}");
+    assert_eq!(serde_json::from_value::<OfficeInfo>(v).unwrap(), hq());
+
+    // With them.
+    let v = serde_json::to_value(offline_hq()).unwrap();
+    assert_eq!(
+        v,
+        json!({"id": "01M6WGY1WJCC503RXF2NS0SH83",
+            "organization_id": "01M6WEQ98NHCE6ZVZWJGWQAJT3", "name": "HQ", "role": "hq",
+            "host": "This Mac", "status": "offline", "status_reason": "crashed",
+            "next_restart_at": "2026-11-08T02:10:04.000Z"})
+    );
+    assert_eq!(
+        serde_json::from_value::<OfficeInfo>(v).unwrap(),
+        offline_hq()
+    );
+
+    // A fatal reason, with no restart pending.
+    let fatal = OfficeInfo {
+        status: OfficeStatus::Unavailable,
+        status_reason: Some(OfficeStatusReason::KeyMissing),
+        next_restart_at: None,
+        ..hq()
+    };
+    let v = serde_json::to_value(&fatal).unwrap();
+    assert_eq!(v["status_reason"], "key_missing");
+    assert!(v.get("next_restart_at").is_none(), "{v}");
+    assert_eq!(serde_json::from_value::<OfficeInfo>(v).unwrap(), fatal);
+}
+
+#[test]
+fn an_office_from_an_older_server_without_the_new_fields_still_decodes() {
+    let old = json!({"id": "01M6WGY1WJCC503RXF2NS0SH83",
+        "organization_id": "01M6WEQ98NHCE6ZVZWJGWQAJT3", "name": "HQ", "role": "hq",
+        "host": "This Mac", "endpoint": "/tmp/o1/run/3RXF2NS0SH83.sock", "status": "active"});
+    let o: OfficeInfo = serde_json::from_value(old).unwrap();
+    assert_eq!(o, hq());
+    assert_eq!(o.status_reason, None);
+    assert_eq!(o.next_restart_at, None);
+
+    // Explicit nulls read as absent too.
+    let nulls = json!({"id": "o", "organization_id": "g", "name": "HQ", "host": "h",
+        "status": "offline", "status_reason": null, "next_restart_at": null});
+    let o: OfficeInfo = serde_json::from_value(nulls).unwrap();
+    assert_eq!(o.status_reason, None);
+    assert_eq!(o.next_restart_at, None);
+}
+
+#[test]
+fn office_status_reasons_are_pinned_and_unknown_ones_decode_as_unknown() {
+    for (reason, name) in [
+        (OfficeStatusReason::KeyMissing, "key_missing"),
+        (OfficeStatusReason::InUse, "in_use"),
+        (OfficeStatusReason::StorageError, "storage_error"),
+        (OfficeStatusReason::InvalidRequest, "invalid_request"),
+        (
+            OfficeStatusReason::UnsupportedVersion,
+            "unsupported_version",
+        ),
+        (OfficeStatusReason::Crashed, "crashed"),
+        (OfficeStatusReason::StartTimeout, "start_timeout"),
+        (OfficeStatusReason::RestartsExhausted, "restarts_exhausted"),
+        (OfficeStatusReason::StoppedByOwner, "stopped_by_owner"),
+        (OfficeStatusReason::Unknown, "unknown"),
+    ] {
+        assert_eq!(serde_json::to_value(reason).unwrap(), name);
+        assert_eq!(
+            serde_json::from_value::<OfficeStatusReason>(name.into()).unwrap(),
+            reason
+        );
+    }
+    assert_eq!(OfficeStatusReason::default(), OfficeStatusReason::Unknown);
+
+    // A reason from a newer server never stops the office record decoding.
+    let newer = json!({"id": "o", "organization_id": "g", "name": "HQ", "host": "h",
+        "status": "unavailable", "status_reason": "quarantined"});
+    let o: OfficeInfo = serde_json::from_value(newer).unwrap();
+    assert_eq!(o.status, OfficeStatus::Unavailable);
+    assert_eq!(o.status_reason, Some(OfficeStatusReason::Unknown));
+}
+
+#[test]
+fn office_status_changed_event_wire_shape() {
+    assert_eq!(OfficeStatusChanged::NAME, "office.status_changed");
+    let data = OfficeStatusChangedData {
+        office: offline_hq(),
+    };
+    let ev = Event::new::<OfficeStatusChanged>(7, &data).unwrap();
+    let line = serde_json::to_string(&ev).unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&line).unwrap(),
+        json!({"event": "office.status_changed", "seq": 7, "data": {"office": {
+            "id": "01M6WGY1WJCC503RXF2NS0SH83",
+            "organization_id": "01M6WEQ98NHCE6ZVZWJGWQAJT3", "name": "HQ", "role": "hq",
+            "host": "This Mac", "status": "offline", "status_reason": "crashed",
+            "next_restart_at": "2026-11-08T02:10:04.000Z"}}})
+    );
+    match serde_json::from_str::<ServerMessage>(&line).unwrap() {
+        ServerMessage::Event(e) => {
+            assert_eq!(e.seq, 7);
+            assert!(e.data::<OrganizationCreated>().is_none());
+            assert_eq!(e.data::<OfficeStatusChanged>().unwrap().unwrap(), data);
+        }
+        other => panic!("expected an event, got {other:?}"),
+    }
+}
+
+#[test]
+fn office_restart_wire_shapes() {
+    assert_eq!(OfficeRestart::METHOD, "office.restart");
+    let req = Request::new::<OfficeRestart>(
+        5,
+        &OfficeRestartParams {
+            office_id: "01M6WGY1WJCC503RXF2NS0SH83".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(&req).unwrap(),
+        json!({"id": 5, "method": "office.restart",
+            "params": {"office_id": "01M6WGY1WJCC503RXF2NS0SH83"}})
+    );
+    assert_eq!(
+        req.params::<OfficeRestart>().unwrap().office_id,
+        "01M6WGY1WJCC503RXF2NS0SH83"
+    );
+    let missing: Request =
+        serde_json::from_str(r#"{"id":5,"method":"office.restart","params":{}}"#).unwrap();
+    assert!(missing.params::<OfficeRestart>().is_err());
+
+    let ok = serde_json::to_value(Response::ok::<OfficeRestart>(5, &Empty {}).unwrap()).unwrap();
+    assert_eq!(ok, json!({"id": 5, "result": {}}));
+    let back: Response = serde_json::from_value(ok).unwrap();
+    assert_eq!(back.into_result::<OfficeRestart>().unwrap(), Empty {});
+
+    for (code, name) in [
+        (ErrorCode::NotAuthorized, "not_authorized"),
+        (ErrorCode::NotFound, "not_found"),
+        (ErrorCode::Conflict, "conflict"),
+        (ErrorCode::Unavailable, "unavailable"),
+    ] {
+        let line = serde_json::to_string(&Response::error(5, ApiError::new(code, "x"))).unwrap();
+        assert_eq!(
+            line,
+            format!(r#"{{"id":5,"error":{{"code":"{name}","message":"x"}}}}"#)
+        );
+        match serde_json::from_str::<Response>(&line)
+            .unwrap()
+            .into_result::<OfficeRestart>()
+        {
+            Err(CallError::Api(e)) => assert_eq!(e.code, code),
+            other => panic!("expected an api error, got {other:?}"),
+        }
+    }
 }
 
 #[test]

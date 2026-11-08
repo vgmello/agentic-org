@@ -37,6 +37,15 @@ pub struct OfficeInfo {
     /// Missing means unknown, never assumed healthy.
     #[serde(default)]
     pub status: OfficeStatus,
+    /// Why the office is `offline` or `unavailable`, when the host knows. Present only with
+    /// those two statuses; absent with any other, and absent from a server that predates it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_reason: Option<OfficeStatusReason>,
+    /// When the host will next try to start the office: RFC 3339 UTC with milliseconds, e.g.
+    /// `2026-11-08T02:10:01.000Z`. Present only while the office is `offline` with a restart
+    /// pending; absent otherwise (including when `unavailable`, where no restart is pending).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_restart_at: Option<String>,
 }
 
 /// An office's role in its organization. Unknown values decode as [`OfficeRole::Unknown`].
@@ -65,13 +74,54 @@ pub enum OfficeStatus {
     Starting,
     /// Invited but not joined yet.
     Pending,
-    /// Not reachable right now.
+    /// Not reachable right now. Its `status_reason` says why, and its `next_restart_at` when
+    /// the host will try again (absent if no restart is pending).
     Offline,
-    /// Can't open its data (e.g. its key is missing).
+    /// The host won't start it again on its own: it can't open its data (e.g. its key is
+    /// missing), or it kept failing. Its `status_reason` says why.
     Unavailable,
     /// Runs a version too old for its organization.
     UpdateNeeded,
     /// Missing or not known to this build.
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+/// Why an office is `offline` or `unavailable` ([`OfficeInfo::status_reason`]). The host sets
+/// it from how the office server's start ended (the launch `failed` codes) or from how it
+/// supervises it. Unknown values decode as [`OfficeStatusReason::Unknown`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum OfficeStatusReason {
+    /// The office's data exists but its encryption key is gone (e.g. removed from the
+    /// Keychain), so it can't be opened. Fatal: `office.restart` refuses it.
+    KeyMissing,
+    /// Another process still held the office's lock when its server started (e.g. an old
+    /// server that hadn't exited yet). The host retries.
+    InUse,
+    /// The office server couldn't read or write its storage (disk, Keychain or database).
+    /// The host retries.
+    StorageError,
+    /// The host started the office server in a way it didn't understand: a bug. Fatal:
+    /// `office.restart` refuses it.
+    InvalidRequest,
+    /// The office server doesn't speak the host's version of the start protocol (they come
+    /// from different builds). Fatal: `office.restart` refuses it.
+    UnsupportedVersion,
+    /// The office server stopped unexpectedly. The host retries.
+    Crashed,
+    /// The office server didn't become ready in time, so the host stopped it. The host
+    /// retries.
+    StartTimeout,
+    /// The office kept failing, so the host stopped retrying (status `unavailable`).
+    /// `office.restart` tries again.
+    RestartsExhausted,
+    /// The owner stopped the office on purpose (status `offline`, no `next_restart_at`). No
+    /// call stops an office yet; one may come later. `office.restart` starts it again.
+    StoppedByOwner,
+    /// Not known to this build (sent by a newer host). A missing reason reads as `None`.
     #[default]
     #[serde(other)]
     Unknown,

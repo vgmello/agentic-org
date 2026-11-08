@@ -39,7 +39,9 @@ pub enum ErrorCode {
     OwnerProtected,
     /// Something the command names doesn't exist (any more).
     NotFound,
-    /// The `expected_version` is stale: the thing changed since the caller saw it.
+    /// The `expected_version` is stale: the thing changed since the caller saw it. Also
+    /// `office.restart` on an office that isn't `offline` or `unavailable` (e.g. it's already
+    /// starting or active).
     Conflict,
     /// `subscribe { from_position }` can't resume from there; take a fresh `org.snapshot`.
     SnapshotRequired,
@@ -53,11 +55,13 @@ pub enum ErrorCode {
     /// organization.
     UnknownRecipient,
     /// The caller isn't allowed to make this call, e.g. the host's check of the peer's code
-    /// signature failed for `office.app_token`, or an app-only command (`member.set_run_mode`)
-    /// arrived on a connection that is not the app's.
+    /// signature failed for `office.app_token` or `office.restart`, or an app-only command
+    /// (`member.set_run_mode`) arrived on a connection that is not the app's.
     NotAuthorized,
     /// What was asked for exists but can't serve now, e.g. the office isn't running, so there's
-    /// no app token to hand out. Trying again later may work.
+    /// no app token to hand out. Trying again later may work. For `office.restart`, though, it
+    /// means the office's reason is one a restart can't fix (e.g. `key_missing`); the message
+    /// says why.
     Unavailable,
     /// A code this build doesn't know (sent by a newer server).
     #[serde(other)]

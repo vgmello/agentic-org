@@ -154,3 +154,30 @@ impl Call for OfficeAppToken {
     type Params = OfficeAppTokenParams;
     type Result = OfficeAppTokenResult;
 }
+
+/// `office.restart` (host, on `host.sock` only): the desktop app asks the host to start an
+/// office that is `offline` or `unavailable` now, without waiting for the next backoff step.
+/// It clears an `unavailable` status and resets the restart backoff. It answers once the
+/// start is under way; the office's new status arrives as `office.status_changed` events.
+///
+/// It refuses the fatal reasons a restart can't fix: `key_missing`, `unsupported_version`
+/// and `invalid_request`. Any other reason, or none, is restarted (e.g. `restarts_exhausted`,
+/// `stopped_by_owner`, or an `offline` office waiting for its next backoff step).
+///
+/// App-only: the host verifies the caller's code signature as for [`OfficeAppToken`].
+/// Errors: `not_authorized` (the signature check failed), `not_found` (no such office here),
+/// `conflict` (the office isn't `offline` or `unavailable`, e.g. it's already `starting` or
+/// `active`), `unavailable` (a fatal reason above; the message says why). A host older than
+/// this call answers `unknown_method`.
+pub struct OfficeRestart;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OfficeRestartParams {
+    pub office_id: String,
+}
+
+impl Call for OfficeRestart {
+    const METHOD: &'static str = "office.restart";
+    type Params = OfficeRestartParams;
+    type Result = Empty;
+}

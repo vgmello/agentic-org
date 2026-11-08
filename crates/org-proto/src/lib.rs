@@ -4,7 +4,8 @@
 //! through `org-client`, and the agent CLI `org-agent`). There are two kinds of server:
 //! - **The host** (`org-office-host`), the one login service on a machine. It supervises the
 //!   office servers and answers `hello`, `organization.create`, `organization.list`,
-//!   `office.list`, `office.app_token` and `subscribe` (it emits `organization.created`).
+//!   `office.list`, `office.app_token`, `office.restart` and `subscribe` (it emits
+//!   `organization.created` and `office.status_changed`).
 //! - **An office server** (`org-office-server`), one process per office. An organization's
 //!   first office is its HQ. It answers `hello` with its identity, and later the
 //!   organization's calls and agent messaging.
@@ -64,11 +65,12 @@ mod wire;
 
 pub use calls::{
     Call, Empty, Hello, HelloResult, ListOfficesResult, ListOrganizationsResult, OfficeAppToken,
-    OfficeAppTokenParams, OfficeAppTokenResult, OfficeHello, OfficeList, OrganizationCreate,
-    OrganizationCreateParams, OrganizationList, Subscribe, SubscribeParams,
+    OfficeAppTokenParams, OfficeAppTokenResult, OfficeHello, OfficeList, OfficeRestart,
+    OfficeRestartParams, OrganizationCreate, OrganizationCreateParams, OrganizationList, Subscribe,
+    SubscribeParams,
 };
 pub use error::{ApiError, CallError, ErrorCode};
-pub use events::{EventKind, OrganizationCreated};
+pub use events::{EventKind, OfficeStatusChanged, OfficeStatusChangedData, OrganizationCreated};
 pub use name::{NameError, OrganizationName};
 pub use org::{
     AgentProfile, AgentRuntime, AgentStatus, CommandAccepted, CommandStatus, Member, MemberKind,
@@ -78,7 +80,10 @@ pub use org::{
     AGENT_TIME_ZONE_MAX_CHARS, OWNER_HANDLE,
 };
 pub use token::{AppToken, APP_TOKEN_BYTES};
-pub use types::{OfficeInfo, OfficeRole, OfficeStatus, Organization, ORGANIZATION_NAME_MAX_CHARS};
+pub use types::{
+    OfficeInfo, OfficeRole, OfficeStatus, OfficeStatusReason, Organization,
+    ORGANIZATION_NAME_MAX_CHARS,
+};
 pub use wire::{
     salvage_id, Event, Outcome, Request, Response, ServerMessage, UNREADABLE_REQUEST_ID,
 };

@@ -233,6 +233,8 @@ fn hq_office(organization_id: &str) -> OfficeInfo {
         host: "This Mac".to_string(),
         endpoint: None,
         status: OfficeStatus::Active,
+        status_reason: None,
+        next_restart_at: None,
     }
 }
 
