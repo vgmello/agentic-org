@@ -1722,6 +1722,60 @@ fn rule_an_expired_message_to_an_unregistered_member_is_an_unknown_recipient() {
 }
 
 #[test]
+fn rule_a_persons_reply_to_an_expired_ask_defaults_to_high() {
+    let t = TempSpool::new("reply_expired");
+    t.spool.register("pat").unwrap();
+    let mut profile = MemberProfile::default_for("pat");
+    profile.kind = "person".into();
+    t.spool.set_profile(&profile).unwrap();
+    let ask_to = |to: &str, expired: bool| {
+        let mut ask = Envelope::new_request(
+            PEER,
+            to,
+            None,
+            "q",
+            BTreeMap::new(),
+            Duration::from_secs(60),
+        )
+        .unwrap();
+        t.spool.enqueue(&ask).unwrap();
+        t.spool.deliver_all().unwrap();
+        if expired {
+            ask.expires_at = Some("2000-01-01T00:00:00.000Z".into());
+            fs::write(
+                t.dir.join(format!("spool/inbox/{to}/new/{}.json", ask.id)),
+                ask.to_json_bytes().unwrap(),
+            )
+            .unwrap();
+        }
+        ask.id
+    };
+    let reply = |me: &str, id: &str, priority: Option<MessagePriority>| {
+        let msg = org_spool::Outgoing {
+            body: "a".into(),
+            priority,
+            ..Default::default()
+        };
+        t.spool.reply(me, id, msg).unwrap().effective_priority()
+    };
+    // A person answering an expired ask: high by default; an explicit priority wins.
+    assert_eq!(
+        reply("pat", &ask_to("pat", true), None),
+        MessagePriority::High
+    );
+    assert_eq!(
+        reply("pat", &ask_to("pat", true), Some(MessagePriority::Normal)),
+        MessagePriority::Normal
+    );
+    // Not expired, or an agent answering: normal, as before.
+    assert_eq!(
+        reply("pat", &ask_to("pat", false), None),
+        MessagePriority::Normal
+    );
+    assert_eq!(reply(ME, &ask_to(ME, true), None), MessagePriority::Normal);
+}
+
+#[test]
 fn rule_is_person_ignores_the_case_of_the_kind() {
     let t = TempSpool::new("person_case");
     // Written by hand or another tool: not lowercase.

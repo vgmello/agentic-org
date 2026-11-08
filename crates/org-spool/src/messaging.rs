@@ -2,7 +2,7 @@
 //! so the CLI only parses, calls and prints.
 
 use std::collections::BTreeMap;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use serde_json::Value;
 
@@ -11,6 +11,7 @@ use crate::member::{check_not_reserved, resolve_member};
 use crate::meta::InboxItem;
 use crate::spool::{Spool, SpoolError};
 use crate::time::check_wait_timeout;
+use crate::time::format_iso8601_utc;
 
 /// `msg inbox --summary` lists at most this many items unless `--limit` says otherwise.
 pub const INBOX_SUMMARY_DEFAULT_LIMIT: usize = 50;
@@ -107,16 +108,24 @@ impl Spool {
     }
 
     /// `msg reply`: answer message `orig_id` in `me`'s inbox, then mark it read (only once the
-    /// reply is safely queued; a deliberate change from v1-old, per ADR-0003 §2.3).
+    /// reply is safely queued; a deliberate change from v1-old, per ADR-0003 §2.3). A person's
+    /// (or the owner's) reply to an ask that has already expired defaults to priority high
+    /// (ADR-0003 §2.5.4: the asker stopped waiting, so it must stand out), unless a priority
+    /// is given.
     pub fn reply(&self, me: &str, orig_id: &str, msg: Outgoing) -> Result<Envelope, SpoolError> {
         let orig = self.find_for_reply(me, orig_id)?;
         if !self.is_registered(&orig.from) {
             return Err(SpoolError::UnknownRecipient(orig.from.clone()));
         }
+        let now_iso = format_iso8601_utc(SystemTime::now());
+        let priority = msg.priority.or_else(|| {
+            (orig.is_expired_request_at(&now_iso) && self.is_person(me))
+                .then_some(MessagePriority::High)
+        });
         let reply = orig
             .new_reply(me, msg.subject, msg.body, msg.meta)
             .map_err(invalid)?;
-        let reply = self.queue(reply, msg.priority)?;
+        let reply = self.queue(reply, priority)?;
         let _ = self.claim(me, orig_id);
         Ok(reply)
     }
