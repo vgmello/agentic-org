@@ -1593,6 +1593,47 @@ fn rule_an_ask_that_expired_before_delivery_still_reaches_a_person() {
 }
 
 #[test]
+fn rule_an_unreadable_profile_leaves_an_expired_ask_in_the_outbox() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = TempSpool::new("expired_unreadable");
+    t.spool.register("pat").unwrap();
+    let mut profile = MemberProfile::default_for("pat");
+    profile.kind = "person".into();
+    t.spool.set_profile(&profile).unwrap();
+    let profile_path = t.dir.join("spool/inbox/pat/profile.json");
+    fs::set_permissions(&profile_path, fs::Permissions::from_mode(0o000)).unwrap();
+
+    let mut ask = Envelope::new_request(
+        PEER,
+        "pat",
+        None,
+        "q",
+        BTreeMap::new(),
+        Duration::from_secs(60),
+    )
+    .unwrap();
+    ask.expires_at = Some("2000-01-01T00:00:00.000Z".into());
+    t.spool.enqueue(&ask).unwrap();
+    let result = t.spool.deliver_all();
+    fs::set_permissions(&profile_path, fs::Permissions::from_mode(0o600)).unwrap();
+    // A real I/O error on the profile: a transient error, the ask stays queued...
+    assert!(matches!(result, Err(SpoolError::Io(_))), "{result:?}");
+    assert!(t
+        .dir
+        .join(format!("spool/outbox/new/{}.json", ask.id))
+        .is_file());
+    // ...and the next pass delivers it.
+    assert_eq!(t.spool.deliver_all().unwrap().delivered, 1);
+
+    // A malformed profile is the default (an agent): dead-lettered.
+    fs::write(&profile_path, b"{not json").unwrap();
+    let mut again = ask.clone();
+    again.id = generate_ulid();
+    t.spool.enqueue(&again).unwrap();
+    assert_eq!(t.spool.deliver_all().unwrap().dead, 1);
+}
+
+#[test]
 fn rule_an_expired_message_to_an_unregistered_member_is_an_unknown_recipient() {
     let t = TempSpool::new("expired_unknown");
     let mut ask = Envelope::new_request(

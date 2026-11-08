@@ -612,12 +612,19 @@ impl Spool {
 
         let now_iso = format_iso8601_utc(SystemTime::now());
         // An expired ask to a person or the owner is still delivered (it then shows as urgent,
-        // "(expired)"): a human must see it even if it expired while the relay was down.
-        if env.is_expired_at(&now_iso)
-            && !(env.kind == MessageKind::Request && self.is_person(&env.to))
-        {
-            let exp = env.expires_at.as_deref().unwrap_or("unknown");
-            return self.move_to_dead(outbox_file, &env.id, &format!("expired: expires_at={exp}"));
+        // "(expired)"): a human must see it even if it expired while the relay was down. If
+        // the recipient's profile can't be read (a real I/O error, not absent or malformed),
+        // the ask stays in the outbox for the next pass, like any transient error.
+        if env.is_expired_at(&now_iso) {
+            let to_person = env.kind == MessageKind::Request && self.check_person(&env.to)?;
+            if !to_person {
+                let exp = env.expires_at.as_deref().unwrap_or("unknown");
+                return self.move_to_dead(
+                    outbox_file,
+                    &env.id,
+                    &format!("expired: expires_at={exp}"),
+                );
+            }
         }
 
         let urgent = env.is_urgent();

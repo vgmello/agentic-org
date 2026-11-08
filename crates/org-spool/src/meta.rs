@@ -765,18 +765,26 @@ impl Spool {
         self.write_agent_json_unlocked(agent, &self.agent_triage_path(agent), state)
     }
 
-    pub(crate) fn load_profile_unlocked(&self, agent: &str) -> MemberProfile {
+    /// The member's profile, or its default when there is none or it is malformed (not a
+    /// regular file, too large, not valid JSON for a profile). `Err` only on a real I/O error
+    /// reading it.
+    fn read_profile(&self, agent: &str) -> io::Result<MemberProfile> {
         let path = self.agent_profile_path(agent);
-        if let Ok(SpoolFile::Bytes(bytes)) = read_spool_file(&path, MAX_ENVELOPE_BYTES) {
+        if let SpoolFile::Bytes(bytes) = read_spool_file(&path, MAX_ENVELOPE_BYTES)? {
             if let Ok(mut profile) = serde_json::from_slice::<MemberProfile>(&bytes) {
                 // The directory names the member, not the file: a profile can't claim to be
                 // someone else, nor make itself the owner.
                 profile.id = agent.to_string();
                 profile.owner = agent == OWNER_ID;
-                return profile;
+                return Ok(profile);
             }
         }
-        MemberProfile::default_for(agent)
+        Ok(MemberProfile::default_for(agent))
+    }
+
+    pub(crate) fn load_profile_unlocked(&self, agent: &str) -> MemberProfile {
+        self.read_profile(agent)
+            .unwrap_or_else(|_| MemberProfile::default_for(agent))
     }
 
     /// Update or create `inbox/<agent>/profile.json` under the per-agent `flock`.
@@ -808,10 +816,19 @@ impl Spool {
     /// Whether `agent` is a person (its profile's kind is `person`) or the owner. A member
     /// with no profile counts as an agent. Decides whether an expired ask stays urgent, and
     /// whether one that expired before delivery is still delivered.
+    /// A malformed profile (or none) means the default: an agent, unless it's the owner; so
+    /// does an I/O error reading it (see [`Spool::check_person`] to tell those apart).
     pub fn is_person(&self, agent: &str) -> bool {
-        let profile = self.load_profile_unlocked(agent);
+        self.check_person(agent)
+            .unwrap_or_else(|_| MemberProfile::default_for(agent).owner)
+    }
+
+    /// [`Spool::is_person`], but a real I/O error reading the profile is an error (the relay
+    /// then leaves an expired ask in the outbox for the next pass instead of guessing).
+    pub(crate) fn check_person(&self, agent: &str) -> io::Result<bool> {
+        let profile = self.read_profile(agent)?;
         // Case-insensitive, like `who --kind`.
-        profile.owner || profile.kind.eq_ignore_ascii_case("person")
+        Ok(profile.owner || profile.kind.eq_ignore_ascii_case("person"))
     }
 
     /// Read a member's profile (falling back to default profile if not customized).
