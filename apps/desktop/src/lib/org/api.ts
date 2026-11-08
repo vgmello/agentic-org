@@ -1,9 +1,12 @@
 import { officeApi } from '$lib/office/api';
 import type { OrgSnapshot } from '$lib/proto';
+import { normalizeKinds } from './model';
 import { emptyOrg, sampleOrg } from './sample';
 
 /** What the org chart needs from an office: `org.snapshot` (changes and commands come with editing). */
 export interface OrgApi {
+	/** True while the data is the TEMPORARY invented sample, not the organization's own. */
+	readonly sample: boolean;
 	snapshot(): Promise<OrgSnapshot>;
 }
 
@@ -14,8 +17,9 @@ export interface OrgApi {
  */
 export function createMockOrg(hqOfficeId: () => Promise<string>, empty: () => boolean = () => false): OrgApi {
 	return {
+		sample: true,
 		async snapshot() {
-			return empty() ? emptyOrg() : sampleOrg(await hqOfficeId());
+			return normalizeKinds(empty() ? emptyOrg() : sampleOrg(await hqOfficeId()));
 		}
 	};
 }

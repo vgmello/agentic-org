@@ -27,7 +27,8 @@
 		selected,
 		onselect,
 		fit = true,
-		highlightLabel = 'here'
+		highlightLabel = 'here',
+		knownOffices
 	}: {
 		snapshot: OrgSnapshot;
 		tree: TeamNode[];
@@ -35,16 +36,19 @@
 		filter: OfficeFilter;
 		selected: string | undefined;
 		onselect: (id: string) => void;
-		/** Shrink the chart (never below 45%) to the width available, instead of scrolling. */
+		/** Shrink the chart (never below 75%) to the width available, instead of scrolling. */
 		fit?: boolean;
 		/** What the office-filter tag says: the filtered office's name. */
 		highlightLabel?: string;
+		knownOffices?: ReadonlySet<string>;
 	} = $props();
 
+	// Below this the tiles would be too small to hit: scroll instead of shrinking further.
+	const MIN_SCALE = 0.75;
 	let chart = $state<HTMLElement>();
 	let available = $state(0);
 	let natural = $state({ w: 0, h: 0 });
-	const scale = $derived(fit && natural.w > 0 && available > 0 ? Math.min(1, Math.max(0.45, available / natural.w)) : 1);
+	const scale = $derived(fit && natural.w > 0 && available > 0 ? Math.min(1, Math.max(MIN_SCALE, available / natural.w)) : 1);
 
 	$effect(() => {
 		if (!chart) return;
@@ -66,9 +70,9 @@
 		member: m,
 		size: 'sm' as const,
 		selected: selected === m.id,
-		highlighted: highlightedByOffice(m, filter) === true,
+		highlighted: highlightedByOffice(m, filter, knownOffices) === true,
 		highlightLabel,
-		dimmed: highlightedByOffice(m, filter) === false,
+		dimmed: highlightedByOffice(m, filter, knownOffices) === false,
 		alsoIn: otherTeamsOf(snapshot, m.id, teamId),
 		onselect
 	});
@@ -102,13 +106,13 @@
 				<div class="flex items-center gap-x-2">
 					<dt class="w-14 shrink-0 text-gray-400">Agents <span class="text-gray-300">{agents.length}</span></dt>
 					<dd class="flex flex-wrap gap-1.5">
-						{#each agents as m (m.id)}<MemberTile {...tileProps(m, team.id)} />{:else}<span class="text-gray-500">None</span>{/each}
+						{#each agents as m (m.id)}<MemberTile {...tileProps(m, team.id)} />{:else}<span class="text-gray-500" aria-label="None">—</span>{/each}
 					</dd>
 				</div>
 				<div class="flex items-center gap-x-2">
 					<dt class="w-14 shrink-0 text-gray-400">People <span class="text-gray-300">{people.length}</span></dt>
 					<dd class="flex flex-wrap gap-1.5">
-						{#each people as m (m.id)}<MemberTile {...tileProps(m, team.id)} />{:else}<span class="text-gray-500">None</span>{/each}
+						{#each people as m (m.id)}<MemberTile {...tileProps(m, team.id)} />{:else}<span class="text-gray-500" aria-label="None">—</span>{/each}
 					</dd>
 				</div>
 				{#if others.length > 0}

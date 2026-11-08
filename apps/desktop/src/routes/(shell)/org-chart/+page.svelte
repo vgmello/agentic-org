@@ -8,11 +8,13 @@
 	import OwnerBar from '$lib/components/OwnerBar.svelte';
 	import PeopleChart from '$lib/components/PeopleChart.svelte';
 	import ReportingChart from '$lib/components/ReportingChart.svelte';
+	import SelectedMember from '$lib/components/SelectedMember.svelte';
 	import TeamsChart from '$lib/components/TeamsChart.svelte';
 	import TeamsList from '$lib/components/TeamsList.svelte';
 	import {
 		highlightedByOffice,
 		nonOwners,
+		memberById,
 		notInATeam,
 		organizationCounts,
 		owner,
@@ -51,9 +53,11 @@
 
 	// What the office filter highlights: the office's name for the tag, and how many agents it covers.
 	const highlightLabel = $derived(filter.kind === 'office' ? (offices.find((o) => o.id === filter.id)?.name ?? 'office') : filter.kind === 'unplaced' ? 'Unplaced' : '');
-	const highlightedCount = $derived(nonOwners(snapshot).filter((m) => highlightedByOffice(m, filter) === true).length);
+	const highlightedCount = $derived(nonOwners(snapshot).filter((m) => highlightedByOffice(m, filter, knownOffices) === true).length);
 
 	const reportParents = (n: ReportNode): string[] => (n.children.length ? [n.member.id, ...n.children.flatMap(reportParents)] : []).filter((id) => id !== n.member.id || !n.member.owner);
+	const knownOffices = $derived(new Set(offices.map((o) => o.id)));
+	const selectedMember = $derived(memberById(snapshot, selected));
 	const parents = (nodes: TeamNode[]): string[] => nodes.flatMap((n) => (n.children.length ? [n.team.id, ...parents(n.children)] : []));
 
 	function onTabKey(e: KeyboardEvent) {
@@ -71,11 +75,7 @@
 <svelte:head><title>Org chart · Agentic Org</title></svelte:head>
 
 <div class="space-y-5 px-8 py-6">
-	<!-- TEMPORARY: until the real office answers org.snapshot, this page shows an invented organization. -->
-	<p class="text-xs/5 text-gray-400" data-testid="sample-data-note">
-		<Badge variant="secondary">Sample data</Badge> This chart shows an invented organization until your office provides the real one.
-	</p>
-	<OwnerBar owner={owner(snapshot)} organization={data.connection.organization.name} />
+	<OwnerBar owner={owner(snapshot)} organization={data.sample ? 'Sample organization' : data.connection.organization.name} />
 
 	<div class="flex flex-wrap items-center justify-between gap-3">
 		<div role="tablist" aria-label="Org chart views" class="inline-flex rounded-lg bg-white/5 p-1 outline-1 -outline-offset-1 outline-white/10">
@@ -95,6 +95,12 @@
 				</button>
 			{/each}
 		</div>
+		{#if data.sample}
+			<!-- TEMPORARY: until the real office answers org.snapshot, this page shows an invented organization. -->
+			<p class="flex items-center gap-x-2 text-xs/5 text-gray-400" data-testid="sample-data-note">
+				<Badge variant="secondary">Sample data</Badge> An invented organization, not yours.
+			</p>
+		{/if}
 		<p class="text-sm/6 text-gray-400">
 			<span class="font-semibold text-white">{counts.agents}</span> agents ·
 			<span class="font-semibold text-white">{counts.people}</span> people ·
@@ -102,6 +108,8 @@
 			<span class="font-semibold text-white">{counts.teams}</span> teams
 		</p>
 	</div>
+
+	<SelectedMember {snapshot} member={selectedMember} offices={offices} onclear={() => (selected = undefined)} />
 
 	{#if tab === 'teams'}
 		<div id="panel-teams" role="tabpanel" aria-labelledby="tab-teams" class="space-y-5">
@@ -151,10 +159,10 @@
 					<p class="mx-auto mt-1 max-w-sm text-sm/6 text-gray-400">Teams group agents and people, and can own other teams and projects.</p>
 				</div>
 			{:else if asList}
-				<TeamsList {snapshot} {tree} />
+				<TeamsList {snapshot} {tree} {filter} {highlightLabel} {knownOffices} />
 			{:else}
 				<div class="overflow-x-auto pb-4">
-					<TeamsChart {snapshot} {tree} {collapsed} {filter} {selected} {fit} {highlightLabel} onselect={select} />
+					<TeamsChart {snapshot} {tree} {collapsed} {filter} {selected} {fit} {highlightLabel} {knownOffices} onselect={select} />
 				</div>
 			{/if}
 
@@ -167,9 +175,9 @@
 								member={m}
 								size="sm"
 								selected={selected === m.id}
-								highlighted={highlightedByOffice(m, filter) === true}
+								highlighted={highlightedByOffice(m, filter, knownOffices) === true}
 								{highlightLabel}
-								dimmed={highlightedByOffice(m, filter) === false}
+								dimmed={highlightedByOffice(m, filter, knownOffices) === false}
 								onselect={select}
 							/>
 						{/each}
