@@ -35,7 +35,8 @@ const ACCEPT_ERROR_PAUSE: Duration = Duration::from_millis(50);
 /// reading, and is disconnected rather than slowing anyone else down.
 const OUTBOUND_QUEUE: usize = 256;
 
-/// Answers requests. Each call runs on its own thread and answers through `connection`.
+/// Answers requests through `connection`. Each call runs on its own thread, except those
+/// [`Handler::inline`] picks, which run on the connection's reader thread.
 pub(crate) trait Handler: Send + Sync + 'static {
     fn handle(&self, request: Request, connection: &Arc<Connection>, received: Received);
 

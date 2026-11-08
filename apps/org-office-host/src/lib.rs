@@ -81,8 +81,8 @@ pub struct Config {
     /// (this exact executable, `Contents/MacOS/<exe>`, run by this user) that the app-only calls
     /// accept without a code signature. The binary sets it from the build-time constant
     /// `ORG_DEV_APP_PATH`, never from run-time input; tests set it directly. If the path doesn't
-    /// exist when the host starts (the app isn't built yet), that's logged and the fallback stays
-    /// off. Every use is logged.
+    /// exist when the host starts (the app isn't built yet) or isn't an executable file, that's
+    /// logged and the fallback stays off. Every use is logged.
     #[cfg(debug_assertions)]
     pub dev_app_path: Option<PathBuf>,
 }

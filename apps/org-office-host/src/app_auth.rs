@@ -33,7 +33,7 @@
 //!
 //! Every check fails closed: any error refuses the call (`not_authorized`).
 //!
-//! An exec between the host's accept and its token sample can still slip through steps 1 and 2
+//! An exec between the host's accept and its token sample can still slip through steps 1 and 3
 //! if it happens before the client sends anything: the defence is that the app answers only
 //! for its own requests. So the **client rule**: the app never sends an app-only call before
 //! it has read the answer to its `hello` (so the call can't be buffered before the accept).
@@ -76,6 +76,16 @@ pub(crate) trait Peer {
     fn executable(&self) -> Option<PathBuf>;
 }
 
+/// Which check let a caller in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Grant {
+    /// The app's code signature.
+    Signed,
+    /// The unsigned development app (debug builds only).
+    #[cfg(debug_assertions)]
+    Development,
+}
+
 /// The policy for app-only calls.
 #[derive(Debug)]
 pub(crate) struct AppPolicy {
@@ -87,9 +97,9 @@ pub(crate) struct AppPolicy {
 }
 
 impl AppPolicy {
-    /// The policy for `bundle_id` and `team_id`, and, in debug builds only, the development
-    /// app `dev_app` (release builds ignore it). A bundle id, team id or development path that
-    /// isn't well formed is an error, never a weaker policy.
+    /// The policy for `bundle_id` and `team_id` (debug builds may add the development app with
+    /// `with_dev_app`). A bundle id or team id that isn't well formed is an error, never
+    /// a weaker policy.
     pub(crate) fn new(bundle_id: &str, team_id: Option<&str>) -> Result<Self, String> {
         let requirement = team_id
             .map(|team_id| designated_requirement(bundle_id, team_id))
@@ -103,7 +113,8 @@ impl AppPolicy {
 
     /// Debug builds only: also accept the unsigned development app at `path` (its executable).
     /// A path that isn't absolute is an error. One that doesn't exist (yet: the app isn't built)
-    /// is logged, and the fallback stays off.
+    /// or isn't an executable file (the app folder instead of its executable) is logged, and the
+    /// fallback stays off.
     #[cfg(debug_assertions)]
     pub(crate) fn with_dev_app(mut self, path: &Path) -> Result<Self, String> {
         if !path.is_absolute() {
@@ -113,7 +124,12 @@ impl AppPolicy {
             ));
         }
         match path.canonicalize() {
-            Ok(path) => self.dev_app = Some(path),
+            Ok(path) if is_executable_file(&path) => self.dev_app = Some(path),
+            Ok(_) => crate::host_log::log(&format!(
+                "the development fallback is off: {} isn't the app's executable file (give \
+                 Contents/MacOS/<exe> inside the app, not the app folder)",
+                path.display()
+            )),
             Err(e) => crate::host_log::log(&format!(
                 "the development fallback is off: the development app {} can't be found ({e}); \
                  build the app, then restart the host",
@@ -125,31 +141,48 @@ impl AppPolicy {
 
     /// Whether `peer` may use the app-only calls.
     pub(crate) fn allows(&self, peer: &impl Peer) -> bool {
-        if !self.decide(peer) {
+        let Some(grant) = self.grant(peer) else {
             return false;
+        };
+        #[cfg(debug_assertions)]
+        if let (Grant::Development, Some(dev_app)) = (grant, &self.dev_app) {
+            // Loudly, every time, and only for a call that is really allowed (after the final
+            // re-check): this path skips the code-signature check.
+            crate::host_log::log(&format!(
+                "DEVELOPMENT FALLBACK: an app-only call was allowed for the unsigned {} \
+                 (debug build, no code-signature check)",
+                dev_app.display()
+            ));
         }
-        // Nothing may have happened while it was decided either: nothing arrived after the
-        // request, and the caller is still the process accepted.
-        peer.nothing_after_request()
-            && peer.accepted_token().is_some()
-            && peer.current_token() == peer.accepted_token()
+        let _ = grant;
+        true
     }
 
-    fn decide(&self, peer: &impl Peer) -> bool {
+    /// Which check lets `peer` in, the final re-check included: `None` refuses the call.
+    fn grant(&self, peer: &impl Peer) -> Option<Grant> {
+        let grant = self.decide(peer)?;
+        // Nothing may have happened while it was decided either: nothing arrived after the
+        // request, and the caller is still the process accepted.
+        let still = peer.nothing_after_request()
+            && peer.accepted_token().is_some()
+            && peer.current_token() == peer.accepted_token();
+        still.then_some(grant)
+    }
+
+    /// Which check would let `peer` in, before the final re-check in [`Self::grant`].
+    fn decide(&self, peer: &impl Peer) -> Option<Grant> {
         // Sent after the accept, with nothing after it, by the process the host accepted (see
         // the module docs).
         if !peer.sent_after_accept() || !peer.nothing_after_request() {
-            return false;
+            return None;
         }
-        let Some(token) = peer.accepted_token() else {
-            return false;
-        };
+        let token = peer.accepted_token()?;
         if peer.current_token() != Some(token) {
-            return false;
+            return None;
         }
         if let Some(requirement) = &self.requirement {
             if peer.satisfies(&token, requirement) {
-                return true;
+                return Some(Grant::Signed);
             }
         }
         #[cfg(debug_assertions)]
@@ -161,17 +194,9 @@ impl AppPolicy {
                     .is_some_and(|path| path == *dev_app)
                 // Still the same process after its executable was looked up by pid.
                 && peer.current_token() == Some(token);
-            if allowed {
-                // Loudly, every time: this path skips the code-signature check.
-                crate::host_log::log(&format!(
-                    "DEVELOPMENT FALLBACK: an app-only call was allowed for the unsigned {} \
-                     (debug build, no code-signature check)",
-                    dev_app.display()
-                ));
-            }
-            return allowed;
+            return allowed.then_some(Grant::Development);
         }
-        false
+        None
     }
 
     /// What the host logs about this policy at startup.
@@ -197,6 +222,13 @@ impl AppPolicy {
         }
         lines
     }
+}
+
+/// Whether `path` is a regular file someone may execute (debug builds: the development app).
+#[cfg(debug_assertions)]
+fn is_executable_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
 /// The app's designated requirement. The bundle id must be a reverse-DNS name (ASCII letters,
@@ -570,27 +602,36 @@ mod tests {
     #[test]
     fn a_caller_whose_audit_token_changes_after_the_decision_is_refused() {
         #[allow(unused_mut)] // Release builds have no development app.
-        let mut policies = vec![AppPolicy::new(APP_BUNDLE_ID, Some("AB12CD34EF")).unwrap()];
+        let mut policies = vec![(
+            AppPolicy::new(APP_BUNDLE_ID, Some("AB12CD34EF")).unwrap(),
+            Grant::Signed,
+        )];
         #[cfg(debug_assertions)]
         {
             let me = std::env::current_exe().unwrap();
-            policies.push(
+            policies.push((
                 AppPolicy::new(APP_BUNDLE_ID, None)
                     .unwrap()
                     .with_dev_app(&me)
                     .unwrap(),
-            );
+                Grant::Development,
+            ));
         }
-        for policy in policies {
+        for (policy, expected) in policies {
             // How many times the decision alone reads the current token.
             let unchanged = caller(true);
-            assert!(policy.decide(&unchanged));
+            assert!(policy.decide(&unchanged).is_some());
+            assert_eq!(policy.grant(&caller(true)), Some(expected));
             let decision_reads = unchanged.reads.get();
             // The token changes right after those reads: the decision still says yes...
             let mut late = caller(true);
             late.swap_after = Some(decision_reads);
-            assert!(policy.decide(&late));
-            // ...and the whole check says no.
+            assert!(policy.decide(&late).is_some());
+            // ...and the whole check says no (so the development fallback, which logs only
+            // for a grant, never logs this call as allowed)...
+            let mut late = caller(true);
+            late.swap_after = Some(decision_reads);
+            assert_eq!(policy.grant(&late), None);
             let mut late = caller(true);
             late.swap_after = Some(decision_reads);
             assert!(!policy.allows(&late));
@@ -751,6 +792,31 @@ mod tests {
         let mut there = caller(false);
         there.executable = missing;
         assert!(!dev.allows(&there));
+    }
+
+    /// The app folder, or a file that can't be executed, instead of the app's executable: no
+    /// caller could ever match it, so the fallback stays off rather than being described as on.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_development_app_folder_instead_of_its_executable_leaves_the_fallback_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let bundle = dir.path().join("Org.app");
+        std::fs::create_dir_all(bundle.join("Contents/MacOS")).unwrap();
+        let dev = AppPolicy::new(APP_BUNDLE_ID, None)
+            .unwrap()
+            .with_dev_app(&bundle)
+            .unwrap();
+        assert!(dev.dev_app.is_none());
+        assert!(!dev.describe().iter().any(|line| line.contains("FALLBACK")));
+        // A file inside it that can't be executed: off too.
+        let plain = bundle.join("Contents/MacOS/Org");
+        std::fs::write(&plain, b"not a program").unwrap();
+        let dev = AppPolicy::new(APP_BUNDLE_ID, None)
+            .unwrap()
+            .with_dev_app(&plain)
+            .unwrap();
+        assert!(dev.dev_app.is_none());
+        assert!(!dev.describe().iter().any(|line| line.contains("FALLBACK")));
     }
 
     /// The real Security-framework path, both ways, on this test process's own audit token: a
