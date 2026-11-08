@@ -2,13 +2,13 @@
 kind: spec
 title: "Offices, organizations and teams (UX)"
 status: for-review
-revision: 2
+revision: 3
 owner: ac-product-designer-eden
 created: 2026-11-08
 updated: 2026-11-08
 requested_by: ac-staff-engineer-ada
 reviewers: [ac-staff-engineer-ada, owner]
-builds_on: [desktop-app-v1]
+builds_on: []
 ---
 
 # Spec · Offices, organizations and teams (UX)
@@ -17,9 +17,11 @@ Requested by ada for the user.
 
 **Sources:** ada's `docs/design/offices-hq-and-satellites.md` (approved), `docs/design/teams-and-org-chart.md` (**approved by the user 2026-11-08**) and `docs/design/create-organization.md`. Look and feel: `prototype-agency` and Tailwind Plus application UI (dark sidebar, gray-900 ground, indigo-500 accent), as the app's onboarding screens already use.
 
-**What it changes in my earlier work:** it replaces, for the office model, `desktop-app-v1.md` §2.5 (workspace switcher), §3.2 (department and reporting-line chart) and §7.1 (Machines). Revision 5 of that spec folds this in. Acceptance-criterion IDs here are stable: changed criteria are rewritten under the same ID, retired IDs are never reused.
+**What it changes in my earlier work:** it replaces, for the office model, `desktop-app-v1.md` (in Eden's notes, not in this repository) §2.5 (workspace switcher), §3.2 (department and reporting-line chart) and §7.1 (Machines). Revision 5 of that spec folds this in. Acceptance-criterion IDs here are stable: changed criteria are rewritten under the same ID, retired IDs are never reused.
 
 ## Changelog
+
+**Revision 3 (2026-11-08): reviewer fixes.** A removed person's tasks come back **unassigned** for the owner to reassign (teams design). "Open organization" stays on the first-launch screen (ada, A38). "Join organization" is used only for joining with an invitation link (phase 3).
 
 **Revision 2 (2026-11-08): the user's final team model, and ada's answers.**
 
@@ -199,7 +201,7 @@ The app lives in the menu bar (ADR-0001). The icon is a monochrome template imag
 ```
 
 - Rows are a stacked list; the whole row opens the organization. Unavailable rows show their fix button instead of "Open".
-- **Empty (first launch):** two cards, as built today, with "Open organization" renamed **Join organization** ("Join an organization you already run, with an invitation link from its HQ") and enabled. Join opens the paste field.
+- **Empty (first launch):** two cards, as built today, **Create organization** and **Open organization** (ADR-0001, `docs/design/create-organization.md`), both enabled. Open organization lists the organizations on this Mac and offers **Join organization** ("Join an organization you already run, with an invitation link from its HQ"), which opens the paste field (the join flow, phase 3).
 - The app **never reads the clipboard on its own.** "Paste" (and ⌘V in the field) does.
 - Opening an `agenticorg://join#…` link brings the window forward on this screen with the field filled and goes straight to Confirm (§5.2). It never joins by itself.
 
@@ -515,7 +517,7 @@ Entry points: the People toolbar's **Add person**; a team's ⋯ › **Add person
   > Remove Sam Ortiz from Lumen Labs?
   > - Sam leaves Product and Checkout, and stops leading Product.
   > - Jo Park, who reports to Sam, will report to you.
-  > - Agents can no longer reach Sam. 3 messages waiting for Sam won't be delivered, and Sam's 2 open tasks come back to you to reassign.
+  > - Agents can no longer reach Sam. 3 messages waiting for Sam won't be delivered, and Sam's 2 open tasks come back unassigned for you to reassign.
   >
   > **Remove Sam Ortiz** (red)
 - **Removing an agent** isn't done here: an agent's quick view offers **Offboard…**, which is the HR flow (same consequences, listed the same way).
@@ -707,6 +709,7 @@ Two directions, same result:
 - U6 · *My recommendation:* keep "HQ" and "office". They're short and plain, and the layout doesn't depend on them.
 
 **For ada**
+- ~~A38~~ · *Resolved (ada):* no rename. "Open organization" stays for an organization already on this Mac, and "Join organization" is reserved for the invitation link (phase 3).
 - A7 · Remove office: I've made it HQ-only, like Add office and approval. Confirm, or should it work from any office while HQ is reachable?
 - A8 · Is there a limit on how many people an organization can add, or on a person's name length? I've assumed the team-name rules (1–64 characters).
 - A9 · Does the agent's `delivery_failed` notice carry the name the agent used, so PEOPLE-7 can say "Couldn't reach "Sam"" and prefill Add person?

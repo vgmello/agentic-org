@@ -2,7 +2,7 @@
 kind: spec
 title: "Work items: tasks, bugs and project docs (UX)"
 status: for-review
-revision: 4
+revision: 5
 owner: ac-product-designer-eden
 created: 2026-11-08
 updated: 2026-11-08
@@ -17,11 +17,13 @@ Phase 1 workstream W7 (UX), with codex-dev (model and library) · Builds on `off
 
 **Sources:** ada's phase-1 plan (`ac-staff-engineer-ada/knowledge/plans/phase-1.md`, W7 and W9). The user's rule (2026-11-08): **bugs are first class**. Every project has its own bugs, and each bug sits in an **area** of the project, owned by a team, so it reaches the people who own that part. codex-dev's provisional model (not yet approved): flat areas per project with stable ids, a renamable name and an owning team; the reporter suggests the area and triage confirms or reroutes it; severity is separate from priority; New → Triaged → In progress → Fixed → Verified/Closed, with reopen, duplicate and won't-fix paths; a bug links to one or more fix tasks rather than turning into one. **ada's defaults (2026-11-08, for the user to approve with this design):** areas are flat, each owned by one of the project's teams, with an optional area lead (default: the team's lead), and every project has a default area **General**; severity is critical, major, minor or trivial, set by the reporter and confirmed at triage; **priority is a separate field shared with tasks** (urgent, high, normal, low); the reporter or the area lead verifies the fix.
 
-**What it changes in my earlier work:** for organizations run by an office, this replaces `desktop-app-v1.md` §3.7 (Assign task), §3.9 (Projects), §3.10 (Tasks roll-up) and the project Brief tab. Tasks are office records now, not backlog-file rows. Revision 5 of the v1 spec folds this in. Words, components, the owner, agents vs people, and the Pending/Blocked rules come from `offices-and-teams-ux.md` and aren't repeated here.
+**What it changes in my earlier work:** for organizations run by an office, this replaces `desktop-app-v1.md` (in Eden's notes, not in this repository) §3.7 (Assign task), §3.9 (Projects), §3.10 (Tasks roll-up) and the project Brief tab. Tasks are office records now, not backlog-file rows. Revision 5 of the v1 spec folds this in. Words, components, the owner, agents vs people, and the Pending/Blocked rules come from `offices-and-teams-ux.md` and aren't repeated here.
 
 **Acceptance-criterion IDs** are new prefixes (PRJ, TSK, BUG, TRI, FIX, AREA, DOC, WORK) so they never collide with v1's PROJ and TASKS. They're stable from this revision: changed criteria are rewritten under the same ID, retired IDs are never reused.
 
 ## Changelog
+
+**Revision 5 (2026-11-08): features and requests (the user).** The project page gets a **Features** tab after Overview (`features-ux.md`) and a **Debt** tab. Work gets **Debt** and **Requests** pills (`decisions-and-tech-debt-ux.md`, `feature-requests-ux.md`). Tasks can link to one feature. Tabs are now **Overview | Features | Tasks | Bugs | Debt | Docs | Insights | Settings**.
 
 **Revision 4 (2026-11-08): checklists and time per task (the user, via ada).** Tasks and bugs can carry a **checklist** of ordered steps, some **required** (§9.1, decisions 17–18). Every task and bug shows its **time**: lead time, cycle time and the split into working, waiting on you, blocked and idle, derived from its state changes (§9.2, with `costs-and-insights-ux.md` §2 and TIME-4 to TIME-6 there). Tech debt is no longer a work item: it's a doc in the repository (`decisions-and-tech-debt-ux.md` rev 4). Criteria added: CHK-1 to CHK-9, TSK-11. 84 criteria here. New questions C19–C21.
 
@@ -46,7 +48,7 @@ Phase 1 workstream W7 (UX), with codex-dev (model and library) · Builds on `off
 
 ## 0. Decisions in this spec
 
-1. **The project page is where work lives.** Tabs: **Overview | Tasks | Bugs | Docs | Settings**. Bugs sit next to tasks and docs, never in a separate tool.
+1. **The project page is where work lives.** Tabs: **Overview | Features | Tasks | Bugs | Debt | Docs | Insights | Settings** *(rev 5; was Overview, Tasks, Bugs, Docs, Settings)*. Bugs sit next to tasks and docs, never in a separate tool.
 2. **One cross-project view, Work,** with pill tabs **Tasks | Bugs** (the Org chart pattern). It replaces the v1 Tasks nav item. Nav: Home · Org chart · Projects · **Work** · Knowledge · … · Offices · Settings.
 3. **One number sequence per project for tasks and bugs:** `chk-12` is either a task or a bug, never both. The type icon and the word ("Bug chk-12") always show with the number, so a reference in a message or doc can't point at the wrong thing. (Model question C1.)
 4. **Severity is the bug's impact,** in four plain words: **Critical · Major · Minor · Trivial**. The reporter sets it, helped by a one-line meaning for each level, and triage confirms it.
@@ -58,7 +60,7 @@ Phase 1 workstream W7 (UX), with codex-dev (model and library) · Builds on `off
 10. **Verification is suggested to the reporter.** A Fixed bug asks its reporter **It's fixed** (Closed · Verified) or **Still happens** (back to Triaged, Reopened, with a required note). Anyone else can answer too, and the activity names who did. *(rev 3)*
 11. **Closing a bug without a fix always needs a reason** (Duplicate needs the original bug; Won't fix and Can't reproduce need a sentence). The reporter is told.
 12. **Reporting asks for little and checks for duplicates:** title, "What happened" and severity are required. The area starts on General, and steps, expected and environment are optional. Environment is filled in for you. While the title is typed, up to three **similar open bugs** show, so the reporter can add to an existing bug instead.
-13. **Areas are flat** (no nesting), managed in project **Settings › Areas**. Each is owned by exactly one of the project's teams and has an optional area lead. Every project has **General**, so a bug never lacks an area. Deleting an area with open bugs asks which area they move to.
+13. **Areas are flat** (no nesting), managed in project **Settings › Areas**. Each is owned by exactly one of the project's teams and has an optional area lead. Every project has **General** (owned by its first team, or by no team while it has none, AREA-7), so a bug never lacks an area. Deleting an area with open bugs asks which area they move to.
 14. **Agents and people are equals in work.** Either can report, be assigned, triage and verify. They are told apart by shape and words (`offices-and-teams-ux.md` §7.0). The owner is first in every assignee picker.
 15. **Docs are Markdown files in the project's repository** (`docs/`), with the project brief pinned first. Saving makes a commit on a docs branch that lands through the project's merge flow (`decisions-and-tech-debt-ux.md` §0.2). Any `chk-12` in a doc links to that task or bug, and the item lists the docs that mention it.
 16. **Every drag has a menu path and a keyboard path** (board columns, priority), as in the org chart.
@@ -278,7 +280,7 @@ Triage is the step from **New** to **Triaged**: confirm the area and severity, s
  │ Activity                                             │ Links                         │
  │ (S) Sam reported it · 3 h ago                        │   Duplicates: chk-10          │
  │ [R] Riley triaged: Critical, Urgent, Riley · 2 h  │   Commits: 9c1e0b2            │
- │ ⚙ In progress when chk-13 started · 1 h ago  [Undo]  │   Branch: fix/double-charge   │
+ │ ⚙ In progress when chk-13 started · 1 h ago  [Undo]  │   Branch: task/chk-13-disab…  │
  │ (S) Sam: still happens on the Apple Pay path · 20 m  │   Docs: Payment step design   │
  │ [Comment…                                   ] [Send] │   [+ Link]                    │
  └─────────────────────────────────────────────────────┴──────────────────────────────┘
@@ -347,7 +349,7 @@ Triage is the step from **New** to **Triaged**: confirm the area and severity, s
 - **Moving:** drag between columns, or ⋯ › **Move to ▸** To do / In progress / Blocked / Done, or the keyboard (select a card with Space, arrow to a column, Space to drop; announced "chk-17 moved to In progress"). **Blocked needs a reason** (one line). Each column sorts by priority, then age (decision 5). Priority changes through ⋯ › **Priority ▸** or the task page, and the card moves to its place with the change announced.
 - **List:** a table with the same columns as v1 §3.10 (status, number, priority, title, assignee, team, fixes, goal, updated), grouped by status, Blocked first.
 - **New task** (slide-over): Title * (1–120) · Assignee (optional; the owner first) · Team (the project's teams; prefilled when there's one) · Priority (Normal) · Description (Markdown) · Definition of done (one or two sentences: the goal the agent works to) · Fixes (bug picker; prefilled from Create fix task) · **Start now** for an agent with no session running (v1 §3.7 rule: never typed into a running session). **Create task**. Toast "Task chk-17 created and given to River."
-- **Task page:** like the bug page. Main column: description, definition of done, activity. Side column: status, priority, assignee, team, fixes (bugs, with severity), branch and worktree (W4: "Worktree: ~/…/chk-17, branch task/chk-17"), commits, docs, **Open session** / **Start a session on this task**.
+- **Task page:** like the bug page. Main column: description, definition of done, activity. Side column: status, priority, assignee, team, fixes (bugs, with severity), branch and worktree (W4: "Worktree: ~/…/chk-17, branch task/chk-17-coupon-edge-cases"), commits, docs, **Open session** / **Start a session on this task**.
 - **States:** board loading (columns with skeleton cards) · no tasks: "No tasks in checkout yet." **New task** · no matches: **Clear filters** · move refused by the office (e.g. a Done task whose worktree has uncommitted changes, C7: the card springs back and the message says why) · someone moved it first (the card animates to its new column, and a toast says "River moved chk-17 to In progress").
 
 ### 9.1 Checklists (rev 4)
@@ -406,7 +408,7 @@ The task and bug pages show a **Time** block in the side column (the full design
 - **List:** the Brief pinned first, then docs by last commit. A dot marks docs changed since I last opened them. Search covers titles and text. The title is the file's first heading, or its file name.
 - **Header:** the path (mono, with Copy path), who last changed it (the agent from the co-author trailer, "ada · committed as you", or "you") and when, **Edit** and ⋯. It shows the project's integration branch, and a pending change shows **Waiting to merge · View change**.
 - **Reader:** rendered Markdown with the v1 §2.8 safety rules (no raw HTML, no remote images, links ask first). `chk-12` becomes a chip with the type icon and status. The footer lists **Mentioned in** (items that link this doc) and **Mentions**.
-- **Edit:** a Markdown editor with **Write | Preview** tabs. **Save** (⌘S) · **Cancel**. Saving commits the file to a docs branch (`docs/<doc-slug>`, never the default branch) with you as the author and an editable one-line description, prefilled "Update Payment step design" (shown under Save, collapsed). The toast says "Saved Payment step design. It shows here when it's merged." Leaving with unsaved changes asks "Discard your changes to Payment step design?".
+- **Edit:** a Markdown editor with **Write | Preview** tabs. **Save** (⌘S) · **Cancel**. Saving commits the file to a docs branch (`docs/<slug>-<short-id>`, created by the office, never the default branch: `decisions-and-tech-debt-ux.md` §0.2, A36) with you as the author and an editable one-line description, prefilled "Update Payment step design" (shown under Save, collapsed). The toast says "Saved Payment step design. It shows here when it's merged." Leaving with unsaved changes asks "Discard your changes to Payment step design?".
 - **New doc:** Title * (1–120, unique in the project), with the file name shown as it's made ("docs/release-checklist.md", editable) → opens in Edit. Nothing is committed until the first Save.
 - **⋯:** Copy link · Rename (renames the file too, and links keep working) · Delete ("Delete Release checklist? It's removed from the main branch and stays in its history. Links to it from 2 items will show as deleted.") · **Report a bug about this doc** · **History** (the file's commits: author, age, description; opening one shows that version read-only, with **Restore this version**, which saves it as a new commit).
 - **Brief:** can't be deleted or renamed. When it's empty: "The brief isn't written yet. Every agent on the project reads it first." **Write the brief**.
@@ -524,8 +526,8 @@ Nav **Work**, pill tabs **Tasks | Bugs**: the same lists as the project tabs, ac
 - AREA-3 · Renaming an area keeps its bugs in it, and closed bugs show the new name.
 - AREA-4 · Changing an area's team says how many open bugs move and who triages new ones.
 - AREA-5 · *(rev 2)* Deleting an area with open bugs requires choosing another area for them, General first. Closed bugs show "<name> (deleted)".
-- AREA-6 · *(rev 2)* A new project has the area General, owned by its first team. General can be renamed and given to another project team, but has no Delete.
-- AREA-7 · *(rev 2)* Removing a team from a project that keeps other teams requires choosing which remaining team takes its areas. When the last team goes, its areas show "No team · Choose team…", and the owner triages their bugs.
+- AREA-6 · *(rev 2)* A new project has the area General, owned by its first team, or by no team while the project has none (AREA-7). General can be renamed and given to another project team, but has no Delete.
+- AREA-7 · *(rev 2)* Removing a team from a project that keeps other teams requires choosing which remaining team takes its areas. When the last team goes, its areas show "No team · Choose team…", and the owner triages their bugs. *(Confirmed by ada for W7: an area's owning team is nullable, and creating a bug is never blocked.)*
 - AREA-8 · *(new, rev 2)* An area with no area lead shows "Area lead: <team lead> (team lead)", and when an area lead leaves the team or the organization, the area falls back to the team's lead.
 - AREA-9 · *(new, rev 2)* Changing an area's team clears an area lead who isn't in the new team, and the dialog says so before saving.
 
@@ -558,13 +560,13 @@ Nav **Work**, pill tabs **Tasks | Bugs**: the same lists as the project tabs, ac
 - C4 · Task statuses: v1's To do, In progress, Blocked, Done. Do you need Cancelled? If so, I'd show it like a closed bug (a resolution on Done: "Done · Cancelled").
 - C5 · The agent side: which `org-agent` commands report, triage, verify and comment (agreed with agy)? I need their output words to match the UI's (statuses, severities, "Fixed — verify").
 - C6 · Watchers: should a bug have watchers (the reporter, duplicate reporters, commenters) who are told about changes? I've used them only for duplicates and verification.
-- C7 · Commits and branches: linking by the number in commit messages and branch names (`fix/chk-11-…`)? And can the office refuse Done for a task whose worktree has uncommitted changes?
+- C7 · Commits and branches: linking by the number in commit messages and branch names (`task/chk-13-…`: task branches are `task/<task-id>-<slug>`, projects-git-github.md)? And can the office refuse Done for a task whose worktree has uncommitted changes?
 - C8 · Can a fix task live in another project from its bug (a Platform fix for a checkout bug)? I've kept links within one project for phase 1.
 - C9 · Deleting bugs and tasks: I'd keep numbers unused after a delete. (Doc history is now git's, A11.)
 - ~~C19~~ · *Resolved (ada):* Mark done anyway with a recorded reason, with no hard refusal in phase 1. The reason shows on the task and in Activity.
 - C20 · Checklist items as part of the work item (ordered, with a stable id each, ticked by and at), and a step "made a task" as a link to that task.
 - ~~C21~~ · *Resolved (agy-senior-dev):* the §9.1 commands fit. `task check|uncheck` take the step number or its stable id (scripts use the id, so reordering never ticks the wrong step). A blocked `task done` exits 1 with the same message on stderr (and JSON with `--json`).
-- C10 · Docs: is the Brief `docs/brief.md` (or the repo's README)? Saves go to a docs branch (rev 4, per the git design). Remaining: and does a project without a repository yet have docs at all?
+- C10 · Docs: is the Brief `docs/brief.md` (or the repo's README)? Saves go to a docs branch (`decisions-and-tech-debt-ux.md` §0.2, A36). Remaining: does a project without a repository yet have docs at all?
 
 **For ada**
 - ~~A10~~ · *Resolved in rev 3, clarified in rev 4:* HQ gives the project number. Items created in the app go to HQ and show Pending (with a local short id) until HQ confirms them. Items an agent creates at its own office are saved at once and wait only for their number (§12).

@@ -2,18 +2,20 @@
 kind: spec
 title: "Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)"
 status: for-review
-revision: 2
+revision: 3
 owner: ac-product-designer-eden
 created: 2026-11-08
 updated: 2026-11-08
 requested_by: owner
 reviewers: [ac-staff-engineer-ada, owner, app-frontend-dev, server-dev, ac-software-engineer-river, agy-senior-dev, codex-dev]
-builds_on: [offices-and-teams-ux, work-items-ux, desktop-app-v1]
+builds_on: [offices-and-teams-ux, work-items-ux]
 ---
 
 # Spec · Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)
 
-Builds on `offices-and-teams-ux.md` rev 2, `work-items-ux.md` rev 3 and `desktop-app-v1.md` (hire §3.6, profile §3.5).
+Builds on `offices-and-teams-ux.md` rev 2, `work-items-ux.md` rev 5 and `desktop-app-v1.md` (in Eden's notes, not in this repository) (hire §3.6, profile §3.5).
+
+**Revision 3 (2026-11-08): reviewer fixes.** Offboarding's kept records, reserved name and Former members are now a contract request (A37), because `member.remove` deletes the member today. The spool-import facts follow ADR-0003. Duplicate open questions removed.
 
 **Revision 2 (2026-11-08):** the user: Remy and Riley aren't started, and they show as **Offline**. Fixes from review: offboarding follows the teams design (reports go to the owner, and open tasks come back unassigned), and git and GitHub belong to River. My recommendations for U10–U12.
 
@@ -31,7 +33,7 @@ Builds on `offices-and-teams-ux.md` rev 2, `work-items-ux.md` rev 3 and `desktop
 - **App:** create, open and list organizations work on a **mock** (`MockOffice`). Agents, Projects, Tasks, Activity and Settings are placeholders. The org chart is work in progress on sample data (app-frontend-dev's worktree).
 - **Office:** the server and host are stubs on `v1`. server-dev's store (local branch) has organizations only. Teams and members are a **contract only** (`org-proto`: `Member { id, kind, name, contact, owner, office_id, reports_to }`, `team.*`).
 - **Hiring has no design and no contract.** The teams design says agents "join through hiring (the HR flow, its own design)", and that design was never written. This spec writes the UX.
-- **Nothing imports an existing team.** The only planned import moves messages, not members (ADR-0003 Phase B).
+- **Nothing imports an existing team.** The only planned import (ADR-0003 Phase B, `import-v1-old-spool`) brings the spool's messages, profiles, statuses and read/snooze state into HQ, not team members. Its spool is deleted a week after the move, so reading names from the spool (IMP-2, IMP-8) must happen in that window, or later from the profiles HQ imported.
 - **An app `Member` can't describe our agents.** It has no role, title, focus, runtime, model, home folder or messaging id.
 - **Our roster is split across three sources** (below), and they disagree.
 
@@ -80,7 +82,7 @@ The organization's name is U10 ("Agentic Consulting" from the folder? another?).
 4. **Four ways to stop or remove work, named by what they do,** never one ambiguous "deallocate":
    - **Remove from team:** the agent stays in the organization, and its team's projects are no longer its work.
    - **Pause:** the agent stays in its teams, isn't started, woken or messaged with new work, and its open tasks stay put. Resume brings it back.
-   - **Offboard:** the agent leaves the organization. Its records are kept, its name stays reserved, its open tasks come back unassigned for the owner to reassign, and anyone reporting to it reports to the owner (teams-and-org-chart design, "When a member is removed").
+   - **Offboard:** the agent leaves the organization. Its open tasks come back unassigned for the owner to reassign, and anyone reporting to it reports to the owner (teams-and-org-chart design, "When a member is removed"). Its record stays, its name stays reserved and it shows under Former members: offboarding is a state, set by `member.offboard` (ada, A37), not a delete.
    - **Unassign a task:** the task goes back to To do with no assignee.
 5. **Moving an agent between teams is one action,** **Move to team…**, not remove-then-add. Nothing flickers in the chart, and the agent is never briefly in "Not in a team" (A16: one command).
 6. **Assigning has one entry point per target,** from the agent or from the target: **Add to team…** (agent ⇄ team), **Lead** (team), **Assign task** (agent ⇄ task). An agent works on a project **through a team**. "Add to project…" on an agent asks which of the project's teams to join (or suggests one).
@@ -253,7 +255,7 @@ v1 §3.6 holds, with these changes for the office model:
 - DEAL-1 · The UI never says "deallocate". It offers Remove from team, Pause, Offboard and Unassign, each with its own consequences.
 - DEAL-2 · Removing an agent from its last team confirms and says it will be in Not in a team.
 - DEAL-3 · A paused agent shows Paused on its card, isn't started or woken, its new messages and tasks wait, and Resume restores it in one click.
-- DEAL-4 · Offboard lists only the consequences that apply, brings open tasks back unassigned for the owner to reassign, makes anyone reporting to the agent report to the owner, and moves the agent to Former members, read-only.
+- DEAL-4 · Offboard lists only the consequences that apply, brings open tasks back unassigned for the owner to reassign, makes anyone reporting to the agent report to the owner, and moves the agent to Former members, read-only (`member.offboard`, A37).
 - DEAL-5 · Show paused in the chart toolbar hides or shows paused agents, and is remembered.
 
 ## 12. Gaps to close, and who I think owns them (for ada to confirm in the phase-1 plan)
@@ -261,7 +263,7 @@ v1 §3.6 holds, with these changes for the office model:
 | # | Gap | Proposed owner | Plan row |
 | --- | --- | --- | --- |
 | G1 | `Member` fields for agents: role, title, focus, runtime, model, home, messaging name, status incl. Paused, hired on | ada (contract) + server-dev (store) | W3 / W10 |
-| G2 | `member.add_agent`, `member.move` (one command), `member.pause` / `resume`, offboard semantics on `member.remove` | ada + server-dev | W3 |
+| G2 | `member.add_agent`, `member.move` (one command), `member.pause` / `resume`, `member.offboard` (A37) | ada + server-dev | W3 |
 | G3 | Import: read the HR workspace and the spool inboxes into a reviewable plan, then apply it (CLI first, then the app) | codex-dev (ada, after W8, with the W7 model) | W12 |
 | G4 | Messaging names ⇄ members: a message from `codex-dev` is linked to its member, and `who`/presence are keyed the same way | agy-senior-dev | W6 Phase B |
 | G5 | Activity feed: one stream over messages, status, work items, team changes and git merges | ada (contract), server-dev, agy | new |
@@ -278,10 +280,7 @@ v1 §3.6 holds, with these changes for the office model:
 - ~~U13~~ · *Resolved (the user):* don't start Remy and Riley. They're brought in Active and show as **Offline** (no session), not Paused. Their planned work (G3, G6, G7) needs another owner (ada).
 
 **For ada**
-- A14 · Which runtime do server-dev, app-frontend-dev and the reviewer run on?
+- ~~A37~~ · *Resolved (ada):* offboarding is a state. `AgentStatus` gains `offboarded`, and `member.offboard { member_id, expected_version }` sets it with `offboarded_at`. The record stays, the handle stays reserved, the agent shows under Former members, and its open tasks are reclaimed as in the teams design. `member.remove` stays for hard deletes of members with no history (mistakes). server-dev drafts it. ada updates `docs/design/teams-and-org-chart.md`, which still says offboarding issues `member.remove`.
 - ~~A15~~ · *Resolved (ada):* `Member.agent: Option<AgentProfile>` (one entity, one version) with role, title, focus, runtime (claude_code | codex | antigravity | other), home, messaging_name, status (active | paused). Commands: `member.add_agent`, `member.update_agent`, `member.set_agent_status`, `member.move`.
 - ~~A14~~ · *Partly resolved (ada):* codex-dev and server-dev run on Codex, agy-senior-dev on Antigravity. app-frontend-dev and the reviewer: ada is asking the user.
 - ~~A16~~ · *Resolved:* `member.move { membership_id, to_team_id, title_in_team? }`, atomic. ~~A17~~ · *Resolved:* the app reads every message in the office (ADR-0003).
-- U13 note (ada): ada plans Remy for import and hire (G3, G6) and Riley for the screens (G7), once the user starts their sessions, so they'd be brought in Active, not Paused.
-- A16 · Can `member.move` be one command (no in-between state)?
-- A17 · Is the owner allowed to read every message between agents (decision 7)? I think yes (it's their organization), and the UI says "Messages in <org> are visible to you" in Settings.

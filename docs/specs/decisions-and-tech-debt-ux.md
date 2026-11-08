@@ -2,7 +2,7 @@
 kind: spec
 title: "Decisions, evaluations, designs and tech debt (UX)"
 status: for-review
-revision: 6
+revision: 7
 owner: ac-product-designer-eden
 created: 2026-11-08
 updated: 2026-11-08
@@ -13,13 +13,15 @@ builds_on: [work-items-ux, our-org-in-the-app]
 
 # Spec · Decisions, evaluations, designs and tech debt (UX)
 
-Extends `work-items-ux.md` rev 3 (Docs, work items) and `our-org-in-the-app.md` (our own project in the app).
+Extends `work-items-ux.md` rev 5 (Docs, work items) and `our-org-in-the-app.md` (our own project in the app).
 
 ## The request (the user, 2026-11-08)
 
 > Capture tech debt: every shortcut or quicker implementation an agent takes should be captured. Have a structure for ADRs and design documents in a project, so agents can use them. Help us find **why a decision was made** and **what technology we evaluated**. And bring this project's own designs into the tool that manages it.
 >
 > These are features of the product: agents don't write them in their own folders any more. They write them **through the tool**, which saves them in the project, in a proper structure, in its repository. *(the user, rev 2)*
+
+**Revision 7 (2026-11-08): reviewer fixes.** §0.2 now says the docs flow **needs** an extension of the git design (A36), since that design lets the office push only an agent's own `task/…` branch and leaves merging for later. ada agreed office-created `docs/<slug>-<short-id>` branches (A36). "Integration branch" replaces "docs branch" where it meant the branch the Docs tab reads. Branch examples follow `task/<task-id>-<slug>`. The kind list matches §0.1. The Spec template includes `created` and `updated`, and member fields hold member ids.
 
 **Revision 6 (2026-11-08): doc changes land through branches (review fix).** Following `docs/design/projects-git-github.md` (never push to the default branch; the owner is the commit author, the agent is co-author): every doc change is a commit on a task or docs branch that lands through the merge flow, and the app shows "Waiting to merge" (§0.2). DEC-4, DEBT-5, AUTH-1 rewritten. C13 partly answered.
 
@@ -51,7 +53,7 @@ ada already writes decisions and designs in a consistent way. The app adopts it 
 
 0. **Written through the tool, kept in the project's repository.** Decisions, designs, evaluations, specs, plans, reviews and the brief are product features. Agents create and change them with `org-agent` (§3.1) and people with the app. The tool writes the file into the project's repository in the structure below and commits it on a branch that lands through the merge flow (§0.2). Agents' home folders keep only their own memory and journal, so no project knowledge lives there any more. Editing the files directly with git still works (agents are developers), and the tool reads them back, but the tool is the normal way and the only one that numbers, templates, links and records status changes.
 
-### 0.1 The project structure (in the repository, on the docs branch)
+### 0.1 The project structure (in the repository, on the integration branch)
 
 ```
 docs/
@@ -62,6 +64,8 @@ docs/
   specs/<slug>.md          UX specs
   plans/<slug>.md          plans (phases, workstreams)
   reviews/<date>-<slug>.md reviews (architecture, design, UX)
+  features/0007-<slug>.md  features (FEAT-0007, `features-ux.md`)
+  retros/<date>-<slug>.md  retrospectives (`retrospectives-ux.md`)
   debt/0012-<slug>.md      tech debt (DEBT-0012)
   limitations/0003-<slug>.md   known limitations (LIM-0003)
   exceptions/0002-<slug>.md    exceptions to a rule or decision (EXC-0002)
@@ -71,14 +75,15 @@ docs/
 
 **The rule (the user, rev 4): persistent in the repository, transitional in the database.** Anything the team will want to read in a year (why we built it this way, what we evaluated, what we knowingly left unfinished, what doesn't work and why, which rules we bent) is a file here. Tasks, bugs, messages, queues, sessions, statuses and other working state are office records: they're acted on, closed and can be deleted, and they never go into the repository. Docs link them by number, and they link docs by id.
 
-### 0.2 How a doc change lands (rev 6: follows `docs/design/projects-git-github.md`)
+### 0.2 How a doc change lands (rev 7: extends `docs/design/projects-git-github.md`, A36 agreed with ada)
 
-- **Never straight to the default branch.** Every doc change, whether a new doc, an edit, an Accept or a status change, is a commit on a branch: an agent's own `task/<id>-<slug>` branch, or for changes made in the app a **docs branch** the office creates (`docs/<doc-slug>`). It lands through the project's normal merge flow. For us: an independent review, the reviewer's READY, ada's go, and a merge into `v1`.
-- **The app shows that honestly.** A changed doc reads "**Waiting to merge** · on docs/payment-step · 1 change" with **View change**. The reader shows the merged text, and a toggle shows the proposed one. An Accept shows as "Accepted · waiting to merge". Lists show the merged state, with a small "1 change waiting" marker.
+- **Never straight to the default branch.** Every doc change, whether a new doc, an edit, an Accept or a status change, is a commit on a branch: an agent's own `task/<task-id>-<slug>` branch, or for changes made in the app a **docs branch** the office creates (`docs/<slug>-<short-id>`). It lands through the project's normal merge flow. For us: an independent review, the reviewer's READY, ada's go, and a merge into `v1`.
+- **Docs branches (ada, A36):** for edits made in the app, the office creates `docs/<slug>-<short-id>` branches (owner as author, the editing agent or the app as co-author), with no stand-in tasks. Agents' own edits ride on their `task/…` branches. Docs merge through the **same flow as code**: the project's configured reviewer, the go, then the merge. "Waiting to merge" covers both. This extends `docs/design/projects-git-github.md`, which ada updates.
+- **The app shows that honestly.** A changed doc reads "**Waiting to merge** · on docs/payment-step-a7f3 · 1 change" with **View change**. The reader shows the merged text, and a toggle shows the proposed one. An Accept shows as "Accepted · waiting to merge". Lists show the merged state, with a small "1 change waiting" marker.
 - **Authorship follows the commit-identity decision:** commits are authored under the owner's name and no-reply address, with the agent as `Co-authored-by`. The app shows the agent who made the change ("ada · committed as you"), read from the co-author trailer, and "you" for changes the owner made.
 - **Which branch the Docs tab reads** is the project's integration branch (`v1` for us, `main` elsewhere), a project setting (C13).
 
-1. **Seven document kinds, one Docs tab:** **Decisions (ADRs) · Designs · Evaluations · Specs · Plans · Reviews · Other** (guides, reports and the brief pinned on top). Every kind is a Markdown file in its folder (§0.1), and the kind comes from the folder.
+1. **Document kinds, one Docs tab:** **Features · Decisions (ADRs) · Designs · Evaluations · Specs · Plans · Reviews · Retrospectives · Debt · Limitations · Exceptions · Other** (guides, reports and the brief pinned on top), as listed in §0.1. Every kind is a Markdown file in its folder (§0.1), and the kind comes from the folder.
 2. **Markdown with front matter, shaped by a template.** Each doc starts with YAML front matter whose fields come from its kind's template (kind, number, title, status, owner, dates, relations), followed by the template's sections as `##` headings. The UI turns the front matter into a header card and the sections into a navigable page. Agents get the same structure from `org-agent doc schema <kind>`. *(rev 3: replaces the parsed status line.)*
 3. **ADR statuses:** **Proposed · Accepted · Superseded · Rejected · Deprecated.** A superseded ADR names its replacement, and both link each other.
 4. **Design statuses:** **Draft · In review · Approved · Built · Obsolete.** Evaluations: **Planned · Running · Done** (with a verdict).
@@ -140,7 +145,7 @@ kind: adr
 id: ADR-0004
 title: Docs storage
 status: proposed            # proposed | accepted | superseded | rejected | deprecated
-owner: ada                  # a member (agent or person)
+owner: ac-staff-engineer-ada  # a member id (agent or person)
 created: 2026-11-08
 decided: null               # set on accept/reject: { on: 2026-11-09, by: owner }
 supersedes: []              # [ADR-0002]
@@ -162,7 +167,7 @@ related: [ac-17, DEBT-0012] # tasks, bugs, debt
 
 **Evaluation** (`docs/evaluations/`): `kind: evaluation` · `id: EVAL-0002` · `title` (the question) · `status: planned | running | done` · `owner` · `options: [Turso, SQLCipher]` · `verdict: SQLCipher` · `verdict_reason: "Turso's encryption is experimental"` · `decides: [ADR-0002]`. Sections: Question · Options · Criteria · Evidence (a table: option × criterion) · Verdict · Left open.
 
-**Spec** (`docs/specs/`): `kind: spec` · `title` · `status: draft | for-review | approved | built` · `revision: 3` · `owner` · `requested_by` · `reviewers: []` · `builds_on: []`. Sections: Goal · Decisions · Flows · States · Acceptance criteria · Open questions · Changelog.
+**Spec** (`docs/specs/`): `kind: spec` · `title` · `status: draft | for-review | approved | built` · `revision: 3` · `owner` · `created` · `updated` · `requested_by` · `reviewers: []` · `builds_on: []`. Sections: Goal · Decisions · Flows · States · Acceptance criteria · Open questions · Changelog.
 
 **Plan** (`docs/plans/`): `kind: plan` · `title` · `status: active | done | dropped` · `owner` · `period: {from, to}`. Sections: Goal · Workstreams · Finish line · Risks.
 
@@ -244,7 +249,7 @@ status: open                 # open | planned | paid | accepted
 cost: medium                 # cost of leaving it: low | medium | high
 effort: s                    # to pay it back: s | m | l
 area: Office server
-taken: { by: river, on: 2026-11-08, task: ac-17, commit: 9c1e0b2, branch: river/office-client }
+taken: { by: ac-software-engineer-river, on: 2026-11-08, task: ac-17, commit: 9c1e0b2, branch: task/ac-17-office-client }
 because: [ADR-0004]          # the decision that accepted it, if any
 payback: []                  # tasks that pay it back, e.g. [ac-40]
 accepted: null               # { on, by, reason } when we decide to live with it
@@ -268,7 +273,7 @@ accepted: null               # { on, by, reason } when we decide to live with it
 
 **Record debt** (slide-over, generated from the debt template's fields, §3.0): **What we did** * (the title, 1–200 characters) · **Why** · **The proper fix** · **Cost of leaving it** Low · Medium · High ("Low: harmless for now" · "Medium: slows us down or risks bugs" · "High: will hurt users, security or data, or blocks a phase") · **Effort to pay back** S · M · L · Area · Links. **Record debt** commits the file (from the app: to the docs branch). Only "What we did" is required. A doc with empty sections shows "Needs details".
 
-**Debt tab** (project, drawn from the files' front matter): grouped by area, sorted by cost, then effort (High cost, S effort first: "quick wins" at the top), with filters Status · Cost · Effort · Taken by · Area. A summary bar: "14 open · 3 High · 5 quick wins · 2 paid this week". Debt still on an unmerged branch shows with a "On river/office-client, not merged" badge.
+**Debt tab** (project, drawn from the files' front matter): grouped by area, sorted by cost, then effort (High cost, S effort first: "quick wins" at the top), with filters Status · Cost · Effort · Taken by · Area. A summary bar: "14 open · 3 High · 5 quick wins · 2 paid this week". Debt still on an unmerged branch shows with a "On task/ac-17-office-client, not merged" badge.
 
 **Statuses:** **Open · Planned · Paid · Accepted.** Creating a payback task (a database task) adds it to `payback` and sets Planned. When all payback tasks are Done, the tool sets Paid in a commit on a docs branch, which lands through the merge flow (activity entry, with Undo as another commit). **Accept…** needs a reason, written to `accepted`, and can name the ADR in `because`.
 
@@ -356,7 +361,7 @@ When the Agentic Org project is brought in (dogfood spec Flow 1, or later from p
 **Authoring through the tool (AUTH)**
 - AUTH-1 · *(rev 3)* Creating a decision, design, evaluation, spec, plan or review in the app or with `org-agent doc new` writes the file in its §0.1 folder from the template, with valid front matter and the next number, and commits it on a branch (the agent's task branch, or a docs branch from the app) with the owner as author and the agent as co-author. Nothing is pushed to the default branch.
 - AUTH-2 · *(rev 3)* `org-agent doc status` and the app's Accept/Reject change only the front-matter fields involved (status, decided), and commit.
-- AUTH-3 · A doc changed directly with git (outside the tool) shows in the app after it reaches the docs branch, with its author, and no data is lost.
+- AUTH-3 · A doc changed directly with git (outside the tool) shows in the app after it reaches the integration branch, with its author, and no data is lost.
 - AUTH-4 · Every create, status change, supersede and link appears in Activity with the actor and the doc's number.
 - AUTH-5 · `org-agent doc list` and `doc show` print the same kinds, numbers, statuses and words as the app.
 - AUTH-6 · *(rev 4)* `org-agent debt add` writes a debt doc on the agent's current branch with only the sentence, and prefills the task, branch and commit.
@@ -394,11 +399,12 @@ When the Agentic Org project is brought in (dogfood spec Flow 1, or later from p
 - ~~C11~~ · *Resolved by the user (rev 3):* YAML front matter is the structure. Status lines are converted on the way in (TPL-7).
 - C17 · Templates as `docs/.templates/<kind>.md` with a field schema in their front matter, and built-in defaults in the app: does that fit the library? Does the office validate on write, or only the CLI and app?
 - C12 · *(rev 4)* Debt, limitations and exceptions are doc kinds with templates, not work items. The CLI: `org-agent debt add|list|show|accept|pay`, `task done --debt/--no-debt`, and `org-agent doc new limitation|exception`.
-- C18 · An agent's debt doc is written on its current branch and reaches the docs branch with the merge. The app shows unmerged debt from open branches. OK, or should debt always go straight to the docs branch?
+- C18 · An agent's debt doc is written on its current task branch and reaches the integration branch with that merge, and the app shows unmerged debt from open branches. OK, or should agents' debt go on its own `docs/…` branch so it can land before the code?
 - ~~C16~~ · *Resolved (agy-senior-dev):* the §3.1 commands fit org-agent's noun-verb style. Additions: `doc edit --set <field=val> --section <heading> --body <text|->` for headless agents (besides `$EDITOR`), `--no-commit`, `--as <member>`, and `--json` on every command, returning the front matter plus `path` and `commit`. The text output is the one-line summary (`ADR-0004 · docs/adr/0004-docs-storage.md (proposed)`).
-- C13 · Docs are read from the integration branch (`v1` for us), not always `main`: a per-project setting "Docs branch"?
+- C13 · Docs are read from the integration branch (`v1` for us), not always `main`: a per-project setting "Integration branch"?
 
 **For ada**
+- ~~A36~~ · *Resolved (ada):* office-created `docs/<slug>-<short-id>` branches for app edits (owner as author, agent or app as co-author), with no stand-in tasks. Docs merge through the same review, go and merge flow as code.
 - ~~A18~~ · *Resolved (ada):* the product repo's ADR-0001–0003 hold (as amended). Her v0 notes (`knowledge/adrs`, `desktop-app-architecture`) are superseded by the office model: they come in as `docs/adr/v0/` with `status: superseded` and links to their successors, never as current.
 - ~~A19~~ · *Resolved by the user (rev 2):* they move into the project's repository and are written through the tool from now on.
 - ~~A23~~ · *Resolved by the user (rev 4):* persistent knowledge (decisions, designs, specs, evaluations, reviews, plans, debt, limitations, exceptions) is in the repository. Tasks, bugs, queues, messages and other transitional state are in the database.

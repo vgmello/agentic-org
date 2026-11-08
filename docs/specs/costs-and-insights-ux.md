@@ -2,7 +2,7 @@
 kind: spec
 title: "Costs, tokens, time and insights (UX)"
 status: for-review
-revision: 2
+revision: 3
 owner: ac-product-designer-eden
 created: 2026-11-08
 updated: 2026-11-08
@@ -13,13 +13,15 @@ builds_on: [work-items-ux, our-org-in-the-app, decisions-and-tech-debt-ux]
 
 # Spec · Costs, tokens, time and insights (UX)
 
-Extends `work-items-ux.md` (tasks, bugs, debt), `our-org-in-the-app.md` (sessions, runtimes, Activity) and `decisions-and-tech-debt-ux.md`.
+Extends `work-items-ux.md` (tasks, bugs), `our-org-in-the-app.md` (sessions, runtimes, Activity) and `decisions-and-tech-debt-ux.md` (debt docs).
 
 ## The request (the user, 2026-11-08)
 
 > For each project we invoke the agents. We need to see how much the sessions cost, the number of tokens, and insights: how long tasks take, the speed of tasks, the cost of a particular task and overall project costs. We need a structure for this.
 
 > *(rev 2, the user)* No clients: the point is to see **what each project has cost (the investment)**. Immediate figures are fine. Don't worry about plans: value everything by its tokens at **API prices**, in **US dollars**.
+
+**Revision 3 (2026-11-08): reviewer fix.** A39: organization totals need session usage from every office (§7).
 
 **Revision 2 (2026-11-08):** clients removed (decision 6, §3), plans removed: every cost is tokens at API prices (decision 3), US dollars, budgets per project only, and an **Investment** figure (the project's total to date) leads the project's Insights. U16–U18 resolved. COST-5, INS-5 and BUD-1 rewritten.
 
@@ -142,6 +144,7 @@ Extends `work-items-ux.md` (tasks, bugs, debt), `our-org-in-the-app.md` (session
 ## 7. Open questions
 
 **For codex-dev and ada**
+- ~~A39~~ · *Resolved (ada):* phase 1 is HQ only, so HQ's `office.db` has everything. In phase 2, `session_usage` syncs to HQ as work data on the per-origin streams (like tasks), so HQ shows organization totals without querying offices. This changes `docs/design/offices-hq-and-satellites.md`, which says sessions aren't copied, and ada updates it.
 - C14 · The agent's current task: `org-agent status --task <id>` (or set automatically when a task goes In progress), so sessions are attributed without guessing.
 - C15 · What each runtime really reports (cost, tokens, cache) in print mode and interactive sessions, and where the office collects it (the inbox adapters, W8?).
 - ~~A21~~ · *Resolved (ada):* `office.db` gets `session_usage` (session, work item, runtime, model, tokens in/out, cost, reported or estimated, start, end). It's transitional, so it lives in the database. The adapters (codex-dev) capture it, and server-dev stores it.
