@@ -171,3 +171,72 @@ describe('Done and time', () => {
 		expect(e.code).toBe('invalid_request');
 	});
 });
+
+describe('bugs', () => {
+	const bctx: WorkContext = { ...ctx, projects: [{ id: 'p1', teamIds: ['web'], areas: [{ id: 'gen', general: true }, { id: 'pay' }] }, ...ctx.projects.slice(1)] };
+	const report = (state: WorkState, n: number, extra: object = {}) =>
+		applyWork(state, { method: 'bug.report', change_id: cid(), item_id: id(n), project_id: 'p1', title: `Bug ${n}`, what_happened: 'It broke', severity: 'major', ...extra } as WorkCall, bctx);
+	const call = (state: WorkState, c: object) => applyWork(state, { change_id: cid(), ...c } as WorkCall, bctx);
+
+	it('reports a bug into New, in General, numbered B-n apart from tasks, severity not yet confirmed', () => {
+		let s = create(emptyWork(), 1).state;
+		const r = report(s, 2);
+		s = r.state;
+		expect(r.accepted.items[0]).toMatchObject({ kind: 'bug', number: 1, status: 'new', severity: 'major', severity_confirmed: false, area_id: 'gen', priority: 'normal' });
+		expect(summaries(s).map((x) => [x.kind, x.number])).toEqual([['task', 1], ['bug', 1]]);
+		expect(refused(() => report(s, 3, { severity: 'huge' })).code).toBe('invalid_request');
+		expect(refused(() => report(s, 3, { what_happened: '  ' })).code).toBe('invalid_request');
+		expect(refused(() => report(s, 3, { area_id: 'nope' })).code).toBe('invalid_request');
+		expect(report(s, 3, { area_id: 'pay' }).accepted.items[0].area_id).toBe('pay');
+	});
+
+	it('triage confirms area and severity, sets priority and assignee, and only from New', () => {
+		let s = report(emptyWork(), 1).state;
+		const t = call(s, { method: 'bug.triage', item_id: id(1), expected_version: 1, area_id: 'pay', severity: 'critical', priority: 'urgent', assignee_id: 'sam' });
+		expect(t.accepted.items[0]).toMatchObject({ status: 'triaged', area_id: 'pay', severity: 'critical', severity_confirmed: true, priority: 'urgent', assignee_id: 'sam' });
+		expect(refused(() => call(t.state, { method: 'bug.triage', item_id: id(1), expected_version: 2, area_id: 'pay', severity: 'minor', priority: 'low' })).code).toBe('invalid_request');
+		expect(refused(() => call(s, { method: 'bug.triage', item_id: id(1), expected_version: 1, area_id: 'ghost', severity: 'minor', priority: 'low' })).code).toBe('invalid_request');
+		s = t.state;
+	});
+
+	it('fix, verify and close: fixed needs a note; verified closes; still happens goes back to Triaged with a note and a count', () => {
+		let s = report(emptyWork(), 1).state;
+		s = call(s, { method: 'bug.triage', item_id: id(1), expected_version: 1, area_id: 'gen', severity: 'major', priority: 'normal' }).state;
+		expect(refused(() => call(s, { method: 'bug.verify', item_id: id(1), expected_version: 2, outcome: 'fixed' })).code).toBe('invalid_request');
+		expect(refused(() => call(s, { method: 'bug.mark_fixed', item_id: id(1), expected_version: 2, note: '  ' })).code).toBe('invalid_request');
+		s = call(s, { method: 'bug.mark_fixed', item_id: id(1), expected_version: 2, note: 'Retry the upload' }).state;
+		expect(summaries(s)[0].status).toBe('fixed');
+		const again = call(s, { method: 'bug.verify', item_id: id(1), expected_version: 3, outcome: 'still_happens', note: 'Fails on Safari' });
+		expect(again.accepted.items[0]).toMatchObject({ status: 'triaged', reopen_count: 1 });
+		expect(refused(() => call(s, { method: 'bug.verify', item_id: id(1), expected_version: 3, outcome: 'still_happens' })).code).toBe('invalid_request');
+		const verified = call(s, { method: 'bug.verify', item_id: id(1), expected_version: 3, outcome: 'fixed' });
+		expect(verified.accepted.items[0]).toMatchObject({ status: 'closed', resolution: 'verified' });
+		const reopened = call(verified.state, { method: 'bug.reopen', item_id: id(1), expected_version: 4, note: 'Back again' });
+		expect(reopened.accepted.items[0]).toMatchObject({ status: 'triaged', reopen_count: 1, resolution: undefined });
+		expect(refused(() => call(reopened.state, { method: 'bug.reopen', item_id: id(1), expected_version: 5, note: 'x' })).code).toBe('invalid_request');
+	});
+
+	it('closing: a duplicate names another bug of the project; won\'t fix needs a reason; reopening a duplicate sends it back to New', () => {
+		let s = report(emptyWork(), 1).state;
+		s = report(s, 2).state;
+		expect(refused(() => call(s, { method: 'bug.close', item_id: id(2), expected_version: 1, duplicate_of: id(2) })).code).toBe('invalid_request');
+		expect(refused(() => call(s, { method: 'bug.close', item_id: id(2), expected_version: 1, duplicate_of: 'ghost' })).code).toBe('not_found');
+		expect(refused(() => call(s, { method: 'bug.close', item_id: id(2), expected_version: 1, resolution: 'wont_fix' })).code).toBe('invalid_request');
+		const dup = call(s, { method: 'bug.close', item_id: id(2), expected_version: 1, duplicate_of: id(1) });
+		expect(dup.accepted.items[0]).toMatchObject({ status: 'closed', resolution: 'duplicate', duplicate_of: id(1) });
+		expect(refused(() => call(dup.state, { method: 'bug.close', item_id: id(1), expected_version: 1, duplicate_of: id(2) })).code).toBe('invalid_request');
+		const back = call(dup.state, { method: 'bug.reopen', item_id: id(2), expected_version: 2, note: 'Not the same after all' });
+		expect(back.accepted.items[0]).toMatchObject({ status: 'new', duplicate_of: undefined });
+		const wf = call(s, { method: 'bug.close', item_id: id(1), expected_version: 1, resolution: 'cant_reproduce', reason: 'Works on my machine' });
+		expect(wf.accepted.items[0]).toMatchObject({ status: 'closed', resolution: 'cant_reproduce' });
+	});
+
+	it('a bug is not a task: task calls refuse it, and its required steps guard mark fixed', () => {
+		let s = report(emptyWork(), 1).state;
+		expect(refused(() => call(s, { method: 'task.set_status', item_id: id(1), expected_version: 1, status: 'done' })).code).toBe('invalid_request');
+		s = call(s, { method: 'checklist.add', item_id: id(1), steps: [{ step_id: id(60), text: 'Add a regression test', required: true }] }).state;
+		s = call(s, { method: 'bug.triage', item_id: id(1), expected_version: 2, area_id: 'gen', severity: 'major', priority: 'normal' }).state;
+		expect(refused(() => call(s, { method: 'bug.mark_fixed', item_id: id(1), expected_version: 3, note: 'Done' })).code).toBe('checklist_incomplete');
+		expect(call(s, { method: 'bug.mark_fixed', item_id: id(1), expected_version: 3, note: 'Done', anyway_reason: 'Tested by hand' }).accepted.items[0]).toMatchObject({ status: 'fixed', done_anyway: true });
+	});
+});

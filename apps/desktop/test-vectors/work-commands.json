@@ -7,6 +7,15 @@
     "id": "p1",
     "teamIds": [
      "web"
+    ],
+    "areas": [
+     {
+      "id": "gen",
+      "general": true
+     },
+     {
+      "id": "pay"
+     }
     ]
    },
    {
@@ -1196,6 +1205,536 @@
        "lead_ms": 1001
       }
      }
+    }
+   ]
+  },
+  {
+   "name": "a bug is reported into New in General, numbered apart from tasks, severity unconfirmed",
+   "steps": [
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg074",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Task 1"
+     },
+     "items": [
+      {
+       "number": 1,
+       "kind": "task"
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "bug.report",
+      "change_id": "chg075",
+      "item_id": "01JC0000000000000000000002",
+      "project_id": "p1",
+      "title": "Bug 2",
+      "what_happened": "It broke",
+      "severity": "major"
+     },
+     "items": [
+      {
+       "kind": "bug",
+       "number": 1,
+       "status": "new",
+       "severity": "major",
+       "severity_confirmed": false,
+       "area_id": "gen"
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "bug.report",
+      "change_id": "chg076",
+      "item_id": "01JC0000000000000000000003",
+      "project_id": "p1",
+      "title": "Bug 3",
+      "what_happened": "It broke",
+      "severity": "huge"
+     },
+     "error": "invalid_request"
+    },
+    {
+     "call": {
+      "method": "bug.report",
+      "change_id": "chg077",
+      "item_id": "01JC0000000000000000000003",
+      "project_id": "p1",
+      "title": "Bug 3",
+      "what_happened": "  ",
+      "severity": "major"
+     },
+     "error": "invalid_request"
+    },
+    {
+     "call": {
+      "method": "bug.report",
+      "change_id": "chg078",
+      "item_id": "01JC0000000000000000000003",
+      "project_id": "p1",
+      "title": "Bug 3",
+      "what_happened": "It broke",
+      "severity": "major",
+      "area_id": "nope"
+     },
+     "error": "invalid_request"
+    },
+    {
+     "call": {
+      "method": "bug.report",
+      "change_id": "chg079",
+      "item_id": "01JC0000000000000000000003",
+      "project_id": "p1",
+      "title": "Bug 3",
+      "what_happened": "It broke",
+      "severity": "major",
+      "area_id": "pay"
+     },
+     "items": [
+      {
+       "number": 2,
+       "area_id": "pay"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "triage confirms area and severity, sets priority and assignee, only from New",
+   "steps": [
+    {
+     "call": {
+      "method": "bug.report",
+      "change_id": "chg080",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Bug 1",
+      "what_happened": "It broke",
+      "severity": "major"
+     },
+     "items": [
+      {
+       "version": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "bug.triage",
+      "change_id": "chg081",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 1,
+      "area_id": "ghost",
+      "severity": "major",
+      "priority": "normal"
+     },
+     "error": "invalid_request"
+    },
+    {
+     "call": {
+      "method": "bug.triage",
+      "change_id": "chg082",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 1,
+      "area_id": "pay",
+      "severity": "critical",
+      "priority": "urgent",
+      "assignee_id": "sam"
+     },
+     "items": [
+      {
+       "status": "triaged",
+       "area_id": "pay",
+       "severity": "critical",
+       "severity_confirmed": true,
+       "priority": "urgent",
+       "assignee_id": "sam"
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "bug.triage",
+      "change_id": "chg083",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 2,
+      "area_id": "gen",
+      "severity": "major",
+      "priority": "normal"
+     },
+     "error": "invalid_request"
+    }
+   ]
+  },
+  {
+   "name": "fix and verify: a note is needed; still happens goes back to Triaged; verified closes; reopen",
+   "steps": [
+    {
+     "call": {
+      "method": "bug.report",
+      "change_id": "chg084",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Bug 1",
+      "what_happened": "It broke",
+      "severity": "major"
+     },
+     "items": [
+      {
+       "version": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "bug.triage",
+      "change_id": "chg085",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 1,
+      "area_id": "gen",
+      "severity": "major",
+      "priority": "normal"
+     },
+     "items": [
+      {
+       "version": 2
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "bug.verify",
+      "change_id": "chg086",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 2,
+      "outcome": "fixed"
+     },
+     "error": "invalid_request"
+    },
+    {
+     "call": {
+      "method": "bug.mark_fixed",
+      "change_id": "chg087",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 2,
+      "note": "  "
+     },
+     "error": "invalid_request"
+    },
+    {
+     "call": {
+      "method": "bug.mark_fixed",
+      "change_id": "chg088",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 2,
+      "note": "Retry the upload"
+     },
+     "items": [
+      {
+       "status": "fixed"
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "bug.verify",
+      "change_id": "chg089",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 3,
+      "outcome": "still_happens"
+     },
+     "error": "invalid_request"
+    },
+    {
+     "call": {
+      "method": "bug.verify",
+      "change_id": "chg090",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 3,
+      "outcome": "still_happens",
+      "note": "Safari"
+     },
+     "items": [
+      {
+       "status": "triaged",
+       "reopen_count": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "bug.mark_fixed",
+      "change_id": "chg091",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 4,
+      "note": "Again"
+     },
+     "items": [
+      {
+       "status": "fixed"
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "bug.verify",
+      "change_id": "chg092",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 5,
+      "outcome": "fixed"
+     },
+     "items": [
+      {
+       "status": "closed",
+       "resolution": "verified"
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "bug.reopen",
+      "change_id": "chg093",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 6,
+      "note": "Back"
+     },
+     "items": [
+      {
+       "status": "triaged",
+       "reopen_count": 2
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "bug.reopen",
+      "change_id": "chg094",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 7,
+      "note": "x"
+     },
+     "error": "invalid_request"
+    }
+   ]
+  },
+  {
+   "name": "closing a bug: a duplicate names another bug of the project; won't fix needs a reason; reopening a duplicate goes to New",
+   "steps": [
+    {
+     "call": {
+      "method": "bug.report",
+      "change_id": "chg095",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Bug 1",
+      "what_happened": "It broke",
+      "severity": "major"
+     },
+     "items": [
+      {
+       "version": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "bug.report",
+      "change_id": "chg096",
+      "item_id": "01JC0000000000000000000002",
+      "project_id": "p1",
+      "title": "Bug 2",
+      "what_happened": "It broke",
+      "severity": "major"
+     },
+     "items": [
+      {
+       "version": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "bug.close",
+      "change_id": "chg097",
+      "item_id": "01JC0000000000000000000002",
+      "expected_version": 1,
+      "duplicate_of": "01JC0000000000000000000002"
+     },
+     "error": "invalid_request"
+    },
+    {
+     "call": {
+      "method": "bug.close",
+      "change_id": "chg098",
+      "item_id": "01JC0000000000000000000002",
+      "expected_version": 1,
+      "duplicate_of": "ghost"
+     },
+     "error": "not_found"
+    },
+    {
+     "call": {
+      "method": "bug.close",
+      "change_id": "chg099",
+      "item_id": "01JC0000000000000000000002",
+      "expected_version": 1,
+      "resolution": "wont_fix"
+     },
+     "error": "invalid_request"
+    },
+    {
+     "call": {
+      "method": "bug.close",
+      "change_id": "chg100",
+      "item_id": "01JC0000000000000000000002",
+      "expected_version": 1,
+      "duplicate_of": "01JC0000000000000000000001"
+     },
+     "items": [
+      {
+       "status": "closed",
+       "resolution": "duplicate",
+       "duplicate_of": "01JC0000000000000000000001"
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "bug.close",
+      "change_id": "chg101",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 1,
+      "duplicate_of": "01JC0000000000000000000002"
+     },
+     "error": "invalid_request"
+    },
+    {
+     "call": {
+      "method": "bug.reopen",
+      "change_id": "chg102",
+      "item_id": "01JC0000000000000000000002",
+      "expected_version": 2,
+      "note": "Different"
+     },
+     "items": [
+      {
+       "status": "new",
+       "reopen_count": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "bug.close",
+      "change_id": "chg103",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 1,
+      "resolution": "cant_reproduce",
+      "reason": "Works here"
+     },
+     "items": [
+      {
+       "status": "closed",
+       "resolution": "cant_reproduce"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "a bug is not a task: task calls refuse it; required steps guard mark fixed",
+   "steps": [
+    {
+     "call": {
+      "method": "bug.report",
+      "change_id": "chg104",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Bug 1",
+      "what_happened": "It broke",
+      "severity": "major"
+     },
+     "items": [
+      {
+       "version": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.set_status",
+      "change_id": "chg105",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 1,
+      "status": "done"
+     },
+     "error": "invalid_request"
+    },
+    {
+     "call": {
+      "method": "checklist.add",
+      "change_id": "chg106",
+      "item_id": "01JC0000000000000000000001",
+      "steps": [
+       {
+        "step_id": "01JC0000000000000000000060",
+        "text": "Regression test",
+        "required": true
+       }
+      ]
+     },
+     "items": [
+      {
+       "version": 2
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "bug.triage",
+      "change_id": "chg107",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 2,
+      "area_id": "gen",
+      "severity": "major",
+      "priority": "normal"
+     },
+     "items": [
+      {
+       "version": 3
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "bug.mark_fixed",
+      "change_id": "chg108",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 3,
+      "note": "Done"
+     },
+     "error": "checklist_incomplete"
+    },
+    {
+     "call": {
+      "method": "bug.mark_fixed",
+      "change_id": "chg109",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 3,
+      "note": "Done",
+      "anyway_reason": "By hand"
+     },
+     "items": [
+      {
+       "status": "fixed",
+       "done_anyway": true
+      }
+     ]
     }
    ]
   }

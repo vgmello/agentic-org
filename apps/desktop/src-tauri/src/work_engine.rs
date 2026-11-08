@@ -51,6 +51,16 @@ pub struct Task {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub done_anyway: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub what_happened: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steps: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closed_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub done_at: Option<String>,
@@ -74,6 +84,9 @@ pub struct Project {
     pub id: String,
     pub archived: bool,
     pub team_ids: Vec<String>,
+    /// The area ids of the project (General first); empty while the mock has none.
+    pub areas: Vec<String>,
+    pub general_area: Option<String>,
 }
 
 /// What the engine needs to know about the world around the items.
@@ -127,6 +140,35 @@ fn counts(steps: &[Step]) -> Value {
         "done": steps.iter().filter(|s| s.done).count(),
         "required_left": steps.iter().filter(|s| s.required && !s.done).count(),
     })
+}
+
+/// The item `id` if it is a live item of `kind` (`task` or `bug`).
+fn kind_of<'a>(state: &'a mut WorkState, id: &str, kind: &str) -> Result<&'a mut Task, ApiError> {
+    let task = state
+        .items
+        .get_mut(id)
+        .filter(|t| t.summary["deleted"] != json!(true))
+        .ok_or_else(|| err("not_found", "That item is not here."))?;
+    if task.summary["kind"] != json!(kind) {
+        return invalid(format!(
+            "That is a {}, not a {kind}.",
+            task.summary["kind"].as_str().unwrap_or("item")
+        ));
+    }
+    Ok(task)
+}
+
+const SEVERITIES: [&str; 4] = ["critical", "major", "minor", "trivial"];
+
+fn bug_text(text: Option<&str>, what: &str, required: bool) -> Result<Option<String>, ApiError> {
+    let t = text.unwrap_or("").trim();
+    if required && t.is_empty() {
+        return invalid(format!("{what} can't be empty."));
+    }
+    if t.is_empty() {
+        return Ok(None);
+    }
+    long_text(t, 10_000, what).map(Some)
 }
 
 fn step_owner(state: &WorkState, step_id: &str) -> Result<String, ApiError> {
@@ -183,6 +225,10 @@ fn new_steps(list: &Value, existing: &[Step]) -> Result<Vec<Step>, ApiError> {
     Ok(out)
 }
 
+fn method_of(call: &Value) -> &str {
+    str_of(call, "method").unwrap_or("")
+}
+
 fn short_id(id: &str) -> String {
     let chars: Vec<char> = id.chars().collect();
     chars[chars.len().saturating_sub(6)..]
@@ -203,6 +249,19 @@ pub fn apply(state: &mut WorkState, call: &Value, ctx: &Ctx) -> Result<Value, Ap
         return Ok(answer.clone());
     }
     let mut next = state.clone();
+    let kind_needed = if matches!(
+        method_of(call),
+        "task.update" | "task.assign" | "task.set_status"
+    ) {
+        Some("task")
+    } else if method_of(call).starts_with("bug.") && method_of(call) != "bug.report" {
+        Some("bug")
+    } else {
+        None
+    };
+    if let Some(kind) = kind_needed {
+        kind_of(&mut next, str_of(call, "item_id").unwrap_or(""), kind)?;
+    }
     let mut changed: Vec<String> = Vec::new();
     let now = ctx.now.as_str();
     let method = str_of(call, "method").unwrap_or("");
@@ -234,7 +293,11 @@ pub fn apply(state: &mut WorkState, call: &Value, ctx: &Ctx) -> Result<Value, Ap
             return invalid("The priority must be urgent, high, normal or low.");
         }
     }
-    if let Some(r) = call.get("resolution").filter(|v| !v.is_null()) {
+    if let Some(r) = call
+        .get("resolution")
+        .filter(|v| !v.is_null())
+        .filter(|_| method == "task.set_status")
+    {
         if !r
             .as_str()
             .is_some_and(|r| ["completed", "cancelled"].contains(&r))
@@ -311,6 +374,11 @@ pub fn apply(state: &mut WorkState, call: &Value, ctx: &Ctx) -> Result<Value, Ap
                     _ => None,
                 },
                 done_anyway: None,
+                what_happened: None,
+                expected: None,
+                steps: None,
+                environment: None,
+                closed_reason: None,
                 started_at: None,
                 done_at: None,
                 checklist,
@@ -495,6 +563,342 @@ pub fn apply(state: &mut WorkState, call: &Value, ctx: &Ctx) -> Result<Value, Ap
             touch(seq, task, now);
             changed.push(item_id.clone());
         }
+        "bug.report" => {
+            let project_id = str_of(call, "project_id").unwrap_or("");
+            let project = ctx
+                .projects
+                .iter()
+                .find(|p| p.id == project_id)
+                .ok_or_else(|| err("not_found", "That project is not here."))?;
+            if project.archived {
+                return invalid("That project is archived.");
+            }
+            let title = one_line(str_of(call, "title"), TITLE_MAX, "The title")?;
+            let happened = bug_text(str_of(call, "what_happened"), "What happened", true)?;
+            let severity = str_of(call, "severity").unwrap_or("");
+            if !SEVERITIES.contains(&severity) {
+                return invalid("Pick a severity: critical, major, minor or trivial.");
+            }
+            if next.items.contains_key(&item_id) {
+                return Err(err("already_exists", "That item already exists."));
+            }
+            let area = match str_of(call, "area_id") {
+                Some(a) if !project.areas.iter().any(|x| x == a) => {
+                    return invalid("That area isn't one of the project's areas.");
+                }
+                Some(a) => Some(a.to_string()),
+                None => project.general_area.clone(),
+            };
+            let key = format!("b:{project_id}");
+            let number = next.next.get(&key).copied().unwrap_or(0) + 1;
+            next.next.insert(key, number);
+            let checklist = match call.get("checklist") {
+                Some(list) if list.as_array().is_some_and(|l| !l.is_empty()) => {
+                    new_steps(list, &[])?
+                }
+                _ => Vec::new(),
+            };
+            let mut summary = json!({
+                "id": item_id, "kind": "bug", "project_id": project_id, "number": number,
+                "short_id": short_id(&item_id), "title": title, "status": "new", "priority": "normal",
+                "created_by": ctx.actor, "created_at": now, "updated_at": now,
+                "severity": severity, "severity_confirmed": false, "reopen_count": 0,
+                "fixes": [], "fixed_by": [], "checklist": counts(&checklist), "done_anyway": false,
+                "owner_office_id": "hq", "generation": 1, "version": 1, "deleted": false,
+            });
+            if let Some(a) = area {
+                summary["area_id"] = json!(a);
+            }
+            let environment = match str_of(call, "environment") {
+                Some(e) if !e.is_empty() => Some(long_text(e, 2000, "The environment")?),
+                _ => None,
+            };
+            let task = Task {
+                summary,
+                description: None,
+                definition_of_done: None,
+                done_anyway: None,
+                what_happened: happened,
+                expected: bug_text(str_of(call, "expected"), "Expected", false)?,
+                steps: bug_text(str_of(call, "steps"), "Steps", false)?,
+                environment,
+                closed_reason: None,
+                started_at: None,
+                done_at: None,
+                checklist,
+                watchers: vec![ctx.actor.clone()],
+            };
+            next.items.insert(item_id.clone(), task);
+            next.seq += 1;
+            changed.push(item_id.clone());
+        }
+        "bug.update" | "bug.triage" | "bug.assign" | "bug.mark_fixed" | "bug.verify"
+        | "bug.close" | "bug.reopen" => {
+            let task = next.items.get_mut(&item_id).expect("checked above");
+            expect_version(task, version)?;
+            let status = task.summary["status"].as_str().unwrap_or("").to_string();
+            let project = ctx
+                .projects
+                .iter()
+                .find(|p| task.summary["project_id"] == json!(p.id));
+            let area_ok = |a: &str| project.is_some_and(|p| p.areas.iter().any(|x| x == a));
+            match method {
+                "bug.update" => {
+                    let mut any = false;
+                    if has(call, "title") {
+                        task.summary["title"] =
+                            json!(one_line(str_of(call, "title"), TITLE_MAX, "The title")?);
+                        any = true;
+                    }
+                    if has(call, "what_happened") {
+                        task.what_happened =
+                            bug_text(str_of(call, "what_happened"), "What happened", true)?;
+                        any = true;
+                    }
+                    for (field, clear, label) in [
+                        ("expected", "clear_expected", "Expected"),
+                        ("steps", "clear_steps", "Steps"),
+                        ("environment", "clear_environment", "The environment"),
+                    ] {
+                        if has(call, field) && flag(call, clear) {
+                            return invalid("Give a value or clear it, not both.");
+                        }
+                        let value = if has(call, field) {
+                            Some(if field == "environment" {
+                                Some(long_text(str_of(call, field).unwrap_or(""), 2000, label)?)
+                            } else {
+                                bug_text(str_of(call, field), label, false)?
+                            })
+                        } else if flag(call, clear) {
+                            Some(None)
+                        } else {
+                            None
+                        };
+                        if let Some(v) = value {
+                            match field {
+                                "expected" => task.expected = v,
+                                "steps" => task.steps = v,
+                                _ => task.environment = v,
+                            }
+                            any = true;
+                        }
+                    }
+                    if let Some(sv) = call.get("severity").filter(|v| !v.is_null()) {
+                        if !sv.as_str().is_some_and(|s| SEVERITIES.contains(&s)) {
+                            return invalid("Pick a severity: critical, major, minor or trivial.");
+                        }
+                        task.summary["severity"] = sv.clone();
+                        any = true;
+                    }
+                    if let Some(p) = str_of(call, "priority") {
+                        task.summary["priority"] = json!(p);
+                        any = true;
+                    }
+                    if let Some(a) = str_of(call, "area_id") {
+                        if !area_ok(a) {
+                            return invalid("That area isn't one of the project's areas.");
+                        }
+                        task.summary["area_id"] = json!(a);
+                        any = true;
+                    }
+                    if !any {
+                        return invalid("Nothing to change.");
+                    }
+                }
+                "bug.triage" => {
+                    if status != "new" {
+                        return invalid(format!(
+                            "A bug that is {} is not waiting for triage.",
+                            status.replace('_', " ")
+                        ));
+                    }
+                    let area = str_of(call, "area_id").unwrap_or("");
+                    if !area_ok(area) {
+                        return invalid("That area isn't one of the project's areas.");
+                    }
+                    let severity = str_of(call, "severity").unwrap_or("");
+                    if !SEVERITIES.contains(&severity) {
+                        return invalid("Pick a severity: critical, major, minor or trivial.");
+                    }
+                    if let Some(a) = str_of(call, "assignee_id") {
+                        if !ctx.members.iter().any(|m| m == a) {
+                            return Err(err(
+                                "unknown_recipient",
+                                "That member cannot be assigned.",
+                            ));
+                        }
+                        task.summary["assignee_id"] = json!(a);
+                    } else {
+                        task.summary
+                            .as_object_mut()
+                            .map(|o| o.remove("assignee_id"));
+                    }
+                    task.summary["area_id"] = json!(area);
+                    task.summary["severity"] = json!(severity);
+                    task.summary["severity_confirmed"] = json!(true);
+                    task.summary["priority"] = json!(str_of(call, "priority").unwrap_or("normal"));
+                    task.summary["status"] = json!("triaged");
+                }
+                "bug.assign" => match str_of(call, "assignee_id") {
+                    Some(a) if !ctx.members.iter().any(|m| m == a) => {
+                        return Err(err("unknown_recipient", "That member cannot be assigned."));
+                    }
+                    Some(a) => task.summary["assignee_id"] = json!(a),
+                    None => {
+                        task.summary
+                            .as_object_mut()
+                            .map(|o| o.remove("assignee_id"));
+                    }
+                },
+                "bug.mark_fixed" => {
+                    if status != "triaged" && status != "in_progress" {
+                        return invalid(format!(
+                            "A bug that is {} can't be marked fixed.",
+                            status.replace('_', " ")
+                        ));
+                    }
+                    let note = long_text(
+                        str_of(call, "note").unwrap_or("").trim(),
+                        REASON_MAX,
+                        "The note",
+                    )?;
+                    if note.is_empty() {
+                        return invalid("Say what fixed it.");
+                    }
+                    let left: Vec<&Step> = task
+                        .checklist
+                        .iter()
+                        .filter(|c| c.required && !c.done)
+                        .collect();
+                    if !left.is_empty() {
+                        let Some(anyway) = str_of(call, "anyway_reason") else {
+                            let names: Vec<&str> = left.iter().map(|c| c.text.as_str()).collect();
+                            return Err(err(
+                                "checklist_incomplete",
+                                format!("Required steps are not done: {}.", names.join("; ")),
+                            ));
+                        };
+                        if anyway.trim().is_empty() {
+                            return invalid("Say why it is fixed with required steps left.");
+                        }
+                        let reason = long_text(anyway.trim(), REASON_MAX, "The reason")?;
+                        let steps: Vec<String> = left.iter().map(|c| c.id.clone()).collect();
+                        task.done_anyway = Some(json!({"reason": reason, "steps": steps}));
+                        task.summary["done_anyway"] = json!(true);
+                    }
+                    task.closed_reason = Some(note);
+                    task.summary["status"] = json!("fixed");
+                }
+                "bug.verify" => {
+                    if status != "fixed" {
+                        return invalid("Only a fixed bug can be verified.");
+                    }
+                    match str_of(call, "outcome") {
+                        Some("fixed") => {
+                            task.summary["status"] = json!("closed");
+                            task.summary["resolution"] = json!("verified");
+                            task.done_at = Some(now.to_string());
+                        }
+                        Some("still_happens") => {
+                            let seen = str_of(call, "note").unwrap_or("").trim();
+                            if seen.is_empty() {
+                                return invalid("Say what you still see.");
+                            }
+                            long_text(seen, REASON_MAX, "The note")?;
+                            task.summary["status"] = json!("triaged");
+                            let n = task.summary["reopen_count"].as_u64().unwrap_or(0) + 1;
+                            task.summary["reopen_count"] = json!(n);
+                            task.summary["done_anyway"] = json!(false);
+                            task.done_anyway = None;
+                        }
+                        _ => return invalid("The outcome is fixed or still_happens."),
+                    }
+                }
+                "bug.close" => {
+                    if !["new", "triaged", "in_progress", "fixed"].contains(&status.as_str()) {
+                        return invalid(format!(
+                            "A bug that is {} can't be closed.",
+                            status.replace('_', " ")
+                        ));
+                    }
+                    if let Some(original) = str_of(call, "duplicate_of") {
+                        let mine = task.summary.clone();
+                        let found = next
+                            .items
+                            .get(original)
+                            .filter(|o| {
+                                o.summary["deleted"] != json!(true)
+                                    && o.summary["kind"] == json!("bug")
+                            })
+                            .ok_or_else(|| err("not_found", "That original bug is not here."))?;
+                        if original == item_id || found.summary["project_id"] != mine["project_id"]
+                        {
+                            return invalid(
+                                "The original must be another bug in the same project.",
+                            );
+                        }
+                        if found.summary["status"] == json!("closed")
+                            && found.summary["resolution"] == json!("duplicate")
+                        {
+                            return invalid("That bug is itself closed as a duplicate.");
+                        }
+                        let creator = mine["created_by"].as_str().unwrap_or("").to_string();
+                        if let Some(o) = next.items.get_mut(original) {
+                            if !o.watchers.contains(&creator) {
+                                o.watchers.push(creator);
+                            }
+                        }
+                        let task = next.items.get_mut(&item_id).expect("checked above");
+                        task.summary["duplicate_of"] = json!(original);
+                        task.summary["resolution"] = json!("duplicate");
+                    } else {
+                        let resolution = str_of(call, "resolution").unwrap_or("");
+                        if resolution != "wont_fix" && resolution != "cant_reproduce" {
+                            return invalid(
+                                "Close it as a duplicate, won't fix or can't reproduce.",
+                            );
+                        }
+                        let reason = long_text(
+                            str_of(call, "reason").unwrap_or("").trim(),
+                            REASON_MAX,
+                            "The reason",
+                        )?;
+                        if reason.is_empty() {
+                            return invalid("Give a reason.");
+                        }
+                        let task = next.items.get_mut(&item_id).expect("checked above");
+                        task.closed_reason = Some(reason);
+                        task.summary["resolution"] = json!(resolution);
+                    }
+                    let task = next.items.get_mut(&item_id).expect("checked above");
+                    task.summary["status"] = json!("closed");
+                    task.done_at = Some(now.to_string());
+                }
+                _ => {
+                    // bug.reopen
+                    if status != "closed" {
+                        return invalid("Only a closed bug can be reopened.");
+                    }
+                    let note = str_of(call, "note").unwrap_or("").trim();
+                    if note.is_empty() {
+                        return invalid("Say why it is reopened.");
+                    }
+                    long_text(note, REASON_MAX, "The note")?;
+                    let duplicate = task.summary["resolution"] == json!("duplicate");
+                    task.summary["status"] = json!(if duplicate { "new" } else { "triaged" });
+                    let n = task.summary["reopen_count"].as_u64().unwrap_or(0) + 1;
+                    task.summary["reopen_count"] = json!(n);
+                    for key in ["resolution", "duplicate_of"] {
+                        task.summary.as_object_mut().map(|o| o.remove(key));
+                    }
+                    task.done_at = None;
+                }
+            }
+            let seq = &mut next.seq;
+            let task = next.items.get_mut(&item_id).expect("checked above");
+            touch(seq, task, now);
+            changed.push(item_id.clone());
+        }
         "checklist.add" => {
             let seq = &mut next.seq;
             let task = next
@@ -631,7 +1035,7 @@ pub fn summaries(
         .filter(|t| t.summary["deleted"] != json!(true))
         .filter(|t| project_id.is_none_or(|p| t.summary["project_id"] == json!(p)))
         .filter(|t| {
-            t.summary["status"] != json!("done")
+            (t.summary["status"] != json!("done") && t.summary["status"] != json!("closed"))
                 || closed_since.is_none_or(|since| {
                     t.done_at
                         .as_deref()
@@ -694,7 +1098,7 @@ pub fn get(state: &WorkState, id: &str, now: &str) -> Result<Value, ApiError> {
     let end = task.done_at.as_deref().unwrap_or(now);
     let mut time = json!({
         "lead_ms": ms(created, end), "waiting_on_owner_ms": 0, "blocked_ms": 0, "idle_ms": 0,
-        "open": task.summary["status"] != json!("done"),
+        "open": task.summary["status"] != json!("done") && task.summary["status"] != json!("closed"),
         "rounds": 1 + task.summary["reopen_count"].as_u64().unwrap_or(0), "as_of": now,
     });
     if let Some(started) = &task.started_at {
@@ -762,6 +1166,18 @@ mod tests {
                 .map(|p| Project {
                     id: p["id"].as_str().unwrap().to_string(),
                     archived: p["archived"].as_bool().unwrap_or(false),
+                    areas: p["areas"]
+                        .as_array()
+                        .map(|a| {
+                            a.iter()
+                                .map(|x| x["id"].as_str().unwrap().to_string())
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    general_area: p["areas"]
+                        .as_array()
+                        .and_then(|a| a.iter().find(|x| x["general"] == true))
+                        .map(|x| x["id"].as_str().unwrap().to_string()),
                     team_ids: p["teamIds"]
                         .as_array()
                         .unwrap()
@@ -787,7 +1203,7 @@ mod tests {
         let cases = vectors["cases"].as_array().unwrap();
         assert_eq!(
             cases.len(),
-            13,
+            23,
             "a case was added or removed: update the Rust runner's count"
         );
         for case in cases {

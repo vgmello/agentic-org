@@ -233,3 +233,102 @@ export const WORK_LIMITS = {
 /** The statuses a task moves between, in board order. */
 export const TASK_STATUSES = ['todo', 'in_progress', 'blocked', 'done'] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
+
+// ---- Bug calls (§4.5, P2) -------------------------------------------------------------------------------------------
+
+export interface BugReport {
+	change_id: string;
+	item_id: string;
+	project_id: string;
+	title: string;
+	what_happened: string;
+	severity: Exclude<Severity, 'unknown'>;
+	area_id?: string;
+	expected?: string;
+	steps?: string;
+	environment?: string;
+	checklist?: NewStep[];
+}
+
+export interface BugUpdate {
+	change_id: string;
+	item_id: string;
+	expected_version: number;
+	title?: string;
+	what_happened?: string;
+	expected?: string;
+	clear_expected?: boolean;
+	steps?: string;
+	clear_steps?: boolean;
+	environment?: string;
+	clear_environment?: boolean;
+	severity?: Exclude<Severity, 'unknown'>;
+	priority?: Priority;
+	area_id?: string;
+}
+
+export interface BugTriage {
+	change_id: string;
+	item_id: string;
+	expected_version: number;
+	area_id: string;
+	severity: Exclude<Severity, 'unknown'>;
+	priority: Priority;
+	assignee_id?: string;
+}
+
+export interface BugAssign {
+	change_id: string;
+	item_id: string;
+	expected_version: number;
+	assignee_id?: string;
+}
+
+export interface BugMarkFixed {
+	change_id: string;
+	item_id: string;
+	expected_version: number;
+	/** What fixed it (1 to 1,000 characters). */
+	note: string;
+	anyway_reason?: string;
+}
+
+export interface BugVerify {
+	change_id: string;
+	item_id: string;
+	expected_version: number;
+	outcome: 'fixed' | 'still_happens';
+	/** Required for `still_happens`. */
+	note?: string;
+}
+
+export interface BugClose {
+	change_id: string;
+	item_id: string;
+	expected_version: number;
+	/** Close as a duplicate of this bug… */
+	duplicate_of?: string;
+	/** …or with a reason. */
+	resolution?: 'wont_fix' | 'cant_reproduce';
+	reason?: string;
+}
+
+export interface BugReopen {
+	change_id: string;
+	item_id: string;
+	expected_version: number;
+	note: string;
+}
+
+export const SEVERITIES = ['critical', 'major', 'minor', 'trivial'] as const;
+
+/** An area of a project (organization data; the mock invents General until `area.*` org commands exist). */
+export interface Area {
+	id: string;
+	project_id: string;
+	name: string;
+	team_id?: string;
+	lead_member_id?: string;
+	general: boolean;
+	deleted: boolean;
+}

@@ -585,6 +585,9 @@ impl OfficeConnection for MockOffice {
                 .map(|p| work_engine::Project {
                     id: p.id.clone(),
                     archived: false,
+                    // Until the area commands exist every project has just General.
+                    areas: vec![format!("{}-general", p.id)],
+                    general_area: Some(format!("{}-general", p.id)),
                     team_ids: snapshot
                         .project_teams
                         .iter()

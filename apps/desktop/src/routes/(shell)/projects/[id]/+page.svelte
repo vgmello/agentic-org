@@ -2,6 +2,7 @@
 	import { invalidate } from '$app/navigation';
 	import { Badge } from '$lib/components/ui/badge';
 	import ProjectTeams from '$lib/components/ProjectTeams.svelte';
+	import BugsPanel from '$lib/components/BugsPanel.svelte';
 	import TasksBoard from '$lib/components/TasksBoard.svelte';
 	import { orgApi } from '$lib/org/api';
 	import { leadsLine, projectById } from '$lib/org/projects';
@@ -13,8 +14,8 @@
 	const session = $derived(sessionFor(orgApi, data.connection.organization.id));
 	const reload = () => invalidate('app:org');
 	// What a project will hold once the work-items contract exists: shown, not hidden, and disabled with the reason.
-	const COMING = ['Features', 'Bugs', 'Debt', 'Docs', 'Insights', 'Settings'];
-	let tab = $state<'overview' | 'tasks'>('overview');
+	const COMING = ['Features', 'Debt', 'Docs', 'Insights', 'Settings'];
+	let tab = $state<'overview' | 'tasks' | 'bugs'>('overview');
 </script>
 
 <svelte:head><title>{row?.project.name ?? 'Project'} · Agentic Org</title></svelte:head>
@@ -38,7 +39,7 @@
 		</header>
 
 		<div role="tablist" aria-label="Project" class="flex flex-wrap gap-x-1 border-b border-white/10">
-			{#each [['overview', 'Overview'], ['tasks', 'Tasks']] as const as [id, name] (id)}
+			{#each [['overview', 'Overview'], ['tasks', 'Tasks'], ['bugs', 'Bugs']] as const as [id, name] (id)}
 				<button type="button" role="tab" aria-selected={tab === id} onclick={() => (tab = id)} class="px-3 py-2 text-sm/6 focus-visible:outline-2 focus-visible:outline-indigo-400 {tab === id ? 'border-b-2 border-indigo-400 font-semibold text-white' : 'text-gray-300 hover:text-white'}">{name}</button>
 			{/each}
 			{#each COMING as name (name)}
@@ -47,6 +48,8 @@
 		</div>
 		{#if tab === 'tasks'}
 			<TasksBoard organizationId={data.connection.organization.id} projectId={row.project.id} projectName={row.project.name} snapshot={data.snapshot} />
+		{:else if tab === 'bugs'}
+			<BugsPanel organizationId={data.connection.organization.id} projectId={row.project.id} projectName={row.project.name} snapshot={data.snapshot} />
 		{:else}
 			<p class="text-sm/6 text-gray-400">Features, bugs, debt, documents and insights for this project are available in a later release.</p>
 		{/if}

@@ -3,6 +3,14 @@
 // comments come later. Errors are thrown as `AppError`s with the codes the design names.
 import type {
 	AppError,
+	BugAssign,
+	BugClose,
+	BugMarkFixed,
+	BugReopen,
+	BugReport,
+	BugTriage,
+	BugUpdate,
+	BugVerify,
 	ApiErrorCode,
 	ChecklistStep,
 	NewStep,
@@ -23,6 +31,12 @@ export interface StoredTask {
 	description?: string;
 	definition_of_done?: string;
 	done_anyway?: { reason: string; steps: string[] };
+	/** Bugs: what was reported and how it ended. */
+	what_happened?: string;
+	expected?: string;
+	steps?: string;
+	environment?: string;
+	closed_reason?: string;
 	/** When it first went In progress, and when it last went Done (a round closes at Done). */
 	started_at?: string;
 	done_at?: string;
@@ -47,7 +61,7 @@ export interface WorkContext {
 	now: string;
 	/** The bound member making the call. */
 	actor: string;
-	projects: { id: string; archived?: boolean; teamIds: string[] }[];
+	projects: { id: string; archived?: boolean; teamIds: string[]; areas?: { id: string; general?: boolean; deleted?: boolean }[] }[];
 	/** Members who can be assigned (not offboarded). */
 	members: string[];
 }
@@ -57,6 +71,14 @@ export type WorkCall =
 	| ({ method: 'task.update' } & TaskUpdate)
 	| ({ method: 'task.assign' } & TaskAssign)
 	| ({ method: 'task.set_status' } & TaskSetStatus)
+	| ({ method: 'bug.report' } & BugReport)
+	| ({ method: 'bug.update' } & BugUpdate)
+	| ({ method: 'bug.triage' } & BugTriage)
+	| ({ method: 'bug.assign' } & BugAssign)
+	| ({ method: 'bug.mark_fixed' } & BugMarkFixed)
+	| ({ method: 'bug.verify' } & BugVerify)
+	| ({ method: 'bug.close' } & BugClose)
+	| ({ method: 'bug.reopen' } & BugReopen)
 	| { method: 'checklist.add'; change_id: string; item_id: string; steps: NewStep[]; after_step_id?: string }
 	| { method: 'checklist.check'; change_id: string; step_id: string; done: boolean }
 	| { method: 'checklist.edit'; change_id: string; step_id: string; expected_version: number; text?: string; required?: boolean }
@@ -79,6 +101,14 @@ const longText = (text: string, max: number, what: string): string => {
 	return text;
 };
 
+const SEVERITY_IDS: readonly string[] = ['critical', 'major', 'minor', 'trivial'];
+/** The free text of a bug report: up to 10,000 characters; a required text can't be empty. */
+const bugText = (text: string | undefined, what: string, required: boolean): string => {
+	const t = (text ?? '').trim();
+	if (required && t === '') fail('invalid_request', `${what} can't be empty.`);
+	return longText(t, WORK_LIMITS.text, what);
+};
+
 const shortId = (id: string) => id.slice(-6).toLowerCase();
 
 export const emptyCounts = (steps: ChecklistStep[]) => ({
@@ -95,6 +125,11 @@ function find(state: WorkState, id: string): StoredTask {
 function stepOwner(state: WorkState, stepId: string): StoredTask {
 	const owner = Object.values(state.items).find((i) => !i.summary.deleted && i.checklist.some((s) => s.id === stepId));
 	return owner ?? fail('not_found', 'That checklist step is not here.');
+}
+function findKind(state: WorkState, id: string, kind: 'task' | 'bug'): StoredTask {
+	const item = find(state, id);
+	if (item.summary.kind !== kind) fail('invalid_request', `That is a ${item.summary.kind}, not a ${kind}.`);
+	return item;
 }
 const expect = (item: StoredTask, version: number) => {
 	if (item.summary.version !== version) fail('conflict', 'This changed since you opened it. Reload to see the latest.');
@@ -129,7 +164,7 @@ export function applyWork(state: WorkState, call: WorkCall, ctx: WorkContext): {
 		if (needed && (typeof value !== 'string' || value === '' || value.length > 128)) fail('invalid_request', `${what} must be a text of 1 to 128 characters.`);
 	}
 	if ('priority' in call && call.priority !== undefined && !['urgent', 'high', 'normal', 'low'].includes(call.priority)) fail('invalid_request', 'The priority must be urgent, high, normal or low.');
-	if ('resolution' in call && call.resolution !== undefined && !['completed', 'cancelled'].includes(call.resolution)) fail('invalid_request', 'A task resolution is completed or cancelled.');
+	if (call.method === 'task.set_status' && call.resolution !== undefined && !['completed', 'cancelled'].includes(call.resolution)) fail('invalid_request', 'A task resolution is completed or cancelled.');
 	if ('done' in call && typeof call.done !== 'boolean') fail('invalid_request', 'done must be true or false.');
 	const next: WorkState = structuredClone(state);
 	const changed: StoredTask[] = [];
@@ -183,7 +218,7 @@ export function applyWork(state: WorkState, call: WorkCall, ctx: WorkContext): {
 			break;
 		}
 		case 'task.update': {
-			const item = find(next, call.item_id);
+			const item = findKind(next, call.item_id, 'task');
 			expect(item, call.expected_version);
 			const s = item.summary;
 			let any = false;
@@ -208,7 +243,7 @@ export function applyWork(state: WorkState, call: WorkCall, ctx: WorkContext): {
 			break;
 		}
 		case 'task.assign': {
-			const item = find(next, call.item_id);
+			const item = findKind(next, call.item_id, 'task');
 			expect(item, call.expected_version);
 			if (call.assignee_id && !ctx.members.includes(call.assignee_id)) fail('unknown_recipient', 'That member cannot be assigned.');
 			item.summary.assignee_id = call.assignee_id;
@@ -217,7 +252,7 @@ export function applyWork(state: WorkState, call: WorkCall, ctx: WorkContext): {
 			break;
 		}
 		case 'task.set_status': {
-			const item = find(next, call.item_id);
+			const item = findKind(next, call.item_id, 'task');
 			expect(item, call.expected_version);
 			const s = item.summary;
 			const from = s.status;
@@ -254,6 +289,201 @@ export function applyWork(state: WorkState, call: WorkCall, ctx: WorkContext): {
 				s.done_anyway = false;
 			}
 			s.status = to;
+			touch(next, item, now);
+			changed.push(item);
+			break;
+		}
+		case 'bug.report': {
+			const project = ctx.projects.find((p) => p.id === call.project_id) ?? fail('not_found', 'That project is not here.');
+			if (project.archived) fail('invalid_request', 'That project is archived.');
+			const title = oneLine(call.title, WORK_LIMITS.title, 'The title');
+			const happened = bugText(call.what_happened, 'What happened', true);
+			if (!SEVERITY_IDS.includes(call.severity)) fail('invalid_request', 'Pick a severity: critical, major, minor or trivial.');
+			if (next.items[call.item_id]) fail('already_exists', 'That item already exists.');
+			const areaId = call.area_id ?? project.areas?.find((a) => a.general && !a.deleted)?.id;
+			if (call.area_id && !project.areas?.some((a) => a.id === call.area_id && !a.deleted)) fail('invalid_request', "That area isn't one of the project's areas.");
+			const key = `b:${call.project_id}`;
+			const number = (next.next[key] ?? 0) + 1;
+			next.next[key] = number;
+			const checklist = call.checklist?.length ? steps(call.checklist, []) : [];
+			const item: StoredTask = {
+				summary: {
+					id: call.item_id,
+					kind: 'bug',
+					project_id: call.project_id,
+					number,
+					short_id: shortId(call.item_id),
+					title,
+					status: 'new',
+					priority: 'normal',
+					created_by: actor,
+					created_at: now,
+					updated_at: now,
+					area_id: areaId,
+					severity: call.severity,
+					severity_confirmed: false,
+					reopen_count: 0,
+					fixes: [],
+					fixed_by: [],
+					checklist: emptyCounts(checklist),
+					done_anyway: false,
+					owner_office_id: 'hq',
+					generation: 1,
+					version: 1,
+					deleted: false
+				},
+				what_happened: happened,
+				expected: call.expected ? bugText(call.expected, 'Expected', false) : undefined,
+				steps: call.steps ? bugText(call.steps, 'Steps', false) : undefined,
+				environment: call.environment ? longText(call.environment, 2000, 'The environment') : undefined,
+				checklist,
+				watchers: [actor]
+			};
+			next.items[call.item_id] = item;
+			next.seq += 1;
+			changed.push(item);
+			break;
+		}
+		case 'bug.update': {
+			const item = findKind(next, call.item_id, 'bug');
+			expect(item, call.expected_version);
+			const s = item.summary;
+			const project = ctx.projects.find((p) => p.id === s.project_id);
+			let any = false;
+			if (call.title !== undefined) ((s.title = oneLine(call.title, WORK_LIMITS.title, 'The title')), (any = true));
+			if (call.what_happened !== undefined) ((item.what_happened = bugText(call.what_happened, 'What happened', true)), (any = true));
+			if (call.expected !== undefined && call.clear_expected) fail('invalid_request', 'Give a value or clear it, not both.');
+			if (call.expected !== undefined) ((item.expected = bugText(call.expected, 'Expected', false)), (any = true));
+			if (call.clear_expected) ((item.expected = undefined), (any = true));
+			if (call.steps !== undefined && call.clear_steps) fail('invalid_request', 'Give a value or clear it, not both.');
+			if (call.steps !== undefined) ((item.steps = bugText(call.steps, 'Steps', false)), (any = true));
+			if (call.clear_steps) ((item.steps = undefined), (any = true));
+			if (call.environment !== undefined && call.clear_environment) fail('invalid_request', 'Give a value or clear it, not both.');
+			if (call.environment !== undefined) ((item.environment = longText(call.environment, 2000, 'The environment')), (any = true));
+			if (call.clear_environment) ((item.environment = undefined), (any = true));
+			if (call.severity !== undefined) {
+				if (!SEVERITY_IDS.includes(call.severity)) fail('invalid_request', 'Pick a severity: critical, major, minor or trivial.');
+				((s.severity = call.severity), (any = true));
+			}
+			if (call.priority !== undefined) ((s.priority = call.priority), (any = true));
+			if (call.area_id !== undefined) {
+				if (!project?.areas?.some((a) => a.id === call.area_id && !a.deleted)) fail('invalid_request', "That area isn't one of the project's areas.");
+				((s.area_id = call.area_id), (any = true));
+			}
+			if (!any) fail('invalid_request', 'Nothing to change.');
+			touch(next, item, now);
+			changed.push(item);
+			break;
+		}
+		case 'bug.triage': {
+			const item = findKind(next, call.item_id, 'bug');
+			expect(item, call.expected_version);
+			const s = item.summary;
+			if (s.status !== 'new') fail('invalid_request', `A bug that is ${s.status.replace('_', ' ')} is not waiting for triage.`);
+			const project = ctx.projects.find((p) => p.id === s.project_id);
+			if (!project?.areas?.some((a) => a.id === call.area_id && !a.deleted)) fail('invalid_request', "That area isn't one of the project's areas.");
+			if (!SEVERITY_IDS.includes(call.severity)) fail('invalid_request', 'Pick a severity: critical, major, minor or trivial.');
+			if (call.assignee_id && !ctx.members.includes(call.assignee_id)) fail('unknown_recipient', 'That member cannot be assigned.');
+			s.area_id = call.area_id;
+			s.severity = call.severity;
+			s.severity_confirmed = true;
+			s.priority = call.priority;
+			s.assignee_id = call.assignee_id;
+			s.status = 'triaged';
+			touch(next, item, now);
+			changed.push(item);
+			break;
+		}
+		case 'bug.assign': {
+			const item = findKind(next, call.item_id, 'bug');
+			expect(item, call.expected_version);
+			if (call.assignee_id && !ctx.members.includes(call.assignee_id)) fail('unknown_recipient', 'That member cannot be assigned.');
+			item.summary.assignee_id = call.assignee_id;
+			touch(next, item, now);
+			changed.push(item);
+			break;
+		}
+		case 'bug.mark_fixed': {
+			const item = findKind(next, call.item_id, 'bug');
+			expect(item, call.expected_version);
+			const s = item.summary;
+			if (s.status !== 'triaged' && s.status !== 'in_progress') fail('invalid_request', `A bug that is ${s.status.replace('_', ' ')} can't be marked fixed.`);
+			const note = longText(call.note.trim(), WORK_LIMITS.reason, 'The note');
+			if (note === '') fail('invalid_request', 'Say what fixed it.');
+			const left = item.checklist.filter((c) => c.required && !c.done);
+			if (left.length > 0) {
+				const anyway = call.anyway_reason;
+				if (anyway === undefined) return fail('checklist_incomplete', `Required steps are not done: ${left.map((c) => c.text).join('; ')}.`);
+				if (anyway.trim() === '') return fail('invalid_request', 'Say why it is fixed with required steps left.');
+				item.done_anyway = { reason: longText(anyway.trim(), WORK_LIMITS.reason, 'The reason'), steps: left.map((c) => c.id) };
+				s.done_anyway = true;
+			}
+			item.closed_reason = note;
+			s.status = 'fixed';
+			touch(next, item, now);
+			changed.push(item);
+			break;
+		}
+		case 'bug.verify': {
+			const item = findKind(next, call.item_id, 'bug');
+			expect(item, call.expected_version);
+			const s = item.summary;
+			if (s.status !== 'fixed') fail('invalid_request', 'Only a fixed bug can be verified.');
+			if (call.outcome === 'fixed') {
+				s.status = 'closed';
+				s.resolution = 'verified';
+				item.done_at = now;
+			} else if (call.outcome === 'still_happens') {
+				const seen = (call.note ?? '').trim();
+				if (seen === '') fail('invalid_request', 'Say what you still see.');
+				longText(seen, WORK_LIMITS.reason, 'The note');
+				s.status = 'triaged';
+				s.reopen_count += 1;
+				s.done_anyway = false;
+				item.done_anyway = undefined;
+			} else fail('invalid_request', 'The outcome is fixed or still_happens.');
+			touch(next, item, now);
+			changed.push(item);
+			break;
+		}
+		case 'bug.close': {
+			const item = findKind(next, call.item_id, 'bug');
+			expect(item, call.expected_version);
+			const s = item.summary;
+			if (!['new', 'triaged', 'in_progress', 'fixed'].includes(s.status)) fail('invalid_request', `A bug that is ${s.status.replace('_', ' ')} can't be closed.`);
+			if (call.duplicate_of !== undefined) {
+				const original = next.items[call.duplicate_of];
+				if (!original || original.summary.deleted || original.summary.kind !== 'bug') fail('not_found', 'That original bug is not here.');
+				if (original.summary.id === s.id || original.summary.project_id !== s.project_id) fail('invalid_request', 'The original must be another bug in the same project.');
+				if (original.summary.status === 'closed' && original.summary.resolution === 'duplicate') fail('invalid_request', 'That bug is itself closed as a duplicate.');
+				s.duplicate_of = call.duplicate_of;
+				s.resolution = 'duplicate';
+				if (!original.watchers.includes(s.created_by)) original.watchers.push(s.created_by);
+			} else {
+				if (call.resolution !== 'wont_fix' && call.resolution !== 'cant_reproduce') fail('invalid_request', 'Close it as a duplicate, won\'t fix or can\'t reproduce.');
+				const reason = longText((call.reason ?? '').trim(), WORK_LIMITS.reason, 'The reason');
+				if (reason === '') fail('invalid_request', 'Give a reason.');
+				item.closed_reason = reason;
+				s.resolution = call.resolution;
+			}
+			s.status = 'closed';
+			item.done_at = now;
+			touch(next, item, now);
+			changed.push(item);
+			break;
+		}
+		case 'bug.reopen': {
+			const item = findKind(next, call.item_id, 'bug');
+			expect(item, call.expected_version);
+			const s = item.summary;
+			if (s.status !== 'closed') fail('invalid_request', 'Only a closed bug can be reopened.');
+			if (call.note.trim() === '') fail('invalid_request', 'Say why it is reopened.');
+			longText(call.note.trim(), WORK_LIMITS.reason, 'The note');
+			s.status = s.resolution === 'duplicate' ? 'new' : 'triaged';
+			s.reopen_count += 1;
+			s.resolution = undefined;
+			s.duplicate_of = undefined;
+			item.done_at = undefined;
 			touch(next, item, now);
 			changed.push(item);
 			break;
@@ -333,7 +563,7 @@ export const positionOf = (s: WorkState): WorkPosition => ({ incarnation: s.inca
 export const summaries = (s: WorkState, projectId?: string, closedSince?: string): WorkItemSummary[] =>
 	Object.values(s.items)
 		.filter((i) => !i.summary.deleted && (projectId === undefined || i.summary.project_id === projectId))
-		.filter((i) => i.summary.status !== 'done' || closedSince === undefined || (i.done_at ?? i.summary.updated_at) >= closedSince)
+		.filter((i) => (i.summary.status !== 'done' && i.summary.status !== 'closed') || closedSince === undefined || (i.done_at ?? i.summary.updated_at) >= closedSince)
 		.map((i) => i.summary)
 		.sort((a, b) => (a.number ?? 0) - (b.number ?? 0));
 
@@ -344,7 +574,7 @@ const timeOf = (item: StoredTask, now: string): TimeFigures => ({
 	waiting_on_owner_ms: 0,
 	blocked_ms: 0,
 	idle_ms: 0,
-	open: item.summary.status !== 'done',
+	open: item.summary.kind === 'bug' ? item.summary.status !== 'closed' : item.summary.status !== 'done',
 	rounds: 1 + item.summary.reopen_count,
 	as_of: now
 });
@@ -358,6 +588,11 @@ export function itemOf(s: WorkState, id: string, now: string): WorkItem {
 		watchers_more: false,
 		description: item.description,
 		definition_of_done: item.definition_of_done,
+		what_happened: item.what_happened,
+		expected: item.expected,
+		steps: item.steps,
+		environment: item.environment,
+		closed_reason: item.closed_reason,
 		done_anyway_detail: item.done_anyway,
 		checklist: item.checklist,
 		links: [],

@@ -65,7 +65,7 @@ test('PROJ-3: a project page shows its name, teams and leads, and Tasks is a tab
 	await expect(page.getByTestId('leads-line')).toHaveText('Leads: Juno Park (Design), Noor Haddad (Web)');
 	await expect(page.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
 	await expect(page.getByRole('tab', { name: 'Tasks' })).toBeEnabled();
-	for (const name of ['Features', 'Bugs', 'Debt', 'Docs', 'Insights', 'Settings']) await expect(page.getByRole('tab', { name })).toHaveAttribute('aria-disabled', 'true');
+	for (const name of ['Features', 'Debt', 'Docs', 'Insights', 'Settings']) await expect(page.getByRole('tab', { name })).toHaveAttribute('aria-disabled', 'true');
 	await shot(page, 'project-page');
 	// Teams are editable from the page too.
 	await page.getByRole('button', { name: 'Remove Beacon from Web' }).click();

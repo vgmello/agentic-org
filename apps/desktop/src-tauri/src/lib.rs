@@ -631,6 +631,7 @@ mod tests {
         };
         let mut from_ui = quoted(include_str!("../../src/lib/office/tauri.ts"));
         from_ui.extend(quoted(include_str!("../../src/lib/org/tauri.ts")));
+        from_ui.extend(quoted(include_str!("../../src/lib/work/tauri.ts")));
         let mut from_build = quoted(include_str!("../build.rs"));
         let mut declared: Vec<String> = COMMANDS.iter().map(|c| c.to_string()).collect();
         from_ui.sort();
