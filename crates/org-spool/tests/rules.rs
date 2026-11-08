@@ -1608,6 +1608,12 @@ fn rule_an_ask_that_expired_before_delivery_still_reaches_a_person() {
 #[test]
 fn rule_an_unreadable_profile_leaves_an_expired_ask_in_the_outbox() {
     use std::os::unix::fs::PermissionsExt;
+    extern "C" {
+        fn geteuid() -> u32;
+    }
+    if unsafe { geteuid() } == 0 {
+        return; // root reads a mode-000 file: nothing to test
+    }
     let t = TempSpool::new("expired_unreadable");
     t.spool.register("pat").unwrap();
     let mut profile = MemberProfile::default_for("pat");
@@ -1637,6 +1643,20 @@ fn rule_an_unreadable_profile_leaves_an_expired_ask_in_the_outbox() {
         .is_file());
     // ...and the next pass delivers it.
     assert_eq!(t.spool.deliver_all().unwrap().delivered, 1);
+
+    // The owner is a person whatever its profile: an unreadable one doesn't hold the ask.
+    let owner = org_spool::OWNER_ID;
+    t.spool.register(owner).unwrap();
+    let owner_profile = t.dir.join(format!("spool/inbox/{owner}/profile.json"));
+    fs::write(&owner_profile, b"{}").unwrap();
+    fs::set_permissions(&owner_profile, fs::Permissions::from_mode(0o000)).unwrap();
+    let mut to_owner = ask.clone();
+    to_owner.id = generate_ulid();
+    to_owner.to = owner.to_string();
+    t.spool.enqueue(&to_owner).unwrap();
+    let result = t.spool.deliver_all();
+    fs::set_permissions(&owner_profile, fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(result.unwrap().delivered, 1);
 
     // A malformed profile is the default (an agent): dead-lettered.
     fs::write(&profile_path, b"{not json").unwrap();

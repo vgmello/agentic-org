@@ -129,6 +129,11 @@ Relay:
 
 ## Known limits
 
+- An expired `ask` to a person (not the owner) whose `profile.json` can't be read (e.g.
+  permissions) stays in the outbox, retried at every relay pass, until the profile is
+  readable; meanwhile every pass reports the error (`relay run --once` exits 4) and the loop
+  relay backs off to its 500 ms poll for messages written without a nudge.
+
 - `msg notify --session` records the listed items as reported (under the lock) before the
   caller has read the output: an adapter that kills `notify` after that save loses those
   items for that session (they stay in the inbox, and other sessions, `msg inbox` and the

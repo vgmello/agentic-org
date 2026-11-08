@@ -816,6 +816,7 @@ impl Spool {
     /// Whether `agent` is a person (its profile's kind is `person`) or the owner. A member
     /// with no profile counts as an agent. Decides whether an expired ask stays urgent, and
     /// whether one that expired before delivery is still delivered.
+    ///
     /// A malformed profile (or none) means the default: an agent, unless it's the owner; so
     /// does an I/O error reading it (see [`Spool::check_person`] to tell those apart).
     pub fn is_person(&self, agent: &str) -> bool {
@@ -826,6 +827,10 @@ impl Spool {
     /// [`Spool::is_person`], but a real I/O error reading the profile is an error (the relay
     /// then leaves an expired ask in the outbox for the next pass instead of guessing).
     pub(crate) fn check_person(&self, agent: &str) -> io::Result<bool> {
+        // The owner is a person whatever its profile says (or whether it can be read).
+        if agent == OWNER_ID {
+            return Ok(true);
+        }
         let profile = self.read_profile(agent)?;
         // Case-insensitive, like `who --kind`.
         Ok(profile.owner || profile.kind.eq_ignore_ascii_case("person"))
