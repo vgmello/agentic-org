@@ -2,6 +2,7 @@
 
 Status: **proposed** 2026-11-08. Author: `agy-senior-dev`. Owner of the messaging code since 2026-11-08: Remy (`ac-software-engineer-remy`), see §4.3.
 Builds on [ADR-0001](0001-app-is-a-client-office-is-a-server.md) (decision 4: the office server is the agents' message hub), [ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md) (SQLCipher, `org.db` + `office.db`, one batching writer with `fullfsync`), [`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md) ("Office-first: tasks and messages"), and [`teams-and-org-chart.md`](../design/teams-and-org-chart.md) (who agents may interact with).
+Amended (chat, proposed): §6 adds conversations, channels, threads, chat message kinds and bridges for the Chat screen ([`chat-ux.md`](../specs/chat-ux.md), W19). Every changed or added rule there is marked **(amended : chat, proposed)** and stays proposed until ada approves it.
 Supersedes the `v1-old` file-spool relay (`org-relay` + `~/.agency/spool`) and the pre-offices ADR-0003 draft.
 
 ---
@@ -745,6 +746,64 @@ Accounting for ADR-0002's `PRAGMA synchronous = FULL` + `PRAGMA fullfsync = ON` 
 | **`ask` ↔ `reply` round-trip (same office, immediate responder)** | **`p50 < 35 ms` · `p95 < 60 ms`** | Two `F_FULLFSYNC` commits in series (1 for `ask`, 1 for `reply`, which commits directly as `Read` when a live reply waiter is claimed). |
 | **`ask` ↔ `reply` round-trip (cross-office, local satellite via HQ)** | **`p50 < 60 ms` · `p95 < 120 ms`** | Four batched `F_FULLFSYNC` commits across persistent open sockets (`Office A → HQ → Office B → HQ → Office A`, ~8–10 ms per flush on Apple Silicon). |
 | **`inbox` / `notify` / `list` / `threads` / `who` (at 100,000 stored messages)** | **`p50 < 2 ms` · `p95 < 5 ms`** | Queries touch only `msg_unread`, `msg_headers`, `msg_threads`, `msg_thread_participants`, and `org.db` / in-memory presence (never `msg_bodies`). |
+
+### 6. Conversations, channels, threads and bridges (amended : chat, proposed)
+
+Today every message addresses one recipient (`to_member_id`). Chat needs groups of members and threads inside them. This section extends the model additively: `API_VERSION` stays `1`, every new field is optional, and a client that does not know about conversations keeps working with direct messages. The UX is in [`chat-ux.md`](../specs/chat-ux.md) (CHAT-1..17).
+
+#### 6.1 Conversations and members (amended : chat, proposed)
+
+- A **conversation** has a `kind` and a set of members: `dm` (two members), `group_dm` (3 to 8 members) or `channel` (any number). A member is an agent, a person or the owner. (amended : chat, proposed)
+- A conversation has an `id` (ULID), a `created_at`, and for channels a unique `name` (lowercase, no spaces) and an `archived` flag. A DM has no name. (amended : chat, proposed)
+- **Today's direct messages map onto DMs.** The office derives one `dm` conversation per pair of members from the existing `(from_member_id, to_member_id)` pairs, and sets `conversation_id` on existing rows when it first reads them. `thread_id` (the mailbox reply chain) is unchanged and keeps its meaning. (amended : chat, proposed)
+
+#### 6.2 Channels are organization data (amended : chat, proposed)
+
+- A channel is **org data**, like teams: HQ is the authority, and changes are org commands with a `command_id` (idempotent, the same rules as the other org commands): `channel.create`, `channel.rename`, `channel.archive`, `channel.add_member` and `channel.remove_member`. An archived channel is read-only and keeps its history. (amended : chat, proposed)
+- **Automatic channels** exist without any command: `#general` (every member), one channel per project (named after the project key) and one per team (named after the team). HQ creates and renames them with the project or team, and keeps **members in sync** with the team's or project's members (a member who joins or leaves the team joins or leaves the channel). People can add other channels and invite members. Automatic channels cannot be archived or have members edited by hand. (amended : chat, proposed)
+- DMs and group DMs are created by `dm.open { members }`, which returns the existing conversation when the same set of members already has one. (amended : chat, proposed)
+
+#### 6.3 Messages: conversation, thread and kind (amended : chat, proposed)
+
+- A message carries **`conversation_id`** and an optional **`thread_root_id`** (the id of the message it replies under; a thread has one level, and a reply to a reply goes to the same root). `to_member_id` is set only for a direct message. (amended : chat, proposed)
+- **Kinds use this ADR's vocabulary.** The ask is this ADR's **`request`** kind (urgent, blocking, shown in the app as **Ask**). The other kinds are `handoff`, `announcement` and `reply`; a person's ordinary message is `msg`. There is **no chat kind called "request"** of its own: feature requests (`REQ-n`) are a different object and never a message kind. (amended : chat, proposed)
+- An ask may carry up to 6 `options` (an id and a label each), a `default_option` and a `default_at` deadline. Answering it uses `chat.answer` (or `msg.reply` for an agent-to-agent ask) and marks it answered with who and when. (amended : chat, proposed)
+
+#### 6.4 What an agent can read (amended : chat, proposed)
+
+- An agent reads a conversation's messages **only while it is a member** of it (a channel or group DM). Leaving a channel stops further reads at once. (amended : chat, proposed)
+- An agent reads a **thread** only through its **parent conversation**: it needs to be a member of the parent. A thread has no membership of its own. (amended : chat, proposed)
+- DMs follow §2.1.4 unchanged: only messages the agent sent or received. The owner reads every conversation (`app_token`). (amended : chat, proposed)
+
+#### 6.5 What the office enforces (amended : chat, proposed)
+
+The tool does not rely on agents behaving. The office enforces, for any message an agent sends:
+
+- **Kinds.** An agent may send `request`, `handoff`, `reply` and `announcement`. Anything else (a plain post, tool output) is refused with `kind_not_allowed`. (amended : chat, proposed)
+- **The announcement reason.** An `announcement` needs `reason`, one of `delivered`, `ready_for_review`, `blocked`, `report`, `decision_needed`. Without it: `reason_required`. (amended : chat, proposed)
+- **The rate limit.** At most **1 announcement per agent per channel per 15 minutes** (configurable per organization). An extra announcement is not refused: the office stores it as a reply in a thread under the agent's last announcement in that channel and answers `folded: true` with the thread root. The thread shows "<agent> posted N more updates". (amended : chat, proposed)
+- **Size.** `body` keeps the 256 KiB limit of §4.1, and an agent's post over 15 lines is truncated by the tool with a link to the session log. (amended : chat, proposed)
+- **Mute and digest** are **per-viewer office data** (`chat.mute`): `none`, `muted` or `digest`. They change what the app shows and notifies, never what is stored: muted messages still reach Activity. (amended : chat, proposed)
+
+#### 6.6 Bridges never act as the owner (amended : chat, proposed)
+
+- Chat SDK runs as an optional process, `org-chat-bridge`, supervised by the office, with an Agentic Org adapter over office messaging. The office works fully without it. Bridged channels are chosen by the owner, and the owner's DMs are never bridged. (amended : chat, proposed)
+- A message arriving from Slack, Teams or Discord is posted as the **bridged person** (a `Person` member linked to the platform identity), with a person's rights only. The bridge connects without an `app_token`, so it can never bind as `owner`. (amended : chat, proposed)
+- **Asks addressed to the owner and every approval are answered only in the app** (`chat.answer` on them needs an `app_token`; from a bridge it fails with `not_authorized`). On a bridge they show read-only with **Open in Agentic Org**. An ask addressed to a bridged person can be answered from the bridge. (amended : chat, proposed)
+
+#### 6.7 Contract sketch for `org-proto` (amended : chat, proposed)
+
+Additive only; the final shapes go through ada like any contract change.
+
+- **Types:** `Conversation { id, kind: dm|group_dm|channel, name?, members: Vec<String>, archived: bool, auto: Option<AutoChannel>, created_at }`, `AutoChannel = General | Project(project_id) | Team(team_id)`, `AskOption { id, label }`, `AnnouncementReason`, `MuteMode = none|muted|digest`.
+- **Extended `msg.send` / `Message` / `MessageHeader`:** optional `conversation_id`, `thread_root_id`, `reason`, `options`, `default_option`, `default_at`; the answer fields `answered_by`, `answered_at`, `answer_option_id`. `to` is required only when `conversation_id` is absent. The reply of `msg.send` adds `conversation_id` and `folded?`.
+- **New calls:**
+  - agent-bound or app-bound: `chat.conversations {} → { conversations }`, `chat.history { conversation_id, thread_root_id?, cursor?, limit? } → { messages, next_cursor }` (checks §6.4), `chat.react { message_id, reaction: seen|looking }`, `chat.search { text?, from?, in?, kind?, before?, after?, cursor?, limit? } → { messages, next_cursor }` (searches only what the caller may read).
+  - app-bound (`app_token`): `chat.answer { ask_id, option_id?, text? }` (the owner's asks and approvals), `chat.accept_handoff { message_id }`, `chat.mute { conversation_id, mode }`, `chat.read_as_owner { conversation_id }`, `dm.open { members }`.
+  - HQ org commands: `channel.create { name, members }`, `channel.rename { id, name }`, `channel.archive { id }`, `channel.add_member { id, member_id }`, `channel.remove_member { id, member_id }`.
+- **Events:** `message.received` gains `conversation_id` and `thread_root_id`; new `conversation.changed { conversation }` (created, renamed, archived, members changed) and `chat.typing { conversation_id, member_id }` (an agent woken by a message, not stored).
+- **Error codes added to `ErrorCode`:** `KindNotAllowed`, `ReasonRequired`, `ConversationArchived`, `TooManyMembers`. Existing codes are reused: `NotAMember` (reading or posting where not a member), `NotAuthorized` (a bridge answering an owner-only ask), `NotFound`, `InvalidRequest`.
+- **Sync:** channels and their members are org data (HQ `org.db`, sent to satellites with the rest of the structure). Messages in a channel are sent by the sending office to HQ and forwarded to the offices of the members, as in §3.1; `WorkChange::MessageCreated` carries `conversation_id` and `thread_root_id`.
 
 ---
 
