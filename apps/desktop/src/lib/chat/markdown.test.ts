@@ -48,36 +48,49 @@ describe('CHAT-14 · messages render Markdown with the safety rules', () => {
 		expect(link('[example.com](https://www.example.com/a)').host).toBeUndefined();
 		expect(link('[https://www.example.com](https://example.com)').host).toBeUndefined();
 	});
-	it('CHAT-14 · very long lines are scanned once, whatever they hold', () => {
-		// Each is the whole 256 KiB a message may hold, on one line, in the shapes that hurt a scanner most: openers with no
-		// closer. The bound is generous on purpose: this guards against a blow-up (seconds), not against a slow machine.
+	const SHAPES = ['[', '**', '*a', '_a', '`', '[a](', '[a](http://x', 'http://', '@a', 'ac-T-', '[a]', '[a](b c', '**a*', '_a_a', '[a]('];
+	const sized = (shape: string, chars: number) => shape.repeat(Math.ceil(chars / shape.length)).slice(0, chars);
+
+	it('CHAT-14 · adversarial lines under the 8 KiB cap are really scanned, and finish at once', () => {
+		// Openers with no closer, the worst case for a scanner. These lines are under MAX_LINE, so scan() runs on every one.
+		for (const shape of SHAPES) {
+			const text = sized(shape, 8000);
+			const start = performance.now();
+			const parts = inline(text);
+			expect(performance.now() - start, `shape ${shape}`).toBeLessThan(2000);
+			expect(parts.length).toBeGreaterThan(0);
+		}
+		expect(inline('**_**_**_'.repeat(900)).length).toBeGreaterThan(0);
+	});
+	it('CHAT-14 · a 256 KiB line is plain text, and a whole message of them is quick', () => {
 		const big = 256 * 1024;
-		const shapes = ['[', '**', '*a', '_a', '`', '[a](', '[a](http://x', 'http://', '@a', 'ac-T-', '[a]', '[a](b c', '**a*', '_a_a'];
-		for (const shape of shapes) {
-			const text = shape.repeat(Math.ceil(big / shape.length));
+		for (const shape of SHAPES) {
+			const text = sized(shape, big);
+			const lines = sized(shape, 8000) + '\n';
 			const start = performance.now();
 			markdown(text);
 			plain(text);
+			markdown(lines.repeat(Math.ceil(big / lines.length)));
 			expect(performance.now() - start, `shape ${shape}`).toBeLessThan(5000);
 		}
-		expect(inline('**_**_**_'.repeat(2000)).length).toBeGreaterThan(0);
 	});
-	it('CHAT-14 · work grows with the line, not faster: ten times the text takes nowhere near a hundred times as long', () => {
-		const cost = (n: number) => {
-			const text = '[a]('.repeat(n);
+	it('CHAT-14 · work grows with the line: four times the text takes well under sixteen times as long, for every shape', () => {
+		// Linear is about 4x, quadratic about 16x. The bound sits between them with room for a noisy machine; the work is
+		// repeated so it is a few milliseconds, not microseconds.
+		const best = (text: string) => {
 			const runs: number[] = [];
 			for (let r = 0; r < 5; r++) {
 				const start = performance.now();
-				inline(text.slice(0, 8000));
-				for (let k = 0; k < n / 2000; k++) inline(text.slice(0, 8000));
+				for (let k = 0; k < 40; k++) inline(text);
 				runs.push(performance.now() - start);
 			}
 			return Math.min(...runs);
 		};
-		const small = cost(2000);
-		const large = cost(20000);
-		// 10x the lines of work; allow plenty of noise (and a floor so a sub-millisecond baseline cannot fail it).
-		expect(large).toBeLessThan(Math.max(small * 60, 50));
+		for (const shape of SHAPES) {
+			const small = best(sized(shape, 2000));
+			const large = best(sized(shape, 8000));
+			expect(large, `shape ${shape}: ${small.toFixed(2)} ms for 2000 chars, ${large.toFixed(2)} ms for 8000`).toBeLessThan(small * 9 + 2);
+		}
 	});
 	it('CHAT-14 · a line over 8 KiB is plain text, and a short line around it still renders', () => {
 		const long = `**not bold** ${'x'.repeat(9000)}`;
@@ -87,7 +100,7 @@ describe('CHAT-14 · messages render Markdown with the safety rules', () => {
 		expect(parts[0]).toEqual({ t: 'text', text: long });
 		expect(parts.some((p) => p.t === 'bold')).toBe(true);
 	});
-	it('CHAT-14 · plain() gives the same text from the cache, and forgets nothing it should keep', () => {
+	it('CHAT-14 · plain() gives the same text before and after its cache evicts it', () => {
 		const text = 'See **ac-T-17** and [the docs](https://example.com) @ada';
 		const first = plain(text);
 		expect(first).toBe('See ac-T-17 and the docs @ada');

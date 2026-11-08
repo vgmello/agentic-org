@@ -224,7 +224,12 @@ const plainCache = new Map<string, string>();
 /** The text of a message without markup, for previews and search. Short messages are remembered: search asks for every one on each keystroke. */
 export function plain(source: string): string {
 	const cached = plainCache.get(source);
-	if (cached !== undefined) return cached;
+	if (cached !== undefined) {
+		// Least recently used stays: touching it moves it to the back of the eviction order.
+		plainCache.delete(source);
+		plainCache.set(source, cached);
+		return cached;
+	}
 	const text = (xs: Inline[]): string => xs.map((x) => (x.t === 'bold' || x.t === 'italic' ? text(x.children) : x.t === 'chip' ? x.ref : x.t === 'mention' ? `@${x.handle}` : x.text)).join('');
 	const result = markdown(source)
 		.map((b) => (b.t === 'ul' ? b.items.map(text).join(' ') : b.t === 'code' ? b.text : text(b.inline)))

@@ -208,6 +208,7 @@ export function applyChat(state: ChatState, call: ChatCall, ctx: ChatContext): {
 	// does three things only: post, react and answer, in the channels chosen for it.
 	if (ctx.surface === 'bridge') {
 		if (ctx.actor === ctx.owner) return refuse('not_authorized', 'A bridge never acts as the owner.');
+		if (actor.kind !== 'person') return refuse('not_authorized', 'A bridge acts only as a mapped person, never as an agent.');
 		if (!['msg.send', 'chat.react', 'chat.answer'].includes(call.method)) return refuse('not_authorized', 'A bridge cannot do this.');
 	}
 	const s = structuredClone(state);
@@ -236,6 +237,7 @@ export function applyChat(state: ChatState, call: ChatCall, ctx: ChatContext): {
 			const c = m && s.conversations.find((x) => x.id === m.conversation_id);
 			if (!m || !c) return refuse('not_found', 'There is no such message.');
 			if (!canRead(ctx, ctx.actor, c)) return refuse('not_in_conversation', `You can react in ${label(c)} only while you are a member of it.`);
+			mustBeIn(ctx, c);
 			if (!REACTIONS.some((r) => r.id === call.reaction)) return refuse('invalid_request', 'Unknown reaction.');
 			const who = new Set(m.reactions?.[call.reaction] ?? []);
 			if (who.has(ctx.actor)) who.delete(ctx.actor);
@@ -294,9 +296,9 @@ function ownerOnly(ctx: ChatContext) {
 
 function send(s: ChatState, call: Extract<ChatCall, { method: 'msg.send' }>, ctx: ChatContext, actor: ChatMember): ChatAccepted {
 	const c = s.conversations.find((x) => x.id === call.conversation_id);
+	if (ctx.surface === 'bridge' && (!c || !bridgeReaches(ctx, c))) return refuse('not_authorized', 'A bridge reaches only the channels chosen for it.');
 	if (!c) return refuse('not_found', 'There is no such conversation.');
 	if (c.archived) return refuse('conversation_archived', `${label(c)} is archived.`);
-	if (ctx.surface === 'bridge' && !bridgeReaches(ctx, c)) return refuse('not_authorized', 'A bridge reaches only the channels chosen for it.');
 	if (!canRead(ctx, ctx.actor, c)) return refuse('not_in_conversation', `You can post in ${label(c)} only while you are a member of it.`);
 	// A bridge posts as a mapped person, and only where that person is a member.
 	if (ctx.surface === 'bridge' && !isMember(c, ctx.actor)) return refuse('not_in_conversation', `${memberOf(ctx, ctx.actor)?.name ?? 'They'} is not a member of ${label(c)}.`);
@@ -304,10 +306,12 @@ function send(s: ChatState, call: Extract<ChatCall, { method: 'msg.send' }>, ctx
 	// A DM keeps every kind ADR-0003 has, custom tags included, so agents' `org-agent msg send` keeps working (section 6 is
 	// additive). Channels and group DMs take the chat kinds only.
 	const known = ['msg', 'request', 'handoff', 'announcement', 'reply'].includes(call.kind);
-	const customTag = c.kind === 'dm' && /^[a-z][a-z0-9_.-]{0,63}$/.test(call.kind) && (call.kind as string) !== 'delivery_failed' && (call.kind as string) !== 'unknown';
-	if (!known && !customTag) return refuse('invalid_request', 'Unknown message kind.');
+	const tagShaped = /^[a-z][a-z0-9_.-]{0,63}$/.test(call.kind) && (call.kind as string) !== 'delivery_failed' && (call.kind as string) !== 'unknown';
+	if (!known && !tagShaped) return refuse('invalid_request', 'Unknown message kind.');
 	// The office enforces the kinds, not only the guidance (CHAT-4): in a channel or group DM an agent posts asks, hand-offs, replies and announcements.
 	if (actor.kind === 'agent' && c.kind !== 'dm' && !(AGENT_KINDS as readonly string[]).includes(call.kind)) return refuse('kind_not_allowed', 'An agent posts only an ask, a hand-off, a reply or an announcement.');
+	// A custom tag is for DMs; a person in a channel or group DM sends the chat kinds too.
+	if (!known && c.kind !== 'dm') return refuse('invalid_request', 'Unknown message kind.');
 	const body = call.body.trim();
 	if (body === '') return refuse('invalid_request', 'Write something first.');
 	if (bytes(body) > CHAT_LIMITS.bodyMax) return refuse('invalid_request', 'That message is too long.');

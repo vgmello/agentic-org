@@ -88,7 +88,7 @@ describe('CHAT-4 · agents post only questions, hand-offs, replies and announcem
 		const s = fresh();
 		const r = run(s, { method: 'msg.send', conversation_id: 'c-dm-sam', kind: 'request', body: 'Ship it?', addressed_to: 'you' }, sam);
 		expect(byId(r.state, r.accepted.id!).kind).toBe('request');
-		expect(refusal(s, { method: 'msg.send', conversation_id: 'c-release-v1', kind: 'feature_request' as never, body: 'x' }, sam)?.code).toBe('invalid_request');
+		expect(refusal(s, { method: 'msg.send', conversation_id: 'c-release-v1', kind: 'feature_request' as never, body: 'x' }, sam)?.code).toBe('kind_not_allowed');
 	});
 	it('CHAT-4 · an agent post longer than 15 lines is cut, pointing at the session log', () => {
 		const s = fresh();
@@ -358,6 +358,26 @@ describe('CHAT-17 · bridges never act as the owner', () => {
 		expect(refusal(asked.state, { method: 'chat.answer', ask_id: asked.accepted.id!, option_id: 'y' }, bridge('hana'))?.code).toBe('not_authorized');
 		expect(refusal(asked.state, { method: 'chat.answer', ask_id: asked.accepted.id!, option_id: 'y' }, bridge('avery', ['c-general']))?.code).toBe('not_authorized');
 	});
+	it('CHAT-17 · a bridge acts only as a person: an agent cannot be posted as through it', () => {
+		const s = fresh();
+		expect(conv(s, 'c-release-v1').members).toContain('sam');
+		for (const draft of [
+			{ method: 'msg.send', conversation_id: 'c-release-v1', kind: 'announcement', reason: 'delivered', body: 'as an agent' },
+			{ method: 'chat.react', message_id: s.messages.find((m) => m.conversation_id === 'c-release-v1')!.id, reaction: 'seen' }
+		] as unknown as Parameters<typeof refusal>[1][]) expect(refusal(s, draft, bridge('sam'))?.code).toBe('not_authorized');
+	});
+	it('CHAT-17 · a bridge reacts only as a member, like it posts', () => {
+		const s = fresh();
+		const m = s.messages.find((x) => x.conversation_id === 'c-release-v1')!;
+		expect(refusal(s, { method: 'chat.react', message_id: m.id, reaction: 'seen' }, bridge('leo'))?.code).toBe('not_in_conversation');
+		expect(refusal(s, { method: 'chat.react', message_id: m.id, reaction: 'seen' }, bridge('avery'))).toBeUndefined();
+	});
+	it('CHAT-17 · a bridge cannot tell a DM id from an id that does not exist', () => {
+		const s = fresh();
+		const post = (id: string) => refusal(s, { method: 'msg.send', conversation_id: id, kind: 'msg', body: 'hi' }, bridge('avery'))?.code;
+		expect(post('c-dm-avery')).toBe('not_authorized');
+		expect(post('no-such-conversation')).toBe('not_authorized');
+	});
 	it('CHAT-17 · a bridge posts, reacts and answers, and does nothing else', () => {
 		const s = fresh();
 		const ann = s.messages.find((m) => m.kind === 'announcement')!.id;
@@ -433,7 +453,10 @@ describe('review fixes', () => {
 		// Channels and group DMs still take the chat kinds only.
 		expect(refusal(s, { method: 'msg.send', conversation_id: 'c-release-v1', kind: 'msg', body: 'x' }, ctxAs('sam', 'agent'))?.code).toBe('kind_not_allowed');
 		expect(refusal(s, { method: 'msg.send', conversation_id: 'c-group', kind: 'msg', body: 'x' }, ctxAs('sam', 'agent'))?.code).toBe('kind_not_allowed');
-		expect(refusal(s, { method: 'msg.send', conversation_id: 'c-release-v1', kind: 'status_note' as never, body: 'x' }, ctxAs('sam', 'agent'))?.code).toBe('invalid_request');
+		expect(refusal(s, { method: 'msg.send', conversation_id: 'c-release-v1', kind: 'status_note' as never, body: 'x' }, ctxAs('sam', 'agent'))?.code).toBe('kind_not_allowed');
+		// A custom tag is for DMs: a person's channel post takes the chat kinds too, and a malformed kind is invalid anywhere.
+		expect(refusal(s, { method: 'msg.send', conversation_id: 'c-release-v1', kind: 'status_note' as never, body: 'x' })?.code).toBe('invalid_request');
+		expect(refusal(s, { method: 'msg.send', conversation_id: 'c-release-v1', kind: 'Not A Tag' as never, body: 'x' }, ctxAs('sam', 'agent'))?.code).toBe('invalid_request');
 	});
 	it('CHAT-16 · an agent that left cannot answer an ask or accept a hand-off there', () => {
 		let s = fresh();
