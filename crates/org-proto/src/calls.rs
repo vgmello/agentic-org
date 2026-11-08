@@ -168,8 +168,16 @@ impl Call for OrganizationList {
 }
 
 /// `subscribe`: after the response, the server pushes every [`crate::Event`] on this
-/// connection until it closes. No filter or unsubscribe yet (a filter would be an optional
-/// param, which is additive). A subscriber also receives events for its own actions.
+/// connection until it closes **or the connection binds again**: any `msg.bind`, failed or
+/// not, ends the subscription, and no event follows the bind's answer. Subscribe again (from
+/// the last position you got) once bound. No filter or unsubscribe yet (a filter would be an
+/// optional param, which is additive). A subscriber also receives events for its own actions.
+///
+/// On an **office server** it needs a binding (ADR-0003 §2.1.4): on an unbound connection
+/// it's `not_authorized`, like `org.snapshot`, and today only app-bound connections may
+/// subscribe (an agent-bound subscriber needs its own event filter first). The **host**
+/// serves it to any same-user connection without a binding (its socket is 0600), for the
+/// office list and `office.status_changed`.
 pub struct Subscribe;
 
 /// `subscribe`'s params. `{}` is still valid (live events only).

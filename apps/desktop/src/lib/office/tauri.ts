@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { Connection, HelloResult, LoginState, Organization } from '$lib/proto';
+import { listen } from '@tauri-apps/api/event';
+import type { Connection, HelloResult, LoginState, Organization, StatusUpdate } from '$lib/proto';
 import type { OfficeApi } from './api';
 
 /** Every call goes through the Rust shell: the WebView has no network access of its own. */
@@ -14,5 +15,6 @@ export const tauriOffice: OfficeApi = {
 	openOrganization: (id) => invoke<Connection>('organization_open', { id }),
 	loginItem: () => invoke<LoginState>('login_item_status'),
 	setLoginItem: (enabled) => invoke<LoginState>('login_item_set', { enabled }),
-	openLoginSettings: () => invoke<void>('login_item_open_settings')
+	openLoginSettings: () => invoke<void>('login_item_open_settings'),
+	onOfficeStatus: (listener) => listen<StatusUpdate>('office-status', (event) => listener(event.payload))
 };

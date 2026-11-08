@@ -1,4 +1,4 @@
-import type { AppError, Connection, HelloResult, LoginState, OfficeInfo, Organization } from '$lib/proto';
+import type { AppError, Connection, HelloResult, LoginState, OfficeInfo, Organization, StatusUpdate } from '$lib/proto';
 import { validateName } from '$lib/name';
 import type { OfficeApi } from './api';
 
@@ -73,9 +73,13 @@ function fail(error: AppError): never {
 export function createMockOffice({
 	delayMs = 900,
 	scenario = scenarioFromUrl(),
-	storage = browserStorage()
-}: { delayMs?: number; scenario?: Scenario; storage?: MockStorage } = {}): OfficeApi {
+	storage = browserStorage(),
+	testHook = false
+}: { delayMs?: number; scenario?: Scenario; storage?: MockStorage; testHook?: boolean } = {}): OfficeApi {
 	let connected = false;
+	// Who listens to status updates. With `testHook`, a browser test pushes one with `window.__mockOfficeStatus(update)`.
+	const listeners = new Set<(update: StatusUpdate) => void>();
+	if (testHook && typeof window !== 'undefined') (window as unknown as { __mockOfficeStatus: (update: StatusUpdate) => void }).__mockOfficeStatus = (update) => listeners.forEach((l) => l(update));
 	// What macOS would say about the host's login service in each scenario.
 	let login: LoginState =
 		scenario === 'needs_approval' ? 'requires_approval' : scenario === 'not_installed' ? 'not_found' : scenario === 'turned_off' ? 'not_registered' : 'enabled';
@@ -143,6 +147,10 @@ export function createMockOffice({
 			if (!connected) fail({ source: 'app', code: 'not_connected', message: "The office isn't running yet." });
 			return hosted();
 		},
+		async onOfficeStatus(listener) {
+			listeners.add(listener);
+			return () => void listeners.delete(listener);
+		},
 		async restartOffice(officeId): Promise<void> {
 			if (!connected) fail({ source: 'app', code: 'not_connected', message: "The office isn't running yet." });
 			await wait(delayMs / 3);
@@ -206,4 +214,3 @@ export function createMockOffice({
 	};
 }
 
-export const mockOffice = createMockOffice();
