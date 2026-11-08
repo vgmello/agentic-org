@@ -355,20 +355,30 @@ fn a_stop_signal_closes_the_office_and_exits_clean() {
 fn a_server_still_waiting_for_its_first_line_can_be_terminated() {
     let world = World::new();
     let mut run = world.spawn(&["--create"]);
-    std::thread::sleep(Duration::from_millis(300)); // it is blocked reading stdin
-    signal(&run, libc::SIGTERM);
-    let status = run.wait();
+    // Give it time to reach the read, then ask it to stop until it does. A server that handled
+    // the signal before reading (and so ignored it) would never stop.
+    std::thread::sleep(Duration::from_millis(1500));
+    let started = std::time::Instant::now();
+    let status = loop {
+        signal(&run, libc::SIGTERM);
+        if let Some(status) = run.child.try_wait().unwrap() {
+            break status;
+        }
+        assert!(started.elapsed() < WAIT, "the server ignored SIGTERM");
+        std::thread::sleep(Duration::from_millis(100));
+    };
     assert!(!status.success(), "{status:?}");
-    assert!(world.key_file(OFFICE).exists().not());
+    assert!(!world.key_file(OFFICE).exists());
 }
 
-trait Not {
-    fn not(self) -> bool;
-}
-impl Not for bool {
-    fn not(self) -> bool {
-        !self
-    }
+#[test]
+fn the_host_going_away_in_the_middle_of_the_first_line_is_a_clean_exit_with_no_line() {
+    let world = World::new();
+    let mut run = world.spawn(&["--create"]);
+    std::io::Write::write_all(run.stdin.as_mut().unwrap(), b"{\"op\":\"crea").unwrap();
+    let status = run.host_goes_away();
+    assert_eq!(status.code(), Some(0), "{status:?}");
+    assert!(run.events.recv_timeout(Duration::from_millis(200)).is_err());
 }
 
 #[test]

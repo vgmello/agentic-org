@@ -229,12 +229,13 @@ fn serve_office(
     };
     let listener = match serve::bind(&socket) {
         Ok(listener) => listener,
-        Err(_) => {
+        Err(error) => {
+            eprintln!("org-office-server: bind failed: {error}");
             return fail(
                 &mut control,
                 FailCode::StorageError,
                 "cannot bind the socket",
-            )
+            );
         }
     };
     // Stop signals are handled only from here: before this the default disposition applies, so a
@@ -248,14 +249,6 @@ fn serve_office(
         OfficeRole::Hq,
         &socket,
     ));
-    emit(
-        &mut control,
-        &ServerEvent::Ready {
-            socket: socket.display().to_string(),
-            pid: std::process::id(),
-        },
-    );
-
     // EOF on the control pipe means the host is gone. What the host writes after the first line
     // is read into a fixed buffer and thrown away, unparsed, so nothing on a later line can
     // stop the server from seeing the end.
@@ -280,6 +273,14 @@ fn serve_office(
         );
     }
 
+    emit(
+        &mut control,
+        &ServerEvent::Ready {
+            socket: socket.display().to_string(),
+            pid: std::process::id(),
+        },
+    );
+
     let stop = || host_gone.load(Ordering::SeqCst) || signals::stop_requested();
     serve::run(&listener, &shared, &stop);
 
@@ -303,6 +304,8 @@ fn emit(control: &mut ControlPipe, event: &ServerEvent) {
 }
 
 fn fail(control: &mut ControlPipe, code: FailCode, message: &str) -> i32 {
+    // The host's log is this process's stderr: say what failed (a fixed text, never a secret).
+    eprintln!("org-office-server: {message}");
     emit(
         control,
         &ServerEvent::Failed {
@@ -314,7 +317,20 @@ fn fail(control: &mut ControlPipe, code: FailCode, message: &str) -> i32 {
 }
 
 fn fail_with(control: &mut ControlPipe, error: &OfficeError) -> i32 {
-    let code = match error {
+    // The cause behind a storage failure (a path, the OS error, SQLite's text) belongs in the log
+    // and not on the pipe; it never holds the key or the token.
+    let mut cause = std::error::Error::source(error);
+    while let Some(inner) = cause {
+        eprintln!("org-office-server:   caused by: {inner}");
+        cause = inner.source();
+    }
+    // `Display` never carries a path, SQL or a key.
+    fail(control, fail_code(error), &error.to_string())
+}
+
+/// The code the host is told for an office error.
+fn fail_code(error: &OfficeError) -> FailCode {
+    match error {
         OfficeError::InvalidName(_) => FailCode::InvalidName,
         OfficeError::OfficeExists | OfficeError::AlreadyExists | OfficeError::KeyExists => {
             FailCode::AlreadyExists
@@ -323,9 +339,7 @@ fn fail_with(control: &mut ControlPipe, error: &OfficeError) -> i32 {
         OfficeError::InUse => FailCode::InUse,
         OfficeError::Invalid(_) | OfficeError::NotFound => FailCode::InvalidRequest,
         _ => FailCode::StorageError,
-    };
-    // `Display` never carries a path, SQL or a key.
-    fail(control, code, &error.to_string())
+    }
 }
 
 #[cfg(test)]
@@ -334,6 +348,28 @@ mod tests {
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[test]
+    fn every_office_error_has_its_code() {
+        use org_office::NameError;
+        let storage = || OfficeError::Storage("disk".into());
+        for (error, code) in [
+            (
+                OfficeError::InvalidName(NameError::Empty),
+                FailCode::InvalidName,
+            ),
+            (OfficeError::OfficeExists, FailCode::AlreadyExists),
+            (OfficeError::AlreadyExists, FailCode::AlreadyExists),
+            (OfficeError::KeyExists, FailCode::AlreadyExists),
+            (OfficeError::KeyMissing, FailCode::KeyMissing),
+            (OfficeError::InUse, FailCode::InUse),
+            (OfficeError::Invalid("x"), FailCode::InvalidRequest),
+            (OfficeError::NotFound, FailCode::InvalidRequest),
+            (storage(), FailCode::StorageError),
+        ] {
+            assert_eq!(fail_code(&error), code, "{error:?}");
+        }
     }
 
     #[test]

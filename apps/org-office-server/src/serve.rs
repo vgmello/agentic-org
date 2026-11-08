@@ -17,7 +17,7 @@ use org_proto::{
 };
 
 /// Most connections served at once; more are closed at once.
-const MAX_CONNECTIONS: usize = 64;
+pub(crate) const MAX_CONNECTIONS: usize = 64;
 
 /// What every connection shares.
 pub struct Shared {
@@ -63,7 +63,13 @@ impl Shared {
 pub fn bind(path: &Path) -> std::io::Result<UnixListener> {
     match std::fs::symlink_metadata(path) {
         // Only a stale socket (a crashed server's) is replaced; anything else is not ours.
-        Ok(metadata) if metadata.file_type().is_socket() => std::fs::remove_file(path)?,
+        Ok(metadata) if metadata.file_type().is_socket() => {
+            // A socket someone still answers on is a live server, not a stale file.
+            if UnixStream::connect(path).is_ok() {
+                return Err(std::io::Error::other("a server is already on this socket"));
+            }
+            std::fs::remove_file(path)?
+        }
         Ok(_) => return Err(std::io::Error::other("the socket path is not a socket")),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(e),
@@ -149,4 +155,84 @@ fn internal(id: u64) -> Response {
         id,
         ApiError::new(ErrorCode::StorageError, "the office could not answer"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::AtomicBool;
+
+    use super::*;
+
+    fn shared(path: &Path) -> Arc<Shared> {
+        Arc::new(Shared::new(
+            "Acme",
+            "OFFICE1",
+            "ORG1",
+            "HQ",
+            OfficeRole::Hq,
+            path,
+        ))
+    }
+
+    fn hello_ok(stream: &mut UnixStream) -> bool {
+        let request = Request::new::<Hello>(1, &org_proto::Empty {}).unwrap();
+        if frame::write_message(&mut *stream, &request).is_err() {
+            return false;
+        }
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        matches!(
+            frame::read_message::<Response>(&mut BufReader::new(&*stream)),
+            Ok(Some(_))
+        )
+    }
+
+    #[test]
+    fn only_so_many_connections_are_served_and_a_closed_one_gives_its_slot_back() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let listener = bind(&path).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let server = {
+            let (shared, stop) = (shared(&path), Arc::clone(&stop));
+            std::thread::spawn(move || run(&listener, &shared, &|| stop.load(Ordering::SeqCst)))
+        };
+
+        let mut held: Vec<UnixStream> = (0..MAX_CONNECTIONS)
+            .map(|_| UnixStream::connect(&path).unwrap())
+            .collect();
+        // All of them are served (each answers hello), so all slots are taken.
+        for stream in &mut held {
+            assert!(hello_ok(stream));
+        }
+        // One more is accepted and closed at once, with no answer.
+        let mut extra = UnixStream::connect(&path).unwrap();
+        assert!(
+            !hello_ok(&mut extra),
+            "a connection over the limit was served"
+        );
+        // A slot comes back when a client goes away.
+        drop(held.pop());
+        let mut again = loop {
+            let mut stream = UnixStream::connect(&path).unwrap();
+            if hello_ok(&mut stream) {
+                break stream;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert!(hello_ok(&mut again));
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_live_socket_is_not_replaced_and_a_stale_one_is() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let live = bind(&path).unwrap();
+        assert!(bind(&path).is_err(), "a live server's socket was taken");
+        drop(live); // the file stays, nobody answers
+        assert!(bind(&path).is_ok());
+    }
 }
