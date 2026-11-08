@@ -971,3 +971,56 @@ fn a_host_that_dies_mid_line_is_gone_not_a_failure() {
     assert!(!bad.is_host_gone());
     assert!(!LaunchError::UnsupportedVersion(2).is_host_gone());
 }
+
+#[test]
+fn the_first_line_must_match_the_flag() {
+    let mut create_line = Vec::new();
+    write_host_message(&mut create_line, &HostMessage::Create(create())).unwrap();
+    let mut start_line = Vec::new();
+    write_host_message(
+        &mut start_line,
+        &HostMessage::Start(StartOffice { app_token: token() }),
+    )
+    .unwrap();
+    assert!(matches!(
+        read_first_host_message(&mut Cursor::new(create_line.clone()), FirstLine::Create),
+        Ok(Some(HostMessage::Create(_)))
+    ));
+    assert!(matches!(
+        read_first_host_message(&mut Cursor::new(start_line.clone()), FirstLine::Start),
+        Ok(Some(HostMessage::Start(_)))
+    ));
+    for (line, expected) in [
+        (create_line, FirstLine::Start),
+        (start_line, FirstLine::Create),
+    ] {
+        let err = read_first_host_message(&mut Cursor::new(line), expected).unwrap_err();
+        assert!(matches!(err, LaunchError::Invalid(_)), "{err}");
+        assert_eq!(err.fail_code(), FailCode::InvalidRequest);
+    }
+    let unknown = b"{\"v\":1,\"op\":\"shutdown\"}\n";
+    let err =
+        read_first_host_message(&mut Cursor::new(&unknown[..]), FirstLine::Start).unwrap_err();
+    assert_eq!(err.fail_code(), FailCode::InvalidRequest);
+    assert!(matches!(
+        read_first_host_message(&mut Cursor::new(&b""[..]), FirstLine::Create),
+        Ok(None)
+    ));
+}
+
+#[test]
+fn refused_dirs_and_folder_names_follow_one_rule() {
+    let home = Path::new("/h");
+    assert_eq!(
+        refused_dir(home, "01M6WGY1WJCC503RXF2NS0SH84"),
+        Some(PathBuf::from(
+            "/h/offices/.refused/01M6WGY1WJCC503RXF2NS0SH84"
+        ))
+    );
+    assert_eq!(refused_dir(home, "../x"), None);
+    assert!(!is_plain_id(REFUSED_DIR_NAME));
+    let file = office_file();
+    assert!(file.names_folder("01M6WGY1WJCC503RXF2NS0SH84"));
+    assert!(!file.names_folder("01M6WGY1WJCC503RXF2NS0SH83"));
+    assert!(!file.names_folder("01m6wgy1wjcc503rxf2ns0sh84"));
+}

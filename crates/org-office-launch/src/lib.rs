@@ -7,11 +7,10 @@
 //! `docs/design/offices-hq-and-satellites.md` ("Processes on one Mac") and the host/server boundary
 //! design (`docs/design/office-host-boundary.md`).
 //!
-//! **A contract (owner: ada): additive and versioned.** Every line and `office.json` carries
-//! `"v"`. Readers ignore unknown fields, unknown host ops after the first line
-//! ([`HostMessage::Unknown`]; as the first line it is [`FailCode::InvalidRequest`]) and unknown
-//! server events ([`ServerEvent::Unknown`]), and decode unknown failure codes as
-//! [`FailCode::StorageError`]. A field a create can't work without (e.g. a satellite's HQ
+//! **A contract (owner: ada): additive and versioned.** Every line and `office.json` carries `"v"`.
+//! Readers ignore unknown fields and unknown server events ([`ServerEvent::Unknown`]), and decode
+//! unknown failure codes as [`FailCode::StorageError`]. A server parses only its first stdin line
+//! ([`read_first_host_message`]). A field a create can't work without (e.g. a satellite's HQ
 //! address) arrives with a role or op that older servers refuse, never as a field they would
 //! silently ignore. `v` is reserved in every line: no op or event has a field named `v`.
 //!
@@ -71,7 +70,10 @@
 //! ## Discarding an unfinished office
 //! An unfinished create can leave a Keychain key the host can't delete (the item belongs to the
 //! server). So the host runs `--discard <id>` for every plain-id office folder without
-//! `office.json` (a folder with an unreadable or invalid `office.json` is logged and left alone).
+//! `office.json` (a folder with an unreadable or invalid `office.json` is logged and left alone;
+//! once `office.json` exists the host never discards the office: it adopts or quarantines it).
+//! An office with no folder: the server takes no lock and creates nothing, removes a leftover key
+//! if there is one, and reports `discarded`.
 //! The server takes the office lock (same wait) and removes only an office that never finished.
 //! It refuses ([`FailCode::AlreadyExists`]) a folder that holds `office.json`, and deletes only
 //! when no database file exists, or when it can open the databases and they hold no committed
@@ -83,12 +85,14 @@
 //! key also reports `discarded`.
 //!
 //! **A refused create.** If a server reports a `created` office that isn't the one the host asked
-//! for (another id, organization, name or role), the host doesn't adopt it. It stops the server
+//! for (a different office id, `org_id`, `org_name`, `office_name` or role), the host doesn't
+//! adopt it. It stops the server
 //! and moves the folder of the office id **it asked for** to `offices/.refused/<id>` (out of
 //! the catalog: `.refused` isn't a plain id), keeping its data and leaving its key, for a person to
 //! look at. It never touches a folder named by a different id the server reported; it only logs
 //! that id. Nothing is deleted. The host treats a folder whose `office.json` names another id
 //! the same way at startup: it moves it to `offices/.refused/<folder name>` and never starts it.
+//! [`refused_dir`] and [`OfficeFile::names_folder`] give both sides one rule.
 
 #![deny(unsafe_code)]
 
@@ -112,6 +116,21 @@ pub const DISCARD_FLAG: &str = "--discard";
 
 /// The folder under the office home that holds one folder per office.
 pub const OFFICES_DIR_NAME: &str = "offices";
+/// The folder inside [`OFFICES_DIR_NAME`] where refused and misplaced offices are moved, out of
+/// the catalog (it isn't a plain id).
+pub const REFUSED_DIR_NAME: &str = ".refused";
+
+/// Where the host moves the folder of office `office_id` when it refuses it:
+/// `<home>/offices/.refused/<office_id>`, or `None` if the id isn't plain. A name already taken
+/// there is the host's to resolve (e.g. a suffix); the base path is this.
+pub fn refused_dir(office_home: &Path, office_id: &str) -> Option<PathBuf> {
+    is_plain_id(office_id).then(|| {
+        office_home
+            .join(OFFICES_DIR_NAME)
+            .join(REFUSED_DIR_NAME)
+            .join(office_id)
+    })
+}
 /// The office's description, in its folder. Plaintext, no secrets.
 pub const OFFICE_FILE_NAME: &str = "office.json";
 /// The office lock, in its folder: held exactly while a server runs that office.
@@ -290,6 +309,12 @@ impl OfficeFile {
         Ok(())
     }
 
+    /// Whether this file belongs in the folder named `folder_name`: its `office_id` must equal
+    /// the folder's name exactly. A file that doesn't is a misplaced office (see the crate docs).
+    pub fn names_folder(&self, folder_name: &str) -> bool {
+        self.office_id == folder_name
+    }
+
     fn check_ids(&self) -> Result<(), LaunchError> {
         if is_plain_id(&self.office_id) && is_plain_id(&self.org_id) {
             Ok(())
@@ -397,7 +422,8 @@ impl<'de> Deserialize<'de> for OfficeFile {
 }
 
 /// A line from the host to a server, on the server's stdin. Not `Clone`: it may hold the app
-/// token.
+/// token. **Write it only with [`write_host_message`]**, which zeroes its buffer: any other
+/// serialization (e.g. `serde_json::to_string`) leaves the token's hex in a buffer nobody clears.
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 #[non_exhaustive]
@@ -406,8 +432,8 @@ pub enum HostMessage {
     Create(CreateOffice),
     /// Serve the existing office (the first line with [`OFFICE_FLAG`]).
     Start(StartOffice),
-    /// An op this build doesn't know. A server ignores it after the first line; as the first
-    /// line it is [`FailCode::InvalidRequest`]. It is never written.
+    /// An op this build doesn't know. As the first line it is [`FailCode::InvalidRequest`]
+    /// ([`read_first_host_message`]); later lines aren't parsed at all. It is never written.
     #[serde(other, skip_serializing)]
     Unknown,
 }
@@ -523,8 +549,11 @@ pub enum ServerEvent {
     /// `--discard` only: the unfinished office's key and folder are gone (or never existed).
     /// The server exits 0 right after.
     Discarded,
-    /// The server can't go on; it exits non-zero right after. On a failed `--create` the
-    /// server has already deleted the key it made.
+    /// The server can't go on; it exits non-zero right after. On a failed `--create` the server
+    /// has already deleted the key it made, **but only if `office.json` wasn't in place yet**:
+    /// after its rename the office is stored, the host adopts it, and the key must never be
+    /// deleted. `message` is untrusted text: the host escapes control characters and caps its
+    /// length before logging it.
     Failed { code: FailCode, message: String },
     /// An event this build doesn't know. The host ignores it; it is never written.
     #[serde(other, skip_serializing)]
@@ -628,8 +657,38 @@ impl LaunchError {
     }
 }
 
+/// Which first line a server expects, from the flag it was started with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FirstLine {
+    /// [`CREATE_FLAG`]: a [`HostMessage::Create`].
+    Create,
+    /// [`OFFICE_FLAG`]: a [`HostMessage::Start`].
+    Start,
+}
+
+/// Read a server's first stdin line, the one rule for both sides. `Ok(None)` means EOF before
+/// it (the host is gone: exit 0, no `failed` line). An unknown op, or the other flag's op, is
+/// [`LaunchError::Invalid`] (report [`LaunchError::fail_code`], i.e. `invalid_request`).
+pub fn read_first_host_message(
+    r: &mut impl BufRead,
+    expected: FirstLine,
+) -> Result<Option<HostMessage>, LaunchError> {
+    let Some(message) = read_host_message(r)? else {
+        return Ok(None);
+    };
+    match (&message, expected) {
+        (HostMessage::Create(_), FirstLine::Create) | (HostMessage::Start(_), FirstLine::Start) => {
+            Ok(Some(message))
+        }
+        _ => Err(LaunchError::Invalid(
+            "the first line isn't the op this server's flag expects",
+        )),
+    }
+}
+
 /// Read one host message. `Ok(None)` means the host closed the pipe. The line it was read from
-/// is zeroed afterwards, since it may hold the app token.
+/// is zeroed afterwards, since it may hold the app token. A server reads its first line with
+/// [`read_first_host_message`], which also checks the op.
 pub fn read_host_message(r: &mut impl BufRead) -> Result<Option<HostMessage>, LaunchError> {
     match read_secret_line(r)? {
         Some(mut line) => decode_host_line(&mut line).map(Some),
