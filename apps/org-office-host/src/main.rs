@@ -5,14 +5,14 @@
 //!
 //! ```text
 //! org-office-host [--home <absolute path>] [--server-bin <path>] [--app-team-id <team id>]
-//!                 [--dev-app-path <absolute path>]
 //! ```
 //! `--home` overrides the office home (otherwise `org_proto::location`'s rule) and
 //! `--server-bin` the office server program (otherwise `org-office-server` next to this one);
 //! both are for development and tests. `--app-team-id` is the team id that signs the desktop
 //! app: without it, `office.app_token` and `office.restart` refuse every caller.
-//! `--dev-app-path` names an unsigned development app those calls accept; only debug builds
-//! honour it.
+//! A debug build may accept one unsigned development app for those calls: its path is the
+//! build-time constant `ORG_DEV_APP_PATH` (set when the host is compiled), never read from the
+//! command line, a config file or the environment at run time. Release builds have no such path.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -21,7 +21,7 @@ use org_office_host::signals::ShutdownSignals;
 use org_office_host::{default_server_program, Config, Host};
 
 const USAGE: &str = "usage: org-office-host [--home <absolute path>] [--server-bin <path>] \
-                     [--app-team-id <team id>] [--dev-app-path <absolute path>]";
+                     [--app-team-id <team id>]";
 
 /// What the command line sets.
 #[derive(Default)]
@@ -29,7 +29,6 @@ struct Args {
     home: Option<PathBuf>,
     server_bin: Option<PathBuf>,
     app_team_id: Option<String>,
-    dev_app_path: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
@@ -61,7 +60,11 @@ fn run() -> Result<(), String> {
     };
     let mut config = Config::new(home, server_bin);
     config.app_team_id = args.app_team_id;
-    config.dev_app_path = args.dev_app_path;
+    // Debug builds only: the development app, fixed when this binary was compiled.
+    #[cfg(debug_assertions)]
+    {
+        config.dev_app_path = option_env!("ORG_DEV_APP_PATH").map(PathBuf::from);
+    }
     let host = Host::start(config).map_err(|e| e.to_string())?;
     let waited = signals.wait();
     host.shutdown();
@@ -77,7 +80,7 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
             println!("org-office-host {}", env!("CARGO_PKG_VERSION"));
             std::process::exit(0);
         }
-        let known = ["--home", "--server-bin", "--app-team-id", "--dev-app-path"];
+        let known = ["--home", "--server-bin", "--app-team-id"];
         if !known.contains(&arg.as_str()) {
             return Err(format!("unexpected argument {arg:?}\n{USAGE}"));
         }
@@ -87,8 +90,7 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
         match arg.as_str() {
             "--home" => parsed.home = Some(PathBuf::from(value)),
             "--server-bin" => parsed.server_bin = Some(PathBuf::from(value)),
-            "--app-team-id" => parsed.app_team_id = Some(value),
-            _ => parsed.dev_app_path = Some(PathBuf::from(value)),
+            _ => parsed.app_team_id = Some(value),
         }
     }
     Ok(parsed)

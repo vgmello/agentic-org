@@ -123,13 +123,22 @@ impl AppPolicy {
         }
         #[cfg(debug_assertions)]
         if let Some(dev_app) = &self.dev_app {
-            return peer.uid() == Some(crate::home::euid())
+            let allowed = peer.uid() == Some(crate::home::euid())
                 && peer
                     .executable()
                     .and_then(|path| path.canonicalize().ok())
                     .is_some_and(|path| path == *dev_app)
                 // Still the same process after its executable was looked up by pid.
                 && peer.current_token() == Some(token);
+            if allowed {
+                // Loudly, every time: this path skips the code-signature check.
+                crate::host_log::log(&format!(
+                    "DEVELOPMENT FALLBACK: an app-only call was allowed for the unsigned {} \
+                     (debug build, no code-signature check)",
+                    dev_app.display()
+                ));
+            }
+            return allowed;
         }
         false
     }

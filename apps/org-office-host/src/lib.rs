@@ -79,7 +79,9 @@ pub struct Config {
     /// every caller is refused (`not_authorized`).
     pub app_team_id: Option<String>,
     /// Debug builds only: an unsigned development app (this exact executable, run by this user)
-    /// that the app-only calls accept without a code signature. Ignored by release builds.
+    /// that the app-only calls accept without a code signature. The binary sets it from the
+    /// build-time constant `ORG_DEV_APP_PATH`, never from run-time input; tests set it directly.
+    /// Ignored by release builds, and every use is logged.
     pub dev_app_path: Option<PathBuf>,
 }
 
