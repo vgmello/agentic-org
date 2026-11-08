@@ -8,11 +8,13 @@
 //! anything it creates, and the `expected_version` of what it edits.
 //!
 //! ## Who may send what
-//! Every command in this module is for the app. A command that arrives on an agent's connection
-//! is refused with `not_authorized` unless the agent-sessions design lists it as allowed for
-//! agents (none is today). In particular `member.add_agent`, `member.update_agent`,
-//! `member.set_agent_status`, `member.set_run_mode`, `member.offboard` and `member.remove` change
-//! who works for the organization and what it spends, and some cannot be undone. The wire
+//! Every command in this module is for the app. A command that arrives on a connection that
+//! isn't the app's is refused with `not_authorized` unless a row of ADR-0003 §2.1.4 allows it
+//! (none does today). The refusal applies to every command here, though only the ones below
+//! that change who works for the organization name `not_authorized` in their `Errors:` lists. In
+//! particular `member.add_agent`, `member.update_agent`, `member.set_agent_status`,
+//! `member.set_run_mode`, `member.offboard` and `member.remove` change who works for the
+//! organization and what it spends, and some cannot be undone. The wire
 //! carries no caller identity: the office that receives a command knows whose connection it came
 //! in on (the app's connection is bound with the app token, ADR-0003), enforces this before it
 //! queues or forwards the command, and HQ relies on that.
@@ -21,7 +23,31 @@
 //! A command can break more than one rule at once. HQ returns the first of: `not_authorized`,
 //! `not_found`, `invalid_request` (unreadable, outside a limit, the wrong kind of member or the
 //! wrong state, a value that makes no sense), `invalid_name`, `conflict` (a stale
-//! `expected_version`), `already_exists`. Every command below uses this one order.
+//! `expected_version`), `already_exists`. Every command below checks in this one order (its
+//! `Errors:` list names the codes it can return, not the order they are checked in). The
+//! domain codes (`owner_protected`, `cycle`, `not_a_member`, `not_empty`) come after
+//! `invalid_name` and before `conflict`: a rule that would refuse the command at any version
+//! is not hidden by a stale one.
+//!
+//! ## Limits every command shares
+//! All are `invalid_request`, so a client can check them before sending:
+//! - **Client-made ids**, the ones a command creates (`team.create`'s `team_id`,
+//!   `team.add_member`'s and `member.move`'s new `membership_id`, `project.add_team`'s
+//!   `project_team_id`, and so on): 1 to [`ID_MAX_CHARS`] ASCII letters, digits, `-` or `_`
+//!   ([`is_valid_id`]). A ULID fits. An id that names something that already exists is only
+//!   looked up (`not_found`).
+//! - **Member ids** (`member.add_person`'s and `member.add_agent`'s `member_id`): exactly
+//!   [`MEMBER_ID_CHARS`] ASCII letters and digits, the shape of a ULID ([`is_valid_member_id`]).
+//!   No handle has this shape, so an id and a handle never collide.
+//! - **Free text** (`contact`, `title_in_team`): trimmed, then 1 to [`AGENT_TEXT_MAX_CHARS`]
+//!   characters with no control characters. To remove a contact use `clear_contact`, not an
+//!   empty string.
+//! - **An edit that changes nothing still counts.** An update that sets a field to the value it
+//!   has (a rename to the same name, a lead set to the current lead), or a
+//!   `member.update_person` that gives no field, is accepted and raises the entity's version by
+//!   one (and so produces an `org.changed`). Only `member.update_agent` refuses a call that
+//!   gives no field. This is about edits: asking for something that already exists (adding a
+//!   member to a team they are in, `member.move` to the member's own team) is `already_exists`.
 
 use serde::{Deserialize, Serialize};
 
@@ -208,6 +234,56 @@ pub struct Schedule {
 /// other member may have it as a handle (see [`AgentProfile::messaging_name`]).
 pub const OWNER_HANDLE: &str = "owner";
 
+/// The word that addresses the office itself in messaging (ADR-0003). Reserved like
+/// [`OWNER_HANDLE`]: no member may have it as a handle.
+pub const OFFICE_HANDLE: &str = "office";
+
+/// A handle may not start with this (any case): `run:<id>` addresses a run in messaging, so a
+/// person named `Run: 1` would shadow it. See [`is_shaped_like_an_address`].
+pub const RUN_HANDLE_PREFIX: &str = "run:";
+
+/// Whether `handle` (trimmed, as a person's `name` or an agent's `messaging_name` is compared)
+/// looks like something messaging already addresses by: it starts with [`RUN_HANDLE_PREFIX`]
+/// (any case), or is exactly 26 ASCII letters and digits (the shape of every member id,
+/// [`is_valid_member_id`]; a lenient ULID decoder reads I, L, O and U too, so none is excluded),
+/// so a handle can never shadow a member id or a run. HQ refuses such a
+/// handle with `invalid_name`, for agents and for people. The reserved words [`OWNER_HANDLE`]
+/// and [`OFFICE_HANDLE`] are a different rule: they are `already_exists`, as if another
+/// member held them.
+pub fn is_shaped_like_an_address(handle: &str) -> bool {
+    let handle = handle.trim();
+    let prefix = RUN_HANDLE_PREFIX.len();
+    let run = handle.len() >= prefix
+        && handle.is_char_boundary(prefix)
+        && handle[..prefix].eq_ignore_ascii_case(RUN_HANDLE_PREFIX);
+    run || is_valid_member_id(handle)
+}
+
+/// The length of a member id.
+pub const MEMBER_ID_CHARS: usize = 26;
+
+/// Whether `id` is a valid member id: exactly [`MEMBER_ID_CHARS`] ASCII letters and digits (the
+/// shape of a ULID, which is what clients make). `member.add_person` and `member.add_agent`
+/// refuse anything else with `invalid_request`. No handle has this shape
+/// ([`is_shaped_like_an_address`]), so an id never equals a handle, and a lookup by id before
+/// handle cannot be captured by a name.
+pub fn is_valid_member_id(id: &str) -> bool {
+    id.len() == MEMBER_ID_CHARS && id.bytes().all(|b| b.is_ascii_alphanumeric())
+}
+
+/// The longest client-made id, in characters (see [`is_valid_id`]).
+pub const ID_MAX_CHARS: usize = 64;
+
+/// Whether `id` is a valid client-made id: 1 to [`ID_MAX_CHARS`] ASCII letters, digits, `-` or
+/// `_`. HQ refuses anything else with `invalid_request`.
+pub fn is_valid_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= ID_MAX_CHARS
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
 /// The longest `messaging_name`, in characters.
 pub const AGENT_MESSAGING_NAME_MAX_CHARS: usize = 64;
 
@@ -268,11 +344,16 @@ pub struct AgentProfile {
     /// A name that breaks the format is `invalid_name`.
     ///
     /// **One handle namespace.** Handles are compared ignoring case across ALL members: every
-    /// agent's `messaging_name`, every person's `name`, and the reserved [`OWNER_HANDLE`], which
-    /// no member other than the owner may use. HQ rejects a clash with `already_exists` in
+    /// agent's `messaging_name`, every person's `name` (the owner's apart, see below), and the
+    /// reserved [`OWNER_HANDLE`], which no member other than the owner may use. HQ rejects a clash with `already_exists` in
     /// either direction (an agent whose `messaging_name` equals a person's `name`, or a person
     /// whose `name` equals an agent's `messaging_name`), so `--to <handle>` never names two
-    /// members. `Member.name` stays the agent's display name and is not a handle.
+    /// members. `Member.name` stays the agent's display name and is not a handle. Two reserved
+    /// words, [`OWNER_HANDLE`] and [`OFFICE_HANDLE`], clash with everyone, and a handle that
+    /// [`is_shaped_like_an_address`] is `invalid_name`. **The owner's handle is only `owner`:
+    /// its display name is exempt from the namespace** (no clash and no address-shape check).
+    /// `member.update_person` on the owner never clashes, and `member.add_person` may reuse the
+    /// owner's display name.
     pub messaging_name: String,
     /// Whether the agent takes work. Required when adding an agent (`Unknown` and
     /// `Offboarded` are refused: an agent is offboarded with `member.offboard`).
@@ -488,11 +569,13 @@ command!(
     }
 );
 command!(
-    /// `member.add_person`. `member_id` is client-made. Agents are added with
-    /// `member.add_agent` instead.
-    /// Errors: `invalid_name`, `already_exists` (the id is taken, or the name is already
-    /// another member's handle: an agent's `messaging_name` or [`OWNER_HANDLE`], ignoring
-    /// case; people's names also clash with each other).
+    /// `member.add_person`. `member_id` is client-made and must be [`is_valid_member_id`]
+    /// (`invalid_request`). Agents are added with `member.add_agent` instead.
+    /// Errors: `invalid_request`, `invalid_name` (also a name that
+    /// [`is_shaped_like_an_address`]), `already_exists`
+    /// (the id is taken, or the name is already another member's handle: an agent's
+    /// `messaging_name`, [`OWNER_HANDLE`] or [`OFFICE_HANDLE`], ignoring case; people's names
+    /// also clash with each other, but not with the owner's display name).
     MemberAddPerson, "member.add_person", MemberAddPersonParams {
         member_id: String,
         name: String,
@@ -502,8 +585,10 @@ command!(
 );
 command!(
     /// `member.update_person`: only the fields given change; `clear_contact` removes the
-    /// contact. The owner can edit its own record. Errors: `invalid_name`, `already_exists`
-    /// (the new name is already another member's handle, as for `member.add_person`),
+    /// contact. The owner can edit its own record, and its display name is not a handle, so
+    /// renaming the owner never clashes. Errors: `invalid_name` (as for `member.add_person`,
+    /// except that the owner is exempt from the address-shape part), `already_exists` (the new
+    /// name is already another member's handle, as for `member.add_person`),
     /// `conflict`, `not_found`, and `invalid_request` if the member is an agent (agents are
     /// edited with `member.update_agent`) or if both `contact` and `clear_contact` are given.
     MemberUpdatePerson, "member.update_person", MemberUpdatePersonParams {
@@ -524,8 +609,8 @@ command!(
     /// for a member who has no history to keep: that is the CALLER'S duty (HQ sees the
     /// organization's structure, not messages or tasks, and cannot tell). What HQ does refuse is
     /// an offboarded agent, whose record and handle are kept for good (`invalid_request`);
-    /// offboard an agent that has worked, remove one that never did. Errors: `owner_protected`,
-    /// `not_found`, `invalid_request`, `conflict`.
+    /// offboard an agent that has worked, remove one that never did. Errors: `not_authorized`,
+    /// `owner_protected`, `not_found`, `invalid_request`, `conflict`.
     MemberRemove, "member.remove", MemberRemoveParams {
         member_id: String,
         expected_version: u64,
@@ -549,11 +634,12 @@ command!(
     /// `Other("codex")` are `invalid_request`), its `status` must be `active` or `paused`
     /// (`Unknown` and `offboarded` are refused: an agent is offboarded with `member.offboard`),
     /// and `offboarded_at` must be absent. If `run_mode` is `scheduled` a `schedule` is required,
-    /// and otherwise there must be none. Errors: `invalid_name` (the name, or a `messaging_name`
-    /// that breaks its format), `invalid_request` (a profile that breaks its limits or rules
-    /// above), `already_exists` (the id is taken, or `messaging_name` is already another member's
-    /// handle: an agent's `messaging_name`, a person's `name` or [`OWNER_HANDLE`], ignoring
-    /// case), `not_found` (no such office).
+    /// and otherwise there must be none. Errors: `not_authorized`, `invalid_name` (the name, or a
+    /// `messaging_name` that breaks its format or [`is_shaped_like_an_address`]),
+    /// `invalid_request` (a profile that breaks its limits or rules above, or a `member_id` that
+    /// is not [`is_valid_member_id`]), `already_exists` (the id is taken, or `messaging_name` is
+    /// already another member's handle: an agent's `messaging_name`, a person's `name`,
+    /// [`OWNER_HANDLE`] or [`OFFICE_HANDLE`], ignoring case), `not_found` (no such office).
     MemberAddAgent, "member.add_agent", MemberAddAgentParams {
         member_id: String,
         name: String,
@@ -571,8 +657,9 @@ command!(
     /// and the offices design rely on such a move). The run mode is changed with
     /// `member.set_run_mode`, the status with `member.set_agent_status` and `member.offboard`. An
     /// offboarded agent is not edited at all (`invalid_request`): its record, handle included, is
-    /// history. Errors: `invalid_name` (the name or a `messaging_name` that breaks its format),
-    /// `already_exists` (`messaging_name` is already another member's handle, as for
+    /// history. Errors: `not_authorized`, `invalid_name` (the name, or a `messaging_name` that
+    /// breaks its format or [`is_shaped_like_an_address`]), `already_exists` (`messaging_name`
+    /// is already another member's handle, as for
     /// `member.add_agent`), `conflict`, `not_found`, and `invalid_request` if the member is not
     /// an agent (people are edited with `member.update_person`), is offboarded, or a value breaks
     /// its limits.
@@ -607,8 +694,8 @@ command!(
     /// `member.set_agent_status`: pause or resume an agent. `status` must be `active` or
     /// `paused`; setting the status it already has is not an error. Anything else is
     /// `invalid_request`: `offboarded` (use `member.offboard`), `Unknown`, a member that is not
-    /// an agent, and an agent that is already offboarded. Errors: `conflict`, `not_found`,
-    /// `invalid_request`.
+    /// an agent, and an agent that is already offboarded. Errors: `not_authorized`, `not_found`,
+    /// `invalid_request`, `conflict`.
     MemberSetAgentStatus, "member.set_agent_status", MemberSetAgentStatusParams {
         member_id: String,
         expected_version: u64,
