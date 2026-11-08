@@ -129,7 +129,7 @@ A promoted satellite needs the app's private key.
 - **`org-office`** (domain): project commands and events, the repository record, and the follow list. It depends on neither adapter. It uses small traits: "create repository" and "token for a job" (implemented at HQ with `org-github`, and at satellites as a request to HQ), and "clone project" (implemented with `org-git`).
 - **`org-sync-proto`** (office-to-office contract) gains the token request. **`org-proto`** (client contract) gains the calls below.
 - **`org-agent`** gains `push` and `gh-token`. Both are socket calls only, so it stays tiny and doesn't depend on `org-git`.
-- **Owners (AGENTS.md):** the server agent owns `org-github` and `org-git`.
+- **Owners (AGENTS.md):** River (`ac-software-engineer-river`) owns `org-github` and `org-git` (moved from the server agent on 2026-11-08 to spread the load); the server agent implements their storage traits in `store.rs`.
 
 ## Implementation plan
 Order: **after the HQ office is serving** (create organization, phase 1), and **before satellites**, as the user asked.
