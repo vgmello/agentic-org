@@ -228,7 +228,7 @@ fn serve_office(
     from_host: File,
     home: &Path,
     office: Office,
-    _app_token: AppToken,
+    app_token: AppToken,
 ) -> i32 {
     let info = office.info().clone();
     let office = Arc::new(office);
@@ -251,16 +251,23 @@ fn serve_office(
     // server waiting for its first line or for the office lock can still be terminated.
     signals::install();
     let shared = Arc::new(serve::Shared::new(
-        &info.org_name,
-        &info.office_id,
-        &info.org_id,
-        &info.office_name,
-        OfficeRole::Hq,
+        &info,
         &socket,
-        {
-            let office = Arc::clone(&office);
-            Box::new(move || office.org_snapshot().map_err(|e| e.to_string()))
+        serve::OfficePorts {
+            snapshot: {
+                let office = Arc::clone(&office);
+                Box::new(move || office.org_snapshot().map_err(|e| logged("snapshot", &e)))
+            },
+            submit: {
+                let office = Arc::clone(&office);
+                Box::new(move |command| {
+                    office
+                        .submit_org(command)
+                        .map_err(|e| logged("command", &e))
+                })
+            },
         },
+        app_token,
     ));
     // EOF on the control pipe means the host is gone. What the host writes after the first line
     // is read into a fixed buffer and thrown away, unparsed, so nothing on a later line can
@@ -313,6 +320,25 @@ fn serve_office(
     0
 }
 
+/// Logs why the office could not answer (to stderr, the host's log: `OfficeError`'s text has no
+/// path, SQL or secret in it) and returns it for the connection, which tells the client only a
+/// fixed text.
+fn logged(what: &str, error: &OfficeError) -> String {
+    eprintln!("org-office-server: {what} failed: {error}");
+    log_causes(error);
+    error.to_string()
+}
+
+/// The causes behind a storage failure (a path, the OS error, SQLite's text) belong in the log
+/// and not on the pipe or the socket; they never hold the key or the token.
+fn log_causes(error: &OfficeError) {
+    let mut cause = std::error::Error::source(error);
+    while let Some(inner) = cause {
+        eprintln!("org-office-server:   caused by: {inner}");
+        cause = inner.source();
+    }
+}
+
 /// The office's socket path, or why it cannot be one.
 fn socket_path(home: &Path, office_id: &str) -> Result<std::path::PathBuf, &'static str> {
     let socket = office_socket_path(home, office_id).ok_or("not a plain office id")?;
@@ -340,13 +366,7 @@ fn fail(control: &mut ControlPipe, code: FailCode, message: &str) -> i32 {
 }
 
 fn fail_with(control: &mut ControlPipe, error: &OfficeError) -> i32 {
-    // The cause behind a storage failure (a path, the OS error, SQLite's text) belongs in the log
-    // and not on the pipe; it never holds the key or the token.
-    let mut cause = std::error::Error::source(error);
-    while let Some(inner) = cause {
-        eprintln!("org-office-server:   caused by: {inner}");
-        cause = inner.source();
-    }
+    log_causes(error);
     // `Display` never carries a path, SQL or a key.
     fail(control, fail_code(error), &error.to_string())
 }
