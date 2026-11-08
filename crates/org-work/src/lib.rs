@@ -63,6 +63,8 @@ mod waiting;
 #[cfg(any(test, feature = "testkit"))]
 pub mod testkit;
 
+#[cfg(test)]
+mod tests;
 
 pub use call::{Caller, WorkCall};
 pub use engine::{
