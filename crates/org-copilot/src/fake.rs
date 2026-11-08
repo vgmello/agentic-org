@@ -1,12 +1,12 @@
 //! A scripted runtime for tests, here and in the office: no process, no network.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::thread;
 use std::time::Duration;
 
-use crate::runtime::{CopilotRuntime, RunOutput, RunRequest, RuntimeError, Usage};
+use crate::runtime::{CancelToken, CopilotRuntime, RunOutput, RunRequest, RuntimeError, Usage};
 
 /// What the fake does on one run.
 #[derive(Debug, Clone)]
@@ -19,6 +19,12 @@ pub enum Reply {
     Slow(Duration, String),
     /// Wait this long, then fail.
     SlowFail(Duration),
+    /// Never answer, like a hung adapter whose child doesn't die: block until
+    /// [`FakeRuntime::release`], whatever the cancel token says.
+    Hang,
+    /// Never answer until cancelled, like a well-behaved adapter that kills its child at the
+    /// deadline: then fail with [`RuntimeError::TimedOut`].
+    HangUntilCancelled,
 }
 
 /// Plays its replies in order. With none left, a run fails with [`RuntimeError::Failed`].
@@ -28,6 +34,8 @@ pub struct FakeRuntime {
     replies: Mutex<VecDeque<Reply>>,
     prompts: Mutex<Vec<String>>,
     started: AtomicUsize,
+    cancelled: AtomicUsize,
+    released: AtomicBool,
 }
 
 impl FakeRuntime {
@@ -38,6 +46,8 @@ impl FakeRuntime {
             replies: Mutex::new(replies.into_iter().collect()),
             prompts: Mutex::new(Vec::new()),
             started: AtomicUsize::new(0),
+            cancelled: AtomicUsize::new(0),
+            released: AtomicBool::new(false),
         }
     }
 
@@ -62,6 +72,16 @@ impl FakeRuntime {
             .clone()
     }
 
+    /// How many runs saw their cancel token set.
+    pub fn cancelled(&self) -> usize {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+
+    /// Let every [`Reply::Hang`] run go (so a test doesn't leave threads behind).
+    pub fn release(&self) {
+        self.released.store(true, Ordering::SeqCst);
+    }
+
     /// How many runs have started (a run counts from the moment it is called).
     pub fn started(&self) -> usize {
         self.started.load(Ordering::SeqCst)
@@ -73,7 +93,7 @@ impl CopilotRuntime for FakeRuntime {
         self.available
     }
 
-    fn run(&self, request: &RunRequest) -> Result<RunOutput, RuntimeError> {
+    fn run(&self, request: &RunRequest, cancel: &CancelToken) -> Result<RunOutput, RuntimeError> {
         self.prompts
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -95,6 +115,19 @@ impl CopilotRuntime for FakeRuntime {
             Some(Reply::SlowFail(wait)) => {
                 thread::sleep(wait);
                 return Err(RuntimeError::Failed);
+            }
+            Some(Reply::Hang) => {
+                while !self.released.load(Ordering::SeqCst) {
+                    thread::sleep(Duration::from_millis(5));
+                }
+                return Err(RuntimeError::Failed);
+            }
+            Some(Reply::HangUntilCancelled) => {
+                while !cancel.is_cancelled() {
+                    thread::sleep(Duration::from_millis(5));
+                }
+                self.cancelled.fetch_add(1, Ordering::SeqCst);
+                return Err(RuntimeError::TimedOut);
             }
         };
         Ok(RunOutput {

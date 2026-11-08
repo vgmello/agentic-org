@@ -1,7 +1,9 @@
 //! The copilot: one call, `draft`, from a request to a validated draft or a fixed-message error.
 
 use std::fmt;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -10,16 +12,17 @@ use crate::contract::{DraftRequest, DraftResponse, FeatureInfo};
 use crate::feature::{Feature, Registry};
 use crate::limits::{Limits, RunGate};
 use crate::prompt;
-use crate::runtime::{CopilotRuntime, RunRequest, RuntimeError, Usage};
+use crate::runtime::{CancelToken, CopilotRuntime, RunOutput, RunRequest, RuntimeError, Usage};
 use crate::secrets::contains_secret;
 
 /// Why a request was refused before any run. Maps to the wire error `invalid_request`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InvalidReason {
     UnknownFeature,
-    /// The input breaks the feature's schema (a wrong shape, or a field over its cap).
+    /// The input breaks the feature's schema (a wrong shape, a missing or extra field).
     BadInput,
-    /// Input and context together are over the byte cap, or there are too many context items.
+    /// Over a cap: a field over its length, the data over the byte cap, or too many context
+    /// items.
     TooLarge,
     ContextNotAllowed,
     /// The text looks like a secret (a key, a token). Never echoed.
@@ -47,9 +50,10 @@ pub enum FailReason {
 pub enum CopilotError {
     /// No runtime is set up. Wire: `copilot_unavailable`.
     Unavailable,
-    /// Wire: `invalid_request`.
+    /// Wire: `invalid_request`; over a cap, `too_large`; an unknown feature, `copilot_unavailable`.
     Invalid(InvalidReason),
-    /// A run of this person's for this feature is still going. Wire: `copilot_busy`.
+    /// A run of this person's for this feature is still going, or too many runs are in flight.
+    /// Wire: `copilot_busy`.
     Busy,
     /// Wire: `timeout`.
     Timeout,
@@ -61,7 +65,11 @@ impl CopilotError {
     /// The wire error code.
     pub fn code(&self) -> &'static str {
         match self {
-            CopilotError::Unavailable => "copilot_unavailable",
+            // A feature this office doesn't offer is as good as unavailable.
+            CopilotError::Unavailable | CopilotError::Invalid(InvalidReason::UnknownFeature) => {
+                "copilot_unavailable"
+            }
+            CopilotError::Invalid(InvalidReason::TooLarge) => "too_large",
             CopilotError::Invalid(_) => "invalid_request",
             CopilotError::Busy => "copilot_busy",
             CopilotError::Timeout => "timeout",
@@ -72,7 +80,9 @@ impl CopilotError {
     /// How the run is counted in the run log.
     pub fn outcome(&self) -> Outcome {
         match self {
-            CopilotError::Unavailable => Outcome::Unavailable,
+            CopilotError::Unavailable | CopilotError::Invalid(InvalidReason::UnknownFeature) => {
+                Outcome::Unavailable
+            }
             CopilotError::Invalid(_) => Outcome::InvalidInput,
             CopilotError::Busy => Outcome::Busy,
             CopilotError::Timeout => Outcome::Timeout,
@@ -143,19 +153,41 @@ pub trait RunLog: Send + Sync {
 /// The copilot, over a registry and a runtime.
 pub struct Copilot<R> {
     registry: Registry,
-    pub(crate) runtime: R,
+    pub(crate) runtime: Arc<R>,
     limits: Limits,
     gate: RunGate,
+    /// Adapter calls still running, including ones that timed out and haven't returned.
+    in_flight: Arc<AtomicUsize>,
     log: Option<Arc<dyn RunLog>>,
+}
+
+/// One adapter call in flight; dropping it (the worker ends, also by panic) frees the count.
+struct InFlight(Arc<AtomicUsize>);
+
+impl InFlight {
+    fn start(count: &Arc<AtomicUsize>, max: usize) -> Option<InFlight> {
+        if count.fetch_add(1, Ordering::SeqCst) >= max {
+            count.fetch_sub(1, Ordering::SeqCst);
+            return None;
+        }
+        Some(InFlight(count.clone()))
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 impl<R: CopilotRuntime> Copilot<R> {
     pub fn new(registry: Registry, runtime: R, limits: Limits) -> Self {
         Copilot {
             registry,
-            runtime,
+            runtime: Arc::new(runtime),
             limits,
             gate: RunGate::new(),
+            in_flight: Arc::new(AtomicUsize::new(0)),
             log: None,
         }
     }
@@ -229,20 +261,7 @@ impl<R: CopilotRuntime> Copilot<R> {
             timeout: self.limits.timeout,
             max_output_bytes: self.limits.max_output_bytes,
         };
-        let started = Instant::now();
-        let outcome = self.runtime.run(&run);
-        // Whatever the adapter did about the deadline, a run that ended after it is a timeout and
-        // its answer is thrown away. (The call blocks: an adapter that never returns is its own
-        // bug, see `CopilotRuntime`.)
-        if started.elapsed() > self.limits.timeout {
-            return Err(CopilotError::Timeout);
-        }
-        let output = match outcome {
-            Err(RuntimeError::TimedOut) => return Err(CopilotError::Timeout),
-            Err(RuntimeError::NotSetUp) => return Err(CopilotError::Unavailable),
-            Err(RuntimeError::Failed) => return Err(Failed(FailReason::Runtime)),
-            Ok(output) => output,
-        };
+        let output = self.run_with_deadline(run)?;
         record.output_bytes = output.text.len();
         record.usage = output.usage;
         if output.text.len() > self.limits.max_output_bytes {
@@ -273,6 +292,42 @@ impl<R: CopilotRuntime> Copilot<R> {
         })
     }
 
+    /// Run the adapter on a worker thread and wait at most the timeout. At the deadline the run's
+    /// [`CancelToken`] is set and `timeout` is the answer; the worker is left to wind down, and
+    /// counts against `max_concurrent_runs` until it does. The caller's slot is free as soon as
+    /// this returns.
+    fn run_with_deadline(&self, run: RunRequest) -> Result<RunOutput, CopilotError> {
+        let flight = InFlight::start(&self.in_flight, self.limits.max_concurrent_runs)
+            .ok_or(CopilotError::Busy)?;
+        let timeout = self.limits.timeout;
+        let cancel = CancelToken::new();
+        let (done, answer) = mpsc::channel();
+        let runtime = Arc::clone(&self.runtime);
+        let worker_cancel = cancel.clone();
+        thread::Builder::new()
+            .name("copilot-run".into())
+            .spawn(move || {
+                let _flight = flight;
+                // The receiver may be gone (we gave up): then the answer is thrown away.
+                let _ = done.send(runtime.run(&run, &worker_cancel));
+            })
+            .map_err(|_| CopilotError::Failed(FailReason::Runtime))?;
+        match answer.recv_timeout(timeout) {
+            Ok(Ok(output)) => Ok(output),
+            Ok(Err(RuntimeError::TimedOut)) => Err(CopilotError::Timeout),
+            Ok(Err(RuntimeError::NotSetUp)) => Err(CopilotError::Unavailable),
+            Ok(Err(RuntimeError::Failed)) => Err(CopilotError::Failed(FailReason::Runtime)),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                cancel.cancel();
+                Err(CopilotError::Timeout)
+            }
+            // The worker ended without an answer: the adapter panicked.
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Err(CopilotError::Failed(FailReason::Runtime))
+            }
+        }
+    }
+
     fn check_input(
         &self,
         feature: &Feature,
@@ -297,8 +352,17 @@ impl<R: CopilotRuntime> Copilot<R> {
         if input_bytes > self.limits.max_input_bytes {
             return Err(Invalid(InvalidReason::TooLarge));
         }
-        if !feature.input_schema().violations(&request.input).is_empty() {
-            return Err(Invalid(InvalidReason::BadInput));
+        let violations = feature.input_schema().violations(&request.input);
+        if !violations.is_empty() {
+            // A field over its length cap is `too_large`; any other break is a bad shape.
+            let only_caps = violations
+                .iter()
+                .all(|v| matches!(v.rule, "maxLength" | "maxItems"));
+            return Err(Invalid(if only_caps {
+                InvalidReason::TooLarge
+            } else {
+                InvalidReason::BadInput
+            }));
         }
         let context_has_secret = request.context.iter().any(|c| {
             [&c.kind, &c.label, &c.text]

@@ -2,9 +2,9 @@
 //!
 //! The template is the feature's own text, fixed at compile time; nothing a person types can
 //! become part of it. The person's input and the context go in one JSON object between two
-//! fence lines. Escaping makes the fence unforgeable: every `<`, `>`, `&` and backtick in a value
-//! is written as a `\uXXXX` escape (still valid JSON, read back as the same character), every
-//! newline is `\n`, so no value can contain the line `DATA>>>`, a markdown fence or a tag. The
+//! fence lines. Escaping makes the fence unforgeable: every `<`, `>`, `&` and backtick in a value,
+//! and every control character, is written as a `\uXXXX` escape (still valid JSON, read back as the
+//! same character), every newline is `\n`, so no value can contain the line `DATA>>>`, a markdown fence or a tag. The
 //! holes are filled in one pass, so data that looks like `{{schema}}` is never expanded.
 
 use std::fmt;
@@ -32,17 +32,29 @@ impl fmt::Display for RenderError {
 
 impl std::error::Error for RenderError {}
 
-/// JSON for `value` in which none of `< > & `` ` `` or the Unicode line separators appears raw.
-/// Those characters can only occur inside JSON strings, so replacing them by escapes is safe.
+/// Characters written as `\uXXXX` rather than raw: the ones a fence or a tag is made of, every
+/// control character (C0, DEL and C1, so U+0085 too), the Unicode line and paragraph separators,
+/// and the invisible direction and joiner controls that can hide text from a reader.
+fn must_escape(c: char) -> bool {
+    matches!(c, '<' | '>' | '&' | '`')
+        || c.is_control()
+        || matches!(
+            c,
+            '\u{200B}'..='\u{200F}' | '\u{2028}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}'
+        )
+}
+
+/// JSON for `value` in which none of the characters in [`must_escape`] appears raw. They can only
+/// occur inside JSON strings (outside strings JSON holds only ASCII punctuation, digits and
+/// letters), so replacing them by escapes is safe, and reads back as the same value.
 pub fn escape_json(value: &Value) -> String {
     let text = value.to_string();
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
-        match c {
-            '<' | '>' | '&' | '`' | '\u{2028}' | '\u{2029}' => {
-                out.push_str(&format!("\\u{:04x}", c as u32))
-            }
-            other => out.push(other),
+        if must_escape(c) {
+            out.push_str(&format!("\\u{:04x}", c as u32));
+        } else {
+            out.push(c);
         }
     }
     out

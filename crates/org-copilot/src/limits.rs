@@ -16,6 +16,9 @@ pub struct Limits {
     pub max_output_bytes: usize,
     /// Context items one call may carry.
     pub max_context_items: usize,
+    /// Runs in flight at once, across everyone. A run that timed out still counts until its
+    /// adapter returns, so a hung adapter can't pile up threads: past this, a call is `busy`.
+    pub max_concurrent_runs: usize,
 }
 
 impl Default for Limits {
@@ -25,6 +28,7 @@ impl Default for Limits {
             max_input_bytes: 64 * 1024,
             max_output_bytes: 64 * 1024,
             max_context_items: 8,
+            max_concurrent_runs: 8,
         }
     }
 }

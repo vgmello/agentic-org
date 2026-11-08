@@ -47,17 +47,28 @@ input.instruction, and using input.text as the author's rough notes. Do not inve
 mark what is unknown as [?].
 Put the text in draft.text. Put assumptions or gaps in notes, briefly.";
 
-const BUG_REPORT_TASK: &str = "\
-Task (bug.report, version 1). The data has \"input.sentence\": one person's short description of \
-a problem in the product. Draft a bug report from it: a short title, what actually happens, \
-what was expected, the steps to reproduce, and a severity (low, medium, high or critical). Use \
-only what the sentence says or clearly implies. Do not invent steps or details: if something is \
-unknown, leave steps empty, say \"Not stated.\" for expected or actual, and add a note. Put \
+const BUG_TASK: &str = "\
+Task (bug.from_sentence, version 2). The data has \"input.sentence\": one person's short \
+description of a problem in the product, and maybe \"context\" items of kind \"area\" (label: the \
+area's name, text: its id). Draft the fields of a bug report from it:
+- title: short, in the person's words.
+- what_happened: what actually happens.
+- severity: critical (data loss, a crash, or nobody can work), major (a main function is broken \
+and there is no good workaround), minor (something is wrong, but there is a workaround) or trivial \
+(cosmetic or very rare).
+- steps: only if the sentence gives them or clearly implies them. One string, one step per line. \
+Otherwise leave it out.
+- expected: only if the sentence says it. Otherwise leave it out.
+- environment: only if the sentence names the system it happened on. Otherwise leave it out.
+- area_id: the id of the one listed area the bug clearly belongs to. Otherwise leave it out. Never \
+invent an id.
+Use only what the sentence says or clearly implies. Do not invent steps or details. Put your \
 assumptions in notes, briefly.";
 
 /// The registry of this build.
 pub fn builtin() -> Registry {
-    Registry::new(vec![text_improve(), bug_report()]).expect("built-in feature ids are unique")
+    Registry::new(vec![text_improve(), bug_from_sentence()])
+        .expect("built-in feature ids are unique")
 }
 
 fn text_improve() -> Feature {
@@ -90,13 +101,13 @@ fn text_improve() -> Feature {
     .expect("text.improve is a valid feature")
 }
 
-fn bug_report() -> Feature {
+fn bug_from_sentence() -> Feature {
     Feature::new(
-        "bug.report",
-        1,
+        "bug.from_sentence",
+        2,
         "Report a bug from a sentence",
-        &template(BUG_REPORT_TASK),
-        &[],
+        &template(BUG_TASK),
+        &["area"],
         json!({
             "type": "object",
             "properties": {
@@ -105,22 +116,22 @@ fn bug_report() -> Feature {
             "required": ["sentence"],
             "additionalProperties": false
         }),
+        // The fields of the real `bug.report` call (org-proto), so a draft fills the report
+        // form as it is. `steps` is one string, like the call's.
         json!({
             "type": "object",
             "properties": {
                 "title": { "type": "string", "minLength": 1, "maxLength": 120 },
-                "actual": { "type": "string", "minLength": 1, "maxLength": 800 },
-                "expected": { "type": "string", "maxLength": 800 },
-                "steps": {
-                    "type": "array",
-                    "items": { "type": "string", "minLength": 1, "maxLength": 300 },
-                    "maxItems": 10
-                },
-                "severity": { "type": "string", "enum": ["low", "medium", "high", "critical"] }
+                "what_happened": { "type": "string", "minLength": 1, "maxLength": 2000 },
+                "severity": { "type": "string", "enum": ["critical", "major", "minor", "trivial"] },
+                "steps": { "type": "string", "minLength": 1, "maxLength": 2000 },
+                "expected": { "type": "string", "minLength": 1, "maxLength": 2000 },
+                "area_id": { "type": "string", "minLength": 1, "maxLength": 100 },
+                "environment": { "type": "string", "minLength": 1, "maxLength": 500 }
             },
-            "required": ["title", "actual", "expected", "steps", "severity"],
+            "required": ["title", "what_happened", "severity"],
             "additionalProperties": false
         }),
     )
-    .expect("bug.report is a valid feature")
+    .expect("bug.from_sentence is a valid feature")
 }
