@@ -665,7 +665,7 @@ apps/org-office-server (server-dev) ─▶ crates/org-office (server-dev) ─┤
 | `crates/org-mailbox` | Remy (`ac-software-engineer-remy`) | Pure messaging & triage/snooze domain (`WaiterRegistry` + snooze timer heap, `sha2` canonical `content_hash`, `flate2` compression + bounded decompression, `notify` formatter + session dedup, idempotent `ask`, dead-letter rules) over `MemberDirectory` + `MessageStore` traits | `org-proto`, `org-sync-proto`, `flate2`, `sha2` (`Ce = 4`, **no SQLite**) | `~0.40` (Domain capability) |
 | `crates/org-spool` | Remy (`ac-software-engineer-remy`) | Crash-safe local spool (`tmp` + `F_FULLFSYNC` + `rename` into `new`, `O_NOFOLLOW | O_NONBLOCK` regular-file ingest; powers Phase A CLI and Phase B offline fallback) | `org-proto`, `serde`, `serde_json` (`Ce = 3`) | `~0.35` (Platform primitive) |
 | `apps/org-agent` | Remy (`ac-software-engineer-remy`) | Fast stateless CLI (`who`, `status`, `msg` with `defer`/`done`/`notify`/`due`) | `org-client`, `org-spool`, `org-proto` (`Ce = 3`) | `1.00` (Edge binary) |
-| `crates/org-office` (`store.rs`) | `server-dev` | Owns `who` / `status.set` runtime capability and implements `MemberDirectory` + `MessageStore` inside `store.rs` on the single batching SQLCipher writer and read pool | Owns `rusqlite` / SQLCipher | Domain + Store |
+| `crates/org-office` (`store.rs`) | `server-dev` | Owns `who` / `status.set` runtime capability and implements `MemberDirectory` + `MessageStore` ((amended 2026-11-08: store split, ada) and `TriageStore`, `SyncStore`, `ThreadStore`) inside `store.rs` on the single batching SQLCipher writer and read pool | Owns `rusqlite` / SQLCipher | Domain + Store |
 
 **Dependency Inversion Traits (`MemberDirectory`, `MessageStore` and `SessionAuth` in `crates/org-mailbox`):**
 `crates/org-mailbox` defines two narrow traits that `crates/org-office/src/store.rs` implements ((amended 2026-11-08: store split, ada) the message store is now four traits, `MessageStore`, `TriageStore`, `SyncStore` and `ThreadStore`, all implemented by `store.rs`), and (amended 2026-11-08: agent sessions rev 3, ada) a third, `SessionAuth`, that `org-office-server` implements from the office's live runs and the OS process table ((amended 2026-11-08: agent sessions rev 3.1, ada) in the new `org-office-sessions` crate that `org-office-server` wires in):
@@ -719,8 +719,8 @@ pub trait MessageStore {
     /// Atomically claim and mark read a specific message `id` or the oldest unsnoozed unread for `to_member_id`,
     /// upserting `state = 'read'` in `msg_state`, removing from `msg_unread`, and allocating a local `origin_seq`.
     /// (amended 2026-11-08: store split, ada) `None` when `id` isn't addressed to `to_member_id`, or with no
-    /// `id` when nothing is unread. Claiming an already read `id` returns it unchanged. Concurrent claims of
-    /// one message succeed once.
+    /// `id` when nothing is unread. A claim sets `read_at` to exactly `now_utc`; claiming an already read `id`
+    /// returns it unchanged, with its earlier `read_at`. Concurrent claims of one message succeed once.
     fn claim_read(&self, to_member_id: &str, id: Option<&str>, now_utc: &str) -> Result<Option<StoredMessage>, StoreError>;
 
     /// Query oldest non-expired, unsnoozed unread message for `to_member_id` (optionally filtered by `from_member_id`
