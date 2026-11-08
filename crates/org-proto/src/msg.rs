@@ -70,6 +70,23 @@
 //! number out of range (a `limit`, `timeout_ms`, `wait_ms` or `ttl_ms`) is
 //! `invalid_request`.
 //!
+//! ## Differences from the ADR-0003 text
+//! Deliberate, and this module is the contract where they differ:
+//! - Headers carry `state` (the ADR's inbox list calls it `status`).
+//! - `who` has no `kind: owner`; find the owner with `member: "owner"`.
+//! - `reply_to` on `msg.send` is checked for app-bound callers too, not only agent-bound
+//!   ones.
+//! - `msg.bind` takes `member`, also read as `agent` (the ADR's name).
+//! - `msg.send` and [`SpooledSend`] have no `ttl_ms` or `expires_at`: only asks have a
+//!   deadline, and asks are never spooled.
+//! - `msg.ask`'s `ttl_ms` is optional (a default by recipient), and its result is
+//!   `{reply?, expires_at}`: no reply means `wait_ms` passed, so re-ask.
+//! - [`Message`] nests its header (`{header, body, meta}`) instead of flattening it.
+//! - Member references, handles and display names have their own limit,
+//!   [`MAX_HANDLE_BYTES`], rather than the 128 bytes of ids.
+//! - A `msg.notify` result holds at most [`NOTIFY_MAX_ITEMS`] items; `count` and
+//!   `urgent_count` still count them all.
+//!
 //! ## Unknown values
 //! Enum values this build doesn't know decode as `Unknown` and re-serialize as `"unknown"`.
 //! So a client that prints a result re-serialized (e.g. `org-agent msg notify --format json`)
@@ -724,14 +741,15 @@ pub struct MsgNotifyParams {
 /// Values this build doesn't know print as `"unknown"` (see
 /// [Unknown values](self#unknown-values)).
 ///
-/// Members appear by handle, as in the locked contract: the runtime adapters compare `agent`
-/// with `$ORG_AGENT`. A member with no handle appears by its member id.
+/// Members appear by handle, as in the locked contract; a member with no handle appears by
+/// its member id. Handles appear in their stored case, so a client that bound by member id
+/// (e.g. `ORG_AGENT` holding an id) won't find that id in `agent`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NotifyResult {
     /// [`NOTIFY_VERSION`].
     pub v: u32,
-    /// The bound member's handle (its member id when it has none); at most
-    /// [`MAX_HANDLE_BYTES`].
+    /// The bound member's handle in its stored case (its member id when it has none); at
+    /// most [`MAX_HANDLE_BYTES`].
     pub agent: String,
     /// Whether any item is urgent.
     pub urgent: bool,
