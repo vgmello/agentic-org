@@ -481,6 +481,8 @@ mod tests {
             host: "This Mac".into(),
             endpoint: None,
             status,
+            status_reason: None,
+            next_restart_at: None,
         }
     }
 
