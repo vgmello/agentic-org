@@ -5,15 +5,17 @@
 | --- | --- |
 | `apps/desktop/` | the **app agent** (`app-frontend-dev`) |
 | `apps/org-office-server/`, `crates/org-office/`, `crates/org-client/`, and the SQL for every table in `store.rs` (messaging's included) | the **server agent** (`server-dev`) |
-| `apps/org-office-host/` (the supervisor and login service), `crates/org-sync/`, `crates/org-pki/`, `crates/org-git/`, `crates/org-github/` | **River** (`ac-software-engineer-river`), Senior Backend Engineer |
-| `apps/org-agent/` (the CLI agents use), `crates/org-spool/`, and the messaging library (its crate name is set in ADR-0003) | the **messaging agent** (`agy-senior-dev`) |
-| `crates/org-proto/`, `crates/org-sync-proto/` and `crates/org-office-launch/` (the contracts; the last is the pipe protocol between the host and an office server and `office.json`, whose first version River writes and ada reviews like any contract change), `docs/`, this file | **ada** (`ac-staff-engineer-ada`), Staff Engineer, who also reviews and gives the "go" on every merge |
+| `apps/org-office-host/` (the supervisor and login service), `crates/org-sync/`, `crates/org-pki/`, `crates/org-git/`, `crates/org-github/`, `crates/org-supervise/`, `crates/org-runtime-claude/` | **River** (`ac-software-engineer-river`), Senior Backend Engineer |
+| `apps/org-agent/` (the CLI agents use), `crates/org-spool/`, and the messaging library (its crate name is set in ADR-0003) | **Remy** (`ac-software-engineer-remy`), Senior Backend Engineer, since 2026-11-08 (taking over from `agy-senior-dev`, who is out of runtime credits) |
+| the work-items library (its crate name is set in `docs/design/tasks-projects-docs.md`, coming), the agent runtime adapters `crates/org-runtime-codex/` and `crates/org-runtime-agy/`, and tooling in the agents repository (the inbox adapters) | the **codex agent** (`codex-dev`) |
+| `crates/org-proto/`, `crates/org-sync-proto/`, `crates/org-office-launch/` and `crates/org-runtime/` (the contracts). `org-office-launch` is the pipe protocol between the host and an office server, and `office.json`, which `org-agent` reads through it. `org-runtime` is the contract the agent runtime adapters implement. River writes the first version of both, and ada reviews them like any contract change. Also `docs/` (except `docs/specs/`) and this file | **ada** (`ac-staff-engineer-ada`), Staff Engineer, who also reviews and gives the "go" on every merge |
+| `docs/specs/` (the UX specs) | **Eden** (`ac-product-designer-eden`), Principal Product Designer. Her changes land through ada |
 
 Don't edit another owner's area. If you need a change there, message its owner.
 
-**Traits are owned by the crate that defines them** (e.g. `org-sync`'s storage and apply traits: River; `org-mailbox`'s `MessageStore`: agy). The implementer of a trait (usually server-dev, in `store.rs`) must agree to any change to it. A change to `org-proto`, `org-sync-proto` or `org-office-launch` goes through ada.
+**Traits are owned by the crate that defines them** (e.g. `org-sync`'s storage and apply traits: River; `org-mailbox`'s `MessageStore`: the messaging owner). The implementer of a trait (usually server-dev, in `store.rs`) must agree to any change to it. A change to `org-proto`, `org-sync-proto`, `org-office-launch` or `org-runtime` goes through ada.
 
-The product is named **Agentic Org**. The designs that are the reference for current work are in `docs/design/` (offices, teams, projects and GitHub), with decisions in `docs/adr/`.
+The product is named **Agentic Org**. The designs that are the reference for current work are in `docs/design/` (offices, teams, projects and GitHub), with decisions in `docs/adr/` and the UX specs in `docs/specs/`.
 
 ## Rules
 1. **Read [`docs/architecture-rules.md`](docs/architecture-rules.md) first.** Dependencies point one way (apps → crates; everything → `org-proto`). No cycles. Logic lives in libraries, and binaries stay thin.
