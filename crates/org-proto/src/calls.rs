@@ -198,6 +198,10 @@ impl Call for OfficeList {
 /// An app-only call is accepted only on a connection whose client sent it after reading `hello`'s
 /// answer. Bytes already buffered when the host accepted the connection are refused with
 /// `not_authorized`, so never pipeline an app-only call before `hello`'s answer.
+/// First thing in the app's main, before any output or threads: fstat fds 0-2 and dup2
+/// `/dev/null` over any that is a socket; the app never reads or writes an fd it didn't open.
+/// After sending an app-only call, the client sends nothing else on that connection until its
+/// answer arrives.
 pub struct OfficeAppToken;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -254,6 +258,10 @@ impl Call for OfficeAppToken {
 /// An app-only call is accepted only on a connection whose client sent it after reading `hello`'s
 /// answer. Bytes already buffered when the host accepted the connection are refused with
 /// `not_authorized`, so never pipeline an app-only call before `hello`'s answer.
+/// First thing in the app's main, before any output or threads: fstat fds 0-2 and dup2
+/// `/dev/null` over any that is a socket; the app never reads or writes an fd it didn't open.
+/// After sending an app-only call, the client sends nothing else on that connection until its
+/// answer arrives.
 pub struct OfficeRestart;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
