@@ -3,12 +3,15 @@
 ## Who owns what
 | Area | Owner |
 | --- | --- |
-| `apps/desktop/` | the **app agent** |
-| `apps/org-office-server/`, `apps/org-office-host/`, `crates/org-office/`, `crates/org-client/`, `crates/org-sync/`, `crates/org-pki/`, `crates/org-github/`, `crates/org-git/`, and the SQL for every table in `store.rs` (messaging's included) | the **server agent** |
+| `apps/desktop/` | the **app agent** (`app-frontend-dev`) |
+| `apps/org-office-server/`, `crates/org-office/`, `crates/org-client/`, `crates/org-github/`, `crates/org-git/`, and the SQL for every table in `store.rs` (messaging's included) | the **server agent** (`server-dev`) |
+| `apps/org-office-host/` (the supervisor and login service), `crates/org-sync/`, `crates/org-pki/` | **River** (`ac-software-engineer-river`), Senior Backend Engineer |
 | `apps/org-agent/` (the CLI agents use), `crates/org-spool/`, and the messaging library (its crate name is set in ADR-0003) | the **messaging agent** (`agy-senior-dev`) |
 | `crates/org-proto/` and `crates/org-sync-proto/` (the contracts), `docs/`, this file | **ada** (`ac-staff-engineer-ada`), Staff Engineer, who also reviews and gives the "go" on every merge |
 
-Don't edit another owner's area. If you need a change there, message its owner. A change to `org-proto` or `org-sync-proto` goes through ada.
+Don't edit another owner's area. If you need a change there, message its owner.
+
+**Traits are owned by the crate that defines them** (e.g. `org-sync`'s storage and apply traits: River; `org-mailbox`'s `MessageStore`: agy). The implementer of a trait (usually server-dev, in `store.rs`) must agree to any change to it. A change to `org-proto` or `org-sync-proto` goes through ada.
 
 The product is named **Agentic Org**. The designs that are the reference for current work are in `docs/design/` (offices, teams, projects and GitHub), with decisions in `docs/adr/`.
 
@@ -20,9 +23,10 @@ The product is named **Agentic Org**. The designs that are the reference for cur
 3. **Before asking for the go:**
    - `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` pass
    - for the app, the type check, its tests and a build pass
-   - an **independent review** of your whole diff (a fresh reviewer with no context: valid, reliable, secure, meets the brief), with every confirmed finding fixed
-4. **Ask ada for the go** with: branch, commit, the final lines of every check, the review findings and what you changed, and a screenshot for UI work. After the go: `git merge --no-ff` into `v1`, then push `v1` and your branch.
-5. **Never write to a user's organization workspace from tests.** Use temporary directories.
+   - **your own independent review** of your whole diff (a fresh subagent you start, with no context: valid, reliable, secure, meets the brief), with every confirmed finding fixed. This is separate from step 4, and step 4 doesn't replace it.
+4. **Send it to the reviewer agent** (`reviewer`, on `org-agent`) with: repo, branch, base, commit, and the design or brief it implements (and screenshots for UI work). It reports a verdict and findings to you and ada. Fix, re-run step 3's checks on the fixed commit, and ask it to re-review, until it says **ready** for your final commit.
+5. **Ask ada for the go** with: branch, commit, the final lines of every check, your own review's findings and fixes, **the reviewer's ready verdict for that exact commit** (any later commit needs a re-review), and a screenshot for UI work. After the go: `git merge --no-ff` into `v1`, then push `v1` and your branch.
+6. **Never write to a user's organization workspace from tests.** Use temporary directories.
 
 ## Talking to other agents
 Use the **already-installed** `org-agent` CLI at `~/.local/bin/org-agent`. That is the working older version, built from branch `v1-old`. `apps/org-agent` in this repo is its successor, still a stub, and it takes over once ported:
