@@ -1543,6 +1543,46 @@ fn rule_an_expired_ask_to_a_person_or_the_owner_stays_urgent() {
 }
 
 #[test]
+fn rule_an_ask_that_expired_before_delivery_still_reaches_a_person() {
+    let t = TempSpool::new("expired_outbox");
+    t.spool.register("pat").unwrap();
+    let mut profile = MemberProfile::default_for("pat");
+    profile.kind = "person".into();
+    t.spool.set_profile(&profile).unwrap();
+    let expired_ask = |to: &str| {
+        let mut ask = Envelope::new_request(
+            PEER,
+            to,
+            Some("q".into()),
+            "q",
+            BTreeMap::new(),
+            Duration::from_secs(60),
+        )
+        .unwrap();
+        // Expired while the relay was down.
+        ask.expires_at = Some("2000-01-01T00:00:00.000Z".into());
+        t.spool.enqueue(&ask).unwrap();
+        ask.id
+    };
+    let to_person = expired_ask("pat");
+    let to_agent = expired_ask(ME);
+
+    let summary = t.spool.deliver_all().unwrap();
+    assert_eq!((summary.delivered, summary.dead), (1, 1));
+    assert!(t
+        .dir
+        .join(format!("spool/inbox/pat/new/{to_person}.json"))
+        .is_file());
+    let report = t.spool.notify("pat", &opts(None, false, true)).unwrap();
+    assert_eq!(ids(&report), vec![to_person]);
+    assert!(report.items[0].urgent);
+    assert!(report.text.contains("(expired)"));
+    // An agent's still goes to dead/, as before.
+    let reason = fs::read_to_string(t.dir.join(format!("spool/dead/{to_agent}.reason"))).unwrap();
+    assert!(reason.starts_with("expired:"), "{reason}");
+}
+
+#[test]
 fn rule_an_ask_picking_up_its_reply_clears_the_replys_triage_state() {
     let t = TempSpool::new("reply_claim");
     // ME asked PEER; PEER's reply lands in ME's inbox and ME snoozes it before `ask` collects it.

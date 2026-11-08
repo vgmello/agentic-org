@@ -601,7 +601,9 @@ impl Spool {
         }
 
         let now_iso = format_iso8601_utc(SystemTime::now());
-        if env.is_expired_at(&now_iso) {
+        // An expired ask to a person or the owner is still delivered (it then shows as urgent,
+        // "(expired)"): a human must see it even if it expired while the relay was down.
+        if env.is_expired_at(&now_iso) && !self.is_person(&env.to) {
             let exp = env.expires_at.as_deref().unwrap_or("unknown");
             return self.move_to_dead(outbox_file, &env.id, &format!("expired: expires_at={exp}"));
         }
