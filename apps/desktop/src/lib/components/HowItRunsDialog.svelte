@@ -45,6 +45,7 @@
 		}
 	});
 
+	const limits = $derived(runLimitsText(mode));
 	const scheduleMissing = $derived((mode === 'scheduled' && (spec.trim() === '' || zone.trim() === '')) || mode === 'unknown');
 
 	// After a stale edit (HQ changed the agent meanwhile) the page reloads: take the latest as the baseline and the
@@ -114,7 +115,6 @@
 					</div>
 				</div>
 			{/if}
-			{@const limits = runLimitsText(mode)}
 			{#if limits}<p class="text-xs/5 text-gray-400" data-testid="run-limits">{limits}</p>{/if}
 			{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 			<DialogFooter>
