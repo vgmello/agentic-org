@@ -176,7 +176,19 @@ impl MemberProfile {
     /// writing, so write a profile only through it.
     pub fn validate(&self) -> Result<(), String> {
         validate_agent_id(&self.id, "id")?;
+        if crate::member::is_reserved_name(&self.id) {
+            return Err(format!(
+                "profile id '{}' is reserved (owner, office)",
+                self.id
+            ));
+        }
         check_profile_text("name", &self.name, false)?;
+        if crate::member::is_reserved_name(&self.name) {
+            return Err(format!(
+                "profile name '{}' is reserved (owner, office)",
+                self.name.trim()
+            ));
+        }
         if self.name.contains(NAME_FORBIDDEN_CHARS) {
             return Err(
                 "profile name must not contain ( ) [ ] : or \" (they could forge a notify line)"
@@ -186,7 +198,7 @@ impl MemberProfile {
         if self.kind != "agent" && self.kind != "person" {
             return Err("profile kind must be agent or person".into());
         }
-        if self.owner && (self.kind != "person" || self.id != OWNER_ID) {
+        if self.owner && (self.kind != "person" || !crate::member::is_owner(&self.id)) {
             return Err(format!("only {OWNER_ID} (a person) can be the owner"));
         }
         if let Some(role) = &self.role_title {
@@ -236,7 +248,7 @@ impl MemberProfile {
     }
 
     pub fn default_for(id: &str) -> Self {
-        let is_owner = id == OWNER_ID;
+        let is_owner = crate::member::is_owner(id);
         Self {
             id: id.to_string(),
             name: id.to_string(),
@@ -807,7 +819,7 @@ impl Spool {
                 // The directory names the member, not the file: a profile can't claim to be
                 // someone else, nor make itself the owner.
                 profile.id = agent.to_string();
-                profile.owner = agent == OWNER_ID;
+                profile.owner = crate::member::is_owner(agent);
                 return Ok(profile);
             }
         }
@@ -856,7 +868,7 @@ impl Spool {
     /// delivery: deliver unless it's a known agent. `Err` only for a transient I/O error
     /// reading the profile (the ask then stays in the outbox for the next pass).
     pub(crate) fn recipient_kind(&self, agent: &str) -> io::Result<RecipientKind> {
-        if agent == OWNER_ID {
+        if crate::member::is_owner(agent) {
             return Ok(RecipientKind::Person);
         }
         classify_profile_read(read_spool_file(

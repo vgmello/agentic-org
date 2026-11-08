@@ -17,6 +17,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::envelope::{validate_agent_id, Envelope, MessageKind, MAX_ENVELOPE_BYTES};
+use crate::member::{check_not_reserved, is_reserved_name, resolve_member};
 use crate::meta::RecipientKind;
 use crate::safe_read::{create_new_nofollow, is_permanent_file_error, read_spool_file, SpoolFile};
 use crate::time::{check_wait_timeout, format_iso8601_utc};
@@ -151,6 +152,10 @@ impl fmt::Display for SpoolError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidInput(msg) => write!(f, "{msg}"),
+            // Never suggest registering a reserved name.
+            Self::UnknownRecipient(agent) if is_reserved_name(agent) => {
+                write!(f, "unknown recipient {agent}")
+            }
             Self::UnknownRecipient(agent) => write!(
                 f,
                 "unknown recipient {agent} (register it with: org-agent msg register {agent})"
@@ -370,6 +375,7 @@ impl Spool {
     /// Register an agent's inbox (`inbox/<agent>/{tmp,new,cur,wake}`).
     pub fn register(&self, agent: &str) -> Result<(), SpoolError> {
         validate_agent_id(agent, "register").map_err(SpoolError::InvalidInput)?;
+        check_not_reserved(agent, "member id")?;
         self.ensure_dir(&self.agent_tmp_dir(agent))?;
         self.ensure_dir(&self.agent_new_dir(agent))?;
         self.ensure_dir(&self.agent_cur_dir(agent))?;
@@ -899,9 +905,11 @@ impl Spool {
         timeout: Duration,
     ) -> Result<Envelope, SpoolError> {
         validate_agent_id(agent, "agent").map_err(SpoolError::InvalidInput)?;
-        if let Some(f) = from_filter {
+        let from_filter = from_filter.map(resolve_member);
+        if let Some(f) = &from_filter {
             validate_agent_id(f, "from").map_err(SpoolError::InvalidInput)?;
         }
+        let from_filter = from_filter.as_deref();
         let deadline = wait_deadline(timeout)?;
         self.register(agent)?;
         let listener = self.bind_wake_listener(agent)?;

@@ -7,6 +7,7 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::envelope::{Envelope, MessagePriority};
+use crate::member::{check_not_reserved, resolve_member};
 use crate::meta::InboxItem;
 use crate::spool::{Spool, SpoolError};
 use crate::time::check_wait_timeout;
@@ -44,6 +45,14 @@ fn invalid(e: String) -> SpoolError {
     SpoolError::InvalidInput(e)
 }
 
+/// A `--to`: `owner` resolves to the owner; another reserved name (`office`) is refused,
+/// never treated as an unknown member.
+fn recipient(raw: &str) -> Result<String, SpoolError> {
+    let to = resolve_member(raw);
+    check_not_reserved(&to, "recipient")?;
+    Ok(to)
+}
+
 impl Spool {
     fn queue(
         &self,
@@ -59,7 +68,9 @@ impl Spool {
     }
 
     /// `msg send`: queue a message to a registered member.
+    /// `to` may be `owner` (ADR-0003 §2.6).
     pub fn send(&self, from: &str, to: &str, msg: Outgoing) -> Result<Envelope, SpoolError> {
+        let to = &recipient(to)?;
         if !self.is_registered(to) {
             return Err(SpoolError::UnknownRecipient(to.to_string()));
         }
@@ -78,6 +89,7 @@ impl Spool {
         timeout: Duration,
     ) -> Result<Envelope, SpoolError> {
         check_wait_timeout(timeout).map_err(invalid)?;
+        let to = &recipient(to)?;
         if !self.is_registered(to) {
             return Err(SpoolError::UnknownRecipient(to.to_string()));
         }
@@ -119,7 +131,8 @@ impl Spool {
         let mut items =
             self.list_inbox_items(agent, query.include_all, query.summary_only, None)?;
         if let Some(from) = &query.from {
-            items.retain(|i| i.from.eq_ignore_ascii_case(from));
+            let from = resolve_member(from);
+            items.retain(|i| i.from.eq_ignore_ascii_case(&from));
         }
         if let Some(thread) = &query.thread {
             items.retain(|i| &i.id == thread || i.reply_to.as_deref() == Some(thread.as_str()));

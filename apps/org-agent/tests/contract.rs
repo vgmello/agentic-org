@@ -767,6 +767,81 @@ fn a_profile_edit_never_overwrites_an_unreadable_profile() {
 }
 
 #[test]
+fn owner_is_an_alias_and_owner_office_are_reserved() {
+    let env = setup("owner_alias");
+    let owner = org_spool::OWNER_ID;
+    assert_eq!(env.run(ME, &["msg", "register", owner]).code, 0);
+
+    // --to owner (any case) reaches the owner's inbox.
+    let sent = env.run(PEER, &["msg", "send", "--to", "OWNER", "hi"]);
+    assert_eq!(sent.code, 0, "{}", sent.stderr);
+    let asked = env.run(
+        PEER,
+        &["msg", "ask", "--to", "owner", "--timeout", "1s", "q?"],
+    );
+    assert_eq!(asked.code, 2, "{}", asked.stderr);
+    env.deliver();
+    let inbox = env.root.join(format!("spool/inbox/{owner}/new"));
+    assert_eq!(
+        fs::read_dir(&inbox).unwrap().count(),
+        2,
+        "both in inbox/{owner}"
+    );
+
+    // --as / ORG_AGENT owner is the owner; --from owner filters on it.
+    let who = TempOrgHome::command(&env.root, "owner", &["whoami"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&who.stdout).trim(), owner);
+    let to_me = TempOrgHome::command(&env.root, "owner", &["msg", "send", "--to", ME, "x"])
+        .output()
+        .unwrap();
+    assert!(to_me.status.success());
+    env.deliver();
+    let from_owner = env.run(ME, &["msg", "inbox", "--from", "Owner"]).stdout;
+    assert_eq!(from_owner.lines().count(), 1, "{from_owner}");
+
+    // Reserved: never registered, never a recipient, never in the "register it with" hint.
+    for name in ["owner", "office", "OFFICE"] {
+        let r = env.run(ME, &["msg", "register", name]);
+        assert_eq!(r.code, 1, "{name}: {}", r.stderr);
+        assert!(!env.root.join(format!("spool/inbox/{name}")).exists());
+    }
+    let r = env.run(ME, &["msg", "send", "--to", "office", "x"]);
+    assert_eq!(r.code, 1, "{}", r.stderr);
+    assert!(!r.stderr.contains("register it with"), "{}", r.stderr);
+    let r = env.run(ME, &["profile", "set", "--name", "Owner"]);
+    assert_eq!(r.code, 1, "{}", r.stderr);
+    let r = env.run(ME, &["profile", "set", "office", "--name", "x"]);
+    assert_eq!(r.code, 1, "{}", r.stderr);
+}
+
+#[test]
+fn the_owner_cannot_be_impersonated_by_case_or_from_another_session() {
+    let env = setup("owner_guard");
+    // Another member's session can't switch to the owner with --as.
+    for as_owner in ["vgmello", "owner", "VGMELLO"] {
+        let r = env.run(
+            ME,
+            &["--as", as_owner, "profile", "set", PEER, "--role", "x"],
+        );
+        assert_eq!(r.code, 1, "{as_owner}: {}", r.stderr);
+        assert!(
+            r.stderr.contains("can't act as the owner from"),
+            "{}",
+            r.stderr
+        );
+    }
+    // The owner's own session, in any case, is the owner (not a way around the check).
+    let r = env.run(
+        "VGMELLO",
+        &["profile", "set", PEER, "--role", "Reviewer", "--json"],
+    );
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    assert_eq!(json(&r.stdout)["role_title"], "Reviewer");
+}
+
+#[test]
 fn register_refuses_bad_flags_before_creating_anything() {
     let env = TempOrgHome::new("register_flags");
     for args in [

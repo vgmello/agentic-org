@@ -72,6 +72,15 @@ member has a live `msg wait`/`ask` listener or used `org-agent` in the last 2 mi
 `offline`, with `last_seen_at`; the spool can't tell busy from idle. Only `vgmello` can carry the owner flag, and a profile file always describes the inbox it sits in (its `id`/`owner` fields are not trusted). `profile set <id>` and `msg register <id> --name ...` edit only your own profile, unless you are the owner. Status lines expire after
 8h (`--ttl`, at most 24h), are one line of at most 140 characters / 256 bytes. Status and profile text may not contain control, format (zero-width, bidi, tag) or other invisible characters (usage error), except variation selectors, which are dropped (`status "⚠️ blocked"` stores `⚠ blocked`). A profile name may not contain `(`, `)`, `[`, `]`, `:` or `"` (they could forge a `msg notify` line); in notify output, names written before this rule have those characters turned into spaces (the line format is unchanged).
 
+**The owner and reserved names** (ADR-0003 §2.6): `--to`, `--from`, `--as` and `$ORG_AGENT`
+accept `owner` (any case) for the owner, `vgmello`; the owner's id in any case is the owner
+(`VGMELLO` is `vgmello`: a case-insensitive file system gives both one inbox). `owner` and
+`office` (any case) are reserved: `msg register`, `profile set` (as an id or a name) and
+`--to` refuse them (exit 1), and no error suggests registering them. `--as vgmello` (or
+`--as owner`) while `$ORG_AGENT` names another member is refused ("can't act as the owner
+from <member>'s session", exit 1). An `ask` to the owner keeps the 120 s default timeout in
+Phase A.
+
 ## Triage Notification Contract (`org-agent msg notify`)
 
 All runtime hooks (Claude Code, Codex, Antigravity) wrap `org-agent msg notify`:
@@ -131,6 +140,9 @@ Relay:
 
 ## Known limits
 
+- Identities can be forged in Phase A: nothing authenticates `--as` or `$ORG_AGENT`, so any
+  caller can act as any member, person or owner included (the owner guard above only stops
+  mistakes; ADR-0003's M-A covers agents only). Phase B authenticates callers.
 - An expired `ask` to a person whose `profile.json` is malformed or can't be read is
   delivered but reads as an agent's (non-urgent, "(expired)") until the profile is fixed.
   Likewise a transient error reading the profile when a check runs shows a person's expired

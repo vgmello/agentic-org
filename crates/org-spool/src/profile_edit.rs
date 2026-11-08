@@ -2,13 +2,16 @@
 //! whom, and what each change means.
 
 use crate::envelope::validate_agent_id;
-use crate::meta::{MemberProfile, RefEntry, TeamEntry, OWNER_ID};
+use crate::member::{canonical_member_id, is_owner};
+use crate::meta::{MemberProfile, RefEntry, TeamEntry};
 use crate::spool::{Spool, SpoolError};
 
 /// A member edits its own profile; only the owner may edit someone else's (Phase A has no
 /// authentication, so this guards against mistakes, not against an agent passing `--as`).
 pub fn authorize_profile_edit(editor: &str, target: &str) -> Result<(), SpoolError> {
-    if editor == target || editor == OWNER_ID {
+    // The owner's id in any case is the owner (a case-insensitive file system gives both the
+    // same inbox), so `--as VGMELLO` is the owner editing, not a way around this check.
+    if canonical_member_id(editor) == canonical_member_id(target) || is_owner(editor) {
         Ok(())
     } else {
         Err(SpoolError::InvalidInput(format!(

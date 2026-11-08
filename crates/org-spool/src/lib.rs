@@ -6,6 +6,7 @@
 //! - Instability (`I`): ~0.20 (Stable platform primitive)
 
 pub mod envelope;
+pub mod member;
 pub mod messaging;
 pub mod meta;
 pub mod profile_edit;
@@ -18,6 +19,10 @@ pub mod ulid;
 pub use envelope::{
     json_quote, validate_agent_id, Envelope, MessageKind, MessagePriority, MetaValue,
     ENVELOPE_VERSION, MAX_BODY_BYTES, MAX_ENVELOPE_BYTES, MAX_SUBJECT_BYTES,
+};
+pub use member::{
+    canonical_member_id, check_not_reserved, is_owner, is_reserved_name, resolve_caller,
+    resolve_member,
 };
 pub use messaging::{InboxQuery, Outgoing, INBOX_MAX_LIMIT, INBOX_SUMMARY_DEFAULT_LIMIT};
 pub use meta::{
