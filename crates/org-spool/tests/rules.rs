@@ -598,6 +598,56 @@ fn rule_notify_text_is_sanitized_framed_as_untrusted_and_never_has_bodies() {
 }
 
 #[test]
+fn rule_format_and_invisible_characters_are_stripped_from_output_and_refused_in_input() {
+    // Regression: only Cc, U+200B-200F, U+202A-202E, U+2060-2069 and U+FEFF were covered, so
+    // e.g. tag characters (invisible, but read by models) passed through.
+    let ranges: &[(u32, u32)] = &[
+        (0xE0000, 0xE007F), // tag characters
+        (0x00AD, 0x00AD),   // soft hyphen
+        (0x061C, 0x061C),   // Arabic letter mark
+        (0x180E, 0x180E),   // Mongolian vowel separator
+        (0x200B, 0x200F),   // zero-width, LRM/RLM
+        (0x202A, 0x202E),   // bidi embeddings and overrides
+        (0x2060, 0x2064),   // word joiner, invisible operators
+        (0x2066, 0x2069),   // bidi isolates
+        (0xFEFF, 0xFEFF),   // BOM / zero-width no-break space
+        (0xFFF9, 0xFFFB),   // interlinear annotation
+        (0xFE00, 0xFE0F),   // variation selectors
+        (0xE0100, 0xE01EF), // variation selectors supplement
+        (0x2028, 0x2029),   // line / paragraph separators
+    ];
+    let t = TempSpool::new("invisible");
+    for &(lo, hi) in ranges {
+        for cp in lo..=hi {
+            let ch = char::from_u32(cp).unwrap();
+            assert_eq!(
+                sanitize_inline_text(&format!("a{ch}b"), 80),
+                "a b",
+                "U+{cp:04X} stripped from output"
+            );
+            assert!(
+                matches!(
+                    t.spool.set_status(ME, &format!("busy{ch}now"), None),
+                    Err(SpoolError::InvalidInput(_))
+                ),
+                "U+{cp:04X} refused in a status line"
+            );
+            let mut profile = MemberProfile::default_for(ME);
+            profile.name = format!("Agy{ch}");
+            assert!(
+                profile.validate().is_err(),
+                "U+{cp:04X} refused in a profile"
+            );
+        }
+    }
+    // Ordinary text, including non-Latin scripts and plain emoji, is untouched.
+    for fine in ["héllo wörld", "日本語", "مرحبا", "ok 👍"] {
+        assert_eq!(sanitize_inline_text(fine, 80), fine);
+        t.spool.set_status(ME, fine, None).unwrap();
+    }
+}
+
+#[test]
 fn rule_a_corrupt_triage_file_is_set_aside_not_fatal() {
     let t = TempSpool::new("corrupt");
     let id = t.ask("q");

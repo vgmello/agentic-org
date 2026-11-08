@@ -101,7 +101,7 @@ fn check_profile_text(field: &str, value: &str, allow_empty: bool) -> Result<(),
     }
     if value.chars().any(is_unsafe_inline_char) {
         return Err(format!(
-            "profile {field} must not contain control or bidi formatting characters"
+            "profile {field} must not contain control, format (zero-width, bidi, tag) or invisible characters"
         ));
     }
     Ok(())
@@ -349,22 +349,61 @@ pub struct NotifyReport {
     pub text: String,
 }
 
-/// Control characters, zero-width and bidi formatting characters (which can visually reorder
-/// or hide text in a terminal or a model's context).
+/// Characters that can hide, reorder or smuggle text in a terminal or a model's context:
+/// control characters (Cc), every format character (Cf: zero-width, bidi, tag characters, ...),
+/// line/paragraph separators, variation selectors and invisible fillers. Std has no Unicode
+/// category lookup, so the Cf ranges are listed (Unicode 16).
 fn is_unsafe_inline_char(ch: char) -> bool {
     ch.is_control()
         || matches!(
             ch,
-            '\u{200B}'..='\u{200F}'
+            // Cf: soft hyphen, Arabic number signs and letter mark, Syriac abbreviation mark,
+            // Arabic pound/piastre marks, Mongolian vowel separator.
+            '\u{00AD}'
+                | '\u{0600}'..='\u{0605}'
+                | '\u{061C}'
+                | '\u{06DD}'
+                | '\u{070F}'
+                | '\u{0890}'..='\u{0891}'
+                | '\u{08E2}'
+                | '\u{180E}'
+                // Cf: zero-width space/non-joiner/joiner, LRM/RLM, bidi embeddings and
+                // overrides, word joiner, invisible operators, bidi isolates, deprecated
+                // format characters, BOM / zero-width no-break space, interlinear annotation.
+                // (U+2065 is unassigned; it was always refused.)
+                | '\u{200B}'..='\u{200F}'
                 | '\u{202A}'..='\u{202E}'
-                | '\u{2060}'..='\u{2069}'
+                | '\u{2060}'..='\u{206F}'
                 | '\u{FEFF}'
+                | '\u{FFF9}'..='\u{FFFB}'
+                // Cf outside the BMP: Kaithi number signs, Egyptian hieroglyph format controls,
+                // shorthand format controls, musical symbol formatting, the tag block.
+                | '\u{110BD}'
+                | '\u{110CD}'
+                | '\u{13430}'..='\u{1343F}'
+                | '\u{1BCA0}'..='\u{1BCA3}'
+                | '\u{1D173}'..='\u{1D17A}'
+                | '\u{E0000}'..='\u{E007F}'
+                // Zl / Zp: line and paragraph separators (they break a line like \n).
+                | '\u{2028}'..='\u{2029}'
+                // Invisible but not Cf: combining grapheme joiner, Hangul fillers, Khmer
+                // inherent vowels, variation selectors.
+                | '\u{034F}'
+                | '\u{115F}'..='\u{1160}'
+                | '\u{17B4}'..='\u{17B5}'
+                | '\u{3164}'
+                | '\u{FFA0}'
+                | '\u{180B}'..='\u{180D}'
+                | '\u{180F}'
+                | '\u{FE00}'..='\u{FE0F}'
+                | '\u{E0100}'..='\u{E01EF}'
         )
 }
 
-/// Make untrusted text safe to show on one line: control, zero-width and bidi characters become
-/// spaces, runs of whitespace collapse, double quotes become single quotes (so a subject can't
-/// break out of the quotes `msg notify` wraps it in), and the result is cut to `max_chars`.
+/// Make untrusted text safe to show on one line: control, format (zero-width, bidi, tag, ...)
+/// and other invisible characters become spaces, runs of whitespace collapse, double quotes
+/// become single quotes (so a subject can't break out of the quotes `msg notify` wraps it in),
+/// and the result is cut to `max_chars`.
 pub fn sanitize_inline_text(raw: &str, max_chars: usize) -> String {
     let mut cleaned = String::with_capacity(raw.len().min(max_chars + 8));
     let mut prev_space = false;
@@ -630,7 +669,7 @@ impl Spool {
         }
         if trimmed.chars().any(is_unsafe_inline_char) {
             return Err(SpoolError::InvalidInput(
-                "status text cannot contain control, zero-width or bidi characters, or newlines"
+                "status text cannot contain control, format (zero-width, bidi, tag) or invisible characters, or newlines"
                     .into(),
             ));
         }
