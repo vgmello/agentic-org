@@ -27,13 +27,13 @@
 //! dates the command. Work writes' `change_id` ([`crate::work`]) has the same form.
 //!
 //! HQ keeps each command's answer, refusals included, until the id's time plus 30 days (offices
-//! design, "Dedup window"). A retry with the same `command_id` and the same params gets the stored
-//! answer again, without being validated again, even after the state changed. The same `command_id`
-//! with different params is refused with `invalid_request` ("command id reused with different
-//! params"). The refusals that come before HQ looks at the command itself (`not_authorized`,
-//! params that don't decode, the id's format, `expired`, `clock_skew`; see below), and
-//! `storage_error` and `unavailable`, are never kept, so a later retry may succeed. To try again after any other refusal, use a new
-//! `command_id`.
+//! design, "Dedup window"). A retry with the same `command_id` and the same params gets the
+//! stored answer again, without being validated again, even after the state changed. The same
+//! `command_id` with different params is refused with `invalid_request` ("command id reused
+//! with different params"). Never kept, so a later retry may succeed: the refusals that come
+//! before HQ looks at the command itself (`not_authorized`, params that don't decode, the id's
+//! format, `expired`, `clock_skew`; see below), `storage_error` and `unavailable`. To try again
+//! after any other refusal, use a new `command_id`.
 //!
 //! ## When several errors apply
 //! A command can break more than one rule at once. The answer is the first that applies, in
@@ -49,8 +49,8 @@
 //!    that steps back can't reopen the window): `expired` when the id is dated more than 29
 //!    days ago, `clock_skew` when it's more than 5 minutes ahead.
 //! 5. **The rules**: `not_found`, `invalid_request` (outside a limit, the wrong kind of member
-//!    or the wrong state, a value that makes no sense), `invalid_name`,
-//!    `conflict` (a stale `expected_version`), `already_exists`.
+//!    or the wrong state, a value that makes no sense), `invalid_name`, `conflict` (a stale
+//!    `expected_version`), `already_exists`.
 //!
 //! Every command below checks in this one order (its `Errors:` list names the codes it can return,
 //! not the order they are checked in). Within step 5, the domain codes (`owner_protected`, `cycle`,
@@ -493,22 +493,29 @@ pub const RESERVED_BRANCH_PREFIXES: &[&str] = &["task/", "docs/", "merged/", "ar
 
 /// Whether `name` starts with one of [`RESERVED_BRANCH_PREFIXES`], so it can't be a project's
 /// `integration_branch`: `project.create` and `project.update` refuse it with
-/// `invalid_request` (docs/design/processes.md, "Project rule"). The one rule the office and
+/// `invalid_request` (docs/design/processes.md, "Project rule"), the one rule the office and
 /// the app's mocks are to share.
 ///
-/// Stricter than a plain prefix test, so a spelling git would resolve to the same branch isn't
-/// a way around it: one leading `refs/heads/` or `heads/` is looked through, and the prefix is
-/// compared ignoring ASCII case (refs can live on a case-insensitive file system).
+/// The office reads the integration branch as the branch `refs/heads/<name>`, never through
+/// git's short-name lookup, so `name` can't reach a tag or another ref. As defence in depth,
+/// this is stricter than a plain prefix test: everything is compared ignoring ASCII case (refs
+/// can live on a case-insensitive file system), and one leading `refs/heads/` or `heads/` is
+/// looked through.
 pub fn has_reserved_branch_prefix(name: &str) -> bool {
-    let name = name
-        .strip_prefix("refs/heads/")
-        .or_else(|| name.strip_prefix("heads/"))
+    let name = ["refs/heads/", "heads/"]
+        .iter()
+        .find_map(|lead| strip_prefix_ignoring_ascii_case(name, lead))
         .unwrap_or(name);
-    RESERVED_BRANCH_PREFIXES.iter().any(|prefix| {
-        name.len() >= prefix.len()
-            && name.is_char_boundary(prefix.len())
-            && name[..prefix.len()].eq_ignore_ascii_case(prefix)
-    })
+    RESERVED_BRANCH_PREFIXES
+        .iter()
+        .any(|prefix| strip_prefix_ignoring_ascii_case(name, prefix).is_some())
+}
+
+/// `name` after `prefix`, when it starts with it ignoring ASCII case.
+fn strip_prefix_ignoring_ascii_case<'a>(name: &'a str, prefix: &str) -> Option<&'a str> {
+    let n = prefix.len();
+    (name.len() >= n && name.is_char_boundary(n) && name[..n].eq_ignore_ascii_case(prefix))
+        .then(|| &name[n..])
 }
 
 /// A project: the full record. It replaced `ProjectSummary` (`{ id, name }`) additively: every

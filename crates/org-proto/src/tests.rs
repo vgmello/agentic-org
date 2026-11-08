@@ -1865,6 +1865,9 @@ fn an_integration_branch_may_not_start_with_a_prefix_the_office_owns() {
         "task/",
         "refs/heads/task/W-12",
         "heads/task/W-12",
+        "Refs/Heads/task/W-12",
+        "HEADS/Merged/x",
+        "refs/heads/Merged/x",
         "Task/W-12",
         "DOCS/x",
     ] {
@@ -1881,6 +1884,9 @@ fn an_integration_branch_may_not_start_with_a_prefix_the_office_owns() {
         "feature/task/x",
         "refs/heads/main",
         "refs/task/x",
+        "refs/heads/heads/task/x",
+        "heads/heads/task/x",
+        "refs/tags/merged/task/W-1",
         "",
         "é/task/",
     ] {
