@@ -23,7 +23,7 @@ use org_proto::{
     ApiError, CommandAccepted, Empty, ErrorCode, HelloResult, OfficeInfo, OfficeRole, OfficeStatus,
     OrgSnapshot, OrgSnapshotCall, Organization,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
@@ -54,7 +54,8 @@ pub struct RealOffice {
     hq: Mutex<HashMap<String, OfficeInfo>>,
     /// Where the organization feeds report to (set once at startup), and the organizations already being followed.
     org_sink: Mutex<Option<OrgSink>>,
-    followed: Mutex<HashSet<String>>,
+    /// Each followed organization's feed, by organization id: set to make it try to connect now.
+    followed: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -169,7 +170,7 @@ impl RealOffice {
             offices: Mutex::new(HashMap::new()),
             hq: Mutex::new(HashMap::new()),
             org_sink: Mutex::new(None),
-            followed: Mutex::new(HashSet::new()),
+            followed: Mutex::new(HashMap::new()),
         }
     }
 
@@ -557,6 +558,12 @@ impl OfficeConnection for RealOffice {
         self.start_feed(organization_id);
     }
 
+    fn retry_org_feed(&self, organization_id: &str) {
+        if let Some(retry) = lock(&self.followed).get(organization_id) {
+            retry.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
     fn follow_status(&self, sink: StatusSink) {
         let home = self.home.clone();
         std::thread::spawn(move || {
@@ -575,15 +582,17 @@ impl RealOffice {
         let Some(sink) = lock(&self.org_sink).clone() else {
             return false;
         };
-        if !lock(&self.followed).insert(organization_id.to_string()) {
-            return false;
-        }
+        let retry = Arc::new(AtomicBool::new(false));
+        match lock(&self.followed).entry(organization_id.to_string()) {
+            std::collections::hash_map::Entry::Occupied(_) => return false,
+            std::collections::hash_map::Entry::Vacant(slot) => slot.insert(Arc::clone(&retry)),
+        };
         let office = Arc::clone(self);
         let organization_id = organization_id.to_string();
         std::thread::spawn(move || {
             // The app never stops following: the thread ends with the process.
             let never = AtomicBool::new(false);
-            org_feed::follow(&*office, &organization_id, &never, &*sink);
+            org_feed::follow(&*office, &organization_id, &never, &retry, &*sink);
         });
         true
     }

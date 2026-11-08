@@ -1,5 +1,5 @@
 import { inTauri, officeApi } from '$lib/office/api';
-import type { ApiErrorCode, AppError, CommandAccepted, OrgChangedNotice, OrgSnapshot, OrgView } from '$lib/proto';
+import type { ApiErrorCode, AppError, CommandAccepted, OrgFeedNotice, OrgSnapshot, OrgView } from '$lib/proto';
 import { ready, type OrgCommand, type OrgCommandInput } from './commands';
 import { normalizeKinds } from './model';
 import { applyCommand, badId } from './reducer';
@@ -15,8 +15,10 @@ export interface OrgApi {
 	 * `AppError` with source `api`). A repeated `command_id` gets the same answer and changes nothing.
 	 */
 	command(organizationId: string, input: OrgCommandInput | OrgCommand): Promise<CommandAccepted>;
-	/** Be told when an organization's structure changes (anyone's command, ours included). Resolves to the function that stops listening. */
-	onChanged(listener: (notice: OrgChangedNotice) => void): Promise<() => void>;
+	/** Be told when an organization's structure changes (anyone's command, ours included) and whether the feed is live. Resolves to the function that stops listening. */
+	onFeed(listener: (notice: OrgFeedNotice) => void): Promise<() => void>;
+	/** "Live updates paused" has a Retry: connect the live feed now. Resolves when asked, not when it is back (a `live` notice says that). */
+	retryFeed(organizationId: string): Promise<void>;
 }
 
 export interface MockStorage {
@@ -116,7 +118,7 @@ export function createMockOrg(
 
 	// Commands are answered one at a time, as HQ does, so two sent together can't overwrite each other.
 	let queue: Promise<unknown> = Promise.resolve();
-	const listeners = new Set<(notice: OrgChangedNotice) => void>();
+	const listeners = new Set<(notice: OrgFeedNotice) => void>();
 
 	async function run(organizationId: string, input: OrgCommandInput | OrgCommand): Promise<CommandAccepted> {
 		const command = ready(input);
@@ -152,7 +154,7 @@ export function createMockOrg(
 		}
 		if ('error' in result) throw result.error;
 		const { position } = result.accepted;
-		if (position) for (const listener of listeners) listener({ organization_id: organizationId, position });
+		if (position) for (const listener of listeners) listener({ kind: 'changed', organization_id: organizationId, position });
 		return result.accepted;
 	}
 
@@ -168,12 +170,21 @@ export function createMockOrg(
 			queue = answer.catch(() => undefined);
 			return answer;
 		},
-		async onChanged(listener) {
+		async onFeed(listener) {
 			listeners.add(listener);
 			return () => void listeners.delete(listener);
+		},
+		async retryFeed(organizationId) {
+			// The mock feed is always reachable again when asked.
+			setTimeout(() => listeners.forEach((l) => l({ kind: 'live', organization_id: organizationId, live: true })), 300);
 		}
 	};
-	if (typeof window !== 'undefined') (window as unknown as { __mockOrgChange: OrgApi['command'] }).__mockOrgChange = api.command;
+	if (typeof window !== 'undefined') {
+		const hooks = window as unknown as { __mockOrgChange: OrgApi['command']; __mockOrgLive: (organizationId: string, live: boolean) => void };
+		hooks.__mockOrgChange = api.command;
+		// A test makes the live feed drop (or come back): `window.__mockOrgLive(organizationId, false)`.
+		hooks.__mockOrgLive = (organization_id, live) => listeners.forEach((l) => l({ kind: 'live', organization_id, live }));
+	}
 	return api;
 }
 

@@ -121,4 +121,7 @@ pub trait OfficeConnection: Send + Sync {
     /// Start following one organization's changes (once; later calls do nothing), reporting to the sink. An office
     /// with no live changes (the mock) does nothing.
     fn follow_org(self: Arc<Self>, _organization_id: &str) {}
+
+    /// The owner pressed Retry on "live updates paused": connect the organization's feed now, not at its next try.
+    fn retry_org_feed(&self, _organization_id: &str) {}
 }

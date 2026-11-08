@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import type { CommandAccepted, OrgChangedNotice, OrgView } from '$lib/proto';
+import type { CommandAccepted, OrgFeedNotice, OrgView } from '$lib/proto';
 import type { OrgApi } from './api';
 import { ready } from './commands';
 import { normalizeKinds } from './model';
@@ -21,5 +21,6 @@ export const tauriOrg: OrgApi = {
 		queue = answer.catch(() => undefined);
 		return answer;
 	},
-	onChanged: (listener) => listen<OrgChangedNotice>('org-changed', (event) => listener(event.payload))
+	onFeed: (listener) => listen<OrgFeedNotice>('org-feed', (event) => listener(event.payload)),
+	retryFeed: (organizationId) => invoke<void>('org_live_retry', { organizationId })
 };

@@ -10,6 +10,11 @@ const shown = new Map<string, Position>();
 const heard = new Map<string, Position>();
 const reloaders = new Map<string, () => Promise<unknown>>();
 const running = new Set<string>();
+// When each organization's structure was last loaded.
+const loadedAt = new Map<string, Date>();
+
+/** When the screens last loaded the organization's structure, if they have. */
+export const lastLoadedAt = (organizationId: string): Date | undefined => loadedAt.get(organizationId);
 
 const behind = (organizationId: string): boolean => {
 	const seen = shown.get(organizationId);
@@ -50,6 +55,7 @@ function catchUp(organizationId: string): void {
 /** A screen loaded the organization's structure at this position (always the latest load: a restored office may be at an earlier one). */
 export function noteShown(organizationId: string, position: Position): void {
 	shown.set(organizationId, position);
+	loadedAt.set(organizationId, new Date());
 	// A change told while this was loading is not shown yet.
 	if (behind(organizationId)) catchUp(organizationId);
 }

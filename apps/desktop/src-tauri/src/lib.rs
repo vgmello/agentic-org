@@ -366,6 +366,16 @@ async fn organizations_peek(
     blocking(move || state.peek_organizations()).await
 }
 
+/// "Live updates paused" has a Retry: the organization's feed connects now, not at its next try. Answers at once.
+#[tauri::command]
+async fn org_live_retry(
+    state: State<'_, Arc<AppState>>,
+    organization_id: String,
+) -> Result<(), CommandError> {
+    state.office.retry_org_feed(&organization_id);
+    Ok(())
+}
+
 #[tauri::command]
 async fn office_restart(
     state: State<'_, Arc<AppState>>,
@@ -626,7 +636,7 @@ pub fn run() {
             }));
             let handle = app.handle().clone();
             office.set_org_sink(Arc::new(move |update| {
-                let _ = handle.emit("org-changed", &update);
+                let _ = handle.emit("org-feed", &update);
             }));
             app.manage(Arc::new(AppState {
                 office,
@@ -659,6 +669,7 @@ pub fn run() {
             organization_open,
             org_snapshot,
             org_command,
+            org_live_retry,
             connections_list,
             work_snapshot,
             work_get,
@@ -863,7 +874,7 @@ mod tests {
         assert_eq!(off.unregister_calls.load(Ordering::SeqCst), 1);
     }
 
-    const COMMANDS: [&str; 17] = [
+    const COMMANDS: [&str; 18] = [
         "office_ensure_running",
         "office_ping",
         "office_restart",
@@ -873,6 +884,7 @@ mod tests {
         "organization_open",
         "org_snapshot",
         "org_command",
+        "org_live_retry",
         "connections_list",
         "work_snapshot",
         "work_get",

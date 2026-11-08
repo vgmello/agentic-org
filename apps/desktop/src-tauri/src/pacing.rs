@@ -37,9 +37,13 @@ impl Pacer {
     }
 }
 
-pub fn wait(pause: Duration, stop: &AtomicBool) {
+/// Wait out `pause`, or less: `stop` ends the wait, and so does `wake` (a Retry from the UI), which is cleared.
+pub fn wait(pause: Duration, stop: &AtomicBool, wake: &AtomicBool) {
     let until = Instant::now() + pause;
     while Instant::now() < until && !stop.load(Ordering::SeqCst) {
+        if wake.swap(false, Ordering::SeqCst) {
+            return;
+        }
         std::thread::sleep(LOOK.min(until.saturating_duration_since(Instant::now())));
     }
 }

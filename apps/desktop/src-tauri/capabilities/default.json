@@ -18,6 +18,7 @@
     "allow-organization-open",
     "allow-org-snapshot",
     "allow-org-command",
+    "allow-org-live-retry",
     "allow-work-snapshot",
     "allow-work-get",
     "allow-work-command",

@@ -328,3 +328,23 @@ test('LIVE: a change that lands while the user is navigating does not cancel the
 	);
 	await expect(page).toHaveURL(/\/agents/);
 });
+
+test('LIVE-7: when live updates stop the shell says so with the time shown, and Retry brings them back', async ({ page }) => {
+	await openChart(page);
+	const organizationId = await page.evaluate(() => {
+		const saved = JSON.parse(localStorage.getItem('agentic-org.mock.connections') ?? '[]') as { organization: { id: string } }[];
+		return saved[saved.length - 1].organization.id;
+	});
+	const live = (isLive: boolean) =>
+		page.evaluate(([id, on]) => (window as unknown as { __mockOrgLive: (o: string, l: boolean) => void }).__mockOrgLive(id as string, on as boolean), [organizationId, isLive]);
+	await expect(page.getByTestId('live-paused')).toHaveCount(0);
+	await live(false);
+	const banner = page.getByTestId('live-paused');
+	await expect(banner).toContainText('Live updates paused.');
+	await expect(banner).toContainText(/Showing what was loaded at \d{1,2}:\d{2}/);
+	await shot(page, 'live-paused');
+	await banner.getByRole('button', { name: 'Retry' }).click();
+	await expect(banner.getByRole('button', { name: 'Retrying…' })).toBeDisabled();
+	await expect(banner).toHaveCount(0); // the feed is back
+	await shot(page, 'live-resumed');
+});
