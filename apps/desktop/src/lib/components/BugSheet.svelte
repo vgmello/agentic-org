@@ -11,6 +11,8 @@
 	import { BUG_STATUS_LABEL, bugRef, closedWord, SEVERITIES, severityWord } from '$lib/work/bugs';
 	import { assigneeOptions, nameOf } from '$lib/work/people';
 	import { timeBlock } from '$lib/work/time';
+	import { shortDate } from '$lib/work/format';
+	import SeverityIcon from '$lib/components/SeverityIcon.svelte';
 	import { newId } from '$lib/org/commands';
 	import { PRIORITIES, STATUS_LABEL, taskRef } from '$lib/work/tasks';
 
@@ -114,6 +116,13 @@
 		if (!s) return;
 		await act({ method: 'task.create', item_id: newId(), project_id: s.project_id!, title: [...`Fix ${bugRef(s)}: ${s.title}`].slice(0, 120).join(''), fixes: [{ link_id: newId(), bug_id: s.id }] }, `Created a fix task for ${bugRef(s)}.`);
 	}
+	// The question above the verify buttons (FIX-*): the reporter is asked directly, anyone else sees who is asked.
+	const verifyQuestion = $derived.by(() => {
+		if (!s) return '';
+		const owner = snapshot.members.find((m) => m.owner);
+		if (s.created_by !== owner?.id) return `${nameOf(snapshot, s.created_by)} (reporter) is asked to check.`;
+		return s.assignee_id ? `${nameOf(snapshot, s.assignee_id)} fixed this. Is it fixed for you?` : 'This was marked fixed. Is it fixed for you?';
+	});
 	const areaName = (id: string | undefined) => areas.find((a) => a.id === id)?.name ?? 'General';
 	// TRI-1: who looks at it first (no area leads yet: the project's owner of record, the owner).
 	const triager = $derived(nameOf(snapshot, snapshot.members.find((m) => m.owner)?.id));
@@ -141,15 +150,15 @@
 	<SheetContent side="right" class="w-full max-w-lg overflow-y-auto">
 		<SheetHeader>
 			<SheetTitle class="[overflow-wrap:anywhere]">{s ? `${bugRef(s)} · ${s.title}` : 'Bug'}</SheetTitle>
-			<SheetDescription>{s ? `Reported ${new Date(s.created_at).toLocaleDateString()} by ${nameOf(snapshot, s.created_by)}` : 'Loading…'}</SheetDescription>
+			<SheetDescription>{s ? `Reported ${shortDate(s.created_at)} by ${nameOf(snapshot, s.created_by)}` : 'Loading…'}</SheetDescription>
 		</SheetHeader>
 
 		{#if s && item}
 			<div class="flex flex-col gap-y-4 px-4 pb-6" data-testid="bug-page">
 				<div class="flex flex-wrap items-center gap-2">
 					<Badge variant="secondary" data-testid="bug-status">{BUG_STATUS_LABEL[s.status] ?? s.status}{s.status === 'closed' ? ` · ${closedWord(s, originalBug)}` : ''}</Badge>
-					<Badge variant="secondary" data-testid="bug-severity">{severityWord(s.severity)}{s.severity_confirmed ? '' : ' (not confirmed)'}</Badge>
-					<span class="text-sm/6 text-gray-400">{areaName(s.area_id)} · {nameOf(snapshot, s.assignee_id)}</span>
+					<Badge variant="secondary" data-testid="bug-severity"><SeverityIcon severity={s.severity} />{severityWord(s.severity)}{s.severity_confirmed ? '' : ' (not confirmed)'}</Badge>
+					<span class="text-sm/6 text-gray-400" data-testid="bug-meta">Area {areaName(s.area_id)} · Reporter {nameOf(snapshot, s.created_by)} · Assignee {nameOf(snapshot, s.assignee_id)}</span>
 					{#if s.reopen_count > 0}<span class="text-xs/5 text-gray-400">Reopened {s.reopen_count} {s.reopen_count === 1 ? 'time' : 'times'}</span>{/if}
 				</div>
 
@@ -202,6 +211,7 @@
 					<div class="flex flex-wrap gap-2" data-testid="bug-actions">
 						{#if s.status === 'triaged' || s.status === 'in_progress'}<Button size="sm" onclick={() => (step = 'fix')}>Mark fixed…</Button>{/if}
 						{#if s.status === 'fixed'}
+							<p class="basis-full text-sm/6 text-gray-200" data-testid="verify-question">{verifyQuestion}</p>
 							<Button size="sm" disabled={busy} onclick={() => act({ method: 'bug.verify', item_id: s.id, expected_version: v, outcome: 'fixed' }, `${bugRef(s)} verified and closed.`)}>It's fixed: close</Button>
 							<Button size="sm" variant="outline" onclick={() => (step = 'still')}>Still happens…</Button>
 						{/if}

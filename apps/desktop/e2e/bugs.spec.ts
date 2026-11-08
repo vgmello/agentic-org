@@ -27,6 +27,9 @@ test('BUG-1: Report a bug needs a title, what happened and a severity (no defaul
 	await page.getByRole('button', { name: 'Report a bug' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Report a bug' });
 	await expect(dialog.getByRole('radio', { checked: true })).toHaveCount(0);
+	await expect(dialog.getByLabel('Environment')).toHaveValue(/^This Mac \(HQ\) · Agentic Org \d/);
+	await expect(dialog.getByTestId('goes-to')).toHaveText('Goes to: Alex Kim, who triages new bugs.');
+	await expect(dialog.getByLabel('Area')).toHaveValue('atlas-general');
 	await dialog.getByRole('button', { name: 'Report bug' }).click();
 	await expect(dialog.getByRole('alert')).toHaveText(['Give the bug a title.', 'Say what happened.', 'Choose a severity.']);
 	await shot(page, 'report-bug');
@@ -67,6 +70,8 @@ test('TRI and FIX: triage a New bug, mark it fixed, then verify it, and a closed
 	await sheet.getByRole('button', { name: 'Mark fixed' }).click();
 	await expect(sheet.getByTestId('bug-status')).toHaveText('Fixed');
 	await expect(sheet.getByTestId('bug-reason')).toHaveText('Fix: Rounded the total');
+	await expect(sheet.getByTestId('verify-question')).toHaveText('Alex Kim fixed this. Is it fixed for you?');
+	await expect(sheet.getByTestId('bug-meta')).toHaveText('Area General · Reporter Alex Kim · Assignee Alex Kim');
 	await shot(page, 'bug-page');
 	await sheet.getByRole('button', { name: 'Still happens…' }).click();
 	await sheet.getByLabel('What do you still see').fill('Still off by a cent');

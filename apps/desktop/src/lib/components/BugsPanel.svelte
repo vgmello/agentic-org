@@ -10,6 +10,7 @@
 	import { sender, workApi } from '$lib/work';
 	import { generalAreaId } from '$lib/work/api';
 	import { BUG_STATUS_LABEL, bugRef, closedWord, FILTERS, filterBugs, groupByArea, severityWord, type BugFilter } from '$lib/work/bugs';
+	import SeverityIcon from '$lib/components/SeverityIcon.svelte';
 	import { nameOf } from '$lib/work/people';
 
 	/** A project's bugs (work-items-ux §6): grouped by area, filtered by where they are in their life. */
@@ -84,7 +85,7 @@
 								<li class="flex flex-wrap items-center gap-x-3 px-4 py-2 text-sm/6" data-testid="bug-row" data-bug={bug.id}>
 									<span class="text-gray-400">{bugRef(bug)}</span>
 									<button type="button" class="min-w-0 flex-1 text-left font-semibold text-white hover:underline focus-visible:outline-2 focus-visible:outline-indigo-400 [overflow-wrap:anywhere]" onclick={() => open(bug.id)}>{bug.title}</button>
-									<span class={bug.severity === 'critical' ? 'font-semibold text-amber-300' : 'text-gray-300'}>{severityWord(bug.severity)}{bug.severity_confirmed ? '' : '?'}</span>
+									<span class={bug.severity === 'critical' ? 'font-semibold text-amber-300' : 'text-gray-300'}><SeverityIcon severity={bug.severity} /> {severityWord(bug.severity)}{bug.severity_confirmed ? '' : '?'}</span>
 									<span class="text-gray-300">{BUG_STATUS_LABEL[bug.status] ?? bug.status}{bug.status === 'closed' ? ` · ${closedWord(bug, bugs.find((b) => b.id === bug.duplicate_of))}` : ''}</span>
 									<span class="text-gray-400">{nameOf(snapshot, bug.assignee_id)}</span>
 								</li>
@@ -98,5 +99,5 @@
 	<p class="sr-only" role="status" aria-live="polite">{announcement}</p>
 </div>
 
-<ReportBugDialog bind:open={reporting} {projectId} {projectName} {areas} {bugs} {send} onopen={open} ondone={(created) => { toast.success(`Bug ${created.ref} reported.`); void load(); }} />
+<ReportBugDialog bind:open={reporting} {projectId} {projectName} {areas} {bugs} triager={nameOf(snapshot, snapshot.members.find((m) => m.owner)?.id)} {send} onopen={open} ondone={(created) => { toast.success(`Bug ${created.ref} reported.`); void load(); }} />
 <BugSheet bind:open={sheetOpen} {organizationId} bugId={openId} {snapshot} {areas} {bugs} items={all ?? []} {send} onchanged={(message) => { if (message) announce(message); void load(); }} />

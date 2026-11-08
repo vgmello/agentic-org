@@ -15,6 +15,7 @@
 	import { assigneeOptions, assignWarning, nameOf } from '$lib/work/people';
 	import { timeBlock } from '$lib/work/time';
 	import { bugRef } from '$lib/work/bugs';
+	import { shortDate } from '$lib/work/format';
 	import { movesFrom, PRIORITIES, STATUS_LABEL, taskRef } from '$lib/work/tasks';
 
 	/** The task page (work-items-ux §9): its fields, status, checklist and time. Each change is one call; a stale one reloads. */
@@ -192,7 +193,7 @@
 	<SheetContent side="right" class="w-full max-w-lg overflow-y-auto">
 		<SheetHeader>
 			<SheetTitle class="[overflow-wrap:anywhere]">{s ? `${taskRef(s)} · ${s.title}` : 'Task'}</SheetTitle>
-			<SheetDescription>{s ? `Created ${new Date(s.created_at).toLocaleDateString()} by ${nameOf(snapshot, s.created_by)}` : 'Loading…'}</SheetDescription>
+			<SheetDescription>{s ? `Created ${shortDate(s.created_at)} by ${nameOf(snapshot, s.created_by)}` : 'Loading…'}</SheetDescription>
 		</SheetHeader>
 
 		{#if s && item}

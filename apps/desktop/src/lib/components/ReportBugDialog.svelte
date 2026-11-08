@@ -10,6 +10,7 @@
 	import { WORK_LIMITS } from '$lib/proto';
 	import type { WorkDraft } from '$lib/work';
 	import { bugRef, SEVERITIES, similarBugs } from '$lib/work/bugs';
+	import { environmentLine } from '$lib/work/format';
 
 	/** Report a bug (BUG-1..BUG-4): a title, what happened and a severity (no default), with similar open bugs suggested. */
 	let {
@@ -18,6 +19,7 @@
 		projectName,
 		areas,
 		bugs,
+		triager,
 		send,
 		ondone,
 		onopen
@@ -27,6 +29,8 @@
 		projectName: string;
 		areas: { id: string; name: string; general?: boolean }[];
 		bugs: WorkItemSummary[];
+		/** Who looks at a new bug first (TRI-1). */
+		triager: string;
 		send: (draft: WorkDraft) => Promise<WorkAccepted>;
 		ondone: (created: { ref: string }) => void;
 		/** Open an existing bug (a suggestion was the one meant). */
@@ -50,7 +54,7 @@
 				title = happened = severity = expected = steps = '';
 				area = areas.find((a) => a.general)?.id ?? areas[0]?.id ?? '';
 				// Prefilled from where the app runs; the reporter can change it.
-				environment = typeof navigator === 'undefined' ? '' : navigator.userAgent.slice(0, 200);
+				environment = environmentLine();
 				error = undefined;
 				busy = false;
 				touched = false;
@@ -130,12 +134,11 @@
 				</div>
 				{#if touched && severity === ''}<p class="text-sm/6 text-red-400" role="alert">Choose a severity.</p>{/if}
 			</fieldset>
-			{#if areas.length > 1}
-				<div class="space-y-2">
-					<Label for="bug-area">Area</Label>
-					<select id="bug-area" bind:value={area} disabled={busy} class={field}>{#each areas as a (a.id)}<option value={a.id}>{a.name}</option>{/each}</select>
-				</div>
-			{/if}
+			<div class="space-y-2">
+				<Label for="bug-area">Area</Label>
+				<select id="bug-area" bind:value={area} disabled={busy} class={field}>{#each areas as a (a.id)}<option value={a.id}>{a.name}</option>{/each}</select>
+				<p class="text-xs/5 text-gray-400" data-testid="goes-to">Goes to: {triager}, who triages new bugs.</p>
+			</div>
 			<div class="space-y-2">
 				<Label for="bug-expected">Expected <span class="font-normal text-gray-400">(optional)</span></Label>
 				<textarea id="bug-expected" bind:value={expected} rows="2" disabled={busy} class={field}></textarea>
