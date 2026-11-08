@@ -24,7 +24,9 @@ mod time;
 mod ulid;
 
 pub use error::{NameError, OfficeError};
-pub use key::{InMemoryKeys, Key, KeyError, KeyProvider};
+#[cfg(any(test, feature = "dev-keys"))]
+pub use key::InMemoryKeys;
+pub use key::{Key, KeyError, KeyProvider};
 pub use model::{OfficeInfo, Organization};
 pub use name::MAX_NAME_CHARS;
 pub use office::Office;

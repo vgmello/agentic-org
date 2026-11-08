@@ -1,14 +1,21 @@
 //! The key that encrypts the office database, and where it is kept.
 //!
 //! `org-office` never talks to a keychain: the server binary supplies a [`KeyProvider`]
-//! (the macOS Keychain in production). Tests supply [`InMemoryKeys`].
+//! (the macOS Keychain in production). Tests supply `InMemoryKeys`, which exists only in
+//! test builds and with the `dev-keys` feature (off by default), so it can't reach a release.
 
-use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
-use std::sync::Mutex;
 
 use crate::ulid;
+
+#[cfg(any(test, feature = "dev-keys"))]
+pub use self::in_memory::InMemoryKeys;
+
+// A release build (no debug assertions) must not carry in-memory keys, even if some crate
+// in the workspace turns the feature on and Cargo unifies it into the server's build.
+#[cfg(all(feature = "dev-keys", not(debug_assertions)))]
+compile_error!("the `dev-keys` feature (InMemoryKeys) must not be enabled in release builds");
 
 /// A 256-bit database key. `Debug` never prints it, and there is no `Display`.
 /// Its memory is not wiped on drop; the key is needed for as long as the office runs.
@@ -39,7 +46,7 @@ impl fmt::Debug for Key {
 pub type KeyError = Box<dyn Error + Send + Sync>;
 
 /// Where an office's key lives between runs. A dumb store: the office decides when to
-/// create a key, so a provider never invents one.
+/// create a key (only `Office::create` does), so a provider never invents one.
 ///
 /// Errors must not contain the key.
 pub trait KeyProvider {
@@ -51,43 +58,53 @@ pub trait KeyProvider {
     fn store(&self, office_id: &str, key: &Key) -> Result<(), KeyError>;
 }
 
-/// Keeps keys in memory only. **For tests and dev**: nothing survives the process, so a
-/// database it encrypted can't be reopened by a later process, unless built with
-/// [`InMemoryKeys::fixed`].
-#[derive(Default)]
-pub struct InMemoryKeys {
-    fixed: Option<Key>,
-    saved: Mutex<HashMap<String, Key>>,
-}
+#[cfg(any(test, feature = "dev-keys"))]
+mod in_memory {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
 
-impl InMemoryKeys {
-    pub fn new() -> Self {
-        Self::default()
+    use super::{Key, KeyError, KeyProvider};
+
+    /// Keeps keys in memory only. **For tests and dev**: nothing survives the process, so a
+    /// database it encrypted can't be reopened by a later process, unless built with
+    /// [`InMemoryKeys::fixed`]. Not compiled into release builds (see the module docs).
+    #[derive(Default)]
+    pub struct InMemoryKeys {
+        fixed: Option<Key>,
+        saved: Mutex<HashMap<String, Key>>,
     }
 
-    /// Answers `key` for every office, so separate processes agree. Never use it for real data.
-    pub fn fixed(key: Key) -> Self {
-        Self {
-            fixed: Some(key),
-            saved: Mutex::default(),
+    impl InMemoryKeys {
+        pub fn new() -> Self {
+            Self::default()
+        }
+
+        /// Answers `key` for every office, so separate processes agree. Never use it for real data.
+        /// It holds a key for every office id, so `Office::create` refuses to use it
+        /// (`KeyExists`); it is for opening a database already encrypted with `key`.
+        pub fn fixed(key: Key) -> Self {
+            Self {
+                fixed: Some(key),
+                saved: Mutex::default(),
+            }
+        }
+
+        fn saved(&self) -> std::sync::MutexGuard<'_, HashMap<String, Key>> {
+            self.saved
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
         }
     }
 
-    fn saved(&self) -> std::sync::MutexGuard<'_, HashMap<String, Key>> {
-        self.saved
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-}
+    impl KeyProvider for InMemoryKeys {
+        fn load(&self, office_id: &str) -> Result<Option<Key>, KeyError> {
+            Ok(self.saved().get(office_id).cloned().or(self.fixed.clone()))
+        }
 
-impl KeyProvider for InMemoryKeys {
-    fn load(&self, office_id: &str) -> Result<Option<Key>, KeyError> {
-        Ok(self.saved().get(office_id).cloned().or(self.fixed.clone()))
-    }
-
-    fn store(&self, office_id: &str, key: &Key) -> Result<(), KeyError> {
-        self.saved().insert(office_id.to_owned(), key.clone());
-        Ok(())
+        fn store(&self, office_id: &str, key: &Key) -> Result<(), KeyError> {
+            self.saved().insert(office_id.to_owned(), key.clone());
+            Ok(())
+        }
     }
 }
 

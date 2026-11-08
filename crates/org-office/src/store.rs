@@ -17,7 +17,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-use rusqlite::{Connection, TransactionBehavior};
+use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 
 use crate::error::OfficeError;
 use crate::key::Key;
@@ -48,6 +48,16 @@ struct WriteJob {
 /// One go at a request, inside its savepoint.
 type Attempt = dyn FnMut(&Connection) -> Result<Option<Undo>, OfficeError> + Send;
 
+/// Whether `Store::open` may make the database, or must find one already there.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Opening {
+    /// A new office: the database file and schema are created.
+    New,
+    /// An existing office: a missing file or one without our schema is refused, and nothing
+    /// is created in its place.
+    Existing,
+}
+
 pub(crate) struct Store {
     /// `None` only while dropping.
     jobs: Option<mpsc::Sender<WriteJob>>,
@@ -58,21 +68,33 @@ pub(crate) struct Store {
 }
 
 impl Store {
-    /// Opens (creating on first use) the encrypted registry at `db_path`, which must be
-    /// absolute, with `key`, and returns it with this office's identity. `office_id` is the
-    /// id the office already holds; a database that belongs to another office is refused.
-    /// The caller must hold the office lock: the store assumes it is the only process
-    /// touching the database.
+    /// Opens the encrypted registry at `db_path`, which must be absolute, with `key`, and
+    /// returns it with this office's identity. `Opening::New` creates the file and schema;
+    /// `Opening::Existing` never does. `office_id` is the id the office already holds; a
+    /// database that belongs to another office is refused. The caller must hold the office
+    /// lock: the store assumes it is the only process touching the database.
     pub(crate) fn open(
         db_path: &Path,
         key: &Key,
         office_id: &str,
+        opening: Opening,
     ) -> Result<(Self, OfficeInfo), OfficeError> {
         if !db_path.is_absolute() {
             return Err(failure("the database path must be absolute"));
         }
-        // SQLite gives new -wal/-shm files the main file's mode, so make that one 0600 first.
-        drop(private_file(db_path).map_err(OfficeError::storage)?);
+        match opening {
+            // SQLite gives new -wal/-shm files the main file's mode, so make that one 0600 first.
+            Opening::New => drop(private_file(db_path).map_err(OfficeError::storage)?),
+            Opening::Existing => {
+                // SQLite deletes a WAL beside an empty main file on the first read, which
+                // would destroy whatever that log still holds: don't let it look.
+                let metadata = std::fs::metadata(db_path).map_err(OfficeError::storage)?;
+                if !metadata.is_file() || metadata.len() == 0 {
+                    return Err(failure("the database file is missing or empty"));
+                }
+                tighten_file_if_present(db_path).map_err(OfficeError::storage)?
+            }
+        }
         // Leftover -wal/-shm files from an earlier run keep whatever mode they had.
         for suffix in ["-wal", "-shm"] {
             let mut sidecar = db_path.as_os_str().to_owned();
@@ -80,7 +102,17 @@ impl Store {
             tighten_file_if_present(Path::new(&sidecar)).map_err(OfficeError::storage)?;
         }
 
-        let mut writer = connect(db_path, key)?;
+        let mut writer = connect(db_path, key, opening == Opening::New)?;
+        if opening == Opening::Existing {
+            // Before anything writes (switching to WAL would write a header): a file without
+            // our schema is not an office, and must not silently become a new, empty one.
+            let version: i64 = writer
+                .pragma_query_value(None, "user_version", |row| row.get(0))
+                .map_err(OfficeError::storage)?;
+            if version < 1 {
+                return Err(failure("the database holds no office schema"));
+            }
+        }
         let journal_mode: String = writer
             .pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))
             .map_err(OfficeError::storage)?;
@@ -232,7 +264,7 @@ impl Store {
         let db = match idle {
             Some(db) => db,
             None => {
-                let db = connect(&self.db_path, &self.key)?;
+                let db = connect(&self.db_path, &self.key, false)?;
                 db.pragma_update(None, "query_only", true)
                     .map_err(OfficeError::storage)?;
                 db
@@ -343,7 +375,7 @@ fn attempt_batch(db: &mut Connection, jobs: &mut Vec<WriteJob>) -> BatchResult {
                         Ok(()) => Ok(undo),
                         Err(cause) => {
                             if let Some(undo) = undo {
-                                undo();
+                                run_undo(undo);
                             }
                             Err(OfficeError::storage(cause))
                         }
@@ -354,7 +386,7 @@ fn attempt_batch(db: &mut Connection, jobs: &mut Vec<WriteJob>) -> BatchResult {
                         Ok(()) => Err(error),
                         Err(_) => {
                             for undo in outcomes.drain(..).flatten().flatten() {
-                                undo();
+                                run_undo(undo);
                             }
                             return BatchResult::Aborted {
                                 culprit: index,
@@ -371,7 +403,7 @@ fn attempt_batch(db: &mut Connection, jobs: &mut Vec<WriteJob>) -> BatchResult {
                 // SQLite ended the whole transaction: undo what the earlier requests did
                 // outside it, and let the caller run the others again.
                 for undo in outcomes.drain(..).flatten().flatten() {
-                    undo();
+                    run_undo(undo);
                 }
                 return BatchResult::Aborted {
                     culprit: index,
@@ -398,7 +430,7 @@ fn attempt_batch(db: &mut Connection, jobs: &mut Vec<WriteJob>) -> BatchResult {
                 match outcome {
                     Ok(undo) => {
                         if let Some(undo) = undo {
-                            undo();
+                            run_undo(undo);
                         }
                         (job.reply)(Err(failure(reason.clone())));
                     }
@@ -408,6 +440,17 @@ fn attempt_batch(db: &mut Connection, jobs: &mut Vec<WriteJob>) -> BatchResult {
         }
     }
     BatchResult::Finished
+}
+
+/// Runs `undo`, containing a panic so it can't take down the writer thread (and with it
+/// every later write). A panicking undo leaves its effect behind. This log line leaves out
+/// the panic's message, which could carry paths or data; the process's panic hook (the
+/// server binary's to set) decides what the panic itself prints. Relies on unwinding: a
+/// `panic = "abort"` profile would make this moot.
+fn run_undo(undo: Undo) {
+    if catch_unwind(AssertUnwindSafe(undo)).is_err() {
+        eprintln!("org-office: an undo panicked; its effect may remain (continuing)");
+    }
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -429,20 +472,69 @@ fn panicked(panic: Box<dyn Any + Send>) -> OfficeError {
     failure(format!("the storage writer panicked: {reason}"))
 }
 
-/// The key as SQLCipher takes a raw key: `x'<64 hex digits>'`.
-fn raw_key_pragma(key: &Key) -> String {
-    let hex: String = key.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
-    format!("PRAGMA key = \"x'{hex}'\";")
+/// The statement that hands SQLCipher a raw key: `PRAGMA key = "x'<64 hex digits>'";`.
+/// It holds the key, so its bytes are overwritten when it is dropped. It is built in one
+/// allocation of exactly its size, so no partial copy is left behind by a reallocation.
+/// No `Debug`: it must never be printed. Best effort, and only this copy is wiped: SQLite
+/// keeps its own copy of the statement text while preparing it and frees it without zeroing
+/// (SQLCipher's `cipher_memory_security` is off), and if preparing fails, rusqlite's error
+/// carries a copy that is dropped unwiped.
+struct KeyPragma(String);
+
+impl KeyPragma {
+    const PREFIX: &'static str = "PRAGMA key = \"x'";
+    const SUFFIX: &'static str = "'\";";
+
+    fn new(key: &Key) -> Self {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let bytes = key.as_bytes();
+        let mut text =
+            String::with_capacity(Self::PREFIX.len() + bytes.len() * 2 + Self::SUFFIX.len());
+        text.push_str(Self::PREFIX);
+        for byte in bytes {
+            text.push(char::from(HEX[usize::from(byte >> 4)]));
+            text.push(char::from(HEX[usize::from(byte & 0x0f)]));
+        }
+        text.push_str(Self::SUFFIX);
+        Self(text)
+    }
+
+    fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
-/// Opens a connection to the encrypted database and proves the key works.
-fn connect(db_path: &Path, key: &Key) -> Result<Connection, OfficeError> {
+impl Drop for KeyPragma {
+    fn drop(&mut self) {
+        wipe(&mut self.0);
+    }
+}
+
+/// Overwrites `text`'s bytes with zeros in place (same buffer, same length). Safe code: the
+/// buffer is taken out as bytes, zeroed, and put back (zeros are valid UTF-8). `black_box`
+/// keeps the compiler from dropping the writes as dead stores (best effort, as its docs say).
+fn wipe(text: &mut String) {
+    let mut bytes = std::mem::take(text).into_bytes();
+    bytes.fill(0);
+    *text = String::from_utf8(bytes).expect("zero bytes are valid UTF-8");
+    std::hint::black_box(&*text);
+}
+
+/// Opens a connection to the encrypted database and proves the key works. Only with
+/// `create` may SQLite make the file if it is missing.
+fn connect(db_path: &Path, key: &Key, create: bool) -> Result<Connection, OfficeError> {
+    let mut flags = OpenFlags::default();
+    if !create {
+        flags.remove(OpenFlags::SQLITE_OPEN_CREATE);
+    }
     // `db_path` is absolute, so SQLite can't read it as a `file:` URI.
-    let db = Connection::open(db_path).map_err(OfficeError::storage)?;
+    let db = Connection::open_with_flags(db_path, flags).map_err(OfficeError::storage)?;
     // A raw key skips the passphrase KDF, so opening a connection is cheap. If this fails,
     // say nothing about why: the statement holds the key and rusqlite's errors quote SQL.
-    db.execute_batch(&raw_key_pragma(key))
-        .map_err(|_| failure("could not apply the database key"))?;
+    let pragma = KeyPragma::new(key);
+    let applied = db.execute_batch(pragma.as_str());
+    drop(pragma);
+    applied.map_err(|_| failure("could not apply the database key"))?;
     // Before the first read, so a busy database makes it wait instead of failing.
     db.pragma_update(None, "busy_timeout", 5_000)
         .map_err(OfficeError::storage)?;
@@ -553,7 +645,7 @@ mod tests {
     }
 
     fn open_in(dir: &TempDir) -> Store {
-        Store::open(&dir.path().join("office.db"), &key(), ID)
+        Store::open(&dir.path().join("office.db"), &key(), ID, Opening::New)
             .unwrap()
             .0
     }
@@ -568,29 +660,121 @@ mod tests {
         let path = dir.path().join("office.db");
         drop(open_in(&dir));
         let raw = Connection::open(&path).unwrap();
-        raw.execute_batch(&raw_key_pragma(&key())).unwrap();
+        raw.execute_batch(KeyPragma::new(&key()).as_str()).unwrap();
         raw.pragma_update(None, "user_version", SCHEMA_VERSION + 1)
             .unwrap();
         drop(raw);
         assert!(matches!(
-            Store::open(&path, &key(), ID),
+            Store::open(&path, &key(), ID, Opening::New),
             Err(OfficeError::Storage(_))
         ));
     }
 
     #[test]
+    fn opening_an_existing_database_never_creates_one() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("office.db");
+
+        // No file: refused, and none is made.
+        assert!(Store::open(&path, &key(), ID, Opening::Existing).is_err());
+        assert!(!path.exists(), "a database file was created");
+
+        // An empty file with a WAL beside it: refused, and neither file is touched.
+        std::fs::write(&path, b"").unwrap();
+        let wal = dir.path().join("office.db-wal");
+        std::fs::write(&wal, b"whatever the log holds").unwrap();
+        assert!(matches!(
+            Store::open(&path, &key(), ID, Opening::Existing),
+            Err(OfficeError::Storage(_))
+        ));
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().len(),
+            0,
+            "it was written to"
+        );
+        assert_eq!(std::fs::read(&wal).unwrap(), b"whatever the log holds");
+    }
+
+    #[test]
+    fn opening_an_existing_database_refuses_one_without_the_schema() {
+        // What a crash between switching to WAL and the first migration leaves: a keyed
+        // database file with no schema.
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("office.db");
+        {
+            let raw = Connection::open(&path).unwrap();
+            raw.execute_batch(KeyPragma::new(&key()).as_str()).unwrap();
+            let _: String = raw
+                .pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))
+                .unwrap();
+        }
+        let before = std::fs::read(&path).unwrap();
+        assert!(!before.is_empty());
+
+        assert!(matches!(
+            Store::open(&path, &key(), ID, Opening::Existing),
+            Err(OfficeError::Storage(_))
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), before, "it was changed");
+    }
+
+    #[test]
+    fn opening_an_existing_database_finds_its_data() {
+        let dir = TempDir::new().unwrap();
+        let store = open_in(&dir);
+        let name = OrganizationName::parse("Acme").unwrap();
+        store.create_organization(&name, |_| Ok(no_undo())).unwrap();
+        drop(store);
+
+        let (store, info) =
+            Store::open(&dir.path().join("office.db"), &key(), ID, Opening::Existing).unwrap();
+        assert_eq!(info.id, ID);
+        assert_eq!(store.list_organizations().unwrap().len(), 1);
+    }
+
+    #[test]
     fn refuses_a_relative_database_path() {
         // A relative path starting with `file:` would be read by SQLite as a URI.
-        let error = Store::open(Path::new("file:office.db?cache=shared"), &key(), ID);
+        let error = Store::open(
+            Path::new("file:office.db?cache=shared"),
+            &key(),
+            ID,
+            Opening::New,
+        );
         assert!(matches!(error, Err(OfficeError::Storage(_))));
     }
 
     #[test]
-    fn raw_key_pragma_is_64_hex_digits_in_sqlcipher_form() {
+    fn key_pragma_is_64_hex_digits_in_sqlcipher_form() {
+        let mut bytes = [0xAB; 32];
+        bytes[0] = 0x01;
+        bytes[31] = 0xF0;
         assert_eq!(
-            raw_key_pragma(&Key::from_bytes([0xAB; 32])),
-            format!("PRAGMA key = \"x'{}'\";", "ab".repeat(32))
+            KeyPragma::new(&Key::from_bytes(bytes)).as_str(),
+            format!("PRAGMA key = \"x'01{}f0'\";", "ab".repeat(30))
         );
+    }
+
+    #[test]
+    fn key_pragma_fits_its_allocation_exactly() {
+        let pragma = KeyPragma::new(&key());
+        assert_eq!(pragma.0.len(), pragma.0.capacity(), "it was reallocated");
+    }
+
+    #[test]
+    fn wipe_zeroes_the_same_buffer_in_place() {
+        let mut text = KeyPragma::new(&key()).as_str().to_owned();
+        let (pointer, len) = (text.as_ptr(), text.len());
+
+        wipe(&mut text);
+
+        assert_eq!(
+            text.as_ptr(),
+            pointer,
+            "a copy was zeroed, not the original"
+        );
+        assert_eq!(text.len(), len);
+        assert!(text.bytes().all(|b| b == 0));
     }
 
     #[test]
@@ -600,7 +784,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("notadb");
         std::fs::write(&path, vec![0x55u8; 8192]).unwrap();
-        let error = Store::open(&path, &key(), ID).err().unwrap();
+        let error = Store::open(&path, &key(), ID, Opening::New).err().unwrap();
         let text = format!("{error:?} {error} {:?}", std::error::Error::source(&error));
         assert!(
             !text.contains(&"07".repeat(32)),
@@ -644,7 +828,7 @@ mod tests {
         drop(open_in(&dir));
         let path = dir.path().join("office.db");
         assert!(matches!(
-            Store::open(&path, &Key::from_bytes([8; 32]), ID),
+            Store::open(&path, &Key::from_bytes([8; 32]), ID, Opening::New),
             Err(OfficeError::Storage(_))
         ));
 
@@ -654,7 +838,7 @@ mod tests {
             .execute_batch("CREATE TABLE t (x)")
             .unwrap();
         assert!(matches!(
-            Store::open(&plain, &key(), ID),
+            Store::open(&plain, &key(), ID, Opening::New),
             Err(OfficeError::Storage(_))
         ));
     }
@@ -667,6 +851,7 @@ mod tests {
             &dir.path().join("office.db"),
             &key(),
             "SOMEONEELSESOFFICE000000",
+            Opening::New,
         );
         assert!(matches!(other, Err(OfficeError::Storage(_))));
     }
@@ -911,6 +1096,34 @@ mod tests {
         let name = OrganizationName::parse("After").unwrap();
         store.create_organization(&name, folders.effect()).unwrap();
         assert_eq!(registered_ids(&store), folders.ids());
+    }
+
+    #[test]
+    fn a_panicking_undo_after_a_failed_commit_does_not_stop_the_writer() {
+        let dir = TempDir::new().unwrap();
+        let store = open_in(&dir);
+        // Only COMMIT fails (a deferred foreign key), so the request's undo runs.
+        store.run_sql_for_test(
+            "CREATE TABLE parent (id INTEGER PRIMARY KEY);
+             CREATE TABLE child (
+                 parent_id INTEGER REFERENCES parent (id) DEFERRABLE INITIALLY DEFERRED
+             );
+             CREATE TRIGGER violate AFTER INSERT ON organizations
+             BEGIN INSERT INTO child VALUES (999); END;",
+        );
+        let name = OrganizationName::parse("Acme").unwrap();
+        let panicking: fn(&Organization) -> std::io::Result<Undo> =
+            |_| Ok(Box::new(|| panic!("undo failed")));
+
+        assert!(matches!(
+            store.create_organization(&name, panicking),
+            Err(OfficeError::Storage(_))
+        ));
+
+        // The writer thread survived the panic and still takes writes.
+        store.run_sql_for_test("DROP TRIGGER violate;");
+        store.create_organization(&name, |_| Ok(no_undo())).unwrap();
+        assert_eq!(registered_ids(&store).len(), 1);
     }
 
     #[test]
