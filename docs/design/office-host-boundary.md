@@ -1,7 +1,10 @@
 # org-office-host ↔ org-office-server: the boundary (phase 1, HQ only)
 
-Status: **approved by ada** 2026-11-08 and **agreed by server-dev** (with `--discard`), updated for ADR-0003 §2.1 (the app token on every start) and the code review of `org-office-launch` (rev 2, 2026-11-08). The contract crate `crates/org-office-launch` is the reference for exact shapes. It implements
+Status: **approved by ada** 2026-11-08, and **agreed by River** (the host) **and server-dev** (the server), `--discard` included. Updated for ADR-0003 §2.1 (the app token on every start) and the code review of `org-office-launch` (rev 2, 2026-11-08). It implements
 `docs/design/offices-hq-and-satellites.md` ("Processes on one Mac") and the `org-proto` host calls.
+The contract crate `crates/org-office-launch` holds the exact shapes. **This design is the reference:**
+where this design and `crates/org-office-launch` differ, this design wins until River's next commit
+updates the crate.
 
 ## 1. Who owns what on disk
 
@@ -9,7 +12,7 @@ Status: **approved by ada** 2026-11-08 and **agreed by server-dev** (with `--dis
 
 | Path | Written by | Read by |
 | --- | --- | --- |
-| `<home>/host.lock` | host: **the catalog lock**, an exclusive `flock` held for the host's whole life. A second host on the same home exits at once. Only the host creates offices, so creates are serialized under it (plus an in-process mutex). | host |
+| `<home>/host.lock` | host: **the single-host lock**, an exclusive `flock` held for the host's whole life. A second host on the same home exits at once, so one host creates every office. Inside it, the **catalog mutex** (in-process) guards only a create's name check and reservation (see 4). | host |
 | `<home>/host.sock` | host (0600) | app, `org-agent` |
 | `<home>/run/<handle>.sock` | server (0600) | app, `org-agent` (address from the host's `office.list`) |
 | `<home>/offices/<office-id>/` | **server** creates it (0700) on `--create` | host lists the folder names |
@@ -17,22 +20,37 @@ Status: **approved by ada** 2026-11-08 and **agreed by server-dev** (with `--dis
 | `…/office.json` | server, **written last** on `--create` (tmp + rename + fsync): this is the "stored" marker | host (the catalog) |
 | `…/org.db`, `office.db`, `workspace/` | server | server |
 
-**The catalog** = the folders under `offices/` named by a plain id that hold a valid `office.json`. A
-folder without one is an unfinished create: the host ignores it and, at startup or after that create
-failed, runs `org-office-server --discard <id>`. The server takes the lock (same wait), and removes the
-folder and its Keychain key only if the office never finished: it refuses (`already_exists`) a folder
-with `office.json` **or with databases that hold a committed organization**, so a real office that lost
-its `office.json` is never destroyed automatically; the host logs it and leaves it for a person.
+**The catalog** = the folders under `offices/` named by a plain id that hold a valid `office.json`.
+The host looks only at folders named by a plain id; any other folder (such as `.refused`) is never
+started or discarded.
+- **No `office.json`:** an unfinished create. The host never starts it. At startup, or after that create
+  failed, it runs `org-office-server --discard <id>`. The server takes the lock (same wait), and removes
+  the folder and its Keychain key only if the office never finished:
+  - it refuses (`already_exists`) a folder with `office.json`, or with databases that hold a committed
+    organization;
+  - it deletes only when no database file exists, or when it opens them and they hold no committed
+    organization;
+  - a database it can't open or check (the key is missing, the Keychain refuses access, SQLCipher
+    fails) means it refuses (`storage_error`).
 
-**A refused create:** if a server reports a `created` office other than the one asked for (id,
-organization, name or role), the host stops it and moves the folder of the id **it asked for** to
-`offices/.refused/<id>` (out of the catalog; nothing deleted, the key stays). It never touches a folder
-named by a different id the server reported; it only logs it.
+  On a refusal the host logs it and leaves the folder for a person. So a real office that lost its
+  `office.json` is never destroyed automatically.
+- **An unreadable or invalid `office.json`** (other than a mismatched id, below): the host logs it and
+  leaves the folder alone. It neither starts it nor runs `--discard`.
+- **An `office.json` whose `office_id` isn't the folder's name:** the host refuses to start it and moves
+  the folder to `offices/.refused/<id>`, `<id>` being the folder's name (nothing deleted, the key stays).
+
+**A refused create:** if a server reports a `created` office other than the one asked for (office id,
+`org_id`, `org_name`, `office_name` or role), the host stops it and moves the folder of the id **it
+asked for** to `offices/.refused/<id>` (out of the catalog; nothing deleted, the key stays). It never
+touches a folder named by a different id the server reported; it only logs it.
 
 **Lock-held-means-running:** an office's `office.lock` is held if and only if a server is running
 that office. The server **waits** for the lock at start (blocking, up to 10 s, then `failed: in_use`),
 so after a crash or a host restart, a slow-exiting old server and its replacement never overlap. The
 host never takes an office's lock and never decides an office is stopped from a lock probe. Status comes from supervision (see 4).
+The `office.lock` fd is close-on-exec, like every fd the server opens (see 2): a child that inherited it
+would keep the lock after the server died.
 
 ### `office.json` (schema v1, the server writes it, the host reads it)
 ```json
@@ -59,6 +77,11 @@ org-office-server --discard <id>    # remove an unfinished office and its key, t
   process group.
 - **stdout carries the server's control lines to the host, and nothing else.** Logs go to stderr,
   which the host sends to `<home>/logs/<handle>.log` (`logs/` 0700, files 0600; rotate at 10 MiB, keep one old file, so a crash loop can't fill the disk).
+- **No child can read the host's lines or write a control line.** The guarantee is the fd swap: first
+  thing at startup, before any thread or child starts, the server dups fds 0 and 1 to new close-on-exec
+  fds, which carry the pipe, and reopens 0 and 1 on `/dev/null`. One spawn helper (`org-supervise`) is
+  a convention on top. Every other fd the server opens is close-on-exec too, the `office.lock` fd above
+  all. The host opens its own fds close-on-exec too, so no child holds `host.lock`.
 - Framing: JSON, one object per line, at most 1 MiB per line (`org_proto::frame`). Every message has `"v":1`.
 
 ## 3. The pipe protocol (v1)
@@ -99,15 +122,15 @@ with the same rule (one implementation, see 6). Later lines are reserved: the se
 | `unsupported_version` | `v` unknown | fatal: `unavailable` |
 | `invalid_name` | name breaks the rule | create fails: `invalid_name` |
 | `already_exists` | `--create` but the folder or office.json exists; `--discard` of an office with office.json or a committed organization | create fails: `already_exists`; discard: log, leave it |
-| `key_missing` | databases exist, key doesn't (ADR-0002) | fatal: `unavailable`, no restart |
+| `key_missing` | databases exist, key doesn't (ADR-0002); `--discard` says `storage_error` instead | fatal: `unavailable`, no restart |
 | `in_use` | lock not acquired within 10 s | restart with backoff |
-| `storage_error` | anything else (I/O, Keychain, SQLCipher) | restart with backoff (create: fails with `storage_error`) |
+| `storage_error` | anything else (I/O, Keychain, SQLCipher); `--discard` of a folder whose databases it can't open or check | restart with backoff (create: fails with `storage_error`; discard: log, leave it) |
 
 - A message is for people: never the key, paths or SQL. Unknown codes count as `storage_error`.
-- **On a failed `--create`, the server deletes the Keychain key it made before it exits** (the host can't: the item's ACL is tied to the server). A crash part-way through can still leave an orphan item; that's accepted for now.
+- **On a failed `--create`, the server deletes the Keychain key it made before it exits** (the host can't: the item's ACL is tied to the server). A crash part-way through can still leave an orphan item; the host's `--discard` then removes it with the folder (rule in 1).
 - EOF on stdout with no `failed` line, or exit before `ready`, means a crash: restart with backoff.
 
-## 4. What the host does (my side, for reference)
+## 4. What the host does
 - **Status per office** (`OfficeInfo.status`): `starting` (spawned, no `ready` yet) → `active`
   (`ready`, child alive) → `offline` (exited, restart pending) → `unavailable` (fatal code, or
   restarts given up). The `ready` wait is 30 s (Keychain and the first SQLCipher open can be slow), then kill + backoff.
@@ -115,10 +138,12 @@ with the same rule (one implementation, see 6). Later lines are reserved: the se
   the host restarts.
 - **Shutdown** (SIGTERM from launchd at logout, or the host exiting): close every child's stdin,
   wait up to 10 s, then SIGKILL what's left.
-- **Create:** under the catalog mutex: check the name and its uniqueness, make the org and office ids
-  (re-roll on a handle clash), spawn `--create`, wait for `created` (or `failed`) for at most 30 s.
-  On failure, remove the unfinished folder (rule in 1), return the error and emit nothing. On success,
-  emit `organization.created` on `subscribe`.
+- **Create:** under the catalog mutex, and only for this step: check the name and its uniqueness
+  (counting names reserved by creates in flight), make the org and office ids (re-roll on a handle
+  clash), reserve the name and handle, then release the mutex. Outside it: spawn `--create` and wait for
+  `created` (or `failed`) for at most 30 s. On failure, run `--discard` (rule in 1), return the error
+  and emit nothing. On success, emit `organization.created` on `subscribe`. The reservation ends when
+  the create fails, or once the new office is in the catalog.
 - **host.sock:** 0600 and `run/` 0700. On accept, the host also checks the peer's uid (`getpeereid`) is its own (defence in depth).
 - **Fatal status:** `unavailable` lasts until the host restarts (phase 1). A manual "retry" call can come later.
 - **Socket length:** every office socket path in a home has the same length (12-character handles),
@@ -138,10 +163,10 @@ with the same rule (one implementation, see 6). Later lines are reserved: the se
   `org-office-server`'s library (an app doesn't depend on an app).
 
 ## 6. Decisions (ada, 2026-11-08)
-1. **The pipe protocol and `office.json` types live in a new contract crate, `crates/org-office-launch`**, not `org-proto` (the client contract stays small). It depends only on `org-proto` and serde. ada owns it as a contract. River writes the first version, and ada reviews every commit that touches it. It's additive and versioned (`"v":1`; unknown ops, events and fields are ignored; unknown failed codes count as `storage_error`).
+1. **The pipe protocol and `office.json` types live in a new contract crate, `crates/org-office-launch`**, not `org-proto` (the client contract stays small). It depends only on `org-proto`, `serde` and `serde_json`. ada owns it as a contract. River writes the first version, and ada reviews every commit that touches it. It's additive and versioned (`"v":1`; unknown ops, events and fields are ignored; unknown failed codes count as `storage_error`).
 2. **The name rule is `org_proto::OrganizationName`** (ada, branch `ada/proto-org-name`): `parse(&str) -> Result<_, NameError>`, `.as_str()` (trimmed), `.key()` (Unicode lowercase of the trimmed name, no normalization). `NameError` is `Empty | TooLong | ControlChar` with `.message()`, mapping to `invalid_name`.
 3. **The minimal listener** lives in one module (`service/listener.rs`), uses only `org_proto::frame` and the typed `Call`/`EventKind`, and grows no router. It's swapped for server-dev's shared crate once that's extracted.
 4. The design's "`--create --role hq`" (line 35) is wrong. Only `--create` goes on the command line. ada fixes the wording.
-5. **`--discard`** (server-dev, agreed 2026-11-08) replaces the host removing unfinished folders itself, so orphan Keychain keys are removed too. It never destroys an office that finished (office.json or a committed organization).
+5. **`--discard`** (server-dev's proposal, agreed by River and ada 2026-11-08) replaces the host removing unfinished folders itself, so orphan Keychain keys are removed too. It never destroys an office that finished (office.json or a committed organization), or one it can't check.
 6. **The app token** (ADR-0003 §2.1, ada 2026-11-08) is ephemeral and goes in the first line of every start.
 7. **Refused creates are quarantined**, not deleted: the requested id's folder moves to `offices/.refused/` (from the review of `org-office-launch` @ 26ed861).
