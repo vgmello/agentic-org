@@ -90,6 +90,8 @@ export const API_ERROR_CODES = [
 	'unknown_recipient',
 	'not_authorized',
 	'unavailable',
+	// ada's W7 work contract (docs/design/tasks-projects-docs.md §4.4): required checklist steps are not done.
+	'checklist_incomplete',
 	'unknown'
 ] as const;
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];

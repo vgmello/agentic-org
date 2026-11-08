@@ -56,7 +56,7 @@ test('PROJ-2: removing a team needs no confirmation while others remain; the las
 	await expect(row(page, 'beacon').getByTestId('no-team')).toBeVisible();
 });
 
-test('PROJ-3: a project page shows its name, teams and leads, and the tabs that come later are disabled', async ({ page }) => {
+test('PROJ-3: a project page shows its name, teams and leads, and Tasks is a tab and the tabs that come later are disabled', async ({ page }) => {
 	await open(page);
 	await row(page, 'beacon').getByRole('link', { name: 'Beacon' }).click();
 	await expect(page).toHaveURL(/\/projects\/beacon$/);
@@ -64,7 +64,8 @@ test('PROJ-3: a project page shows its name, teams and leads, and the tabs that 
 	await expect(page.getByRole('link', { name: 'Projects' }).first()).toBeVisible(); // breadcrumb
 	await expect(page.getByTestId('leads-line')).toHaveText('Leads: Juno Park (Design), Noor Haddad (Web)');
 	await expect(page.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
-	for (const name of ['Tasks', 'Bugs', 'Docs']) await expect(page.getByRole('tab', { name })).toHaveAttribute('aria-disabled', 'true');
+	await expect(page.getByRole('tab', { name: 'Tasks' })).toBeEnabled();
+	for (const name of ['Bugs', 'Docs']) await expect(page.getByRole('tab', { name })).toHaveAttribute('aria-disabled', 'true');
 	await shot(page, 'project-page');
 	// Teams are editable from the page too.
 	await page.getByRole('button', { name: 'Remove Beacon from Web' }).click();
