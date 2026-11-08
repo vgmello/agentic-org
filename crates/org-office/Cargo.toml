@@ -8,3 +8,6 @@ publish.workspace = true
 
 [dependencies]
 org-proto = { path = "../org-proto" }
+
+[dev-dependencies]
+serde_json.workspace = true
