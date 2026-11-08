@@ -796,9 +796,11 @@ impl Spool {
     }
 
     /// The member's profile, or its default when there is none or it is malformed (not a
-    /// regular file, too large, not valid JSON for a profile). `Err` only on a real I/O error
-    /// reading it.
-    fn read_profile(&self, agent: &str) -> io::Result<MemberProfile> {
+    /// regular file, too large, not valid JSON for a profile). `Err` on any I/O error reading
+    /// it (permissions included), so a caller that writes the profile back
+    /// ([`Spool::edit_profile`]) never replaces an unreadable one with defaults; readers that
+    /// only display it use [`Spool::load_profile_unlocked`], which falls back to defaults.
+    pub(crate) fn read_profile(&self, agent: &str) -> io::Result<MemberProfile> {
         let path = self.agent_profile_path(agent);
         if let SpoolFile::Bytes(bytes) = read_spool_file(&path, MAX_ENVELOPE_BYTES)? {
             if let Ok(mut profile) = serde_json::from_slice::<MemberProfile>(&bytes) {

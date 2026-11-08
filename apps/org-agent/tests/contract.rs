@@ -737,6 +737,36 @@ fn errors_come_in_the_order_they_used_to() {
 }
 
 #[test]
+fn a_profile_edit_never_overwrites_an_unreadable_profile() {
+    use std::os::unix::fs::PermissionsExt;
+    extern "C" {
+        fn geteuid() -> u32;
+    }
+    if unsafe { geteuid() } == 0 {
+        return; // root reads a mode-000 file: nothing to test
+    }
+    let env = setup("profile_unreadable");
+    let set = env.run(
+        ME,
+        &["profile", "set", "--kind", "person", "--role", "Lead"],
+    );
+    assert_eq!(set.code, 0, "{}", set.stderr);
+    let path = env.root.join(format!("spool/inbox/{ME}/profile.json"));
+    let before = fs::read(&path).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+    let r = env.run(ME, &["profile", "set", "--team", "core"]);
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(r.code, 4, "an I/O error: {}", r.stderr);
+    assert_eq!(fs::read(&path).unwrap(), before, "the profile is untouched");
+
+    // A malformed one is repaired (defaults plus the edit).
+    fs::write(&path, b"{not json").unwrap();
+    let r = env.run(ME, &["profile", "set", "--team", "core", "--json"]);
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    assert_eq!(json(&r.stdout)["teams"][0]["id"], "core");
+}
+
+#[test]
 fn register_refuses_bad_flags_before_creating_anything() {
     let env = TempOrgHome::new("register_flags");
     for args in [

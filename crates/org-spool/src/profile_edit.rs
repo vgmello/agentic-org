@@ -150,7 +150,9 @@ impl Spool {
     /// `editor` changes `target`'s profile (registering `target` if needed): authorized by
     /// [`authorize_profile_edit`], applied onto the current profile, validated and written.
     /// Load, apply, validate and write all happen under the member's meta lock, so two edits
-    /// of different fields at once both survive.
+    /// of different fields at once both survive. A profile that can't be read (an I/O error)
+    /// fails the edit and is left untouched; a malformed one is replaced (defaults plus the
+    /// edit), as a repair.
     pub fn edit_profile(
         &self,
         editor: &str,
@@ -165,13 +167,13 @@ impl Spool {
             profile
         };
         // Refuse an invalid edit before creating anything (re-checked under the lock).
-        edited(self.load_profile_unlocked(target))
+        edited(self.read_profile(target)?)
             .without_variation_selectors()
             .validate()
             .map_err(SpoolError::InvalidInput)?;
         self.register(target)?;
         self.with_agent_meta_lock(target, || {
-            self.store_profile_unlocked(&edited(self.load_profile_unlocked(target)))
+            self.store_profile_unlocked(&edited(self.read_profile(target)?))
         })
     }
 }
