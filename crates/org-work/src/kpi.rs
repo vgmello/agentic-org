@@ -50,6 +50,8 @@ pub struct TimeTally {
     started: bool,
     any_started: bool,
     rounds: u32,
+    #[serde(default)]
+    deleted: bool,
     last_at_ms: Option<u64>,
     /// The open waiting spans, keyed by `(on_member_id, reason)`.
     spans: BTreeSet<String>,
@@ -69,6 +71,7 @@ impl TimeTally {
             started: false,
             any_started: false,
             rounds: 0,
+            deleted: false,
             last_at_ms: None,
             spans: BTreeSet::new(),
             lead_ms: 0,
@@ -100,7 +103,11 @@ impl TimeTally {
             cycle_ms: t.any_started.then_some(t.cycle_ms),
             waiting_on_owner_ms: t.waiting_ms,
             blocked_ms: t.blocked_ms,
-            rest_ms: t.lead_ms - t.waiting_ms - t.blocked_ms,
+            // Never below zero, even from a corrupt stored tally.
+            rest_ms: t
+                .lead_ms
+                .saturating_sub(t.waiting_ms)
+                .saturating_sub(t.blocked_ms),
             working_ms: None,
             idle_ms: None,
             open: t.in_round,
@@ -117,14 +124,14 @@ impl TimeTally {
             return;
         }
         let d = at - last;
-        self.lead_ms += d;
+        self.lead_ms = self.lead_ms.saturating_add(d);
         if self.started {
-            self.cycle_ms += d;
+            self.cycle_ms = self.cycle_ms.saturating_add(d);
         }
         if self.waiting() {
-            self.waiting_ms += d;
+            self.waiting_ms = self.waiting_ms.saturating_add(d);
         } else if self.kind == ItemKind::Task && self.status == ItemStatus::Blocked {
-            self.blocked_ms += d;
+            self.blocked_ms = self.blocked_ms.saturating_add(d);
         }
         self.last_at_ms = Some(at);
     }
@@ -143,6 +150,14 @@ impl TimeTally {
                 self.in_round = true;
                 self.rounds = 1;
             }
+            // A deleted item stops counting (§2.8), and nothing reopens it.
+            WorkEventKind::Deleted => {
+                self.in_round = false;
+                self.started = false;
+                self.deleted = true;
+                self.spans.clear();
+            }
+            _ if self.deleted => {}
             WorkEventKind::StatusChanged { to, .. } => {
                 let to = *to;
                 if self.in_round && is_terminal(self.kind, to) {

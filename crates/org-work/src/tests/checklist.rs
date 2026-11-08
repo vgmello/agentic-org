@@ -462,3 +462,22 @@ fn an_item_has_at_most_100_steps() {
     let (_, empty) = add(&w, &id, &[], None);
     assert_eq!(w.code(&agent(), empty), ErrorCode::InvalidRequest);
 }
+
+#[test]
+fn making_a_ticked_step_into_a_task_unticks_it_until_the_task_is_completed() {
+    let w = World::new();
+    let (parent, step) = w.task_with_step(true);
+    w.ok(&agent(), w.check(&step, true));
+    let (task, call) = w.make_task(&step);
+    w.ok(&agent(), call);
+    let s = w.step(&parent, &step);
+    assert!(!s.done);
+    assert_eq!((s.checked_by, s.checked_at_ms), (None, None));
+    // The parent's required step guards Done again while the made task is open.
+    let e = w.err(&agent(), WorkCall::TaskSetStatus(w.status(&parent, Done)));
+    assert_eq!(e.code, ErrorCode::ChecklistIncomplete);
+    let mut p = w.status(&task, Done);
+    p.resolution = Some(Resolution::Cancelled);
+    w.ok(&agent(), WorkCall::TaskSetStatus(p));
+    assert!(!w.step(&parent, &step).done);
+}

@@ -312,3 +312,29 @@ fn property_figures_are_the_same_however_the_events_are_batched() {
         assert_eq!(tally.figures(as_of), whole);
     }
 }
+
+#[test]
+fn a_deleted_item_stops_counting() {
+    let events = [
+        ev(T0, WorkEventKind::Created),
+        wait(T0 + HOUR, true),
+        ev(T0 + 2 * HOUR, WorkEventKind::Deleted),
+        // Anything after the delete changes nothing.
+        status(T0 + 3 * HOUR, Todo, InProgress),
+    ];
+    let t = task(&events, T0 + 10 * HOUR);
+    assert_eq!(
+        (t.lead_ms, t.waiting_on_owner_ms, t.open, t.cycle_ms),
+        (2 * HOUR, HOUR, false, None)
+    );
+}
+
+#[test]
+fn a_corrupt_stored_tally_never_panics() {
+    let mut tally = serde_json::to_value(TimeTally::new(ItemKind::Task, "ada", OWNER)).unwrap();
+    tally["lead_ms"] = 5.into();
+    tally["waiting_ms"] = 9.into();
+    tally["blocked_ms"] = u64::MAX.into();
+    let tally: TimeTally = serde_json::from_value(tally).unwrap();
+    assert_eq!(tally.figures(T0).rest_ms, 0);
+}

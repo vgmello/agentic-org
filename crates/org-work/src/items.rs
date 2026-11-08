@@ -255,7 +255,9 @@ pub(crate) fn delete(ctx: &mut Ctx, p: &WorkDeleteParams) -> Result<Plan, Fail> 
     };
     let mut draft = ctx.draft(item);
     draft.item.deleted = true;
-    draft.record(WorkEventKind::Deleted, Origin::Caller);
+    let cause = draft.record(WorkEventKind::Deleted, Origin::Caller);
+    // The time figures ignore a deleted item from here on: its spans end with it (§2.8).
+    waiting::round_closed(&mut draft, &cause);
     let mut drafts = vec![draft];
     if let Some(parent) = parent.filter(|p| !p.deleted) {
         let task_id = p.item_id.clone();

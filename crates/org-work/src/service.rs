@@ -61,6 +61,9 @@ pub fn read_item(
     loop {
         let page = reads.events(&item.id, after, 500)?;
         let Some(last) = page.last() else { break };
+        if last.version <= after {
+            break; // a store that ignores `after_version`: never loop
+        }
         after = last.version;
         events.extend(page);
     }

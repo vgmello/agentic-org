@@ -4,6 +4,11 @@
 //! after every change. It serializes with serde, so the store may keep the columns it indexes
 //! (see the design's §3.3 sketch) and the rest as JSON. Times are Unix milliseconds; events and
 //! reads carry RFC 3339.
+//!
+//! It keeps removed steps and links as tombstones (their ids are never reused) and a reference
+//! per comment, so it grows with an item's history. A store that writes it whole on every change
+//! pays for that; one that keeps steps, links and comments as rows writes only the ones that
+//! changed (compare with the stored copy).
 
 use org_proto::work::{
     ChecklistCounts, ChecklistStep, CommentKind, DoneAnyway, ItemKind, ItemStatus, Link, LinkKind,

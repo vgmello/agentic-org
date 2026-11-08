@@ -93,6 +93,18 @@ pub fn execute(
             format!("`{}` can only be made from the app", call.method()),
         )));
     }
+    // Only the app's connection acts as the owner or a person (§2.2); the office binds
+    // connections, and this keeps the rule true inside the library too.
+    if !caller.via_app
+        && !org
+            .member(&caller.member_id)?
+            .is_some_and(|m| m.kind == MemberKind::Agent && !m.owner)
+    {
+        return Ok(TxnOutput::Refused(ApiError::new(
+            ErrorCode::NotAuthorized,
+            "only the app acts as the owner or a person",
+        )));
+    }
     let params = call.params_json();
     let hash = params_hash(call.method(), &caller.member_id, &params);
     let change_id = call.change_id();

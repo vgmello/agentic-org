@@ -61,8 +61,11 @@ pub(crate) fn aspects_of(
             StepPosition(step_id.clone()),
             StepTask(step_id.clone()),
         ],
-        WorkEventKind::StepMadeTask { step_id, .. }
-        | WorkEventKind::StepTaskUnlinked { step_id, .. } => vec![StepTask(step_id.clone())],
+        // Making a task also unticks the step (it follows the open task from then on).
+        WorkEventKind::StepMadeTask { step_id, .. } => {
+            vec![StepTask(step_id.clone()), StepDone(step_id.clone())]
+        }
+        WorkEventKind::StepTaskUnlinked { step_id, .. } => vec![StepTask(step_id.clone())],
         WorkEventKind::WaitingStarted { .. } | WorkEventKind::WaitingEnded { .. } => {
             vec![Waiting]
         }

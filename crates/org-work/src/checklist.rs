@@ -264,7 +264,7 @@ fn end_part_of(ctx: &mut Ctx, task_id: &str, parent_id: &str) -> Result<Option<D
 
 /// `checklist.make_task`: creates task `task_id` in the item's project (and team, when the item
 /// is a task), titled `title` or the step's text cut to 120 characters, with a `part_of` link to
-/// the item; the step then follows it.
+/// the item; the step then follows it (unticked until the task is Done · Completed).
 pub(crate) fn make_task(ctx: &mut Ctx, p: &ChecklistMakeTaskParams) -> Result<Plan, Fail> {
     let item = load_step_item(ctx, &p.step_id)?;
     let project_id = item
@@ -318,6 +318,11 @@ pub(crate) fn make_task(ctx: &mut Ctx, p: &ChecklistMakeTaskParams) -> Result<Pl
     let mut parent = ctx.draft(item);
     let s = parent.item.step_mut(&p.step_id).expect("checked above");
     s.task_id = Some(p.task_id.clone());
+    // From now on the step follows its task, which is open: it ticks only when the task is
+    // Done · Completed (§1.6), so a tick it had ends here.
+    s.done = false;
+    s.checked_by = None;
+    s.checked_at_ms = None;
     s.version += 1;
     s.task_version = s.version;
     parent.record(

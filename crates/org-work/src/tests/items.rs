@@ -515,3 +515,51 @@ fn events_are_never_dated_before_the_previous_one() {
     let events = w.events(&id);
     assert_eq!(events[1].at, events[0].at);
 }
+
+#[test]
+fn deleting_an_item_ends_its_waiting_spans() {
+    let w = World::new();
+    let id = w.task();
+    let q = question(&w, &id, OWNER);
+    let q_id = q.comment_id.clone();
+    w.ok(&agent(), WorkCall::Comment(q));
+    w.ok(&app(), w.delete(&id));
+    let events = w.events(&id);
+    let n = events.len();
+    assert_eq!(events[n - 2].change, WorkEventKind::Deleted);
+    assert_eq!(events[n - 1].change, ended(&q_id));
+    assert!(w.item(&id).waiting.is_empty());
+}
+
+#[test]
+fn a_connection_that_isnt_the_apps_acts_only_as_an_agent() {
+    let w = World::new();
+    for who in [OWNER, "pat", "nobody"] {
+        let p = w.create_params(PROJECT);
+        assert_eq!(
+            w.code(&Caller::agent(who), WorkCall::TaskCreate(p)),
+            ErrorCode::NotAuthorized,
+            "{who}"
+        );
+    }
+    // The app may act as the owner or a person.
+    w.ok(
+        &Caller::app("pat"),
+        WorkCall::TaskCreate(w.create_params(PROJECT)),
+    );
+}
+
+#[test]
+fn writers_never_send_unknown() {
+    let w = World::new();
+    let a = w.task();
+    let b = w.task();
+    let (_, call) = link(&w, &a, LinkKind::Unknown, to_item(&b));
+    assert_eq!(w.code(&agent(), call), ErrorCode::InvalidRequest);
+    let mut p = w.status(&a, ItemStatus::Done);
+    p.resolution = Some(Resolution::Unknown);
+    assert_eq!(
+        w.code(&agent(), WorkCall::TaskSetStatus(p)),
+        ErrorCode::InvalidRequest
+    );
+}

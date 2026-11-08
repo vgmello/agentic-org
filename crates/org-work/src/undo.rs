@@ -22,8 +22,10 @@ pub(crate) fn undo(ctx: &mut Ctx, p: &WorkUndoParams) -> Result<Plan, Fail> {
     }
     let target = later.remove(0);
 
-    // Undo's own order (§2.4): what the target event is, then its age, then whether it was
-    // undone already, and only then whether a later change makes it stale.
+    // Undo has its own order (§2.3 points to §2.4's rule; `org_proto::work::WorkUndo` lists
+    // these errors): what the target event is, then its age, then whether it was undone
+    // already, and only then whether a later change makes it stale. With `conflict` first,
+    // "already undone" could never be answered: the `Undone` event has the same aspects.
     if !target.auto {
         return Err(invalid(if target.actor_id.is_none() {
             "a cascade or the office's bookkeeping can't be undone"
