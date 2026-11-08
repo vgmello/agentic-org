@@ -351,3 +351,11 @@ export interface Area {
 	general: boolean;
 	deleted: boolean;
 }
+
+/** Why an item waits on the owner (`WaitingStarted`/`WaitingEnded` events; ada/proto-work-p1 @ 410e1a6). */
+export type WaitReason =
+	| { type: 'question'; comment_id: string }
+	| { type: 'message'; message_id: string }
+	| { type: 'triage' }
+	| { type: 'decision'; doc_key: string }
+	| { type: 'unknown' };
