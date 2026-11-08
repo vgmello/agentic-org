@@ -16,6 +16,8 @@ export function newId(now: number = Date.now(), random: () => number = Math.rand
 	return time + rand;
 }
 
+import type { AgentProfile, AgentRuntime, AgentStatus, RunMode, Schedule } from '$lib/proto';
+
 type C<M extends string, P> = { method: M; params: { command_id: string } & P };
 
 export type OrgCommand =
@@ -32,6 +34,28 @@ export type OrgCommand =
 	| C<'member.remove', { member_id: string; expected_version: number }>
 	| C<'member.set_reports_to', { member_id: string; expected_version: number; reports_to_member_id?: string }>
 	| C<'member.move', { membership_id: string; expected_version: number; new_membership_id: string; to_team_id: string; title_in_team?: string }>
+	| C<'member.add_agent', { member_id: string; name: string; office_id: string; profile: AgentProfile }>
+	| C<
+			'member.update_agent',
+			{
+				member_id: string;
+				expected_version: number;
+				name?: string;
+				role?: string;
+				title?: string;
+				focus?: string;
+				clear_focus?: boolean;
+				runtime?: AgentRuntime;
+				model?: string;
+				clear_model?: boolean;
+				home?: string;
+				clear_home?: boolean;
+				messaging_name?: string;
+			}
+	  >
+	| C<'member.set_agent_status', { member_id: string; expected_version: number; status: AgentStatus }>
+	| C<'member.set_run_mode', { member_id: string; expected_version: number; run_mode?: RunMode; schedule?: Schedule }>
+	| C<'member.offboard', { member_id: string; expected_version: number }>
 	| C<'project.add_team', { project_team_id: string; project_id: string; team_id: string }>
 	| C<'project.remove_team', { project_team_id: string; expected_version: number }>;
 

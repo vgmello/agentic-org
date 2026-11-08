@@ -988,6 +988,960 @@
     }
    },
    "expect": "ok"
+  },
+  {
+   "name": "add agent: a new agent",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "add agent: a missing office",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": "Cameron",
+     "office_id": "ghost",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "add agent: a missing office beats a bad profile",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": "Cameron",
+     "office_id": "ghost",
+     "profile": {
+      "role": " ",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "add agent: an unknown runtime",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "unknown",
+      "messaging_name": "cam",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add agent: a copy of a known runtime's name",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": {
+       "other": "codex"
+      },
+      "messaging_name": "cam",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add agent: a named other runtime",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": {
+       "other": "my-runtime"
+      },
+      "messaging_name": "cam",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "add agent: offboarded status",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "offboarded"
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add agent: paused status",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "paused"
+     }
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "add agent: an offboarded date",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active",
+      "offboarded_at": "2026-01-01T00:00:00.000Z"
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add agent: scheduled without a schedule",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active",
+      "run_mode": "scheduled"
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add agent: a schedule on an always-on agent",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active",
+      "run_mode": "always_on",
+      "schedule": {
+       "spec": "daily",
+       "time_zone": "UTC"
+      }
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add agent: scheduled with a schedule",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active",
+      "run_mode": "scheduled",
+      "schedule": {
+       "spec": "weekdays at 9",
+       "time_zone": "Europe/Lisbon"
+      }
+     }
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "add agent: a time zone with .. in it",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active",
+      "run_mode": "scheduled",
+      "schedule": {
+       "spec": "daily",
+       "time_zone": "Europe/../etc"
+      }
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add agent: an unknown run mode",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active",
+      "run_mode": "unknown"
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add agent: a relative home",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active",
+      "home": "agents/cam"
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add agent: a home with ..",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active",
+      "home": "/agents/../etc"
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add agent: an absolute home",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active",
+      "home": "/Users/me/agents/cam"
+     }
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "add agent: a blank role beats a bad messaging name",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": " ",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "bad name!",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add agent: a bad messaging name",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "bad name!",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "add agent: a messaging name that starts with a dash",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "-cam",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "add agent: a blank display name",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": " ",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "add agent: a taken id",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "sam",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "add agent: another agent's handle, ignoring case",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "SAM",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "add agent: the owner's handle",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "Owner",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "add agent: a person's name as a handle",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "Avery",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "update agent: nothing given",
+   "command": {
+    "method": "member.update_agent",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "update agent: a value and its clear flag",
+   "command": {
+    "method": "member.update_agent",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "focus": "x",
+     "clear_focus": true
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "update agent: a person",
+   "command": {
+    "method": "member.update_agent",
+    "params": {
+     "member_id": "avery",
+     "expected_version": 1,
+     "role": "x"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "update agent: a bad name beats a stale version",
+   "command": {
+    "method": "member.update_agent",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 9,
+     "name": " "
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "update agent: a stale version",
+   "command": {
+    "method": "member.update_agent",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 9,
+     "role": "x"
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "update agent: another agent's handle",
+   "command": {
+    "method": "member.update_agent",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "messaging_name": "noor"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "update agent: your own handle in another case",
+   "command": {
+    "method": "member.update_agent",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "messaging_name": "SAM"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "update agent: a role, a focus and a home",
+   "command": {
+    "method": "member.update_agent",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "role": "staff engineer",
+     "focus": "the office",
+     "home": "/Users/me/sam"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "update agent: clearing the focus",
+   "command": {
+    "method": "member.update_agent",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "clear_focus": true
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "update agent: an offboarded agent",
+   "command": {
+    "method": "member.update_agent",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 2,
+     "role": "x"
+    }
+   },
+   "expect": "invalid_request",
+   "setup": [
+    {
+     "method": "member.offboard",
+     "params": {
+      "member_id": "sam",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "update agent: a missing agent",
+   "command": {
+    "method": "member.update_agent",
+    "params": {
+     "member_id": "ghost",
+     "expected_version": 1,
+     "role": "x"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "status: pause an agent",
+   "command": {
+    "method": "member.set_agent_status",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "status": "paused"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "status: the same status again",
+   "command": {
+    "method": "member.set_agent_status",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "status": "active"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "status: offboarded is not set here",
+   "command": {
+    "method": "member.set_agent_status",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "status": "offboarded"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "status: a person",
+   "command": {
+    "method": "member.set_agent_status",
+    "params": {
+     "member_id": "avery",
+     "expected_version": 1,
+     "status": "paused"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "status: a stale version",
+   "command": {
+    "method": "member.set_agent_status",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 9,
+     "status": "paused"
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "status: an agent who left",
+   "command": {
+    "method": "member.set_agent_status",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 2,
+     "status": "active"
+    }
+   },
+   "expect": "invalid_request",
+   "setup": [
+    {
+     "method": "member.offboard",
+     "params": {
+      "member_id": "sam",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "run mode: on call",
+   "command": {
+    "method": "member.set_run_mode",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "run_mode": "on_call"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "run mode: none (started by a person)",
+   "command": {
+    "method": "member.set_run_mode",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "run mode: scheduled needs a schedule",
+   "command": {
+    "method": "member.set_run_mode",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "run_mode": "scheduled"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "run mode: scheduled with one",
+   "command": {
+    "method": "member.set_run_mode",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "run_mode": "scheduled",
+     "schedule": {
+      "spec": "weekdays at 9",
+      "time_zone": "Europe/Lisbon"
+     }
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "run mode: unknown",
+   "command": {
+    "method": "member.set_run_mode",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "run_mode": "unknown"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "run mode: a person",
+   "command": {
+    "method": "member.set_run_mode",
+    "params": {
+     "member_id": "avery",
+     "expected_version": 1,
+     "run_mode": "on_call"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "offboard: an agent",
+   "command": {
+    "method": "member.offboard",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "offboard: a person",
+   "command": {
+    "method": "member.offboard",
+    "params": {
+     "member_id": "avery",
+     "expected_version": 1
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "offboard: twice",
+   "command": {
+    "method": "member.offboard",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 2
+    }
+   },
+   "expect": "invalid_request",
+   "setup": [
+    {
+     "method": "member.offboard",
+     "params": {
+      "member_id": "sam",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "offboard: a stale version",
+   "command": {
+    "method": "member.offboard",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 9
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "offboard: the lead leaves, so the team's version rose",
+   "command": {
+    "method": "team.set_lead",
+    "params": {
+     "team_id": "eng",
+     "expected_version": 2,
+     "lead_member_id": "avery"
+    }
+   },
+   "expect": "not_a_member",
+   "setup": [
+    {
+     "method": "member.offboard",
+     "params": {
+      "member_id": "sam",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "offboard: reporters now report to its manager, with a new version",
+   "command": {
+    "method": "member.set_reports_to",
+    "params": {
+     "member_id": "noor",
+     "expected_version": 2
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "member.offboard",
+     "params": {
+      "member_id": "sam",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "offboard: its handle stays reserved",
+   "command": {
+    "method": "member.add_person",
+    "params": {
+     "member_id": "p1",
+     "name": "sam"
+    }
+   },
+   "expect": "already_exists",
+   "setup": [
+    {
+     "method": "member.offboard",
+     "params": {
+      "member_id": "sam",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "offboard: it can't join a team again",
+   "command": {
+    "method": "team.add_member",
+    "params": {
+     "membership_id": "m9",
+     "team_id": "web",
+     "member_id": "sam"
+    }
+   },
+   "expect": "invalid_request",
+   "setup": [
+    {
+     "method": "member.offboard",
+     "params": {
+      "member_id": "sam",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "offboard: it can't be removed",
+   "command": {
+    "method": "member.remove",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 2
+    }
+   },
+   "expect": "invalid_request",
+   "setup": [
+    {
+     "method": "member.offboard",
+     "params": {
+      "member_id": "sam",
+      "expected_version": 1
+     }
+    }
+   ]
   }
  ]
 }

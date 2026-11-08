@@ -1,4 +1,4 @@
-import type { Member, Membership, OrgSnapshot, ProjectSummary, ProjectTeam, Team } from '$lib/proto';
+import type { AgentProfile, Member, Membership, OrgSnapshot, ProjectSummary, ProjectTeam, Team } from '$lib/proto';
 
 // A sample organization for the mock office: invented people, none from a real workspace.
 // `officeId` is the HQ office the agents are placed in.
@@ -30,21 +30,23 @@ const joined = (team_id: string, member_id: string, title_in_team?: string): Mem
 
 export function sampleOrg(officeId: string): OrgSnapshot {
 	n = 0;
-	const agent = (id: string, name: string, extra: Partial<Member> = {}) =>
-		member(id, 'agent', name, { office_id: officeId, ...extra });
+	// Every agent carries a profile like the Rust mock office's sample: the same role, runtime and handle (its id).
+	const profile = (id: string, role: string): AgentProfile => ({ role, title: role, runtime: 'claude_code', run_mode: 'on_call', messaging_name: id, status: 'active' });
+	const agent = (id: string, name: string, role: string, extra: Partial<Member> = {}) =>
+		member(id, 'agent', name, { office_id: officeId, agent: profile(id, role), ...extra });
 	const members: Member[] = [
 		member('you', 'person', 'You', { owner: true }),
 		member('avery', 'person', 'Avery Stone', { contact: 'avery@example.com' }),
 		member('hana', 'person', 'Hana Weiss', { reports_to_member_id: 'avery' }),
 		member('leo', 'person', 'Leo Brandt', { reports_to_member_id: 'hana' }),
-		agent('sam', 'Sam Okafor', { reports_to_member_id: 'avery' }),
-		agent('noor', 'Noor Haddad', { reports_to_member_id: 'sam' }),
-		agent('kai', 'Kai Lindqvist', { reports_to_member_id: 'sam' }),
-		agent('mira', 'Mira Castillo', { reports_to_member_id: 'sam' }),
-		agent('juno', 'Juno Park', { reports_to_member_id: 'avery' }),
-		agent('pax', 'Pax Moreau', { reports_to_member_id: 'juno' }),
-		member('ines', 'agent', 'Inês Duarte', { reports_to_member_id: 'hana' }), // not placed in an office
-		agent('quinn', 'Quinn Adeyemi')
+		agent('sam', 'Sam Okafor', 'software engineer', { reports_to_member_id: 'avery' }),
+		agent('noor', 'Noor Haddad', 'web engineer', { reports_to_member_id: 'sam' }),
+		agent('kai', 'Kai Lindqvist', 'platform engineer', { reports_to_member_id: 'sam' }),
+		agent('mira', 'Mira Castillo', 'software engineer', { reports_to_member_id: 'sam' }),
+		agent('juno', 'Juno Park', 'designer', { reports_to_member_id: 'avery' }),
+		agent('pax', 'Pax Moreau', 'designer', { reports_to_member_id: 'juno' }),
+		member('ines', 'agent', 'Inês Duarte', { reports_to_member_id: 'hana', agent: profile('ines', 'people partner') }), // not placed in an office
+		agent('quinn', 'Quinn Adeyemi', 'researcher')
 	];
 	const teams: Team[] = [
 		team('eng', 'Engineering', undefined, 'sam'),

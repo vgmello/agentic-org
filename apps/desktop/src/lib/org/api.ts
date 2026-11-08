@@ -117,7 +117,8 @@ export function createMockOrg(
 		let result: Answer['result'];
 		let snapshot = state.snapshot;
 		try {
-			snapshot = applyCommand(state.snapshot, command); // throws HQ's error
+			// HQ's clock, and the offices that exist (the mock organization has its HQ office).
+			snapshot = applyCommand(state.snapshot, command, { now: new Date().toISOString(), offices: [await hqOfficeId(organizationId)] }); // throws HQ's error
 			result = { accepted: { status: 'committed', position: snapshot.position } };
 		} catch (e) {
 			if (!(e && typeof e === 'object' && 'code' in e && 'source' in e)) throw e;

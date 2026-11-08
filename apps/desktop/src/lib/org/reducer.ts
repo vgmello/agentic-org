@@ -4,7 +4,7 @@
 // is run against both. The real HQ is the authority. Pure: it returns a new snapshot, or throws the same
 // error codes HQ would, in the contract's order: not_found, invalid_request, invalid_name, conflict, then the
 // command's own rule (owner_protected, cycle, not_a_member, not_empty), then already_exists.
-import type { ApiErrorCode, AppError, Member, Membership, OrgSnapshot, ProjectTeam, Team } from '$lib/proto';
+import type { AgentProfile, AgentRuntime, ApiErrorCode, AppError, Member, Membership, OrgSnapshot, ProjectTeam, RunMode, Schedule, Team } from '$lib/proto';
 import { trimWhiteSpace, validateName } from '$lib/name';
 import { withoutNulls, type OrgCommand } from './commands';
 
@@ -87,7 +87,7 @@ const siblingTaken = (s: OrgSnapshot, parent: string | undefined, name: string, 
  */
 const handleTaken = (s: OrgSnapshot, name: string, exceptId?: string) =>
 	sameName(name, 'owner') ||
-	s.members.some((m) => m.id !== exceptId && !m.owner && sameName(m.kind === 'agent' ? m.id : m.name, name));
+	s.members.some((m) => m.id !== exceptId && !m.owner && sameName(m.kind === 'agent' ? (m.agent?.messaging_name ?? m.id) : m.name, name));
 
 const bump = <T extends { version: number }>(x: T): T => ({ ...x, version: x.version + 1 });
 const replace = <T extends { id: string }>(xs: T[], next: T) => xs.map((x) => (x.id === next.id ? next : x));
@@ -102,15 +102,105 @@ const clearLead = (teams: Team[], teamId: string, memberId: string): Team[] =>
 
 const isOffboarded = (m: Member) => (m as Member & { agent?: { status?: string } }).agent?.status === 'offboarded';
 
+// ---- an agent's profile (the contract's limits; invalid_request except a messaging name's format) ------------
+
+const HOME_MAX_BYTES = 1024;
+const TIME_ZONE_MAX = 64;
+const bytes = (s: string) => new TextEncoder().encode(s).length;
+
+/** Text as HQ stores it: trimmed, 1 to 200 characters, no control characters. */
+function agentText(raw: string, what: string): string {
+	const t = trimWhiteSpace(raw);
+	if (t === '') fail('invalid_request', `${what} can't be empty.`);
+	if ([...t].length > AGENT_TEXT_MAX) fail('invalid_request', `${what} can be at most ${AGENT_TEXT_MAX} characters.`);
+	if (CONTROL.test(t)) fail('invalid_request', `${what} can't contain control characters.`);
+	return t;
+}
+
+function messagingName(raw: string): string {
+	if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(raw)) fail('invalid_name', 'A messaging name is 1 to 64 letters, digits, - _ or ., starting with a letter or digit.');
+	return raw;
+}
+
+function agentRuntime(r: AgentRuntime | undefined): AgentRuntime {
+	if (r === undefined || r === 'unknown') return fail('invalid_request', 'Choose what the agent runs on.');
+	if (typeof r === 'object') {
+		if (r === null || typeof (r as { other?: unknown }).other !== 'string') return fail('invalid_request', 'Choose what the agent runs on.');
+		const name = agentText(r.other, "The runtime's name");
+		if (['claude_code', 'codex', 'antigravity'].includes(name)) fail('invalid_request', 'Use the known runtime, not a copy of its name.');
+		return { other: name };
+	}
+	if (!['claude_code', 'codex', 'antigravity'].includes(r)) fail('invalid_request', 'Choose what the agent runs on.');
+	return r;
+}
+
+function agentHome(raw: string): string {
+	if (raw === '' || bytes(raw) > HOME_MAX_BYTES || CONTROL.test(raw) || !raw.startsWith('/') || raw.split('/').includes('..'))
+		fail('invalid_request', 'The home folder must be an absolute path (no .. parts, at most 1024 bytes).');
+	return raw;
+}
+
+function agentSchedule(sc: Schedule): Schedule {
+	const spec = agentText(sc?.spec ?? '', 'The schedule');
+	const zone = sc?.time_zone ?? '';
+	if (zone === '' || [...zone].length > TIME_ZONE_MAX || !zone.split('/').every((part) => /^[A-Za-z0-9_+-]+$/.test(part)))
+		fail('invalid_request', 'The time zone must be a name like Europe/Lisbon.');
+	return { spec, time_zone: zone };
+}
+
+/** A run mode with its schedule: scheduled needs one, any other mode must have none, unknown is refused. */
+function agentRunMode(mode: RunMode | undefined, schedule: Schedule | undefined): { run_mode?: RunMode; schedule?: Schedule } {
+	if (mode === 'unknown') fail('invalid_request', 'Choose how the agent is run.');
+	if (mode === 'scheduled') {
+		if (!schedule) fail('invalid_request', 'A scheduled agent needs a schedule.');
+		return { run_mode: mode, schedule: agentSchedule(schedule!) };
+	}
+	if (schedule) fail('invalid_request', 'Only a scheduled agent has a schedule.');
+	return mode === undefined ? {} : { run_mode: mode };
+}
+
+/** A whole profile as HQ stores it when an agent is added. */
+function newProfile(p: AgentProfile): AgentProfile {
+	const role = agentText(p.role, 'The role');
+	const title = agentText(p.title, 'The title');
+	const focus = p.focus !== undefined ? agentText(p.focus, 'The focus') : undefined;
+	const model = p.model !== undefined ? agentText(p.model, 'The model') : undefined;
+	const runtime = agentRuntime(p.runtime);
+	const home = p.home !== undefined ? agentHome(p.home) : undefined;
+	if (p.status !== 'active' && p.status !== 'paused') fail('invalid_request', 'A new agent is active or paused.');
+	if (p.offboarded_at !== undefined) fail('invalid_request', "A new agent hasn't been offboarded.");
+	const mode = agentRunMode(p.run_mode, p.schedule);
+	const handle = messagingName(p.messaging_name);
+	return { role, title, ...(focus !== undefined ? { focus } : {}), runtime, ...(model !== undefined ? { model } : {}), ...mode, ...(home !== undefined ? { home } : {}), messaging_name: handle, status: p.status };
+}
+
+/** What HQ knows besides the structure: its clock and which offices exist (undefined: not checked). */
+export interface Ctx {
+	now: string;
+	offices?: string[];
+}
+
+/** Everything that happens to a member's place when they leave it (removed, or an agent offboarded). */
+function detach(s: OrgSnapshot, id: string, manager: string | undefined): OrgSnapshot {
+	const led = s.teams.filter((t) => t.lead_member_id === id).map((t) => t.id);
+	const teams = led.reduce((acc, teamId) => clearLead(acc, teamId, id), s.teams);
+	const members = s.members.map((x) => {
+		if (x.reports_to_member_id !== id) return x;
+		const rest = without(x, 'reports_to_member_id') as Member;
+		return bump(manager ? { ...rest, reports_to_member_id: manager } : rest);
+	});
+	return { ...s, teams, members, memberships: s.memberships.filter((x) => x.member_id !== id) };
+}
+
 /** Apply a command. Returns the next snapshot with its position advanced by one. */
-export function applyCommand(s: OrgSnapshot, given: OrgCommand): OrgSnapshot {
+export function applyCommand(s: OrgSnapshot, given: OrgCommand, ctx: Ctx = { now: new Date().toISOString() }): OrgSnapshot {
 	const command = withoutNulls(given);
 	wellFormed(command);
-	const next = apply(s, command);
+	const next = apply(s, command, ctx);
 	return { ...next, position: { epoch: s.position.epoch, seq: s.position.seq + 1 } };
 }
 
-function apply(s: OrgSnapshot, c: OrgCommand): OrgSnapshot {
+function apply(s: OrgSnapshot, c: OrgCommand, ctx: Ctx): OrgSnapshot {
 	switch (c.method) {
 		case 'team.create': {
 			const p = c.params;
@@ -216,16 +306,7 @@ function apply(s: OrgSnapshot, c: OrgCommand): OrgSnapshot {
 			fresh(m, p.expected_version, m.name);
 			if (m.owner) fail('owner_protected', "The owner can't be removed.");
 			// Whoever reported to them now reports to their own manager, or to the owner if they had none.
-			const members = s.members
-				.filter((x) => x.id !== m.id)
-				.map((x) => {
-					if (x.reports_to_member_id !== m.id) return x;
-					const rest = without(x, 'reports_to_member_id') as Member;
-					return bump(m.reports_to_member_id ? { ...rest, reports_to_member_id: m.reports_to_member_id } : rest);
-				});
-			const led = s.teams.filter((t) => t.lead_member_id === m.id).map((t) => t.id);
-			const teams = led.reduce((acc, id) => clearLead(acc, id, m.id), s.teams);
-			return { ...s, members, teams, memberships: s.memberships.filter((x) => x.member_id !== m.id) };
+			return detach({ ...s, members: s.members.filter((x) => x.id !== m.id) }, m.id, m.reports_to_member_id);
 		}
 		case 'member.set_reports_to': {
 			const p = c.params;
@@ -249,6 +330,69 @@ function apply(s: OrgSnapshot, c: OrgCommand): OrgSnapshot {
 				fail('already_exists', `They are already in ${to.name}.`);
 			const moved: Membership = { id: p.new_membership_id, team_id: to.id, member_id: old.member_id, version: 1, ...(p.title_in_team !== undefined ? { title_in_team: p.title_in_team } : {}) };
 			return { ...s, teams: clearLead(s.teams, old.team_id, old.member_id), memberships: [...s.memberships.filter((x) => x.id !== old.id), moved] };
+		}
+		case 'member.add_agent': {
+			const p = c.params;
+			if (ctx.offices && !ctx.offices.includes(p.office_id)) fail('not_found', "That office isn't in the organization.");
+			const profile = newProfile(p.profile);
+			const name = checkedName(p.name);
+			if (s.members.some((m) => m.id === p.member_id)) fail('already_exists', 'That agent id is taken.');
+			if (handleTaken(s, profile.messaging_name)) fail('already_exists', `${profile.messaging_name} is already taken as a name here.`);
+			const agent: Member = { id: p.member_id, kind: 'agent', name, office_id: p.office_id, agent: profile, created_at: ctx.now, version: 1 };
+			return { ...s, members: [...s.members, agent] };
+		}
+		case 'member.update_agent': {
+			const p = c.params;
+			const m = member(s, p.member_id);
+			if (m.kind !== 'agent' || !m.agent) fail('invalid_request', 'That member isn\'t an agent: people are edited another way.');
+			if (isOffboarded(m)) fail('invalid_request', "An agent who has left isn't edited: its record is history.");
+			const given = [p.name, p.role, p.title, p.focus, p.runtime, p.model, p.home, p.messaging_name].some((v) => v !== undefined) || !!p.clear_focus || !!p.clear_model || !!p.clear_home;
+			if (!given || (p.focus !== undefined && p.clear_focus) || (p.model !== undefined && p.clear_model) || (p.home !== undefined && p.clear_home))
+				fail('invalid_request', 'Give a value to change, and not both a value and its clear flag.');
+			let next: AgentProfile = { ...m.agent! };
+			if (p.role !== undefined) next.role = agentText(p.role, 'The role');
+			if (p.title !== undefined) next.title = agentText(p.title, 'The title');
+			if (p.focus !== undefined) next.focus = agentText(p.focus, 'The focus');
+			if (p.clear_focus) next = without(next, 'focus') as AgentProfile;
+			if (p.runtime !== undefined) next.runtime = agentRuntime(p.runtime);
+			if (p.model !== undefined) next.model = agentText(p.model, 'The model');
+			if (p.clear_model) next = without(next, 'model') as AgentProfile;
+			if (p.home !== undefined) next.home = agentHome(p.home);
+			if (p.clear_home) next = without(next, 'home') as AgentProfile;
+			const name = p.name !== undefined ? checkedName(p.name) : undefined;
+			if (p.messaging_name !== undefined) next.messaging_name = messagingName(p.messaging_name);
+			fresh(m, p.expected_version, m.name);
+			if (p.messaging_name !== undefined && handleTaken(s, next.messaging_name, m.id)) fail('already_exists', `${next.messaging_name} is already taken as a name here.`);
+			return { ...s, members: replace(s.members, bump({ ...m, ...(name !== undefined ? { name } : {}), agent: next })) };
+		}
+		case 'member.set_agent_status': {
+			const p = c.params;
+			const m = member(s, p.member_id);
+			if (m.kind !== 'agent' || !m.agent) fail('invalid_request', "That member isn't an agent.");
+			if (isOffboarded(m)) fail('invalid_request', "An agent who has left can't be paused or resumed.");
+			if (p.status !== 'active' && p.status !== 'paused') fail('invalid_request', 'An agent is active or paused.');
+			fresh(m, p.expected_version, m.name);
+			return { ...s, members: replace(s.members, bump({ ...m, agent: { ...m.agent!, status: p.status } })) };
+		}
+		case 'member.set_run_mode': {
+			const p = c.params;
+			const m = member(s, p.member_id);
+			if (m.kind !== 'agent' || !m.agent) fail('invalid_request', "That member isn't an agent.");
+			if (isOffboarded(m)) fail('invalid_request', "An agent who has left isn't run.");
+			const mode = agentRunMode(p.run_mode, p.schedule);
+			fresh(m, p.expected_version, m.name);
+			const rest = without(without(m.agent!, 'run_mode'), 'schedule') as AgentProfile;
+			return { ...s, members: replace(s.members, bump({ ...m, agent: { ...rest, ...mode } })) };
+		}
+		case 'member.offboard': {
+			const p = c.params;
+			const m = member(s, p.member_id);
+			if (m.kind !== 'agent' || !m.agent) fail('invalid_request', "That member isn't an agent: people are removed instead.");
+			if (isOffboarded(m)) fail('invalid_request', 'That agent has already left.');
+			fresh(m, p.expected_version, m.name);
+			// Offboarding is a state, not a deletion: the record and its handle stay for good.
+			const left = bump({ ...m, agent: { ...m.agent!, status: 'offboarded' as const, offboarded_at: ctx.now } });
+			return detach({ ...s, members: replace(s.members, left) }, m.id, m.reports_to_member_id);
 		}
 		case 'project.add_team': {
 			const p = c.params;
