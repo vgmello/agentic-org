@@ -668,7 +668,7 @@ apps/org-office-server (server-dev) ─▶ crates/org-office (server-dev) ─┤
 | `crates/org-office` (`store.rs`) | `server-dev` | Owns `who` / `status.set` runtime capability and implements `MemberDirectory` + `MessageStore` inside `store.rs` on the single batching SQLCipher writer and read pool | Owns `rusqlite` / SQLCipher | Domain + Store |
 
 **Dependency Inversion Traits (`MemberDirectory`, `MessageStore` and `SessionAuth` in `crates/org-mailbox`):**
-`crates/org-mailbox` defines two narrow traits that `crates/org-office/src/store.rs` implements, and (amended 2026-11-08: agent sessions rev 3, ada) a third, `SessionAuth`, that `org-office-server` implements from the office's live runs and the OS process table ((amended 2026-11-08: agent sessions rev 3.1, ada) in the new `org-office-sessions` crate that `org-office-server` wires in):
+`crates/org-mailbox` defines two narrow traits that `crates/org-office/src/store.rs` implements ((amended 2026-11-08: store split, ada) the message store is now four traits, `MessageStore`, `TriageStore`, `SyncStore` and `ThreadStore`, all implemented by `store.rs`), and (amended 2026-11-08: agent sessions rev 3, ada) a third, `SessionAuth`, that `org-office-server` implements from the office's live runs and the OS process table ((amended 2026-11-08: agent sessions rev 3.1, ada) in the new `org-office-sessions` crate that `org-office-server` wires in):
 
 ```rust
 /// Narrow read-only port into `org.db` (shared with tasks; full `who` and `status.set` live in `org-office`).
@@ -695,26 +695,56 @@ pub trait SessionAuth {
     fn allowed_recipients(&self, run_id: &str) -> Option<Vec<String>>;
 }
 
+// (amended 2026-11-08: store split, ada) The single 12-method `MessageStore` is split into four
+// capability traits, with no unsupported default methods, so each caller depends only on what it
+// calls. `store.rs` implements all four on office.db. The Mailbox's slice 1 (send, inbox, read,
+// wait) needs only `MessageStore` and `MemberDirectory`; triage, sync and threads come later.
+// Two databases: `MemberDirectory` reads org.db and these four read and write office.db. No
+// transaction spans both, and the Mailbox never assumes one does.
+
+/// (amended 2026-11-08: store split, ada) Delivery: commit, claim, peek and look up messages.
 pub trait MessageStore {
     /// Persist a new local or synced message (or return the existing commit if deduplicated by
     /// `id` + `content_hash` or `(origin_office_id, origin_incarnation, origin_seq)`),
     /// updating `msg_threads`, `msg_headers`, `msg_bodies`, `msg_state` (using `msg.initial_state`:
     /// `Unread` normally, or `Read` when claimed before commit by a live `msg.ask` reply waiter),
     /// `msg_unread` (only when `initial_state == Unread`), and `work_origin_log`.
+    /// (amended 2026-11-08: store split, ada) A local commit passes `origin_seq: None`, and the store
+    /// allocates `local_seq` and `origin_seq` in the same transaction from the office's local
+    /// counter (≥ 1, strictly increasing in commit order); a synced commit passes its origin's.
+    /// The same `id` with a different sender or `content_hash` is `StoreError::AlreadyExists`;
+    /// a matching replay returns the first commit with `inserted: false`.
     fn commit_message(&self, msg: NewStoredMessage) -> Result<CommitMessageOutcome, StoreError>;
 
     /// Atomically claim and mark read a specific message `id` or the oldest unsnoozed unread for `to_member_id`,
     /// upserting `state = 'read'` in `msg_state`, removing from `msg_unread`, and allocating a local `origin_seq`.
+    /// (amended 2026-11-08: store split, ada) `None` when `id` isn't addressed to `to_member_id`, or with no
+    /// `id` when nothing is unread. Claiming an already read `id` returns it unchanged. Concurrent claims of
+    /// one message succeed once.
     fn claim_read(&self, to_member_id: &str, id: Option<&str>, now_utc: &str) -> Result<Option<StoredMessage>, StoreError>;
 
+    /// Query oldest non-expired, unsnoozed unread message for `to_member_id` (optionally filtered by `from_member_id`
+    /// and `urgent_only`) without marking read. Also returns any expired unread IDs encountered.
+    /// (amended 2026-11-08: store split, ada) Read-only: it changes and deletes nothing. The Mailbox
+    /// decides what to do with `expired_ids` (through `TriageStore`).
+    fn peek_next_unread(&self, to_member_id: &str, from_member_id: Option<&str>, urgent_only: bool, now_utc: &str) -> Result<PeekUnreadOutcome, StoreError>;
+
+    /// Look up an existing message by ID (for `msg.get`, `msg.reply` recipient check, or idempotent `msg.ask`).
+    fn get_message(&self, id: &str) -> Result<Option<StoredMessage>, StoreError>;
+
+    /// Paginate headers (`msg.inbox`, `msg.list`, `msg.human_needs_you`) by `local_seq DESC` without reading `msg_bodies`.
+    fn list_headers(&self, query: HeaderQuery) -> Result<HeaderPage, StoreError>;
+
+    /// Find a reply (`reply_to == ask_id` and `from_member_id == responder_id`) or `delivery_failed` for `ask_id`.
+    fn find_reply_for_ask(&self, ask_id: &str, responder_id: &str) -> Result<Option<StoredMessage>, StoreError>;
+}
+
+/// (amended 2026-11-08: store split, ada) Triage: local state transitions, snooze release and the snooze timer seed.
+pub trait TriageStore {
     /// Transition a message's lifecycle state (`Snoozed`, `Unread`, `Read`, `Done`, `Expired`, or `DeadLetter`)
     /// at the owning office, upserting `msg_state`, syncing `msg_unread` (including restoring a read message to
     /// `msg_unread` on `Snoozed` and incrementing `triage_gen`), and allocating a local `origin_seq` in `work_origin_log`.
     fn update_state_local(&self, change: LocalStateTransition) -> Result<MessageHeader, StoreError>;
-
-    /// Apply a synced lifecycle state transition (`WorkChange::MessageStateChanged`) ordered by
-    /// `(org_epoch, org_seq, origin_seq, origin_office_id, origin_incarnation)`, upserting `msg_state` and syncing `msg_unread`.
-    fn apply_synced_state(&self, synced: SyncedMessageState) -> Result<bool, StoreError>;
 
     /// Evaluate and return actionable unread messages for `to_member_id` (releasing snoozes with
     /// `snoozed_until <= now_utc` and, when `after_task` is true, `snooze_after_task = 1`, bumping `triage_gen`),
@@ -723,22 +753,20 @@ pub trait MessageStore {
 
     /// List all active time-based `(snoozed_until, to_member_id, id)` rows in `msg_unread` to seed the in-memory snooze timer heap on startup.
     fn list_active_snooze_deadlines(&self) -> Result<Vec<SnoozeDeadline>, StoreError>;
+}
 
-    /// Query oldest non-expired, unsnoozed unread message for `to_member_id` (optionally filtered by `from_member_id`
-    /// and `urgent_only`) without marking read. Also returns any expired unread IDs encountered.
-    fn peek_next_unread(&self, to_member_id: &str, from_member_id: Option<&str>, urgent_only: bool, now_utc: &str) -> Result<PeekUnreadOutcome, StoreError>;
-
-    /// Look up an existing message by ID (for `msg.get`, `msg.reply` recipient check, or idempotent `msg.ask`).
-    fn get_message(&self, id: &str) -> Result<Option<StoredMessage>, StoreError>;
-
-    /// Find a reply (`reply_to == ask_id` and `from_member_id == responder_id`) or `delivery_failed` for `ask_id`.
-    fn find_reply_for_ask(&self, ask_id: &str, responder_id: &str) -> Result<Option<StoredMessage>, StoreError>;
+/// (amended 2026-11-08: store split, ada) Sync: apply what other offices committed.
+pub trait SyncStore {
+    /// Apply a synced lifecycle state transition (`WorkChange::MessageStateChanged`) ordered by
+    /// `(org_epoch, org_seq, origin_seq, origin_office_id, origin_incarnation)`, upserting `msg_state` and syncing `msg_unread`.
+    fn apply_synced_state(&self, synced: SyncedMessageState) -> Result<bool, StoreError>;
 
     /// Re-evaluate messages with `FLAG_UNRESOLVED_REF` whose `(org_epoch, org_seq) <= applied_pos` when `org.db` advances.
     fn resolve_pending_references(&self, applied_pos: Position, now_utc: &str) -> Result<Vec<DeliveredMessage>, StoreError>;
+}
 
-    /// Paginate headers (`msg.inbox`, `msg.list`, `msg.human_needs_you`) or threads (`msg.threads`) without reading `msg_bodies`.
-    fn list_headers(&self, query: HeaderQuery) -> Result<HeaderPage, StoreError>;
+/// (amended 2026-11-08: store split, ada) Threads: paginate thread summaries (`msg.threads`) without reading `msg_bodies`.
+pub trait ThreadStore {
     fn list_threads(&self, query: ThreadQuery) -> Result<ThreadPage, StoreError>;
 }
 ```
