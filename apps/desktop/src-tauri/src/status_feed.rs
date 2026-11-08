@@ -27,10 +27,10 @@ pub enum StatusUpdate {
 /// Where updates go (the UI's event channel).
 pub type StatusSink = Arc<dyn Fn(StatusUpdate) + Send + Sync>;
 
-const FIRST_PAUSE: Duration = Duration::from_secs(1);
-const LONGEST_PAUSE: Duration = Duration::from_secs(30);
+pub(crate) const FIRST_PAUSE: Duration = Duration::from_secs(1);
+pub(crate) const LONGEST_PAUSE: Duration = Duration::from_secs(30);
 /// How often a quiet connection looks at `stop`.
-const LOOK: Duration = Duration::from_millis(250);
+pub(crate) const LOOK: Duration = Duration::from_millis(250);
 
 /// Follow the host in `home` until `stop` is set, calling `emit` with each update.
 pub fn follow(home: &Path, stop: &AtomicBool, emit: &dyn Fn(StatusUpdate)) {
@@ -44,7 +44,7 @@ pub fn follow(home: &Path, stop: &AtomicBool, emit: &dyn Fn(StatusUpdate)) {
 
 /// How long to wait before the connection after this one. It was up and then went away: soon. It never got going
 /// (no host, not ready, another version): ask less and less often.
-fn next_pause(pause: Duration, delivered: bool) -> Duration {
+pub(crate) fn next_pause(pause: Duration, delivered: bool) -> Duration {
     if delivered {
         FIRST_PAUSE
     } else {
@@ -52,7 +52,7 @@ fn next_pause(pause: Duration, delivered: bool) -> Duration {
     }
 }
 
-fn wait(pause: Duration, stop: &AtomicBool) {
+pub(crate) fn wait(pause: Duration, stop: &AtomicBool) {
     let until = Instant::now() + pause;
     while Instant::now() < until && !stop.load(Ordering::SeqCst) {
         std::thread::sleep(LOOK.min(until.saturating_duration_since(Instant::now())));

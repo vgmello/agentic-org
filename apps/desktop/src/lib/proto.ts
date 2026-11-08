@@ -154,6 +154,12 @@ export interface Position {
 	seq: number;
 }
 
+/** The shell's live feed (`org-changed`): the organization changed, and its log is now at `position`. */
+export interface OrgChangedNotice {
+	organization_id: string;
+	position: Position;
+}
+
 /** A team. Teams own teams (a tree). Optional lead: a member of the team. */
 export interface Team {
 	id: string;

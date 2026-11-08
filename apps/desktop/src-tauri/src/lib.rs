@@ -12,6 +12,7 @@ mod office;
 mod org_agent_rules;
 mod org_command;
 mod org_engine;
+mod org_feed;
 mod org_mock;
 mod real;
 mod status_feed;
@@ -274,8 +275,11 @@ impl AppState {
     /// The structure of an organization this machine hosts, and whether it is invented.
     fn org_snapshot(&self, organization_id: &str) -> Result<OrgView, CommandError> {
         self.ensure_connected()?;
+        let snapshot = self.office.org_snapshot(organization_id)?;
+        // Reading it worked, so the organization is there to follow (once): its changes come to the UI as they happen.
+        Arc::clone(&self.office).follow_org(organization_id);
         Ok(OrgView {
-            snapshot: self.office.org_snapshot(organization_id)?,
+            snapshot,
             sample: self.office.serves_sample_data(),
         })
     }
@@ -618,6 +622,10 @@ pub fn run() {
             let handle = app.handle().clone();
             office.follow_status(Arc::new(move |update| {
                 let _ = handle.emit("office-status", &update);
+            }));
+            let handle = app.handle().clone();
+            office.set_org_sink(Arc::new(move |update| {
+                let _ = handle.emit("org-changed", &update);
             }));
             app.manage(Arc::new(AppState {
                 office,
