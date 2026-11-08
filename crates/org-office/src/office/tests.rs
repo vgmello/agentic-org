@@ -5,6 +5,7 @@ use tempfile::TempDir;
 use super::*;
 use crate::key::{InMemoryKeys, KeyError};
 use crate::model::OfficeRole;
+use org_proto::org::CommandStatus;
 
 const ID: &str = "OFFICE1";
 const SHORT: Duration = Duration::from_millis(100);
@@ -1143,4 +1144,277 @@ fn a_created_office_has_its_owner_in_the_first_log_entry_and_keeps_it_across_a_r
 
     let again = Office::open(folder_of(&dir, ID), &keys).unwrap();
     assert_eq!(again.org_snapshot().unwrap(), snapshot);
+}
+
+/// A command id made `ago_ms` ago (negative: ahead), distinct for each `n`.
+fn cmd(n: u8, ago_ms: i64) -> String {
+    crate::ulid::from_ms((time::now_ms() as i64 - ago_ms) as u64, n)
+}
+
+fn team_create(command_id: &str, team_id: &str, name: &str) -> OrgCommand {
+    OrgCommand::TeamCreate(org_proto::org::TeamCreateParams {
+        command_id: command_id.into(),
+        team_id: team_id.into(),
+        name: name.into(),
+        owner_team_id: None,
+    })
+}
+
+fn at(seq: u64) -> org_proto::org::Position {
+    org_proto::org::Position { epoch: 1, seq }
+}
+
+fn code(office: &Office, command: OrgCommand) -> org_proto::ErrorCode {
+    office.submit_org(command).unwrap().unwrap_err().code
+}
+
+const DAY_MS: i64 = 86_400_000;
+
+#[test]
+fn a_command_is_logged_at_the_next_position_and_changes_the_snapshot() {
+    let (_dir, _keys, office) = made();
+
+    let accepted = office
+        .submit_org(team_create(&cmd(1, 0), "T1", "Platform"))
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(accepted.status, CommandStatus::Committed);
+    assert_eq!(accepted.position, Some(at(2)));
+    let snapshot = office.org_snapshot().unwrap();
+    assert_eq!(snapshot.position, at(2));
+    assert_eq!(snapshot.teams.len(), 1);
+    assert_eq!(snapshot.teams[0].name, "Platform");
+}
+
+#[test]
+fn a_retried_command_gets_its_own_commit_back_and_changes_nothing_again() {
+    let (dir, keys, office) = made();
+    let (c1, c2) = (cmd(1, 0), cmd(2, 0));
+    let first = office
+        .submit_org(team_create(&c1, "T1", "Platform"))
+        .unwrap()
+        .unwrap();
+    office
+        .submit_org(team_create(&c2, "T2", "Design"))
+        .unwrap()
+        .unwrap();
+    let snapshot = office.org_snapshot().unwrap();
+    assert_eq!(first.position, Some(at(2)));
+    assert_eq!(snapshot.position, at(3));
+
+    // Same id again, in this process and after a restart: the first commit's position, not the
+    // head.
+    assert_eq!(
+        office
+            .submit_org(team_create(&c1, "T1", "Platform"))
+            .unwrap()
+            .unwrap(),
+        first
+    );
+    drop(office);
+    let office = Office::open(folder_of(&dir, ID), &keys).unwrap();
+    assert_eq!(
+        office
+            .submit_org(team_create(&c1, "T1", "Platform"))
+            .unwrap()
+            .unwrap(),
+        first
+    );
+
+    assert_eq!(office.org_snapshot().unwrap(), snapshot);
+}
+
+#[test]
+fn the_same_command_sent_at_once_commits_once() {
+    let (_dir, _keys, office) = made();
+    let c1 = cmd(1, 0);
+
+    let answers: Vec<_> = std::thread::scope(|scope| {
+        let sends: Vec<_> = (0..8)
+            .map(|_| scope.spawn(|| office.submit_org(team_create(&c1, "T1", "Platform"))))
+            .collect();
+        sends
+            .into_iter()
+            .map(|send| send.join().unwrap().unwrap().unwrap())
+            .collect()
+    });
+
+    assert!(answers.iter().all(|answer| *answer == answers[0]));
+    assert_eq!(answers[0].position, Some(at(2)));
+    assert_eq!(office.org_snapshot().unwrap().position, at(2));
+}
+
+#[test]
+fn a_refusal_is_remembered_and_a_retry_gets_the_same_refusal_even_if_it_would_now_succeed() {
+    let (dir, keys, office) = made();
+    let (c1, c2) = (cmd(1, 0), cmd(2, 0));
+    let before = office.org_snapshot().unwrap();
+
+    // Refused: the owner team does not exist yet.
+    let command = |owner: Option<&str>| {
+        OrgCommand::TeamCreate(org_proto::org::TeamCreateParams {
+            command_id: c1.clone(),
+            team_id: "T2".into(),
+            name: "Sub".into(),
+            owner_team_id: owner.map(str::to_owned),
+        })
+    };
+    assert_eq!(
+        code(&office, command(Some("T1"))),
+        org_proto::ErrorCode::NotFound
+    );
+    assert_eq!(office.org_snapshot().unwrap(), before);
+
+    // The state changes so the same command would now commit...
+    office
+        .submit_org(team_create(&c2, "T1", "Platform"))
+        .unwrap()
+        .unwrap();
+    // ...but the old id still gets the old refusal, in this process and after a restart.
+    assert_eq!(
+        code(&office, command(Some("T1"))),
+        org_proto::ErrorCode::NotFound
+    );
+    drop(office);
+    let office = Office::open(folder_of(&dir, ID), &keys).unwrap();
+    assert_eq!(
+        code(&office, command(Some("T1"))),
+        org_proto::ErrorCode::NotFound
+    );
+    assert_eq!(office.org_snapshot().unwrap().position, at(2));
+
+    // A new id commits, at the next position: a refusal takes none.
+    let mut again = command(Some("T1"));
+    if let OrgCommand::TeamCreate(p) = &mut again {
+        p.command_id = cmd(3, 0);
+    }
+    assert_eq!(
+        office.submit_org(again).unwrap().unwrap().position,
+        Some(at(3))
+    );
+}
+
+#[test]
+fn an_id_reused_with_other_params_is_refused_whether_it_committed_or_was_refused() {
+    let (_dir, _keys, office) = made();
+    let (c1, c2) = (cmd(1, 0), cmd(2, 0));
+    office
+        .submit_org(team_create(&c1, "T1", "Platform"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        code(&office, team_create(&c1, "T9", "Other")),
+        org_proto::ErrorCode::InvalidRequest
+    );
+    // A refused one, too: the blank name is `invalid_name`; other params are `invalid_request`.
+    assert_eq!(
+        code(&office, team_create(&c2, "T3", "  ")),
+        org_proto::ErrorCode::InvalidName
+    );
+    assert_eq!(
+        code(&office, team_create(&c2, "T3", "Fine")),
+        org_proto::ErrorCode::InvalidRequest
+    );
+    assert_eq!(office.org_snapshot().unwrap().position, at(2));
+}
+
+#[test]
+fn commands_are_logged_one_after_another_without_gaps() {
+    let (_dir, _keys, office) = made();
+    for (n, name) in ["A", "B", "C"].into_iter().enumerate() {
+        let accepted = office
+            .submit_org(team_create(&cmd(n as u8, 0), &format!("T{n}"), name))
+            .unwrap()
+            .unwrap();
+        assert_eq!(accepted.position, Some(at(n as u64 + 2)));
+    }
+}
+
+#[test]
+fn a_command_id_that_is_not_a_ulid_is_refused_and_not_remembered() {
+    let (_dir, _keys, office) = made();
+    let before = office.org_snapshot().unwrap();
+    let lower = cmd(1, 0).to_lowercase();
+
+    for bad in ["", "has space", "plain-id", lower.as_str(), &"X".repeat(70)] {
+        assert_eq!(
+            code(&office, team_create(bad, "T1", "Platform")),
+            org_proto::ErrorCode::InvalidRequest,
+            "{bad:?}"
+        );
+    }
+
+    assert_eq!(office.org_snapshot().unwrap(), before);
+}
+
+#[test]
+fn an_id_dated_outside_the_window_is_expired_or_clock_skew_and_changes_nothing() {
+    let (_dir, _keys, office) = made();
+    let before = office.org_snapshot().unwrap();
+
+    assert_eq!(
+        code(&office, team_create(&cmd(1, 30 * DAY_MS), "T1", "Platform")),
+        org_proto::ErrorCode::Expired
+    );
+    assert_eq!(
+        code(
+            &office,
+            team_create(&cmd(2, -10 * 60_000), "T1", "Platform")
+        ),
+        org_proto::ErrorCode::ClockSkew
+    );
+    assert_eq!(office.org_snapshot().unwrap(), before);
+    // Inside the window on both sides is fine, and the refused ones were not remembered.
+    for (n, ago) in [(3, 28 * DAY_MS), (4, -4 * 60_000)] {
+        office
+            .submit_org(team_create(
+                &cmd(n, ago),
+                &format!("T{n}"),
+                &format!("N{n}"),
+            ))
+            .unwrap()
+            .unwrap();
+    }
+}
+
+#[test]
+fn the_clock_never_goes_back_so_a_stepped_back_clock_cannot_reopen_the_window() {
+    let (_dir, _keys, office) = made();
+    // HQ's clock once read the year 2100 (the high-water mark is kept); it now reads the
+    // present again. An id dated now is then decades behind the mark: `expired`, as it would
+    // have been with the clock that never stepped back.
+    office.org.run_sql_for_test(
+        "INSERT INTO meta (key, value) VALUES ('clock_high_ms', '4102444800000')",
+    );
+
+    assert_eq!(
+        code(&office, team_create(&cmd(1, 0), "T1", "Platform")),
+        org_proto::ErrorCode::Expired
+    );
+}
+
+#[test]
+fn the_high_water_mark_follows_the_clock_forward() {
+    let (_dir, _keys, office) = made();
+    office
+        .submit_org(team_create(&cmd(1, 0), "T1", "Platform"))
+        .unwrap()
+        .unwrap();
+    let mark = |office: &Office| {
+        office
+            .org
+            .meta("clock_high_ms")
+            .unwrap()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap()
+    };
+    let first = mark(&office);
+    assert!(first > 0);
+    office
+        .submit_org(team_create(&cmd(2, 0), "T2", "Design"))
+        .unwrap()
+        .unwrap();
+    assert!(mark(&office) >= first);
 }

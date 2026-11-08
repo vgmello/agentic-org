@@ -7,7 +7,7 @@ use org_proto::org::{
     TeamRemoveMemberParams, TeamRename, TeamRenameParams, TeamSetLead, TeamSetLeadParams,
     TeamSetTitle, TeamSetTitleParams,
 };
-use org_proto::{ApiError, ErrorCode, Request};
+use org_proto::{ApiError, Call, ErrorCode, Request};
 
 /// An organization command, read from a request. Agent commands join in a later change.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,5 +87,37 @@ impl OrgCommand {
             Self::ProjectAddTeam(p) => &p.command_id,
             Self::ProjectRemoveTeam(p) => &p.command_id,
         }
+    }
+
+    /// The method and the params as JSON, which together say what this command is: two
+    /// commands are the same command if both are the same.
+    pub(crate) fn method_and_params(&self) -> (&'static str, String) {
+        macro_rules! of {
+            ($($variant:ident => $call:ty),* $(,)?) => {
+                match self {
+                    $(Self::$variant(p) => (
+                        <$call as Call>::METHOD,
+                        serde_json::to_string(p).expect("params serialize"),
+                    ),)*
+                }
+            };
+        }
+        of!(
+            TeamCreate => TeamCreate,
+            TeamRename => TeamRename,
+            TeamMove => TeamMove,
+            TeamSetLead => TeamSetLead,
+            TeamDelete => TeamDelete,
+            TeamAddMember => TeamAddMember,
+            TeamRemoveMember => TeamRemoveMember,
+            TeamSetTitle => TeamSetTitle,
+            MemberAddPerson => MemberAddPerson,
+            MemberUpdatePerson => MemberUpdatePerson,
+            MemberMove => MemberMove,
+            MemberRemove => MemberRemove,
+            MemberSetReportsTo => MemberSetReportsTo,
+            ProjectAddTeam => ProjectAddTeam,
+            ProjectRemoveTeam => ProjectRemoveTeam,
+        )
     }
 }
