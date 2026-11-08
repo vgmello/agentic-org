@@ -1,5 +1,5 @@
 {
- "comment": "The organization-name rule's vectors, owned by org-proto (OrganizationName::parse): the canonical vectors; the app's pre-check moves to this file (follow-up). An entry with no `name` must be rejected as invalid_name. \"Trimmed\" is Unicode White_Space (Rust str::trim), which differs from JavaScript's trim at U+0085 and U+FEFF. Format characters (General_Category=Cf) and Default_Ignorable_Code_Point code points, plus U+2028/U+2029, are refused, except U+200C, which Persian and Indic names need, and U+200D, U+FE0E and U+FE0F, which emoji need; so U+FEFF, tag characters, Hangul fillers and variation selectors other than U+FE0E/U+FE0F are refused.",
+ "comment": "The organization-name rule's vectors, owned by org-proto (OrganizationName::parse): the canonical vectors; the app's pre-check moves to this file (follow-up). An entry with no `name` must be rejected as invalid_name, and carries an `error` naming the rule it breaks: \"empty\" (nothing left after trimming), \"too_long\" (more than 64 characters after trimming), \"control\" (a control character) or \"invisible\" (a refused format, default-ignorable or line/paragraph-separator character). The rules are checked in that order, and `error` names the first one broken. org-proto maps them to NameError::Empty, TooLong, ControlChar and InvisibleChar. \"Trimmed\" is Unicode White_Space (Rust str::trim), which differs from JavaScript's trim at U+0085 and U+FEFF. Format characters (General_Category=Cf) and Default_Ignorable_Code_Point code points, plus U+2028/U+2029, are refused, except U+200C, which Persian and Indic names need, and U+200D, U+FE0E and U+FE0F, which emoji need; so U+FEFF, tag characters, Hangul fillers and variation selectors other than U+FE0E/U+FE0F are refused.",
  "vectors": [
   {
    "input": "Acme",
@@ -18,61 +18,76 @@
    "name": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00"
   },
   {
-   "input": ""
+   "input": "",
+   "error": "empty"
   },
   {
-   "input": "   "
+   "input": "   ",
+   "error": "empty"
   },
   {
-   "input": "a\nb"
+   "input": "a\nb",
+   "error": "control"
   },
   {
-   "input": "a\u007fb"
+   "input": "a\u007fb",
+   "error": "control"
   },
   {
-   "input": "a\u0085b"
+   "input": "a\u0085b",
+   "error": "control"
   },
   {
-   "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "error": "too_long"
   },
   {
-   "input": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00"
+   "input": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+   "error": "too_long"
   },
   {
    "input": "\u0085Acme\u0085",
    "name": "Acme"
   },
   {
-   "input": "\ufeffAcme"
+   "input": "\ufeffAcme",
+   "error": "invisible"
   },
   {
    "input": "\u00a0\u2003Acme\u3000",
    "name": "Acme"
   },
   {
-   "input": "Acme\u200b"
+   "input": "Acme\u200b",
+   "error": "invisible"
   },
   {
-   "input": "Ac\u202eme"
+   "input": "Ac\u202eme",
+   "error": "invisible"
   },
   {
-   "input": "Ac\u2066me\u2069"
+   "input": "Ac\u2066me\u2069",
+   "error": "invisible"
   },
   {
-   "input": "Ac\u2028me"
+   "input": "Ac\u2028me",
+   "error": "invisible"
   },
   {
    "input": "\ud83d\udc69\u200d\ud83d\udcbb Labs",
    "name": "\ud83d\udc69\u200d\ud83d\udcbb Labs"
   },
   {
-   "input": "Acme\udb40\udc20"
+   "input": "Acme\udb40\udc20",
+   "error": "invisible"
   },
   {
-   "input": "Ac\u3164me"
+   "input": "Ac\u3164me",
+   "error": "invisible"
   },
   {
-   "input": "Ac\ufe00me"
+   "input": "Ac\ufe00me",
+   "error": "invisible"
   },
   {
    "input": "\u2764\ufe0f",

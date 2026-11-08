@@ -417,9 +417,26 @@ mod tests {
         assert_eq!(vectors.len(), 24);
         for v in vectors {
             let input = v["input"].as_str().unwrap();
+            let error = v.get("error").map(|e| e.as_str().expect(input));
             match v.get("name").and_then(|n| n.as_str()) {
-                Some(name) => assert_eq!(OrganizationName::parse(input).unwrap().as_str(), name),
-                None => assert!(OrganizationName::parse(input).is_err(), "{input:?}"),
+                Some(name) => {
+                    assert_eq!(error, None, "{input:?}: an accepted vector has no error");
+                    assert_eq!(OrganizationName::parse(input).unwrap().as_str(), name);
+                }
+                None => {
+                    let expected = match error {
+                        Some("empty") => NameError::Empty,
+                        Some("too_long") => NameError::TooLong,
+                        Some("control") => NameError::ControlChar,
+                        Some("invisible") => NameError::InvisibleChar,
+                        other => panic!("{input:?}: bad or missing error {other:?}"),
+                    };
+                    assert_eq!(
+                        OrganizationName::parse(input).unwrap_err(),
+                        expected,
+                        "{input:?}"
+                    );
+                }
             }
         }
     }

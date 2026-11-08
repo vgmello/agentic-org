@@ -41,6 +41,10 @@ pub const APP_TOKEN_BYTES: usize = 32;
 
 /// A per-office app token. See the module docs.
 ///
+/// Zeroing on drop is defence in depth: it covers this token's own bytes only. The copies the
+/// typed envelopes make of its hex (through `serde_json::Value` and frame buffers) can't be
+/// zeroed. Reading them needs local memory access as the same user.
+///
 /// It isn't `Clone`:
 ///
 /// ```compile_fail,E0599
@@ -186,6 +190,9 @@ fn nibble(c: u8) -> Option<u8> {
 }
 
 /// Overwrite with zeros in a way the optimizer can't remove.
+// The crate denies unsafe code. This is the one exception: a plain write of zeros to bytes
+// that are about to be dropped is a dead store the optimizer may remove, and safe Rust has no
+// volatile write. `write_volatile` through an exclusive reference is sound.
 #[allow(unsafe_code)]
 fn zero(bytes: &mut [u8]) {
     for b in bytes.iter_mut() {
@@ -417,6 +424,8 @@ mod tests {
         assert!(err.contains(BAD_TOKEN) && !err.contains("314159"), "{err}");
     }
 
+    // Test-only: reading the bytes after `Drop` has run needs `ManuallyDrop::drop`, which is
+    // unsafe. The library's only unsafe code is still `zero`.
     #[test]
     #[allow(unsafe_code)]
     fn drop_zeroes_the_token() {
