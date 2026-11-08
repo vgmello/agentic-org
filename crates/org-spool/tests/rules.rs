@@ -1529,6 +1529,13 @@ fn rule_an_expired_ask_to_a_person_or_the_owner_stays_urgent() {
                 .unwrap()[0]
                 .urgent
         );
+        // Read (in cur/): still urgent in `inbox --all`.
+        t.spool.claim(recipient, &ask.id).unwrap();
+        let all = t
+            .spool
+            .list_inbox_items(recipient, true, true, None)
+            .unwrap();
+        assert!(all.iter().find(|i| i.id == ask.id).unwrap().urgent);
     }
     // No profile at all: an agent.
     let t = TempSpool::new("expired_noprof");
