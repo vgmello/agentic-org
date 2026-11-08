@@ -10,19 +10,22 @@
 		open = $bindable(false),
 		office,
 		snapshot,
+		counting = false,
 		sample = false,
 		here = false
 	}: {
 		open: boolean;
 		office: OfficeInfo | undefined;
-		snapshot: OrgSnapshot;
+		/** Undefined while the agents are still being counted, or when they couldn't be. */
+		snapshot: OrgSnapshot | undefined;
+		counting?: boolean;
 		/** The agents come from the invented sample organization: say so where they are listed. */
 		sample?: boolean;
 		/** This is the office the app is connected to. */
 		here?: boolean;
 	} = $props();
 
-	const agents = $derived(office ? agentsIn(snapshot, office.id) : []);
+	const agents = $derived(office && snapshot ? agentsIn(snapshot, office.id) : []);
 </script>
 
 <Sheet bind:open>
@@ -41,7 +44,7 @@
 				<dd><OfficeStatusBadge status={office.status} /></dd>
 				<dt class="text-gray-400">Agents here</dt>
 				<dd class="min-w-0 text-white [overflow-wrap:anywhere]">
-					{agents.length === 0 ? 'None' : agents.map((a) => a.name).join(', ')}
+					{#if !snapshot}{counting ? 'Counting…' : "Couldn't be counted"}{:else}{agents.length === 0 ? 'None' : agents.map((a) => a.name).join(', ')}{/if}
 					{#if sample && agents.length > 0}<Badge variant="secondary" data-testid="sample-data-note-sheet">Sample data</Badge>{/if}
 				</dd>
 			</dl>

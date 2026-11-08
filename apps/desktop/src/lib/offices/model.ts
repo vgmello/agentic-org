@@ -21,6 +21,8 @@ export function roleInfo(o: OfficeInfo): { label: string; description: string } 
 }
 
 /** The owner-facing word for an office's status, with its icon family and tone (spec §3.1). */
+export type StatusIcon = 'circle' | 'circle-outline' | 'loader' | 'circle-x' | 'circle-arrow-up' | 'mail' | 'circle-help';
+
 export function statusInfo(status: OfficeStatus | undefined): { label: string; tone: 'ok' | 'info' | 'muted' | 'warn' | 'bad' } {
 	switch (status) {
 		case 'active':
@@ -70,4 +72,37 @@ export function secondaryText(o: OfficeInfo): string {
 	if (o.status === 'pending') return 'invitation';
 	if (isHere(o)) return THIS_MAC;
 	return o.host;
+}
+
+/** The Lucide icon for each status (spec §3.1). The word always shows too: an icon alone never carries the status. */
+export function statusIcon(status: OfficeStatus | undefined): StatusIcon {
+	switch (status) {
+		case 'active':
+			return 'circle';
+		case 'starting':
+			return 'loader';
+		case 'offline':
+			return 'circle-outline';
+		case 'unavailable':
+			return 'circle-x';
+		case 'update_needed':
+			return 'circle-arrow-up';
+		case 'pending':
+			return 'mail';
+		default:
+			return 'circle-help';
+	}
+}
+
+/**
+ * What a screen reader hears for an office row (OFC-13): its name, HQ, where it runs, its status and how many
+ * agents it has. `agents` is undefined while they are still being counted.
+ */
+export function rowLabel(o: OfficeInfo, agents: number | undefined, here: boolean): string {
+	const parts = [o.name];
+	if (isHq(o)) parts.push('HQ');
+	parts.push(secondaryText(o) + (here ? " (you're here)" : ''));
+	parts.push(statusInfo(o.status).label);
+	if (agents !== undefined) parts.push(`${agents} ${agents === 1 ? 'agent' : 'agents'}`);
+	return parts.join(', ');
 }

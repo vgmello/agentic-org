@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { OfficeInfo } from '$lib/proto';
 import { sampleOrg } from '$lib/org/sample';
-import { agentsIn, isHere, orderOffices, roleInfo, secondaryText, statusInfo, unplacedAgents } from './model';
+import { agentsIn, isHere, orderOffices, roleInfo, rowLabel, secondaryText, statusIcon, statusInfo, unplacedAgents } from './model';
 
 const office = (id: string, name: string, over: Partial<OfficeInfo> = {}): OfficeInfo => ({
 	id,
@@ -72,5 +72,22 @@ describe('OFC-1 the list order and what each row says', () => {
 		const s = sampleOrg('office-1');
 		expect(unplacedAgents(s, [office('office-1', 'HQ', { role: 'hq' })]).map((m) => m.id)).toEqual(['ines']);
 		expect(unplacedAgents(s, []).length).toBe(8);
+	});
+});
+
+describe('OFC-13 each status has its icon, and a row says everything to a screen reader', () => {
+	it('gives every status its own icon from the spec, and an unknown one a question mark', () => {
+		expect(
+			(['active', 'starting', 'offline', 'unavailable', 'update_needed', 'pending', 'unknown', undefined] as const).map((s) => statusIcon(s))
+		).toEqual(['circle', 'loader', 'circle-outline', 'circle-x', 'circle-arrow-up', 'mail', 'circle-help', 'circle-help']);
+	});
+
+	it('the row label has the name, HQ, where it runs, the status and the agents', () => {
+		expect(rowLabel(hq, 6, true)).toBe("Main office, HQ, This Mac (you're here), Online, 6 agents");
+		expect(rowLabel(office('s', 'Studio', { host: '192.168.1.31', status: 'offline' }), 1, false)).toBe('Studio, 192.168.1.31, Offline, 1 agent');
+	});
+
+	it('leaves the count out while the agents are still being counted', () => {
+		expect(rowLabel(hq, undefined, false)).toBe('Main office, HQ, This Mac, Online');
 	});
 });

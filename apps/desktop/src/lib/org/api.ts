@@ -15,10 +15,11 @@ export interface OrgApi {
  * TEMPORARY: until the real host and `org-client` are wired in (the Rust shell then answers
  * `org.snapshot`), the browser and the app both use this TypeScript mock for organization data.
  */
-export function createMockOrg(hqOfficeId: () => Promise<string>, empty: () => boolean = () => false): OrgApi {
+export function createMockOrg(hqOfficeId: () => Promise<string>, empty: () => boolean = () => false, fails: () => boolean = () => false): OrgApi {
 	return {
 		sample: true,
 		async snapshot() {
+			if (fails()) throw { source: 'api', code: 'storage_error', message: "The office couldn't read its storage." };
 			return normalizeKinds(empty() ? emptyOrg() : sampleOrg(await hqOfficeId()));
 		}
 	};
@@ -26,8 +27,12 @@ export function createMockOrg(hqOfficeId: () => Promise<string>, empty: () => bo
 
 const wantsEmpty = () =>
 	typeof location !== 'undefined' && new URLSearchParams(location.search).get('org') === 'empty';
+/** `?org=fails` makes reading the structure fail, to show how a screen copes. */
+const wantsFailure = () =>
+	typeof location !== 'undefined' && new URLSearchParams(location.search).get('org') === 'fails';
 
 export const orgApi: OrgApi = createMockOrg(
 	async () => (await officeApi.connections()).at(-1)?.office.id ?? 'office-local',
-	wantsEmpty
+	wantsEmpty,
+	wantsFailure
 );
