@@ -27,10 +27,14 @@ pub struct Empty {}
 /// `hello`: the first call on a connection. The client checks `api_version`.
 pub struct Hello;
 
-/// The answer to `hello`. Build one with [`HelloResult::host`] or [`HelloResult::office`]
-/// (and [`HelloResult::with_capabilities`]) rather than a struct literal, so a new field never
-/// breaks the caller.
+/// The answer to `hello`.
+///
+/// `#[non_exhaustive]`: fields may be added. Code outside this crate builds one with
+/// [`HelloResult::host`] or [`HelloResult::office`] (and [`HelloResult::with_capabilities`]),
+/// not a struct literal, so a new field never breaks it. Its fields stay public to read and
+/// set. (The attribute only affects other crates; inside `org-proto` a literal still compiles.)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct HelloResult {
     pub api_version: u32,
     pub server_version: String,
