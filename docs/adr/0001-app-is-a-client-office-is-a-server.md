@@ -5,7 +5,7 @@ Status: **accepted** 2026-11-08 (the user). Owner: ada. This starts the new `v1`
 ## The model
 - **An organization** owns its teams, projects, agents (AI employees), roles and org chart. Projects belong to a team in the organization, not to an office.
 - **An office** is a node: where work actually runs. An agent is placed in an office to execute. The office holds the runtime side (sessions, live status, local queues, work in progress) and serves the organization's data to clients.
-- **The app (agentic.org)** is a client. Its first screen is *Open organization* or *Create organization*. It connects to one or more office servers, lives in the menu bar (and can hide from the Dock), and lists the servers it knows.
+- **The app (Agentic Org)** is a client. Its first screen is *Open organization* or *Create organization*. It connects to one or more office servers, lives in the menu bar (and can hide from the Dock), and lists the servers it knows.
 
 ## Decisions
 1. **`org-office-server` is a daemon registered as a macOS login service** (per-user, through SMAppService). The app ships the server inside its bundle and registers it (confirmed by the user 2026-11-08). It keeps running when the app quits. This replaces the earlier "daemon stops with the app" decision. It runs as the user, never as root, and listens on a local Unix socket (mode 0600, local only). Remote access comes later, with authentication.

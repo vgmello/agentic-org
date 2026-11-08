@@ -1,4 +1,4 @@
-# agentic.org
+# Agentic Org
 
 A macOS desktop app for running an AI organization: its teams, projects and agents (AI employees) and the work they do. The app is a **client**. Each organization runs on one or more **office servers**, the nodes where agents actually work. Agents talk to their office through a tiny CLI.
 
@@ -11,7 +11,7 @@ crates/                         libraries only
   org-office/                   the office's domain and storage (organizations, agents, SQLite, files)
   org-spool/                    an agent's local queue (its role beside the message hub: see the messaging ADR, to come)
 apps/                           things you run or ship
-  desktop/                      agentic.org, the app (Tauri 2 + SvelteKit)
+  desktop/                      Agentic Org, the app (Tauri 2 + SvelteKit)
   org-office-server/            one office's server (one process per office)
   org-office-host/              the host: the one macOS login service, which runs the office servers (to come)
   org-agent/                    the CLI agents use (messages now; tasks and queues later)
