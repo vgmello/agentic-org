@@ -336,7 +336,8 @@ fn member_update_person(view: &dyn OrgView, p: &MemberUpdatePersonParams) -> Dec
     let contact = check_text(p.contact.as_deref(), "contact")?;
     let name = p.name.as_deref().map(parse_name).transpose()?;
     check_version(member.version, p.expected_version)?;
-    if let Some(name) = &name {
+    // The owner's display name is not a handle, so it never clashes.
+    if let Some(name) = name.as_ref().filter(|_| !member.owner) {
         check_handle_free(view, name.key(), Some(&member.id))?;
     }
     Ok(vec![OrgChange::MemberUpserted {
@@ -566,14 +567,13 @@ fn refuse_offboarded(member: &Member) -> Result<(), ApiError> {
 }
 
 /// Handles are compared ignoring case across every agent's `messaging_name`, every person's
-/// `name` and the reserved word `owner` (see `org_proto::org`). `except` is the member being
-/// renamed, which may keep or recapitalize its own.
+/// `name` and the reserved word `owner`; the owner's display name is not a handle. `except` is
+/// the member being renamed, which may keep or recapitalize its own.
 fn check_handle_free(view: &dyn OrgView, key: &str, except: Option<&str>) -> Result<(), ApiError> {
     let taken_by_other = view
         .member_with_handle(key)
         .is_some_and(|holder| Some(holder.id.as_str()) != except);
-    let reserved = key == OWNER_HANDLE && !is_owner(view, except);
-    if taken_by_other || reserved {
+    if taken_by_other || key == OWNER_HANDLE {
         Err(fail(
             ErrorCode::AlreadyExists,
             "that name is already another member's handle",
@@ -581,10 +581,6 @@ fn check_handle_free(view: &dyn OrgView, key: &str, except: Option<&str>) -> Res
     } else {
         Ok(())
     }
-}
-
-fn is_owner(view: &dyn OrgView, id: Option<&str>) -> bool {
-    id.and_then(|id| view.member(id)).is_some_and(|m| m.owner)
 }
 
 /// Whether `candidate` is `team_id` itself or a team that `team_id` owns, directly or not.

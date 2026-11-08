@@ -1701,3 +1701,147 @@ fn what_is_not_there_is_not_found_on_every_command_that_names_it() {
     );
     assert_eq!(code(unlink), ErrorCode::NotFound);
 }
+
+// ---- third review: conflict before already_exists, the owner's display name ----------------
+
+#[test]
+fn a_stale_version_is_told_before_a_name_or_id_that_is_taken() {
+    let mut org = staffed();
+    org.team("t3", "Research", Some("t1")).unwrap();
+    let stale = 9;
+    let rename = decide(
+        &org.state,
+        NOW,
+        &OrgCommand::TeamRename(TeamRenameParams {
+            command_id: "c".into(),
+            team_id: "t3".into(),
+            expected_version: stale,
+            name: "design".into(),
+        }),
+    );
+    assert_eq!(code(rename), ErrorCode::Conflict);
+    let moved = decide(
+        &org.state,
+        NOW,
+        &OrgCommand::TeamMove(TeamMoveParams {
+            command_id: "c".into(),
+            team_id: "t2".into(),
+            expected_version: stale,
+            owner_team_id: None,
+        }),
+    );
+    // Moving "Design" to the top level clashes with nothing, so a stale version is the only
+    // problem; make a top-level "Design" and it is still the version that is told.
+    assert_eq!(code(moved), ErrorCode::Conflict);
+    org.team("t4", "Design", None).unwrap();
+    let moved = decide(
+        &org.state,
+        NOW,
+        &OrgCommand::TeamMove(TeamMoveParams {
+            command_id: "c".into(),
+            team_id: "t2".into(),
+            expected_version: stale,
+            owner_team_id: None,
+        }),
+    );
+    assert_eq!(code(moved), ErrorCode::Conflict);
+    let update = decide(
+        &org.state,
+        NOW,
+        &OrgCommand::MemberUpdatePerson(MemberUpdatePersonParams {
+            command_id: "c".into(),
+            member_id: "ann".into(),
+            expected_version: stale,
+            name: Some("Bob".into()),
+            contact: None,
+            clear_contact: false,
+        }),
+    );
+    assert_eq!(code(update), ErrorCode::Conflict);
+    let moved = decide(
+        &org.state,
+        NOW,
+        &OrgCommand::MemberMove(MemberMoveParams {
+            command_id: "c".into(),
+            membership_id: "ms-ann".into(),
+            expected_version: stale,
+            new_membership_id: "ms-bob".into(),
+            to_team_id: "t1".into(),
+            title_in_team: None,
+        }),
+    );
+    assert_eq!(code(moved), ErrorCode::Conflict);
+}
+
+#[test]
+fn a_new_reporting_line_raises_the_version_by_one() {
+    let mut org = staffed();
+    let changes = org.reports("bob", Some("ann")).unwrap();
+    let bob = member_of(&changes, "bob");
+    assert_eq!(
+        (bob.version, bob.reports_to_member_id.as_deref()),
+        (2, Some("ann"))
+    );
+}
+
+#[test]
+fn a_reporting_line_to_someone_missing_is_not_found_before_anything_else() {
+    let mut org = staffed();
+    org.agent("old", "Old", AgentStatus::Offboarded);
+    let command_id = org.id();
+    let result = org.run(OrgCommand::MemberSetReportsTo(MemberSetReportsToParams {
+        command_id,
+        member_id: "old".into(),
+        expected_version: 1,
+        reports_to_member_id: Some("nope".into()),
+    }));
+    assert_eq!(code(result), ErrorCode::NotFound);
+}
+
+#[test]
+fn a_bad_contact_is_told_before_a_bad_name_in_a_person_update() {
+    let org = staffed();
+    let result = decide(
+        &org.state,
+        NOW,
+        &OrgCommand::MemberUpdatePerson(MemberUpdatePersonParams {
+            command_id: "c".into(),
+            member_id: "ann".into(),
+            expected_version: 1,
+            name: Some("  ".into()),
+            contact: Some(" ".into()),
+            clear_contact: false,
+        }),
+    );
+    assert_eq!(code(result), ErrorCode::InvalidRequest);
+}
+
+#[test]
+fn the_owners_display_name_is_not_a_handle() {
+    let mut org = staffed();
+    let rename = |org: &mut Org, member: &str, name: &str| {
+        let command_id = org.id();
+        let expected_version = org.state.members[member].version;
+        org.run(OrgCommand::MemberUpdatePerson(MemberUpdatePersonParams {
+            command_id,
+            member_id: member.into(),
+            expected_version,
+            name: Some(name.into()),
+            contact: None,
+            clear_contact: false,
+        }))
+    };
+    // The owner may take the name of another person, or the word "owner" for display...
+    rename(&mut org, OWNER, "Ann").unwrap();
+    rename(&mut org, OWNER, "Vi").unwrap();
+    // ...and a new person may reuse the owner's display name.
+    org.person("vi2", "Vi").unwrap();
+    // But the word `owner` is still nobody else's.
+    assert_eq!(
+        code(rename(&mut org, "bob", "Owner")),
+        ErrorCode::AlreadyExists
+    );
+    assert_eq!(code(org.person("p9", "owner")), ErrorCode::AlreadyExists);
+    // And people still clash with each other.
+    assert_eq!(code(org.person("p10", "vi")), ErrorCode::AlreadyExists);
+}

@@ -56,7 +56,9 @@ impl OrgView for MemState {
     fn member_with_handle(&self, handle_key: &str) -> Option<Member> {
         self.members
             .values()
-            .find(|m| handle_of(m) == handle_key)
+            // The owner's handle is only `owner` (reserved by the rules); its display name is not
+            // one.
+            .find(|m| !m.owner && handle_of(m) == handle_key)
             .cloned()
     }
     fn reports_of(&self, member_id: &str) -> Vec<Member> {

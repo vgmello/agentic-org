@@ -18,8 +18,8 @@ pub trait OrgView {
     fn member(&self, id: &str) -> Option<Member>;
     /// The member whose person `name` or agent `messaging_name` has the key `handle_key`: the
     /// trimmed name lower-cased for a person, the `messaging_name` lower-cased for an agent. The
-    /// owner is a person, so the owner's own name counts. (The reserved word `owner` is not
-    /// looked up here; the rules handle it.)
+    /// owner's display name is NOT a handle: the owner is never returned here. (The reserved word
+    /// `owner` is not looked up here; the rules handle it.)
     fn member_with_handle(&self, handle_key: &str) -> Option<Member>;
     /// Members that report directly to `member_id`.
     fn reports_of(&self, member_id: &str) -> Vec<Member>;
