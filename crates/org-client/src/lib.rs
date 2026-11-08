@@ -62,6 +62,21 @@ pub use error::ClientError;
 /// How long a call waits for its answer unless told otherwise.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// What `organization.create` gets by default. The host may hold a create up to 30 s while it
+/// starts up (and answers `not_ready` when it would take longer), so the short default would give
+/// up on a call that is going to succeed.
+pub const CREATE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// The timeout [`Client::call`] gives a call by default: [`CREATE_TIMEOUT`] for the calls that
+/// create things on the host, [`DEFAULT_TIMEOUT`] for every other. A caller that knows better
+/// uses [`Client::call_with_timeout`].
+pub fn default_timeout(method: &str) -> Duration {
+    match method {
+        "organization.create" => CREATE_TIMEOUT,
+        _ => DEFAULT_TIMEOUT,
+    }
+}
+
 /// Events waiting to be read. A reader that falls this far behind loses the connection
 /// instead of making the app buffer without limit. The bound is a count, not bytes: an event
 /// line is at most `MAX_FRAME_BYTES`, so a server that only sends maximum-size events can make
@@ -324,9 +339,10 @@ impl Client {
         })
     }
 
-    /// Calls `C` and waits up to [`DEFAULT_TIMEOUT`] for the answer.
+    /// Calls `C` and waits for the answer up to [`default_timeout`] for its method
+    /// ([`DEFAULT_TIMEOUT`], or longer for the calls that are slow by nature).
     pub fn call<C: Call>(&self, params: &C::Params) -> Result<C::Result, ClientError> {
-        self.call_with_timeout::<C>(params, DEFAULT_TIMEOUT)
+        self.call_with_timeout::<C>(params, default_timeout(C::METHOD))
     }
 
     /// Calls `C`. `timeout` bounds the whole call, sending the request and then waiting for
@@ -798,8 +814,13 @@ mod tests {
     }
 
     #[test]
-    fn a_request_has_ten_seconds_unless_told_otherwise() {
+    fn a_request_has_ten_seconds_unless_its_kind_is_slow_by_nature() {
         assert_eq!(DEFAULT_TIMEOUT, Duration::from_secs(10));
+        assert_eq!(default_timeout("hello"), DEFAULT_TIMEOUT);
+        assert_eq!(default_timeout("organization.list"), DEFAULT_TIMEOUT);
+        assert_eq!(default_timeout(OrganizationCreate::METHOD), CREATE_TIMEOUT);
+        // The host may hold a create 30 s at startup.
+        assert!(CREATE_TIMEOUT >= Duration::from_secs(45));
     }
 
     #[test]

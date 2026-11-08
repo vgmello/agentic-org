@@ -1190,23 +1190,23 @@ fn mid_write_attempt() -> Result<(), String> {
     watchdog(Duration::from_secs(60), || {
         let saw_big = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let server_saw = std::sync::Arc::clone(&saw_big);
+        let (go, wait_for_go) = mpsc::channel::<()>();
         let server = fake(move |mut peer| {
             use std::io::Read;
-            // A slow but steady reader, paced by bytes: it takes in 256 KiB per 100 ms however
-            // much each read returns (a Unix socket hands over only its small buffer at a
-            // time). With a 90 ms deadline that is: after the request is encoded and handed
-            // to the writer, yet before the write is over; and the write still ends inside
-            // the 100 ms grace period after the deadline.
+            // Reads nothing until told to, so the client's write of the big request blocks
+            // once the socket buffers are full: it is mid-write when the deadline falls. Then
+            // it reads everything at once, and the write ends a moment after the deadline,
+            // inside the grace period.
+            if wait_for_go.recv().is_err() {
+                return;
+            }
             let mut pending = Vec::new();
-            let mut chunk = vec![0u8; 16 * 1024];
+            let mut chunk = vec![0u8; 64 * 1024];
             loop {
-                let taken = match peer.stream.read(&mut chunk) {
+                match peer.stream.read(&mut chunk) {
                     Ok(0) | Err(_) => return,
-                    Ok(n) => {
-                        pending.extend_from_slice(&chunk[..n]);
-                        n as u64
-                    }
-                };
+                    Ok(n) => pending.extend_from_slice(&chunk[..n]),
+                }
                 while let Some(end) = pending.iter().position(|&b| b == b'\n') {
                     let line: Vec<u8> = pending.drain(..=end).collect();
                     if let Ok(request) = serde_json::from_slice::<Request>(&line) {
@@ -1223,7 +1223,6 @@ fn mid_write_attempt() -> Result<(), String> {
                         }
                     }
                 }
-                std::thread::sleep(Duration::from_micros(taken * 100_000 / (256 * 1024)));
             }
         });
         let client = server.client();
@@ -1231,8 +1230,14 @@ fn mid_write_attempt() -> Result<(), String> {
         let big = OrganizationCreateParams {
             name: "x".repeat(256 * 1024),
         };
+        // 20 ms after the 150 ms deadline, the server starts reading.
+        let timer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(170));
+            let _ = go.send(());
+        });
         let result =
-            client.call_with_timeout::<OrganizationCreate>(&big, Duration::from_millis(90));
+            client.call_with_timeout::<OrganizationCreate>(&big, Duration::from_millis(150));
+        timer.join().unwrap();
         let outcome = if !matches!(result, Err(ClientError::Timeout)) {
             Err(format!("the big call did not time out: {result:?}"))
         } else if let Err(e) = client.hello() {
@@ -1392,4 +1397,25 @@ fn more_callers_than_the_queue_holds_wait_for_room_and_time_out_without_closing_
         drop(client);
         server.finish();
     });
+}
+
+#[test]
+fn creating_an_organization_waits_longer_than_the_short_default() {
+    // The host may hold a create for a while at startup: an answer that arrives after the
+    // short default (10 s) but well inside the create timeout is still an answer.
+    let server = fake(|mut peer| {
+        let request = peer.next_request().unwrap();
+        std::thread::sleep(Duration::from_millis(10_500));
+        peer.reply::<OrganizationCreate>(request.id, &organization("Acme"));
+    });
+    let client = server.client();
+
+    let created = watchdog(Duration::from_secs(40), move || {
+        let created = client.create_organization("Acme");
+        drop(client);
+        created
+    });
+
+    assert_eq!(created.unwrap().name, "Acme");
+    server.finish();
 }
