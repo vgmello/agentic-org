@@ -26,14 +26,20 @@ export interface HrScan {
 	error?: string;
 	agents: HrAgent[];
 	roles: string[];
-	/** Records skipped, each with why. */
+	/** Records skipped, each with why (the first few). */
 	skipped: string[];
+	/** How many more were skipped than `skipped` lists. */
+	skipped_more?: number;
+	/** There were more agents than the scan reads: the first ones are listed. */
+	truncated?: boolean;
 }
 
 export interface MessagingScan {
 	path: string;
 	error?: string;
 	names: string[];
+	/** There were more names than the scan reads: the first ones are listed. */
+	truncated?: boolean;
 }
 
 export interface Scan {

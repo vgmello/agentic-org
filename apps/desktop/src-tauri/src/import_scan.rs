@@ -79,8 +79,11 @@ pub struct HrScan {
     pub agents: Vec<HrAgent>,
     /// The role files' names (`software-engineer`), for the role picker.
     pub roles: Vec<String>,
-    /// Records that were skipped, each with why.
+    /// Records that were skipped, each with why (the first few: `skipped_more` counts the rest).
     pub skipped: Vec<String>,
+    pub skipped_more: usize,
+    /// There were more agents than this scan reads: the first ones are listed.
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -88,6 +91,8 @@ pub struct MessagingScan {
     pub path: String,
     pub error: Option<String>,
     pub names: Vec<String>,
+    /// There were more names than this scan reads: the first ones are listed.
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -124,7 +129,25 @@ fn plain_dir(path: &Path) -> bool {
 }
 
 fn is_hr_workspace(dir: &Path) -> bool {
-    plain_dir(&dir.join("hr").join("roles")) && plain_dir(&dir.join("projects"))
+    plain_dir(&dir.join("hr"))
+        && plain_dir(&dir.join("hr").join("roles"))
+        && plain_dir(&dir.join("projects"))
+}
+
+/// A folder the webview named was not one the app handed out.
+#[derive(Debug, PartialEq, Eq)]
+pub struct NotGranted;
+
+/// `scan` for folders named by the webview: every one must be a folder the app handed out, or nothing is read at all.
+pub fn scan_granted(
+    granted: &Granted,
+    hr: Option<&str>,
+    spool: Option<&str>,
+) -> Result<Scan, NotGranted> {
+    if hr.into_iter().chain(spool).any(|dir| !granted.allows(dir)) {
+        return Err(NotGranted);
+    }
+    Ok(scan(hr.map(Path::new), spool.map(Path::new)))
 }
 
 /// Read what is there. A source the owner did not give is `None`; one that can't be read says why.
@@ -149,6 +172,7 @@ fn scan_hr(root: &Path) -> HrScan {
             Some("That folder has no hr/roles and projects: it isn't an HR workspace.".into());
         return out;
     }
+    let mut notes = Notes::default();
     let roles = root.join("hr").join("roles");
     match fs::read_dir(&roles) {
         Ok(entries) => {
@@ -164,45 +188,72 @@ fn scan_hr(root: &Path) -> HrScan {
                 .collect();
             out.roles.sort();
         }
-        Err(e) => note(&mut out.skipped, format!("hr/roles can't be read ({e})")),
+        Err(e) => note(&mut notes, format!("hr/roles can't be read ({e})")),
     }
-    'projects: for project in dirs_in(&root.join("projects"), root, &mut out.skipped) {
-        for agent_dir in dirs_in(&project.join("agents"), root, &mut out.skipped) {
+    'projects: for project in dirs_in(&root.join("projects"), root, &mut notes) {
+        for agent_dir in dirs_in(&project.join("agents"), root, &mut notes) {
             let record = agent_dir.join("agent.json");
             if matches!(fs::symlink_metadata(&record), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
             {
                 continue; // not an agent's home
             }
             if out.agents.len() >= MAX_ENTRIES {
-                note(&mut out.skipped, "More agents than this scan reads.".into());
+                out.truncated = true;
                 break 'projects;
             }
             match read_agent(&record, root) {
                 Ok(agent) => out.agents.push(agent),
-                Err(why) => note(&mut out.skipped, format!("{}: {why}", short(root, &record))),
+                Err(why) => note(&mut notes, format!("{}: {why}", short(root, &record))),
             }
         }
     }
+    out.skipped = notes.list;
+    out.skipped_more = notes.more;
     out
 }
 
-/// Remember something that was skipped, up to a limit (the rest are not listed, so a flood of them can't grow the answer).
-fn note(notes: &mut Vec<String>, text: String) {
-    if notes.len() < MAX_NOTES {
-        notes.push(text);
+/// Remember something that was skipped, up to a limit (the rest are only counted, so a flood of them can't grow the answer).
+fn note(notes: &mut Notes, text: String) {
+    if notes.list.len() < MAX_NOTES {
+        notes.list.push(text);
+    } else {
+        notes.more += 1;
     }
+}
+
+#[derive(Default)]
+struct Notes {
+    list: Vec<String>,
+    more: usize,
 }
 
 /// The agent record at `record`, or why it can't be read.
 fn read_agent(record: &Path, root: &Path) -> Result<HrAgent, String> {
-    let meta = fs::symlink_metadata(record).map_err(|e| format!("can't be read ({e})"))?;
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+    // Opened without following a link and without blocking (a named pipe would otherwise hang the scan), then checked
+    // on the open handle: what was checked is what is read.
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(record)
+        .map_err(|e| format!("can't be read ({e})"))?;
+    let meta = file
+        .metadata()
+        .map_err(|e| format!("can't be read ({e})"))?;
     if !meta.is_file() {
         return Err("not a plain file".into());
     }
     if meta.len() > MAX_FILE_BYTES {
         return Err("too large to be an agent record".into());
     }
-    let text = fs::read_to_string(record).map_err(|e| format!("can't be read ({e})"))?;
+    let mut text = String::new();
+    file.take(MAX_FILE_BYTES + 1)
+        .read_to_string(&mut text)
+        .map_err(|e| format!("can't be read ({e})"))?;
+    if text.len() as u64 > MAX_FILE_BYTES {
+        return Err("too large to be an agent record".into());
+    }
     let mut agent: HrAgent =
         serde_json::from_str(&text).map_err(|_| "isn't a readable agent record".to_string())?;
     if agent.id.trim().is_empty() {
@@ -232,19 +283,19 @@ fn scan_messaging(spool: &Path) -> MessagingScan {
         out.error = Some("That folder has no inbox: it isn't a messaging spool.".into());
         return out;
     }
-    let mut unread = Vec::new();
+    let mut unread = Notes::default();
     let mut names: Vec<String> = dirs_in(&inbox, spool, &mut unread)
         .into_iter()
         .filter_map(|dir| dir.file_name().map(|n| n.to_string_lossy().into_owned()))
         .filter(|name| !name.starts_with('.'))
         .collect();
-    if let Some(why) = unread.first() {
+    if let Some(why) = unread.list.first() {
         out.error = Some(format!("The inbox can't be read ({why})."));
         return out;
     }
     if names.len() > MAX_ENTRIES {
         names.truncate(MAX_ENTRIES);
-        out.error = Some("More names than this scan reads: the first ones are listed.".into());
+        out.truncated = true;
     }
     out.names = names;
     out
@@ -252,7 +303,7 @@ fn scan_messaging(spool: &Path) -> MessagingScan {
 
 /// The sub-directories of `dir` that are real directories (a symbolic link is not followed), by name. A folder that
 /// can't be read is noted in `skipped` (a missing one is just empty).
-fn dirs_in(dir: &Path, root: &Path, skipped: &mut Vec<String>) -> Vec<PathBuf> {
+fn dirs_in(dir: &Path, root: &Path, skipped: &mut Notes) -> Vec<PathBuf> {
     if fs::symlink_metadata(dir).is_ok_and(|m| m.file_type().is_symlink()) {
         note(
             skipped,
@@ -490,7 +541,7 @@ mod tests {
         }
         let messaging = scan(None, Some(spool.path())).messaging.unwrap();
         assert_eq!(messaging.names.len(), MAX_ENTRIES);
-        assert!(messaging.error.unwrap().contains("More names"));
+        assert!(messaging.truncated && messaging.error.is_none());
         let dir = tempfile::tempdir().unwrap();
         write(&dir.path().join("hr/roles/r.toml"), "");
         for n in 0..(MAX_NOTES + 20) {
@@ -502,6 +553,7 @@ mod tests {
         }
         let hr = scan(Some(dir.path()), None).hr.unwrap();
         assert_eq!(hr.skipped.len(), MAX_NOTES);
+        assert_eq!(hr.skipped_more, 20, "and the rest are counted");
     }
 
     #[test]
@@ -520,6 +572,63 @@ mod tests {
         let hr = scan(Some(dir.path()), None).hr.unwrap();
         assert_eq!(hr.roles, ["real"]);
         assert!(hr.agents.iter().all(|a| a.home_path.is_none()));
+    }
+
+    #[test]
+    fn a_link_in_hr_is_not_followed_and_a_pipe_does_not_hang_the_scan() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        write(&outside.path().join("roles/stolen.toml"), "");
+        fs::create_dir_all(dir.path().join("projects/p")).unwrap();
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("hr")).unwrap();
+        assert!(scan(Some(dir.path()), None)
+            .hr
+            .unwrap()
+            .error
+            .unwrap()
+            .contains("isn't an HR workspace"));
+        let ws = tempfile::tempdir().unwrap();
+        workspace(ws.path());
+        let pipe = ws.path().join("projects/ac/agents/pipe/agent.json");
+        fs::create_dir_all(pipe.parent().unwrap()).unwrap();
+        let made = std::process::Command::new("mkfifo")
+            .arg(&pipe)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        let hr = scan(Some(ws.path()), None).hr.unwrap();
+        assert!(hr.agents.iter().all(|a| a.id != "pipe"));
+        assert!(
+            hr.skipped.iter().any(|s| s.contains("pipe")),
+            "{:?}",
+            hr.skipped
+        );
+    }
+
+    #[test]
+    fn the_webview_may_scan_only_what_was_handed_out_and_nothing_is_read_otherwise() {
+        let dir = tempfile::tempdir().unwrap();
+        workspace(dir.path());
+        let spool = tempfile::tempdir().unwrap();
+        fs::create_dir_all(spool.path().join("inbox/x")).unwrap();
+        let (hr, sp) = (path_text(dir.path()), path_text(spool.path()));
+        let granted = Granted::default();
+        granted.grant(&hr);
+        // Never granted, or a granted path with something appended: refused.
+        assert_eq!(scan_granted(&granted, Some(&sp), None), Err(NotGranted));
+        assert_eq!(
+            scan_granted(&granted, Some(&format!("{hr}/../x")), None),
+            Err(NotGranted)
+        );
+        // One granted and one not: refused as a whole, with no partial scan.
+        assert_eq!(
+            scan_granted(&granted, Some(&hr), Some(&sp)),
+            Err(NotGranted)
+        );
+        granted.grant(&sp);
+        let both = scan_granted(&granted, Some(&hr), Some(&sp)).unwrap();
+        assert!(both.hr.is_some() && both.messaging.is_some());
+        assert_eq!(scan_granted(&granted, None, None).unwrap(), Scan::default());
     }
 
     #[test]

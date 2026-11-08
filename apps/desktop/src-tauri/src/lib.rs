@@ -381,19 +381,14 @@ async fn import_scan(
     hr_dir: Option<String>,
     spool_dir: Option<String>,
 ) -> Result<import_scan::Scan, CommandError> {
-    for dir in hr_dir.iter().chain(spool_dir.iter()) {
-        if !granted.allows(dir) {
-            return Err(CommandError::local(
+    let granted = Arc::clone(&granted);
+    blocking(move || {
+        import_scan::scan_granted(&granted, hr_dir.as_deref(), spool_dir.as_deref()).map_err(|_| {
+            CommandError::local(
                 "invalid_request",
                 "That folder wasn't chosen here: pick it again.",
-            ));
-        }
-    }
-    blocking(move || {
-        Ok(import_scan::scan(
-            hr_dir.as_deref().map(std::path::Path::new),
-            spool_dir.as_deref().map(std::path::Path::new),
-        ))
+            )
+        })
     })
     .await
 }

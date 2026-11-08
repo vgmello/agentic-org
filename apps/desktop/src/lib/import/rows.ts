@@ -105,10 +105,12 @@ function breakCycles(rows: Row[]): void {
 	for (const row of rows) {
 		const seen = new Set<string>([row.key]);
 		for (let boss = byKey.get(row.managerKey); boss; boss = byKey.get(boss.managerKey)) {
-			if (seen.has(boss.key)) {
+			// Only a row that is in the cycle itself is cut; one that merely reports into it keeps its line.
+			if (boss.key === row.key) {
 				row.managerKey = OWNER;
 				break;
 			}
+			if (seen.has(boss.key)) break;
 			seen.add(boss.key);
 		}
 	}
@@ -128,9 +130,18 @@ function fromHr(record: HrAgent): Partial<Row> {
 	};
 }
 
+/**
+ * Whether `name` can be an agent's messaging name, as org-proto has it: 1 to 64 ASCII letters, digits, `-`, `_` and `.`,
+ * starting with a letter or digit, and not shaped like an address (26 letters and digits, a member id's shape).
+ */
+export function isValidHandle(name: string): boolean {
+	return /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name) && !/^[A-Za-z0-9]{26}$/.test(name);
+}
+
 /** What a row still needs from the owner before it can be brought in. */
-export function missingOf(row: Row): ('role' | 'runtime')[] {
-	const missing: ('role' | 'runtime')[] = [];
+export function missingOf(row: Row): ('role' | 'runtime' | 'name')[] {
+	const missing: ('role' | 'runtime' | 'name')[] = [];
+	if (!isValidHandle(row.messagingName)) missing.push('name');
 	if (!row.role?.trim() || !row.title?.trim()) missing.push('role');
 	if (row.runtime === undefined || row.runtime === 'unknown') missing.push('runtime');
 	return missing;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Member } from '$lib/proto';
 import { SAMPLE_SCAN } from './mock';
-import { buildRows, counts, hasNoMessages, isReady, missingOf, OWNER, roleWords } from './rows';
+import { buildRows, counts, hasNoMessages, isReady, isValidHandle, missingOf, OWNER, roleWords } from './rows';
 import type { HrAgent, Scan } from './types';
 
 const rowsOf = (scan: Scan = SAMPLE_SCAN, exclude = ['sample']) => buildRows(scan, { exclude });
@@ -140,5 +140,26 @@ describe('records that need care', () => {
 		}
 		expect([manager('a'), manager('b')]).toContain(OWNER);
 		expect(manager('c')).toBe('a');
+	});
+
+	it('keeps the line of an agent that only reports into a cycle, and cuts just the row that closes it', () => {
+		// a sorts first and reports to b; b and c report to each other.
+		const { rows } = buildRows(hr([{ id: 'a', reports_to: 'b' }, { id: 'b', reports_to: 'c' }, { id: 'c', reports_to: 'b' }]));
+		const manager = (key: string) => rows.find((r) => r.key === key)!.managerKey;
+		expect(manager('a')).toBe('b');
+		expect([manager('b'), manager('c')].filter((m) => m === OWNER)).toHaveLength(1);
+	});
+});
+
+describe('a messaging name HQ would refuse is not ready', () => {
+	it('mirrors org-proto’s handle rules', () => {
+		for (const ok of ['ada', 'ac-staff-engineer-ada', 'a.b_c-d', '9lives', 'x'.repeat(64)]) expect(isValidHandle(ok)).toBe(true);
+		for (const bad of ['', '-dash', 'has space', 'run:x', 'Ünïcode', 'x'.repeat(65), '01ARZ3NDEKTSV4RRFFQ69G5FAV', '.dot']) expect(isValidHandle(bad)).toBe(false);
+	});
+
+	it('asks for a name instead of counting the row as ready', () => {
+		const { rows } = buildRows({ hr: { path: '/h', agents: [{ id: 'has space', role: 'x', title: 'y' }], roles: [], skipped: [] } });
+		expect(missingOf(rows[0])).toEqual(['name']);
+		expect(counts(rows)).toMatchObject({ ready: 0, needDetails: 1 });
 	});
 });
