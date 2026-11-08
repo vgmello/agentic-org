@@ -28,6 +28,12 @@ pub trait OfficeConnection: Send + Sync {
     /// `hello`.
     fn ensure_running(&self) -> Result<HelloResult, SetupError>;
 
+    /// Ask the running office whether it answers (`hello`). Read-only: it never installs, registers or
+    /// starts anything, so it is safe to call often (the Offices screen checks every half minute). Every failure is
+    /// reported as `setup/unreachable`. This says the host (or the mock) answers, not that the connected office is up:
+    /// the screen shows Online only when the office's reported status is also `active` (OFC-12).
+    fn ping(&self) -> Result<(), SetupError>;
+
     fn create_organization(&self, name: &str) -> Result<Organization, ApiError>;
 
     /// Every organization this office hosts (`organization.list`).
