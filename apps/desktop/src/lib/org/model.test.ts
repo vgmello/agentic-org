@@ -112,7 +112,7 @@ describe('TEAM-3 and OWNER-1 not in a team', () => {
 	});
 
 	it('counts leave the owner out', () => {
-		expect(owner(s)?.name).toBe('You');
+		expect(owner(s)?.name).toBe('Alex Kim');
 		expect(organizationCounts(s)).toEqual({ agents: 8, people: 3, others: 0, teams: 5 });
 		expect(organizationCounts(emptyOrg())).toEqual({ agents: 0, people: 0, others: 0, teams: 0 });
 		const odd = { ...s, members: s.members.map((m) => (m.id === 'leo' ? { ...m, kind: 'unknown' as const } : m)) };

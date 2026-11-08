@@ -18,12 +18,12 @@ test('PEOPLE-3: Add person takes a name, contact, teams and a manager; they appe
 	const sheet = page.getByRole('dialog', { name: 'Add person' });
 	await expect(sheet.getByRole('button', { name: 'Add person' })).toBeDisabled(); // no name yet
 	await expect(sheet.getByLabel('Reports to')).toHaveValue(''); // the owner by default
-	await expect(sheet.getByLabel('Reports to').locator('option').first()).toHaveText('You (you)');
+	await expect(sheet.getByLabel('Reports to').locator('option').first()).toHaveText('Alex Kim (you)');
 	await sheet.getByLabel('Name').fill('Sam Ortiz');
 	await sheet.getByLabel('Contact').fill('sam@example.com');
 	await sheet.getByRole('checkbox', { name: 'Engineering › Web' }).click();
 	await sheet.getByLabel('Reports to').selectOption({ label: 'Avery Stone' });
-	await expect(sheet).toContainText('any agent in Sample organization can message them');
+	await expect(sheet).toContainText('any agent in Acme can message them');
 	await shot(page, 'add-person');
 	await sheet.getByRole('button', { name: 'Add person' }).click();
 	await expect(page.getByText('Added Sam Ortiz. Agents can now reach Sam Ortiz.')).toBeVisible();
@@ -36,7 +36,7 @@ test('PEOPLE-4: a name that is already a handle is refused inline with a suggest
 	await page.getByRole('button', { name: 'Add person' }).first().click();
 	const sheet = page.getByRole('dialog', { name: 'Add person' });
 	await sheet.getByLabel('Name').fill('avery stone');
-	await expect(sheet.getByRole('alert')).toHaveText('Avery Stone is already in Sample organization. Use a different name, such as avery stone (2).');
+	await expect(sheet.getByRole('alert')).toHaveText('Avery Stone is already in Acme. Use a different name, such as avery stone (2).');
 	await expect(sheet.getByRole('button', { name: 'Add person' })).toBeDisabled();
 	await sheet.getByLabel('Name').fill('SAM');
 	await expect(sheet.getByRole('alert')).toHaveText("SAM is an agent's name. Choose another.");
@@ -60,7 +60,7 @@ test('PEOPLE-8: renaming checks the handle rule and says agents will use the new
 	await page.getByTestId('selected-member').getByRole('button', { name: 'Edit…' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Edit Hana Weiss' });
 	await dialog.getByLabel('Name').fill('Leo Brandt');
-	await expect(dialog.getByRole('alert')).toContainText('Leo Brandt is already in Sample organization');
+	await expect(dialog.getByRole('alert')).toContainText('Leo Brandt is already in Acme');
 	await expect(dialog.getByRole('button', { name: 'Save' })).toBeDisabled();
 	await dialog.getByLabel('Name').fill('Hana W.');
 	await expect(dialog.getByTestId('rename-note')).toHaveText('Agents will address them as Hana W. from now on.');
@@ -73,7 +73,7 @@ test('PEOPLE-5: removing a person confirms first, naming the teams, who reports 
 	await openChart(page);
 	await card(page, 'people').getByRole('button', { name: /^Hana Weiss/ }).click();
 	await page.getByTestId('selected-member').getByRole('button', { name: /^Remove from/ }).click();
-	const dialog = page.getByRole('dialog', { name: 'Remove Hana Weiss from Sample organization?' });
+	const dialog = page.getByRole('dialog', { name: 'Remove Hana Weiss from Acme?' });
 	await expect(dialog).toContainText('Hana Weiss leaves People, and stops leading People.');
 	await expect(dialog).toContainText("Inês Duarte and Leo Brandt, who report to Hana Weiss, will report to Hana Weiss's manager, Avery Stone.");
 	await expect(dialog).toContainText("Messages waiting for Hana Weiss won't be delivered");
@@ -110,7 +110,7 @@ test('REPORT-3: Change manager lists the owner first, never the member, and disa
 	const dialog = page.getByRole('dialog', { name: 'Change manager of Hana Weiss' });
 	await expect(dialog).toContainText('Hana Weiss reports to Avery Stone now.');
 	const radios = dialog.getByRole('radio');
-	await expect(radios.first()).toHaveAccessibleName(/^You \(you\)/); // the owner first
+	await expect(radios.first()).toHaveAccessibleName(/^Alex Kim \(you\)/); // the owner first
 	await expect(dialog.getByRole('radio', { name: /^Hana Weiss/ })).toHaveCount(0); // never themselves
 	// Leo (and anyone below) can't be chosen: it would make a loop.
 	const leo = dialog.getByRole('radio', { name: /^Leo Brandt/ });
@@ -143,9 +143,9 @@ test('REPORT-3: the owner can be chosen as the manager', async ({ page }) => {
 	await card(page, 'people').getByRole('button', { name: /^Leo Brandt/ }).click();
 	await page.getByTestId('selected-member').getByRole('button', { name: 'Change manager…' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Change manager of Leo Brandt' });
-	await dialog.getByRole('radio', { name: /^You \(you\)/ }).check();
+	await dialog.getByRole('radio', { name: /^Alex Kim \(you\)/ }).check();
 	await dialog.getByRole('button', { name: 'Change manager' }).click();
-	await expect(page.getByText('Leo Brandt now reports to You (you).')).toBeVisible();
+	await expect(page.getByText('Leo Brandt now reports to Alex Kim (you).')).toBeVisible();
 });
 
 test('TEAM-6: Edit teams for a member checks teams with a title each, and warns before clearing a lead', async ({ page }) => {

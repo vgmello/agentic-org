@@ -17,11 +17,12 @@ test('OWNER-1: the owner is shown once, above the chart, and never on a team or 
 	await openChart(page);
 	const bar = page.getByRole('region', { name: 'Owner' });
 	await expect(page.getByRole('region', { name: 'Owner' })).toHaveCount(1);
-	await expect(bar).toContainText('You (you) · Owner of Sample organization');
+	await expect(bar).toContainText('Alex Kim (you) · Owner of Acme');
+	await expect(bar.getByTestId('owner-sample')).toContainText('Sample data');
 	await expect(bar).toContainText('Full access to every team, member and project');
 	await expect(bar).toContainText('Any agent can message, ask or assign you');
 	// Never as a tile on a card, in "Not in a team", or in a team's members.
-	await expect(page.getByRole('button', { name: /^You,/ })).toHaveCount(0);
+	await expect(page.getByRole('button', { name: /^Alex Kim,/ })).toHaveCount(0);
 	// Counts leave the owner out.
 	await expect(page.getByText(/\b8\b.*agents/)).toBeVisible();
 	await expect(page.getByText(/\b3\b.*people/)).toBeVisible();
@@ -226,5 +227,5 @@ test('TEAM-4 and TEAM-10: the office filter marks members in the list view too',
 test('the sample data is labelled where it can’t scroll away: next to the tabs and in the owner bar', async ({ page }) => {
 	await openChart(page);
 	await expect(page.getByTestId('sample-data-note')).toBeVisible();
-	await expect(page.getByRole('region', { name: 'Owner' })).toContainText('Sample organization');
+	await expect(page.getByRole('region', { name: 'Owner' })).toContainText('Sample data');
 });

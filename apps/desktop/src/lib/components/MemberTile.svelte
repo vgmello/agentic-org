@@ -27,7 +27,7 @@
 
 	const agent = $derived(member.kind === 'agent');
 	// Agents and people are told apart by shape and glyph, not color: a square tile with a robot, or
-	// a round avatar with initials; screen readers hear "agent" or "person" after the name.
+	// a round avatar; both show initials; screen readers hear "agent" or "person" after the name.
 	const label = $derived(
 		`${member.name}, ${agent ? 'agent' : member.kind === 'person' ? 'person' : 'member'}` +
 			(alsoIn.length ? `, also in ${alsoIn.map((t) => t.name).join(', ')}` : '') +
@@ -46,13 +46,13 @@
 		{agent ? 'rounded-md bg-indigo-500/20 text-indigo-200 outline-indigo-400/30' : 'rounded-full bg-emerald-500/15 text-emerald-200 outline-emerald-400/30'}
 		{selected ? 'ring-2 ring-white' : highlighted ? 'ring-2 ring-amber-300' : ''} {dimmed ? 'opacity-40' : ''}"
 >
+	<span aria-hidden="true">{initialsOf(member.name)}</span>
 	{#if agent}
-		<Bot class={size === 'sm' ? 'size-4' : 'size-5'} aria-hidden="true" />
-	{:else}
-		<span aria-hidden="true">{initialsOf(member.name)}</span>
+		<!-- A square tile with a small robot: told apart from a person by shape and glyph, not color or initials alone. -->
+		<Bot class="absolute -top-1 -left-1 size-3.5 rounded-sm bg-gray-800 p-px text-indigo-200" aria-hidden="true" />
 	{/if}
 	{#if alsoIn.length > 0}
-		<span class="absolute -top-1.5 -right-1.5 rounded-full bg-gray-700 px-1 text-[0.6rem] leading-4 font-semibold text-white outline-1 outline-white/20" aria-hidden="true">
+		<span class="absolute -top-1.5 -right-1.5 rounded-sm bg-gray-700 px-1 text-[0.6rem] leading-4 font-semibold whitespace-nowrap text-white outline-1 outline-white/20" aria-hidden="true">
 			+{alsoIn.length} {alsoIn.length === 1 ? 'team' : 'teams'}
 		</span>
 	{/if}
