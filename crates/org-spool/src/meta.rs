@@ -37,8 +37,7 @@ const MAX_SNOOZE_SECS: u64 = 365 * 24 * 3600;
 /// kept 30 days), so it gets more room than an envelope: hitting the cap sets the file aside
 /// like a corrupt one, losing its snoozes.
 const MAX_TRIAGE_BYTES: usize = 16 * 1024 * 1024;
-/// The organization's owner (a person), the only member that may carry `owner: true`.
-pub const OWNER_ID: &str = "vgmello";
+pub use crate::member::OWNER_ID;
 const MAX_PROFILE_FIELD_CHARS: usize = 128;
 /// `msg notify` lists at most this many items, then "…and \<k\> more".
 pub const NOTIFY_MAX_ITEMS: usize = 10;

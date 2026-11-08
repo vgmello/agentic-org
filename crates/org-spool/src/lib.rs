@@ -21,8 +21,8 @@ pub use envelope::{
     ENVELOPE_VERSION, MAX_BODY_BYTES, MAX_ENVELOPE_BYTES, MAX_SUBJECT_BYTES,
 };
 pub use member::{
-    canonical_member_id, check_not_reserved, is_owner, is_reserved_name, resolve_caller,
-    resolve_member,
+    canonical_member_id, check_not_reserved, is_owner, is_reserved_name, member_id_arg,
+    resolve_caller, resolve_member,
 };
 pub use messaging::{InboxQuery, Outgoing, INBOX_MAX_LIMIT, INBOX_SUMMARY_DEFAULT_LIMIT};
 pub use meta::{

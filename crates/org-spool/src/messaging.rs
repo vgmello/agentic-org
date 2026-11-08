@@ -50,7 +50,7 @@ fn invalid(e: String) -> SpoolError {
 /// never treated as an unknown member.
 fn recipient(raw: &str) -> Result<String, SpoolError> {
     let to = resolve_member(raw);
-    check_not_reserved(&to, "recipient")?;
+    check_not_reserved(&to, "recipient").map_err(invalid)?;
     Ok(to)
 }
 

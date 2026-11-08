@@ -3,8 +3,9 @@
 //! member can be registered under them.
 
 use crate::envelope::validate_agent_id;
-use crate::meta::OWNER_ID;
-use crate::spool::SpoolError;
+
+/// The organization's owner (a person), the only member that may carry `owner: true`.
+pub const OWNER_ID: &str = "vgmello";
 
 /// Names no member can have (any case): `owner` is the alias of the owner, `office` is kept
 /// for the office itself.
@@ -17,14 +18,22 @@ pub fn is_reserved_name(raw: &str) -> bool {
 }
 
 /// Refuse a reserved name where a member is named or created (`msg register`, `profile set`).
-pub fn check_not_reserved(raw: &str, what: &str) -> Result<(), SpoolError> {
+pub fn check_not_reserved(raw: &str, what: &str) -> Result<(), String> {
     if is_reserved_name(raw) {
-        return Err(SpoolError::InvalidInput(format!(
+        return Err(format!(
             "{what} '{}' is reserved (owner, office)",
             raw.trim()
-        )));
+        ));
     }
     Ok(())
+}
+
+/// A member id given as an argument (`msg register <id>`, `profile set <id>`,
+/// `msg deregister <id>`): valid, not reserved, and the owner's in canonical case.
+pub fn member_id_arg(raw: &str, what: &str) -> Result<String, String> {
+    validate_agent_id(raw, what)?;
+    check_not_reserved(raw, "member id")?;
+    Ok(canonical_member_id(raw))
 }
 
 /// The owner's id in canonical case (`VGMELLO` is `vgmello`: a case-insensitive file system

@@ -1776,6 +1776,30 @@ fn rule_a_persons_reply_to_an_expired_ask_defaults_to_high() {
 }
 
 #[test]
+fn rule_the_owner_id_is_canonical_in_library_calls_too() {
+    let t = TempSpool::new("owner_case");
+    let owner = org_spool::OWNER_ID;
+    // No second, differently-cased owner inbox through the library.
+    assert!(matches!(
+        t.spool.register("VGMELLO"),
+        Err(SpoolError::InvalidInput(_))
+    ));
+    let mut update = org_spool::ProfileUpdate::default();
+    update.role("Founder");
+    let p = t.spool.edit_profile(owner, "VgMello", &update).unwrap();
+    assert_eq!(p.id, owner);
+    assert!(t
+        .dir
+        .join(format!("spool/inbox/{owner}/profile.json"))
+        .is_file());
+    assert_eq!(
+        org_spool::member_id_arg("VGMELLO", "register").unwrap(),
+        owner
+    );
+    assert!(org_spool::member_id_arg("Office", "register").is_err());
+}
+
+#[test]
 fn rule_is_person_ignores_the_case_of_the_kind() {
     let t = TempSpool::new("person_case");
     // Written by hand or another tool: not lowercase.

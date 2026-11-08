@@ -11,10 +11,10 @@ use std::process::ExitCode;
 use std::time::{Duration, SystemTime};
 
 use org_spool::{
-    authorize_profile_edit, canonical_member_id, check_not_reserved, check_wait_timeout,
-    format_iso8601_utc, json_quote, parse_duration_arg, request_interrupt, resolve_caller,
-    sanitize_inline_text, validate_agent_id, DirectoryCard, Envelope, InboxQuery, MessagePriority,
-    MetaValue, NotifyOptions, Outgoing, ProfileUpdate, RelayOutcome, Spool, SpoolError,
+    authorize_profile_edit, check_wait_timeout, format_iso8601_utc, json_quote, member_id_arg,
+    parse_duration_arg, request_interrupt, resolve_caller, sanitize_inline_text, DirectoryCard,
+    Envelope, InboxQuery, MessagePriority, MetaValue, NotifyOptions, Outgoing, ProfileUpdate,
+    RelayOutcome, Spool, SpoolError,
 };
 
 const EXIT_OK: u8 = 0;
@@ -147,14 +147,6 @@ fn run_relay_subcommand(spool: &Spool, args: &[String], json_flag: bool) -> Resu
 fn resolve_identity(as_flag: Option<&str>) -> Result<String, CliError> {
     let session = env::var("ORG_AGENT").ok();
     resolve_caller(as_flag, session.as_deref()).map_err(CliError::Usage)
-}
-
-/// A member id given as a positional argument (`msg register <id>`, `profile set <id>`,
-/// `msg deregister <id>`): valid, not reserved, the owner's in canonical case.
-fn member_id_arg(raw: &str, what: &str) -> Result<String, CliError> {
-    validate_agent_id(raw, what).map_err(CliError::Usage)?;
-    check_not_reserved(raw, "member id")?;
-    Ok(canonical_member_id(raw))
 }
 
 fn read_body_arg(body_flag: Option<String>, positional: &[String]) -> Result<String, CliError> {
@@ -663,7 +655,10 @@ fn run(args: Vec<String>) -> Result<u8, CliError> {
             let rest = &filtered[2..];
             let (target_id, flag_slice) = if let Some(first) = rest.first() {
                 if !first.starts_with('-') {
-                    (member_id_arg(first, "profile")?, &rest[1..])
+                    (
+                        member_id_arg(first, "profile").map_err(CliError::Usage)?,
+                        &rest[1..],
+                    )
                 } else {
                     (resolve_identity(as_agent.as_deref())?, rest)
                 }
@@ -792,7 +787,10 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
         "register" => {
             let (id, flag_slice) = if let Some(first) = sub_args.first() {
                 if !first.starts_with('-') {
-                    (member_id_arg(first, "register")?, &sub_args[1..])
+                    (
+                        member_id_arg(first, "register").map_err(CliError::Usage)?,
+                        &sub_args[1..],
+                    )
                 } else {
                     (resolve_identity(as_agent.as_deref())?, sub_args)
                 }
@@ -827,7 +825,7 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
                     "usage: org-agent msg deregister <agent>".into(),
                 ));
             };
-            let id = &member_id_arg(id, "deregister")?;
+            let id = &member_id_arg(id, "deregister").map_err(CliError::Usage)?;
             let me = resolve_identity(as_agent.as_deref())?;
             spool.deregister_as(&me, id)?;
             if json_flag {

@@ -18,7 +18,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use crate::envelope::{validate_agent_id, Envelope, MessageKind, MAX_ENVELOPE_BYTES};
 use crate::member::{
-    canonical_member_id, check_not_reserved, is_owner, is_reserved_name, resolve_member,
+    canonical_member_id, check_not_reserved, is_owner, is_reserved_name, resolve_member, OWNER_ID,
 };
 use crate::meta::RecipientKind;
 use crate::safe_read::{create_new_nofollow, is_permanent_file_error, read_spool_file, SpoolFile};
@@ -377,7 +377,14 @@ impl Spool {
     /// Register an agent's inbox (`inbox/<agent>/{tmp,new,cur,wake}`).
     pub fn register(&self, agent: &str) -> Result<(), SpoolError> {
         validate_agent_id(agent, "register").map_err(SpoolError::InvalidInput)?;
-        check_not_reserved(agent, "member id")?;
+        check_not_reserved(agent, "member id").map_err(SpoolError::InvalidInput)?;
+        if is_owner(agent) && agent != OWNER_ID {
+            // A case-insensitive file system would give it the owner's inbox; a case-sensitive
+            // one a second one.
+            return Err(SpoolError::InvalidInput(format!(
+                "the owner's id is '{OWNER_ID}', not '{agent}'"
+            )));
+        }
         self.ensure_dir(&self.agent_tmp_dir(agent))?;
         self.ensure_dir(&self.agent_new_dir(agent))?;
         self.ensure_dir(&self.agent_cur_dir(agent))?;
@@ -398,7 +405,8 @@ impl Spool {
     /// `msg deregister <agent>` by `caller`: only the member itself, or the owner, may remove an
     /// inbox (v1-old didn't check). Phase A has no authentication, so this stops mistakes.
     pub fn deregister_as(&self, caller: &str, agent: &str) -> Result<(), SpoolError> {
-        if canonical_member_id(caller) != canonical_member_id(agent) && !is_owner(caller) {
+        let agent = &canonical_member_id(agent);
+        if canonical_member_id(caller) != *agent && !is_owner(caller) {
             return Err(SpoolError::InvalidInput(format!(
                 "{caller} can't deregister {agent} (only itself; the owner can deregister any)"
             )));
