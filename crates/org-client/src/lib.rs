@@ -11,7 +11,7 @@
 //!
 //! Limits worth knowing:
 //! - A call's time is its timeout plus, for the one call whose request is mid-write at its
-//!   deadline, up to [`WRITE_GRACE`] (100 ms) and about a millisecond of polling for queue room.
+//!   deadline, up to `WRITE_GRACE` (100 ms) and about a millisecond of polling for queue room.
 //! - A call with a huge timeout (even `Duration::MAX`) whose request is stuck mid-write holds
 //!   the connection: nothing else can be written until it gives up. Use sensible timeouts.
 //! - A [`ClientError::Timeout`] can also report a connection that closed just before the
@@ -68,6 +68,9 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 /// the queue hold about 256 MiB of text (and its parsed form is larger still). The server is the
 /// user's own office on a 0600 socket, so this is a limit on a bug, not on an attacker.
 const EVENT_QUEUE: usize = 256;
+
+/// How long dropping a `Client` waits for its reader thread to end before letting it go.
+const DROP_JOIN_WAIT: Duration = Duration::from_millis(500);
 
 /// Requests waiting for the writer. A call that finds the queue full waits for room until its
 /// own deadline, then times out; the queue being full never closes the connection.
@@ -136,8 +139,11 @@ struct Outgoing {
 }
 
 /// Server events, from [`Client::subscribe`]. Use it like a `Receiver<Event>` (`recv`,
-/// `recv_timeout`, `try_recv`, `iter`, ...). Dropping it releases the subscription, so
-/// `subscribe` can be called again.
+/// `recv_timeout`, `try_recv`, `iter`, ...). Dropping it releases the subscription on this side,
+/// so `subscribe` can be called again. The protocol has no unsubscribe: the server keeps
+/// publishing to the connection until it closes, so a second `subscribe_from` can see events
+/// the old subscription already delivered (take a new snapshot and use positions to drop
+/// duplicates), and what the server does with a repeated `subscribe` is its own contract.
 #[must_use = "dropping the Subscription ends the subscription"]
 pub struct Subscription {
     events: Receiver<Event>,
@@ -394,8 +400,15 @@ impl Client {
                     return Err(ClientError::Disconnected);
                 }
             };
-            let before = self.shared.queued_bytes.fetch_add(size, Ordering::SeqCst);
-            if before + size <= MAX_QUEUED_BYTES {
+            // Reserve room in the byte budget, never going over it (not even for a moment).
+            let reserved = self
+                .shared
+                .queued_bytes
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |queued| {
+                    (queued + size <= MAX_QUEUED_BYTES).then_some(queued + size)
+                })
+                .is_ok();
+            if reserved {
                 match outbound.try_send(message) {
                     Ok(()) => {
                         *sent = true;
@@ -412,7 +425,6 @@ impl Client {
                     }
                 }
             } else {
-                self.shared.queued_bytes.fetch_sub(size, Ordering::SeqCst);
                 waiting = Some(message);
             }
             if Instant::now() >= deadline {
@@ -461,9 +473,11 @@ impl Client {
     /// Returns whether the request was withdrawn without any of it being written.
     ///
     /// Known limit: the writer thread is in `WRITING` from the moment it picks a request up
-    /// until its first byte is out, and a writer that is not scheduled for more than
-    /// [`WRITE_GRACE`] in that span (heavy load, a stopped process) looks the same as a stuck
-    /// write. The caller then closes a healthy connection. Callers must be ready to reconnect.
+    /// until the whole request is out. A write that is still going `WRITE_GRACE` after the
+    /// deadline (a peer that takes a large request slowly, or a writer that is not scheduled
+    /// for that long under heavy load or a stopped process) looks the same as a stuck write,
+    /// and the caller then closes the connection, healthy or not. Callers must be ready to
+    /// reconnect.
     fn settle(&self, state: &AtomicU8) -> bool {
         match state.compare_exchange(QUEUED, ABANDONED, Ordering::SeqCst, Ordering::SeqCst) {
             Ok(_) | Err(ABANDONED) => return true,
@@ -593,7 +607,17 @@ impl Drop for Client {
         // Let the writer thread end once its queue is empty.
         self.outbound.take();
         if let Some(reader) = self.reader.take() {
-            let _ = reader.join();
+            // The shutdown above ends the reader's read. On macOS it has been seen not to wake
+            // it (in about one drop in a hundred), and an unconditional join would then freeze
+            // whoever dropped the client, usually a UI thread. Wait a moment, then let the
+            // thread go: it ends when the server closes its side.
+            let give_up_at = Instant::now() + DROP_JOIN_WAIT;
+            while !reader.is_finished() && Instant::now() < give_up_at {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            if reader.is_finished() {
+                let _ = reader.join();
+            }
         }
     }
 }
@@ -735,4 +759,100 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::net::UnixListener;
+
+    use super::*;
+
+    /// A server that accepts one connection and never reads or answers, until dropped.
+    struct StuckServer {
+        _dir: tempfile::TempDir,
+        path: PathBuf,
+        _release: mpsc::Sender<()>,
+    }
+
+    fn stuck_server() -> StuckServer {
+        let dir = tempfile::Builder::new().prefix("oc").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let (release, held) = mpsc::channel::<()>();
+        std::thread::spawn(move || {
+            let connection = listener.accept();
+            let _ = held.recv(); // returns when the test drops `release`
+            drop(connection);
+        });
+        StuckServer {
+            _dir: dir,
+            path,
+            _release: release,
+        }
+    }
+
+    #[test]
+    fn a_client_can_be_shared_between_threads() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<Client>();
+    }
+
+    #[test]
+    fn a_request_has_ten_seconds_unless_told_otherwise() {
+        assert_eq!(DEFAULT_TIMEOUT, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn the_write_queue_never_holds_more_than_its_byte_budget_and_does_fill_it() {
+        let server = stuck_server();
+        let client = Arc::new(Client::connect(&server.path).unwrap());
+        // Each request is nearly the largest a frame may be, and nothing is ever read, so the
+        // writer sticks on the first and the rest queue up to the budget.
+        let name = "x".repeat(MAX_FRAME_BYTES - 1024);
+        let callers: Vec<_> = (0..40)
+            .map(|_| {
+                let client = Arc::clone(&client);
+                let name = name.clone();
+                std::thread::spawn(move || {
+                    client.call_with_timeout::<OrganizationCreate>(
+                        &OrganizationCreateParams { name },
+                        Duration::from_millis(1500),
+                    )
+                })
+            })
+            .collect();
+        let mut most = 0;
+        let until = Instant::now() + Duration::from_millis(1000);
+        while Instant::now() < until {
+            most = most.max(client.shared.queued_bytes.load(Ordering::SeqCst));
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        for caller in callers {
+            assert!(matches!(caller.join().unwrap(), Err(ClientError::Timeout)));
+        }
+        assert!(
+            most <= MAX_QUEUED_BYTES,
+            "{most} bytes were queued; the budget is {MAX_QUEUED_BYTES}"
+        );
+        assert!(
+            most + 2 * MAX_FRAME_BYTES >= MAX_QUEUED_BYTES,
+            "only {most} bytes were ever queued: the budget was not what held the callers back"
+        );
+    }
+
+    #[test]
+    fn request_ids_stop_before_they_pass_two_to_the_fifty_third() {
+        let server = stuck_server();
+        let client = Client::connect(&server.path).unwrap();
+        client
+            .shared
+            .next_id
+            .store(MAX_REQUEST_ID, Ordering::SeqCst);
+        // The last id is still usable (it times out: nobody answers)...
+        let last = client.call_with_timeout::<Hello>(&Empty {}, Duration::from_millis(50));
+        assert!(matches!(last, Err(ClientError::Timeout)), "{last:?}");
+        // ...and the next call is refused rather than sent with an id the peer may misread.
+        let next = client.call_with_timeout::<Hello>(&Empty {}, Duration::from_millis(50));
+        assert!(matches!(next, Err(ClientError::Protocol(_))), "{next:?}");
+    }
 }

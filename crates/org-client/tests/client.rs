@@ -791,9 +791,8 @@ fn dropping_the_client_closes_the_connection() {
     let (dropped, wait_for_drop) = mpsc::channel::<()>();
     let server = fake(move |mut peer| {
         use std::io::Read;
-        peer.stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
+        // The client may already be gone, and macOS then refuses a socket option: not an error.
+        let _ = peer.stream.set_read_timeout(Some(Duration::from_secs(5)));
         wait_for_drop.recv().unwrap();
         let mut sink = [0u8; 8];
         let end = peer.reader.read(&mut sink);
