@@ -909,6 +909,16 @@ fn send_refuses_an_envelope_too_large_to_deliver_and_long_subjects() {
     let id = env.send(PEER, ME, &["--subject", &max, "b"]);
     let reply = env.run(ME, &["msg", "reply", &id, "ok"]);
     assert_eq!(reply.code, 0, "{}", reply.stderr);
+
+    // reply refuses the same way, writes nothing and leaves the original unread.
+    let id = env.send(PEER, ME, &["--subject", "short", "b"]);
+    let before = spool_files(&env);
+    let r = env.run(ME, &["msg", "reply", &id, "--subject", &long, "ok"]);
+    assert_eq!(r.code, 1, "{}", r.stderr);
+    let r = env.run_stdin(ME, &["msg", "reply", &id, "-"], &body);
+    assert_eq!(r.code, 1, "{}", r.stderr);
+    assert_eq!(spool_files(&env), before, "nothing written");
+    assert!(env.inbox_file(ME, "new", &id).is_file());
 }
 
 #[test]
