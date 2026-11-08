@@ -394,8 +394,14 @@ fn rule_a_triage_turn_stop_ends_the_break_as_the_hooks_run_it() {
     t.spool.defer_message(ME, &m, "after-task", None).unwrap();
     let b = t.spool.notify(ME, &opts(session, false, false)).unwrap(); // Stop B (triage turn)
     assert_eq!(b.count, 0);
-    // The urgent-only watcher in the same session doesn't end or start anything.
-    t.spool.notify(ME, &opts(session, false, true)).unwrap();
+    // The urgent-only watcher in the same session releases nothing.
+    assert_eq!(
+        t.spool
+            .notify(ME, &opts(session, false, true))
+            .unwrap()
+            .count,
+        0
+    );
     let p = t.send("p", None);
     let c = t.spool.notify(ME, &opts(session, true, false)).unwrap(); // Stop C (real task)
     assert_eq!(ids(&c), vec![m.clone(), p]);
@@ -409,6 +415,34 @@ fn rule_a_triage_turn_stop_ends_the_break_as_the_hooks_run_it() {
         .unwrap();
     t.spool.notify(ME, &opts(None, false, false)).unwrap();
     assert_eq!(t.triage_json()["in_break"], true);
+}
+
+#[test]
+fn rule_an_urgent_only_check_ends_the_break_as_antigravity_runs_it() {
+    // Antigravity has no triage turn: the next prompt (a new real task) runs `notify
+    // --urgent-only`. A deferral made during that task must come back at its Stop, even when
+    // new mail arrives too.
+    let t = TempSpool::new("break_agy");
+    let session = Some("antigravity:c1");
+    let m = t.send("m", None);
+    assert_eq!(
+        ids(&t.spool.notify(ME, &opts(session, true, false)).unwrap()),
+        vec![m.clone()]
+    ); // T1's Stop: the break starts
+    t.spool.notify(ME, &opts(session, false, true)).unwrap(); // T2's prompt
+    let y = t.send("y", None);
+    t.spool.defer_message(ME, &y, "after-task", None).unwrap(); // mid-T2
+    let p = t.send("p", None);
+    let stop = t.spool.notify(ME, &opts(session, true, false)).unwrap(); // T2's Stop
+                                                                         // (m was already reported to this session: session dedup.)
+    assert_eq!(ids(&stop), vec![y, p]);
+    assert_eq!(stop.items[0].reason, "after_task");
+    assert!(!ids(&stop).contains(&m));
+}
+
+#[test]
+fn rule_request_expiry_overflow_is_an_error_not_an_instant_expiry() {
+    assert!(Envelope::new_request(PEER, ME, None, "q", BTreeMap::new(), Duration::MAX).is_err());
 }
 
 #[test]

@@ -231,8 +231,9 @@ pub struct TriageState {
     #[serde(default)]
     pub messages: BTreeMap<String, MessageTriageEntry>,
     /// Counts the agent's natural breaks (`--after-task` checks, i.e. the Stop after a task).
-    /// A break starts at the first such check after one that listed nothing new, after a plain
-    /// check from the same session (a triage turn's Stop or the next prompt), or from another
+    /// A break starts at the first such check after one that listed nothing new, after any
+    /// other check from the same session (a triage turn's Stop, the next prompt, the watcher),
+    /// or from another
     /// `--session`; it lasts while each `--after-task` check lists something not yet listed in
     /// this break (the agent is triaging). Missing in older files: 0.
     #[serde(default)]
@@ -278,9 +279,12 @@ impl TriageState {
         changed
     }
 
-    /// A plain (not `--after-task`, not `--urgent-only`) check from the break's own session:
-    /// the runtime hooks run one at the Stop of a triage turn and at the next prompt, so the
-    /// break is over. Returns whether the state changed.
+    /// Any check without `--after-task` from the break's own session: the runtime hooks run
+    /// one at a triage turn's Stop and at the next prompt (plain, or `--urgent-only` on
+    /// antigravity), and the watcher runs `--urgent-only` ones, so the agent is past this
+    /// break's Stop and the next `--after-task` check starts a new break. (The hooks never run
+    /// `--after-task` at a triage turn's Stop, so this can't re-release a deferral made while
+    /// triaging.) Returns whether the state changed.
     fn end_break_from_session(&mut self, session: Option<&str>) -> bool {
         let same_session = session.is_some() && self.break_session.as_deref() == session;
         if !(self.in_break && same_session) {
@@ -1243,10 +1247,8 @@ impl Spool {
             let mut state = self.load_triage_unlocked(agent)?;
             let mut dirty = if opts.after_task {
                 state.begin_after_task_check(session)
-            } else if !opts.urgent_only {
-                state.end_break_from_session(session)
             } else {
-                false
+                state.end_break_from_session(session)
             };
             dirty |= Self::release_due_in_state(&mut state, &now_iso, opts.after_task);
 
