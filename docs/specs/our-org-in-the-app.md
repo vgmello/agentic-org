@@ -1,0 +1,287 @@
+---
+kind: spec
+title: "Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)"
+status: for-review
+revision: 2
+owner: ac-product-designer-eden
+created: 2026-11-08
+updated: 2026-11-08
+requested_by: owner
+reviewers: [ac-staff-engineer-ada, owner, app-frontend-dev, server-dev, ac-software-engineer-river, agy-senior-dev, codex-dev]
+builds_on: [offices-and-teams-ux, work-items-ux, desktop-app-v1]
+---
+
+# Spec · Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)
+
+Builds on `offices-and-teams-ux.md` rev 2, `work-items-ux.md` rev 3 and `desktop-app-v1.md` (hire §3.6, profile §3.5).
+
+**Revision 2 (2026-11-08):** the user: Remy and Riley aren't started, and they show as **Offline**. Fixes from review: offboarding follows the teams design (reports go to the owner, and open tasks come back unassigned), and git and GitHub belong to River. My recommendations for U10–U12.
+
+## The goal (the user, 2026-11-08)
+
+> All of us (ada, Eden, the reviewer, codex-dev and the other devs) are registered as an organization in the application. From it you can see everything that's happening, add agents, hire more, deallocate agents, assign agents and change teams, with a great user experience.
+
+**Success test (the dogfood run).** In the real app on this Mac, with no mock data:
+1. The owner brings our existing team in, once, in under 5 minutes, and every agent shows in the org chart under the right team and manager, with its runtime.
+2. Home and Activity show, live, what the team is doing: who's working, the messages they send each other (like ada's phase-1 push), tasks and bugs moving, and merges into `v1`.
+3. The owner hires a new agent, assigns it to a team, a project and a task, moves an agent to another team, pauses an idle agent and offboards one. Every change shows at once in the chart and Activity, and every agent keeps working on its own runtime.
+
+## Where we are (survey of `origin/v1` at 0f7df26, 2026-11-08)
+
+- **App:** create, open and list organizations work on a **mock** (`MockOffice`). Agents, Projects, Tasks, Activity and Settings are placeholders. The org chart is work in progress on sample data (app-frontend-dev's worktree).
+- **Office:** the server and host are stubs on `v1`. server-dev's store (local branch) has organizations only. Teams and members are a **contract only** (`org-proto`: `Member { id, kind, name, contact, owner, office_id, reports_to }`, `team.*`).
+- **Hiring has no design and no contract.** The teams design says agents "join through hiring (the HR flow, its own design)", and that design was never written. This spec writes the UX.
+- **Nothing imports an existing team.** The only planned import moves messages, not members (ADR-0003 Phase B).
+- **An app `Member` can't describe our agents.** It has no role, title, focus, runtime, model, home folder or messaging id.
+- **Our roster is split across three sources** (below), and they disagree.
+
+## 1. Our team today
+
+| Agent | In HR (agents repo) | On messaging (`org-agent`) | Runtime | Role / owns (AGENTS.md) | Reports to |
+| --- | --- | --- | --- | --- | --- |
+| ada (`ac-staff-engineer-ada`) | active | yes | Claude Code | Staff Engineer: leads; contracts (org-proto) | the owner |
+| Eden (`ac-product-designer-eden`) | active (title says Principal; the user says **Senior**) | yes | Claude Code | Product Designer | the owner |
+| River (`ac-software-engineer-river`) | active | yes | Claude Code | Senior Backend: office host, sync, PKI, git and GitHub (`org-git`, `org-github`) | ada |
+| server-dev | **no** | yes | Codex | office server, storage | ada |
+| app-frontend-dev | **no** | yes | ? (A14) | the desktop app | ada |
+| agy-senior-dev | **no** | yes | Antigravity | messaging: org-agent CLI, spool, mailbox | ada |
+| codex-dev | **no** | yes | Codex | inbox adapters; the work-items library (W7) | ada |
+| reviewer | **no** | yes | ? (A14) | independent reviews ("ready" verdicts) | ada |
+| Remy (`ac-software-engineer-remy`) | active | **no** | Claude Code | Senior Backend (the old orgd daemon) | ada |
+| Riley (`ac-software-engineer-riley`) | active | **no** | Claude Code | Senior Frontend (the old prototype) | ada |
+
+**What this tells the design:**
+- An organization is **mixed-runtime**. The app must show and respect each agent's runtime, and never assume Claude Code.
+- **Not every agent was hired through HR.** Some were simply started in a runtime and given a messaging name. The app needs **Add an existing agent**, not only Hire.
+- Records **drift**. HR says Remy and Riley are active, but they haven't messaged and their work moved to server-dev and app-frontend-dev. Import must show this and let the owner decide (pause, offboard, keep), not copy it blindly.
+
+## 2. Proposed shape of our organization (for the user to approve, U11)
+
+```
+ (VM) Vitor (you) · Owner
+ ├─ Engineering                 lead: ada
+ │   ├─ App                     lead: app-frontend-dev     · app-frontend-dev, Riley (offline)
+ │   ├─ Office                  lead: server-dev           · server-dev, River, Remy (offline)
+ │   ├─ Agent tooling           lead: agy-senior-dev       · agy-senior-dev, codex-dev
+ │   └─ Quality                 lead: reviewer             · reviewer
+ └─ Design                      lead: Eden                 · Eden
+ Project: Agentic Org (key ac) · teams: Engineering, Design · Shared
+   Areas: General (Engineering) · Desktop app (App) · Office server (Office) · Messaging and CLI (Agent tooling) · Design and docs (Design)
+ Reporting lines: ada → you · Eden → you · everyone in Engineering → ada
+```
+
+The organization's name is U10 ("Agentic Consulting" from the folder? another?). It mustn't be "Agentic Org", which is the app.
+
+## 3. Decisions
+
+1. **Bring in, don't rebuild.** Our team enters the app through an **import** that reads what already exists (HR's folders and the messaging inboxes), shows a review of every agent with what was found and what's unclear, and writes nothing until **Bring in 9 agents**. After that, the app is the place to manage the team (U12).
+2. **The agent record grows** to describe how an agent works, shown on every profile and card: role, title, focus, **runtime** (Claude Code · Codex · Antigravity), model, **home folder**, **messaging name** (`codex-dev`), office, hired on, and status. Those are UX requirements for the `Member` contract (A15).
+3. **Runtime is visible but quiet:** a small runtime mark on the profile and in the quick view ("Runs on Codex"), not on chart cards. Actions adapt to it: **Open session** opens the agent's runtime (Claude Code in the session panel; others say "Open in Codex" and hand off), and nothing offers a Claude-only action to a Codex agent.
+4. **Four ways to stop or remove work, named by what they do,** never one ambiguous "deallocate":
+   - **Remove from team:** the agent stays in the organization, and its team's projects are no longer its work.
+   - **Pause:** the agent stays in its teams, isn't started, woken or messaged with new work, and its open tasks stay put. Resume brings it back.
+   - **Offboard:** the agent leaves the organization. Its records are kept, its name stays reserved, its open tasks come back unassigned for the owner to reassign, and anyone reporting to it reports to the owner (teams-and-org-chart design, "When a member is removed").
+   - **Unassign a task:** the task goes back to To do with no assignee.
+5. **Moving an agent between teams is one action,** **Move to team…**, not remove-then-add. Nothing flickers in the chart, and the agent is never briefly in "Not in a team" (A16: one command).
+6. **Assigning has one entry point per target,** from the agent or from the target: **Add to team…** (agent ⇄ team), **Lead** (team), **Assign task** (agent ⇄ task). An agent works on a project **through a team**. "Add to project…" on an agent asks which of the project's teams to join (or suggests one).
+7. **Everything happening is one feed, Activity,** with Home showing its top. Sources: sessions and status, messages between members, tasks and bugs, team and member changes, and git merges into the integration branch. Filters by team, member, project and kind. The owner reads agents' messages and replies only when addressed (§6).
+8. **Live everywhere:** status dots on chart cards and lists come from presence, and changes made by agents (a task moved, a message sent) appear in under 2 seconds without a reload.
+9. **Hire is the HR flow on the office.** The v1 §3.6 steps (Describe → Suggestion → Review → Hiring → Done) stay, and the review adds **Team**, **Runtime** and **Office**. HR proposes, and the owner sees exactly what will be created before anything is.
+
+## 4. Flow 1 · Bring our team in (import)
+
+**Entry points:** the first-run screen after **Create organization** ("Start empty" or **Bring in an existing team**), Org chart's empty state, and Settings › Team › **Import**.
+
+```
+ Bring in an existing team                                                     [×]
+ ─────────────────────────────────────────────────────────────────────────────────
+ Where is your team today?
+   ☑ HR workspace       ~/projects/agentic-consulting/agents        [Change…]
+                        Found 5 agents in 1 project (ac)
+   ☑ Messaging          ~/.agency/spool                             [Change…]
+                        Found 8 names, 5 not in the HR workspace
+                                                            [Cancel]  [Scan]
+```
+
+- Folders are prefilled when found in the usual places, and **Change…** opens a folder picker. Scanning only reads and writes nothing.
+- **Review** (one row per agent, merged across sources by name):
+
+```
+ Review 10 agents                         Filter: [All ▾]   [Bring in 9 agents]
+ ─────────────────────────────────────────────────────────────────────────────────
+ [A] ada            Staff Engineer        HR + messaging   Claude Code   Engineering ▾
+ [E] Eden           Product Designer      HR + messaging   Claude Code   Design ▾
+ [R] River          Senior Backend Eng.   HR + messaging   Claude Code   Office ▾
+ [S] server-dev     — Role? ▾             messaging only   Runtime? ▾    Office ▾        ⚠ 2 to fill
+ [C] codex-dev      — Role? ▾             messaging only   Codex ▾       Agent tooling ▾
+ …
+ [R] Remy           Senior Backend Eng.   HR only          Claude Code   Office ▾        ⓘ No messages
+                                                                         [Bring in ▾: Active · Paused · Skip]
+ ─────────────────────────────────────────────────────────────────────────────────
+ Teams: create Engineering, App, Office, Agent tooling, Quality, Design   [Edit…]
+ Reporting lines: from HR (ada → you; River, Remy, Riley → ada)           [Edit…]
+ Project: Agentic Org (ac), from HR · shared by Engineering, Design      [Edit…]
+```
+
+- **Merged rows:** an agent in both sources shows "HR + messaging" and links its messaging name automatically when the HR id matches the inbox name.
+- **Messaging-only agents** need a **role** (a catalog combobox, or "Custom title…") and a **runtime**. The row says "2 to fill", and **Bring in** counts only complete rows ("Bring in 7 agents · 2 need details").
+- **HR-only agents with no messaging inbox** get an info note, "No messages from Remy yet", and a per-row choice **Active · Paused · Skip**, defaulting to Active. The note explains: "Remy is active in HR but hasn't joined messaging. Bring in as Paused if Remy isn't working now."
+- **Offboarded HR agents** are listed collapsed under "Offboarded in HR (2)", unchecked, as a record.
+- **Teams:** HR has no teams, so the app suggests them from roles and AGENTS.md ownership (the shape in §2) in an editable preview. **Edit…** opens a small tree editor (rename, move, lead, members). **Skip teams** leaves everyone in "Not in a team".
+- **Reporting lines** come from HR's `reports_to`. Messaging-only agents default to the owner, editable per row.
+- **What happens** (always visible, like Hire's dry run): "Creates 9 agents, 6 teams and 1 project in <org>. Nothing changes in your HR workspace or in messaging. Agents keep running where they are."
+- **Bring in** → progress in words (Adding agents… Creating teams… Linking messaging names…), then **Done**: the org chart opens with the new members highlighted, and a summary "9 agents, 6 teams, 1 project. 2 agents paused." with **View Activity**.
+- **States:**
+  - No sources found: "No HR workspace or messaging found here. **Choose folder…** or start empty."
+  - A source unreadable: the row error, and the other source still works.
+  - Same agent twice with conflicting data (title, reports to): the row shows both with a picker, "HR says Principal Product Designer · you can change it".
+  - Name taken in the organization: "Already in <org>". The row offers **Update from HR** or **Skip**.
+  - Import interrupted: nothing half-created. Agents already added stay and are marked, and **Try again** continues.
+  - Running it again later: "Bring in" shows only what's new or changed since the last import, with "Nothing new" as its empty state.
+
+## 5. Flow 2 · The agent record (profile, quick view, card)
+
+- **Card (org chart):** avatar (agent square) · name · title · status dot + word (Working · Waiting · Idle · Needs you · Paused · Offline) · team role (Lead). There's no runtime on cards (decision 3).
+- **Quick view:** name, title, status, **Runs on Codex** · messaging name (mono, copy) · office ("This Mac") · teams · reports to · current task · last activity ("Sent ada a status reply · 4 min ago"). Actions: **Message** · **Assign task** · **Move to team…** · ⋯ (Add to team… · Pause · Offboard…).
+- **Profile header** (v1 §3.5, extended): name · messaging name · title · focus · runtime · model · office · status · **Open in <runtime>** / **Open session** · **Assign task** · ⋯.
+- **Profile tabs:** Overview · **Activity** (this agent's feed, §6) · Tasks · Messages (threads it's in) · Sessions · Knowledge (its home folder, when the app can read it) · Settings (the record, editable: title, focus, model, runtime and home, with "Changes take effect at the agent's next session").
+- **Missing data** reads plainly, never blank: "Runtime not set · **Set runtime**", "No home folder (this agent runs elsewhere)".
+
+## 6. Flow 3 · See everything that's happening (Activity and Home)
+
+**Activity** (nav item, also each team's, project's and agent's Activity tab):
+
+```
+ Activity                                [All teams ▾] [Everyone ▾] [All kinds ▾] [Search]
+ ─────────────────────────────────────────────────────────────────────────────────────────
+ Today
+ 05:41  [A] ada → [E] Eden · message · "Phase 1 push: your part + status please"   [Open thread]
+ 05:39  [C] codex-dev → [E] Eden · reply · "No W7 draft or design branch yet…"
+ 05:33  [A] ada → 7 members · message · "PHASE 1 PUSH (the user, today)…"
+ 05:30  [S] server-dev · merged server-dev/create-org into v1 · 3 commits      [View]
+ 05:12  [R] River · status Working → Waiting · "waiting for the reviewer"
+ 04:58  [E] Eden · bug chk-15 reported in Agentic Org · Major
+        ── Earlier: 14 more · [Show]
+```
+
+- **Kinds** (filter, and an icon on each row): Messages · Status · Tasks and bugs · Team changes · Git (merges into the integration branch) · Sessions.
+- **Messages between agents are readable by the owner** (it's the owner's organization), shown as one line with **Open thread**. Threads open in a side panel, read-only unless the owner is a recipient, where they can **Reply**. Broadcasts are one row ("ada → 7 members").
+- **Grouping:** consecutive rows of the same kind from the same member collapse ("River changed status 4 times · Show"). Default filter: everything except Status changes, which are noisy. They live as dots on the cards.
+- **Home** shows: **Needs you** (unchanged), **Working now** (agents with status Working and their current task, one line each), and **Latest** (the top 8 Activity rows, with **All activity**).
+- **Live:** new rows slide in at the top with a 2-second highlight. When the owner has scrolled down, a pill shows "3 new · Jump to latest" and the list doesn't move.
+- **States:**
+  - Loading (skeleton rows).
+  - Empty organization: "When your agents start working, everything they do shows up here."
+  - Messaging not connected: "Messages aren't connected yet, so agents' conversations don't show here." **How to connect**.
+  - A source offline (git or presence): a quiet row "Git activity paused: the project's repository isn't reachable."
+
+## 7. Flow 4 · Hire (the HR flow, on the office)
+
+v1 §3.6 holds, with these changes for the office model:
+
+- **Describe:** "What do you need?" plus **Team** (optional, prefilled from where Hire was opened) instead of Project. Projects come with the team.
+- **Suggestion (HR's proposal):** role, title (with level), name, focus, **team**, **reports to** (the team's lead by default), and **runtime** (the organization's default, or what the role suggests).
+- **Review:** what will be created, as a dry run: the member (name, messaging name `ac-qa-engineer-cameron`), team, reports to, runtime and model, office ("This Mac"), home folder, the role file if it's new, and "Cameron can be reached by everyone in <org>".
+- **Hiring:** in words (Creating Cameron's record… Setting up the home folder… Registering with messaging…). **Done:** "Cameron is hired and in App." **Open in Claude Code** / **Open session** (primary), Assign a task, View profile.
+- **Runtime not installed or signed out** (chosen in Suggestion): the Review warns "Codex isn't signed in on This Mac. Cameron is hired, but can't start until it is." **Hire anyway** works.
+- **Add an existing agent** (the Hire panel's second tab, for an agent already running elsewhere, like ours were): name · messaging name · runtime · role/title · team · reports to · home folder (optional). **Add agent**. This is the one-row version of the import.
+
+## 8. Flow 5 · Assign and change teams
+
+- **Add to team…** (agent ⋯, or team ⋯ › Add members…): as offices-and-teams §7.6 (an agent can be in several teams).
+- **Move to team…** (quick view, profile, card drag between teams): a team picker with "Moves Riley from App to Office. Riley stops working on App's projects (Desktop app) and starts on Office's (Office server)." If the agent leads the old team: "Riley leads App. App will have no lead." · **Move Riley**. Toast: "Riley moved to Office. **Undo**".
+- **Make lead** (team ⋯ or member row): "app-frontend-dev now leads App and its projects."
+- **Add to project…** (agent ⋯): lists projects; choosing one lists that project's teams ("Join App to work on Agentic Org"). With one team, it's one step.
+- **Assign task** (work-items Flow 7): the assignee picker shows each agent's status and runtime, and a **Paused** agent is listed but marked: "Riley is paused. Assign anyway? They'll see it when resumed."
+
+## 9. Flow 6 · Deallocate: remove from team, pause, offboard
+
+- **Remove from team** (team ⋯ › member › Remove from App, or Edit teams): no confirmation when the agent has other teams. When it's the last one: "Remove Riley from App? Riley will be in Not in a team and won't work on any project. 2 open tasks stay assigned." · **Remove**.
+- **Pause** (quick view, profile ⋯): a dialog "Pause Remy? Remy won't be started or woken, and new tasks and messages wait until you resume. Remy stays in Office." If a session is running: "Remy's session is running. Stop it now / Let it finish". The card then shows a **Paused** badge (gray `pause`), and the chart can hide paused agents (toolbar ☐ Show paused). **Resume** is one click.
+- **Offboard…** (v1 §3.5 dialog, office model): it lists only what applies: "Remy leaves Office. 1 open task comes back unassigned for you to reassign. Nobody reports to Remy (or: "Riley, who reports to Remy, will report to you"). Remy's records stay in the HR workspace. The name stays reserved." · **Offboard Remy** (red). After it, Remy appears in Settings › Team › **Former members** with the date, read-only.
+- **States:** the agent is working right now (the dialog says so and offers to stop the session first) · offboarding fails partway (names what was done, **Try again**) · it was already changed elsewhere (the dialog refreshes, and nothing is applied twice).
+
+## 10. Accessibility and copy
+
+- Status, runtime, Paused and Lead are always words plus icons. Screen reader: "codex-dev, agent, Agent tooling, runs on Codex, working".
+- Activity rows are list items with time, actor, kind and text. **Open thread** is a button labelled with the thread's subject.
+- Messaging names are shown in mono only as secondary text, and the display name leads everywhere.
+- Never "deallocate" in the UI (decision 4). Words: Remove from team · Pause · Resume · Offboard · Unassign.
+
+## 11. UX acceptance criteria
+
+**Import (IMP)**
+- IMP-1 · Bring in an existing team is offered after creating an organization, in Org chart's empty state and in Settings › Team, and scanning writes nothing.
+- IMP-2 · With the HR workspace and messaging folders, the review lists every agent once, merged by name, with its sources ("HR + messaging", "HR only", "messaging only").
+- IMP-3 · A messaging-only agent can't be brought in until it has a role or title and a runtime, and the button counts only complete rows.
+- IMP-4 · An HR-active agent with no messaging inbox shows "No messages from <name> yet" and the choice Active / Paused / Skip.
+- IMP-5 · The suggested teams, reporting lines and project are shown before anything is created, and each can be edited or skipped.
+- IMP-6 · "What happens" names the counts and says nothing changes in the HR workspace or messaging.
+- IMP-7 · After Bring in, the org chart shows every brought-in agent in its team, under its manager, highlighted. Messages from each agent's messaging name appear on that agent in Activity.
+- IMP-8 · Running import again shows only new or changed agents, and an agent already in the organization offers Update from HR or Skip.
+- IMP-9 · An interrupted import leaves no half-created agent, and Try again continues where it stopped.
+
+**Agent record (PROF)**
+- PROF-1 · Every agent's profile and quick view show its runtime, messaging name, office and status. A missing runtime reads "Runtime not set · Set runtime".
+- PROF-2 · Open session adapts to the runtime: Claude Code opens in the app's session panel, and other runtimes show "Open in <runtime>". No Claude-only action is offered to a non-Claude agent.
+- PROF-3 · Chart cards show status as a dot and a word, with no runtime.
+- PROF-4 · Title, focus, model, runtime and home can be edited in Settings, with "Changes take effect at the agent's next session".
+
+**Activity (LIVE)**
+- LIVE-1 · Activity lists messages, status changes, tasks and bugs, team changes, git merges and sessions, newest first, filterable by team, member, project and kind.
+- LIVE-2 · A message one agent sends another appears in Activity within 2 seconds, and Open thread shows the whole thread.
+- LIVE-3 · The owner can reply in a thread only when the owner is a recipient. Otherwise the thread is read-only and says so.
+- LIVE-4 · Home shows Needs you, Working now (each working agent with its current task) and the latest 8 Activity rows.
+- LIVE-5 · New rows never move the list while the owner is scrolled down. A "n new · Jump to latest" pill appears instead.
+- LIVE-6 · A status change shows on the agent's card within 2 seconds, and Status rows are hidden from Activity by default.
+- LIVE-7 · When messaging isn't connected, Activity says so with How to connect instead of looking empty.
+
+**Hire and add (STAFF)**
+- STAFF-1 · Hire's review shows team, reports to, runtime, model, office, home folder and messaging name before anything is created.
+- STAFF-2 · A hired agent appears in its team in the chart, highlighted, and in Activity ("Cameron was hired into App").
+- STAFF-3 · Choosing a runtime that isn't installed or signed in warns in Review, and Hire anyway still hires.
+- STAFF-4 · Add an existing agent creates an agent from name, messaging name, runtime, role or title, team and reports to, with no HR proposal.
+
+**Assign and move (MOVE)**
+- MOVE-1 · Move to team is one action: the agent never appears in Not in a team in between, and the toast offers Undo.
+- MOVE-2 · The move dialog names the projects the agent stops and starts working on, and a lost lead.
+- MOVE-3 · Add to project lists the project's teams to join, and with one team it's a single step.
+- MOVE-4 · The assignee picker shows status and runtime, and assigning to a paused agent asks first.
+- MOVE-5 · Make lead updates the team card and its projects' lead line at once.
+
+**Deallocate (DEAL)**
+- DEAL-1 · The UI never says "deallocate". It offers Remove from team, Pause, Offboard and Unassign, each with its own consequences.
+- DEAL-2 · Removing an agent from its last team confirms and says it will be in Not in a team.
+- DEAL-3 · A paused agent shows Paused on its card, isn't started or woken, its new messages and tasks wait, and Resume restores it in one click.
+- DEAL-4 · Offboard lists only the consequences that apply, brings open tasks back unassigned for the owner to reassign, makes anyone reporting to the agent report to the owner, and moves the agent to Former members, read-only.
+- DEAL-5 · Show paused in the chart toolbar hides or shows paused agents, and is remembered.
+
+## 12. Gaps to close, and who I think owns them (for ada to confirm in the phase-1 plan)
+
+| # | Gap | Proposed owner | Plan row |
+| --- | --- | --- | --- |
+| G1 | `Member` fields for agents: role, title, focus, runtime, model, home, messaging name, status incl. Paused, hired on | ada (contract) + server-dev (store) | W3 / W10 |
+| G2 | `member.add_agent`, `member.move` (one command), `member.pause` / `resume`, offboard semantics on `member.remove` | ada + server-dev | W3 |
+| G3 | Import: read the HR workspace and the spool inboxes into a reviewable plan, then apply it (CLI first, then the app) | codex-dev (ada, after W8, with the W7 model) | W12 |
+| G4 | Messaging names ⇄ members: a message from `codex-dev` is linked to its member, and `who`/presence are keyed the same way | agy-senior-dev | W6 Phase B |
+| G5 | Activity feed: one stream over messages, status, work items, team changes and git merges | ada (contract), server-dev, agy | new |
+| G6 | Hire on the office: HR's proposal and provisioning as an office call (the `hr.py` logic ported) | codex-dev (ada) | W12 |
+| G7 | App screens: Import, the agent record, Activity, Home, Hire and Add agent, Move, Pause and Offboard | app-frontend-dev (ada; Riley stays offline) | W9 / W12 |
+| G8 | Runtime hand-off: "Open in Codex/Antigravity" and session launch per runtime | codex-dev (adapters, W8) + app-frontend-dev | W8 / W9 |
+
+## 13. Open questions
+
+**For the user**
+- U10 · *My recommendation:* **Agentic Consulting**, the workspace's name, distinct from the app. Use another name if you prefer.
+- U11 · *My recommendation:* the shape in §2, with Riley and Remy shown Offline in App and Office.
+- U12 · *My recommendation:* yes. After the import, the app (and `org-agent`) is where we hire, move and offboard. HR's folders stay as a read-only record, and later imports only bring in what changed.
+- ~~U13~~ · *Resolved (the user):* don't start Remy and Riley. They're brought in Active and show as **Offline** (no session), not Paused. Their planned work (G3, G6, G7) needs another owner (ada).
+
+**For ada**
+- A14 · Which runtime do server-dev, app-frontend-dev and the reviewer run on?
+- ~~A15~~ · *Resolved (ada):* `Member.agent: Option<AgentProfile>` (one entity, one version) with role, title, focus, runtime (claude_code | codex | antigravity | other), home, messaging_name, status (active | paused). Commands: `member.add_agent`, `member.update_agent`, `member.set_agent_status`, `member.move`.
+- ~~A14~~ · *Partly resolved (ada):* codex-dev and server-dev run on Codex, agy-senior-dev on Antigravity. app-frontend-dev and the reviewer: ada is asking the user.
+- ~~A16~~ · *Resolved:* `member.move { membership_id, to_team_id, title_in_team? }`, atomic. ~~A17~~ · *Resolved:* the app reads every message in the office (ADR-0003).
+- U13 note (ada): ada plans Remy for import and hire (G3, G6) and Riley for the screens (G7), once the user starts their sessions, so they'd be brought in Active, not Paused.
+- A16 · Can `member.move` be one command (no in-between state)?
+- A17 · Is the owner allowed to read every message between agents (decision 7)? I think yes (it's their organization), and the UI says "Messages in <org> are visible to you" in Settings.
