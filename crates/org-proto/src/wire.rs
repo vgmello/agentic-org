@@ -1,3 +1,5 @@
+use std::fmt;
+
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
@@ -26,7 +28,11 @@ pub fn salvage_id(line: &[u8]) -> Option<u64> {
 /// A client's request. `method` stays a string on the wire, so a server can answer an
 /// unknown method with `unknown_method` instead of failing to parse the line.
 /// Clients number requests from 1 (see [`UNREADABLE_REQUEST_ID`]).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// Its `params` can carry a secret in raw JSON, so don't log a request or keep it longer than
+/// handling it takes. Its `Debug` shows only the id and method and elides the params
+/// (`<elided N bytes>`); `Clone` copies the secret along with it.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Request {
     pub id: u64,
     pub method: String,
@@ -63,7 +69,12 @@ impl Request {
 /// The server's answer to the request with the same `id`: either `result` or `error`.
 /// A line with both, or neither, is rejected. A `null` result or a `null` error counts as
 /// missing, so results must not serialize to `null` ([`Response::ok`] refuses them).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// Its `result` can carry a secret in raw JSON (e.g. `office.app_token`'s), so don't log a
+/// response or keep it longer than handling it takes. Its `Debug` shows only the id and the
+/// error, if any, and elides the result (`<elided N bytes>`); `Clone` copies the secret along
+/// with it.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "RawResponse")]
 pub struct Response {
     pub id: u64,
@@ -72,7 +83,10 @@ pub struct Response {
 }
 
 /// A response's outcome. On the wire it is a `result` or an `error` key, never both.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// A result can hold a secret: its `Debug` elides it (`Result(<elided N bytes>)`) and shows
+/// an error in full.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Outcome {
     Result(Value),
@@ -139,7 +153,11 @@ impl Response {
 
 /// A server-pushed event, sent only after `subscribe`. Has no `id`. `seq` counts per
 /// connection from 1. Clients ignore events they don't know. Missing `data` reads as `null`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// Its `data` can carry a secret in raw JSON, so don't log an event or keep it longer than
+/// handling it takes. Its `Debug` shows only the event name and seq and elides the data
+/// (`<elided N bytes>`); `Clone` copies the secret along with it.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Event {
     pub event: String,
     pub seq: u64,
@@ -173,7 +191,10 @@ impl Event {
 /// (a shape from a newer server), which readers ignore. A known shape that fails to decode
 /// is an error; use [`salvage_id`] on the line to fail just that pending request. Duplicate
 /// keys are not detected on this path (the last one wins).
-#[derive(Debug, Clone, PartialEq, Serialize)]
+///
+/// It can carry secrets: see [`Response`] and [`Event`]. Its `Debug` elides every payload,
+/// including all of an unknown message.
+#[derive(Clone, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum ServerMessage {
     Response(Response),
@@ -198,6 +219,78 @@ impl<'de> Deserialize<'de> for ServerMessage {
                 .map_err(D::Error::custom)
         } else {
             Ok(ServerMessage::Unknown(value))
+        }
+    }
+}
+
+/// A payload in a `Debug` print: its size in bytes as compact JSON, never its content.
+struct Elided<'a>(&'a Value);
+
+impl fmt::Debug for Elided<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Count the bytes as they're written, so the payload is never copied.
+        struct Count(usize);
+        impl std::io::Write for Count {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0 += buf.len();
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut count = Count(0);
+        match serde_json::to_writer(&mut count, self.0) {
+            Ok(()) => write!(f, "<elided {} bytes>", count.0),
+            Err(_) => f.write_str("<elided>"),
+        }
+    }
+}
+
+impl fmt::Debug for Request {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Request")
+            .field("id", &self.id)
+            .field("method", &self.method)
+            .field("params", &Elided(&self.params))
+            .finish()
+    }
+}
+
+impl fmt::Debug for Response {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Response")
+            .field("id", &self.id)
+            .field("outcome", &self.outcome)
+            .finish()
+    }
+}
+
+impl fmt::Debug for Outcome {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Outcome::Result(v) => f.debug_tuple("Result").field(&Elided(v)).finish(),
+            Outcome::Error(e) => f.debug_tuple("Error").field(e).finish(),
+        }
+    }
+}
+
+impl fmt::Debug for Event {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Event")
+            .field("event", &self.event)
+            .field("seq", &self.seq)
+            .field("data", &Elided(&self.data))
+            .finish()
+    }
+}
+
+impl fmt::Debug for ServerMessage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ServerMessage::Response(r) => f.debug_tuple("Response").field(r).finish(),
+            ServerMessage::Event(e) => f.debug_tuple("Event").field(e).finish(),
+            ServerMessage::Unknown(v) => f.debug_tuple("Unknown").field(&Elided(v)).finish(),
         }
     }
 }
