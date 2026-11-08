@@ -9,11 +9,13 @@ use serde::{Deserialize, Serialize};
 pub enum ErrorCode {
     /// The request couldn't be read (bad JSON, a bad envelope, or params of the wrong shape), or
     /// it can be read but makes no sense: a value outside its documented limits (e.g. an
-    /// agent's `title` or `home`), a call that changes nothing, `Unknown` or a non-canonical
-    /// value where a known one is required, or an agent-only call on a person (or the other
-    /// way round). In [`crate::msg`] and [`crate::directory`], a number out of range (a
-    /// `limit`, `timeout_ms`, `wait_ms` or `ttl_ms`) is `invalid_request`, while a string,
-    /// body, meta or note over its size limit is `too_large`.
+    /// agent's `title` or `home`), a call that gives nothing to change, `Unknown` or a
+    /// non-canonical value where a known one is required, an agent-only call on a person (or
+    /// the other way round), or a call on a member in the wrong state (e.g. editing or
+    /// offboarding an agent that is already offboarded). In [`crate::msg`] and
+    /// [`crate::directory`], a number out of range (a `limit`, `timeout_ms`, `wait_ms` or
+    /// `ttl_ms`) is `invalid_request`, while a string, body, meta or note over its size limit
+    /// is `too_large`.
     InvalidRequest,
     /// The server doesn't know the method.
     UnknownMethod,
@@ -54,7 +56,8 @@ pub enum ErrorCode {
     /// organization.
     UnknownRecipient,
     /// The caller isn't allowed to make this call, e.g. the host's check of the peer's code
-    /// signature failed for `office.app_token`.
+    /// signature failed for `office.app_token`, or an app-only command (`member.set_run_mode`)
+    /// arrived on a connection that is not the app's.
     NotAuthorized,
     /// What was asked for exists but can't serve now, e.g. the office isn't running, so there's
     /// no app token to hand out. Trying again later may work.

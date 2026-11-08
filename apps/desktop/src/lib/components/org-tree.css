@@ -1,0 +1,73 @@
+/* Connectors for the org chart trees: each list item draws its half of the bar across its siblings and a
+   drop to its card; a nested list draws the stem down from its parent. Used as `class="org-tree"` on the
+   chart root, with `class="t"` on the tree's own <ul>/<li> (lists inside cards are left alone). */
+	.org-tree {
+		--line: rgb(255 255 255 / 0.18);
+		--gap: 28px;
+		width: max-content;
+	}
+	.org-tree ul.t {
+		position: relative;
+		display: flex;
+		justify-content: center;
+		padding-top: var(--gap);
+	}
+	.org-tree > ul.t {
+		padding-top: 0;
+	}
+	.org-tree li.t {
+		position: relative;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		padding: var(--gap) 10px 0;
+	}
+	.org-tree > ul.t > li.t {
+		padding-top: 0;
+	}
+	.org-tree li.t::before,
+	.org-tree li.t::after {
+		content: '';
+		position: absolute;
+		top: 0;
+		right: 50%;
+		width: 50%;
+		height: var(--gap);
+		border-top: 1px solid var(--line);
+	}
+	.org-tree li.t::after {
+		right: auto;
+		left: 50%;
+		border-left: 1px solid var(--line);
+	}
+	.org-tree > ul.t > li.t::before,
+	.org-tree > ul.t > li.t::after,
+	.org-tree li.t:only-child::before {
+		display: none;
+	}
+	.org-tree li.t:only-child::after {
+		width: 0;
+		left: 50%;
+		border-top: 0;
+	}
+	.org-tree li.t:first-child::before {
+		border: 0 none;
+	}
+	.org-tree li.t:last-child::after {
+		border: 0 none;
+	}
+	.org-tree li.t:last-child::before {
+		border-right: 1px solid var(--line);
+		border-top-right-radius: 8px;
+	}
+	.org-tree li.t:first-child::after {
+		border-top-left-radius: 8px;
+	}
+	.org-tree ul.t ul.t::before {
+		content: '';
+		position: absolute;
+		top: 0;
+		left: 50%;
+		height: var(--gap);
+		border-left: 1px solid var(--line);
+	}
