@@ -353,6 +353,63 @@ describe('CHAT-17 · bridges never act as the owner', () => {
 	});
 });
 
+describe('review fixes', () => {
+	const bridgeOwner = ctxAs('you', 'bridge', NOW, { bridge: 'slack' });
+	it('CHAT-17 · a bridge cannot act as the owner at all: not post, react, pin or read', () => {
+		const s = fresh();
+		for (const draft of [
+			{ method: 'msg.send', conversation_id: 'c-general', kind: 'msg', body: 'as the owner' },
+			{ method: 'chat.react', message_id: s.messages[0].id, reaction: 'seen' },
+			{ method: 'chat.pin', message_id: s.messages[0].id },
+			{ method: 'chat.mark_read', conversation_id: 'c-general' }
+		] as const) expect(refusal(s, draft, bridgeOwner)?.code).toBe('not_authorized');
+		// The owner's read-everything right is the app's: a DM the owner is in is not readable through a bridge.
+		expect(canRead(bridgeOwner, 'you', conv(s, 'c-dm-sam-noor'))).toBe(false);
+		expect(canRead(ctxAs(), 'you', conv(s, 'c-dm-sam-noor'))).toBe(true);
+	});
+	it('CHAT-10 · posting inside a thread does not get around the announcement limit', () => {
+		const sam = ctxAs('sam', 'agent');
+		const root = s0().messages.find((m) => m.body.startsWith('@sam your part'))!;
+		let s = s0();
+		const post = (state: typeof s, minutes: number) => run(state, { method: 'msg.send', conversation_id: root.conversation_id, thread_root_id: root.id, kind: 'announcement', reason: 'report', body: 'update' }, ctxAs('sam', 'agent', minutesAfter(NOW, minutes)));
+		const first = post(s, 0);
+		s = first.state;
+		const second = post(s, 3);
+		expect(second.accepted.folded_into).toBe(root.id);
+		expect(byId(second.state, second.accepted.id!).folded).toBe(true);
+		expect(post(second.state, 16).accepted.folded_into).toBeUndefined();
+		void sam;
+	});
+	it('CHAT-16 · mentioning an agent that is not in a group DM does not wake it', () => {
+		const s = fresh();
+		expect(conv(s, 'c-group').members).not.toContain('ines');
+		const r = run(s, { method: 'msg.send', conversation_id: 'c-group', kind: 'msg', body: '@ines are you there?' });
+		expect(r.accepted.woke).toBeUndefined();
+		expect(r.state.presence.ines).toBe('asleep');
+	});
+	it('CHAT-6 · a default applied at its deadline goes back to the agent as a reply from the office, under the ask', () => {
+		const s = fresh();
+		const later = tick(s, minutesAfter(NOW, 121));
+		const reply = later.messages.find((m) => m.thread_root_id === kaiAsk(s).id)!;
+		expect(reply).toMatchObject({ from: 'office', kind: 'reply', body: "No answer by the deadline: the default applies (No, allow (Eden's AREA-7))." });
+		expect(tick(later, minutesAfter(NOW, 200))).toBe(later);
+	});
+	it('a reply or a message over the size limit is refused, counted in bytes', () => {
+		const s = fresh();
+		const emoji = '😀'.repeat(70_000);
+		expect(emoji.length).toBeLessThan(256 * 1024);
+		expect(refusal(s, { method: 'msg.send', conversation_id: 'c-general', kind: 'msg', body: emoji })?.code).toBe('invalid_request');
+		expect(refusal(s, { method: 'chat.answer', ask_id: kaiAsk(s).id, text: emoji })?.code).toBe('invalid_request');
+	});
+	it('CHAT-10 · every folded message in the sample is within the window after its root', () => {
+		const s = fresh();
+		const folded = s.messages.filter((m) => m.folded);
+		expect(folded.length).toBeGreaterThan(0);
+		for (const m of folded) expect(Date.parse(m.created_at) - Date.parse(byId(s, m.thread_root_id!).created_at)).toBeLessThan(15 * 60_000);
+	});
+});
+const s0 = fresh;
+
 describe('calls are idempotent and reactions are acknowledgements', () => {
 	it('a repeated change id changes nothing', () => {
 		const s = fresh();

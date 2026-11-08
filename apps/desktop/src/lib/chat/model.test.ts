@@ -176,8 +176,12 @@ describe('CHAT-9 · slash commands and Turn into…', () => {
 		expect(parseSlash('/task')).toMatchObject({ ok: false, message: 'Say which agent: /task @agent [title]' });
 		expect(parseSlash('/task @sam')).toMatchObject({ ok: false, message: 'Give the task a title: /task @agent [title]' });
 		expect(parseSlash('/wake')).toMatchObject({ ok: false });
-		expect(parseSlash('/nope')).toMatchObject({ ok: false });
+		expect(parseSlash('/bgu the list')).toMatchObject({ ok: false, message: 'There is no /bgu command. Did you mean /bug?' });
 		expect(parseSlash('not a command')).toBeUndefined();
+		// Ordinary text that starts with a slash is a message, not a mistake.
+		expect(parseSlash('/tmp is full again')).toBeUndefined();
+		expect(parseSlash('/etc/hosts has the wrong entry')).toBeUndefined();
+		expect(parseSlash('/nope')).toBeUndefined();
 		expect(parseSlash('http://example.com')).toBeUndefined();
 	});
 	it('CHAT-9 · commands complete while typing, and a reminder reads its delay', () => {
@@ -353,6 +357,9 @@ describe('CHAT-17 · asks to the owner and approvals are app-only', () => {
 		const s = fresh();
 		expect(appOnly(kaiAsk(s), ctx)).toBe(true);
 		expect(appOnly(miraApproval(s), ctx)).toBe(true);
+		const handoff = s.messages.find((m) => m.kind === 'handoff')!;
+		expect(appOnly({ ...handoff, addressed_to: 'you' }, ctx)).toBe(true);
+		expect(appOnly(handoff, ctx)).toBe(false);
 		const toAvery = { ...kaiAsk(s), addressed_to: 'avery' };
 		expect(appOnly(toAvery, ctx)).toBe(false);
 		expect(appOnly({ ...toAvery, approval: true }, ctx)).toBe(true);

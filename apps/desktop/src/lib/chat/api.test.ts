@@ -71,6 +71,27 @@ describe('the mock chat office', () => {
 		await expect(api.command('o', send('c-general', 'retry me'))).resolves.toMatchObject({ conversation_id: 'c-general' });
 		expect((await api.snapshot('o')).state.messages.filter((m) => m.body === 'retry me')).toHaveLength(1);
 	});
+	it('two calls at once are both applied, in order, with their own ids', async () => {
+		const api = createMockChat(orgOf(), { now: () => NOW, schedule: () => undefined });
+		const [a, b] = await Promise.all([api.command('o', send('c-general', 'first')), api.command('o', send('c-general', 'second'))]);
+		expect(a.id).not.toBe(b.id);
+		const bodies = (await api.snapshot('o')).state.messages.map((m) => m.body);
+		expect(bodies.indexOf('first')).toBeLessThan(bodies.indexOf('second'));
+		expect(bodies).toContain('second');
+	});
+	it('a call that fails does not stop the ones queued behind it', async () => {
+		const api = createMockChat(orgOf(), { now: () => NOW, schedule: () => undefined });
+		const [bad, good] = await Promise.allSettled([api.command('o', { method: 'chat.answer', change_id: 'q1', ask_id: 'nope', text: 'x' }), api.command('o', send('c-general', 'still goes'))]);
+		expect(bad.status).toBe('rejected');
+		expect(good.status).toBe('fulfilled');
+	});
+	it('a retry with the same change id posts the message once', async () => {
+		const api = createMockChat(orgOf(), { now: () => NOW, schedule: () => undefined });
+		const call = send('c-general', 'only once');
+		await api.command('o', call);
+		await api.command('o', call);
+		expect((await api.snapshot('o')).state.messages.filter((m) => m.body === 'only once')).toHaveLength(1);
+	});
 	it('keeps each organization\'s conversations apart', async () => {
 		const api = createMockChat(orgOf(), { now: () => NOW, schedule: () => undefined });
 		await api.command('a', send('c-general', 'only in a'));

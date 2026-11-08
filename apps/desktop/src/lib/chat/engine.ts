@@ -56,6 +56,9 @@ export const APPROVAL_OPTIONS: AskOption[] = [
 	{ id: 'reject', label: 'Reject…' }
 ];
 
+/** The reserved sender of what the office itself says (ADR-0003: `"office"` is never a member). */
+export const OFFICE = 'office';
+
 export const emptyChat = (): ChatState => ({ seq: 0, conversations: [], messages: [], mutes: [], read_at: {}, presence: {}, typing: [], applied: {} });
 
 export const refuse = (code: ChatErrorCode, message: string): never => {
@@ -63,6 +66,7 @@ export const refuse = (code: ChatErrorCode, message: string): never => {
 };
 
 const ms = (iso: string) => Date.parse(iso);
+const bytes = (text: string) => new TextEncoder().encode(text).length;
 const APPLIED_KEPT = 500;
 
 export const slug = (text: string): string =>
@@ -146,7 +150,7 @@ export const isMember = (c: Conversation, id: string) => c.members.includes(id);
  * Whether `viewer` may read a conversation (CHAT-12, CHAT-16): the owner reads every one; anyone else only while a member.
  * A thread is never a conversation of its own: it is read through its parent, so the same check covers it.
  */
-export const canRead = (ctx: ChatContext, viewer: string, c: Conversation): boolean => viewer === ctx.owner || isMember(c, viewer);
+export const canRead = (ctx: ChatContext, viewer: string, c: Conversation): boolean => (viewer === ctx.owner && ctx.surface === 'app') || isMember(c, viewer);
 
 /** The messages of a conversation, or of one thread of it, for `viewer`. Refuses when they may not read it. */
 export function messagesIn(state: ChatState, ctx: ChatContext, viewer: string, conversationId: string, threadRootId?: string): ChatMessage[] {
@@ -190,6 +194,8 @@ export function applyChat(state: ChatState, call: ChatCall, ctx: ChatContext): {
 	if (done) return { state, accepted: done };
 	const actor = memberOf(ctx, ctx.actor);
 	if (!actor || actor.former) return refuse('not_authorized', 'Only a current member can use chat.');
+	// A bridge connects without the app token: it can post as a bridged person, never as the owner (decision 11).
+	if (ctx.surface === 'bridge' && ctx.actor === ctx.owner) return refuse('not_authorized', 'A bridge never acts as the owner.');
 	const s = structuredClone(state);
 	let accepted: ChatAccepted = {};
 	switch (call.method) {
@@ -274,7 +280,7 @@ function send(s: ChatState, call: Extract<ChatCall, { method: 'msg.send' }>, ctx
 	if (actor.kind === 'agent' && !(AGENT_KINDS as readonly string[]).includes(call.kind)) return refuse('kind_not_allowed', 'An agent posts only an ask, a hand-off, a reply or an announcement.');
 	const body = call.body.trim();
 	if (body === '') return refuse('invalid_request', 'Write something first.');
-	if (body.length > CHAT_LIMITS.bodyMax) return refuse('invalid_request', 'That message is too long.');
+	if (bytes(body) > CHAT_LIMITS.bodyMax) return refuse('invalid_request', 'That message is too long.');
 
 	let root = call.thread_root_id;
 	let replyTarget: ChatMessage | undefined;
@@ -329,15 +335,18 @@ function send(s: ChatState, call: Extract<ChatCall, { method: 'msg.send' }>, ctx
 	if (call.kind === 'announcement') {
 		if (!call.reason || !(ANNOUNCEMENT_REASONS as readonly string[]).includes(call.reason)) return refuse('reason_required', 'An announcement says why: delivered, ready for review, blocked, a report or a decision needed.');
 		m.reason = call.reason;
-		// At most one announcement per agent per channel per window; the extras fold into a thread under the last one (CHAT-10).
-		if (actor.kind === 'agent' && c.kind === 'channel' && root === undefined) {
+		// At most one announcement per agent per channel per window, wherever it was posted; the extras fold into a thread under
+		// the last one (CHAT-10). The last one is the latest that was not itself folded.
+		if (actor.kind === 'agent' && c.kind === 'channel') {
 			const last = s.messages
-				.filter((x) => x.conversation_id === c.id && x.from === ctx.actor && x.kind === 'announcement' && x.thread_root_id === undefined)
+				.filter((x) => x.conversation_id === c.id && x.from === ctx.actor && x.kind === 'announcement' && !x.folded)
 				.sort((a, b) => ms(b.created_at) - ms(a.created_at))[0];
 			if (last && ms(ctx.now) - ms(last.created_at) < CHAT_LIMITS.announcementWindowMs) {
-				m.thread_root_id = last.id;
+				const rootOfLast = last.thread_root_id ?? last.id;
+				m.thread_root_id = rootOfLast;
 				m.folded = true;
-				folded_into = last.id;
+				delete m.also_in_channel;
+				folded_into = rootOfLast;
 			}
 		}
 	}
@@ -346,7 +355,7 @@ function send(s: ChatState, call: Extract<ChatCall, { method: 'msg.send' }>, ctx
 
 	// Messaging an asleep agent wakes it, and it shows as typing while it works (CHAT-7).
 	const woke: string[] = [];
-	const reached = c.kind === 'dm' ? c.members.filter((id) => id !== ctx.actor) : mentionsIn(body, ctx).filter((id) => isMember(c, id) || c.kind !== 'channel');
+	const reached = c.kind === 'dm' ? c.members.filter((id) => id !== ctx.actor) : mentionsIn(body, ctx).filter((id) => isMember(c, id));
 	for (const id of unique(reached)) {
 		if (id === ctx.actor || !isAgent(ctx, id)) continue;
 		if (s.presence[id] === 'asleep') {
@@ -371,6 +380,7 @@ function answer(s: ChatState, call: Extract<ChatCall, { method: 'chat.answer' }>
 	if ((ask.addressed_to === ctx.owner || ask.approval) && !(ctx.actor === ctx.owner && ctx.surface === 'app')) return refuse('not_authorized', 'Open Agentic Org to answer this: asks to the owner and approvals are answered only in the app.');
 	if (ctx.actor !== ctx.owner && ctx.actor !== ask.addressed_to) return refuse('not_authorized', 'Only the person it is asked of can answer it.');
 	const text = call.text?.trim() || undefined;
+	if (text && bytes(text) > CHAT_LIMITS.bodyMax) return refuse('invalid_request', 'That reply is too long.');
 	const option = call.option_id === undefined ? undefined : ask.options?.find((o) => o.id === call.option_id);
 	if (call.option_id !== undefined && !option) return refuse('invalid_request', 'That is not one of the options.');
 	if (!option && !text) return refuse('invalid_request', 'Choose an option or write a reply.');
@@ -447,8 +457,17 @@ export function tick(state: ChatState, now: string): ChatState {
 	const stale = state.typing.some((t) => ms(t.until) <= ms(now));
 	if (!due.length && !stale) return state;
 	const s = structuredClone(state);
-	for (const m of s.messages)
-		if (due.some((d) => d.id === m.id)) m.answer = { by: 'default', at: m.default_at!, option_id: m.default_option };
+	for (const ask of due) {
+		const m = s.messages.find((x) => x.id === ask.id)!;
+		const c = s.conversations.find((x) => x.id === m.conversation_id);
+		m.answer = { by: 'default', at: m.default_at!, option_id: m.default_option };
+		// The default goes back to the agent like any answer (`msg.reply`), from the office, under the ask.
+		s.seq += 1;
+		const label = m.options?.find((o) => o.id === m.default_option)?.label.replace(/…$/, '') ?? m.default_option;
+		const reply: ChatMessage = { id: `m-d${s.seq}`, conversation_id: m.conversation_id, from: OFFICE, kind: 'reply', body: `No answer by the deadline: the default applies (${label}).`, created_at: m.default_at! };
+		if (c && c.kind !== 'dm') reply.thread_root_id = m.thread_root_id ?? m.id;
+		s.messages.push(reply);
+	}
 	s.typing = s.typing.filter((t) => ms(t.until) > ms(now));
 	return s;
 }

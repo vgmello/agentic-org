@@ -2,7 +2,7 @@
 import type { OrgSnapshot } from '$lib/proto';
 import { isFormer } from '$lib/org/model';
 import { span } from '$lib/work/time';
-import { canRead, isMember, memberOf, mentionsHere, mentionsIn, slug, type ChatContext, type ChatMember } from './engine';
+import { canRead, isMember, memberOf, mentionsHere, mentionsIn, OFFICE, slug, type ChatContext, type ChatMember } from './engine';
 import { plain } from './markdown';
 import { CHAT_LIMITS, type ChatMessage, type ChatState, type Conversation, type MessageKind, type Presence, type Typing } from './types';
 
@@ -41,7 +41,7 @@ export function chatContext(s: OrgSnapshot, init: { now: string; actor?: string;
 
 // ---- naming ----------------------------------------------------------------------------------------
 
-export const nameOf = (ctx: ChatContext, id: string): string => (id === 'default' ? 'Default' : (memberOf(ctx, id)?.name ?? 'Someone'));
+export const nameOf = (ctx: ChatContext, id: string): string => (id === 'default' ? 'Default' : id === OFFICE ? 'Office' : (memberOf(ctx, id)?.name ?? 'Someone'));
 
 /** "#agentic-org", a person's or agent's name, or the group's names (CHAT-3). */
 export function titleOf(c: Conversation, ctx: ChatContext, viewer: string): string {
@@ -292,12 +292,32 @@ export const SLASH_COMMANDS: { name: SlashName; usage: string; help: string }[] 
 
 export type Slash = { ok: true; name: SlashName; args: string; handle?: string; rest: string } | { ok: false; message: string };
 
-/** A message that starts with `/` is a command for people. `undefined` when it is not one. */
+/** Edit distance, for catching a mistyped command. */
+function editDistance(a: string, b: string): number {
+	const row = Array.from({ length: b.length + 1 }, (_, j) => j);
+	for (let i = 1; i <= a.length; i++) {
+		let prev = row[0];
+		row[0] = i;
+		for (let j = 1; j <= b.length; j++) {
+			const keep = row[j];
+			row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+			prev = keep;
+		}
+	}
+	return row[b.length];
+}
+
+/** A message that starts with `/` is a command for people. `undefined` when it is not one (an unknown `/word` is plain text). */
 export function parseSlash(text: string): Slash | undefined {
 	const m = /^\/([a-z]+)(?:\s+([\s\S]*))?$/.exec(text.trimStart());
 	if (!m) return undefined;
 	const cmd = SLASH_COMMANDS.find((c) => c.name === m[1]);
-	if (!cmd) return { ok: false, message: `There is no /${m[1]} command. Try ${SLASH_COMMANDS.map((c) => '/' + c.name).join(', ')}.` };
+	if (!cmd) {
+		// `/tmp is full` is a message, not a command. A near miss of a real command (`/bgu`) is a typo worth catching.
+		const sorted = (t: string) => [...t].sort().join('');
+		const near = SLASH_COMMANDS.find((c) => editDistance(c.name, m[1]) <= 1 || sorted(c.name) === sorted(m[1]));
+		return near ? { ok: false, message: `There is no /${m[1]} command. Did you mean /${near.name}?` } : undefined;
+	}
 	const args = (m[2] ?? '').trim();
 	const who = /^@([\w-]+)\s*([\s\S]*)$/.exec(args);
 	if ((cmd.name === 'task' || cmd.name === 'wake') && !who) return { ok: false, message: `Say which agent: ${cmd.usage}` };
@@ -354,8 +374,8 @@ export function answerWords(m: ChatMessage, ctx: ChatContext): string | undefine
 	return `Answered by ${by}${label ? `: ${label}` : ''}${m.answer.text ? `${label ? ' · ' : ': '}${m.answer.text}` : ''}`;
 }
 
-/** Whether the app (and nothing else) may answer this: asks to the owner and every approval (CHAT-17). */
-export const appOnly = (m: ChatMessage, ctx: ChatContext): boolean => m.kind === 'request' && (m.addressed_to === ctx.owner || !!m.approval);
+/** Whether the app (and nothing else) may answer this: asks and hand-offs to the owner, and every approval (CHAT-17). */
+export const appOnly = (m: ChatMessage, ctx: ChatContext): boolean => (m.kind === 'request' && (m.addressed_to === ctx.owner || !!m.approval)) || (m.kind === 'handoff' && m.addressed_to === ctx.owner);
 
 // ---- long text (CHAT-14) ---------------------------------------------------------------------------
 

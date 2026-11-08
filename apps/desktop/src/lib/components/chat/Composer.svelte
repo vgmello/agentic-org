@@ -104,12 +104,16 @@
 		const body = text.trim();
 		if (!canWrite || busy || body === '') return;
 		busy = true;
+		const key = resetKey;
 		try {
 			if ((await onsend(body, { alsoInChannel, attachments })) === false) return;
-			text = '';
-			drafts[resetKey] = '';
-			attachments = [];
-			alsoInChannel = false;
+			// The draft that was sent is gone, but only where it was written: the owner may have moved on while it went.
+			drafts[key] = '';
+			if (key === resetKey) {
+				text = '';
+				attachments = [];
+				alsoInChannel = false;
+			}
 		} finally {
 			busy = false;
 			queueMicrotask(() => box?.focus());
@@ -118,7 +122,7 @@
 
 	function onkeydown(e: KeyboardEvent) {
 		// ⌘ or Ctrl+Enter always sends, even with a list open.
-		if (popup && !((e.metaKey || e.ctrlKey) && e.key === 'Enter')) {
+		if (popup && !e.isComposing && !((e.metaKey || e.ctrlKey) && e.key === 'Enter')) {
 			const n = popup === 'mention' ? mentions.length : slashes.length;
 			if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
 				e.preventDefault();
@@ -156,10 +160,10 @@
 	{#if canWrite}
 		<div class="relative">
 			{#if popup}
-				<ul role="listbox" aria-label={popup === 'mention' ? 'Mention' : 'Commands'} class="absolute bottom-full z-20 mb-1 max-h-56 w-72 overflow-y-auto rounded-md bg-gray-900 py-1 shadow-lg ring-1 ring-white/10" data-testid="composer-popup">
+				<ul id="composer-popup-{resetKey}" role="listbox" aria-label={popup === 'mention' ? 'Mention' : 'Commands'} class="absolute bottom-full z-20 mb-1 max-h-56 w-72 overflow-y-auto rounded-md bg-gray-900 py-1 shadow-lg ring-1 ring-white/10" data-testid="composer-popup">
 					{#if popup === 'mention'}
 						{#each mentions as o, i (o.handle)}
-							<li role="option" aria-selected={i === picked % mentions.length}>
+							<li id="composer-opt-{resetKey}-{i}" role="option" aria-selected={i === picked % mentions.length}>
 								<button type="button" class="flex w-full items-baseline gap-x-2 px-3 py-1.5 text-left text-sm/6 {i === picked % mentions.length ? 'bg-white/10' : 'hover:bg-white/5'}" onmousedown={(e) => (e.preventDefault(), pickMention(o.handle))}>
 									<span class="font-semibold text-white">{o.name}</span><span class="text-gray-400">@{o.handle}</span>
 								</button>
@@ -167,7 +171,7 @@
 						{/each}
 					{:else}
 						{#each slashes as c, i (c.name)}
-							<li role="option" aria-selected={i === picked % slashes.length}>
+							<li id="composer-opt-{resetKey}-{i}" role="option" aria-selected={i === picked % slashes.length}>
 								<button type="button" class="flex w-full flex-col px-3 py-1.5 text-left text-sm/6 {i === picked % slashes.length ? 'bg-white/10' : 'hover:bg-white/5'}" onmousedown={(e) => (e.preventDefault(), pickSlash(c.name))}>
 									<span class="font-mono font-semibold text-white">{c.usage}</span><span class="text-xs/5 text-gray-400">{c.help}</span>
 								</button>
@@ -181,6 +185,9 @@
 				id="composer-{resetKey}"
 				bind:this={box}
 				bind:value={text}
+				aria-autocomplete="list"
+				aria-controls={popup ? `composer-popup-${resetKey}` : undefined}
+				aria-activedescendant={popup ? `composer-opt-${resetKey}-${picked % (popup === 'mention' ? mentions.length : slashes.length)}` : undefined}
 				{rows}
 				{placeholder}
 				maxlength={CHAT_LIMITS.bodyMax}

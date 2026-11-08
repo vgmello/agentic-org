@@ -10,8 +10,10 @@ describe('CHAT-14 · messages render Markdown with the safety rules', () => {
 		expect(blocks[3]).toEqual({ t: 'code', text: 'let x = 1;' });
 	});
 	it('CHAT-14 · item numbers become chips', () => {
-		const refs = inline('See ac-17, REQ-14, ADR-0004, T-12 and B-3 but not xac-17 or ADR-4 or T12.').filter((x) => x.t === 'chip');
-		expect(refs).toEqual(['ac-17', 'REQ-14', 'ADR-0004', 'T-12', 'B-3'].map((ref) => ({ t: 'chip', ref })));
+		const wanted = ['ac-T-17', 'ac-B-15', 'chk-T-12', 'chk-B-7', 'REQ-14', 'AREA-7', 'ADR-0004', 'FEAT-0007', 'DEBT-0012', 'T-12', 'B-3'];
+		const refs = inline(`See ${wanted.join(', ')} but not ADR-4, T12, xT-12 or FEAT-7.`).filter((x) => x.t === 'chip');
+		expect(refs).toEqual(wanted.map((ref) => ({ t: 'chip', ref })));
+		expect(inline('(ac-T-17) and ac-T-17.').filter((x) => x.t === 'chip')).toHaveLength(2);
 	});
 	it('CHAT-14 · mentions are found and a handle inside an address is not one', () => {
 		expect(inline('hi @ada and @sam-2, mail a@b.com').filter((x) => x.t === 'mention')).toEqual([
@@ -38,9 +40,24 @@ describe('CHAT-14 · messages render Markdown with the safety rules', () => {
 		expect(clean('a‮b​c\u0007d﻿e\r\nf')).toBe('abcde\nf');
 		expect(clean('keep\ttabs\nand lines')).toBe('keep\ttabs\nand lines');
 	});
-	it('CHAT-14 · deep nesting and long runs do not hang', () => {
-		const t = '**'.repeat(5000) + '*'.repeat(5000) + '_'.repeat(5000) + '['.repeat(5000);
-		expect(markdown(t).length).toBeGreaterThan(0);
+	it('CHAT-14 · a link whose text is an address that is not where it goes says where it goes', () => {
+		const link = (md: string) => inline(md).find((x) => x.t === 'link') as { host?: string; text: string; href: string };
+		expect(link('[https://bank.com](https://evil.example/x)').host).toBe('evil.example');
+		expect(link('[bank.com/login](https://evil.example)').host).toBe('evil.example');
+		expect(link('[the docs](https://example.com)').host).toBeUndefined();
+		expect(link('[example.com](https://www.example.com/a)').host).toBeUndefined();
+		expect(link('[https://www.example.com](https://example.com)').host).toBeUndefined();
+	});
+	it('CHAT-14 · deep nesting and very long lines do not hang', () => {
+		const slow = (text: string) => {
+			const start = performance.now();
+			markdown(text);
+			plain(text);
+			return performance.now() - start;
+		};
+		// Each is the whole 256 KiB a message may hold, on one line: unclosed openers, the worst case for a scanner.
+		const big = 256 * 1024;
+		for (const piece of ['[', '**', '*a', '_a', '`', '[a](', '[a](http://x', 'http://', '@a', 'ac-T-', '[a]('.repeat(1) + 'x'.repeat(50)]) expect(slow(piece.repeat(Math.ceil(big / piece.length)))).toBeLessThan(2000);
 		expect(inline('**_**_**_'.repeat(2000)).length).toBeGreaterThan(0);
 	});
 });

@@ -41,6 +41,8 @@ export function createMockChat(org: Pick<OrgApi, 'view'>, { now = () => new Date
 	const states = new Map<string, ChatState>();
 	const listeners = new Map<string, Set<() => void>>();
 	const failed = new Set<string>();
+	// One call at a time per organization, in the order sent: each reads the state, so two at once would lose one.
+	const queues = new Map<string, Promise<unknown>>();
 	const notify = (organizationId: string) => listeners.get(organizationId)?.forEach((l) => l());
 
 	const context = async (organizationId: string, extra: { newId?: (p: string) => string } = {}) => {
@@ -60,38 +62,44 @@ export function createMockChat(org: Pick<OrgApi, 'view'>, { now = () => new Date
 		return state;
 	};
 
+	const apply = async (organizationId: string, call: ChatCall): Promise<ChatAccepted> => {
+		if (scenario() === 'offline') throw unavailable();
+		const before = await load(organizationId);
+		const ctx = await context(organizationId, { newId: (p) => `${p}-${before.seq + 1}` });
+		// `fail`: a message goes wrong once, so "Not delivered" and Retry can be seen. A retry (same text) goes through.
+		if (scenario() === 'fail' && call.method === 'msg.send' && !failed.has(call.body)) {
+			failed.add(call.body);
+			throw unavailable();
+		}
+		const { state, accepted } = applyChat(before, call, ctx);
+		states.set(organizationId, state);
+		notify(organizationId);
+		// A woken agent answers a moment later, with a canned line (sample data).
+		if (call.method === 'msg.send' && accepted.id) {
+			const sent = state.messages.find((m) => m.id === accepted.id)!;
+			const c = state.conversations.find((x) => x.id === sent.conversation_id)!;
+			const typing = state.typing.filter((t) => t.conversation_id === c.id).map((t) => t.member_id);
+			if (c.kind === 'dm' && typing.length) {
+				schedule(() => {
+					const current = states.get(organizationId);
+					if (!current) return;
+					const reply: ChatMessage = { id: `m-r${current.seq + 1}`, conversation_id: c.id, from: typing[0], kind: 'reply', body: 'Sample reply: got it. I will only post again if something needs you.', created_at: now() };
+					states.set(organizationId, { ...current, seq: current.seq + 1, messages: [...current.messages, reply], typing: current.typing.filter((t) => !(t.conversation_id === c.id && t.member_id === typing[0])) });
+					notify(organizationId);
+				}, replyMs);
+			}
+		}
+		return accepted;
+	};
+
 	return {
 		async snapshot(organizationId) {
 			return { state: await load(organizationId), sample: true, office_running: scenario() !== 'offline' };
 		},
-		async command(organizationId, call) {
-			if (scenario() === 'offline') throw unavailable();
-			const before = await load(organizationId);
-			const ctx = await context(organizationId, { newId: (p) => `${p}-${before.seq + 1}` });
-			// `fail`: a message goes wrong once, so "Not delivered" and Retry can be seen. A retry (same text) goes through.
-			if (scenario() === 'fail' && call.method === 'msg.send' && !failed.has(call.body)) {
-				failed.add(call.body);
-				throw unavailable();
-			}
-			const { state, accepted } = applyChat(before, call, ctx);
-			states.set(organizationId, state);
-			notify(organizationId);
-			// A woken agent answers a moment later, with a canned line (sample data).
-			if (call.method === 'msg.send' && accepted.id) {
-				const sent = state.messages.find((m) => m.id === accepted.id)!;
-				const c = state.conversations.find((x) => x.id === sent.conversation_id)!;
-				const typing = state.typing.filter((t) => t.conversation_id === c.id).map((t) => t.member_id);
-				if (c.kind === 'dm' && typing.length) {
-					schedule(() => {
-						const current = states.get(organizationId);
-						if (!current) return;
-						const reply: ChatMessage = { id: `m-r${current.seq + 1}`, conversation_id: c.id, from: typing[0], kind: 'reply', body: 'Sample reply: got it. I will only post again if something needs you.', created_at: now() };
-						states.set(organizationId, { ...current, seq: current.seq + 1, messages: [...current.messages, reply], typing: current.typing.filter((t) => !(t.conversation_id === c.id && t.member_id === typing[0])) });
-						notify(organizationId);
-					}, replyMs);
-				}
-			}
-			return accepted;
+		command(organizationId, call) {
+			const run = (queues.get(organizationId) ?? Promise.resolve()).then(() => apply(organizationId, call));
+			queues.set(organizationId, run.catch(() => undefined));
+			return run;
 		},
 		subscribe(organizationId, listener) {
 			const set = listeners.get(organizationId) ?? new Set();

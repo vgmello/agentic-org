@@ -40,10 +40,10 @@ export function sampleChat(ctx: ChatContext): ChatState {
 
 	// #general
 	add(general.id, 'avery', 'msg', 60 * 5, ['Plan for the week:', ...Array.from({ length: 19 }, (_, i) => `${i + 1}. Step ${i + 1}: keep the notes in the shared doc and link them in the task.`), 'Questions in the thread, please.'].join('\n'));
-	const ready = add(general.id, 'sam', 'announcement', 50, 'Ready for review: **create-org** branch at `9c1e0b2`. See ac-17 and [the branch](https://example.com/branch/create-org).', { reason: 'ready_for_review', reactions: { seen: ['avery'] } });
-	add(general.id, 'sam', 'announcement', 44, 'Tests are green on create-org.', { reason: 'report', thread_root_id: ready, folded: true });
-	add(general.id, 'sam', 'announcement', 38, 'Docs for create-org are updated.', { reason: 'report', thread_root_id: ready, folded: true });
-	add(general.id, 'sam', 'announcement', 31, 'Merged the review fixes.', { reason: 'report', thread_root_id: ready, folded: true });
+	const ready = add(general.id, 'sam', 'announcement', 50, 'Ready for review: **create-org** branch at `9c1e0b2`. See ac-T-17 and [the branch](https://example.com/branch/create-org).', { reason: 'ready_for_review', reactions: { seen: ['avery'] } });
+	add(general.id, 'sam', 'announcement', 47, 'Tests are green on create-org.', { reason: 'report', thread_root_id: ready, folded: true });
+	add(general.id, 'sam', 'announcement', 43, 'Docs for create-org are updated.', { reason: 'report', thread_root_id: ready, folded: true });
+	add(general.id, 'sam', 'announcement', 39, 'Merged the review fixes.', { reason: 'report', thread_root_id: ready, folded: true });
 	add(general.id, 'juno', 'announcement', 20, '@owner the Beacon mockups are ready for your go.', { reason: 'decision_needed' });
 
 	// #atlas (the Atlas project): Kai and Mira are on its team

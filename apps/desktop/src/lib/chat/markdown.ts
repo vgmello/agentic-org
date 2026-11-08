@@ -7,8 +7,9 @@ export type Inline =
 	| { t: 'bold'; children: Inline[] }
 	| { t: 'italic'; children: Inline[] }
 	| { t: 'code'; text: string }
-	| { t: 'link'; href: string; text: string }
-	/** An item number: `ac-17`, `REQ-14`, `ADR-0004`, `T-12`, `B-3`. */
+	/** `host` is set when the text looks like an address that isn't where the link goes. */
+	| { t: 'link'; href: string; text: string; host?: string }
+	/** An item number: `ac-T-17`, `chk-B-7`, `REQ-14`, `AREA-7`, `ADR-0004`, `FEAT-0007`, `DEBT-0012`, `T-12`, `B-3`. */
 	| { t: 'chip'; ref: string }
 	| { t: 'mention'; handle: string };
 
@@ -19,17 +20,18 @@ export type Block = { t: 'p'; inline: Inline[] } | { t: 'quote'; inline: Inline[
 const UNSAFE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f​-‏‪-‮⁠-⁤⁦-⁩﻿]/g;
 export const clean = (text: string): string => text.replace(/\r\n?/g, '\n').replace(UNSAFE, '');
 
-const CHIP = '(?:ac-\\d+|REQ-\\d+|ADR-\\d{4}|[TB]-\\d+)';
+// Bounded quantifiers keep the scan of one line linear: an unclosed `[` or `**` costs at most a few hundred characters.
+const CHIP = '(?:[a-z]{2,4}-[TB]-\\d{1,6}|(?:REQ|AREA)-\\d{1,6}|(?:ADR|FEAT|DEBT)-\\d{4}|[TB]-\\d{1,6})';
 const TOKEN = new RegExp(
 	[
-		'`([^`\\n]+)`', // 1 code
-		'\\*\\*([^*\\n]+)\\*\\*', // 2 bold
-		'(?<![\\w*])\\*([^*\\n]+)\\*(?![\\w*])', // 3 italic
-		'(?<![\\w])_([^_\\n]+)_(?![\\w])', // 4 italic
-		'\\[([^\\]\\n]+)\\]\\(([^)\\s]+)\\)', // 5 text, 6 href
-		'(https?://[^\\s<>()]+[^\\s<>().,;:!?\'"])', // 7 bare url
+		'`([^`\\n]{1,500})`', // 1 code
+		'\\*\\*([^*\\n]{1,500})\\*\\*', // 2 bold
+		'(?<![\\w*])\\*([^*\\n]{1,500})\\*(?![\\w*])', // 3 italic
+		'(?<![\\w])_([^_\\n]{1,500})_(?![\\w])', // 4 italic
+		'\\[([^\\]\\n]{1,200})\\]\\(([^)\\s]{1,2000})\\)', // 5 text, 6 href
+		'(https?://[^\\s<>()]{1,2000}[^\\s<>().,;:!?\'"])', // 7 bare url
 		`(?<![\\w-])(${CHIP})(?![\\w-])`, // 8 chip
-		'(?<![\\w@])@([a-zA-Z0-9][\\w-]*)' // 9 mention
+		'(?<![\\w@])@([a-zA-Z0-9][\\w-]{0,63})' // 9 mention
 	].join('|'),
 	'g'
 );
@@ -44,7 +46,23 @@ export function safeHref(href: string): string | undefined {
 	}
 }
 
+/** Link text that looks like an address but isn't where the link goes: say where it goes. */
+function misleading(text: string, href: string): { host: string } | Record<string, never> {
+	const looks = /^(?:https?:\/\/)?([a-z0-9-]+(?:\.[a-z0-9-]+)+)(?:[/:?#]|$)/i.exec(text.trim());
+	if (!looks) return {};
+	const host = new URL(href).hostname.toLowerCase();
+	const shown = looks[1].toLowerCase();
+	return shown === host || shown === host.replace(/^www\./, '') || host === shown.replace(/^www\./, '') ? {} : { host };
+}
+
+/** A very long line is read in pieces, so no single line can make the scan slow. */
+const PIECE = 4000;
 export function inline(text: string, depth = 0): Inline[] {
+	if (text.length > PIECE && depth === 0) return Array.from({ length: Math.ceil(text.length / PIECE) }, (_, i) => inlinePiece(text.slice(i * PIECE, (i + 1) * PIECE), 0)).flat();
+	return inlinePiece(text, depth);
+}
+
+function inlinePiece(text: string, depth: number): Inline[] {
 	const out: Inline[] = [];
 	let at = 0;
 	const push = (t: string) => t && out.push({ t: 'text', text: t });
@@ -59,7 +77,7 @@ export function inline(text: string, depth = 0): Inline[] {
 			out.push({ t: 'italic', children: depth < 3 ? inline(body, depth + 1) : [{ t: 'text', text: body }] });
 		} else if (m[5] !== undefined) {
 			const href = safeHref(m[6]);
-			if (href) out.push({ t: 'link', href, text: m[5] });
+			if (href) out.push({ t: 'link', href, text: m[5], ...misleading(m[5], href) });
 			else push(m[0]);
 		} else if (m[7] !== undefined) {
 			const href = safeHref(m[7]);

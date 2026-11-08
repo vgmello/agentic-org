@@ -206,7 +206,7 @@ test('CHAT-10: extra announcements are folded into a thread under the last one',
 	await expect(page.getByTestId('message-list').getByText('Merged the review fixes.')).toHaveCount(0);
 });
 
-test('CHAT-11: the owner mutes an agent in a channel or sets a digest, and muted messages still appear in Activity data', async ({ page }) => {
+test('CHAT-11: the owner mutes an agent in a channel or sets a digest (that muted messages still reach Activity is in the model tests)', async ({ page }) => {
 	await open(page);
 	await go(page, 'general');
 	const row = messages(page).filter({ hasText: 'Ready for review: create-org' });
@@ -264,7 +264,7 @@ test('CHAT-14: Markdown renders safely, item numbers are chips, long messages co
 	const ready = messages(page).filter({ hasText: 'Ready for review: create-org' });
 	await expect(ready.locator('strong')).toHaveText('create-org');
 	await expect(ready.locator('code')).toHaveText('9c1e0b2');
-	await expect(ready.getByTestId('item-chip')).toHaveText('ac-17');
+	await expect(ready.getByTestId('item-chip')).toHaveText('ac-T-17');
 	await expect(ready.getByRole('link', { name: 'the branch' })).toHaveAttribute('href', 'https://example.com/branch/create-org');
 	await expect(ready.getByRole('link', { name: 'the branch' })).toHaveAttribute('rel', 'noopener noreferrer');
 	// More than 15 lines collapses.
@@ -288,7 +288,7 @@ test('CHAT-14: Markdown renders safely, item numbers are chips, long messages co
 	await expect(composer(page)).toHaveValue('hello @hana-weiss ');
 });
 
-test('CHAT-15: a link from Activity opens the message in Chat', async ({ page }) => {
+test('CHAT-15: the link an Activity row uses (/chat?c=…&m=…) opens the message in Chat', async ({ page }) => {
 	await open(page);
 	await go(page, 'atlas');
 	const id = await messages(page).filter({ hasText: 'Publish the 0.2' }).getAttribute('data-id');
@@ -311,6 +311,10 @@ test('CHAT-17: a bridged message shows its platform, and asks to the owner and a
 	await expect(card.getByTestId('app-only')).toContainText('Open in Agentic Org');
 	await expect(card.getByRole('button', { name: 'Yes, block' })).toHaveCount(0);
 	await expect(page.getByTestId('ask-card').filter({ hasText: 'Publish the 0.2' }).getByTestId('app-only')).toBeVisible();
+	// Inside a thread too, and the composer is off.
+	await go(page, 'release-v1');
+	await page.getByTestId('replies-link').first().click();
+	await expect(page.getByTestId('thread-panel').getByTestId('composer')).toHaveCount(0);
 	await shot(page, 'chat-bridge-preview');
 });
 

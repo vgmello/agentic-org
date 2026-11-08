@@ -3,6 +3,7 @@
 	import type { ChatContext } from '$lib/chat/engine';
 	import { answerWords, appOnly, deadlineWords, nameOf, waitingFor } from '$lib/chat/model';
 	import type { ChatMessage } from '$lib/chat/types';
+	import { collapse } from '$lib/chat/model';
 	import Rich from './Rich.svelte';
 
 	/**
@@ -30,12 +31,14 @@
 		onreplyinthread?: () => void;
 	} = $props();
 
+	let expanded = $state(false);
 	let replying = $state(false);
 	let rejecting = $state(false);
 	let text = $state('');
 	let busy = $state(false);
 	let error = $state<string | undefined>();
 
+	const long = $derived(collapse(message.body));
 	const isAsk = $derived(message.kind === 'request');
 	const to = $derived(message.addressed_to === ctx.owner ? 'you' : nameOf(ctx, message.addressed_to ?? ''));
 	const deadline = $derived(deadlineWords(message, now));
@@ -62,7 +65,10 @@
 		{#if isAsk}{message.approval ? '✅ Approval' : '❓ Ask'}: {nameOf(ctx, message.from)} asks {to}{:else}🔁 Hand-off: {nameOf(ctx, message.from)} → {to}{/if}
 		{#if where}<span class="font-normal text-gray-400">{' · in ' + where}</span>{/if}
 	</p>
-	<div class="mt-2"><Rich body={message.body} /></div>
+	<div class="mt-2">
+		<Rich body={expanded ? message.body : long.shown} />
+		{#if long.hidden > 0}<button type="button" class="mt-1 text-sm/6 font-semibold text-indigo-300 hover:text-indigo-200" aria-expanded={expanded} onclick={() => (expanded = !expanded)}>{expanded ? 'Show less' : `Show more (${long.hidden} more lines)`}</button>{/if}
+	</div>
 
 	{#if isAsk && !message.answer}
 		<p class="mt-2 text-xs/5 text-gray-400">
@@ -92,7 +98,7 @@
 		{#if replying || rejecting}
 			<form class="mt-2 flex flex-wrap items-start gap-2" onsubmit={(e) => (e.preventDefault(), go(() => onanswer(rejecting ? { option_id: 'reject', text } : { text })))}>
 				<label class="sr-only" for="ask-text-{message.id}">{rejecting ? 'Why do you reject it?' : 'Your reply'}</label>
-				<textarea id="ask-text-{message.id}" bind:value={text} rows="2" disabled={busy} placeholder={rejecting ? 'Why do you reject it?' : 'Your reply'} class="min-w-0 flex-1 rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400"></textarea>
+				<textarea id="ask-text-{message.id}" bind:value={text} rows="2" maxlength={20000} disabled={busy} placeholder={rejecting ? 'Why do you reject it?' : 'Your reply'} class="min-w-0 flex-1 rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400"></textarea>
 				<Button type="submit" size="sm" disabled={busy || text.trim() === ''}>{rejecting ? 'Reject' : 'Send reply'}</Button>
 			</form>
 		{/if}

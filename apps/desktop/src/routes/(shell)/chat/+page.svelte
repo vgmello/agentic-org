@@ -35,7 +35,8 @@
 		unreadIn,
 		type ChatView
 	} from '$lib/chat/model';
-	import type { ChatMessage, ChatSnapshot, Conversation, MuteMode, Reaction } from '$lib/chat/types';
+	import type { ChatCall, ChatMessage, ChatSnapshot, Conversation, MuteMode, Reaction } from '$lib/chat/types';
+	import { newId } from '$lib/org/commands';
 	import { toAppError } from '$lib/office/api';
 
 	/** Chat (docs/specs/chat-ux.md): channels, DMs and threads where agents and people talk. A mock office; always sample data. */
@@ -61,6 +62,7 @@
 	let openDigest = $state<string | undefined>();
 	let highlight = $state<string | undefined>();
 	let started = false;
+	let lastSearch = '';
 	let listEl = $state<HTMLElement | undefined>();
 
 	// Previews how a bridge shows asks (CHAT-17): a mock hook like `?mock=`, `?org=` and `?chat=`.
@@ -102,6 +104,7 @@
 			const loc = parseChatLocation(page.url.search);
 			if (chatState && (loc.conversation || loc.message)) openLocation(loc);
 			else if (bar && bar.needsYou.length === 0) select({ type: 'conversation', id: chatState!.conversations.find((c) => c.auto?.type === 'general')?.id ?? '' });
+			lastSearch = page.url.search;
 			started = true;
 		});
 		const stop = chatApi.subscribe(organizationId, () => void load());
@@ -110,9 +113,14 @@
 	});
 
 	// A link followed while the screen is open (Open in Chat from another place).
+	// Only when the address itself changes: a refresh of the data must not pull the owner back to a link they followed.
 	$effect(() => {
 		const search = page.url.search;
-		if (started && chatState) untrack(() => openLocation(parseChatLocation(search)));
+		untrack(() => {
+			if (!started || !chatState || search === lastSearch) return;
+			lastSearch = search;
+			openLocation(parseChatLocation(search));
+		});
 	});
 
 	function openLocation(loc: { conversation?: string; message?: string }) {
@@ -175,6 +183,8 @@
 
 	interface Pending {
 		key: number;
+		/** Kept across a Retry, so a message the office already has is not posted twice. */
+		change_id: string;
 		conversation_id: string;
 		body: string;
 		attachments: string[];
@@ -213,7 +223,7 @@
 			const accepted = await act({ method: 'msg.send', conversation_id: c.id, thread_root_id: thread, kind: 'msg', body: text, also_in_channel: options.alsoInChannel || undefined, attachments: options.attachments.length ? options.attachments : undefined });
 			return !!accepted;
 		}
-		pending.push({ key: ++keys, conversation_id: c.id, body: text, attachments: options.attachments, status: 'sending' });
+		pending.push({ key: ++keys, change_id: newId(), conversation_id: c.id, body: text, attachments: options.attachments, status: 'sending' });
 		// The reactive copy: changing it redraws the row.
 		void deliver(pending[pending.length - 1]);
 		return true;
@@ -221,7 +231,7 @@
 	async function deliver(p: Pending) {
 		p.status = 'sending';
 		try {
-			await send({ method: 'msg.send', conversation_id: p.conversation_id, kind: 'msg', body: p.body, attachments: p.attachments.length ? p.attachments : undefined });
+			await chatApi.command(organizationId, { method: 'msg.send', change_id: p.change_id, conversation_id: p.conversation_id, kind: 'msg', body: p.body, attachments: p.attachments.length ? p.attachments : undefined } satisfies ChatCall);
 			pending = pending.filter((x) => x.key !== p.key);
 			await load();
 		} catch (e) {
@@ -424,7 +434,7 @@
 		</section>
 
 		{#if root && threadConversation}
-			<ThreadPanel {root} conversation={threadConversation} {ctx} {chatState} {now} {officeRunning} onclose={() => (threadRoot = undefined)} onsend={(t, o) => submit(t, o, threadConversation, root.id)} onreact={react} onturn={turn} onmute={mute} onpin={pin} onanswer={answer} onaccept={accept} />
+			<ThreadPanel {root} conversation={threadConversation} {ctx} {chatState} {now} {officeRunning} readOnly={bridgePreview} onclose={() => (threadRoot = undefined)} onsend={(t, o) => submit(t, o, threadConversation, root.id)} onreact={react} onturn={turn} onmute={mute} onpin={pin} onanswer={answer} onaccept={accept} />
 		{:else if showMembers && conversation}
 			<MembersPanel {conversation} {ctx} {chatState} projectName={followsWords} onclose={() => (showMembers = false)} onmute={(id, mode) => muteIn(conversation.id, id, mode)} onrename={() => openChannelDialog('rename')} onaddpeople={() => openChannelDialog('members')} onremove={(id) => void act({ method: 'channel.remove_member', id: conversation.id, member_id: id })} onarchive={() => void act({ method: 'channel.archive', id: conversation.id }, `#${conversation.name} is archived.`)} />
 		{/if}
