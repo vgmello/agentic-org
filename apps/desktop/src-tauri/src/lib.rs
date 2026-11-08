@@ -392,7 +392,8 @@ async fn login_item_open_settings(
 /// The address a link in a chat message may open: http or https, with a host, no spaces or control characters.
 /// Anything else (`javascript:`, `file:`, a custom scheme, an option-looking string) is refused before a process starts.
 fn external_url(raw: &str) -> Result<&str, &'static str> {
-    const MAX: usize = 2048;
+    // A link the app draws can be 2000 characters raw and grow when its address is normalised (percent-encoding).
+    const MAX: usize = 8192;
     if raw.is_empty() || raw.len() > MAX {
         return Err("That link is not an address this app opens.");
     }
@@ -914,9 +915,9 @@ mod tests {
         ] {
             assert!(external_url(bad).is_err(), "{bad:?}");
         }
-        let long = format!("https://example.com/{}", "a".repeat(2048));
+        let long = format!("https://example.com/{}", "a".repeat(8192));
         assert!(external_url(&long).is_err());
-        let longest = format!("https://example.com/{}", "a".repeat(2048 - 20));
+        let longest = format!("https://example.com/{}", "a".repeat(8192 - 20));
         assert_eq!(external_url(&longest), Ok(longest.as_str()));
     }
 
