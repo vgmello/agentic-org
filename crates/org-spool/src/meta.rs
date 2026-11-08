@@ -338,8 +338,9 @@ impl TriageState {
     /// runtime hooks run one at a triage turn's Stop and at the next prompt (plain, or
     /// `--urgent-only` on antigravity), and the watcher runs them too, so the agent is past
     /// this break's Stop and the next `--after-task` check starts a new one. An `--after-task`
-    /// check never ends a break, so the adapter's re-check after its grace wait, or a triage
-    /// turn's Stop that runs `--after-task`, can't re-release a deferral made while triaging.
+    /// check never ends a break, so the adapter's re-check after its grace wait can't
+    /// re-release a deferral made while triaging (nor can a triage turn's Stop that runs
+    /// `--after-task`, unless a plain check from the session ended the break first).
     /// Returns whether the state changed.
     fn end_break_from_session(&mut self, session: Option<&str>) -> bool {
         if !(self.in_break && self.break_session.as_deref() == session) {
