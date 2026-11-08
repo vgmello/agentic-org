@@ -7,7 +7,7 @@
 //!
 //! ## Wire format
 //! UTF-8 JSON, one object per line (`\n`), at most [`MAX_FRAME_BYTES`] per line, over the
-//! office server's local Unix socket. See [`frame`].
+//! office server's local Unix socket, found through [`location`]. See [`frame`].
 //!
 //! - A client sends a [`Request`] with an `id`; the server answers with a [`Response`]
 //!   carrying the same `id`. Several requests may be in flight on one connection.
@@ -37,6 +37,7 @@
 //!   [`ErrorCode::Unknown`], and answer unknown methods with [`ErrorCode::UnknownMethod`].
 
 pub mod frame;
+pub mod location;
 
 mod calls;
 mod error;
