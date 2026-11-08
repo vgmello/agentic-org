@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import DraftableText from '$lib/components/DraftableText.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
@@ -103,10 +104,7 @@
 				<Input id="new-task-title" bind:value={title} maxlength={WORK_LIMITS.title * 2} disabled={busy} autocomplete="off" aria-invalid={titleError ? true : undefined} />
 				{#if titleError}<p class="text-sm/6 text-red-400" role="alert">{titleError}</p>{/if}
 			</div>
-			<div class="space-y-2">
-				<Label for="new-task-description">Description <span class="font-normal text-gray-400">(optional)</span></Label>
-				<textarea id="new-task-description" bind:value={description} rows="3" disabled={busy} class="w-full rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400"></textarea>
-			</div>
+			<DraftableText id="new-task-description" label="Description" hint="(optional)" rows={3} bind:value={description} limit={WORK_LIMITS.description} disabled={busy} />
 			<div class="space-y-2">
 				<Label for="new-task-dod">Definition of done <span class="font-normal text-gray-400">(optional)</span></Label>
 				<textarea id="new-task-dod" bind:value={definitionOfDone} rows="2" maxlength={WORK_LIMITS.definitionOfDone * 2} disabled={busy} placeholder="The goal the agent works to" class="w-full rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400"></textarea>

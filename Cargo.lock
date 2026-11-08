@@ -2190,6 +2190,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "org-copilot"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "org-office"
 version = "0.0.0"
 dependencies = [

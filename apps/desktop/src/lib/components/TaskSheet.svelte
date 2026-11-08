@@ -1,4 +1,5 @@
 <script lang="ts">
+	import DraftableText from '$lib/components/DraftableText.svelte';
 	import { untrack } from 'svelte';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import { Badge } from '$lib/components/ui/badge';
@@ -262,10 +263,7 @@
 					{/if}
 				</div>
 
-				<div class="space-y-2">
-					<Label for="task-description">Description</Label>
-					<textarea id="task-description" bind:value={description} rows="4" disabled={busy} class={field} onblur={() => saveField('Description')}></textarea>
-				</div>
+				<DraftableText id="task-description" label="Description" rows={4} bind:value={description} limit={WORK_LIMITS.description} disabled={busy} onblur={() => saveField('Description')} onchange={() => saveField('Description')} />
 				<div class="space-y-2">
 					<Label for="task-dod">Definition of done</Label>
 					<textarea id="task-dod" bind:value={definitionOfDone} rows="2" maxlength={WORK_LIMITS.definitionOfDone * 2} disabled={busy} placeholder="The goal the agent works to" class={field} onblur={() => saveField('Definition of done')}></textarea>
