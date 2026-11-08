@@ -115,6 +115,12 @@ export function createMockOffice({
 			connected = true;
 			return { api_version: 1, server_version: '0.0.0-mock', host: 'This Mac' };
 		},
+		async ping(): Promise<void> {
+			await wait(delayMs / 3);
+			if (!connected) fail({ source: 'app', code: 'not_connected', message: "The office isn't running yet." });
+			if (scenario === 'not_installed' || scenario === 'needs_approval' || scenario === 'unreachable')
+				fail({ source: 'setup', code: 'unreachable', message: "The office isn't answering." });
+		},
 		async createOrganization(rawName): Promise<Connection> {
 			if (!connected) fail({ source: 'app', code: 'not_connected', message: "The office isn't running yet." });
 			const checked = validateName(rawName);

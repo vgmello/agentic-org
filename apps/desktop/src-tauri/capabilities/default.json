@@ -9,6 +9,7 @@
     "core:window:allow-start-dragging",
     "core:window:allow-internal-toggle-maximize",
     "allow-office-ensure-running",
+    "allow-office-ping",
     "allow-organization-create",
     "allow-connections-list",
     "allow-organizations-list",

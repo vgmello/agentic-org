@@ -16,6 +16,10 @@ tauri-build = { version = "=2.7.4", features = [] }
 
 [dependencies]
 org-proto = { path = "../../../crates/org-proto" }
+org-client = { path = "../../../crates/org-client" }
 tauri = { version = "=2.12.5", features = ["tray-icon", "image-png"] }
 serde.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

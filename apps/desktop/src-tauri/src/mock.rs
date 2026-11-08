@@ -423,6 +423,15 @@ impl OfficeConnection for MockOffice {
         }
     }
 
+    fn ping(&self) -> Result<(), SetupError> {
+        match self.scenario {
+            Scenario::Healthy | Scenario::StorageError => Ok(()),
+            Scenario::NotInstalled | Scenario::NeedsApproval | Scenario::Unreachable => Err(
+                setup_error(SetupErrorCode::Unreachable, "The office isn't answering."),
+            ),
+        }
+    }
+
     fn create_organization(&self, name: &str) -> Result<Organization, ApiError> {
         let name = validate_name(name)?;
         self.check_readable()?;

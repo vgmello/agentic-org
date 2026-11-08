@@ -20,7 +20,8 @@ test('OFC-1: the list shows HQ first with its status, where it runs, and how man
 	await expect(hq).toContainText('Online');
 	await expect(hq).toContainText("This Mac (you're here)");
 	await expect(hq).toContainText('7 agents');
-	await expect(page.getByTestId('unplaced-note')).toContainText('1 agent is not placed in an office: Inês Duarte');
+	await expect(page.getByTestId('unplaced-note')).toContainText('Unplaced · 1 agent');
+	await expect(page.getByTestId('unplaced-note')).toContainText('Inês Duarte');
 	await shot(page, 'offices');
 });
 
@@ -48,4 +49,128 @@ test('phase 1: Add office is disabled and says it comes in a later release', asy
 	const add = page.getByRole('button', { name: 'Add office' });
 	await expect(add).toBeDisabled();
 	await expect(add).toHaveAccessibleDescription('Available in a later release.');
+});
+
+test('OFC-13: a row’s label says its name, HQ, where it runs, the status and the agents, and that it opens details', async ({ page }) => {
+	await openOffices(page);
+	const button = rows(page).first().getByRole('button');
+	await expect(button).toHaveAccessibleName("HQ, HQ, This Mac (you're here), Online, 7 agents, opens details");
+	await expect(button).toHaveAttribute('aria-haspopup', 'dialog');
+});
+
+test('OFC-13: every status shows its icon and its word (the word is never replaced by the icon)', async ({ page }) => {
+	await openOffices(page);
+	const badge = rows(page).first().locator('[data-status-icon]');
+	await expect(badge).toHaveAttribute('data-status-icon', 'circle'); // Online
+	await expect(badge).toContainText('Online');
+	await expect(badge.locator('svg')).toHaveCount(1); // the icon really renders
+});
+
+test('while the agents are being counted the row shows a skeleton, then the count', async ({ page }) => {
+	await visit(page, '/create');
+	await page.getByLabel('Organization name').fill('Acme');
+	await page.getByRole('button', { name: 'Create organization' }).click();
+	await expect(page).toHaveURL(/\/agents$/);
+	await visit(page, '/offices?org=slow');
+	await expect(rows(page)).toHaveCount(1); // the list doesn't wait
+	await expect(page.getByTestId('count-skeleton')).toBeVisible();
+	await expect(rows(page).first().getByRole('button')).toHaveAccessibleName(/^HQ, HQ, This Mac \(you're here\), [^,]+, opens details$/); // no count in it yet
+	await expect(page.getByTestId('count-skeleton')).toHaveCount(0, { timeout: 10_000 });
+	await expect(rows(page).first().getByTestId('agent-count')).toContainText('7 agents');
+});
+
+test('Retry after a failed count works', async ({ page }) => {
+	await visit(page, '/create');
+	await page.getByLabel('Organization name').fill('Acme');
+	await page.getByRole('button', { name: 'Create organization' }).click();
+	await expect(page).toHaveURL(/\/agents$/);
+	await visit(page, '/offices?org=fails_once');
+	await expect(page.getByTestId('count-error')).toBeVisible();
+	const retry = page.getByRole('button', { name: 'Retry' });
+	await retry.focus();
+	await page.keyboard.press('Enter');
+	await expect(page.getByTestId('count-error')).toHaveCount(0);
+	await expect(rows(page).first().getByTestId('agent-count')).toContainText('7 agents');
+});
+
+test('OFC-1: the list opens from the keyboard and closes back to the row', async ({ page }) => {
+	await openOffices(page);
+	const button = rows(page).first().getByRole('button');
+	await button.focus();
+	await page.keyboard.press('Enter');
+	await expect(page.getByTestId('office-details')).toBeVisible();
+	await page.keyboard.press('Escape');
+	await expect(page.getByTestId('office-details')).toBeHidden();
+	await expect(button).toBeFocused();
+});
+
+test('Unplaced agents are a group with a disabled Place… that says why', async ({ page }) => {
+	await openOffices(page);
+	const group = page.getByTestId('unplaced-note');
+	await expect(group.getByRole('heading', { name: 'Unplaced · 1 agent' })).toBeVisible();
+	const place = group.getByRole('button', { name: 'Place… Inês Duarte' });
+	await expect(place).toBeDisabled();
+	await expect(place).toHaveAccessibleDescription('Placing agents is available in a later release.');
+});
+
+test('a failure to count agents keeps the list and shows an in-page error with Retry, not an error page', async ({ page }) => {
+	await visit(page, '/create');
+	await page.getByLabel('Organization name').fill('Acme');
+	await page.getByRole('button', { name: 'Create organization' }).click();
+	await expect(page).toHaveURL(/\/agents$/);
+	await visit(page, '/offices?org=fails');
+	await expect(rows(page)).toHaveCount(1); // the list is there
+	await expect(page.getByTestId('count-error')).toContainText("Can't count agents right now: The office couldn't read its storage.");
+	await expect(page.getByRole('link', { name: /Offices/ }).first()).toBeVisible(); // the window around it is intact
+	await expect(rows(page).first().getByTestId('agent-count')).not.toContainText('agents');
+	await expect(page.getByTestId('unplaced-note')).toHaveCount(0);
+	await rows(page).first().getByRole('button').click();
+	await expect(page.getByTestId('office-details')).toContainText("Couldn't be counted");
+	await shot(page, 'offices-count-error');
+});
+
+test('OFC-12: HQ says Checking… until the app has verified the connection, and only then Online', async ({ page }) => {
+	await visit(page, '/create');
+	await page.getByLabel('Organization name').fill('Acme');
+	await page.getByRole('button', { name: 'Create organization' }).click();
+	await expect(page).toHaveURL(/\/agents$/);
+	await visit(page, '/offices');
+	// The saved status says active, but the row has to earn "Online" by the office answering.
+	const badge = rows(page).first().locator('[data-status-icon]');
+	await expect(badge).toContainText('Checking…');
+	await expect(badge).toHaveAttribute('data-status-icon', 'loader');
+	await expect(rows(page).first()).not.toContainText('Online');
+	await expect(badge).toContainText('Online');
+	await expect(badge).toHaveAttribute('data-status-icon', 'circle');
+	await expect(badge.locator('svg')).toHaveCount(1);
+	await expect(page.getByTestId('live-status')).toHaveText('HQ: Online'); // said once for screen readers
+});
+
+test('OFC-12: when the office does not answer, the row says Unreachable with a Retry, never a stale Online', async ({ page }) => {
+	await visit(page, '/create');
+	await page.getByLabel('Organization name').fill('Acme');
+	await page.getByRole('button', { name: 'Create organization' }).click();
+	await expect(page).toHaveURL(/\/agents$/);
+	await visit(page, '/offices?mock=unreachable');
+	const hq = rows(page).first();
+	await expect(hq).toContainText('Unreachable');
+	await expect(hq).toContainText("Can't reach this office");
+	await expect(hq).not.toContainText('Online');
+	await expect(hq.locator('[data-status-icon]')).toHaveAttribute('data-status-icon', 'wifi-off');
+	await expect(hq.getByRole('button', { name: /^HQ, HQ, .*Unreachable/ })).toBeVisible();
+	await expect(hq.locator('[data-status-icon] svg')).toHaveCount(1);
+	const retry = hq.getByTestId('retry-office'); // its name changes while it works, so find it by id
+	await expect(retry).toHaveAccessibleName('Retry reaching HQ');
+	await shot(page, 'offices-unreachable');
+	// Retry keeps the keyboard focus while it works, and says so; the office still doesn't answer, so it ends Unreachable again.
+	await retry.focus();
+	await page.keyboard.press('Enter');
+	await expect(retry).toHaveText('Retrying…');
+	await expect(retry).toHaveAccessibleName('Retrying… reaching HQ'); // the name follows the visible text
+	await expect(retry).toBeFocused();
+	await expect(hq).toContainText('Checking…');
+	await expect(retry).toHaveText('Retry', { timeout: 15_000 });
+	await expect(hq).toContainText('Unreachable');
+	await expect(retry).toBeFocused();
+	await expect(page.getByTestId('live-status')).toHaveText('HQ: Unreachable');
 });

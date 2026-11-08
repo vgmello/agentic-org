@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { OfficeInfo } from '$lib/proto';
 import { sampleOrg } from '$lib/org/sample';
-import { agentsIn, isHere, orderOffices, roleInfo, secondaryText, statusInfo, unplacedAgents } from './model';
+import { agentsIn, displayStatus, displayStatusFor, isHere, orderOffices, roleInfo, rowLabel, secondaryText, statusIcon, statusInfo, unplacedAgents } from './model';
 
 const office = (id: string, name: string, over: Partial<OfficeInfo> = {}): OfficeInfo => ({
 	id,
@@ -33,7 +33,7 @@ describe('OFC-1 the list order and what each row says', () => {
 		expect(statusInfo('unavailable').label).toBe('Stopped');
 		expect(statusInfo('update_needed').tone).toBe('warn');
 		expect(statusInfo('pending').label).toBe('Invited');
-		expect(statusInfo(undefined)).toEqual({ label: 'Unknown', tone: 'muted' });
+		expect(statusInfo(undefined)).toEqual({ label: 'Status unknown', tone: 'muted' });
 		expect(statusInfo('unknown').tone).not.toBe('ok');
 	});
 
@@ -83,5 +83,54 @@ describe('agents who have left are not in an office', () => {
 		expect(agentsIn(left, 'office-1').map((m) => m.id)).not.toContain('sam');
 		expect(agentsIn(left, 'office-1').length).toBe(6);
 		expect(unplacedAgents(left, []).map((m) => m.id)).not.toContain('sam'); // the office is gone, he is not "unplaced" either
+	});
+});
+
+describe('OFC-13 each status has its icon, and a row says everything to a screen reader', () => {
+	it('gives every status its own icon from the spec, and an unknown one a question mark', () => {
+		expect(
+			(['active', 'starting', 'offline', 'unavailable', 'update_needed', 'pending', 'unknown', undefined] as const).map((s) => statusIcon(s))
+		).toEqual(['circle', 'loader', 'circle-outline', 'circle-x', 'circle-arrow-up', 'mail', 'circle-help', 'circle-help']);
+		expect(statusIcon('unreachable')).toBe('wifi-off');
+		expect(statusIcon('checking')).toBe('loader');
+	});
+
+	it('the row label has the name, HQ, where it runs, the status and the agents', () => {
+		expect(rowLabel(hq, 6, true, 'active')).toBe("Main office, HQ, This Mac (you're here), Online, 6 agents, opens details");
+		expect(rowLabel(office('s', 'Studio', { host: '192.168.1.31', status: 'offline' }), 1, false, 'offline')).toBe('Studio, 192.168.1.31, Offline, 1 agent, opens details');
+	});
+
+	it('leaves the count out while the agents are still being counted', () => {
+		expect(rowLabel(hq, undefined, false, 'active')).toBe('Main office, HQ, This Mac, Online, opens details');
+	});
+});
+
+describe('OFC-12 status is never shown stale', () => {
+	it('the connected office is Online only while it is verified, Unreachable when it does not answer, Checking meanwhile', () => {
+		expect(displayStatus(true, 'up')).toBe('active');
+		expect(displayStatus(true, 'down')).toBe('unreachable');
+		expect(displayStatus(true, 'checking')).toBe('checking');
+	});
+
+	it('any office the app is not connected to is "Status unknown", whatever was saved', () => {
+		for (const check of ['up', 'down', 'checking'] as const) expect(statusInfo(displayStatus(false, check))).toEqual({ label: 'Status unknown', tone: 'muted' });
+	});
+
+	it('the words and tones of the new states', () => {
+		expect(statusInfo('unreachable')).toEqual({ label: 'Unreachable', tone: 'bad' });
+		expect(statusInfo('checking')).toEqual({ label: 'Checking…', tone: 'info' });
+	});
+
+	it('the row label says the verified status, not the saved one', () => {
+		expect(rowLabel(hq, 1, true, 'unreachable')).toBe("Main office, HQ, Can't reach this office, Unreachable, 1 agent, opens details");
+		expect(rowLabel(hq, 1, false, 'status_unknown')).toBe('Main office, HQ, This Mac, Status unknown, 1 agent, opens details');
+	});
+});
+
+describe('OFC-12 which office is verified', () => {
+	it('only the office the app is connected to can be Online; another office with the same saved status reads unknown', () => {
+		expect(displayStatusFor('hq', 'hq', 'up')).toBe('active');
+		expect(displayStatusFor('office-2', 'hq', 'up')).toBe('status_unknown');
+		expect(displayStatusFor('office-2', 'hq', 'down')).toBe('status_unknown');
 	});
 });

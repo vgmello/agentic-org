@@ -12,6 +12,7 @@ mod org_agent_rules;
 mod org_command;
 mod org_engine;
 mod org_mock;
+mod real;
 mod tray;
 
 use connections::{local_office, Connection, ConnectionStore};
@@ -95,6 +96,13 @@ impl AppState {
     fn ensure_running(&self) -> Result<HelloResult, CommandError> {
         let _one_at_a_time = self.start.lock().unwrap_or_else(|e| e.into_inner());
         self.start_locked()
+    }
+
+    /// Whether the connected office answers. Read-only: no start lock, no epoch, no restart, so a status
+    /// check can't pile up behind (or cause) a start. Before the office has been started there is nothing to ask.
+    fn ping(&self) -> Result<(), CommandError> {
+        self.ensure_connected()?;
+        Ok(self.office.ping()?)
     }
 
     fn start_locked(&self) -> Result<HelloResult, CommandError> {
@@ -281,6 +289,12 @@ async fn office_ensure_running(
 }
 
 #[tauri::command]
+async fn office_ping(state: State<'_, Arc<AppState>>) -> Result<(), CommandError> {
+    let state = Arc::clone(&state);
+    blocking(move || state.ping()).await
+}
+
+#[tauri::command]
 async fn organization_create(
     app: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
@@ -340,16 +354,37 @@ async fn connections_list(
     blocking(move || state.connections()).await
 }
 
+/// Which office the app talks to: the real one (the host and HQ office sockets, through `org-client`) when
+/// `AGENTIC_ORG_OFFICE=real` and there is an office home to look in, otherwise the mock. Until the host is bundled
+/// and started by the app, the mock is the default.
+fn choose_office(
+    data: &std::path::Path,
+    choice: Option<&str>,
+    real: Option<real::RealOffice>,
+) -> (Arc<dyn OfficeConnection>, std::path::PathBuf) {
+    match (choice, real) {
+        (Some("real"), Some(real)) => (Arc::new(real), data.join("real")),
+        _ => {
+            let dir = data.join("mock");
+            (Arc::new(mock::MockOffice::from_env(dir.clone())), dir)
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            // The mock's connections live apart from anything a real office will remember, so a build
-            // that has the real client never opens a fake organization.
+            // The mock's connections live apart from anything the real office remembers, so choosing the real
+            // office never opens a fake organization (and the other way round).
             let data = app.path().app_data_dir()?;
-            let dir = data.join("mock");
+            let (office, dir) = choose_office(
+                &data,
+                std::env::var("AGENTIC_ORG_OFFICE").ok().as_deref(),
+                real::RealOffice::from_env(),
+            );
             app.manage(Arc::new(AppState {
-                office: Arc::new(mock::MockOffice::from_env(dir.clone())),
+                office,
                 store: ConnectionStore::new(dir),
                 connected: Mutex::new(None),
                 start: Mutex::new(()),
@@ -370,6 +405,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             office_ensure_running,
+            office_ping,
             organization_create,
             organizations_list,
             organization_open,
@@ -482,6 +518,33 @@ mod tests {
     }
 
     #[test]
+    fn a_ping_only_asks_it_never_starts_or_restarts_the_office() {
+        let (state, dir) = make_state(Scenario::Healthy);
+        // Before anything started the office there is nothing to ask, and asking starts nothing.
+        let err = state.ping().unwrap_err();
+        assert_eq!((err.source, err.code.as_str()), ("app", "not_connected"));
+        assert_eq!(state.epoch.load(Ordering::SeqCst), 0);
+        state.ensure_running().unwrap();
+        let epoch = state.epoch.load(Ordering::SeqCst);
+        for _ in 0..3 {
+            assert!(state.ping().is_ok());
+        }
+        assert_eq!(
+            state.epoch.load(Ordering::SeqCst),
+            epoch,
+            "a ping is not a start"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+        // An office that doesn't answer is reported as unreachable (a setup error), not restarted.
+        let (state, dir) = make_state(Scenario::Unreachable);
+        *state.connected.lock().unwrap() = Some("This Mac".into());
+        let err = state.ping().unwrap_err();
+        assert_eq!((err.source, err.code.as_str()), ("setup", "unreachable"));
+        assert_eq!(state.epoch.load(Ordering::SeqCst), 0);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn creating_before_the_office_is_running_is_refused() {
         let (state, dir) = make_state(Scenario::Healthy);
         let err = state.create_organization("Acme").unwrap_err();
@@ -515,8 +578,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir2);
     }
 
-    const COMMANDS: [&str; 7] = [
+    const COMMANDS: [&str; 8] = [
         "office_ensure_running",
+        "office_ping",
         "organization_create",
         "organizations_list",
         "organization_open",
@@ -714,6 +778,9 @@ mod tests {
                 host: "This Mac".into(),
                 office: None,
             })
+        }
+        fn ping(&self) -> Result<(), office::SetupError> {
+            Ok(())
         }
         fn create_organization(&self, _: &str) -> Result<Organization, ApiError> {
             unreachable!()
@@ -928,5 +995,27 @@ mod tests {
             serde_json::to_value(accepted).unwrap(),
             fixture["command_accepted"]
         );
+    }
+
+    #[test]
+    fn the_mock_is_the_default_and_the_real_office_needs_asking_for_and_a_home() {
+        let data = std::env::temp_dir().join(format!("agentic-org-choose-{}", std::process::id()));
+        let real = || Some(real::RealOffice::new(data.join("home")));
+        let (office, dir) = choose_office(&data, None, real());
+        assert!(office.serves_sample_data(), "the mock by default");
+        assert_eq!(dir, data.join("mock"));
+        let (office, dir) = choose_office(&data, Some("real"), real());
+        assert!(!office.serves_sample_data());
+        assert_eq!(
+            dir,
+            data.join("real"),
+            "its connections are kept apart from the mock's"
+        );
+        let (office, dir) = choose_office(&data, Some("real"), None);
+        assert!(office.serves_sample_data(), "no office home: the mock");
+        assert_eq!(dir, data.join("mock"));
+        let (office, _) = choose_office(&data, Some("mock"), real());
+        assert!(office.serves_sample_data());
+        let _ = std::fs::remove_dir_all(&data);
     }
 }
