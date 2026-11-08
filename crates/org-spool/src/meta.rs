@@ -809,7 +809,8 @@ impl Spool {
     /// with no profile counts as an agent. Decides whether an expired ask stays urgent.
     pub fn is_person(&self, agent: &str) -> bool {
         let profile = self.load_profile_unlocked(agent);
-        profile.owner || profile.kind == "person"
+        // Case-insensitive, like `who --kind`.
+        profile.owner || profile.kind.eq_ignore_ascii_case("person")
     }
 
     /// Read a member's profile (falling back to default profile if not customized).

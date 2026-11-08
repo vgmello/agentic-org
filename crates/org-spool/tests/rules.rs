@@ -1583,6 +1583,19 @@ fn rule_an_ask_that_expired_before_delivery_still_reaches_a_person() {
 }
 
 #[test]
+fn rule_is_person_ignores_the_case_of_the_kind() {
+    let t = TempSpool::new("person_case");
+    // Written by hand or another tool: not lowercase.
+    fs::write(
+        t.dir.join(format!("spool/inbox/{PEER}/profile.json")),
+        r#"{"id":"ada","name":"Ada","kind":"Person"}"#,
+    )
+    .unwrap();
+    assert!(t.spool.is_person(PEER));
+    assert!(!t.spool.is_person(ME));
+}
+
+#[test]
 fn rule_an_ask_picking_up_its_reply_clears_the_replys_triage_state() {
     let t = TempSpool::new("reply_claim");
     // ME asked PEER; PEER's reply lands in ME's inbox and ME snoozes it before `ask` collects it.
