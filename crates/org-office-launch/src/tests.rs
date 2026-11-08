@@ -1,0 +1,753 @@
+use std::io::Cursor;
+use std::path::Path;
+
+use super::*;
+
+/// A fixed token for tests; its wire form is `TOKEN_HEX`.
+fn token() -> AppToken {
+    AppToken::from_bytes([0xab; 32])
+}
+
+const TOKEN_HEX: &str = "abababababababababababababababababababababababababababababababab";
+
+fn create() -> CreateOffice {
+    CreateOffice {
+        org_id: "01M6WGY1WJCC503RXF2NS0SH83".into(),
+        org_name: "Acme".into(),
+        office_id: "01M6WGY1WJCC503RXF2NS0SH84".into(),
+        office_name: "HQ".into(),
+        role: OfficeRole::Hq,
+        app_token: token(),
+    }
+}
+
+fn office_file() -> OfficeFile {
+    OfficeFile::new(
+        "01M6WGY1WJCC503RXF2NS0SH84",
+        "HQ",
+        OfficeRole::Hq,
+        "01M6WGY1WJCC503RXF2NS0SH83",
+        "Acme",
+        "2026-11-08T02:10:00.000Z",
+    )
+}
+
+fn json(bytes: &[u8]) -> serde_json::Value {
+    serde_json::from_slice(bytes).unwrap()
+}
+
+#[test]
+fn the_create_message_has_the_agreed_shape() {
+    let mut out = Vec::new();
+    write_host_message(&mut out, &HostMessage::Create(create())).unwrap();
+    assert_eq!(out.last(), Some(&b'\n'));
+    assert_eq!(
+        json(&out),
+        serde_json::json!({"v":1,"op":"create","org_id":"01M6WGY1WJCC503RXF2NS0SH83",
+            "org_name":"Acme","office_id":"01M6WGY1WJCC503RXF2NS0SH84",
+            "office_name":"HQ","role":"hq","app_token":TOKEN_HEX})
+    );
+}
+
+#[test]
+fn host_messages_round_trip_and_eof_is_none() {
+    let mut out = Vec::new();
+    write_host_message(&mut out, &HostMessage::Create(create())).unwrap();
+    let mut r = Cursor::new(out);
+    assert_eq!(
+        read_host_message(&mut r).unwrap(),
+        Some(HostMessage::Create(create()))
+    );
+    assert_eq!(read_host_message(&mut r).unwrap(), None);
+}
+
+#[test]
+fn server_events_have_the_agreed_shapes() {
+    let cases = [
+        (
+            ServerEvent::Ready {
+                socket: "/h/run/3RXF2NS0SH84.sock".into(),
+                pid: 4242,
+            },
+            serde_json::json!({"v":1,"event":"ready","socket":"/h/run/3RXF2NS0SH84.sock","pid":4242}),
+        ),
+        (
+            ServerEvent::Failed {
+                code: FailCode::KeyMissing,
+                message: "the office's key is missing".into(),
+            },
+            serde_json::json!({"v":1,"event":"failed","code":"key_missing",
+                "message":"the office's key is missing"}),
+        ),
+        (
+            ServerEvent::Created {
+                office: office_file(),
+            },
+            serde_json::json!({"v":1,"event":"created","office":{"v":1,
+                "office_id":"01M6WGY1WJCC503RXF2NS0SH84","office_name":"HQ","role":"hq",
+                "org_id":"01M6WGY1WJCC503RXF2NS0SH83","org_name":"Acme",
+                "created_at":"2026-11-08T02:10:00.000Z"}}),
+        ),
+    ];
+    for (event, expected) in cases {
+        let mut out = Vec::new();
+        write_server_event(&mut out, &event).unwrap();
+        assert_eq!(json(&out), expected);
+        assert_eq!(
+            read_server_event(&mut Cursor::new(out)).unwrap(),
+            Some(event)
+        );
+    }
+}
+
+#[test]
+fn every_fail_code_has_its_wire_name() {
+    let names = [
+        (FailCode::InvalidRequest, "invalid_request"),
+        (FailCode::UnsupportedVersion, "unsupported_version"),
+        (FailCode::InvalidName, "invalid_name"),
+        (FailCode::AlreadyExists, "already_exists"),
+        (FailCode::KeyMissing, "key_missing"),
+        (FailCode::InUse, "in_use"),
+        (FailCode::StorageError, "storage_error"),
+    ];
+    for (code, name) in names {
+        assert_eq!(serde_json::to_value(code).unwrap(), name);
+        assert_eq!(
+            serde_json::from_value::<FailCode>(name.into()).unwrap(),
+            code
+        );
+    }
+}
+
+#[test]
+fn unknown_ops_events_codes_and_fields_are_tolerated() {
+    let line = br#"{"v":1,"op":"shutdown","grace_ms":5}
+"#;
+    assert_eq!(
+        read_host_message(&mut Cursor::new(&line[..])).unwrap(),
+        Some(HostMessage::Unknown)
+    );
+
+    let line = br#"{"v":1,"event":"status","busy":true}
+"#;
+    assert_eq!(
+        read_server_event(&mut Cursor::new(&line[..])).unwrap(),
+        Some(ServerEvent::Unknown)
+    );
+
+    let line = br#"{"v":1,"event":"failed","code":"disk_on_fire","message":"m","extra":1}
+"#;
+    assert_eq!(
+        read_server_event(&mut Cursor::new(&line[..])).unwrap(),
+        Some(ServerEvent::Failed {
+            code: FailCode::StorageError,
+            message: "m".into()
+        })
+    );
+
+    let line = br#"{"v":1,"op":"create","org_id":"A1","org_name":"Acme","office_id":"B2","office_name":"HQ","role":"hq","hq_address":"x","app_token":"abababababababababababababababababababababababababababababababab"}
+"#;
+    let Some(HostMessage::Create(c)) = read_host_message(&mut Cursor::new(&line[..])).unwrap()
+    else {
+        panic!("not a create");
+    };
+    assert_eq!(c.role, OfficeRole::Hq);
+}
+
+#[test]
+fn a_create_with_a_role_this_version_cant_create_is_refused() {
+    for line in [
+        &br#"{"v":1,"op":"create","org_id":"A1","org_name":"Acme","office_id":"B2","office_name":"HQ","role":"satellite","hq_address":"x"}
+"#[..],
+        &br#"{"v":1,"op":"create","org_id":"A1","org_name":"Acme","office_id":"B2","office_name":"HQ","role":"moon"}
+"#[..],
+        &br#"{"v":1,"op":"create","org_id":"A1","org_name":"Acme","office_id":"B2","office_name":"HQ"}
+"#[..],
+    ] {
+        let err = read_host_message(&mut Cursor::new(line)).unwrap_err();
+        assert!(matches!(err, LaunchError::Json(_)), "{err}");
+        assert_eq!(err.fail_code(), FailCode::InvalidRequest);
+    }
+    for role in [OfficeRole::Unknown, OfficeRole::Satellite] {
+        let message = HostMessage::Create(CreateOffice { role, ..create() });
+        assert!(matches!(
+            write_host_message(&mut Vec::new(), &message),
+            Err(LaunchError::Invalid(_))
+        ));
+    }
+}
+
+#[test]
+fn the_types_check_their_rules_on_every_serde_path() {
+    // Reading with the plain frame API, bypassing `read_host_message`, is still refused.
+    let mut line = serde_json::to_value(HostMessage::Create(create())).unwrap();
+    line["office_id"] = "../../etc".into();
+    let mut r = Cursor::new(line.to_string() + "\n");
+    assert!(org_proto::frame::read_message::<HostMessage>(&mut r).is_err());
+
+    // Encoding a bad create or office file through serde directly fails too.
+    let bad = CreateOffice {
+        org_id: "../x".into(),
+        ..create()
+    };
+    assert!(serde_json::to_string(&bad).is_err());
+    let bad = OfficeFile {
+        office_id: "a/b".into(),
+        ..office_file()
+    };
+    assert!(serde_json::to_string(&bad).is_err());
+    let mut value = serde_json::to_value(office_file()).unwrap();
+    value["org_id"] = "../x".into();
+    assert!(serde_json::from_value::<OfficeFile>(value).is_err());
+}
+
+#[test]
+fn a_created_event_with_a_bad_office_is_refused() {
+    let mut office = serde_json::to_value(office_file()).unwrap();
+    office["office_id"] = "../../x".into();
+    let line = serde_json::json!({"v":1,"event":"created","office":office}).to_string() + "\n";
+    assert!(matches!(
+        read_server_event(&mut Cursor::new(line)),
+        Err(LaunchError::Json(_))
+    ));
+
+    let mut office = serde_json::to_value(office_file()).unwrap();
+    office["v"] = 7.into();
+    let line = serde_json::json!({"v":1,"event":"created","office":office}).to_string() + "\n";
+    assert!(matches!(
+        read_server_event(&mut Cursor::new(line)),
+        Err(LaunchError::Json(_))
+    ));
+
+    let bad = ServerEvent::Created {
+        office: OfficeFile {
+            org_id: "a/b".into(),
+            ..office_file()
+        },
+    };
+    assert!(matches!(
+        write_server_event(&mut Vec::new(), &bad),
+        Err(LaunchError::Invalid(_))
+    ));
+}
+
+#[test]
+fn unknown_variants_are_never_written() {
+    let mut out = Vec::new();
+    assert!(matches!(
+        write_host_message(&mut out, &HostMessage::Unknown),
+        Err(LaunchError::Invalid(_))
+    ));
+    assert!(matches!(
+        write_server_event(&mut out, &ServerEvent::Unknown),
+        Err(LaunchError::Invalid(_))
+    ));
+    assert!(out.is_empty());
+}
+
+#[test]
+fn oversized_lines_are_refused_both_ways() {
+    let mut line = br#"{"v":1,"event":"failed","code":"in_use","message":""#.to_vec();
+    line.extend(std::iter::repeat_n(b'x', org_proto::MAX_FRAME_BYTES));
+    line.extend(b"\"}\n{\"v\":1,\"event\":\"ready\",\"socket\":\"/s\",\"pid\":1}\n");
+    let err = read_server_event(&mut Cursor::new(line)).unwrap_err();
+    assert!(
+        matches!(err, LaunchError::Frame(FrameError::TooLarge)),
+        "{err}"
+    );
+    assert!(err.closes_stream());
+
+    let huge = ServerEvent::Failed {
+        code: FailCode::StorageError,
+        message: "x".repeat(org_proto::MAX_FRAME_BYTES),
+    };
+    let mut out = Vec::new();
+    assert!(matches!(
+        write_server_event(&mut out, &huge),
+        Err(LaunchError::Frame(FrameError::TooLargeToSend))
+    ));
+    assert!(out.is_empty());
+}
+
+#[test]
+fn errors_say_whether_the_pipe_is_still_in_step() {
+    let mut r =
+        Cursor::new(&b"not json\n{\"v\":1,\"event\":\"ready\",\"socket\":\"/s\",\"pid\":2}\n"[..]);
+    let err = read_server_event(&mut r).unwrap_err();
+    assert!(!err.closes_stream());
+    assert!(std::error::Error::source(&err).is_some());
+    assert_eq!(
+        read_server_event(&mut r).unwrap(),
+        Some(ServerEvent::Ready {
+            socket: "/s".into(),
+            pid: 2
+        })
+    );
+    let err = LaunchError::UnsupportedVersion(2);
+    assert_eq!(err.fail_code(), FailCode::UnsupportedVersion);
+    assert!(!err.closes_stream());
+}
+
+#[test]
+fn another_version_is_refused_before_its_shape_is_read() {
+    // A v2 line with a shape v1 can't decode still reports the version, not a JSON error.
+    let line = br#"{"v":2,"op":"create","org":{"nested":true}}
+"#;
+    assert!(matches!(
+        read_host_message(&mut Cursor::new(&line[..])),
+        Err(LaunchError::UnsupportedVersion(2))
+    ));
+    let line = br#"{"v":0,"event":"ready","socket":"/s","pid":1}
+"#;
+    assert!(matches!(
+        read_server_event(&mut Cursor::new(&line[..])),
+        Err(LaunchError::UnsupportedVersion(0))
+    ));
+    let line = br#"{"op":"create"}
+"#;
+    assert!(matches!(
+        read_host_message(&mut Cursor::new(&line[..])),
+        Err(LaunchError::Json(_))
+    ));
+}
+
+#[test]
+fn a_create_with_a_hostile_id_is_refused() {
+    for (org_id, office_id) in [
+        ("../x", "B2"),
+        ("A1", "../../etc"),
+        ("A1", ""),
+        ("a/b", "B2"),
+    ] {
+        let message = HostMessage::Create(CreateOffice {
+            org_id: org_id.into(),
+            office_id: office_id.into(),
+            ..create()
+        });
+        let mut out = Vec::new();
+        assert!(
+            matches!(
+                write_host_message(&mut out, &message),
+                Err(LaunchError::Invalid(_))
+            ),
+            "wrote {org_id:?} / {office_id:?}"
+        );
+        assert!(out.is_empty());
+
+        // A peer that doesn't use this crate may still send one: the reader refuses it.
+        let mut line = serde_json::to_value(HostMessage::Create(create())).unwrap();
+        line["v"] = 1.into();
+        line["org_id"] = org_id.into();
+        line["office_id"] = office_id.into();
+        let line = line.to_string() + "\n";
+        assert!(
+            matches!(
+                read_host_message(&mut Cursor::new(line)),
+                Err(LaunchError::Json(_))
+            ),
+            "accepted {org_id:?} / {office_id:?}"
+        );
+    }
+}
+
+#[test]
+fn malformed_lines_and_truncation_are_errors() {
+    let mut r = Cursor::new(&b"not json\n"[..]);
+    assert!(matches!(
+        read_server_event(&mut r),
+        Err(LaunchError::Json(_))
+    ));
+    let mut r = Cursor::new(&br#"{"v":1,"event":"ready""#[..]);
+    assert!(matches!(
+        read_server_event(&mut r),
+        Err(LaunchError::Frame(FrameError::Truncated))
+    ));
+}
+
+#[test]
+fn office_file_round_trips_and_ignores_unknown_fields() {
+    let file = office_file();
+    let bytes = file.to_vec().unwrap();
+    assert_eq!(bytes.last(), Some(&b'\n'));
+    assert_eq!(OfficeFile::from_slice(&bytes).unwrap(), file);
+
+    // A field from a newer build survives a read and a rewrite by this one.
+    let mut value = json(&bytes);
+    value["hq_address"] = "hq.local:7443".into();
+    let read = OfficeFile::from_slice(&serde_json::to_vec(&value).unwrap()).unwrap();
+    assert_eq!(read.office_id, file.office_id);
+    assert_eq!(read.org_name, file.org_name);
+    let mut renamed = read;
+    renamed.org_name = "Acme Inc".into();
+    let rewritten = json(&renamed.to_vec().unwrap());
+    assert_eq!(rewritten["hq_address"], "hq.local:7443");
+    assert_eq!(rewritten["org_name"], "Acme Inc");
+    assert_eq!(rewritten["v"], LAUNCH_VERSION);
+}
+
+#[test]
+fn an_office_file_without_a_role_reads_as_unknown() {
+    let mut value = serde_json::to_value(office_file()).unwrap();
+    value.as_object_mut().unwrap().remove("role");
+    let file = OfficeFile::from_slice(&serde_json::to_vec(&value).unwrap()).unwrap();
+    assert_eq!(file.role, OfficeRole::Unknown);
+}
+
+#[test]
+fn discarded_has_its_shape_and_fail_codes_map_errors() {
+    let mut out = Vec::new();
+    write_server_event(&mut out, &ServerEvent::Discarded).unwrap();
+    assert_eq!(json(&out), serde_json::json!({"v":1,"event":"discarded"}));
+    assert_eq!(
+        read_server_event(&mut Cursor::new(out)).unwrap(),
+        Some(ServerEvent::Discarded)
+    );
+    assert_eq!(DISCARD_FLAG, "--discard");
+
+    let broken = LaunchError::Frame(FrameError::Io(std::io::Error::other("pipe")));
+    assert_eq!(broken.fail_code(), FailCode::StorageError);
+    assert_eq!(
+        LaunchError::Frame(FrameError::Truncated).fail_code(),
+        FailCode::StorageError
+    );
+    assert_eq!(
+        LaunchError::Frame(FrameError::TooLarge).fail_code(),
+        FailCode::InvalidRequest
+    );
+    let bad_json = read_server_event(&mut Cursor::new(&b"{]\n"[..])).unwrap_err();
+    assert_eq!(bad_json.fail_code(), FailCode::InvalidRequest);
+}
+
+#[test]
+fn office_file_checks_version_and_ids() {
+    let mut value = serde_json::to_value(office_file()).unwrap();
+    value["v"] = 2.into();
+    assert!(matches!(
+        OfficeFile::from_slice(&serde_json::to_vec(&value).unwrap()),
+        Err(LaunchError::UnsupportedVersion(2))
+    ));
+
+    let mut value = serde_json::to_value(office_file()).unwrap();
+    value["office_id"] = "../../x".into();
+    assert!(matches!(
+        OfficeFile::from_slice(&serde_json::to_vec(&value).unwrap()),
+        Err(LaunchError::Invalid(_))
+    ));
+
+    assert!(matches!(
+        OfficeFile::from_slice(b"{}"),
+        Err(LaunchError::Json(_))
+    ));
+
+    let mut value = serde_json::to_value(office_file()).unwrap();
+    value.as_object_mut().unwrap().remove("v");
+    assert!(matches!(
+        OfficeFile::from_slice(&serde_json::to_vec(&value).unwrap()),
+        Err(LaunchError::Json(_))
+    ));
+
+    // The derived decoder is guarded too, not only `from_slice`.
+    let mut value = serde_json::to_value(office_file()).unwrap();
+    value["v"] = 9.into();
+    assert!(serde_json::from_value::<OfficeFile>(value).is_err());
+}
+
+#[test]
+fn office_file_always_writes_the_current_version_and_refuses_bad_ids() {
+    let written = json(&office_file().to_vec().unwrap());
+    assert_eq!(written["v"], LAUNCH_VERSION);
+    let bad = OfficeFile {
+        office_id: "../x".into(),
+        ..office_file()
+    };
+    assert!(matches!(bad.to_vec(), Err(LaunchError::Invalid(_))));
+}
+
+#[test]
+fn the_start_message_has_the_agreed_shape_and_round_trips() {
+    let start = HostMessage::Start(StartOffice { app_token: token() });
+    let mut out = Vec::new();
+    write_host_message(&mut out, &start).unwrap();
+    assert_eq!(
+        json(&out),
+        serde_json::json!({"v":1,"op":"start","app_token":TOKEN_HEX})
+    );
+    assert_eq!(
+        read_host_message(&mut Cursor::new(out)).unwrap(),
+        Some(start)
+    );
+}
+
+#[test]
+fn the_app_token_never_shows_in_debug_or_errors() {
+    let shown = format!(
+        "{:?} {:?}",
+        HostMessage::Create(create()),
+        HostMessage::Start(StartOffice { app_token: token() })
+    );
+    assert!(!shown.contains("abab"), "{shown}");
+
+    // A bad token, and a create missing one, fail without echoing the line.
+    let bad = format!("{}Z", &TOKEN_HEX[..63]);
+    for line in [
+        format!("{{\"v\":1,\"op\":\"start\",\"app_token\":\"{bad}\"}}\n"),
+        format!(
+            "{{\"v\":1,\"op\":\"start\",\"app_token\":{}}}\n",
+            "1234567890".repeat(7)
+        ),
+    ] {
+        let err = read_host_message(&mut Cursor::new(line)).unwrap_err();
+        let text = format!("{err} {err:?}");
+        assert!(
+            !text.contains("abababab") && !text.contains("12345678"),
+            "{text}"
+        );
+        assert_eq!(err.fail_code(), FailCode::InvalidRequest);
+    }
+    let mut value = serde_json::to_value(HostMessage::Create(create())).unwrap();
+    value.as_object_mut().unwrap().remove("app_token");
+    value["v"] = 1.into();
+    let err = read_host_message(&mut Cursor::new(value.to_string() + "\n")).unwrap_err();
+    assert!(matches!(err, LaunchError::Json(_)), "{err}");
+}
+
+#[test]
+fn ids_are_capped_at_64_characters() {
+    assert!(is_plain_id(&"a".repeat(64)));
+    assert!(!is_plain_id(&"a".repeat(65)));
+    assert_eq!(MAX_ID_CHARS, 64);
+}
+
+#[test]
+fn office_dir_uses_the_same_plain_id_rule_as_sockets() {
+    let home = Path::new("/h");
+    assert_eq!(
+        office_dir(home, "01M6WGY1WJCC503RXF2NS0SH84"),
+        Some(PathBuf::from("/h/offices/01M6WGY1WJCC503RXF2NS0SH84"))
+    );
+    for id in [
+        "",
+        "/etc/x",
+        "../../x",
+        "a/b",
+        "a.b",
+        "é1234567890",
+        "abc def",
+        "abc",
+        "01M6WGY1WJCC503RXF2NS0SH84",
+        &"a".repeat(64),
+        &"a".repeat(65),
+    ] {
+        assert_eq!(
+            office_dir(home, id).is_some(),
+            org_proto::location::office_socket_path(home, id).is_some(),
+            "rules disagree on {id:?}"
+        );
+    }
+}
+
+#[test]
+fn an_unknown_role_is_written_back_as_it_was() {
+    for (stored, expected) in [
+        (
+            Some(serde_json::json!("relay")),
+            Some(serde_json::json!("relay")),
+        ),
+        (
+            Some(serde_json::json!({"kind":"x"})),
+            Some(serde_json::json!({"kind":"x"})),
+        ),
+        (Some(serde_json::Value::Null), Some(serde_json::Value::Null)),
+        (None, None),
+    ] {
+        let mut value = serde_json::to_value(office_file()).unwrap();
+        let object = value.as_object_mut().unwrap();
+        object.remove("role");
+        if let Some(role) = stored {
+            object.insert("role".into(), role);
+        }
+        let mut file = OfficeFile::from_slice(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(file.role, OfficeRole::Unknown);
+        file.org_name = "Renamed".into();
+        let written = json(&file.to_vec().unwrap());
+        assert_eq!(written.get("role").cloned(), expected);
+    }
+    // A known role set by this build replaces whatever was there.
+    let mut value = serde_json::to_value(office_file()).unwrap();
+    value["role"] = "relay".into();
+    let mut file = OfficeFile::from_slice(&serde_json::to_vec(&value).unwrap()).unwrap();
+    file.role = OfficeRole::Hq;
+    assert_eq!(json(&file.to_vec().unwrap())["role"], "hq");
+}
+
+#[test]
+fn unknown_variants_never_serialize_through_plain_serde() {
+    assert!(serde_json::to_string(&HostMessage::Unknown).is_err());
+    assert!(serde_json::to_string(&ServerEvent::Unknown).is_err());
+}
+
+#[test]
+fn an_oversized_host_message_is_not_sent() {
+    let message = HostMessage::Create(CreateOffice {
+        org_name: "x".repeat(org_proto::MAX_FRAME_BYTES),
+        ..create()
+    });
+    let mut out = Vec::new();
+    assert!(matches!(
+        write_host_message(&mut out, &message),
+        Err(LaunchError::Frame(FrameError::TooLargeToSend))
+    ));
+    assert!(out.is_empty());
+}
+
+#[test]
+fn host_messages_are_flushed_as_one_line() {
+    struct Recorder {
+        bytes: Vec<u8>,
+        flushed_at: Option<usize>,
+    }
+    impl Write for Recorder {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.bytes.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.flushed_at = Some(self.bytes.len());
+            Ok(())
+        }
+    }
+    let mut w = Recorder {
+        bytes: Vec::new(),
+        flushed_at: None,
+    };
+    write_host_message(
+        &mut w,
+        &HostMessage::Start(StartOffice { app_token: token() }),
+    )
+    .unwrap();
+    assert_eq!(w.flushed_at, Some(w.bytes.len()));
+    assert_eq!(w.bytes.iter().filter(|&&b| b == b'\n').count(), 1);
+    assert_eq!(w.bytes.last(), Some(&b'\n'));
+}
+
+#[test]
+fn a_newer_office_file_reports_its_version_even_with_another_shape() {
+    assert!(matches!(
+        OfficeFile::from_slice(br#"{"v":2,"office":{"id":"x"}}"#),
+        Err(LaunchError::UnsupportedVersion(2))
+    ));
+}
+
+#[test]
+fn an_office_file_made_without_a_role_cant_be_written() {
+    let file = OfficeFile::new("A1", "HQ", OfficeRole::Unknown, "B2", "Acme", "t");
+    assert!(matches!(file.to_vec(), Err(LaunchError::Invalid(_))));
+    assert!(serde_json::to_string(&file).is_err());
+}
+
+#[test]
+fn host_lines_are_zeroed_after_decoding_on_every_path() {
+    let good = encode_host_line(&HostMessage::Start(StartOffice { app_token: token() })).unwrap();
+    let mut line = good[..good.len() - 1].to_vec();
+    assert!(decode_host_line(&mut line).is_ok());
+    assert!(line.iter().all(|&b| b == 0));
+
+    let mut other_version =
+        format!("{{\"v\":2,\"op\":\"start\",\"app_token\":\"{TOKEN_HEX}\"}}").into_bytes();
+    assert!(decode_host_line(&mut other_version).is_err());
+    assert!(other_version.iter().all(|&b| b == 0));
+
+    let mut bad =
+        format!("{{\"v\":1,\"op\":\"start\",\"app_token\":\"{TOKEN_HEX}\",]").into_bytes();
+    assert!(decode_host_line(&mut bad).is_err());
+    assert!(bad.iter().all(|&b| b == 0));
+}
+
+#[test]
+fn host_lines_are_encoded_without_reallocating() {
+    let line = encode_host_line(&HostMessage::Create(create())).unwrap();
+    assert_eq!(line.capacity(), line.len());
+    assert_eq!(line.last(), Some(&b'\n'));
+}
+
+#[test]
+fn a_host_line_read_in_pieces_stays_in_its_first_buffer() {
+    struct Chunks(Vec<Vec<u8>>);
+    impl std::io::Read for Chunks {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.0.is_empty() {
+                return Ok(0);
+            }
+            let chunk = self.0.remove(0);
+            buf[..chunk.len()].copy_from_slice(&chunk);
+            Ok(chunk.len())
+        }
+    }
+    let line = encode_host_line(&HostMessage::Start(StartOffice { app_token: token() })).unwrap();
+    let mut chunks = Vec::new();
+    for piece in line.chunks(16) {
+        chunks.push(piece.to_vec());
+    }
+    let mut r = std::io::BufReader::with_capacity(16, Chunks(chunks));
+    let read = read_secret_line(&mut r).unwrap().unwrap();
+    assert_eq!(read.capacity(), org_proto::MAX_FRAME_BYTES + 1);
+    assert_eq!(read, line[..line.len() - 1]);
+}
+
+#[test]
+fn the_largest_host_line_is_sent_and_one_byte_more_is_not() {
+    let base = encode_host_line(&HostMessage::Create(create())).unwrap();
+    // The line without its newline may be exactly MAX_FRAME_BYTES long.
+    let pad = org_proto::MAX_FRAME_BYTES - (base.len() - 1);
+    let fits = HostMessage::Create(CreateOffice {
+        org_name: format!("Acme{}", "x".repeat(pad)),
+        ..create()
+    });
+    let mut out = Vec::new();
+    write_host_message(&mut out, &fits).unwrap();
+    assert_eq!(out.len(), org_proto::MAX_FRAME_BYTES + 1);
+    assert!(read_host_message(&mut Cursor::new(out)).unwrap().is_some());
+
+    let too_big = HostMessage::Create(CreateOffice {
+        org_name: format!("Acme{}", "x".repeat(pad + 1)),
+        ..create()
+    });
+    let mut out = Vec::new();
+    assert!(matches!(
+        write_host_message(&mut out, &too_big),
+        Err(LaunchError::Frame(FrameError::TooLargeToSend))
+    ));
+    assert!(out.is_empty());
+}
+
+#[test]
+fn an_oversized_host_line_is_too_large_and_closes_the_pipe() {
+    let mut line = vec![b'x'; org_proto::MAX_FRAME_BYTES + 1];
+    line.push(b'\n');
+    let err = read_host_message(&mut Cursor::new(line)).unwrap_err();
+    assert!(
+        matches!(err, LaunchError::Frame(FrameError::TooLarge)),
+        "{err}"
+    );
+    assert_eq!(err.fail_code(), FailCode::InvalidRequest);
+    assert!(err.closes_stream());
+    // One byte less is a whole (if malformed) line, not too large.
+    let mut line = vec![b'x'; org_proto::MAX_FRAME_BYTES];
+    line.push(b'\n');
+    assert!(matches!(
+        read_host_message(&mut Cursor::new(line)),
+        Err(LaunchError::Json(_))
+    ));
+}
+
+#[test]
+fn a_created_office_without_a_known_role_is_not_sent() {
+    let office = OfficeFile::new("A1", "HQ", OfficeRole::Unknown, "B2", "Acme", "t");
+    let mut out = Vec::new();
+    assert!(matches!(
+        write_server_event(&mut out, &ServerEvent::Created { office }),
+        Err(LaunchError::Invalid(_))
+    ));
+    assert!(out.is_empty());
+}
