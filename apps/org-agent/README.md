@@ -75,7 +75,7 @@ member has a live `msg wait`/`ask` listener or used `org-agent` in the last 2 mi
 ## Triage Notification Contract (`org-agent msg notify`)
 
 All runtime hooks (Claude Code, Codex, Antigravity) wrap `org-agent msg notify`:
-- **Urgency:** A message is urgent iff `kind == "request"` (`ask`) or `priority` is `"high"` or `"urgent"`, except that an `ask` to an agent past its `expires_at` (the asker stopped waiting) is not: `notify`, `due`, `inbox` and `wait --urgent-only` treat it as a normal message (`urgent: false`, `priority: "normal"`). An expired `ask` to a person or the owner (the recipient's profile kind is `person`, or it is the owner) stays urgent with its own priority, as in `org_proto::msg` (it stays in "Needs you"). A recipient other than the owner with no profile, or a malformed one, counts as an agent. Either way the text line says `[request] (expired)`, so the reader sees the asker gave up. The relay dead-letters an `ask` that expired before it was delivered (e.g. while the relay was down) only when it's for an agent; one for a person or the owner is delivered, and shows as urgent and expired (if the recipient's profile can't be read, it stays in the outbox until a later pass can).
+- **Urgency:** A message is urgent iff `kind == "request"` (`ask`) or `priority` is `"high"` or `"urgent"`, except that an `ask` to an agent past its `expires_at` (the asker stopped waiting) is not: `notify`, `due`, `inbox` and `wait --urgent-only` treat it as a normal message (`urgent: false`, `priority: "normal"`). An expired `ask` to a person or the owner (the recipient's profile kind is `person`, or it is the owner) stays urgent with its own priority, as in `org_proto::msg` (it stays in "Needs you"). A recipient other than the owner with no profile, or a malformed one, counts as an agent. Either way the text line says `[request] (expired)`, so the reader sees the asker gave up. The relay dead-letters an `ask` that expired before it was delivered (e.g. while the relay was down) only when the recipient is a known agent (a readable profile of another kind, or no profile and not the owner). One for a person or the owner is delivered and shows as urgent and expired; so is one whose recipient isn't known for sure (a malformed profile, or one that can't be read: permissions, a symlink, not a regular file, too large), which then reads as an agent's (non-urgent, "(expired)"). Only a transient error reading the profile leaves the ask in the outbox for the next pass.
 - **Exit codes:**
   - `0`: Nothing to report (`stdout` is empty in `text` mode).
   - `10`: Normal (non-urgent) items need triage.
@@ -120,19 +120,19 @@ names refuse `( ) [ ] : "`: a member whose saved name already has one must fix t
 `msg reply` marks the original read (above).
 
 Relay:
-- An `ask` to a person or the owner that expired in the outbox (e.g. while the relay was down)
-  is delivered (it shows as urgent, "(expired)"), where v1-old dead-lettered it; one to an
-  agent is still dead-lettered. Caveat: while a v1-old `org-relay` holds `relay.lock` (the
+- An `ask` that expired in the outbox (e.g. while the relay was down) is delivered unless
+  the recipient is a known agent, where v1-old dead-lettered every one: to a person or the
+  owner it shows as urgent, "(expired)"; when the recipient's kind can't be told (malformed
+  or unreadable profile) it is delivered too and reads as non-urgent, "(expired)". One to a
+  known agent is still dead-lettered. Caveat: while a v1-old `org-relay` holds `relay.lock` (the
   two can share a spool), it is that relay delivering, so such asks are still dead-lettered.
 - A message to an unregistered member is dead-lettered as `unknown_recipient` even if it has
   also expired (v1-old said `expired`).
 
 ## Known limits
 
-- An expired `ask` to a person (not the owner) whose `profile.json` can't be read (e.g.
-  permissions) stays in the outbox, retried at every relay pass, until the profile is
-  readable; meanwhile every pass reports the error (`relay run --once` exits 4) and the loop
-  relay backs off to its 500 ms poll for messages written without a nudge.
+- An expired `ask` to a person whose `profile.json` is malformed or can't be read is
+  delivered but reads as an agent's (non-urgent, "(expired)") until the profile is fixed.
 
 - `msg notify --session` records the listed items as reported (under the lock) before the
   caller has read the output: an adapter that kills `notify` after that save loses those

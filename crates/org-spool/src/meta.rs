@@ -14,7 +14,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::envelope::{validate_agent_id, Envelope, MAX_ENVELOPE_BYTES};
-use crate::safe_read::{open_regular_nofollow, read_spool_file, SpoolFile};
+use crate::safe_read::{
+    is_permanent_file_error, open_regular_nofollow, read_spool_file, SpoolFile,
+};
 use crate::spool::{Spool, SpoolError};
 use crate::time::{format_iso8601_utc, is_valid_iso8601_utc, parse_duration_arg};
 use crate::ulid::{generate_ulid, is_valid_ulid};
@@ -95,6 +97,34 @@ pub struct MemberProfile {
     pub reports_to: Option<RefEntry>,
     #[serde(default)]
     pub office: Option<RefEntry>,
+}
+
+/// A recipient's kind as far as its profile tells.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RecipientKind {
+    /// Kind `person` (any case), or the owner.
+    Person,
+    /// A readable profile of another kind, or no profile at all.
+    Agent,
+    /// A malformed profile or one that can never be read (permissions, a symlink, not a
+    /// regular file, too large): not known to be an agent.
+    Unknown,
+}
+
+/// The kind a (non-owner) profile read gives; `Err` only for a transient I/O error.
+fn classify_profile_read(read: io::Result<SpoolFile>) -> io::Result<RecipientKind> {
+    Ok(match read {
+        Ok(SpoolFile::Missing) => RecipientKind::Agent,
+        Ok(SpoolFile::Bytes(bytes)) => match serde_json::from_slice::<MemberProfile>(&bytes) {
+            // Case-insensitive, like `who --kind`.
+            Ok(p) if p.kind.eq_ignore_ascii_case("person") => RecipientKind::Person,
+            Ok(_) => RecipientKind::Agent,
+            Err(_) => RecipientKind::Unknown,
+        },
+        Ok(SpoolFile::Rejected(_)) => RecipientKind::Unknown,
+        Err(e) if is_permanent_file_error(&e) => RecipientKind::Unknown,
+        Err(e) => return Err(e),
+    })
 }
 
 /// Characters a display name can't contain: the structure of a `msg notify` line
@@ -813,27 +843,24 @@ impl Spool {
         Ok(profile)
     }
 
-    /// Whether `agent` is a person (its profile's kind is `person`) or the owner. A member
-    /// with no profile counts as an agent. Decides whether an expired ask stays urgent, and
-    /// whether one that expired before delivery is still delivered.
-    ///
-    /// A malformed profile (or none) means the default: an agent, unless it's the owner; so
-    /// does an I/O error reading it (see [`Spool::check_person`] to tell those apart).
+    /// Whether `agent` is a person (its profile's kind is `person`, any case) or the owner.
+    /// Decides whether an expired ask stays urgent. A member with no profile, a malformed
+    /// one or one that can't be read counts as an agent (the owner is always a person).
     pub fn is_person(&self, agent: &str) -> bool {
-        self.check_person(agent)
-            .unwrap_or_else(|_| MemberProfile::default_for(agent).owner)
+        matches!(self.recipient_kind(agent), Ok(RecipientKind::Person))
     }
 
-    /// [`Spool::is_person`], but a real I/O error reading the profile is an error (the relay
-    /// then leaves an expired ask in the outbox for the next pass instead of guessing).
-    pub(crate) fn check_person(&self, agent: &str) -> io::Result<bool> {
-        // The owner is a person whatever its profile says (or whether it can be read).
+    /// What the relay knows about a recipient, to decide on an ask that expired before
+    /// delivery: deliver unless it's a known agent. `Err` only for a transient I/O error
+    /// reading the profile (the ask then stays in the outbox for the next pass).
+    pub(crate) fn recipient_kind(&self, agent: &str) -> io::Result<RecipientKind> {
         if agent == OWNER_ID {
-            return Ok(true);
+            return Ok(RecipientKind::Person);
         }
-        let profile = self.read_profile(agent)?;
-        // Case-insensitive, like `who --kind`.
-        Ok(profile.owner || profile.kind.eq_ignore_ascii_case("person"))
+        classify_profile_read(read_spool_file(
+            &self.agent_profile_path(agent),
+            MAX_ENVELOPE_BYTES,
+        ))
     }
 
     /// Read a member's profile (falling back to default profile if not customized).
@@ -1562,6 +1589,43 @@ impl NotifyReport {
             items,
             more,
             text,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_profile_read_says_person_agent_unknown_or_retry() {
+        let bytes = |s: &str| Ok(SpoolFile::Bytes(s.as_bytes().to_vec()));
+        let kind = |r| classify_profile_read(r).ok();
+        assert_eq!(
+            kind(bytes(r#"{"id":"p","name":"P","kind":"Person"}"#)),
+            Some(RecipientKind::Person)
+        );
+        assert_eq!(
+            kind(bytes(r#"{"id":"a","name":"A"}"#)),
+            Some(RecipientKind::Agent)
+        );
+        assert_eq!(kind(Ok(SpoolFile::Missing)), Some(RecipientKind::Agent));
+        // Unsure: deliver.
+        assert_eq!(kind(bytes("{not json")), Some(RecipientKind::Unknown));
+        assert_eq!(
+            kind(Ok(SpoolFile::Rejected("symlink".into()))),
+            Some(RecipientKind::Unknown)
+        );
+        for permanent in [1, 13] {
+            // EPERM, EACCES
+            assert_eq!(
+                kind(Err(io::Error::from_raw_os_error(permanent))),
+                Some(RecipientKind::Unknown)
+            );
+        }
+        // Transient (EIO, EMFILE): retry next pass.
+        for transient in [5, 24] {
+            assert!(classify_profile_read(Err(io::Error::from_raw_os_error(transient))).is_err());
         }
     }
 }

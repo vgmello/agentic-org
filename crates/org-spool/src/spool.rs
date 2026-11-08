@@ -17,6 +17,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::envelope::{validate_agent_id, Envelope, MessageKind, MAX_ENVELOPE_BYTES};
+use crate::meta::RecipientKind;
 use crate::safe_read::{create_new_nofollow, is_permanent_file_error, read_spool_file, SpoolFile};
 use crate::time::{check_wait_timeout, format_iso8601_utc};
 use crate::ulid::{generate_ulid, is_valid_ulid};
@@ -611,13 +612,15 @@ impl Spool {
         }
 
         let now_iso = format_iso8601_utc(SystemTime::now());
-        // An expired ask to a person or the owner is still delivered (it then shows as urgent,
-        // "(expired)"): a human must see it even if it expired while the relay was down. If
-        // the recipient's profile can't be read (a real I/O error, not absent or malformed),
-        // the ask stays in the outbox for the next pass, like any transient error.
+        // An expired ask is dead-lettered only when the recipient is a known agent. One to a
+        // person or the owner is delivered (it shows as urgent, "(expired)"), and so is one
+        // whose recipient isn't known for sure (malformed or unreadable profile): when unsure,
+        // deliver; it then reads as an agent's, non-urgent with "(expired)". A transient
+        // error reading the profile leaves the ask in the outbox for the next pass.
         if env.is_expired_at(&now_iso) {
-            let to_person = env.kind == MessageKind::Request && self.check_person(&env.to)?;
-            if !to_person {
+            let known_agent = env.kind != MessageKind::Request
+                || self.recipient_kind(&env.to)? == RecipientKind::Agent;
+            if known_agent {
                 let exp = env.expires_at.as_deref().unwrap_or("unknown");
                 return self.move_to_dead(
                     outbox_file,

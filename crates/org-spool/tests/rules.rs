@@ -1606,63 +1606,75 @@ fn rule_an_ask_that_expired_before_delivery_still_reaches_a_person() {
 }
 
 #[test]
-fn rule_an_unreadable_profile_leaves_an_expired_ask_in_the_outbox() {
+fn rule_an_expired_ask_whose_recipient_is_unsure_is_delivered() {
+    // When unsure, deliver: never strand an ask, never dead-letter one that may be a person's.
     use std::os::unix::fs::PermissionsExt;
     extern "C" {
         fn geteuid() -> u32;
     }
-    if unsafe { geteuid() } == 0 {
-        return; // root reads a mode-000 file: nothing to test
-    }
-    let t = TempSpool::new("expired_unreadable");
+    let t = TempSpool::new("expired_unsure");
     t.spool.register("pat").unwrap();
     let mut profile = MemberProfile::default_for("pat");
     profile.kind = "person".into();
     t.spool.set_profile(&profile).unwrap();
     let profile_path = t.dir.join("spool/inbox/pat/profile.json");
-    fs::set_permissions(&profile_path, fs::Permissions::from_mode(0o000)).unwrap();
+    let expired_ask = |to: &str| {
+        let mut ask = Envelope::new_request(
+            PEER,
+            to,
+            None,
+            "q",
+            BTreeMap::new(),
+            Duration::from_secs(60),
+        )
+        .unwrap();
+        ask.expires_at = Some("2000-01-01T00:00:00.000Z".into());
+        t.spool.enqueue(&ask).unwrap();
+        ask.id
+    };
+    let delivered_to_pat = |id: &str| {
+        t.dir
+            .join(format!("spool/inbox/pat/new/{id}.json"))
+            .is_file()
+    };
 
-    let mut ask = Envelope::new_request(
-        PEER,
-        "pat",
-        None,
-        "q",
-        BTreeMap::new(),
-        Duration::from_secs(60),
-    )
-    .unwrap();
-    ask.expires_at = Some("2000-01-01T00:00:00.000Z".into());
-    t.spool.enqueue(&ask).unwrap();
-    let result = t.spool.deliver_all();
-    fs::set_permissions(&profile_path, fs::Permissions::from_mode(0o600)).unwrap();
-    // A real I/O error on the profile: a transient error, the ask stays queued...
-    assert!(matches!(result, Err(SpoolError::Io(_))), "{result:?}");
-    assert!(t
-        .dir
-        .join(format!("spool/outbox/new/{}.json", ask.id))
-        .is_file());
-    // ...and the next pass delivers it.
-    assert_eq!(t.spool.deliver_all().unwrap().delivered, 1);
+    // An unreadable profile (a permanent error): delivered, not stuck in the outbox. It reads
+    // as an agent's meanwhile: non-urgent, "(expired)".
+    if unsafe { geteuid() } != 0 {
+        fs::set_permissions(&profile_path, fs::Permissions::from_mode(0o000)).unwrap();
+        let id = expired_ask("pat");
+        let result = t.spool.deliver_all();
+        let urgent_only = t.spool.notify("pat", &opts(None, false, true));
+        fs::set_permissions(&profile_path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(result.unwrap().delivered, 1);
+        assert!(delivered_to_pat(&id));
+        assert_eq!(urgent_only.unwrap().count, 0);
 
-    // The owner is a person whatever its profile: an unreadable one doesn't hold the ask.
-    let owner = org_spool::OWNER_ID;
-    t.spool.register(owner).unwrap();
-    let owner_profile = t.dir.join(format!("spool/inbox/{owner}/profile.json"));
-    fs::write(&owner_profile, b"{}").unwrap();
-    fs::set_permissions(&owner_profile, fs::Permissions::from_mode(0o000)).unwrap();
-    let mut to_owner = ask.clone();
-    to_owner.id = generate_ulid();
-    to_owner.to = owner.to_string();
-    t.spool.enqueue(&to_owner).unwrap();
-    let result = t.spool.deliver_all();
-    fs::set_permissions(&owner_profile, fs::Permissions::from_mode(0o600)).unwrap();
-    assert_eq!(result.unwrap().delivered, 1);
+        // The owner: delivered whatever its profile.
+        let owner = org_spool::OWNER_ID;
+        t.spool.register(owner).unwrap();
+        let owner_profile = t.dir.join(format!("spool/inbox/{owner}/profile.json"));
+        fs::write(&owner_profile, b"{}").unwrap();
+        fs::set_permissions(&owner_profile, fs::Permissions::from_mode(0o000)).unwrap();
+        expired_ask(owner);
+        let result = t.spool.deliver_all();
+        fs::set_permissions(&owner_profile, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(result.unwrap().delivered, 1);
+    }
 
-    // A malformed profile is the default (an agent): dead-lettered.
+    // A malformed profile: delivered too.
     fs::write(&profile_path, b"{not json").unwrap();
-    let mut again = ask.clone();
-    again.id = generate_ulid();
-    t.spool.enqueue(&again).unwrap();
+    let id = expired_ask("pat");
+    assert_eq!(t.spool.deliver_all().unwrap().delivered, 1);
+    assert!(delivered_to_pat(&id));
+    let at_break = t.spool.notify("pat", &opts(None, true, false)).unwrap();
+    assert!(at_break.text.contains("(expired)"), "{}", at_break.text);
+
+    // A known agent (a readable profile of another kind): dead-lettered, as before.
+    let mut agent = MemberProfile::default_for("pat");
+    agent.kind = "agent".into();
+    fs::write(&profile_path, serde_json::to_vec(&agent).unwrap()).unwrap();
+    expired_ask("pat");
     assert_eq!(t.spool.deliver_all().unwrap().dead, 1);
 }
 
