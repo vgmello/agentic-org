@@ -2155,6 +2155,8 @@ name = "org-client"
 version = "0.0.0"
 dependencies = [
  "org-proto",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
