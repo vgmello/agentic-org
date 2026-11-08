@@ -33,7 +33,9 @@ pub trait OfficeConnection: Send + Sync {
     /// Every organization this office hosts (`organization.list`).
     fn list_organizations(&self) -> Result<Vec<Organization>, ApiError>;
 
-    /// `org.snapshot`: the structure of an organization, from this machine's office.
+    /// `org.snapshot`: the structure of an organization, from this machine's office. The call has no
+    /// parameters on the wire: `organization_id` picks which organization's office the shell asks (the real
+    /// implementation looks up that connection, and refuses an id it has none for with `not_found`).
     fn org_snapshot(&self, organization_id: &str) -> Result<OrgSnapshot, ApiError>;
 
     /// True while the data this connection serves is invented (the mock office), so the UI says so.

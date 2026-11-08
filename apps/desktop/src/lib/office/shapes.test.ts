@@ -19,7 +19,7 @@ describe('what the Tauri commands return', () => {
 		expect(Object.keys(connection.organization.offices[0]).sort()).toEqual(officeKeys);
 	});
 
-	it('an organization view has the keys proto.ts declares, and an agent carries its profile', () => {
+	it('an organization view has the keys proto.ts declares, and an agent is placed in an office', () => {
 		const view = shapes.org_view as OrgView;
 		expect(Object.keys(view).sort()).toEqual(['sample', 'snapshot']);
 		expect(Object.keys(view.snapshot).sort()).toEqual(['members', 'memberships', 'position', 'project_teams', 'projects', 'teams']);
