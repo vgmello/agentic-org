@@ -434,6 +434,18 @@ pub fn parse_snooze_until(raw: &str, now: SystemTime) -> Result<String, SpoolErr
                 "--until '{raw}' is not a valid UTC time"
             )));
         }
+        // Same bound as a duration: no later than a year from now, and not before the epoch
+        // (canonical times of the same width compare correctly as strings).
+        let latest = now
+            .checked_add(Duration::from_secs(MAX_SNOOZE_SECS))
+            .map(format_iso8601_utc);
+        if iso.as_str() < "1970-01-01T00:00:00.000Z"
+            || latest.is_some_and(|latest| iso.as_str() > latest.as_str())
+        {
+            return Err(SpoolError::InvalidInput(format!(
+                "--until '{raw}' must be between 1970-01-01 and 365 days from now"
+            )));
+        }
         return Ok(iso);
     }
     let dur = parse_duration_arg(trimmed).map_err(SpoolError::InvalidInput)?;

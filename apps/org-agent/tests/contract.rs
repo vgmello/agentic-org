@@ -431,7 +431,12 @@ fn defer_done_due_and_snooze_aware_inbox() {
     }
     // Far-future or overflowing snoozes are rejected rather than coming due at once.
     let c = env.send(PEER, ME, &["--subject", "c", "body c"]);
-    for until in ["3000000d", "99999999999999999h"] {
+    for until in [
+        "3000000d",
+        "99999999999999999h",
+        "9999-12-31T23:59:59Z",
+        "0000-01-01T00:00:00Z",
+    ] {
         assert_eq!(
             env.run(ME, &["msg", "defer", &c, "--until", until]).code,
             1,
@@ -439,6 +444,11 @@ fn defer_done_due_and_snooze_aware_inbox() {
         );
     }
     assert!(env.run(ME, &["msg", "inbox"]).stdout.contains(&c));
+    let in_range = org_spool::format_iso8601_utc(
+        std::time::SystemTime::now() + Duration::from_secs(30 * 24 * 3600),
+    );
+    let ok = env.run(ME, &["msg", "defer", &c, "--until", &in_range]);
+    assert_eq!(ok.code, 0, "{}", ok.stderr);
     let unknown = org_spool::generate_ulid();
     assert_eq!(env.run(ME, &["msg", "done", &unknown]).code, 1);
 }

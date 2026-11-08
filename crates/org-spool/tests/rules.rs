@@ -459,7 +459,8 @@ fn rule_defer_and_done_need_a_message_in_my_inbox() {
 
 #[test]
 fn rule_snooze_until_accepts_durations_after_task_and_iso_times() {
-    let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    // 2027-06-01T00:00:00Z: the ISO times below are in the past or within a year.
+    let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_811_808_000);
     assert_eq!(parse_snooze_until("after-task", now).unwrap(), "after-task");
     assert_eq!(
         parse_snooze_until("30m", now).unwrap(),
@@ -497,6 +498,33 @@ fn rule_snooze_until_accepts_durations_after_task_and_iso_times() {
         "2026-04-31T00:00:00Z",
     ] {
         assert!(parse_snooze_until(bad, now).is_err(), "{bad:?}");
+    }
+}
+
+#[test]
+fn rule_snooze_until_iso_times_are_bounded_like_durations() {
+    // Regression: durations were capped at 365 days but ISO times weren't.
+    let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_811_808_000); // 2027-06-01
+    for bad in [
+        "9999-12-31T23:59:59Z",
+        "0000-01-01T00:00:00Z",
+        "1969-12-31T23:59:59.999Z",
+        "2028-05-31T00:00:00.001Z", // a year (366 days, 2028 is leap) and a bit
+    ] {
+        assert!(
+            matches!(
+                parse_snooze_until(bad, now),
+                Err(SpoolError::InvalidInput(_))
+            ),
+            "{bad:?}"
+        );
+    }
+    for ok in [
+        "1970-01-01T00:00:00Z",
+        "2027-06-01T00:00:00Z",
+        "2028-05-31T00:00:00.000Z", // now + 365 days exactly
+    ] {
+        assert!(parse_snooze_until(ok, now).is_ok(), "{ok:?}");
     }
 }
 
