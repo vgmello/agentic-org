@@ -13,8 +13,8 @@ export const tauriOrg: OrgApi = {
 		return { ...view, snapshot: normalizeKinds(view.snapshot) };
 	},
 	command(organizationId, input) {
-		// One at a time, in the order sent (the shell runs each call on its own thread, which doesn't keep order),
-		// so a command that depends on the one before it never overtakes it.
+		// One at a time, in the order sent: the shell runs each call on its own thread, which keeps no order,
+		// so a command that depends on the one before it must not overtake it.
 		const command = ready(input);
 		const answer = queue.then(() => invoke<CommandAccepted>('org_command', { organizationId, command }));
 		queue = answer.catch(() => undefined);
