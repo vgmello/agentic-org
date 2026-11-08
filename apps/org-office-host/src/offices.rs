@@ -137,13 +137,13 @@ impl Offices {
     }
 
     /// Waits until `deadline` for the startup discards to finish, so a create never races the
-    /// discard of an unfinished folder; then `unavailable` ("host starting").
+    /// discard of an unfinished folder; then `not_ready` ("host starting"), so a client retries.
     fn wait_for_startup(&self, deadline: Instant) -> Result<(), ApiError> {
         let mut started = lock(&self.started);
         while !*started {
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
-                return Err(ApiError::new(ErrorCode::Unavailable, HOST_STARTING));
+                return Err(ApiError::new(ErrorCode::NotReady, HOST_STARTING));
             }
             started = self
                 .started_changed
