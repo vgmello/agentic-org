@@ -206,9 +206,10 @@ test('OFC-11: other reasons have their words; no reason reads "It isn’t runnin
 	await expect(other.getByTestId('office-row').first()).toContainText("It isn't running");
 });
 
-test('OFC-11: a restart that is pending counts down, and the line never goes negative', async ({ page }) => {
+test('OFC-11: a restart that is pending counts down, and the office reads Stopped, never Offline', async ({ page }) => {
 	await openOffices(page, 'restarting');
 	const hq = rows(page).first();
-	await expect(hq).toContainText('Offline');
+	await expect(hq).toContainText('Stopped');
+	await expect(hq).not.toContainText('Offline');
 	await expect(hq).toContainText(/It stopped unexpectedly\. Restarting in \d+ s/);
 });

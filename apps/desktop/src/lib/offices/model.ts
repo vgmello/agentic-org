@@ -41,7 +41,8 @@ export type DisplayStatus = OfficeStatus | 'unreachable' | 'checking' | 'status_
  */
 export function displayStatus(connected: boolean, check: LiveCheck, reported?: OfficeStatus): DisplayStatus {
 	if (!connected) return 'status_unknown';
-	if (check === 'up') return reported && reported !== 'active' ? reported : 'active';
+	// An office on this Mac never reads Offline, only Stopped (spec §3.1); the connected office is always on this Mac.
+	if (check === 'up') return reported === 'offline' ? 'unavailable' : reported && reported !== 'active' ? reported : 'active';
 	return check === 'down' ? 'unreachable' : 'checking';
 }
 
@@ -159,9 +160,17 @@ const REASON_COPY: Record<OfficeStatusReason, string> = {
 	unknown: "It stopped for a reason this version doesn't know"
 };
 
+/** The reason line for the screen-reader label: it never ticks, so a pending restart reads "restarting shortly" (spec §3.3). */
+export function whyForLabel(o: Pick<OfficeInfo, 'status' | 'status_reason' | 'next_restart_at'>, now: Date): string | undefined {
+	const text = whyStopped({ ...o, next_restart_at: undefined }, now);
+	return text !== undefined && secondsUntil(o.next_restart_at, now) !== undefined ? `${text}. Restarting shortly` : text;
+}
+
 /** Seconds from `now` until `next_restart_at`, rounded up; never negative. Nothing when it is absent or unreadable. */
 export function secondsUntil(nextRestartAt: string | undefined, now: Date): number | undefined {
 	if (!nextRestartAt) return undefined;
+	// RFC 3339 with a time zone only: Date.parse alone accepts junk like "5".
+	if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.test(nextRestartAt)) return undefined;
 	const t = Date.parse(nextRestartAt);
 	return Number.isNaN(t) ? undefined : Math.max(0, Math.ceil((t - now.getTime()) / 1000));
 }
@@ -173,9 +182,10 @@ export function secondsUntil(nextRestartAt: string | undefined, now: Date): numb
  */
 export function whyStopped(o: Pick<OfficeInfo, 'status' | 'status_reason' | 'next_restart_at'>, now: Date): string | undefined {
 	if (o.status !== 'offline' && o.status !== 'unavailable') return undefined;
-	const base = o.status_reason ? (REASON_COPY[o.status_reason] ?? REASON_COPY.unknown) : "It isn't running";
+	const base = o.status_reason ? (Object.hasOwn(REASON_COPY, o.status_reason) ? REASON_COPY[o.status_reason] : REASON_COPY.unknown) : "It isn't running";
 	const n = secondsUntil(o.next_restart_at, now);
-	if (n === undefined) return base;
+	// A restart whose time has come is not announced as "in 0 s": the next status will say what happened.
+	if (n === undefined || n === 0) return base;
 	return o.status_reason === 'in_use' ? `${base}. Trying again in ${n} s` : `${base}. Restarting in ${n} s`;
 }
 

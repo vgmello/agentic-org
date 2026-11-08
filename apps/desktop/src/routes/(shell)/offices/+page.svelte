@@ -9,7 +9,7 @@
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
 	import { officeApi } from '$lib/office/api';
-	import { agentsIn, displayStatusFor, isHq, orderOffices, rowLabel, secondaryText, statusInfo, unplacedAgents, whyStopped, type LiveCheck } from '$lib/offices/model';
+	import { agentsIn, displayStatusFor, isHq, orderOffices, rowLabel, secondaryText, statusInfo, unplacedAgents, whyForLabel, whyStopped, type LiveCheck } from '$lib/offices/model';
 	import type { Counts } from './+page';
 
 	let { data } = $props();
@@ -68,6 +68,11 @@
 		return () => (clearInterval(again), clearInterval(tick));
 	});
 	// Why a stopped office stopped: only for an office whose status is shown as reported by the host.
+	const labelWhyOf = (officeId: string) => {
+		const shown = statusOf(officeId);
+		const office = data.offices.find((o) => o.id === officeId);
+		return office && (shown === 'offline' || shown === 'unavailable') ? whyForLabel(office, new Date()) : undefined;
+	};
 	const whyOf = (officeId: string) => {
 		const shown = statusOf(officeId);
 		const office = data.offices.find((o) => o.id === officeId);
@@ -134,12 +139,12 @@
 				<button
 					type="button"
 					class="min-w-0 flex-1 text-left focus-visible:outline-2 focus-visible:outline-indigo-400"
-					aria-label={rowLabel(office, agents, here.id === office.id, statusOf(office.id), whyOf(office.id))}
+					aria-label={rowLabel(office, agents, here.id === office.id, statusOf(office.id), labelWhyOf(office.id))}
 					aria-haspopup="dialog"
 					onclick={() => open(office.id)}
 				>
 					<span class="block truncate text-sm/6 font-semibold text-white" title={office.name}>{office.name}</span>
-					<span class="block truncate text-xs/5 text-gray-400">{statusOf(office.id) === 'unreachable' ? "Can't reach this office" : (whyOf(office.id) ?? secondaryText(office) + (here.id === office.id ? " (you're here)" : ''))}</span>
+					<span class="block truncate text-xs/5 text-gray-400" title={whyOf(office.id)}>{statusOf(office.id) === 'unreachable' ? "Can't reach this office" : (whyOf(office.id) ?? secondaryText(office) + (here.id === office.id ? " (you're here)" : ''))}</span>
 				</button>
 				<!-- The button's label already says the status and the count: not read twice. -->
 				<span aria-hidden="true"><OfficeStatusBadge status={statusOf(office.id)} /></span>
@@ -193,4 +198,4 @@
 	<p class="text-xs/5 text-gray-500">Shown from this Mac.</p>
 </div>
 
-<OfficeDetailsSheet bind:open={detailsOpen} office={detailsFor} status={detailsFor ? statusOf(detailsFor.id) : 'status_unknown'} why={detailsFor ? whyOf(detailsFor.id) : undefined} {now} {snapshot} counting={!snapshot && !countError} {sample} here={detailsFor?.id === here.id} />
+<OfficeDetailsSheet bind:open={detailsOpen} office={detailsFor} status={detailsFor ? statusOf(detailsFor.id) : 'status_unknown'} why={detailsFor ? whyOf(detailsFor.id) : undefined} {snapshot} counting={!snapshot && !countError} {sample} here={detailsFor?.id === here.id} />

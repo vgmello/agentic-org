@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { OfficeInfo, OfficeStatusReason } from '$lib/proto';
 import { sampleOrg } from '$lib/org/sample';
-import { agentsIn, copyDetails, displayStatus, displayStatusFor, isHere, orderOffices, roleInfo, rowLabel, secondaryText, statusIcon, statusInfo, unplacedAgents, whyStopped } from './model';
+import { agentsIn, copyDetails, displayStatus, displayStatusFor, isHere, orderOffices, roleInfo, rowLabel, secondaryText, statusIcon, statusInfo, unplacedAgents, whyForLabel, whyStopped } from './model';
 
 const office = (id: string, name: string, over: Partial<OfficeInfo> = {}): OfficeInfo => ({
 	id,
@@ -157,8 +157,35 @@ describe('OFC-11..13 why an office stopped', () => {
 		expect(whyStopped(stopped('in_use', '2026-11-08T12:00:07.200Z'), NOW)).toBe('Its data is still in use by another Agentic Org process. Trying again in 8 s');
 		expect(whyStopped(stopped(undefined, '2026-11-08T12:00:05.000Z'), NOW)).toBe("It isn't running. Restarting in 5 s");
 		// A time in the past counts down to 0, never negative; junk is ignored.
-		expect(whyStopped(stopped('crashed', '2026-11-08T11:59:00.000Z'), NOW)).toBe('It stopped unexpectedly. Restarting in 0 s');
+		expect(whyStopped(stopped('crashed', '2026-11-08T11:59:00.000Z'), NOW)).toBe('It stopped unexpectedly');
 		expect(whyStopped(stopped('crashed', 'soon'), NOW)).toBe('It stopped unexpectedly');
+	});
+
+	it('has words for every reason, and a reason it does not know reads as unknown', () => {
+		const text = (r: string) => whyStopped(stopped(r as OfficeStatusReason, undefined, 'unavailable'), NOW);
+		expect(text('restarts_exhausted')).toBe("It kept stopping, so it won't restart on its own");
+		expect(text('storage_error')).toBe("It can't read or write its data on this Mac");
+		expect(text('unsupported_version')).toContain('Update or reinstall Agentic Org');
+		expect(text('invalid_request')).toBe("It couldn't start because of an internal error");
+		expect(text('in_use')).toContain('still in use');
+		for (const r of ['unknown', 'from_the_future', 'constructor', 'toString']) expect(text(r)).toBe("It stopped for a reason this version doesn't know");
+	});
+
+	it('a restart that is due is not announced in 0 s, and a time that is not RFC 3339 is ignored', () => {
+		expect(whyStopped(stopped('crashed', '2026-11-08T12:00:00.000Z'), NOW)).toBe('It stopped unexpectedly');
+		for (const junk of ['5', '1', 'soon', '2026-11-08', '']) expect(whyStopped(stopped('crashed', junk), NOW)).toBe('It stopped unexpectedly');
+		expect(whyStopped(stopped('crashed', '2026-11-08T14:00:20+02:00'), NOW)).toBe('It stopped unexpectedly. Restarting in 20 s');
+	});
+
+	it('the screen-reader line never ticks: a pending restart reads "Restarting shortly"', () => {
+		expect(whyForLabel(stopped('crashed', '2026-11-08T12:00:20.000Z'), NOW)).toBe('It stopped unexpectedly. Restarting shortly');
+		expect(whyForLabel(stopped('crashed', '2026-11-08T12:00:20.000Z'), new Date('2026-11-08T12:00:09.000Z'))).toBe('It stopped unexpectedly. Restarting shortly');
+		expect(whyForLabel(stopped('crashed'), NOW)).toBe('It stopped unexpectedly');
+	});
+
+	it('an office on this Mac never reads Offline: the connected office that the host reports offline is Stopped', () => {
+		expect(displayStatus(true, 'up', 'offline')).toBe('unavailable');
+		expect(statusInfo(displayStatus(true, 'up', 'offline')).label).toBe('Stopped');
 	});
 
 	it('only an office the host reports offline or unavailable has a reason line', () => {
@@ -170,6 +197,6 @@ describe('OFC-11..13 why an office stopped', () => {
 		const o = { id: 'o1', organization_id: 'org', name: 'HQ', host: 'This Mac', status: 'unavailable', status_reason: 'key_missing' } as OfficeInfo;
 		const text = copyDetails(o, 'Stopped', NOW, '0.1.0');
 		expect(text).toBe(['Office: HQ', 'Id: o1', 'Status: Stopped', 'Reason: key_missing', 'Time: 2026-11-08T12:00:00.000Z', 'Agentic Org: 0.1.0'].join('\n'));
-		expect(text.toLowerCase()).not.toContain('token');
+		expect(text).not.toMatch(/endpoint|key=|secret/i);
 	});
 });

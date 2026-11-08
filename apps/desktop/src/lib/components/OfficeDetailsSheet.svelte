@@ -16,8 +16,7 @@
 		counting = false,
 		sample = false,
 		here = false,
-		why,
-		now = new Date()
+		why
 	}: {
 		open: boolean;
 		office: OfficeInfo | undefined;
@@ -32,7 +31,6 @@
 		here?: boolean;
 		/** Why the office is stopped, when the host says it is (spec §3.3). */
 		why?: string;
-		now?: Date;
 	} = $props();
 
 	const agents = $derived(office && snapshot ? agentsIn(snapshot, office.id) : []);
