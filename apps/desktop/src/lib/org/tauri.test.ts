@@ -33,3 +33,24 @@ describe('tauriOrg.view', () => {
 		await expect(tauriOrg.view('org-1')).rejects.toMatchObject({ code: 'storage_error' });
 	});
 });
+
+describe('tauriOrg.command', () => {
+	beforeEach(() => invoke.mockReset());
+
+	it('sends the command with its own id, or gives it one, to org_command', async () => {
+		invoke.mockResolvedValue({ status: 'committed', position: { epoch: 1, seq: 2 } });
+		await tauriOrg.command('org-1', { method: 'team.create', params: { command_id: 'C1', team_id: 't', name: 'Ops' } });
+		expect(invoke).toHaveBeenLastCalledWith('org_command', {
+			organizationId: 'org-1',
+			command: { method: 'team.create', params: { command_id: 'C1', team_id: 't', name: 'Ops' } }
+		});
+		await tauriOrg.command('org-1', { method: 'team.delete', params: { team_id: 't', expected_version: 1 } });
+		const sent = invoke.mock.calls.at(-1)![1].command;
+		expect(sent.params.command_id).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+	});
+
+	it('lets HQ’s refusal through for the dialog to show', async () => {
+		invoke.mockRejectedValueOnce({ source: 'api', code: 'already_exists', message: 'Taken.' });
+		await expect(tauriOrg.command('org-1', { method: 'team.create', params: { team_id: 't', name: 'Ops' } })).rejects.toMatchObject({ code: 'already_exists' });
+	});
+});

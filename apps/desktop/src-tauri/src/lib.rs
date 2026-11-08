@@ -8,12 +8,14 @@ mod connections;
 mod menu_model;
 mod mock;
 mod office;
+mod org_engine;
 mod org_mock;
 mod tray;
 
 use connections::{local_office, Connection, ConnectionStore};
 use office::{OfficeConnection, SetupError};
-use org_proto::{ApiError, HelloResult, OfficeStatus, OrgSnapshot, Organization};
+use org_engine::OrgCommand;
+use org_proto::{ApiError, CommandAccepted, HelloResult, OfficeStatus, OrgSnapshot, Organization};
 use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -240,6 +242,17 @@ impl AppState {
         })
     }
 
+    /// Send an organization command to HQ. A command carries its own `command_id`, so running it
+    /// again after the office was restarted gets the same answer and changes nothing twice.
+    fn org_command(
+        &self,
+        organization_id: &str,
+        command: &OrgCommand,
+    ) -> Result<CommandAccepted, CommandError> {
+        self.ensure_connected()?;
+        Ok(self.office.org_command(organization_id, command)?)
+    }
+
     fn connections(&self) -> Result<Vec<Connection>, CommandError> {
         self.store
             .list()
@@ -306,6 +319,16 @@ async fn org_snapshot(
     blocking(move || state.with_restart(|s| s.org_snapshot(&organization_id))).await
 }
 
+#[tauri::command]
+async fn org_command(
+    state: State<'_, Arc<AppState>>,
+    organization_id: String,
+    command: OrgCommand,
+) -> Result<CommandAccepted, CommandError> {
+    let state = Arc::clone(&state);
+    blocking(move || state.with_restart(|s| s.org_command(&organization_id, &command))).await
+}
+
 /// Remembered connections, oldest first (the most recent is last).
 #[tauri::command]
 async fn connections_list(
@@ -349,6 +372,7 @@ pub fn run() {
             organizations_list,
             organization_open,
             org_snapshot,
+            org_command,
             connections_list
         ])
         .build(tauri::generate_context!())
@@ -406,6 +430,41 @@ mod tests {
     }
 
     #[test]
+    fn a_command_needs_a_running_office_and_reaches_hq_once() {
+        let (state, dir) = state_with(vec![hosted("a", "Alpha")]);
+        let command: OrgCommand = serde_json::from_value(serde_json::json!({
+            "method": "team.create",
+            "params": {"command_id": "C1", "team_id": "ops", "name": "Ops"}
+        }))
+        .unwrap();
+        let err = state.org_command("a", &command).unwrap_err();
+        assert_eq!((err.source, err.code.as_str()), ("app", "not_connected"));
+        state.ensure_running().unwrap();
+        let first = state
+            .with_restart(|s| s.org_command("a", &command))
+            .unwrap();
+        let again = state
+            .with_restart(|s| s.org_command("a", &command))
+            .unwrap();
+        assert_eq!(first, again);
+        let refused = state
+            .org_command(
+                "a",
+                &serde_json::from_value(serde_json::json!({
+                    "method": "team.delete",
+                    "params": {"command_id": "C2", "team_id": "nope", "expected_version": 1}
+                }))
+                .unwrap(),
+            )
+            .unwrap_err();
+        assert_eq!(
+            (refused.source, refused.code.as_str()),
+            ("api", "not_found")
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn a_snapshot_failure_the_office_answered_is_not_a_reason_to_restart_it() {
         let (state, dir) = state_with(vec![hosted("a", "Alpha")]);
         state.ensure_running().unwrap();
@@ -454,12 +513,13 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir2);
     }
 
-    const COMMANDS: [&str; 6] = [
+    const COMMANDS: [&str; 7] = [
         "office_ensure_running",
         "organization_create",
         "organizations_list",
         "organization_open",
         "org_snapshot",
+        "org_command",
         "connections_list",
     ];
 
@@ -670,6 +730,9 @@ mod tests {
         fn org_snapshot(&self, _: &str) -> Result<OrgSnapshot, ApiError> {
             unreachable!()
         }
+        fn org_command(&self, _: &str, _: &OrgCommand) -> Result<CommandAccepted, ApiError> {
+            unreachable!()
+        }
     }
 
     fn flaky_state(failures: usize) -> (AppState, Arc<Flaky>) {
@@ -854,5 +917,11 @@ mod tests {
         );
         let view: OrgView = serde_json::from_value(fixture["org_view"].clone()).unwrap();
         assert_eq!(serde_json::to_value(view).unwrap(), fixture["org_view"]);
+        let accepted: CommandAccepted =
+            serde_json::from_value(fixture["command_accepted"].clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(accepted).unwrap(),
+            fixture["command_accepted"]
+        );
     }
 }

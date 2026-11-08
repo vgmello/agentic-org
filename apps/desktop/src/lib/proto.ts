@@ -174,6 +174,16 @@ export interface OrgView {
 	sample: boolean;
 }
 
+/** What happened to an organization command: committed by HQ, or queued while HQ is unreachable. */
+export type CommandStatus = 'committed' | 'queued' | 'unknown';
+
+/** The answer to every organization command (an error means HQ rejected it). */
+export interface CommandAccepted {
+	status: CommandStatus;
+	/** Set when `status` is `committed`. */
+	position?: Position;
+}
+
 /** Everything the org chart needs, as of `position` (`org.snapshot`). */
 export interface OrgSnapshot {
 	position: Position;

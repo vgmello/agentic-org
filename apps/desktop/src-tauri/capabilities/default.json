@@ -14,6 +14,7 @@
     "allow-organizations-list",
     "allow-organization-open",
     "allow-org-snapshot",
+    "allow-org-command",
     "core:event:allow-listen",
     "core:event:allow-unlisten"
   ]

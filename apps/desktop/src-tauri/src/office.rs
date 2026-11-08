@@ -4,7 +4,8 @@
 //! implements it. The real implementation will sit on `org-client` and the office-setup layer
 //! (install, login-service registration, start), neither of which exists yet.
 
-use org_proto::{ApiError, HelloResult, OrgSnapshot, Organization};
+use crate::org_engine::OrgCommand;
+use org_proto::{ApiError, CommandAccepted, HelloResult, OrgSnapshot, Organization};
 use serde::Serialize;
 
 /// Why the office could not be made ready. These belong to the app's setup layer, not to
@@ -37,6 +38,14 @@ pub trait OfficeConnection: Send + Sync {
     /// parameters on the wire: `organization_id` picks which organization's office the shell asks (the real
     /// implementation looks up that connection, and refuses an id it has none for with `not_found`).
     fn org_snapshot(&self, organization_id: &str) -> Result<OrgSnapshot, ApiError>;
+
+    /// Send an organization command to HQ and return its answer. A retry with the same
+    /// `command_id` gets the same answer and changes nothing.
+    fn org_command(
+        &self,
+        organization_id: &str,
+        command: &OrgCommand,
+    ) -> Result<CommandAccepted, ApiError>;
 
     /// True while the data this connection serves is invented (the mock office), so the UI says so.
     fn serves_sample_data(&self) -> bool {

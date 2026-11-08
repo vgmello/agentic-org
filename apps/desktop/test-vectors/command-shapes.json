@@ -94,5 +94,12 @@
     }
    ]
   }
+ },
+ "command_accepted": {
+  "status": "committed",
+  "position": {
+   "epoch": 1,
+   "seq": 2
+  }
  }
 }

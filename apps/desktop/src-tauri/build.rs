@@ -8,6 +8,7 @@ fn main() {
             "organizations_list",
             "organization_open",
             "org_snapshot",
+            "org_command",
             "connections_list",
         ]),
     ))
