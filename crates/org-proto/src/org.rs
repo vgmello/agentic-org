@@ -31,16 +31,20 @@
 //!
 //! ## Limits every command shares
 //! All are `invalid_request`, so a client can check them before sending:
-//! - **Client-made ids** (`team_id`, `member_id`, `membership_id`, `project_team_id`, the new
-//!   ids of `member.move` and so on): 1 to [`ID_MAX_CHARS`] ASCII letters, digits, `-` or `_`
-//!   ([`is_valid_id`]). A ULID fits.
+//! - **Client-made ids**, the ones a command creates (`team.create`'s `team_id`,
+//!   `member.add_person`'s `member_id`, `team.add_member`'s and `member.move`'s new
+//!   `membership_id`, `project.add_team`'s `project_team_id`, and so on): 1 to [`ID_MAX_CHARS`]
+//!   ASCII letters, digits, `-` or `_` ([`is_valid_id`]). A ULID fits. An id that names
+//!   something that already exists is only looked up (`not_found`).
 //! - **Free text** (`contact`, `title_in_team`): trimmed, then 1 to [`AGENT_TEXT_MAX_CHARS`]
 //!   characters with no control characters. To remove a contact use `clear_contact`, not an
 //!   empty string.
-//! - **A command that changes nothing still counts.** Setting a field to the value it has, or
-//!   a `member.update_person` that gives no field, is accepted and raises the entity's
-//!   version by one (and so produces an `org.changed`). Only `member.update_agent` refuses a
-//!   call that gives no field.
+//! - **An edit that changes nothing still counts.** An update that sets a field to the value it
+//!   has (a rename to the same name, a lead set to the current lead), or a
+//!   `member.update_person` that gives no field, is accepted and raises the entity's version by
+//!   one (and so produces an `org.changed`). Only `member.update_agent` refuses a call that
+//!   gives no field. This is about edits: asking for something that already exists (adding a
+//!   member to a team they are in, `member.move` to the member's own team) is `already_exists`.
 
 use serde::{Deserialize, Serialize};
 
