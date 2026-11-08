@@ -18,7 +18,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use crate::envelope::{validate_agent_id, Envelope, MAX_ENVELOPE_BYTES};
 use crate::safe_read::{read_spool_file, SpoolFile};
-use crate::time::format_iso8601_utc;
+use crate::time::{check_wait_timeout, format_iso8601_utc};
 use crate::ulid::{generate_ulid, is_valid_ulid};
 
 const RETENTION_SECS: u64 = 30 * 24 * 60 * 60;
@@ -101,6 +101,15 @@ fn read_envelope(path: &Path) -> Result<Option<Result<Envelope, String>>, SpoolE
         SpoolFile::Bytes(bytes) => Some(Envelope::from_json_bytes(&bytes)),
         SpoolFile::Rejected(why) => Some(Err(why)),
     })
+}
+
+/// `now + timeout` for a wait: at most [`crate::MAX_WAIT_TIMEOUT`], and never a panic on
+/// overflow (`Instant + Duration` panics).
+fn wait_deadline(timeout: Duration) -> Result<Instant, SpoolError> {
+    check_wait_timeout(timeout).map_err(SpoolError::InvalidInput)?;
+    Instant::now()
+        .checked_add(timeout)
+        .ok_or_else(|| SpoolError::InvalidInput("--timeout is out of range".into()))
 }
 
 fn is_pid_dead(pid: u32) -> bool {
@@ -778,7 +787,7 @@ impl Spool {
         listener: &WakeListener,
         timeout: Duration,
     ) -> Result<Envelope, SpoolError> {
-        let deadline = Instant::now() + timeout;
+        let deadline = wait_deadline(timeout)?;
         loop {
             if is_interrupted() {
                 return Err(SpoolError::Interrupted);
@@ -811,9 +820,9 @@ impl Spool {
         if let Some(f) = from_filter {
             validate_agent_id(f, "from").map_err(SpoolError::InvalidInput)?;
         }
+        let deadline = wait_deadline(timeout)?;
         self.register(agent)?;
         let listener = self.bind_wake_listener(agent)?;
-        let deadline = Instant::now() + timeout;
 
         loop {
             if is_interrupted() {

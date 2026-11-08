@@ -912,6 +912,33 @@ fn send_refuses_an_envelope_too_large_to_deliver_and_long_subjects() {
 }
 
 #[test]
+fn a_huge_timeout_is_a_usage_error_not_a_panic() {
+    // Regression: `Instant::now() + timeout` panicked on a huge --timeout.
+    let env = setup("timeout");
+    for args in [
+        &["msg", "wait", "--timeout", "18446744073709551615"][..],
+        &["msg", "wait", "--timeout", "25h"],
+        &[
+            "msg",
+            "ask",
+            "--to",
+            PEER,
+            "--timeout",
+            "18446744073709551615",
+            "q",
+        ],
+    ] {
+        let r = env.run(ME, args);
+        assert_eq!(r.code, 1, "{args:?}: {}", r.stderr);
+        assert!(r.stderr.contains("at most 24h"), "{args:?}: {}", r.stderr);
+    }
+    let queued = fs::read_dir(env.root.join("spool/outbox/new"))
+        .unwrap()
+        .count();
+    assert_eq!(queued, 0, "the ask was never queued");
+}
+
+#[test]
 fn any_msg_command_marks_the_caller_online_in_who() {
     let env = setup("presence_cli");
     // Registered on its behalf by someone else: never seen yet.

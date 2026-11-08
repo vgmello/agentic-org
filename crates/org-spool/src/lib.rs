@@ -26,7 +26,8 @@ pub use spool::{
     DeliverOutcome, DeliverSummary, Spool, SpoolError, SpoolStatus, WakeEvents, WakeListener,
 };
 pub use time::{
-    format_epoch_ms_iso8601, format_iso8601_utc, is_valid_iso8601_utc, parse_duration_arg,
+    check_wait_timeout, format_epoch_ms_iso8601, format_iso8601_utc, is_valid_iso8601_utc,
+    parse_duration_arg, MAX_WAIT_TIMEOUT,
 };
 pub use ulid::{encode_ulid, generate_ulid, is_valid_ulid};
 

@@ -54,6 +54,17 @@ pub fn is_valid_iso8601_utc(s: &str) -> bool {
         && b[23] == b'Z'
 }
 
+/// The longest `--timeout` an `ask` or `msg wait` takes.
+pub const MAX_WAIT_TIMEOUT: Duration = Duration::from_secs(24 * 3600);
+
+/// Check a wait `--timeout` (at most [`MAX_WAIT_TIMEOUT`]).
+pub fn check_wait_timeout(timeout: Duration) -> Result<(), String> {
+    if timeout > MAX_WAIT_TIMEOUT {
+        return Err("--timeout must be at most 24h".into());
+    }
+    Ok(())
+}
+
 /// Parse a human duration string such as `"120s"`, `"500ms"`, `"30m"`, `"2h"`, `"1d"`, or plain seconds `"60"`.
 pub fn parse_duration_arg(raw: &str) -> Result<Duration, String> {
     let s = raw.trim();
