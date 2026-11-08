@@ -11,9 +11,10 @@ use std::process::ExitCode;
 use std::time::{Duration, SystemTime};
 
 use org_spool::{
-    format_iso8601_utc, json_quote, parse_duration_arg, request_interrupt, sanitize_inline_text,
-    validate_agent_id, DirectoryCard, Envelope, MemberProfile, MessagePriority, MetaValue,
-    NotifyOptions, RefEntry, RelayOutcome, Spool, SpoolError, TeamEntry, OWNER_ID,
+    check_wait_timeout, format_iso8601_utc, json_quote, parse_duration_arg, request_interrupt,
+    sanitize_inline_text, validate_agent_id, DirectoryCard, Envelope, MemberProfile,
+    MessagePriority, MetaValue, NotifyOptions, RefEntry, RelayOutcome, Spool, SpoolError,
+    TeamEntry, OWNER_ID,
 };
 
 const EXIT_OK: u8 = 0;
@@ -943,6 +944,7 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
                             .get(j)
                             .ok_or_else(|| CliError::Usage("missing value for --timeout".into()))?;
                         timeout = parse_duration_arg(raw).map_err(CliError::Usage)?;
+                        check_wait_timeout(timeout).map_err(CliError::Usage)?;
                     }
                     "--subject" => {
                         j += 1;
@@ -1487,6 +1489,7 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
                             .get(j)
                             .ok_or_else(|| CliError::Usage("missing value for --timeout".into()))?;
                         timeout = parse_duration_arg(raw).map_err(CliError::Usage)?;
+                        check_wait_timeout(timeout).map_err(CliError::Usage)?;
                     }
                     "--from" => {
                         j += 1;

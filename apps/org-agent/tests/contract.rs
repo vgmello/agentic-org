@@ -936,6 +936,13 @@ fn a_huge_timeout_is_a_usage_error_not_a_panic() {
         .unwrap()
         .count();
     assert_eq!(queued, 0, "the ask was never queued");
+    // Refused before any side effect: an unregistered asker gets no inbox.
+    let r = env.run(
+        "fresh-asker",
+        &["msg", "ask", "--to", PEER, "--timeout", "25h", "q"],
+    );
+    assert_eq!(r.code, 1, "{}", r.stderr);
+    assert!(!env.root.join("spool/inbox/fresh-asker").exists());
 }
 
 #[test]

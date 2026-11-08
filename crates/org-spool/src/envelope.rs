@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::time::{check_wait_timeout, format_iso8601_utc, is_valid_iso8601_utc};
+use crate::time::{format_iso8601_utc, is_valid_iso8601_utc};
 use crate::ulid::{generate_ulid, is_valid_ulid};
 
 pub const ENVELOPE_VERSION: u32 = 1;
@@ -163,8 +163,8 @@ impl Envelope {
         meta: BTreeMap<String, Value>,
         timeout: Duration,
     ) -> Result<Self, String> {
-        // Checked before anything is queued (an overflowing expiry would expire it at once).
-        check_wait_timeout(timeout)?;
+        // An overflowing expiry would expire the request at once. (The CLI caps --timeout at
+        // MAX_WAIT_TIMEOUT when parsing it.)
         let now = SystemTime::now();
         let expires = now
             .checked_add(timeout)
