@@ -1158,8 +1158,8 @@ fn rule_reading_while_a_defer_moves_the_file_never_reports_not_found() {
 }
 
 #[test]
-fn rule_an_ask_stays_urgent_even_after_it_expires() {
-    // The locked contract: urgent = kind request OR priority high/urgent, nothing else.
+fn rule_an_ask_is_no_longer_urgent_once_it_expires() {
+    // Nobody waits for the answer any more: it stays in the inbox, as a normal message.
     let mut env = Envelope::new_request(
         PEER,
         ME,
@@ -1169,9 +1169,55 @@ fn rule_an_ask_stays_urgent_even_after_it_expires() {
         Duration::from_secs(60),
     )
     .unwrap();
+    let now = format_iso8601_utc(SystemTime::now());
+    assert!(env.is_urgent_at(&now));
+    assert_eq!(env.priority_at(&now), MessagePriority::Urgent);
     env.expires_at = Some("2000-01-01T00:00:00.000Z".into());
-    assert!(env.is_urgent());
-    assert_eq!(env.effective_priority(), MessagePriority::Urgent);
+    assert!(!env.is_urgent_at(&now));
+    assert_eq!(env.priority_at(&now), MessagePriority::Normal);
+    assert!(env.is_expired_request_at(&now));
+
+    // In notify: not urgent, still listed at the break, marked in the text only.
+    let t = TempSpool::new("expired_ask");
+    t.spool.register(ME).unwrap();
+    let mut fresh = Envelope::new_request(
+        PEER,
+        ME,
+        Some("q".into()),
+        "q",
+        BTreeMap::new(),
+        Duration::from_secs(60),
+    )
+    .unwrap();
+    t.spool.enqueue(&fresh).unwrap();
+    t.spool.deliver_all().unwrap();
+    // Expire it in place (the relay dead-letters asks that expire before delivery).
+    fresh.expires_at = Some("2000-01-01T00:00:00.000Z".into());
+    fs::write(
+        t.dir
+            .join(format!("spool/inbox/{ME}/new/{}.json", fresh.id)),
+        fresh.to_json_bytes().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        t.spool.notify(ME, &opts(None, false, true)).unwrap().count,
+        0
+    );
+    let report = t.spool.notify(ME, &opts(None, true, false)).unwrap();
+    assert_eq!((report.urgent, report.items[0].urgent), (false, false));
+    assert_eq!(report.items[0].priority, "normal");
+    assert!(
+        report.text.contains("[request] (expired) (id: "),
+        "{}",
+        report.text
+    );
+    assert!(!report.text.contains("[URGENT]"));
+    let json = serde_json::to_value(&report).unwrap();
+    assert!(
+        json["items"][0].get("expired").is_none(),
+        "JSON shape unchanged"
+    );
+    assert!(!t.spool.list_inbox_items(ME, false, true, None).unwrap()[0].urgent);
 }
 
 #[test]

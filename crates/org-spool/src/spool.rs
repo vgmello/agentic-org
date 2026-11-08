@@ -863,7 +863,7 @@ impl Spool {
                         continue;
                     }
                 }
-                if urgent_only && !env.is_urgent() {
+                if urgent_only && !env.is_urgent_at(&format_iso8601_utc(SystemTime::now())) {
                     continue;
                 }
                 if from_filter.map(|f| env.from == f).unwrap_or(true) {

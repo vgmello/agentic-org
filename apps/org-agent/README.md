@@ -63,7 +63,7 @@ member has a live `msg wait`/`ask` listener or used `org-agent` in the last 2 mi
 ## Triage Notification Contract (`org-agent msg notify`)
 
 All runtime hooks (Claude Code, Codex, Antigravity) wrap `org-agent msg notify`:
-- **Urgency:** A message is urgent iff `kind == "request"` (`ask`) or `priority` is `"high"` or `"urgent"`.
+- **Urgency:** A message is urgent iff `kind == "request"` (`ask`) or `priority` is `"high"` or `"urgent"`, except that an `ask` past its `expires_at` (nobody waits for the answer any more) is not: `notify`, `due`, `inbox` and `wait --urgent-only` treat it as a normal message (`urgent: false`, `priority: "normal"`), and its text line says `[request] (expired)`.
 - **Exit codes:**
   - `0`: Nothing to report (`stdout` is empty in `text` mode).
   - `10`: Normal (non-urgent) items need triage.

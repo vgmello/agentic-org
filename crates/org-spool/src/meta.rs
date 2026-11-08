@@ -408,6 +408,10 @@ pub struct NotifyItem {
     pub triage_gen: u64,
     pub created_at: String,
     pub reason: String,
+    /// An `ask` past its `expires_at` (then not urgent): marked "(expired)" in the text line.
+    /// Not in the JSON, which keeps its locked shape.
+    #[serde(skip)]
+    pub expired: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1200,6 +1204,7 @@ impl Spool {
         limit: Option<usize>,
     ) -> Result<Vec<InboxItem>, SpoolError> {
         validate_agent_id(agent, "agent").map_err(SpoolError::InvalidInput)?;
+        let now_iso = format_iso8601_utc(SystemTime::now());
         let state = self.release_due_snoozes(agent, false)?;
         let new_envs = self.list_inbox(agent, false)?;
         let mut items = Vec::new();
@@ -1226,8 +1231,8 @@ impl Spool {
                 from: env.from.clone(),
                 to: env.to.clone(),
                 kind: env.kind.as_str().to_string(),
-                priority: env.effective_priority().as_str().to_string(),
-                urgent: env.is_urgent(),
+                priority: env.priority_at(&now_iso).as_str().to_string(),
+                urgent: env.is_urgent_at(&now_iso),
                 triage_gen: t.triage_gen,
                 status,
                 snoozed_until: t.snoozed_until,
@@ -1260,8 +1265,8 @@ impl Spool {
                             from: env.from.clone(),
                             to: env.to.clone(),
                             kind: env.kind.as_str().to_string(),
-                            priority: env.effective_priority().as_str().to_string(),
-                            urgent: env.is_urgent(),
+                            priority: env.priority_at(&now_iso).as_str().to_string(),
+                            urgent: env.is_urgent_at(&now_iso),
                             triage_gen: t.triage_gen,
                             status,
                             snoozed_until: t.snoozed_until,
@@ -1331,7 +1336,7 @@ impl Spool {
                 if entry.is_some_and(|e| e.done_at.is_some() || e.snoozed_until.is_some()) {
                     continue;
                 }
-                let urgent = env.is_urgent();
+                let urgent = env.is_urgent_at(&now_iso);
                 if opts.urgent_only && !urgent {
                     continue;
                 }
@@ -1360,7 +1365,7 @@ impl Spool {
 
             let mut items = Vec::with_capacity(candidates.len());
             let mut listed_new = false;
-            for (env, urgent, reason) in candidates {
+            for (env, _, reason) in candidates {
                 let triage_gen = state.messages.get(&env.id).map_or(0, |e| e.triage_gen);
                 if opts.after_task {
                     let entry = state.messages.entry(env.id.clone()).or_default();
@@ -1384,7 +1389,7 @@ impl Spool {
                         .insert(sess.to_string(), entry.triage_gen);
                     dirty = true;
                 }
-                items.push(self.notify_item(env, urgent, triage_gen, reason));
+                items.push(self.notify_item(env, &now_iso, triage_gen, reason));
             }
 
             if opts.after_task {
@@ -1404,7 +1409,7 @@ impl Spool {
     fn notify_item(
         &self,
         env: Envelope,
-        urgent: bool,
+        now_iso: &str,
         triage_gen: u64,
         reason: String,
     ) -> NotifyItem {
@@ -1419,8 +1424,9 @@ impl Spool {
                 subject
             },
             kind: env.kind.as_str().to_string(),
-            urgent,
-            priority: env.effective_priority().as_str().to_string(),
+            urgent: env.is_urgent_at(now_iso),
+            priority: env.priority_at(now_iso).as_str().to_string(),
+            expired: env.is_expired_request_at(now_iso),
             triage_gen,
             created_at: env.created_at,
             reason,
@@ -1475,8 +1481,9 @@ impl NotifyReport {
             }
             for item in &items {
                 let prefix = if item.urgent { "- [URGENT] " } else { "- " };
+                let expired = if item.expired { " (expired)" } else { "" };
                 lines.push(format!(
-                    "{prefix}{} ({}): \"{}\" [{}] (id: {})",
+                    "{prefix}{} ({}): \"{}\" [{}]{expired} (id: {})",
                     item.from_name, item.from, item.subject, item.kind, item.id
                 ));
             }

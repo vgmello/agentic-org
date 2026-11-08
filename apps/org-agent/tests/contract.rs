@@ -1092,6 +1092,44 @@ fn a_fifo_or_symlink_at_meta_lock_is_a_clear_io_error() {
 }
 
 #[test]
+fn an_expired_unanswered_ask_is_no_longer_urgent() {
+    // Regression: an ask stayed urgent forever, so an urgent-only watcher kept waking on it.
+    let mut env = setup("expired_ask");
+    env.start_relay();
+    let asked = env.run(PEER, &["msg", "ask", "--to", ME, "--timeout", "1s", "q?"]);
+    assert_eq!(asked.code, 2, "no answer: {}", asked.stderr);
+    env.stop_relay();
+    assert_eq!(
+        json(&env.run(ME, &["msg", "inbox", "--json"]).stdout)
+            .as_array()
+            .unwrap()
+            .len(),
+        1,
+        "still in the inbox"
+    );
+
+    let r = env.run(ME, &["msg", "notify", "--urgent-only"]);
+    assert_eq!((r.code, r.stdout.as_str()), (0, ""));
+    let started = Instant::now();
+    let w = env.run(ME, &["msg", "wait", "--urgent-only", "--timeout", "500ms"]);
+    assert_eq!(w.code, 2, "doesn't return at once: {}", w.stdout);
+    assert!(started.elapsed() >= Duration::from_millis(400));
+
+    let at_break = env.run(ME, &["msg", "notify", "--after-task"]);
+    assert_eq!(at_break.code, 10, "listed as normal: {}", at_break.stdout);
+    assert!(
+        at_break.stdout.contains("[request] (expired) (id: "),
+        "{}",
+        at_break.stdout
+    );
+    let due = json(&env.run(ME, &["msg", "due", "--after-task"]).stdout);
+    assert_eq!(
+        (due["urgent"].clone(), due["items"][0]["urgent"].clone()),
+        (false.into(), false.into())
+    );
+}
+
+#[test]
 fn any_msg_command_marks_the_caller_online_in_who() {
     let env = setup("presence_cli");
     // Registered on its behalf by someone else: never seen yet.
