@@ -1368,6 +1368,42 @@ pub fn mailbox_wait_registered_before_commit_delivers_once(backend: impl OpenBac
     );
 }
 
+/// One commit wakes ALL of the member's held waits, and each returns the message; a wait
+/// for another member stays held.
+pub fn mailbox_wait_one_commit_wakes_every_waiter(backend: impl OpenBackend) {
+    let office = office(&backend);
+    let (_handle, cancel) = cancellation_pair();
+    let (_other_handle, other_cancel) = cancellation_pair();
+    let other = {
+        let mailbox = office.mailbox.clone();
+        thread::spawn(move || {
+            mailbox.wait(REMY_ID, wait_params(1_500), far_deadline(), &other_cancel)
+        })
+    };
+    let waiters: Vec<_> = (0..3)
+        .map(|_| {
+            let mailbox = office.mailbox.clone();
+            let cancel = cancel.clone();
+            thread::spawn(move || mailbox.wait(ADA_ID, wait_params(5_000), far_deadline(), &cancel))
+        })
+        .collect();
+    eventually("all four waiters to register", || {
+        office.mailbox.held_waits() == 4
+    });
+    send(&office.mailbox, PAT_ID, 1, ADA_HANDLE).unwrap();
+    for waiter in waiters {
+        let waited = waiter.join().unwrap().unwrap();
+        assert_eq!(
+            waited.message.map(|message| message.header.id),
+            Some(msg_id(1)),
+            "every waiter of the recipient is woken by the one commit"
+        );
+    }
+    assert_eq!(other.join().unwrap().unwrap().message, None);
+    assert_eq!(office.mailbox.held_waits(), 0);
+    assert_eq!(office.events.received(), [msg_id(1)]);
+}
+
 /// §2.2: a commit that lands after the wait's check found nothing, but before it blocks,
 /// still wakes it (the waiter was registered before the check).
 pub fn mailbox_wait_commit_between_check_and_block(backend: impl OpenBackend) {
@@ -1602,6 +1638,7 @@ macro_rules! mailbox_conformance_tests {
             mailbox_concurrent_reads_claim_once,
             mailbox_wait_returns_unread_without_claiming,
             mailbox_wait_registered_before_commit_delivers_once,
+            mailbox_wait_one_commit_wakes_every_waiter,
             mailbox_wait_commit_between_check_and_block,
             mailbox_wait_deadline,
             mailbox_wait_cancel_removes_waiter,
