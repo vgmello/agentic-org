@@ -1,7 +1,17 @@
 [workspace]
 resolver = "2"
-# apps/desktop/src-tauri joins this list once the app agent scaffolds it.
 members = [
+  "crates/org-proto",
+  "crates/org-client",
+  "crates/org-office",
+  "crates/org-spool",
+  "apps/org-office-server",
+  "apps/org-agent",
+  "apps/desktop/src-tauri",
+]
+# Every member except the Tauri shell, so a plain `cargo test` at the root doesn't compile Tauri.
+# Build the app with `cargo <cmd> -p agentic-org` or from apps/desktop.
+default-members = [
   "crates/org-proto",
   "crates/org-client",
   "crates/org-office",
