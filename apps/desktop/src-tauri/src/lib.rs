@@ -14,6 +14,7 @@ mod org_command;
 mod org_engine;
 mod org_feed;
 mod org_mock;
+mod pacing;
 mod real;
 mod status_feed;
 pub mod stdio;

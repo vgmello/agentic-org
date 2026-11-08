@@ -7,7 +7,7 @@
 //! restarted, the app's token changed) the feed reconnects with a growing pause, binds again, and starts from a
 //! fresh snapshot, so a change made while it was away is not lost. The feed never starts anything.
 
-use crate::status_feed::{next_pause, wait, FIRST_PAUSE, LOOK};
+use crate::pacing::{next_pause, wait, FIRST_PAUSE, LOOK};
 use org_client::{Client, ClientError};
 use org_proto::{Empty, OrgChanged, OrgSnapshotCall, Position};
 use serde::Serialize;
@@ -122,7 +122,13 @@ mod tests {
         }
     }
 
-    fn office(mut batches: Vec<Vec<Event>>, hang_up: bool) -> Office {
+    fn office(batches: Vec<Vec<Event>>, hang_up: bool) -> Office {
+        office_refusing(batches, hang_up, 0)
+    }
+
+    /// Like `office`, answering `snapshot_required` to the first `refusals` subscribes.
+    fn office_refusing(mut batches: Vec<Vec<Event>>, hang_up: bool, refusals: usize) -> Office {
+        let refusals = Arc::new(std::sync::atomic::AtomicUsize::new(refusals));
         let dir = tempfile::Builder::new().prefix("ao").tempdir().unwrap();
         let path = dir.path().join("hq.sock");
         let listener = UnixListener::bind(&path).unwrap();
@@ -133,6 +139,7 @@ mod tests {
             for stream in listener.incoming().flatten() {
                 let events = batches.pop().unwrap_or_default();
                 let asked = Arc::clone(&asked);
+                let refusals = Arc::clone(&refusals);
                 std::thread::spawn(move || {
                     let mut reader = BufReader::new(stream.try_clone().unwrap());
                     let mut writer = stream;
@@ -149,7 +156,22 @@ mod tests {
                             }
                             "subscribe" => {
                                 asked.lock().unwrap().push(r.params.clone());
-                                Response::ok::<Subscribe>(r.id, &Empty {}).unwrap()
+                                if refusals
+                                    .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+                                        n.checked_sub(1)
+                                    })
+                                    .is_ok()
+                                {
+                                    Response::error(
+                                        r.id,
+                                        org_proto::ApiError::new(
+                                            org_proto::ErrorCode::SnapshotRequired,
+                                            "take a new snapshot",
+                                        ),
+                                    )
+                                } else {
+                                    Response::ok::<Subscribe>(r.id, &Empty {}).unwrap()
+                                }
                             }
                             _ => return,
                         };
@@ -242,6 +264,19 @@ mod tests {
         let positions: Vec<_> = updates.iter().map(|(_, p)| p.seq).collect();
         assert_eq!(positions, [1, 2, 1, 3]);
         assert_eq!(*source.opened.lock().unwrap(), 2);
+    }
+
+    #[test]
+    fn when_the_office_cannot_resume_it_takes_a_new_snapshot_and_subscribes_again() {
+        let source = office_refusing(vec![vec![], vec![changed(2)]], false, 1);
+        let updates = collect(&source, 2);
+        assert_eq!(updates.last().unwrap().1, at(2));
+        assert_eq!(
+            *source.opened.lock().unwrap(),
+            2,
+            "a new connection, a new bind, a new snapshot"
+        );
+        assert_eq!(source.subscribes.lock().unwrap().len(), 2);
     }
 
     #[test]

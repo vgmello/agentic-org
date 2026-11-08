@@ -557,7 +557,8 @@ impl OfficeConnection for RealOffice {
         let Some(sink) = lock(&self.org_sink).clone() else {
             return;
         };
-        // Once per organization: a second call (every screen load) finds it followed.
+        // Once per organization: a second call (every screen load) finds it followed. A feed lives as long as the app:
+        // Phase 1 has the organizations of this Mac, and a feed for one that went away only retries, slowly and quietly.
         if !lock(&self.followed).insert(organization_id.to_string()) {
             return;
         }
@@ -593,7 +594,20 @@ impl OrgSource for RealOffice {
         if let Some(refusal) = not_connectable(office.status) {
             return Err(ClientError::Api(refusal));
         }
-        self.open_office(&office)
+        match self.open_office(&office) {
+            // The host's record may be old (the office moved or restarted): forget it, ask again, try once more.
+            Err(e) if dead(&e) || matches!(e, ClientError::OfficeNotReachable) => {
+                lock(&self.hq).remove(organization_id);
+                let latest = self
+                    .hq_of(organization_id, true)
+                    .map_err(ClientError::Api)?;
+                if let Some(refusal) = not_connectable(latest.status) {
+                    return Err(ClientError::Api(refusal));
+                }
+                self.open_office(&latest)
+            }
+            other => other,
+        }
     }
 }
 

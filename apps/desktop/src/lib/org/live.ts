@@ -6,7 +6,7 @@ export const isAfter = (a: Position, b: Position): boolean => a.epoch > b.epoch 
 // The position of the structure each organization's screens last loaded.
 const shown = new Map<string, Position>();
 
-/** A screen loaded the organization's structure at this position. */
+/** A screen loaded the organization's structure at this position (always the latest load: a restored office may be at an earlier one). */
 export function noteShown(organizationId: string, position: Position): void {
 	shown.set(organizationId, position);
 }

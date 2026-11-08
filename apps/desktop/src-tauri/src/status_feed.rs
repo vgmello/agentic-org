@@ -6,14 +6,14 @@
 //! stopped) the feed reconnects with a growing pause, and each new connection starts with a fresh list, so a
 //! change made while it was away is not lost. The feed never starts the host; it only listens.
 
+use crate::pacing::{next_pause, wait, FIRST_PAUSE, LOOK};
 use org_client::{Client, ClientError};
-use org_proto::{OfficeInfo, OfficeStatusChanged};
+use org_proto::{ApiError, ErrorCode, OfficeInfo, OfficeStatusChanged};
 use serde::Serialize;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 /// What the feed tells the UI. `Offices` replaces everything it knew (the start, and after a reconnect);
 /// `Office` replaces one office's record.
@@ -27,11 +27,6 @@ pub enum StatusUpdate {
 /// Where updates go (the UI's event channel).
 pub type StatusSink = Arc<dyn Fn(StatusUpdate) + Send + Sync>;
 
-pub(crate) const FIRST_PAUSE: Duration = Duration::from_secs(1);
-pub(crate) const LONGEST_PAUSE: Duration = Duration::from_secs(30);
-/// How often a quiet connection looks at `stop`.
-pub(crate) const LOOK: Duration = Duration::from_millis(250);
-
 /// Follow the host in `home` until `stop` is set, calling `emit` with each update.
 pub fn follow(home: &Path, stop: &AtomicBool, emit: &dyn Fn(StatusUpdate)) {
     let mut pause = FIRST_PAUSE;
@@ -42,23 +37,6 @@ pub fn follow(home: &Path, stop: &AtomicBool, emit: &dyn Fn(StatusUpdate)) {
     }
 }
 
-/// How long to wait before the connection after this one. It was up and then went away: soon. It never got going
-/// (no host, not ready, another version): ask less and less often.
-pub(crate) fn next_pause(pause: Duration, delivered: bool) -> Duration {
-    if delivered {
-        FIRST_PAUSE
-    } else {
-        (pause * 2).min(LONGEST_PAUSE)
-    }
-}
-
-pub(crate) fn wait(pause: Duration, stop: &AtomicBool) {
-    let until = Instant::now() + pause;
-    while Instant::now() < until && !stop.load(Ordering::SeqCst) {
-        std::thread::sleep(LOOK.min(until.saturating_duration_since(Instant::now())));
-    }
-}
-
 /// One connection: `Err` if it never reached the list, `Ok` once it ended after delivering it.
 fn follow_once(
     home: &Path,
@@ -66,7 +44,17 @@ fn follow_once(
     emit: &dyn Fn(StatusUpdate),
 ) -> Result<(), ClientError> {
     let client = Client::connect_host_in(home)?;
-    client.hello()?;
+    // A host that does not publish status changes would leave the feed listening to nothing: leave it to the
+    // checks the screen makes, and ask again later (the host may be updated).
+    if !client
+        .hello()?
+        .supports(org_proto::capability::OFFICE_STATUS_CHANGED)
+    {
+        return Err(ClientError::Api(ApiError::new(
+            ErrorCode::UnknownMethod,
+            "The host does not publish office status changes.",
+        )));
+    }
     let events = client.subscribe()?;
     let offices = client.list_offices()?;
     emit(StatusUpdate::Offices { offices });
@@ -99,6 +87,7 @@ mod tests {
     use std::io::BufReader;
     use std::os::unix::net::UnixListener;
     use std::sync::Mutex;
+    use std::time::{Duration, Instant};
 
     fn office(status: OfficeStatus) -> OfficeInfo {
         OfficeInfo {
@@ -130,6 +119,7 @@ mod tests {
         home: &Path,
         mut batches: Vec<Vec<Event>>,
         hang_up: bool,
+        capable: bool,
     ) -> Arc<Mutex<Vec<&'static str>>> {
         let listener = UnixListener::bind(host_socket_path(home)).unwrap();
         let log = Arc::new(Mutex::new(Vec::new()));
@@ -146,8 +136,18 @@ mod tests {
                         let (name, response) = match r.method.as_str() {
                             "hello" => (
                                 "hello",
-                                Response::ok::<Hello>(r.id, &HelloResult::host("test", "This Mac"))
-                                    .unwrap(),
+                                Response::ok::<Hello>(
+                                    r.id,
+                                    &HelloResult::host("test", "This Mac").with_capabilities(
+                                        if capable {
+                                            vec![org_proto::capability::OFFICE_STATUS_CHANGED
+                                                .to_string()]
+                                        } else {
+                                            vec![]
+                                        },
+                                    ),
+                                )
+                                .unwrap(),
                             ),
                             "subscribe" => (
                                 "subscribe",
@@ -186,11 +186,15 @@ mod tests {
 
     /// Runs the feed on a thread until `want` updates arrived (or 10 s), and returns them.
     fn collect(home: &Path, want: usize) -> Vec<StatusUpdate> {
+        collect_within(home, want, Duration::from_secs(10))
+    }
+
+    fn collect_within(home: &Path, want: usize, within: Duration) -> Vec<StatusUpdate> {
         let stop = Arc::new(AtomicBool::new(false));
         let got = Arc::new(Mutex::new(Vec::new()));
         let (s, g, h) = (Arc::clone(&stop), Arc::clone(&got), home.to_path_buf());
         let thread = std::thread::spawn(move || follow(&h, &s, &|u| g.lock().unwrap().push(u)));
-        let until = Instant::now() + Duration::from_secs(10);
+        let until = Instant::now() + within;
         while got.lock().unwrap().len() < want && Instant::now() < until {
             std::thread::sleep(Duration::from_millis(20));
         }
@@ -213,6 +217,7 @@ mod tests {
             home.path(),
             vec![vec![changed(OfficeStatus::Offline)]],
             false,
+            true,
         );
         let updates = collect(home.path(), 2);
         assert_eq!(
@@ -254,6 +259,7 @@ mod tests {
                 changed(OfficeStatus::Unavailable),
             ]],
             false,
+            true,
         );
         let updates = collect(home.path(), 2);
         assert_eq!(updates.len(), 2);
@@ -274,6 +280,7 @@ mod tests {
                 vec![changed(OfficeStatus::Offline)],
                 vec![changed(OfficeStatus::Active)],
             ],
+            true,
             true,
         );
         let updates = collect(home.path(), 4);
@@ -297,15 +304,15 @@ mod tests {
     }
 
     #[test]
-    fn the_pause_grows_while_nothing_connects_and_starts_over_after_a_good_connection() {
-        let mut pause = FIRST_PAUSE;
-        let mut seen = Vec::new();
-        for _ in 0..7 {
-            seen.push(pause.as_secs());
-            pause = next_pause(pause, false);
-        }
-        assert_eq!(seen, [1, 2, 4, 8, 16, 30, 30]);
-        assert_eq!(next_pause(pause, true), FIRST_PAUSE);
+    fn a_host_that_does_not_publish_status_changes_is_not_subscribed_to() {
+        let home = short_home();
+        let log = host(home.path(), vec![], false, false);
+        assert!(collect_within(home.path(), 1, Duration::from_millis(600)).is_empty());
+        assert_eq!(
+            *log.lock().unwrap(),
+            vec!["hello"],
+            "it said hello, saw no office.status_changed capability and went no further"
+        );
     }
 
     #[test]
