@@ -338,7 +338,7 @@ mod conformance {
     #[test]
     fn retry_by_exact_id_survives_recipient_removal() {
         use crate::testkit::fixture::*;
-        use crate::{Mailbox, MailboxError, NoMessageEvents, OfficeIdentity};
+        use crate::{Mailbox, MailboxError, MemberDirectory, NoMessageEvents, OfficeIdentity};
         use org_proto::msg::{Meta, MsgSendParams, KIND_MSG};
         use std::sync::Arc;
 
@@ -371,5 +371,15 @@ mod conformance {
             mailbox.send(ADA_ID, params(PAT_HANDLE)),
             Err(MailboxError::UnknownRecipient)
         );
+        // PAT_ID still resolves (as the shadow agent's handle). Remy's id resolves to no
+        // one once Remy is removed, and the exact-id retry must still return the first result.
+        let remy = || MsgSendParams {
+            id: msg_id(2),
+            ..params(REMY_ID)
+        };
+        let second = mailbox.send(ADA_ID, remy()).unwrap();
+        directory.remove(REMY_ID, POSITION);
+        assert_eq!(directory.resolve_member(REMY_ID).unwrap(), None);
+        assert_eq!(mailbox.send(ADA_ID, remy()), Ok(second));
     }
 }
