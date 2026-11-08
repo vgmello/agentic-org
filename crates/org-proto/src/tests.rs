@@ -1575,6 +1575,12 @@ fn reserved_handle_words_and_address_shapes() {
         "01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "01arz3ndektsv4rrffq69g5fav",
         " 01ARZ3NDEKTSV4RRFFQ69G5FAV ",
+        // A lenient ULID decoder reads I, L, O and U too: any 26 letters and digits count.
+        "01ARZ3NDEKTSV4RRFFQ69G5FAI",
+        "01ARZ3NDEKTSV4RRFFQ69G5FAL",
+        "01arz3ndektsv4rrffq69g5fao",
+        "UUUUUUUUUUUUUUUUUUUUUUUUUU",
+        "remyremyremyremyremyremyre",
     ] {
         assert!(is_shaped_like_an_address(bad), "{bad}");
     }
@@ -1588,20 +1594,12 @@ fn reserved_handle_words_and_address_shapes() {
         "owner",
         "01ARZ3NDEKTSV4RRFFQ69G5FA",
         "01ARZ3NDEKTSV4RRFFQ69G5FAVV",
-        "01ARZ3NDEKTSV4RRFFQ69G5FAI",
-        "01ARZ3NDEKTSV4RRFFQ69G5FAU",
         "01ARZ3NDEKTSV4RRFFQ69G5F-V",
         "rün:1",
         "ab€c",
         "a€bc",
         "ru€:",
         "😀run:",
-        "01ARZ3NDEKTSV4RRFFQ69G5FAL",
-        "01ARZ3NDEKTSV4RRFFQ69G5FAO",
-        "01arz3ndektsv4rrffq69g5fai",
-        "01arz3ndektsv4rrffq69g5fal",
-        "01arz3ndektsv4rrffq69g5fao",
-        "01arz3ndektsv4rrffq69g5fau",
         "",
     ] {
         assert!(!is_shaped_like_an_address(fine), "{fine}");
@@ -1622,5 +1620,33 @@ fn client_made_ids_are_short_and_plain() {
     }
     for bad in ["", " ", "a b", "a.b", "a/b", "é", "a\n", &"x".repeat(65)] {
         assert!(!is_valid_id(bad), "{bad:?}");
+    }
+}
+
+#[test]
+fn member_ids_are_26_letters_and_digits_and_no_handle_has_that_shape() {
+    assert_eq!(MEMBER_ID_CHARS, 26);
+    for good in [
+        "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "01arz3ndektsv4rrffq69g5fav",
+        "00000000000000000000000000",
+    ] {
+        assert!(is_valid_member_id(good), "{good}");
+        assert!(
+            is_shaped_like_an_address(good),
+            "an id must never be a handle: {good}"
+        );
+    }
+    for bad in [
+        "",
+        "remy",
+        "ann",
+        "01ARZ3NDEKTSV4RRFFQ69G5FA",
+        "01ARZ3NDEKTSV4RRFFQ69G5FAVV",
+        "01ARZ3NDEKTSV4RRFFQ69G5F-V",
+        "01ARZ3NDEKTSV4RRFFQ69G5FAé",
+        " 01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    ] {
+        assert!(!is_valid_member_id(bad), "{bad:?}");
     }
 }

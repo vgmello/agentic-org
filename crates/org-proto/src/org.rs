@@ -32,10 +32,13 @@
 //! ## Limits every command shares
 //! All are `invalid_request`, so a client can check them before sending:
 //! - **Client-made ids**, the ones a command creates (`team.create`'s `team_id`,
-//!   `member.add_person`'s `member_id`, `team.add_member`'s and `member.move`'s new
-//!   `membership_id`, `project.add_team`'s `project_team_id`, and so on): 1 to [`ID_MAX_CHARS`]
-//!   ASCII letters, digits, `-` or `_` ([`is_valid_id`]). A ULID fits. An id that names
-//!   something that already exists is only looked up (`not_found`).
+//!   `team.add_member`'s and `member.move`'s new `membership_id`, `project.add_team`'s
+//!   `project_team_id`, and so on): 1 to [`ID_MAX_CHARS`] ASCII letters, digits, `-` or `_`
+//!   ([`is_valid_id`]). A ULID fits. An id that names something that already exists is only
+//!   looked up (`not_found`).
+//! - **Member ids** (`member.add_person`'s and `member.add_agent`'s `member_id`): exactly
+//!   [`MEMBER_ID_CHARS`] ASCII letters and digits, the shape of a ULID ([`is_valid_member_id`]).
+//!   No handle has this shape, so an id and a handle never collide.
 //! - **Free text** (`contact`, `title_in_team`): trimmed, then 1 to [`AGENT_TEXT_MAX_CHARS`]
 //!   characters with no control characters. To remove a contact use `clear_contact`, not an
 //!   empty string.
@@ -241,8 +244,9 @@ pub const RUN_HANDLE_PREFIX: &str = "run:";
 
 /// Whether `handle` (trimmed, as a person's `name` or an agent's `messaging_name` is compared)
 /// looks like something messaging already addresses by: it starts with [`RUN_HANDLE_PREFIX`]
-/// (any case), or is exactly 26 Crockford base32 characters (a ULID, the shape of every member
-/// id, in either case), so a handle can never shadow a member id or a run. HQ refuses such a
+/// (any case), or is exactly 26 ASCII letters and digits (the shape of every member id,
+/// [`is_valid_member_id`]; a lenient ULID decoder reads I, L, O and U too, so none is excluded),
+/// so a handle can never shadow a member id or a run. HQ refuses such a
 /// handle with `invalid_name`, for agents and for people. The reserved words [`OWNER_HANDLE`]
 /// and [`OFFICE_HANDLE`] are a different rule: they are `already_exists`, as if another
 /// member held them.
@@ -252,12 +256,19 @@ pub fn is_shaped_like_an_address(handle: &str) -> bool {
     let run = handle.len() >= prefix
         && handle.is_char_boundary(prefix)
         && handle[..prefix].eq_ignore_ascii_case(RUN_HANDLE_PREFIX);
-    let ulid = handle.len() == 26
-        && handle.bytes().all(|b| {
-            b.is_ascii_alphanumeric()
-                && !matches!(b.to_ascii_uppercase(), b'I' | b'L' | b'O' | b'U')
-        });
-    run || ulid
+    run || is_valid_member_id(handle)
+}
+
+/// The length of a member id.
+pub const MEMBER_ID_CHARS: usize = 26;
+
+/// Whether `id` is a valid member id: exactly [`MEMBER_ID_CHARS`] ASCII letters and digits (the
+/// shape of a ULID, which is what clients make). `member.add_person` and `member.add_agent`
+/// refuse anything else with `invalid_request`. No handle has this shape
+/// ([`is_shaped_like_an_address`]), so an id never equals a handle, and a lookup by id before
+/// handle cannot be captured by a name.
+pub fn is_valid_member_id(id: &str) -> bool {
+    id.len() == MEMBER_ID_CHARS && id.bytes().all(|b| b.is_ascii_alphanumeric())
 }
 
 /// The longest client-made id, in characters (see [`is_valid_id`]).
@@ -558,9 +569,10 @@ command!(
     }
 );
 command!(
-    /// `member.add_person`. `member_id` is client-made. Agents are added with
-    /// `member.add_agent` instead.
-    /// Errors: `invalid_name` (also a name that [`is_shaped_like_an_address`]), `already_exists`
+    /// `member.add_person`. `member_id` is client-made and must be [`is_valid_member_id`]
+    /// (`invalid_request`). Agents are added with `member.add_agent` instead.
+    /// Errors: `invalid_request`, `invalid_name` (also a name that
+    /// [`is_shaped_like_an_address`]), `already_exists`
     /// (the id is taken, or the name is already another member's handle: an agent's
     /// `messaging_name`, [`OWNER_HANDLE`] or [`OFFICE_HANDLE`], ignoring case; people's names
     /// also clash with each other, but not with the owner's display name).
@@ -624,8 +636,8 @@ command!(
     /// and `offboarded_at` must be absent. If `run_mode` is `scheduled` a `schedule` is required,
     /// and otherwise there must be none. Errors: `not_authorized`, `invalid_name` (the name, or a
     /// `messaging_name` that breaks its format or [`is_shaped_like_an_address`]),
-    /// `invalid_request` (a profile that breaks its limits or rules above), `already_exists` (the
-    /// id is taken, or `messaging_name` is already another member's handle: an agent's
+    /// `invalid_request` (a profile that breaks its limits or rules above, or a `member_id` that
+    /// is not [`is_valid_member_id`]), `already_exists` (the id is taken, or `messaging_name` is already another member's handle: an agent's
     /// `messaging_name`, a person's `name`, [`OWNER_HANDLE`] or [`OFFICE_HANDLE`], ignoring
     /// case), `not_found` (no such office).
     MemberAddAgent, "member.add_agent", MemberAddAgentParams {
