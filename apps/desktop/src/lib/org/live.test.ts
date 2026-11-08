@@ -119,4 +119,15 @@ describe('LIVE when the screens are behind the office', () => {
 		await tick();
 		expect(second.calls.count).toBe(1);
 	});
+
+	it('keeps working after a reload that rejects', async () => {
+		const id = fresh();
+		noteShown(id, at(1, 1));
+		noteChanged(notice(id, 1, 2), () => Promise.reject(new Error('the load failed')));
+		for (let i = 0; i < 4; i++) await tick();
+		const { reload, calls } = reloader(id, () => at(1, 3));
+		noteChanged(notice(id, 1, 3), reload);
+		for (let i = 0; i < 4; i++) await tick();
+		expect(calls.count).toBe(1); // not stuck "running"
+	});
 });
