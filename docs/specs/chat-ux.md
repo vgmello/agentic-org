@@ -2,7 +2,7 @@
 kind: spec
 title: "Chat: channels, DMs and threads where agents and people talk (UX)"
 status: for-review
-revision: 4
+revision: 5
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-08"
@@ -18,6 +18,8 @@ Extends `our-org-in-the-app.md` (Activity, the owner reads messages, A17), `agen
 ## The request (the user, 2026-11-08)
 
 > A chat, using chat-sdk.dev, where **agents talk to agents and I can talk to them too, like Slack**: channels, DMs and so on. Agents **don't output everything**: only their questions and their interactions with people, the responses that require interaction. That's what goes in the chat.
+
+**Revision 5 (2026-11-08): hand-off states (from the Chat build review).** Only the hand-off's recipient sees **Accept** (the owner too when the hand-off is to the owner); others, including the owner reading as the owner, see **Reply…** only. Once accepted, the card reads "Accepted by <name> · <time>" with no buttons, for everyone (§2). A person's status in a DM is a word too, never only a dot (§1). **Added:** CHAT-18.
 
 **Revision 4 (2026-11-08): review fixes.** The built-in hiring agent is always called "HR lead" (`our-org-in-the-app.md` §2a, HRL-1): the DM list and the asleep-agent example say "HR lead". Its handle stays `hr`. No criteria changed.
 
@@ -64,12 +66,12 @@ Extends `our-org-in-the-app.md` (Activity, the owner reads messages, A17), `agen
  │ ● [A] ada        Working  │   @ada the specs branch is ready for your go ↳ 2 replies  │
  │ ◌ [H] HR lead    Asleep   │                                                           │
  │ ○ [R] Riley      Offline  │ ┌─────────────────────────────────────────────────────┐   │
- │ ● (S) Sam Ortiz           │ │ Message #agentic-org      @ mention  / command  📎   │   │
+ │ ● (S) Sam Ortiz  Online   │ │ Message #agentic-org      @ mention  / command  📎   │   │
  │ + New message             │ └─────────────────────────────────────────────────────┘   │
  └───────────────────────────┴───────────────────────────────────────────────────────────┘
 ```
 
-- **Sidebar:** **Needs you** (asks and hand-offs waiting for the owner, newest first) · **Mentions** · **Threads** (threads I'm in with new replies) · Channels (unread in bold, with a count for mentions) · Direct messages (agents as squares, people as circles, each with status: Working, Waiting, Asleep, Offline, Paused).
+- **Sidebar:** **Needs you** (asks and hand-offs waiting for the owner, newest first) · **Mentions** · **Threads** (threads I'm in with new replies) · Channels (unread in bold, with a count for mentions) · Direct messages (agents as squares, people as circles, each with status as a word: agents Working, Waiting, Asleep, Offline, Paused; people Online or Offline *(rev 5)*).
 - **Message:** avatar · name · time · text (Markdown, rendered with the v1 safety rules) · reactions · "↳ n replies" · a kind marker when it isn't plain: ❓ ask · 📣 announcement · 🔁 hand-off. Item numbers (`ac-T-17`, `ac-B-15`, `REQ-14`, `ADR-0004`) become chips.
 - **Composer:** text, `@` mentions (typed by display name and completed to the member's handle; `@here` for a channel's members), `/` commands (§3), attachments, ⌘Enter to send (Enter for a new line, configurable).
 
@@ -78,7 +80,7 @@ Extends `our-org-in-the-app.md` (Activity, the owner reads messages, A17), `agen
 | Kind | Who | Shown as | What answering does |
 | --- | --- | --- | --- |
 | **Ask** (ADR-0003 kind `request`: urgent, blocking) | an agent asking someone | a card: the question, options as buttons, **Reply…**, how long it's been waiting, and what it blocks | the answer goes back to the agent (`msg.ask` reply), unblocks it, clears Needs you and marks the card **Answered by <name>** |
-| **Hand-off** (`handoff`) | agent → agent or person | "🔁 ada → server-dev: review the store traits" with **Accept** · **Reply…** | Accept records the hand-off on the linked task, if any |
+| **Hand-off** (`handoff`) | agent → agent or person | "🔁 ada → server-dev: review the store traits" with **Accept** · **Reply…** (*rev 5:* only the recipient sees Accept, or the owner when it's handed to the owner; everyone else sees Reply… only) | Accept records the hand-off on the linked task, if any, and the card then reads "Accepted by <name> · <time>" with no buttons, for everyone *(rev 5)* |
 | **Announcement** | an agent, for something to act on or know | 📣 with links (branch, feature, report) and reactions | reactions are acknowledgements (✅ seen, 👀 looking) and don't post a message |
 | **Approval** (an Ask with Approve and Reject; answered only in the app, never through a bridge, decision 11) | an agent needing a yes/no from the owner | a card with **Approve** · **Reject…** (reason) | recorded with who and when, like decisions |
 
@@ -134,6 +136,7 @@ Settings › Chat › **Bridges**: connect a channel to Slack, Microsoft Teams o
 - CHAT-15 · Activity message rows open the message in Chat.
 - CHAT-16 · *(rev 2)* An agent sees a channel's or group DM's messages only while it's a member, a thread's only if it's a member of the parent conversation, and stops seeing new messages when it leaves.
 - CHAT-17 · *(rev 2)* A bridged message is posted as the bridged person, never as the owner, and the owner's asks and approvals can't be answered from a bridge (read-only there, with Open in Agentic Org).
+- CHAT-18 · *(new, rev 5)* A hand-off shows **Accept** only to its recipient (or to the owner when it's handed to the owner). Once accepted, the card reads "Accepted by <name> · <time>" with no buttons for everyone. A DM with a person shows their status as a word, never only a dot.
 
 ## 9. Open questions
 
