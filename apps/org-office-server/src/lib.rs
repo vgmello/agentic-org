@@ -74,7 +74,6 @@ pub fn run(args: &[String], mut control: ControlPipe) -> i32 {
         Ok(keys) => keys,
         Err(why) => return fail(&mut control, FailCode::StorageError, &why),
     };
-    signals::install();
     match mode {
         Mode::Discard(id) => discard(&mut control, &home, &id, &*keys),
         Mode::Create => create_and_serve(control, &home, &*keys),
@@ -130,6 +129,11 @@ fn create_and_serve(
             "not a plain office id",
         );
     };
+    // The socket path depends only on the home and the id: refuse a path that is too long
+    // BEFORE anything is stored, so a create never makes an office that can never start.
+    if let Err(message) = socket_path(home, &create.office_id) {
+        return fail(&mut control, FailCode::InvalidRequest, message);
+    }
     let new = NewOffice {
         office_id: create.office_id.clone(),
         office_name: create.office_name.clone(),
@@ -179,6 +183,9 @@ fn open_and_serve(
             "not a plain office id",
         );
     };
+    if let Err(message) = socket_path(home, id) {
+        return fail(&mut control, FailCode::InvalidRequest, message);
+    }
     let office = match Office::open(folder, keys) {
         Ok(office) => office,
         Err(e) => return fail_with(&mut control, &e),
@@ -216,20 +223,10 @@ fn serve_office(
     _app_token: AppToken,
 ) -> i32 {
     let info = office.info().clone();
-    let Some(socket) = office_socket_path(home, &info.office_id) else {
-        return fail(
-            &mut control,
-            FailCode::InvalidRequest,
-            "not a plain office id",
-        );
+    let socket = match socket_path(home, &info.office_id) {
+        Ok(socket) => socket,
+        Err(message) => return fail(&mut control, FailCode::InvalidRequest, message),
     };
-    if check_socket_path(&socket).is_err() {
-        return fail(
-            &mut control,
-            FailCode::InvalidRequest,
-            "the socket path is too long",
-        );
-    }
     let listener = match serve::bind(&socket) {
         Ok(listener) => listener,
         Err(_) => {
@@ -240,6 +237,9 @@ fn serve_office(
             )
         }
     };
+    // Stop signals are handled only from here: before this the default disposition applies, so a
+    // server waiting for its first line or for the office lock can still be terminated.
+    signals::install();
     let shared = Arc::new(serve::Shared::new(
         &info.org_name,
         &info.office_id,
@@ -287,6 +287,13 @@ fn serve_office(
     let _ = std::fs::remove_file(&socket);
     drop(office);
     0
+}
+
+/// The office's socket path, or why it cannot be one.
+fn socket_path(home: &Path, office_id: &str) -> Result<std::path::PathBuf, &'static str> {
+    let socket = office_socket_path(home, office_id).ok_or("not a plain office id")?;
+    check_socket_path(&socket).map_err(|_| "the socket path is too long")?;
+    Ok(socket)
 }
 
 fn emit(control: &mut ControlPipe, event: &ServerEvent) {

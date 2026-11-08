@@ -3,7 +3,7 @@
 //! calls arrive.
 
 use std::io::BufReader;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -62,10 +62,9 @@ impl Shared {
 /// holds the office lock, so no other server of this office is alive.
 pub fn bind(path: &Path) -> std::io::Result<UnixListener> {
     match std::fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() || metadata.is_dir() => {
-            return Err(std::io::Error::other("the socket path is not a socket"));
-        }
-        Ok(_) => std::fs::remove_file(path)?,
+        // Only a stale socket (a crashed server's) is replaced; anything else is not ours.
+        Ok(metadata) if metadata.file_type().is_socket() => std::fs::remove_file(path)?,
+        Ok(_) => return Err(std::io::Error::other("the socket path is not a socket")),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(e),
     }
@@ -85,18 +84,17 @@ pub fn run(listener: &UnixListener, shared: &Arc<Shared>, stop: &dyn Fn() -> boo
                     live.fetch_sub(1, Ordering::SeqCst);
                     continue; // dropped: closed at once
                 }
-                let (shared, counted) = (Arc::clone(shared), Arc::clone(&live));
-                let spawned = std::thread::Builder::new()
+                let shared = Arc::clone(shared);
+                let slot = Slot(Arc::clone(&live));
+                // If the thread cannot start, the closure (and its slot) is dropped with the
+                // error: the slot is given back and the connection closes.
+                let _ = std::thread::Builder::new()
                     .name("org-office-conn".into())
                     .spawn(move || {
+                        let _slot = slot; // given back however the thread ends, panics included
                         let _ = stream.set_nonblocking(false);
                         serve_connection(stream, &shared);
-                        counted.fetch_sub(1, Ordering::SeqCst);
                     });
-                if spawned.is_err() {
-                    // Out of threads: the connection is dropped and the count is given back.
-                    live.fetch_sub(1, Ordering::SeqCst);
-                }
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 std::thread::sleep(Duration::from_millis(20));
@@ -105,6 +103,15 @@ pub fn run(listener: &UnixListener, shared: &Arc<Shared>, stop: &dyn Fn() -> boo
             // A connection that died before accept: carry on.
             Err(_) => std::thread::sleep(Duration::from_millis(20)),
         }
+    }
+}
+
+/// One of the connection slots; dropping it gives the slot back, even if the thread panics.
+struct Slot(Arc<AtomicUsize>);
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 

@@ -327,22 +327,143 @@ fn a_lost_key_is_key_missing_and_nothing_is_made() {
     assert!(!world.key_file(OFFICE).exists(), "a key was made");
 }
 
-#[test]
-fn a_stop_signal_closes_the_office_and_exits_clean() {
-    let world = World::new();
-    let mut run = create(&world);
+fn signal(run: &Run, signal: libc::c_int) {
     // SAFETY: signalling a child process we started.
     #[allow(unsafe_code)]
     unsafe {
-        libc::kill(run.child.id() as libc::pid_t, libc::SIGTERM);
+        libc::kill(run.child.id() as libc::pid_t, signal);
     }
+}
+
+#[test]
+fn a_stop_signal_closes_the_office_and_exits_clean() {
+    for stop in [libc::SIGTERM, libc::SIGINT] {
+        let world = World::new();
+        let mut run = create(&world);
+        signal(&run, stop);
+        let status = run.wait();
+        assert_eq!(status.code(), Some(0), "signal {stop}: {status:?}");
+        // The office can be served again right away: its lock was released.
+        let mut again = world.spawn(&["--office", OFFICE]);
+        again.send(&start_message());
+        assert!(matches!(again.event(), ServerEvent::Ready { .. }));
+        assert!(again.host_goes_away().success());
+    }
+}
+
+#[test]
+fn a_server_still_waiting_for_its_first_line_can_be_terminated() {
+    let world = World::new();
+    let mut run = world.spawn(&["--create"]);
+    std::thread::sleep(Duration::from_millis(300)); // it is blocked reading stdin
+    signal(&run, libc::SIGTERM);
     let status = run.wait();
-    assert!(status.success(), "{status:?}");
-    // The office can be served again right away: its lock was released.
+    assert!(!status.success(), "{status:?}");
+    assert!(world.key_file(OFFICE).exists().not());
+}
+
+trait Not {
+    fn not(self) -> bool;
+}
+impl Not for bool {
+    fn not(self) -> bool {
+        !self
+    }
+}
+
+#[test]
+fn the_socket_is_owner_only_and_other_methods_are_unknown() {
+    use std::os::unix::fs::PermissionsExt;
+    let world = World::new();
+    let mut run = create(&world);
+    let mode = std::fs::metadata(socket(&world))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o600, "{mode:o}");
+    let client = Client::connect(socket(&world)).unwrap();
+    let error = client
+        .call::<org_proto::OrganizationList>(&org_proto::Empty {})
+        .unwrap_err();
+    assert!(
+        matches!(&error, org_client::ClientError::Api(e) if e.code == org_proto::ErrorCode::UnknownMethod),
+        "{error:?}"
+    );
+    drop(client);
+    assert!(run.host_goes_away().success());
+}
+
+#[test]
+fn a_stale_socket_file_is_replaced_but_anything_else_there_is_not() {
+    let world = World::new();
+    let mut first = create(&world);
+    assert!(first.host_goes_away().success());
+
+    // A crashed server leaves its socket file behind.
+    drop(std::os::unix::net::UnixListener::bind(socket(&world)).unwrap());
+    assert!(socket(&world).exists());
     let mut again = world.spawn(&["--office", OFFICE]);
     again.send(&start_message());
     assert!(matches!(again.event(), ServerEvent::Ready { .. }));
+    assert_eq!(hello(&world).office.id, OFFICE);
     assert!(again.host_goes_away().success());
+
+    // A regular file is not ours to remove.
+    std::fs::write(socket(&world), b"mine").unwrap();
+    let mut refused = world.spawn(&["--office", OFFICE]);
+    refused.send(&start_message());
+    assert_eq!(failed_code(refused.event()), FailCode::StorageError);
+    assert!(!refused.wait().success());
+    assert_eq!(std::fs::read(socket(&world)).unwrap(), b"mine");
+}
+
+#[test]
+fn what_the_host_writes_after_the_first_line_never_stops_the_server_and_eof_does() {
+    let world = World::new();
+    let mut run = create(&world);
+    // Lines of any shape, and a lot of them: read and thrown away, unparsed.
+    let stdin = run.stdin.as_mut().unwrap();
+    std::io::Write::write_all(stdin, b"garbage\n{\"op\":\"nonsense\"}\n").unwrap();
+    std::io::Write::write_all(stdin, &vec![b'x'; 3 * 1024 * 1024]).unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(
+        hello(&world).office.id,
+        OFFICE,
+        "the server stopped serving"
+    );
+    assert!(run.host_goes_away().success());
+}
+
+#[test]
+fn a_create_whose_socket_path_cannot_exist_fails_before_anything_is_stored() {
+    let dir = tempfile::Builder::new().prefix("oo").tempdir().unwrap();
+    let long = dir.path().join("x".repeat(90));
+    std::fs::create_dir_all(long.join("offices")).unwrap();
+    std::fs::create_dir_all(long.join("run")).unwrap();
+    let keys = dir.path().join("k");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_org-office-server"))
+        .arg("--create")
+        .env("ORG_OFFICE_HOME", &long)
+        .env("ORG_OFFICE_DEV_KEY_DIR", &keys)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    write_host_message(&mut stdin, &create_message()).unwrap();
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    let first = read_server_event(&mut reader).unwrap().unwrap();
+    assert_eq!(failed_code(first), FailCode::InvalidRequest);
+    assert_eq!(child.wait().unwrap().code(), Some(1));
+    assert!(
+        !office_dir(&long, OFFICE).unwrap().exists(),
+        "an office was stored"
+    );
+    assert!(
+        !keys.join(format!("{OFFICE}.key")).exists(),
+        "a key was made"
+    );
 }
 
 #[test]
