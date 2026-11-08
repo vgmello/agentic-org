@@ -3536,4 +3536,19 @@ fn hello_capabilities_are_additive_and_checked_by_name() {
     assert!(back.supports("office.app_token"));
     assert!(back.supports("office.status_changed"));
     assert!(!back.supports("office.restar"));
+
+    // hello must always decode: a malformed advisory list never breaks the handshake.
+    for bad in [json!(null), json!("office.restart"), json!({"a": 1})] {
+        let h: HelloResult = serde_json::from_value(json!({
+            "api_version": 1, "server_version": "0.0.0", "host": "This Mac", "capabilities": bad
+        }))
+        .unwrap();
+        assert!(h.capabilities.is_empty());
+    }
+    let mixed: HelloResult = serde_json::from_value(json!({
+        "api_version": 1, "server_version": "0.0.0", "host": "This Mac",
+        "capabilities": [1, "office.restart", null, ["x"]]
+    }))
+    .unwrap();
+    assert_eq!(mixed.capabilities, vec!["office.restart".to_owned()]);
 }

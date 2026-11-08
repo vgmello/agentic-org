@@ -40,9 +40,32 @@ pub struct HelloResult {
     /// `api_version` has, by wire name (see [`capability`]). A client checks for one before
     /// calling it or waiting for it, and ignores names it doesn't know. Empty (and absent on
     /// the wire) for a server that implements none, including servers older than this field.
-    /// When present it's always a JSON array of strings (never `null`).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Servers always send a JSON array of strings. Reading is tolerant, because `hello` must
+    /// always decode: `null` reads as empty and an item that isn't a string is skipped.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "lenient_names"
+    )]
     pub capabilities: Vec<String>,
+}
+
+/// Reads an advisory list of names: `null` is empty, and non-string items are dropped.
+fn lenient_names<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(match value {
+        Some(serde_json::Value::Array(items)) => items
+            .into_iter()
+            .filter_map(|item| match item {
+                serde_json::Value::String(name) => Some(name),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    })
 }
 
 /// Capability names a server may list in [`HelloResult::capabilities`]. Each one is the wire
