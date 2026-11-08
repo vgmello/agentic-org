@@ -31,7 +31,12 @@ serde_json.workspace = true
 libc.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
-security-framework.workspace = true
+# `OSX_10_15` for the Data Protection keychain (`kSecUseDataProtectionKeychain`), where the
+# release key store keeps every office's database key (`src/keys/keychain.rs`).
+security-framework = { workspace = true, features = ["OSX_10_15"] }
+# The key store's direct `SecItemAdd` (add-only), already in Cargo.lock through
+# security-framework.
+security-framework-sys = { version = "=2.17.0", features = ["OSX_10_15"] }
 core-foundation.workspace = true
 
 [dev-dependencies]

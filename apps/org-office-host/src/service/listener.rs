@@ -419,7 +419,7 @@ impl SecretLine {
 
 impl Drop for SecretLine {
     fn drop(&mut self) {
-        crate::app_token::zero(&mut self.0);
+        crate::secrets::zero(&mut self.0);
     }
 }
 

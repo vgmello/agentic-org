@@ -2211,6 +2211,7 @@ dependencies = [
  "org-office-launch",
  "org-proto",
  "security-framework",
+ "security-framework-sys",
  "serde",
  "serde_json",
  "tempfile",

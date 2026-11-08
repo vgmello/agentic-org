@@ -1,5 +1,12 @@
 //! The real `org-office-host` binary: signals, a killed host, and a second host. Kept in its
 //! own test binary so its process spawns never overlap the in-process hosts' pipes.
+//!
+//! A host that starts keeps its offices' keys in a development key folder
+//! (`ORG_OFFICE_DEV_KEY_DIR`), which only a debug build reads (a release host uses the Keychain,
+//! which tests never touch), so every test that starts one runs in debug builds only.
+
+// Only the argument checks run in release builds.
+#![cfg_attr(not(debug_assertions), allow(unused_imports, dead_code))]
 
 mod support;
 
@@ -65,8 +72,8 @@ fn spawn_host(home: &TestHome, stderr_to: &str) -> HostProcess {
             .arg(fake_server())
             // Something of the login session's that must never reach a server.
             .env(CANARY, "from-the-host-environment")
-            // A dev-keys server's key folder: passed on in debug builds only.
-            .env("ORG_OFFICE_DEV_KEY_DIR", "/tmp/org-dev-keys-test")
+            // The host's own development key folder: never passed on to a server.
+            .env("ORG_OFFICE_DEV_KEY_DIR", home.keys_dir())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(stderr)
@@ -113,6 +120,7 @@ fn signal(child: &Child, signal: i32) {
     assert_eq!(unsafe { libc::kill(child.id() as libc::pid_t, signal) }, 0);
 }
 
+#[cfg(debug_assertions)]
 #[test]
 fn sigterm_stops_the_servers_cleanly_and_exits_0() {
     let home = home_with_office();
@@ -130,6 +138,7 @@ fn sigterm_stops_the_servers_cleanly_and_exits_0() {
     );
 }
 
+#[cfg(debug_assertions)]
 #[test]
 fn sigint_also_stops_it() {
     let home = home_with_office();
@@ -139,6 +148,7 @@ fn sigint_also_stops_it() {
     assert!(wait_for_exit(&mut host).success());
 }
 
+#[cfg(debug_assertions)]
 #[test]
 fn a_killed_host_takes_its_servers_with_it() {
     let home = home_with_office();
@@ -154,6 +164,7 @@ fn a_killed_host_takes_its_servers_with_it() {
     eventually(WAIT, "the server process to be gone", || !alive(server));
 }
 
+#[cfg(debug_assertions)]
 #[test]
 fn a_second_host_binary_on_the_same_home_exits_at_once() {
     let home = home_with_office();
@@ -188,6 +199,7 @@ fn bad_arguments_are_refused() {
     assert!(!status.success());
 }
 
+#[cfg(debug_assertions)]
 #[test]
 fn the_host_never_logs_a_token() {
     let home = home_with_office();
@@ -234,9 +246,14 @@ fn the_host_never_logs_a_token() {
         !has_hex_run(&log, 64),
         "the host's log holds 64 hex digits:\n{log}"
     );
-    home.assert_no_token_in_logs();
+    // Neither a token nor a key anywhere in the home (the host's stderr file included). The
+    // keys of the stored office, the refused create and the good one stay in the key folder;
+    // the failed create's went with its discard.
+    home.assert_no_secret_in_home();
+    assert_eq!(home.key_ids().len(), 3, "{:?}", home.key_ids());
 }
 
+#[cfg(debug_assertions)]
 #[test]
 fn servers_inherit_no_host_fds_while_clients_connect() {
     let home = TestHome::new();
@@ -302,6 +319,7 @@ fn servers_inherit_no_host_fds_while_clients_connect() {
     assert!(leaked.is_empty(), "servers inherited host fds: {leaked:?}");
 }
 
+#[cfg(debug_assertions)]
 #[test]
 fn servers_get_only_the_allowed_environment() {
     let home = home_with_office();
@@ -317,25 +335,22 @@ fn servers_get_only_the_allowed_environment() {
         "TMPDIR",
         "LANG",
         "ORG_OFFICE_HOME",
-        // Debug builds only (checked below).
-        "ORG_OFFICE_DEV_KEY_DIR",
     ];
     let runs = home.env_names(A);
     assert!(!runs.is_empty());
+    // The host used its key folder (the server got the office's key on its first line)...
+    assert_eq!(
+        home.db_key_fingerprints(A),
+        [home.stored_key_fingerprint(A).unwrap()]
+    );
     for names in runs {
         assert!(names.iter().any(|n| n == "ORG_OFFICE_HOME"), "{names:?}");
         assert!(!names.iter().any(|n| n == CANARY), "the canary got through");
-        // The test host is given a dev key folder (see `spawn_host`). A debug host passes it on
-        // to a dev-keys server; a release host never does.
-        let dev_keys = names.iter().any(|n| n == "ORG_OFFICE_DEV_KEY_DIR");
-        if cfg!(debug_assertions) {
-            assert!(dev_keys, "the dev key folder wasn't passed on: {names:?}");
-        } else {
-            assert!(
-                !dev_keys,
-                "a release host passed the dev key folder on: {names:?}"
-            );
-        }
+        // ...but never passes the folder on: servers never touch a key store.
+        assert!(
+            !names.iter().any(|n| n == "ORG_OFFICE_DEV_KEY_DIR"),
+            "the dev key folder was passed on: {names:?}"
+        );
         for name in names.iter().filter(|n| !n.is_empty()) {
             assert!(allowed.contains(&name.as_str()), "{name} was passed on");
         }

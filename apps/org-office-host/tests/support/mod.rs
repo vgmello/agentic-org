@@ -1,12 +1,13 @@
 //! Shared helpers for the host's integration tests: a short temporary office home (never the
-//! real one), the fake office server and its script and log, and a small org-proto client.
+//! real one) with its own development key folder (never the Keychain), the fake office server
+//! and its script and log, and a small org-proto client.
 
 #![allow(dead_code)] // each test file uses a different part
 
 use std::collections::VecDeque;
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::fs::PermissionsExt;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -39,7 +40,9 @@ pub fn fast_timings() -> Timings {
     }
 }
 
-/// A temporary office home under /tmp (socket paths must stay under 103 bytes).
+/// A temporary office home under /tmp (socket paths must stay under 103 bytes), with its own
+/// development key folder next to it (outside the home, so no key is ever in the home or its
+/// logs).
 pub struct TestHome {
     dir: tempfile::TempDir,
 }
@@ -58,9 +61,18 @@ impl TestHome {
         self.dir.path().join("h")
     }
 
+    /// The host's development key folder (`<id>.key` files), outside the office home.
+    pub fn keys_dir(&self) -> PathBuf {
+        self.dir.path().join("k")
+    }
+
     pub fn config(&self) -> Config {
         let mut config = Config::new(self.path(), fake_server());
         config.timings = fast_timings();
+        #[cfg(debug_assertions)]
+        {
+            config.dev_key_dir = Some(self.keys_dir());
+        }
         config
     }
 
@@ -74,11 +86,80 @@ impl TestHome {
         .unwrap();
     }
 
-    /// Stores an office as if a server had created it.
+    /// Stores an office as if the host had created it: its `office.json`, and a key in the key
+    /// folder (unless it has one).
     pub fn write_office(&self, office: &OfficeFile) {
         let dir = self.office_dir(&office.office_id);
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("office.json"), office.to_vec().unwrap()).unwrap();
+        if !self.has_key(&office.office_id) {
+            self.write_key(&office.office_id);
+        }
+    }
+
+    fn key_path(&self, office_id: &str) -> PathBuf {
+        self.keys_dir().join(format!("{office_id}.key"))
+    }
+
+    /// Writes a new random key for `office_id` in the development store's format (64 hex
+    /// digits, owner-only), replacing any.
+    pub fn write_key(&self, office_id: &str) {
+        let mut bytes = [0u8; 32];
+        fs::File::open("/dev/urandom")
+            .unwrap()
+            .read_exact(&mut bytes)
+            .unwrap();
+        let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+        self.write_key_text(office_id, &hex);
+    }
+
+    /// Writes `text` as `office_id`'s key file, replacing any (e.g. one that isn't a key).
+    pub fn write_key_text(&self, office_id: &str, text: &str) {
+        std::os::unix::fs::DirBuilderExt::mode(fs::DirBuilder::new().recursive(true), 0o700)
+            .create(self.keys_dir())
+            .unwrap();
+        let _ = fs::remove_file(self.key_path(office_id));
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(self.key_path(office_id))
+            .unwrap()
+            .write_all(text.as_bytes())
+            .unwrap();
+    }
+
+    pub fn remove_key(&self, office_id: &str) {
+        fs::remove_file(self.key_path(office_id)).unwrap();
+    }
+
+    pub fn has_key(&self, office_id: &str) -> bool {
+        self.key_path(office_id).exists()
+    }
+
+    /// The raw text of `office_id`'s key file.
+    pub fn key_text(&self, office_id: &str) -> Option<String> {
+        fs::read_to_string(self.key_path(office_id)).ok()
+    }
+
+    /// The fingerprint of `office_id`'s stored key, as the fake records the keys it gets.
+    pub fn stored_key_fingerprint(&self, office_id: &str) -> Option<String> {
+        self.key_text(office_id)
+            .map(|hex| fingerprint_hex(hex.trim()))
+    }
+
+    /// The office ids that have a key in the key folder.
+    pub fn key_ids(&self) -> Vec<String> {
+        let mut ids: Vec<String> = fs::read_dir(self.keys_dir())
+            .map(|entries| {
+                entries
+                    .map(|e| e.unwrap().file_name().into_string().unwrap())
+                    .filter_map(|name| name.strip_suffix(".key").map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default();
+        ids.sort();
+        ids
     }
 
     pub fn office_dir(&self, office_id: &str) -> PathBuf {
@@ -165,6 +246,24 @@ impl TestHome {
         self.log_fields("token", key)
             .iter()
             .map(|f| f[3].clone())
+            .collect()
+    }
+
+    /// The fingerprints of the database keys the fake's runs for `key` ("create" or an office
+    /// id) got, in order (`null` for none).
+    pub fn db_key_fingerprints(&self, key: &str) -> Vec<String> {
+        self.log_fields("dbkey", key)
+            .iter()
+            .map(|f| f[3].clone())
+            .collect()
+    }
+
+    /// The `--discard` runs that read their first line, in order: the office id and the
+    /// fingerprint of the key the line carried (`null` for none).
+    pub fn discard_keys(&self) -> Vec<(String, String)> {
+        self.log_fields("dbkey", "discard")
+            .iter()
+            .map(|f| (f[4].clone(), f[3].clone()))
             .collect()
     }
 
@@ -261,6 +360,47 @@ impl TestHome {
             );
         }
     }
+
+    /// Asserts no secret (an app token or a database key: 64 lowercase hex digits in a row) is
+    /// in any file in the office home (its logs, the offices' folders, `.refused/`, the fake's
+    /// files), and no stored key's hex is either: keys live only in the key folder, outside the
+    /// home. Also checks the logs as [`TestHome::assert_no_token_in_logs`] does.
+    pub fn assert_no_secret_in_home(&self) {
+        self.assert_no_token_in_logs();
+        let keys: Vec<String> = self
+            .key_ids()
+            .iter()
+            .filter_map(|id| self.key_text(id))
+            .map(|hex| hex.trim().to_lowercase())
+            .collect();
+        let mut folders = vec![self.path()];
+        while let Some(folder) = folders.pop() {
+            let Ok(entries) = fs::read_dir(&folder) else {
+                continue;
+            };
+            for entry in entries {
+                let path = entry.unwrap().path();
+                let meta = fs::symlink_metadata(&path).unwrap();
+                if meta.is_dir() {
+                    folders.push(path);
+                } else if meta.is_file() {
+                    let text = String::from_utf8_lossy(&fs::read(&path).unwrap()).into_owned();
+                    assert!(
+                        !has_hex_run(&text, 64),
+                        "{} holds 64 hex digits in a row",
+                        path.display()
+                    );
+                    for key in &keys {
+                        assert!(
+                            !text.contains(key.as_str()),
+                            "{} holds a key",
+                            path.display()
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Whether `text` has `len` or more lowercase hex digits in a row.
@@ -283,7 +423,12 @@ pub fn has_hex_run(text: &str, len: usize) -> bool {
 /// test can match a token the host hands out with the one a server got.
 pub fn fingerprint(token: &org_proto::AppToken) -> String {
     let json = serde_json::to_string(token).unwrap();
-    let hex = json.trim_matches('"');
+    fingerprint_hex(json.trim_matches('"'))
+}
+
+/// The fingerprint of a secret given as 64 hex digits (see [`fingerprint`]).
+pub fn fingerprint_hex(hex: &str) -> String {
+    let hex = hex.to_lowercase();
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for i in (0..hex.len()).step_by(2) {
         let byte = u8::from_str_radix(&hex[i..i + 2], 16).unwrap();

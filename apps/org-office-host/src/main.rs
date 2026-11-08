@@ -15,6 +15,11 @@
 //! the host is compiled), never read from the command line, a config file or the environment at
 //! run time. If it doesn't exist when the host starts, the fallback is off (logged). Release
 //! builds have no such path.
+//!
+//! A debug build keeps the offices' database keys as files in the folder `ORG_OFFICE_DEV_KEY_DIR`
+//! names, never in the Keychain, and refuses to start without it. Release builds ignore the
+//! variable: they use the Keychain access group they were compiled with
+//! (`ORG_HOST_KEYCHAIN_GROUP`). The host never passes the variable on to its servers.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -66,6 +71,14 @@ fn run() -> Result<(), String> {
     #[cfg(debug_assertions)]
     {
         config.dev_app_path = option_env!("ORG_DEV_APP_PATH").map(PathBuf::from);
+        // The development key folder, resolved against our working directory.
+        config.dev_key_dir = match std::env::var_os("ORG_OFFICE_DEV_KEY_DIR") {
+            Some(dir) if !dir.is_empty() => Some(
+                std::path::absolute(&dir)
+                    .map_err(|e| format!("resolving ORG_OFFICE_DEV_KEY_DIR: {e}"))?,
+            ),
+            _ => None,
+        };
     }
     let host = Host::start(config).map_err(|e| e.to_string())?;
     let waited = signals.wait();

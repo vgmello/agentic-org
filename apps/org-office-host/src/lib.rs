@@ -12,10 +12,13 @@
 //! a valid `office.json` (`catalog`). It talks to its servers only through
 //! `org-office-launch`, and never depends on `org-office` (no SQLCipher in the login service).
 //!
+//! It holds every office's database key (`keys`): it creates each one, keeps it in its key store
+//! (the Data Protection keychain in release builds, a development folder in debug builds) and
+//! hands it to the office's server on the launch pipe. Its servers never touch a key store.
+//!
 //! `main.rs` only parses arguments, waits for a shutdown signal and calls [`Host`].
 
 mod app_auth;
-mod app_token;
 mod broadcast;
 mod catalog;
 mod clock;
@@ -24,9 +27,11 @@ mod error;
 mod home;
 mod host_log;
 mod ids;
+mod keys;
 mod logs;
 mod offices;
 mod peer;
+mod secrets;
 mod service;
 pub mod signals;
 mod supervisor;
@@ -85,6 +90,13 @@ pub struct Config {
     /// logged and the fallback stays off. Every use is logged.
     #[cfg(debug_assertions)]
     pub dev_app_path: Option<PathBuf>,
+    /// Debug builds only (release builds don't have the field): the folder (absolute) where the
+    /// host keeps the offices' database keys, as plain files, instead of the Keychain. A debug
+    /// host without it refuses to start ([`HostError::NoDevKeyDir`]), so it never writes a real
+    /// Keychain item. The binary takes it from `ORG_OFFICE_DEV_KEY_DIR`; tests set it directly.
+    /// It must not be inside the office home, and two homes must not share one.
+    #[cfg(debug_assertions)]
+    pub dev_key_dir: Option<PathBuf>,
 }
 
 impl Config {
@@ -100,6 +112,8 @@ impl Config {
             app_team_id: None,
             #[cfg(debug_assertions)]
             dev_app_path: None,
+            #[cfg(debug_assertions)]
+            dev_key_dir: None,
         }
     }
 }
@@ -122,10 +136,10 @@ pub struct Host {
 }
 
 impl Host {
-    /// Starts the host: checks the socket paths fit, makes the office home owner-only, takes
-    /// `host.lock`, binds `host.sock`, starts a server for every office in the catalog, has the
-    /// unfinished office folders discarded in the background, and serves `host.sock` at once
-    /// (only `organization.create` waits for the discards).
+    /// Starts the host: chooses its key store, checks the socket paths fit, makes the office
+    /// home owner-only, takes `host.lock`, binds `host.sock`, starts a server for every office in
+    /// the catalog, has the unfinished office folders discarded in the background, and serves
+    /// `host.sock` at once (only `organization.create` waits for the discards).
     pub fn start(config: Config) -> Result<Self, HostError> {
         if !config.home.is_absolute() {
             return Err(HostError::RelativeHome { path: config.home });
@@ -140,6 +154,8 @@ impl Host {
         for line in app.describe() {
             host_log::log(&line);
         }
+        // Before anything is made on disk or started: no office runs without its key store.
+        let keys = keys::store_for(&config)?;
         let layout = Layout::new(&config.home);
         layout.check_socket_paths()?;
         layout.prepare()?;
@@ -166,6 +182,7 @@ impl Host {
             logs_dir: layout.logs.clone(),
             log_max_bytes: config.log_max_bytes,
             timings: config.timings.clone(),
+            keys,
         });
         let broadcast = Arc::new(Broadcast::default());
         let offices = Offices::start(

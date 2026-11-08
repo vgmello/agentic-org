@@ -3,6 +3,10 @@
 //!
 //! The tests never see a token: the fake records a fingerprint of each one it gets.
 
+// Every host here keeps its offices' keys in a development key folder, which only debug builds
+// have (a release host uses the Keychain, which tests never touch): debug builds only.
+#![cfg(debug_assertions)]
+
 mod support;
 
 use std::thread;
@@ -11,7 +15,7 @@ use std::time::Duration;
 use org_office_host::Host;
 use org_office_launch::{write_host_message, CreateOffice, HostMessage, StartOffice};
 use org_proto::{
-    AppToken, Empty, ErrorCode, OfficeList, OfficeRole, OfficeStatus, OrganizationCreate,
+    AppToken, DbKey, Empty, ErrorCode, OfficeList, OfficeRole, OfficeStatus, OrganizationCreate,
     OrganizationCreateParams,
 };
 use serde_json::json;
@@ -78,7 +82,7 @@ fn every_start_gets_its_office_token_and_restarts_reuse_it() {
     assert!(logs
         .iter()
         .any(|(path, text)| path.ends_with(format!("{handle}.log")) && text.contains(&a[0])));
-    home.assert_no_token_in_logs();
+    home.assert_no_secret_in_home();
     host.shutdown();
 }
 
@@ -97,7 +101,7 @@ fn a_host_restart_makes_new_tokens() {
         a[0], a[1],
         "the second host run reused the first run's token"
     );
-    home.assert_no_token_in_logs();
+    home.assert_no_secret_in_home();
 }
 
 #[test]
@@ -140,7 +144,7 @@ fn a_created_office_keeps_its_token_when_it_restarts() {
     assert_eq!(fingerprints.len(), 2);
     assert_ne!(fingerprints[0], fingerprints[1]);
     wait_for(&host, &other.offices[0].id, OfficeStatus::Active);
-    home.assert_no_token_in_logs();
+    home.assert_no_secret_in_home();
     host.shutdown();
 }
 
@@ -153,6 +157,7 @@ fn a_malformed_or_wrong_first_line_makes_the_office_unavailable() {
         office_name: "HQ".into(),
         role: OfficeRole::Hq,
         app_token: AppToken::from_bytes([7; 32]),
+        db_key: DbKey::from_bytes([8; 32]),
     }));
     let cases = [
         (
@@ -161,7 +166,7 @@ fn a_malformed_or_wrong_first_line_makes_the_office_unavailable() {
         ),
         (
             "unknown-op",
-            r#"printf '{"v":1,"op":"stop"}\n' | "$FAKE" "$@""#.to_owned(),
+            r#"printf '{"v":2,"op":"stop"}\n' | "$FAKE" "$@""#.to_owned(),
         ),
         (
             "create-op",
@@ -208,6 +213,7 @@ fn a_server_whose_stdin_closes_before_its_first_line_exits_and_is_restarted() {
 fn a_create_whose_first_line_is_a_start_line_fails() {
     let start = line(&HostMessage::Start(StartOffice {
         app_token: AppToken::from_bytes([7; 32]),
+        db_key: DbKey::from_bytes([8; 32]),
     }));
     let home = TestHome::new();
     let mut config = home.config();

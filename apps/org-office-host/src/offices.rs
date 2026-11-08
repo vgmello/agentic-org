@@ -28,14 +28,15 @@ use org_proto::{
     OrganizationName,
 };
 
-use crate::app_token;
 use crate::broadcast::Broadcast;
 use crate::catalog::{self, Catalog, CreatePlan, OrganizationEntry, PlanError};
 use crate::clock;
 use crate::host_log;
 use crate::ids;
+use crate::secrets;
 use crate::supervisor::{
-    CreateOutcome, DiscardOutcome, OfficeState, RestartOutcome, StatusObserver, Supervisor,
+    CreateOutcome, CreateStartError, DiscardOutcome, OfficeState, RestartOutcome, StatusObserver,
+    Supervisor,
 };
 use crate::sync::lock;
 use crate::timings::Timings;
@@ -310,12 +311,15 @@ impl Offices {
             .collect()
     }
 
-    /// `organization.create`: makes the organization and its HQ office, and leaves the HQ's
-    /// server running under supervision. On failure the unfinished office is discarded (except
-    /// after `already_exists`, which isn't ours); a created office other than the one asked for
-    /// is refused and moved aside (`move_refused`). The error never holds a path. On success,
-    /// `respond` queues the answer, inside the critical section that adds the organization (see
-    /// [`Offices::add_created`]).
+    /// `organization.create`: makes the organization and its HQ office (with a new database key,
+    /// stored before its server starts), and leaves the HQ's server running under supervision.
+    /// On failure the unfinished office is discarded with its key, and the key is deleted only
+    /// once the discard reports `discarded` (a discard that fails is tried again at the next
+    /// start, which finds the folder). After `already_exists` (a folder that isn't ours) nothing
+    /// is discarded and the key is kept. A created office other than the one asked for is refused
+    /// and moved aside (`move_refused`), keeping its key. The error never holds a path. On
+    /// success, `respond` queues the answer, inside the critical section that adds the
+    /// organization (see [`Offices::add_created`]).
     pub(crate) fn create_organization(
         &self,
         raw_name: &str,
@@ -347,12 +351,28 @@ impl Offices {
             home: &self.home,
             office_id: &plan.office_id,
         };
-        let pending = create_message(&plan)
-            .and_then(|create| self.supervisor.begin_create(create))
-            .map_err(|e| {
-                host_log::log(&format!("couldn't start an office server: {e}"));
-                storage_error()
-            })?;
+        let create = create_message(&plan).map_err(|e| {
+            host_log::log(&format!("couldn't make the new office's secrets: {e}"));
+            storage_error()
+        })?;
+        let pending = match self.supervisor.begin_create(create) {
+            Ok(pending) => pending,
+            Err(e) => {
+                host_log::log(&format!(
+                    "couldn't start the server of new office {}: {e}",
+                    plan.office_id
+                ));
+                if let CreateStartError::KeyStored(_) = e {
+                    // Its key is stored: discarded like any unfinished create, so it's deleted
+                    // only after `discarded` (a folderless office is reported discarded at once).
+                    // If the discard can't start either, the key stays and, with no folder, the
+                    // next start's scan never finds it: an orphan until the (deferred) orphan-key
+                    // sweep.
+                    self.clean_up(&plan.office_id);
+                }
+                return Err(storage_error());
+            }
+        };
         match pending.wait(self.create_timeout) {
             CreateOutcome::Created(adoptable) => {
                 if !matches_plan(&adoptable.office, &plan) {
@@ -376,7 +396,9 @@ impl Offices {
                 self.add_created(&office, respond);
                 Ok(())
             }
-            // The folder existed before this create, so it isn't ours to discard.
+            // The folder existed before this create, so it isn't ours to discard. The new key
+            // stays: keys are deleted only after `discarded` (the next start discards the folder
+            // with it, if it is unfinished).
             CreateOutcome::Failed(FailCode::AlreadyExists) => Err(already_exists()),
             // A server that failed after storing the office still made it: the same as one that
             // ended without reporting.
@@ -570,7 +592,7 @@ fn unsupervised() -> OfficeState {
 }
 
 /// Moves an office folder the host refuses to `offices/.refused/`, out of the catalog's sight,
-/// and never discards it, so any Keychain key its office made stays (accepted; logged). `why`
+/// and never discards it, so its key stays in the host's key store (accepted; logged). `why`
 /// is for the log. Used at startup for a folder holding another office's `office.json`, and for
 /// a refused create (its server already stopped): the requested office's folder. Nothing of
 /// another office id that server reported is touched:
@@ -582,8 +604,8 @@ fn unsupervised() -> OfficeState {
 fn move_refused(home: &Path, office_id: &str, why: &str) {
     match catalog::move_refused(home, office_id) {
         Ok(moved) => host_log::log(&format!(
-            "moved office folder {office_id} to offices/{}/{} ({why}); any Keychain key its \
-             office made stays",
+            "moved office folder {office_id} to offices/{}/{} ({why}); its key stays in the \
+             host's key store",
             catalog::REFUSED_DIR_NAME,
             moved.file_name().unwrap_or_default().to_string_lossy()
         )),
@@ -593,12 +615,14 @@ fn move_refused(home: &Path, office_id: &str, why: &str) {
     }
 }
 
-/// The one cleanup of an unfinished create, at startup and after a failed create: the server
-/// itself discards it (`--discard`), because only it can delete a Keychain key the create may
-/// have left. A folder holding `office.json` is never discarded. A failure is logged, not
-/// retried: the next host start tries again, once. `already_exists` (an organization committed
-/// in the folder's databases) and `storage_error` (databases the server can't open or check)
-/// mean the folder may be a real office that lost its `office.json`: it is left for a person.
+/// The one cleanup of an unfinished create, at startup and after a failed create: a server
+/// discards it (`--discard`, with the office's key, or `null` when the host has none), because
+/// only a server can open its databases to check that no organization was committed. Its key
+/// is deleted only after `discarded` (see `Supervisor::discard`). A folder holding
+/// `office.json` is never discarded. A failure is logged, not retried: the next host start
+/// tries again, once, with the key it kept. `already_exists` (an organization committed in the
+/// folder's databases) and `storage_error` (databases the server can't open or check) mean the
+/// folder may be a real office that lost its `office.json`: it is left for a person, with its key.
 pub(crate) fn discard_unfinished(home: &Path, supervisor: &Supervisor, office_id: &str) {
     if catalog::is_stored(home, office_id) {
         host_log::log(&format!("kept office {office_id}: it is stored"));
@@ -608,6 +632,10 @@ pub(crate) fn discard_unfinished(home: &Path, supervisor: &Supervisor, office_id
         Ok(DiscardOutcome::Discarded) => {
             host_log::log(&format!("discarded unfinished office {office_id}"));
         }
+        Ok(DiscardOutcome::KeyUnreadable) => host_log::log(&format!(
+            "kept unfinished office {office_id}: its key couldn't be read; the next start tries \
+             again"
+        )),
         Ok(DiscardOutcome::Failed(code @ (FailCode::AlreadyExists | FailCode::StorageError))) => {
             host_log::log(&format!(
                 "kept unfinished office {office_id}: its server refused to discard it ({code:?}): \
@@ -623,7 +651,8 @@ pub(crate) fn discard_unfinished(home: &Path, supervisor: &Supervisor, office_id
     }
 }
 
-/// The create message for `plan`, with a fresh app token (the office's for this host run).
+/// The create message for `plan`, with a fresh app token (the office's for this host run) and a
+/// fresh database key (the office's for good, stored before its server starts).
 fn create_message(plan: &CreatePlan) -> io::Result<CreateOffice> {
     Ok(CreateOffice {
         org_id: plan.org_id.clone(),
@@ -631,7 +660,8 @@ fn create_message(plan: &CreatePlan) -> io::Result<CreateOffice> {
         office_id: plan.office_id.clone(),
         office_name: plan.office_name.clone(),
         role: plan.role,
-        app_token: app_token::generate()?,
+        app_token: secrets::generate_app_token()?,
+        db_key: secrets::generate_db_key()?,
     })
 }
 
@@ -703,6 +733,7 @@ fn storage_error() -> ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keys::memory::MemoryKeys;
     use crate::supervisor::SupervisorConfig;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
@@ -726,6 +757,7 @@ mod tests {
             logs_dir: home.join("logs"),
             log_max_bytes: 1024,
             timings: Timings::default(),
+            keys: Arc::new(MemoryKeys::default()),
         });
         for (id, stored) in [("STORED", true), ("UNFINISHED", false)] {
             let folder = home.join("offices").join(id);
@@ -761,6 +793,7 @@ mod tests {
             logs_dir: home.join("logs"),
             log_max_bytes: 1024,
             timings: Timings::default(),
+            keys: Arc::new(MemoryKeys::default()),
         });
         if stopped {
             supervisor.shutdown();

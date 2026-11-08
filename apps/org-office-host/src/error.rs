@@ -19,6 +19,13 @@ pub enum HostError {
     SocketInTheWay { path: PathBuf },
     /// The app's identity (bundle id, team id, development path) isn't well formed.
     InvalidAppIdentity { why: String },
+    /// A debug build has no usable development key folder (`Config::dev_key_dir`, an absolute
+    /// path outside the office home), so it has nowhere to keep the offices' keys. Debug builds
+    /// never use the Keychain.
+    NoDevKeyDir,
+    /// A release build was compiled without its Keychain access group
+    /// (`ORG_HOST_KEYCHAIN_GROUP`), so it has nowhere to keep the offices' keys.
+    NoKeychainGroup,
     Io {
         context: &'static str,
         source: io::Error,
@@ -58,6 +65,16 @@ impl fmt::Display for HostError {
                 path.display()
             ),
             HostError::InvalidAppIdentity { why } => write!(f, "{why}"),
+            HostError::NoDevKeyDir => f.write_str(
+                "a debug build keeps the offices' keys in a development folder, and none was \
+                 given: set ORG_OFFICE_DEV_KEY_DIR to an absolute path outside the office home \
+                 (debug builds never use the Keychain)",
+            ),
+            HostError::NoKeychainGroup => f.write_str(
+                "this build has no Keychain access group for the offices' keys: build it with \
+                 ORG_HOST_KEYCHAIN_GROUP set to the group in its keychain-access-groups \
+                 entitlement",
+            ),
             HostError::Io { context, source } => write!(f, "{context}: {source}"),
         }
     }
