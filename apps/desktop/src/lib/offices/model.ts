@@ -34,16 +34,19 @@ export type DisplayStatus = OfficeStatus | 'unreachable' | 'checking' | 'status_
 
 /**
  * The status to show for an office. The saved status is never shown as if it were live: the office this app is
- * connected to is Online only while the connection is verified, and any other office reads "Status unknown".
+ * connected to is Online only while the connection is verified AND the host reports it active (the host answering is
+ * not enough: a stopped office under a running host must not read Online, OFC-12). If it answers but reports another
+ * status (Starting, Stopped…), that status is shown. Any other office reads "Status unknown".
  */
-export function displayStatus(connected: boolean, check: LiveCheck): DisplayStatus {
+export function displayStatus(connected: boolean, check: LiveCheck, reported?: OfficeStatus): DisplayStatus {
 	if (!connected) return 'status_unknown';
-	return check === 'up' ? 'active' : check === 'down' ? 'unreachable' : 'checking';
+	if (check === 'up') return reported && reported !== 'active' ? reported : 'active';
+	return check === 'down' ? 'unreachable' : 'checking';
 }
 
 /** `displayStatus` for an office in a list: connected means it is the office the app is connected to. */
-export const displayStatusFor = (officeId: string, connectedOfficeId: string, check: LiveCheck): DisplayStatus =>
-	displayStatus(officeId === connectedOfficeId, check);
+export const displayStatusFor = (officeId: string, connectedOfficeId: string, check: LiveCheck, reported?: OfficeStatus): DisplayStatus =>
+	displayStatus(officeId === connectedOfficeId, check, reported);
 
 /** The owner-facing word for an office's status, with its icon family and tone (spec §3.1). */
 export function statusInfo(status: DisplayStatus | undefined): { label: string; tone: 'ok' | 'info' | 'muted' | 'warn' | 'bad' } {

@@ -18,6 +18,7 @@
 	const here = $derived(data.connection.office);
 	// The agent counts arrive after the list: `undefined` while they are being counted.
 	let counts = $state<Counts | undefined>();
+	let organizationOfCounts = '';
 	let retrying = $state(false);
 	// True from the first failure until the office answers again: the Retry button stays while it works.
 	let retryingProbe = $state(false);
@@ -27,6 +28,11 @@
 	});
 	$effect(() => {
 		const pending = data.counts;
+		// The last answer stays only within one organization: a new one starts uncounted (no old agents under Unplaced).
+		if (organizationOfCounts !== data.connection.organization.id) {
+			organizationOfCounts = data.connection.organization.id;
+			counts = undefined;
+		}
 		// The last answer stays until the next arrives, so Retry (and its focus) isn't removed while it works.
 		pending.then((r) => {
 			if (pending !== data.counts) return;
@@ -68,7 +74,7 @@
 		}
 		lastOffice = id;
 	});
-	const statusOf = (officeId: string) => displayStatusFor(officeId, here.id, check);
+	const statusOf = (officeId: string) => displayStatusFor(officeId, here.id, check, data.offices.find((o) => o.id === officeId)?.status);
 
 	let detailsId = $state<string | undefined>();
 	// The open sheet shows the latest data for its office, not the copy captured when it was clicked.
