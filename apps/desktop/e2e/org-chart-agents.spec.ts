@@ -340,8 +340,8 @@ test('LIVE-7: when live updates stop the shell says so with the time shown, and 
 	await expect(page.getByTestId('live-paused')).toHaveCount(0);
 	await live(false);
 	const banner = page.getByTestId('live-paused');
-	await expect(banner).toContainText('Live updates paused.');
-	await expect(banner).toContainText(/Showing what was loaded at \d{1,2}:\d{2}/);
+	await expect(banner).toContainText('Live updates paused. Showing');
+	await expect(banner).toContainText(/Showing what was loaded at \d{2}:\d{2}\./);
 	await shot(page, 'live-paused');
 	await banner.getByRole('button', { name: 'Retry' }).click();
 	await expect(banner.getByRole('button', { name: 'Retrying…' })).toBeDisabled();
