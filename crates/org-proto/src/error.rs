@@ -70,8 +70,8 @@ pub enum ErrorCode {
     /// signature failed for `office.app_token` or `office.restart`, an app-only command
     /// (`member.set_run_mode`, `project.create`, `work.delete`) arrived on a connection that is
     /// not the app's, `msg.bind` refused a member or a credential (it fails closed), or
-    /// `org.snapshot` came on a connection that isn't bound (ADR-0003 §2.1.4; unlike `who`,
-    /// which answers that with `not_bound`).
+    /// `org.snapshot` or `subscribe` came on a connection that isn't bound (ADR-0003 §2.1.4;
+    /// unlike `who`, which answers that with `not_bound`).
     NotAuthorized,
     /// What was asked for exists but can't serve now, e.g. the office isn't running, so there's
     /// no app token to hand out. Trying again later may work. For `office.restart`, though, it
@@ -95,8 +95,8 @@ pub enum ErrorCode {
     /// app bound as the owner or a person), the bound member was moved out of this office or
     /// removed, or the connection is bound app-wide and the call acts as a member. Also ends
     /// held `msg.wait` and `msg.ask` calls when the connection re-binds. Every work call
-    /// ([`crate::work`]) needs a bound connection. (`org.snapshot` on an unbound connection is
-    /// `not_authorized` instead.) Never stored as a write's answer: a retry may succeed.
+    /// ([`crate::work`]) needs a bound connection. (`org.snapshot` and `subscribe` on an
+    /// unbound connection are `not_authorized` instead.) Never stored as a write's answer: a retry may succeed.
     NotBound,
     /// `task.set_status { done }` (or a bug's mark-fixed) while required checklist steps are
     /// unticked and no `anyway_reason` is given; the message names the steps. Clients branch on
