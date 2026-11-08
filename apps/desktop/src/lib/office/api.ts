@@ -5,7 +5,8 @@ import {
 	type Connection,
 	type HelloResult,
 	type LoginState,
-	type Organization
+	type Organization,
+	type StatusUpdate
 } from '$lib/proto';
 import { mockOffice } from './mock';
 import { tauriOffice } from './tauri';
@@ -37,6 +38,8 @@ export interface OfficeApi {
 	setLoginItem(enabled: boolean): Promise<LoginState>;
 	/** Open System Settings at Login Items, where the owner approves it. */
 	openLoginSettings(): Promise<void>;
+	/** Be told when an office's status changes (the host's `office.status_changed`). Resolves to the function that stops listening. */
+	onOfficeStatus(listener: (update: StatusUpdate) => void): Promise<() => void>;
 }
 
 /** Normalize anything thrown by a call into an `AppError`. */

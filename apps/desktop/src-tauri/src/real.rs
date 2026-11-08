@@ -3,12 +3,13 @@
 //!
 //! Setup: `ensure_running` says `hello` to the host; when nothing is listening it turns the host's login service
 //! on (see `login_item`) and waits for it to come up, or says what the owner has to do (allow it in System
-//! Settings). `ping` never does any of that. The mock office stays the default until the host is bundled
-//! (`AGENTIC_ORG_OFFICE=real` picks this one).
+//! Settings). `ping` never does any of that. This is the app's default office; `AGENTIC_ORG_OFFICE=mock`
+//! picks the invented one instead.
 
 use crate::login_item::{LoginService, LoginState};
-use crate::office::{OfficeConnection, SetupError, SetupErrorCode};
+use crate::office::{OfficeConnection, SetupError, SetupErrorCode, StatusSink};
 use crate::org_command::OrgCommand;
+use crate::status_feed;
 use org_client::{Client, ClientError};
 use org_proto::org::{
     AreaCreate, AreaRename, AreaSetLead, AreaSetTeam, MemberAddAgent, MemberAddPerson, MemberMove,
@@ -23,6 +24,7 @@ use org_proto::{
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -532,6 +534,15 @@ impl OfficeConnection for RealOffice {
 
     fn serves_sample_data(&self) -> bool {
         false
+    }
+
+    fn follow_status(&self, sink: StatusSink) {
+        let home = self.home.clone();
+        std::thread::spawn(move || {
+            // The app never stops following: the thread ends with the process.
+            let never = AtomicBool::new(false);
+            status_feed::follow(&home, &never, &*sink);
+        });
     }
 }
 

@@ -115,7 +115,7 @@ test('RUN-1: How it runs changes the mode; a scheduled agent needs a schedule; n
 	await expect(dialog.getByRole('radio', { name: /^On call/ })).toBeChecked();
 	await expect(dialog.getByTestId('run-limits')).toContainText('back to sleep after 5 minutes');
 	await dialog.getByRole('radio', { name: /^Always on/ }).check();
-	await expect(dialog.getByTestId('run-limits')).toHaveText('A run stops after 30 minutes of work at home, or 2 hours on a task.');
+	await expect(dialog.getByTestId('run-limits')).toHaveText('Defaults for all agents: a run stops after 30 minutes of work in its home, or 2 hours on a task.');
 	await dialog.getByRole('radio', { name: /^Scheduled/ }).check();
 	await expect(dialog.getByTestId('run-limits')).toContainText('back to sleep after 5 minutes');
 	await expect(dialog.getByRole('button', { name: 'Save' })).toBeDisabled(); // a schedule is needed

@@ -44,6 +44,12 @@ export interface OfficeInfo {
 	next_restart_at?: string;
 }
 
+/**
+ * What the shell's live status feed sends (`office-status`): the whole list of this Mac's offices (when the feed
+ * starts and after it reconnects), or one office's updated record (`office.status_changed`).
+ */
+export type StatusUpdate = { kind: 'offices'; offices: OfficeInfo[] } | { kind: 'office'; office: OfficeInfo };
+
 /** Set when an office server answers `hello`. */
 export interface OfficeHello {
 	organization_name: string;

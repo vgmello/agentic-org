@@ -14,6 +14,7 @@ mod org_command;
 mod org_engine;
 mod org_mock;
 mod real;
+mod status_feed;
 pub mod stdio;
 mod tray;
 mod work_engine;
@@ -26,7 +27,7 @@ use org_proto::{ApiError, CommandAccepted, HelloResult, OfficeStatus, OrgSnapsho
 use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 /// What the shell holds for the UI commands.
 struct AppState {
@@ -577,26 +578,27 @@ async fn connections_list(
     blocking(move || state.connections()).await
 }
 
-/// Which office the app talks to: the real one (the host and HQ office sockets, through `org-client`) when
-/// `AGENTIC_ORG_OFFICE=real` and there is an office home to look in, otherwise the mock. Until the host is bundled
-/// and started by the app, the mock is the default.
+/// Which office the app talks to: the real one (the host and HQ office sockets, through `org-client`) unless
+/// `AGENTIC_ORG_OFFICE=mock` asks for the invented one (development, screenshots). With no office home to look in
+/// there is no real office to reach, so the mock stands in (its data is flagged as sample data).
 fn choose_office(
     data: &std::path::Path,
     choice: Option<&str>,
     real: Option<real::RealOffice>,
 ) -> (Arc<dyn OfficeConnection>, std::path::PathBuf) {
     match (choice, real) {
-        (Some("real"), Some(real)) => (Arc::new(real), data.join("real")),
-        (Some("real"), None) => {
-            eprintln!("AGENTIC_ORG_OFFICE=real, but there is no office folder to look in: using the mock office.");
-            let dir = data.join("mock");
-            (Arc::new(mock::MockOffice::from_env(dir.clone())), dir)
-        }
-        _ => {
-            let dir = data.join("mock");
-            (Arc::new(mock::MockOffice::from_env(dir.clone())), dir)
+        (Some("mock"), _) => mock_office(data),
+        (_, Some(real)) => (Arc::new(real), data.join("real")),
+        (_, None) => {
+            eprintln!("There is no office folder to look in: using the mock office.");
+            mock_office(data)
         }
     }
+}
+
+fn mock_office(data: &std::path::Path) -> (Arc<dyn OfficeConnection>, std::path::PathBuf) {
+    let dir = data.join("mock");
+    (Arc::new(mock::MockOffice::from_env(dir.clone())), dir)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -612,6 +614,11 @@ pub fn run() {
                 std::env::var("AGENTIC_ORG_OFFICE").ok().as_deref(),
                 real::RealOffice::from_env(&data),
             );
+            // Live office status goes to the UI as it changes (the mock has none).
+            let handle = app.handle().clone();
+            office.follow_status(Arc::new(move |update| {
+                let _ = handle.emit("office-status", &update);
+            }));
             app.manage(Arc::new(AppState {
                 office,
                 store: ConnectionStore::new(dir),
@@ -1320,7 +1327,7 @@ mod tests {
     }
 
     #[test]
-    fn the_mock_is_the_default_and_the_real_office_needs_asking_for_and_a_home() {
+    fn the_real_office_is_the_default_and_the_mock_needs_asking_for_or_no_home() {
         let data = std::env::temp_dir().join(format!("agentic-org-choose-{}", std::process::id()));
         let real = || {
             Some(real::RealOffice::new(
@@ -1329,20 +1336,25 @@ mod tests {
             ))
         };
         let (office, dir) = choose_office(&data, None, real());
-        assert!(office.serves_sample_data(), "the mock by default");
-        assert_eq!(dir, data.join("mock"));
-        let (office, dir) = choose_office(&data, Some("real"), real());
-        assert!(!office.serves_sample_data());
+        assert!(!office.serves_sample_data(), "the real office by default");
         assert_eq!(
             dir,
             data.join("real"),
             "its connections are kept apart from the mock's"
         );
-        let (office, dir) = choose_office(&data, Some("real"), None);
+        let (office, _) = choose_office(&data, Some("real"), real());
+        assert!(!office.serves_sample_data());
+        let (office, _) = choose_office(&data, Some("anything else"), real());
+        assert!(
+            !office.serves_sample_data(),
+            "only `mock` asks for the mock"
+        );
+        let (office, dir) = choose_office(&data, Some("mock"), real());
+        assert!(office.serves_sample_data());
+        assert_eq!(dir, data.join("mock"));
+        let (office, dir) = choose_office(&data, None, None);
         assert!(office.serves_sample_data(), "no office home: the mock");
         assert_eq!(dir, data.join("mock"));
-        let (office, _) = choose_office(&data, Some("mock"), real());
-        assert!(office.serves_sample_data());
         let _ = std::fs::remove_dir_all(&data);
     }
 }
