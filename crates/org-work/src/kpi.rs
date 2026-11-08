@@ -15,9 +15,12 @@
 //!   until sessions report it, and untracked time is never folded into idle: `working_ms` and
 //!   `idle_ms` stay absent and the rest holds both.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use org_proto::work::{ItemKind, ItemStatus, TimeFigures, WaitReason, WorkEvent, WorkEventKind};
+use org_proto::work::{
+    ItemKind, ItemStatus, Resolution, TimeFigures, VerifyOutcome, WaitReason, WorkEvent,
+    WorkEventKind,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::states::{is_terminal, starts_cycle};
@@ -52,6 +55,13 @@ pub struct TimeTally {
     rounds: u32,
     #[serde(default)]
     deleted: bool,
+    /// The last close was a duplicate's: a reopen then goes back to `new`, not `triaged`.
+    #[serde(default)]
+    closed_as_duplicate: bool,
+    /// The status before each automatic status change, by version, so an Undo of one puts the
+    /// status back.
+    #[serde(default)]
+    auto_from: BTreeMap<u64, ItemStatus>,
     last_at_ms: Option<u64>,
     /// The open waiting spans, keyed by `(on_member_id, reason)`.
     spans: BTreeSet<String>,
@@ -72,6 +82,8 @@ impl TimeTally {
             any_started: false,
             rounds: 0,
             deleted: false,
+            closed_as_duplicate: false,
+            auto_from: BTreeMap::new(),
             last_at_ms: None,
             spans: BTreeSet::new(),
             lead_ms: 0,
@@ -90,7 +102,7 @@ impl TimeTally {
             .max(last.unwrap_or(0));
         self.advance_to(at);
         self.last_at_ms = Some(at);
-        self.apply(&event.change);
+        self.apply(event);
     }
 
     /// The figures as of `as_of_ms` (an open round runs to it).
@@ -144,8 +156,35 @@ impl TimeTally {
             || (self.kind == ItemKind::Request && self.status == ItemStatus::Scoped)
     }
 
-    fn apply(&mut self, change: &WorkEventKind) {
-        match change {
+    /// Ends the round: spans still open stop counting here.
+    fn close_round(&mut self) {
+        self.in_round = false;
+        self.started = false;
+        self.spans.clear();
+    }
+
+    /// Starts the next round (a reopen).
+    fn open_round(&mut self) {
+        self.in_round = true;
+        self.rounds += 1;
+        self.started = false;
+    }
+
+    /// Takes `status`; entering the cycle's start status starts the round's cycle time.
+    fn enter(&mut self, status: ItemStatus) {
+        self.status = status;
+        if self.in_round && starts_cycle(self.kind, status) && !self.started {
+            self.started = true;
+            self.any_started = true;
+        }
+    }
+
+    fn reopenable(&self) -> bool {
+        !self.in_round && self.rounds > 0 && is_terminal(self.kind, self.status)
+    }
+
+    fn apply(&mut self, event: &WorkEvent) {
+        match &event.change {
             WorkEventKind::Created if self.rounds == 0 => {
                 self.in_round = true;
                 self.rounds = 1;
@@ -158,26 +197,50 @@ impl TimeTally {
                 self.spans.clear();
             }
             _ if self.deleted => {}
-            WorkEventKind::StatusChanged { to, .. } => {
+            WorkEventKind::StatusChanged {
+                from,
+                to,
+                resolution,
+                ..
+            } => {
                 let to = *to;
-                if self.in_round && is_terminal(self.kind, to) {
-                    // The round ends; spans still open stop counting here.
-                    self.in_round = false;
-                    self.started = false;
-                    self.spans.clear();
-                } else if !self.in_round
-                    && self.rounds > 0
-                    && is_terminal(self.kind, self.status)
-                    && !is_terminal(self.kind, to)
-                {
-                    self.in_round = true;
-                    self.rounds += 1;
-                    self.started = false;
+                if event.auto {
+                    self.auto_from.insert(event.version, *from);
                 }
-                self.status = to;
-                if self.in_round && starts_cycle(self.kind, to) && !self.started {
-                    self.started = true;
-                    self.any_started = true;
+                if self.in_round && is_terminal(self.kind, to) {
+                    self.close_round();
+                    self.closed_as_duplicate = *resolution == Some(Resolution::Duplicate);
+                } else if self.reopenable() && !is_terminal(self.kind, to) {
+                    self.open_round();
+                }
+                self.enter(to);
+            }
+            // A bug triaged, verified, or reopened (§1.10): none of them is a `StatusChanged`.
+            WorkEventKind::Triaged { .. } if self.in_round => self.enter(ItemStatus::Triaged),
+            WorkEventKind::Verified { outcome, .. } if self.in_round => match outcome {
+                VerifyOutcome::Fixed => {
+                    self.close_round();
+                    self.closed_as_duplicate = false;
+                    self.status = ItemStatus::Closed;
+                }
+                VerifyOutcome::StillHappens => self.enter(ItemStatus::Triaged),
+                // An outcome a newer build wrote: not guessed at.
+                _ => {}
+            },
+            WorkEventKind::Reopened { .. } if self.reopenable() => {
+                self.open_round();
+                let to = if self.closed_as_duplicate {
+                    ItemStatus::New
+                } else {
+                    ItemStatus::Triaged
+                };
+                self.enter(to);
+            }
+            // The Undo of an automatic status change puts the earlier status back. (A cycle it
+            // had started stays started.)
+            WorkEventKind::Undone { event_version } if self.in_round => {
+                if let Some(from) = self.auto_from.get(event_version) {
+                    self.status = *from;
                 }
             }
             WorkEventKind::WaitingStarted {

@@ -129,11 +129,23 @@ export function moveTargets(s: OrgSnapshot, team: Team): Team[] {
 export const addProjectTeam = (api: OrgSession, projectId: string, teamId: string) =>
 	api.command({ method: 'project.add_team', params: { project_team_id: newId(), project_id: projectId, team_id: teamId } });
 
-/** Take a team off a project, against the link's current version. A project left with no team is unassigned. */
-export async function removeProjectTeam(api: OrgSession, projectId: string, teamId: string): Promise<void> {
-	const link = ((await api.snapshot()).project_teams ?? []).find((l) => l.project_id === projectId && l.team_id === teamId);
+/**
+ * Take a team off a project, against the link's current version. A project left with no team is unassigned. Areas the
+ * team owned go to another of the project's teams (HQ needs to be told which): the first of the remaining teams, A–Z,
+ * until the owner is asked. Resolves with the team that took them over, if there was one.
+ */
+export async function removeProjectTeam(api: OrgSession, projectId: string, teamId: string): Promise<Team | undefined> {
+	const s = await api.snapshot();
+	const link = (s.project_teams ?? []).find((l) => l.project_id === projectId && l.team_id === teamId);
 	if (!link) throw { source: 'api', code: 'not_found', message: "That team isn't on the project any more." } satisfies AppError;
-	await api.command({ method: 'project.remove_team', params: { project_team_id: link.id, expected_version: link.version } });
+	const owns = (s.areas ?? []).some((a) => a.project_id === projectId && !a.deleted && a.team_id === teamId);
+	const takeover = owns
+		? s.teams
+				.filter((t) => t.id !== teamId && (s.project_teams ?? []).some((l) => l.project_id === projectId && l.team_id === t.id))
+				.sort((a, b) => a.name.localeCompare(b.name))[0]
+		: undefined;
+	await api.command({ method: 'project.remove_team', params: { project_team_id: link.id, expected_version: link.version, ...(takeover ? { areas_to_team_id: takeover.id } : {}) } });
+	return takeover;
 }
 
 export interface NewPersonInput {
