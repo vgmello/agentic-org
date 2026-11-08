@@ -34,6 +34,7 @@ test('DEAL-3: Pause confirms, then the agent shows Paused and Resume restores it
 	const dialog = page.getByRole('dialog', { name: 'Pause Noor Haddad?' });
 	await expect(dialog).toContainText("Noor Haddad won't be started or woken, and new tasks and messages wait until you resume.");
 	await expect(dialog).toContainText('Noor Haddad stays in Design, Web.');
+	await shot(page, 'pause-agent');
 	await dialog.getByRole('button', { name: 'Cancel' }).click();
 	await expect(strip(page).getByTestId('paused-badge')).toHaveCount(0); // nothing happened
 	await strip(page).getByRole('button', { name: 'Pause…' }).click();
@@ -42,6 +43,7 @@ test('DEAL-3: Pause confirms, then the agent shows Paused and Resume restores it
 	await expect(strip(page).getByTestId('paused-badge')).toBeVisible();
 	await expect(card(page, 'web').getByRole('button', { name: /^Noor Haddad, agent, paused/ })).toBeVisible();
 	await expect(card(page, 'web').getByTestId('paused-mark')).toHaveCount(1);
+	await shot(page, 'agent-paused');
 	await strip(page).getByRole('button', { name: 'Resume' }).click();
 	await expect(page.getByText('Resumed Noor Haddad.')).toBeVisible();
 	await expect(strip(page).getByTestId('paused-badge')).toHaveCount(0);
@@ -113,6 +115,7 @@ test('RUN-1: How it runs changes the mode; a scheduled agent needs a schedule; n
 	await expect(dialog.getByRole('radio', { name: /^On call/ })).toBeChecked();
 	await dialog.getByRole('radio', { name: /^Scheduled/ }).check();
 	await expect(dialog.getByRole('button', { name: 'Save' })).toBeDisabled(); // a schedule is needed
+	await shot(page, 'how-it-runs');
 	await dialog.getByLabel('When', { exact: true }).fill('weekdays at 9');
 	await dialog.getByLabel('Time zone', { exact: true }).fill('Europe/Lisbon');
 	await dialog.getByRole('button', { name: 'Save' }).click();
@@ -196,6 +199,7 @@ test('TEAM-11: Search members rings the matches and dims the rest, and the searc
 	await expect(page.getByLabel('Search members')).toHaveValue('designer'); // kept
 	await expect(page.getByTestId('search-status')).toContainText('2 matches');
 	await expect(page.getByRole('button', { name: /^Pax Moreau, agent, matches the search/ })).toBeVisible();
+	await shot(page, 'member-search');
 	await page.getByRole('button', { name: 'Clear' }).click();
 	await expect(page.getByLabel('Search members')).toHaveValue('');
 	await expect(page.getByTestId('search-status')).toHaveText('');
@@ -216,6 +220,7 @@ test('DEAL-5: Show paused hides paused agents from the chart and counts, and bri
 	await expect(page.getByText('Paused Noor Haddad.')).toBeVisible();
 	const toggle = page.getByLabel('Show paused');
 	await expect(toggle).toBeChecked();
+	await shot(page, 'show-paused-on');
 	await toggle.uncheck();
 	await expect(card(page, 'web').getByRole('button', { name: /^Noor Haddad/ })).toHaveCount(0);
 	await expect(page.getByText(/\b7\b.*agents/)).toBeVisible(); // 8 agents, one hidden
@@ -272,6 +277,7 @@ test('TEAM-10: arrow keys move between the member tiles, Home and End go to the 
 	await expect(tiles.nth(2)).toBeFocused();
 	await page.keyboard.press('ArrowLeft');
 	await expect(tiles.nth(1)).toBeFocused();
+	await shot(page, 'tile-keyboard-focus');
 	await page.keyboard.press('End');
 	await expect(tiles.nth(count - 1)).toBeFocused();
 	await page.keyboard.press('ArrowRight'); // the end stays the end
