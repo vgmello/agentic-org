@@ -24,9 +24,10 @@
 //!   Crockford base32 characters, the first `0` to `7`; `invalid_request` otherwise), and its
 //!   result is [`WorkAccepted`]. The owning office keeps `change_id → (params hash, result)` for
 //!   30 days: a retry with the same `change_id` and params gets the stored answer (refusals
-//!   included, except `storage_error`, `unavailable`, `not_bound`, `too_large`, `expired` and
-//!   `clock_skew`, which are never stored); the same `change_id` with other params is
-//!   `invalid_request` ("change id reused"). A `change_id` dated more than 29 days ago is
+//!   included, except `storage_error`, `unavailable`, `not_bound`, `not_authorized`,
+//!   `too_large`, a `change_id` that isn't a ULID, `expired` and `clock_skew`, which are never
+//!   stored); the same `change_id` with other params is `invalid_request` ("change id
+//!   reused"). A `change_id` dated more than 29 days ago is
 //!   `expired`, more than 5 minutes ahead of the office's clock `clock_skew`.
 //! - Client-made ids (`item_id`, `step_id`, `link_id`, `comment_id`, `task_id`, …) are ULIDs
 //!   (`invalid_request` otherwise) not already used (`already_exists`).
@@ -796,9 +797,9 @@ pub enum WorkEventKind {
         to: ItemStatus,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         resolution: Option<Resolution>,
-        /// The blocked reason, or another reason the move needed: free text, never an id. For
-        /// a bug (phase 2): the note of `bug.mark_fixed`, or the reason of a won't fix or
-        /// can't reproduce close.
+        /// The blocked reason, or another reason the move needed: free text, never an id (except
+        /// in events recorded before `duplicate_of` existed, below). For a bug (phase 2): the
+        /// note of `bug.mark_fixed`, or the reason of a won't fix or can't reproduce close.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
         /// Done (or Fixed) with required steps left.

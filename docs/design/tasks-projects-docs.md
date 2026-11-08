@@ -141,7 +141,7 @@ Derived, never stored: the **suggested triager** (the area lead, else the area t
 - `Project { id, key, name, description?, repo?: ProjectRepo, integration_branch?, archived, created_at?, version }` (`created_at` is absent only on records from before it existed)
   - `key`: 2–10 characters, lowercase ASCII letters and digits, starting with a letter; unique in the organization; never changes. Reserved: `req`, `feat`, `adr`, `eval`, `debt`, `lim`, `exc`.
   - `repo`: `ProjectRepo { host: local | github, default_branch, path? (local: the bare repository on HQ's Mac), github?: { owner, name, repo_id, private } }`. Never a token. The local path is visible organization-wide (like an agent's `home`).
-  - `integration_branch`: the branch the Docs tab reads (C13). Empty means the repository's default branch.
+  - `integration_branch`: the branch the Docs tab reads (C13). Empty means the repository's default branch. (amended 2026-11-08: proto follow-ups) It is also the branch task branches start from, the source of instructions, guidance and processes, and the test for "merged", and it may not start with `task/`, `docs/`, `merged/` or `archive/`: see [`processes.md`](processes.md), A56 to A58 and "Project rule".
   - `archived`: no new items in it; everything else still works.
 - `Area { id, project_id, name, team_id?, lead_member_id?, general: bool, deleted: bool, replaced_by?, version }`
   - `name`: 1–40 characters (organization-name rules), unique in its project among areas that aren't deleted, ignoring case.
@@ -591,7 +591,7 @@ pub enum WorkEventKind {
     StatusChanged { from: ItemStatus, to: ItemStatus, resolution: Option<Resolution>, reason: Option<String>,
                     anyway: Option<DoneAnyway>,     // Done or Fixed with required steps left
                     duplicate_of: Option<String> }, // (amended 2026-11-08: P2) a bug closed as a duplicate: the
-                                                    // original's id; absent otherwise. `reason` is free text, never an id.
+                                                    // original's id; absent otherwise. `reason` is free text, never an id (events from before have the id there).
                                                     // The reopen of a duplicate is `Reopened`; its item state has it cleared.
     Assigned { from: Option<String>, to: Option<String> },
     Triaged { area_id: String, severity: Severity, priority: Priority, assignee_id: Option<String> },
@@ -732,8 +732,8 @@ Same style as T1: params start with `command_id`, the result is `CommandAccepted
 
 | Command | Params (after `command_id`) | Errors | Phase |
 | --- | --- | --- | --- |
-| `project.create` | `project_id`, `name`, `key?` (absent: HQ derives one, §below), `description?`, `teams?: Vec<{ project_team_id, team_id }>`, `general_area_id`, `general_area_name?` (default "General"), `repo?: RepoSpec`, `integration_branch?` | `not_found` (a team), `invalid_request` (key format or reserved; limits; a repeated team; repo spec), `invalid_name` (name, area name), `already_exists` (an id; the key; the name, ignoring case) | P1 |
-| `project.update` | `project_id`, `expected_version`, `name?`, `description?`, `clear_description?`, `integration_branch?`, `clear_integration_branch?` | `not_found`, `invalid_request`, `invalid_name`, `conflict`, `already_exists` | P1 |
+| `project.create` | `project_id`, `name`, `key?` (absent: HQ derives one, §below), `description?`, `teams?: Vec<{ project_team_id, team_id }>`, `general_area_id`, `general_area_name?` (default "General"), `repo?: RepoSpec`, `integration_branch?` | `not_found` (a team), `invalid_request` (key format or reserved; limits; a repeated team; repo spec; an `integration_branch` with a reserved prefix, amended 2026-11-08: proto follow-ups, `processes.md` "Project rule"), `invalid_name` (name, area name), `already_exists` (an id; the key; the name, ignoring case) | P1 |
+| `project.update` | `project_id`, `expected_version`, `name?`, `description?`, `clear_description?`, `integration_branch?`, `clear_integration_branch?` | `not_found`, `invalid_request` (also an `integration_branch` with a reserved prefix, amended 2026-11-08: proto follow-ups), `invalid_name`, `conflict`, `already_exists` | P1 |
 | `project.archive` | `project_id`, `expected_version`, `archived: bool` | `not_found`, `conflict` | P1 |
 | `project.add_team` (exists) | unchanged | unchanged | — |
 | `project.remove_team` (extended) | `project_team_id`, `expected_version`, `areas_to_team_id?` (§2.5) | adds `invalid_request` (missing or not a remaining team) | P1 |

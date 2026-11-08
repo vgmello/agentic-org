@@ -29,7 +29,8 @@
 //!   `msg.human_needs_you`. Those that act as a member (`msg.send`, `msg.inbox`,
 //!   `status.set`, ...) fail on it with `not_bound`. Calls of other modules follow their own
 //!   rules: the organization commands ([`crate::org`]) need an app-bound connection, one
-//!   bound with `app_token`, such as the app-wide binding.
+//!   bound with `app_token`, such as the app-wide binding (`org.snapshot`, a read, needs any
+//!   binding).
 //!
 //! ## Events
 //! Message events ([`MessageReceived`], [`MessageStateChanged`], [`MessageDeliveryFailed`])
