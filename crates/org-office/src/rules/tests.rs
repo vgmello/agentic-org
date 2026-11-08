@@ -26,6 +26,7 @@ impl Org {
         let first = owner_bootstrap(OWNER, "Owner", NOW).unwrap();
         org.commit(first);
         org.state.projects.insert("p1".into());
+        org.state.offices.insert("office1".into());
         org
     }
 
@@ -1112,6 +1113,7 @@ fn replaying_the_log_on_an_empty_state_rebuilds_exactly_the_same_state() {
         apply(&mut rebuilt, change).unwrap();
     }
     rebuilt.projects = projects; // projects are not made by these commands yet
+    rebuilt.offices = org.state.offices.clone(); // nor offices
     assert_eq!(rebuilt, org.state);
 }
 
@@ -2168,4 +2170,985 @@ fn renaming_a_person_to_an_address_shape_is_refused_but_the_owner_may_display_an
     );
     // The owner's display name is not a handle.
     assert!(rename(&mut org, OWNER, "BOB00000000000000000000000").is_ok());
+}
+
+// ---- agents -----------------------------------------------------------------------------
+
+/// A member id for tests: `n` padded with zeros to the 26 characters an id has.
+fn mid(n: &str) -> String {
+    format!("{n:0<26}")
+}
+
+fn profile(handle: &str) -> AgentProfile {
+    AgentProfile {
+        role: "software engineer".into(),
+        title: "Senior Engineer".into(),
+        focus: None,
+        runtime: AgentRuntime::ClaudeCode,
+        model: None,
+        run_mode: None,
+        schedule: None,
+        home: None,
+        messaging_name: handle.into(),
+        status: AgentStatus::Active,
+        offboarded_at: None,
+    }
+}
+
+impl Org {
+    fn hire(&mut self, id: &str, handle: &str) -> Result<Vec<OrgChange>, ApiError> {
+        self.hire_with(id, "Pixel", "office1", profile(handle))
+    }
+
+    fn hire_with(
+        &mut self,
+        id: &str,
+        name: &str,
+        office: &str,
+        profile: AgentProfile,
+    ) -> Result<Vec<OrgChange>, ApiError> {
+        let command_id = self.id();
+        self.run(OrgCommand::MemberAddAgent(MemberAddAgentParams {
+            command_id,
+            member_id: id.into(),
+            name: name.into(),
+            office_id: office.into(),
+            profile,
+        }))
+    }
+
+    fn version_of(&self, id: &str) -> u64 {
+        self.state.members.get(id).map_or(1, |m| m.version)
+    }
+
+    fn edit_agent(
+        &mut self,
+        id: &str,
+        change: impl FnOnce(&mut MemberUpdateAgentParams),
+    ) -> Result<Vec<OrgChange>, ApiError> {
+        let command_id = self.id();
+        let mut params = MemberUpdateAgentParams {
+            command_id,
+            member_id: id.into(),
+            expected_version: self.version_of(id),
+            name: None,
+            role: None,
+            title: None,
+            focus: None,
+            clear_focus: false,
+            runtime: None,
+            model: None,
+            clear_model: false,
+            home: None,
+            clear_home: false,
+            messaging_name: None,
+        };
+        change(&mut params);
+        self.run(OrgCommand::MemberUpdateAgent(params))
+    }
+
+    fn set_status(&mut self, id: &str, status: AgentStatus) -> Result<Vec<OrgChange>, ApiError> {
+        let command_id = self.id();
+        let expected_version = self.version_of(id);
+        self.run(OrgCommand::MemberSetAgentStatus(
+            MemberSetAgentStatusParams {
+                command_id,
+                member_id: id.into(),
+                expected_version,
+                status,
+            },
+        ))
+    }
+
+    fn offboard(&mut self, id: &str) -> Result<Vec<OrgChange>, ApiError> {
+        let command_id = self.id();
+        let expected_version = self.version_of(id);
+        self.run(OrgCommand::MemberOffboard(MemberOffboardParams {
+            command_id,
+            member_id: id.into(),
+            expected_version,
+        }))
+    }
+
+    fn run_mode(
+        &mut self,
+        id: &str,
+        run_mode: Option<RunMode>,
+        schedule: Option<Schedule>,
+    ) -> Result<Vec<OrgChange>, ApiError> {
+        let command_id = self.id();
+        let expected_version = self.version_of(id);
+        self.run(OrgCommand::MemberSetRunMode(MemberSetRunModeParams {
+            command_id,
+            member_id: id.into(),
+            expected_version,
+            run_mode,
+            schedule,
+        }))
+    }
+}
+
+fn agent_of(changes: &[OrgChange], id: &str) -> AgentProfile {
+    member_of(changes, id).agent.expect("an agent")
+}
+
+#[test]
+fn an_agent_is_added_with_its_profile_trimmed_and_the_time_it_was_hired() {
+    let mut org = Org::new();
+    let id = mid("AG1");
+    let mut p = profile("pixel.bot");
+    p.role = "  software engineer ".into();
+    p.focus = Some(" payments ".into());
+    p.model = Some("claude-sonnet-5-5".into());
+    p.home = Some("/Users/dev/agents/pixel".into());
+    p.run_mode = Some(RunMode::Scheduled);
+    p.schedule = Some(Schedule {
+        spec: " weekdays at 9 ".into(),
+        time_zone: "Europe/Lisbon".into(),
+    });
+    p.status = AgentStatus::Paused;
+
+    let changes = org.hire_with(&id, "  Pixel ", "office1", p).unwrap();
+
+    let [OrgChange::MemberUpserted { member }] = &changes[..] else {
+        panic!("{changes:?}")
+    };
+    assert_eq!(
+        (
+            member.kind,
+            member.name.as_str(),
+            member.owner,
+            member.version
+        ),
+        (MemberKind::Agent, "Pixel", false, 1)
+    );
+    assert_eq!(member.office_id.as_deref(), Some("office1"));
+    assert_eq!(member.created_at.as_deref(), Some(NOW));
+    assert_eq!(member.contact, None);
+    assert_eq!(member.reports_to_member_id, None);
+    let agent = member.agent.as_ref().unwrap();
+    assert_eq!(agent.role, "software engineer");
+    assert_eq!(agent.focus.as_deref(), Some("payments"));
+    assert_eq!(agent.status, AgentStatus::Paused);
+    assert_eq!(agent.messaging_name, "pixel.bot");
+    assert_eq!(agent.schedule.as_ref().unwrap().spec, "weekdays at 9");
+    assert_eq!(agent.offboarded_at, None);
+    // Addressed by its handle, in any case.
+    assert_eq!(
+        org.state.member_with_handle("pixel.bot").map(|m| m.id),
+        Some(id)
+    );
+}
+
+#[test]
+fn an_agent_needs_a_known_office_a_member_id_and_a_profile_inside_its_limits() {
+    let mut org = Org::new();
+    let id = mid("AG1");
+    let bad = |change: &dyn Fn(&mut AgentProfile)| {
+        let mut p = profile("pixel");
+        change(&mut p);
+        p
+    };
+    // The office comes first (not_found), before anything else is looked at.
+    let mut p = profile("pixel");
+    p.role = String::new();
+    assert_eq!(
+        code(org.hire_with("short", "Pixel", "nowhere", p)),
+        ErrorCode::NotFound
+    );
+    // A member id is exactly 26 letters and digits.
+    for id in [
+        "short",
+        &mid("AG1")[1..],
+        &format!("{}0", mid("AG1")),
+        "has-dash",
+    ] {
+        let got = org.hire_with(id, "Pixel", "office1", profile("pixel"));
+        if id == mid("AG1") {
+            continue;
+        }
+        assert_eq!(code(got), ErrorCode::InvalidRequest, "{id}");
+    }
+    let cases: Vec<(&str, AgentProfile)> = vec![
+        ("empty role", bad(&|p| p.role = " ".into())),
+        ("empty title", bad(&|p| p.title = String::new())),
+        ("control char", bad(&|p| p.title = "a\u{7}b".into())),
+        (
+            "long role",
+            bad(&|p| p.role = "r".repeat(AGENT_TEXT_MAX_CHARS + 1)),
+        ),
+        ("empty focus", bad(&|p| p.focus = Some("  ".into()))),
+        ("empty model", bad(&|p| p.model = Some(String::new()))),
+        (
+            "unknown runtime",
+            bad(&|p| p.runtime = AgentRuntime::Unknown),
+        ),
+        (
+            "codex spelled Other",
+            bad(&|p| p.runtime = AgentRuntime::Other("Codex".into())),
+        ),
+        (
+            "claude code spelled Other",
+            bad(&|p| p.runtime = AgentRuntime::Other("claude-code".into())),
+        ),
+        (
+            "claude code with a space",
+            bad(&|p| p.runtime = AgentRuntime::Other("Claude Code".into())),
+        ),
+        (
+            "empty other",
+            bad(&|p| p.runtime = AgentRuntime::Other(String::new())),
+        ),
+        ("status unknown", bad(&|p| p.status = AgentStatus::Unknown)),
+        (
+            "status offboarded",
+            bad(&|p| p.status = AgentStatus::Offboarded),
+        ),
+        (
+            "offboarded_at given",
+            bad(&|p| p.offboarded_at = Some(NOW.into())),
+        ),
+        (
+            "run mode unknown",
+            bad(&|p| p.run_mode = Some(RunMode::Unknown)),
+        ),
+        (
+            "scheduled without a schedule",
+            bad(&|p| p.run_mode = Some(RunMode::Scheduled)),
+        ),
+        (
+            "a schedule without scheduled",
+            bad(&|p| {
+                p.schedule = Some(Schedule {
+                    spec: "daily".into(),
+                    time_zone: "UTC".into(),
+                })
+            }),
+        ),
+        (
+            "relative home",
+            bad(&|p| p.home = Some("agents/pixel".into())),
+        ),
+        ("home with ..", bad(&|p| p.home = Some("/a/../b".into()))),
+        ("home with NUL", bad(&|p| p.home = Some("/a\u{0}b".into()))),
+        (
+            "long home",
+            bad(&|p| p.home = Some(format!("/{}", "h".repeat(AGENT_HOME_MAX_BYTES)))),
+        ),
+    ];
+    for (what, p) in cases {
+        assert_eq!(
+            code(org.hire_with(&id, "Pixel", "office1", p)),
+            ErrorCode::InvalidRequest,
+            "{what}"
+        );
+    }
+    // Nothing was added; a named runtime, `Other` with a name of its own, and `..` inside a name
+    // (not a component) are fine.
+    assert!(!org.state.members.contains_key(&id));
+    let mut ok = profile("pixel");
+    ok.runtime = AgentRuntime::Other("aider".into());
+    ok.home = Some("/a/b..c".into());
+    assert!(org.hire_with(&id, "Pixel", "office1", ok).is_ok());
+}
+
+#[test]
+fn a_schedule_has_a_spec_and_a_time_zone_that_can_never_be_a_path() {
+    let mut org = Org::new();
+    for (zone, fine) in [
+        ("Europe/Lisbon", true),
+        ("UTC", true),
+        ("Etc/GMT+1", true),
+        ("America/Argentina/Buenos_Aires", true),
+        ("", false),
+        ("/Europe", false),
+        ("Europe/", false),
+        ("Europe//Lisbon", false),
+        ("../etc", false),
+        ("Europe/..", false),
+        ("a.b", false),
+        ("Europe Lisbon", false),
+        (&"z".repeat(AGENT_TIME_ZONE_MAX_CHARS + 1), false),
+    ] {
+        let mut p = profile("pixel");
+        p.run_mode = Some(RunMode::Scheduled);
+        p.schedule = Some(Schedule {
+            spec: "daily".into(),
+            time_zone: zone.into(),
+        });
+        let got = org.hire_with(&mid("AG1"), "Pixel", "office1", p);
+        if fine {
+            got.unwrap();
+            org.remove(&mid("AG1")).unwrap();
+        } else {
+            assert_eq!(code(got), ErrorCode::InvalidRequest, "{zone:?}");
+        }
+    }
+    let mut p = profile("pixel");
+    p.run_mode = Some(RunMode::Scheduled);
+    p.schedule = Some(Schedule {
+        spec: " ".into(),
+        time_zone: "UTC".into(),
+    });
+    assert_eq!(
+        code(org.hire_with(&mid("AG1"), "Pixel", "office1", p)),
+        ErrorCode::InvalidRequest
+    );
+}
+
+#[test]
+fn an_agents_handle_has_a_format_and_one_namespace_with_people_and_the_reserved_words() {
+    let mut org = Org::new();
+    org.person(&mid("PE1"), "Ana").unwrap();
+    org.hire(&mid("AG1"), "Pixel").unwrap();
+    // The format and the address shape: invalid_name.
+    let looks_like_an_id = mid("ABC");
+    for bad in [
+        "",
+        "-x",
+        ".x",
+        "a b",
+        "é",
+        "a/b",
+        &"h".repeat(AGENT_MESSAGING_NAME_MAX_CHARS + 1),
+        looks_like_an_id.as_str(),
+        "run:1",
+        " pixel2",
+    ] {
+        assert_eq!(
+            code(org.hire(&mid("AG2"), bad)),
+            ErrorCode::InvalidName,
+            "{bad:?}"
+        );
+    }
+    // Taken by an agent, a person (either case), or reserved: already_exists.
+    for taken in [
+        "pixel", "PIXEL", "ana", "ANA", "owner", "Owner", "office", "OFFICE",
+    ] {
+        assert_eq!(
+            code(org.hire(&mid("AG2"), taken)),
+            ErrorCode::AlreadyExists,
+            "{taken}"
+        );
+    }
+    // The other way round: a person may not take an agent's handle.
+    assert_eq!(
+        code(org.person(&mid("PE2"), "pixel")),
+        ErrorCode::AlreadyExists
+    );
+    // The owner's display name is not a handle.
+    org.hire(&mid("AG2"), "Owner2.bot").unwrap();
+    // The display name of an agent is a name, not a handle: two agents may share one.
+    org.hire_with(&mid("AG3"), "Pixel", "office1", profile("pixel3"))
+        .unwrap();
+}
+
+#[test]
+fn adding_an_agent_tells_the_errors_in_the_contracts_order() {
+    let mut org = Org::new();
+    org.hire(&mid("AG1"), "pixel").unwrap();
+    let mut p = profile("pixel"); // taken
+    p.role = String::new(); // and a bad profile
+                            // invalid_request first,
+    assert_eq!(
+        code(org.hire_with(&mid("AG1"), "", "office1", p)),
+        ErrorCode::InvalidRequest
+    );
+    // then invalid_name (the display name before the handle),
+    assert_eq!(
+        code(org.hire_with(&mid("AG1"), "  ", "office1", profile("pixel"))),
+        ErrorCode::InvalidName
+    );
+    assert_eq!(
+        code(org.hire_with(&mid("AG1"), "Fine", "office1", profile("-bad"))),
+        ErrorCode::InvalidName
+    );
+    // then already_exists: the id before the handle.
+    assert_eq!(
+        code(org.hire_with(&mid("AG1"), "Fine", "office1", profile("other"))),
+        ErrorCode::AlreadyExists
+    );
+}
+
+#[test]
+fn an_agent_is_edited_field_by_field_and_each_edit_raises_the_version() {
+    let mut org = Org::new();
+    let id = mid("AG1");
+    let mut p = profile("pixel");
+    p.focus = Some("payments".into());
+    p.model = Some("m".into());
+    p.home = Some("/h".into());
+    org.hire_with(&id, "Pixel", "office1", p).unwrap();
+
+    let changes = org
+        .edit_agent(&id, |p| {
+            p.name = Some(" Pixel Two ".into());
+            p.role = Some("reviewer".into());
+            p.title = Some(" Principal ".into());
+            p.runtime = Some(AgentRuntime::Codex);
+            p.messaging_name = Some("PIXEL".into()); // another capitalisation of its own
+            p.clear_focus = true;
+            p.clear_model = true;
+            p.home = Some("/new/home".into());
+        })
+        .unwrap();
+
+    let member = member_of(&changes, &id);
+    assert_eq!((member.name.as_str(), member.version), ("Pixel Two", 2));
+    let agent = member.agent.unwrap();
+    assert_eq!(
+        (
+            agent.role.as_str(),
+            agent.title.as_str(),
+            agent.messaging_name.as_str()
+        ),
+        ("reviewer", "Principal", "PIXEL")
+    );
+    assert_eq!(agent.runtime, AgentRuntime::Codex);
+    assert_eq!((agent.focus, agent.model), (None, None));
+    assert_eq!(agent.home.as_deref(), Some("/new/home"));
+    // The rest is untouched.
+    assert_eq!(agent.status, AgentStatus::Active);
+    assert_eq!(org.state.members[&id].office_id.as_deref(), Some("office1"));
+    // Clearing what is not there, and setting what is, are accepted.
+    org.edit_agent(&id, |p| p.clear_home = true).unwrap();
+    org.edit_agent(&id, |p| p.role = Some("reviewer".into()))
+        .unwrap();
+    assert_eq!(org.state.members[&id].version, 4);
+}
+
+#[test]
+fn editing_an_agent_refuses_what_the_contract_refuses() {
+    let mut org = Org::new();
+    let id = mid("AG1");
+    org.hire(&id, "pixel").unwrap();
+    org.hire(&mid("AG2"), "other").unwrap();
+    org.person(&mid("PE1"), "Ana").unwrap();
+    // Nothing to change, a field with its clear flag, values outside their limits.
+    assert_eq!(code(org.edit_agent(&id, |_| {})), ErrorCode::InvalidRequest);
+    assert_eq!(
+        code(org.edit_agent(&id, |p| {
+            p.focus = Some("x".into());
+            p.clear_focus = true;
+        })),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        code(org.edit_agent(&id, |p| {
+            p.home = Some("/h".into());
+            p.clear_home = true;
+        })),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        code(org.edit_agent(&id, |p| {
+            p.model = Some("m".into());
+            p.clear_model = true;
+        })),
+        ErrorCode::InvalidRequest
+    );
+    for change in [
+        (|p: &mut MemberUpdateAgentParams| p.role = Some(" ".into())) as fn(&mut _),
+        |p| p.title = Some(String::new()),
+        |p| p.focus = Some("  ".into()),
+        |p| p.model = Some(String::new()),
+        |p| p.runtime = Some(AgentRuntime::Unknown),
+        |p| p.runtime = Some(AgentRuntime::Other("CODEX".into())),
+        |p| p.home = Some("relative".into()),
+    ] {
+        assert_eq!(code(org.edit_agent(&id, change)), ErrorCode::InvalidRequest);
+    }
+    // A person is not edited here; a missing member is not found.
+    assert_eq!(
+        code(org.edit_agent(&mid("PE1"), |p| p.role = Some("x".into()))),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        code(org.edit_agent(&mid("NOPE"), |p| p.role = Some("x".into()))),
+        ErrorCode::NotFound
+    );
+    // Names: the format, then a stale version, then a taken handle.
+    assert_eq!(
+        code(org.edit_agent(&id, |p| p.name = Some(" ".into()))),
+        ErrorCode::InvalidName
+    );
+    assert_eq!(
+        code(org.edit_agent(&id, |p| p.messaging_name = Some("-no".into()))),
+        ErrorCode::InvalidName
+    );
+    assert_eq!(
+        code(org.edit_agent(&id, |p| {
+            p.messaging_name = Some("OTHER".into());
+            p.expected_version = 99;
+        })),
+        ErrorCode::Conflict,
+        "a stale version is told before a taken handle"
+    );
+    for taken in ["OTHER", "ana", "owner", "office"] {
+        assert_eq!(
+            code(org.edit_agent(&id, |p| p.messaging_name = Some(taken.into()))),
+            ErrorCode::AlreadyExists,
+            "{taken}"
+        );
+    }
+    assert_eq!(
+        code(org.edit_agent(&id, |p| {
+            p.role = Some("x".into());
+            p.expected_version = 99;
+        })),
+        ErrorCode::Conflict
+    );
+    // None of the refusals changed anything.
+    assert_eq!(org.state.members[&id].version, 1);
+}
+
+#[test]
+fn an_agent_is_paused_and_resumed_and_only_to_those_two() {
+    let mut org = Org::new();
+    let id = mid("AG1");
+    org.hire(&id, "pixel").unwrap();
+    org.person(&mid("PE1"), "Ana").unwrap();
+
+    let paused = org.set_status(&id, AgentStatus::Paused).unwrap();
+    assert_eq!(agent_of(&paused, &id).status, AgentStatus::Paused);
+    assert_eq!(member_of(&paused, &id).version, 2);
+    // The same status is accepted and still counts as an edit.
+    org.set_status(&id, AgentStatus::Paused).unwrap();
+    org.set_status(&id, AgentStatus::Active).unwrap();
+    assert_eq!(org.state.members[&id].version, 4);
+
+    for refused in [AgentStatus::Offboarded, AgentStatus::Unknown] {
+        assert_eq!(
+            code(org.set_status(&id, refused)),
+            ErrorCode::InvalidRequest,
+            "{refused:?}"
+        );
+    }
+    assert_eq!(
+        code(org.set_status(&mid("PE1"), AgentStatus::Paused)),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        code(org.set_status(&mid("NOPE"), AgentStatus::Paused)),
+        ErrorCode::NotFound
+    );
+    let command_id = org.id();
+    assert_eq!(
+        code(org.run(OrgCommand::MemberSetAgentStatus(
+            MemberSetAgentStatusParams {
+                command_id,
+                member_id: id.clone(),
+                expected_version: 1,
+                status: AgentStatus::Paused,
+            }
+        ))),
+        ErrorCode::Conflict
+    );
+}
+
+#[test]
+fn offboarding_ends_an_agents_relations_and_keeps_its_record_and_its_handle() {
+    let mut org = Org::new();
+    let (boss, agent, report) = (mid("BOSS"), mid("AG1"), mid("REP"));
+    org.person(&boss, "Bea").unwrap();
+    org.hire(&agent, "pixel").unwrap();
+    org.person(&report, "Rex").unwrap();
+    org.team("t1", "Platform", None).unwrap();
+    org.team("t2", "Design", None).unwrap();
+    org.join("m1", "t1", &agent).unwrap();
+    org.join("m2", "t2", &agent).unwrap();
+    org.join("m3", "t2", &report).unwrap();
+    org.lead("t1", Some(&agent)).unwrap();
+    org.reports(&agent, Some(&boss)).unwrap();
+    org.reports(&report, Some(&agent)).unwrap();
+    let before = org.state.members[&agent].version;
+
+    let changes = org.offboard(&agent).unwrap();
+
+    // Its memberships end, the team it led loses its lead, whoever reported to it now reports
+    // to its manager, and the record stays, offboarded, one version up.
+    assert!(changes.contains(&OrgChange::MembershipRemoved {
+        membership_id: "m1".into()
+    }));
+    assert!(changes.contains(&OrgChange::MembershipRemoved {
+        membership_id: "m2".into()
+    }));
+    assert_eq!(org.state.teams["t1"].lead_member_id, None);
+    assert_eq!(org.state.teams["t1"].version, 3); // created, led, lead cleared
+    assert_eq!(
+        org.state.members[&report].reports_to_member_id.as_deref(),
+        Some(boss.as_str())
+    );
+    let member = &org.state.members[&agent];
+    assert_eq!(member.version, before + 1);
+    let profile = member.agent.as_ref().unwrap();
+    assert_eq!(profile.status, AgentStatus::Offboarded);
+    assert_eq!(profile.offboarded_at.as_deref(), Some(NOW));
+    assert_eq!(profile.messaging_name, "pixel");
+    // The last change is the agent itself.
+    assert!(
+        matches!(changes.last(), Some(OrgChange::MemberUpserted { member }) if member.id == agent)
+    );
+
+    // Its handle stays reserved for good, and nobody may name it any more.
+    assert_eq!(
+        code(org.hire(&mid("AG2"), "pixel")),
+        ErrorCode::AlreadyExists
+    );
+    assert_eq!(
+        code(org.hire(&mid("AG2"), "PIXEL")),
+        ErrorCode::AlreadyExists
+    );
+    assert_eq!(
+        code(org.person(&mid("PE9"), "pixel")),
+        ErrorCode::AlreadyExists
+    );
+    assert_eq!(
+        code(org.join("m9", "t1", &agent)),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        code(org.lead("t1", Some(&agent))),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        code(org.reports(&report, Some(&agent))),
+        ErrorCode::InvalidRequest
+    );
+    // It is history: no second offboarding, no edits, no status, no run mode, no removal.
+    assert_eq!(code(org.offboard(&agent)), ErrorCode::InvalidRequest);
+    assert_eq!(
+        code(org.edit_agent(&agent, |p| p.role = Some("x".into()))),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        code(org.set_status(&agent, AgentStatus::Active)),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        code(org.run_mode(&agent, Some(RunMode::AlwaysOn), None)),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(code(org.remove(&agent)), ErrorCode::InvalidRequest);
+}
+
+#[test]
+fn offboarding_checks_who_and_which_version() {
+    let mut org = Org::new();
+    org.person(&mid("PE1"), "Ana").unwrap();
+    org.hire(&mid("AG1"), "pixel").unwrap();
+    assert_eq!(code(org.offboard(&mid("PE1"))), ErrorCode::InvalidRequest);
+    assert_eq!(code(org.offboard(&mid("NOPE"))), ErrorCode::NotFound);
+    let command_id = org.id();
+    assert_eq!(
+        code(org.run(OrgCommand::MemberOffboard(MemberOffboardParams {
+            command_id,
+            member_id: mid("AG1"),
+            expected_version: 7,
+        }))),
+        ErrorCode::Conflict
+    );
+    assert_eq!(org.state.members[&mid("AG1")].version, 1);
+}
+
+#[test]
+fn an_agents_run_mode_is_set_with_its_schedule_or_cleared() {
+    let mut org = Org::new();
+    let id = mid("AG1");
+    org.hire(&id, "pixel").unwrap();
+    let schedule = Schedule {
+        spec: " weekdays at 9 ".into(),
+        time_zone: "Europe/Lisbon".into(),
+    };
+
+    for mode in [RunMode::AlwaysOn, RunMode::OnCall] {
+        let changes = org.run_mode(&id, Some(mode), None).unwrap();
+        assert_eq!(agent_of(&changes, &id).run_mode, Some(mode));
+    }
+    let scheduled = org
+        .run_mode(&id, Some(RunMode::Scheduled), Some(schedule.clone()))
+        .unwrap();
+    let profile = agent_of(&scheduled, &id);
+    assert_eq!(profile.run_mode, Some(RunMode::Scheduled));
+    assert_eq!(profile.schedule.unwrap().spec, "weekdays at 9");
+    // Leaving the run mode out takes the agent out of the office's control, schedule and all.
+    let freed = org.run_mode(&id, None, None).unwrap();
+    assert_eq!(agent_of(&freed, &id).run_mode, None);
+    assert_eq!(agent_of(&freed, &id).schedule, None);
+    assert_eq!(org.state.members[&id].version, 5);
+    // The mode it has is accepted.
+    org.run_mode(&id, None, None).unwrap();
+
+    for (mode, schedule) in [
+        (Some(RunMode::Unknown), None),
+        (Some(RunMode::Scheduled), None),
+        (Some(RunMode::OnCall), Some(schedule.clone())),
+        (None, Some(schedule.clone())),
+    ] {
+        assert_eq!(
+            code(org.run_mode(&id, mode, schedule)),
+            ErrorCode::InvalidRequest
+        );
+    }
+    org.person(&mid("PE1"), "Ana").unwrap();
+    assert_eq!(
+        code(org.run_mode(&mid("PE1"), Some(RunMode::AlwaysOn), None)),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        code(org.run_mode(&mid("NOPE"), Some(RunMode::AlwaysOn), None)),
+        ErrorCode::NotFound
+    );
+    let command_id = org.id();
+    assert_eq!(
+        code(
+            org.run(OrgCommand::MemberSetRunMode(MemberSetRunModeParams {
+                command_id,
+                member_id: id.clone(),
+                expected_version: 1,
+                run_mode: Some(RunMode::AlwaysOn),
+                schedule: None,
+            }))
+        ),
+        ErrorCode::Conflict
+    );
+}
+
+#[test]
+fn a_person_edit_refuses_an_agent_and_an_agent_edit_refuses_a_person() {
+    let mut org = Org::new();
+    org.hire(&mid("AG1"), "pixel").unwrap();
+    let command_id = org.id();
+    let got = org.run(OrgCommand::MemberUpdatePerson(MemberUpdatePersonParams {
+        command_id,
+        member_id: mid("AG1"),
+        expected_version: 1,
+        name: Some("x".into()),
+        contact: None,
+        clear_contact: false,
+    }));
+    assert_eq!(code(got), ErrorCode::InvalidRequest);
+}
+
+#[test]
+fn the_agent_commands_are_read_from_their_requests() {
+    use org_proto::Call;
+    let command_id = "cmd-1".to_string();
+    let requests = [
+        Request::new::<MemberAddAgent>(
+            1,
+            &MemberAddAgentParams {
+                command_id: command_id.clone(),
+                member_id: mid("AG1"),
+                name: "Pixel".into(),
+                office_id: "office1".into(),
+                profile: profile("pixel"),
+            },
+        )
+        .unwrap(),
+        Request::new::<MemberOffboard>(
+            2,
+            &MemberOffboardParams {
+                command_id: command_id.clone(),
+                member_id: mid("AG1"),
+                expected_version: 1,
+            },
+        )
+        .unwrap(),
+        Request::new::<MemberSetAgentStatus>(
+            3,
+            &MemberSetAgentStatusParams {
+                command_id: command_id.clone(),
+                member_id: mid("AG1"),
+                expected_version: 1,
+                status: AgentStatus::Paused,
+            },
+        )
+        .unwrap(),
+        Request::new::<MemberSetRunMode>(
+            4,
+            &MemberSetRunModeParams {
+                command_id: command_id.clone(),
+                member_id: mid("AG1"),
+                expected_version: 1,
+                run_mode: None,
+                schedule: None,
+            },
+        )
+        .unwrap(),
+    ];
+    let methods = [
+        MemberAddAgent::METHOD,
+        MemberOffboard::METHOD,
+        MemberSetAgentStatus::METHOD,
+        MemberSetRunMode::METHOD,
+    ];
+    for (request, method) in requests.iter().zip(methods) {
+        let command = OrgCommand::parse(request).unwrap().expect(method);
+        assert_eq!(command.command_id(), "cmd-1");
+        assert_eq!(command.method_and_params().0, method);
+    }
+    // The update has a request of its own, with its optional fields left out.
+    let update = Request {
+        id: 5,
+        method: MemberUpdateAgent::METHOD.to_owned(),
+        params: json!({"command_id": "cmd-1", "member_id": mid("AG1"), "expected_version": 1, "role": "x"}),
+    };
+    assert!(matches!(
+        OrgCommand::parse(&update).unwrap(),
+        Some(OrgCommand::MemberUpdateAgent(_))
+    ));
+    // Params that do not decode are invalid_request, not an unknown method.
+    let bad = Request {
+        id: 6,
+        method: MemberOffboard::METHOD.to_owned(),
+        params: json!({"nope": 1}),
+    };
+    assert_eq!(
+        OrgCommand::parse(&bad).unwrap_err().code,
+        ErrorCode::InvalidRequest
+    );
+}
+
+#[test]
+fn the_edges_of_an_agents_home_time_zone_and_handle_are_exact() {
+    let mut org = Org::new();
+    let try_hire = |org: &mut Org, change: &dyn Fn(&mut AgentProfile)| {
+        let mut p = profile("pixel");
+        change(&mut p);
+        let got = org.hire_with(&mid("AG1"), "Pixel", "office1", p);
+        if got.is_ok() {
+            org.remove(&mid("AG1")).unwrap();
+        }
+        got.map(|_| ())
+    };
+    let home = |h: String| move |p: &mut AgentProfile| p.home = Some(h.clone());
+    let zone = |z: &str| {
+        let z = z.to_owned();
+        move |p: &mut AgentProfile| {
+            p.run_mode = Some(RunMode::Scheduled);
+            p.schedule = Some(Schedule {
+                spec: "daily".into(),
+                time_zone: z.clone(),
+            });
+        }
+    };
+    let handle = |h: &str| {
+        let h = h.to_owned();
+        move |p: &mut AgentProfile| p.messaging_name = h.clone()
+    };
+
+    // home: a `..` component anywhere (also first or last) is refused, not a substring check;
+    // the limit is 1024 BYTES, inclusive.
+    for bad in ["/..", "/a/..", "/../a", "/a/../b"] {
+        assert_eq!(
+            code(try_hire(&mut org, &home(bad.into()))),
+            ErrorCode::InvalidRequest,
+            "{bad}"
+        );
+    }
+    assert!(try_hire(
+        &mut org,
+        &home(format!("/{}", "h".repeat(AGENT_HOME_MAX_BYTES - 1)))
+    )
+    .is_ok());
+    assert_eq!(
+        code(try_hire(
+            &mut org,
+            &home(format!("/{}", "h".repeat(AGENT_HOME_MAX_BYTES)))
+        )),
+        ErrorCode::InvalidRequest
+    );
+    // 600 two-byte characters are 600 characters but 1201 bytes with the slash.
+    assert_eq!(
+        code(try_hire(&mut org, &home(format!("/{}", "é".repeat(600))))),
+        ErrorCode::InvalidRequest
+    );
+    assert!(try_hire(&mut org, &home("/a b/ü".into())).is_ok());
+
+    // time zone: 64 characters inclusive; `-` and `+` allowed; no backslash, no non-ASCII.
+    assert!(try_hire(&mut org, &zone(&"z".repeat(AGENT_TIME_ZONE_MAX_CHARS))).is_ok());
+    assert!(try_hire(&mut org, &zone("Etc/GMT-5")).is_ok());
+    for bad in ["Europe\\Lisbon", "Europe/Lisboà", "Europe/Lis:bon"] {
+        assert_eq!(
+            code(try_hire(&mut org, &zone(bad))),
+            ErrorCode::InvalidRequest,
+            "{bad}"
+        );
+    }
+
+    // handle: 64 characters inclusive; `-` `_` `.` allowed inside; `:` not.
+    assert!(try_hire(
+        &mut org,
+        &handle(&"h".repeat(AGENT_MESSAGING_NAME_MAX_CHARS))
+    )
+    .is_ok());
+    for fine in ["a-b", "a_b", "a.b", "9lives"] {
+        assert!(try_hire(&mut org, &handle(fine)).is_ok(), "{fine}");
+    }
+    assert_eq!(
+        code(try_hire(&mut org, &handle("a:b"))),
+        ErrorCode::InvalidName
+    );
+}
+
+#[test]
+fn an_agents_display_name_is_a_name_not_a_handle() {
+    let mut org = Org::new();
+    // The display name may look like a member id or a run address: only the handle is addressed.
+    org.hire_with(&mid("AG1"), "run:1", "office1", profile("pixel"))
+        .unwrap();
+    org.hire_with(
+        &mid("AG2"),
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        "office1",
+        profile("other"),
+    )
+    .unwrap();
+    org.edit_agent(&mid("AG1"), |p| p.name = Some("run:2".into()))
+        .unwrap();
+    org.edit_agent(&mid("AG2"), |p| {
+        p.name = Some("ZYXWVUTSRQPONMLKJIHGFEDCBA".into())
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_runtime_spelled_as_other_is_refused_for_every_named_runtime() {
+    let mut org = Org::new();
+    for spelled in [
+        "Antigravity",
+        "ANTIGRAVITY",
+        "claude_code",
+        "Claude-Code",
+        "codex",
+    ] {
+        let mut p = profile("pixel");
+        p.runtime = AgentRuntime::Other(spelled.into());
+        assert_eq!(
+            code(org.hire_with(&mid("AG1"), "Pixel", "office1", p)),
+            ErrorCode::InvalidRequest,
+            "{spelled}"
+        );
+    }
+}
+
+#[test]
+fn clearing_a_field_alone_is_an_edit_and_removes_it() {
+    let mut org = Org::new();
+    let id = mid("AG1");
+    let mut p = profile("pixel");
+    p.focus = Some("f".into());
+    p.model = Some("m".into());
+    p.home = Some("/h".into());
+    org.hire_with(&id, "Pixel", "office1", p).unwrap();
+
+    // Each clear flag alone is a call that gives a field.
+    let changes = org.edit_agent(&id, |p| p.clear_model = true).unwrap();
+    assert_eq!(agent_of(&changes, &id).model, None);
+    let changes = org.edit_agent(&id, |p| p.clear_home = true).unwrap();
+    assert_eq!(agent_of(&changes, &id).home, None);
+    let changes = org.edit_agent(&id, |p| p.clear_focus = true).unwrap();
+    assert_eq!(agent_of(&changes, &id).focus, None);
+    assert_eq!(org.state.members[&id].version, 4);
 }

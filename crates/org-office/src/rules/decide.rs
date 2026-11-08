@@ -1,11 +1,14 @@
 use std::collections::HashSet;
 
 use org_proto::org::{
-    AgentStatus, Member, MemberAddPersonParams, MemberKind, MemberMoveParams, MemberRemoveParams,
-    MemberSetReportsToParams, MemberUpdatePersonParams, Membership, OrgChange,
-    ProjectAddTeamParams, ProjectRemoveTeamParams, ProjectTeam, Team, TeamAddMemberParams,
+    AgentProfile, AgentRuntime, AgentStatus, Member, MemberAddAgentParams, MemberAddPersonParams,
+    MemberKind, MemberMoveParams, MemberOffboardParams, MemberRemoveParams,
+    MemberSetAgentStatusParams, MemberSetReportsToParams, MemberSetRunModeParams,
+    MemberUpdateAgentParams, MemberUpdatePersonParams, Membership, OrgChange, ProjectAddTeamParams,
+    ProjectRemoveTeamParams, ProjectTeam, RunMode, Schedule, Team, TeamAddMemberParams,
     TeamCreateParams, TeamDeleteParams, TeamMoveParams, TeamRemoveMemberParams, TeamRenameParams,
-    TeamSetLeadParams, TeamSetTitleParams, AGENT_TEXT_MAX_CHARS, OFFICE_HANDLE, OWNER_HANDLE,
+    TeamSetLeadParams, TeamSetTitleParams, AGENT_HOME_MAX_BYTES, AGENT_MESSAGING_NAME_MAX_CHARS,
+    AGENT_TEXT_MAX_CHARS, AGENT_TIME_ZONE_MAX_CHARS, OFFICE_HANDLE, OWNER_HANDLE,
 };
 use org_proto::{ApiError, ErrorCode, NameError, OrganizationName};
 
@@ -28,6 +31,11 @@ pub fn decide(view: &dyn OrgView, now: &str, command: &OrgCommand) -> Decision {
         OrgCommand::TeamRemoveMember(p) => team_remove_member(view, p),
         OrgCommand::TeamSetTitle(p) => team_set_title(view, p),
         OrgCommand::MemberAddPerson(p) => member_add_person(view, now, p),
+        OrgCommand::MemberAddAgent(p) => member_add_agent(view, now, p),
+        OrgCommand::MemberUpdateAgent(p) => member_update_agent(view, p),
+        OrgCommand::MemberSetAgentStatus(p) => member_set_agent_status(view, p),
+        OrgCommand::MemberOffboard(p) => member_offboard(view, now, p),
+        OrgCommand::MemberSetRunMode(p) => member_set_run_mode(view, p),
         OrgCommand::MemberUpdatePerson(p) => member_update_person(view, p),
         OrgCommand::MemberMove(p) => member_move(view, p),
         OrgCommand::MemberRemove(p) => member_remove(view, p),
@@ -317,6 +325,337 @@ fn member_add_person(view: &dyn OrgView, now: &str, p: &MemberAddPersonParams) -
             version: 1,
         },
     }])
+}
+
+// ---- agents ---------------------------------------------------------------------------
+
+fn member_add_agent(view: &dyn OrgView, now: &str, p: &MemberAddAgentParams) -> Decision {
+    if !view.office_exists(&p.office_id) {
+        return Err(fail(ErrorCode::NotFound, "no such office"));
+    }
+    check_member_id(&p.member_id)?;
+    let profile = &p.profile;
+    let role = required_text(&profile.role, "role")?;
+    let title = required_text(&profile.title, "title")?;
+    let focus = check_text(profile.focus.as_deref(), "focus")?;
+    let runtime = check_runtime(&profile.runtime)?;
+    let model = check_text(profile.model.as_deref(), "model")?;
+    let home = profile.home.as_deref().map(check_home).transpose()?;
+    if profile.offboarded_at.is_some() {
+        return Err(fail(
+            ErrorCode::InvalidRequest,
+            "offboarded_at is set by member.offboard only",
+        ));
+    }
+    if !matches!(profile.status, AgentStatus::Active | AgentStatus::Paused) {
+        return Err(fail(
+            ErrorCode::InvalidRequest,
+            "a new agent is active or paused; offboarding is member.offboard",
+        ));
+    }
+    let (run_mode, schedule) = check_run_mode(profile.run_mode, profile.schedule.as_ref())?;
+    let name = parse_name(&p.name)?;
+    let handle = parse_messaging_name(&profile.messaging_name)?;
+    if view.member(&p.member_id).is_some() {
+        return Err(fail(ErrorCode::AlreadyExists, "that member id is taken"));
+    }
+    check_handle_free(view, &handle.to_lowercase(), None)?;
+    Ok(vec![OrgChange::MemberUpserted {
+        member: Member {
+            id: p.member_id.clone(),
+            kind: MemberKind::Agent,
+            name: name.into_string(),
+            contact: None,
+            owner: false,
+            office_id: Some(p.office_id.clone()),
+            agent: Some(AgentProfile {
+                role,
+                title,
+                focus,
+                runtime,
+                model,
+                run_mode,
+                schedule,
+                home,
+                messaging_name: handle,
+                status: profile.status,
+                offboarded_at: None,
+            }),
+            reports_to_member_id: None,
+            created_at: Some(now.to_owned()),
+            version: 1,
+        },
+    }])
+}
+
+/// The agent `member_id` names, which must be one that is still a member: a person, or an
+/// offboarded agent (whose record is history), is `invalid_request`.
+fn live_agent(view: &dyn OrgView, member_id: &str) -> Result<(Member, AgentProfile), ApiError> {
+    let member = found(view.member(member_id), "no such member")?;
+    let Some(profile) = member
+        .agent
+        .clone()
+        .filter(|_| member.kind == MemberKind::Agent)
+    else {
+        return Err(fail(
+            ErrorCode::InvalidRequest,
+            "that member is a person; agents only here",
+        ));
+    };
+    refuse_offboarded(&member)?;
+    Ok((member, profile))
+}
+
+fn member_update_agent(view: &dyn OrgView, p: &MemberUpdateAgentParams) -> Decision {
+    let (member, mut profile) = live_agent(view, &p.member_id)?;
+    let gives_nothing = p.name.is_none()
+        && p.role.is_none()
+        && p.title.is_none()
+        && p.focus.is_none()
+        && !p.clear_focus
+        && p.runtime.is_none()
+        && p.model.is_none()
+        && !p.clear_model
+        && p.home.is_none()
+        && !p.clear_home
+        && p.messaging_name.is_none();
+    if gives_nothing {
+        return Err(fail(ErrorCode::InvalidRequest, "give a field to change"));
+    }
+    for (given, clear, what) in [
+        (p.focus.is_some(), p.clear_focus, "focus"),
+        (p.model.is_some(), p.clear_model, "model"),
+        (p.home.is_some(), p.clear_home, "home"),
+    ] {
+        if given && clear {
+            return Err(fail(
+                ErrorCode::InvalidRequest,
+                &format!("give {what} or clear it, not both"),
+            ));
+        }
+    }
+    if let Some(role) = &p.role {
+        profile.role = required_text(role, "role")?;
+    }
+    if let Some(title) = &p.title {
+        profile.title = required_text(title, "title")?;
+    }
+    if p.clear_focus {
+        profile.focus = None;
+    } else if p.focus.is_some() {
+        profile.focus = check_text(p.focus.as_deref(), "focus")?;
+    }
+    if let Some(runtime) = &p.runtime {
+        profile.runtime = check_runtime(runtime)?;
+    }
+    if p.clear_model {
+        profile.model = None;
+    } else if p.model.is_some() {
+        profile.model = check_text(p.model.as_deref(), "model")?;
+    }
+    if p.clear_home {
+        profile.home = None;
+    } else if let Some(home) = &p.home {
+        profile.home = Some(check_home(home)?);
+    }
+    let name = p.name.as_deref().map(parse_name).transpose()?;
+    let handle = p
+        .messaging_name
+        .as_deref()
+        .map(parse_messaging_name)
+        .transpose()?;
+    check_version(member.version, p.expected_version)?;
+    if let Some(handle) = &handle {
+        check_handle_free(view, &handle.to_lowercase(), Some(&member.id))?;
+        profile.messaging_name = handle.clone();
+    }
+    Ok(vec![OrgChange::MemberUpserted {
+        member: Member {
+            name: name.map_or(member.name.clone(), OrganizationName::into_string),
+            agent: Some(profile),
+            version: member.version + 1,
+            ..member
+        },
+    }])
+}
+
+fn member_set_agent_status(view: &dyn OrgView, p: &MemberSetAgentStatusParams) -> Decision {
+    let (member, mut profile) = live_agent(view, &p.member_id)?;
+    if !matches!(p.status, AgentStatus::Active | AgentStatus::Paused) {
+        return Err(fail(
+            ErrorCode::InvalidRequest,
+            "an agent is active or paused; offboarding is member.offboard",
+        ));
+    }
+    check_version(member.version, p.expected_version)?;
+    profile.status = p.status;
+    Ok(vec![OrgChange::MemberUpserted {
+        member: Member {
+            agent: Some(profile),
+            version: member.version + 1,
+            ..member
+        },
+    }])
+}
+
+fn member_offboard(view: &dyn OrgView, now: &str, p: &MemberOffboardParams) -> Decision {
+    let (member, mut profile) = live_agent(view, &p.member_id)?;
+    check_version(member.version, p.expected_version)?;
+    // Its relations end as for a removal; the record and its handle stay, as history.
+    let mut changes = ending_relations(view, &member);
+    profile.status = AgentStatus::Offboarded;
+    profile.offboarded_at = Some(now.to_owned());
+    changes.push(OrgChange::MemberUpserted {
+        member: Member {
+            agent: Some(profile),
+            version: member.version + 1,
+            ..member
+        },
+    });
+    Ok(changes)
+}
+
+fn member_set_run_mode(view: &dyn OrgView, p: &MemberSetRunModeParams) -> Decision {
+    let (member, mut profile) = live_agent(view, &p.member_id)?;
+    let (run_mode, schedule) = check_run_mode(p.run_mode, p.schedule.as_ref())?;
+    check_version(member.version, p.expected_version)?;
+    profile.run_mode = run_mode;
+    profile.schedule = schedule;
+    Ok(vec![OrgChange::MemberUpserted {
+        member: Member {
+            agent: Some(profile),
+            version: member.version + 1,
+            ..member
+        },
+    }])
+}
+
+/// A required profile text (`role`, `title`): trimmed, 1 to [`AGENT_TEXT_MAX_CHARS`] characters,
+/// no control characters.
+fn required_text(raw: &str, what: &str) -> Result<String, ApiError> {
+    Ok(check_text(Some(raw), what)?.expect("a given text is returned"))
+}
+
+/// A runtime a writer may send: a named one, or `Other` with a name that is not a named runtime
+/// in another spelling (ignoring case, with `-`, `_` and spaces alike). `Unknown` is refused.
+fn check_runtime(runtime: &AgentRuntime) -> Result<AgentRuntime, ApiError> {
+    match runtime {
+        AgentRuntime::Unknown => Err(fail(
+            ErrorCode::InvalidRequest,
+            "the runtime must be one this office knows",
+        )),
+        AgentRuntime::Other(name) => {
+            let name = required_text(name, "runtime")?;
+            let spelled: String = name
+                .chars()
+                .map(|c| if c == '-' || c == ' ' { '_' } else { c })
+                .collect::<String>()
+                .to_lowercase();
+            if matches!(spelled.as_str(), "claude_code" | "codex" | "antigravity") {
+                Err(fail(
+                    ErrorCode::InvalidRequest,
+                    "that runtime has a name of its own; use it",
+                ))
+            } else {
+                Ok(AgentRuntime::Other(name))
+            }
+        }
+        known => Ok(known.clone()),
+    }
+}
+
+/// A home: an absolute path of at most [`AGENT_HOME_MAX_BYTES`] bytes with no control character
+/// and no `..` component. It is stored as given and never opened by the rules.
+fn check_home(home: &str) -> Result<String, ApiError> {
+    if !home.starts_with('/')
+        || home.len() > AGENT_HOME_MAX_BYTES
+        || home.chars().any(char::is_control)
+        || home.split('/').any(|part| part == "..")
+    {
+        return Err(fail(
+            ErrorCode::InvalidRequest,
+            "home must be an absolute path with no `..`, at most 1024 bytes",
+        ));
+    }
+    Ok(home.to_owned())
+}
+
+/// The run mode and schedule together: `Unknown` is refused, `scheduled` needs a schedule and
+/// any other mode (or none) must have none.
+fn check_run_mode(
+    run_mode: Option<RunMode>,
+    schedule: Option<&Schedule>,
+) -> Result<(Option<RunMode>, Option<Schedule>), ApiError> {
+    match (run_mode, schedule) {
+        (Some(RunMode::Unknown), _) => Err(fail(
+            ErrorCode::InvalidRequest,
+            "the run mode must be one this office knows",
+        )),
+        (Some(RunMode::Scheduled), Some(schedule)) => {
+            Ok((Some(RunMode::Scheduled), Some(check_schedule(schedule)?)))
+        }
+        (Some(RunMode::Scheduled), None) => Err(fail(
+            ErrorCode::InvalidRequest,
+            "a scheduled agent needs a schedule",
+        )),
+        (mode, None) => Ok((mode, None)),
+        (_, Some(_)) => Err(fail(
+            ErrorCode::InvalidRequest,
+            "only a scheduled agent has a schedule",
+        )),
+    }
+}
+
+/// A schedule: the spec is text (trimmed, 1 to [`AGENT_TEXT_MAX_CHARS`], no control characters)
+/// and the time zone is `/`-separated names of ASCII letters, digits, `_`, `+` and `-`, so it
+/// can never name a path.
+fn check_schedule(schedule: &Schedule) -> Result<Schedule, ApiError> {
+    let spec = required_text(&schedule.spec, "schedule.spec")?;
+    let zone = schedule.time_zone.as_str();
+    let zone_ok = !zone.is_empty()
+        && zone.len() <= AGENT_TIME_ZONE_MAX_CHARS
+        && zone.split('/').all(|name| {
+            !name.is_empty()
+                && name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'+' | b'-'))
+        });
+    if !zone_ok {
+        return Err(fail(
+            ErrorCode::InvalidRequest,
+            "schedule.time_zone must be an IANA name like Europe/Lisbon",
+        ));
+    }
+    Ok(Schedule {
+        spec,
+        time_zone: zone.to_owned(),
+    })
+}
+
+/// An agent's `messaging_name`, its handle: 1 to [`AGENT_MESSAGING_NAME_MAX_CHARS`] ASCII
+/// letters, digits, `-`, `_` and `.`, starting with a letter or digit, and not shaped like an
+/// address (a member id, `run:`). Not trimmed: a name that breaks the format is `invalid_name`.
+fn parse_messaging_name(raw: &str) -> Result<String, ApiError> {
+    let bytes = raw.as_bytes();
+    let format_ok = !bytes.is_empty()
+        && bytes.len() <= AGENT_MESSAGING_NAME_MAX_CHARS
+        && bytes[0].is_ascii_alphanumeric()
+        && bytes
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'));
+    if !format_ok {
+        return Err(ApiError::new(
+            ErrorCode::InvalidName,
+            "a handle is 1 to 64 letters, digits, `-`, `_` and `.`, starting with a letter or digit",
+        ));
+    }
+    if org_proto::is_shaped_like_an_address(raw) {
+        return Err(ApiError::new(
+            ErrorCode::InvalidName,
+            "a handle can't look like a member id",
+        ));
+    }
+    Ok(raw.to_owned())
 }
 
 fn member_update_person(view: &dyn OrgView, p: &MemberUpdatePersonParams) -> Decision {
