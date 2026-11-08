@@ -64,6 +64,11 @@ pub(crate) enum SpoolFile {
 /// descriptor (`fstat`) that it is a regular file of at most `max` bytes, and read at most
 /// `max + 1` bytes (the file may grow after the check). An I/O error on a regular file (e.g.
 /// permissions) is still an error.
+///
+/// `O_NOFOLLOW` covers only the last path component: a symlinked spool directory (e.g.
+/// `inbox/<agent>` or `~/.agency` itself) is still followed. That's within the threat model
+/// (the spool belongs to one user, mode 0700); the point is that a file someone drops into a
+/// spool directory can't make us read elsewhere or block.
 pub(crate) fn read_spool_file(path: &Path, max: usize) -> io::Result<SpoolFile> {
     let file = match OpenOptions::new()
         .read(true)
