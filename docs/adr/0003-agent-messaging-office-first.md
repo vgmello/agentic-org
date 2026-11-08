@@ -203,6 +203,11 @@ To keep `inbox`, `notify`, `wait`, `read --next`, and UI thread views sub-millis
      - **Residual risk (v1):** An unsandboxed local process that can drive the macOS GUI (Accessibility) or attach to an unsigned dev build of the app could still act through the UI; OS-level sandboxing of agent child processes is deferred to v2.
    - **Agent Identity (Accepted Risk Until Office Runner Spawns Agents, `M-A`):**
      - **Accepted risk for v1:** Until the office runner spawns every agent session directly, agents are launched by `bin/agent` or developer terminals outside `org-office-server`. Therefore, any local process on the office machine can bind as any **`MemberKind::Agent`** via `--as` / `ORG_AGENT` (never as a `Person` or `owner`). Once the office runner spawns agents directly, `org-office-server` will issue a per-session capability token (`ORG_SESSION_TOKEN`) in the spawned child's environment and require it on `msg.bind` for agent identities.
+     - (amended 2026-11-08: agent sessions, ada) **The token is now issued** ([`agent-sessions.md`](../design/agent-sessions.md)). The office runner spawns office-run agents, meaning agents with a `run_mode`:
+       - Every start and resume gets a fresh random `ORG_SESSION_TOKEN`. The office holds it only in memory and puts it only in the child's environment, next to `ORG_OFFICE=<office_id>` and `ORG_AGENT`. It's never in argv or a settings file, and never logged.
+       - `msg.bind` as an office-run agent requires that agent's live session token (`msg.bind { agent, session_token }`). Without a valid one it's refused with `not_authorized`. `org-agent` reads the token from `ORG_SESSION_TOKEN`.
+       - So M-A is closed for office-run agents. It stays an accepted risk for agents people start interactively (`bin/agent`, developer terminals).
+       - **Residual risk:** a hostile process running as the same user can read another process's environment on macOS. The token stops casual and accidental impersonation, not that. Real isolation stays a v2 item, as above.
    - **Parent Verification on `reply_to` and No Retroactive Thread Escalation (`H1b`):**
      - When `msg.send` includes `reply_to: Some(parent_id)` or when `msg.reply { to_id: parent_id }` is called on an agent-bound connection, the server verifies that `bound_member_id` is authorized to read `parent_id` (`parent.from_member_id == bound_member_id || parent.to_member_id == bound_member_id`); otherwise it rejects the call with `ErrorCode::NotFound`. An agent cannot attach a message to a foreign thread by passing an arbitrary message ULID.
      - Furthermore, an agent-bound connection can read **only messages where `from_member_id == bound_member_id` or `to_member_id == bound_member_id`** (never earlier or third-party messages in a thread between other members).
@@ -219,6 +224,14 @@ To keep `inbox`, `notify`, `wait`, `read --next`, and UI thread views sub-millis
 | `msg.get` | `agent-bound` or `app-bound` | `app-bound` (`app_token`): any message in the office. `agent-bound`: requires `msg.from_member_id == bound_member_id \|\| msg.to_member_id == bound_member_id` (else `NotFound`). |
 | `msg.list` | `agent-bound` or `app-bound` | `app-bound` (`app_token`): any thread/participant in the office. `agent-bound`: `participant` must be `None` or resolve to `bound_member_id` (else `InvalidRequest`), and rows are restricted to `from_member_id == bound_member_id \|\| to_member_id == bound_member_id`. |
 | `msg.threads`, `msg.human_needs_you` | **`app-bound` (`app_token`) only** | Used by the Agentic Org desktop app to render org/human thread lists and the menu-bar "Needs you" queue. |
+| `msg.bind` as an office-run agent | Any local client **with that agent's live `session_token`** | (amended 2026-11-08: agent sessions, ada) Refused with `not_authorized` without a valid token (M-A above). |
+| `agent.wake`, `agent.stop`, `agent.interrupt`, `agent.send` | **`app-bound` (`app_token`) only** | (amended 2026-11-08: agent sessions, ada) The owner drives agents ([`agent-sessions.md`](../design/agent-sessions.md)). An agent-bound connection is refused with `not_authorized`, so an agent can't wake, stop or prompt another agent, or itself. |
+| `approval.list`, `approval.answer` | **`app-bound` (`app_token`) only** | (amended 2026-11-08: agent sessions, ada) An agent can never answer an approval, including its own. |
+| `run.list`, `run.get`, `run.events` | **`app-bound` (`app_token`) only** | (amended 2026-11-08: agent sessions, ada) Runs, usage and event logs. |
+| `session.take_over`, `session.heartbeat`, `session.hand_back` | **`app-bound` (`app_token`) only** | (amended 2026-11-08: agent sessions, ada) Take-over and its lease. |
+| `runtime.status`, `permission_policy.get`, `permission_policy.set` | **`app-bound` (`app_token`) only** | (amended 2026-11-08: agent sessions, ada) An agent can't read or widen its own permission policy. |
+
+(amended 2026-11-08: agent sessions, ada) A test calls every `app-bound`-only method on an agent-bound connection and expects `not_authorized`.
 
 #### 2.2 In-Memory Waiter Registry, Snooze Timer Heap, and Claim-Before-Commit Reply Hand-Off (`M1`, `M2`, `M-C`, `L-a`)
 
@@ -337,6 +350,15 @@ Agents must be able to discover everyone in the organization (agents, people, an
      ```
 2. **Presence (`online | busy | idle | offline`):**
    - Derived from each office's runtime state (`busy` while executing a turn, `idle` while holding `msg.wait` or between turns, `offline` when no session is active).
+   - (amended 2026-11-08: agent sessions, ada) **Agent presence is now `busy | idle | needs_you | with_you | asleep | offline`** ([`agent-sessions.md`](../design/agent-sessions.md)). `online` stays for people only. Unknown values decode as `Unknown`.
+     - `busy`: a turn is running.
+     - `idle`: a live session between turns, **or a turn whose connection holds an `org-agent` wait (`msg.wait` or `msg.ask`)**. The wait still counts toward the run's busy time.
+     - `needs_you`: the agent is waiting for an approval.
+     - `with_you`: a person has taken the session over.
+     - `asleep`: derived, never stored. An on-call or scheduled agent with no live run.
+     - `offline`: an always-on agent with no live session, or an agent the office doesn't run and that has no live session.
+     - For office-run agents the office derives presence from the session's own events, not from hooks. Office-run sessions load no presence or inbox hooks.
+     - **Blocking waits:** in office-run mode the wake guidance tells agents not to block in `msg wait` or `msg ask --timeout` for longer than **60 s**, because the office is their wake path. The 1-hour socket limit (§4.1) is unchanged for agents people start interactively.
    - **How presence propagates across offices:** Per [`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md) ("Runtime summaries are not logged"), presence is **ephemeral runtime data**, never written to `org.db`'s event log. Each office sends HQ passing `MemberPresenceUpdate` frames over its open connection when an agent's presence or status changes (debounced to at most 1 update/second per agent). HQ keeps the latest map in memory and forwards updates to connected offices and app subscribers (`member.presence_changed` event), avoiding any `fullfsync` per status change.
 3. **Self-Reported Status Line (`org-agent status` → wire call `status.set`):**
    - `org-agent status "<text>" [--ttl 8h] [--json]` sets the calling agent's status line; `org-agent status --clear` clears it.
@@ -535,6 +557,8 @@ Per [`teams-and-org-chart.md`](../design/teams-and-org-chart.md) ("Who agents ma
   - `message.state_changed { id: String, thread_id: String, to_member_id: String, state: MessageLifecycleState, triage_gen: u64, snoozed_until: Option<String>, snooze_after_task: bool, reason: Option<String>, updated_at: String }`
   - `message.delivery_failed { id: String, original_id: String, thread_id: String, from_member_id: String, recipient_id: String, recipient_name: String, reason: String }` (carries both the recipient's `id` and `display_name` as addressed at send time and the `reason` code such as `unknown_recipient` or `expired`)
   - `member.presence_changed { member_id: String, presence: MemberPresence, last_seen_at: String, status: Option<String>, status_expires_at: Option<String>, current_task_id: Option<String> }`
+    - (amended 2026-11-08: agent sessions, ada) `MemberPresence` gains `NeedsYou`, `WithYou` and `Asleep`, and decodes unknown values as `Unknown` (§2.4).
+- (amended 2026-11-08: agent sessions, ada) **Agent-session calls** (`agent.*`, `approval.*`, `run.*`, `session.*`, `runtime.status`, `permission_policy.*`) are defined in [`agent-sessions.md`](../design/agent-sessions.md). All are app-only (§2.1.4). `msg.bind` gains `session_token?: String`, required when binding as an office-run agent (M-A).
 - **Error codes added to `org_proto::ErrorCode`:**
   - `Timeout`, `TooLarge`, `NotBound` (`AlreadyExists`, `UnknownRecipient`, `NotFound`, `InvalidRequest`, `StorageError`, `Unknown` already exist in `crates/org-proto/src/error.rs`).
 - **Limits (measured on JSON-encoded wire bytes, fitting inside `MAX_FRAME_BYTES = 1 MiB`):**
@@ -552,6 +576,7 @@ In the office-to-office protocol (`crates/org-sync-proto`):
   - `WorkChange::MessageStateChanged(SyncedMessageState)`: carries `origin_office_id`, `origin_incarnation`, `origin_seq`, `org_position: Position`, `msg_id`, `to_member_id`, `state: Unread | Snoozed | Read | Done | Expired | DeadLetter`, `triage_gen: u64`, `snoozed_until: Option<String>`, `snooze_after_task: bool`, `reason: Option<String>`, `updated_at: String`.
 - **Passing runtime updates (not logged in `org.db` or `work_origin_log`):**
   - `RuntimeUpdate::MemberPresence { office_id: String, members: Vec<MemberRuntimeState> }` (carries `member_id`, `presence: Online | Busy | Idle | Offline`, `last_seen_at`, `status`, `status_expires_at`, `current_task_id`).
+    - (amended 2026-11-08: agent sessions, ada) `presence` carries the same values as `MemberPresence` in §4.1 (`NeedsYou`, `WithYou` and `Asleep` added, unknown values decoded as `Unknown`).
 
 #### 4.3 Where the Code Lives, Coupling Metrics (`docs/architecture-rules.md`), and the `MemberDirectory` & `MessageStore` Traits
 
