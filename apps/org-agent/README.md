@@ -119,6 +119,14 @@ names refuse `( ) [ ] : "`: a member whose saved name already has one must fix t
 (`--name`) in the same `profile set` as any other change, since the whole profile is checked.
 `msg reply` marks the original read (above).
 
+Relay:
+- An `ask` to a person or the owner that expired in the outbox (e.g. while the relay was down)
+  is delivered (it shows as urgent, "(expired)"), where v1-old dead-lettered it; one to an
+  agent is still dead-lettered. Caveat: while a v1-old `org-relay` holds `relay.lock` (the
+  two can share a spool), it is that relay delivering, so such asks are still dead-lettered.
+- A message to an unregistered member is dead-lettered as `unknown_recipient` even if it has
+  also expired (v1-old said `expired`).
+
 ## Known limits
 
 - `msg notify --session` records the listed items as reported (under the lock) before the
