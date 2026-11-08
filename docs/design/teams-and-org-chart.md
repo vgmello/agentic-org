@@ -12,7 +12,7 @@ Status: **draft for the user**, 2026-11-08. Owner: ada. It follows the user's mo
 
 ## The model
 - **Team** `{ id, name, kind, owner_team_id?, lead_member_id?, description?, version }`
-  - `kind` is `team` or `guild`, a **label only**: the same rules apply to both. It decides which chart shows the team (see "The two charts").
+  - `kind` is `team` or `guild`, a **label only**: the same rules apply to both. A guild can own teams and projects, or be owned by a team, like any team; the charts show those cases (see "The two charts"). Relabelling is always allowed.
   - `owner_team_id` empty means a top-level team.
   - **Ownership forms a tree:** each team has at most one owner, and a team can't own itself or any team above it. HQ rejects a move that would create a loop (`cycle`).
   - **The lead** is optional, and must be a member of that team.
@@ -24,7 +24,8 @@ Status: **draft for the user**, 2026-11-08. Owner: ada. It follows the user's mo
   - a lead must be a member. **Removing the lead from the team clears the lead**, in the same event, and the team's version goes up.
   - **deleting a team** that owns teams or projects is refused (`not_empty`) until they're moved or deleted. Its memberships go with it.
   - **removing a member from the organization** removes their memberships and clears them as lead of any team, in the same event. Each affected team's version goes up. **The owner's own person record can't be removed.**
-  - **names:** a team's name is unique among teams with the same owner (top-level teams count as siblings of each other). A **create, rename or move** that would clash returns `already_exists`.
+  - **names:** a team's name is unique among teams with the same owner, **whatever their kind** (top-level teams count as siblings of each other). So a top-level "Frontend" team and "Frontend" guild clash. A **create, rename or move** that would clash returns `already_exists`.
+  - **adding someone who's already a member** returns `already_exists`.
 
 ## How it changes
 These are organization commands, so they go through HQ and every office gets the resulting events (offices design):
@@ -36,7 +37,8 @@ These are organization commands, so they go through HQ and every office gets the
 
 Each command carries a client-made id for anything it creates, and the version of what it edits, as in the offices design:
 - `team.move` expects the **moved team's** version. The new owner is checked against HQ's current state, as is the loop check.
-- Membership commands expect the **membership's** version (`set_title`, `remove_member`) or the team's (`add_member`).
+- Membership commands expect the **membership's** version (`set_title`, `remove_member`). `add_member` needs only that the team and member exist. A membership is its own entity, so adding or removing members doesn't change the team's version (clearing a departing lead does, as above).
+- `project.move` changes only the project's version.
 - `team.rename`, `team.set_lead`, `team.set_kind` and `team.delete` expect the team's version. `member.remove` expects the member's.
 - `project.move` expects the project's version.
 
@@ -45,12 +47,12 @@ A command queued in a satellite's outbox can find its team, owner or member dele
 **Reading:** the app reads from its local office's copy with **`org.snapshot`**, the one read call. It returns the teams, members, memberships and projects (with their `team_id`), together with the **position** it reflects. `subscribe { from_position }` then resumes from exactly that point, so no change slips in between.
 
 ## The two charts
-1. **Team chart:** the ownership tree of teams labelled `team`.
+1. **Team chart:** the ownership tree of **all** teams. Guild-labelled teams appear in it like any team, with a small "guild" badge, so nothing is ever left without its parent.
    - Each team is a card: its name, lead, member avatars and projects. A division is simply a team card with teams below it.
    - A member who's in several teams appears in each, with a small "+2 teams" badge that lists the others.
    - Collapse and expand any branch. Drag a team onto another to move it, with a confirmation. HQ checks for loops.
    - A filter by office highlights agents placed in a given office.
-2. **Guild chart:** the teams labelled `guild`, side by side, each listing its members, and each member showing the teams they're in. That shows a discipline across the whole organization.
+2. **Guild chart:** the teams labelled `guild`, side by side, each listing its members, and each member showing the teams they're in. That shows a discipline across the whole organization. A guild that also owns teams or projects shows them as a count, linking to its place in the team chart.
 
 Both charts are views of the same teams. Editing (create, add member, move, relabel) is available from both. Changes waiting in an offline satellite's outbox show as **pending** in the chart (e.g. a moved team shown in its new place, marked pending), and rejected ones as **blocked**, as in the offices design.
 
