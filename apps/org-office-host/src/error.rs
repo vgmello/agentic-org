@@ -17,6 +17,8 @@ pub enum HostError {
     AlreadyRunning { home: PathBuf },
     /// Something that isn't a socket is where `host.sock` goes.
     SocketInTheWay { path: PathBuf },
+    /// The app's identity (bundle id, team id, development path) isn't well formed.
+    InvalidAppIdentity { why: String },
     Io {
         context: &'static str,
         source: io::Error,
@@ -55,6 +57,7 @@ impl fmt::Display for HostError {
                 "{} exists and isn't a socket; refusing to replace it",
                 path.display()
             ),
+            HostError::InvalidAppIdentity { why } => write!(f, "{why}"),
             HostError::Io { context, source } => write!(f, "{context}: {source}"),
         }
     }

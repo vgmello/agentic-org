@@ -84,7 +84,9 @@ fn create_stores_the_office_starts_it_and_tells_subscribers() {
     assert_eq!(hello.office.unwrap().office.id, hq.id);
 
     // The subscriber hears about it, with the same organization.
-    let event = events.next_event(WAIT).expect("organization.created");
+    let event = events
+        .next_event_named("organization.created", WAIT)
+        .expect("organization.created");
     let data = event.data::<OrganizationCreated>().unwrap().unwrap();
     assert_eq!(data.id, org.id);
     assert_eq!(data.offices[0].id, hq.id);
@@ -183,14 +185,27 @@ fn server_failures_map_to_errors_clean_up_and_emit_nothing() {
         assert_eq!(home.runs("discard"), run as u64 + 1);
     }
 
-    // The first event this subscriber sees is the successful create: the failures sent none.
+    // The failures sent no event at all.
+    assert_eq!(events.events_within(Duration::from_millis(300)), []);
+    // The first event after the successful create is its `organization.created` (no status
+    // change for its office comes before it), and the first this subscriber ever got.
     let org = create(&mut client, "Acme").unwrap();
-    let event = events.next_event(WAIT).unwrap();
-    assert_eq!(
-        event.data::<OrganizationCreated>().unwrap().unwrap().id,
-        org.id
-    );
-    assert_eq!(event.seq, 1);
+    let first = events.next_event(WAIT).unwrap();
+    assert_eq!(first.event, "organization.created");
+    assert_eq!(first.seq, 1);
+    let about = match first.event.as_str() {
+        "organization.created" => first.data::<OrganizationCreated>().unwrap().unwrap().id,
+        "office.status_changed" => {
+            first
+                .data::<org_proto::OfficeStatusChanged>()
+                .unwrap()
+                .unwrap()
+                .office
+                .organization_id
+        }
+        other => panic!("unexpected event {other}"),
+    };
+    assert_eq!(about, org.id);
     host.shutdown();
 }
 
@@ -226,7 +241,8 @@ fn a_crash_before_created_is_a_storage_error_and_cleans_up() {
         .unwrap()
         .organizations
         .is_empty());
-    assert!(events.next_event(Duration::from_millis(200)).is_none());
+    // No event at all: there's no other office here.
+    assert_eq!(events.events_within(Duration::from_millis(200)), []);
     // The failed create released its reservation: the name can be created again.
     create(&mut client, "Acme").unwrap();
     host.shutdown();
@@ -244,7 +260,7 @@ fn a_create_that_stored_its_office_but_never_reported_succeeds() {
         let home = TestHome::new();
         home.script(json!({ "create": step }));
         let mut config = home.config();
-        config.timings.create_timeout = Duration::from_secs(2);
+        config.timings.create_timeout = Duration::from_secs(5);
         let host = Host::start(config).unwrap();
         let mut events = subscriber(&host);
         let mut client = Client::connect(host.socket_path());
@@ -252,7 +268,9 @@ fn a_create_that_stored_its_office_but_never_reported_succeeds() {
         let office_id = org.offices[0].id.clone();
         assert_eq!(org.offices[0].status, OfficeStatus::Starting, "{step}");
         // Listed, announced, and served by a fresh `--office` run.
-        let event = events.next_event(WAIT).expect("organization.created");
+        let event = events
+            .next_event_named("organization.created", WAIT)
+            .expect("organization.created");
         assert_eq!(
             event.data::<OrganizationCreated>().unwrap().unwrap().id,
             org.id
@@ -293,7 +311,7 @@ fn a_create_that_stored_another_office_but_never_reported_is_refused() {
             .unwrap()
             .organizations
             .is_empty());
-        assert!(events.next_event(Duration::from_millis(200)).is_none());
+        assert_eq!(events.events_within(Duration::from_millis(200)), []);
         host.shutdown();
     }
 }
@@ -337,8 +355,8 @@ fn a_create_that_never_answers_times_out_kills_the_server_and_cleans_up() {
     home.script(json!({"create": {"do": "hang", "ignore_eof": true}}));
     let mut config = home.config();
     // Long enough for the fake to start and read the create message (a freshly built binary's
-    // first launch on macOS can take a few hundred ms), short enough for a test.
-    config.timings.create_timeout = Duration::from_secs(2);
+    // first launch on macOS can take seconds on a busy machine), short enough for a test.
+    config.timings.create_timeout = Duration::from_secs(5);
     let host = Host::start(config).unwrap();
     let mut client = Client::connect(host.socket_path());
     let err = create(&mut client, "Acme").unwrap_err();
@@ -392,8 +410,9 @@ fn a_created_office_other_than_the_one_asked_for_is_refused_and_moved_aside() {
                 .is_empty(),
             "{report}"
         );
-        assert!(
-            events.next_event(Duration::from_millis(200)).is_none(),
+        assert_eq!(
+            events.events_within(Duration::from_millis(200)),
+            [],
             "{report}"
         );
         // The requested folder was moved, whole, to offices/.refused/, and never discarded.
@@ -449,7 +468,14 @@ fn a_created_office_reported_under_another_offices_id_leaves_that_office_alone()
 
     let err = create(&mut client, "Acme").unwrap_err();
     assert_eq!(err.code, ErrorCode::StorageError);
-    assert!(events.next_event(Duration::from_millis(200)).is_none());
+    // Nothing about the refused create; at most the other office's own status.
+    for event in events.events_within(Duration::from_millis(200)) {
+        let office = event
+            .data::<org_proto::OfficeStatusChanged>()
+            .and_then(Result::ok)
+            .map(|data| data.office.id);
+        assert_eq!(office.as_deref(), Some(OTHER), "unexpected {event:?}");
+    }
     // Only the requested folder was moved aside; the other office is untouched and still runs.
     assert_eq!(home.runs("discard"), 0);
     assert_eq!(home.office_folders(), [".refused", OTHER]);
@@ -563,7 +589,7 @@ fn a_shutdown_during_a_create_stops_its_server_adopts_nothing_and_sends_no_event
     let answer = creator.join().unwrap();
     assert!(!answer.contains("\"result\""), "{answer}");
     assert!(!alive(pid), "the create's server is still running");
-    assert!(events.next_event(Duration::from_millis(200)).is_none());
+    assert_eq!(events.events_within(Duration::from_millis(200)), []);
     // Its cleanup ran into the shutdown: no discard was started then.
     assert_eq!(home.runs("discard"), 0);
     assert_eq!(home.office_folders().len(), 1);
@@ -611,14 +637,18 @@ fn subscribing_twice_on_one_connection_sends_each_event_once() {
         .call::<Subscribe>(&SubscribeParams::default())
         .unwrap();
     let org = create(&mut Client::connect(host.socket_path()), "Acme").unwrap();
-    let event = events.next_event(WAIT).expect("organization.created");
+    let event = events
+        .next_event_named("organization.created", WAIT)
+        .expect("organization.created");
     assert_eq!(
         event.data::<OrganizationCreated>().unwrap().unwrap().id,
         org.id
     );
+    // Its office's status may follow (level-triggered), but no second `organization.created`.
+    let more = events.events_within(Duration::from_millis(300));
     assert!(
-        events.next_event(Duration::from_millis(300)).is_none(),
-        "the event came twice"
+        !more.iter().any(|e| e.event == "organization.created"),
+        "the event came twice: {more:?}"
     );
     host.shutdown();
 }

@@ -4,11 +4,15 @@
 //! on SIGTERM or SIGINT. All logic lives in the library.
 //!
 //! ```text
-//! org-office-host [--home <absolute path>] [--server-bin <path>]
+//! org-office-host [--home <absolute path>] [--server-bin <path>] [--app-team-id <team id>]
+//!                 [--dev-app-path <absolute path>]
 //! ```
 //! `--home` overrides the office home (otherwise `org_proto::location`'s rule) and
 //! `--server-bin` the office server program (otherwise `org-office-server` next to this one);
-//! both are for development and tests.
+//! both are for development and tests. `--app-team-id` is the team id that signs the desktop
+//! app: without it, `office.app_token` and `office.restart` refuse every caller.
+//! `--dev-app-path` names an unsigned development app those calls accept; only debug builds
+//! honour it.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -16,7 +20,17 @@ use std::process::ExitCode;
 use org_office_host::signals::ShutdownSignals;
 use org_office_host::{default_server_program, Config, Host};
 
-const USAGE: &str = "usage: org-office-host [--home <absolute path>] [--server-bin <path>]";
+const USAGE: &str = "usage: org-office-host [--home <absolute path>] [--server-bin <path>] \
+                     [--app-team-id <team id>] [--dev-app-path <absolute path>]";
+
+/// What the command line sets.
+#[derive(Default)]
+struct Args {
+    home: Option<PathBuf>,
+    server_bin: Option<PathBuf>,
+    app_team_id: Option<String>,
+    dev_app_path: Option<PathBuf>,
+}
 
 fn main() -> ExitCode {
     match run() {
@@ -31,13 +45,13 @@ fn main() -> ExitCode {
 fn run() -> Result<(), String> {
     // First, before any thread exists, so every thread inherits the mask.
     let signals = ShutdownSignals::block().map_err(|e| format!("blocking signals: {e}"))?;
-    let (home, server_bin) = parse_args(std::env::args().skip(1))?;
-    let home = match home {
+    let args = parse_args(std::env::args().skip(1))?;
+    let home = match args.home {
         Some(home) => home,
         None => org_proto::location::default_office_home()
             .ok_or("no office home: neither ORG_OFFICE_HOME nor HOME is an absolute path")?,
     };
-    let server_bin = match server_bin {
+    let server_bin = match args.server_bin {
         // Servers run with `/` as their working directory, so a relative path must be
         // resolved here, against ours.
         Some(path) => {
@@ -45,7 +59,10 @@ fn run() -> Result<(), String> {
         }
         None => default_server_program().map_err(|e| format!("finding the office server: {e}"))?,
     };
-    let host = Host::start(Config::new(home, server_bin)).map_err(|e| e.to_string())?;
+    let mut config = Config::new(home, server_bin);
+    config.app_team_id = args.app_team_id;
+    config.dev_app_path = args.dev_app_path;
+    let host = Host::start(config).map_err(|e| e.to_string())?;
     let waited = signals.wait();
     host.shutdown();
     waited
@@ -53,24 +70,26 @@ fn run() -> Result<(), String> {
         .map_err(|e| format!("waiting for a signal: {e}"))
 }
 
-fn parse_args(
-    mut args: impl Iterator<Item = String>,
-) -> Result<(Option<PathBuf>, Option<PathBuf>), String> {
-    let (mut home, mut server_bin) = (None, None);
+fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
+    let mut parsed = Args::default();
     while let Some(arg) = args.next() {
-        let slot = match arg.as_str() {
-            "--home" => &mut home,
-            "--server-bin" => &mut server_bin,
-            "--version" => {
-                println!("org-office-host {}", env!("CARGO_PKG_VERSION"));
-                std::process::exit(0);
-            }
-            _ => return Err(format!("unexpected argument {arg:?}\n{USAGE}")),
-        };
+        if arg == "--version" {
+            println!("org-office-host {}", env!("CARGO_PKG_VERSION"));
+            std::process::exit(0);
+        }
+        let known = ["--home", "--server-bin", "--app-team-id", "--dev-app-path"];
+        if !known.contains(&arg.as_str()) {
+            return Err(format!("unexpected argument {arg:?}\n{USAGE}"));
+        }
         let value = args
             .next()
             .ok_or_else(|| format!("{arg} needs a value\n{USAGE}"))?;
-        *slot = Some(PathBuf::from(value));
+        match arg.as_str() {
+            "--home" => parsed.home = Some(PathBuf::from(value)),
+            "--server-bin" => parsed.server_bin = Some(PathBuf::from(value)),
+            "--app-team-id" => parsed.app_team_id = Some(value),
+            _ => parsed.dev_app_path = Some(PathBuf::from(value)),
+        }
     }
-    Ok((home, server_bin))
+    Ok(parsed)
 }

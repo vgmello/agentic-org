@@ -43,7 +43,10 @@ rusqlite = { version = "=0.41.1", features = ["bundled-sqlcipher"] }
 tempfile = "=3.27.0"
 sha2 = "=0.10.9"
 libc = "=0.2.191"
+# The host's check of the desktop app's code signature (office.app_token, office.restart),
+# and the app's own use on v1.
 security-framework = "=3.7.0"
+# security-framework's code-signing API takes Core Foundation types (the peer's audit token).
 core-foundation = "=0.10.1"
 
 [profile.release]

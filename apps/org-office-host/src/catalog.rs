@@ -132,6 +132,21 @@ impl Catalog {
         self.offices.push(office);
     }
 
+    /// Whether `office_id` is an office on this Mac.
+    pub(crate) fn has_office(&self, office_id: &str) -> bool {
+        self.offices.iter().any(|o| o.office_id == office_id)
+    }
+
+    /// The office `office_id`, if it's on this Mac.
+    pub(crate) fn office(&self, office_id: &str) -> Option<&OfficeFile> {
+        self.offices.iter().find(|o| o.office_id == office_id)
+    }
+
+    /// Whether a create in flight planned `office_id`.
+    pub(crate) fn is_reserved(&self, office_id: &str) -> bool {
+        self.reserved.iter().any(|r| r.office_id == office_id)
+    }
+
     /// Ends the reservation of the create that planned `office_id` (if it still has one).
     pub(crate) fn release(&mut self, office_id: &str) {
         self.reserved.retain(|r| r.office_id != office_id);

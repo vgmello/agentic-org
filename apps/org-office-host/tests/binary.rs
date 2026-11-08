@@ -26,6 +26,9 @@ const WAIT: Duration = Duration::from_secs(10);
 const EXIT_WAIT: Duration = Duration::from_secs(30);
 const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
 
+/// An environment variable every test host gets, to show it isn't passed on.
+const CANARY: &str = "ORG_HOST_TEST_CANARY";
+
 /// A host process that is killed (and reaped) when dropped, so a failed assertion never leaves
 /// one running.
 struct HostProcess(Child);
@@ -60,6 +63,8 @@ fn spawn_host(home: &TestHome, stderr_to: &str) -> HostProcess {
             .arg(home.path())
             .arg("--server-bin")
             .arg(fake_server())
+            // Something of the login session's that must never reach a server.
+            .env(CANARY, "from-the-host-environment")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(stderr)
@@ -293,4 +298,31 @@ fn servers_inherit_no_host_fds_while_clients_connect() {
     assert_eq!(reports.len(), 200, "every server reports its fds");
     let leaked: Vec<&&str> = reports.iter().filter(|l| !l.ends_with(" -")).collect();
     assert!(leaked.is_empty(), "servers inherited host fds: {leaked:?}");
+}
+
+#[test]
+fn servers_get_only_the_allowed_environment() {
+    let home = home_with_office();
+    let mut host = spawn_host(&home, "host.err");
+    wait_until_active(&home);
+    signal(&host, libc::SIGTERM);
+    assert!(wait_for_exit(&mut host).success());
+    let allowed = [
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "PATH",
+        "TMPDIR",
+        "LANG",
+        "ORG_OFFICE_HOME",
+    ];
+    let runs = home.env_names(A);
+    assert!(!runs.is_empty());
+    for names in runs {
+        assert!(names.iter().any(|n| n == "ORG_OFFICE_HOME"), "{names:?}");
+        assert!(!names.iter().any(|n| n == CANARY), "the canary got through");
+        for name in names.iter().filter(|n| !n.is_empty()) {
+            assert!(allowed.contains(&name.as_str()), "{name} was passed on");
+        }
+    }
 }

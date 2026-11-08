@@ -14,8 +14,11 @@
 //!
 //! `main.rs` only parses arguments, waits for a shutdown signal and calls [`Host`].
 
+mod app_auth;
 mod app_token;
+mod broadcast;
 mod catalog;
+mod clock;
 mod cloexec;
 mod error;
 mod home;
@@ -23,6 +26,8 @@ mod host_log;
 mod ids;
 mod logs;
 mod offices;
+#[cfg(target_os = "macos")]
+mod peer;
 mod service;
 pub mod signals;
 mod supervisor;
@@ -35,6 +40,8 @@ use std::os::unix::fs::FileTypeExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::app_auth::AppPolicy;
+use crate::broadcast::Broadcast;
 use crate::catalog::Catalog;
 use crate::home::{HostLock, Layout};
 use crate::offices::Offices;
@@ -42,6 +49,7 @@ use crate::service::listener::{self, BindError, Listener, ListenerConfig};
 use crate::service::Service;
 use crate::supervisor::{Supervisor, SupervisorConfig};
 
+pub use crate::app_auth::APP_BUNDLE_ID;
 pub use crate::error::HostError;
 pub use crate::logs::DEFAULT_LOG_MAX_BYTES;
 pub use crate::timings::Timings;
@@ -64,6 +72,15 @@ pub struct Config {
     pub log_max_bytes: u64,
     /// Client connections beyond this are closed on arrival.
     pub max_connections: usize,
+    /// The desktop app's bundle id, for the code-signature check of the app-only calls
+    /// (`office.app_token`, `office.restart`).
+    pub app_bundle_id: String,
+    /// The team id that signs the desktop app. Required for the app-only calls: with none,
+    /// every caller is refused (`not_authorized`).
+    pub app_team_id: Option<String>,
+    /// Debug builds only: an unsigned development app (this exact executable, run by this user)
+    /// that the app-only calls accept without a code signature. Ignored by release builds.
+    pub dev_app_path: Option<PathBuf>,
 }
 
 impl Config {
@@ -75,6 +92,9 @@ impl Config {
             timings: Timings::default(),
             log_max_bytes: DEFAULT_LOG_MAX_BYTES,
             max_connections: 64,
+            app_bundle_id: APP_BUNDLE_ID.to_owned(),
+            app_team_id: None,
+            dev_app_path: None,
         }
     }
 }
@@ -105,6 +125,18 @@ impl Host {
         if !config.home.is_absolute() {
             return Err(HostError::RelativeHome { path: config.home });
         }
+        let app = AppPolicy::new(
+            &config.app_bundle_id,
+            config.app_team_id.as_deref(),
+            config.dev_app_path.as_deref(),
+        )
+        .map_err(|why| HostError::InvalidAppIdentity { why })?;
+        for line in app.describe() {
+            host_log::log(&line);
+        }
+        if !cfg!(debug_assertions) && config.dev_app_path.is_some() {
+            host_log::log("the development app path is ignored: this is a release build");
+        }
         let layout = Layout::new(&config.home);
         layout.check_socket_paths()?;
         layout.prepare()?;
@@ -132,11 +164,13 @@ impl Host {
             log_max_bytes: config.log_max_bytes,
             timings: config.timings.clone(),
         });
+        let broadcast = Arc::new(Broadcast::default());
         let offices = Offices::start(
             &layout.home,
             catalog,
             unfinished,
             supervisor,
+            Arc::clone(&broadcast),
             &config.timings,
         );
 
@@ -146,7 +180,7 @@ impl Host {
                 max_in_flight: MAX_IN_FLIGHT_PER_CONNECTION,
                 expected_uid: home::euid(),
             };
-            let service = Arc::new(Service::new(Arc::clone(&offices)));
+            let service = Arc::new(Service::new(Arc::clone(&offices), broadcast, app));
             Listener::start(bound, config, service).map_err(io("starting the listener"))
         };
         let listener = match listener {

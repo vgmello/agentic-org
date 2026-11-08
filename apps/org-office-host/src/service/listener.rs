@@ -20,6 +20,7 @@ use org_proto::frame::{self, FrameError};
 use org_proto::{salvage_id, ApiError, ErrorCode, Event, Request, Response, UNREADABLE_REQUEST_ID};
 use serde_json::Value;
 
+use crate::app_auth::AuditToken;
 use crate::cloexec::SPAWN_LOCK;
 use crate::host_log;
 use crate::sync::lock;
@@ -36,7 +37,8 @@ const OUTBOUND_QUEUE: usize = 256;
 
 /// Answers requests. Each call runs on its own thread and answers through `connection`.
 pub(crate) trait Handler: Send + Sync + 'static {
-    fn handle(&self, request: Request, connection: &Arc<Connection>);
+    /// `sent_at` is the byte offset in the connection's stream where the request's line began.
+    fn handle(&self, request: Request, connection: &Arc<Connection>, sent_at: u64);
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -242,7 +244,7 @@ fn accept_loop(
         };
         let id = next_id;
         next_id += 1;
-        let (connection, queue) = Connection::new(for_writer);
+        let (connection, queue) = Connection::new(for_writer, Accepted::sample(&stream));
         let reader = {
             let (handler, connection) = (Arc::clone(handler), Arc::clone(&connection));
             let max_in_flight = config.max_in_flight;
@@ -253,6 +255,67 @@ fn accept_loop(
         if let Ok(reader) = reader {
             table.insert(id, Live { connection, reader });
         }
+    }
+}
+
+/// What the host notes about a client as it accepts its connection, for the app-only calls
+/// (`app_auth`): its audit token, taken first, then how many bytes it had already sent. A byte
+/// buffered before the token was taken may come from a process image that was replaced since
+/// (the exec swap), so an app-only call is accepted only from a request line that starts at or
+/// after `buffered`.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Accepted {
+    pub(crate) token: Option<AuditToken>,
+    pub(crate) buffered: u64,
+}
+
+impl Accepted {
+    pub(crate) fn sample(stream: &UnixStream) -> Self {
+        #[cfg(target_os = "macos")]
+        let token = crate::peer::audit_token(stream).ok();
+        #[cfg(not(target_os = "macos"))]
+        let token = None;
+        // After the token: anything sent before it was taken is counted as buffered.
+        let buffered = bytes_waiting(stream).unwrap_or(u64::MAX);
+        Self { token, buffered }
+    }
+}
+
+/// How many bytes are waiting to be read on `stream` (`FIONREAD`).
+fn bytes_waiting(stream: &UnixStream) -> io::Result<u64> {
+    let mut waiting: libc::c_int = 0;
+    // SAFETY: a valid socket fd, and an out-value of the size FIONREAD writes.
+    let rc = unsafe { libc::ioctl(stream.as_raw_fd(), libc::FIONREAD, &mut waiting) };
+    if rc == 0 {
+        Ok(u64::try_from(waiting).unwrap_or(0))
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+/// A reader that counts the bytes consumed from the stream, so each request line's starting
+/// offset is known.
+struct Counted<R> {
+    inner: R,
+    consumed: u64,
+}
+
+impl<R: io::BufRead> io::Read for Counted<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.consumed += n as u64;
+        Ok(n)
+    }
+}
+
+impl<R: io::BufRead> io::BufRead for Counted<R> {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        self.inner.fill_buf()
+    }
+
+    fn consume(&mut self, amount: usize) {
+        self.consumed += amount as u64;
+        self.inner.consume(amount);
     }
 }
 
@@ -285,8 +348,15 @@ fn serve(
             .spawn(move || write_loop(&out, queue))
     });
     let in_flight = Arc::new(InFlight::new(max_in_flight));
-    let mut reader = BufReader::new(stream);
-    while let Ok(Some(line)) = frame::read_line(&mut reader) {
+    let mut reader = Counted {
+        inner: BufReader::new(stream),
+        consumed: 0,
+    };
+    loop {
+        let sent_at = reader.consumed;
+        let Ok(Some(line)) = frame::read_line(&mut reader) else {
+            break;
+        };
         let request = match serde_json::from_slice::<Request>(&line) {
             Ok(request) => request,
             Err(_) => {
@@ -309,7 +379,7 @@ fn serve(
                 .name("host-request".into())
                 .spawn(move || {
                     let _done = Release(&in_flight);
-                    handler.handle(request, &connection);
+                    handler.handle(request, &connection, sent_at);
                 })
         };
         if worker.is_err() {
@@ -376,6 +446,8 @@ impl Drop for Release<'_> {
 
 enum Outbound {
     Response(Response),
+    /// A response line already encoded, holding a secret: written as is, then zeroed.
+    Secret(SecretLine),
     /// `seq` is given by the writer, so it counts without gaps in the order events are written.
     Event {
         name: String,
@@ -385,16 +457,57 @@ enum Outbound {
     Close,
 }
 
+/// An encoded response line holding a secret (`office.app_token`). It never passes through a
+/// `serde_json::Value` or the writer's buffer, and is zeroed when dropped (best effort: the
+/// socket's kernel buffers still hold it until the client reads it).
+pub(crate) struct SecretLine(Vec<u8>);
+
+impl SecretLine {
+    /// `bytes` is one JSON line, `\n` included.
+    pub(crate) fn new(bytes: Vec<u8>) -> Self {
+        Self(bytes)
+    }
+}
+
+impl Drop for SecretLine {
+    fn drop(&mut self) {
+        crate::app_token::zero(&mut self.0);
+    }
+}
+
 /// One client connection, as handlers see it: a place to queue responses and events.
 pub(crate) struct Connection {
     outbound: SyncSender<Outbound>,
     stream: UnixStream,
+    /// What the host noted about the client when it accepted the connection (`app_auth`).
+    accepted: Accepted,
 }
 
 impl Connection {
-    fn new(stream: UnixStream) -> (Arc<Self>, Receiver<Outbound>) {
+    fn new(stream: UnixStream, accepted: Accepted) -> (Arc<Self>, Receiver<Outbound>) {
         let (outbound, queue) = mpsc::sync_channel(OUTBOUND_QUEUE);
-        (Arc::new(Self { outbound, stream }), queue)
+        let connection = Self {
+            outbound,
+            stream,
+            accepted,
+        };
+        (Arc::new(connection), queue)
+    }
+
+    /// What the host noted about the client when it accepted the connection.
+    pub(crate) fn accepted(&self) -> Accepted {
+        self.accepted
+    }
+
+    /// The connection's socket, to identify the client (`app_auth`).
+    pub(crate) fn socket(&self) -> &UnixStream {
+        &self.stream
+    }
+
+    /// Queues an encoded response line that holds a secret. Never blocks, like
+    /// [`Connection::send_response`].
+    pub(crate) fn send_secret_line(&self, line: SecretLine) {
+        self.enqueue(Outbound::Secret(line));
     }
 
     /// Queues a response. Never blocks: a client whose queue is full is disconnected.
@@ -427,6 +540,12 @@ impl Connection {
     }
 }
 
+impl crate::broadcast::Subscriber for Connection {
+    fn send_event(&self, name: &str, data: Value) {
+        Connection::send_event(self, name, data);
+    }
+}
+
 /// The writer: writes queued messages until [`Outbound::Close`], until every sender is gone,
 /// or until a write fails (then it closes the socket, which also ends the reader).
 fn write_loop(stream: &UnixStream, queue: Receiver<Outbound>) {
@@ -436,6 +555,18 @@ fn write_loop(stream: &UnixStream, queue: Receiver<Outbound>) {
         let written = match message {
             Outbound::Close => return,
             Outbound::Response(response) => write_response(&mut out, response),
+            Outbound::Secret(line) => {
+                // Past the writer's buffer, straight to the socket, so no copy stays there.
+                let written = io::Write::flush(&mut out).and_then(|()| {
+                    let mut socket: &UnixStream = out.get_ref();
+                    io::Write::write_all(&mut socket, &line.0)
+                });
+                if written.is_err() {
+                    let _ = stream.shutdown(std::net::Shutdown::Both);
+                    return;
+                }
+                continue;
+            }
             Outbound::Event { name, data } => {
                 seq += 1;
                 frame::write_message(
@@ -480,7 +611,7 @@ mod tests {
     struct Echo;
 
     impl Handler for Echo {
-        fn handle(&self, request: Request, connection: &Arc<Connection>) {
+        fn handle(&self, request: Request, connection: &Arc<Connection>, _sent_at: u64) {
             connection.send_response(Response {
                 id: request.id,
                 outcome: org_proto::Outcome::Result(Value::String(request.method)),
@@ -576,6 +707,51 @@ mod tests {
         let mut third = connect(&path);
         let _ = third.write_all(b"{\"id\":1,\"method\":\"a\"}\n");
         assert_eq!(read_line(&third), None);
+    }
+
+    /// Records where each request began and what the accept noted.
+    struct Recorder(Mutex<Vec<(String, u64, u64)>>);
+
+    impl Handler for Recorder {
+        fn handle(&self, request: Request, connection: &Arc<Connection>, sent_at: u64) {
+            lock(&self.0).push((request.method, sent_at, connection.accepted().buffered));
+        }
+    }
+
+    /// The N0 rule's two halves: what the accept notes as already buffered, and each request's
+    /// offset in the stream. A request that was already buffered when the connection was
+    /// accepted starts before N0 (an app-only call there is refused); one sent after starts at or
+    /// after it. (An integration test can't place a request before the host's accept reliably;
+    /// here the "accept" is the sample taken after the first request was written.)
+    #[test]
+    fn the_accept_notes_what_was_buffered_and_requests_know_where_they_began() {
+        let (client, server) = UnixStream::pair().unwrap();
+        let first = b"{\"id\":1,\"method\":\"early\"}\n";
+        let second = b"{\"id\":2,\"method\":\"after\"}\n";
+        (&client).write_all(first).unwrap();
+        let accepted = Accepted::sample(&server);
+        assert_eq!(accepted.buffered, first.len() as u64);
+
+        let recorder = Arc::new(Recorder(Mutex::new(Vec::new())));
+        let (connection, queue) = Connection::new(server.try_clone().unwrap(), accepted);
+        let handler: Arc<dyn Handler> = recorder.clone();
+        let serving = thread::spawn(move || serve(server, connection, queue, handler, 4));
+        (&client).write_all(second).unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+        serving.join().unwrap();
+
+        let mut seen = lock(&recorder.0).clone();
+        seen.sort_by_key(|(_, at, _)| *at);
+        let n0 = first.len() as u64;
+        assert_eq!(
+            seen,
+            [
+                ("early".to_owned(), 0, n0),
+                ("after".to_owned(), first.len() as u64, n0),
+            ]
+        );
+        // The early one began before N0; the later one at it.
+        assert!(seen[0].1 < seen[0].2 && seen[1].1 >= seen[1].2);
     }
 
     #[test]
