@@ -3,12 +3,13 @@
 //! the mock. Each variant carries `org_proto`'s own params type, and its `method` name is the contract's.
 
 use org_proto::org::{
-    MemberAddAgentParams, MemberAddPersonParams, MemberMoveParams, MemberOffboardParams,
-    MemberRemoveParams, MemberSetAgentStatusParams, MemberSetReportsToParams,
-    MemberSetRunModeParams, MemberUpdateAgentParams, MemberUpdatePersonParams,
-    ProjectAddTeamParams, ProjectRemoveTeamParams, TeamAddMemberParams, TeamCreateParams,
-    TeamDeleteParams, TeamMoveParams, TeamRemoveMemberParams, TeamRenameParams, TeamSetLeadParams,
-    TeamSetTitleParams,
+    AreaCreateParams, AreaRenameParams, AreaSetLeadParams, AreaSetTeamParams, MemberAddAgentParams,
+    MemberAddPersonParams, MemberMoveParams, MemberOffboardParams, MemberRemoveParams,
+    MemberSetAgentStatusParams, MemberSetReportsToParams, MemberSetRunModeParams,
+    MemberUpdateAgentParams, MemberUpdatePersonParams, ProjectAddTeamParams, ProjectArchiveParams,
+    ProjectCreateParams, ProjectRemoveTeamParams, ProjectUpdateParams, TeamAddMemberParams,
+    TeamCreateParams, TeamDeleteParams, TeamMoveParams, TeamRemoveMemberParams, TeamRenameParams,
+    TeamSetLeadParams, TeamSetTitleParams,
 };
 use serde::{Deserialize, Serialize};
 
@@ -57,6 +58,20 @@ pub enum OrgCommand {
     ProjectAddTeam(ProjectAddTeamParams),
     #[serde(rename = "project.remove_team")]
     ProjectRemoveTeam(ProjectRemoveTeamParams),
+    #[serde(rename = "project.create")]
+    ProjectCreate(ProjectCreateParams),
+    #[serde(rename = "project.update")]
+    ProjectUpdate(ProjectUpdateParams),
+    #[serde(rename = "project.archive")]
+    ProjectArchive(ProjectArchiveParams),
+    #[serde(rename = "area.create")]
+    AreaCreate(AreaCreateParams),
+    #[serde(rename = "area.rename")]
+    AreaRename(AreaRenameParams),
+    #[serde(rename = "area.set_team")]
+    AreaSetTeam(AreaSetTeamParams),
+    #[serde(rename = "area.set_lead")]
+    AreaSetLead(AreaSetLeadParams),
 }
 
 impl OrgCommand {
@@ -83,6 +98,13 @@ impl OrgCommand {
             Self::MemberOffboard(p) => &p.command_id,
             Self::ProjectAddTeam(p) => &p.command_id,
             Self::ProjectRemoveTeam(p) => &p.command_id,
+            Self::ProjectCreate(p) => &p.command_id,
+            Self::ProjectUpdate(p) => &p.command_id,
+            Self::ProjectArchive(p) => &p.command_id,
+            Self::AreaCreate(p) => &p.command_id,
+            Self::AreaRename(p) => &p.command_id,
+            Self::AreaSetTeam(p) => &p.command_id,
+            Self::AreaSetLead(p) => &p.command_id,
         }
     }
 }
@@ -91,10 +113,11 @@ impl OrgCommand {
 mod tests {
     use super::*;
     use org_proto::org::{
-        MemberAddAgent, MemberAddPerson, MemberMove, MemberOffboard, MemberRemove,
-        MemberSetAgentStatus, MemberSetReportsTo, MemberSetRunMode, MemberUpdateAgent,
-        MemberUpdatePerson, ProjectAddTeam, ProjectRemoveTeam, TeamAddMember, TeamCreate,
-        TeamDelete, TeamMove, TeamRemoveMember, TeamRename, TeamSetLead, TeamSetTitle,
+        AreaCreate, AreaRename, AreaSetLead, AreaSetTeam, MemberAddAgent, MemberAddPerson,
+        MemberMove, MemberOffboard, MemberRemove, MemberSetAgentStatus, MemberSetReportsTo,
+        MemberSetRunMode, MemberUpdateAgent, MemberUpdatePerson, ProjectAddTeam, ProjectArchive,
+        ProjectCreate, ProjectRemoveTeam, ProjectUpdate, TeamAddMember, TeamCreate, TeamDelete,
+        TeamMove, TeamRemoveMember, TeamRename, TeamSetLead, TeamSetTitle,
     };
     use org_proto::Call;
 
@@ -122,6 +145,13 @@ mod tests {
             "member.offboard",
             "project.add_team",
             "project.remove_team",
+            "project.create",
+            "project.update",
+            "project.archive",
+            "area.create",
+            "area.rename",
+            "area.set_team",
+            "area.set_lead",
         ];
         let contract = [
             TeamCreate::METHOD,
@@ -144,6 +174,13 @@ mod tests {
             MemberOffboard::METHOD,
             ProjectAddTeam::METHOD,
             ProjectRemoveTeam::METHOD,
+            ProjectCreate::METHOD,
+            ProjectUpdate::METHOD,
+            ProjectArchive::METHOD,
+            AreaCreate::METHOD,
+            AreaRename::METHOD,
+            AreaSetTeam::METHOD,
+            AreaSetLead::METHOD,
         ];
         assert_eq!(methods, contract);
         // The enum's own wire names: each parses with the contract's params for it (so a typo in a
@@ -180,6 +217,13 @@ mod tests {
             c(serde_json::json!({"member_id": "a", "expected_version": 1})),
             c(serde_json::json!({"project_team_id": "x", "project_id": "p", "team_id": "t"})),
             c(serde_json::json!({"project_team_id": "x", "expected_version": 1})),
+            c(serde_json::json!({"project_id": "p", "name": "n", "general_area_id": "g"})),
+            c(serde_json::json!({"project_id": "p", "expected_version": 1, "name": "n"})),
+            c(serde_json::json!({"project_id": "p", "expected_version": 1, "archived": true})),
+            c(serde_json::json!({"area_id": "a", "project_id": "p", "name": "n"})),
+            c(serde_json::json!({"area_id": "a", "expected_version": 1, "name": "n"})),
+            c(serde_json::json!({"area_id": "a", "expected_version": 1})),
+            c(serde_json::json!({"area_id": "a", "expected_version": 1})),
         ];
         for (method, params) in methods.iter().zip(params) {
             let wire = serde_json::json!({"method": method, "params": params});

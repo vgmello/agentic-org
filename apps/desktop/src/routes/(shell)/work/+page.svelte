@@ -7,7 +7,6 @@
 	import { toAppError } from '$lib/office/api';
 	import type { WorkItemSummary } from '$lib/proto';
 	import { sender, workApi } from '$lib/work';
-	import { generalAreaId } from '$lib/work/api';
 	import { BUG_STATUS_LABEL, bugRef, severityWord } from '$lib/work/bugs';
 	import { nameOf } from '$lib/work/people';
 	import { countOf, defaultFilter, needsYou, savedFilters, type WorkTab } from '$lib/work/saved';
@@ -55,7 +54,7 @@
 	const shown = $derived((items ?? []).filter(active.test).sort((a, b) => projectName(a.project_id).localeCompare(projectName(b.project_id)) || (a.number ?? 0) - (b.number ?? 0)));
 	const waiting = $derived(needsYou(items ?? [], me));
 	const bugsOf = (projectId: string | undefined) => (items ?? []).filter((i) => i.kind === 'bug' && i.project_id === projectId);
-	const areasOf = (projectId: string | undefined) => [{ id: generalAreaId(projectId ?? ''), name: 'General', general: true }];
+	const areasOf = (projectId: string | undefined) => (snapshot.areas ?? []).filter((a) => a.project_id === projectId && !a.deleted).map((a) => ({ id: a.id, name: a.name, general: a.general }));
 	const bugProject = $derived((items ?? []).find((i) => i.id === bugId)?.project_id);
 </script>
 

@@ -21,9 +21,6 @@ export interface MockWorkStorage {
 	setItem(key: string, value: string): void;
 }
 
-/** The id of a project's General area in the mock: areas are organization data that `area.*` commands will own. */
-export const generalAreaId = (projectId: string) => `${projectId}-general`;
-
 const key = (organizationId: string) => `agentic-org.mock.work.${organizationId}`;
 
 export function createMockWork(
@@ -67,8 +64,9 @@ export function createMockWork(
 			projects: (snapshot.projects ?? []).map((p) => ({
 				id: p.id,
 				teamIds: (snapshot.project_teams ?? []).filter((l) => l.project_id === p.id).map((l) => l.team_id),
-				// Until the area commands exist every project has just General.
-				areas: [{ id: generalAreaId(p.id), general: true }]
+				// The project's areas are organization data (the `area.*` commands own them).
+				areas: (snapshot.areas ?? []).filter((a) => a.project_id === p.id).map((a) => ({ id: a.id, general: a.general, deleted: a.deleted })),
+				archived: p.archived
 			})),
 			members: snapshot.members.filter((m) => !isFormer(m)).map((m) => m.id)
 		};
