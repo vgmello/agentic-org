@@ -2,8 +2,8 @@
 
 use org_runtime::{
     Capabilities, CleanupPath, EnvName, FileLocation, LaunchContext, LaunchPlan, PermissionMode,
-    PlanError, PlannedFile, RelPath, SessionId, SessionKind, SessionSpec, SignalTarget, Stdio,
-    StopPlan, StopSignal, StopStep,
+    PlanError, PlannedFile, RelPath, SessionId, SessionKind, SessionSpec, SignalTarget, SpecPath,
+    Stdio, StopPlan, StopSignal, StopStep,
 };
 use serde_json::{json, Map, Value};
 
@@ -14,8 +14,10 @@ pub(crate) const SETTINGS_FILE: &str = "settings.json";
 pub(crate) const MCP_FILE: &str = "mcp.json";
 pub(crate) const INSTRUCTIONS_FILE: &str = "instructions.md";
 
-/// The socket every Claude process listens on, which a SIGKILL leaves behind (spike fact 9).
-/// By its real path: `/tmp` is a symlink on macOS, and the supervisor follows none.
+/// The socket every Claude process listens on, which a SIGKILL leaves behind (spike fact 9),
+/// and the folder it must stay in. By its real path: `/tmp` is a symlink on macOS, and the
+/// supervisor follows none.
+pub(crate) const MESSAGING_SOCKET_DIR: &str = "/private/tmp/cc-socks";
 pub(crate) const MESSAGING_SOCKET: &str = "/private/tmp/cc-socks/{pid}.sock";
 
 /// The secret Claude puts into every tool's environment (spike fact 9).
@@ -69,6 +71,8 @@ pub(crate) struct Planned {
     pub plan: LaunchPlan,
     /// The mode Claude must report, in its words.
     pub reported_mode: &'static str,
+    /// The writable roots (TMPDIR included) while the sandbox enforces them.
+    pub writable: Option<Vec<String>>,
 }
 
 /// Builds the plan for a headless session or a take-over.
@@ -115,6 +119,30 @@ pub(crate) fn plan(
             "a tool allowlist holding {:?} can't be enforced: its subagents have their own tools",
             tool.as_str()
         )));
+    }
+    // `/` as the cwd, a writable root, TMPDIR or the runtime dir would open (or hand over)
+    // the whole disk.
+    let roots = [&spec.workspace, &ctx.tmpdir, &ctx.runtime_dir]
+        .into_iter()
+        .chain(&spec.sandbox.writable_roots);
+    if roots.into_iter().any(SpecPath::is_root) {
+        return Err(PlanError::InvalidSpec(
+            "`/` can't be the workspace, a writable root, the TMPDIR or the runtime dir".to_owned(),
+        ));
+    }
+    // The runtime dir holds the settings and instructions: never agent-writable.
+    let writable_paths = spec
+        .sandbox
+        .writable_roots
+        .iter()
+        .chain([&spec.workspace, &ctx.tmpdir]);
+    for path in writable_paths {
+        let (rt, w) = (ctx.runtime_dir.as_str(), path.as_str());
+        if rules::within(rt, w) || rules::within(w, rt) {
+            return Err(PlanError::InvalidSpec(format!(
+                "the runtime dir {rt:?} overlaps the writable path {w:?}"
+            )));
+        }
     }
     let effective = spec.effective_permission_mode(caps);
     let (mode_arg, reported_mode) = permission_mode_words(effective).ok_or(
@@ -239,13 +267,22 @@ pub(crate) fn plan(
         },
         runtime_session_id: Some(session_id),
         stop: StopPlan { steps: stop },
-        cleanup_after_exit: vec![CleanupPath::try_from(MESSAGING_SOCKET)
-            .expect("the messaging socket template is a valid cleanup path")],
+        cleanup_after_exit: vec![messaging_socket()],
         secret_env_names: vec![env_name(MESSAGING_TOKEN_VAR)],
     };
     Ok(Planned {
         plan,
         reported_mode,
+        writable: spec.sandbox.enabled.then(|| {
+            let mut roots: Vec<String> = spec
+                .sandbox
+                .writable_roots
+                .iter()
+                .map(|p| p.as_str().to_owned())
+                .collect();
+            roots.push(ctx.tmpdir.as_str().to_owned());
+            roots
+        }),
     })
 }
 
@@ -305,6 +342,11 @@ fn planned_file(name: &str, value: Value) -> PlannedFile {
         contents,
         git_exclude: false,
     }
+}
+
+fn messaging_socket() -> CleanupPath {
+    let root = SpecPath::try_from(MESSAGING_SOCKET_DIR).expect("a valid path");
+    CleanupPath::new(root, MESSAGING_SOCKET).expect("the messaging socket is a valid cleanup path")
 }
 
 fn term(target: SignalTarget, grace_ms: u64) -> StopStep {

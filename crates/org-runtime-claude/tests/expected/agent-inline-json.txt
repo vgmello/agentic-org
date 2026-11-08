@@ -14,7 +14,7 @@ event {"type":"assistant_text","data":{"message_id":"msg_011Cgq5KuMwgMybgNDKAVUF
 event rate_limit {"type":"five_hour"}
 event rate_limit {"type":"seven_day"}
 # line 7: from claude: result/success
-event {"type":"usage","data":{"model":"claude-haiku-5-5","input":2,"output":9,"cache_read":0,"cache_write":3283,"reasoning":0,"cost_usd":0.0006703,"cost_basis":"list_price_estimate","scope":"turn_delta"}}
+event {"type":"usage","data":{"model":"claude-haiku-5-5","input":2,"output":9,"cache_read":0,"cache_write":3283,"reasoning":0,"cost_usd":0.0006703,"cost_basis":"list_price_estimate","token_scope":"turn_delta","cost_scope":"turn_delta"}}
 event {"type":"turn_ended","data":{"outcome":{"type":"completed"},"errors":[]}}
 # stdout closed
 # exit ExitInfo { code: Some(0), signal: None }

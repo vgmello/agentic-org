@@ -11,7 +11,7 @@ event {"type":"turn_started","data":{"turn_id":null,"solicited":true}}
 # line 3: from claude: assistant
 event {"type":"tool_started","data":{"tool_use_id":"toolu_01XtybpmhTcBCaEHxG1cwmEC","name":"Bash","input":{"command":"echo original > original.txt","description":"Write original to original.txt"}}}
 # line 4: from claude: control_request/can_use_tool
-event {"type":"approval_requested","data":{"id":"00000000-0000-4000-8000-000000000004","kind":"command","tool":"Bash","display_name":"Bash","input":{"command":"echo original > original.txt","description":"Write original to original.txt"},"justification_untrusted":"Write original to original.txt","blocked_path":"<tmp>/s2/ws/original.txt","tool_use_id":"toolu_01XtybpmhTcBCaEHxG1cwmEC"}}
+event {"type":"approval_requested","data":{"id":"00000000-0000-4000-8000-000000000004","kind":"command","escalation":"none","tool":"Bash","display_name":"Bash","input":{"command":"echo original > original.txt","description":"Write original to original.txt"},"justification_untrusted":"Write original to original.txt","blocked_path":"<tmp>/s2/ws/original.txt","tool_use_id":"toolu_01XtybpmhTcBCaEHxG1cwmEC"}}
 # line 5: to claude: control_response
 # not expressible through Decision: not sent
 # line 6: from claude: user
@@ -20,7 +20,7 @@ event {"type":"tool_finished","data":{"tool_use_id":"toolu_01XtybpmhTcBCaEHxG1cw
 event {"type":"assistant_text","data":{"message_id":"msg_011Cgq4gY22Hgpy1Z98mW5HN","text":"The command ran successfully: `echo original > original.txt` completed with no output and no error, so there is no denial to report."}}
 # line 8: from claude: result/success
 event {"type":"approval_cancelled","data":{"id":"00000000-0000-4000-8000-000000000004"}}
-event {"type":"usage","data":{"model":"claude-haiku-5-5","input":4,"output":21,"cache_read":43631,"cache_write":396,"reasoning":0,"cost_usd":0.00057591,"cost_basis":"list_price_estimate","scope":"turn_delta"}}
+event {"type":"usage","data":{"model":"claude-haiku-5-5","input":4,"output":21,"cache_read":43631,"cache_write":396,"reasoning":0,"cost_usd":0.00057591,"cost_basis":"list_price_estimate","token_scope":"turn_delta","cost_scope":"turn_delta"}}
 event {"type":"turn_ended","data":{"outcome":{"type":"completed"},"errors":[]}}
 # stdout closed
 # exit ExitInfo { code: Some(0), signal: None }

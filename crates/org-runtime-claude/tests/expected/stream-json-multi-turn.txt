@@ -17,7 +17,7 @@ event {"type":"assistant_text","data":{"message_id":"msg_011Cgq4aA1HaDhf6bgC9Uk2
 event rate_limit {"type":"five_hour"}
 event rate_limit {"type":"seven_day"}
 # line 9: from claude: result/success
-event {"type":"usage","data":{"model":"claude-haiku-5-5","input":2,"output":5,"cache_read":11384,"cache_write":8601,"reasoning":0,"cost_usd":0.00183674,"cost_basis":"list_price_estimate","scope":"turn_delta"}}
+event {"type":"usage","data":{"model":"claude-haiku-5-5","input":2,"output":5,"cache_read":11384,"cache_write":8601,"reasoning":0,"cost_usd":0.00183674,"cost_basis":"list_price_estimate","token_scope":"turn_delta","cost_scope":"turn_delta"}}
 event {"type":"turn_ended","data":{"outcome":{"type":"completed"},"errors":[]}}
 # line 10: to claude: user
 # control Send { text: "Use the Read tool to read note.txt in the current directory, then reply with exactly its contents.", urgent: false }
@@ -31,7 +31,7 @@ event {"type":"tool_finished","data":{"tool_use_id":"toolu_01V1nJ57CLAUdL2DW15kC
 # line 14: from claude: assistant
 event {"type":"assistant_text","data":{"message_id":"msg_011Cgq4aftt3dYBpU4ZxEjSM","text":"TWO-FROM-FILE"}}
 # line 15: from claude: result/success
-event {"type":"usage","data":{"model":"claude-haiku-5-5","input":4,"output":24,"cache_read":34429,"cache_write":5862,"reasoning":0,"cost_usd":0.00155859,"cost_basis":"list_price_estimate","scope":"turn_delta"}}
+event {"type":"usage","data":{"model":"claude-haiku-5-5","input":4,"output":24,"cache_read":34429,"cache_write":5862,"reasoning":0,"cost_usd":0.00155859,"cost_basis":"list_price_estimate","token_scope":"turn_delta","cost_scope":"turn_delta"}}
 event {"type":"turn_ended","data":{"outcome":{"type":"completed"},"errors":[]}}
 # stdout closed
 # exit ExitInfo { code: Some(0), signal: None }

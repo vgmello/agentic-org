@@ -16,7 +16,7 @@ event {"type":"thinking"}
 # line 7: from claude: assistant
 event {"type":"tool_started","data":{"tool_use_id":"toolu_013thpoDxtTi5BDTnZGySWGR","name":"Bash","input":{"command":"echo late > late.txt","description":"Write late to late.txt"}}}
 # line 8: from claude: control_request/can_use_tool
-event {"type":"approval_requested","data":{"id":"00000000-0000-4000-8000-000000000008","kind":"command","tool":"Bash","display_name":"Bash","input":{"command":"echo late > late.txt","description":"Write late to late.txt"},"justification_untrusted":"Write late to late.txt","blocked_path":"<tmp>/s2/ws/late.txt","tool_use_id":"toolu_013thpoDxtTi5BDTnZGySWGR"}}
+event {"type":"approval_requested","data":{"id":"00000000-0000-4000-8000-000000000008","kind":"command","escalation":"none","tool":"Bash","display_name":"Bash","input":{"command":"echo late > late.txt","description":"Write late to late.txt"},"justification_untrusted":"Write late to late.txt","blocked_path":"<tmp>/s2/ws/late.txt","tool_use_id":"toolu_013thpoDxtTi5BDTnZGySWGR"}}
 # line 9: to claude: control_request/interrupt
 # control Interrupt
 write {"request":{"subtype":"interrupt"},"request_id":"org-2","type":"control_request"}
@@ -27,7 +27,7 @@ event {"type":"approval_cancelled","data":{"id":"00000000-0000-4000-8000-0000000
 event {"type":"tool_finished","data":{"tool_use_id":"toolu_013thpoDxtTi5BDTnZGySWGR","is_error":true}}
 # line 13: from claude: user
 # line 14: from claude: result/error_during_execution
-event {"type":"usage","data":{"model":"claude-haiku-5-5","input":2,"output":5,"cache_read":23405,"cache_write":237,"reasoning":0,"cost_usd":0.0005421499999999999,"cost_basis":"list_price_estimate","scope":"turn_delta"}}
+event {"type":"usage","data":{"model":"claude-haiku-5-5","input":2,"output":5,"cache_read":23405,"cache_write":237,"reasoning":0,"cost_usd":0.0005421499999999999,"cost_basis":"list_price_estimate","token_scope":"turn_delta","cost_scope":"turn_delta"}}
 event {"type":"turn_ended","data":{"outcome":{"type":"interrupted"},"errors":["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use"]}}
 # stdout closed
 # exit ExitInfo { code: Some(0), signal: None }

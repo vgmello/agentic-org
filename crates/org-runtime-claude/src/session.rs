@@ -129,6 +129,9 @@ pub(crate) struct ClaudeSession {
     session_id: Option<SessionId>,
     /// The permission mode Claude last reported.
     mode: Option<String>,
+    /// The writable roots (TMPDIR included) while they're enforced, for the file tools'
+    /// approvals.
+    writable: Option<Vec<String>>,
 }
 
 impl ClaudeSession {
@@ -136,6 +139,7 @@ impl ClaudeSession {
         agent: &str,
         reported_mode: &'static str,
         planned_session: Option<SessionId>,
+        writable: Option<Vec<String>>,
     ) -> Self {
         ClaudeSession {
             agent: agent.to_owned(),
@@ -153,6 +157,7 @@ impl ClaudeSession {
             stdout_closed: false,
             session_id: None,
             mode: None,
+            writable,
         }
     }
 
@@ -237,20 +242,15 @@ impl ClaudeSession {
         out.push(event(SessionEvent::TurnEnded { outcome, errors }));
     }
 
-    /// Claude reported its permission mode (`initialize`, then every `system/init`). The one
-    /// place a mode change is noticed.
+    /// Claude reported its permission mode on a `system/init` (`initialize`'s was checked
+    /// at the opening). The one place a change is noticed: a mode other than the last one
+    /// reported (e.g. after an approved `ExitPlanMode`) is a [`SessionEvent::ModeChanged`].
     fn on_mode_report(&mut self, mode: &str, out: &mut Vec<Output>) {
         if self.mode.as_deref() != Some(mode) {
-            if self.mode.is_some() || mode != self.reported_mode {
-                out.push(event(SessionEvent::Notice {
-                    kind: NoticeKind::Warning,
-                    text: format!(
-                        "Claude reports permission mode {mode:?}; the session asked for {:?}",
-                        self.reported_mode
-                    ),
-                }));
-            }
             self.mode = Some(mode.to_owned());
+            out.push(event(SessionEvent::ModeChanged {
+                mode: Some(mode.to_owned()),
+            }));
         }
     }
 
@@ -336,19 +336,23 @@ impl ClaudeSession {
 
     fn on_control_request(&mut self, msg: &Value, out: &mut Vec<Output>) {
         let wire_id = msg.get("request_id").cloned().unwrap_or(Value::Null);
-        let id = match &wire_id {
-            Value::String(s) => s.clone(),
-            Value::Number(n) => n.to_string(),
-            _ => return protocol_error("a control_request without a request_id", out),
+        let Some(id) = request_id(&wire_id) else {
+            return protocol_error("a control_request without a request_id", out);
         };
         let request = msg.get("request").cloned().unwrap_or(Value::Null);
         let subtype = str_field(&request, "subtype").unwrap_or_default();
         if subtype == "can_use_tool" {
-            match approval::request(&id, &request) {
+            match approval::request(&id, &request, self.writable.as_deref()) {
                 Ok(approval) => {
                     // After Close, stdin is gone: Claude denies it itself when it reads EOF.
                     if self.closing {
                         return;
+                    }
+                    // Two pending requests with one id (`"42"` and `42` read alike) would
+                    // make an answer ambiguous: the second is declined.
+                    if self.approvals.iter().any(|p| p.request_id == id) {
+                        protocol_error("a second pending request with the same id", out);
+                        return self.decline(&wire_id, "a request with this id is pending", out);
                     }
                     let turn = self.ensure_turn(out);
                     if let Some(tool_use_id) = &approval.tool_use_id {
@@ -549,7 +553,7 @@ impl ClaudeSession {
             Some("control_response") => self.on_control_response(msg, out),
             Some("control_request") => self.on_control_request(msg, out),
             Some("control_cancel_request") => {
-                let id = str_field(msg, "request_id");
+                let id = msg.get("request_id").and_then(request_id);
                 if let Some(pos) = self
                     .approvals
                     .iter()
@@ -718,6 +722,11 @@ impl Session for ClaudeSession {
         match self.phase {
             Phase::Ended | Phase::Failed => return Err(ControlError::Closed),
             _ if self.closing => return Err(ControlError::Closed),
+            // A graceful close works before Ready too.
+            Phase::New | Phase::Opening if control == Control::Close => {
+                self.closing = true;
+                return Ok(vec![Output::CloseStdin]);
+            }
             Phase::New | Phase::Opening => return Err(ControlError::NotReady),
             Phase::Ready => {}
         }
@@ -808,6 +817,15 @@ fn protocol_error(detail: &str, out: &mut Vec<Output>) {
     out.push(event(SessionEvent::ProtocolError {
         detail: detail.to_owned(),
     }));
+}
+
+/// A request id as the office sees it: Claude's string, or its number written out.
+fn request_id(wire: &Value) -> Option<String> {
+    match wire {
+        Value::String(s) => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
 }
 
 fn str_field(v: &Value, key: &str) -> Option<String> {

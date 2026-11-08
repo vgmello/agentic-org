@@ -30,7 +30,7 @@ event {"type":"assistant_text","data":{"message_id":"msg_011Cgq53YnFAs9GNXE4snWu
 # line 17: from claude: stream_event/message_delta
 # line 18: from claude: stream_event/message_stop
 # line 19: from claude: result/error_during_execution
-event {"type":"usage","data":{"model":"claude-haiku-5-5","input":2,"output":2,"cache_read":19430,"cache_write":57,"reasoning":0,"cost_usd":null,"cost_basis":"none","scope":"turn_delta"}}
+event {"type":"usage","data":{"model":"claude-haiku-5-5","input":2,"output":2,"cache_read":19430,"cache_write":57,"reasoning":0,"cost_usd":null,"cost_basis":"none","token_scope":"turn_delta","cost_scope":"turn_delta"}}
 event {"type":"turn_ended","data":{"outcome":{"type":"interrupted"},"errors":["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"]}}
 # stdout closed
 # exit ExitInfo { code: Some(0), signal: None }

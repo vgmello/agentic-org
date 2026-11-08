@@ -1,7 +1,9 @@
 //! Probes: `claude --version` and `claude auth status`, planned and read purely. Quota has
 //! no probe: Claude reports it in-stream (`rate_limit_event`).
 
-use org_runtime::{Probe, ProbeContext, ProbeOutput, ProbePlan, ProbeResult, Unavailable};
+use org_runtime::{
+    Probe, ProbeContext, ProbeOutput, ProbePlan, ProbeResult, ProbeRun, Unavailable,
+};
 use serde_json::Value;
 
 use crate::plan::env_name;
@@ -9,21 +11,21 @@ use crate::plan::env_name;
 const VERSION_TIMEOUT_MS: u64 = 15_000;
 const AUTH_TIMEOUT_MS: u64 = 30_000;
 
-pub(crate) fn plan(probe: Probe, ctx: &ProbeContext) -> Option<ProbePlan> {
+/// Both probes are one-shot: no exchange on stdin.
+pub(crate) fn plan(probe: Probe, ctx: &ProbeContext) -> Option<ProbeRun> {
     let (args, timeout_ms): (&[&str], u64) = match probe {
         Probe::Version => (&["--version"], VERSION_TIMEOUT_MS),
         Probe::Auth => (&["auth", "status"], AUTH_TIMEOUT_MS),
         // Optional for Claude: quota arrives in-stream. And any probe this build doesn't know.
         _ => return None,
     };
-    Some(ProbePlan {
+    Some(ProbeRun::OneShot(ProbePlan {
         program: ctx.runtime_path.clone(),
         args: args.iter().map(|a| a.to_string()).collect(),
         env_add: vec![(env_name("DISABLE_AUTOUPDATER"), "1".to_owned())],
         stdin_lines: vec![],
-        keep_stdin_open_until_exit: false,
         timeout_ms,
-    })
+    }))
 }
 
 pub(crate) fn parse(

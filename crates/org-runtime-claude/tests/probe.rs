@@ -3,42 +3,46 @@
 
 use std::path::PathBuf;
 
-use org_runtime::{AgentRuntime, Probe, ProbeContext, ProbeOutput, ProbeResult, Unavailable};
+use org_runtime::{
+    AgentRuntime, Probe, ProbeContext, ProbeOutput, ProbePlan, ProbeResult, ProbeRun, Unavailable,
+};
 use org_runtime_claude::ClaudeRuntime;
 
 fn ctx() -> ProbeContext {
-    ProbeContext {
-        runtime_path: PathBuf::from("/opt/homebrew/Caskroom/claude-code/2.1.311/claude"),
-        runtime_version: None,
-    }
+    ProbeContext::new(PathBuf::from(
+        "/opt/homebrew/Caskroom/claude-code/2.1.311/claude",
+    ))
 }
 
 fn out(stdout: &str, exit: Option<i32>) -> ProbeOutput {
-    ProbeOutput {
-        stdout: stdout.as_bytes().to_vec(),
-        stderr: vec![],
-        exit_code: exit,
-        timed_out: false,
+    ProbeOutput::new(stdout.as_bytes().to_vec(), vec![], exit)
+}
+
+/// Claude's probes are one-shot.
+fn one_shot(run: Option<ProbeRun>) -> ProbePlan {
+    match run {
+        Some(ProbeRun::OneShot(plan)) => plan,
+        other => panic!("{other:?}"),
     }
 }
 
 #[test]
 fn probe_plans() {
     let rt = ClaudeRuntime::new();
-    let version = rt.plan_probe(Probe::Version, &ctx()).unwrap();
+    let version = one_shot(rt.plan_probe(Probe::Version, &ctx()));
     assert_eq!(version.program, ctx().runtime_path);
     assert_eq!(version.args, ["--version"]);
     assert!(version.stdin_lines.is_empty());
-    let auth = rt.plan_probe(Probe::Auth, &ctx()).unwrap();
+    let auth = one_shot(rt.plan_probe(Probe::Auth, &ctx()));
     assert_eq!(auth.args, ["auth", "status"]);
-    assert!(!auth.keep_stdin_open_until_exit);
+    assert!(auth.stdin_lines.is_empty());
     for plan in [&version, &auth] {
         assert!(plan.timeout_ms > 0);
         assert_eq!(plan.env_add.len(), 1);
         assert_eq!(plan.env_add[0].0.as_str(), "DISABLE_AUTOUPDATER");
     }
     // Quota comes in-stream: there's no probe, and it reads as unavailable.
-    assert_eq!(rt.plan_probe(Probe::Quota, &ctx()), None);
+    assert!(rt.plan_probe(Probe::Quota, &ctx()).is_none());
     assert!(matches!(
         rt.parse_probe(Probe::Quota, &out("", Some(0))),
         ProbeResult::Unavailable { .. }

@@ -113,12 +113,23 @@ fn multi_turn_session() {
             text: "ONE".into()
         }
     );
-    // The rate-limit windows read. Their values aren't asserted: the fixture's are
-    // scrubbed (and due to be replaced by synthetic ones).
+    // The rate-limit windows read, each value of the right type decoded. (The fixture's
+    // values are synthetic, so they're checked for presence, not equality.)
     match (&ev[4], &ev[5]) {
         (SessionEvent::RateLimit(a), SessionEvent::RateLimit(b)) => {
             assert_eq!(a.window, Window::FiveHour);
             assert_eq!(b.window, Window::SevenDay);
+            for l in [a, b] {
+                assert!(
+                    l.used_fraction.is_some_and(|f| (0.0..=1.0).contains(&f)),
+                    "{l:?}"
+                );
+                assert!(
+                    l.resets_at.as_deref().is_some_and(|t| t.ends_with('Z')),
+                    "{l:?}"
+                );
+                assert_ne!(l.status, org_runtime::LimitStatus::Unknown, "{l:?}");
+            }
         }
         other => panic!("{other:?}"),
     }
@@ -470,7 +481,8 @@ fn every_fixture_replays_cleanly_and_usage_matches_the_results() {
         .filter(|n| n.ends_with(".jsonl"))
         .collect();
     names.sort();
-    assert_eq!(names.len(), 39);
+    // 39 recorded with the first spike; later ones (e.g. MCP isolation) join the sweep.
+    assert!(names.len() >= 39, "{}", names.len());
     for name in &names {
         let lines = fixture(name);
         // Every session is launched with the agent `zephyr`; runs that had no `--agents`

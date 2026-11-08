@@ -13,7 +13,7 @@ event {"type":"turn_started","data":{"turn_id":null,"solicited":true}}
 # line 5: from claude: assistant
 event {"type":"tool_started","data":{"tool_use_id":"toolu_016ZTQCKepEg7dpX9Msm37bh","name":"Bash","input":{"command":"echo x > deny-invalid.txt","description":"Write x to deny-invalid.txt"}}}
 # line 6: from claude: control_request/can_use_tool
-event {"type":"approval_requested","data":{"id":"00000000-0000-4000-8000-000000000006","kind":"command","tool":"Bash","display_name":"Bash","input":{"command":"echo x > deny-invalid.txt","description":"Write x to deny-invalid.txt"},"justification_untrusted":"Write x to deny-invalid.txt","blocked_path":"<tmp>/s2b/ws/deny-invalid.txt","tool_use_id":"toolu_016ZTQCKepEg7dpX9Msm37bh"}}
+event {"type":"approval_requested","data":{"id":"00000000-0000-4000-8000-000000000006","kind":"command","escalation":"none","tool":"Bash","display_name":"Bash","input":{"command":"echo x > deny-invalid.txt","description":"Write x to deny-invalid.txt"},"justification_untrusted":"Write x to deny-invalid.txt","blocked_path":"<tmp>/s2b/ws/deny-invalid.txt","tool_use_id":"toolu_016ZTQCKepEg7dpX9Msm37bh"}}
 # line 7: to claude: control_response
 # not expressible through Decision: not sent
 # line 8: from claude: rate_limit_event
@@ -25,7 +25,7 @@ event {"type":"tool_finished","data":{"tool_use_id":"toolu_016ZTQCKepEg7dpX9Msm3
 event {"type":"assistant_text","data":{"message_id":"msg_011Cgq4w8PtH1JvqdjCvMGrL","text":"DENIED — the Bash call returned this error: \"The canUseTool callback returned an invalid permission result. Expected {behavior: 'allow', updatedInput?: object} or {behavior: 'deny', message: string}. updatedPermissions may hold at most 4096 updates, rules and directories in all.\"\n\nI did not retry the command."}}
 # line 11: from claude: result/success
 event {"type":"approval_cancelled","data":{"id":"00000000-0000-4000-8000-000000000006"}}
-event {"type":"usage","data":{"model":"claude-haiku-5-5","input":4,"output":21,"cache_read":34776,"cache_write":6441,"reasoning":0,"cost_usd":0.00173736,"cost_basis":"list_price_estimate","scope":"turn_delta"}}
+event {"type":"usage","data":{"model":"claude-haiku-5-5","input":4,"output":21,"cache_read":34776,"cache_write":6441,"reasoning":0,"cost_usd":0.00173736,"cost_basis":"list_price_estimate","token_scope":"turn_delta","cost_scope":"turn_delta"}}
 event {"type":"turn_ended","data":{"outcome":{"type":"completed"},"errors":[]}}
 # line 12: to claude: user
 # control Send { text: "Reply with exactly the word ALIVE.", urgent: false }
@@ -35,7 +35,7 @@ event {"type":"turn_started","data":{"turn_id":null,"solicited":true}}
 # line 14: from claude: assistant
 event {"type":"assistant_text","data":{"message_id":"msg_011Cgq4wCSi3KowDRrFD2oFc","text":"ALIVE"}}
 # line 15: from claude: result/success
-event {"type":"usage","data":{"model":"claude-haiku-5-5","input":2,"output":7,"cache_read":21789,"cache_write":180,"reasoning":0,"cost_usd":0.00025759,"cost_basis":"list_price_estimate","scope":"turn_delta"}}
+event {"type":"usage","data":{"model":"claude-haiku-5-5","input":2,"output":7,"cache_read":21789,"cache_write":180,"reasoning":0,"cost_usd":0.00025759,"cost_basis":"list_price_estimate","token_scope":"turn_delta","cost_scope":"turn_delta"}}
 event {"type":"turn_ended","data":{"outcome":{"type":"completed"},"errors":[]}}
 # stdout closed
 # exit ExitInfo { code: Some(0), signal: None }

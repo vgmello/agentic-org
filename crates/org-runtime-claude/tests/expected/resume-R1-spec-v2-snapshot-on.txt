@@ -24,7 +24,7 @@ event {"type":"tool_finished","data":{"tool_use_id":"toolu_01Jk8b3qvRXyKyPxwza1H
 # line 10: from claude: assistant
 event {"type":"assistant_text","data":{"message_id":"msg_011Cgq5PE1gnu8VKXzezqLDd","text":"ZEPHYR-V1: The touch command ran and created ok-r1.txt in the working directory with no output."}}
 # line 11: from claude: result/success
-event {"type":"usage","data":{"model":"claude-haiku-5-5","input":4,"output":10,"cache_read":29358,"cache_write":4240,"reasoning":0,"cost_usd":0.00129648,"cost_basis":"list_price_estimate","scope":"turn_delta"}}
+event {"type":"usage","data":{"model":"claude-haiku-5-5","input":4,"output":10,"cache_read":29358,"cache_write":4240,"reasoning":0,"cost_usd":0.00129648,"cost_basis":"list_price_estimate","token_scope":"turn_delta","cost_scope":"turn_delta"}}
 event {"type":"turn_ended","data":{"outcome":{"type":"completed"},"errors":[]}}
 # stdout closed
 # exit ExitInfo { code: Some(0), signal: None }

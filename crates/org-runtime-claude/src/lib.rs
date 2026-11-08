@@ -39,7 +39,7 @@ mod usage;
 
 use org_runtime::{
     AgentRuntime, Capabilities, CostBasis, LaunchContext, LaunchPlan, PlanError, Probe,
-    ProbeContext, ProbeOutput, ProbePlan, ProbeResult, RuntimeId, Session, SessionSpec, UsageScope,
+    ProbeContext, ProbeOutput, ProbeResult, ProbeRun, RuntimeId, Session, SessionSpec, UsageScope,
     VersionRange,
 };
 
@@ -130,6 +130,7 @@ impl AgentRuntime for ClaudeRuntime {
             spec.agent.name.as_str(),
             planned.reported_mode,
             planned.plan.runtime_session_id.clone(),
+            planned.writable,
         );
         Ok((planned.plan, Box::new(session)))
     }
@@ -145,7 +146,7 @@ impl AgentRuntime for ClaudeRuntime {
         Ok(plan::plan(spec, ctx, &self.capabilities(), mode)?.plan)
     }
 
-    fn plan_probe(&self, probe: Probe, ctx: &ProbeContext) -> Option<ProbePlan> {
+    fn plan_probe(&self, probe: Probe, ctx: &ProbeContext) -> Option<ProbeRun> {
         probe::plan(probe, ctx)
     }
 

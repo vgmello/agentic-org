@@ -36,7 +36,7 @@ write {"request":{"subtype":"interrupt"},"request_id":"org-2","type":"control_re
 event {"type":"tool_finished","data":{"tool_use_id":"toolu_01MTDpnFzwfkK57FCAAGMEGN","is_error":true}}
 # line 23: from claude: user
 # line 24: from claude: result/error_during_execution
-event {"type":"usage","data":{"model":"claude-haiku-5-5","input":2,"output":87,"cache_read":19217,"cache_write":0,"reasoning":0,"cost_usd":0.00023587000000000003,"cost_basis":"list_price_estimate","scope":"turn_delta"}}
+event {"type":"usage","data":{"model":"claude-haiku-5-5","input":2,"output":87,"cache_read":19217,"cache_write":0,"reasoning":0,"cost_usd":0.00023587000000000003,"cost_basis":"list_price_estimate","token_scope":"turn_delta","cost_scope":"turn_delta"}}
 event {"type":"turn_ended","data":{"outcome":{"type":"interrupted"},"errors":["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use"]}}
 # stdout closed
 # exit ExitInfo { code: Some(0), signal: None }

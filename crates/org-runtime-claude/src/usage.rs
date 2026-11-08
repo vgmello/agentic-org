@@ -96,11 +96,11 @@ impl TurnUsage {
         let mut by_model: BTreeMap<Option<String>, MessageUsage> = BTreeMap::new();
         for (_, m) in self.messages {
             let total = by_model.entry(m.model.clone()).or_default();
-            total.input += m.input;
-            total.output += m.output;
-            total.cache_read += m.cache_read;
-            total.cache_write += m.cache_write;
-            total.reasoning += m.reasoning;
+            total.input = total.input.saturating_add(m.input);
+            total.output = total.output.saturating_add(m.output);
+            total.cache_read = total.cache_read.saturating_add(m.cache_read);
+            total.cache_write = total.cache_write.saturating_add(m.cache_write);
+            total.reasoning = total.reasoning.saturating_add(m.reasoning);
         }
         by_model
             .into_iter()
@@ -117,17 +117,18 @@ impl TurnUsage {
                     (Some(_), Some(_)) => CostBasis::Unknown,
                     (Some(_), None) => CostBasis::ListPriceEstimate,
                 };
-                Usage {
-                    model,
-                    input: t.input,
-                    output: t.output,
-                    cache_read: t.cache_read,
-                    cache_write: t.cache_write,
-                    reasoning: t.reasoning,
-                    cost_usd,
-                    cost_basis,
-                    scope: UsageScope::TurnDelta,
-                }
+                // Both per turn: the counts are this turn's messages, and the cost is
+                // `model_usage_since_last_result`'s (not the process-wide total_cost_usd).
+                let mut usage = Usage::new(UsageScope::TurnDelta, UsageScope::TurnDelta);
+                usage.model = model;
+                usage.input = t.input;
+                usage.output = t.output;
+                usage.cache_read = t.cache_read;
+                usage.cache_write = t.cache_write;
+                usage.reasoning = t.reasoning;
+                usage.cost_usd = cost_usd;
+                usage.cost_basis = cost_basis;
+                usage
             })
             .collect()
     }
@@ -190,20 +191,17 @@ mod tests {
         u.on_assistant(&msg("b", 5)); // a second message, no stream
         let costs = json!({"m1": {"costUSD": 0.5, "costBasis": "list"}});
         let usage = u.finish(costs.as_object());
-        assert_eq!(
-            usage,
-            vec![Usage {
-                model: Some("m1".into()),
-                input: 4,
-                output: 92,
-                cache_read: 200,
-                cache_write: 14,
-                reasoning: 40,
-                cost_usd: Some(0.5),
-                cost_basis: CostBasis::ListPriceEstimate,
-                scope: UsageScope::TurnDelta,
-            }]
-        );
+        let mut expected = Usage::new(UsageScope::TurnDelta, UsageScope::TurnDelta);
+        expected.model = Some("m1".into());
+        (expected.input, expected.output) = (4, 92);
+        (
+            expected.cache_read,
+            expected.cache_write,
+            expected.reasoning,
+        ) = (200, 14, 40);
+        expected.cost_usd = Some(0.5);
+        expected.cost_basis = CostBasis::ListPriceEstimate;
+        assert_eq!(usage, vec![expected]);
     }
 
     #[test]

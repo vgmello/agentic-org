@@ -11,7 +11,7 @@ event {"type":"turn_started","data":{"turn_id":null,"solicited":true}}
 # line 3: from claude: assistant
 event {"type":"tool_started","data":{"tool_use_id":"toolu_01JFSTMTjdBMMcJmsw55tEpt","name":"Bash","input":{"command":"echo nope > deny.txt","description":"Write nope to deny.txt"}}}
 # line 4: from claude: control_request/can_use_tool
-event {"type":"approval_requested","data":{"id":"00000000-0000-4000-8000-000000000004","kind":"command","tool":"Bash","display_name":"Bash","input":{"command":"echo nope > deny.txt","description":"Write nope to deny.txt"},"justification_untrusted":"Write nope to deny.txt","blocked_path":"<tmp>/s2/ws/deny.txt","tool_use_id":"toolu_01JFSTMTjdBMMcJmsw55tEpt"}}
+event {"type":"approval_requested","data":{"id":"00000000-0000-4000-8000-000000000004","kind":"command","escalation":"none","tool":"Bash","display_name":"Bash","input":{"command":"echo nope > deny.txt","description":"Write nope to deny.txt"},"justification_untrusted":"Write nope to deny.txt","blocked_path":"<tmp>/s2/ws/deny.txt","tool_use_id":"toolu_01JFSTMTjdBMMcJmsw55tEpt"}}
 # line 5: to claude: control_response
 # control Answer { request_id: ApprovalId("00000000-0000-4000-8000-000000000004"), decision: Deny { message: Some("Office policy: writes need the owner's approval"), stop_turn: false } }
 write {"response":{"request_id":"00000000-0000-4000-8000-000000000004","response":{"behavior":"deny","message":"Office policy: writes need the owner's approval"},"subtype":"success"},"type":"control_response"}
@@ -20,7 +20,7 @@ event {"type":"tool_finished","data":{"tool_use_id":"toolu_01JFSTMTjdBMMcJmsw55t
 # line 7: from claude: assistant
 event {"type":"assistant_text","data":{"message_id":"msg_011Cgq4ggGMgRR7wDZiqmckY","text":"DENIED: Office policy: writes need the owner's approval"}}
 # line 8: from claude: result/success
-event {"type":"usage","data":{"model":"claude-haiku-5-5","input":4,"output":21,"cache_read":44352,"cache_write":335,"reasoning":0,"cost_usd":0.00056442,"cost_basis":"list_price_estimate","scope":"turn_delta"}}
+event {"type":"usage","data":{"model":"claude-haiku-5-5","input":4,"output":21,"cache_read":44352,"cache_write":335,"reasoning":0,"cost_usd":0.00056442,"cost_basis":"list_price_estimate","token_scope":"turn_delta","cost_scope":"turn_delta"}}
 event {"type":"turn_ended","data":{"outcome":{"type":"completed"},"errors":[]}}
 # stdout closed
 # exit ExitInfo { code: Some(0), signal: None }

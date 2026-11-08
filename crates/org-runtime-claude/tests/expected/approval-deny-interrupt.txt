@@ -11,7 +11,7 @@ event {"type":"turn_started","data":{"turn_id":null,"solicited":true}}
 # line 3: from claude: assistant
 event {"type":"tool_started","data":{"tool_use_id":"toolu_01TNj4oFtEuaBpXkFfAFU6WP","name":"Bash","input":{"command":"echo x > deny-interrupt.txt","description":"Write x to deny-interrupt.txt"}}}
 # line 4: from claude: control_request/can_use_tool
-event {"type":"approval_requested","data":{"id":"00000000-0000-4000-8000-000000000004","kind":"command","tool":"Bash","display_name":"Bash","input":{"command":"echo x > deny-interrupt.txt","description":"Write x to deny-interrupt.txt"},"justification_untrusted":"Write x to deny-interrupt.txt","blocked_path":"<tmp>/s2b/ws/deny-interrupt.txt","tool_use_id":"toolu_01TNj4oFtEuaBpXkFfAFU6WP"}}
+event {"type":"approval_requested","data":{"id":"00000000-0000-4000-8000-000000000004","kind":"command","escalation":"none","tool":"Bash","display_name":"Bash","input":{"command":"echo x > deny-interrupt.txt","description":"Write x to deny-interrupt.txt"},"justification_untrusted":"Write x to deny-interrupt.txt","blocked_path":"<tmp>/s2b/ws/deny-interrupt.txt","tool_use_id":"toolu_01TNj4oFtEuaBpXkFfAFU6WP"}}
 # line 5: to claude: control_response
 # control Answer { request_id: ApprovalId("00000000-0000-4000-8000-000000000004"), decision: Deny { message: Some("Stopped by the owner"), stop_turn: true } }
 write {"response":{"request_id":"00000000-0000-4000-8000-000000000004","response":{"behavior":"deny","interrupt":true,"message":"Stopped by the owner"},"subtype":"success"},"type":"control_response"}
@@ -22,7 +22,7 @@ event rate_limit {"type":"seven_day"}
 event {"type":"tool_finished","data":{"tool_use_id":"toolu_01TNj4oFtEuaBpXkFfAFU6WP","is_error":true}}
 # line 8: from claude: user
 # line 9: from claude: result/error_during_execution
-event {"type":"usage","data":{"model":"claude-haiku-5-5","input":2,"output":16,"cache_read":12848,"cache_write":6409,"reasoning":0,"cost_usd":0.00145748,"cost_basis":"list_price_estimate","scope":"turn_delta"}}
+event {"type":"usage","data":{"model":"claude-haiku-5-5","input":2,"output":16,"cache_read":12848,"cache_write":6409,"reasoning":0,"cost_usd":0.00145748,"cost_basis":"list_price_estimate","token_scope":"turn_delta","cost_scope":"turn_delta"}}
 event {"type":"turn_ended","data":{"outcome":{"type":"interrupted"},"errors":["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use"]}}
 # line 10: to claude: user
 # control Send { text: "Reply with exactly the word ALIVE.", urgent: false }
@@ -32,7 +32,7 @@ event {"type":"turn_started","data":{"turn_id":null,"solicited":true}}
 # line 12: from claude: assistant
 event {"type":"assistant_text","data":{"message_id":"msg_011Cgq4vu8umPnyPBrPo6uvu","text":"ALIVE"}}
 # line 13: from claude: result/success
-event {"type":"usage","data":{"model":"claude-haiku-5-5","input":2,"output":7,"cache_read":19257,"cache_write":268,"reasoning":0,"cost_usd":0.00024987,"cost_basis":"list_price_estimate","scope":"turn_delta"}}
+event {"type":"usage","data":{"model":"claude-haiku-5-5","input":2,"output":7,"cache_read":19257,"cache_write":268,"reasoning":0,"cost_usd":0.00024987,"cost_basis":"list_price_estimate","token_scope":"turn_delta","cost_scope":"turn_delta"}}
 event {"type":"turn_ended","data":{"outcome":{"type":"completed"},"errors":[]}}
 # stdout closed
 # exit ExitInfo { code: Some(0), signal: None }

@@ -35,20 +35,19 @@ fn window(id: &str) -> Window {
 }
 
 fn limit(window: Window, w: &Value) -> RateLimit {
-    RateLimit {
-        window,
-        used_fraction: w
-            .get("utilization")
-            .and_then(Value::as_f64)
-            .filter(|f| f.is_finite()),
-        resets_at: w.get("resetsAt").and_then(Value::as_i64).and_then(rfc3339),
-        status: match w.get("status").and_then(Value::as_str) {
-            Some("allowed") => LimitStatus::Ok,
-            Some("allowed_warning") => LimitStatus::Warning,
-            Some("rejected") => LimitStatus::Rejected,
-            _ => LimitStatus::Unknown,
-        },
-    }
+    let status = match w.get("status").and_then(Value::as_str) {
+        Some("allowed") => LimitStatus::Ok,
+        Some("allowed_warning") => LimitStatus::Warning,
+        Some("rejected") => LimitStatus::Rejected,
+        _ => LimitStatus::Unknown,
+    };
+    let mut limit = RateLimit::new(window, status);
+    limit.used_fraction = w
+        .get("utilization")
+        .and_then(Value::as_f64)
+        .filter(|f| f.is_finite());
+    limit.resets_at = w.get("resetsAt").and_then(Value::as_i64).and_then(rfc3339);
+    limit
 }
 
 /// Unix seconds as RFC 3339 in UTC (`2026-11-08T05:00:00Z`), for years 1970 to 9999.
@@ -107,15 +106,10 @@ mod tests {
         }}});
         let limits = from_event(&msg).unwrap();
         assert_eq!(limits.len(), 3);
-        assert_eq!(
-            limits[0],
-            RateLimit {
-                window: Window::FiveHour,
-                used_fraction: Some(0.82),
-                resets_at: Some("2026-11-08T05:00:00Z".into()),
-                status: LimitStatus::Warning,
-            }
-        );
+        assert_eq!(limits[0].window, Window::FiveHour);
+        assert_eq!(limits[0].used_fraction, Some(0.82));
+        assert_eq!(limits[0].resets_at.as_deref(), Some("2026-11-08T05:00:00Z"));
+        assert_eq!(limits[0].status, LimitStatus::Warning);
         assert_eq!(limits[1].window, Window::SevenDay);
         assert_eq!(limits[1].status, LimitStatus::Unknown);
         assert_eq!(
@@ -143,12 +137,7 @@ mod tests {
         let limits = from_event(&scrubbed).unwrap();
         assert_eq!(
             limits,
-            vec![RateLimit {
-                window: Window::FiveHour,
-                used_fraction: None,
-                resets_at: None,
-                status: LimitStatus::Unknown
-            }]
+            vec![RateLimit::new(Window::FiveHour, LimitStatus::Unknown)]
         );
         assert_eq!(from_event(&json!({"type": "rate_limit_event"})), None);
         assert_eq!(from_event(&json!({"rate_limit_info": "<scrubbed>"})), None);

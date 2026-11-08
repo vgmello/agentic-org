@@ -24,7 +24,7 @@ event {"type":"thinking"}
 # line 10: from claude: assistant
 event {"type":"assistant_text","data":{"message_id":"msg_011Cgq4u31s4258oKkbRzWgZ","text":"DENIED: The command failed with \"Output redirection to '<tmp>/s2/ws/noflag.txt' needs approval.\" Claude Code asks before a shell command creates files in the working directory, so the file was not created. I did not retry."}}
 # line 11: from claude: result/success
-event {"type":"usage","data":{"model":"claude-haiku-5-5","input":4,"output":19,"cache_read":32507,"cache_write":9988,"reasoning":0,"cost_usd":0.00244457,"cost_basis":"list_price_estimate","scope":"turn_delta"}}
+event {"type":"usage","data":{"model":"claude-haiku-5-5","input":4,"output":19,"cache_read":32507,"cache_write":9988,"reasoning":0,"cost_usd":0.00244457,"cost_basis":"list_price_estimate","token_scope":"turn_delta","cost_scope":"turn_delta"}}
 event {"type":"turn_ended","data":{"outcome":{"type":"completed"},"errors":[]}}
 # stdout closed
 # exit ExitInfo { code: Some(0), signal: None }

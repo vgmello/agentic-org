@@ -1,6 +1,6 @@
 //! `can_use_tool` requests as [`ApprovalRequest`]s, and how they're answered.
 
-use org_runtime::{ApprovalId, ApprovalKind, ApprovalRequest, Decision};
+use org_runtime::{ApprovalId, ApprovalKind, ApprovalRequest, Decision, Escalation};
 use serde_json::{json, Value};
 
 /// What a deny tells the model when the office gave no message. Claude needs one: a deny
@@ -10,31 +10,45 @@ pub(crate) const DEFAULT_DENY_MESSAGE: &str = "The office denied this action.";
 /// Tools that switch Claude's permission mode when they run.
 const MODE_SWITCH_TOOLS: &[&str] = &["ExitPlanMode", "EnterPlanMode"];
 
-/// Whether an approval would widen what the session may do beyond the call itself.
-///
-/// The port's `ApprovalRequest` doesn't carry this yet (an `escalation` field is coming);
-/// it's computed here, in one place, so the session can set it as soon as it exists.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // wired into ApprovalRequest once the port has the field
-pub(crate) enum Escalation {
-    /// An ordinary tool call.
-    None,
-    /// The call asks to run outside the sandbox (`dangerouslyDisableSandbox`).
-    SandboxBypass,
-    /// The call changes the session's permission mode (e.g. `ExitPlanMode`).
-    PermissionChange,
-    /// The request is too malformed to tell.
-    Unknown,
-}
+/// The file tools, which run in the unsandboxed CLI, and the input key naming the file.
+const FILE_WRITE_TOOLS: &[(&str, &str)] = &[
+    ("Edit", "file_path"),
+    ("Write", "file_path"),
+    ("MultiEdit", "file_path"),
+    ("NotebookEdit", "notebook_path"),
+];
 
-/// The escalation of a `can_use_tool` request for `tool` with `input`.
-#[allow(dead_code)] // wired into ApprovalRequest once the port has the field
-pub(crate) fn escalation(tool: &str, input: &Value) -> Escalation {
+/// Whether allowing a `can_use_tool` request for `tool` with `input` would widen the session
+/// beyond its spec:
+/// - running outside the sandbox: a `dangerouslyDisableSandbox` that isn't `false`, or, while
+///   the writable roots are enforced (`writable` is `Some`), a file tool writing anywhere but
+///   inside them (Claude's file tools run in the unsandboxed CLI, so only this keeps them to
+///   the roots; a path that isn't a plain absolute one counts as outside);
+/// - switching the permission mode (`ExitPlanMode`, `EnterPlanMode`);
+/// - a request too malformed to tell.
+pub(crate) fn escalation(tool: &str, input: &Value, writable: Option<&[String]>) -> Escalation {
     if tool.is_empty() || !input.is_object() {
-        Escalation::Unknown
-    } else if input.get("dangerouslyDisableSandbox") == Some(&Value::Bool(true)) {
-        Escalation::SandboxBypass
-    } else if MODE_SWITCH_TOOLS.contains(&tool) {
+        return Escalation::Unknown;
+    }
+    if input
+        .get("dangerouslyDisableSandbox")
+        .is_some_and(|v| *v != Value::Bool(false))
+    {
+        return Escalation::SandboxBypass;
+    }
+    if let (Some(roots), Some((_, key))) =
+        (writable, FILE_WRITE_TOOLS.iter().find(|(t, _)| *t == tool))
+    {
+        let inside = input
+            .get(*key)
+            .and_then(Value::as_str)
+            .and_then(|p| org_runtime::SpecPath::try_from(p).ok())
+            .is_some_and(|p| roots.iter().any(|r| crate::rules::within(p.as_str(), r)));
+        if !inside {
+            return Escalation::SandboxBypass;
+        }
+    }
+    if MODE_SWITCH_TOOLS.contains(&tool) {
         Escalation::PermissionChange
     } else {
         Escalation::None
@@ -52,7 +66,12 @@ pub(crate) fn kind(tool: &str) -> ApprovalKind {
 }
 
 /// A `can_use_tool` request (the `request` object) as an approval, or why it can't be one.
-pub(crate) fn request(id: &str, request: &Value) -> Result<ApprovalRequest, &'static str> {
+/// `writable` is the writable roots while they're enforced (see [`escalation`]).
+pub(crate) fn request(
+    id: &str,
+    request: &Value,
+    writable: Option<&[String]>,
+) -> Result<ApprovalRequest, &'static str> {
     let tool = request
         .get("tool_name")
         .and_then(Value::as_str)
@@ -62,17 +81,15 @@ pub(crate) fn request(id: &str, request: &Value) -> Result<ApprovalRequest, &'st
         .cloned()
         .ok_or("a can_use_tool request without an input")?;
     let text = |key: &str| request.get(key).and_then(Value::as_str).map(str::to_owned);
-    Ok(ApprovalRequest {
-        id: ApprovalId::new(id),
-        kind: kind(tool),
-        tool: tool.to_owned(),
-        display_name: text("display_name"),
-        input,
-        // The agent's own words about the call: untrusted.
-        justification_untrusted: text("description"),
-        blocked_path: text("blocked_path"),
-        tool_use_id: text("tool_use_id"),
-    })
+    let escalation = escalation(tool, &input, writable);
+    let mut approval =
+        ApprovalRequest::new(ApprovalId::new(id), kind(tool), escalation, tool, input);
+    approval.display_name = text("display_name");
+    // The agent's own words about the call: untrusted.
+    approval.justification_untrusted = text("description");
+    approval.blocked_path = text("blocked_path");
+    approval.tool_use_id = text("tool_use_id");
+    Ok(approval)
 }
 
 /// The `control_response` answering request `id` (as Claude sent it: a string or a number).
@@ -102,33 +119,77 @@ mod tests {
 
     #[test]
     fn escalations() {
+        let e = |tool: &str, input: Value| escalation(tool, &input, None);
         let cmd = json!({"command": "ls"});
-        assert_eq!(escalation("Bash", &cmd), Escalation::None);
-        assert_eq!(escalation("Edit", &json!({})), Escalation::None);
+        assert_eq!(e("Bash", cmd.clone()), Escalation::None);
+        assert_eq!(e("Edit", json!({})), Escalation::None);
+        for bypass in [json!(true), json!("true"), json!(1)] {
+            assert_eq!(
+                e(
+                    "Bash",
+                    json!({"command": "ls", "dangerouslyDisableSandbox": bypass})
+                ),
+                Escalation::SandboxBypass
+            );
+        }
         assert_eq!(
-            escalation(
+            e(
                 "Bash",
-                &json!({"command": "ls", "dangerouslyDisableSandbox": true})
-            ),
-            Escalation::SandboxBypass
-        );
-        assert_eq!(
-            escalation(
-                "Bash",
-                &json!({"command": "ls", "dangerouslyDisableSandbox": false})
+                json!({"command": "ls", "dangerouslyDisableSandbox": false})
             ),
             Escalation::None
         );
         assert_eq!(
-            escalation("ExitPlanMode", &json!({"plan": "x"})),
+            e("ExitPlanMode", json!({"plan": "x"})),
             Escalation::PermissionChange
         );
+        assert_eq!(e("EnterPlanMode", json!({})), Escalation::PermissionChange);
+        assert_eq!(e("", cmd.clone()), Escalation::Unknown);
+        assert_eq!(e("Bash", json!("ls")), Escalation::Unknown);
+    }
+
+    #[test]
+    fn file_writes_outside_the_roots_are_a_sandbox_bypass() {
+        let roots = vec!["/work/t1".to_owned(), "/tmp/s1".to_owned()];
+        let e = |tool: &str, input: Value| escalation(tool, &input, Some(&roots));
+        for (tool, key) in FILE_WRITE_TOOLS {
+            assert_eq!(
+                e(tool, json!({*key: "/work/t1/src/a.rs"})),
+                Escalation::None,
+                "{tool}"
+            );
+            assert_eq!(
+                e(tool, json!({*key: "/tmp/s1/x"})),
+                Escalation::None,
+                "{tool}"
+            );
+            for outside in [
+                json!("/work/t2/a.rs"),
+                json!("/work/t1/../t2/a.rs"),
+                json!("/work/t1x/a"),
+                json!("src/a.rs"),
+                json!("/etc/hosts"),
+                json!(42),
+            ] {
+                assert_eq!(
+                    e(tool, json!({*key: outside.clone()})),
+                    Escalation::SandboxBypass,
+                    "{tool} {outside}"
+                );
+            }
+            // No path at all: fails closed.
+            assert_eq!(e(tool, json!({})), Escalation::SandboxBypass, "{tool}");
+        }
+        // Reads and commands aren't file writes; and with the sandbox off nothing is held.
         assert_eq!(
-            escalation("EnterPlanMode", &json!({})),
-            Escalation::PermissionChange
+            e("Read", json!({"file_path": "/etc/hosts"})),
+            Escalation::None
         );
-        assert_eq!(escalation("", &cmd), Escalation::Unknown);
-        assert_eq!(escalation("Bash", &json!("ls")), Escalation::Unknown);
+        assert_eq!(e("Bash", json!({"command": "ls /etc"})), Escalation::None);
+        assert_eq!(
+            escalation("Edit", &json!({"file_path": "/etc/hosts"}), None),
+            Escalation::None
+        );
     }
 
     #[test]

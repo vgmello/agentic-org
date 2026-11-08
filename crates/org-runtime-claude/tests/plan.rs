@@ -418,7 +418,15 @@ fn stopping_and_cleaning_up() {
     );
     assert_eq!(
         plan.cleanup_after_exit,
-        vec![CleanupPath::try_from("/private/tmp/cc-socks/{pid}.sock").unwrap()]
+        vec![CleanupPath::new(
+            p("/private/tmp/cc-socks"),
+            "/private/tmp/cc-socks/{pid}.sock"
+        )
+        .unwrap()]
+    );
+    assert_eq!(
+        plan.cleanup_after_exit[0].root().as_str(),
+        "/private/tmp/cc-socks"
     );
     assert_eq!(
         plan.cleanup_after_exit[0].path_for(42).to_str(),
@@ -468,6 +476,36 @@ fn no_secret_or_bypass_reaches_the_plan() {
             "CLAUDE_SECURESTORAGE_CONFIG_DIR",
         ] {
             assert!(!all.contains(forbidden), "{forbidden} in the plan");
+        }
+    }
+}
+
+#[test]
+fn plans_pass_the_port_checks() {
+    // The port's own plan checks (no bypass switch, cwd, TMPDIR a writable root) on
+    // representative specs: every mode, sandbox on and off, new and resumed.
+    let rt = ClaudeRuntime::new();
+    let caps = rt.capabilities();
+    for mode in [
+        PermissionMode::Ask,
+        PermissionMode::AcceptEdits,
+        PermissionMode::Plan,
+    ] {
+        for sandbox in [true, false] {
+            for resume in [false, true] {
+                let mut s = spec("ada", mode);
+                s.sandbox.enabled = sandbox;
+                let mut c = ctx();
+                if resume {
+                    c.resume = Some(SessionId::try_from(NEW_ID).unwrap());
+                }
+                let (plan, _) = rt.plan_session(&s, &c).unwrap();
+                org_runtime::testkit::check_plan(&plan, &s, &c, &caps);
+                if resume {
+                    let take_over = rt.plan_take_over(&s, &c, 100, 30).unwrap();
+                    org_runtime::testkit::check_plan(&take_over, &s, &c, &caps);
+                }
+            }
         }
     }
 }
@@ -624,6 +662,53 @@ fn refused_specs() {
                     "*",
                     RuleScope::McpServer(McpServerName::try_from("a__b").unwrap()),
                 ))
+            }),
+        ),
+        (
+            "`/` as the workspace",
+            Box::new(|s| {
+                s.workspace = p("/");
+                s.sandbox.writable_roots = vec![p("/private/var/office/work")];
+            }),
+        ),
+        (
+            "`/` as a writable root",
+            Box::new(|s| s.sandbox.writable_roots.push(p("/"))),
+        ),
+        (
+            "an MCP deny on a server whose name ends with _",
+            Box::new(|s| {
+                s.policy.deny.push(rule(
+                    "*",
+                    RuleScope::McpServer(McpServerName::try_from("a_").unwrap()),
+                ))
+            }),
+        ),
+        (
+            "a sandbox deny with too many interior **",
+            Box::new(|s| {
+                s.sandbox
+                    .deny_read
+                    .push(pat(&format!("{}/x", "/a/**".repeat(7))))
+            }),
+        ),
+        (
+            "a command-prefix deny ending in `:` (Claude's legacy syntax)",
+            Box::new(|s| s.policy.deny.push(rule("Bash", prefix("npm run build:")))),
+        ),
+        (
+            "the runtime dir inside a writable root",
+            Box::new(|s| {
+                s.sandbox
+                    .writable_roots
+                    .push(p("/private/var/office/agents"))
+            }),
+        ),
+        (
+            "the runtime dir holding the workspace",
+            Box::new(|s| {
+                s.workspace = p(&format!("{RUNTIME_DIR}/ws"));
+                s.sandbox.writable_roots = vec![p(&format!("{RUNTIME_DIR}/ws"))];
             }),
         ),
         (

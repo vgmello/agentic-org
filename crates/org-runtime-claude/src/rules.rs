@@ -53,7 +53,10 @@ const FIXED_EDIT_DENY_PATHS: &[&str] = &["~/.claude/**", "~/.claude", "~/.claude
 /// Characters that make a shell line more than one command, or quote or expand part of it.
 /// Claude splits a compound command and matches each part on its own, so a prefix holding
 /// one of these could never match as a whole: a deny with one would be narrower than asked.
-const SHELL_METACHARACTERS: &[char] = &[';', '&', '|', '<', '>', '$', '`', '"', '\'', '\n'];
+/// Also `{ } # !`: groups, comments and history expansion.
+const SHELL_METACHARACTERS: &[char] = &[
+    ';', '&', '|', '<', '>', '$', '`', '"', '\'', '\n', '{', '}', '#', '!',
+];
 
 /// The same reads, for the sandbox (`sandbox.filesystem.denyRead`, which expands `~`). A
 /// directory denies its whole subtree.
@@ -181,11 +184,11 @@ pub(crate) fn translate(
     if sandbox_on {
         for pattern in &spec.sandbox.deny_write {
             deny.extend(edit_rules(pattern.as_str()));
-            deny_write.extend(sandbox_paths(pattern));
+            deny_write.extend(sandbox_paths(pattern)?);
         }
         for pattern in &spec.sandbox.deny_read {
             deny.extend(deny_path_rules("Read", pattern.as_str()));
-            deny_read.extend(sandbox_paths(pattern));
+            deny_read.extend(sandbox_paths(pattern)?);
         }
     }
 
@@ -260,6 +263,11 @@ fn deny_rule(rule: &Rule, sandbox_on: bool) -> Result<DenyParts, PlanError> {
             if has_shell_metacharacters(prefix.as_str()) {
                 return refuse("with a command prefix holding shell operators or quotes");
             }
+            // `Bash(foo:*)` is Claude's legacy syntax for the prefix `foo` (word-bounded),
+            // which wouldn't cover `foo:bar` as the literal prefix `foo:` does.
+            if prefix.as_str().ends_with(':') {
+                return refuse("with a command prefix ending in `:` (Claude's legacy syntax)");
+            }
             parts.rules.push(prefix_rule(prefix.as_str()));
         }
         RuleScope::McpServer(server) => match mcp_rule(tool, server.as_str()) {
@@ -268,16 +276,18 @@ fn deny_rule(rule: &Rule, sandbox_on: bool) -> Result<DenyParts, PlanError> {
         },
         RuleScope::Path(pattern) => {
             let p = pattern.as_str();
-            let bash = |parts: &mut DenyParts| {
-                parts.sandbox_read.extend(sandbox_paths(pattern));
-                parts.sandbox_write.extend(sandbox_paths(pattern));
+            let bash = |parts: &mut DenyParts| -> Result<(), PlanError> {
+                let paths = sandbox_paths(pattern)?;
+                parts.sandbox_read.extend(paths.clone());
+                parts.sandbox_write.extend(paths);
+                Ok(())
             };
             if tool == "*" || tool == SHELL_TOOL {
                 // Only the sandbox holds Bash to a path.
                 if !sandbox_on {
                     return refuse("on a path while the sandbox is off");
                 }
-                bash(&mut parts);
+                bash(&mut parts)?;
                 if tool == "*" {
                     parts.rules.extend(deny_path_rules("Read", p));
                     parts.rules.extend(edit_rules(p));
@@ -372,10 +382,11 @@ fn prefix_rule(prefix: &str) -> String {
 /// An MCP rule: `mcp__<server>` (every tool of the server) for `*` or that name itself, or
 /// one of the server's tools by its full name.
 ///
-/// A server name holding `__` is refused (`None`): Claude would read `mcp__a__b` as the tool
-/// `b` of the server `a`.
+/// A server name holding `__`, or starting or ending with `_`, is refused (`None`): Claude
+/// splits rule and tool names on `__`, so `mcp__a__b` reads as the tool `b` of the server `a`,
+/// and `mcp__a___t` (server `a_`) as the server `a`.
 fn mcp_rule(tool: &str, server: &str) -> Option<String> {
-    if server.contains("__") {
+    if server.contains("__") || server.starts_with('_') || server.ends_with('_') {
         return None;
     }
     let all = format!("mcp__{server}");
@@ -395,10 +406,18 @@ fn mcp_rule(tool: &str, server: &str) -> Option<String> {
 ///
 /// An interior `**` is also written collapsed (`/a/**/b` as `/a/b` too), in every
 /// combination, in case the sandbox's `**` needs at least one segment, as the port's
-/// doesn't.
-pub(crate) fn sandbox_paths(pattern: &PathPattern) -> Vec<String> {
+/// doesn't. Runs of `**` are one `**` first; a pattern with more than
+/// [`MAX_INTERIOR_GLOBSTARS`] interior `**` left is refused, rather than written as an
+/// unbounded number of variants (or as fewer, which would narrow the deny).
+pub(crate) fn sandbox_paths(pattern: &PathPattern) -> Result<Vec<String>, PlanError> {
+    let variants = collapsed_variants(pattern.as_str()).ok_or_else(|| {
+        PlanError::InvalidSpec(format!(
+            "the pattern {:?} has more than {MAX_INTERIOR_GLOBSTARS} interior `**` segments",
+            pattern.as_str()
+        ))
+    })?;
     let mut out = Vec::new();
-    for variant in collapsed_variants(pattern.as_str()) {
+    for variant in variants {
         let p = variant.as_str();
         match p.strip_suffix("/**") {
             Some("") => out.push("/".to_owned()),
@@ -410,16 +429,30 @@ pub(crate) fn sandbox_paths(pattern: &PathPattern) -> Vec<String> {
             None => out.push(p.to_owned()),
         }
     }
-    dedup(out)
+    Ok(dedup(out))
 }
 
-/// `pattern`, and every version of it with some of its interior `**` segments removed.
-fn collapsed_variants(pattern: &str) -> Vec<String> {
-    let segments: Vec<&str> = pattern.split('/').skip(1).collect();
+/// The most interior `**` segments a sandbox pattern may have (it's written as up to
+/// 2^n variants).
+const MAX_INTERIOR_GLOBSTARS: usize = 6;
+
+/// `pattern`, and every version of it with some of its interior `**` segments removed
+/// (runs of `**` merged first, since `/**/**` is `/**`), or `None` past
+/// [`MAX_INTERIOR_GLOBSTARS`].
+fn collapsed_variants(pattern: &str) -> Option<Vec<String>> {
+    let mut segments: Vec<&str> = Vec::new();
+    for segment in pattern.split('/').skip(1) {
+        if !(segment == "**" && segments.last() == Some(&"**")) {
+            segments.push(segment);
+        }
+    }
     let interior: Vec<usize> = (0..segments.len().saturating_sub(1))
         .filter(|&i| segments[i] == "**")
         .collect();
-    (0u32..1 << interior.len())
+    if interior.len() > MAX_INTERIOR_GLOBSTARS {
+        return None;
+    }
+    let variants = (0u32..1 << interior.len())
         .map(|mask| {
             let kept: Vec<&str> = segments
                 .iter()
@@ -434,12 +467,13 @@ fn collapsed_variants(pattern: &str) -> Vec<String> {
                 .collect();
             format!("/{}", kept.join("/"))
         })
-        .collect()
+        .collect();
+    Some(variants)
 }
 
 /// Whether `path` (a literal path or a pattern whose wildcards are whole segments) is
 /// `root` or inside it. `root` is a literal path.
-fn within(path: &str, root: &str) -> bool {
+pub(crate) fn within(path: &str, root: &str) -> bool {
     root == "/"
         || path == root
         || path
@@ -474,16 +508,20 @@ mod tests {
         PathPattern::try_from(p).unwrap()
     }
 
+    fn sandbox_paths_ok(p: &PathPattern) -> Vec<String> {
+        sandbox_paths(p).unwrap()
+    }
+
     #[test]
     fn sandbox_path_forms() {
-        assert_eq!(sandbox_paths(&pat("/a/b/**")), ["/a/b"]);
-        assert_eq!(sandbox_paths(&pat("/**")), ["/"]);
-        assert_eq!(sandbox_paths(&pat("/a/*/c/**")), ["/a/*/c/**", "/a/*/c"]);
-        assert_eq!(sandbox_paths(&pat("/a/b")), ["/a/b"]);
-        assert_eq!(sandbox_paths(&pat("/a/*/db")), ["/a/*/db"]);
-        assert_eq!(sandbox_paths(&pat("/a/**/b")), ["/a/**/b", "/a/b"]);
+        assert_eq!(sandbox_paths_ok(&pat("/a/b/**")), ["/a/b"]);
+        assert_eq!(sandbox_paths_ok(&pat("/**")), ["/"]);
+        assert_eq!(sandbox_paths_ok(&pat("/a/*/c/**")), ["/a/*/c/**", "/a/*/c"]);
+        assert_eq!(sandbox_paths_ok(&pat("/a/b")), ["/a/b"]);
+        assert_eq!(sandbox_paths_ok(&pat("/a/*/db")), ["/a/*/db"]);
+        assert_eq!(sandbox_paths_ok(&pat("/a/**/b")), ["/a/**/b", "/a/b"]);
         assert_eq!(
-            sandbox_paths(&pat("/a/**/b/**/c/**")),
+            sandbox_paths_ok(&pat("/a/**/b/**/c/**")),
             [
                 "/a/**/b/**/c/**",
                 "/a/**/b/**/c",
@@ -494,6 +532,14 @@ mod tests {
                 "/a/b/c"
             ]
         );
+        // Runs merge; past the cap, the spec is refused rather than narrowed.
+        assert_eq!(sandbox_paths_ok(&pat("/a/**/**/b")), ["/a/**/b", "/a/b"]);
+        let six = format!("{}/x", "/a/**".repeat(6));
+        assert_eq!(sandbox_paths_ok(&pat(&six)).len(), 64);
+        let seven = format!("{}/x", "/a/**".repeat(7));
+        assert!(sandbox_paths(&pat(&seven)).is_err());
+        let many = format!("{}/x", "/a/**".repeat(40));
+        assert!(sandbox_paths(&pat(&many)).is_err());
     }
 
     #[test]
@@ -524,6 +570,11 @@ mod tests {
         assert_eq!(mcp_rule("mcp__officex__send", "office"), None);
         assert_eq!(mcp_rule("Bash", "office"), None);
         assert_eq!(mcp_rule("*", "a__b"), None);
+        assert_eq!(mcp_rule("*", "a_"), None);
+        assert_eq!(mcp_rule("*", "_a"), None);
+        assert_eq!(mcp_rule("*", "a_b").as_deref(), Some("mcp__a_b"));
+        assert!(has_shell_metacharacters("{ rm"));
+        assert!(has_shell_metacharacters("echo #"));
         assert!(has_shell_metacharacters("cd /x && rm"));
         assert!(has_shell_metacharacters("echo 'x"));
         assert!(!has_shell_metacharacters("git status"));
