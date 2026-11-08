@@ -2,14 +2,16 @@
 
 use org_proto::org::OWNER_HANDLE;
 use org_proto::work::{
-    CommentKind, LinkKind, LinkTarget, WorkCommentParams, WorkDeleteParams, WorkEventKind,
-    WorkLinkParams, WorkUnlinkParams, WorkWatchParams, WORK_MAX_LINKS, WORK_TEXT_MAX_CHARS,
+    CommentKind, ItemKind, ItemStatus, LinkKind, LinkTarget, WorkCommentParams, WorkDeleteParams,
+    WorkEventKind, WorkLinkParams, WorkUnlinkParams, WorkWatchParams, WORK_MAX_LINKS,
+    WORK_TEXT_MAX_CHARS,
 };
 
 use crate::aspects::Aspect;
 use crate::common::{load, not_deleted, require_ulid, unused};
 use crate::engine::{Ctx, Origin, Plan};
 use crate::fail::{already_exists, invalid, not_found, Fail};
+use crate::fixes::{self, Edge};
 use crate::model::{link_view, StoredComment, StoredLink};
 use crate::text::{multi_line, one_line};
 use crate::waiting;
@@ -124,7 +126,8 @@ pub(crate) fn watch(ctx: &mut Ctx, p: &WorkWatchParams) -> Result<Plan, Fail> {
     Ok(Plan::of(vec![draft]))
 }
 
-/// `work.link`: in phase 1, a `relates_to` link from an item to another item or to a doc.
+/// `work.link`: a `relates_to` link from an item to another item or to a doc, or (phase 2) a
+/// `fixes` link from a task to a bug of its project.
 pub(crate) fn link(ctx: &mut Ctx, p: &WorkLinkParams) -> Result<Plan, Fail> {
     let item = load(ctx, &p.from_item_id)?;
     let target = match &p.to {
@@ -145,7 +148,15 @@ pub(crate) fn link(ctx: &mut Ctx, p: &WorkLinkParams) -> Result<Plan, Fail> {
     require_ulid("link_id", &p.link_id)?;
     match p.kind {
         LinkKind::RelatesTo => {}
-        LinkKind::Fixes => return Err(invalid("`fixes` links come with bugs (a later phase)")),
+        LinkKind::Fixes => {
+            if item.kind != ItemKind::Task {
+                return Err(invalid("a `fixes` link goes from a task to a bug"));
+            }
+            match (&target, &item.project_id) {
+                (Some(bug), Some(project)) => crate::bugs::check_fixable(project, bug)?,
+                _ => return Err(invalid("a `fixes` link goes from a task to a bug")),
+            }
+        }
         LinkKind::PaysBack => {
             return Err(invalid("`pays_back` links come with debt (a later phase)"))
         }
@@ -203,8 +214,14 @@ pub(crate) fn link(ctx: &mut Ctx, p: &WorkLinkParams) -> Result<Plan, Fail> {
     };
     let view = link_view(&draft.item.id, &stored, &|_| false);
     draft.item.links.push(stored);
-    draft.record(WorkEventKind::Linked { link: view }, Origin::Caller);
-    Ok(Plan::of(vec![draft]))
+    let cause = draft.record(WorkEventKind::Linked { link: view }, Origin::Caller);
+    // A task already in progress that now fixes a triaged bug starts it (§2.4).
+    let mut drafts = vec![];
+    if p.kind == LinkKind::Fixes && draft.item.status == ItemStatus::InProgress {
+        fixes::follow_task(ctx, &mut drafts, &draft.item, &[Edge::Started], &cause)?;
+    }
+    drafts.insert(0, draft);
+    Ok(Plan::of(drafts))
 }
 
 /// `work.unlink`: removes a link. `part_of` (use `checklist.unlink_task`) and `from_request`

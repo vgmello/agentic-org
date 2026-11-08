@@ -46,6 +46,16 @@ impl<S: WorkStore> WorkService<S> {
             execute(org, txn, clock.as_ref(), &office_id, &caller, &call)
         }))
     }
+
+    /// Runs the bug cascades of [`crate::reconcile_bugs`] as one write request. The office
+    /// calls it after it applies an organization event (and on start).
+    pub fn reconcile_bugs(&self) -> Result<TxnOutput, StoreError> {
+        let clock = Arc::clone(&self.clock);
+        let office_id = self.office_id.clone();
+        self.store.transact(Arc::new(move |org, txn| {
+            crate::cascades::reconcile_bugs(org, txn, clock.as_ref(), &office_id)
+        }))
+    }
 }
 
 /// An item in full, for `work.get`: its checklist, links (targets that are deleted marked so),
@@ -78,12 +88,29 @@ pub fn read_item(
             }
         }
     }
+    let (mut fixed_by, mut suggested_triager, mut suggested_verifier) = (vec![], None, None);
+    if item.kind == org_proto::work::ItemKind::Bug {
+        fixed_by = reads
+            .linked_to(&item.id, org_proto::work::LinkKind::Fixes)?
+            .into_iter()
+            .filter(|t| !t.deleted)
+            .map(|t| t.id)
+            .collect();
+        suggested_triager = Some(crate::bugs::suggested_triager(
+            org,
+            item.bug.area_id.as_deref(),
+        )?);
+        suggested_verifier = Some(crate::bugs::suggested_verifier(org, item)?);
+    }
     Ok(work_item(
         item,
         ItemReadParts {
             backlinks,
             is_deleted: Box::new(move |id| deleted.contains(id)),
             time,
+            fixed_by,
+            suggested_triager,
+            suggested_verifier,
         },
     ))
 }

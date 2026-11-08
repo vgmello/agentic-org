@@ -1,23 +1,26 @@
 //! `work.changed` (§4.10): one per committed call, split into parts so each encodes under
 //! [`WORK_CHANGED_MAX_BYTES`].
 
-use org_proto::work::{WorkChange, WorkChangedData, WorkPosition, WORK_CHANGED_MAX_BYTES};
+use org_proto::work::{
+    WorkChange, WorkChangedData, WorkItemSummary, WorkPosition, WORK_CHANGED_MAX_BYTES,
+};
 
 use crate::engine::Draft;
 
 /// Room left for the envelope around the changes (position, change id, part numbers).
 const ENVELOPE_BYTES: usize = 512;
 
-/// The `work.changed` parts for one committed call: each changed item, whole, followed by the
-/// events it recorded.
+/// The `work.changed` parts for one committed call: each changed item, whole (`summaries`, one
+/// per draft, in order), followed by the events it recorded.
 pub(crate) fn parts(
     position: WorkPosition,
     change_id: Option<&str>,
     drafts: &[Draft],
+    summaries: &[WorkItemSummary],
 ) -> Vec<WorkChangedData> {
-    let changes = drafts.iter().flat_map(|d| {
+    let changes = drafts.iter().zip(summaries).flat_map(|(d, summary)| {
         std::iter::once(WorkChange::ItemUpserted {
-            item: d.item.summary(),
+            item: summary.clone(),
         })
         .chain(
             d.events

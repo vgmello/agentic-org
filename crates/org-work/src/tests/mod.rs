@@ -2,12 +2,16 @@
 
 mod support;
 
+mod bugs;
+mod cascades;
 mod checklist;
 mod conflicts;
 mod feed;
+mod fix_tasks;
 mod idempotency;
 mod items;
 mod numbering;
 mod refs;
 mod state_machine;
 mod time;
+mod triage_wait;
