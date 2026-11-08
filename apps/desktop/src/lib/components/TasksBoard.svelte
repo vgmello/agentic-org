@@ -36,6 +36,17 @@
 	let announced = 0;
 	// The same words twice must be read twice: a zero-width mark makes the text differ.
 	const announce = (text: string) => (announcement = text + (announced++ % 2 ? '\u200b' : ''));
+	// Board or List is remembered per project (TSK-9); storage can be unavailable, then it is just this visit's.
+	const viewKey = $derived(`agentic-org.tasks.view.${projectId}`);
+	let view = $state<'board' | 'list'>('board');
+	function setView(next: 'board' | 'list') {
+		view = next;
+		try {
+			localStorage.setItem(viewKey, next);
+		} catch {
+			// not remembered
+		}
+	}
 	let startSheet = $state<{ pending: 'done_anyway'; message: string } | undefined>();
 
 	const send = $derived(sender(organizationId));
@@ -51,7 +62,14 @@
 			else toast.error(toAppError(e).message);
 		}
 	}
-	onMount(load);
+	onMount(() => {
+		try {
+			if (localStorage.getItem(viewKey) === 'list') view = 'list';
+		} catch {
+			// the default
+		}
+		void load();
+	});
 
 	async function move(task: WorkItemSummary, to: TaskStatus) {
 		if (to === 'blocked') {
@@ -96,7 +114,14 @@
 <div class="space-y-4">
 	<div class="flex items-center justify-between gap-3">
 		<p class="text-sm/6 text-gray-400">Tasks in {projectName}. <span class="rounded bg-white/10 px-1.5 text-xs/5 text-gray-200">Sample data</span></p>
-		<Button onclick={() => (adding = true)}><Plus aria-hidden="true" /> New task</Button>
+		<div class="flex items-center gap-x-2">
+			<div role="group" aria-label="View" class="inline-flex rounded-lg bg-white/5 p-1 outline-1 -outline-offset-1 outline-white/10">
+				{#each [['board', 'Board'], ['list', 'List']] as const as [id, name] (id)}
+					<button type="button" aria-pressed={view === id} onclick={() => setView(id)} class="rounded-md px-3 py-1 text-sm/6 font-semibold focus-visible:outline-2 focus-visible:outline-indigo-400 {view === id ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-white'}">{name}</button>
+				{/each}
+			</div>
+			<Button onclick={() => (adding = true)}><Plus aria-hidden="true" /> New task</Button>
+		</div>
 	</div>
 
 	{#if loadError}
@@ -104,6 +129,35 @@
 	{:else if tasks === undefined}
 		<p class="text-sm/6 text-gray-400">Loading tasks…</p>
 	{:else}
+		{#if view === 'list'}
+			<div class="overflow-x-auto rounded-xl bg-white/5 outline-1 -outline-offset-1 outline-white/10">
+				<table class="w-full text-left text-sm/6" data-testid="task-list">
+					<caption class="sr-only">Tasks</caption>
+					<thead class="text-xs/5 text-gray-400">
+						<tr>
+							<th scope="col" class="px-4 py-2 font-medium">Task</th>
+							<th scope="col" class="px-4 py-2 font-medium">Title</th>
+							<th scope="col" class="px-4 py-2 font-medium">Status</th>
+							<th scope="col" class="px-4 py-2 font-medium">Priority</th>
+							<th scope="col" class="px-4 py-2 font-medium">Assignee</th>
+							<th scope="col" class="px-4 py-2 font-medium">Steps</th>
+						</tr>
+					</thead>
+					<tbody class="divide-y divide-white/5 text-gray-200">
+						{#each cols.flatMap((c) => c.tasks) as task (task.id)}
+							<tr data-testid="task-row" data-task={task.id}>
+								<td class="px-4 py-2 text-gray-400">{taskRef(task)}</td>
+								<th scope="row" class="px-4 py-2 font-normal"><button type="button" class="text-left font-semibold text-white hover:underline focus-visible:outline-2 focus-visible:outline-indigo-400 [overflow-wrap:anywhere]" onclick={() => ((startSheet = undefined), (openId = task.id), (sheetOpen = true))}>{task.title}</button></th>
+								<td class="px-4 py-2">{STATUS_LABEL[task.status as TaskStatus]}{task.blocked_reason ? `: ${task.blocked_reason}` : ''}</td>
+								<td class="px-4 py-2 {task.priority === 'urgent' ? 'font-semibold text-amber-300' : ''}">{priorityWord(task.priority) ?? ''}</td>
+								<td class="px-4 py-2">{nameOf(snapshot, task.assignee_id)}</td>
+								<td class="px-4 py-2 text-gray-400">{checklistWords(task)}</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{:else}
 		<div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4" data-testid="task-board">
 			{#each cols as col (col.status)}
 				<section class="rounded-xl bg-white/5 p-3 outline-1 -outline-offset-1 outline-white/10" aria-labelledby={`col-${col.status}`} data-testid="task-column" data-status={col.status}>
@@ -138,6 +192,7 @@
 				</section>
 			{/each}
 		</div>
+		{/if}
 		{#if tasks.length === 0}
 			<p class="text-sm/6 text-gray-400" data-testid="no-tasks">No tasks yet. Create the first one.</p>
 		{/if}

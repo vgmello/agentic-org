@@ -13,7 +13,7 @@
 	const session = $derived(sessionFor(orgApi, data.connection.organization.id));
 	const reload = () => invalidate('app:org');
 	// What a project will hold once the work-items contract exists: shown, not hidden, and disabled with the reason.
-	const COMING = ['Bugs', 'Docs'];
+	const COMING = ['Features', 'Bugs', 'Debt', 'Docs', 'Insights', 'Settings'];
 	let tab = $state<'overview' | 'tasks'>('overview');
 </script>
 
@@ -48,7 +48,7 @@
 		{#if tab === 'tasks'}
 			<TasksBoard organizationId={data.connection.organization.id} projectId={row.project.id} projectName={row.project.name} snapshot={data.snapshot} />
 		{:else}
-			<p class="text-sm/6 text-gray-400">Bugs and documents for this project are available in a later release.</p>
+			<p class="text-sm/6 text-gray-400">Features, bugs, debt, documents and insights for this project are available in a later release.</p>
 		{/if}
 	{/if}
 </div>

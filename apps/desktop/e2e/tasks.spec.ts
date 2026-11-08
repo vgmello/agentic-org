@@ -134,3 +134,19 @@ test('the task page keeps a typed description when another field changes, and th
 	await expect(sheet.getByLabel('Status')).toHaveValue('todo');
 	await expect(page.getByRole('status')).toContainText('priority is now High.');
 });
+
+test('TSK-9: Board or List is remembered per project', async ({ page }) => {
+	await open(page);
+	await newTask(page, 'Listed task', 'high');
+	await page.getByRole('button', { name: 'List', exact: true }).click();
+	await expect(page.getByTestId('task-list')).toBeVisible();
+	await expect(page.getByTestId('task-row')).toHaveCount(1);
+	await expect(page.getByTestId('task-row')).toContainText('T-1');
+	await expect(page.getByTestId('task-row')).toContainText('High');
+	await shot(page, 'tasks-list');
+	await visit(page, '/projects/atlas');
+	await page.getByRole('tab', { name: 'Tasks' }).click();
+	await expect(page.getByTestId('task-list')).toBeVisible(); // remembered
+	await page.getByRole('button', { name: 'Board', exact: true }).click();
+	await expect(page.getByTestId('task-board')).toBeVisible();
+});
