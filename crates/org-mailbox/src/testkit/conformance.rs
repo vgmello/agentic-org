@@ -500,6 +500,121 @@ pub fn store_claim_read_is_once_under_concurrency(backend: impl OpenBackend) {
     assert_eq!(sorted, (1..=5).map(msg_id).collect::<Vec<_>>());
 }
 
+/// A commit that returned `Ok` is visible at once to a reader on another, long-lived
+/// thread (as a pooled or thread-bound connection would be), and so is a claim: reads use a
+/// fresh snapshot, never a long-lived read transaction (§2.2).
+pub fn store_commits_and_claims_are_visible_to_other_readers(backend: impl OpenBackend) {
+    let store = open_store(&backend);
+    type Seen = (Option<String>, bool, Vec<String>);
+    thread::scope(|scope| {
+        // Owned inside the scope: if an assertion fails, `ask` drops while unwinding and
+        // the reader thread ends, instead of the scope waiting on it forever.
+        let (ask, asked) = std::sync::mpsc::channel::<Option<u32>>();
+        let (answer, answers) = std::sync::mpsc::channel::<Seen>();
+        let store = &store;
+        scope.spawn(move || {
+            // One reader thread for the whole case; it reads before every commit too.
+            while let Ok(Some(round)) = asked.recv() {
+                let peeked = peek(store, ADA_ID).message.map(|m| m.message.header.id);
+                let got = store.get_message(&msg_id(round)).unwrap().is_some();
+                let unread = ids(&store.list_headers(inbox_query(ADA_ID, true, 100)).unwrap());
+                answer.send((peeked, got, unread)).unwrap();
+            }
+        });
+        for round in 1..=5 {
+            ask.send(Some(round)).unwrap();
+            assert_eq!(
+                answers.recv().unwrap(),
+                (None, false, vec![]),
+                "round {round}"
+            );
+            commit(
+                store,
+                new_message(round, PAT_ID, ADA_ID, MessagePriority::Normal),
+            );
+            ask.send(Some(round)).unwrap();
+            assert_eq!(
+                answers.recv().unwrap(),
+                (Some(msg_id(round)), true, vec![msg_id(round)]),
+                "the reader must see the commit that just returned (round {round})"
+            );
+            let claimed = store.claim_read(ADA_ID, None, NOW_UTC).unwrap().unwrap();
+            assert_eq!(claimed.message.header.id, msg_id(round));
+        }
+        ask.send(Some(5)).unwrap();
+        assert_eq!(answers.recv().unwrap(), (None, true, vec![]));
+        ask.send(None).unwrap();
+    });
+}
+
+/// `claim_read(None)` selects and marks in one writer transaction: claimers that have been
+/// reading (and could hold stale snapshots) race each other and a writer still committing,
+/// and every message is claimed exactly once.
+pub fn store_claim_read_selects_and_marks_atomically(backend: impl OpenBackend) {
+    let store = open_store(&backend);
+    for n in 1..=30 {
+        commit(
+            &store,
+            new_message(n, PAT_ID, ADA_ID, MessagePriority::Normal),
+        );
+    }
+    let first = store.claim_read(ADA_ID, None, NOW_UTC).unwrap().unwrap();
+    assert_eq!(first.message.header.id, msg_id(1));
+    let barrier = Barrier::new(7);
+    let mut claimed: Vec<String> = thread::scope(|scope| {
+        let store = &store;
+        let barrier = &barrier;
+        let producer = scope.spawn(move || {
+            barrier.wait();
+            for n in 31..=60 {
+                commit(
+                    store,
+                    new_message(n, PAT_ID, ADA_ID, MessagePriority::Normal),
+                );
+            }
+        });
+        let claimers: Vec<_> = (0..6)
+            .map(|_| {
+                scope.spawn(move || {
+                    // Read first, so a backend that claims from a reader's snapshot has one.
+                    // Assert after the barrier, so a failure can't strand the other threads.
+                    let warmed = peek(store, ADA_ID).message.is_some();
+                    barrier.wait();
+                    assert!(warmed, "peek sees the unread messages");
+                    let mut mine = Vec::new();
+                    for _ in 0..200 {
+                        match store.claim_read(ADA_ID, None, NOW_UTC).unwrap() {
+                            Some(stored) => {
+                                assert_eq!(stored.message.header.state, State::Read);
+                                mine.push(stored.message.header.id);
+                            }
+                            None => thread::yield_now(),
+                        }
+                        let _ = peek(store, ADA_ID);
+                    }
+                    mine
+                })
+            })
+            .collect();
+        producer.join().unwrap();
+        claimers
+            .into_iter()
+            .flat_map(|c| c.join().unwrap())
+            .collect()
+    });
+    while let Some(stored) = store.claim_read(ADA_ID, None, NOW_UTC).unwrap() {
+        claimed.push(stored.message.header.id);
+    }
+    claimed.push(first.message.header.id);
+    claimed.sort();
+    assert_eq!(
+        claimed,
+        (1..=60).map(msg_id).collect::<Vec<_>>(),
+        "every message is claimed exactly once"
+    );
+    assert_eq!(peek(&store, ADA_ID).message, None);
+}
+
 /// Headers come newest first by `local_seq`, page by cursor without gaps or repeats, and
 /// filter by scope, sender, thread and read state.
 pub fn store_list_headers_order_paging_and_filters(backend: impl OpenBackend) {
@@ -1457,6 +1572,8 @@ macro_rules! mailbox_conformance_tests {
             store_peek_reports_expired_without_deleting,
             store_claim_read_order_and_ownership,
             store_claim_read_is_once_under_concurrency,
+            store_commits_and_claims_are_visible_to_other_readers,
+            store_claim_read_selects_and_marks_atomically,
             store_list_headers_order_paging_and_filters,
             directory_resolution_order,
             directory_returns_status_unfiltered,
