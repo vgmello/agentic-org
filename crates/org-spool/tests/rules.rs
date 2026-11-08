@@ -941,6 +941,31 @@ fn rule_a_display_name_cannot_forge_a_notify_line() {
 }
 
 #[test]
+fn rule_a_non_canonical_snooze_time_counts_as_due() {
+    let t = TempSpool::new("bad_until");
+    let ids_: Vec<String> = ["a", "b", "c"].iter().map(|s| t.send(s, None)).collect();
+    let messages: serde_json::Map<String, serde_json::Value> = ids_
+        .iter()
+        .zip(["zzzz", "2999-01-01", "2999-01-01T00:00:00Z"])
+        .map(|(id, until)| {
+            (
+                id.clone(),
+                serde_json::json!({"triage_gen": 1, "snoozed_until": until,
+                                   "triaged_at": "2026-11-01T00:00:00.000Z"}),
+            )
+        })
+        .collect();
+    fs::write(
+        t.dir.join(format!("spool/inbox/{ME}/triage.json")),
+        serde_json::to_vec(&serde_json::json!({"v": 1, "messages": messages})).unwrap(),
+    )
+    .unwrap();
+    let report = t.spool.notify(ME, &opts(None, false, false)).unwrap();
+    assert_eq!(ids(&report), ids_);
+    assert!(report.items.iter().all(|i| i.reason == "due"));
+}
+
+#[test]
 fn rule_a_corrupt_triage_file_is_set_aside_not_fatal() {
     let t = TempSpool::new("corrupt");
     let id = t.ask("q");

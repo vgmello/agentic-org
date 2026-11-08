@@ -1151,7 +1151,9 @@ impl Spool {
                     entry.reported_sessions.clear();
                     modified = true;
                 }
-            } else if until.as_str() <= now_iso {
+            } else if until.as_str() <= now_iso || !is_valid_iso8601_utc(until) {
+                // Times compare as strings, so a value that isn't a canonical time (a hand
+                // edit, another tool) would otherwise never come due: it counts as due now.
                 entry.snoozed_until = None;
                 entry.triage_gen = entry.triage_gen.saturating_add(1);
                 entry.triaged_at = Some(now_iso.to_string());
