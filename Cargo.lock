@@ -2148,6 +2148,7 @@ name = "org-agent"
 version = "0.0.0"
 dependencies = [
  "org-spool",
+ "serde_json",
 ]
 
 [[package]]
@@ -2155,14 +2156,28 @@ name = "org-client"
 version = "0.0.0"
 dependencies = [
  "org-proto",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
 name = "org-office"
 version = "0.0.0"
 dependencies = [
+ "org-proto",
  "rusqlite",
+ "serde",
+ "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "org-office-launch"
+version = "0.0.0"
+dependencies = [
+ "org-proto",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2182,8 +2197,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "org-runtime"
+version = "0.0.0"
+dependencies = [
+ "org-runtime",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "org-spool"
 version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "org-work"
+version = "0.0.0"
+dependencies = [
+ "org-proto",
+ "serde",
+ "serde_json",
+ "sha2",
+]
 
 [[package]]
 name = "pango"

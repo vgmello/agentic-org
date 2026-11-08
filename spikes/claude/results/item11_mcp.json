@@ -1,0 +1,64 @@
+{
+  "runs": {
+    "A-office-strict-empty": {
+      "flags": [
+        "--strict-mcp-config",
+        "--mcp-config",
+        "<empty mcpServers>",
+        "--setting-sources",
+        ""
+      ],
+      "mcp_server_count": 0,
+      "mcp_server_statuses": [],
+      "planted_stub_listed": false,
+      "any_name_contains_claude_ai": false,
+      "tool_count": 0,
+      "mcp_tool_count": 0,
+      "result_subtype": "success",
+      "exit": 0,
+      "denied_unexpected_calls": []
+    },
+    "B-no-strict-sources-empty": {
+      "flags": [
+        "--setting-sources",
+        ""
+      ],
+      "mcp_server_count": 6,
+      "mcp_server_statuses": [
+        "connected",
+        "connected",
+        "needs-auth",
+        "needs-auth",
+        "needs-auth",
+        "needs-auth"
+      ],
+      "planted_stub_listed": false,
+      "any_name_contains_claude_ai": true,
+      "tool_count": 24,
+      "mcp_tool_count": 24,
+      "result_subtype": "success",
+      "exit": 0,
+      "denied_unexpected_calls": []
+    },
+    "C-no-strict-default-sources": {
+      "flags": [],
+      "mcp_server_count": 7,
+      "mcp_server_statuses": [
+        "connected",
+        "connected",
+        "failed",
+        "needs-auth",
+        "needs-auth",
+        "needs-auth",
+        "needs-auth"
+      ],
+      "planted_stub_listed": true,
+      "any_name_contains_claude_ai": true,
+      "tool_count": 24,
+      "mcp_tool_count": 24,
+      "result_subtype": "success",
+      "exit": 0,
+      "denied_unexpected_calls": []
+    }
+  }
+}

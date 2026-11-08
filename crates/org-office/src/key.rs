@@ -54,8 +54,13 @@ pub trait KeyProvider {
     fn load(&self, office_id: &str) -> Result<Option<Key>, KeyError>;
 
     /// Saves `key` for `office_id`. Must not return `Ok` until the key is durable: the
-    /// office creates its database only after this succeeds.
+    /// office creates its database only after this succeeds. Must never replace a key that
+    /// already exists for the id (fail instead): the office checks first, but two offices may race.
     fn store(&self, office_id: &str, key: &Key) -> Result<(), KeyError>;
+
+    /// Removes the key saved for `office_id`; having none is not an error. Only a failed
+    /// `Office::create` and `Office::discard` call it, for a key no database holds data under.
+    fn delete(&self, office_id: &str) -> Result<(), KeyError>;
 }
 
 #[cfg(any(test, feature = "dev-keys"))]
@@ -102,7 +107,16 @@ mod in_memory {
         }
 
         fn store(&self, office_id: &str, key: &Key) -> Result<(), KeyError> {
-            self.saved().insert(office_id.to_owned(), key.clone());
+            let mut saved = self.saved();
+            if saved.contains_key(office_id) {
+                return Err("a key for this office already exists".into());
+            }
+            saved.insert(office_id.to_owned(), key.clone());
+            Ok(())
+        }
+
+        fn delete(&self, office_id: &str) -> Result<(), KeyError> {
+            self.saved().remove(office_id);
             Ok(())
         }
     }
@@ -130,6 +144,13 @@ mod tests {
         keys.store("a", &Key::from_bytes([1; 32])).unwrap();
         assert_eq!(keys.load("a").unwrap(), Some(Key::from_bytes([1; 32])));
         assert!(keys.load("b").unwrap().is_none());
+
+        // Never replaces: a second store for the same id fails and the first key stays.
+        assert!(keys.store("a", &Key::from_bytes([2; 32])).is_err());
+        assert_eq!(keys.load("a").unwrap(), Some(Key::from_bytes([1; 32])));
+        keys.delete("a").unwrap();
+        assert!(keys.load("a").unwrap().is_none());
+        keys.delete("a").unwrap(); // having none is fine
 
         let fixed = InMemoryKeys::fixed(Key::from_bytes([7; 32]));
         assert_eq!(
