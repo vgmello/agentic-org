@@ -10,6 +10,8 @@
 	// The menu bar asks the window to go somewhere (an organization was picked, "Create
 	// organization…"): the Rust side sends a `navigate` event with one of a few known paths.
 	onMount(() => {
+		// Tells the browser tests the page is interactive: clicking earlier would submit a form natively.
+		document.documentElement.dataset.hydrated = 'true';
 		if (!inTauri()) return;
 		let stop: (() => void) | undefined;
 		let gone = false;
