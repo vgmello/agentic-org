@@ -1,0 +1,25 @@
+# agent-file.jsonl
+write {"request":{"subtype":"initialize"},"request_id":"org-1","type":"control_request"}
+# line 2: from claude: control_response
+event {"type":"ready","data":{"runtime_version":"2.1.311","pid":14191,"agents":["claude","Explore","general-purpose","Plan","statusline-setup","zephyr"],"permission_mode":"default"}}
+# line 3: to claude: user
+# control Send { text: "In one line: what is your name, and what is your office handle (or NONE)?", urgent: false }
+write {"message":{"content":"In one line: what is your name, and what is your office handle (or NONE)?","role":"user"},"type":"user"}
+# line 4: from claude: system/init
+event {"type":"session_started","data":{"runtime_session_id":"00000000-0000-4000-8000-000000000001"}}
+event {"type":"turn_started","data":{"turn_id":null,"solicited":true}}
+# line 5: from claude: system/thinking_tokens
+# line 6: from claude: system/thinking_tokens
+# line 7: from claude: assistant
+event {"type":"thinking"}
+# line 8: from claude: assistant
+event {"type":"assistant_text","data":{"message_id":"msg_011Cgq5L66rsSPJEcmSJoE92","text":"ZEPHYR: Name: Zephyr; office handle: NONE (none was assigned in my instructions)."}}
+# line 9: from claude: rate_limit_event
+event {"type":"rate_limit","data":{"window":{"type":"five_hour"},"used_fraction":null,"resets_at":null,"status":"unknown"}}
+event {"type":"rate_limit","data":{"window":{"type":"seven_day"},"used_fraction":null,"resets_at":null,"status":"unknown"}}
+# line 10: from claude: result/success
+event {"type":"usage","data":{"model":"claude-haiku-5-5","input":2,"output":6,"cache_read":0,"cache_write":3253,"reasoning":0,"cost_usd":0.0007388,"cost_basis":"list_price_estimate","scope":"turn_delta"}}
+event {"type":"turn_ended","data":{"outcome":{"type":"completed"},"errors":[]}}
+# stdout closed
+# exit ExitInfo { code: Some(0), signal: None }
+event {"type":"ended","data":{"exit":{"code":0,"signal":null}}}

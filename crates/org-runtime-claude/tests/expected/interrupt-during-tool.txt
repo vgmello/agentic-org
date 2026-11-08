@@ -1,0 +1,43 @@
+# interrupt-during-tool.jsonl
+write {"request":{"subtype":"initialize"},"request_id":"org-1","type":"control_request"}
+# opening: the reply recorded in agent-inline-json
+event {"type":"ready","data":{"runtime_version":"2.1.311","pid":14075,"agents":["claude","Explore","general-purpose","Plan","statusline-setup","zephyr"],"permission_mode":"default"}}
+# line 1: to claude: user
+# control Send { text: "Use the Bash tool to run exactly: sh wait47.sh (in the foreground, not in the background). Then reply with the output.", urgent: false }
+write {"message":{"content":"Use the Bash tool to run exactly: sh wait47.sh (in the foreground, not in the background). Then reply with the output.","role":"user"},"type":"user"}
+# line 2: from claude: system/init
+event {"type":"session_started","data":{"runtime_session_id":"00000000-0000-4000-8000-000000000001"}}
+event {"type":"turn_started","data":{"turn_id":null,"solicited":true}}
+# line 3: from claude: system/status
+# line 4: from claude: stream_event/message_start
+# line 5: from claude: stream_event/content_block_start
+# line 6: from claude: stream_event/content_block_delta
+# line 7: from claude: stream_event/content_block_delta
+# line 8: from claude: stream_event/content_block_delta
+# line 9: from claude: stream_event/content_block_delta
+# line 10: from claude: stream_event/content_block_delta
+# line 11: from claude: stream_event/content_block_delta
+# line 12: from claude: stream_event/content_block_delta
+# line 13: from claude: assistant
+event {"type":"tool_started","data":{"tool_use_id":"toolu_01MTDpnFzwfkK57FCAAGMEGN","name":"Bash","input":{"command":"sh wait47.sh","description":"Run wait47.sh in the foreground"}}}
+# line 14: from claude: stream_event/content_block_stop
+# line 15: from claude: stream_event/message_delta
+# line 16: from claude: stream_event/message_stop
+# line 17: from claude: rate_limit_event
+event {"type":"rate_limit","data":{"window":{"type":"five_hour"},"used_fraction":null,"resets_at":null,"status":"unknown"}}
+event {"type":"rate_limit","data":{"window":{"type":"seven_day"},"used_fraction":null,"resets_at":null,"status":"unknown"}}
+# line 18: from claude: system/task_started
+# line 19: to claude: control_request/interrupt
+# control Interrupt
+write {"request":{"subtype":"interrupt"},"request_id":"org-2","type":"control_request"}
+# line 20: from claude: control_response
+# line 21: from claude: system/task_notification
+# line 22: from claude: user
+event {"type":"tool_finished","data":{"tool_use_id":"toolu_01MTDpnFzwfkK57FCAAGMEGN","is_error":true}}
+# line 23: from claude: user
+# line 24: from claude: result/error_during_execution
+event {"type":"usage","data":{"model":"claude-haiku-5-5","input":2,"output":87,"cache_read":19217,"cache_write":0,"reasoning":0,"cost_usd":0.00023587000000000003,"cost_basis":"list_price_estimate","scope":"turn_delta"}}
+event {"type":"turn_ended","data":{"outcome":{"type":"interrupted"},"errors":["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use"]}}
+# stdout closed
+# exit ExitInfo { code: Some(0), signal: None }
+event {"type":"ended","data":{"exit":{"code":0,"signal":null}}}

@@ -1,0 +1,27 @@
+# approval-allow-rewrite.jsonl
+write {"request":{"subtype":"initialize"},"request_id":"org-1","type":"control_request"}
+# opening: the reply recorded in agent-inline-json
+event {"type":"ready","data":{"runtime_version":"2.1.311","pid":14075,"agents":["claude","Explore","general-purpose","Plan","statusline-setup","zephyr"],"permission_mode":"default"}}
+# line 1: to claude: user
+# control Send { text: "Use the Bash tool to run exactly this command and nothing else: echo original > original.txt\nIf the tool call is denied or fails, do not retry and do not try anything else: reply with the word DENIED followed by the reason you were given.", urgent: false }
+write {"message":{"content":"Use the Bash tool to run exactly this command and nothing else: echo original > original.txt\nIf the tool call is denied or fails, do not retry and do not try anything else: reply with the word DENIED followed by the reason you were given.","role":"user"},"type":"user"}
+# line 2: from claude: system/init
+event {"type":"session_started","data":{"runtime_session_id":"00000000-0000-4000-8000-000000000001"}}
+event {"type":"turn_started","data":{"turn_id":null,"solicited":true}}
+# line 3: from claude: assistant
+event {"type":"tool_started","data":{"tool_use_id":"toolu_01XtybpmhTcBCaEHxG1cwmEC","name":"Bash","input":{"command":"echo original > original.txt","description":"Write original to original.txt"}}}
+# line 4: from claude: control_request/can_use_tool
+event {"type":"approval_requested","data":{"id":"00000000-0000-4000-8000-000000000004","kind":"command","tool":"Bash","display_name":"Bash","input":{"command":"echo original > original.txt","description":"Write original to original.txt"},"justification_untrusted":"Write original to original.txt","blocked_path":"<tmp>/s2/ws/original.txt","tool_use_id":"toolu_01XtybpmhTcBCaEHxG1cwmEC"}}
+# line 5: to claude: control_response
+# not expressible through Decision: not sent
+# line 6: from claude: user
+event {"type":"tool_finished","data":{"tool_use_id":"toolu_01XtybpmhTcBCaEHxG1cwmEC","is_error":false}}
+# line 7: from claude: assistant
+event {"type":"assistant_text","data":{"message_id":"msg_011Cgq4gY22Hgpy1Z98mW5HN","text":"The command ran successfully: `echo original > original.txt` completed with no output and no error, so there is no denial to report."}}
+# line 8: from claude: result/success
+event {"type":"approval_cancelled","data":{"id":"00000000-0000-4000-8000-000000000004"}}
+event {"type":"usage","data":{"model":"claude-haiku-5-5","input":4,"output":21,"cache_read":43631,"cache_write":396,"reasoning":0,"cost_usd":0.00057591,"cost_basis":"list_price_estimate","scope":"turn_delta"}}
+event {"type":"turn_ended","data":{"outcome":{"type":"completed"},"errors":[]}}
+# stdout closed
+# exit ExitInfo { code: Some(0), signal: None }
+event {"type":"ended","data":{"exit":{"code":0,"signal":null}}}

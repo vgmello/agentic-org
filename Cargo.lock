@@ -2191,6 +2191,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "org-runtime-claude"
+version = "0.0.0"
+dependencies = [
+ "org-runtime",
+ "serde_json",
+]
+
+[[package]]
 name = "org-spool"
 version = "0.0.0"
 

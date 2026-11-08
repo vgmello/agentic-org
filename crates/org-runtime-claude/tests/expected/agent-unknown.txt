@@ -1,0 +1,18 @@
+# agent-unknown.jsonl
+write {"request":{"subtype":"initialize"},"request_id":"org-1","type":"control_request"}
+# line 2: from claude: control_response
+event {"type":"start_failed","data":{"reason":{"type":"agent_mismatch","requested":"zephyr","available":["claude","Explore","general-purpose","Plan","statusline-setup"]}}}
+close_stdin
+# line 3: to claude: user
+# control Send { text: "In one line: what is your name, and what is your office handle (or NONE)?", urgent: false }
+# refused: Closed
+# line 4: from claude: system/init
+# line 5: from claude: system/thinking_tokens
+# line 6: from claude: system/thinking_tokens
+# line 7: from claude: assistant
+# line 8: from claude: assistant
+# line 9: from claude: rate_limit_event
+# line 10: from claude: result/success
+# stdout closed
+# exit ExitInfo { code: Some(0), signal: None }
+event {"type":"ended","data":{"exit":{"code":0,"signal":null}}}

@@ -1,0 +1,34 @@
+# approval-no-answer.jsonl
+write {"request":{"subtype":"initialize"},"request_id":"org-1","type":"control_request"}
+# opening: the reply recorded in agent-inline-json
+event {"type":"ready","data":{"runtime_version":"2.1.311","pid":14075,"agents":["claude","Explore","general-purpose","Plan","statusline-setup","zephyr"],"permission_mode":"default"}}
+# line 1: to claude: user
+# control Send { text: "Use the Bash tool to run exactly this command and nothing else: echo late > late.txt\nIf the tool call is denied or fails, do not retry and do not try anything else: reply with the word DENIED followed by the reason you were given.", urgent: false }
+write {"message":{"content":"Use the Bash tool to run exactly this command and nothing else: echo late > late.txt\nIf the tool call is denied or fails, do not retry and do not try anything else: reply with the word DENIED followed by the reason you were given.","role":"user"},"type":"user"}
+# line 2: from claude: system/init
+event {"type":"session_started","data":{"runtime_session_id":"00000000-0000-4000-8000-000000000001"}}
+event {"type":"turn_started","data":{"turn_id":null,"solicited":true}}
+# line 3: from claude: system/thinking_tokens
+# line 4: from claude: system/thinking_tokens
+# line 5: from claude: system/thinking_tokens
+# line 6: from claude: assistant
+event {"type":"thinking"}
+# line 7: from claude: assistant
+event {"type":"tool_started","data":{"tool_use_id":"toolu_013thpoDxtTi5BDTnZGySWGR","name":"Bash","input":{"command":"echo late > late.txt","description":"Write late to late.txt"}}}
+# line 8: from claude: control_request/can_use_tool
+event {"type":"approval_requested","data":{"id":"00000000-0000-4000-8000-000000000008","kind":"command","tool":"Bash","display_name":"Bash","input":{"command":"echo late > late.txt","description":"Write late to late.txt"},"justification_untrusted":"Write late to late.txt","blocked_path":"<tmp>/s2/ws/late.txt","tool_use_id":"toolu_013thpoDxtTi5BDTnZGySWGR"}}
+# line 9: to claude: control_request/interrupt
+# control Interrupt
+write {"request":{"subtype":"interrupt"},"request_id":"org-2","type":"control_request"}
+# line 10: from claude: control_cancel_request
+event {"type":"approval_cancelled","data":{"id":"00000000-0000-4000-8000-000000000008"}}
+# line 11: from claude: control_response
+# line 12: from claude: user
+event {"type":"tool_finished","data":{"tool_use_id":"toolu_013thpoDxtTi5BDTnZGySWGR","is_error":true}}
+# line 13: from claude: user
+# line 14: from claude: result/error_during_execution
+event {"type":"usage","data":{"model":"claude-haiku-5-5","input":2,"output":5,"cache_read":23405,"cache_write":237,"reasoning":0,"cost_usd":0.0005421499999999999,"cost_basis":"list_price_estimate","scope":"turn_delta"}}
+event {"type":"turn_ended","data":{"outcome":{"type":"interrupted"},"errors":["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use"]}}
+# stdout closed
+# exit ExitInfo { code: Some(0), signal: None }
+event {"type":"ended","data":{"exit":{"code":0,"signal":null}}}

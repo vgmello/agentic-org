@@ -1,0 +1,15 @@
+[package]
+name = "org-runtime-claude"
+description = "The Claude Code adapter for the org-runtime port: launch plans, probes and a sans-I/O session for Claude Code's headless stream-json protocol."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+org-runtime = { path = "../org-runtime" }
+serde_json.workspace = true
+
+[dev-dependencies]
+# The port's conformance checks for the Session (`org_runtime::testkit`).
+org-runtime = { path = "../org-runtime", features = ["testkit"] }
