@@ -726,6 +726,26 @@ pub fn directory_resolution_order(backend: impl OpenBackend) {
     }
 }
 
+/// Handles fold case by Unicode lower case (`str::to_lowercase`), as org-office keys them:
+/// "Émile" is found as "émile" and "ÉMILE", by the directory and through send.
+pub fn directory_handles_fold_unicode_case(backend: impl OpenBackend) {
+    let (_, directory) = backend.open(&members(), POSITION);
+    for spelling in ["\u{c9}mile", "\u{e9}mile", "\u{c9}MILE", "\u{e9}MILE"] {
+        assert_eq!(
+            resolve(&directory, spelling).as_deref(),
+            Some(EMILE_ID),
+            "{spelling}"
+        );
+    }
+    assert_eq!(resolve(&directory, "emile"), None, "an accent is not case");
+
+    let office = office(&backend);
+    assert_eq!(
+        recipient(&office, 1, "  \u{e9}MILE\t").as_deref(),
+        Ok(EMILE_ID)
+    );
+}
+
 /// The directory returns members with their stored status, whatever it is.
 pub fn directory_returns_status_unfiltered(backend: impl OpenBackend) {
     let (_, directory) = backend.open(&members(), POSITION);
@@ -1625,6 +1645,7 @@ macro_rules! mailbox_conformance_tests {
             store_list_headers_order_paging_and_filters,
             directory_resolution_order,
             directory_returns_status_unfiltered,
+            directory_handles_fold_unicode_case,
             mailbox_send_commits_with_origin,
             mailbox_send_replay_and_conflict,
             mailbox_send_concurrent_replay_publishes_once,

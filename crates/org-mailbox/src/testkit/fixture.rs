@@ -20,6 +20,9 @@ pub const OWNER_NAME: &str = "Robin Owner";
 /// A person; their name is their handle.
 pub const PAT_ID: &str = "01JCMPAT000000000000000000";
 pub const PAT_HANDLE: &str = "Pat";
+/// A person whose handle isn't ASCII: handles fold case by Unicode lower case.
+pub const EMILE_ID: &str = "01JCMEMILE0000000000000000";
+pub const EMILE_HANDLE: &str = "\u{c9}mile";
 /// An active agent at this office.
 pub const ADA_ID: &str = "01JCMADA000000000000000000";
 pub const ADA_HANDLE: &str = "ada";
@@ -92,6 +95,7 @@ pub fn members() -> Vec<Member> {
     vec![
         person(OWNER_ID, OWNER_NAME, true),
         person(PAT_ID, PAT_HANDLE, false),
+        person(EMILE_ID, EMILE_HANDLE, false),
         agent(ADA_ID, ADA_NAME, ADA_HANDLE, AgentStatus::Active, OFFICE_ID),
         agent(REMY_ID, "Remy", REMY_HANDLE, AgentStatus::Paused, OFFICE_ID),
         agent(
