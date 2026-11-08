@@ -728,9 +728,9 @@ pub(crate) fn close(ctx: &mut Ctx, p: &BugCloseParams) -> Result<Plan, Fail> {
             from,
             to: ItemStatus::Closed,
             resolution: Some(resolution),
-            reason: original.as_ref().map(|o| o.id.clone()).or(reason),
+            reason,
             anyway: None,
-            duplicate_of: None,
+            duplicate_of: original.as_ref().map(|o| o.id.clone()),
         },
         Origin::Caller,
     );

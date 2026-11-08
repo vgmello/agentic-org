@@ -888,16 +888,20 @@ fn a_duplicate_names_its_original_and_its_reporter_watches_it() {
         Some(original.as_str())
     );
     let WorkEventKind::StatusChanged {
-        resolution, reason, ..
+        resolution,
+        reason,
+        duplicate_of,
+        ..
     } = w.last_event(&dup).change
     else {
         panic!("status")
     };
     assert_eq!(
-        (resolution, reason),
+        (resolution, duplicate_of),
         (Some(Resolution::Duplicate), Some(original.clone())),
-        "the event names the original"
+        "the event names the original in `duplicate_of`"
     );
+    assert_eq!(reason, None, "and never puts an id in the free-text reason");
     // The original's watchers gain the duplicate's reporter (pat), once.
     assert!(w.item(&original).watchers.contains(&"pat".to_owned()));
     assert_eq!(accepted.items.len(), 2);
@@ -1020,6 +1024,35 @@ fn reopening_a_duplicate_goes_to_new_and_clears_the_original() {
     assert_eq!(bug.bug.duplicate_of, None);
     assert_eq!(bug.resolution, None);
     assert_eq!(accepted.items[0].duplicate_of, None);
+    // The event is the reopen (§4.2): the cleared original travels in the item's new state.
+    assert_eq!(
+        w.last_event(&dup).change,
+        WorkEventKind::Reopened {
+            note: Some("It came back".into())
+        }
+    );
+}
+
+#[test]
+fn a_wont_fix_close_keeps_its_reason_as_free_text_and_names_no_original() {
+    let w = World::new();
+    let id = w.bug();
+    let p = w.wont_fix_params(&id);
+    let reason = p.reason.clone();
+    w.ok(&app(), WorkCall::BugClose(p));
+    let WorkEventKind::StatusChanged {
+        resolution,
+        reason: recorded,
+        duplicate_of,
+        ..
+    } = w.last_event(&id).change
+    else {
+        panic!("status")
+    };
+    assert_eq!(resolution, Some(Resolution::WontFix));
+    assert_eq!(recorded, reason);
+    assert_eq!(duplicate_of, None);
+    assert_eq!(w.item(&id).bug.duplicate_of, None);
 }
 
 // ---- the state machine, as a table -------------------------------------------------------
