@@ -2173,10 +2173,15 @@ fn work_events_round_trip_and_unknown_kinds_never_break_the_activity() {
         },
         WorkEventKind::WaitingStarted {
             on_member_id: "owner1".into(),
-            reference: Some("c1".into()),
+            reason: WaitReason::Question {
+                comment_id: "c1".into(),
+            },
         },
         WorkEventKind::WaitingEnded {
             on_member_id: "owner1".into(),
+            reason: WaitReason::Question {
+                comment_id: "c1".into(),
+            },
         },
         WorkEventKind::Watched {
             member_id: "a1".into(),
@@ -2249,6 +2254,20 @@ fn work_events_round_trip_and_unknown_kinds_never_break_the_activity() {
             "comment_kind": "question", "asks": "owner1", "watch": true
         })
     );
+    assert_eq!(
+        v["result"]["events"][14]["change"],
+        json!({
+            "type": "waiting_started", "on_member_id": "owner1",
+            "reason": {"type": "question", "comment_id": "c1"}
+        })
+    );
+    assert_eq!(
+        v["result"]["events"][15]["change"],
+        json!({
+            "type": "waiting_ended", "on_member_id": "owner1",
+            "reason": {"type": "question", "comment_id": "c1"}
+        })
+    );
     assert!(v["result"]["events"][0].get("auto").is_none());
     let back: Response = serde_json::from_value(v).unwrap();
     assert_eq!(back.into_result::<WorkActivity>().unwrap(), result);
@@ -2294,6 +2313,84 @@ fn work_events_round_trip_and_unknown_kinds_never_break_the_activity() {
         }
     );
     assert!(newer.next_after_version.is_none());
+}
+
+#[test]
+fn wait_reasons_have_their_wire_shapes_and_an_unknown_reason_never_breaks_the_event() {
+    use crate::work::*;
+    let reasons = [
+        (
+            WaitReason::Question {
+                comment_id: "c1".into(),
+            },
+            json!({"type": "question", "comment_id": "c1"}),
+        ),
+        (
+            WaitReason::Message {
+                message_id: "m1".into(),
+            },
+            json!({"type": "message", "message_id": "m1"}),
+        ),
+        (WaitReason::Triage, json!({"type": "triage"})),
+        (
+            WaitReason::Decision {
+                doc_key: "ADR-0004".into(),
+            },
+            json!({"type": "decision", "doc_key": "ADR-0004"}),
+        ),
+    ];
+    for (reason, wire) in reasons {
+        assert_eq!(serde_json::to_value(&reason).unwrap(), wire);
+        assert_eq!(serde_json::from_value::<WaitReason>(wire).unwrap(), reason);
+    }
+    // A reason from a later build reads as Unknown, in the event too.
+    assert_eq!(
+        serde_json::from_value::<WaitReason>(json!({"type": "review", "pr": 7})).unwrap(),
+        WaitReason::Unknown
+    );
+
+    // A bookkeeping event: no actor, not automatic, caused by the item event that opened it.
+    let event: WorkEvent = serde_json::from_value(json!({
+        "target_id": "t1", "version": 5, "at": "2026-11-08T02:10:00.000Z",
+        "cause": {"target_id": "t1", "version": 4},
+        "org_position": {"epoch": 1, "seq": 40},
+        "change": {"type": "waiting_started", "on_member_id": "owner1",
+                   "reason": {"type": "review", "pr": 7}}
+    }))
+    .unwrap();
+    assert_eq!(event.actor_id, None);
+    assert!(!event.auto);
+    assert_eq!(
+        event.cause,
+        Some(EventRef {
+            target_id: "t1".into(),
+            version: 4
+        })
+    );
+    assert_eq!(
+        event.change,
+        WorkEventKind::WaitingStarted {
+            on_member_id: "owner1".into(),
+            reason: WaitReason::Unknown,
+        }
+    );
+    let ended: WorkEventKind = serde_json::from_value(json!({
+        "type": "waiting_ended", "on_member_id": "owner1", "reason": {"type": "triage"}
+    }))
+    .unwrap();
+    assert_eq!(
+        ended,
+        WorkEventKind::WaitingEnded {
+            on_member_id: "owner1".into(),
+            reason: WaitReason::Triage,
+        }
+    );
+    // The reason is required: the pre-rev-2 shape (`reference`, no `reason`) doesn't decode
+    // as a waiting event.
+    assert!(serde_json::from_value::<WorkEventKind>(json!({
+        "type": "waiting_started", "on_member_id": "owner1", "reference": "c1"
+    }))
+    .is_err());
 }
 
 #[test]

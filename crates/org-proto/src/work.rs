@@ -691,8 +691,8 @@ pub struct Feature {
 /// An item's time figures, derived only from its events (§6). Durations in milliseconds.
 /// `waiting_on_owner_ms + blocked_ms + rest_ms = lead_ms`. While sessions don't report working
 /// time, `working_ms` and `idle_ms` are absent and `rest_ms` holds working and idle together:
-/// show it as "the rest", never as idle (idle means nobody worked on it). When working time is
-/// tracked, `working_ms + idle_ms = rest_ms`.
+/// show it as "the rest", never as idle (idle means nobody worked on it). When working time was
+/// tracked for the item's whole lead time, `working_ms + idle_ms = rest_ms`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TimeFigures {
     /// The sum of each round's length; an open round runs to `as_of`.
@@ -700,7 +700,9 @@ pub struct TimeFigures {
     /// From each round's first start to its end (or `as_of`). Absent when no round started.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cycle_ms: Option<u64>,
-    /// Absent: no session tracking for this item ("not tracked"), never guessed.
+    /// Present (with `idle_ms`) only when working time was tracked for the item's whole lead
+    /// time (§6). Absent: "working time isn't tracked yet", never guessed. Always absent in
+    /// phase 1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub working_ms: Option<u64>,
     #[serde(default)]
@@ -748,13 +750,15 @@ pub struct WorkEvent {
     /// The version this event made.
     pub version: u64,
     pub at: String,
-    /// The bound member that made the change. Absent: an automatic change or a system cascade.
+    /// The bound member that made the change. Absent: an automatic change, a system cascade or
+    /// office bookkeeping (`WaitingStarted` / `WaitingEnded`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor_id: Option<String>,
     /// An automatic change (it can be undone with `work.undo` for an hour).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub auto: bool,
-    /// The triggering event (of an automatic change) or the undone one (of an `Undone`).
+    /// The triggering event (of an automatic change, or of office bookkeeping when there is
+    /// one) or the undone one (of an `Undone`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cause: Option<EventRef>,
     /// The organization position the change was checked at.
@@ -763,7 +767,8 @@ pub struct WorkEvent {
 }
 
 /// What an event changed. Tagged `type`; an unknown kind decodes as `Unknown` (show
-/// "changed"). Later phases add kinds (a bug's triage and verification, handovers).
+/// "changed"). Later phases add kinds (a bug's triage, verification and reopening, working
+/// time, debt status, handovers).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
@@ -848,15 +853,20 @@ pub enum WorkEventKind {
         step_id: String,
         task_id: String,
     },
-    /// A span of waiting on a member (the owner) started: a question to them.
+    /// A span of waiting on a member (the owner) started, for one reason (§6). Office
+    /// bookkeeping (§2.3), written in the triggering call's transaction (`work.comment`,
+    /// `msg.ask`, `work.link` from phase 4, …) or by a cascade: a system event (`actor_id`
+    /// absent, `auto` false, `cause` the triggering item event if there is one) whose only
+    /// aspect, `waiting`, is one no call writes, so it never makes an `expected_version` stale
+    /// and is never undone.
     WaitingStarted {
         on_member_id: String,
-        /// What it waits on, e.g. the question's `comment_id`.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        reference: Option<String>,
+        reason: WaitReason,
     },
+    /// The span keyed by (`on_member_id`, `reason`) ended. Bookkeeping, as `WaitingStarted`.
     WaitingEnded {
         on_member_id: String,
+        reason: WaitReason,
     },
     Watched {
         member_id: String,
@@ -868,6 +878,29 @@ pub enum WorkEventKind {
     },
     /// The item became a tombstone.
     Deleted,
+    #[serde(other)]
+    Unknown,
+}
+
+/// Why an item waits on the owner (§6): the reason of a [`WorkEventKind::WaitingStarted`] or
+/// [`WorkEventKind::WaitingEnded`]. A span is keyed by (`on_member_id`, `reason`), so
+/// overlapping reasons are counted once. On the wire `{"type": "question", "comment_id": …}`,
+/// `{"type": "message", "message_id": …}`, `{"type": "triage"}` or `{"type": "decision",
+/// "doc_key": …}`; an unknown `type` decodes as `Unknown`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum WaitReason {
+    /// A question to the owner (`work.comment { question, asks: owner }`); its answer ends it.
+    Question { comment_id: String },
+    /// An agent's `msg.ask` or `msg.send` to the owner carrying `meta.work_item` = the item;
+    /// the owner's reply, or marking it done, ends it.
+    Message { message_id: String },
+    /// A `new` bug whose suggested triager is the owner (phase 2).
+    Triage,
+    /// The item is linked (`relates_to`) to, or named in the front matter `related` of, an
+    /// ADR in `proposed` (phase 4); `doc_key` is the ADR's.
+    Decision { doc_key: String },
     #[serde(other)]
     Unknown,
 }

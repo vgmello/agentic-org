@@ -96,7 +96,7 @@ pub use work::{
     ChecklistCounts, ChecklistStep, CommentKind, DocRef, DocWritten, DoneAnyway, DraftTask,
     Estimate, EventRef, Feature, FeatureOutcome, FeatureStatus, FieldChange, ItemKind, ItemStatus,
     ItemTime, Link, LinkKind, LinkTarget, NewStep, Priority, RequestKind, RequestOutcome,
-    Resolution, RoutedBy, Severity, Shortcut, TimeFigures, WorkAccepted, WorkActivity,
+    Resolution, RoutedBy, Severity, Shortcut, TimeFigures, WaitReason, WorkAccepted, WorkActivity,
     WorkActivityParams, WorkActivityResult, WorkChange, WorkChanged, WorkChangedData, WorkEvent,
     WorkEventKind, WorkGet, WorkGetParams, WorkGetResult, WorkItem, WorkItemSummary, WorkList,
     WorkListParams, WorkListResult, WorkPosition, WorkSnapshot, WorkSnapshotParams,
