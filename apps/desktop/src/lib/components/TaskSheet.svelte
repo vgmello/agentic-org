@@ -13,7 +13,7 @@
 	import { WORK_LIMITS } from '$lib/proto';
 	import { workApi, type WorkDraft } from '$lib/work';
 	import { assigneeOptions, nameOf } from '$lib/work/people';
-	import { elapsed } from '$lib/work/time';
+	import { timeBlock } from '$lib/work/time';
 	import { movesFrom, PRIORITIES, STATUS_LABEL, taskRef } from '$lib/work/tasks';
 
 	/** The task page (work-items-ux §9): its fields, status, checklist and time. Each change is one call; a stale one reloads. */
@@ -245,7 +245,7 @@
 					</form>
 				</section>
 
-				<p class="text-sm/6 text-gray-400" data-testid="task-time">{elapsed(item.time)}</p>
+				<p class="text-sm/6 text-gray-400" data-testid="task-time">{timeBlock(item.time)}</p>
 
 				{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 
