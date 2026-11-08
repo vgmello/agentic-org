@@ -7,6 +7,20 @@ const memory = (): MockStorage => {
 };
 const make = (storage = memory()) => createMockOrg(async () => 'office-1', { storage });
 
+describe('an organization saved before projects had areas', () => {
+	it('gets each project’s General area when it is loaded, keeping its position and answers', async () => {
+		const storage = memory();
+		const old = structuredClone((await make().view('org-1')).snapshot);
+		delete (old as { areas?: unknown }).areas;
+		old.position = { epoch: 1, seq: 7 };
+		storage.setItem('agentic-org.mock.org.org-1', JSON.stringify({ snapshot: old, answers: { c0: { command: 'x', result: { accepted: { status: 'committed' } } } }, order: ['c0'] }));
+		const { snapshot } = await make(storage).view('org-1');
+		expect(snapshot.areas?.map((a) => a.id).sort()).toEqual(['atlas-general', 'beacon-general', 'onboarding-general', 'scratch-general']);
+		expect(snapshot.areas?.find((a) => a.id === 'beacon-general')).toMatchObject({ team_id: 'web', general: true, version: 1 });
+		expect(snapshot.position.seq).toBe(7);
+	});
+});
+
 describe('the mock office’s organization', () => {
 	it('starts with the sample, applies a command, and keeps the change across instances', async () => {
 		const storage = memory();

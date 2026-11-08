@@ -6,8 +6,8 @@
 //! `org_proto::org` types, so only the transport changes when the real office lands.
 
 use org_proto::org::{
-    AgentProfile, AgentRuntime, AgentStatus, Member, MemberKind, Membership, OrgSnapshot, Position,
-    ProjectSummary, ProjectTeam, RunMode, Team,
+    AgentProfile, AgentRuntime, AgentStatus, Area, Member, MemberKind, Membership, OrgSnapshot,
+    Position, ProjectSummary, ProjectTeam, RunMode, Team,
 };
 
 /// Which organization a new mock organization starts as.
@@ -157,7 +157,12 @@ pub fn sample_org(hq: &str) -> OrgSnapshot {
         joined(10, "people", "leo", None),
         joined(11, "people", "ines", None),
     ];
-    let project = |id: &str, name: &str| ProjectSummary::new(id, name);
+    let project = |id: &str, name: &str, key: &str| {
+        let mut p = ProjectSummary::new(id, name);
+        p.key = key.into();
+        p.version = 1;
+        p
+    };
     let project_team = |id: &str, project_id: &str, team_id: &str| ProjectTeam {
         id: id.into(),
         project_id: project_id.into(),
@@ -170,10 +175,10 @@ pub fn sample_org(hq: &str) -> OrgSnapshot {
         members,
         memberships,
         projects: vec![
-            project("atlas", "Atlas"),
-            project("beacon", "Beacon"),
-            project("onboarding", "Onboarding kit"),
-            project("scratch", "Scratchpad"),
+            project("atlas", "Atlas", "atl"),
+            project("beacon", "Beacon", "bea"),
+            project("onboarding", "Onboarding kit", "onb"),
+            project("scratch", "Scratchpad", "scr"),
         ],
         project_teams: vec![
             project_team("pt-1", "atlas", "platform"),
@@ -181,7 +186,27 @@ pub fn sample_org(hq: &str) -> OrgSnapshot {
             project_team("pt-3", "beacon", "design"),
             project_team("pt-4", "onboarding", "people"),
         ],
-        areas: vec![],
+        areas: vec![
+            general("atlas", Some("platform")),
+            general("beacon", Some("web")),
+            general("onboarding", Some("people")),
+            general("scratch", None),
+        ],
+    }
+}
+
+/// A project's General area (design §1.9): every project has one, owned by its first team, if it has any.
+fn general(project_id: &str, team_id: Option<&str>) -> Area {
+    Area {
+        id: format!("{project_id}-general"),
+        project_id: project_id.into(),
+        name: "General".into(),
+        team_id: team_id.map(String::from),
+        lead_member_id: None,
+        general: true,
+        deleted: false,
+        replaced_by: None,
+        version: 1,
     }
 }
 

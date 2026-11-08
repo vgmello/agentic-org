@@ -5,7 +5,7 @@
 // error codes HQ would, in the contract's order: not_found, invalid_request, invalid_name, then the command's own rule
 // (owner_protected, cycle, not_a_member, not_empty), conflict, then already_exists: a permanent refusal is never hidden
 // behind a stale version.
-import type { AgentProfile, AgentRuntime, ApiErrorCode, AppError, Member, Membership, OrgSnapshot, ProjectTeam, RunMode, Schedule, Team } from '$lib/proto';
+import type { AgentProfile, AgentRuntime, ApiErrorCode, AppError, Area, Member, Membership, OrgSnapshot, ProjectSummary, ProjectTeam, RunMode, Schedule, Team } from '$lib/proto';
 import { trimWhiteSpace, validateName } from '$lib/name';
 import { withoutNulls, type OrgCommand } from './commands';
 
@@ -66,8 +66,9 @@ const badText = (t: string | undefined) => t !== undefined && (trimWhiteSpace(t)
 /** An id that is not an id can never name anything, so it is refused before the organization is looked at. */
 export function wellFormed(c: OrgCommand) {
 	const p = c.params as Record<string, unknown>;
-	const idKeys = ['command_id', 'team_id', 'owner_team_id', 'lead_member_id', 'membership_id', 'new_membership_id', 'to_team_id', 'member_id', 'reports_to_member_id', 'project_team_id', 'project_id', 'office_id'];
-	if (idKeys.some((k) => badId(p[k] as string | undefined))) fail('invalid_request', "An id in that request isn't valid.");
+	const idKeys = ['command_id', 'team_id', 'owner_team_id', 'lead_member_id', 'membership_id', 'new_membership_id', 'to_team_id', 'member_id', 'reports_to_member_id', 'project_team_id', 'project_id', 'office_id', 'area_id', 'general_area_id', 'areas_to_team_id'];
+	const nested = Array.isArray(p.teams) ? (p.teams as { project_team_id?: string; team_id?: string }[]).flatMap((t) => [t.project_team_id, t.team_id]) : [];
+	if (idKeys.some((k) => badId(p[k] as string | undefined)) || nested.some((id) => badId(id))) fail('invalid_request', "An id in that request isn't valid.");
 }
 
 /** A title or contact that is empty (clear it instead), too long or has control characters: in the command's own invalid_request step. */
@@ -202,8 +203,73 @@ function detach(s: OrgSnapshot, id: string, manager: string | undefined): OrgSna
 export function applyCommand(s: OrgSnapshot, given: OrgCommand, ctx: Ctx = { now: new Date().toISOString() }): OrgSnapshot {
 	const command = withoutNulls(given);
 	wellFormed(command);
-	const next = apply(s, command, ctx);
+	const next = reconcileAreas(apply(s, command, ctx));
 	return { ...next, position: { epoch: s.position.epoch, seq: s.position.seq + 1 } };
+}
+
+// ---- projects and areas (design tasks-projects-docs.md §1.9, §2.5, §4.8) ------------------------------------------
+
+const RESERVED_KEYS = ['req', 'feat', 'adr', 'eval', 'debt', 'lim', 'exc'];
+const DESCRIPTION_MAX = 1000;
+const AREA_NAME_MAX = 40;
+const projectOf = (s: OrgSnapshot, id: string): ProjectSummary => (s.projects ?? []).find((x) => x.id === id) ?? fail('not_found', "That project isn't there any more.");
+const areaOf = (s: OrgSnapshot, id: string): Area => (s.areas ?? []).find((x) => x.id === id) ?? fail('not_found', "That area isn't there any more.");
+const keyOk = (key: string) => /^[a-z][a-z0-9]{1,9}$/.test(key);
+const keyTaken = (s: OrgSnapshot, key: string) => RESERVED_KEYS.includes(key) || (s.projects ?? []).some((p) => p.key === key);
+const projectNameTaken = (s: OrgSnapshot, name: string, except?: string) => (s.projects ?? []).some((p) => p.id !== except && sameName(p.name, name));
+const areaNameTaken = (s: OrgSnapshot, projectId: string, name: string, except?: string) =>
+	(s.areas ?? []).some((a) => a.project_id === projectId && !a.deleted && a.id !== except && sameName(a.name, name));
+const projectTeamIds = (s: OrgSnapshot, projectId: string) => (s.project_teams ?? []).filter((l) => l.project_id === projectId).map((l) => l.team_id);
+
+/** A key from the name: its ASCII letters and digits, lowercased, the first 3 (prefixed with `p` if that doesn't start with a letter, padded with `x` to 2); a digit 2, 3, … is appended while it is taken or reserved. */
+export function deriveKey(s: OrgSnapshot, name: string): string {
+	let base = [...name].filter((c) => /[A-Za-z0-9]/.test(c)).slice(0, 3).join('').toLowerCase();
+	if (!/^[a-z]/.test(base)) base = 'p' + base; // the prefix doesn't count toward the 3 (ada's ruling)
+	while (base.length < 2) base += 'x';
+	let key = base;
+	for (let n = 2; keyTaken(s, key); n++) key = `${base}${n}`;
+	return key;
+}
+
+/** An area's name: the organization-name rules, and at most 40 characters. */
+function checkedAreaName(raw: string): string {
+	const name = checkedName(raw);
+	if ([...name].length > AREA_NAME_MAX) fail('invalid_name', `An area's name can be at most ${AREA_NAME_MAX} characters.`);
+	return name;
+}
+
+function checkDescription(text: string) {
+	if ([...text].length > DESCRIPTION_MAX || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/.test(text)) fail('invalid_request', `A description can be at most ${DESCRIPTION_MAX} characters, without control characters.`);
+}
+function checkBranch(text: string) {
+	if (trimWhiteSpace(text) === '' || [...text].length > 255 || CONTROL.test(text)) fail('invalid_request', "That isn't a branch name.");
+}
+
+/** A lead must be a live, non-owner member of the area's team (shared by `area.create` and `area.set_lead`). */
+function checkLead(s: OrgSnapshot, leadId: string, teamId: string | undefined) {
+	const m = member(s, leadId);
+	if (isOffboarded(m)) fail('invalid_request', `${m.name} has left the organization.`);
+	if (teamId === undefined) fail('invalid_request', 'An area needs a team before it has a lead.');
+	if (m.owner) fail('owner_protected', "The owner can't lead an area.");
+	if (!s.memberships.some((x) => x.team_id === teamId && x.member_id === leadId)) fail('not_a_member', `${m.name} isn't in that team.`);
+}
+
+/** Restore the area invariants after any command (design §2.5): an area's team is one of its project's teams (else the area is team-less) and its lead a live member of that team (else it has no lead). Each area that changes goes up one version. */
+function reconcileAreas(s: OrgSnapshot): OrgSnapshot {
+	if (!s.areas || s.areas.length === 0) return s;
+	const areas = s.areas.map((a) => {
+		if (a.deleted) return a;
+		let next = a;
+		if (next.team_id !== undefined && !(s.teams.some((t) => t.id === next.team_id) && (s.project_teams ?? []).some((l) => l.project_id === next.project_id && l.team_id === next.team_id))) next = without(next, 'team_id') as Area;
+		if (next.lead_member_id !== undefined) {
+			const lead = next.lead_member_id;
+			const live = s.members.some((m) => m.id === lead && !isOffboarded(m));
+			const inTeam = next.team_id !== undefined && s.memberships.some((m) => m.team_id === next.team_id && m.member_id === lead);
+			if (!live || !inTeam) next = without(next, 'lead_member_id') as Area;
+		}
+		return next === a ? a : bump(next);
+	});
+	return areas.some((a, i) => a !== s.areas![i]) ? { ...s, areas } : s;
 }
 
 function apply(s: OrgSnapshot, c: OrgCommand, ctx: Ctx): OrgSnapshot {
@@ -414,8 +480,141 @@ function apply(s: OrgSnapshot, c: OrgCommand, ctx: Ctx): OrgSnapshot {
 		case 'project.remove_team': {
 			const p = c.params;
 			const link = (s.project_teams ?? []).find((x) => x.id === p.project_team_id) ?? fail('not_found', "That link isn't there any more.");
+			// The leaving team's areas go to `areas_to_team_id` when the project keeps other teams (required then), or are
+			// left team-less when it was the last one (then it may not be given).
+			const owned = (s.areas ?? []).filter((a) => a.project_id === link.project_id && !a.deleted && a.team_id === link.team_id);
+			const remaining = (s.project_teams ?? []).filter((x) => x.project_id === link.project_id && x.id !== link.id).map((x) => x.team_id);
+			if (p.areas_to_team_id !== undefined && (remaining.length === 0 || !remaining.includes(p.areas_to_team_id))) fail('invalid_request', 'Areas can only go to another team that still works on the project.');
+			if (p.areas_to_team_id === undefined && owned.length > 0 && remaining.length > 0) fail('invalid_request', "Say which of the project's other teams takes over this team's areas.");
 			fresh(link, p.expected_version, 'That link');
-			return { ...s, project_teams: (s.project_teams ?? []).filter((x) => x.id !== link.id) };
+			const target = p.areas_to_team_id;
+			// A lead who isn't in the team taking over stops leading, in the same change.
+			const areas = (s.areas ?? []).map((a) => {
+				if (target === undefined || !owned.some((o) => o.id === a.id)) return a;
+				const moved: Area = { ...a, team_id: target };
+				const stays = a.lead_member_id !== undefined && s.memberships.some((m) => m.team_id === target && m.member_id === a.lead_member_id);
+				return bump(a.lead_member_id !== undefined && !stays ? (without(moved, 'lead_member_id') as Area) : moved);
+			});
+			return { ...s, project_teams: (s.project_teams ?? []).filter((x) => x.id !== link.id), areas };
+		}
+		case 'project.create': {
+			const p = c.params;
+			for (const t of p.teams ?? []) team(s, t.team_id);
+			if (p.key !== undefined && (!keyOk(p.key) || RESERVED_KEYS.includes(p.key))) fail('invalid_request', 'A key is 2 to 10 lowercase letters and digits, starting with a letter, and not reserved.');
+			if (p.description !== undefined) checkDescription(p.description);
+			if (p.integration_branch !== undefined) checkBranch(p.integration_branch);
+			const teamIds = (p.teams ?? []).map((t) => t.team_id);
+			if (new Set(teamIds).size !== teamIds.length) fail('invalid_request', 'A team can be listed once.');
+			let repo: ProjectSummary['repo'];
+			if (p.repo && 'new_local' in p.repo) repo = { host: 'local', default_branch: 'main', path: `/workspace/repos/${p.project_id}.git` };
+			else if (p.repo && 'existing_local' in p.repo) {
+				const path = p.repo.existing_local.path;
+				if (!path.startsWith('/') || CONTROL.test(path)) fail('invalid_request', 'A repository path is absolute.');
+				repo = { host: 'local', default_branch: 'main', path };
+			} else if (p.repo) fail('invalid_request', "That repository kind isn't supported yet.");
+			const name = checkedName(p.name);
+			const generalName = checkedAreaName(p.general_area_name ?? 'General');
+			const linkIds = (p.teams ?? []).map((t) => t.project_team_id);
+			if (new Set(linkIds).size !== linkIds.length) fail('already_exists', 'A link id is used twice.');
+			if ((s.projects ?? []).some((x) => x.id === p.project_id) || (s.areas ?? []).some((a) => a.id === p.general_area_id) || (p.teams ?? []).some((t) => (s.project_teams ?? []).some((l) => l.id === t.project_team_id)))
+				fail('already_exists', 'One of those ids is taken.');
+			if (p.key !== undefined && keyTaken(s, p.key)) fail('already_exists', 'That key is taken.');
+			if (projectNameTaken(s, name)) fail('already_exists', `There's already a project called ${name}.`);
+			const project: ProjectSummary = {
+				id: p.project_id,
+				key: p.key ?? deriveKey(s, name),
+				name,
+				...(p.description !== undefined ? { description: p.description } : {}),
+				...(repo ? { repo } : {}),
+				...(p.integration_branch !== undefined ? { integration_branch: p.integration_branch } : {}),
+				created_at: ctx.now,
+				version: 1
+			};
+			const general: Area = { id: p.general_area_id, project_id: p.project_id, name: generalName, ...(teamIds[0] ? { team_id: teamIds[0] } : {}), general: true, version: 1 };
+			const links: ProjectTeam[] = (p.teams ?? []).map((t) => ({ id: t.project_team_id, project_id: p.project_id, team_id: t.team_id, version: 1 }));
+			return { ...s, projects: [...(s.projects ?? []), project], areas: [...(s.areas ?? []), general], project_teams: [...(s.project_teams ?? []), ...links] };
+		}
+		case 'project.update': {
+			const p = c.params;
+			const pr = projectOf(s, p.project_id);
+			if ((p.description !== undefined && p.clear_description) || (p.integration_branch !== undefined && p.clear_integration_branch)) fail('invalid_request', 'Give a value or clear it, not both.');
+			if (p.name === undefined && p.description === undefined && !p.clear_description && p.integration_branch === undefined && !p.clear_integration_branch) fail('invalid_request', 'Nothing to change.');
+			if (p.description !== undefined) checkDescription(p.description);
+			if (p.integration_branch !== undefined) checkBranch(p.integration_branch);
+			const name = p.name !== undefined ? checkedName(p.name) : undefined;
+			fresh({ version: pr.version ?? 0 }, p.expected_version, pr.name);
+			if (name !== undefined && projectNameTaken(s, name, pr.id)) fail('already_exists', `There's already a project called ${name}.`);
+			let next: ProjectSummary = { ...pr };
+			if (name !== undefined) next.name = name;
+			if (p.description !== undefined) next.description = p.description;
+			if (p.clear_description) next = without(next, 'description') as ProjectSummary;
+			if (p.integration_branch !== undefined) next.integration_branch = p.integration_branch;
+			if (p.clear_integration_branch) next = without(next, 'integration_branch') as ProjectSummary;
+			next.version = (pr.version ?? 0) + 1;
+			return { ...s, projects: (s.projects ?? []).map((x) => (x.id === pr.id ? next : x)) };
+		}
+		case 'project.archive': {
+			const p = c.params;
+			const pr = projectOf(s, p.project_id);
+			fresh({ version: pr.version ?? 0 }, p.expected_version, pr.name);
+			return { ...s, projects: (s.projects ?? []).map((x) => {
+				if (x.id !== pr.id) return x;
+				const next = { ...x, version: (pr.version ?? 0) + 1 };
+				// Not archived is the absence of the field, as it is on the wire.
+				return p.archived ? { ...next, archived: true } : (without(next, 'archived') as ProjectSummary);
+			}) };
+		}
+		case 'area.create': {
+			const p = c.params;
+			const pr = projectOf(s, p.project_id);
+			if (p.team_id !== undefined) team(s, p.team_id);
+			if (p.lead_member_id !== undefined) member(s, p.lead_member_id);
+			const teams = projectTeamIds(s, pr.id);
+			if (p.team_id !== undefined && !teams.includes(p.team_id)) fail('invalid_request', "That team doesn't work on this project.");
+			if (p.team_id === undefined && teams.length > 0) fail('invalid_request', "Choose which of the project's teams owns this area.");
+			if (p.lead_member_id !== undefined) {
+				const m = member(s, p.lead_member_id);
+				if (isOffboarded(m) || p.team_id === undefined) checkLead(s, p.lead_member_id, p.team_id);
+			}
+			const name = checkedAreaName(p.name);
+			if (p.lead_member_id !== undefined) checkLead(s, p.lead_member_id, p.team_id);
+			if ((s.areas ?? []).some((a) => a.id === p.area_id)) fail('already_exists', 'That area id is taken.');
+			if (areaNameTaken(s, pr.id, name)) fail('already_exists', `${pr.name} already has an area called ${name}.`);
+			const area: Area = { id: p.area_id, project_id: pr.id, name, ...(p.team_id !== undefined ? { team_id: p.team_id } : {}), ...(p.lead_member_id !== undefined ? { lead_member_id: p.lead_member_id } : {}), version: 1 };
+			return { ...s, areas: [...(s.areas ?? []), area] };
+		}
+		case 'area.rename': {
+			const p = c.params;
+			const a = areaOf(s, p.area_id);
+			if (a.deleted) fail('invalid_request', 'That area was deleted.');
+			const name = checkedAreaName(p.name);
+			fresh(a, p.expected_version, a.name);
+			if (areaNameTaken(s, a.project_id, name, a.id)) fail('already_exists', `There's already an area called ${name} in this project.`);
+			return { ...s, areas: replace(s.areas ?? [], bump({ ...a, name })) };
+		}
+		case 'area.set_team': {
+			const p = c.params;
+			const a = areaOf(s, p.area_id);
+			if (p.team_id !== undefined) team(s, p.team_id);
+			if (a.deleted) fail('invalid_request', 'That area was deleted.');
+			const teams = projectTeamIds(s, a.project_id);
+			if (p.team_id !== undefined && !teams.includes(p.team_id)) fail('invalid_request', "That team doesn't work on this project.");
+			if (p.team_id === undefined && teams.length > 0) fail('invalid_request', "Choose which of the project's teams owns this area.");
+			fresh(a, p.expected_version, a.name);
+			let next: Area = p.team_id !== undefined ? { ...a, team_id: p.team_id } : (without(a, 'team_id') as Area);
+			// A lead who isn't in the new team stops leading.
+			if (next.lead_member_id && !(p.team_id !== undefined && s.memberships.some((m) => m.team_id === p.team_id && m.member_id === next.lead_member_id))) next = without(next, 'lead_member_id') as Area;
+			return { ...s, areas: replace(s.areas ?? [], bump(next)) };
+		}
+		case 'area.set_lead': {
+			const p = c.params;
+			const a = areaOf(s, p.area_id);
+			if (p.lead_member_id !== undefined) member(s, p.lead_member_id);
+			if (a.deleted) fail('invalid_request', 'That area was deleted.');
+			if (p.lead_member_id !== undefined) checkLead(s, p.lead_member_id, a.team_id);
+			fresh(a, p.expected_version, a.name);
+			const next = p.lead_member_id !== undefined ? { ...a, lead_member_id: p.lead_member_id } : (without(a, 'lead_member_id') as Area);
+			return { ...s, areas: replace(s.areas ?? [], bump(next)) };
 		}
 	}
 }

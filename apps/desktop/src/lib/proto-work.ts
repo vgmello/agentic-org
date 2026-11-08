@@ -341,16 +341,6 @@ export interface WorkUnlink {
 
 export const SEVERITIES = ['critical', 'major', 'minor', 'trivial'] as const;
 
-/** An area of a project (organization data; the mock invents General until `area.*` org commands exist). */
-export interface Area {
-	id: string;
-	project_id: string;
-	name: string;
-	team_id?: string;
-	lead_member_id?: string;
-	general: boolean;
-	deleted: boolean;
-}
 
 /** Why an item waits on the owner (`WaitingStarted`/`WaitingEnded` events; ada/proto-work-p1 @ 410e1a6). */
 export type WaitReason =

@@ -27,6 +27,7 @@ The product is named **Agentic Org**. The designs that are the reference for cur
    - After the merge, ada deletes the branch on origin once it's confirmed fully in `v1` (nothing unmerged is ever deleted; closed work is archived as an `archive/<branch>` tag), and tells you when your local branch and worktree can go. Then start your next branch from `origin/v1`.
 3. **Before asking for the go:**
    - `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` pass
+   - the office server's launch tests (the real binary, with test keys instead of the Keychain) need a feature the workspace commands skip: also run `cargo test -p org-office-server --features dev-keys` and `cargo clippy -p org-office-server --all-targets --features dev-keys -- -D warnings`
    - for the app, the type check, its tests and a build pass
    - **your own independent review** of your whole diff (a fresh subagent you start, with no context: valid, reliable, secure, meets the brief), with every confirmed finding fixed. This is separate from step 4, and step 4 doesn't replace it.
 4. **Send it to the reviewer agent** (`reviewer`, on `org-agent`) with: repo, branch, base, commit, and the design or brief it implements (and screenshots for UI work). It reports a verdict and findings to you and ada. Fix, re-run step 3's checks on the fixed commit, and ask it to re-review, until it says **ready** for your final commit. If it doesn't answer within 30 minutes, tell ada, who starts another reviewer so work never stalls.

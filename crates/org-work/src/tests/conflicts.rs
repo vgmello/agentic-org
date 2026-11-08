@@ -174,3 +174,97 @@ fn update_validation() {
     let item = w.item(&id);
     assert_eq!((item.task.description, item.task.team_id), (None, None));
 }
+
+// ---- bugs ----------------------------------------------------------------------------------
+
+#[test]
+fn a_triage_does_not_make_an_edit_of_another_field_stale() {
+    let w = World::new();
+    let id = w.bug();
+    let v = w.version(&id);
+    w.triage(&id);
+    // A title edit and an assign from before the triage still go through.
+    let mut p = w.bug_update(&id);
+    p.expected_version = v;
+    p.title = Some("A clearer title".into());
+    w.ok(&app(), WorkCall::BugUpdate(p));
+    let mut p = w.bug_assign(&id, Some("riley"));
+    p.expected_version = v;
+    w.ok(&app(), WorkCall::BugAssign(p));
+    // But the fields the triage set are stale: severity, priority and the area.
+    let edits: [fn(&mut BugUpdateParams); 3] = [
+        |p| p.severity = Some(Severity::Minor),
+        |p| p.priority = Some(Priority::Low),
+        |p| p.area_id = Some(AREA_UI.into()),
+    ];
+    for edit in edits {
+        let mut p = w.bug_update(&id);
+        p.expected_version = v;
+        edit(&mut p);
+        assert_eq!(w.code(&app(), WorkCall::BugUpdate(p)), ErrorCode::Conflict);
+    }
+}
+
+#[test]
+fn a_triage_that_assigns_makes_a_stale_assign_conflict() {
+    let w = World::new();
+    let id = w.bug();
+    let mut t = w.triage_params(&id, AREA_PAY);
+    t.assignee_id = Some("riley".into());
+    let stale = w.bug_assign(&id, Some("pau"));
+    w.ok(&app(), WorkCall::BugTriage(t));
+    assert_eq!(
+        w.code(&app(), WorkCall::BugAssign(stale)),
+        ErrorCode::Conflict
+    );
+}
+
+#[test]
+fn verify_and_reopen_only_make_status_calls_stale() {
+    let w = World::new();
+    let id = w.bug_at(ItemStatus::Fixed);
+    let v = w.version(&id);
+    let p = w.verify_params(&id, VerifyOutcome::StillHappens);
+    w.ok(&pat(), WorkCall::BugVerify(p));
+    let mut p = w.bug_update(&id);
+    p.expected_version = v;
+    p.title = Some("Still off".into());
+    w.ok(&app(), WorkCall::BugUpdate(p));
+    let mut stale = w.fixed_params(&id);
+    stale.expected_version = v;
+    assert_eq!(
+        w.code(&app(), WorkCall::BugMarkFixed(stale)),
+        ErrorCode::Conflict
+    );
+
+    let closed = w.bug_at(ItemStatus::Closed);
+    let v = w.version(&closed);
+    let p = w.reopen_params(&closed);
+    w.ok(&app(), WorkCall::BugReopen(p));
+    let mut p = w.bug_assign(&closed, Some("riley"));
+    p.expected_version = v;
+    w.ok(&app(), WorkCall::BugAssign(p));
+}
+
+#[test]
+fn the_note_that_a_rule_changed_nothing_does_not_make_a_status_call_stale() {
+    let w = World::new();
+    let step = w.id();
+    let bug = w.bug_with(|p| {
+        p.area_id = Some(AREA_PAY.into());
+        p.checklist = vec![NewStep {
+            step_id: step.clone(),
+            text: "Add a test".into(),
+            required: true,
+        }];
+    });
+    w.triage(&bug);
+    let task = w.fix_task(&bug);
+    w.set(&task, ItemStatus::InProgress);
+    let seen = w.version(&bug);
+    w.set(&task, ItemStatus::Done); // records "all fix tasks done; required steps left"
+    assert!(w.version(&bug) > seen);
+    let mut p = w.wont_fix_params(&bug);
+    p.expected_version = seen;
+    w.ok(&app(), WorkCall::BugClose(p));
+}

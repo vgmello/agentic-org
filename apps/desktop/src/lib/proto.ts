@@ -215,6 +215,12 @@ export interface ProjectSummary {
 	/** The project's short key; empty on a record from before keys existed. */
 	key?: string;
 	name: string;
+	description?: string;
+	/** The repository HQ resolved from the spec it was given (`org_proto::ProjectRepo`); the app never sends one. */
+	repo?: { host: string; default_branch: string; path?: string };
+	integration_branch?: string;
+	archived?: boolean;
+	created_at?: string;
 	/** 0 on a record from before projects had versions. */
 	version?: number;
 }

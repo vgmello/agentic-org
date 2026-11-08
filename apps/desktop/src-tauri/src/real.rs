@@ -11,10 +11,11 @@ use crate::office::{OfficeConnection, SetupError, SetupErrorCode};
 use crate::org_command::OrgCommand;
 use org_client::{Client, ClientError};
 use org_proto::org::{
-    MemberAddAgent, MemberAddPerson, MemberMove, MemberOffboard, MemberRemove,
-    MemberSetAgentStatus, MemberSetReportsTo, MemberSetRunMode, MemberUpdateAgent,
-    MemberUpdatePerson, ProjectAddTeam, ProjectRemoveTeam, TeamAddMember, TeamCreate, TeamDelete,
-    TeamMove, TeamRemoveMember, TeamRename, TeamSetLead, TeamSetTitle,
+    AreaCreate, AreaRename, AreaSetLead, AreaSetTeam, MemberAddAgent, MemberAddPerson, MemberMove,
+    MemberOffboard, MemberRemove, MemberSetAgentStatus, MemberSetReportsTo, MemberSetRunMode,
+    MemberUpdateAgent, MemberUpdatePerson, ProjectAddTeam, ProjectArchive, ProjectCreate,
+    ProjectRemoveTeam, ProjectUpdate, TeamAddMember, TeamCreate, TeamDelete, TeamMove,
+    TeamRemoveMember, TeamRename, TeamSetLead, TeamSetTitle,
 };
 use org_proto::{
     ApiError, CommandAccepted, Empty, ErrorCode, HelloResult, OfficeInfo, OfficeRole, OfficeStatus,
@@ -452,6 +453,13 @@ fn send(c: &Client, command: &OrgCommand) -> Result<CommandAccepted, ClientError
         OrgCommand::MemberOffboard(p) => c.call::<MemberOffboard>(p),
         OrgCommand::ProjectAddTeam(p) => c.call::<ProjectAddTeam>(p),
         OrgCommand::ProjectRemoveTeam(p) => c.call::<ProjectRemoveTeam>(p),
+        OrgCommand::ProjectCreate(p) => c.call::<ProjectCreate>(p),
+        OrgCommand::ProjectUpdate(p) => c.call::<ProjectUpdate>(p),
+        OrgCommand::ProjectArchive(p) => c.call::<ProjectArchive>(p),
+        OrgCommand::AreaCreate(p) => c.call::<AreaCreate>(p),
+        OrgCommand::AreaRename(p) => c.call::<AreaRename>(p),
+        OrgCommand::AreaSetTeam(p) => c.call::<AreaSetTeam>(p),
+        OrgCommand::AreaSetLead(p) => c.call::<AreaSetLead>(p),
     }
 }
 
@@ -800,6 +808,34 @@ mod tests {
             (
                 "project.remove_team",
                 serde_json::json!({"project_team_id": "x", "expected_version": 1}),
+            ),
+            (
+                "project.create",
+                serde_json::json!({"project_id": "p", "name": "n", "general_area_id": "g"}),
+            ),
+            (
+                "project.update",
+                serde_json::json!({"project_id": "p", "expected_version": 1, "name": "n"}),
+            ),
+            (
+                "project.archive",
+                serde_json::json!({"project_id": "p", "expected_version": 1, "archived": true}),
+            ),
+            (
+                "area.create",
+                serde_json::json!({"area_id": "a", "project_id": "p", "name": "n"}),
+            ),
+            (
+                "area.rename",
+                serde_json::json!({"area_id": "a", "expected_version": 1, "name": "n"}),
+            ),
+            (
+                "area.set_team",
+                serde_json::json!({"area_id": "a", "expected_version": 1}),
+            ),
+            (
+                "area.set_lead",
+                serde_json::json!({"area_id": "a", "expected_version": 1}),
             ),
         ];
         for (method, params) in &all {
