@@ -18,6 +18,8 @@ use org_proto::{
 };
 use serde::{Deserialize, Serialize};
 
+mod projects;
+
 type Outcome<T = Vec<OrgChange>> = Result<T, ApiError>;
 
 fn err<T>(code: ErrorCode, message: impl Into<String>) -> Outcome<T> {
@@ -269,7 +271,42 @@ fn ids_of(command: &OrgCommand) -> Vec<&str> {
         OrgCommand::ProjectAddTeam(p) => {
             ids.extend([&p.project_team_id, &p.project_id, &p.team_id].map(String::as_str))
         }
-        OrgCommand::ProjectRemoveTeam(p) => ids.push(&p.project_team_id),
+        OrgCommand::ProjectRemoveTeam(p) => ids.extend(
+            [Some(p.project_team_id.as_str()), opt(&p.areas_to_team_id)]
+                .into_iter()
+                .flatten(),
+        ),
+        OrgCommand::ProjectCreate(p) => {
+            ids.extend([p.project_id.as_str(), p.general_area_id.as_str()]);
+            ids.extend(
+                p.teams
+                    .iter()
+                    .flat_map(|t| [t.project_team_id.as_str(), t.team_id.as_str()]),
+            );
+        }
+        OrgCommand::ProjectUpdate(p) => ids.push(&p.project_id),
+        OrgCommand::ProjectArchive(p) => ids.push(&p.project_id),
+        OrgCommand::AreaCreate(p) => ids.extend(
+            [
+                Some(p.area_id.as_str()),
+                Some(p.project_id.as_str()),
+                opt(&p.team_id),
+                opt(&p.lead_member_id),
+            ]
+            .into_iter()
+            .flatten(),
+        ),
+        OrgCommand::AreaRename(p) => ids.push(&p.area_id),
+        OrgCommand::AreaSetTeam(p) => ids.extend(
+            [Some(p.area_id.as_str()), opt(&p.team_id)]
+                .into_iter()
+                .flatten(),
+        ),
+        OrgCommand::AreaSetLead(p) => ids.extend(
+            [Some(p.area_id.as_str()), opt(&p.lead_member_id)]
+                .into_iter()
+                .flatten(),
+        ),
     }
     ids
 }
@@ -311,7 +348,15 @@ fn check_text(text: &Option<String>) -> Outcome<()> {
     Ok(())
 }
 
+/// Run the command, then restore the area invariants its changes may have broken (design §2.5): a team that left a
+/// project, a lead who left a team or the organization.
 fn apply_to(s: &mut OrgSnapshot, command: &OrgCommand, ctx: &Ctx) -> Outcome {
+    let mut changes = apply_command(s, command, ctx)?;
+    projects::reconcile_areas(s, &mut changes);
+    Ok(changes)
+}
+
+fn apply_command(s: &mut OrgSnapshot, command: &OrgCommand, ctx: &Ctx) -> Outcome {
     well_formed(command)?;
     match command {
         OrgCommand::TeamCreate(p) => {
@@ -957,14 +1002,75 @@ fn apply_to(s: &mut OrgSnapshot, command: &OrgCommand, ctx: &Ctx) -> Outcome {
             else {
                 return err(ErrorCode::NotFound, "That link isn't there any more.");
             };
+            // The leaving team's areas go to `areas_to_team_id` when the project keeps other teams (required then), or
+            // are left team-less when it was the last one (then it may not be given).
+            let link = s.project_teams[i].clone();
+            let owns_areas = s.areas.iter().any(|a| {
+                a.project_id == link.project_id
+                    && !a.deleted
+                    && a.team_id.as_deref() == Some(link.team_id.as_str())
+            });
+            let remaining: Vec<String> = s
+                .project_teams
+                .iter()
+                .filter(|x| x.project_id == link.project_id && x.id != link.id)
+                .map(|x| x.team_id.clone())
+                .collect();
+            match &p.areas_to_team_id {
+                Some(target) if remaining.is_empty() || !remaining.contains(target) => {
+                    return err(
+                        ErrorCode::InvalidRequest,
+                        "Areas can only go to another team that still works on the project.",
+                    );
+                }
+                None if owns_areas && !remaining.is_empty() => {
+                    return err(
+                        ErrorCode::InvalidRequest,
+                        "Say which of the project's other teams takes over this team's areas.",
+                    );
+                }
+                _ => {}
+            }
             if s.project_teams[i].version != p.expected_version {
                 return err(ErrorCode::Conflict, "That link changed since you looked.");
             }
             s.project_teams.remove(i);
-            Ok(vec![OrgChange::ProjectTeamRemoved {
+            let mut changes = vec![OrgChange::ProjectTeamRemoved {
                 project_team_id: p.project_team_id.clone(),
-            }])
+            }];
+            if let Some(target) = &p.areas_to_team_id {
+                let in_target: Vec<String> = s
+                    .memberships
+                    .iter()
+                    .filter(|m| m.team_id == *target)
+                    .map(|m| m.member_id.clone())
+                    .collect();
+                for a in s.areas.iter_mut().filter(|a| {
+                    a.project_id == link.project_id
+                        && !a.deleted
+                        && a.team_id.as_deref() == Some(link.team_id.as_str())
+                }) {
+                    a.team_id = Some(target.clone());
+                    // A lead who isn't in the team taking over stops leading, in the same change.
+                    if a.lead_member_id
+                        .as_ref()
+                        .is_some_and(|l| !in_target.contains(l))
+                    {
+                        a.lead_member_id = None;
+                    }
+                    a.version += 1;
+                    changes.push(OrgChange::AreaUpserted { area: a.clone() });
+                }
+            }
+            Ok(changes)
         }
+        OrgCommand::ProjectCreate(p) => projects::project_create(s, p, ctx),
+        OrgCommand::ProjectUpdate(p) => projects::project_update(s, p),
+        OrgCommand::ProjectArchive(p) => projects::project_archive(s, p),
+        OrgCommand::AreaCreate(p) => projects::area_create(s, p),
+        OrgCommand::AreaRename(p) => projects::area_rename(s, p),
+        OrgCommand::AreaSetTeam(p) => projects::area_set_team(s, p),
+        OrgCommand::AreaSetLead(p) => projects::area_set_lead(s, p),
     }
 }
 
@@ -1029,6 +1135,7 @@ impl Hq {
     /// fingerprint, not a command's text), list them in `order`, and honour the cap. Older files
     /// written by earlier builds had neither.
     pub fn tidy(&mut self) {
+        projects::backfill_general_areas(&mut self.snapshot);
         self.answers.retain(|_, a| is_fingerprint(&a.command));
         let known: std::collections::HashSet<String> = self.answers.keys().cloned().collect();
         self.order.retain(|id| known.contains(id));
@@ -2007,7 +2114,7 @@ mod tests {
         let cases = vectors["cases"].as_array().unwrap();
         assert_eq!(
             cases.len(),
-            147,
+            239,
             "a case was lost or added: update this count"
         );
         for case in cases {
@@ -2026,7 +2133,46 @@ mod tests {
                 );
             }
             match case["expect"].as_str().unwrap() {
-                "ok" => assert!(outcome.is_ok(), "{}: {:?}", case["name"], outcome),
+                "ok" => {
+                    assert!(outcome.is_ok(), "{}: {:?}", case["name"], outcome);
+                    // What the command left behind: entities found by id in the snapshot's lists (design §4.8).
+                    let state = serde_json::to_value(&h.snapshot).unwrap();
+                    for check in case["after"].as_array().into_iter().flatten() {
+                        let list = check["in"].as_str().unwrap();
+                        let found = state[list]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .find(|x| x["id"] == check["id"]);
+                        if check["absent"] == json!(true) {
+                            assert!(
+                                found.is_none(),
+                                "{}: {list} {} should be gone",
+                                case["name"],
+                                check["id"]
+                            );
+                            continue;
+                        }
+                        let found = found.unwrap_or_else(|| {
+                            panic!("{}: no {list} {}", case["name"], check["id"])
+                        });
+                        for (k, v) in check["has"].as_object().into_iter().flatten() {
+                            assert_eq!(
+                                &found[k], v,
+                                "{}: {list} {} {k}",
+                                case["name"], check["id"]
+                            );
+                        }
+                        for k in check["lacks"].as_array().into_iter().flatten() {
+                            assert!(
+                                found.get(k.as_str().unwrap()).is_none(),
+                                "{}: {list} {} should lack {k}",
+                                case["name"],
+                                check["id"]
+                            );
+                        }
+                    }
+                }
                 code => {
                     let got = serde_json::to_value(outcome.unwrap_err().code).unwrap();
                     assert_eq!(got, json!(code), "{}", case["name"]);
@@ -2137,6 +2283,34 @@ mod tests {
             ErrorCode::InvalidRequest
         );
         assert_eq!(serde_json::to_string(&h).unwrap().len(), size_before);
+    }
+
+    #[test]
+    fn an_organization_saved_before_areas_gets_each_projects_general_area_on_load() {
+        let mut h = hq();
+        h.snapshot.areas.clear();
+        h.tidy();
+        let ids: Vec<&str> = h.snapshot.areas.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "atlas-general",
+                "beacon-general",
+                "onboarding-general",
+                "scratch-general"
+            ]
+        );
+        let beacon = h
+            .snapshot
+            .areas
+            .iter()
+            .find(|a| a.id == "beacon-general")
+            .unwrap();
+        assert_eq!(beacon.team_id.as_deref(), Some("web"));
+        assert!(beacon.general && beacon.version == 1);
+        // Loading again adds nothing.
+        h.tidy();
+        assert_eq!(h.snapshot.areas.len(), 4);
     }
 
     #[test]

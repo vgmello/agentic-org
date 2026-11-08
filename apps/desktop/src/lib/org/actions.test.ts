@@ -162,8 +162,11 @@ describe('TEAM-8 giving a project to a team and taking it off', () => {
 		const api = make();
 		await removeProjectTeam(api, 'beacon', 'web');
 		expect(sharedBy(await api.snapshot(), 'beacon')).toEqual(['Design']);
+		// Web's area went to the team that stays (HQ is told where); the last team's removal leaves it team-less.
+		expect((await api.snapshot()).areas?.find((a) => a.id === 'beacon-general')?.team_id).toBe('design');
 		await removeProjectTeam(api, 'beacon', 'design');
 		expect(unassignedProjects(await api.snapshot()).map((p) => p.id)).toContain('beacon');
+		expect((await api.snapshot()).areas?.find((a) => a.id === 'beacon-general')?.team_id).toBeUndefined();
 		await expect(removeProjectTeam(api, 'beacon', 'design')).rejects.toMatchObject({ code: 'not_found' });
 	});
 });

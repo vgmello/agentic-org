@@ -2139,6 +2139,1749 @@
     }
    },
    "expect": "not_found"
+  },
+  {
+   "name": "project.create: makes the project, its General area and the links in one command, with a derived key",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "teams": [
+      {
+       "project_team_id": "pt-9",
+       "team_id": "web"
+      }
+     ]
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "neo",
+     "has": {
+      "key": "neo",
+      "name": "Neo Project",
+      "version": 1
+     }
+    },
+    {
+     "in": "areas",
+     "id": "neo-general",
+     "has": {
+      "name": "General",
+      "general": true,
+      "team_id": "web",
+      "project_id": "neo",
+      "version": 1
+     }
+    },
+    {
+     "in": "project_teams",
+     "id": "pt-9",
+     "has": {
+      "project_id": "neo",
+      "team_id": "web"
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.create: a taken key gets a digit",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "at2",
+     "name": "Atlas Two",
+     "general_area_id": "at2-g"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "at2",
+     "has": {
+      "key": "atl2"
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.create: a reserved key gets a digit",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "rq",
+     "name": "Request tool",
+     "general_area_id": "rq-g"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "rq",
+     "has": {
+      "key": "req2"
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.create: a name without a letter first is prefixed with p",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "n1",
+     "name": "123 go",
+     "general_area_id": "n1-g"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "n1",
+     "has": {
+      "key": "p123"
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.create: a chosen key is kept",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "key": "neo9"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "neo",
+     "has": {
+      "key": "neo9"
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.create: a missing team",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "teams": [
+      {
+       "project_team_id": "pt-9",
+       "team_id": "ghost"
+      }
+     ]
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "project.create: a bad key",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "key": "Bad Key"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.create: a reserved key",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "key": "req"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.create: a repeated team",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "teams": [
+      {
+       "project_team_id": "pt-8",
+       "team_id": "web"
+      },
+      {
+       "project_team_id": "pt-9",
+       "team_id": "web"
+      }
+     ]
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.create: a relative repository path",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "repo": {
+      "existing_local": {
+       "path": "relative/path"
+      }
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.create: a blank name",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "  ",
+     "general_area_id": "neo-general"
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "project.create: a blank General name",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "general_area_name": " "
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "project.create: a taken project id",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "atlas",
+     "name": "Neo Project",
+     "general_area_id": "neo-general"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "project.create: a taken key",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "key": "atl"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "project.create: a name taken ignoring case",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "ATLAS",
+     "general_area_id": "neo-general"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "project.create: a missing team beats a blank name",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "  ",
+     "general_area_id": "g",
+     "teams": [
+      {
+       "project_team_id": "pt-9",
+       "team_id": "ghost"
+      }
+     ]
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "project.update: renames and describes, and the version goes up",
+   "command": {
+    "method": "project.update",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 1,
+     "name": "Atlas 2",
+     "description": "The big one"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "atlas",
+     "has": {
+      "name": "Atlas 2",
+      "description": "The big one",
+      "version": 2,
+      "key": "atl"
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.update: a description can be cleared",
+   "command": {
+    "method": "project.update",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 2,
+     "clear_description": true
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "project.update",
+     "params": {
+      "project_id": "atlas",
+      "expected_version": 1,
+      "description": "x"
+     }
+    }
+   ],
+   "after": [
+    {
+     "in": "projects",
+     "id": "atlas",
+     "has": {
+      "version": 3
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.update: nothing to change",
+   "command": {
+    "method": "project.update",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 1
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.update: a value and its clear",
+   "command": {
+    "method": "project.update",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 1,
+     "description": "x",
+     "clear_description": true
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.update: a missing project",
+   "command": {
+    "method": "project.update",
+    "params": {
+     "project_id": "ghost",
+     "expected_version": 1,
+     "name": "x"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "project.update: a blank name beats a stale version",
+   "command": {
+    "method": "project.update",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 9,
+     "name": " "
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "project.update: a stale version",
+   "command": {
+    "method": "project.update",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 9,
+     "name": "Atlas 2"
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "project.update: a name taken ignoring case",
+   "command": {
+    "method": "project.update",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 1,
+     "name": "beacon"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "project.archive: archives and unarchives",
+   "command": {
+    "method": "project.archive",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 1,
+     "archived": true
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "atlas",
+     "has": {
+      "archived": true,
+      "version": 2
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.archive: a stale version",
+   "command": {
+    "method": "project.archive",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 9,
+     "archived": true
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "project.archive: a missing project",
+   "command": {
+    "method": "project.archive",
+    "params": {
+     "project_id": "ghost",
+     "expected_version": 1,
+     "archived": true
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "area.create: in a project with teams the area names its team",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "pay",
+     "project_id": "atlas",
+     "name": "Payments",
+     "team_id": "platform"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "areas",
+     "id": "pay",
+     "has": {
+      "name": "Payments",
+      "team_id": "platform",
+      "project_id": "atlas",
+      "version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "area.create: with a lead who is in the team",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "pay",
+     "project_id": "atlas",
+     "name": "Payments",
+     "team_id": "platform",
+     "lead_member_id": "kai"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "areas",
+     "id": "pay",
+     "has": {
+      "lead_member_id": "kai"
+     }
+    }
+   ]
+  },
+  {
+   "name": "area.create: a project with no team takes no team",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "x",
+     "project_id": "scratch",
+     "name": "Docs"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "areas",
+     "id": "x",
+     "has": {
+      "project_id": "scratch"
+     }
+    }
+   ]
+  },
+  {
+   "name": "area.create: a missing project",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "x",
+     "project_id": "ghost",
+     "name": "Docs"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "area.create: a missing team",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "x",
+     "project_id": "atlas",
+     "name": "Docs",
+     "team_id": "ghost"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "area.create: a team that is not the project's",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "x",
+     "project_id": "atlas",
+     "name": "Docs",
+     "team_id": "web"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "area.create: no team when the project has teams",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "x",
+     "project_id": "atlas",
+     "name": "Docs"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "area.create: a blank name",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "x",
+     "project_id": "atlas",
+     "name": " ",
+     "team_id": "platform"
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "area.create: a lead who is not in the team",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "x",
+     "project_id": "atlas",
+     "name": "Docs",
+     "team_id": "platform",
+     "lead_member_id": "noor"
+    }
+   },
+   "expect": "not_a_member"
+  },
+  {
+   "name": "area.create: the owner as lead",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "x",
+     "project_id": "atlas",
+     "name": "Docs",
+     "team_id": "platform",
+     "lead_member_id": "you"
+    }
+   },
+   "expect": "owner_protected"
+  },
+  {
+   "name": "area.create: a taken name, ignoring case",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "x",
+     "project_id": "atlas",
+     "name": "general",
+     "team_id": "platform"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "area.create: a taken id",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "atlas-general",
+     "project_id": "atlas",
+     "name": "Docs",
+     "team_id": "platform"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "area.rename: renames and bumps the version",
+   "command": {
+    "method": "area.rename",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 1,
+     "name": "Everything"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "areas",
+     "id": "atlas-general",
+     "has": {
+      "name": "Everything",
+      "version": 2,
+      "general": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "area.rename: a stale version",
+   "command": {
+    "method": "area.rename",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 9,
+     "name": "Everything"
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "area.rename: a taken name in the project",
+   "command": {
+    "method": "area.rename",
+    "params": {
+     "area_id": "pay",
+     "expected_version": 1,
+     "name": "General"
+    }
+   },
+   "expect": "already_exists",
+   "setup": [
+    {
+     "method": "area.create",
+     "params": {
+      "area_id": "pay",
+      "project_id": "atlas",
+      "name": "Payments",
+      "team_id": "platform"
+     }
+    }
+   ]
+  },
+  {
+   "name": "area.rename: a blank name",
+   "command": {
+    "method": "area.rename",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 1,
+     "name": " "
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "area.rename: a missing area",
+   "command": {
+    "method": "area.rename",
+    "params": {
+     "area_id": "ghost",
+     "expected_version": 1,
+     "name": "x"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "area.set_team: moves an area to another of the project's teams and drops a lead who is not in it",
+   "command": {
+    "method": "area.set_team",
+    "params": {
+     "area_id": "bea-a",
+     "expected_version": 2,
+     "team_id": "design"
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "area.create",
+     "params": {
+      "area_id": "bea-a",
+      "project_id": "beacon",
+      "name": "Sites",
+      "team_id": "web",
+      "lead_member_id": "noor"
+     }
+    },
+    {
+     "method": "area.rename",
+     "params": {
+      "area_id": "bea-a",
+      "expected_version": 1,
+      "name": "Websites"
+     }
+    }
+   ],
+   "after": [
+    {
+     "in": "areas",
+     "id": "bea-a",
+     "has": {
+      "team_id": "design",
+      "version": 3
+     }
+    }
+   ]
+  },
+  {
+   "name": "area.set_team: a lead who is in the new team stays",
+   "command": {
+    "method": "area.set_team",
+    "params": {
+     "area_id": "bea-a",
+     "expected_version": 1,
+     "team_id": "design"
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "area.create",
+     "params": {
+      "area_id": "bea-a",
+      "project_id": "beacon",
+      "name": "Sites",
+      "team_id": "web",
+      "lead_member_id": "noor"
+     }
+    }
+   ],
+   "after": [
+    {
+     "in": "areas",
+     "id": "bea-a",
+     "has": {
+      "team_id": "design",
+      "lead_member_id": "noor",
+      "version": 2
+     }
+    }
+   ]
+  },
+  {
+   "name": "area.set_team: a team that is not the project's",
+   "command": {
+    "method": "area.set_team",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 1,
+     "team_id": "web"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "area.set_team: no team while the project has teams",
+   "command": {
+    "method": "area.set_team",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 1
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "area.set_team: a stale version",
+   "command": {
+    "method": "area.set_team",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 9,
+     "team_id": "platform"
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "area.set_lead: sets and clears the lead",
+   "command": {
+    "method": "area.set_lead",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 1,
+     "lead_member_id": "kai"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "areas",
+     "id": "atlas-general",
+     "has": {
+      "lead_member_id": "kai",
+      "version": 2
+     }
+    }
+   ]
+  },
+  {
+   "name": "area.set_lead: the owner",
+   "command": {
+    "method": "area.set_lead",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 1,
+     "lead_member_id": "you"
+    }
+   },
+   "expect": "owner_protected"
+  },
+  {
+   "name": "area.set_lead: not in the team",
+   "command": {
+    "method": "area.set_lead",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 1,
+     "lead_member_id": "noor"
+    }
+   },
+   "expect": "not_a_member"
+  },
+  {
+   "name": "area.set_lead: an area with no team has no lead",
+   "command": {
+    "method": "area.set_lead",
+    "params": {
+     "area_id": "scratch-general",
+     "expected_version": 1,
+     "lead_member_id": "kai"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "area.set_lead: the owner beats a stale version",
+   "command": {
+    "method": "area.set_lead",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 9,
+     "lead_member_id": "you"
+    }
+   },
+   "expect": "owner_protected"
+  },
+  {
+   "name": "area.set_lead: a stale version",
+   "command": {
+    "method": "area.set_lead",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 9,
+     "lead_member_id": "kai"
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "a lead who leaves the team stops leading the area",
+   "command": {
+    "method": "team.remove_member",
+    "params": {
+     "membership_id": "ms-4",
+     "expected_version": 1
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "area.set_lead",
+     "params": {
+      "area_id": "atlas-general",
+      "expected_version": 1,
+      "lead_member_id": "kai"
+     }
+    }
+   ],
+   "after": [
+    {
+     "in": "areas",
+     "id": "atlas-general",
+     "has": {
+      "version": 3
+     }
+    },
+    {
+     "in": "areas",
+     "id": "atlas-general",
+     "lacks": [
+      "lead_member_id"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "a lead who is offboarded or removed stops leading",
+   "command": {
+    "method": "member.remove",
+    "params": {
+     "member_id": "kai",
+     "expected_version": 1
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "area.set_lead",
+     "params": {
+      "area_id": "atlas-general",
+      "expected_version": 1,
+      "lead_member_id": "kai"
+     }
+    }
+   ],
+   "after": [
+    {
+     "in": "areas",
+     "id": "atlas-general",
+     "lacks": [
+      "lead_member_id"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "project.remove_team: the leaving team's areas go to the chosen team",
+   "command": {
+    "method": "project.remove_team",
+    "params": {
+     "project_team_id": "pt-2",
+     "expected_version": 1,
+     "areas_to_team_id": "design"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "areas",
+     "id": "beacon-general",
+     "has": {
+      "team_id": "design",
+      "version": 2
+     }
+    },
+    {
+     "in": "project_teams",
+     "id": "pt-2",
+     "absent": true
+    }
+   ]
+  },
+  {
+   "name": "project.remove_team: the chosen team is required when the project keeps others",
+   "command": {
+    "method": "project.remove_team",
+    "params": {
+     "project_team_id": "pt-2",
+     "expected_version": 1
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.remove_team: the chosen team must be a remaining team",
+   "command": {
+    "method": "project.remove_team",
+    "params": {
+     "project_team_id": "pt-2",
+     "expected_version": 1,
+     "areas_to_team_id": "platform"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.remove_team: the last team leaves its areas without a team",
+   "command": {
+    "method": "project.remove_team",
+    "params": {
+     "project_team_id": "pt-1",
+     "expected_version": 1
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "areas",
+     "id": "atlas-general",
+     "lacks": [
+      "team_id"
+     ]
+    },
+    {
+     "in": "areas",
+     "id": "atlas-general",
+     "has": {
+      "version": 2
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.remove_team: a target is refused when the last team leaves",
+   "command": {
+    "method": "project.remove_team",
+    "params": {
+     "project_team_id": "pt-1",
+     "expected_version": 1,
+     "areas_to_team_id": "web"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.remove_team: a team that owns no area needs no target",
+   "command": {
+    "method": "project.remove_team",
+    "params": {
+     "project_team_id": "pt-3",
+     "expected_version": 1
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "project_teams",
+     "id": "pt-3",
+     "absent": true
+    }
+   ]
+  },
+  {
+   "name": "team.delete: leaves the areas it owned without a team",
+   "command": {
+    "method": "team.delete",
+    "params": {
+     "team_id": "people",
+     "expected_version": 1
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "areas",
+     "id": "onboarding-general",
+     "lacks": [
+      "team_id"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "area.create: a name over 40 characters",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "x",
+     "project_id": "atlas",
+     "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+     "team_id": "platform"
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "area.create: a name of 40 characters",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "x",
+     "project_id": "atlas",
+     "name": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+     "team_id": "platform"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "areas",
+     "id": "x",
+     "has": {
+      "project_id": "atlas"
+     }
+    }
+   ]
+  },
+  {
+   "name": "area.rename: a name over 40 characters",
+   "command": {
+    "method": "area.rename",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 1,
+     "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "project.create: a General name over 40 characters",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "general_area_name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "project.create: a blank link id in teams",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "teams": [
+      {
+       "project_team_id": "",
+       "team_id": "web"
+      }
+     ]
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.create: a blank team id in teams",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "teams": [
+      {
+       "project_team_id": "pt-9",
+       "team_id": ""
+      }
+     ]
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.create: a link id used twice",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "teams": [
+      {
+       "project_team_id": "pt-9",
+       "team_id": "web"
+      },
+      {
+       "project_team_id": "pt-9",
+       "team_id": "design"
+      }
+     ]
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "project.create: a description over 1000 characters",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "description": "ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.create: a description with a control character",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "description": "a\u0001b"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.create: a blank branch",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "integration_branch": "  "
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.create: an absolute existing repository",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "repo": {
+      "existing_local": {
+       "path": "/repos/x.git"
+      }
+     }
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "neo",
+     "has": {
+      "created_at": "2026-11-08T12:00:00.000Z",
+      "version": 1,
+      "repo": {
+       "host": "local",
+       "default_branch": "main",
+       "path": "/repos/x.git"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.create: a repository path with a control character",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "repo": {
+      "existing_local": {
+       "path": "/repos/\u0002x"
+      }
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.update: a description over 1000 characters",
+   "command": {
+    "method": "project.update",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 1,
+     "description": "ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.remove_team: a lead who is not in the team taking over stops leading, in the same change",
+   "command": {
+    "method": "project.remove_team",
+    "params": {
+     "project_team_id": "pt-2",
+     "expected_version": 1,
+     "areas_to_team_id": "design"
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "area.create",
+     "params": {
+      "area_id": "bea-a",
+      "project_id": "beacon",
+      "name": "Sites",
+      "team_id": "web",
+      "lead_member_id": "mira"
+     }
+    }
+   ],
+   "after": [
+    {
+     "in": "areas",
+     "id": "bea-a",
+     "has": {
+      "team_id": "design",
+      "version": 2
+     }
+    },
+    {
+     "in": "areas",
+     "id": "bea-a",
+     "lacks": [
+      "lead_member_id"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "project.remove_team: a lead who is in the team taking over keeps leading",
+   "command": {
+    "method": "project.remove_team",
+    "params": {
+     "project_team_id": "pt-2",
+     "expected_version": 1,
+     "areas_to_team_id": "design"
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "area.create",
+     "params": {
+      "area_id": "bea-a",
+      "project_id": "beacon",
+      "name": "Sites",
+      "team_id": "web",
+      "lead_member_id": "noor"
+     }
+    }
+   ],
+   "after": [
+    {
+     "in": "areas",
+     "id": "bea-a",
+     "has": {
+      "team_id": "design",
+      "lead_member_id": "noor",
+      "version": 2
+     }
+    }
+   ]
+  },
+  {
+   "name": "member.offboard: an agent who leaves stops leading an area",
+   "command": {
+    "method": "member.offboard",
+    "params": {
+     "member_id": "kai",
+     "expected_version": 1
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "area.set_lead",
+     "params": {
+      "area_id": "atlas-general",
+      "expected_version": 1,
+      "lead_member_id": "kai"
+     }
+    }
+   ],
+   "after": [
+    {
+     "in": "areas",
+     "id": "atlas-general",
+     "lacks": [
+      "lead_member_id"
+     ]
+    },
+    {
+     "in": "areas",
+     "id": "atlas-general",
+     "has": {
+      "version": 3
+     }
+    }
+   ]
+  },
+  {
+   "name": "member.move: a lead who moves to another team stops leading the old team's area",
+   "command": {
+    "method": "member.move",
+    "params": {
+     "membership_id": "ms-4",
+     "expected_version": 1,
+     "new_membership_id": "ms-new",
+     "to_team_id": "design"
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "area.set_lead",
+     "params": {
+      "area_id": "atlas-general",
+      "expected_version": 1,
+      "lead_member_id": "kai"
+     }
+    }
+   ],
+   "after": [
+    {
+     "in": "areas",
+     "id": "atlas-general",
+     "lacks": [
+      "lead_member_id"
+     ]
+    },
+    {
+     "in": "areas",
+     "id": "atlas-general",
+     "has": {
+      "version": 3
+     }
+    }
+   ]
+  },
+  {
+   "name": "team.delete: the areas it owned lose the team and the lead, once",
+   "command": {
+    "method": "team.delete",
+    "params": {
+     "team_id": "platform",
+     "expected_version": 1
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "area.set_lead",
+     "params": {
+      "area_id": "atlas-general",
+      "expected_version": 1,
+      "lead_member_id": "kai"
+     }
+    }
+   ],
+   "after": [
+    {
+     "in": "areas",
+     "id": "atlas-general",
+     "lacks": [
+      "team_id",
+      "lead_member_id"
+     ]
+    },
+    {
+     "in": "areas",
+     "id": "atlas-general",
+     "has": {
+      "version": 3
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.create: a new local repository is resolved by HQ",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "repo": {
+      "new_local": {}
+     }
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "neo",
+     "has": {
+      "repo": {
+       "host": "local",
+       "default_branch": "main",
+       "path": "/workspace/repos/neo.git"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.create: a description and a branch are kept",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "description": "Notes",
+     "integration_branch": "develop"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "neo",
+     "has": {
+      "description": "Notes",
+      "integration_branch": "develop"
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.archive: unarchiving removes the flag",
+   "command": {
+    "method": "project.archive",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 2,
+     "archived": false
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "project.archive",
+     "params": {
+      "project_id": "atlas",
+      "expected_version": 1,
+      "archived": true
+     }
+    }
+   ],
+   "after": [
+    {
+     "in": "projects",
+     "id": "atlas",
+     "has": {
+      "version": 3
+     }
+    },
+    {
+     "in": "projects",
+     "id": "atlas",
+     "lacks": [
+      "archived"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "area.create: an offboarded lead",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "x",
+     "project_id": "beacon",
+     "name": "Docs",
+     "team_id": "design",
+     "lead_member_id": "pax"
+    }
+   },
+   "expect": "invalid_request",
+   "setup": [
+    {
+     "method": "member.offboard",
+     "params": {
+      "member_id": "pax",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "area.set_team: a missing team",
+   "command": {
+    "method": "area.set_team",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 1,
+     "team_id": "ghost"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "area.set_team: a missing area",
+   "command": {
+    "method": "area.set_team",
+    "params": {
+     "area_id": "ghost",
+     "expected_version": 1,
+     "team_id": "platform"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "area.set_lead: a missing area",
+   "command": {
+    "method": "area.set_lead",
+    "params": {
+     "area_id": "ghost",
+     "expected_version": 1,
+     "lead_member_id": "kai"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "area.set_lead: a missing member",
+   "command": {
+    "method": "area.set_lead",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 1,
+     "lead_member_id": "ghost"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "area.set_lead: an offboarded lead",
+   "command": {
+    "method": "area.set_lead",
+    "params": {
+     "area_id": "beacon-general",
+     "expected_version": 1,
+     "lead_member_id": "pax"
+    }
+   },
+   "expect": "invalid_request",
+   "setup": [
+    {
+     "method": "member.offboard",
+     "params": {
+      "member_id": "pax",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.remove_team: a target is ignored for a team that owns no area when others remain",
+   "command": {
+    "method": "project.remove_team",
+    "params": {
+     "project_team_id": "pt-3",
+     "expected_version": 1,
+     "areas_to_team_id": "web"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "project_teams",
+     "id": "pt-3",
+     "absent": true
+    },
+    {
+     "in": "areas",
+     "id": "beacon-general",
+     "has": {
+      "team_id": "web",
+      "version": 1
+     }
+    }
+   ]
   }
  ]
 }

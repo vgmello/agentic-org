@@ -57,7 +57,27 @@ export type OrgCommand =
 	| C<'member.set_run_mode', { member_id: string; expected_version: number; run_mode?: RunMode; schedule?: Schedule }>
 	| C<'member.offboard', { member_id: string; expected_version: number }>
 	| C<'project.add_team', { project_team_id: string; project_id: string; team_id: string }>
-	| C<'project.remove_team', { project_team_id: string; expected_version: number }>;
+	| C<'project.remove_team', { project_team_id: string; expected_version: number; areas_to_team_id?: string }>
+	| C<
+			'project.create',
+			{
+				project_id: string;
+				name: string;
+				key?: string;
+				description?: string;
+				teams?: { project_team_id: string; team_id: string }[];
+				general_area_id: string;
+				general_area_name?: string;
+				repo?: { new_local: Record<string, never> } | { existing_local: { path: string } };
+				integration_branch?: string;
+			}
+	  >
+	| C<'project.update', { project_id: string; expected_version: number; name?: string; description?: string; clear_description?: boolean; integration_branch?: string; clear_integration_branch?: boolean }>
+	| C<'project.archive', { project_id: string; expected_version: number; archived: boolean }>
+	| C<'area.create', { area_id: string; project_id: string; name: string; team_id?: string; lead_member_id?: string }>
+	| C<'area.rename', { area_id: string; expected_version: number; name: string }>
+	| C<'area.set_team', { area_id: string; expected_version: number; team_id?: string }>
+	| C<'area.set_lead', { area_id: string; expected_version: number; lead_member_id?: string }>;
 
 export type OrgMethod = OrgCommand['method'];
 

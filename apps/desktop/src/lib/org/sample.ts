@@ -1,4 +1,4 @@
-import type { AgentProfile, Member, Membership, OrgSnapshot, ProjectSummary, ProjectTeam, Team } from '$lib/proto';
+import type { AgentProfile, Area, Member, Membership, OrgSnapshot, ProjectSummary, ProjectTeam, Team } from '$lib/proto';
 
 // A sample organization for the mock office: invented people, none from a real workspace.
 // `officeId` is the HQ office the agents are placed in.
@@ -69,10 +69,17 @@ export function sampleOrg(officeId: string): OrgSnapshot {
 		joined('people', 'ines')
 	];
 	const projects: ProjectSummary[] = [
-		{ id: 'atlas', name: 'Atlas' },
-		{ id: 'beacon', name: 'Beacon' },
-		{ id: 'onboarding', name: 'Onboarding kit' },
-		{ id: 'scratch', name: 'Scratchpad' }
+		{ id: 'atlas', key: 'atl', name: 'Atlas', version: 1 },
+		{ id: 'beacon', key: 'bea', name: 'Beacon', version: 1 },
+		{ id: 'onboarding', key: 'onb', name: 'Onboarding kit', version: 1 },
+		{ id: 'scratch', key: 'scr', name: 'Scratchpad', version: 1 }
+	];
+	// Every project has a General area, owned by its first team if it has one (design §1.9).
+	const areas: Area[] = [
+		{ id: 'atlas-general', project_id: 'atlas', name: 'General', team_id: 'platform', general: true, version: 1 },
+		{ id: 'beacon-general', project_id: 'beacon', name: 'General', team_id: 'web', general: true, version: 1 },
+		{ id: 'onboarding-general', project_id: 'onboarding', name: 'General', team_id: 'people', general: true, version: 1 },
+		{ id: 'scratch-general', project_id: 'scratch', name: 'General', general: true, version: 1 }
 	];
 	const project_teams: ProjectTeam[] = [
 		{ id: 'pt-1', project_id: 'atlas', team_id: 'platform', version: 1 },
@@ -80,7 +87,7 @@ export function sampleOrg(officeId: string): OrgSnapshot {
 		{ id: 'pt-3', project_id: 'beacon', team_id: 'design', version: 1 },
 		{ id: 'pt-4', project_id: 'onboarding', team_id: 'people', version: 1 }
 	];
-	return { position: { epoch: 1, seq: 1 }, teams, members, memberships, projects, project_teams };
+	return { position: { epoch: 1, seq: 1 }, teams, members, memberships, projects, project_teams, areas };
 }
 
 /** An organization with an owner and nothing else. */
