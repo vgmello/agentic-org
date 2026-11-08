@@ -72,6 +72,8 @@ test('CHAT-3: DMs show each member\'s status, and a group of up to 8 can be star
 	await expect(dms.locator('[data-conversation=c-dm-sam]')).toContainText('Working');
 	await expect(dms.locator('[data-conversation=c-dm-ines]')).toContainText('Asleep');
 	await expect(dms.locator('[data-conversation=c-dm-pax]')).toContainText('Paused');
+	// A person's status is a word too, never only a dot (CHAT-18).
+	await expect(dms.locator('[data-conversation=c-dm-avery]').getByTestId('dm-status')).toHaveText('Online');
 	await side(page).getByRole('button', { name: 'New message' }).click();
 	const dialog = page.getByRole('dialog', { name: 'New message' });
 	for (const n of ['Avery Stone', 'Hana Weiss', 'Leo Brandt', 'Kai Lindqvist', 'Mira Castillo', 'Juno Park', 'Pax Moreau']) await dialog.getByLabel(n).check();
@@ -124,9 +126,25 @@ test('CHAT-5: Reply… answers with text, and an approval is rejected with a rea
 	await expect(page.getByTestId('ask-card').filter({ hasText: 'Publish the 0.2' }).getByTestId('answered')).toContainText('Answered by Alex Kim: Reject · Not before the audit.');
 });
 
+test('CHAT-18: only a hand-off\'s recipient sees Accept, and an accepted one reads who and when with no buttons', async ({ page }) => {
+	await open(page);
+	// Kai handed this to Sam: the owner reading it sees Reply… only.
+	await go(page, 'release-v1');
+	const handoff = page.getByTestId('handoff-card').filter({ hasText: 'review the store traits' });
+	await expect(handoff).toBeVisible();
+	await expect(handoff.getByRole('button', { name: 'Accept' })).toHaveCount(0);
+	await expect(handoff.getByRole('button', { name: 'Reply…' })).toBeVisible();
+	// Sam handed one to Noor, who accepted it.
+	await side(page).getByTestId('as-owner').locator('summary').click();
+	await side(page).getByTestId('as-owner').getByTestId('conversation-link').filter({ hasText: 'Sam Okafor, Noor Haddad' }).click();
+	const done = page.getByTestId('handoff-card').filter({ hasText: 'take the settings page' });
+	await expect(done.getByTestId('answered')).toHaveText(/^Accepted by Noor Haddad · \d\d:\d\d$/);
+	await expect(done.getByRole('button')).toHaveCount(0);
+});
+
 test('CHAT-6: an ask with a default shows its deadline', async ({ page }) => {
 	await open(page);
-	await expect(page.getByTestId('ask-card').filter({ hasText: 'Block bug reports' }).getByTestId('deadline')).toContainText("the default applies: No, allow (Eden's AREA-7)");
+	await expect(page.getByTestId('ask-card').filter({ hasText: 'Block bug reports' }).getByTestId('deadline')).toContainText("the default applies: No, allow (default)");
 });
 
 test('CHAT-7: messaging an asleep agent says it will wake it, and a typing indicator shows while it works', async ({ page }) => {
@@ -243,6 +261,7 @@ test('CHAT-13: search filters by text, member, channel, kind and date', async ({
 	await expect(count).toContainText('1 result');
 	await search.fill('from:@kai');
 	await expect(count).toContainText('4 results');
+	await expect(page.getByTestId('search-help')).toContainText('from:@name');
 	await search.fill('has:ask');
 	await expect(count).toContainText('2 results');
 	await search.fill('in:#release-v1 from:@kai');

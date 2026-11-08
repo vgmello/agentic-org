@@ -52,7 +52,7 @@ export function sampleChat(ctx: ChatContext): ChatState {
 			addressed_to: owner,
 			options: [
 				{ id: 'yes', label: 'Yes, block' },
-				{ id: 'no', label: "No, allow (Eden's AREA-7)" }
+				{ id: 'no', label: 'No, allow (default)' }
 			],
 			default_option: 'no',
 			default_at: at(-120),
@@ -79,7 +79,7 @@ export function sampleChat(ctx: ChatContext): ChatState {
 	add('c-dm-avery', 'avery', 'msg', 400, 'Can we move the sync to Thursday?');
 	add('c-group', owner, 'msg', 500, 'Sam, Noor: who takes the web part of ac-17?');
 	add('c-group', 'noor', 'reply', 490, 'I do. Starting after lunch.');
-	add('c-dm-sam-noor', 'sam', 'handoff', 600, 'Noor, please take the settings page.', { addressed_to: 'noor', linked_ref: 'T-14' });
+	add('c-dm-sam-noor', 'sam', 'handoff', 600, 'Noor, please take the settings page.', { addressed_to: 'noor', linked_ref: 'T-14', accepted_by: 'noor', accepted_at: at(595) });
 	add('c-dm-sam-noor', 'noor', 'reply', 590, 'Accepted.');
 
 	const presence: Record<string, Presence> = {};

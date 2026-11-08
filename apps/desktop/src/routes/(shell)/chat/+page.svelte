@@ -339,7 +339,15 @@
 
 			<div bind:this={listEl} class="min-h-0 flex-1 overflow-y-auto px-3 py-3" data-testid="message-list">
 				{#if searching}
-					<p class="px-2 pb-2 text-sm/6 text-gray-400" data-testid="search-count">{results.length} {results.length === 1 ? 'result' : 'results'}. Filters: <code>from:@name in:#channel member:@name has:ask|thread|attachment kind:announcement|handoff before:2026-11-08 after:2026-11-01</code></p>
+					<div class="px-2 pb-3">
+						<p class="text-sm/6 text-gray-300" data-testid="search-count">{results.length} {results.length === 1 ? 'result' : 'results'}</p>
+						<ul class="mt-1 flex flex-wrap items-center gap-1.5 text-xs/5 text-gray-400" aria-label="Search filters" data-testid="search-help">
+							<li>Filter by</li>
+							{#each ['from:@name', 'in:#channel', 'member:@name', 'has:ask', 'has:thread', 'has:attachment', 'kind:announcement', 'kind:handoff', 'before:2026-11-08', 'after:2026-11-01'] as f (f)}
+								<li class="rounded bg-white/10 px-1.5 py-0.5 font-mono text-gray-200">{f}</li>
+							{/each}
+						</ul>
+					</div>
 					<div class="space-y-1">
 						{#each results as m (m.id)}
 							{@const c = chatState.conversations.find((x) => x.id === m.conversation_id)}

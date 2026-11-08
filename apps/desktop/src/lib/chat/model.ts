@@ -367,6 +367,11 @@ export function deadlineWords(m: ChatMessage, now: string, clock: (iso: string) 
 	return { text: `If no answer by ${clock(m.default_at)}, the default applies: ${label}. (${span(ms(m.default_at) - ms(now))} left)`, applied: false };
 }
 
+/** "Accepted by Noor Haddad · 09:12" on an accepted hand-off, for everyone (CHAT-18). */
+export function acceptedWords(m: ChatMessage, ctx: ChatContext, clock: (iso: string) => string = clockTime): string | undefined {
+	return m.kind === 'handoff' && m.accepted_by ? `Accepted by ${nameOf(ctx, m.accepted_by)}${m.accepted_at ? ` · ${clock(m.accepted_at)}` : ''}` : undefined;
+}
+
 export function answerWords(m: ChatMessage, ctx: ChatContext): string | undefined {
 	if (!m.answer) return undefined;
 	const label = m.options?.find((o) => o.id === m.answer!.option_id)?.label.replace(/…$/, '');

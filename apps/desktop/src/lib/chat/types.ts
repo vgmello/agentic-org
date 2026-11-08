@@ -59,6 +59,8 @@ export interface BridgeBinding {
 	platform: Bridge;
 	/** Conversation ids of the channels chosen for this bridge. */
 	channels: string[];
+	/** Who it may post as: platform users mapped to members. Persons only, never an agent or the owner (checked at `bridge.create`). */
+	people: { platform_user: string; member_id: string }[];
 }
 
 export interface Answer {
@@ -94,8 +96,9 @@ export interface ChatMessage {
 	/** An ask with Approve and Reject, answered only in the app. */
 	approval?: boolean;
 	answer?: Answer;
-	/** `handoff`: who accepted it. */
+	/** `handoff`: who accepted it, and when. */
 	accepted_by?: string;
+	accepted_at?: string;
 	reactions?: Partial<Record<Reaction, string[]>>;
 	/** An extra announcement that was folded into a thread under the last one. */
 	folded?: boolean;

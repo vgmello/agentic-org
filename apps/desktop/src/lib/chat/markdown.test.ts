@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clean, inline, markdown, plain, safeHref } from './markdown';
+import { clean, inline, markdown, plain, safeHref, scanStats } from './markdown';
 
 describe('CHAT-14 · messages render Markdown with the safety rules', () => {
 	it('CHAT-14 · bold, italic, code, lists, quotes and fenced code', () => {
@@ -74,22 +74,20 @@ describe('CHAT-14 · messages render Markdown with the safety rules', () => {
 			expect(performance.now() - start, `shape ${shape}`).toBeLessThan(5000);
 		}
 	});
-	it('CHAT-14 · work grows with the line: four times the text takes well under sixteen times as long, for every shape', () => {
-		// Linear is about 4x, quadratic about 16x. The bound sits between them with room for a noisy machine; the work is
-		// repeated so it is a few milliseconds, not microseconds.
-		const best = (text: string) => {
-			const runs: number[] = [];
-			for (let r = 0; r < 5; r++) {
-				const start = performance.now();
-				for (let k = 0; k < 40; k++) inline(text);
-				runs.push(performance.now() - start);
-			}
-			return Math.min(...runs);
+	it('CHAT-14 · work grows with the line, counted in steps: four times the text is about four times the steps, for every shape', () => {
+		// A step is a turn of the scanner's loop or a character a finder looked at. It is deterministic, so this is not a clock:
+		// linear is 4x for 4x the text, quadratic would be 16x. Cached finds cost nothing, which is the point of the finders.
+		const steps = (text: string) => {
+			scanStats.steps = 0;
+			inline(text);
+			return scanStats.steps;
 		};
 		for (const shape of SHAPES) {
-			const small = best(sized(shape, 2000));
-			const large = best(sized(shape, 8000));
-			expect(large, `shape ${shape}: ${small.toFixed(2)} ms for 2000 chars, ${large.toFixed(2)} ms for 8000`).toBeLessThan(small * 9 + 2);
+			const small = steps(sized(shape, 2000));
+			const large = steps(sized(shape, 8000));
+			expect(large, `shape ${shape}: ${small} steps for 2000 chars, ${large} for 8000`).toBeLessThanOrEqual(small * 4.5 + 20);
+			// And a flat ceiling per character, so a constant that grew would show too.
+			expect(large, `shape ${shape}`).toBeLessThanOrEqual(8000 * 8);
 		}
 	});
 	it('CHAT-14 · a line over 8 KiB is plain text, and a short line around it still renders', () => {

@@ -209,6 +209,7 @@ export function applyChat(state: ChatState, call: ChatCall, ctx: ChatContext): {
 	if (ctx.surface === 'bridge') {
 		if (ctx.actor === ctx.owner) return refuse('not_authorized', 'A bridge never acts as the owner.');
 		if (actor.kind !== 'person') return refuse('not_authorized', 'A bridge acts only as a mapped person, never as an agent.');
+		if (!ctx.bridge?.people.some((p) => p.member_id === ctx.actor)) return refuse('not_authorized', 'That person is not mapped to this bridge.');
 		if (!['msg.send', 'chat.react', 'chat.answer'].includes(call.method)) return refuse('not_authorized', 'A bridge cannot do this.');
 	}
 	const s = structuredClone(state);
@@ -224,11 +225,13 @@ export function applyChat(state: ChatState, call: ChatCall, ctx: ChatContext): {
 			const m = s.messages.find((x) => x.id === call.message_id && x.kind === 'handoff');
 			if (!m) return refuse('not_found', 'There is no such hand-off.');
 			if (m.accepted_by) return refuse('already_exists', `Already accepted by ${memberOf(ctx, m.accepted_by)?.name ?? 'someone'}.`);
-			if (ctx.actor !== ctx.owner && ctx.actor !== m.addressed_to) return refuse('not_authorized', 'Only the person it is handed to can accept it.');
+			// Only its recipient accepts it (the owner when it is handed to the owner); the owner reading as the owner only replies.
+			if (ctx.actor !== m.addressed_to) return refuse('not_authorized', 'Only the person it is handed to can accept it.');
 			const home = s.conversations.find((x) => x.id === m.conversation_id)!;
 			if (m.addressed_to === ctx.owner && !(ctx.actor === ctx.owner && ctx.surface === 'app')) return refuse('not_authorized', 'Open Agentic Org to accept a hand-off addressed to the owner.');
 			mustBeIn(ctx, home);
 			m.accepted_by = ctx.actor;
+			m.accepted_at = ctx.now;
 			accepted = { id: m.id };
 			break;
 		}
@@ -266,6 +269,7 @@ export function applyChat(state: ChatState, call: ChatCall, ctx: ChatContext): {
 			const m = s.messages.find((x) => x.id === call.message_id);
 			const c = m && s.conversations.find((x) => x.id === m.conversation_id);
 			if (!m || !c) return refuse('not_found', 'There is no such message.');
+			if (ctx.surface !== 'app') return refuse('not_authorized', 'Pinning is done in the app.');
 			if (!canRead(ctx, ctx.actor, c)) return refuse('not_in_conversation', 'Pin only in a conversation you are in.');
 			m.pinned = m.pinned ? undefined : true;
 			break;

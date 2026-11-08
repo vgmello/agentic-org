@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { run, byId, channelNamed, conv, ctxAs, fresh, kaiAsk, miraApproval, minutesAfter, NOW, org } from './testkit';
 import { tick } from './engine';
 import {
+	acceptedWords,
 	activityRows,
 	answerWords,
 	applyMention,
@@ -30,6 +31,7 @@ import {
 	typingWords,
 	unreadIn,
 	wakesFor,
+	PRESENCE_WORD,
 	waitingFor
 } from './model';
 
@@ -92,7 +94,7 @@ describe('CHAT-5 · answering clears Needs you', () => {
 		const s = fresh();
 		const r = run(s, { method: 'chat.answer', ask_id: kaiAsk(s).id, option_id: 'no' }).state;
 		expect(needsYou(r, ctx).map((m) => m.id)).toEqual(needsYou(s, ctx).filter((m) => m.id !== kaiAsk(s).id).map((m) => m.id));
-		expect(answerWords(byId(r, kaiAsk(s).id), ctx)).toBe("Answered by Alex Kim: No, allow (Eden's AREA-7)");
+		expect(answerWords(byId(r, kaiAsk(s).id), ctx)).toBe("Answered by Alex Kim: No, allow (default)");
 		expect(answerWords(kaiAsk(s), ctx)).toBeUndefined();
 	});
 	it('CHAT-5 · a hand-off for the owner is in Needs you until accepted', () => {
@@ -113,12 +115,12 @@ describe('CHAT-6 · an ask with a default shows its deadline', () => {
 	it('CHAT-6 · before the deadline the card shows when the default applies', () => {
 		const w = deadlineWords(kaiAsk(fresh()), NOW, clock)!;
 		expect(w.applied).toBe(false);
-		expect(w.text).toBe("If no answer by 14:00, the default applies: No, allow (Eden's AREA-7). (2 h left)");
+		expect(w.text).toBe("If no answer by 14:00, the default applies: No, allow (default). (2 h left)");
 	});
 	it('CHAT-6 · when the default is applied the card says so', () => {
 		const later = tick(fresh(), minutesAfter(NOW, 130));
 		const w = deadlineWords(byId(later, kaiAsk(fresh()).id), minutesAfter(NOW, 130), clock)!;
-		expect(w).toEqual({ applied: true, text: "No answer by 14:00: the default was applied (No, allow (Eden's AREA-7))." });
+		expect(w).toEqual({ applied: true, text: "No answer by 14:00: the default was applied (No, allow (default))." });
 		expect(answerWords(byId(later, kaiAsk(fresh()).id), ctx)).toContain('Answered by the default');
 		expect(needsYou(later, ctx).some((m) => m.id === kaiAsk(fresh()).id)).toBe(false);
 	});
@@ -198,6 +200,26 @@ describe('CHAT-9 · slash commands and Turn into…', () => {
 		expect(bug.title).toBe('the export button does nothing on Safari.');
 		expect(bug.body).toContain('Safari');
 		expect(turnInto({ ...m, body: 'x'.repeat(200) }, 'task').title).toHaveLength(80);
+	});
+});
+
+describe('CHAT-18 · hand-off states and a person\'s status as a word', () => {
+	const clock = (iso: string) => iso.slice(11, 16);
+	it('CHAT-18 · an accepted hand-off reads "Accepted by <name> · <time>" for everyone', () => {
+		const s = fresh();
+		const accepted = s.messages.find((m) => m.kind === 'handoff' && m.accepted_by)!;
+		expect(acceptedWords(accepted, ctx, clock)).toBe(`Accepted by Noor Haddad · ${clock(accepted.accepted_at!)}`);
+		expect(acceptedWords(s.messages.find((m) => m.kind === 'handoff' && !m.accepted_by)!, ctx, clock)).toBeUndefined();
+		expect(acceptedWords(kaiAsk(s), ctx, clock)).toBeUndefined();
+		expect(acceptedWords({ ...accepted, accepted_at: undefined }, ctx, clock)).toBe('Accepted by Noor Haddad');
+	});
+	it('CHAT-18 · a DM with a person shows Online or Offline as a word, an agent its own word', () => {
+		const dms = sidebar(fresh(), ctx).dms;
+		const word = (id: string) => PRESENCE_WORD[dms.find((d) => d.conversation.id === id)!.presence!];
+		expect(word('c-dm-avery')).toBe('Online');
+		expect(word('c-dm-sam')).toBe('Working');
+		const gone = sidebar({ ...fresh(), presence: { avery: 'offline' } }, ctx).dms.find((d) => d.conversation.id === 'c-dm-avery')!;
+		expect(PRESENCE_WORD[gone.presence!]).toBe('Offline');
 	});
 });
 

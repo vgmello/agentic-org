@@ -11,7 +11,7 @@ export const minutesAfter = (iso: string, minutes: number) => new Date(Date.pars
 
 export const ctxAs = (actor = 'you', surface: ChatContext['surface'] = 'app', now = NOW, extra: Partial<ChatContext> = {}): ChatContext => ({ ...chatContext(org, { now, actor, surface }), ...extra });
 /** A bridge binding as Slack, with the channels chosen for it, acting as a mapped person. */
-export const bridgeAs = (actor: string, channels: string[] = ['c-general', 'c-release-v1'], now = NOW): ChatContext => ctxAs(actor, 'bridge', now, { bridge: { id: 'b1', platform: 'slack', channels } });
+export const bridgeAs = (actor: string, channels: string[] = ['c-general', 'c-release-v1'], now = NOW): ChatContext => ctxAs(actor, 'bridge', now, { bridge: { id: 'b1', platform: 'slack', channels, people: [{ platform_user: `u-${actor}`, member_id: actor }] } });
 export const fresh = (): ChatState => sampleChat(ctxAs());
 
 let n = 0;

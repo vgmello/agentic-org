@@ -44,6 +44,9 @@ function misleading(text: string, href: string): { host: string } | Record<strin
 // last answer, so a run of openers with no closer (`[[[[…`, `**a**a…`) costs one scan in all, not one scan each. That makes
 // the work linear in the line, whatever it holds. A line over MAX_LINE is not parsed at all.
 
+/** Work done by the scanner, counted for tests: loop turns plus the characters its finders looked at. A deterministic stand-in for a clock. */
+export const scanStats = { steps: 0 };
+
 /** A line longer than this is shown as plain text: no formatting is worth a slow scan. */
 export const MAX_LINE = 8192;
 const MAX_SPAN = 500;
@@ -57,13 +60,14 @@ const isWord = (ch: string | undefined) => ch !== undefined && /\w/.test(ch);
 const isWordOrDash = (ch: string | undefined) => ch !== undefined && /[\w-]/.test(ch);
 
 /** The next index of `find` at or after `from`, or -1. Remembers the last answer: asked again from a later start, it reuses it. */
-function finder(find: (from: number) => number): (from: number) => number {
+function finder(find: (from: number) => number, limit: number): (from: number) => number {
 	let lastFrom = -1;
 	let lastAt = -1;
 	return (from) => {
 		if (lastFrom !== -1 && from >= lastFrom && (lastAt === -1 || lastAt >= from)) return lastAt;
 		lastFrom = from;
 		lastAt = find(from);
+		scanStats.steps += (lastAt === -1 ? limit : lastAt) - from + 1;
 		return lastAt;
 	};
 }
@@ -74,15 +78,15 @@ function scan(text: string, depth: number): Inline[] {
 	const out: Inline[] = [];
 	let at = 0; // where the pending plain text starts
 	let i = 0;
-	const nextTick = finder((f) => text.indexOf('`', f));
-	const nextStar = finder((f) => text.indexOf('*', f));
-	const nextUnder = finder((f) => text.indexOf('_', f));
-	const nextBracket = finder((f) => text.indexOf(']', f));
-	const nextParen = finder((f) => text.indexOf(')', f));
+	const nextTick = finder((f) => text.indexOf('`', f), text.length);
+	const nextStar = finder((f) => text.indexOf('*', f), text.length);
+	const nextUnder = finder((f) => text.indexOf('_', f), text.length);
+	const nextBracket = finder((f) => text.indexOf(']', f), text.length);
+	const nextParen = finder((f) => text.indexOf(')', f), text.length);
 	const nextSpace = finder((f) => {
 		WHITESPACE.lastIndex = f;
 		return WHITESPACE.exec(text)?.index ?? -1;
-	});
+	}, text.length);
 	const emit = (end: number, token: Inline) => {
 		if (i > at) out.push({ t: 'text', text: text.slice(at, i) });
 		out.push(token);
@@ -91,6 +95,7 @@ function scan(text: string, depth: number): Inline[] {
 	};
 	const children = (inner: string): Inline[] => (depth < 3 ? scan(inner, depth + 1) : [{ t: 'text', text: inner }]);
 	while (i < text.length) {
+		scanStats.steps++;
 		const ch = text[i];
 		const prev = i > 0 ? text[i - 1] : undefined;
 		if (ch === '`') {
@@ -138,7 +143,10 @@ function scan(text: string, depth: number): Inline[] {
 		} else if (ch === 'h' && (text.startsWith('http://', i) || text.startsWith('https://', i))) {
 			const start = i + (text[i + 4] === 's' ? 8 : 7);
 			let k = start;
-			while (k < text.length && k - start <= MAX_HREF && !/[\s<>()]/.test(text[k])) k++;
+			while (k < text.length && k - start <= MAX_HREF && !/[\s<>()]/.test(text[k])) {
+				k++;
+				scanStats.steps++;
+			}
 			let end = k;
 			while (end > start && /[.,;:!?'"]/.test(text[end - 1])) end--;
 			if (end - start >= 2) {

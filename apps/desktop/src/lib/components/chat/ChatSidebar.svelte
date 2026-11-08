@@ -1,7 +1,7 @@
 <script lang="ts">
 	import Plus from '@lucide/svelte/icons/plus';
 	import type { ChatContext } from '$lib/chat/engine';
-	import type { ChatView, ConversationRow, Sidebar } from '$lib/chat/model';
+	import { PRESENCE_WORD, type ChatView, type ConversationRow, type Sidebar } from '$lib/chat/model';
 	import Avatar from './Avatar.svelte';
 
 	/** The left column (CHAT-1): Needs you, Mentions, Threads, channels, direct messages, and what is read as the owner. */
@@ -38,7 +38,7 @@
 			{:else if r.other}
 				<Avatar name={r.other.name} kind={r.other.kind} presence={r.presence} size="sm" />
 				<span class="min-w-0 flex-1 truncate {r.unread ? 'font-semibold text-white' : ''}">{r.title}</span>
-				{#if r.presence && r.presence !== 'online'}<span class="shrink-0 text-xs/5 text-gray-400">{({ working: 'Working', waiting: 'Waiting', asleep: 'Asleep', offline: 'Offline', paused: 'Paused', online: '' })[r.presence]}</span>{/if}
+				{#if r.presence}<span class="shrink-0 text-xs/5 text-gray-400" data-testid="dm-status">{PRESENCE_WORD[r.presence]}</span>{/if}
 			{:else}
 				<span class="w-4 shrink-0 text-center text-gray-400" aria-hidden="true">👥</span>
 				<span class="min-w-0 flex-1 truncate {r.unread ? 'font-semibold text-white' : ''}">{r.title}</span>

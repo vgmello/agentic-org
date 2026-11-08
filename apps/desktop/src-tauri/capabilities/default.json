@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The main window: dragging the overlay title bar (and double-click to zoom), listening for the menu bar's navigate events, and the office commands. Nothing else: no paths, menus, fs or shell.",
+  "description": "The main window: dragging the overlay title bar (and double-click to zoom), listening for the menu bar's navigate events, the office commands, and opening an http or https link from a chat message in the browser (one checked command, no shell). Nothing else: no paths, menus or fs.",
   "windows": [
     "main"
   ],

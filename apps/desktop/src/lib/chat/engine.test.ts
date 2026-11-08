@@ -148,12 +148,14 @@ describe('CHAT-5 · an ask is a card that answers itself', () => {
 		expect(refusal(s, ask({ approval: true, addressed_to: 'kai' }), sam)?.code).toBe('invalid_request');
 		expect(refusal(s, ask({ options: opts.slice(0, 6) }), sam)).toBeUndefined();
 	});
-	it('CHAT-5 · a hand-off is accepted by the person it is handed to, and the owner', () => {
+	it('CHAT-18 · a hand-off is accepted only by the person it is handed to, and it records when', () => {
 		const s = fresh();
 		const h = s.messages.find((m) => m.kind === 'handoff' && m.from === 'kai')!;
 		expect(refusal(s, { method: 'chat.accept_handoff', message_id: h.id }, ctxAs('noor', 'agent'))?.code).toBe('not_authorized');
-		const r = run(s, { method: 'chat.accept_handoff', message_id: h.id }, ctxAs('sam', 'agent'));
-		expect(byId(r.state, h.id).accepted_by).toBe('sam');
+		// The owner reading as the owner does not accept an agent's hand-off to another agent.
+		expect(refusal(s, { method: 'chat.accept_handoff', message_id: h.id })?.code).toBe('not_authorized');
+		const r = run(s, { method: 'chat.accept_handoff', message_id: h.id }, ctxAs('sam', 'agent', minutesAfter(NOW, 3)));
+		expect(byId(r.state, h.id)).toMatchObject({ accepted_by: 'sam', accepted_at: minutesAfter(NOW, 3) });
 		expect(refusal(r.state, { method: 'chat.accept_handoff', message_id: h.id }, ctxAs('sam', 'agent'))?.code).toBe('already_exists');
 	});
 });
@@ -358,6 +360,26 @@ describe('CHAT-17 · bridges never act as the owner', () => {
 		expect(refusal(asked.state, { method: 'chat.answer', ask_id: asked.accepted.id!, option_id: 'y' }, bridge('hana'))?.code).toBe('not_authorized');
 		expect(refusal(asked.state, { method: 'chat.answer', ask_id: asked.accepted.id!, option_id: 'y' }, bridge('avery', ['c-general']))?.code).toBe('not_authorized');
 	});
+	it('CHAT-18 · a hand-off to the owner is accepted by the owner in the app, and nowhere else', () => {
+		const s = fresh();
+		const h = run(s, { method: 'msg.send', conversation_id: 'c-dm-sam', kind: 'handoff', body: 'Yours now.', addressed_to: 'you' }, ctxAs('sam', 'agent'));
+		expect(refusal(h.state, { method: 'chat.accept_handoff', message_id: h.accepted.id! }, ctxAs('sam', 'agent'))?.code).toBe('not_authorized');
+		const r = run(h.state, { method: 'chat.accept_handoff', message_id: h.accepted.id! });
+		expect(byId(r.state, h.accepted.id!)).toMatchObject({ accepted_by: 'you', accepted_at: NOW });
+	});
+	it('CHAT-17 · a bridge posts only as a person its mapping holds', () => {
+		const s = fresh();
+		const stranger = { ...bridgeAs('avery'), bridge: { id: 'b1', platform: 'slack' as const, channels: ['c-release-v1'], people: [{ platform_user: 'u-hana', member_id: 'hana' }] } };
+		expect(refusal(s, { method: 'msg.send', conversation_id: 'c-release-v1', kind: 'msg', body: 'hi' }, stranger)?.code).toBe('not_authorized');
+		expect(refusal(s, { method: 'msg.send', conversation_id: 'c-release-v1', kind: 'msg', body: 'hi' }, bridgeAs('avery'))).toBeUndefined();
+	});
+	it('chat.pin is the app\'s: an agent connection and a bridge are refused', () => {
+		const s = fresh();
+		const m = s.messages.find((x) => x.conversation_id === 'c-release-v1')!;
+		expect(refusal(s, { method: 'chat.pin', message_id: m.id }, ctxAs('sam', 'agent'))?.code).toBe('not_authorized');
+		expect(refusal(s, { method: 'chat.pin', message_id: m.id }, bridgeAs('avery'))?.code).toBe('not_authorized');
+		expect(run(s, { method: 'chat.pin', message_id: m.id }).state.messages.find((x) => x.id === m.id)!.pinned).toBe(true);
+	});
 	it('CHAT-17 · a bridge acts only as a person: an agent cannot be posted as through it', () => {
 		const s = fresh();
 		expect(conv(s, 'c-release-v1').members).toContain('sam');
@@ -432,7 +454,7 @@ describe('review fixes', () => {
 		const s = fresh();
 		const later = tick(s, minutesAfter(NOW, 121));
 		const reply = later.messages.find((m) => m.thread_root_id === kaiAsk(s).id)!;
-		expect(reply).toMatchObject({ from: 'office', kind: 'reply', body: "No answer by the deadline: the default applies (No, allow (Eden's AREA-7))." });
+		expect(reply).toMatchObject({ from: 'office', kind: 'reply', body: "No answer by the deadline: the default applies (No, allow (default))." });
 		expect(tick(later, minutesAfter(NOW, 200))).toBe(later);
 	});
 	it('a reply or a message over the size limit is refused, counted in bytes', () => {

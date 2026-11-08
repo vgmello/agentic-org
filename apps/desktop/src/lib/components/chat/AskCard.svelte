@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Button } from '$lib/components/ui/button';
 	import type { ChatContext } from '$lib/chat/engine';
-	import { answerWords, appOnly, deadlineWords, nameOf, waitingFor } from '$lib/chat/model';
+	import { acceptedWords, answerWords, appOnly, deadlineWords, nameOf, waitingFor } from '$lib/chat/model';
 	import type { ChatMessage } from '$lib/chat/types';
 	import { collapse } from '$lib/chat/model';
 	import Rich from './Rich.svelte';
@@ -44,6 +44,9 @@
 	const deadline = $derived(deadlineWords(message, now));
 	const blockedHere = $derived(readOnly && appOnly(message, ctx));
 	const done = $derived(isAsk ? message.answer : message.accepted_by);
+	// Only the hand-off's recipient accepts (the owner when it is handed to the owner); everyone else, the owner reading as the
+	// owner included, can only reply (CHAT-18).
+	const canAccept = $derived(message.addressed_to === ctx.actor);
 
 	async function go(run: () => Promise<void> | void) {
 		busy = true;
@@ -78,7 +81,7 @@
 	{/if}
 
 	{#if done}
-		<p class="mt-3 text-sm/6 text-emerald-300" data-testid="answered">{isAsk ? answerWords(message, ctx) : `Accepted by ${nameOf(ctx, message.accepted_by ?? '')}`}</p>
+		<p class="mt-3 text-sm/6 text-emerald-300" data-testid="answered">{isAsk ? answerWords(message, ctx) : acceptedWords(message, ctx)}</p>
 		{#if isAsk && message.answer?.by === 'default' && deadline}<p class="text-xs/5 text-gray-400" data-testid="deadline">{deadline.text}</p>{/if}
 	{:else if blockedHere}
 		<p class="mt-3 rounded-md bg-white/5 px-3 py-2 text-sm/6 text-gray-300" data-testid="app-only">This is answered only in Agentic Org, never from a bridge. <a href="/chat" class="font-semibold text-indigo-300 underline">Open in Agentic Org</a></p>
@@ -104,7 +107,7 @@
 		{/if}
 	{:else}
 		<div class="mt-3 flex flex-wrap items-center gap-2">
-			<Button type="button" size="sm" variant="outline" disabled={busy} onclick={() => go(onaccept)}>Accept</Button>
+			{#if canAccept}<Button type="button" size="sm" variant="outline" disabled={busy} onclick={() => go(onaccept)}>Accept</Button>{/if}
 			{#if onreplyinthread}<Button type="button" size="sm" variant="ghost" onclick={onreplyinthread}>Reply…</Button>{/if}
 			{#if message.linked_ref}<span class="text-xs/5 text-gray-400">Linked to <span class="font-mono text-gray-200">{message.linked_ref}</span></span>{/if}
 		</div>
