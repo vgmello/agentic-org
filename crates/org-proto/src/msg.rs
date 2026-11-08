@@ -46,9 +46,16 @@
 //! A recipient or member (`to`, `from`, `member`, `participant`) is named by its member id, or
 //! by its handle, ignoring case: an agent's
 //! [`messaging_name`](crate::org::AgentProfile::messaging_name), a person's `name`, or
-//! [`OWNER_HANDLE`](crate::OWNER_HANDLE) (`owner`, the organization's owner). The handles
-//! form one namespace, so a handle names at most one member. An exact member-id match takes
-//! precedence over a handle. [`OFFICE_SENDER`] (`office`) is reserved for the server: a `to`
+//! [`OWNER_HANDLE`](crate::OWNER_HANDLE) (`owner`) for the organization's owner, who is
+//! addressed only as `owner`: the owner's name is not a handle. The handles form one
+//! namespace, so a handle names at most one member. An exact member-id match takes
+//! precedence over a handle.
+//!
+//! A recipient (`msg.send`, `msg.ask`, and the sender a `msg.reply` answers) must be in the
+//! organization: an [`Offboarded`](crate::org::AgentStatus::Offboarded) agent, an agent
+//! whose status is [`Unknown`](crate::org::AgentStatus::Unknown), or a name that matches no
+//! member is `unknown_recipient`. A [`Paused`](crate::org::AgentStatus::Paused) agent still
+//! receives: its messages wait in its inbox. [`OFFICE_SENDER`] (`office`) is reserved for the server: a `to`
 //! or `member` of `office` is always refused (`invalid_request`). It appears only as the
 //! sender of a `delivery_failed` notice.
 //!
@@ -185,7 +192,8 @@ pub enum MessagePriority {
     High,
     /// Urgent: interrupts a busy recipient.
     Urgent,
-    /// A value this build doesn't know (sent by a newer peer). Not urgent.
+    /// A value this build doesn't know (sent by a newer peer). Not urgent. Never sent:
+    /// `msg.send`, `msg.reply`, `msg.ask` and spool ingest refuse it (`invalid_request`).
     #[serde(other)]
     Unknown,
 }
@@ -432,11 +440,12 @@ impl Call for MsgBind {
 /// With `reply_to`, the parent must be one the caller sent or received (else `not_found`), and
 /// the message joins the parent's thread.
 ///
-/// Errors: `unknown_recipient`, `not_found` (`reply_to` isn't visible to the caller),
+/// Errors: `unknown_recipient` (no such member, or an offboarded or `Unknown`-status agent;
+/// a paused agent still receives), `not_found` (`reply_to` isn't visible to the caller),
 /// `already_exists` (the id was used for different content), `too_large` (a string, body or
 /// meta over its limit), `invalid_request` (kind `request` (use `msg.ask`) or
-/// `delivery_failed`, a `reply_to` that is a `delivery_failed` notice, or `to` is `office`),
-/// `not_bound`, `storage_error`.
+/// `delivery_failed`, an `Unknown` priority, a `reply_to` that is a `delivery_failed` notice,
+/// or `to` is `office`), `not_bound`, `storage_error`.
 pub struct MsgSend;
 
 /// `msg.send`'s params. Its `Debug` prints only the sizes of `body` and `meta`.
@@ -498,9 +507,10 @@ impl Call for MsgSend {
 /// answered message becomes `read`. Replying to a request past its deadline is allowed (a
 /// late reply).
 ///
-/// Errors: `not_found` (`to_id` isn't addressed to the caller), `already_exists`, `too_large`
-/// (a string, body or meta over its limit), `invalid_request` (`to_id` is a `delivery_failed`
-/// notice), `not_bound`, `storage_error`.
+/// Errors: `not_found` (`to_id` isn't addressed to the caller), `unknown_recipient` (its
+/// sender has since been offboarded or removed, or has an `Unknown` status), `already_exists`,
+/// `too_large` (a string, body or meta over its limit), `invalid_request` (`to_id` is a
+/// `delivery_failed` notice, or an `Unknown` priority), `not_bound`, `storage_error`.
 pub struct MsgReply;
 
 /// `msg.reply`'s params. Its `Debug` prints only the sizes of `body` and `meta`.
@@ -545,9 +555,10 @@ impl Call for MsgReply {
 /// (idempotent re-ask, ADR-0003 §3.3.4), keeping its `expires_at`. That's how a client waits
 /// past [`MAX_WAIT_MS`], or recovers from a dropped connection.
 ///
-/// Errors: `unknown_recipient`, `already_exists` (the id was used for different content),
+/// Errors: `unknown_recipient` (no such member, or an offboarded or `Unknown`-status agent;
+/// a paused agent still receives), `already_exists` (the id was used for different content),
 /// `too_large` (a string, body or meta over its limit), `invalid_request` (`wait_ms` or
-/// `ttl_ms` out of range, or `to` is `office`), `timeout` (`expires_at` passed without a
+/// `ttl_ms` out of range, an `Unknown` priority, or `to` is `office`), `timeout` (`expires_at` passed without a
 /// reply), `unknown_recipient` or `timeout` when a `delivery_failed` answers the request,
 /// `unavailable` (the connection already holds [`MAX_HELD_CALLS_PER_CONNECTION`] calls),
 /// `not_bound` (also when a re-bind ends the call), `storage_error`.
@@ -1124,14 +1135,17 @@ impl EventKind for MessageDeliveryFailed {
 ///
 /// `from` is unauthenticated (whoever wrote the file), so ingest applies every `msg.send`
 /// rule as if `from` had bound as an agent without a token: the limits apply, kinds `request`
-/// and `delivery_failed` and an `office` recipient are refused, and `reply_to` must be visible
-/// to `from`. On top of that, `from` must resolve to an **active agent that the office doesn't
+/// and `delivery_failed`, an `Unknown` priority and an `office` recipient are refused, the
+/// recipient rules of [Addressing](self#addressing) apply, and `reply_to` must be visible to
+/// `from`. On top of that, `from` must resolve to an **active agent that the office doesn't
 /// run** (one with no run mode, per the agent-sessions design): agents the office runs will
 /// bind with a session token (see [`MsgBindParams`]), which a file can't carry. A `from` that
 /// is a person, the owner, `office`, a `run:` address (agent-sessions design), an office-run
-/// agent, an agent whose status isn't [`AgentStatus::Active`](crate::org::AgentStatus::Active)
-/// (paused or unknown), or a handle or id that names no member (an offboarded agent's
-/// included) is refused.
+/// agent, an agent whose status isn't [`Active`](crate::org::AgentStatus::Active)
+/// ([`Paused`](crate::org::AgentStatus::Paused),
+/// [`Offboarded`](crate::org::AgentStatus::Offboarded) or
+/// [`Unknown`](crate::org::AgentStatus::Unknown)), or a handle or id that names no member is
+/// refused.
 ///
 /// A `created_at` in the future is clamped to the ingest time. A backdated `created_at` is
 /// accepted: like `from`, it's the writer's word (the agent-identity risk, ADR-0003 M-A). A
