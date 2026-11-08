@@ -2,12 +2,14 @@ use std::fs::{self, File, TryLockError};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use crate::directory::{self, RuntimeView, ThisOffice};
 use crate::error::OfficeError;
 use crate::key::{Key, KeyProvider};
 use crate::model::{NewOffice, OfficeInfo};
 use crate::office_file::{self, is_plain_id};
 use crate::private_fs::{absolute, private_dir, private_file, tighten_dir};
 use crate::rules::OrgCommand;
+use org_proto::directory::{WhoParams, WhoResult};
 use org_proto::org::{CommandAccepted, OrgChangedData, OrgSnapshot, Position};
 use org_proto::ApiError;
 
@@ -360,6 +362,28 @@ impl Office {
     /// The organization's structure as of the last log entry, from one consistent read.
     pub fn org_snapshot(&self) -> Result<OrgSnapshot, OfficeError> {
         self.org.read(org_db::snapshot)
+    }
+
+    /// `who`: the directory cards matching `params`, from one consistent read of the organization
+    /// and the runtime data (`runtime`: presence, status lines). `Err(ApiError)` inside the `Ok`
+    /// is the caller's mistake (see [`crate::directory::who`]); the outer error is the storage's.
+    pub fn who(
+        &self,
+        params: &WhoParams,
+        runtime: &dyn RuntimeView,
+    ) -> Result<Result<WhoResult, ApiError>, OfficeError> {
+        let snapshot = self.org_snapshot()?;
+        let office = ThisOffice {
+            id: &self.info.office_id,
+            name: &self.info.office_name,
+        };
+        Ok(directory::who(
+            &snapshot,
+            office,
+            &time::now_rfc3339(),
+            runtime,
+            params,
+        ))
     }
 
     /// Runs one organization command on this office (HQ): the rules decide, and the changes

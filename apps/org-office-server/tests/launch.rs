@@ -901,3 +901,120 @@ fn the_app_hires_an_agent_into_the_office_and_it_survives_a_restart() {
     drop(client);
     assert!(again.host_goes_away().success());
 }
+
+#[test]
+fn who_lists_the_directory_with_cards_for_the_app_and_not_for_an_unbound_connection() {
+    use org_proto::directory::{Who, WhoParams};
+    use org_proto::org::{
+        AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams, MemberKind,
+        MemberOffboard, MemberOffboardParams, TeamAddMember, TeamAddMemberParams,
+    };
+    let world = World::new();
+    let mut run = create(&world);
+    let client = Client::connect(socket(&world)).unwrap();
+
+    // Unbound: not_bound, whatever the params.
+    let unbound = client.call::<Who>(&WhoParams::default()).unwrap_err();
+    assert_eq!(api_code(unbound), org_proto::ErrorCode::NotBound);
+    bind(&client, token()).unwrap();
+
+    // The owner alone to begin with: their handle is `owner`, not their name.
+    let first = client.call::<Who>(&WhoParams::default()).unwrap();
+    let [owner] = &first.members[..] else {
+        panic!("{:?}", first.members)
+    };
+    assert!(owner.owner);
+    assert_eq!(owner.handle.as_deref(), Some("owner"));
+
+    // A team, an agent in it (placed in this office), and what the card then says.
+    team_create(&client, &command_id(1), "Platform").unwrap();
+    let agent_id = "AGENT00000000000000000000A".to_owned();
+    client
+        .call::<MemberAddAgent>(&MemberAddAgentParams {
+            command_id: command_id(2),
+            member_id: agent_id.clone(),
+            name: "Pixel the engineer".into(),
+            office_id: OFFICE.into(),
+            profile: AgentProfile {
+                role: "engineer".into(),
+                title: "Senior Engineer".into(),
+                focus: None,
+                runtime: AgentRuntime::ClaudeCode,
+                model: None,
+                run_mode: None,
+                schedule: None,
+                home: None,
+                messaging_name: "pixel".into(),
+                status: AgentStatus::Active,
+                offboarded_at: None,
+            },
+        })
+        .unwrap();
+    client
+        .call::<TeamAddMember>(&TeamAddMemberParams {
+            command_id: command_id(3),
+            membership_id: "m1".into(),
+            team_id: "T1".into(),
+            member_id: agent_id.clone(),
+            title_in_team: Some("Lead".into()),
+        })
+        .unwrap();
+
+    let by_handle = client
+        .call::<Who>(&WhoParams {
+            member: Some("PIXEL".into()),
+            ..WhoParams::default()
+        })
+        .unwrap();
+    let [pixel] = &by_handle.members[..] else {
+        panic!("{:?}", by_handle.members)
+    };
+    assert_eq!(pixel.id, agent_id);
+    assert_eq!(pixel.kind, MemberKind::Agent);
+    assert_eq!(pixel.role_title.as_deref(), Some("Senior Engineer"));
+    assert_eq!(pixel.office.as_ref().map(|o| o.name.as_str()), Some("HQ"));
+    assert_eq!(pixel.teams[0].name, "Platform");
+    assert_eq!(pixel.teams[0].title_in_team.as_deref(), Some("Lead"));
+    // Filters: by team name, and by kind.
+    let in_team = client
+        .call::<Who>(&WhoParams {
+            team: Some("platform".into()),
+            ..WhoParams::default()
+        })
+        .unwrap();
+    assert_eq!(in_team.members.len(), 1);
+    let people = client
+        .call::<Who>(&WhoParams {
+            kind: Some(MemberKind::Person),
+            ..WhoParams::default()
+        })
+        .unwrap();
+    assert!(people.members.iter().all(|c| c.kind == MemberKind::Person));
+    let nobody = client
+        .call::<Who>(&WhoParams {
+            member: Some("nobody".into()),
+            ..WhoParams::default()
+        })
+        .unwrap_err();
+    assert_eq!(api_code(nobody), org_proto::ErrorCode::NotFound);
+
+    // Offboarded: gone from the directory, and naming it is not_found.
+    client
+        .call::<MemberOffboard>(&MemberOffboardParams {
+            command_id: command_id(4),
+            member_id: agent_id.clone(),
+            expected_version: 1,
+        })
+        .unwrap();
+    let after = client.call::<Who>(&WhoParams::default()).unwrap();
+    assert!(after.members.iter().all(|c| c.id != agent_id));
+    let gone = client
+        .call::<Who>(&WhoParams {
+            member: Some("pixel".into()),
+            ..WhoParams::default()
+        })
+        .unwrap_err();
+    assert_eq!(api_code(gone), org_proto::ErrorCode::NotFound);
+    drop(client);
+    assert!(run.host_goes_away().success());
+}
