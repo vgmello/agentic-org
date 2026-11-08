@@ -6,13 +6,14 @@ A macOS desktop app for running an AI organization: its teams, projects and agen
 
 ```
 crates/                         libraries only
-  org-proto/                    the contract between app, agent CLI and office server (types)
-  org-client/                   connects to an office server (used by the app)
+  org-proto/                    the contract between app, agent CLI, host and office servers (types)
+  org-client/                   connects to the host and office servers (used by the app and org-agent)
   org-office/                   the office's domain and storage (organizations, agents, SQLite, files)
   org-spool/                    an agent's local queue (its role beside the message hub: see the messaging ADR, to come)
 apps/                           things you run or ship
   desktop/                      agentic.org, the app (Tauri 2 + SvelteKit)
-  org-office-server/            the office daemon (macOS login service)
+  org-office-server/            one office's server (one process per office)
+  org-office-host/              the host: the one macOS login service, which runs the office servers (to come)
   org-agent/                    the CLI agents use (messages now; tasks and queues later)
 docs/
   architecture-rules.md         how we write code here

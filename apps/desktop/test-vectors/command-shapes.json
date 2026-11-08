@@ -1,0 +1,33 @@
+{
+ "comment": "The JSON shapes the Tauri commands return. Checked by cargo test (src-tauri/src/lib.rs) and vitest (src/lib/office/shapes.test.ts).",
+ "command_error": {
+  "source": "api",
+  "code": "already_exists",
+  "message": "Taken."
+ },
+ "connection": {
+  "office": {
+   "id": "office-1",
+   "organization_id": "org-1",
+   "name": "HQ",
+   "role": "hq",
+   "host": "This Mac",
+   "status": "active"
+  },
+  "organization": {
+   "id": "org-1",
+   "name": "Acme",
+   "created_at": "2026-11-08T02:10:00.000Z",
+   "offices": [
+    {
+     "id": "office-1",
+     "organization_id": "org-1",
+     "name": "HQ",
+     "role": "hq",
+     "host": "This Mac",
+     "status": "active"
+    }
+   ]
+  }
+ }
+}
