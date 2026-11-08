@@ -135,3 +135,54 @@ export async function removeProjectTeam(api: OrgSession, projectId: string, team
 	if (!link) throw { source: 'api', code: 'not_found', message: "That team isn't on the project any more." } satisfies AppError;
 	await api.command({ method: 'project.remove_team', params: { project_team_id: link.id, expected_version: link.version } });
 }
+
+export interface NewPersonInput {
+	name: string;
+	contact?: string;
+	/** Teams to put them in (optional). */
+	teamIds: string[];
+	/** Who they report to; none means the owner. */
+	managerId?: string;
+}
+
+export interface NewPersonResult {
+	memberId: string;
+	/** The person themselves: when this fails nothing else was tried and the form stays open. */
+	created: StepResult;
+	steps: StepResult[];
+}
+
+/** Add a person (PEOPLE-3), then their teams and manager, each its own command. Never throws. */
+export async function addPerson(api: OrgSession, input: NewPersonInput, teamName: (id: string) => string = (id) => id): Promise<NewPersonResult> {
+	const memberId = newId();
+	const created = await attempt(`Add ${input.name}`, () =>
+		api.command({ method: 'member.add_person', params: { member_id: memberId, name: input.name, contact: input.contact || undefined } })
+	);
+	if (created.error) return { memberId, created, steps: [] };
+	const steps: StepResult[] = [];
+	for (const teamId of input.teamIds)
+		steps.push(await attempt(`Add ${input.name} to ${teamName(teamId)}`, () => api.command({ method: 'team.add_member', params: { membership_id: newId(), team_id: teamId, member_id: memberId } })));
+	if (input.managerId) {
+		const me = (await api.snapshot()).members.find((m) => m.id === memberId);
+		if (me) steps.push(await attempt('Set their manager', () => api.command({ method: 'member.set_reports_to', params: { member_id: memberId, expected_version: me.version, reports_to_member_id: input.managerId } })));
+	}
+	return { memberId, created, steps };
+}
+
+/** Rename a person and/or change their contact (an empty contact clears it), against their current version. */
+export async function updatePerson(api: OrgSession, memberId: string, change: { name?: string; contact?: string }): Promise<void> {
+	const m = (await api.snapshot()).members.find((x) => x.id === memberId);
+	if (!m) throw { source: 'api', code: 'not_found', message: "That person isn't in the organization any more." } satisfies AppError;
+	const clear = change.contact !== undefined && change.contact.trim() === '';
+	await api.command({
+		method: 'member.update_person',
+		params: { member_id: memberId, expected_version: m.version, ...(change.name !== undefined ? { name: change.name } : {}), ...(change.contact !== undefined && !clear ? { contact: change.contact.trim() } : {}), ...(clear ? { clear_contact: true } : {}) }
+	});
+}
+
+/** Remove someone from the organization (never the owner; an agent leaves through the HR flow). */
+export async function removePerson(api: OrgSession, memberId: string): Promise<void> {
+	const m = (await api.snapshot()).members.find((x) => x.id === memberId);
+	if (!m) throw { source: 'api', code: 'not_found', message: "That person isn't in the organization any more." } satisfies AppError;
+	await api.command({ method: 'member.remove', params: { member_id: memberId, expected_version: m.version } });
+}

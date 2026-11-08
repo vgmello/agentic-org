@@ -9,6 +9,9 @@
 	import { Button } from '$lib/components/ui/button';
 	import ProjectTeamDialog from '$lib/components/ProjectTeamDialog.svelte';
 	import RemoveProjectDialog from '$lib/components/RemoveProjectDialog.svelte';
+	import AddPersonSheet from '$lib/components/AddPersonSheet.svelte';
+	import EditPersonDialog from '$lib/components/EditPersonDialog.svelte';
+	import RemovePersonDialog from '$lib/components/RemovePersonDialog.svelte';
 	import EditMembersDialog from '$lib/components/EditMembersDialog.svelte';
 	import DeleteTeamDialog from '$lib/components/DeleteTeamDialog.svelte';
 	import MemberTile from '$lib/components/MemberTile.svelte';
@@ -40,7 +43,7 @@
 	import { sessionFor } from '$lib/org/session';
 	import { removeProjectTeam } from '$lib/org/actions';
 	import { isLastTeam } from '$lib/org/team-edit';
-	import type { Team } from '$lib/proto';
+	import type { Member, Team } from '$lib/proto';
 
 	let { data } = $props();
 	const snapshot = $derived(data.snapshot);
@@ -104,6 +107,12 @@
 	let projectTeamOpen = $state(false);
 	let removeProject = $state<{ projectId: string; projectName: string; teamName: string; teamId: string } | undefined>();
 	let removeProjectOpen = $state(false);
+	let addPersonOpen = $state(false);
+	let addPersonTeam = $state<string | undefined>();
+	let editingPerson = $state<Member | undefined>();
+	let editPersonOpen = $state(false);
+	let removingPerson = $state<Member | undefined>();
+	let removePersonOpen = $state(false);
 	let moving = $state<Team | undefined>();
 	let moveOpen = $state(false);
 	let justAdded = $state<string | undefined>();
@@ -113,6 +122,7 @@
 		else if (action === 'delete') ((deleting = team), (deleteOpen = true));
 		else if (action === 'move') ((moving = team), (moveOpen = true));
 		else if (action === 'members') ((editingMembers = team), (membersOpen = true));
+		else if (action === 'add-person') ((addPersonTeam = team.id), (addPersonOpen = true));
 		else if (action === 'add-project') ((projectTeam = team), (assigning = undefined), (projectTeamOpen = true));
 		else ((newTeamUnder = team.id), (newTeamOpen = true));
 	}
@@ -158,6 +168,24 @@
 			toast.error(`Couldn't remove ${project.name} from ${team.name}: ${toAppError(e).message} Nothing changed.`);
 		}
 		await reload();
+	}
+	const organizationName = $derived(data.sample ? 'Sample organization' : data.connection.organization.name);
+	async function personAdded(r: { memberId: string; name: string; problems: string[] }) {
+		await reload();
+		selected = r.memberId;
+		if (r.problems.length === 0) toast.success(`Added ${r.name}. Agents can now reach ${r.name}.`);
+		else toast.warning(`Added ${r.name}, but not everything went through.`, { description: r.problems.join(' ') });
+	}
+	async function personEdited(r: { name: string; stale?: boolean }) {
+		await reload();
+		if (!r.stale) toast.success(`Saved ${r.name}.`);
+	}
+	async function personRemoved(r: { name: string } | { stale: true }) {
+		await reload();
+		if ('name' in r) {
+			selected = undefined;
+			toast.success(`Removed ${r.name}.`);
+		}
 	}
 	async function teamMoved(r: { name: string; to: string; undo: () => Promise<void> } | { stale: true }) {
 		await reload();
@@ -225,7 +253,7 @@
 		</p>
 	</div>
 
-	<SelectedMember {snapshot} member={selectedMember} offices={offices} onclear={() => (selected = undefined)} />
+	<SelectedMember {snapshot} member={selectedMember} offices={offices} organization={organizationName} onclear={() => (selected = undefined)} onedit={(m) => ((editingPerson = m), (editPersonOpen = true))} onremove={(m) => ((removingPerson = m), (removePersonOpen = true))} />
 
 	{#if tab === 'teams'}
 		<div id="panel-teams" role="tabpanel" aria-labelledby="tab-teams" class="space-y-5">
@@ -241,6 +269,7 @@
 				</label>
 				<div class="ml-auto flex items-center gap-x-2">
 					<Button size="sm" onclick={() => newTeam()}><Plus aria-hidden="true" /> New team</Button>
+					<Button variant="outline" size="sm" onclick={() => ((addPersonTeam = undefined), (addPersonOpen = true))}><Plus aria-hidden="true" /> Add person</Button>
 					<Button variant="outline" size="sm" onclick={() => (asList = !asList)}>
 						{#if asList}<Network aria-hidden="true" /> Chart{:else}<LayoutList aria-hidden="true" /> List{/if}
 					</Button>
@@ -324,6 +353,9 @@
 			<p class="rounded-lg bg-sky-500/10 px-4 py-3 text-sm/6 text-sky-100 outline-1 -outline-offset-1 outline-sky-400/20" data-testid="people-note">
 				Agents can only reach the people listed in your organization.
 			</p>
+			<div class="flex justify-end">
+				<Button size="sm" onclick={() => ((addPersonTeam = undefined), (addPersonOpen = true))}><Plus aria-hidden="true" /> Add person</Button>
+			</div>
 			{#if tree.length === 0}
 				<div class="rounded-xl bg-white/5 px-6 py-10 text-center outline-1 -outline-offset-1 outline-white/10">
 					<p class="text-sm/6 font-semibold text-white">No teams yet</p>
@@ -377,3 +409,6 @@
 <EditMembersDialog bind:open={membersOpen} team={editingMembers && snapshot.teams.find((x) => x.id === editingMembers?.id)} {snapshot} {session} ondone={membersEdited} />
 <ProjectTeamDialog bind:open={projectTeamOpen} team={projectTeam && snapshot.teams.find((x) => x.id === projectTeam?.id)} project={assigning} {snapshot} {session} ondone={projectGiven} />
 <RemoveProjectDialog bind:open={removeProjectOpen} target={removeProject} {session} ondone={projectGiven} />
+<AddPersonSheet bind:open={addPersonOpen} {snapshot} {session} organization={organizationName} presetTeamId={addPersonTeam} ondone={personAdded} />
+<EditPersonDialog bind:open={editPersonOpen} person={editingPerson && snapshot.members.find((x) => x.id === editingPerson?.id)} {snapshot} {session} organization={organizationName} ondone={personEdited} />
+<RemovePersonDialog bind:open={removePersonOpen} person={removingPerson && snapshot.members.find((x) => x.id === removingPerson?.id)} {snapshot} {session} organization={organizationName} ondone={personRemoved} />
