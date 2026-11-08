@@ -62,7 +62,11 @@ Agents run on their office's machine and talk only to that office, through the l
   - Ownership moves to HQ or to the assignee's current office, at the latest task version HQ holds.
   - Every task version carries an **ownership generation** that a handover or reclaim increases.
   - **A reclaim can split ownership for a while.** If the old owner was only offline, it still believes it owns the task and keeps confirming changes to its agents until it hears of the reclaim. So the warning before a reclaim says so.
-  - When the old owner comes back, its stale changes are **not dropped**. It may resend them before it hears of the reclaim. So **HQ alone** turns each task version from an older generation, numbered above the reclaim's base version, into a change request to the current owner, with a change id built from the version's (origin, seq), which makes it happen once. Other offices simply skip older-generation versions. It's accepted or rejected like any other, and rejected ones stay visible, flagged, for the owner to resolve.
+  - When the old owner comes back, its stale changes are **not dropped**. It may resend them before it hears of the reclaim. So **HQ alone** turns each task version from an older generation, numbered above the reclaim's base version, into a change request to the current owner.
+    - Its change id is built from the version's (origin, seq), so it happens once. Its age for the 30-day rule is the version's creation time.
+    - The first such request expects the reclaim's base version, and each later one the version its predecessor produces, as in the outbox.
+    - Each is accepted or rejected like any other request, and rejected ones stay visible, flagged, for the owner to resolve.
+    - Other offices simply skip older-generation versions.
   - Change requests already in flight at a handover are forwarded, as above. The generation applies to task versions, not to requests.
 
   Every change has exactly one office in charge, so offices don't conflict over work data. The one exception is a reclaim from an office that was only offline, handled above.
@@ -152,7 +156,7 @@ Agents run on their office's machine and talk only to that office, through the l
   - A message between two agents **in the same office** is delivered by that office directly, even with HQ unreachable.
   - A message to an agent **in another office** goes through HQ, which delivers it to the recipient's office. While HQ is unreachable it waits in the sender office's **message queue**, which is separate from the command outbox, so a blocked command never holds messages back.
 - **The app on a Mac with only a satellite:**
-  - A task created in the app is still created **at HQ**: the satellite relays it there, and queues it in its command outbox while HQ is unreachable (the one work change that travels there). It shows as pending until HQ confirms it. The create carries a client-made task id and change id, so a retry can't create it twice. Before showing it as blocked, the satellite checks its own copy for that task id.
+  - A task created in the app is still created **at HQ**: the satellite relays it there, and queues it in its command outbox while HQ is unreachable (the one work change that travels there). It shows as pending until HQ confirms it. The create carries a client-made task id and change id, so a retry can't create it twice. HQ always returns the create's result to the relaying office (as change-request results go back to the requester), so the satellite knows the outcome even when the task is handed to another office it doesn't follow.
   - Changes to person-owned tasks (owned by HQ) are change requests, queued while HQ is unreachable, like any other.
 - **"Backup", honestly:** satellites follow HQ immediately, so a deletion or bad change reaches them too, and a local satellite shares HQ's disk. Satellites protect against losing HQ's machine, not against mistakes. Real backups (point-in-time snapshots) are a separate feature.
 
