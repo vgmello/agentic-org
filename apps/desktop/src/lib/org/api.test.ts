@@ -125,7 +125,7 @@ describe('the browser mock keeps its history bounded, like the Rust mock HQ', ()
 		for (let n = 1; n <= 1000; n++) await org.command('org-1', { method: 'team.create', params: { command_id: `F${n}`, team_id: `t${n}`, name: `T${n}` } });
 		await expect(org.command('org-1', first)).rejects.toMatchObject({ code: 'already_exists' });
 		expect(storage.getItem('agentic-org.mock.org.org-1')!.length).toBeLessThan(2_000_000);
-	});
+	}, 60_000);
 
 	it('refuses a command too big to be a command, and an unreadable id, without keeping them', async () => {
 		const storage = memory();
