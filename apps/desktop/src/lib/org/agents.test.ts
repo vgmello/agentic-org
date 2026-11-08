@@ -130,11 +130,11 @@ describe('the Agents roster', () => {
 describe('RUN-6 the limits that end a run', () => {
 	it('says when an on call or scheduled agent sleeps and when a run is stopped', () => {
 		for (const mode of ['on_call', 'scheduled']) {
-			expect(runLimitsText(mode)).toBe('It goes back to sleep after 5 minutes with nothing to do. A run stops after 30 minutes of work at home, or 2 hours on a task.');
+			expect(runLimitsText(mode)).toBe('Defaults for all agents: it goes back to sleep after 5 minutes with nothing to do; a run stops after 30 minutes of work in its home, or 2 hours on a task.');
 		}
 	});
 	it('gives an always on agent only the busy limits, and a hand-started or unknown mode none', () => {
-		expect(runLimitsText('always_on')).toBe('A run stops after 30 minutes of work at home, or 2 hours on a task.');
+		expect(runLimitsText('always_on')).toBe('Defaults for all agents: a run stops after 30 minutes of work in its home, or 2 hours on a task.');
 		expect(runLimitsText('')).toBe('');
 		expect(runLimitsText('unknown')).toBe('');
 	});

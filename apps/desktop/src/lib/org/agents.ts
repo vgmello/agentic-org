@@ -28,9 +28,9 @@ export const RUN_LIMITS = {
 
 /** The limits in words for a mode, or '' when nothing ends a run by itself (a person starts the agent). */
 export function runLimitsText(mode: string): string {
-	const busy = `A run stops after ${RUN_LIMITS.busyMinutesAtHome} minutes of work at home, or ${RUN_LIMITS.busyHoursOnATask} hours on a task.`;
-	if (mode === 'on_call' || mode === 'scheduled') return `It goes back to sleep after ${RUN_LIMITS.idleMinutes} minutes with nothing to do. ${busy}`;
-	if (mode === 'always_on') return busy;
+	const stop = `a run stops after ${RUN_LIMITS.busyMinutesAtHome} minutes of work in its home, or ${RUN_LIMITS.busyHoursOnATask} hours on a task.`;
+	if (mode === 'on_call' || mode === 'scheduled') return `Defaults for all agents: it goes back to sleep after ${RUN_LIMITS.idleMinutes} minutes with nothing to do; ${stop}`;
+	if (mode === 'always_on') return `Defaults for all agents: ${stop}`;
 	return '';
 }
 

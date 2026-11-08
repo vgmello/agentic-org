@@ -16,7 +16,7 @@ the config and the bundle identifier in agreement.
 
 ## How the app uses it
 
-`RealOffice::ensure_running` (when `AGENTIC_ORG_OFFICE=real`) says `hello` to the host. If nothing is listening it asks
+`RealOffice::ensure_running` (the real office is the default; `AGENTIC_ORG_OFFICE=mock` picks the invented one for development) says `hello` to the host. If nothing is listening it asks
 macOS for the login service's state (`src-tauri/src/login_item.rs`):
 
 | macOS says          | The app does                                             | The owner sees                                  |
