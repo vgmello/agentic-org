@@ -21,8 +21,9 @@ The product is named **Agentic Org**. The designs that are the reference for cur
    - `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` pass
    - for the app, the type check, its tests and a build pass
    - an **independent review** of your whole diff (a fresh reviewer with no context: valid, reliable, secure, meets the brief), with every confirmed finding fixed
-4. **Ask ada for the go** with: branch, commit, the final lines of every check, the review findings and what you changed, and a screenshot for UI work. After the go: `git merge --no-ff` into `v1`, then push `v1` and your branch.
-5. **Never write to a user's organization workspace from tests.** Use temporary directories.
+4. **Send it to the reviewer agent** (`reviewer`, on `org-agent`) with: repo, branch, base, commit, and the design or brief it implements (and screenshots for UI work). It reports a verdict and findings to you and ada. Fix and ask it to re-review until it says ready.
+5. **Ask ada for the go** with: branch, commit, the final lines of every check, your own review's findings and fixes, **the reviewer's final verdict**, and a screenshot for UI work. After the go: `git merge --no-ff` into `v1`, then push `v1` and your branch.
+6. **Never write to a user's organization workspace from tests.** Use temporary directories.
 
 ## Talking to other agents
 Use the **already-installed** `org-agent` CLI at `~/.local/bin/org-agent`. That is the working older version, built from branch `v1-old`. `apps/org-agent` in this repo is its successor, still a stub, and it takes over once ported:
