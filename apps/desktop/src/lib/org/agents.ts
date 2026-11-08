@@ -98,3 +98,37 @@ export function suggestMessagingName(name: string): string {
 		.replace(/^-+|-+$/g, '');
 	return slug.slice(0, 64);
 }
+
+export interface RosterRow {
+	member: Member;
+	teams: string[];
+	/** Where it runs: the office's name, or "Unplaced". */
+	office: string;
+	/** Who it reports to ("You" for the owner is the owner's own name). */
+	manager: string;
+	status: 'active' | 'paused' | 'left' | 'unknown';
+}
+
+export type RosterFilter = 'all' | 'active' | 'paused' | 'left';
+
+/** Every agent in the organization, A–Z, with what the Agents screen lists about each (agent-first view of the chart). */
+export function roster(s: OrgSnapshot, offices: { id: string; name: string }[]): RosterRow[] {
+	return s.members
+		.filter((m) => m.kind === 'agent')
+		.sort(byName)
+		.map((m) => {
+			const status = m.agent?.status;
+			const boss = managerOf(s, m);
+			return {
+				member: m,
+				teams: teamsOfMember(s, m.id).map((t) => t.name),
+				office: offices.find((o) => o.id === m.office_id)?.name ?? 'Unplaced',
+				manager: boss?.name ?? s.members.find((x) => x.owner)?.name ?? '',
+				status: status === 'active' ? 'active' : status === 'paused' ? 'paused' : status === 'offboarded' ? 'left' : 'unknown'
+			};
+		});
+}
+
+/** The rows a filter shows. "All" leaves out agents who left: they have their own filter. */
+export const filterRoster = (rows: RosterRow[], filter: RosterFilter): RosterRow[] =>
+	rows.filter((r) => (filter === 'all' ? r.status !== 'left' : filter === 'left' ? r.status === 'left' : r.status === filter));

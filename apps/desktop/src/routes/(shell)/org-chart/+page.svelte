@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { invalidate } from '$app/navigation';
+	import { page } from '$app/state';
 	import { setContext } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { toast } from 'svelte-sonner';
@@ -83,7 +84,7 @@
 	const collapsed = new SvelteSet<string>();
 	const collapsedReports = new SvelteSet<string>();
 	const reporting = $derived(reportingTree(snapshot));
-	let selected = $state<string | undefined>();
+	let selected = $state<string | undefined>(page.url.searchParams.get('member') ?? undefined); // from the Agents screen
 	// The search is kept when the tab changes (TEAM-11), and read by every tile through a context.
 	let query = $state('');
 	let searchInput = $state<HTMLInputElement>();

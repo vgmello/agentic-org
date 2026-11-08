@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agentLine, isPaused, messagingNameError, offboardSummary, runModeLabel, runtimeLabel, scheduleLabel, statusWord, suggestMessagingName } from './agents';
+import { agentLine, filterRoster, isPaused, messagingNameError, offboardSummary, roster, runModeLabel, runtimeLabel, scheduleLabel, statusWord, suggestMessagingName } from './agents';
 import { formerMembers, isFormer, withoutFormer } from './model';
 import { sampleOrg } from './sample';
 
@@ -92,5 +92,30 @@ describe('messaging names', () => {
 	it('suggests one from the name', () => {
 		expect(suggestMessagingName('Cameron Díaz')).toBe('cameron-diaz');
 		expect(suggestMessagingName('  ')).toBe('');
+	});
+});
+
+describe('the Agents roster', () => {
+	const offices = [{ id: 'office-1', name: 'HQ' }];
+	it('lists every agent A–Z with its teams, office, manager and status', () => {
+		const rows = roster(s, offices);
+		expect(rows.length).toBe(8);
+		expect(rows.map((r) => r.member.name)).toEqual([...rows.map((r) => r.member.name)].sort((a, b) => a.localeCompare(b)));
+		const noor = rows.find((r) => r.member.id === 'noor')!;
+		expect(noor).toMatchObject({ teams: ['Design', 'Web'], office: 'HQ', manager: 'Sam Okafor', status: 'active' });
+		expect(rows.find((r) => r.member.id === 'ines')!.office).toBe('Unplaced');
+		expect(rows.find((r) => r.member.id === 'quinn')!.manager).toBe('Alex Kim'); // no manager: the owner
+	});
+
+	it('filters by status; All leaves out agents who left', () => {
+		const withStates = {
+			...s,
+			members: s.members.map((m) => (m.id === 'sam' ? { ...m, agent: { ...m.agent!, status: 'paused' as const } } : m.id === 'kai' ? { ...m, agent: { ...m.agent!, status: 'offboarded' as const } } : m))
+		};
+		const rows = roster(withStates, offices);
+		expect(filterRoster(rows, 'all').length).toBe(7);
+		expect(filterRoster(rows, 'paused').map((r) => r.member.id)).toEqual(['sam']);
+		expect(filterRoster(rows, 'left').map((r) => r.member.id)).toEqual(['kai']);
+		expect(filterRoster(rows, 'active').length).toBe(6);
 	});
 });
