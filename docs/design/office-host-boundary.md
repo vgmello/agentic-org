@@ -125,7 +125,7 @@ with the same rule (one implementation, see 6). Later lines are reserved: the se
 | `unsupported_version` | `v` unknown | fatal: `unavailable` |
 | `invalid_name` | name breaks the rule | create fails: `invalid_name` |
 | `already_exists` | `--create` but the folder or office.json exists; `--discard` of an office with office.json or a committed organization | create fails: `already_exists`; discard: log, leave it |
-| `key_missing` | databases exist, key doesn't (ADR-0002); `--discard` says `storage_error` instead | fatal: `unavailable`, no restart |
+| `key_missing` | databases exist, key doesn't (ADR-0002); `--discard` says `storage_error` instead | fatal: `unavailable` (`key_missing`); no automatic restart, but `office.restart` retries it |
 | `in_use` | lock not acquired within 10 s | restart with backoff |
 | `storage_error` | anything else (I/O, Keychain, SQLCipher); `--discard` of a folder whose databases it can't open or check | restart with backoff (create: fails with `storage_error`; discard: log, leave it) |
 
