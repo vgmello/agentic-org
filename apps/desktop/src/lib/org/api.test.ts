@@ -82,3 +82,29 @@ describe('the mock office’s command handling, like HQ’s', () => {
 		await expect(make(full).command('org-1', { method: 'team.create', params: { team_id: 'a', name: 'A' } })).rejects.toMatchObject({ source: 'app', code: 'internal' });
 	});
 });
+
+describe('the browser mock office’s organization view', () => {
+	it('is always sample data, and places agents in the office it was given', async () => {
+		const view = await createMockOrg(async () => 'office-7', { storage: memory() }).view('org-1');
+		expect(view.sample).toBe(true);
+		expect(view.snapshot.members.filter((m) => m.kind === 'agent' && m.office_id === 'office-7').length).toBeGreaterThan(0);
+	});
+
+	it('shows only the owner when asked for an empty organization', async () => {
+		const view = await createMockOrg(async () => 'o', { empty: () => true, storage: memory() }).view('org-1');
+		expect(view.snapshot.members.map((m) => m.owner)).toEqual([true]);
+	});
+
+	it('asks which organization it is for, and passes a refusal on', async () => {
+		const asked: string[] = [];
+		const org = createMockOrg(
+			async (id) => {
+				asked.push(id);
+				throw { source: 'api', code: 'not_found', message: 'gone' };
+			},
+			{ storage: memory() }
+		);
+		await expect(org.view('org-9')).rejects.toMatchObject({ code: 'not_found' });
+		expect(asked).toEqual(['org-9']);
+	});
+});

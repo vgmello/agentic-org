@@ -14,7 +14,9 @@ describe('loadOrgView', () => {
 
 	it('fails the page with the office’s own message, not a generic one', async () => {
 		view.mockRejectedValueOnce({ source: 'api', code: 'not_found', message: "That organization isn't here." });
-		await expect(loadOrgView('gone')).rejects.toMatchObject({ status: 500, body: { message: "That organization isn't here." } });
+		await expect(loadOrgView('gone')).rejects.toMatchObject({ status: 404, body: { message: "That organization isn't here." } });
+		view.mockRejectedValueOnce({ source: 'api', code: 'storage_error', message: 'unreadable' });
+		await expect(loadOrgView('x')).rejects.toMatchObject({ status: 500, body: { message: 'unreadable' } });
 	});
 
 	it('also explains a failure that is not from the office', async () => {

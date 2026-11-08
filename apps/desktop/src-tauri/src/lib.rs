@@ -733,6 +733,9 @@ mod tests {
         fn org_command(&self, _: &str, _: &OrgCommand) -> Result<CommandAccepted, ApiError> {
             unreachable!()
         }
+        fn serves_sample_data(&self) -> bool {
+            false
+        }
     }
 
     fn flaky_state(failures: usize) -> (AppState, Arc<Flaky>) {

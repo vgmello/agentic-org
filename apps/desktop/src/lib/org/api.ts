@@ -119,8 +119,9 @@ export const orgApi: OrgApi = inTauri()
 	? tauriOrg
 	: createMockOrg(
 			async (organizationId) => {
-				const connections = await officeApi.connections();
-				return (connections.find((c) => c.organization.id === organizationId) ?? connections.at(-1))?.office.id ?? 'office-local';
+				const connection = (await officeApi.connections()).find((c) => c.organization.id === organizationId);
+				if (!connection) throw refusal('not_found', "That organization isn't here.");
+				return connection.office.id;
 			},
 			{ empty: wantsEmpty }
 		);
