@@ -7,7 +7,7 @@
 | `apps/org-office-server/`, `crates/org-office/`, `crates/org-client/`, `crates/org-github/`, `crates/org-git/`, and the SQL for every table in `store.rs` (messaging's included) | the **server agent** (`server-dev`) |
 | `apps/org-office-host/` (the supervisor and login service), `crates/org-sync/`, `crates/org-pki/` | **River** (`ac-software-engineer-river`), Senior Backend Engineer |
 | `apps/org-agent/` (the CLI agents use), `crates/org-spool/`, and the messaging library (its crate name is set in ADR-0003) | the **messaging agent** (`agy-senior-dev`) |
-| `crates/org-proto/`, `crates/org-sync-proto/` and `crates/org-office-launch/` (the contracts; the last is the host↔office-server pipe protocol and `office.json`, written first by River), `docs/`, this file | **ada** (`ac-staff-engineer-ada`), Staff Engineer, who also reviews and gives the "go" on every merge |
+| `crates/org-proto/`, `crates/org-sync-proto/` and `crates/org-office-launch/` (the contracts; the last is the host↔office-server pipe protocol and `office.json`, whose first version River writes and ada reviews like any contract change), `docs/`, this file | **ada** (`ac-staff-engineer-ada`), Staff Engineer, who also reviews and gives the "go" on every merge |
 
 Don't edit another owner's area. If you need a change there, message its owner.
 

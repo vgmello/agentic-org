@@ -18,7 +18,7 @@ An organization has offices. **The first office is HQ**. It holds the organizati
 - **The app always talks to an office on its own Mac.** It prefers that organization's HQ if HQ runs here. A Mac with only a satellite reads from it and sends changes through it. "Open organization" in the app means joining an existing organization by enrolling a new satellite on this Mac (see Provisioning).
 
 ## Processes on one Mac
-- **One office = one process**: `org-office-server --office <office-id>`. It owns `<home>/offices/<office-id>/`:
+- **One office = one process**: `org-office-server --office <office-id>` for an existing office (a new one starts with `--create` alone, see below). It owns `<home>/offices/<office-id>/`:
   - `office.json`: plaintext, no secrets. It holds the office id, the organization's id and name, the role, and HQ's address.
   - `org.db`: SQLCipher. It holds the organization data, HQ's original or a satellite's copy, and the copied command-result and revocation tables.
     - On a satellite it also holds the last applied position, committed in the same transaction as each apply.
@@ -32,7 +32,7 @@ An organization has offices. **The first office is HQ**. It holds the organizati
 - **An office lock:** the server takes an exclusive `flock` on its folder at start. Two processes can never write one office.
 - **`org-office-host` is the one login service.** macOS lets an app register a fixed set of login programs, not a variable number, so one supervisor covers them all.
   - It starts one `org-office-server` per office folder on this Mac and restarts a crashed one with backoff.
-  - For "create organization", it starts a new office server with `--create` and passes it the new office's details (including its role, `hq`) through its pipe, never on the command line. The pipe protocol and `office.json` are specified in `crates/org-office-launch`.
+  - For "create organization", it starts a new office server with `--create` as its only argument and passes every detail of the new office (its id, its role `hq`, the organization's id and name) through the pipe to the host, never on the command line. The pipe protocol and `office.json` will be specified in a new contract crate, `org-office-launch` (see "Where the code lives").
   - It tells the app and `org-agent` which offices run on this Mac and how to reach each one.
   - It holds no organization data.
 - **Local addresses:** a Unix socket at `<home>/run/<handle>.sock`. The handle is the last 12 characters of the office id (its random part), checked for uniqueness when the office is created. macOS caps a socket path at 103 bytes, so the host checks the length and fails with a clear message if it would be too long.
@@ -222,12 +222,13 @@ If HQ is gone for good, the owner can **promote** a satellite to HQ. It's a deli
   It works over a small **storage trait** that `org-office`'s `store.rs` implements, so all SQL, snapshot export included, stays in `store.rs` (ADR-0002's swap point). The server only supplies the transport.
 - **`org-office`:** the domain. It validates commands, produces events and uses `org-sync`. It knows nothing about networks or certificates.
 - **`org-pki`** (new adapter crate): enrollment, the organization's CA, certificates, TLS. Only the server binaries use it.
+- **`org-office-launch`** (new contract crate): the pipe protocol between the host and an office server it starts, and the `office.json` file the server writes and the host reads. Only those two binaries use it, so it also stays out of `org-proto`.
 - **`org-sync-proto`** (new contract crate): the office-to-office protocol (stream, snapshot chunks, enrollment, status updates). It stays out of `org-proto`, so the crate every client depends on doesn't grow.
 - **`org-office-server` and `org-office-host`** stay thin, each with a library target for its logic.
 - **Owners (AGENTS.md):**
   - **River** (`ac-software-engineer-river`) owns `org-office-host`, `org-sync` and `org-pki`.
   - **server-dev** owns `org-office` (incl. `store.rs` and its implementations of the storage and apply traits) and `org-office-server`.
-  - `org-sync-proto` is a contract, so ada owns it and reviews changes, like `org-proto`.
+  - `org-sync-proto` and `org-office-launch` are contracts, so ada owns them and reviews changes, like `org-proto`. River writes `org-office-launch`'s first version, and ada reviews it like any contract change.
 
 ## Phases
 1. **Now: HQ only.** Create organization = start a new HQ office.
