@@ -18,7 +18,7 @@ An organization has offices. **The first office is HQ**. It holds the organizati
 - **The app always talks to an office on its own Mac.** It prefers that organization's HQ if HQ runs here. A Mac with only a satellite reads from it and sends changes through it. "Open organization" in the app means joining an existing organization by enrolling a new satellite on this Mac (see Provisioning).
 
 ## Processes on one Mac
-- **One office = one process**: `org-office-server --office <office-id>`. It owns `<home>/offices/<office-id>/`:
+- **One office = one process**: `org-office-server --office <office-id>` for an existing office (a new one starts with `--create` alone, see below). It owns `<home>/offices/<office-id>/`:
   - `office.json`: plaintext, no secrets. It holds the office id, the organization's id and name, the role, and HQ's address.
   - `org.db`: SQLCipher. It holds the organization data, HQ's original or a satellite's copy, and the copied command-result and revocation tables.
     - On a satellite it also holds the last applied position, committed in the same transaction as each apply.
@@ -31,9 +31,10 @@ An organization has offices. **The first office is HQ**. It holds the organizati
 - **Keys:** the office server **creates its own key** on first start (`--create`) and keeps it in the Keychain under account = the office id. The Keychain ties an item to the program that created it, so the process that uses the key must be the one that creates it.
 - **An office lock:** the server takes an exclusive `flock` on its folder at start. Two processes can never write one office.
 - **`org-office-host` is the one login service.** macOS lets an app register a fixed set of login programs, not a variable number, so one supervisor covers them all.
-  - It starts one `org-office-server` per office folder on this Mac and restarts a crashed one with backoff.
-  - For "create organization", it starts a new office server with `--create --role hq`.
-  - It tells the app and `org-agent` which offices run on this Mac and how to reach each one.
+  - It starts one `org-office-server` per office folder on this Mac that has an `office.json`, and restarts a crashed one with backoff.
+  - **A folder without an `office.json` is an unfinished create.** The host never starts it, and removes it once it can take that folder's office lock. `org-agent`'s scan ignores it too (ADR-0003 §2.1).
+  - For "create organization", it starts a new office server with `--create` as its only argument and the host passes every detail of the new office (its id, its role `hq`, the organization's id and name) to it through the pipe between them, never on the command line. That server creates the office and then goes on serving it. Once creation has finished (the office's `office.json` is written), later starts use `--office <id>`; a create that fails or crashes before that is never restarted. On a failed create, the server deletes the Keychain key it made, if any (only it can), and the host removes the unfinished folder and returns the error to the app. A crash can leave an orphaned Keychain item, which is accepted for now. The pipe is long-lived and two-way: stdin carries the host's lines to the server (the first one at every start), stdout carries the server's control lines to the host ("created", "ready", "failed"), and the server exits when stdin closes. The pipe protocol and `office.json` will be defined in a new contract crate, `org-office-launch` (see "Where the code lives").
+  - Its `office.list` tells the app which offices run on this Mac and how to reach each one. `org-agent` finds its office from `office.json` (ADR-0003 §2.1).
   - It holds no organization data.
 - **Local addresses:** a Unix socket at `<home>/run/<handle>.sock`. The handle is the last 12 characters of the office id (its random part), checked for uniqueness when the office is created. macOS caps a socket path at 103 bytes, so the host checks the length and fails with a clear message if it would be too long.
 - **If the host dies, its office servers stop too.** They run in the host's process group and also exit when the pipe to the host closes, so no office is ever left running unsupervised. When launchd restarts the host, the host starts them all again. The office lock means a slow-exiting server and its replacement never overlap: the new one waits for the lock.
@@ -132,7 +133,7 @@ Agents run on their office's machine and talk only to that office, through the l
 ## Provisioning a satellite
 1. In the app, the owner adds an office: a name, plus local or remote.
 2. HQ adds a `pending` registry entry.
-   - **Local** (a second office on this Mac, phase 2): the host creates the office directly. It starts a new office server and passes it its details through a pipe, never on the command line. No link, TLS, certificate or approval is involved: trust rests on both offices running as the same macOS user. Steps 3–4 don't apply, and the satellite goes straight to step 5.
+   - **Local** (a second office on this Mac, phase 2): the host has the office created directly: it starts a new office server with `--create` and passes it its details through the pipe, never on the command line (the `org-office-launch` protocol, as for HQ). No link, TLS, certificate or approval is involved: trust rests on both offices running as the same macOS user. Steps 3–4 don't apply, and the satellite goes straight to step 5.
    - **Remote** (phase 3): HQ makes a **one-time invitation link** (see "The invitation link" below).
 3. **Remote:** the owner copies the link to the other machine and pastes it into Agentic Org at "Open organization" (recommended), or opens it, which pre-fills the same screen.
 4. **Remote: the satellite makes its own key pair** and keeps the private key in its Keychain. It sends HQ a certificate request together with its **proof of the invitation** (see "The invitation link"). The invitation secret itself never crosses the network.
@@ -222,12 +223,13 @@ If HQ is gone for good, the owner can **promote** a satellite to HQ. It's a deli
   It works over a small **storage trait** that `org-office`'s `store.rs` implements, so all SQL, snapshot export included, stays in `store.rs` (ADR-0002's swap point). The server only supplies the transport.
 - **`org-office`:** the domain. It validates commands, produces events and uses `org-sync`. It knows nothing about networks or certificates.
 - **`org-pki`** (new adapter crate): enrollment, the organization's CA, certificates, TLS. Only the server binaries use it.
+- **`org-office-launch`** (new contract crate): the pipe protocol between the host and an office server it starts, and the `office.json` file the server writes and the host reads. The host and the office server use it, and `org-agent` reads `office.json` through it (ADR-0003 §2.1). It stays out of `org-proto`, so the crate every client depends on doesn't grow.
 - **`org-sync-proto`** (new contract crate): the office-to-office protocol (stream, snapshot chunks, enrollment, status updates). It stays out of `org-proto`, so the crate every client depends on doesn't grow.
 - **`org-office-server` and `org-office-host`** stay thin, each with a library target for its logic.
 - **Owners (AGENTS.md):**
   - **River** (`ac-software-engineer-river`) owns `org-office-host`, `org-sync` and `org-pki`.
   - **server-dev** owns `org-office` (incl. `store.rs` and its implementations of the storage and apply traits) and `org-office-server`.
-  - `org-sync-proto` is a contract, so ada owns it and reviews changes, like `org-proto`.
+  - `org-sync-proto` and `org-office-launch` are contracts, so ada owns them and reviews changes, like `org-proto`. River writes `org-office-launch`'s first version.
 
 ## Phases
 1. **Now: HQ only.** Create organization = start a new HQ office.
@@ -244,13 +246,14 @@ If HQ is gone for good, the owner can **promote** a satellite to HQ. It's a deli
   - The app talks to an office on its own Mac, and its menu lists organizations, each with its offices.
 - **ADR-0002:**
   - **Each office has its own two databases:** `org.db`, the organization data or its copy, and `office.db`, its own data. They share one key, kept under the office id and created by that office's server.
+  - A key is created only by `--create`. An `--office` start never creates one: a missing key is `key_missing` (fatal).
   - Layout `<home>/offices/<office-id>/`.
   - HQ's `org.db` holds the event log. SQLCipher, one writer per database, durability and the swap point hold per office.
 - **ADR-0003 (proposed):**
   - `org-agent` talks to **its own office**, so binding needs only the agent.
   - Messages are office-first: committed and delivered locally, then synced to HQ, and through HQ to other offices. The storage structure for heavy traffic and the cross-office `ask` are defined there.
 - **`org-proto`** (client ↔ office):
-  - The host gains `hello`, `organization.create`, `organization.list` and `office.list`.
+  - The host gains `hello`, `organization.create`, `organization.list`, `office.list` and `office.app_token` (ADR-0003 §2.1).
   - An office's `hello` reports its organization and role.
   - Organizations list their offices from the registry.
   - The exact shapes are drafted after this design is agreed.
