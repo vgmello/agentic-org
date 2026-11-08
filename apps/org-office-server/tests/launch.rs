@@ -726,3 +726,86 @@ fn only_the_bound_app_changes_the_organization_and_what_it_changed_survives_a_re
     drop(client);
     assert!(again.host_goes_away().success());
 }
+
+fn changed(event: &org_proto::Event) -> org_proto::org::OrgChangedData {
+    assert_eq!(event.event, "org.changed");
+    serde_json::from_value(event.data.clone()).unwrap()
+}
+
+fn next_event(sub: &org_client::Subscription) -> org_proto::Event {
+    sub.recv_timeout(WAIT).expect("no event")
+}
+
+#[test]
+fn a_subscriber_follows_the_organization_and_resumes_from_where_it_was_after_a_restart() {
+    let world = World::new();
+    let mut first = create(&world);
+    let app = Client::connect(socket(&world)).unwrap();
+    let watcher = Client::connect(socket(&world)).unwrap();
+
+    // Only a bound connection subscribes.
+    assert_eq!(
+        api_code(watcher.subscribe().err().unwrap()),
+        org_proto::ErrorCode::NotAuthorized
+    );
+    bind(&app, token()).unwrap();
+    bind(&watcher, token()).unwrap();
+    let snapshot = app
+        .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
+        .unwrap();
+
+    // Live: another connection's command arrives as `org.changed`, with its command id.
+    let sub = watcher.subscribe_from(Some(snapshot.position)).unwrap();
+    let command = command_id(1);
+    let accepted = team_create(&app, &command, "Platform").unwrap();
+    let event = next_event(&sub);
+    assert_eq!(event.seq, 1);
+    let data = changed(&event);
+    assert_eq!(Some(data.position), accepted.position);
+    assert_eq!(data.command_id, command);
+    assert!(matches!(
+        &data.changes[..],
+        [org_proto::org::OrgChange::TeamUpserted { team }] if team.name == "Platform"
+    ));
+    // A refused command is not an event, and a retry of a committed one is not either.
+    let _ = team_create(&app, &command_id(2), " ").unwrap_err();
+    team_create(&app, &command, "Platform").unwrap();
+    assert!(sub.recv_timeout(Duration::from_millis(500)).is_err());
+
+    // A position the log does not have: take a snapshot.
+    let beyond = org_proto::org::Position { epoch: 1, seq: 99 };
+    let probe = Client::connect(socket(&world)).unwrap();
+    bind(&probe, token()).unwrap();
+    assert_eq!(
+        api_code(probe.subscribe_from(Some(beyond)).err().unwrap()),
+        org_proto::ErrorCode::SnapshotRequired
+    );
+    drop((sub, app, watcher, probe));
+    assert!(first.host_goes_away().success());
+
+    // After a restart a client resumes from the position it held and misses nothing.
+    let mut again = world.spawn(&["--office", OFFICE]);
+    again.send(&start_message());
+    assert!(matches!(again.event(), ServerEvent::Ready { .. }));
+    let app = Client::connect(socket(&world)).unwrap();
+    bind(&app, token()).unwrap();
+    let sub = app.subscribe_from(Some(snapshot.position)).unwrap();
+    let backlog = changed(&next_event(&sub));
+    assert_eq!(Some(backlog.position), accepted.position);
+    assert_eq!(backlog.command_id, command);
+    // ...and then follows live from there.
+    let other = Client::connect(socket(&world)).unwrap();
+    bind(&other, token()).unwrap();
+    let rename = org_proto::org::TeamRenameParams {
+        command_id: command_id(3),
+        team_id: "T1".into(),
+        expected_version: 1,
+        name: "Platform team".into(),
+    };
+    let renamed = other.call::<org_proto::org::TeamRename>(&rename).unwrap();
+    let live = changed(&next_event(&sub));
+    assert_eq!(Some(live.position), renamed.position);
+    assert_eq!(live.command_id, rename.command_id);
+    drop((sub, app, other));
+    assert!(again.host_goes_away().success());
+}
