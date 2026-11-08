@@ -1662,13 +1662,26 @@ fn rule_an_expired_ask_whose_recipient_is_unsure_is_delivered() {
         assert_eq!(result.unwrap().delivered, 1);
     }
 
-    // A malformed profile: delivered too.
+    // A malformed profile: delivered too, and it reads as an agent's (not urgent, expired).
     fs::write(&profile_path, b"{not json").unwrap();
     let id = expired_ask("pat");
-    assert_eq!(t.spool.deliver_all().unwrap().delivered, 1);
+    let outcome = t
+        .spool
+        .deliver_one(&t.dir.join(format!("spool/outbox/new/{id}.json")));
+    assert!(
+        matches!(
+            outcome,
+            Ok(org_spool::DeliverOutcome::Delivered { urgent: false, .. })
+        ),
+        "no urgent wake when unsure: {outcome:?}"
+    );
     assert!(delivered_to_pat(&id));
     let at_break = t.spool.notify("pat", &opts(None, true, false)).unwrap();
-    assert!(at_break.text.contains("(expired)"), "{}", at_break.text);
+    let item = at_break.items.iter().find(|i| i.id == id).unwrap();
+    assert!(!item.urgent);
+    assert!(at_break
+        .text
+        .contains(&format!("[request] (expired) (id: {id})")));
 
     // A known agent (a readable profile of another kind): dead-lettered, as before.
     let mut agent = MemberProfile::default_for("pat");

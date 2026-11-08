@@ -617,10 +617,14 @@ impl Spool {
         // whose recipient isn't known for sure (malformed or unreadable profile): when unsure,
         // deliver; it then reads as an agent's, non-urgent with "(expired)". A transient
         // error reading the profile leaves the ask in the outbox for the next pass.
+        let mut urgent = env.is_urgent();
         if env.is_expired_at(&now_iso) {
-            let known_agent = env.kind != MessageKind::Request
-                || self.recipient_kind(&env.to)? == RecipientKind::Agent;
-            if known_agent {
+            let kind = if env.kind == MessageKind::Request {
+                self.recipient_kind(&env.to)?
+            } else {
+                RecipientKind::Agent
+            };
+            if kind == RecipientKind::Agent {
                 let exp = env.expires_at.as_deref().unwrap_or("unknown");
                 return self.move_to_dead(
                     outbox_file,
@@ -628,9 +632,10 @@ impl Spool {
                     &format!("expired: expires_at={exp}"),
                 );
             }
+            // Read as an agent's when unsure: no urgent wake for it either.
+            urgent = urgent && kind == RecipientKind::Person;
         }
 
-        let urgent = env.is_urgent();
         let tag = if urgent { b"U" } else { b"N" };
         let dest_path = self.agent_new_dir(&env.to).join(format!("{}.json", env.id));
         fs::rename(outbox_file, &dest_path)?;
