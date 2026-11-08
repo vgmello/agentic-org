@@ -17,6 +17,7 @@ org-agent profile set [<id>] [--name <n>] [--kind agent|person] [--owner] [--rol
 
 # Messaging & Triage
 org-agent msg register [<agent>] [--name <n>] [--role <r>] [--team <t>] [--reports-to <r>] [--json]
+org-agent msg deregister <agent> [--json]            # <agent> required: never defaults to you
 org-agent msg send   --to <agent> [--subject <s>] [--priority normal|high|urgent] [--meta k=v] [--json] <body | ->
 org-agent msg ask    --to <agent> [--timeout 120s] [--subject <s>] [--priority high|urgent] [--meta k=v] [--json] <body | ->
 org-agent msg reply  <id> [--subject <s>] [--priority normal|high|urgent] [--meta k=v] [--json] [--body <body> | <body | ->]

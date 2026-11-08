@@ -483,6 +483,7 @@ Usage:
   org-agent status [<text> | --clear] [--ttl 8h] [--as <agent>] [--json]
   org-agent profile set [<id>] [--name <n>] [--kind agent|person] [--owner] [--role <r>] [--team <id[:name[:title]]>] [--reports-to <id[:name]>] [--office <id[:name]>] [--as <agent>] [--json]
   org-agent msg register [<agent>] [--name <n>] [--kind agent|person] [--role <r>] [--team <t>] [--reports-to <r>] [--as <agent>] [--json]
+  org-agent msg deregister <agent> [--json]
   org-agent msg send   --to <agent> [--subject <s>] [--priority normal|high|urgent] [--meta k=v] [--as <agent>] [--json] <body | ->
   org-agent msg ask    --to <agent> [--timeout 120s] [--subject <s>] [--priority high|urgent] [--meta k=v] [--as <agent>] [--json] <body | ->
   org-agent msg reply  <id> [--subject <s>] [--priority normal|high|urgent] [--meta k=v] [--as <agent>] [--json] [--body <body> | <body | ->]
@@ -895,20 +896,17 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
         }
 
         "deregister" => {
-            let id = if let Some(pos) = sub_args.first() {
-                if sub_args.len() > 1 {
-                    return Err(CliError::Usage(
-                        "deregister takes at most one <agent> argument".into(),
-                    ));
-                }
-                validate_agent_id(pos, "deregister").map_err(CliError::Usage)?;
-                pos.clone()
-            } else {
-                resolve_identity(as_agent.as_deref())?
+            // `<agent>` is required (as in v1-old): never fall back to $ORG_AGENT, which would
+            // delete the caller's own inbox.
+            let [id] = sub_args else {
+                return Err(CliError::Usage(
+                    "usage: org-agent msg deregister <agent>".into(),
+                ));
             };
-            spool.deregister(&id)?;
+            validate_agent_id(id, "deregister").map_err(CliError::Usage)?;
+            spool.deregister(id)?;
             if json_flag {
-                println!("{{\"deregistered\":{}}}", json_quote(&id));
+                println!("{{\"deregistered\":{}}}", json_quote(id));
             } else {
                 println!("{id}");
             }

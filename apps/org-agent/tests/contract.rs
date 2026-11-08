@@ -689,6 +689,26 @@ fn defer_racing_notify_never_loses_a_snooze() {
 }
 
 #[test]
+fn deregister_requires_an_agent_and_never_falls_back_to_the_caller() {
+    let env = setup("deregister");
+    let id = env.send(PEER, ME, &["keep me"]);
+    for args in [
+        &["msg", "deregister"][..],
+        &["msg", "deregister", "--json"],
+        &["msg", "deregister", PEER, ME],
+    ] {
+        let r = env.run(ME, args);
+        assert_eq!(r.code, 1, "{args:?}: {}", r.stderr);
+        assert!(r.stdout.is_empty(), "{args:?}: {}", r.stdout);
+    }
+    assert!(
+        env.inbox_file(ME, "new", &id).is_file(),
+        "the caller's inbox survives"
+    );
+    assert!(env.root.join(format!("spool/inbox/{PEER}")).is_dir());
+}
+
+#[test]
 fn an_invalid_recipient_id_is_an_unknown_recipient_like_v1_old() {
     let env = setup("bad_to");
     for to in ["bad.name", "../etc", "has space"] {
