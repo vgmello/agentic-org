@@ -12,7 +12,7 @@
 	import type { OrgSnapshot, Priority, TaskStatus, WorkItem } from '$lib/proto';
 	import { WORK_LIMITS } from '$lib/proto';
 	import { workApi, type WorkDraft } from '$lib/work';
-	import { assigneeOptions, nameOf } from '$lib/work/people';
+	import { assigneeOptions, assignWarning, nameOf } from '$lib/work/people';
 	import { timeBlock } from '$lib/work/time';
 	import { movesFrom, PRIORITIES, STATUS_LABEL, taskRef } from '$lib/work/tasks';
 
@@ -50,6 +50,8 @@
 	// The status the owner picked that needs more words before it is sent.
 	let pending = $state<'blocked' | 'done_anyway' | undefined>();
 	let confirmDelete = $state(false);
+	let saved = $state('');
+	let assignPending = $state<string | undefined>();
 	let statusSelect = $state<HTMLSelectElement | undefined>();
 
 	async function load(reset: boolean) {
@@ -77,6 +79,8 @@
 				pending = start?.pending;
 				if (start) error = start.message;
 				confirmDelete = false;
+				saved = '';
+				assignPending = undefined;
 				void load(true);
 			});
 		}
@@ -149,6 +153,33 @@
 		if (!s) return;
 		if (await change({ method: 'work.delete', item_id: s.id, expected_version: version })) open = false;
 	}
+	/** Save a text field when it is left, if it changed, and say so (one save model: no Save buttons). */
+	async function saveField(what: 'Title' | 'Description' | 'Definition of done') {
+		if (!s || !item || busy) return;
+		const base = { item_id: s.id, expected_version: version } as const;
+		let draft: WorkDraft | undefined;
+		if (what === 'Title' && title.trim() !== s.title) draft = title.trim() === '' ? undefined : { method: 'task.update', ...base, title: title.trim() };
+		if (what === 'Title' && title.trim() === '') title = s.title;
+		if (what === 'Description' && description !== (item.description ?? '')) draft = { method: 'task.update', ...base, ...(description.trim() === '' ? { clear_description: true } : { description }) };
+		if (what === 'Definition of done' && definitionOfDone !== (item.definition_of_done ?? '')) draft = { method: 'task.update', ...base, ...(definitionOfDone.trim() === '' ? { clear_definition_of_done: true } : { definition_of_done: definitionOfDone }) };
+		if (!draft) return;
+		saved = '';
+		if (await change(draft)) saved = `${what} saved.`;
+	}
+	function requestAssign(id: string) {
+		if (!s) return;
+		if (assignWarning(snapshot, id || undefined)) assignPending = id;
+		else void change({ method: 'task.assign', item_id: s.id, expected_version: version, assignee_id: id || undefined });
+	}
+	async function confirmAssign() {
+		if (!s || !assignPending) return;
+		if (await change({ method: 'task.assign', item_id: s.id, expected_version: version, assignee_id: assignPending })) assignPending = undefined;
+	}
+	function cancelAssign() {
+		assignPending = undefined;
+		const select = document.getElementById('task-assignee') as HTMLSelectElement | null;
+		if (select && s) select.value = s.assignee_id ?? '';
+	}
 	const field = 'w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400';
 </script>
 
@@ -163,10 +194,7 @@
 			<div class="flex flex-col gap-y-5 px-4 pb-6" data-testid="task-page">
 				<div class="space-y-2">
 					<Label for="task-title">Title</Label>
-					<div class="flex gap-x-2">
-						<Input id="task-title" bind:value={title} maxlength={WORK_LIMITS.title * 2} disabled={busy} autocomplete="off" />
-						<Button variant="outline" disabled={busy || title.trim() === s.title || title.trim() === ''} onclick={() => change({ method: 'task.update', item_id: s.id, expected_version: version, title: title.trim() })}>Save</Button>
-					</div>
+					<Input id="task-title" bind:value={title} maxlength={WORK_LIMITS.title * 2} disabled={busy} autocomplete="off" onblur={() => saveField('Title')} />
 				</div>
 
 				<div class="grid gap-4 sm:grid-cols-2">
@@ -214,22 +242,26 @@
 
 				<div class="space-y-2">
 					<Label for="task-assignee">Assignee</Label>
-					<select id="task-assignee" disabled={busy} value={s.assignee_id ?? ''} onchange={(e) => change({ method: 'task.assign', item_id: s.id, expected_version: version, assignee_id: e.currentTarget.value || undefined })} class={field}>
+					<select id="task-assignee" disabled={busy} value={s.assignee_id ?? ''} onchange={(e) => requestAssign(e.currentTarget.value)} class={field}>
 						<option value="">Unassigned</option>
 						{#each people as p (p.member.id)}<option value={p.member.id}>{p.label}</option>{/each}
 					</select>
+					{#if assignPending && assignWarning(snapshot, assignPending)}
+						<div class="space-y-2 rounded-md bg-amber-500/10 p-3 text-sm/6 text-amber-100" role="alert" data-testid="assign-warning">
+							<p>{assignWarning(snapshot, assignPending)}</p>
+							<div class="flex gap-x-2"><Button size="sm" disabled={busy} onclick={confirmAssign}>Assign anyway</Button><Button size="sm" variant="outline" onclick={cancelAssign}>Cancel</Button></div>
+						</div>
+					{/if}
 				</div>
 
 				<div class="space-y-2">
 					<Label for="task-description">Description</Label>
-					<textarea id="task-description" bind:value={description} rows="4" disabled={busy} class={field}></textarea>
-					<Button variant="outline" size="sm" disabled={busy || description === (item.description ?? '')} onclick={() => change({ method: 'task.update', item_id: s.id, expected_version: version, ...(description.trim() === '' ? { clear_description: true } : { description }) })}>Save description</Button>
+					<textarea id="task-description" bind:value={description} rows="4" disabled={busy} class={field} onblur={() => saveField('Description')}></textarea>
 				</div>
-
 				<div class="space-y-2">
 					<Label for="task-dod">Definition of done</Label>
-					<textarea id="task-dod" bind:value={definitionOfDone} rows="2" maxlength={WORK_LIMITS.definitionOfDone * 2} disabled={busy} placeholder="The goal the agent works to" class={field}></textarea>
-					<Button variant="outline" size="sm" disabled={busy || definitionOfDone === (item.definition_of_done ?? '')} onclick={() => change({ method: 'task.update', item_id: s.id, expected_version: version, ...(definitionOfDone.trim() === '' ? { clear_definition_of_done: true } : { definition_of_done: definitionOfDone }) })}>Save definition of done</Button>
+					<textarea id="task-dod" bind:value={definitionOfDone} rows="2" maxlength={WORK_LIMITS.definitionOfDone * 2} disabled={busy} placeholder="The goal the agent works to" class={field} onblur={() => saveField('Definition of done')}></textarea>
+					<p class="h-5 text-xs/5 text-gray-400" role="status" data-testid="saved">{saved}</p>
 				</div>
 
 				<section class="space-y-2" aria-labelledby="task-checklist">

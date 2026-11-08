@@ -9,7 +9,7 @@
 	import type { Member, OrgSnapshot, Priority, WorkAccepted } from '$lib/proto';
 	import { WORK_LIMITS } from '$lib/proto';
 	import type { WorkDraft } from '$lib/work';
-	import { assigneeOptions } from '$lib/work/people';
+	import { assigneeOptions, assignWarning } from '$lib/work/people';
 	import { PRIORITIES, taskRef } from '$lib/work/tasks';
 
 	/** New task (TSK-5): a title is enough; the priority is Normal unless changed. */
@@ -38,6 +38,7 @@
 	let error = $state<string | undefined>();
 	let busy = $state(false);
 	let touched = $state(false);
+	let confirmed = $state(false);
 
 	$effect(() => {
 		if (open) {
@@ -50,6 +51,7 @@
 				error = undefined;
 				busy = false;
 				touched = false;
+				confirmed = false;
 			});
 		}
 	});
@@ -61,6 +63,11 @@
 		e.preventDefault();
 		touched = true;
 		if (busy || title.trim() === '') return;
+		// Someone who will not pick it up now: ask once before giving it to them.
+		if (assignWarning(snapshot, assignee) && !confirmed) {
+			confirmed = true;
+			return;
+		}
 		busy = true;
 		error = undefined;
 		try {
@@ -113,16 +120,17 @@
 				</div>
 				<div class="space-y-2">
 					<Label for="new-task-assignee">Assignee <span class="font-normal text-gray-400">(optional)</span></Label>
-					<select id="new-task-assignee" bind:value={assignee} disabled={busy} class="w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
+					<select id="new-task-assignee" bind:value={assignee} onchange={() => (confirmed = false)} disabled={busy} class="w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
 						<option value="">Unassigned</option>
 						{#each people as p (p.member.id)}<option value={p.member.id}>{p.label}</option>{/each}
 					</select>
 				</div>
 			</div>
+			{#if confirmed && assignWarning(snapshot, assignee)}<p class="rounded-md bg-amber-500/10 px-3 py-2 text-sm/6 text-amber-100" role="alert" data-testid="assign-warning">{assignWarning(snapshot, assignee)} Create it anyway?</p>{/if}
 			{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 			<DialogFooter>
 				<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}>Cancel</Button>
-				<Button type="submit" disabled={busy}>Create task</Button>
+				<Button type="submit" disabled={busy}>{confirmed && assignWarning(snapshot, assignee) ? "Create anyway" : "Create task"}</Button>
 			</DialogFooter>
 		</form>
 	</DialogContent>

@@ -56,7 +56,7 @@ test('TSK-2 and TSK-3: a card moves with Move to…, announced; Blocked asks for
 	await newTask(page, 'Write docs');
 	await card(page, 'Write docs').getByLabel(/^Move T-1 to/).selectOption('in_progress');
 	await expect(column(page, 'in_progress').getByTestId('task-card')).toHaveCount(1);
-	await expect(page.getByRole('status')).toContainText('T-1 moved to In progress.');
+	await expect(page.getByRole('status').filter({ hasText: 'T-1 moved to In progress.' })).toHaveCount(1);
 	await card(page, 'Write docs').getByLabel(/^Move T-1 to/).selectOption('blocked');
 	const dialog = page.getByRole('dialog', { name: 'Block T-1' });
 	await expect(dialog.getByRole('button', { name: 'Block task' })).toBeDisabled();
@@ -134,7 +134,7 @@ test('the task page keeps a typed description when another field changes, and th
 	await sheet.getByLabel('Status').selectOption('blocked');
 	await sheet.getByRole('button', { name: 'Cancel' }).click();
 	await expect(sheet.getByLabel('Status')).toHaveValue('todo');
-	await expect(page.getByRole('status')).toContainText('priority is now High.');
+	await expect(page.getByRole('status').filter({ hasText: 'priority is now High.' })).toHaveCount(1);
 });
 
 test('TSK-9: Board or List is remembered per project', async ({ page }) => {
@@ -159,8 +159,42 @@ test('the definition of done is kept with the task and can be changed on the tas
 	await card(page, 'Goal task').getByRole('button', { name: /Goal task/ }).click();
 	const sheet = page.getByRole('dialog');
 	await sheet.getByLabel('Definition of done').fill('Every test passes');
-	await sheet.getByRole('button', { name: 'Save definition of done' }).click();
-	await expect(sheet.getByRole('button', { name: 'Save definition of done' })).toBeDisabled(); // saved: nothing left to save
+	await sheet.getByLabel('Definition of done').blur(); // one save model: a field saves when it is left
+	await expect(sheet.getByTestId('saved')).toHaveText('Definition of done saved.');
 	await sheet.getByLabel('Status').selectOption('done');
 	await expect(sheet.getByLabel('Status').locator('option').first()).toHaveText('Done · Completed');
+});
+
+test('TSK-5: assigning to a paused agent asks first, on the task page and in New task; the picker shows runtime and status', async ({ page }) => {
+	await open(page);
+	// Pause an agent first (the Agents screen is the place for it).
+	await visit(page, '/org-chart');
+	await page.locator('[data-testid=team-card][data-team=web]').getByRole('button', { name: /^Noor Haddad/ }).click();
+	await page.getByTestId('selected-member').getByRole('button', { name: 'Pause…' }).click();
+	await page.getByRole('dialog').getByRole('button', { name: 'Pause Noor Haddad' }).click();
+	await expect(page.getByText('Paused Noor Haddad.')).toBeVisible();
+	await visit(page, '/projects/atlas');
+	await page.getByRole('tab', { name: 'Tasks' }).click();
+	await page.getByRole('button', { name: 'New task' }).click();
+	const dialog = page.getByRole('dialog', { name: 'New task' });
+	const options = await dialog.getByLabel('Assignee').locator('option').allInnerTexts();
+	expect(options).toContain('Noor Haddad (agent · Claude Code · Paused)');
+	expect(options.some((o) => /\(agent · .* · Asleep\)$/.test(o))).toBe(true);
+	await dialog.getByLabel('Title').fill('For Noor');
+	await dialog.getByLabel('Assignee').selectOption({ label: 'Noor Haddad (agent · Claude Code · Paused)' });
+	await dialog.getByRole('button', { name: 'Create task' }).click();
+	await expect(dialog.getByTestId('assign-warning')).toContainText('Noor Haddad is paused. The task waits until you resume them. Create it anyway?');
+	await dialog.getByRole('button', { name: 'Create anyway' }).click();
+	await expect(dialog).toBeHidden();
+	await expect(page.getByTestId('task-card').filter({ hasText: 'For Noor' })).toContainText('Noor Haddad');
+	await newTask(page, 'Unassigned one');
+	await page.getByTestId('task-card').filter({ hasText: 'Unassigned one' }).getByRole('button', { name: /Unassigned one/ }).click();
+	const sheet = page.getByRole('dialog');
+	await sheet.getByLabel('Assignee').selectOption({ label: 'Noor Haddad (agent · Claude Code · Paused)' });
+	await expect(sheet.getByTestId('assign-warning')).toBeVisible();
+	await sheet.getByRole('button', { name: 'Cancel' }).click();
+	await expect(sheet.getByLabel('Assignee')).toHaveValue('');
+	await sheet.getByLabel('Assignee').selectOption({ label: 'Noor Haddad (agent · Claude Code · Paused)' });
+	await sheet.getByRole('button', { name: 'Assign anyway' }).click();
+	await expect(sheet.getByLabel('Assignee')).toHaveValue('noor');
 });
