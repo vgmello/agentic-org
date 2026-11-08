@@ -19,6 +19,16 @@
     ]
    },
    {
+    "id": "p2",
+    "teamIds": [],
+    "areas": [
+     {
+      "id": "gen2",
+      "general": true
+     }
+    ]
+   },
+   {
     "id": "old",
     "archived": true,
     "teamIds": []
@@ -1736,6 +1746,764 @@
        "done_anyway": true
       }
      ]
+    }
+   ]
+  },
+  {
+   "name": "a fix task drives its bug: In progress when it starts, Fixed when it is Done, back when it is reopened",
+   "steps": [
+    {
+     "call": {
+      "method": "bug.report",
+      "change_id": "chg110",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Bug 1",
+      "what_happened": "It broke",
+      "severity": "major"
+     },
+     "items": [
+      {
+       "version": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "bug.triage",
+      "change_id": "chg111",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 1,
+      "area_id": "gen",
+      "severity": "major",
+      "priority": "normal"
+     },
+     "items": [
+      {
+       "version": 2
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg112",
+      "item_id": "01JC0000000000000000000002",
+      "project_id": "p1",
+      "title": "Task 2",
+      "fixes": [
+       {
+        "link_id": "lnk2",
+        "bug_id": "01JC0000000000000000000001"
+       }
+      ]
+     },
+     "items": [
+      {
+       "number": 1,
+       "fixes": [
+        "01JC0000000000000000000001"
+       ]
+      },
+      {
+       "fixed_by": [
+        "01JC0000000000000000000002"
+       ],
+       "status": "triaged"
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.set_status",
+      "change_id": "chg113",
+      "item_id": "01JC0000000000000000000002",
+      "expected_version": 1,
+      "status": "in_progress"
+     },
+     "items": [
+      {
+       "status": "in_progress"
+      },
+      {
+       "status": "in_progress"
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.set_status",
+      "change_id": "chg114",
+      "item_id": "01JC0000000000000000000002",
+      "expected_version": 2,
+      "status": "done"
+     },
+     "items": [
+      {
+       "status": "done"
+      },
+      {
+       "status": "fixed"
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.set_status",
+      "change_id": "chg115",
+      "item_id": "01JC0000000000000000000002",
+      "expected_version": 3,
+      "status": "todo"
+     },
+     "items": [
+      {
+       "status": "todo"
+      },
+      {
+       "status": "in_progress"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "fix tasks that are only cancelled, or a bug with required steps left, leave the bug where it is",
+   "steps": [
+    {
+     "call": {
+      "method": "bug.report",
+      "change_id": "chg116",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Bug 1",
+      "what_happened": "It broke",
+      "severity": "major"
+     },
+     "items": [
+      {
+       "version": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "bug.triage",
+      "change_id": "chg117",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 1,
+      "area_id": "gen",
+      "severity": "major",
+      "priority": "normal"
+     },
+     "items": [
+      {
+       "version": 2
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg118",
+      "item_id": "01JC0000000000000000000002",
+      "project_id": "p1",
+      "title": "Task 2",
+      "fixes": [
+       {
+        "link_id": "lnk2",
+        "bug_id": "01JC0000000000000000000001"
+       }
+      ]
+     },
+     "items": [
+      {
+       "number": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.set_status",
+      "change_id": "chg119",
+      "item_id": "01JC0000000000000000000002",
+      "expected_version": 1,
+      "status": "done",
+      "resolution": "cancelled"
+     },
+     "items": [
+      {
+       "status": "done",
+       "resolution": "cancelled"
+      }
+     ]
+    },
+    {
+     "get": "01JC0000000000000000000001",
+     "expect": {
+      "summary": {
+       "status": "triaged"
+      }
+     }
+    },
+    {
+     "call": {
+      "method": "checklist.add",
+      "change_id": "chg120",
+      "item_id": "01JC0000000000000000000001",
+      "steps": [
+       {
+        "step_id": "01JC0000000000000000000060",
+        "text": "Add a test",
+        "required": true
+       }
+      ]
+     },
+     "items": [
+      {
+       "version": 3
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.set_status",
+      "change_id": "chg121",
+      "item_id": "01JC0000000000000000000002",
+      "expected_version": 2,
+      "status": "todo"
+     },
+     "items": [
+      {
+       "status": "todo"
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.set_status",
+      "change_id": "chg122",
+      "item_id": "01JC0000000000000000000002",
+      "expected_version": 3,
+      "status": "done"
+     },
+     "items": [
+      {
+       "status": "done"
+      }
+     ]
+    },
+    {
+     "get": "01JC0000000000000000000001",
+     "expect": {
+      "summary": {
+       "status": "triaged"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a fix task that starts before the bug is triaged moves it when it is triaged; unlinking changes nothing",
+   "steps": [
+    {
+     "call": {
+      "method": "bug.report",
+      "change_id": "chg123",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Bug 1",
+      "what_happened": "It broke",
+      "severity": "major"
+     },
+     "items": [
+      {
+       "version": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg124",
+      "item_id": "01JC0000000000000000000002",
+      "project_id": "p1",
+      "title": "Task 2",
+      "fixes": [
+       {
+        "link_id": "lnk2",
+        "bug_id": "01JC0000000000000000000001"
+       }
+      ]
+     },
+     "items": [
+      {
+       "number": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.set_status",
+      "change_id": "chg125",
+      "item_id": "01JC0000000000000000000002",
+      "expected_version": 1,
+      "status": "in_progress"
+     },
+     "items": [
+      {
+       "status": "in_progress"
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "bug.triage",
+      "change_id": "chg126",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 1,
+      "area_id": "gen",
+      "severity": "major",
+      "priority": "normal"
+     },
+     "items": [
+      {
+       "status": "in_progress"
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "work.unlink",
+      "change_id": "chg127",
+      "link_id": "lnk2"
+     },
+     "items": [
+      {
+       "fixes": []
+      },
+      {
+       "fixed_by": [],
+       "status": "in_progress"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "fix links: the same project and a real bug are needed; a link cannot repeat; work.link adds one",
+   "steps": [
+    {
+     "call": {
+      "method": "bug.report",
+      "change_id": "chg128",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Bug 1",
+      "what_happened": "It broke",
+      "severity": "major"
+     },
+     "items": [
+      {
+       "version": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg129",
+      "item_id": "01JC0000000000000000000002",
+      "project_id": "p1",
+      "title": "Task 2"
+     },
+     "items": [
+      {
+       "number": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "work.link",
+      "change_id": "chg130",
+      "link_id": "l1",
+      "from_item_id": "01JC0000000000000000000002",
+      "kind": "fixes",
+      "to": {
+       "type": "item",
+       "item_id": "ghost"
+      }
+     },
+     "error": "not_found"
+    },
+    {
+     "call": {
+      "method": "work.link",
+      "change_id": "chg131",
+      "link_id": "l1",
+      "from_item_id": "01JC0000000000000000000001",
+      "kind": "fixes",
+      "to": {
+       "type": "item",
+       "item_id": "01JC0000000000000000000001"
+      }
+     },
+     "error": "invalid_request"
+    },
+    {
+     "call": {
+      "method": "work.link",
+      "change_id": "chg132",
+      "link_id": "l1",
+      "from_item_id": "01JC0000000000000000000002",
+      "kind": "fixes",
+      "to": {
+       "type": "item",
+       "item_id": "01JC0000000000000000000001"
+      }
+     },
+     "items": [
+      {
+       "fixes": [
+        "01JC0000000000000000000001"
+       ]
+      },
+      {
+       "fixed_by": [
+        "01JC0000000000000000000002"
+       ]
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "work.link",
+      "change_id": "chg133",
+      "link_id": "l2",
+      "from_item_id": "01JC0000000000000000000002",
+      "kind": "fixes",
+      "to": {
+       "type": "item",
+       "item_id": "01JC0000000000000000000001"
+      }
+     },
+     "error": "already_exists"
+    },
+    {
+     "get": "01JC0000000000000000000001",
+     "expect": {
+      "backlinks": [
+       {
+        "id": "l1",
+        "kind": "fixes",
+        "from_item_id": "01JC0000000000000000000002"
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "rules fire on edges, not scans: linking never fixes or restarts a bug, and a deliberate return to Triaged stays",
+   "steps": [
+    {
+     "call": {
+      "method": "bug.report",
+      "change_id": "chg134",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Bug 1",
+      "what_happened": "It broke",
+      "severity": "major"
+     },
+     "items": [
+      {
+       "version": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "bug.triage",
+      "change_id": "chg135",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 1,
+      "area_id": "gen",
+      "severity": "major",
+      "priority": "normal"
+     },
+     "items": [
+      {
+       "version": 2
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg136",
+      "item_id": "01JC0000000000000000000002",
+      "project_id": "p1",
+      "title": "Task 2"
+     },
+     "items": [
+      {
+       "number": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.set_status",
+      "change_id": "chg137",
+      "item_id": "01JC0000000000000000000002",
+      "expected_version": 1,
+      "status": "done"
+     },
+     "items": [
+      {
+       "status": "done"
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "work.link",
+      "change_id": "chg138",
+      "link_id": "la",
+      "from_item_id": "01JC0000000000000000000002",
+      "kind": "fixes",
+      "to": {
+       "type": "item",
+       "item_id": "01JC0000000000000000000001"
+      }
+     },
+     "items": [
+      {
+       "fixes": [
+        "01JC0000000000000000000001"
+       ]
+      }
+     ]
+    },
+    {
+     "get": "01JC0000000000000000000001",
+     "expect": {
+      "summary": {
+       "status": "triaged"
+      }
+     }
+    },
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg139",
+      "item_id": "01JC0000000000000000000003",
+      "project_id": "p1",
+      "title": "Task 3",
+      "fixes": [
+       {
+        "link_id": "lnk3",
+        "bug_id": "01JC0000000000000000000001"
+       }
+      ]
+     },
+     "items": [
+      {
+       "number": 2
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.set_status",
+      "change_id": "chg140",
+      "item_id": "01JC0000000000000000000003",
+      "expected_version": 1,
+      "status": "in_progress"
+     },
+     "items": [
+      {
+       "status": "in_progress"
+      },
+      {
+       "status": "in_progress"
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "bug.mark_fixed",
+      "change_id": "chg141",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 3,
+      "note": "By hand"
+     },
+     "items": [
+      {
+       "status": "fixed"
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg142",
+      "item_id": "01JC0000000000000000000004",
+      "project_id": "p1",
+      "title": "Task 4",
+      "fixes": [
+       {
+        "link_id": "lnk4",
+        "bug_id": "01JC0000000000000000000001"
+       }
+      ]
+     },
+     "items": [
+      {
+       "number": 3
+      }
+     ]
+    },
+    {
+     "get": "01JC0000000000000000000001",
+     "expect": {
+      "summary": {
+       "status": "fixed"
+      }
+     }
+    },
+    {
+     "call": {
+      "method": "bug.verify",
+      "change_id": "chg143",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 4,
+      "outcome": "still_happens",
+      "note": "Still"
+     },
+     "items": [
+      {
+       "status": "triaged"
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.set_status",
+      "change_id": "chg144",
+      "item_id": "01JC0000000000000000000003",
+      "expected_version": 2,
+      "status": "blocked",
+      "blocked_reason": "Waiting"
+     },
+     "items": [
+      {
+       "status": "blocked"
+      }
+     ]
+    },
+    {
+     "get": "01JC0000000000000000000001",
+     "expect": {
+      "summary": {
+       "status": "triaged"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a fix task and its bug are in the same project",
+   "steps": [
+    {
+     "call": {
+      "method": "bug.report",
+      "change_id": "chg145",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Bug 1",
+      "what_happened": "It broke",
+      "severity": "major"
+     },
+     "items": [
+      {
+       "version": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg146",
+      "item_id": "01JC0000000000000000000002",
+      "project_id": "p2",
+      "title": "Task 2"
+     },
+     "items": [
+      {
+       "number": 1,
+       "project_id": "p2"
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "work.link",
+      "change_id": "chg147",
+      "link_id": "lx",
+      "from_item_id": "01JC0000000000000000000002",
+      "kind": "fixes",
+      "to": {
+       "type": "item",
+       "item_id": "01JC0000000000000000000001"
+      }
+     },
+     "error": "invalid_request"
+    },
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg148",
+      "item_id": "01JC0000000000000000000003",
+      "project_id": "p2",
+      "title": "Task 3",
+      "fixes": [
+       {
+        "link_id": "ly",
+        "bug_id": "01JC0000000000000000000001"
+       }
+      ]
+     },
+     "error": "invalid_request"
+    },
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg149",
+      "item_id": "01JC0000000000000000000003",
+      "project_id": "p1",
+      "title": "Task 3"
+     },
+     "items": [
+      {
+       "number": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "work.link",
+      "change_id": "chg150",
+      "link_id": "",
+      "from_item_id": "01JC0000000000000000000003",
+      "kind": "fixes",
+      "to": {
+       "type": "item",
+       "item_id": "01JC0000000000000000000001"
+      }
+     },
+     "error": "invalid_request"
     }
    ]
   }

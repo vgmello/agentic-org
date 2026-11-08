@@ -41,6 +41,15 @@ pub struct Step {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FixLink {
+    pub id: String,
+    /// The bug this link's task fixes.
+    pub to: String,
+    pub created_by: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Task {
     /// The `WorkItemSummary` of the contract, as JSON.
     pub summary: Value,
@@ -66,6 +75,9 @@ pub struct Task {
     pub done_at: Option<String>,
     pub checklist: Vec<Step>,
     pub watchers: Vec<String>,
+    /// The links this item makes (a fix task to the bug it fixes).
+    #[serde(default)]
+    pub links: Vec<FixLink>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -237,6 +249,146 @@ fn short_id(id: &str) -> String {
         .to_lowercase()
 }
 
+/// Add the link `task_id` fixes `bug_id` (design §1.7): same project, a live bug, no repeats.
+fn add_fix_link(
+    next: &mut WorkState,
+    task_id: &str,
+    link_id: &str,
+    bug_id: &str,
+    now: &str,
+    actor: &str,
+    changed: &mut Vec<String>,
+) -> Result<(), ApiError> {
+    let bug_project = match next.items.get(bug_id) {
+        Some(b) if b.summary["deleted"] != json!(true) && b.summary["kind"] == json!("bug") => {
+            b.summary["project_id"].clone()
+        }
+        _ => return Err(err("not_found", "That bug is not here.")),
+    };
+    if link_id.is_empty() || link_id.len() > 128 {
+        return invalid("link_id must be a text of 1 to 128 characters.");
+    }
+    if next
+        .items
+        .values()
+        .any(|i| i.links.iter().any(|l| l.id == link_id))
+    {
+        return Err(err("already_exists", "That link already exists."));
+    }
+    let task = next.items.get_mut(task_id).expect("checked by the caller");
+    if task.summary["project_id"] != bug_project {
+        return invalid("A fix task and its bug must be in the same project.");
+    }
+    if task.summary["fixes"]
+        .as_array()
+        .is_some_and(|f| f.contains(&json!(bug_id)))
+    {
+        return Err(err("already_exists", "That task already fixes that bug."));
+    }
+    task.links.push(FixLink {
+        id: link_id.to_string(),
+        to: bug_id.to_string(),
+        created_by: actor.to_string(),
+        created_at: now.to_string(),
+    });
+    task.summary["fixes"]
+        .as_array_mut()
+        .expect("fixes is a list")
+        .push(json!(bug_id));
+    let bug = next.items.get_mut(bug_id).expect("checked above");
+    bug.summary["fixed_by"]
+        .as_array_mut()
+        .expect("fixed_by is a list")
+        .push(json!(task_id));
+    bug.summary["updated_at"] = json!(now);
+    if !changed.iter().any(|c| c == bug_id) {
+        changed.push(bug_id.to_string());
+    }
+    Ok(())
+}
+
+/// What just happened to a fix task or its bug: the rules of design §2.4 fire on these edges, never on a scan.
+enum FixTrigger<'a> {
+    Task { from: &'a str, to: &'a str },
+    Linked { task_status: &'a str },
+    Triaged,
+}
+
+/// A bug follows its fix tasks (design §2.4). While Triaged it goes In progress when a fix task goes In progress (or an
+/// In progress task is linked, or the bug is triaged while one is In progress); it goes Fixed when a fix task goes Done
+/// (or the bug is triaged) and every fix task is Done, at least one Completed, and no required step is left; it goes
+/// back to In progress when a fix task goes back from Done while the bug is Fixed. Cancelled-only fix tasks and
+/// unticked required steps change nothing, and neither does linking to a Fixed bug or unlinking.
+fn follow_fix_tasks(
+    next: &mut WorkState,
+    bug_id: &str,
+    now: &str,
+    changed: &mut Vec<String>,
+    trigger: FixTrigger,
+) {
+    let Some(bug) = next
+        .items
+        .get(bug_id)
+        .filter(|b| b.summary["deleted"] != json!(true) && b.summary["kind"] == json!("bug"))
+    else {
+        return;
+    };
+    let fix_tasks: Vec<&Task> = bug.summary["fixed_by"]
+        .as_array()
+        .map(|ids| {
+            ids.iter()
+                .filter_map(|id| id.as_str())
+                .filter_map(|id| next.items.get(id))
+                .filter(|t| t.summary["deleted"] != json!(true))
+                .collect()
+        })
+        .unwrap_or_default();
+    let status = bug.summary["status"].as_str().unwrap_or("").to_string();
+    let all_done = !fix_tasks.is_empty()
+        && fix_tasks
+            .iter()
+            .all(|t| t.summary["status"] == json!("done"));
+    let any_completed = fix_tasks
+        .iter()
+        .any(|t| t.summary["resolution"] == json!("completed"));
+    let started = match &trigger {
+        FixTrigger::Task { to, .. } => *to == "in_progress",
+        FixTrigger::Linked { task_status } => *task_status == "in_progress",
+        FixTrigger::Triaged => fix_tasks
+            .iter()
+            .any(|t| t.summary["status"] == json!("in_progress")),
+    };
+    let finished = matches!(
+        &trigger,
+        FixTrigger::Task { to: "done", .. } | FixTrigger::Triaged
+    );
+    let mut to: Option<&str> = None;
+    if status == "triaged" && started {
+        to = Some("in_progress");
+    }
+    if finished
+        && (status == "triaged" || status == "in_progress")
+        && all_done
+        && any_completed
+        && !bug.checklist.iter().any(|c| c.required && !c.done)
+    {
+        to = Some("fixed");
+    }
+    if status == "fixed"
+        && matches!(&trigger, FixTrigger::Task { from: "done", to } if *to != "done")
+    {
+        to = Some("in_progress");
+    }
+    let Some(to) = to else { return };
+    let seq = &mut next.seq;
+    let bug = next.items.get_mut(bug_id).expect("found above");
+    bug.summary["status"] = json!(to);
+    touch(seq, bug, now);
+    if !changed.iter().any(|c| c == bug_id) {
+        changed.push(bug_id.to_string());
+    }
+}
+
 /// Apply one call (`{ "method": "task.create", "change_id": …, … }`). Returns the answer (`WorkAccepted`); the state
 /// changes only when the call is accepted.
 pub fn apply(state: &mut WorkState, call: &Value, ctx: &Ctx) -> Result<Value, ApiError> {
@@ -274,8 +426,9 @@ pub fn apply(state: &mut WorkState, call: &Value, ctx: &Ctx) -> Result<Value, Ap
     ] {
         let needed = what == "change_id"
             || (what == "item_id"
-                && !method.starts_with("checklist.check")
-                && !matches!(method, "checklist.edit" | "checklist.remove"))
+                && (method.starts_with("task.")
+                    || method.starts_with("bug.")
+                    || matches!(method, "checklist.add" | "work.delete")))
             || (what == "step_id"
                 && matches!(
                     method,
@@ -383,10 +536,34 @@ pub fn apply(state: &mut WorkState, call: &Value, ctx: &Ctx) -> Result<Value, Ap
                 done_at: None,
                 checklist,
                 watchers: vec![ctx.actor.clone()],
+                links: Vec::new(),
             };
             next.items.insert(item_id.clone(), task);
             next.seq += 1;
             changed.push(item_id.clone());
+            if let Some(fixes) = call.get("fixes").and_then(Value::as_array) {
+                for f in fixes {
+                    let bug_id = str_of(f, "bug_id").unwrap_or("").to_string();
+                    add_fix_link(
+                        &mut next,
+                        &item_id,
+                        str_of(f, "link_id").unwrap_or(""),
+                        &bug_id,
+                        now,
+                        &ctx.actor,
+                        &mut changed,
+                    )?;
+                    follow_fix_tasks(
+                        &mut next,
+                        &bug_id,
+                        now,
+                        &mut changed,
+                        FixTrigger::Linked {
+                            task_status: "todo",
+                        },
+                    );
+                }
+            }
         }
         "task.update" => {
             let seq = &mut next.seq;
@@ -562,6 +739,26 @@ pub fn apply(state: &mut WorkState, call: &Value, ctx: &Ctx) -> Result<Value, Ap
             task.summary["status"] = json!(to);
             touch(seq, task, now);
             changed.push(item_id.clone());
+            let bugs: Vec<String> = task.summary["fixes"]
+                .as_array()
+                .map(|f| {
+                    f.iter()
+                        .filter_map(|b| b.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            for bug_id in bugs {
+                follow_fix_tasks(
+                    &mut next,
+                    &bug_id,
+                    now,
+                    &mut changed,
+                    FixTrigger::Task {
+                        from: &from,
+                        to: &to,
+                    },
+                );
+            }
         }
         "bug.report" => {
             let project_id = str_of(call, "project_id").unwrap_or("");
@@ -627,6 +824,7 @@ pub fn apply(state: &mut WorkState, call: &Value, ctx: &Ctx) -> Result<Value, Ap
                 done_at: None,
                 checklist,
                 watchers: vec![ctx.actor.clone()],
+                links: Vec::new(),
             };
             next.items.insert(item_id.clone(), task);
             next.seq += 1;
@@ -898,6 +1096,94 @@ pub fn apply(state: &mut WorkState, call: &Value, ctx: &Ctx) -> Result<Value, Ap
             let task = next.items.get_mut(&item_id).expect("checked above");
             touch(seq, task, now);
             changed.push(item_id.clone());
+            if method == "bug.triage" {
+                follow_fix_tasks(&mut next, &item_id, now, &mut changed, FixTrigger::Triaged);
+            }
+        }
+        "work.link" => {
+            if str_of(call, "kind") != Some("fixes") {
+                return invalid("Only fix links are supported for now.");
+            }
+            let Some(bug_id) = call
+                .get("to")
+                .filter(|t| t["type"] == json!("item"))
+                .and_then(|t| str_of(t, "item_id"))
+                .map(String::from)
+            else {
+                return invalid("A fix link points at a bug.");
+            };
+            let from = str_of(call, "from_item_id").unwrap_or("").to_string();
+            if from.is_empty() || from.len() > 128 {
+                return invalid("from_item_id must be a text of 1 to 128 characters.");
+            }
+            let task = next
+                .items
+                .get(&from)
+                .filter(|t| t.summary["deleted"] != json!(true))
+                .ok_or_else(|| err("not_found", "That item is not here."))?;
+            if task.summary["kind"] != json!("task") {
+                return invalid("That is a bug, not a task.");
+            }
+            if from == bug_id {
+                return invalid("An item cannot be linked to itself.");
+            }
+            changed.push(from.clone());
+            add_fix_link(
+                &mut next,
+                &from,
+                str_of(call, "link_id").unwrap_or(""),
+                &bug_id,
+                now,
+                &ctx.actor,
+                &mut changed,
+            )?;
+            let seq = &mut next.seq;
+            touch(seq, next.items.get_mut(&from).expect("checked above"), now);
+            let task_status = next.items[&from].summary["status"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
+            follow_fix_tasks(
+                &mut next,
+                &bug_id,
+                now,
+                &mut changed,
+                FixTrigger::Linked {
+                    task_status: &task_status,
+                },
+            );
+        }
+        "work.unlink" => {
+            let link_id = str_of(call, "link_id").unwrap_or("").to_string();
+            let Some(owner) = next
+                .items
+                .iter()
+                .find(|(_, i)| i.links.iter().any(|l| l.id == link_id))
+                .map(|(id, _)| id.clone())
+            else {
+                return Err(err("not_found", "That link is not here."));
+            };
+            let bug_id = next.items[&owner]
+                .links
+                .iter()
+                .find(|l| l.id == link_id)
+                .map(|l| l.to.clone())
+                .expect("found above");
+            let task = next.items.get_mut(&owner).expect("found above");
+            task.links.retain(|l| l.id != link_id);
+            if let Some(f) = task.summary["fixes"].as_array_mut() {
+                f.retain(|b| *b != json!(bug_id));
+            }
+            let seq = &mut next.seq;
+            touch(seq, task, now);
+            changed.push(owner.clone());
+            // Unlinking changes no bug status (design §2.4).
+            if let Some(bug) = next.items.get_mut(&bug_id) {
+                if let Some(f) = bug.summary["fixed_by"].as_array_mut() {
+                    f.retain(|t| *t != json!(owner));
+                }
+                changed.push(bug_id);
+            }
         }
         "checklist.add" => {
             let seq = &mut next.seq;
@@ -1087,6 +1373,22 @@ fn ms(a: &str, b: &str) -> u64 {
     (parse(b) - parse(a)).max(0) as u64
 }
 
+fn links_of(state: &WorkState, id: &str, back: bool) -> Vec<Value> {
+    state
+        .items
+        .iter()
+        .flat_map(|(owner, item)| item.links.iter().map(move |l| (owner, l)))
+        .filter(|(owner, l)| if back { l.to == id } else { owner.as_str() == id })
+        .map(|(owner, l)| {
+            json!({
+                "id": l.id, "from_item_id": owner, "kind": "fixes", "to": {"type": "item", "item_id": l.to},
+                "created_by": l.created_by, "created_at": l.created_at,
+                "target_deleted": state.items.get(&l.to).is_some_and(|t| t.summary["deleted"] == json!(true)),
+            })
+        })
+        .collect()
+}
+
 /// One task in full (`work.get`).
 pub fn get(state: &WorkState, id: &str, now: &str) -> Result<Value, ApiError> {
     let task = state
@@ -1106,7 +1408,7 @@ pub fn get(state: &WorkState, id: &str, now: &str) -> Result<Value, ApiError> {
     }
     let mut item = json!({
         "summary": task.summary, "backlinks_more": false, "watchers_more": false,
-        "checklist": task.checklist, "links": [], "backlinks": [], "watchers": task.watchers, "time": time,
+        "checklist": task.checklist, "links": links_of(state, id, false), "backlinks": links_of(state, id, true), "watchers": task.watchers, "time": time,
     });
     if let Some(d) = &task.description {
         item["description"] = json!(d);
@@ -1203,7 +1505,7 @@ mod tests {
         let cases = vectors["cases"].as_array().unwrap();
         assert_eq!(
             cases.len(),
-            23,
+            29,
             "a case was added or removed: update the Rust runner's count"
         );
         for case in cases {

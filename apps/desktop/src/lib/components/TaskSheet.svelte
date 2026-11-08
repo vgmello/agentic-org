@@ -14,6 +14,7 @@
 	import { workApi, type WorkDraft } from '$lib/work';
 	import { assigneeOptions, assignWarning, nameOf } from '$lib/work/people';
 	import { timeBlock } from '$lib/work/time';
+	import { bugRef } from '$lib/work/bugs';
 	import { movesFrom, PRIORITIES, STATUS_LABEL, taskRef } from '$lib/work/tasks';
 
 	/** The task page (work-items-ux §9): its fields, status, checklist and time. Each change is one call; a stale one reloads. */
@@ -38,6 +39,8 @@
 	} = $props();
 
 	let item = $state<WorkItem | undefined>();
+	// The bugs this task fixes, with their numbers and titles.
+	let fixed = $state<{ id: string; ref: string; title: string }[]>([]);
 	let error = $state<string | undefined>();
 	let busy = $state(false);
 	let title = $state('');
@@ -59,6 +62,7 @@
 		try {
 			const got = await workApi.get(organizationId, taskId);
 			item = got;
+			fixed = (await Promise.all(got.links.filter((l) => l.kind === 'fixes' && l.to.type === 'item').map((l) => workApi.get(organizationId, (l.to as { item_id: string }).item_id).catch(() => undefined)))).flatMap((b) => (b ? [{ id: b.summary.id, ref: bugRef(b.summary), title: b.summary.title }] : []));
 			if (reset) {
 				title = got.summary.title;
 				description = got.description ?? '';
@@ -73,6 +77,7 @@
 		if (open && taskId) {
 			untrack(() => {
 				item = undefined;
+				fixed = [];
 				error = undefined;
 				newStep = blockedReason = anywayReason = '';
 				newRequired = false;
@@ -196,6 +201,8 @@
 					<Label for="task-title">Title</Label>
 					<Input id="task-title" bind:value={title} maxlength={WORK_LIMITS.title * 2} disabled={busy} autocomplete="off" onblur={() => saveField('Title')} />
 				</div>
+
+				{#if fixed.length > 0}<p class="text-sm/6 text-gray-300" data-testid="task-fixes">Fixes {fixed.map((b) => `${b.ref} · ${b.title}`).join(', ')}</p>{/if}
 
 				<div class="grid gap-4 sm:grid-cols-2">
 					<div class="space-y-2">

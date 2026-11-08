@@ -11,7 +11,8 @@
 	import { BUG_STATUS_LABEL, bugRef, closedWord, SEVERITIES, severityWord } from '$lib/work/bugs';
 	import { assigneeOptions, nameOf } from '$lib/work/people';
 	import { timeBlock } from '$lib/work/time';
-	import { PRIORITIES } from '$lib/work/tasks';
+	import { newId } from '$lib/org/commands';
+	import { PRIORITIES, STATUS_LABEL, taskRef } from '$lib/work/tasks';
 
 	/** The bug page (BUG-*, TRI-*, FIX-*): its report, triage while New, then fix, verify and close or reopen. */
 	let {
@@ -21,6 +22,7 @@
 		snapshot,
 		areas,
 		bugs,
+		items,
 		send,
 		onchanged
 	}: {
@@ -30,6 +32,8 @@
 		snapshot: OrgSnapshot;
 		areas: { id: string; name: string; general?: boolean }[];
 		bugs: WorkItemSummary[];
+		/** Every item of the project (the fix tasks are looked up here). */
+		items: WorkItemSummary[];
 		send: (draft: WorkDraft) => Promise<unknown>;
 		onchanged: (message?: string) => void;
 	} = $props();
@@ -104,6 +108,12 @@
 	const people = $derived(assigneeOptions(snapshot));
 	const others = $derived(bugs.filter((b) => b.kind === 'bug' && b.id !== s?.id && b.status !== 'closed'));
 	const originalBug = $derived(s?.duplicate_of ? bugs.find((b) => b.id === s.duplicate_of) : undefined);
+	// Its fix tasks: the tasks with a fixes link to this bug (design §1.7).
+	const fixTasks = $derived((item?.backlinks ?? []).filter((l) => l.kind === 'fixes').map((l) => items.find((i) => i.id === l.from_item_id)).filter((t): t is WorkItemSummary => !!t && !t.deleted));
+	async function createFixTask() {
+		if (!s) return;
+		await act({ method: 'task.create', item_id: newId(), project_id: s.project_id!, title: [...`Fix ${bugRef(s)}: ${s.title}`].slice(0, 120).join(''), fixes: [{ link_id: newId(), bug_id: s.id }] }, `Created a fix task for ${bugRef(s)}.`);
+	}
 	const areaName = (id: string | undefined) => areas.find((a) => a.id === id)?.name ?? 'General';
 	// TRI-1: who looks at it first (no area leads yet: the project's owner of record, the owner).
 	const triager = $derived(nameOf(snapshot, snapshot.members.find((m) => m.owner)?.id));
@@ -165,6 +175,19 @@
 						<Button disabled={busy} onclick={() => act({ method: 'bug.triage', item_id: s.id, expected_version: v, area_id: tArea, severity: tSeverity as 'major', priority: tPriority, assignee_id: tAssignee || undefined }, `${bugRef(s)} triaged.`)}>Triage</Button>
 					</section>
 				{/if}
+
+				<section class="space-y-2" aria-labelledby="fix-tasks" data-testid="fix-tasks">
+					<h3 id="fix-tasks" class="text-sm/6 font-semibold text-white">Fix tasks</h3>
+					<ul class="divide-y divide-white/5 rounded-lg bg-white/5 outline-1 -outline-offset-1 outline-white/10">
+						{#each fixTasks as t (t.id)}
+							<li class="flex items-center gap-x-3 px-3 py-2 text-sm/6" data-testid="fix-task"><span class="text-gray-400">{taskRef(t)}</span><span class="min-w-0 flex-1 [overflow-wrap:anywhere]">{t.title}</span><span class="text-gray-300">{STATUS_LABEL[t.status as 'todo']}{t.status === 'done' && t.resolution === 'cancelled' ? ' · Cancelled' : ''}</span></li>
+						{:else}
+							<li class="px-3 py-2 text-sm/6 text-gray-400">No fix task yet.</li>
+						{/each}
+					</ul>
+					{#if s.status !== 'closed'}<Button size="sm" variant="outline" disabled={busy} onclick={createFixTask}>Create a fix task</Button>{/if}
+					{#if fixTasks.length > 0 && fixTasks.every((t) => t.status === 'done' && t.resolution === 'cancelled') && s.status !== 'closed'}<p class="text-xs/5 text-amber-200">All its fix tasks were cancelled. Create a fix task, or close the bug.</p>{/if}
+				</section>
 
 				{#if s.status !== 'closed' && s.status !== 'new'}
 					<div class="space-y-1">

@@ -11,6 +11,8 @@ import type {
 	BugTriage,
 	BugUpdate,
 	BugVerify,
+	WorkLinkCall,
+	WorkUnlink,
 	ApiErrorCode,
 	ChecklistStep,
 	NewStep,
@@ -42,6 +44,8 @@ export interface StoredTask {
 	done_at?: string;
 	checklist: ChecklistStep[];
 	watchers: string[];
+	/** Links this item makes (`fixes`: a task to the bug it fixes). */
+	links?: { id: string; kind: 'fixes'; to: string; created_by: string; created_at: string }[];
 }
 
 export interface WorkState {
@@ -79,6 +83,8 @@ export type WorkCall =
 	| ({ method: 'bug.verify' } & BugVerify)
 	| ({ method: 'bug.close' } & BugClose)
 	| ({ method: 'bug.reopen' } & BugReopen)
+	| ({ method: 'work.link' } & WorkLinkCall)
+	| ({ method: 'work.unlink' } & WorkUnlink)
 	| { method: 'checklist.add'; change_id: string; item_id: string; steps: NewStep[]; after_step_id?: string }
 	| { method: 'checklist.check'; change_id: string; step_id: string; done: boolean }
 	| { method: 'checklist.edit'; change_id: string; step_id: string; expected_version: number; text?: string; required?: boolean }
@@ -135,11 +141,54 @@ const expect = (item: StoredTask, version: number) => {
 	if (item.summary.version !== version) fail('conflict', 'This changed since you opened it. Reload to see the latest.');
 };
 
+/** What just happened to a fix task or its bug: the rules of design §2.4 fire on these edges, never on a scan. */
+type FixTrigger = { kind: 'task'; from: string; to: string } | { kind: 'linked'; taskStatus: string } | { kind: 'triaged' };
+
+/**
+ * A bug follows its fix tasks (design §2.4). While Triaged it goes In progress when a fix task goes In progress (or an In
+ * progress task is linked, or the bug is triaged while one is In progress); it goes Fixed when a fix task goes Done (or
+ * the bug is triaged) and every fix task is Done, at least one Completed, and no required step is left; it goes back to
+ * In progress when a fix task goes back from Done while the bug is Fixed. Cancelled-only fix tasks and unticked required
+ * steps change nothing, and neither does linking to a Fixed bug or unlinking.
+ */
+function followFixTasks(state: WorkState, bug: StoredTask, now: string, changed: StoredTask[], trigger: FixTrigger) {
+	if (bug.summary.deleted || bug.summary.kind !== 'bug') return;
+	const fixTasks = bug.summary.fixed_by.map((id) => state.items[id]).filter((t) => t && !t.summary.deleted);
+	const status = bug.summary.status;
+	let to: 'in_progress' | 'fixed' | undefined;
+	const started = trigger.kind === 'task' ? trigger.to === 'in_progress' : trigger.kind === 'linked' ? trigger.taskStatus === 'in_progress' : fixTasks.some((t) => t.summary.status === 'in_progress');
+	if (status === 'triaged' && started) to = 'in_progress';
+	const finished = (trigger.kind === 'task' && trigger.to === 'done') || trigger.kind === 'triaged';
+	if (finished && (status === 'triaged' || status === 'in_progress') && fixTasks.length > 0 && fixTasks.every((t) => t.summary.status === 'done') && fixTasks.some((t) => t.summary.resolution === 'completed')) {
+		if (!bug.checklist.some((c) => c.required && !c.done)) to = 'fixed';
+	}
+	if (status === 'fixed' && trigger.kind === 'task' && trigger.from === 'done' && trigger.to !== 'done') to = 'in_progress';
+	if (!to) return;
+	bug.summary.status = to;
+	touch(state, bug, now);
+	if (!changed.includes(bug)) changed.push(bug);
+}
+
 function touch(state: WorkState, item: StoredTask, now: string) {
 	item.summary.version += 1;
 	item.summary.updated_at = now;
 	item.summary.checklist = emptyCounts(item.checklist);
 	state.seq += 1;
+}
+
+function addFixLink(state: WorkState, task: StoredTask, linkId: string, bugId: string, changed: StoredTask[], now: string, actor: string) {
+	if (typeof linkId !== 'string' || linkId === '' || linkId.length > 128) fail('invalid_request', 'link_id must be a text of 1 to 128 characters.');
+	if (typeof bugId !== 'string') fail('not_found', 'That bug is not here.');
+	const bug = state.items[bugId];
+	if (!bug || bug.summary.deleted || bug.summary.kind !== 'bug') fail('not_found', 'That bug is not here.');
+	if (bug.summary.project_id !== task.summary.project_id) fail('invalid_request', 'A fix task and its bug must be in the same project.');
+	if (Object.values(state.items).some((i) => i.links?.some((l) => l.id === linkId))) fail('already_exists', 'That link already exists.');
+	if (task.summary.fixes.includes(bugId)) fail('already_exists', 'That task already fixes that bug.');
+	(task.links ??= []).push({ id: linkId, kind: 'fixes', to: bugId, created_by: actor, created_at: now });
+	task.summary.fixes.push(bugId);
+	bug.summary.fixed_by.push(task.summary.id);
+	bug.summary.updated_at = now;
+	if (!changed.includes(bug)) changed.push(bug);
 }
 
 function steps(list: NewStep[], existing: ChecklistStep[]): ChecklistStep[] {
@@ -215,6 +264,10 @@ export function applyWork(state: WorkState, call: WorkCall, ctx: WorkContext): {
 			next.items[call.item_id] = item;
 			next.seq += 1;
 			changed.push(item);
+			for (const f of call.fixes ?? []) {
+				addFixLink(next, item, f.link_id, f.bug_id, changed, now, actor);
+				followFixTasks(next, next.items[f.bug_id], now, changed, { kind: 'linked', taskStatus: item.summary.status });
+			}
 			break;
 		}
 		case 'task.update': {
@@ -291,6 +344,7 @@ export function applyWork(state: WorkState, call: WorkCall, ctx: WorkContext): {
 			s.status = to;
 			touch(next, item, now);
 			changed.push(item);
+			for (const bugId of s.fixes) followFixTasks(next, next.items[bugId], now, changed, { kind: 'task', from, to });
 			break;
 		}
 		case 'bug.report': {
@@ -392,6 +446,7 @@ export function applyWork(state: WorkState, call: WorkCall, ctx: WorkContext): {
 			s.status = 'triaged';
 			touch(next, item, now);
 			changed.push(item);
+			followFixTasks(next, item, now, changed, { kind: 'triaged' });
 			break;
 		}
 		case 'bug.assign': {
@@ -488,6 +543,32 @@ export function applyWork(state: WorkState, call: WorkCall, ctx: WorkContext): {
 			changed.push(item);
 			break;
 		}
+		case 'work.link': {
+			if (call.kind !== 'fixes') fail('invalid_request', 'Only fix links are supported for now.');
+			if (call.to.type !== 'item') return fail('invalid_request', 'A fix link points at a bug.');
+			const bugId = call.to.item_id;
+			const task = findKind(next, call.from_item_id, 'task');
+			if (call.from_item_id === bugId) fail('invalid_request', 'An item cannot be linked to itself.');
+			changed.push(task);
+			addFixLink(next, task, call.link_id, bugId, changed, now, actor);
+			touch(next, task, now);
+			followFixTasks(next, next.items[bugId], now, changed, { kind: 'linked', taskStatus: task.summary.status });
+			break;
+		}
+		case 'work.unlink': {
+			const owner = Object.values(next.items).find((i) => i.links?.some((l) => l.id === call.link_id));
+			if (!owner) fail('not_found', 'That link is not here.');
+			const link = owner!.links!.find((l) => l.id === call.link_id)!;
+			owner!.links = owner!.links!.filter((l) => l.id !== call.link_id);
+			owner!.summary.fixes = owner!.summary.fixes.filter((b) => b !== link.to);
+			const bug = next.items[link.to];
+			if (bug) bug.summary.fixed_by = bug.summary.fixed_by.filter((id) => id !== owner!.summary.id);
+			// Unlinking changes no bug status (design §2.4).
+			touch(next, owner!, now);
+			changed.push(owner!);
+			if (bug && !changed.includes(bug)) changed.push(bug);
+			break;
+		}
 		case 'checklist.add': {
 			const item = find(next, call.item_id);
 			const added = steps(call.steps, item.checklist);
@@ -579,6 +660,22 @@ const timeOf = (item: StoredTask, now: string): TimeFigures => ({
 	as_of: now
 });
 
+const linkOf = (owner: StoredTask, l: NonNullable<StoredTask['links']>[number], s: WorkState) => ({
+	id: l.id,
+	from_item_id: owner.summary.id,
+	kind: l.kind,
+	to: { type: 'item' as const, item_id: l.to },
+	created_by: l.created_by,
+	created_at: l.created_at,
+	target_deleted: !!s.items[l.to]?.summary.deleted
+});
+/** The links an item makes, or (backlinks) the links that point at it. */
+function linksOf(s: WorkState, id: string, back: boolean) {
+	return Object.values(s.items).flatMap((owner) =>
+		(owner.links ?? []).filter((l) => (back ? l.to === id : owner.summary.id === id)).map((l) => linkOf(owner, l, s))
+	);
+}
+
 /** One task in full (`work.get`). */
 export function itemOf(s: WorkState, id: string, now: string): WorkItem {
 	const item = find(s, id);
@@ -595,8 +692,8 @@ export function itemOf(s: WorkState, id: string, now: string): WorkItem {
 		closed_reason: item.closed_reason,
 		done_anyway_detail: item.done_anyway,
 		checklist: item.checklist,
-		links: [],
-		backlinks: [],
+		links: linksOf(s, id, false),
+		backlinks: linksOf(s, id, true),
 		watchers: item.watchers,
 		time: timeOf(item, now)
 	});

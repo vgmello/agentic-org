@@ -324,6 +324,21 @@ export interface BugReopen {
 	note: string;
 }
 
+// ---- Links (§4.6): a fix task fixes a bug --------------------------------------------------------------------------
+
+export interface WorkLinkCall {
+	change_id: string;
+	link_id: string;
+	from_item_id: string;
+	kind: 'fixes' | 'relates_to' | 'pays_back';
+	to: LinkTarget;
+}
+
+export interface WorkUnlink {
+	change_id: string;
+	link_id: string;
+}
+
 export const SEVERITIES = ['critical', 'major', 'minor', 'trivial'] as const;
 
 /** An area of a project (organization data; the mock invents General until `area.*` org commands exist). */

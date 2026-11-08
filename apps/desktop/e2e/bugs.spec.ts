@@ -102,3 +102,43 @@ test('BUG: closing as a duplicate names the original; the filters and counts fol
 	await expect(page.getByTestId('bug-row')).toHaveCount(1);
 	await expect(page.getByTestId('bug-row')).toContainText('Duplicate of B-1');
 });
+
+test('FIX: a fix task drives its bug: In progress when it starts, Fixed when it is Done, and the bug page lists it', async ({ page }) => {
+	await open(page);
+	await report(page, 'Total is wrong');
+	await row(page, 'Total is wrong').getByRole('button', { name: 'Total is wrong' }).click();
+	let sheet = page.getByRole('dialog');
+	await sheet.getByRole('button', { name: 'Triage' }).click();
+	await expect(sheet.getByTestId('bug-status')).toHaveText('Triaged');
+	await expect(sheet.getByTestId('fix-tasks')).toContainText('No fix task yet.');
+	await sheet.getByRole('button', { name: 'Create a fix task' }).click();
+	await expect(sheet.getByTestId('fix-task')).toContainText('T-1');
+	await expect(sheet.getByTestId('fix-task')).toContainText('To do');
+	await page.keyboard.press('Escape');
+
+	// The task starts: the bug follows.
+	await page.getByRole('tab', { name: 'Tasks' }).click();
+	const task = page.getByTestId('task-card').filter({ hasText: 'Fix B-1' });
+	await task.getByRole('button', { name: /^Actions for/ }).click();
+	await page.getByRole('menuitem', { name: 'In progress', exact: true }).click();
+	await page.getByRole('tab', { name: 'Bugs' }).click();
+	await expect(row(page, 'Total is wrong')).toContainText('In progress');
+
+	// The task is done: the bug is Fixed, waiting to be verified.
+	await page.getByRole('tab', { name: 'Tasks' }).click();
+	await page.getByTestId('task-card').filter({ hasText: 'Fix B-1' }).getByRole('button', { name: /^Actions for/ }).click();
+	await page.getByRole('menuitem', { name: 'Done', exact: true }).click();
+	await page.getByRole('tab', { name: 'Bugs' }).click();
+	await expect(row(page, 'Total is wrong')).toContainText('Fixed');
+	await row(page, 'Total is wrong').getByRole('button', { name: 'Total is wrong' }).click();
+	sheet = page.getByRole('dialog');
+	await expect(sheet.getByTestId('fix-task')).toContainText('Done');
+	await shot(page, 'bug-fix-task');
+	await page.keyboard.press('Escape');
+
+	// The task page says what it fixes.
+	await page.getByRole('tab', { name: 'Tasks' }).click();
+	await page.getByRole('button', { name: 'Show all done' }).click();
+	await page.getByTestId('task-card').filter({ hasText: 'Fix B-1' }).getByRole('button', { name: /Fix B-1/ }).click();
+	await expect(page.getByTestId('task-fixes')).toContainText('Fixes B-1 · Total is wrong');
+});

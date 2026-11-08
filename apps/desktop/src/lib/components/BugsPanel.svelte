@@ -99,4 +99,4 @@
 </div>
 
 <ReportBugDialog bind:open={reporting} {projectId} {projectName} {areas} {bugs} {send} onopen={open} ondone={(created) => { toast.success(`Bug ${created.ref} reported.`); void load(); }} />
-<BugSheet bind:open={sheetOpen} {organizationId} bugId={openId} {snapshot} {areas} {bugs} {send} onchanged={(message) => { if (message) announce(message); void load(); }} />
+<BugSheet bind:open={sheetOpen} {organizationId} bugId={openId} {snapshot} {areas} {bugs} items={all ?? []} {send} onchanged={(message) => { if (message) announce(message); void load(); }} />
