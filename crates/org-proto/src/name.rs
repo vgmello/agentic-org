@@ -13,7 +13,10 @@ use crate::{ApiError, ErrorCode, ORGANIZATION_NAME_MAX_CHARS};
 /// control characters.
 ///
 /// Only [`OrganizationName::parse`] makes one, so holding one means the name passed the rule.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+///
+/// It deliberately has no `PartialEq`, `Eq` or `Hash`: a derived comparison would be
+/// case-sensitive, which is the wrong test for duplicates. Compare [`OrganizationName::key`]s.
+#[derive(Debug, Clone)]
 pub struct OrganizationName {
     name: String,
     key: String,
@@ -49,8 +52,9 @@ impl OrganizationName {
     }
 
     /// The key two names are compared by for uniqueness, which ignores case: the Unicode
-    /// lowercase of the trimmed name (`str::to_lowercase`). There's no Unicode normalization,
-    /// so a composed and a decomposed spelling of the same accented name are different keys.
+    /// lowercase of the trimmed name (`str::to_lowercase`). It isn't full Unicode case folding
+    /// ("STRASSE" and "straße" differ), and there's no Unicode normalization, so a composed and a
+    /// decomposed spelling of the same accented name are different keys.
     ///
     /// Compare keys, never names. The key is only for comparing; store and show
     /// [`OrganizationName::as_str`].
@@ -122,10 +126,10 @@ mod tests {
 
     #[test]
     fn empty_or_only_white_space_is_empty() {
-        assert_eq!(OrganizationName::parse(""), Err(NameError::Empty));
+        assert_eq!(OrganizationName::parse("").unwrap_err(), NameError::Empty);
         assert_eq!(
-            OrganizationName::parse(" \u{a0}\u{2028} "),
-            Err(NameError::Empty)
+            OrganizationName::parse(" \u{a0}\u{2028} ").unwrap_err(),
+            NameError::Empty
         );
     }
 
@@ -139,7 +143,10 @@ mod tests {
             max
         );
         let over = "a".repeat(ORGANIZATION_NAME_MAX_CHARS + 1);
-        assert_eq!(OrganizationName::parse(&over), Err(NameError::TooLong));
+        assert_eq!(
+            OrganizationName::parse(&over).unwrap_err(),
+            NameError::TooLong
+        );
     }
 
     #[test]
@@ -147,8 +154,8 @@ mod tests {
         for c in ['\u{0}', '\u{1b}', '\u{7f}', '\u{9f}', '\t'] {
             let raw = format!("Ac{c}me");
             assert_eq!(
-                OrganizationName::parse(&raw),
-                Err(NameError::ControlChar),
+                OrganizationName::parse(&raw).unwrap_err(),
+                NameError::ControlChar,
                 "{c:?}"
             );
         }
@@ -175,6 +182,22 @@ mod tests {
             OrganizationName::parse("école").unwrap().key()
         );
         assert_ne!(a.key(), OrganizationName::parse("Acme Lab").unwrap().key());
+    }
+
+    /// The vectors the app's TypeScript pre-check is tested against too.
+    #[test]
+    fn shared_vectors() {
+        let file: serde_json::Value =
+            serde_json::from_str(include_str!("../test-vectors/organization-names.json")).unwrap();
+        let vectors = file["vectors"].as_array().unwrap();
+        assert!(vectors.len() >= 14);
+        for v in vectors {
+            let input = v["input"].as_str().unwrap();
+            match v.get("name").and_then(|n| n.as_str()) {
+                Some(name) => assert_eq!(OrganizationName::parse(input).unwrap().as_str(), name),
+                None => assert!(OrganizationName::parse(input).is_err(), "{input:?}"),
+            }
+        }
     }
 
     #[test]
