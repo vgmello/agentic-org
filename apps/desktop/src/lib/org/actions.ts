@@ -256,6 +256,8 @@ export interface NewAgentInput {
 	model?: string;
 	home?: string;
 	runMode?: RunMode;
+	/** How it starts: active unless the owner says paused. */
+	status?: 'active' | 'paused';
 	/** Teams to put it in, and who it reports to (none means the owner). */
 	teamIds: string[];
 	managerId?: string;
@@ -286,7 +288,7 @@ export async function addAgent(api: OrgSession, input: NewAgentInput, teamName: 
 					...(input.runMode ? { run_mode: input.runMode } : {}),
 					...(input.home ? { home: input.home } : {}),
 					messaging_name: input.messagingName,
-					status: 'active'
+					status: input.status ?? 'active'
 				}
 			}
 		})

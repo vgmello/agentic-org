@@ -425,6 +425,7 @@ async fn import_pick_file(
             .dialog()
             .file()
             .set_title(title)
+            .add_filter("Team hints", &["toml"])
             .blocking_pick_file()
             .and_then(|picked| picked.into_path().ok())
             .map(|path| path.to_string_lossy().into_owned());

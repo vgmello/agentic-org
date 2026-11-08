@@ -88,4 +88,21 @@ describe('IMP-10 the team hints file', () => {
 		expect(broken.rows).toBe(all);
 		expect(broken.fromFile).toBe(0);
 	});
+
+	it('breaks a circle of owner teams at the team that closes it and says so', () => {
+		const all = rows();
+		const hints = {
+			path: 'f',
+			teams: [
+				{ key: 'a', name: 'A', parent: 'b', members: ['ada'] },
+				{ key: 'b', name: 'B', parent: 'a', members: ['Eden'] },
+				{ key: 'c', name: 'C', parent: 'c', members: ['reviewer'] }
+			]
+		};
+		const fitted = applyHints(all, hints, []);
+		const parents = Object.fromEntries(fitted.drafts.map((d) => [d.key, d.parentKey]));
+		expect(Object.values(parents).filter(Boolean).length).toBeLessThan(3);
+		expect(parents.c).toBeUndefined();
+		expect(fitted.notFound.join(' ')).toMatch(/circle/);
+	});
 });

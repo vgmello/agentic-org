@@ -63,8 +63,21 @@ export function applyHints(rows: Row[], hints: Hints, departmentTeams: TeamDraft
 		if (parent) draft.parentKey = lower(nameOf(parent));
 		return draft;
 	});
+	// A team can't be its own owner, however far round: the team that closes a circle loses its parent.
+	const ownerOf = new Map(drafts.map((d) => [d.key, d.parentKey]));
+	for (const draft of drafts) {
+		for (let at = draft.parentKey, hops = 0; at; at = ownerOf.get(at), hops++) {
+			if (at === draft.key || hops > drafts.length) {
+				missing(`${draft.name} (its owner team is a circle)`);
+				delete draft.parentKey;
+				ownerOf.set(draft.key, undefined);
+				break;
+			}
+		}
+	}
 	for (const team of hints.teams) for (const ref of team.members) place(ref, team);
-	// A lead is a member, even when the file did not list them (and stays where a deeper team already put them).
+	// A lead leads the team they are placed in. One who is also in a deeper team keeps that membership here as well: the
+	// executor adds the membership HQ needs before it names them lead.
 	hints.teams.forEach((team, i) => {
 		if (!team.lead) return;
 		const lead = place(team.lead, team);

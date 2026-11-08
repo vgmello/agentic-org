@@ -122,15 +122,20 @@ function breakCycles(rows: Row[]): void {
 	}
 }
 
+/** The agent record keeps at most this many characters in a role, title, focus or model (org-proto `AGENT_TEXT_MAX_CHARS`). */
+const TEXT_MAX = 200;
+/** Free text from HR is cut to the limit rather than refused: it is a description, not an identifier. */
+const clip = (text: string): string => (text.length > TEXT_MAX ? `${text.slice(0, TEXT_MAX - 1).trimEnd()}…` : text);
+
 /** What an HR record says about the agent. HR agents are Claude Code subagents (the toolkit registers them as such). */
 function fromHr(record: HrAgent): Partial<Row> {
 	return {
 		...(roleWords(record.role) ? { role: roleWords(record.role) } : {}),
 		...(record.title ? { title: record.title } : {}),
-		...(record.focus ? { focus: record.focus } : {}),
+		...(record.focus?.trim() ? { focus: clip(record.focus.trim()) } : {}),
 		runtime: 'claude_code',
 		// "inherit" is HR saying it sets no model.
-		...(record.model && lower(record.model) !== 'inherit' ? { model: record.model } : {}),
+		...(record.model?.trim() && lower(record.model) !== 'inherit' ? { model: clip(record.model.trim()) } : {}),
 		...(record.home_path ? { home: record.home_path } : {}),
 		...(record.department ? { teamKey: record.department } : {})
 	};
@@ -153,17 +158,21 @@ export function handleProblem(name: string): string | undefined {
  * starting with a letter or digit, and not shaped like an address (26 letters and digits, a member id's shape).
  */
 export function isValidHandle(name: string): boolean {
-	return handleProblem(name) === undefined && !NOT_AGENTS.has(lower(name));
+	return handleProblem(name) === undefined;
 }
 
 /** What a row still needs from the owner before it can be brought in. */
 export function missingOf(row: Row): ('role' | 'runtime' | 'name')[] {
 	const missing: ('role' | 'runtime' | 'name')[] = [];
 	if (!isValidHandle(row.messagingName)) missing.push('name');
-	if (!row.role?.trim() || !row.title?.trim()) missing.push('role');
+	// Both are required, and at most TEXT_MAX long (HQ refuses more).
+	if (!row.role?.trim() || !row.title?.trim() || row.role.trim().length > TEXT_MAX || row.title.trim().length > TEXT_MAX) missing.push('role');
 	if (row.runtime === undefined || row.runtime === 'unknown') missing.push('runtime');
 	return missing;
 }
+
+/** Whether a row takes part in the import: chosen, complete, and not a person's name. It may already be in (an agent from an earlier try). */
+export const takesPart = (row: Row): boolean => row.choice !== 'skip' && row.existingKind !== 'person' && missingOf(row).length === 0;
 
 /** Whether a row will be brought in as it is: chosen, not already in, and nothing missing. */
 export const isReady = (row: Row): boolean => row.choice !== 'skip' && !row.existingMemberId && missingOf(row).length === 0;
