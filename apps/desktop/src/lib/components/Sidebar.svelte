@@ -54,12 +54,16 @@
 				</ul>
 			</li>
 			<li class="-mx-6 mt-auto">
-				<div class="flex items-center gap-x-3 px-6 py-3 text-sm/6">
+				<a
+					href="/welcome"
+					class="flex items-center gap-x-3 px-6 py-3 text-sm/6 hover:bg-white/5 {focusRing}"
+					aria-label="Switch organization (now {connection.organization.name}, {connection.office.name} office on {connection.office.host})"
+				>
 					<span class="min-w-0">
 						<span class="block truncate font-semibold text-white">{connection.office.host}</span>
-						<span class="block text-xs/5 text-gray-400">{connection.office.name} office</span>
+						<span class="block text-xs/5 text-gray-400">{connection.office.name} office · Switch organization</span>
 					</span>
-				</div>
+				</a>
 			</li>
 		</ul>
 	</nav>

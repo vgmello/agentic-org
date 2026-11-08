@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The main window: dragging the overlay title bar (and double-click to zoom) and the three office commands. Nothing else: no events, paths, menus, fs or shell.",
+  "description": "The main window: dragging the overlay title bar (and double-click to zoom) and the office commands. Nothing else: no events, paths, menus, fs or shell.",
   "windows": [
     "main"
   ],
@@ -10,6 +10,8 @@
     "core:window:allow-internal-toggle-maximize",
     "allow-office-ensure-running",
     "allow-organization-create",
-    "allow-connections-list"
+    "allow-connections-list",
+    "allow-organizations-list",
+    "allow-organization-open"
   ]
 }

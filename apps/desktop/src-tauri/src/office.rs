@@ -29,4 +29,7 @@ pub trait OfficeConnection: Send + Sync {
     fn ensure_running(&self) -> Result<HelloResult, SetupError>;
 
     fn create_organization(&self, name: &str) -> Result<Organization, ApiError>;
+
+    /// Every organization this office hosts (`organization.list`).
+    fn list_organizations(&self) -> Result<Vec<Organization>, ApiError>;
 }

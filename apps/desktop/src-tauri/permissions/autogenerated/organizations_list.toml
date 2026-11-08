@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-organizations-list"
+description = "Enables the organizations_list command without any pre-configured scope."
+commands.allow = ["organizations_list"]
+
+[[permission]]
+identifier = "deny-organizations-list"
+description = "Denies the organizations_list command without any pre-configured scope."
+commands.deny = ["organizations_list"]

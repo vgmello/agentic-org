@@ -11,7 +11,10 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('the sidebar lists every section, with its icon', async ({ page }) => {
-	const links = page.getByRole('navigation', { name: 'Main' }).getByRole('link');
+	const links = page
+		.getByRole('navigation', { name: 'Main' })
+		.getByRole('link')
+		.filter({ hasNotText: 'Switch organization' });
 	await expect(links).toHaveText(SECTIONS);
 	await expect(links.locator('svg')).toHaveCount(SECTIONS.length);
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createFlow, createOrganization, isBusy, type Phase } from './create-flow';
+import { createFlow, createOrganization, describeFailure, isBusy, type Phase } from './create-flow';
 import { createMockOffice, type Scenario } from './office/mock';
 import { toAppError, type OfficeApi } from './office/api';
 
@@ -46,6 +46,8 @@ describe('createOrganization', () => {
 		let called = false;
 		const api: OfficeApi = {
 			connections: async () => [],
+			listOrganizations: async () => [],
+			openOrganization: async () => Promise.reject(new Error('unused')),
 			ensureRunning: async () => ((called = true), Promise.reject(new Error('unreachable'))),
 			createOrganization: async () => Promise.reject(new Error('unreachable'))
 		};
@@ -70,6 +72,8 @@ describe('createOrganization', () => {
 	it('sends a name the office rejects back to the form', async () => {
 		const api: OfficeApi = {
 			connections: async () => [],
+			listOrganizations: async () => [],
+			openOrganization: async () => Promise.reject(new Error('unused')),
 			ensureRunning: async () => ({
 				api_version: 1,
 				server_version: 't',
@@ -85,11 +89,21 @@ describe('createOrganization', () => {
 	it('turns an unexpected throw into a failed phase', async () => {
 		const api: OfficeApi = {
 			connections: async () => [],
+			listOrganizations: async () => [],
+			openOrganization: async () => Promise.reject(new Error('unused')),
 			ensureRunning: async () => Promise.reject(new Error('boom')),
 			createOrganization: async () => Promise.reject(new Error('unused'))
 		};
 		const last = (await run(api, 'Acme')).at(-1);
 		expect(last).toMatchObject({ kind: 'failed', during: 'starting', error: { source: 'app', message: 'boom' } });
+	});
+});
+
+describe('describeFailure', () => {
+	it('words a storage error for what the owner was doing', () => {
+		const error = { source: 'api', code: 'storage_error', message: 'm' } as const;
+		expect(describeFailure(error).title).toBe("Couldn't create the organization");
+		expect(describeFailure(error, 'list').title).toBe("Couldn't read the organizations");
 	});
 });
 
