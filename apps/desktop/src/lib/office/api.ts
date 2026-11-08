@@ -1,4 +1,11 @@
-import { API_ERROR_CODES, type ApiErrorCode, type AppError, type Connection, type HelloResult } from '$lib/proto';
+import {
+	API_ERROR_CODES,
+	type ApiErrorCode,
+	type AppError,
+	type Connection,
+	type HelloResult,
+	type Organization
+} from '$lib/proto';
 import { mockOffice } from './mock';
 import { tauriOffice } from './tauri';
 
@@ -11,8 +18,12 @@ export interface OfficeApi {
 	connections(): Promise<Connection[]>;
 	/** Make sure an office is installed, running and answering. */
 	ensureRunning(): Promise<HelloResult>;
-	/** Create an organization on the office reached by `ensureRunning`, and remember it. */
+	/** Create an organization on this Mac's host (reached by `ensureRunning`), and remember it. */
 	createOrganization(name: string): Promise<Connection>;
+	/** The organizations this Mac already has, each with its offices here (`organization.list`). */
+	listOrganizations(): Promise<Organization[]>;
+	/** Open one of them: remember the connection to its office here. */
+	openOrganization(id: string): Promise<Connection>;
 }
 
 /** Normalize anything thrown by a call into an `AppError`. */

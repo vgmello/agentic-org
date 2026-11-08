@@ -10,7 +10,7 @@ test('first launch: welcome → create → shell, then straight into the shell',
 	await page.goto('/');
 	await expect(page).toHaveURL(/\/welcome$/);
 	await expect(page.getByRole('heading', { name: 'Welcome to agentic.org' })).toBeVisible();
-	await expect(page.getByRole('button', { name: /Open organization/ })).toBeDisabled();
+	await expect(page.getByTestId('organization-row')).toHaveCount(2);
 	await shot(page, 'welcome');
 
 	await page.getByRole('link', { name: /Create organization/ }).click();

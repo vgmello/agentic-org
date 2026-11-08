@@ -51,7 +51,10 @@ export async function createOrganization(
 }
 
 /** The headline and advice for a failure, in the owner's words. */
-export function describeFailure(error: AppError): { title: string; hint: string } {
+export function describeFailure(
+	error: AppError,
+	doing: 'create' | 'list' = 'create'
+): { title: string; hint: string } {
 	switch (error.code) {
 		case 'not_installed':
 			return { title: "The office isn't installed", hint: 'agentic.org needs to install its office server on this Mac.' };
@@ -60,6 +63,11 @@ export function describeFailure(error: AppError): { title: string; hint: string 
 		case 'unreachable':
 			return { title: "The office isn't answering", hint: 'It may still be starting. Try again in a moment.' };
 		case 'storage_error':
+			if (doing === 'list')
+				return {
+					title: "Couldn't read the organizations",
+					hint: 'The office could not read its storage. Try again in a moment.'
+				};
 			return { title: "Couldn't create the organization", hint: 'The office could not write to its storage. Check free disk space, then try again.' };
 		default:
 			return { title: 'Something went wrong', hint: error.message };

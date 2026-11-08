@@ -5,6 +5,8 @@ fn main() {
         tauri_build::AppManifest::new().commands(&[
             "office_ensure_running",
             "organization_create",
+            "organizations_list",
+            "organization_open",
             "connections_list",
         ]),
     ))
