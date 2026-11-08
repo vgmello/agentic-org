@@ -1,6 +1,7 @@
 // "Bring in an existing team": from what the scan found to the rows the owner reviews (spec our-org-in-the-app §4).
 // Pure: nothing here reads a file or calls the office. The scan's two sources are merged by name, one row per agent.
 
+import { trimWhiteSpace } from '$lib/name';
 import type { AgentRuntime, Member } from '$lib/proto';
 import type { HrAgent, Scan } from './types';
 
@@ -18,6 +19,8 @@ export interface Row {
 	/** Where HR keeps its record, when it has one. */
 	hr?: HrAgent;
 	role?: string;
+	/** The role was suggested from the title (shown as "Suggested"); it still counts as filled. */
+	roleSuggested?: boolean;
 	title?: string;
 	focus?: string;
 	runtime?: AgentRuntime;
@@ -28,8 +31,11 @@ export interface Row {
 	/** Who it reports to: another row's key, or `owner`. */
 	managerKey: string;
 	choice: Choice;
-	/** The member already in the organization with this messaging name ("Already in <org>"). */
+	/** The member already in the organization with this messaging name ("Already in <org>"): an agent, or a person whose name it is. */
 	existingMemberId?: string;
+	existingKind?: 'agent' | 'person';
+	/** That agent was offboarded: its name stays reserved, and it is no longer part of the team. */
+	existingOffboarded?: boolean;
 }
 
 export interface Review {
@@ -67,9 +73,12 @@ export function buildRows(scan: Scan, { exclude = [], members = [] }: { exclude?
 	// The same name in other capitals is the same handle (HQ compares them ignoring case): the first one is kept.
 	const handles = new Map<string, string>();
 	for (const name of names) if (!skip.has(lower(name)) && !gone.has(lower(name)) && !handles.has(lower(name))) handles.set(lower(name), name);
-	const existing = new Map(
-		members.filter((m) => m.kind === 'agent' && m.agent).map((m) => [lower(m.agent!.messaging_name), m.id])
-	);
+	// HQ keeps one handle namespace: an agent's messaging name, and a person's name (the owner's apart).
+	const existing = new Map<string, { id: string; kind: 'agent' | 'person'; offboarded: boolean }>();
+	for (const m of members) {
+		if (m.kind === 'agent' && m.agent) existing.set(lower(m.agent.messaging_name), { id: m.id, kind: 'agent', offboarded: m.agent.status === 'offboarded' });
+		else if (m.kind === 'person' && !m.owner) existing.set(lower(m.name), { id: m.id, kind: 'person', offboarded: false });
+	}
 
 	const keys = new Set([...records.keys(), ...handles.keys()]);
 	const rows: Row[] = [...keys].sort().map((key) => {
@@ -78,14 +87,14 @@ export function buildRows(scan: Scan, { exclude = [], members = [] }: { exclude?
 		const messagingName = handle ?? record!.id;
 		return {
 			key,
-			name: record?.name || messagingName,
+			name: cleanName(record?.name) || messagingName,
 			messagingName,
 			source: record && handle ? 'both' : record ? 'hr' : 'messaging',
 			...(record ? { hr: record } : {}),
 			...(record ? fromHr(record) : {}),
 			managerKey: OWNER,
 			choice: 'active',
-			...(existing.has(key) ? { existingMemberId: existing.get(key) } : {})
+			...(existing.has(key) ? { existingMemberId: existing.get(key)!.id, existingKind: existing.get(key)!.kind, ...(existing.get(key)!.offboarded ? { existingOffboarded: true } : {}) } : {})
 		};
 	});
 	// Reporting lines from HR: to another row's agent, or to the owner.
@@ -116,18 +125,45 @@ function breakCycles(rows: Row[]): void {
 	}
 }
 
+/** The agent record keeps at most this many characters in a role, title, focus or model (org-proto `AGENT_TEXT_MAX_CHARS`). */
+const TEXT_MAX = 200;
+/** Free text from HR is cut to the limit rather than refused: it is a description, not an identifier. */
+const clip = (text: string): string => {
+	const chars = [...text];
+	return chars.length > TEXT_MAX ? `${chars.slice(0, TEXT_MAX - 1).join('').trimEnd()}…` : text;
+};
+
+// eslint-disable-next-line no-control-regex
+const CONTROLS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g;
+/** HR text without control characters (HQ refuses them) and trimmed the way HQ trims. */
+const plain = (text: string | undefined): string => trimWhiteSpace((text ?? '').replace(CONTROLS, ' '));
+/** A display name HQ will take: plain, and not longer than an organization name (64 characters). */
+const cleanName = (name: string | undefined): string => [...plain(name)].slice(0, 64).join('');
+
 /** What an HR record says about the agent. HR agents are Claude Code subagents (the toolkit registers them as such). */
 function fromHr(record: HrAgent): Partial<Row> {
 	return {
-		...(roleWords(record.role) ? { role: roleWords(record.role) } : {}),
-		...(record.title ? { title: record.title } : {}),
-		...(record.focus ? { focus: record.focus } : {}),
+		...(roleWords(plain(record.role)) ? { role: roleWords(plain(record.role)) } : {}),
+		...(plain(record.title) ? { title: plain(record.title) } : {}),
+		...(plain(record.focus) ? { focus: clip(plain(record.focus)) } : {}),
 		runtime: 'claude_code',
 		// "inherit" is HR saying it sets no model.
-		...(record.model && lower(record.model) !== 'inherit' ? { model: record.model } : {}),
+		...(plain(record.model) && lower(plain(record.model)) !== 'inherit' ? { model: clip(plain(record.model)) } : {}),
 		...(record.home_path ? { home: record.home_path } : {}),
 		...(record.department ? { teamKey: record.department } : {})
 	};
+}
+
+/**
+ * Why `name` can't be an agent's messaging name, in plain words, or nothing when it can (org-proto: 1 to 64 ASCII letters,
+ * digits, `-`, `_` and `.`, starting with a letter or digit; not a reserved word; not shaped like a member id).
+ */
+export function handleProblem(name: string): string | undefined {
+	if (name.length > 64) return 'Messaging names are at most 64 characters.';
+	if (NOT_AGENTS.has(lower(name))) return `${name} is reserved.`;
+	if (/^[A-Za-z0-9]{26}$/.test(name)) return 'This looks like a member id. Choose another name.';
+	if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) return 'Messaging names use letters, digits, - _ and ., and start with a letter or digit.';
+	return undefined;
 }
 
 /**
@@ -135,17 +171,21 @@ function fromHr(record: HrAgent): Partial<Row> {
  * starting with a letter or digit, and not shaped like an address (26 letters and digits, a member id's shape).
  */
 export function isValidHandle(name: string): boolean {
-	return /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name) && !/^[A-Za-z0-9]{26}$/.test(name);
+	return handleProblem(name) === undefined;
 }
 
 /** What a row still needs from the owner before it can be brought in. */
 export function missingOf(row: Row): ('role' | 'runtime' | 'name')[] {
 	const missing: ('role' | 'runtime' | 'name')[] = [];
 	if (!isValidHandle(row.messagingName)) missing.push('name');
-	if (!row.role?.trim() || !row.title?.trim()) missing.push('role');
+	// Both are required, and at most TEXT_MAX long (HQ refuses more).
+	if (!row.role?.trim() || !row.title?.trim() || row.role.trim().length > TEXT_MAX || row.title.trim().length > TEXT_MAX) missing.push('role');
 	if (row.runtime === undefined || row.runtime === 'unknown') missing.push('runtime');
 	return missing;
 }
+
+/** Whether a row takes part in the import: chosen, complete, and not a person's name. It may already be in (an agent from an earlier try). */
+export const takesPart = (row: Row): boolean => row.choice !== 'skip' && row.existingKind !== 'person' && !row.existingOffboarded && missingOf(row).length === 0;
 
 /** Whether a row will be brought in as it is: chosen, not already in, and nothing missing. */
 export const isReady = (row: Row): boolean => row.choice !== 'skip' && !row.existingMemberId && missingOf(row).length === 0;
@@ -164,4 +204,36 @@ export function counts(rows: Row[]): { ready: number; needDetails: number; alrea
 		alreadyIn: rows.filter((r) => r.existingMemberId).length,
 		paused: rows.filter((r) => isReady(r) && r.choice === 'paused').length
 	};
+}
+
+// ---- role and title (rev 14): both are required by the agent record; the Role comes from the catalog (HR's role files).
+
+const words = (text: string) => lower(text).split(/[^a-z0-9]+/).filter(Boolean);
+
+/** The catalog role whose words overlap the title's the most, when one does clearly (not a tie): "Staff Engineer" -> "staff engineer". */
+export function suggestRole(title: string, roles: string[]): string | undefined {
+	const wanted = new Set(words(title));
+	const scored = roles.map((slug) => ({ role: roleWords(slug)!, hits: words(slug).filter((w) => wanted.has(w)).length })).filter((r) => r.hits > 0);
+	const best = Math.max(0, ...scored.map((r) => r.hits));
+	const top = scored.filter((r) => r.hits === best);
+	return top.length === 1 ? top[0].role : undefined;
+}
+
+/** "software engineer" -> "Software Engineer". */
+const titleCase = (text: string): string => text.replace(/\b\p{L}/gu, (c) => c.toUpperCase());
+
+/** The owner picked a role: the title follows its words until the owner gives their own. */
+export function chooseRole(row: Row, role: string): Row {
+	const keepsTitle = !!row.title && row.title !== titleCase(row.role ?? '');
+	return { ...row, role, roleSuggested: false, title: keepsTitle ? row.title : titleCase(role) };
+}
+
+/** "Custom title…": the title is the owner's own, and an empty role gets the catalog's best match for it, marked Suggested. */
+export function chooseTitle(row: Row, title: string, roles: string[]): Row {
+	const next: Row = { ...row, title };
+	if (!next.role?.trim()) {
+		const suggested = suggestRole(title, roles);
+		if (suggested) return { ...next, role: suggested, roleSuggested: true };
+	}
+	return next;
 }

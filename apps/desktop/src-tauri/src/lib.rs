@@ -393,6 +393,50 @@ async fn import_scan(
     .await
 }
 
+/// Read the optional team hints file the owner picked (`import_pick_file`). A file that can't be used says why.
+#[tauri::command]
+async fn import_read_hints(
+    granted: State<'_, Arc<import_scan::Granted>>,
+    path: String,
+) -> Result<import_scan::Hints, CommandError> {
+    let granted = Arc::clone(&granted);
+    blocking(move || {
+        import_scan::read_hints_granted(&granted, &path).map_err(|_| {
+            CommandError::local(
+                "invalid_request",
+                "That file wasn't chosen here: pick it again.",
+            )
+        })
+    })
+    .await
+}
+
+/// Ask the owner for a file with the system's file picker. `None`: they cancelled. The file picked may be read as hints.
+#[tauri::command]
+async fn import_pick_file(
+    app: tauri::AppHandle,
+    granted: State<'_, Arc<import_scan::Granted>>,
+    title: String,
+) -> Result<Option<String>, CommandError> {
+    use tauri_plugin_dialog::DialogExt;
+    let granted = Arc::clone(&granted);
+    blocking(move || {
+        let picked = app
+            .dialog()
+            .file()
+            .set_title(title)
+            .add_filter("Team hints", &["toml"])
+            .blocking_pick_file()
+            .and_then(|picked| picked.into_path().ok())
+            .map(|path| path.to_string_lossy().into_owned());
+        if let Some(path) = &picked {
+            granted.grant(path);
+        }
+        Ok(picked)
+    })
+    .await
+}
+
 /// Ask the owner for a folder with the system's folder picker. `None`: they cancelled. The folder picked may be scanned.
 #[tauri::command]
 async fn import_pick_folder(
@@ -759,6 +803,8 @@ pub fn run() {
             import_defaults,
             import_scan,
             import_pick_folder,
+            import_pick_file,
+            import_read_hints,
             connections_list,
             work_snapshot,
             work_get,
@@ -963,7 +1009,7 @@ mod tests {
         assert_eq!(off.unregister_calls.load(Ordering::SeqCst), 1);
     }
 
-    const COMMANDS: [&str; 22] = [
+    const COMMANDS: [&str; 24] = [
         "office_ensure_running",
         "office_ping",
         "office_restart",
@@ -978,6 +1024,8 @@ mod tests {
         "import_defaults",
         "import_scan",
         "import_pick_folder",
+        "import_pick_file",
+        "import_read_hints",
         "connections_list",
         "work_snapshot",
         "work_get",

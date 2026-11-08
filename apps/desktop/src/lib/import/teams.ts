@@ -2,7 +2,7 @@
 // teams: a department becomes a top-level team, and the owner shapes the rest (App, Office, ... under Engineering) in the
 // editable preview. Pure.
 
-import { isReady, type Row } from './rows';
+import { isReady, takesPart, type Row } from './rows';
 
 /** A team to create. `key` is its name in lower case: the same team is the same team whatever its capitals. */
 export interface TeamDraft {
@@ -34,15 +34,15 @@ export function suggestTeams(rows: Row[]): TeamDraft[] {
 		.sort(([a], [b]) => a.localeCompare(b))
 		.map(([k, name]) => {
 			// Only a row that will be brought in can lead.
-			const members = rows.filter((r) => isReady(r) && r.teamKey && key(r.teamKey) === k);
+			const members = rows.filter((r) => takesPart(r) && r.teamKey && key(r.teamKey) === k);
 			const reportsIn = (candidate: Row) => members.filter((m) => m.managerKey === candidate.key).length;
 			const lead = [...members].sort((a, b) => reportsIn(b) - reportsIn(a) || a.key.localeCompare(b.key))[0];
 			return { key: k, name, ...(lead && (reportsIn(lead) > 0 || members.length === 1) ? { leadKey: lead.key } : {}) };
 		});
 }
 
-/** The rows that go in a team: chosen and complete, not already in. */
-export const membersOf = (rows: Row[], team: TeamDraft): Row[] => rows.filter((r) => isReady(r) && r.teamKey && key(r.teamKey) === team.key);
+/** The rows that go in a team: chosen and complete (one already in is still put in its team if it has none). */
+export const membersOf = (rows: Row[], team: TeamDraft): Row[] => rows.filter((r) => takesPart(r) && r.teamKey && key(r.teamKey) === team.key);
 
 /** The teams that will be created: the ones with someone to bring in, and the ones that own them. */
 export function teamsToCreate(rows: Row[], drafts: TeamDraft[]): TeamDraft[] {
