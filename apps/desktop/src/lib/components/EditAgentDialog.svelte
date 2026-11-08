@@ -154,7 +154,12 @@
 			<div class="space-y-2">
 				<Label for="agent-handle">Messaging name</Label>
 				<Input id="agent-handle" bind:value={handle} disabled={busy} autocomplete="off" class="font-mono" aria-invalid={handleError ? true : undefined} aria-describedby={handleError ? 'agent-handle-error' : undefined} />
-				{#if handleError}<p id="agent-handle-error" class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{handleError}</p>{/if}
+				{#if handleError}<p id="agent-handle-error" class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{handleError}</p>
+				{:else if shown?.agent && handle !== shown.agent.messaging_name && handle !== ''}
+					<p class="text-sm/6 text-amber-200 [overflow-wrap:anywhere]" data-testid="handle-change-warning">
+						Others reach {shown.name} as <code class="font-mono">{shown.agent.messaging_name}</code> today. After saving they must use <code class="font-mono">{handle}</code>, and <code class="font-mono">{shown.agent.messaging_name}</code> stays reserved.
+					</p>
+				{/if}
 			</div>
 			{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 			<DialogFooter>

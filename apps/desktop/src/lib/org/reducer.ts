@@ -74,6 +74,11 @@ const checkText = (t: string | undefined) => {
 	if (badText(t)) fail('invalid_request', "A title or contact can't be empty, too long or contain control characters.");
 };
 
+/** The id of a new member is exactly 26 ASCII letters or digits (ULID-shaped); the sample's readable ids are display fixtures. */
+function checkNewMemberId(id: string) {
+	if (!/^[A-Za-z0-9]{26}$/.test(id)) fail('invalid_request', "A new member's id is 26 letters or digits.");
+}
+
 // ---- names ------------------------------------------------------------------------------------------------------
 
 /** Whether a sibling of `parent` (a team with the same owner) already has this name, other than `exceptId`. */
@@ -281,6 +286,7 @@ function apply(s: OrgSnapshot, c: OrgCommand, ctx: Ctx): OrgSnapshot {
 		case 'member.add_person': {
 			const p = c.params;
 			checkText(p.contact);
+			checkNewMemberId(p.member_id);
 			const name = checkedName(p.name);
 			if (s.members.some((m) => m.id === p.member_id)) fail('already_exists', 'That person id is taken.');
 			if (handleTaken(s, name)) fail('already_exists', `${name} is already taken as a name here.`);
@@ -334,6 +340,7 @@ function apply(s: OrgSnapshot, c: OrgCommand, ctx: Ctx): OrgSnapshot {
 		case 'member.add_agent': {
 			const p = c.params;
 			if (ctx.offices && !ctx.offices.includes(p.office_id)) fail('not_found', "That office isn't in the organization.");
+			checkNewMemberId(p.member_id);
 			const profile = newProfile(p.profile);
 			const name = checkedName(p.name);
 			if (s.members.some((m) => m.id === p.member_id)) fail('already_exists', 'That agent id is taken.');

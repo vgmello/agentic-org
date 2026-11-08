@@ -274,6 +274,19 @@ fn ids_of(command: &OrgCommand) -> Vec<&str> {
     ids
 }
 
+/// The id of a new member (`member.add_person`, `member.add_agent`) is exactly 26 ASCII letters or digits (ULID-shaped):
+/// anything else is `invalid_request`. The sample's readable ids (`sam`) are display fixtures, not ids to send.
+fn check_new_member_id(id: &str) -> Outcome<()> {
+    if id.len() == 26 && id.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        Ok(())
+    } else {
+        err(
+            ErrorCode::InvalidRequest,
+            "A new member's id is 26 letters or digits.",
+        )
+    }
+}
+
 /// An id that is not an id (empty, long, with control characters) can never name anything, so it is
 /// refused before the organization is looked at.
 fn well_formed(command: &OrgCommand) -> Outcome<()> {
@@ -533,6 +546,7 @@ fn apply_to(s: &mut OrgSnapshot, command: &OrgCommand, ctx: &Ctx) -> Outcome {
         }
         OrgCommand::MemberAddPerson(p) => {
             check_text(&p.contact)?;
+            check_new_member_id(&p.member_id)?;
             let name = checked_name(&p.name)?;
             if s.members.iter().any(|m| m.id == p.member_id) {
                 return err(ErrorCode::AlreadyExists, "That person id is taken.");
@@ -702,6 +716,7 @@ fn apply_to(s: &mut OrgSnapshot, command: &OrgCommand, ctx: &Ctx) -> Outcome {
                     "That office isn't in the organization.",
                 );
             }
+            check_new_member_id(&p.member_id)?;
             let profile = rules::new_profile(&p.profile)?;
             let name = checked_name(&p.name)?;
             if s.members.iter().any(|m| m.id == p.member_id) {
@@ -1512,7 +1527,7 @@ mod tests {
             &mut h,
             "member.add_person",
             1,
-            json!({"member_id": "p1", "name": "Sam Ortiz"}),
+            json!({"member_id": "01JC00000000000000000000P1", "name": "Sam Ortiz"}),
         )
         .unwrap();
         for (n, name) in [
@@ -1525,7 +1540,7 @@ mod tests {
                 &mut h,
                 "member.add_person",
                 n,
-                json!({"member_id": format!("x{n}"), "name": name}),
+                json!({"member_id": format!("01JC{n:0>22}"), "name": name}),
             );
             if name == "SAM" {
                 assert_eq!(
@@ -1542,7 +1557,7 @@ mod tests {
                 &mut h,
                 "member.add_person",
                 6,
-                json!({"member_id": "p1", "name": "Someone"})
+                json!({"member_id": "01JC00000000000000000000P1", "name": "Someone"})
             )),
             ErrorCode::AlreadyExists
         );
@@ -1551,7 +1566,7 @@ mod tests {
                 &mut h,
                 "member.add_person",
                 7,
-                json!({"member_id": "p9", "name": " "})
+                json!({"member_id": "01JC00000000000000000000P9", "name": " "})
             )),
             ErrorCode::InvalidName
         );
@@ -1560,7 +1575,7 @@ mod tests {
             &mut h,
             "member.update_person",
             8,
-            json!({"member_id": "p1", "expected_version": 1, "name": "SAM ORTIZ"}),
+            json!({"member_id": "01JC00000000000000000000P1", "expected_version": 1, "name": "SAM ORTIZ"}),
         )
         .unwrap();
         assert_eq!(
@@ -1568,7 +1583,7 @@ mod tests {
                 &mut h,
                 "member.update_person",
                 9,
-                json!({"member_id": "p1", "expected_version": 2, "name": "Avery Stone"})
+                json!({"member_id": "01JC00000000000000000000P1", "expected_version": 2, "name": "Avery Stone"})
             )),
             ErrorCode::AlreadyExists
         );
@@ -1992,7 +2007,7 @@ mod tests {
         let cases = vectors["cases"].as_array().unwrap();
         assert_eq!(
             cases.len(),
-            142,
+            147,
             "a case was lost or added: update this count"
         );
         for case in cases {
@@ -2048,7 +2063,7 @@ mod tests {
                 &mut h,
                 "member.add_person",
                 70,
-                json!({"member_id": "p9", "name": "Pat", "contact": contact}),
+                json!({"member_id": "01JC00000000000000000000P9", "name": "Pat", "contact": contact}),
             );
             assert_eq!(code(r), ErrorCode::InvalidRequest, "{contact:?}");
         }
@@ -2168,15 +2183,15 @@ mod tests {
             &mut h,
             "member.add_agent",
             1,
-            json!({"member_id": "cam", "name": "  Cameron  ", "office_id": "office-1",
+            json!({"member_id": "01JC0000000000000000000CAM", "name": "  Cameron  ", "office_id": "office-1",
                    "profile": {"role": "  QA engineer ", "title": "QA", "focus": " tests ", "runtime": "codex",
                                "model": " gpt ", "messaging_name": "cam", "status": "active"}}),
         )
         .unwrap();
         assert!(
-            matches!(&changes[..], [OrgChange::MemberUpserted { member }] if member.id == "cam")
+            matches!(&changes[..], [OrgChange::MemberUpserted { member }] if member.id == "01JC0000000000000000000CAM")
         );
-        let cam = member(&h.snapshot, "cam");
+        let cam = member(&h.snapshot, "01JC0000000000000000000CAM");
         assert_eq!(
             (cam.name.as_str(), cam.kind, cam.version),
             ("Cameron", MemberKind::Agent, 1)
@@ -2184,7 +2199,7 @@ mod tests {
         assert_eq!(cam.office_id.as_deref(), Some("office-1"));
         assert_eq!(cam.created_at.as_deref(), Some("2026-11-08T12:00:00.000Z"));
         assert_eq!(cam.reports_to_member_id, None);
-        let a = profile_of(&h.snapshot, "cam");
+        let a = profile_of(&h.snapshot, "01JC0000000000000000000CAM");
         assert_eq!(
             (a.role.as_str(), a.focus.as_deref(), a.model.as_deref()),
             ("QA engineer", Some("tests"), Some("gpt"))
