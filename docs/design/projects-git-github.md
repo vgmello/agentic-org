@@ -66,7 +66,7 @@ Splitting them means a leaked satellite token can push to repositories, but neve
   - **Residual risk, stated plainly:** agents run as the **same macOS user** as the office. A determined agent could edit the mirror's files directly, or reach the office's Keychain items through the same user. The separate mirror and the hardening stop accidents and ordinary git misuse, not a hostile agent. Real isolation means running agents as a separate macOS user or in a sandbox. That's a later decision, and for now offices and agents are all yours (decision 8).
   - **No server-side guard on GitHub Free:** rulesets that protect the default branch need GitHub Pro, Team or Enterprise for private repositories. The app detects the plan, and HQ sets them up with the admin app (rulesets need Administration) where available. Without them, **the office's push check is the required control**, and it's tested (G2c).
 - **One git operation at a time per repository** (fetch, worktree add or remove, push), which avoids `.git` lock races.
-- **Commit identity:** commits are authored as the agent (e.g. `ada (agentic.org)`) with the connected account's **GitHub no-reply address** (`<id>+<login>@users.noreply.github.com`). Pushes aren't rejected when the account hides its email, and the commits are still tied to it (open question 3).
+- **Commit identity** *(decided by the user, 2026-11-08)*: commits are authored under **the connected user's name and GitHub no-reply address** (`<id>+<login>@users.noreply.github.com`), with the agent added as a co-author: a `Co-authored-by: <agent name> <agent address>` trailer. Pushes aren't rejected when the account hides its email.
 - **When a task moves to another office** (a handover or reclaim, offices design):
   - The old office pushes the task branch, including work in progress, before it hands over.
   - The new office fetches it and checks out the same branch in its own worktree.
@@ -121,10 +121,12 @@ Each step: its own branch, an independent review, my go, then a merge into `v1`.
 - **The app connected to a satellite** creates a project at HQ like any organization command, relayed through its office. HQ, which holds the admin app, creates the repository.
 - **Internal:** periodic fetch for followed projects, and the push before a handover. Both are office behaviour, not calls.
 
+## Decisions (the user, 2026-11-08)
+2. New project repositories go under **your personal account**, **private by default**.
+3. Commits: **your name and no-reply email as author, the agent as co-author**.
+4. Install scope: **selected repositories**.
+5. **Each office signs in to GitHub itself.**
+6. Running agents as a separate macOS user (or sandboxed): **v2**.
+
 ## Open questions for the user
-1. **Registering the two GitHub Apps** ("agentic.org" and "agentic.org admin"): one form each on GitHub (Settings → Developer settings → GitHub Apps), with the device flow and token expiry enabled and the permissions above. Under your personal account or a GitHub organization? I'll write the exact steps.
-2. **Where new project repositories go:** your personal account, or a GitHub organization (which one)? Private by default?
-3. **Agents' commits:** authored under the agent's name with your account's no-reply email (proposed), or under your own name with the agent as a co-author?
-4. **Install scope:** selected repositories (recommended: a leaked token reaches only project repositories) or "All repositories" (simpler: new repositories are covered automatically)?
-5. **Each office signs in to GitHub itself** (proposed: simple, and all offices are yours), rather than HQ sharing its token with satellites. Is that OK?
-6. **Running agents as a separate macOS user** (or sandboxed) would truly keep tokens and the office's files out of agents' reach. Not now, but should it be on the roadmap?
+1. **One GitHub App or two?** Two apps: a read-and-push app for every office, and an admin app at HQ only that can create repositories. Or one read-and-push app only, where you create each repository on GitHub and agentic.org links it, and creating repositories from the app comes later (ada's recommendation, given selected repositories). Then: who registers it (I'll write the exact steps).
