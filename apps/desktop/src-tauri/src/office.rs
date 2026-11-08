@@ -1,10 +1,15 @@
 //! The app's view of an office server.
 //!
-//! `OfficeConnection` is the seam between the Tauri shell and an office. Today only `MockOffice`
-//! implements it. The real implementation will sit on `org-client` and the office-setup layer
-//! (install, login-service registration, start), neither of which exists yet.
+//! `OfficeConnection` is the seam between the Tauri shell and an office. `RealOffice` (on `org-client` and the
+//! login-service setup) is the app's default; `MockOffice` stands in for development and when there is no office home.
 
 use crate::org_command::OrgCommand;
+use crate::org_feed::OrgUpdate;
+pub use crate::status_feed::StatusSink;
+use std::sync::Arc;
+
+/// Where organization changes go (the UI's event channel).
+pub type OrgSink = Arc<dyn Fn(OrgUpdate) + Send + Sync>;
 use crate::work_engine::WorkError;
 use org_proto::{ApiError, CommandAccepted, HelloResult, OrgSnapshot, Organization};
 use serde::Serialize;
@@ -105,4 +110,23 @@ pub trait OfficeConnection: Send + Sync {
     /// True while the data this connection serves is invented (the mock office), so the UI says so.
     /// Every implementation says so: a stand-in that forgot would show invented data as real.
     fn serves_sample_data(&self) -> bool;
+
+    /// Start telling `sink` about office status changes as they happen. Once per office, at startup; the work runs
+    /// on a thread of its own for as long as the app lives. An office with no live status (the mock) does nothing.
+    fn follow_status(&self, _sink: StatusSink) {}
+
+    /// Where to report the changes of the organizations passed to `follow_org`. Set once, at startup.
+    fn set_org_sink(&self, _sink: OrgSink) {}
+
+    /// Start following one organization's changes (once; later calls do nothing), reporting to the sink. An office
+    /// with no live changes (the mock) does nothing.
+    fn follow_org(self: Arc<Self>, _organization_id: &str) {}
+
+    /// Whether the organization's feed is subscribed right now (`None`: it has not said yet, or there is no feed).
+    fn org_live(&self, _organization_id: &str) -> Option<bool> {
+        None
+    }
+
+    /// The owner pressed Retry on "live updates paused": connect the organization's feed now, not at its next try.
+    fn retry_org_feed(&self, _organization_id: &str) {}
 }

@@ -2,13 +2,15 @@ use std::fs::{self, File, TryLockError};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use crate::directory::{self, RuntimeView, ThisOffice};
 use crate::error::OfficeError;
 use crate::key::{Key, KeyProvider};
 use crate::model::{NewOffice, OfficeInfo};
 use crate::office_file::{self, is_plain_id};
 use crate::private_fs::{absolute, private_dir, private_file, tighten_dir};
 use crate::rules::OrgCommand;
-use org_proto::org::{CommandAccepted, OrgSnapshot};
+use org_proto::directory::{WhoParams, WhoResult};
+use org_proto::org::{CommandAccepted, OrgChangedData, OrgSnapshot, Position};
 use org_proto::ApiError;
 
 use crate::store::org as org_db;
@@ -52,6 +54,33 @@ const OFFICE_SCHEMA: Schema = Schema {
     },
 };
 
+/// A counter and a condition variable: the commit side bumps it, followers wait on it.
+#[derive(Default)]
+struct ChangeSignal {
+    count: std::sync::Mutex<u64>,
+    changed: std::sync::Condvar,
+}
+
+impl ChangeSignal {
+    fn token(&self) -> u64 {
+        *self.count.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn bump(&self) {
+        *self.count.lock().unwrap_or_else(|p| p.into_inner()) += 1;
+        self.changed.notify_all();
+    }
+
+    fn wait(&self, seen: u64, timeout: Duration) -> u64 {
+        let guard = self.count.lock().unwrap_or_else(|p| p.into_inner());
+        let (guard, _) = self
+            .changed
+            .wait_timeout_while(guard, timeout, |count| *count == seen)
+            .unwrap_or_else(|p| p.into_inner());
+        *guard
+    }
+}
+
 /// An office: ONE folder, `<home>/offices/<office-id>/`, served by one `org-office-server`.
 ///
 /// ```text
@@ -69,6 +98,8 @@ const OFFICE_SCHEMA: Schema = Schema {
 pub struct Office {
     folder: PathBuf,
     info: OfficeInfo,
+    /// Counts committed organization commands, to wake whoever follows the log.
+    changes: ChangeSignal,
     // Databases close (and checkpoint) before the lock is released: fields drop in order.
     org: Store,
     #[allow(dead_code)] // the office's own data arrives with work items and messaging
@@ -161,6 +192,7 @@ impl Office {
                 info,
                 org,
                 local,
+                changes: ChangeSignal::default(),
                 _lock: lock,
             }),
             Err(error) => {
@@ -236,6 +268,7 @@ impl Office {
             info,
             org,
             local,
+            changes: ChangeSignal::default(),
             _lock: lock,
         })
     }
@@ -331,6 +364,28 @@ impl Office {
         self.org.read(org_db::snapshot)
     }
 
+    /// `who`: the directory cards matching `params`, from one consistent read of the organization
+    /// and the runtime data (`runtime`: presence, status lines). `Err(ApiError)` inside the `Ok`
+    /// is the caller's mistake (see [`crate::directory::who`]); the outer error is the storage's.
+    pub fn who(
+        &self,
+        params: &WhoParams,
+        runtime: &dyn RuntimeView,
+    ) -> Result<Result<WhoResult, ApiError>, OfficeError> {
+        let snapshot = self.org_snapshot()?;
+        let office = ThisOffice {
+            id: &self.info.office_id,
+            name: &self.info.office_name,
+        };
+        Ok(directory::who(
+            &snapshot,
+            office,
+            &time::now_rfc3339(),
+            runtime,
+            params,
+        ))
+    }
+
     /// Runs one organization command on this office (HQ): the rules decide, and the changes
     /// are logged and applied in one transaction. A retry with the same `command_id` gets the
     /// same answer. `Err(ApiError)` inside the `Ok` is the rules' refusal; the outer error is
@@ -340,8 +395,46 @@ impl Office {
         command: OrgCommand,
     ) -> Result<Result<CommandAccepted, ApiError>, OfficeError> {
         // The clock is read in the writer, so the log's times follow its order.
-        self.org
-            .write(move |db| Ok((org_db::submit(db, time::now_ms(), &command)?, None)))
+        let answer = self
+            .org
+            .write(move |db| Ok((org_db::submit(db, time::now_ms(), &command)?, None)))?;
+        // After the commit: whoever follows the log reads it again (a retry of an old command
+        // changes nothing, and the extra wake-up is harmless).
+        self.changes.bump();
+        Ok(answer)
+    }
+
+    /// The position of the last log entry, from one consistent read.
+    pub fn org_head(&self) -> Result<Position, OfficeError> {
+        self.org.read(org_db::head)
+    }
+
+    /// Whether a subscriber that holds the organization as of `after` can be sent what follows
+    /// (`false`: it must take a fresh snapshot). See `subscribe { from_position }`.
+    pub fn org_can_resume_from(&self, after: Position) -> Result<bool, OfficeError> {
+        self.org.read(|db| org_db::can_resume_from(db, after))
+    }
+
+    /// Up to `limit` committed commands after `after`, oldest first: the data of the
+    /// `org.changed` events.
+    pub fn org_changes_after(
+        &self,
+        after: Position,
+        limit: usize,
+    ) -> Result<Vec<OrgChangedData>, OfficeError> {
+        self.org.read(|db| org_db::changes_after(db, after, limit))
+    }
+
+    /// A number that changes whenever a command has been committed. Read it BEFORE reading the
+    /// log, then [`Office::wait_for_org_change`] with it: a commit in between is not missed.
+    pub fn org_change_token(&self) -> u64 {
+        self.changes.token()
+    }
+
+    /// Waits until the token is no longer `seen` (a command was committed) or `timeout` passes,
+    /// and returns the current token.
+    pub fn wait_for_org_change(&self, seen: u64, timeout: Duration) -> u64 {
+        self.changes.wait(seen, timeout)
     }
 
     /// What `office.json` records about this office.

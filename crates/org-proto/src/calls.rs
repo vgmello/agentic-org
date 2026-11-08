@@ -137,7 +137,8 @@ impl Call for Hello {
 /// process started is reported in that office's `status` (`starting`, `active`, or
 /// `unavailable`), not as an error, so a client never retries into `already_exists`.
 /// Errors: `invalid_name`, `already_exists`, `storage_error`, `not_ready` (the host is still
-/// starting: its startup discards are running; retry shortly).
+/// starting: its startup discards are running; retry shortly), `unavailable` (too many creates
+/// in progress; retry).
 pub struct OrganizationCreate;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -167,8 +168,16 @@ impl Call for OrganizationList {
 }
 
 /// `subscribe`: after the response, the server pushes every [`crate::Event`] on this
-/// connection until it closes. No filter or unsubscribe yet (a filter would be an optional
-/// param, which is additive). A subscriber also receives events for its own actions.
+/// connection until it closes **or the connection binds again**: any `msg.bind`, failed or
+/// not, ends the subscription, and no event follows the bind's answer. Subscribe again (from
+/// the last position you got) once bound. No filter or unsubscribe yet (a filter would be an
+/// optional param, which is additive). A subscriber also receives events for its own actions.
+///
+/// On an **office server** it needs a binding (ADR-0003 §2.1.4): on an unbound connection
+/// it's `not_authorized`, like `org.snapshot`, and today only app-bound connections may
+/// subscribe (an agent-bound subscriber needs its own event filter first). The **host**
+/// serves it to any same-user connection without a binding (its socket is 0600), for the
+/// office list and `office.status_changed`.
 pub struct Subscribe;
 
 /// `subscribe`'s params. `{}` is still valid (live events only).
@@ -229,6 +238,14 @@ impl Call for OfficeList {
 /// still starting: its startup discards are running; retry shortly).
 ///
 /// The result is a secret: never log it, or the response line that carries it.
+///
+/// An app-only call is accepted only on a connection whose client sent it after reading `hello`'s
+/// answer. Bytes already buffered when the host accepted the connection are refused with
+/// `not_authorized`, so never pipeline an app-only call before `hello`'s answer.
+/// First thing in the app's main, before any output or threads: fstat fds 0-2 and dup2
+/// `/dev/null` over any that is a socket; the app never reads or writes an fd it didn't open.
+/// After sending an app-only call, the client sends nothing else on that connection until its
+/// answer arrives.
 pub struct OfficeAppToken;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -276,10 +293,19 @@ impl Call for OfficeAppToken {
 /// Errors: `not_authorized` (the signature check failed), `not_found` (no such office here),
 /// `conflict` (the office isn't `offline` or `unavailable`, e.g. it's already `starting` or
 /// `active`), `unavailable` (only for the two reasons a restart can't fix,
-/// `unsupported_version` and `invalid_request`; the message says why), `not_ready` (the host
+/// `unsupported_version` and `invalid_request`, or an office the host couldn't start; the
+/// message says why), `not_ready` (the host
 /// is still starting: its startup discards are running; retry shortly). A host older than
 /// this call answers `unknown_method`. Show the office's `status_reason`, not this call's
 /// error code: the code says only why the call failed.
+///
+/// An app-only call is accepted only on a connection whose client sent it after reading `hello`'s
+/// answer. Bytes already buffered when the host accepted the connection are refused with
+/// `not_authorized`, so never pipeline an app-only call before `hello`'s answer.
+/// First thing in the app's main, before any output or threads: fstat fds 0-2 and dup2
+/// `/dev/null` over any that is a socket; the app never reads or writes an fd it didn't open.
+/// After sending an app-only call, the client sends nothing else on that connection until its
+/// answer arrives.
 pub struct OfficeRestart;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

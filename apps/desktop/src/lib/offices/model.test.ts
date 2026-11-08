@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { OfficeInfo, OfficeStatusReason } from '$lib/proto';
 import { sampleOrg } from '$lib/org/sample';
-import { agentsIn, copyDetails, displayStatus, displayStatusFor, isHere, orderOffices, roleInfo, rowLabel, secondaryText, statusIcon, statusInfo, unplacedAgents, restartAction, restartOutcome, whyForLabel, whyStopped } from './model';
+import { agentsIn, applyStatusUpdate, copyDetails, displayStatus, displayStatusFor, isHere, orderOffices, roleInfo, rowLabel, secondaryText, statusIcon, statusInfo, unplacedAgents, restartAction, restartOutcome, whyForLabel, whyStopped } from './model';
 
 const office = (id: string, name: string, over: Partial<OfficeInfo> = {}): OfficeInfo => ({
 	id,
@@ -244,5 +244,23 @@ describe('OFC-11 what can be done about a stopped office', () => {
 		expect(displayStatus(true, 'up', 'unavailable', ['office.restart'])).toBe('status_unknown');
 		expect(displayStatus(true, 'up', 'active')).toBe('active'); // capabilities not known yet
 		expect(displayStatus(true, 'down', 'active', [])).toBe('unreachable');
+	});
+});
+
+describe('OFC-11 a live status update from the host', () => {
+	const sat = office('sat', 'Second', { status: 'active' });
+	const known = [hq, sat];
+	it('replaces one office with its updated record and leaves the others as they were', () => {
+		const stopped = { ...hq, status: 'unavailable' as const, status_reason: 'crashed' as const };
+		expect(applyStatusUpdate(known, 'org', { kind: 'office', office: stopped })).toEqual([stopped, sat]);
+	});
+	it('adds an office this organization did not have yet, and ignores another organization’s', () => {
+		const added = office('new', 'New', { status: 'pending' });
+		expect(applyStatusUpdate(known, 'org', { kind: 'office', office: added })).toEqual([hq, sat, added]);
+		expect(applyStatusUpdate(known, 'org', { kind: 'office', office: { ...added, organization_id: 'other' } })).toBe(known);
+	});
+	it('takes the whole list as the truth, keeping only this organization’s offices', () => {
+		const stranger = office('x', 'Elsewhere', { organization_id: 'other' });
+		expect(applyStatusUpdate(known, 'org', { kind: 'offices', offices: [sat, stranger] })).toEqual([sat]);
 	});
 });

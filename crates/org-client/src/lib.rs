@@ -161,6 +161,11 @@ struct Outgoing {
 /// publishing to the connection until it closes, so a second `subscribe_from` can see events
 /// the old subscription already delivered (take a new snapshot and use positions to drop
 /// duplicates), and what the server does with a repeated `subscribe` is its own contract.
+///
+/// **A `msg.bind` on the connection ends the subscription on the server** (failed or not):
+/// no event follows the bind's answer, and nothing on this side says so. Bind first, then
+/// subscribe, and if you ever bind again, drop this `Subscription` and `subscribe_from` again
+/// from the last position you got.
 #[must_use = "dropping the Subscription ends the subscription"]
 pub struct Subscription {
     events: Receiver<Event>,

@@ -1,6 +1,6 @@
 //! The office's socket: JSON lines (`org_proto::frame`), one thread per connection. It answers
-//! `hello`, `org.snapshot`, `msg.bind` (app-wide only) and the organization commands, which
-//! only the app's connection may send; every other method is `unknown_method`. When the server
+//! `hello`, `org.snapshot`, `msg.bind` (app-wide only), `subscribe` and the organization
+//! commands, which only the app's connection may send; every other method is `unknown_method`. When the server
 //! stops, every connection is closed and its thread joined BEFORE the office is, so no thread
 //! touches a database that is closing.
 
@@ -9,12 +9,15 @@ use std::io::BufReader;
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use crate::bounded;
+use crate::follow::{self, OrgFeed, Timing};
 use org_office::rules::OrgCommand;
+use org_proto::directory::{Who, WhoParams, WhoResult};
 use org_proto::frame;
 use org_proto::msg::{MsgBind, MsgBindParams, MsgBindResult, MAX_HANDLE_BYTES, OFFICE_SENDER};
 use org_proto::org::{CommandAccepted, TeamCreate};
@@ -31,10 +34,18 @@ pub type SnapshotFn = Box<dyn Fn() -> Result<OrgSnapshot, String> + Send + Sync>
 pub type SubmitFn =
     Box<dyn Fn(OrgCommand) -> Result<Result<CommandAccepted, ApiError>, String> + Send + Sync>;
 
+/// Answers `who` (the office's `who`): the cards, the caller's mistake, or why it could not
+/// answer at all (storage).
+pub type WhoFn =
+    Box<dyn Fn(&WhoParams) -> Result<Result<WhoResult, ApiError>, String> + Send + Sync>;
+
 /// What the connections ask of the office.
 pub struct OfficePorts {
     pub snapshot: SnapshotFn,
     pub submit: SubmitFn,
+    pub who: WhoFn,
+    /// The log, for `subscribe`.
+    pub feed: Box<dyn OrgFeed>,
 }
 
 /// Who a connection is, as far as the socket knows. Only the app is told apart so far: a client
@@ -68,9 +79,17 @@ pub struct Shared {
     ports: OfficePorts,
     /// The app's token, given to the server on the launch pipe. Zeroed when `Shared` drops.
     app_token: AppToken,
+    timing: Timing,
 }
 
 impl Shared {
+    /// The same, with other timings (tests).
+    #[cfg(test)]
+    fn with_timing(mut self, timing: Timing) -> Self {
+        self.timing = timing;
+        self
+    }
+
     /// The `hello` this office answers with.
     pub fn new(
         info: &org_office::OfficeInfo,
@@ -82,6 +101,7 @@ impl Shared {
             office_id: info.office_id.clone(),
             ports,
             app_token,
+            timing: Timing::default(),
             // Part 1 implements only what every server of this api_version has: no capabilities.
             hello: HelloResult::office(
                 env!("CARGO_PKG_VERSION"),
@@ -220,28 +240,92 @@ impl Drop for Slot {
 }
 
 fn serve_connection(stream: UnixStream, shared: &Shared) {
-    let Ok(mut out) = stream.try_clone() else {
+    let Ok(out) = stream.try_clone() else {
         return;
     };
-    let mut reader = BufReader::new(stream);
-    let mut binding = Binding::Anonymous;
-    // A line the framing refuses (too long, not JSON) ends the connection: the stream is out of
-    // step and nothing in it can be trusted.
-    while let Ok(Some(request)) = frame::read_message::<Request>(&mut reader) {
-        let response = answer(&request, shared, &mut binding);
-        match frame::write_message(&mut out, &response) {
-            Ok(()) => {}
-            // The answer does not fit in a frame (nothing was written): say so, and carry on.
-            Err(frame::FrameError::TooLargeToSend) => {
-                let error = Response::error(
-                    request.id,
-                    ApiError::new(ErrorCode::StorageError, "the answer is too large to send"),
-                );
-                if frame::write_message(&mut out, &error).is_err() {
-                    return;
-                }
+    // One writer at a time: answers and pushed events never interleave. Every frame has a
+    // deadline (`bounded`), so a client that does not read cannot hold the thread.
+    let out = Mutex::new(out);
+    // Moves on whenever the connection's binding changes or the reader ends, which stops the
+    // events of the binding before it.
+    let generation = AtomicU64::new(0);
+    // The events sent on this connection, whichever subscription sent them.
+    let sent = AtomicU64::new(0);
+    // The subscription's thread is joined when the connection ends: it reads the office, which
+    // must not be closing.
+    std::thread::scope(|scope| {
+        let mut reader = BufReader::new(stream);
+        let mut binding = Binding::Anonymous;
+        let mut subscribed = false;
+        // The last subscription's thread: a new one waits for it, so a client that binds and
+        // subscribes in a loop never has more than two.
+        let mut pusher: Option<std::thread::ScopedJoinHandle<'_, ()>> = None;
+        // A line the framing refuses (too long, not JSON) ends the connection: the stream is out
+        // of step and nothing in it can be trusted.
+        while let Ok(Some(request)) = frame::read_message::<Request>(&mut reader) {
+            if request.is::<MsgBind>() {
+                generation.fetch_add(1, Ordering::SeqCst);
+                subscribed = false;
             }
-            Err(_) => return,
+            let response = if request.is::<org_proto::Subscribe>() {
+                match follow::begin(
+                    &request,
+                    &*shared.ports.feed,
+                    binding.is_app_bound(),
+                    subscribed,
+                ) {
+                    Ok(start) => {
+                        // The answer first, then the events.
+                        let answer =
+                            Response::ok::<org_proto::Subscribe>(request.id, &org_proto::Empty {})
+                                .unwrap_or_else(|_| internal(request.id));
+                        if !send(&out, &request, &answer, shared.timing) {
+                            break;
+                        }
+                        subscribed = true;
+                        if let Some(old) = pusher.take() {
+                            let _ = old.join();
+                        }
+                        let mine = generation.load(Ordering::SeqCst);
+                        let (feed, out, generation, sent) =
+                            (&*shared.ports.feed, &out, &generation, &sent);
+                        let timing = shared.timing;
+                        pusher = Some(scope.spawn(move || {
+                            follow::push(feed, out, generation, mine, start, sent, timing)
+                        }));
+                        continue;
+                    }
+                    Err(refusal) => Response::error(request.id, refusal),
+                }
+            } else {
+                answer(&request, shared, &mut binding)
+            };
+            if !send(&out, &request, &response, shared.timing) {
+                break;
+            }
+        }
+        generation.fetch_add(1, Ordering::SeqCst);
+    });
+}
+
+/// Writes `response` to the client; `false` when the connection is gone.
+fn send(out: &Mutex<UnixStream>, request: &Request, response: &Response, timing: Timing) -> bool {
+    let stream = out.lock().unwrap_or_else(|p| p.into_inner());
+    match bounded::write_message(&stream, response, timing.write) {
+        Ok(()) => true,
+        // The answer does not fit in a frame (nothing was written): say so, and carry on.
+        Err(frame::FrameError::TooLargeToSend) => {
+            let error = Response::error(
+                request.id,
+                ApiError::new(ErrorCode::StorageError, "the answer is too large to send"),
+            );
+            bounded::write_message(&stream, &error, timing.write).is_ok()
+        }
+        // A frame may be half written: nothing more goes out on this connection, not even an
+        // event from the follower once it gets the lock.
+        Err(_) => {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+            false
         }
     }
 }
@@ -264,6 +348,9 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
                 .unwrap_or_else(|_| internal(request.id)),
             Err(_) => internal(request.id),
         };
+    }
+    if request.is::<Who>() {
+        return who(request, shared, binding);
     }
     if request.is::<Hello>() {
         return Response::ok::<Hello>(request.id, &shared.hello)
@@ -306,6 +393,31 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
     )
 }
 
+/// `who`: the directory, for a bound connection (`not_bound` otherwise, as that call's contract
+/// says). The binding is checked before the params are read.
+fn who(request: &Request, shared: &Shared, binding: &Binding) -> Response {
+    if !binding.is_bound() {
+        return Response::error(
+            request.id,
+            ApiError::new(ErrorCode::NotBound, "bind before asking who"),
+        );
+    }
+    let Ok(params) = request.params::<Who>() else {
+        return bind_error(
+            request.id,
+            ErrorCode::InvalidRequest,
+            "the params of `who` are not valid",
+        );
+    };
+    match (shared.ports.who)(&params) {
+        Ok(Ok(result)) => {
+            Response::ok::<Who>(request.id, &result).unwrap_or_else(|_| internal(request.id))
+        }
+        Ok(Err(refusal)) => Response::error(request.id, refusal),
+        Err(_) => internal(request.id),
+    }
+}
+
 /// `msg.bind`, app-wide only for now: with the office's `app_token` and no member. Binding as a
 /// member is messaging's and arrives with it; until then every member bind fails closed
 /// (`not_authorized`, the contract's answer to a lookup that fails) after the contract's
@@ -323,7 +435,7 @@ fn bind_connection(request: &Request, shared: &Shared, binding: &mut Binding) ->
         if member.len() > MAX_HANDLE_BYTES {
             return bind_error(request.id, ErrorCode::TooLarge, "the member is too long");
         }
-        if member.eq_ignore_ascii_case(OFFICE_SENDER) {
+        if org_office::directory::trim_address(member).eq_ignore_ascii_case(OFFICE_SENDER) {
             return bind_error(
                 request.id,
                 ErrorCode::InvalidRequest,
@@ -401,16 +513,107 @@ mod tests {
         OfficePorts {
             snapshot,
             submit: Box::new(|_| Err("none".to_owned())),
+            who: Box::new(|_| Err("none".to_owned())),
+            feed: Box::new(Arc::new(FakeFeed::default())),
         }
     }
 
+    /// A log the test appends to: `push` is a commit. The genesis is at (1, 1).
+    #[derive(Default)]
+    struct FakeFeed {
+        log: Mutex<Vec<org_proto::org::OrgChangedData>>,
+        token: Mutex<u64>,
+        woken: std::sync::Condvar,
+        /// Makes every read of the log fail.
+        broken: std::sync::atomic::AtomicBool,
+        /// Followers asleep in `wait` now, and the most there have been at once.
+        waiting: AtomicUsize,
+        peak_waiting: AtomicUsize,
+    }
+
+    impl FakeFeed {
+        fn push(&self, seq: u64) {
+            self.push_with(seq, format!("cmd-{seq}"));
+        }
+
+        /// An event whose frame is about `size` bytes.
+        fn push_big(&self, seq: u64, size: usize) {
+            self.push_with(seq, "x".repeat(size));
+        }
+
+        fn push_with(&self, seq: u64, command_id: String) {
+            self.log
+                .lock()
+                .unwrap()
+                .push(org_proto::org::OrgChangedData {
+                    position: org_proto::org::Position { epoch: 1, seq },
+                    command_id,
+                    changes: Vec::new(),
+                });
+            *self.token.lock().unwrap() += 1;
+            self.woken.notify_all();
+        }
+    }
+
+    impl OrgFeed for Arc<FakeFeed> {
+        fn head(&self) -> Result<org_proto::org::Position, String> {
+            let seq = self
+                .log
+                .lock()
+                .unwrap()
+                .last()
+                .map_or(1, |d| d.position.seq);
+            Ok(org_proto::org::Position { epoch: 1, seq })
+        }
+        fn can_resume_from(&self, after: org_proto::org::Position) -> Result<bool, String> {
+            let head = self.head()?;
+            Ok(after.epoch == 1 && (1..=head.seq).contains(&after.seq))
+        }
+        fn changes_after(
+            &self,
+            after: org_proto::org::Position,
+            limit: usize,
+        ) -> Result<Vec<org_proto::org::OrgChangedData>, String> {
+            if self.broken.load(Ordering::SeqCst) {
+                return Err("log unreadable".to_owned());
+            }
+            Ok(self
+                .log
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|d| (d.position.epoch, d.position.seq) > (after.epoch, after.seq))
+                .take(limit)
+                .cloned()
+                .collect())
+        }
+        fn token(&self) -> u64 {
+            *self.token.lock().unwrap()
+        }
+        fn wait(&self, seen: u64, timeout: Duration) -> u64 {
+            let now = self.waiting.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak_waiting.fetch_max(now, Ordering::SeqCst);
+            let guard = self.token.lock().unwrap();
+            let token = *self
+                .woken
+                .wait_timeout_while(guard, timeout, |t| *t == seen)
+                .unwrap()
+                .0;
+            self.waiting.fetch_sub(1, Ordering::SeqCst);
+            token
+        }
+    }
+
+    /// Whether `stream` is served: it answers hello. The wait is generous because a loaded machine
+    /// (a full workspace run) can take seconds to schedule 64 connection threads; a connection
+    /// the server refuses is closed at once, so that case does not wait for it.
     fn hello_ok(stream: &mut UnixStream) -> bool {
         let request = Request::new::<Hello>(1, &org_proto::Empty {}).unwrap();
         if frame::write_message(&mut *stream, &request).is_err() {
             return false;
         }
         stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
+            .set_read_timeout(Some(Duration::from_secs(60)))
             .unwrap();
         matches!(
             frame::read_message::<Response>(&mut BufReader::new(&*stream)),
@@ -444,11 +647,16 @@ mod tests {
         );
         // A slot comes back when a client goes away.
         drop(held.pop());
+        let deadline = std::time::Instant::now() + Duration::from_secs(120);
         let mut again = loop {
             let mut stream = UnixStream::connect(&path).unwrap();
             if hello_ok(&mut stream) {
                 break stream;
             }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the slot of a closed connection never came back"
+            );
             std::thread::sleep(Duration::from_millis(20));
         };
         assert!(hello_ok(&mut again));
@@ -637,6 +845,8 @@ mod tests {
                     counter.fetch_add(1, Ordering::SeqCst);
                     answer()
                 }),
+                who: Box::new(|_| Err("none".to_owned())),
+                feed: Box::new(Arc::new(FakeFeed::default())),
             },
             token(),
         ));
@@ -691,6 +901,46 @@ mod tests {
                 app_token,
             };
             self.ask(|id| Request::new::<MsgBind>(id, &params).unwrap())
+        }
+
+        /// The next message of either kind (an answer has an `id`, an event an `event`).
+        fn next_message(&mut self) -> serde_json::Value {
+            frame::read_message::<serde_json::Value>(&mut self.reader)
+                .unwrap()
+                .expect("the connection ended")
+        }
+
+        /// Nothing arrives within `wait`.
+        fn nothing_within(&mut self, wait: Duration) -> bool {
+            self.stream.set_read_timeout(Some(wait)).unwrap();
+            let got = frame::read_message::<serde_json::Value>(&mut self.reader);
+            self.stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            matches!(got, Err(frame::FrameError::Io(e)) if matches!(
+                e.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ))
+        }
+
+        /// The server closed the connection (not merely: nothing arrived in time).
+        fn connection_ended(&mut self) -> bool {
+            match frame::read_message::<serde_json::Value>(&mut self.reader) {
+                Ok(None) => true,
+                Err(frame::FrameError::Io(e)) => !matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ),
+                _ => false,
+            }
+        }
+
+        fn subscribe(&mut self, from_seq: Option<u64>) -> org_proto::Outcome {
+            let params = org_proto::SubscribeParams {
+                from_position: from_seq.map(|seq| org_proto::org::Position { epoch: 1, seq }),
+                from_work_position: None,
+            };
+            self.ask(|id| Request::new::<org_proto::Subscribe>(id, &params).unwrap())
         }
 
         fn team_create(&mut self) -> org_proto::Outcome {
@@ -834,7 +1084,7 @@ mod tests {
         );
         // The input-only checks come first: the office is never a member, and a member over
         // the limit is too large, whatever else the call sends.
-        for office in ["office", "OFFICE", "Office"] {
+        for office in ["office", "OFFICE", "Office", " office ", "\toffice\n"] {
             client.bind(None, Some(token()));
             assert_eq!(
                 code_of(client.bind(Some(office), Some(token()))),
@@ -931,6 +1181,11 @@ mod tests {
             TeamRemoveMember::METHOD,
             TeamSetTitle::METHOD,
             MemberAddPerson::METHOD,
+            MemberAddAgent::METHOD,
+            MemberUpdateAgent::METHOD,
+            MemberSetAgentStatus::METHOD,
+            MemberOffboard::METHOD,
+            MemberSetRunMode::METHOD,
             MemberUpdatePerson::METHOD,
             MemberMove::METHOD,
             MemberRemove::METHOD,
@@ -981,6 +1236,566 @@ mod tests {
         // A failed bind takes the right to read away too.
         client.bind(None, None);
         assert_eq!(code_of(client.ask(snapshot)), ErrorCode::NotAuthorized);
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    // ---- subscribe -------------------------------------------------------------------
+
+    fn following(path: &Path) -> (Arc<FakeFeed>, Arc<AtomicBool>, std::thread::JoinHandle<()>) {
+        following_with(path, Timing::default())
+    }
+
+    fn following_with(
+        path: &Path,
+        timing: Timing,
+    ) -> (Arc<FakeFeed>, Arc<AtomicBool>, std::thread::JoinHandle<()>) {
+        let feed = Arc::new(FakeFeed::default());
+        let shared = Arc::new(
+            Shared::new(
+                &test_info(),
+                path,
+                OfficePorts {
+                    snapshot: Box::new(|| Err("none".to_owned())),
+                    submit: Box::new(|_| Err("none".to_owned())),
+                    who: Box::new(|_| Err("none".to_owned())),
+                    feed: Box::new(Arc::clone(&feed)),
+                },
+                token(),
+            )
+            .with_timing(timing),
+        );
+        let (stop, server) = start(path, &shared);
+        (feed, stop, server)
+    }
+
+    /// The event's `(seq, position.seq, command_id)`.
+    fn event_of(message: &serde_json::Value) -> (u64, u64, String) {
+        assert_eq!(message["event"], "org.changed", "{message}");
+        (
+            message["seq"].as_u64().unwrap(),
+            message["data"]["position"]["seq"].as_u64().unwrap(),
+            message["data"]["command_id"].as_str().unwrap().to_owned(),
+        )
+    }
+
+    #[test]
+    fn subscribing_needs_a_binding_and_says_nothing_else_to_a_connection_without_one() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (feed, stop, server) = following(&path);
+        let mut client = Client::connect(&path);
+
+        assert_eq!(code_of(client.subscribe(None)), ErrorCode::NotAuthorized);
+        // Params that do not decode are not told apart either.
+        let garbled = |id| Request {
+            id,
+            method: "subscribe".to_owned(),
+            params: serde_json::json!({"from_position": "nope"}),
+        };
+        assert_eq!(code_of(client.ask(garbled)), ErrorCode::NotAuthorized);
+        feed.push(2);
+        assert!(client.nothing_within(Duration::from_millis(400)));
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn live_events_start_after_the_answer_and_count_from_one_on_the_connection() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (feed, stop, server) = following(&path);
+        feed.push(2); // before the subscription: not sent
+        let mut client = Client::connect(&path);
+        client.bind(None, Some(token()));
+
+        assert!(matches!(
+            client.subscribe(None),
+            org_proto::Outcome::Result(_)
+        ));
+        assert!(client.nothing_within(Duration::from_millis(300)));
+        feed.push(3);
+        feed.push(4);
+
+        assert_eq!(event_of(&client.next_message()), (1, 3, "cmd-3".into()));
+        assert_eq!(event_of(&client.next_message()), (2, 4, "cmd-4".into()));
+        // The connection still answers, between events.
+        assert!(matches!(
+            client.ask(|id| Request::new::<Hello>(id, &org_proto::Empty {}).unwrap()),
+            org_proto::Outcome::Result(_)
+        ));
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn resuming_sends_what_the_client_missed_in_order_then_goes_live_without_a_repeat() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (feed, stop, server) = following(&path);
+        // More than one page of log after the position the client holds.
+        for seq in 2..=252 {
+            feed.push(seq);
+        }
+        let mut client = Client::connect(&path);
+        client.bind(None, Some(token()));
+
+        // The answer comes first, then every missed event, then live ones.
+        let answer = client.subscribe(Some(2));
+        assert!(
+            matches!(answer, org_proto::Outcome::Result(_)),
+            "{answer:?}"
+        );
+        for expected in 3..=252u64 {
+            let (seq, position, _) = event_of(&client.next_message());
+            assert_eq!((seq, position), (expected - 2, expected));
+        }
+        feed.push(253);
+        assert_eq!(
+            event_of(&client.next_message()),
+            (251, 253, "cmd-253".into())
+        );
+        assert!(client.nothing_within(Duration::from_millis(300)));
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_position_the_log_cannot_resume_from_is_snapshot_required_and_subscribes_nothing() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (feed, stop, server) = following(&path);
+        feed.push(2);
+        let mut client = Client::connect(&path);
+        client.bind(None, Some(token()));
+
+        assert_eq!(
+            code_of(client.subscribe(Some(9))),
+            ErrorCode::SnapshotRequired
+        );
+        assert_eq!(
+            code_of(client.subscribe(Some(0))),
+            ErrorCode::SnapshotRequired
+        );
+        let work = |id| {
+            Request::new::<org_proto::Subscribe>(
+                id,
+                &org_proto::SubscribeParams {
+                    from_position: None,
+                    from_work_position: Some(org_proto::work::WorkPosition::default()),
+                },
+            )
+            .unwrap()
+        };
+        assert_eq!(code_of(client.ask(work)), ErrorCode::SnapshotRequired);
+        // None of them subscribed: nothing is pushed, and a good subscribe still works.
+        feed.push(3);
+        assert!(client.nothing_within(Duration::from_millis(300)));
+        assert!(matches!(
+            client.subscribe(Some(2)),
+            org_proto::Outcome::Result(_)
+        ));
+        assert_eq!(event_of(&client.next_message()).1, 3);
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_second_subscribe_is_refused_and_does_not_double_the_events() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (feed, stop, server) = following(&path);
+        let mut client = Client::connect(&path);
+        client.bind(None, Some(token()));
+        assert!(matches!(
+            client.subscribe(None),
+            org_proto::Outcome::Result(_)
+        ));
+
+        assert_eq!(code_of(client.subscribe(None)), ErrorCode::InvalidRequest);
+        feed.push(2);
+        assert_eq!(event_of(&client.next_message()).1, 2);
+        assert!(
+            client.nothing_within(Duration::from_millis(300)),
+            "an event twice"
+        );
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_bind_ends_the_subscription_and_the_client_subscribes_again() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (feed, stop, server) = following(&path);
+        let mut client = Client::connect(&path);
+        client.bind(None, Some(token()));
+        assert!(matches!(
+            client.subscribe(None),
+            org_proto::Outcome::Result(_)
+        ));
+        feed.push(2);
+        assert_eq!(event_of(&client.next_message()).1, 2);
+
+        // A failed bind unbinds the connection: no event reaches it any more.
+        client.bind(None, None);
+        feed.push(3);
+        assert!(client.nothing_within(Duration::from_millis(400)));
+        // Bound again, it subscribes again and resumes from what it last had.
+        client.bind(None, Some(token()));
+        assert!(matches!(
+            client.subscribe(Some(2)),
+            org_proto::Outcome::Result(_)
+        ));
+        // `seq` counts on the connection, not per subscription.
+        assert_eq!(event_of(&client.next_message()), (2, 3, "cmd-3".into()));
+        // A successful re-bind ends it too.
+        client.bind(None, Some(token()));
+        feed.push(4);
+        assert!(client.nothing_within(Duration::from_millis(400)));
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_log_that_cannot_be_read_closes_the_subscribers_connection_instead_of_leaving_it_silent() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (feed, stop, server) = following(&path);
+        let mut client = Client::connect(&path);
+        client.bind(None, Some(token()));
+        // Subscribing reads the log too, so the failure is switched on after it.
+        assert!(matches!(
+            client.subscribe(None),
+            org_proto::Outcome::Result(_)
+        ));
+        feed.broken.store(true, Ordering::SeqCst);
+        feed.push(2);
+
+        assert!(client.connection_ended());
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn stopping_with_a_subscribed_connection_open_returns_and_closes_it() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (_feed, stop, server) = following(&path);
+        let mut client = Client::connect(&path);
+        client.bind(None, Some(token()));
+        assert!(matches!(
+            client.subscribe(None),
+            org_proto::Outcome::Result(_)
+        ));
+
+        let started = std::time::Instant::now();
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+
+        assert!(started.elapsed() < Duration::from_secs(10));
+        assert!(client.connection_ended());
+    }
+
+    #[test]
+    fn a_commit_wakes_the_subscriber_without_waiting_for_the_idle_poll() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        // The poll is far longer than the delivery is allowed to take: only the commit's wake-up
+        // can deliver in time. (Stopping waits for the poll, so it is not hours.)
+        let timing = Timing {
+            idle: Duration::from_secs(6),
+            ..Timing::default()
+        };
+        let (feed, stop, server) = following_with(&path, timing);
+        let mut client = Client::connect(&path);
+        client.bind(None, Some(token()));
+        assert!(matches!(
+            client.subscribe(None),
+            org_proto::Outcome::Result(_)
+        ));
+        std::thread::sleep(Duration::from_millis(300)); // the follower is asleep in `wait`
+
+        let started = std::time::Instant::now();
+        feed.push(2);
+
+        assert_eq!(event_of(&client.next_message()).1, 2);
+        assert!(started.elapsed() < Duration::from_secs(3));
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_client_that_does_not_read_is_dropped_after_the_write_deadline() {
+        use std::io::Read;
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let timing = Timing {
+            write: Duration::from_millis(500),
+            ..Timing::default()
+        };
+        let (feed, stop, server) = following_with(&path, timing);
+        let mut client = Client::connect(&path);
+        client.bind(None, Some(token()));
+        assert!(matches!(
+            client.subscribe(None),
+            org_proto::Outcome::Result(_)
+        ));
+
+        // Events far bigger than the socket's buffers, to a client that reads nothing.
+        client
+            .stream
+            .set_read_timeout(Some(Duration::from_secs(20)))
+            .unwrap();
+        for seq in 2..=5 {
+            feed.push_big(seq, 400_000);
+        }
+        std::thread::sleep(Duration::from_secs(3));
+
+        // The server gave up on it and closed: draining ends in EOF. (Without a deadline the
+        // drain would unblock the server and the stream would never end.)
+        let mut sink = Vec::new();
+        let ended = client.stream.read_to_end(&mut sink);
+        assert!(ended.is_ok(), "{ended:?}");
+        assert!(
+            sink.len() < 4 * 400_000,
+            "everything was sent: {}",
+            sink.len()
+        );
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_client_that_reads_a_trickle_is_dropped_by_the_deadline_of_the_whole_frame() {
+        use std::io::Read;
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let timing = Timing {
+            write: Duration::from_secs(1),
+            ..Timing::default()
+        };
+        let (feed, stop, server) = following_with(&path, timing);
+        let mut client = Client::connect(&path);
+        client.bind(None, Some(token()));
+        assert!(matches!(
+            client.subscribe(None),
+            org_proto::Outcome::Result(_)
+        ));
+        feed.push_big(2, 900_000);
+
+        // Some progress every 100 ms (each write call would succeed within a second), but at
+        // this pace the frame would take over twenty: the frame's deadline ends it.
+        let started = std::time::Instant::now();
+        let mut buffer = [0u8; 4096];
+        let mut total = 0usize;
+        let ended = loop {
+            std::thread::sleep(Duration::from_millis(100));
+            match client.stream.read(&mut buffer) {
+                Ok(0) => break true,
+                Ok(n) => total += n,
+                Err(_) => break false,
+            }
+            if started.elapsed() > Duration::from_secs(15) {
+                break false;
+            }
+        };
+        assert!(ended, "still connected after {total} bytes");
+        assert!(total < 900_000, "the whole frame went out: {total}");
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn binding_and_subscribing_in_a_loop_never_leaves_more_than_two_followers_on_a_connection() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let timing = Timing {
+            idle: Duration::from_millis(300),
+            ..Timing::default()
+        };
+        let (feed, stop, server) = following_with(&path, timing);
+        let mut client = Client::connect(&path);
+
+        for _ in 0..8 {
+            client.bind(None, Some(token()));
+            assert!(matches!(
+                client.subscribe(None),
+                org_proto::Outcome::Result(_)
+            ));
+        }
+
+        // The one being replaced, and the new one: a new subscription waits for the old to end.
+        let peak = feed.peak_waiting.load(Ordering::SeqCst);
+        assert!(peak <= 2, "{peak} followers at once");
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_rebind_in_the_middle_of_a_replay_leaves_no_gap_in_the_numbers() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (feed, stop, server) = following(&path);
+        for seq in 2..=2001 {
+            feed.push(seq);
+        }
+        let mut client = Client::connect(&path);
+        client.bind(None, Some(token()));
+        assert!(matches!(
+            client.subscribe(Some(1)),
+            org_proto::Outcome::Result(_)
+        ));
+        // Read part of the replay, then bind again while the follower is still sending.
+        let mut last = (0, 0);
+        for _ in 0..50 {
+            let (n, position, _) = event_of(&client.next_message());
+            last = (n, position);
+        }
+        client.stream.set_nonblocking(false).unwrap();
+        let rebind = Request::new::<MsgBind>(
+            900,
+            &MsgBindParams {
+                member: None,
+                app_token: Some(token()),
+            },
+        )
+        .unwrap();
+        frame::write_message(&mut client.stream, &rebind).unwrap();
+        // Events already on the wire come first; the bind's answer ends them.
+        loop {
+            let message = client.next_message();
+            if message.get("id") == Some(&serde_json::json!(900)) {
+                break;
+            }
+            let (n, position, _) = event_of(&message);
+            assert_eq!(n, last.0 + 1, "a number was skipped");
+            last = (n, position);
+        }
+        // Subscribing again from the last position continues the numbers, with no gap.
+        client.next = 900;
+        assert!(matches!(
+            client.subscribe(Some(last.1)),
+            org_proto::Outcome::Result(_)
+        ));
+        let (n, position, _) = event_of(&client.next_message());
+        assert_eq!((n, position), (last.0 + 1, last.1 + 1));
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    // ---- who -------------------------------------------------------------------------
+
+    /// A server whose `who` answers from `answer` and counts its calls.
+    fn asking(
+        path: &Path,
+        answer: impl Fn(&WhoParams) -> Result<Result<WhoResult, ApiError>, String>
+            + Send
+            + Sync
+            + 'static,
+    ) -> (
+        Arc<AtomicUsize>,
+        Arc<AtomicBool>,
+        std::thread::JoinHandle<()>,
+    ) {
+        let asked = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&asked);
+        let shared = Arc::new(Shared::new(
+            &test_info(),
+            path,
+            OfficePorts {
+                snapshot: Box::new(|| Err("none".to_owned())),
+                submit: Box::new(|_| Err("none".to_owned())),
+                who: Box::new(move |params| {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    answer(params)
+                }),
+                feed: Box::new(Arc::new(FakeFeed::default())),
+            },
+            token(),
+        ));
+        let (stop, server) = start(path, &shared);
+        (asked, stop, server)
+    }
+
+    fn who_ask(client: &mut Client, params: serde_json::Value) -> org_proto::Outcome {
+        client.ask(|id| Request {
+            id,
+            method: "who".to_owned(),
+            params,
+        })
+    }
+
+    #[test]
+    fn who_is_for_a_bound_connection_and_an_unbound_one_is_not_bound_before_its_params_are_read() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (asked, stop, server) = asking(&path, |_| Ok(Ok(WhoResult { members: vec![] })));
+        let mut client = Client::connect(&path);
+
+        assert_eq!(
+            code_of(who_ask(&mut client, serde_json::json!({}))),
+            ErrorCode::NotBound
+        );
+        assert_eq!(
+            code_of(who_ask(&mut client, serde_json::json!({"kind": 7}))),
+            ErrorCode::NotBound
+        );
+        assert_eq!(asked.load(Ordering::SeqCst), 0);
+
+        client.bind(None, Some(token()));
+        let org_proto::Outcome::Result(value) = who_ask(&mut client, serde_json::json!({})) else {
+            panic!("a bound connection was refused")
+        };
+        assert_eq!(value["members"], serde_json::json!([]));
+        // Params that do not decode are told to a bound connection.
+        assert_eq!(
+            code_of(who_ask(&mut client, serde_json::json!({"kind": 7}))),
+            ErrorCode::InvalidRequest
+        );
+        assert_eq!(asked.load(Ordering::SeqCst), 1);
+        // A failed bind takes the right away.
+        client.bind(None, None);
+        assert_eq!(
+            code_of(who_ask(&mut client, serde_json::json!({}))),
+            ErrorCode::NotBound
+        );
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn what_who_answers_is_what_the_caller_gets() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&calls);
+        let (_asked, stop, server) = asking(&path, move |params| {
+            match seen.fetch_add(1, Ordering::SeqCst) {
+                0 => {
+                    assert_eq!(params.member.as_deref(), Some("pixel"));
+                    assert_eq!(params.team.as_deref(), Some("t1"));
+                    Ok(Err(ApiError::new(ErrorCode::NotFound, "no such member")))
+                }
+                _ => Err("disk on fire at /secret/path".to_owned()),
+            }
+        });
+        let mut client = Client::connect(&path);
+        client.bind(None, Some(token()));
+
+        // A refusal keeps its code; a storage failure is a fixed text, not the cause.
+        assert_eq!(
+            code_of(who_ask(
+                &mut client,
+                serde_json::json!({"member": "pixel", "team": "t1"})
+            )),
+            ErrorCode::NotFound
+        );
+        let org_proto::Outcome::Error(error) = who_ask(&mut client, serde_json::json!({})) else {
+            panic!("expected an error")
+        };
+        assert_eq!(error.code, ErrorCode::StorageError);
+        assert!(!error.message.contains("secret"), "{}", error.message);
         stop.store(true, Ordering::SeqCst);
         server.join().unwrap();
     }

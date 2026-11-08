@@ -18,7 +18,8 @@
 //! - Each `msg.bind` replaces the connection's previous binding and is checked only on its
 //!   own params: an earlier binding grants nothing. A failed `msg.bind` leaves the connection
 //!   unbound. Any re-bind, failed or not, ends the previous binding's held `msg.wait` and
-//!   `msg.ask` calls with `not_bound`.
+//!   `msg.ask` calls with `not_bound`, and ends the connection's `subscribe` (subscribe again
+//!   once bound).
 //! - Until a connection binds, every other call here, and `who` and `status.set`
 //!   ([`crate::directory`]), fails with `not_bound`. So does a call on a connection whose
 //!   member was since moved out of this office or removed (ADR-0003 §3.1); it must bind again.
@@ -49,8 +50,10 @@
 //! quote a body or meta value.
 //!
 //! ## Addressing
-//! A recipient or member (`to`, `from`, `member`, `participant`) resolves in this order
-//! (ADR-0003 §2.6):
+//! A recipient or member (`to`, `from`, `member`, `participant`) is first trimmed of
+//! leading and trailing ASCII whitespace (space, tab, line feed, form feed, carriage return;
+//! HQ compares handles trimmed), and an empty result names no member. Other whitespace, such
+//! as U+00A0, is text. It then resolves in this order (ADR-0003 §2.6):
 //! 1. [`OWNER_HANDLE`](crate::OWNER_HANDLE) (`owner`, ignoring case) is the organization's
 //!    owner. It comes before ids, so a member whose id is `owner` can't capture it. The
 //!    owner is addressed only as `owner`: the owner's name is not a handle.
@@ -433,7 +436,8 @@ impl fmt::Debug for MetaSize<'_> {
 ///
 /// Each call replaces the previous binding and is checked only on its own params. A failed
 /// call leaves the connection unbound. Any re-bind, failed or not, ends the previous
-/// binding's held `msg.wait` and `msg.ask` calls with `not_bound`.
+/// binding's held `msg.wait` and `msg.ask` calls with `not_bound`, and ends the connection's
+/// `subscribe`: no event follows the bind's answer.
 ///
 /// Errors: `not_authorized` (step 2, and a missing or wrong token in step 3),
 /// `invalid_request` (step 1, and an active or paused agent with `app_token` in step 3),

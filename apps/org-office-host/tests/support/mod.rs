@@ -30,6 +30,8 @@ pub fn fast_timings() -> Timings {
         backoff_initial: Duration::from_millis(100),
         backoff_max: Duration::from_millis(400),
         backoff_reset_after: Duration::from_secs(60),
+        give_up_after: 10,
+        give_up_window: Duration::from_secs(30 * 60),
         shutdown_grace: Duration::from_secs(5),
         discard_timeout: Duration::from_secs(10),
         create_wait: Duration::from_secs(10),
@@ -189,6 +191,14 @@ impl TestHome {
             .collect()
     }
 
+    /// The environment variable names each of the fake's runs for `key` got.
+    pub fn env_names(&self, key: &str) -> Vec<Vec<String>> {
+        self.log_fields("env", key)
+            .iter()
+            .map(|f| f[3].split(',').map(str::to_owned).collect())
+            .collect()
+    }
+
     /// The pids that refused their first line.
     pub fn first_line_refusals(&self, key: &str) -> Vec<u32> {
         self.log_fields("first-line-refused", key)
@@ -267,6 +277,52 @@ pub fn has_hex_run(text: &str, len: usize) -> bool {
         }
     }
     false
+}
+
+/// The fingerprint the fake records for a token (64-bit FNV-1a of its 32 bytes, as hex), so a
+/// test can match a token the host hands out with the one a server got.
+pub fn fingerprint(token: &org_proto::AppToken) -> String {
+    let json = serde_json::to_string(token).unwrap();
+    let hex = json.trim_matches('"');
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for i in (0..hex.len()).step_by(2) {
+        let byte = u8::from_str_radix(&hex[i..i + 2], 16).unwrap();
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
+/// `at` as RFC 3339 UTC with milliseconds (the contract's timestamps sort as strings).
+pub fn rfc3339(at: std::time::SystemTime) -> String {
+    let since = at.duration_since(std::time::UNIX_EPOCH).unwrap();
+    let (secs, millis) = (since.as_secs(), since.subsec_millis());
+    let (days, rem) = (secs / 86_400, secs % 86_400);
+    let z = days as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{millis:03}Z",
+        rem / 3600,
+        rem % 3600 / 60,
+        rem % 60
+    )
+}
+
+/// The office `office_id` as `office.list` shows it now.
+pub fn office_info(socket: &Path, office_id: &str) -> Option<org_proto::OfficeInfo> {
+    Client::connect(socket)
+        .call::<org_proto::OfficeList>(&org_proto::Empty {})
+        .unwrap()
+        .offices
+        .into_iter()
+        .find(|o| o.id == office_id)
 }
 
 /// An HQ office file.
@@ -374,6 +430,37 @@ impl Client {
         match message? {
             ServerMessage::Event(event) => Some(event),
             other => panic!("expected an event, got {other:?}"),
+        }
+    }
+
+    /// Every event that arrives within `timeout` (fewer if the connection closes).
+    pub fn events_within(&mut self, timeout: Duration) -> Vec<Event> {
+        let deadline = Instant::now() + timeout;
+        let mut events = Vec::new();
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return events;
+            }
+            match self.next_event(left) {
+                Some(event) => events.push(event),
+                None => return events,
+            }
+        }
+    }
+
+    /// The next event named `name` (others are skipped), or `None` within `timeout`.
+    pub fn next_event_named(&mut self, name: &str, timeout: Duration) -> Option<Event> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return None;
+            }
+            let event = self.next_event(left)?;
+            if event.event == name {
+                return Some(event);
+            }
         }
     }
 

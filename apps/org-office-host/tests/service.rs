@@ -8,9 +8,9 @@ use std::os::unix::fs::PermissionsExt;
 
 use org_office_host::Host;
 use org_proto::{
-    Empty, ErrorCode, Hello, OfficeList, OrganizationCreate, OrganizationCreateParams,
-    OrganizationList, Outcome, ServerMessage, Subscribe, SubscribeParams, API_VERSION,
-    UNREADABLE_REQUEST_ID,
+    Empty, ErrorCode, Hello, OfficeInfo, OfficeList, OfficeStatus, OfficeStatusChanged,
+    OrganizationCreate, OrganizationCreateParams, OrganizationCreated, OrganizationList, Outcome,
+    ServerMessage, Subscribe, SubscribeParams, API_VERSION, UNREADABLE_REQUEST_ID,
 };
 use support::{Client, TestHome};
 
@@ -32,6 +32,16 @@ fn hello_names_the_host_and_no_office() {
     assert_eq!(hello.server_version, env!("CARGO_PKG_VERSION"));
     assert_eq!(hello.host, "This Mac");
     assert_eq!(hello.office, None);
+    // Every optional call and event this host implements, once each.
+    assert_eq!(
+        hello.capabilities,
+        [
+            org_proto::capability::OFFICE_APP_TOKEN,
+            org_proto::capability::OFFICE_RESTART,
+            org_proto::capability::OFFICE_STATUS_CHANGED,
+        ]
+    );
+    assert!(hello.supports(org_proto::capability::OFFICE_STATUS_CHANGED));
     host.shutdown();
 }
 
@@ -168,7 +178,7 @@ fn shutdown_with_clients_connected_finishes_promptly() {
 /// organizations are created on another.
 #[test]
 fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
     use std::io::{BufRead, BufReader, Write};
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::Arc;
@@ -210,8 +220,13 @@ fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
                 }
                 let last = !creating.load(Ordering::SeqCst);
                 id += 1;
-                let line =
-                    format!("{{\"id\":{id},\"method\":\"organization.list\",\"params\":{{}}}}\n");
+                // Both lists, in turn.
+                let method = if id % 2 == 1 {
+                    "organization.list"
+                } else {
+                    "office.list"
+                };
+                let line = format!("{{\"id\":{id},\"method\":\"{method}\",\"params\":{{}}}}\n");
                 out.write_all(line.as_bytes()).unwrap();
                 sent.store(id, Ordering::SeqCst);
                 if last {
@@ -235,6 +250,26 @@ fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
         })
     };
 
+    // Each office goes from `starting` to `active`; no message may show an office in an
+    // earlier state than one before it on this connection (an event older than a list answer,
+    // or a list answer older than an event).
+    let mut furthest: HashMap<String, OfficeStatus> = HashMap::new();
+    let mut see = |office: &OfficeInfo, what: &str| {
+        let rank = |status: OfficeStatus| match status {
+            OfficeStatus::Starting => 0,
+            OfficeStatus::Active => 1,
+            other => panic!("{} became {other:?}", office.id),
+        };
+        let seen = furthest.entry(office.id.clone()).or_insert(office.status);
+        assert!(
+            rank(office.status) >= rank(*seen),
+            "{what} showed {} {:?} after {:?}",
+            office.id,
+            office.status,
+            seen
+        );
+        *seen = office.status;
+    };
     let (mut heard, mut answers) = (HashSet::new(), 0u64);
     loop {
         let done = writer.is_finished() && answers == sent.load(Ordering::SeqCst);
@@ -244,19 +279,44 @@ fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
         let mut line = String::new();
         assert!(reader.read_line(&mut line).unwrap() > 0, "the host hung up");
         match serde_json::from_str::<ServerMessage>(&line).unwrap() {
-            ServerMessage::Event(event) => {
-                if event.event == "organization.created" {
-                    heard.insert(event.data["id"].as_str().unwrap().to_owned());
+            ServerMessage::Event(event) => match event.event.as_str() {
+                "organization.created" => {
+                    let org = event.data::<OrganizationCreated>().unwrap().unwrap();
+                    for office in &org.offices {
+                        see(office, "organization.created");
+                    }
+                    heard.insert(org.id);
                 }
-            }
+                "office.status_changed" => {
+                    let office = event.data::<OfficeStatusChanged>().unwrap().unwrap().office;
+                    // Never before its organization was announced.
+                    assert!(
+                        heard.contains(&office.organization_id),
+                        "office.status_changed for {} came before its organization.created",
+                        office.id
+                    );
+                    see(&office, "office.status_changed");
+                }
+                other => panic!("unexpected event {other}"),
+            },
             ServerMessage::Response(response) => {
-                let listed: HashSet<String> = response
-                    .into_result::<OrganizationList>()
-                    .unwrap()
-                    .organizations
-                    .into_iter()
-                    .map(|o| o.id)
-                    .collect();
+                // The organizations each list answer shows.
+                let listed: HashSet<String> = if response.id % 2 == 1 {
+                    let orgs = response
+                        .into_result::<OrganizationList>()
+                        .unwrap()
+                        .organizations;
+                    for office in orgs.iter().flat_map(|o| &o.offices) {
+                        see(office, "organization.list");
+                    }
+                    orgs.into_iter().map(|o| o.id).collect()
+                } else {
+                    let offices = response.into_result::<OfficeList>().unwrap().offices;
+                    for office in &offices {
+                        see(office, "office.list");
+                    }
+                    offices.into_iter().map(|o| o.organization_id).collect()
+                };
                 let missing: Vec<_> = heard.difference(&listed).collect();
                 assert!(
                     missing.is_empty(),
@@ -270,5 +330,68 @@ fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
     }
     writer.join().unwrap();
     creator.join().unwrap();
+    host.shutdown();
+}
+
+/// A subscriber that creates organizations on its own connection gets each answer before any
+/// event about that organization: the answer, `organization.created` and the office's status
+/// changes go out in that order.
+#[test]
+fn a_subscribed_creator_gets_its_answer_before_any_event_about_it() {
+    use std::collections::HashSet;
+    use std::io::{BufRead, BufReader, Write};
+
+    let home = TestHome::new();
+    let host = Host::start(home.config()).unwrap();
+    let stream = std::os::unix::net::UnixStream::connect(host.socket_path()).unwrap();
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(30)));
+    let mut out = stream.try_clone().unwrap();
+    let mut reader = BufReader::new(stream);
+    let mut next = || {
+        let mut line = String::new();
+        assert!(reader.read_line(&mut line).unwrap() > 0, "the host hung up");
+        serde_json::from_str::<ServerMessage>(&line).unwrap()
+    };
+    out.write_all(b"{\"id\":0,\"method\":\"subscribe\",\"params\":{}}\n")
+        .unwrap();
+    assert!(matches!(next(), ServerMessage::Response(r) if r.id == 0));
+
+    let mut answered: HashSet<String> = HashSet::new();
+    let mut announced: HashSet<String> = HashSet::new();
+    for id in 1..=15u64 {
+        let line = format!(
+            "{{\"id\":{id},\"method\":\"organization.create\",\"params\":{{\"name\":\"Org {id}\"}}}}\n"
+        );
+        out.write_all(line.as_bytes()).unwrap();
+        // Read until this create's answer; every event before it must be about organizations
+        // already answered (and, for a status change, already announced).
+        loop {
+            match next() {
+                ServerMessage::Response(response) => {
+                    assert_eq!(response.id, id);
+                    let org = response.into_result::<OrganizationCreate>().unwrap();
+                    answered.insert(org.id);
+                    break;
+                }
+                ServerMessage::Event(event) => match event.event.as_str() {
+                    "organization.created" => {
+                        let org = event.data::<OrganizationCreated>().unwrap().unwrap();
+                        assert!(answered.contains(&org.id), "announced before its answer");
+                        announced.insert(org.id);
+                    }
+                    "office.status_changed" => {
+                        let office = event.data::<OfficeStatusChanged>().unwrap().unwrap().office;
+                        assert!(
+                            answered.contains(&office.organization_id)
+                                && announced.contains(&office.organization_id),
+                            "a status change came before its organization's answer or event"
+                        );
+                    }
+                    other => panic!("unexpected event {other}"),
+                },
+                ServerMessage::Unknown(v) => panic!("unexpected {v}"),
+            }
+        }
+    }
     host.shutdown();
 }

@@ -7,24 +7,36 @@
 //! different names run side by side and listing never waits for a create.
 //!
 //! The unfinished folders found at startup are discarded in the background, a few at a time,
-//! so the host answers at once; only `organization.create` waits for them (see
-//! [`Offices::create_organization`]).
+//! so the host answers at once; only the calls that need a settled catalog wait for them
+//! (`organization.create`, `office.restart`, and `office.app_token` for an office still being
+//! discarded).
+//!
+//! Every change of an office's state is announced as `office.status_changed` through the
+//! [`Broadcast`], in order with the list answers.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use org_office_launch::{office_dir, CreateOffice, FailCode, OfficeFile, OFFICE_FILE_NAME};
-use org_proto::{ApiError, ErrorCode, OfficeInfo, OfficeStatus, Organization, OrganizationName};
+use org_proto::{
+    ApiError, AppToken, ErrorCode, OfficeInfo, OfficeStatus, OfficeStatusChanged,
+    OfficeStatusChangedData, OfficeStatusReason, Organization, OrganizationCreated,
+    OrganizationName,
+};
 
 use crate::app_token;
+use crate::broadcast::Broadcast;
 use crate::catalog::{self, Catalog, CreatePlan, OrganizationEntry, PlanError};
+use crate::clock;
 use crate::host_log;
 use crate::ids;
-use crate::supervisor::{CreateOutcome, DiscardOutcome, Supervisor};
+use crate::supervisor::{
+    CreateOutcome, DiscardOutcome, OfficeState, RestartOutcome, StatusObserver, Supervisor,
+};
 use crate::sync::lock;
 use crate::timings::Timings;
 
@@ -48,6 +60,9 @@ pub(crate) struct Offices {
     home: PathBuf,
     catalog: Mutex<Catalog>,
     supervisor: Supervisor,
+    broadcast: Arc<Broadcast>,
+    /// The unfinished folders found at startup whose discard hasn't finished yet.
+    discarding: Mutex<HashSet<String>>,
     create_timeout: Duration,
     create_wait: Duration,
     /// Creates running now (at most [`MAX_CREATES_IN_FLIGHT`]).
@@ -68,23 +83,23 @@ impl Offices {
         catalog: Catalog,
         unfinished: Vec<String>,
         supervisor: Supervisor,
+        broadcast: Arc<Broadcast>,
         timings: &Timings,
     ) -> Arc<Self> {
         for folder in catalog.misplaced() {
             move_refused(home, folder, "its office.json is for another office");
         }
-        for office in catalog.offices() {
-            if let Err(e) = supervisor.start_office(&office.office_id) {
-                host_log::log(&format!(
-                    "couldn't supervise office {}: {e}",
-                    office.office_id
-                ));
-            }
-        }
+        let to_start: Vec<String> = catalog
+            .offices()
+            .iter()
+            .map(|office| office.office_id.clone())
+            .collect();
         let offices = Arc::new(Self {
             home: home.to_path_buf(),
             catalog: Mutex::new(catalog),
             supervisor,
+            broadcast,
+            discarding: Mutex::new(unfinished.iter().cloned().collect()),
             create_timeout: timings.create_timeout,
             create_wait: timings.create_wait,
             creates: Mutex::new(0),
@@ -93,6 +108,13 @@ impl Offices {
             started_changed: Condvar::new(),
             startup: Mutex::new(None),
         });
+        let observer: Weak<dyn StatusObserver> = Arc::downgrade(&offices) as Weak<Self>;
+        offices.supervisor.observe(observer);
+        for office_id in to_start {
+            if let Err(e) = offices.supervisor.start_office(&office_id) {
+                host_log::log(&format!("couldn't supervise office {office_id}: {e}"));
+            }
+        }
         let background = Arc::clone(&offices);
         let spawned = thread::Builder::new()
             .name("startup-discards".into())
@@ -102,6 +124,7 @@ impl Offices {
             Err(e) => {
                 // No thread for them: they wait for the next start, and creates don't wait.
                 host_log::log(&format!("couldn't discard unfinished offices: {e}"));
+                lock(&offices.discarding).clear();
                 offices.startup_done();
             }
         }
@@ -126,6 +149,7 @@ impl Offices {
                         return;
                     };
                     discard_unfinished(&self.home, &self.supervisor, &office_id);
+                    lock(&self.discarding).remove(&office_id);
                 });
             }
         });
@@ -173,6 +197,101 @@ impl Offices {
         Ok(CreateSlot(self))
     }
 
+    /// `office.app_token`: runs `use_token` with a running office's app token (it's written
+    /// straight into the response, never copied). Errors: `not_found` (no such office here),
+    /// `not_ready` (the office is still being created, or still being discarded at startup
+    /// after waiting [`Timings::create_wait`]), `unavailable` (the office isn't running). The
+    /// caller's code signature is checked before this.
+    pub(crate) fn app_token<R>(
+        &self,
+        office_id: &str,
+        use_token: impl FnOnce(&AppToken) -> R,
+    ) -> Result<R, ApiError> {
+        if lock(&self.discarding).contains(office_id) {
+            self.wait_for_startup(Instant::now() + self.create_wait)?;
+        }
+        self.settled_office(office_id)?;
+        let running = self.supervisor.state(office_id).is_some_and(|state| {
+            matches!(state.status, OfficeStatus::Starting | OfficeStatus::Active)
+        });
+        if !running {
+            return Err(ApiError::new(
+                ErrorCode::Unavailable,
+                "the office isn't running, so it has no app token",
+            ));
+        }
+        self.supervisor
+            .with_app_token(office_id, use_token)
+            .ok_or_else(|| {
+                ApiError::new(
+                    ErrorCode::Unavailable,
+                    "the office isn't running, so it has no app token",
+                )
+            })
+    }
+
+    /// `office.restart`: starts an `offline` or `unavailable` office again now (see
+    /// [`Supervisor::restart`]). Waits for the startup discards first, like a create. The
+    /// caller's code signature is checked before this.
+    pub(crate) fn restart_office(&self, office_id: &str) -> Result<(), ApiError> {
+        self.wait_for_startup(Instant::now() + self.create_wait)?;
+        self.settled_office(office_id)?;
+        match self.supervisor.restart(office_id) {
+            RestartOutcome::Restarting => Ok(()),
+            RestartOutcome::Conflict => Err(ApiError::new(
+                ErrorCode::Conflict,
+                "the office isn't offline or unavailable",
+            )),
+            RestartOutcome::CantFix(reason) => Err(ApiError::new(
+                ErrorCode::Unavailable,
+                match reason {
+                    OfficeStatusReason::UnsupportedVersion => {
+                        concat!(
+                            "a restart can't fix this office: its server doesn't speak this ",
+                            "host's version (install an updated app, then restart the host)"
+                        )
+                    }
+                    _ => {
+                        concat!(
+                            "a restart can't fix this office: the host started its server in a ",
+                            "way it didn't understand (install an updated app, then restart the host)"
+                        )
+                    }
+                },
+            )),
+            // Supervision never started for it: start it now.
+            RestartOutcome::NotSupervised => match self.supervisor.start_office(office_id) {
+                Ok(()) => {
+                    // From `unavailable` (unsupervised) to `starting`: say so.
+                    self.status_changed(office_id);
+                    Ok(())
+                }
+                Err(e) => {
+                    host_log::log(&format!("couldn't supervise office {office_id}: {e}"));
+                    Err(ApiError::new(
+                        ErrorCode::Unavailable,
+                        "the host can't start this office's server",
+                    ))
+                }
+            },
+        }
+    }
+
+    /// `not_ready` if `office_id` is still being created, `not_found` if it isn't an office here.
+    fn settled_office(&self, office_id: &str) -> Result<(), ApiError> {
+        let catalog = lock(&self.catalog);
+        if catalog.is_reserved(office_id) {
+            return Err(ApiError::new(
+                ErrorCode::NotReady,
+                "the office is still being created",
+            ));
+        }
+        if !catalog.has_office(office_id) {
+            return Err(ApiError::new(ErrorCode::NotFound, "no such office here"));
+        }
+        Ok(())
+    }
+
     /// Every organization with an office on this Mac (see [`Catalog::organizations`]).
     pub(crate) fn organizations(&self) -> Vec<Organization> {
         let catalog = lock(&self.catalog);
@@ -194,8 +313,14 @@ impl Offices {
     /// `organization.create`: makes the organization and its HQ office, and leaves the HQ's
     /// server running under supervision. On failure the unfinished office is discarded (except
     /// after `already_exists`, which isn't ours); a created office other than the one asked for
-    /// is refused and moved aside (`move_refused`). The error never holds a path.
-    pub(crate) fn create_organization(&self, raw_name: &str) -> Result<Organization, ApiError> {
+    /// is refused and moved aside (`move_refused`). The error never holds a path. On success,
+    /// `respond` queues the answer, inside the critical section that adds the organization (see
+    /// [`Offices::add_created`]).
+    pub(crate) fn create_organization(
+        &self,
+        raw_name: &str,
+        respond: impl FnOnce(&Organization),
+    ) -> Result<(), ApiError> {
         let name = OrganizationName::parse(raw_name)
             .map_err(|e| ApiError::new(ErrorCode::InvalidName, e.message()))?;
         // One budget for both waits.
@@ -247,16 +372,16 @@ impl Offices {
                     return Err(storage_error());
                 }
                 let office = adoptable.office.clone();
-                let status = self.supervisor.adopt(*adoptable);
-                lock(&self.catalog).insert(office.clone());
-                Ok(self.created(&office, status))
+                self.supervisor.adopt(*adoptable);
+                self.add_created(&office, respond);
+                Ok(())
             }
             // The folder existed before this create, so it isn't ours to discard.
             CreateOutcome::Failed(FailCode::AlreadyExists) => Err(already_exists()),
             // A server that failed after storing the office still made it: the same as one that
             // ended without reporting.
             CreateOutcome::Failed(_) if catalog::is_stored(&self.home, &plan.office_id) => {
-                self.finish_unreported(&plan)
+                self.finish_unreported(&plan, respond)
             }
             CreateOutcome::Failed(code) => {
                 self.clean_up(&plan.office_id);
@@ -268,7 +393,9 @@ impl Offices {
                     _ => storage_error(),
                 })
             }
-            CreateOutcome::Crashed | CreateOutcome::TimedOut => self.finish_unreported(&plan),
+            CreateOutcome::Crashed | CreateOutcome::TimedOut => {
+                self.finish_unreported(&plan, respond)
+            }
             CreateOutcome::Stopped => {
                 self.clean_up(&plan.office_id);
                 Err(ApiError::new(
@@ -285,7 +412,11 @@ impl Offices {
     /// create succeeds after all (its server is started with `--office`, status `starting`);
     /// another office is a refused create (moved to `.refused/`). With no `office.json` the create is unfinished and is discarded;
     /// one that can't be read is left alone, its name still taken (see [`Reserved`]).
-    fn finish_unreported(&self, plan: &CreatePlan) -> Result<Organization, ApiError> {
+    fn finish_unreported(
+        &self,
+        plan: &CreatePlan,
+        respond: impl FnOnce(&Organization),
+    ) -> Result<(), ApiError> {
         let stored = office_dir(&self.home, &plan.office_id)
             .ok_or_else(storage_error)
             .map(|dir| catalog::read_office_file(&dir.join(OFFICE_FILE_NAME)))?;
@@ -300,18 +431,14 @@ impl Offices {
                      starting it",
                     office.office_id
                 ));
-                let status = match self.supervisor.start_office(&office.office_id) {
-                    Ok(()) => OfficeStatus::Starting,
-                    Err(e) => {
-                        host_log::log(&format!(
-                            "couldn't supervise office {}: {e}",
-                            office.office_id
-                        ));
-                        OfficeStatus::Unavailable
-                    }
-                };
-                lock(&self.catalog).insert(office.clone());
-                Ok(self.created(&office, status))
+                if let Err(e) = self.supervisor.start_office(&office.office_id) {
+                    host_log::log(&format!(
+                        "couldn't supervise office {}: {e}",
+                        office.office_id
+                    ));
+                }
+                self.add_created(&office, respond);
+                Ok(())
             }
             Ok(Some(_)) => {
                 host_log::log(&format!(
@@ -331,13 +458,28 @@ impl Offices {
         }
     }
 
-    /// The organization a create made, with its one office in `status`.
-    fn created(&self, office: &OfficeFile, status: OfficeStatus) -> Organization {
+    /// Adds a created office to the catalog, queues the creator's answer (`respond`) and
+    /// publishes `organization.created`, all in one broadcast critical section, each from the
+    /// office's state at that moment. So no `office.status_changed` for the new office reaches
+    /// anyone before its `organization.created` (it isn't in the catalog until then, and the
+    /// next one waits for the lock), and the creator's answer is never older than an event about
+    /// the office it gets after it.
+    fn add_created(&self, office: &OfficeFile, respond: impl FnOnce(&Organization)) {
+        self.broadcast.critical(|held| {
+            lock(&self.catalog).insert(office.clone());
+            let organization = self.created(office, self.state_of(&office.office_id));
+            respond(&organization);
+            held.publish::<OrganizationCreated>(&organization);
+        });
+    }
+
+    /// The organization a create made, with its one office in `state`.
+    fn created(&self, office: &OfficeFile, state: OfficeState) -> Organization {
         Organization {
             id: office.org_id.clone(),
             name: office.org_name.clone(),
             created_at: office.created_at.clone(),
-            offices: vec![self.office_info(office, status)],
+            offices: vec![self.office_info(office, state)],
         }
     }
 
@@ -362,22 +504,29 @@ impl Offices {
             offices: org
                 .offices
                 .into_iter()
-                .map(|office| {
-                    let status = self
-                        .supervisor
-                        .status(&office.office_id)
-                        // In the catalog but not supervised: supervision couldn't start.
-                        .unwrap_or(OfficeStatus::Unavailable);
-                    self.office_info(office, status)
-                })
+                .map(|office| self.office_info(office, self.state_of(&office.office_id)))
                 .collect(),
         }
     }
 
+    /// A catalog office's state; one in the catalog but not supervised (supervision couldn't
+    /// start) is `unavailable`.
+    fn state_of(&self, office_id: &str) -> OfficeState {
+        self.supervisor
+            .state(office_id)
+            .unwrap_or_else(unsupervised)
+    }
+
     /// An office as clients see it. Its endpoint is always the host's own idea of its socket.
-    fn office_info(&self, office: &OfficeFile, status: OfficeStatus) -> OfficeInfo {
+    /// The reason goes only with `offline` and `unavailable`, and the next restart only with
+    /// `offline`, as the contract says.
+    fn office_info(&self, office: &OfficeFile, state: OfficeState) -> OfficeInfo {
         let endpoint = org_proto::location::office_socket_path(&self.home, &office.office_id)
             .and_then(|path| path.to_str().map(str::to_owned));
+        let down = matches!(
+            state.status,
+            OfficeStatus::Offline | OfficeStatus::Unavailable
+        );
         OfficeInfo {
             id: office.office_id.clone(),
             organization_id: office.org_id.clone(),
@@ -385,10 +534,38 @@ impl Offices {
             role: office.role,
             host: THIS_MAC.to_owned(),
             endpoint,
-            status,
-            status_reason: None,
-            next_restart_at: None,
+            status: state.status,
+            status_reason: state.reason.filter(|_| down),
+            next_restart_at: state
+                .next_restart_at
+                .filter(|_| state.status == OfficeStatus::Offline)
+                .map(clock::rfc3339_millis),
         }
+    }
+}
+
+/// Announces an office's changed state as `office.status_changed`, built under the broadcast
+/// lock from its state now (an office not in the catalog yet, being adopted, is announced by
+/// `organization.created` instead). Level-triggered, as the design says: each event carries the
+/// state at that moment, so an intermediate state may be skipped and an event may repeat one.
+impl StatusObserver for Offices {
+    fn status_changed(&self, office_id: &str) {
+        self.broadcast.publish::<OfficeStatusChanged>(|| {
+            let catalog = lock(&self.catalog);
+            let office = catalog.office(office_id)?;
+            Some(OfficeStatusChangedData {
+                office: self.office_info(office, self.state_of(office_id)),
+            })
+        });
+    }
+}
+
+/// The state of an office the host couldn't supervise.
+fn unsupervised() -> OfficeState {
+    OfficeState {
+        status: OfficeStatus::Unavailable,
+        reason: None,
+        next_restart_at: None,
     }
 }
 
@@ -560,5 +737,72 @@ mod tests {
         }
         let ran = fs::read_to_string(home.join("ran")).unwrap_or_default();
         assert_eq!(ran, "--discard UNFINISHED\n");
+    }
+
+    const OFFICE: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
+
+    fn hq() -> OfficeFile {
+        OfficeFile::new(
+            OFFICE,
+            "HQ",
+            org_proto::OfficeRole::Hq,
+            "01ORGA",
+            "Acme",
+            "2026-11-08T00:00:00.000Z",
+        )
+    }
+
+    /// Offices over `catalog` in `home`, whose server program doesn't exist (nothing here needs
+    /// it to run). With `stopped`, the supervisor is shut down first, so it can't start anything.
+    fn offices(home: &Path, catalog: Catalog, stopped: bool) -> Arc<Offices> {
+        let supervisor = Supervisor::new(SupervisorConfig {
+            program: home.join("no-such-server"),
+            home: home.to_path_buf(),
+            logs_dir: home.join("logs"),
+            log_max_bytes: 1024,
+            timings: Timings::default(),
+        });
+        if stopped {
+            supervisor.shutdown();
+        }
+        let broadcast = Arc::new(Broadcast::default());
+        Offices::start(
+            home,
+            catalog,
+            Vec::new(),
+            supervisor,
+            broadcast,
+            &Timings::default(),
+        )
+    }
+
+    /// `office.restart` on an office the host couldn't supervise, when it still can't: listed
+    /// `unavailable`, and the restart answers `unavailable` too.
+    #[test]
+    fn restarting_an_office_the_host_still_cant_supervise_is_unavailable() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut catalog = Catalog::default();
+        catalog.insert(hq());
+        let offices = offices(dir.path(), catalog, true);
+        assert_eq!(offices.state_of(OFFICE).status, OfficeStatus::Unavailable);
+        let err = offices.restart_office(OFFICE).unwrap_err();
+        assert_eq!(err.code, ErrorCode::Unavailable);
+        assert!(offices.supervisor.state(OFFICE).is_none());
+        offices.shutdown();
+    }
+
+    /// `office.restart` on an office the host doesn't supervise, when it now can: supervision
+    /// starts. (The office is put in the catalog after the start, so supervision never began for
+    /// it: the state an office is left in when the host couldn't supervise it.)
+    #[test]
+    fn restarting_an_office_the_host_couldnt_supervise_starts_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let offices = offices(dir.path(), Catalog::default(), false);
+        lock(&offices.catalog).insert(hq());
+        assert!(offices.supervisor.state(OFFICE).is_none());
+        assert_eq!(offices.state_of(OFFICE).status, OfficeStatus::Unavailable);
+        offices.restart_office(OFFICE).unwrap();
+        assert!(offices.supervisor.state(OFFICE).is_some());
+        offices.shutdown();
     }
 }

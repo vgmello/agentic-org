@@ -113,7 +113,11 @@ test('RUN-1: How it runs changes the mode; a scheduled agent needs a schedule; n
 	await strip(page).getByRole('button', { name: 'How it runs…' }).click();
 	const dialog = page.getByRole('dialog', { name: 'How Sam Okafor runs' });
 	await expect(dialog.getByRole('radio', { name: /^On call/ })).toBeChecked();
+	await expect(dialog.getByTestId('run-limits')).toContainText('back to sleep after 5 minutes');
+	await dialog.getByRole('radio', { name: /^Always on/ }).check();
+	await expect(dialog.getByTestId('run-limits')).toHaveText('Defaults for all agents: a run stops after 30 minutes of work in its home, or 2 hours on a task.');
 	await dialog.getByRole('radio', { name: /^Scheduled/ }).check();
+	await expect(dialog.getByTestId('run-limits')).toContainText('back to sleep after 5 minutes');
 	await expect(dialog.getByRole('button', { name: 'Save' })).toBeDisabled(); // a schedule is needed
 	await shot(page, 'how-it-runs');
 	await dialog.getByLabel('When', { exact: true }).fill('weekdays at 9');
@@ -123,6 +127,7 @@ test('RUN-1: How it runs changes the mode; a scheduled agent needs a schedule; n
 	await expect(strip(page).getByTestId('agent-line')).toHaveText('software engineer · Runs on Claude Code · Scheduled');
 	await strip(page).getByRole('button', { name: 'How it runs…' }).click();
 	await page.getByRole('dialog').getByRole('radio', { name: /^Started by a person/ }).check();
+	await expect(page.getByTestId('run-limits')).toHaveCount(0);
 	await page.getByRole('dialog').getByRole('button', { name: 'Save' }).click();
 	await expect(strip(page).getByTestId('agent-line')).toHaveText('software engineer · Runs on Claude Code · Started by a person');
 });
@@ -286,4 +291,60 @@ test('TEAM-10: arrow keys move between the member tiles, Home and End go to the 
 	await expect(tiles.first()).toBeFocused();
 	await page.keyboard.press('Enter'); // a tile is a button: Enter selects it
 	await expect(page.getByTestId('selected-member')).toBeVisible();
+});
+
+test('LIVE: a change someone else makes shows on the open org chart without a reload', async ({ page }) => {
+	await openChart(page);
+	await expect(card(page, 'qa-live')).toHaveCount(0);
+	const organizationId = await page.evaluate(() => {
+		const saved = JSON.parse(localStorage.getItem('agentic-org.mock.connections') ?? '[]') as { organization: { id: string } }[];
+		return saved[saved.length - 1].organization.id;
+	});
+	// As if another person (or an agent) had created a team, through the office.
+	await page.evaluate(
+		([id]) => (window as unknown as { __mockOrgChange: (o: string, c: object) => Promise<unknown> }).__mockOrgChange(id, { method: 'team.create', params: { team_id: 'qa-live', name: 'Live QA' } }),
+		[organizationId]
+	);
+	await expect(card(page, 'qa-live')).toBeVisible();
+	await expect(card(page, 'qa-live')).toContainText('Live QA');
+});
+
+test('LIVE: a change that lands while the user is navigating does not cancel the navigation', async ({ page }) => {
+	await visit(page, '/create');
+	await page.getByLabel('Organization name').fill('Acme');
+	await page.getByRole('button', { name: 'Create organization' }).click();
+	await expect(page).toHaveURL(/\/agents/);
+	await visit(page, '/org-chart?org=slow'); // loads of the org take a moment (the mock's `org=slow`)
+	await expect(page.getByRole('tablist', { name: 'Org chart views' })).toBeVisible();
+	const organizationId = await page.evaluate(() => {
+		const saved = JSON.parse(localStorage.getItem('agentic-org.mock.connections') ?? '[]') as { organization: { id: string } }[];
+		return saved[saved.length - 1].organization.id;
+	});
+	await page.getByRole('link', { name: 'Agents' }).first().click();
+	await page.waitForTimeout(500); // the destination's load is still running
+	await page.evaluate(
+		([id]) => (window as unknown as { __mockOrgChange: (o: string, c: object) => Promise<unknown> }).__mockOrgChange(id, { method: 'team.create', params: { team_id: 'qa-nav', name: 'Nav QA' } }),
+		[organizationId]
+	);
+	await expect(page).toHaveURL(/\/agents/);
+});
+
+test('LIVE-8: when live updates stop the shell says so with the time shown, and Retry brings them back', async ({ page }) => {
+	await openChart(page);
+	const organizationId = await page.evaluate(() => {
+		const saved = JSON.parse(localStorage.getItem('agentic-org.mock.connections') ?? '[]') as { organization: { id: string } }[];
+		return saved[saved.length - 1].organization.id;
+	});
+	const live = (isLive: boolean) =>
+		page.evaluate(([id, on]) => (window as unknown as { __mockOrgLive: (o: string, l: boolean) => void }).__mockOrgLive(id as string, on as boolean), [organizationId, isLive]);
+	await expect(page.getByTestId('live-paused')).toHaveCount(0);
+	await live(false);
+	const banner = page.getByTestId('live-paused');
+	await expect(banner).toContainText('Live updates paused. Showing');
+	await expect(banner).toContainText(/Showing what was loaded at \d{2}:\d{2}\./);
+	await shot(page, 'live-paused');
+	await banner.getByRole('button', { name: 'Retry' }).click();
+	await expect(banner.getByRole('button', { name: 'Retrying…' })).toBeDisabled();
+	await expect(banner).toHaveCount(0); // the feed is back
+	await shot(page, 'live-resumed');
 });

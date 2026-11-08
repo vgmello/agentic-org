@@ -2190,6 +2190,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "org-copilot"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "org-mailbox"
 version = "0.0.0"
 dependencies = [
@@ -2214,10 +2222,13 @@ dependencies = [
 name = "org-office-host"
 version = "0.0.0"
 dependencies = [
+ "core-foundation",
  "libc",
  "org-office-host",
  "org-office-launch",
  "org-proto",
+ "security-framework",
+ "serde",
  "serde_json",
  "tempfile",
 ]
@@ -2242,6 +2253,7 @@ dependencies = [
  "org-office-launch",
  "org-proto",
  "security-framework",
+ "serde",
  "serde_json",
  "tempfile",
 ]
