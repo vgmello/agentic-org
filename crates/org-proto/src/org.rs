@@ -130,6 +130,10 @@ impl<'de> Deserialize<'de> for AgentStatus {
     }
 }
 
+/// The word that always addresses the organization's owner (ADR-0003). It is reserved: no
+/// other member may have it as a handle (see [`AgentProfile::messaging_name`]).
+pub const OWNER_HANDLE: &str = "owner";
+
 /// The longest `messaging_name`, in characters.
 pub const AGENT_MESSAGING_NAME_MAX_CHARS: usize = 64;
 
@@ -166,12 +170,19 @@ pub struct AgentProfile {
     /// offices.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<String>,
-    /// The handle this agent is addressed by. 1 to
+    /// The handle this agent is addressed by (`--to <handle>` on `org-agent`). 1 to
     /// [`AGENT_MESSAGING_NAME_MAX_CHARS`] ASCII letters, digits, `-`, `_` and `.`, starting
     /// with a letter or digit. Unique among the organization's agents **ignoring case**
     /// (`already_exists` on a clash; a removed agent frees its name, and renaming an agent to
     /// a different capitalisation of its own name is fine). A name that breaks the format is
     /// `invalid_name`.
+    ///
+    /// **One handle namespace.** Handles are compared ignoring case across ALL members: every
+    /// agent's `messaging_name`, every person's `name`, and the reserved [`OWNER_HANDLE`], which
+    /// no member other than the owner may use. HQ rejects a clash with `already_exists` in
+    /// either direction (an agent whose `messaging_name` equals a person's `name`, or a person
+    /// whose `name` equals an agent's `messaging_name`), so `--to <handle>` never names two
+    /// members. `Member.name` stays the agent's display name and is not a handle.
     pub messaging_name: String,
     /// Whether the agent takes work. Required when adding an agent (`Unknown` is refused).
     #[serde(default)]
@@ -377,7 +388,9 @@ command!(
 command!(
     /// `member.add_person`. `member_id` is client-made. Agents are added with
     /// `member.add_agent` instead.
-    /// Errors: `invalid_name`, `already_exists` (the id is taken).
+    /// Errors: `invalid_name`, `already_exists` (the id is taken, or the name is already
+    /// another member's handle: an agent's `messaging_name` or [`OWNER_HANDLE`], ignoring
+    /// case; people's names also clash with each other).
     MemberAddPerson, "member.add_person", MemberAddPersonParams {
         member_id: String,
         name: String,
@@ -387,8 +400,9 @@ command!(
 );
 command!(
     /// `member.update_person`: only the fields given change; `clear_contact` removes the
-    /// contact. The owner can edit its own record. Errors: `invalid_name`, `conflict`,
-    /// `not_found`, and `invalid_request` if the member is an agent (agents are edited with
+    /// contact. The owner can edit its own record. Errors: `invalid_name`, `already_exists`
+    /// (the new name is already another member's handle, as for `member.add_person`),
+    /// `conflict`, `not_found`, and `invalid_request` if the member is an agent (agents are edited with
     /// `member.update_agent`) or if both `contact` and `clear_contact` are given.
     MemberUpdatePerson, "member.update_person", MemberUpdatePersonParams {
         member_id: String,
@@ -427,8 +441,9 @@ command!(
     /// non-canonical `Other` such as `Other("codex")` are `invalid_request`).
     /// Errors: `invalid_name` (the name, or a `messaging_name` that breaks its format),
     /// `invalid_request` (a profile that breaks its limits), `already_exists` (the id is
-    /// taken, or `messaging_name` is another agent's, ignoring case), `not_found` (no such
-    /// office).
+    /// taken, or `messaging_name` is already another member's handle: an agent's
+    /// `messaging_name`, a person's `name` or [`OWNER_HANDLE`], ignoring case), `not_found`
+    /// (no such office).
     MemberAddAgent, "member.add_agent", MemberAddAgentParams {
         member_id: String,
         name: String,
@@ -444,8 +459,9 @@ command!(
     /// `Other`). `role` and `title` cannot be cleared. `office_id` does
     /// not change here: moving an agent to another office needs its own command (a future
     /// `member.place_agent`; ADR-0003 and the offices design rely on such a move). Errors: `invalid_name` (the name or a `messaging_name` that breaks its
-    /// format), `already_exists` (`messaging_name` is another agent's, ignoring case),
-    /// `conflict`, `not_found`, and `invalid_request` if the member is not an agent (people
+    /// format), `already_exists` (`messaging_name` is already another member's handle, as for
+    /// `member.add_agent`), `conflict`, `not_found`, and `invalid_request` if the member is
+    /// not an agent (people
     /// are edited with `member.update_person`) or a value breaks its limits.
     MemberUpdateAgent, "member.update_agent", MemberUpdateAgentParams {
         member_id: String,

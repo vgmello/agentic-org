@@ -1173,6 +1173,7 @@ fn a_missing_runtime_or_status_reads_as_unknown_not_as_an_error() {
 
 #[test]
 fn agent_limits_are_pinned() {
+    assert_eq!(OWNER_HANDLE, "owner");
     assert_eq!(AGENT_MESSAGING_NAME_MAX_CHARS, 64);
     assert_eq!(AGENT_TEXT_MAX_CHARS, 200);
     assert_eq!(AGENT_HOME_MAX_BYTES, 1024);
