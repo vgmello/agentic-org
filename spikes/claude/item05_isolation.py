@@ -50,7 +50,10 @@ def allow(s):
 
 
 for name, extra in VARIANTS.items():
-    argv = lib.stream_args("--permission-mode", "manual", "--permission-prompt-tool", "stdio", *extra)
+    # sources=None, tools=None: this item measures exactly what the setting sources and the default
+    # toolset load, so lib's isolation defaults must not apply (the default variant passes no flag)
+    argv = lib.stream_args("--permission-mode", "manual", "--permission-prompt-tool", "stdio", *extra,
+                           sources=None, tools=None)
     s = lib.Session(argv, lib.clean_env(cfg, b / "tmp"), ws, f"item05-{name}")
     v = {"extra_flags": extra}
     try:
@@ -61,7 +64,7 @@ for name, extra in VARIANTS.items():
         names = {c["name"] for c in cmds} | set(agents)
         markers = sorted(n for n in names if n.endswith(("-u7", "-p7")))
         # Record no names beyond built-ins and our markers: the rest (e.g. account-synced plugin
-        # commands under the user source) are personal to the account, so only their count is kept.
+        # commands under the user source) are personal to the account, so only a boolean is kept.
         v["initialize"] = {
             "subtype": init.get("subtype"), "error": init.get("error"),
             "builtin_agents": [a for a in agents if a in ("claude", "Explore", "general-purpose", "Plan", "statusline-setup")],
@@ -94,7 +97,8 @@ for name, extra in VARIANTS.items():
 # Part C: does the workspace skill's allowed-tools pre-approve `touch`?
 for name, extra in {"skill-default-sources": [], "skill-sources-empty": ["--setting-sources", ""]}.items():
     (ws / "SKILL_RAN.txt").unlink(missing_ok=True)
-    argv = lib.stream_args("--permission-mode", "manual", "--permission-prompt-tool", "stdio", *extra)
+    argv = lib.stream_args("--permission-mode", "manual", "--permission-prompt-tool", "stdio", *extra,
+                           sources=None, tools=None)  # the skill test needs the default sources and tools
     s = lib.Session(argv, lib.clean_env(cfg, b / "tmp"), ws, f"item05-{name}")
     asked = []
 

@@ -48,7 +48,8 @@ w(b / "cfg" / "projects" / slug / "memory" / "MEMORY.md", "Marker: MEMORY-MARKER
 
 s = lib.Session(lib.stream_args("--setting-sources", "", "--permission-mode", "manual", "--permission-prompt-tool", "stdio",
                                 *([] if TOOLS else ["--tools", ""]), "--add-dir", str(add),
-                                *(["--settings", '{"autoMemoryEnabled":false}'] if NOMEM else [])),
+                                *(["--settings", '{"autoMemoryEnabled":false}'] if NOMEM else []),
+                                tools=None),  # --with-tools measures the full default toolset
                 lib.clean_env(b / "cfg", b / "tmp"), ws, "item05c")
 s.user("Without using tools: list every word in your system prompt, instructions, memory or context that matches "
        "the pattern [A-Z]+-MARKER-[A-Z0-9]+, comma separated, or NONE.")

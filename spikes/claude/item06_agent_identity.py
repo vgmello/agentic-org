@@ -31,7 +31,9 @@ VARIANTS = {
 }
 out = {}
 for name, extra in VARIANTS.items():
-    argv = lib.stream_args("--setting-sources", "", "--permission-mode", "manual", "--permission-prompt-tool", "stdio", *extra)
+    # tools=None: the unknown-agent case is detected by init.tools falling back to the full default set
+    argv = lib.stream_args("--setting-sources", "", "--permission-mode", "manual", "--permission-prompt-tool", "stdio", *extra,
+                           tools=None)
     s = lib.Session(argv, lib.clean_env(b / "cfg", b / "tmp"), b / "ws", f"item06-{name}")
     v = {"extra_flags": extra}
     try:

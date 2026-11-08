@@ -13,6 +13,7 @@ Everything left over is killed by pid at the end. Model turns: 3.
 import json
 import os
 import signal
+import stat
 import subprocess
 import time
 
@@ -109,10 +110,14 @@ def drop_sock(pid):
     """Remove claude's /tmp/cc-socks/<pid>.sock if it was left behind. Call it only while that claude is
     an unreaped zombie of ours, so the pid (and its socket name) can't belong to anyone else yet."""
     sock = f"/tmp/cc-socks/{pid}.sock"
-    if os.path.exists(sock):
-        os.unlink(sock)
-        return True
-    return False
+    try:
+        st = os.lstat(sock)  # lstat: never follow a symlink planted at that name
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISSOCK(st.st_mode) or st.st_uid != os.getuid():
+        return False  # not a socket of ours: leave it
+    os.unlink(sock)
+    return True
 
 
 out = {}
