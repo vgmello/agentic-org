@@ -5,6 +5,9 @@
 use crate::connections::local_office;
 use org_proto::{OfficeInfo, OfficeRole, OfficeStatus, Organization};
 
+/// The host name the app shows for the machine it runs on.
+const THIS_MAC: &str = "This Mac";
+
 /// More offices than this are collapsed into "N more offices…".
 pub const MAX_OFFICES_SHOWN: usize = 5;
 /// ⌘1 to ⌘9 pick the first nine organizations.
@@ -107,10 +110,16 @@ fn office_label(office: &OfficeInfo) -> String {
     format!("{role} · {} — {}", office.host, status_label(office.status))
 }
 
-/// HQ first, then the rest A–Z by name.
+/// HQ first, then the other offices on this Mac, then the rest, each group A–Z by name.
 fn ordered_offices(offices: &[OfficeInfo]) -> Vec<&OfficeInfo> {
     let mut sorted: Vec<&OfficeInfo> = offices.iter().collect();
-    sorted.sort_by_key(|o| (o.role != OfficeRole::Hq, o.name.to_lowercase()));
+    sorted.sort_by_key(|o| {
+        (
+            o.role != OfficeRole::Hq,
+            o.host != THIS_MAC,
+            o.name.to_lowercase(),
+        )
+    });
     sorted
 }
 
@@ -410,5 +419,23 @@ mod tests {
             entries(build(&orgs, None))[0],
             OrganizationEntry::Unavailable { .. }
         ));
+    }
+
+    #[test]
+    fn offices_on_this_mac_come_before_remote_ones_after_hq() {
+        let mut remote = office("r", "Aardvark", OfficeRole::Satellite, OfficeStatus::Active);
+        remote.host = "hq-mac.local".into();
+        let local = office("l", "Zebra", OfficeRole::Satellite, OfficeStatus::Active);
+        let hq = office("h", "HQ", OfficeRole::Hq, OfficeStatus::Active);
+        let e = entries(build(&[org("o", "O", vec![remote, local, hq])], None));
+        let OrganizationEntry::Available { offices, .. } = &e[0] else {
+            panic!()
+        };
+        let ids: Vec<_> = offices.iter().map(|o| o.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["h", "l", "r"],
+            "HQ, then this Mac's, then the remote one"
+        );
     }
 }
