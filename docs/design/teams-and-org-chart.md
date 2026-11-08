@@ -1,6 +1,6 @@
 # Design: teams and the org chart
 
-Status: **approved by the user** 2026-11-08 (decisions at the end). Owner: ada. It follows the user's model (2026-11-08). It builds on `offices-hq-and-satellites.md`: teams are organization data, so HQ owns them and every office has a copy.
+Status: **approved by the user** 2026-11-08 (decisions at the end); amended by ada 2026-11-08 (agents as members, `member.move`, one handle namespace). Owner: ada. It follows the user's model (2026-11-08). It builds on `offices-hq-and-satellites.md`: teams are organization data, so HQ owns them and every office has a copy.
 
 ## The user's model, in short
 - An organization is made of **teams**, and **a team can be owned by another team**: just teams and their sub-teams.
@@ -61,7 +61,7 @@ These are organization commands, so they go through HQ and every office gets the
   - people are added with `member.add_person { member_id, name, contact? }` and edited with `member.update_person { member_id, name?, contact?, clear_contact? }`
   - **`member.set_reports_to { member_id, reports_to_member_id? }`** sets a reporting line (`cycle` on a loop; `owner_protected` for the owner)
   - **`member.remove { member_id }`** removes anyone except the owner. Offboarding an agent issues it, with the same cascade.
-  - **`member.move { membership_id, new_membership_id, to_team_id, … }`** moves a member from one team to another **atomically**: one event removes the old membership and adds the new one. If the member led the team they leave, removing them clears the lead, as above.
+  - **`member.move { membership_id, expected_version, new_membership_id, to_team_id, title_in_team? }`** (the membership's title carries over unless a new one is given) moves a member from one team to another **atomically**: one event removes the old membership and adds the new one. If the member led the team they leave, removing them clears the lead, as above.
 
 Each command carries a client-made id for anything it creates, and the version of what it edits, as in the offices design:
 - `team.move` expects the moved team's version. The new owner and the loop check are judged against HQ's current state.
@@ -99,7 +99,7 @@ Editing (create, add member, move, add a person, link a project, set who someone
 - `already_exists` covers a sibling team name, a membership or project-team link that already exists, and a handle that's already taken (agents' `messaging_name`s, people's names, `owner`; one namespace, ignoring case).
 - **The crate (`org_proto::org`) is the reference for the exact shapes.**
 - `project.create` gains `team_ids?` when the projects contract (GitHub design, G1) is written. It isn't in the crate yet.
-- `member.add_agent`, `member.update_agent`, `member.set_agent_status`, `member.move` and `AgentProfile` aren't in the crate yet either.
+- `member.add_agent`, `member.update_agent`, `member.set_agent_status`, `member.move` and `AgentProfile` aren't in the crate yet either, and neither is the handle rule for the existing `member.add_person` / `member.update_person` (`already_exists` on a clash with an agent's `messaging_name` or `owner`). server-dev's `proto-agents` change adds them.
 - Messaging (ADR-0003) and tasks check recipients against members: agents, and people who've been added.
 
 ## Plan
@@ -107,7 +107,7 @@ Editing (create, add member, move, add a person, link a project, set who someone
 | --- | --- | --- |
 | T0 | UX for the chart's three views and the editing flows | Eden (product designer), with app-frontend-dev. Her spec needs updating for the owner, people and shared projects |
 | T1 | The contract in `org-proto` (`org_proto::org`). `team_ids?` on `project.create` follows with the projects contract (G1) | ada |
-| T2 | Teams, members (the owner, people), memberships and project-team links as commands, events and apply code in `org-office`, with the rules above and tests (loops, non-empty delete, multi-team membership, the owner can't be removed or lead) | server-dev, after the HQ event log |
+| T2 | Teams, members (the owner, people, agents with `AgentProfile`), memberships and project-team links as commands, events and apply code in `org-office`, with the rules above and tests (loops, non-empty delete, multi-team membership, the owner can't be removed or lead, `member.move` atomicity and lead clearing, the handle namespace in both directions) | server-dev, after the HQ event log |
 | T3 | The app: the chart's teams, people and reporting-lines views, and editing. Built on a mock with the T1 types first, then on the office | app-frontend-dev |
 
 Each step: its own branch, an independent review, my go, then merge into `v1`.
