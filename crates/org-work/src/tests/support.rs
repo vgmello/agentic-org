@@ -22,6 +22,12 @@ pub const PROJECT: &str = "p-chk";
 pub const OTHER_PROJECT: &str = "p-pay";
 pub const ARCHIVED: &str = "p-old";
 pub const TEAM: &str = "team-a";
+/// An area of `PROJECT` led by riley: bugs routed there don't wait on the owner.
+pub const AREA_PAY: &str = "ar-pay";
+/// An area of `PROJECT` with a team and no lead (and, at first, no team lead).
+pub const AREA_UI: &str = "ar-ui";
+/// `PROJECT`'s General area: its team has no lead, so the owner triages its bugs.
+pub const GENERAL: &str = "p-chk-general";
 
 pub fn app() -> Caller {
     Caller::app(OWNER)
@@ -29,6 +35,11 @@ pub fn app() -> Caller {
 
 pub fn agent() -> Caller {
     Caller::agent("ada")
+}
+
+/// A person who reports bugs through the app.
+pub fn pat() -> Caller {
+    Caller::app("pat")
 }
 
 pub fn org() -> MemOrg {
@@ -40,7 +51,9 @@ pub fn org() -> MemOrg {
         .with_agent("off", AgentStatus::Offboarded)
         .with_project(PROJECT, "chk", &[TEAM])
         .with_project(OTHER_PROJECT, "pay", &[])
-        .with_project(ARCHIVED, "old", &[]);
+        .with_project(ARCHIVED, "old", &[])
+        .with_area(AREA_PAY, PROJECT, Some(TEAM), Some("riley"))
+        .with_area(AREA_UI, PROJECT, Some(TEAM), None);
     org.set_archived(ARCHIVED, true);
     org
 }
@@ -251,5 +264,206 @@ impl World {
             item_id: id.into(),
             expected_version: self.version(id),
         })
+    }
+}
+
+// ---- bugs ----------------------------------------------------------------------------------
+
+impl World {
+    pub fn report_params(&self, project: &str) -> BugReportParams {
+        BugReportParams {
+            change_id: self.id(),
+            item_id: self.id(),
+            project_id: project.into(),
+            title: "Coupon total is off".into(),
+            what_happened: "The total ignores the coupon.".into(),
+            severity: Severity::Major,
+            area_id: None,
+            expected: None,
+            steps: None,
+            environment: None,
+            from: None,
+            affects_feature_id: None,
+            checklist: vec![],
+        }
+    }
+
+    /// Reports a bug in `PROJECT`, in `area` (default General), as `pat`; returns its id.
+    pub fn bug_in(&self, area: Option<&str>) -> String {
+        self.bug_with(|p| p.area_id = area.map(str::to_owned))
+    }
+
+    pub fn bug_with(&self, f: impl FnOnce(&mut BugReportParams)) -> String {
+        let mut p = self.report_params(PROJECT);
+        f(&mut p);
+        let id = p.item_id.clone();
+        self.ok(&pat(), WorkCall::BugReport(p));
+        id
+    }
+
+    /// A new bug in the area led by riley (no waiting on the owner).
+    pub fn bug(&self) -> String {
+        self.bug_in(Some(AREA_PAY))
+    }
+
+    pub fn triage_params(&self, id: &str, area: &str) -> BugTriageParams {
+        BugTriageParams {
+            change_id: self.id(),
+            item_id: id.into(),
+            expected_version: self.version(id),
+            area_id: area.into(),
+            severity: Severity::Major,
+            priority: Priority::High,
+            assignee_id: None,
+        }
+    }
+
+    pub fn triage(&self, id: &str) -> WorkAccepted {
+        let area = self.item(id).bug.area_id.expect("a bug has an area");
+        let p = self.triage_params(id, &area);
+        self.ok(&app(), WorkCall::BugTriage(p))
+    }
+
+    /// A triaged bug in the area led by riley.
+    pub fn triaged(&self) -> String {
+        let id = self.bug();
+        self.triage(&id);
+        id
+    }
+
+    /// A task that fixes `bug`, made in `PROJECT`.
+    pub fn fix_task(&self, bug: &str) -> String {
+        self.task_with(|p| {
+            p.fixes = vec![NewFixLink {
+                link_id: self.id(),
+                bug_id: bug.into(),
+            }]
+        })
+    }
+
+    pub fn fixed_params(&self, id: &str) -> BugMarkFixedParams {
+        BugMarkFixedParams {
+            change_id: self.id(),
+            item_id: id.into(),
+            expected_version: self.version(id),
+            note: "Rounded the total".into(),
+            anyway_reason: None,
+        }
+    }
+
+    pub fn verify_params(&self, id: &str, outcome: VerifyOutcome) -> BugVerifyParams {
+        BugVerifyParams {
+            change_id: self.id(),
+            item_id: id.into(),
+            expected_version: self.version(id),
+            outcome,
+            note: (outcome == VerifyOutcome::StillHappens).then(|| "Still off by a cent".into()),
+        }
+    }
+
+    pub fn wont_fix_params(&self, id: &str) -> BugCloseParams {
+        BugCloseParams {
+            change_id: self.id(),
+            item_id: id.into(),
+            expected_version: self.version(id),
+            duplicate_of: None,
+            resolution: Some(Resolution::WontFix),
+            reason: Some("By design".into()),
+        }
+    }
+
+    pub fn duplicate_params(&self, id: &str, original: &str) -> BugCloseParams {
+        BugCloseParams {
+            change_id: self.id(),
+            item_id: id.into(),
+            expected_version: self.version(id),
+            duplicate_of: Some(original.into()),
+            resolution: None,
+            reason: None,
+        }
+    }
+
+    pub fn reopen_params(&self, id: &str) -> BugReopenParams {
+        BugReopenParams {
+            change_id: self.id(),
+            item_id: id.into(),
+            expected_version: self.version(id),
+            note: "It came back".into(),
+        }
+    }
+
+    pub fn bug_update(&self, id: &str) -> BugUpdateParams {
+        BugUpdateParams {
+            change_id: self.id(),
+            item_id: id.into(),
+            expected_version: self.version(id),
+            title: None,
+            what_happened: None,
+            expected: None,
+            clear_expected: false,
+            steps: None,
+            clear_steps: false,
+            environment: None,
+            clear_environment: false,
+            severity: None,
+            priority: None,
+            area_id: None,
+            affects_feature_id: None,
+            clear_affects_feature: false,
+        }
+    }
+
+    pub fn bug_assign(&self, id: &str, to: Option<&str>) -> BugAssignParams {
+        BugAssignParams {
+            change_id: self.id(),
+            item_id: id.into(),
+            expected_version: self.version(id),
+            assignee_id: to.map(str::to_owned),
+        }
+    }
+
+    /// Drives a fresh bug (area led by riley) to `status`: `New`, `Triaged`, `InProgress`
+    /// (through a fix task), `Fixed` (by hand) or `Closed` (won't fix).
+    pub fn bug_at(&self, status: ItemStatus) -> String {
+        let id = self.bug();
+        if status == ItemStatus::New {
+            return id;
+        }
+        self.triage(&id);
+        match status {
+            ItemStatus::Triaged => {}
+            ItemStatus::InProgress => {
+                let task = self.fix_task(&id);
+                self.set(&task, ItemStatus::InProgress);
+            }
+            ItemStatus::Fixed => {
+                let p = self.fixed_params(&id);
+                self.ok(&app(), WorkCall::BugMarkFixed(p));
+            }
+            ItemStatus::Closed => {
+                let p = self.wont_fix_params(&id);
+                self.ok(&app(), WorkCall::BugClose(p));
+            }
+            other => panic!("not a bug status: {other:?}"),
+        }
+        assert_eq!(self.item(&id).status, status);
+        id
+    }
+
+    /// The kinds of the item's events from `after_version` on, as short names.
+    pub fn kinds_after(&self, id: &str, after_version: u64) -> Vec<String> {
+        self.events(id)
+            .into_iter()
+            .filter(|e| e.version > after_version)
+            .map(|e| {
+                let v = serde_json::to_value(&e.change).expect("encodes");
+                let kind = v["type"].as_str().expect("tagged").to_owned();
+                if e.auto {
+                    format!("auto:{kind}")
+                } else {
+                    kind
+                }
+            })
+            .collect()
     }
 }

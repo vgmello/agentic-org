@@ -231,6 +231,7 @@ fn serve_office(
     _app_token: AppToken,
 ) -> i32 {
     let info = office.info().clone();
+    let office = Arc::new(office);
     let socket = match socket_path(home, &info.office_id) {
         Ok(socket) => socket,
         Err(message) => return fail(&mut control, FailCode::InvalidRequest, message),
@@ -256,6 +257,10 @@ fn serve_office(
         &info.office_name,
         OfficeRole::Hq,
         &socket,
+        {
+            let office = Arc::clone(&office);
+            Box::new(move || office.org_snapshot().map_err(|e| e.to_string()))
+        },
     ));
     // EOF on the control pipe means the host is gone. What the host writes after the first line
     // is read into a fixed buffer and thrown away, unparsed, so nothing on a later line can
@@ -301,6 +306,9 @@ fn serve_office(
 
     drop(listener);
     let _ = std::fs::remove_file(&socket);
+    // Every connection thread is gone (joined by `serve::run`): the only owners of the office
+    // left are `shared` and this function.
+    drop(shared);
     drop(office);
     0
 }

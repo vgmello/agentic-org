@@ -41,8 +41,25 @@ pub(crate) fn aspects_of(
             .iter()
             .map(|FieldChange { field, .. }| Field(field.clone()))
             .collect(),
+        // A note that a rule was due and changed nothing (`from == to`) touches nothing.
+        WorkEventKind::StatusChanged { from, to, .. } if from == to => vec![],
         WorkEventKind::StatusChanged { .. } => vec![Status],
         WorkEventKind::Assigned { .. } => vec![Assignee],
+        // A triage writes the status, the area, the severity, the priority and, when given,
+        // the assignee; sending a fix back (`still_happens`) or reopening writes the status.
+        WorkEventKind::Triaged { assignee_id, .. } => {
+            let mut a = vec![
+                Status,
+                Field("area_id".to_owned()),
+                Field("severity".to_owned()),
+                Field("priority".to_owned()),
+            ];
+            if assignee_id.is_some() {
+                a.push(Assignee);
+            }
+            a
+        }
+        WorkEventKind::Verified { .. } | WorkEventKind::Reopened { .. } => vec![Status],
         WorkEventKind::Linked { .. } | WorkEventKind::Unlinked { .. } => vec![Links],
         WorkEventKind::Comment { watch, .. } => {
             let mut a = vec![Comments];

@@ -32,7 +32,7 @@ mod decide;
 mod view;
 
 #[cfg(test)]
-mod memory;
+pub(crate) mod memory;
 #[cfg(test)]
 mod tests;
 

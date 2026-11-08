@@ -1931,6 +1931,14 @@ fn work_wire_names_are_pinned() {
         (ChecklistRemove::METHOD, "checklist.remove"),
         (ChecklistMakeTask::METHOD, "checklist.make_task"),
         (ChecklistUnlinkTask::METHOD, "checklist.unlink_task"),
+        (BugReport::METHOD, "bug.report"),
+        (BugUpdate::METHOD, "bug.update"),
+        (BugTriage::METHOD, "bug.triage"),
+        (BugAssign::METHOD, "bug.assign"),
+        (BugMarkFixed::METHOD, "bug.mark_fixed"),
+        (BugVerify::METHOD, "bug.verify"),
+        (BugClose::METHOD, "bug.close"),
+        (BugReopen::METHOD, "bug.reopen"),
         (WorkChanged::NAME, "work.changed"),
         (ProjectCreate::METHOD, "project.create"),
         (ProjectUpdate::METHOD, "project.update"),
@@ -2072,6 +2080,13 @@ fn work_enums_have_their_wire_names_and_read_anything_else_as_unknown() {
             (Severity::Trivial, "trivial"),
         ],
         Severity::Unknown,
+    );
+    pin_enum(
+        &[
+            (VerifyOutcome::Fixed, "fixed"),
+            (VerifyOutcome::StillHappens, "still_happens"),
+        ],
+        VerifyOutcome::Unknown,
     );
     pin_enum(
         &[
@@ -2388,6 +2403,18 @@ fn work_events_round_trip_and_unknown_kinds_never_break_the_activity() {
             from: None,
             to: Some("a1".into()),
         },
+        WorkEventKind::Triaged {
+            area_id: "ar1".into(),
+            severity: Severity::Major,
+            priority: Priority::High,
+            assignee_id: Some("a1".into()),
+        },
+        WorkEventKind::Verified {
+            outcome: VerifyOutcome::StillHappens,
+            by_reporter: true,
+            note: Some("Happens on Safari too".into()),
+        },
+        WorkEventKind::Reopened { note: None },
         WorkEventKind::Linked {
             link: Link {
                 id: "l1".into(),
@@ -2491,6 +2518,9 @@ fn work_events_round_trip_and_unknown_kinds_never_break_the_activity() {
             "fields_changed",
             "status_changed",
             "assigned",
+            "triaged",
+            "verified",
+            "reopened",
             "linked",
             "unlinked",
             "comment",
@@ -2517,21 +2547,39 @@ fn work_events_round_trip_and_unknown_kinds_never_break_the_activity() {
         })
     );
     assert_eq!(
+        v["result"]["events"][4]["change"],
+        json!({
+            "type": "triaged", "area_id": "ar1", "severity": "major", "priority": "high",
+            "assignee_id": "a1"
+        })
+    );
+    assert_eq!(
+        v["result"]["events"][5]["change"],
+        json!({
+            "type": "verified", "outcome": "still_happens", "by_reporter": true,
+            "note": "Happens on Safari too"
+        })
+    );
+    assert_eq!(
         v["result"]["events"][6]["change"],
+        json!({"type": "reopened"})
+    );
+    assert_eq!(
+        v["result"]["events"][9]["change"],
         json!({
             "type": "comment", "comment_id": "c1", "body": "Which colour?",
             "comment_kind": "question", "asks": "owner1", "watch": true
         })
     );
     assert_eq!(
-        v["result"]["events"][14]["change"],
+        v["result"]["events"][17]["change"],
         json!({
             "type": "waiting_started", "on_member_id": "owner1",
             "reason": {"type": "question", "comment_id": "c1"}
         })
     );
     assert_eq!(
-        v["result"]["events"][15]["change"],
+        v["result"]["events"][18]["change"],
         json!({
             "type": "waiting_ended", "on_member_id": "owner1",
             "reason": {"type": "question", "comment_id": "c1"}
@@ -2567,7 +2615,7 @@ fn work_events_round_trip_and_unknown_kinds_never_break_the_activity() {
     let newer: WorkActivityResult = serde_json::from_value(json!({"events": [
         {"target_id": "b1", "version": 2, "at": "2026-11-08T02:10:00.000Z", "actor_id": "a1",
          "org_position": {"epoch": 1, "seq": 1},
-         "change": {"type": "triaged", "area_id": "ar1", "severity": "major", "priority": "high"}},
+         "change": {"type": "debt_status_changed", "doc_key": "DEBT-0012", "to": "paid"}},
         {"target_id": "b1", "version": 3, "at": "2026-11-08T02:10:00.000Z",
          "org_position": {"epoch": 1, "seq": 1},
          "change": {"type": "step_checked", "step_id": "s1", "done": false, "by_rule": "x"}}
@@ -2974,6 +3022,166 @@ fn every_work_write_starts_with_a_change_id_and_answers_work_accepted() {
         },
         json!({"change_id": "01C", "step_id": "s2"}),
     );
+
+    // Bugs (phase 2).
+    pin_params::<BugReport>(
+        &BugReportParams {
+            change_id: "01C".into(),
+            item_id: "b1".into(),
+            project_id: "p1".into(),
+            title: "Coupon total is off".into(),
+            what_happened: "The total ignores the coupon.".into(),
+            severity: Severity::Major,
+            area_id: None,
+            expected: Some("The coupon is taken off.".into()),
+            steps: None,
+            environment: None,
+            from: Some(BugReportedFrom {
+                link_id: "l1".into(),
+                to: LinkTarget::Item {
+                    item_id: "t1".into(),
+                },
+            }),
+            affects_feature_id: None,
+            checklist: vec![],
+        },
+        json!({
+            "change_id": "01C", "item_id": "b1", "project_id": "p1",
+            "title": "Coupon total is off", "what_happened": "The total ignores the coupon.",
+            "severity": "major", "expected": "The coupon is taken off.",
+            "from": {"link_id": "l1", "to": {"type": "item", "item_id": "t1"}}
+        }),
+    );
+    pin_params::<BugUpdate>(
+        &BugUpdateParams {
+            change_id: "01C".into(),
+            item_id: "b1".into(),
+            expected_version: 2,
+            title: None,
+            what_happened: None,
+            expected: None,
+            clear_expected: true,
+            steps: Some("1. Add a coupon".into()),
+            clear_steps: false,
+            environment: None,
+            clear_environment: false,
+            severity: Some(Severity::Critical),
+            priority: None,
+            area_id: Some("ar2".into()),
+            affects_feature_id: None,
+            clear_affects_feature: false,
+        },
+        json!({
+            "change_id": "01C", "item_id": "b1", "expected_version": 2,
+            "clear_expected": true, "steps": "1. Add a coupon", "severity": "critical",
+            "area_id": "ar2"
+        }),
+    );
+    pin_params::<BugTriage>(
+        &BugTriageParams {
+            change_id: "01C".into(),
+            item_id: "b1".into(),
+            expected_version: 2,
+            area_id: "ar1".into(),
+            severity: Severity::Minor,
+            priority: Priority::Low,
+            assignee_id: Some("a1".into()),
+        },
+        json!({
+            "change_id": "01C", "item_id": "b1", "expected_version": 2, "area_id": "ar1",
+            "severity": "minor", "priority": "low", "assignee_id": "a1"
+        }),
+    );
+    pin_params::<BugAssign>(
+        &BugAssignParams {
+            change_id: "01C".into(),
+            item_id: "b1".into(),
+            expected_version: 3,
+            assignee_id: None,
+        },
+        json!({"change_id": "01C", "item_id": "b1", "expected_version": 3}),
+    );
+    pin_params::<BugMarkFixed>(
+        &BugMarkFixedParams {
+            change_id: "01C".into(),
+            item_id: "b1".into(),
+            expected_version: 4,
+            note: "Rounded the total".into(),
+            anyway_reason: Some("Docs follow".into()),
+        },
+        json!({
+            "change_id": "01C", "item_id": "b1", "expected_version": 4,
+            "note": "Rounded the total", "anyway_reason": "Docs follow"
+        }),
+    );
+    pin_params::<BugVerify>(
+        &BugVerifyParams {
+            change_id: "01C".into(),
+            item_id: "b1".into(),
+            expected_version: 5,
+            outcome: VerifyOutcome::StillHappens,
+            note: Some("Still off by a cent".into()),
+        },
+        json!({
+            "change_id": "01C", "item_id": "b1", "expected_version": 5,
+            "outcome": "still_happens", "note": "Still off by a cent"
+        }),
+    );
+    pin_params::<BugClose>(
+        &BugCloseParams {
+            change_id: "01C".into(),
+            item_id: "b1".into(),
+            expected_version: 5,
+            duplicate_of: Some("b0".into()),
+            resolution: None,
+            reason: None,
+        },
+        json!({"change_id": "01C", "item_id": "b1", "expected_version": 5, "duplicate_of": "b0"}),
+    );
+    pin_params::<BugClose>(
+        &BugCloseParams {
+            change_id: "01C".into(),
+            item_id: "b1".into(),
+            expected_version: 5,
+            duplicate_of: None,
+            resolution: Some(Resolution::WontFix),
+            reason: Some("By design".into()),
+        },
+        json!({
+            "change_id": "01C", "item_id": "b1", "expected_version": 5,
+            "resolution": "wont_fix", "reason": "By design"
+        }),
+    );
+    pin_params::<BugReopen>(
+        &BugReopenParams {
+            change_id: "01C".into(),
+            item_id: "b1".into(),
+            expected_version: 6,
+            note: "It came back".into(),
+        },
+        json!({"change_id": "01C", "item_id": "b1", "expected_version": 6, "note": "It came back"}),
+    );
+    // A report without a severity, and a triage without an area, are not valid params.
+    for (method, params) in [
+        (
+            "bug.report",
+            json!({"change_id": "c", "item_id": "b", "project_id": "p", "title": "t",
+                   "what_happened": "w"}),
+        ),
+        (
+            "bug.triage",
+            json!({"change_id": "c", "item_id": "b", "expected_version": 1,
+                   "severity": "minor", "priority": "low"}),
+        ),
+    ] {
+        let request: Request =
+            serde_json::from_value(json!({"id": 1, "method": method, "params": params})).unwrap();
+        let read = match method {
+            "bug.report" => request.params::<BugReport>().map(|_| ()),
+            _ => request.params::<BugTriage>().map(|_| ()),
+        };
+        assert!(read.is_err(), "{method}");
+    }
 
     // The change id is required, and so is an expected_version where the call has one.
     for (method, params) in [
