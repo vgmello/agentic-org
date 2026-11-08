@@ -9,7 +9,7 @@
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
 	import { officeApi } from '$lib/office/api';
-	import { agentsIn, displayStatusFor, isHq, orderOffices, rowLabel, secondaryText, statusInfo, unplacedAgents, whyForLabel, whyStopped, type LiveCheck } from '$lib/offices/model';
+	import { agentsIn, applyStatusUpdate, displayStatusFor, isHq, orderOffices, rowLabel, secondaryText, statusInfo, unplacedAgents, whyForLabel, whyStopped, type LiveCheck } from '$lib/offices/model';
 	import type { OfficeInfo } from '$lib/proto';
 	import type { Counts } from './+page';
 
@@ -92,13 +92,20 @@
 	// The countdown in a stopped office's line moves no more often than every 10 s.
 	let now = $state(new Date());
 	onMount(() => {
+		// The host says when an office's status changes: show it now instead of at the next check.
+		let stopListening: (() => void) | undefined;
+		let leaving = false;
+		void officeApi.onOfficeStatus((update) => (reported = applyStatusUpdate(reported ?? data.offices, data.connection.organization.id, update))).then((stop) => {
+			if (leaving) stop();
+			else stopListening = stop;
+		});
 		void probe.run('explicit');
 		const again = setInterval(() => void probe.run('background'), 30_000);
 		const tick = setInterval(() => (now = new Date()), 10_000);
-		return () => (clearInterval(again), clearInterval(tick));
+		return () => (clearInterval(again), clearInterval(tick), (leaving = true), stopListening?.());
 	});
-	// TODO (OFC-11): the statuses are re-listed on each check, not pushed (nothing subscribes to office.status_changed yet), and
-	// Check for updates (for unsupported_version) is not built.
+	// TODO (OFC-11): Check for updates (for unsupported_version) is not built. The statuses arrive from the host as they
+	// change; they are also re-listed on each check, in case an update was missed.
 	// Why a stopped office stopped: only for an office whose status is shown as reported by the host.
 	const labelWhyOf = (officeId: string) => {
 		const shown = statusOf(officeId);

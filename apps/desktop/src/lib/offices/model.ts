@@ -1,7 +1,7 @@
 // The Offices screen's rules as pure functions (UX spec §3.1). Phase 1 shows HQ only and changes nothing:
 // adding and removing offices come with the local satellite in phase 2.
 import { isFormer } from '$lib/org/model';
-import type { Member, OfficeInfo, OfficeStatus, OfficeStatusReason, OrgSnapshot } from '$lib/proto';
+import type { Member, OfficeInfo, OfficeStatus, OfficeStatusReason, OrgSnapshot, StatusUpdate } from '$lib/proto';
 
 const THIS_MAC = 'This Mac';
 
@@ -74,6 +74,18 @@ export function statusInfo(status: DisplayStatus | undefined): { label: string; 
 		default:
 			return { label: 'Status unknown', tone: 'muted' };
 	}
+}
+
+/**
+ * The organization's offices after a status update from the host. The full list replaces what was known (the host
+ * lists every organization on this Mac, so only this one's offices are kept); one office's record replaces its
+ * older one, or joins the list when it is new to this organization. Another organization's office changes nothing.
+ */
+export function applyStatusUpdate(known: OfficeInfo[], organizationId: string, update: StatusUpdate): OfficeInfo[] {
+	if (update.kind === 'offices') return update.offices.filter((o) => o.organization_id === organizationId);
+	const { office } = update;
+	if (office.organization_id !== organizationId) return known;
+	return known.some((o) => o.id === office.id) ? known.map((o) => (o.id === office.id ? office : o)) : [...known, office];
 }
 
 const byName = (a: OfficeInfo, b: OfficeInfo) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });

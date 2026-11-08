@@ -4,6 +4,7 @@
 //! login-service setup) is the app's default; `MockOffice` stands in for development and when there is no office home.
 
 use crate::org_command::OrgCommand;
+pub use crate::status_feed::StatusSink;
 use crate::work_engine::WorkError;
 use org_proto::{ApiError, CommandAccepted, HelloResult, OrgSnapshot, Organization};
 use serde::Serialize;
@@ -104,4 +105,8 @@ pub trait OfficeConnection: Send + Sync {
     /// True while the data this connection serves is invented (the mock office), so the UI says so.
     /// Every implementation says so: a stand-in that forgot would show invented data as real.
     fn serves_sample_data(&self) -> bool;
+
+    /// Start telling `sink` about office status changes as they happen. Once per office, at startup; the work runs
+    /// on a thread of its own for as long as the app lives. An office with no live status (the mock) does nothing.
+    fn follow_status(&self, _sink: StatusSink) {}
 }
