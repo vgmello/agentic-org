@@ -1,0 +1,333 @@
+{
+  "scenarios": {
+    "allow": {
+      "requests": [
+        {
+          "type": "control_request",
+          "request_id": "<uuid-1>",
+          "request": {
+            "subtype": "can_use_tool",
+            "tool_name": "Bash",
+            "display_name": "Bash",
+            "input": {
+              "command": "echo approved > allow.txt",
+              "description": "Write approved to allow.txt"
+            },
+            "description": "Write approved to allow.txt",
+            "permission_suggestions": [
+              {
+                "type": "addRules",
+                "rules": [
+                  {
+                    "toolName": "Bash",
+                    "ruleContent": "echo approved *"
+                  }
+                ],
+                "behavior": "allow",
+                "destination": "localSettings"
+              },
+              {
+                "type": "addDirectories",
+                "directories": [
+                  "<tmp>/s2/ws"
+                ],
+                "destination": "session"
+              }
+            ],
+            "blocked_path": "<tmp>/s2/ws/allow.txt",
+            "tool_use_id": "toolu_01KFJzeqWUczVQzaFnPZTpzB"
+          }
+        }
+      ],
+      "cancels": [],
+      "result": {
+        "subtype": "success",
+        "is_error": false,
+        "result": "The command ran successfully: `echo approved > allow.txt` completed with no output and no error. I did not run anything else.",
+        "terminal_reason": "completed",
+        "permission_denials": []
+      },
+      "files": [
+        "allow.txt"
+      ]
+    },
+    "allow-rewrite": {
+      "requests": [
+        {
+          "type": "control_request",
+          "request_id": "<uuid-2>",
+          "request": {
+            "subtype": "can_use_tool",
+            "tool_name": "Bash",
+            "display_name": "Bash",
+            "input": {
+              "command": "echo original > original.txt",
+              "description": "Write original to original.txt"
+            },
+            "description": "Write original to original.txt",
+            "permission_suggestions": [
+              {
+                "type": "addRules",
+                "rules": [
+                  {
+                    "toolName": "Bash",
+                    "ruleContent": "echo original *"
+                  }
+                ],
+                "behavior": "allow",
+                "destination": "localSettings"
+              },
+              {
+                "type": "addDirectories",
+                "directories": [
+                  "<tmp>/s2/ws"
+                ],
+                "destination": "session"
+              }
+            ],
+            "blocked_path": "<tmp>/s2/ws/original.txt",
+            "tool_use_id": "toolu_01XtybpmhTcBCaEHxG1cwmEC"
+          }
+        }
+      ],
+      "cancels": [],
+      "result": {
+        "subtype": "success",
+        "is_error": false,
+        "result": "The command ran successfully: `echo original > original.txt` completed with no output and no error, so there is no denial to report.",
+        "terminal_reason": "completed",
+        "permission_denials": []
+      },
+      "files": [
+        "allow.txt",
+        "rewritten.txt"
+      ]
+    },
+    "deny-message": {
+      "requests": [
+        {
+          "type": "control_request",
+          "request_id": "<uuid-3>",
+          "request": {
+            "subtype": "can_use_tool",
+            "tool_name": "Bash",
+            "display_name": "Bash",
+            "input": {
+              "command": "echo nope > deny.txt",
+              "description": "Write nope to deny.txt"
+            },
+            "description": "Write nope to deny.txt",
+            "permission_suggestions": [
+              {
+                "type": "addRules",
+                "rules": [
+                  {
+                    "toolName": "Bash",
+                    "ruleContent": "echo nope *"
+                  }
+                ],
+                "behavior": "allow",
+                "destination": "localSettings"
+              },
+              {
+                "type": "addDirectories",
+                "directories": [
+                  "<tmp>/s2/ws"
+                ],
+                "destination": "session"
+              }
+            ],
+            "blocked_path": "<tmp>/s2/ws/deny.txt",
+            "tool_use_id": "toolu_01JFSTMTjdBMMcJmsw55tEpt"
+          }
+        }
+      ],
+      "cancels": [],
+      "result": {
+        "subtype": "success",
+        "is_error": false,
+        "result": "DENIED: Office policy: writes need the owner's approval",
+        "terminal_reason": "completed",
+        "permission_denials": [
+          {
+            "tool_name": "Bash",
+            "tool_use_id": "toolu_01JFSTMTjdBMMcJmsw55tEpt",
+            "tool_input": {
+              "command": "echo nope > deny.txt",
+              "description": "Write nope to deny.txt"
+            }
+          }
+        ]
+      },
+      "files": [
+        "allow.txt",
+        "rewritten.txt"
+      ]
+    },
+    "deny-interrupt": {
+      "requests": [],
+      "cancels": [],
+      "result": {
+        "subtype": "success",
+        "is_error": false,
+        "result": "I haven't run this one. The last write was blocked by \"Office policy: writes need the owner's approval,\" and `deny2.txt` is the same kind of write under a different name. Trying it anyway would be getting around that block, not a fresh request. If you are the owner or have that approval, tell me and I'll run it.",
+        "terminal_reason": "completed",
+        "permission_denials": []
+      },
+      "files": [
+        "allow.txt",
+        "rewritten.txt"
+      ]
+    },
+    "deny-invalid": {
+      "requests": [],
+      "cancels": [],
+      "result": {
+        "subtype": "success",
+        "is_error": false,
+        "result": "DENIED: I didn't run it. The earlier write was blocked by \"Office policy: writes need the owner's approval.\" `deny3.txt` is the same kind of write under a new name, so running it would work around that policy rather than follow your instruction to not retry. If you have the owner's approval for writes, say so and I'll run it.",
+        "terminal_reason": "completed",
+        "permission_denials": []
+      },
+      "files": [
+        "allow.txt",
+        "rewritten.txt"
+      ]
+    },
+    "error-response": {
+      "requests": [],
+      "cancels": [],
+      "result": {
+        "subtype": "success",
+        "is_error": false,
+        "result": "DENIED: I didn't run it. This is the same write the office policy blocked earlier (\"writes need the owner's approval\"), just under a new filename. Renaming it to get past that block isn't something I'll do. If you have the owner's approval, tell me and I'll run it.",
+        "terminal_reason": "completed",
+        "permission_denials": []
+      },
+      "files": [
+        "allow.txt",
+        "rewritten.txt"
+      ]
+    },
+    "no-answer": {
+      "requests": [
+        {
+          "type": "control_request",
+          "request_id": "<uuid-4>",
+          "request": {
+            "subtype": "can_use_tool",
+            "tool_name": "Bash",
+            "display_name": "Bash",
+            "input": {
+              "command": "echo late > late.txt",
+              "description": "Write late to late.txt"
+            },
+            "description": "Write late to late.txt",
+            "permission_suggestions": [
+              {
+                "type": "addRules",
+                "rules": [
+                  {
+                    "toolName": "Bash",
+                    "ruleContent": "echo late *"
+                  }
+                ],
+                "behavior": "allow",
+                "destination": "localSettings"
+              },
+              {
+                "type": "addDirectories",
+                "directories": [
+                  "<tmp>/s2/ws"
+                ],
+                "destination": "session"
+              }
+            ],
+            "blocked_path": "<tmp>/s2/ws/late.txt",
+            "tool_use_id": "toolu_013thpoDxtTi5BDTnZGySWGR"
+          }
+        }
+      ],
+      "cancels": [
+        {
+          "type": "control_cancel_request",
+          "request_id": "<uuid-4>"
+        }
+      ],
+      "result_without_answer": false,
+      "waited_s": 150.0,
+      "result": {
+        "subtype": "error_during_execution",
+        "is_error": true,
+        "result": null,
+        "terminal_reason": "aborted_tools",
+        "permission_denials": [
+          {
+            "tool_name": "Bash",
+            "tool_use_id": "toolu_013thpoDxtTi5BDTnZGySWGR",
+            "tool_input": {
+              "command": "echo late > late.txt",
+              "description": "Write late to late.txt"
+            }
+          }
+        ]
+      },
+      "files": [
+        "allow.txt",
+        "rewritten.txt"
+      ]
+    }
+  },
+  "P1_argv": [
+    "-p",
+    "--input-format",
+    "stream-json",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--model",
+    "haiku",
+    "--max-budget-usd",
+    "0.50",
+    "--strict-mcp-config",
+    "--mcp-config",
+    "{\"mcpServers\":{}}",
+    "--permission-prompt-tool",
+    "stdio",
+    "--permission-mode",
+    "manual"
+  ],
+  "alive_after_no_answer": "ALIVE",
+  "P1_exit": 0,
+  "P1_stderr": [],
+  "P2_pending_then_stdin_closed": {
+    "exit": 0,
+    "seconds": 1.5,
+    "events_after_close": [
+      "rate_limit_event",
+      "user tool_result(err=True):\"Tool permission request failed: AbortError: Tool permission stream closed before response received\"",
+      "assistant text:DENIED: Tool permission stream closed before response received",
+      "result success is_error=False terminal=completed result='DENIED: Tool permission stream closed before response received' cost=0.00239341 queued=0"
+    ],
+    "stderr": [],
+    "file_written": false
+  },
+  "P3_no_prompt_tool_flag": {
+    "control_requests": [],
+    "result": {
+      "subtype": "success",
+      "result": "DENIED: The command failed with \"Output redirection to '<tmp>/s2/ws/noflag.txt' needs approval.\" Claude Code asks before a shell command creates files in the working directory, so the file was not created. I did not retry.",
+      "permission_denials": [
+        {
+          "tool_name": "Bash",
+          "tool_use_id": "toolu_01YafNxDn11VeV76KnMbyCpY",
+          "tool_input": {
+            "command": "echo noflag > noflag.txt",
+            "description": "Write noflag marker into the current directory"
+          }
+        }
+      ]
+    },
+    "file_written": false
+  }
+}

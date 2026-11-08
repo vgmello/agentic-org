@@ -8,9 +8,12 @@ use std::fs::File;
 use std::io::Read;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+// ULIDs for the members the office makes (the owner's id, ...) arrive with the HQ event log.
+#[allow(dead_code)]
 const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 /// A fresh ULID: 48 bits of Unix milliseconds followed by 80 random bits.
+#[allow(dead_code)]
 pub(crate) fn generate() -> std::io::Result<String> {
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -26,6 +29,7 @@ pub(crate) fn random_bytes<const N: usize>() -> std::io::Result<[u8; N]> {
     Ok(bytes)
 }
 
+#[allow(dead_code)]
 fn encode(ms: u64, random: [u8; 10]) -> String {
     let mut value = (u128::from(ms & 0xFFFF_FFFF_FFFF) << 80) | {
         let mut tail = [0u8; 16];

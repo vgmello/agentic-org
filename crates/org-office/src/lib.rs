@@ -1,24 +1,23 @@
 //! # org-office: the office's domain and storage
 //!
-//! Organizations, teams, agents, projects and tasks; encrypted SQLite (single writer: the server);
-//! the workspace files agents read and write. A library with no entry point:
-//! `apps/org-office-server` runs it.
+//! An office is one folder (`<home>/offices/<office-id>/`) with its own encrypted databases
+//! (`org.db`: the organization's data; `office.db`: the office's own), one key, a lock that
+//! makes the server the only owner, a workspace, and `office.json` marking it finished. A
+//! library with no entry point: `apps/org-office-server` runs it.
 //!
-//! Knows nothing about sockets or the wire contract: callers hand it plain values and get
-//! plain values back. Phase 1 holds the organization registry (`Office`).
-//!
-//! **Transitional:** this is the storage engine (encrypted SQLite, one batching writer, keys,
-//! owner-only files) with the first registry-style `Office` on top of it. The office model
-//! (`docs/design/offices-hq-and-satellites.md`) makes an office ONE folder with its own
-//! `org.db` and `office.db`; the next piece replaces `Office`'s registry API with that, on the
-//! same engine (`store.rs`, `key.rs`, `private_fs.rs`).
+//! Knows nothing about sockets: callers hand it plain values and get plain values back.
+//! `Office::create` / `open` / `discard` are the three ways into a folder; the engine
+//! (`store.rs`: SQLCipher, one batching writer, keys, owner-only files) is private. The
+//! organization's rules (`rules`) speak the wire contract's types (`org_proto::org`), because
+//! a satellite replays the very changes HQ logged.
 
 mod error;
 mod key;
 mod model;
-mod name;
 mod office;
+mod office_file;
 mod private_fs;
+pub mod rules;
 mod store;
 mod time;
 mod ulid;
@@ -27,6 +26,5 @@ pub use error::{NameError, OfficeError};
 #[cfg(any(test, feature = "dev-keys"))]
 pub use key::InMemoryKeys;
 pub use key::{Key, KeyError, KeyProvider};
-pub use model::{OfficeInfo, Organization};
-pub use name::MAX_NAME_CHARS;
-pub use office::Office;
+pub use model::{NewOffice, OfficeInfo, OfficeRole};
+pub use office::{Office, LOCK_WAIT};

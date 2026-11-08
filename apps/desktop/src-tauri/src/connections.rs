@@ -172,6 +172,8 @@ mod tests {
                 host: "This Mac".into(),
                 endpoint: None,
                 status: OfficeStatus::Active,
+                status_reason: None,
+                next_restart_at: None,
             },
             organization: Organization {
                 id: org_id.into(),

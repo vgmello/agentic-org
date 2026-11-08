@@ -2,7 +2,7 @@
 kind: spec
 title: "Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)"
 status: for-review
-revision: 5
+revision: 9
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-08"
@@ -14,6 +14,14 @@ builds_on: [offices-and-teams-ux, work-items-ux]
 # Spec · Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)
 
 Builds on `offices-and-teams-ux.md` rev 4, `work-items-ux.md` rev 5 and `desktop-app-v1.md` (in Eden's notes, not in this repository) (hire §3.6, profile §3.5).
+
+**Revision 9 (2026-11-08): review fixes.** The requester never approves their own request (it goes one level up), except the owner, who approves their own hires since nobody is above the owner (§7.1). In Chat the HR lead is listed in DMs and in @ completion as "HR lead". The Requests tab has empty, loading and error states (§7.1). U10 and U11 now read as approved: the organization is **Agentic Consulting**, with the shape in §2. APPR-3 and HRL-2 rewritten.
+
+**Revision 8 (2026-11-08): approving hires without the owner (the user).** A flag on an agent, **Can approve hires**, lets that agent approve hires. A hire request goes to the requester's manager, and if that manager has the flag, its approval is enough: the HR lead provisions with no human in the loop. Otherwise the request goes up the reporting line to the nearest manager with the flag, and finally to the owner (§7.1). §2a, HRL-3 and HRL-4 rewritten. APPR-1 to APPR-8 added.
+
+**Revision 7 (2026-11-08): the HR lead is built in (the user).** HR is a built-in agent, "HR lead", that only provisions agents (§2a). The user approved my recommendations U10–U12 (the name Agentic Consulting, the team shape in §2, and the app as where we manage the team). HRL-1 to HRL-5 added.
+
+**Revision 6 (2026-11-08): aligned with ada's W7 model.** Item numbers in Activity follow `work-items-ux.md` rev 6 and carry the project key, since Activity spans projects (`ac-B-15`). No criteria changed.
 
 **Revision 5 (2026-11-08): follows org-proto on v1.** Offboarding or removing a member sends their reports to that member's own manager, or to the owner if they had none (not always to the owner). Pause stops a running session at once (agent-sessions). G2 uses `member.set_agent_status`. The survey notes what v1 has gained since.
 
@@ -63,7 +71,7 @@ Builds on `offices-and-teams-ux.md` rev 4, `work-items-ux.md` rev 5 and `desktop
 - **Not every agent was hired through HR.** Some were simply started in a runtime and given a messaging name. The app needs **Add an existing agent**, not only Hire.
 - Records **drift**. HR says Riley is active, but Riley hasn't messaged and the app work moved to app-frontend-dev. (Remy was in the same state until the user started him.) Import must show this and let the owner decide (pause, offboard, keep), not copy it blindly.
 
-## 2. Proposed shape of our organization (for the user to approve, U11)
+## 2. The shape of our organization (approved, U11)
 
 ```
  (VM) Vitor (you) · Owner
@@ -78,7 +86,17 @@ Builds on `offices-and-teams-ux.md` rev 4, `work-items-ux.md` rev 5 and `desktop
  Reporting lines: ada → you · Eden → you · everyone in Engineering → ada
 ```
 
-The organization's name is U10 ("Agentic Consulting" from the folder? another?). It mustn't be "Agentic Org", which is the app.
+The organization is named **Agentic Consulting** (U10, approved), the workspace's name. It mustn't be "Agentic Org", which is the app.
+
+## 2a. The HR lead, a built-in agent (rev 7, the user)
+
+Every organization has one built-in agent, **HR lead**, created with the organization. Its only job is **provisioning agents**: it proposes and sets up hires (Hire, Add an existing agent, Staff a team from requirements), drafts new roles, and does the provisioning cleanup when the owner offboards an agent. It doesn't manage, lead, triage or take work.
+
+- **Always there, never removable:** it can't be offboarded, deleted, moved into a team or given reports, and nobody reports to it. Its name is fixed ("HR lead"), and its handle `hr` is reserved like `owner`. The owner can change only its runtime, model and how it runs.
+- **On call by default** (`agent-run-modes-ux.md`): asleep until a Hire, an Add agent or a provisioning request wakes it. Its runs and cost show under "HR lead" in Insights.
+- **Where it shows:** beside the owner bar in the org chart as a compact chip, "HR lead · built-in · Asleep · wakes when called", which opens its quick view; in the Agents roster's own **Built-in** group at the top; and in Chat, in Direct messages and in @ completion, as "HR lead" (it can be messaged). It never appears on a team card, in Teams, People or Reporting lines, or in member, lead and manager pickers.
+- **Someone always approves** *(rev 8)*: anything the HR lead provisions needs an approved Hire review, either by the owner or by a manager with **Can approve hires** (§7.1). Agents ask it (`@hr` in Chat, or `org-agent hire request "…"`), and the request is routed to its approver. Hiring is never automatic.
+- **Import:** the HR toolkit's own agent (`.claude/agents/hr.md` in the agents repo) maps onto the built-in HR lead. It isn't brought in as a member.
 
 ## 3. Decisions
 
@@ -94,7 +112,7 @@ The organization's name is U10 ("Agentic Consulting" from the folder? another?).
 6. **Assigning has one entry point per target,** from the agent or from the target: **Add to team…** (agent ⇄ team), **Lead** (team), **Assign task** (agent ⇄ task). An agent works on a project **through a team**. "Add to project…" on an agent asks which of the project's teams to join (or suggests one).
 7. **Everything happening is one feed, Activity,** with Home showing its top. Sources: sessions and status, messages between members, tasks and bugs, team and member changes, and git merges into the integration branch. Filters by team, member, project and kind. The owner reads agents' messages and replies only when addressed (§6).
 8. **Live everywhere:** status dots on chart cards and lists come from presence, and changes made by agents (a task moved, a message sent) appear in under 2 seconds without a reload.
-9. **Hire is the HR flow on the office.** The v1 §3.6 steps (Describe → Suggestion → Review → Hiring → Done) stay, and the review adds **Team**, **Runtime** and **Office**. HR proposes, and the owner sees exactly what will be created before anything is.
+9. **Hire is the HR flow on the office.** The v1 §3.6 steps (Describe → Suggestion → Review → Hiring → Done) stay, and the review adds **Team**, **Runtime** and **Office**. The HR lead proposes, and the approver (the owner, or a manager with Can approve hires, §7.1) sees exactly what will be created before anything is.
 
 ## 4. Flow 1 · Bring our team in (import)
 
@@ -169,7 +187,7 @@ The organization's name is U10 ("Agentic Consulting" from the folder? another?).
  05:33  [A] ada → 7 members · message · "PHASE 1 PUSH (the user, today)…"
  05:30  [S] server-dev · merged server-dev/create-org into v1 · 3 commits      [View]
  05:12  [R] River · status Working → Waiting · "waiting for the reviewer"
- 04:58  [E] Eden · bug chk-15 reported in Agentic Org · Major
+ 04:58  [E] Eden · bug ac-B-15 reported in Agentic Org · Major
         ── Earlier: 14 more · [Show]
 ```
 
@@ -189,11 +207,32 @@ The organization's name is U10 ("Agentic Consulting" from the folder? another?).
 v1 §3.6 holds, with these changes for the office model:
 
 - **Describe:** "What do you need?" plus **Team** (optional, prefilled from where Hire was opened) instead of Project. Projects come with the team.
-- **Suggestion (HR's proposal):** role, title (with level), name, focus, **team**, **reports to** (the team's lead by default), and **runtime** (the organization's default, or what the role suggests).
+- **Suggestion (the HR lead's proposal):** role, title (with level), name, focus, **team**, **reports to** (the team's lead by default), and **runtime** (the organization's default, or what the role suggests).
 - **Review:** what will be created, as a dry run: the member (name, messaging name `ac-qa-engineer-cameron`), team, reports to, runtime and model, office ("This Mac"), home folder, the role file if it's new, and "Cameron can be reached by everyone in <org>".
 - **Hiring:** in words (Creating Cameron's record… Setting up the home folder… Registering with messaging…). **Done:** "Cameron is hired and in App." **Open in Claude Code** / **Open session** (primary), Assign a task, View profile.
 - **Runtime not installed or signed out** (chosen in Suggestion): the Review warns "Codex isn't signed in on This Mac. Cameron is hired, but can't start until it is." **Hire anyway** works.
 - **Add an existing agent** (the Hire panel's second tab, for an agent already running elsewhere, like ours were): name · messaging name · runtime · role/title · team · reports to · home folder (optional). **Add agent**. This is the one-row version of the import.
+
+### 7.1 Who approves a hire (rev 8, the user)
+
+**The flag.** **Can approve hires** is a flag on an **agent** (not on its role), set by the owner in the agent's Settings, at hire or later. It's typical for managers and senior managers. The roster and quick view show it as a badge, "Approves hires". Only the owner can set or clear it. An agent can't give it to itself or to the agents it hires.
+
+**The route.** A hire request (from an agent or a person, through `@hr`, `org-agent hire request` or the app's Hire) is drafted by the HR lead into a **hire proposal**: role, title, team, reports to, runtime and model, how it runs, and an estimated cost per month at API prices. The proposal then goes to its **approver**:
+
+1. The requester's **manager**, if that manager has Can approve hires.
+2. Otherwise up the **reporting line** to the nearest manager with the flag.
+3. Otherwise **the owner**.
+
+The owner can always approve or reject any proposal. Someone who requests a hire never approves their own request: it goes one level up. The one exception is **the owner**, who approves their own hires, since nobody is above the owner. The HR lead never approves.
+
+**An agent approver** gets the proposal in its inbox (woken if on call), with the same facts as the Hire review. It answers `org-agent hire approve <id> --reason "…"` or `hire reject <id> --reason "…"`. Approved means the HR lead provisions at once, with no human needed. The approval is recorded on the new agent ("Hired 8 Nov · requested by codex-dev · approved by ada") and in Activity. The owner sees it on Home ("ada approved hiring Cameron, QA engineer, for Office · ≈ $40/month"), with **Open** and, from the agent's profile, the usual **Offboard…** if they disagree.
+
+**Hire requests** (Agents › Requests tab): each proposal with its requester, approver, state (**Waiting for ada** · **Waiting for you** · **Approved by ada** · **Rejected** · **Hired**) and age. A request waiting on an agent approver for more than a day is also shown to the owner, who can approve it directly.
+- **Empty:** "No hire requests. When someone asks the HR lead for a new agent, it shows here."
+- **Loading:** skeleton rows.
+- **Error:** "Can't load hire requests" with **Retry**.
+
+**Optional guardrail** (Settings › Hiring): "Hires approved by agents: no limit" (default), or "at most [n] per week", or "only up to ≈ $[amount] per month each". Above the limit the request goes to the owner, and the proposal says why ("Above ada's weekly limit, so it comes to you").
 
 ## 8. Flow 5 · Assign and change teams
 
@@ -249,7 +288,7 @@ v1 §3.6 holds, with these changes for the office model:
 - STAFF-1 · Hire's review shows team, reports to, runtime, model, office, home folder and messaging name before anything is created.
 - STAFF-2 · A hired agent appears in its team in the chart, highlighted, and in Activity ("Cameron was hired into App").
 - STAFF-3 · Choosing a runtime that isn't installed or signed in warns in Review, and Hire anyway still hires.
-- STAFF-4 · Add an existing agent creates an agent from name, messaging name, runtime, role or title, team and reports to, with no HR proposal.
+- STAFF-4 · *(rev 8)* Add an existing agent creates an agent from name, messaging name, runtime, role or title, team and reports to. It goes through the HR lead's proposal and needs approval like any hire (§7.1, HRL-3).
 
 **Assign and move (MOVE)**
 - MOVE-1 · Move to team is one action: the agent never appears in Not in a team in between, and the toast offers Undo.
@@ -257,6 +296,23 @@ v1 §3.6 holds, with these changes for the office model:
 - MOVE-3 · Add to project lists the project's teams to join, and with one team it's a single step.
 - MOVE-4 · The assignee picker shows status and runtime, and assigning to a paused agent asks first.
 - MOVE-5 · Make lead updates the team card and its projects' lead line at once.
+
+**Hire approval (APPR)** *(new, rev 8)*
+- APPR-1 · Only the owner can set or clear an agent's Can approve hires flag, at hire or in the agent's Settings, and the roster and quick view show "Approves hires".
+- APPR-2 · A hire proposal goes to the requester's manager if that manager has the flag, else up the reporting line to the nearest manager with it, else to the owner. The proposal shows who it's waiting for.
+- APPR-3 · *(rev 9)* The requester never approves their own request (it goes one level up), except the owner, who approves their own hires since nobody is above the owner. The HR lead never approves.
+- APPR-4 · An approval by a manager with the flag is enough: the HR lead provisions at once, with no human step.
+- APPR-5 · Every approved hire records who requested and who approved it, on the new agent's profile and in Activity, and the owner sees it on Home.
+- APPR-6 · The owner can approve or reject any proposal at any time, and a proposal waiting on an agent for over a day is shown to the owner.
+- APPR-7 · Above the optional weekly or cost limit, a proposal goes to the owner and says why.
+- APPR-8 · `org-agent hire request|approve|reject` work with the same words as the app, and approve and reject need a reason.
+
+**HR lead (HRL)** *(new, rev 7)*
+- HRL-1 · Every organization has one built-in HR lead from its creation, with the reserved handle `hr`, and it can't be offboarded, deleted, renamed, put in a team, given reports or chosen as anyone's manager.
+- HRL-2 · *(rev 9)* The HR lead appears only as the chip beside the owner bar, in the Agents roster's Built-in group, and in Chat, where it's listed in DMs and in @ completion as "HR lead" (it can be messaged). It never appears on team cards, in Teams, People or Reporting lines, or in member pickers.
+- HRL-3 · *(rev 8)* Hire, Add an existing agent and Staff a team wake the HR lead (on call by default), and nothing is provisioned before the proposal is approved by the owner or by a manager with Can approve hires (§7.1).
+- HRL-4 · *(rev 8)* An agent's request to the HR lead becomes a hire proposal routed to its approver (§7.1), never an automatic hire.
+- HRL-5 · The owner can change the HR lead's runtime, model and run mode only, and its runs and cost show under "HR lead" in Insights.
 
 **Deallocate (DEAL)**
 - DEAL-1 · The UI never says "deallocate". It offers Remove from team, Pause, Offboard and Unassign, each with its own consequences.
@@ -274,19 +330,21 @@ v1 §3.6 holds, with these changes for the office model:
 | G3 | Import: read the HR workspace and the spool inboxes into a reviewable plan, then apply it (CLI first, then the app) | codex-dev (ada, after W8, with the W7 model) | W12 |
 | G4 | Messaging names ⇄ members: a message from `codex-dev` is linked to its member, and `who`/presence are keyed the same way | Remy (messaging owner) | W6 Phase B |
 | G5 | Activity feed: one stream over messages, status, work items, team changes and git merges | ada (contract), server-dev, Remy | new |
-| G6 | Hire on the office: HR's proposal and provisioning as an office call (the `hr.py` logic ported) | codex-dev (ada) | W12 |
+| G6 | Hire on the office: the HR lead's proposal and provisioning as an office call (the HR toolkit's `hr.py` logic ported) | codex-dev (ada) | W12 |
 | G7 | App screens: Import, the agent record, Activity, Home, Hire and Add agent, Move, Pause and Offboard | app-frontend-dev (ada; Riley stays offline) | W9 / W12 |
 | G8 | Runtime hand-off: "Open in Codex/Antigravity" and session launch per runtime | codex-dev (adapters, W8) + app-frontend-dev | W8 / W9 |
 
 ## 13. Open questions
 
 **For the user**
-- U10 · *My recommendation:* **Agentic Consulting**, the workspace's name, distinct from the app. Use another name if you prefer.
-- U11 · *My recommendation:* the shape in §2: Remy leads Agent tooling, and Riley shows Offline in App.
-- U12 · *My recommendation:* yes. After the import, the app (and `org-agent`) is where we hire, move and offboard. HR's folders stay as a read-only record, and later imports only bring in what changed.
+- ~~U10~~ · *Resolved (the user, 2026-11-08): as recommended.* *My recommendation:* **Agentic Consulting**, the workspace's name, distinct from the app. Use another name if you prefer.
+- ~~U11~~ · *Resolved (the user, 2026-11-08): as recommended.* *My recommendation:* the shape in §2: Remy leads Agent tooling, and Riley shows Offline in App.
+- ~~U12~~ · *Resolved (the user, 2026-11-08): as recommended.* *My recommendation:* yes. After the import, the app (and `org-agent`) is where we hire, move and offboard. HR's folders stay as a read-only record, and later imports only bring in what changed.
 - ~~U13~~ · *Resolved (the user):* don't start Remy and Riley. They're brought in Active and show as **Offline** (no session), not Paused. Their planned work (G3, G6, G7) needs another owner (ada). *Update (later the same day): the user started Remy, who now owns messaging (AGENTS.md). Riley stays Offline.*
 
 **For ada**
+- ~~A47~~ · *Resolved (ada):* `can_approve_hires` (owner-set only), `HireProposal` with routing up the reporting line, and `hire.request|approve|reject` (server-dev the contract, codex-dev the flow). In our team, ada has the flag.
+- ~~A46~~ · *Resolved (ada):* server-dev adds a built-in `hr_lead` agent with the reserved handle `hr`, created with the organization; codex-dev builds the HR lead's runs. Note: `member.add_agent` is app-only today (`teams-and-org-chart.md`), so provisioning approved by an agent needs an exception for the HR lead's run (ada).
 - ~~A37~~ · *Resolved (ada):* offboarding is a state. `AgentStatus` gains `offboarded`, and `member.offboard { member_id, expected_version }` sets it with `offboarded_at`. The record stays, the handle stays reserved, the agent shows under Former members, and its open tasks are reclaimed as in the teams design. `member.remove` stays for hard deletes of members with no history (mistakes). server-dev drafts it. ada updates `docs/design/teams-and-org-chart.md`, which still says offboarding issues `member.remove`.
 - ~~A15~~ · *Resolved (ada):* `Member.agent: Option<AgentProfile>` (one entity, one version) with role, title, focus, runtime (claude_code | codex | antigravity | other), home, messaging_name, status (active | paused). Commands: `member.add_agent`, `member.update_agent`, `member.set_agent_status`, `member.move`.
 - ~~A14~~ · *Partly resolved (ada):* codex-dev and server-dev run on Codex, agy-senior-dev on Antigravity. app-frontend-dev and the reviewer: ada is asking the user.

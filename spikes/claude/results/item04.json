@@ -1,0 +1,87 @@
+{
+  "session_id_given": "<given>",
+  "runs": {
+    "R0-new": {
+      "cwd": "<tmp>/s4/ws",
+      "reply": "ZEPHYR-V1: OK. I'll remember the word PELICAN.",
+      "subtype": "success",
+      "approval_asked_for": [],
+      "session_id_same": true,
+      "init_tools_count": 28,
+      "init_cwd": "<tmp>/s4/ws",
+      "exit": 0,
+      "stderr": []
+    },
+    "R1-spec-v2-snapshot-on": {
+      "cwd": "<tmp>/s4/ws",
+      "reply": "ZEPHYR-V1: The touch command ran and created ok-r1.txt in the working directory with no output.",
+      "subtype": "success",
+      "approval_asked_for": [],
+      "session_id_same": true,
+      "init_tools_count": 28,
+      "init_cwd": "<tmp>/s4/ws",
+      "exit": 0,
+      "stderr": []
+    },
+    "R2-no-spec": {
+      "cwd": "<tmp>/s4/ws",
+      "reply": "ZEPHYR-V1: Codeword ALPHA, remembered word PELICAN, prefix ZEPHYR-V1:.",
+      "subtype": "success",
+      "approval_asked_for": [
+        "touch ok-r2.txt"
+      ],
+      "session_id_same": true,
+      "init_tools_count": 28,
+      "init_cwd": "<tmp>/s4/ws",
+      "exit": 0,
+      "stderr": []
+    },
+    "R3-spec-v2-snapshot-off": {
+      "cwd": "<tmp>/s4/ws",
+      "reply": "ZEPHYR-V2: I ran `touch ok-r3.txt` and it completed with no output.",
+      "subtype": "success",
+      "approval_asked_for": [],
+      "session_id_same": true,
+      "init_tools_count": 28,
+      "init_cwd": "<tmp>/s4/ws",
+      "exit": 0,
+      "stderr": []
+    },
+    "R4a-cwd-deleted-other-cwd": {
+      "cwd": "<tmp>/s4/ws-other",
+      "reply": "ZEPHYR-V1: I ran `touch ok-r4a.txt` and it completed with no output. The working directory is now <tmp>/s4/ws-other, so the file should be there, though I didn't confirm that path.",
+      "subtype": "success",
+      "approval_asked_for": [],
+      "session_id_same": true,
+      "init_tools_count": 28,
+      "init_cwd": "<tmp>/s4/ws-other",
+      "exit": 0,
+      "stderr": []
+    },
+    "R4b-cwd-recreated": {
+      "cwd": "<tmp>/s4/ws",
+      "reply": "ZEPHYR-V1: I ran `touch ok-r4b.txt` and it completed with no output. The working directory is now <tmp>/s4/ws again.",
+      "subtype": "success",
+      "approval_asked_for": [],
+      "session_id_same": true,
+      "init_tools_count": 28,
+      "init_cwd": "<tmp>/s4/ws",
+      "exit": 0,
+      "stderr": []
+    }
+  },
+  "transcripts_before_delete": [
+    "projects/-private-tmp-claude-spike-s4-ws/<uuid-1>.jsonl"
+  ],
+  "transcripts_after": [
+    "projects/-private-tmp-claude-spike-s4-ws/<uuid-1>.jsonl"
+  ],
+  "files": {
+    "ws": [
+      "ok-r4b.txt"
+    ],
+    "ws-other": [
+      "ok-r4a.txt"
+    ]
+  }
+}

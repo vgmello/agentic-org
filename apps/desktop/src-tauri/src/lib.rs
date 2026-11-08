@@ -454,6 +454,8 @@ mod tests {
             host: "This Mac".into(),
             endpoint: None,
             status: org_proto::OfficeStatus::Active,
+            status_reason: None,
+            next_restart_at: None,
         }
     }
 

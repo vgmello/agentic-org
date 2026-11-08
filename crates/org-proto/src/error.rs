@@ -12,18 +12,25 @@ pub enum ErrorCode {
     /// agent's `title` or `home`), a call that gives nothing to change, `Unknown` or a
     /// non-canonical value where a known one is required, an agent-only call on a person (or
     /// the other way round), or a call on a member in the wrong state (e.g. editing or
-    /// offboarding an agent that is already offboarded).
+    /// offboarding an agent that is already offboarded). In [`crate::msg`] and
+    /// [`crate::directory`], a number out of range (a `limit`, `timeout_ms`, `wait_ms` or
+    /// `ttl_ms`) is `invalid_request`, while a string, body, meta or note over its size limit
+    /// is `too_large`.
     InvalidRequest,
     /// The server doesn't know the method.
     UnknownMethod,
-    /// A name breaks its rule. Each kind of name (an organization, a team, a person, an agent)
-    /// has its own rule; an organization's is [`crate::OrganizationName::parse`]. An agent's
-    /// `messaging_name` that breaks its format is also `invalid_name`.
+    /// A name breaks its rule. Each kind of name (an organization, a team, a person, an agent, a
+    /// project, an area) has its own rule; an organization's is [`crate::OrganizationName::parse`].
+    /// An agent's `messaging_name` that breaks its format is also `invalid_name`, and so is a
+    /// person's name or an agent's `messaging_name` that looks like an address (a `run:` prefix,
+    /// or 26 letters and digits, the shape of a member id).
     InvalidName,
     /// Something with that name or id already exists: an organization or a sibling team with
     /// that name (names compare ignoring case), another agent with that `messaging_name`
-    /// (ignoring case), a membership or project-team link that already exists, or a
-    /// client-made id that's taken.
+    /// (ignoring case), a person's name or `messaging_name` that is a reserved word (`owner`,
+    /// `office`), a project with that key or name (ignoring case), a live area of the project
+    /// with that name (ignoring case), a membership, project-team link or work-item link that
+    /// already exists, or a client-made id that's taken.
     AlreadyExists,
     /// The server couldn't read or write its storage. Partial state is cleaned up.
     StorageError,
@@ -39,26 +46,59 @@ pub enum ErrorCode {
     OwnerProtected,
     /// Something the command names doesn't exist (any more).
     NotFound,
-    /// The `expected_version` is stale: the thing changed since the caller saw it.
+    /// The `expected_version` is stale: the thing changed since the caller saw it. Also
+    /// `office.restart` on an office that isn't `offline` or `unavailable` (e.g. it's already
+    /// starting or active).
     Conflict,
     /// `subscribe { from_position }` can't resume from there; take a fresh `org.snapshot`.
+    /// Also for `from_work_position` (take a fresh `work.snapshot`). The error doesn't say
+    /// which stream: a client that gave both positions takes both snapshots again.
     SnapshotRequired,
     /// The command is too old for HQ to accept (its id's time is past the dedup window).
-    /// Applies to every organization command.
+    /// Applies to every organization command, and to every work write (its `change_id` is
+    /// dated more than 29 days ago; see [`crate::work`]).
     Expired,
     /// The command's id is dated too far ahead of HQ's clock. Applies to every organization
-    /// command.
+    /// command, and to every work write (its `change_id` is more than 5 minutes ahead of the
+    /// owning office's clock).
     ClockSkew,
     /// A message or task is addressed to someone who isn't an agent or person of the
     /// organization.
     UnknownRecipient,
     /// The caller isn't allowed to make this call, e.g. the host's check of the peer's code
-    /// signature failed for `office.app_token`, or an app-only command (`member.set_run_mode`)
-    /// arrived on a connection that is not the app's.
+    /// signature failed for `office.app_token` or `office.restart`, or an app-only command
+    /// (`member.set_run_mode`, `project.create`, `work.delete`) arrived on a connection that is
+    /// not the app's.
     NotAuthorized,
     /// What was asked for exists but can't serve now, e.g. the office isn't running, so there's
-    /// no app token to hand out. Trying again later may work.
+    /// no app token to hand out. Trying again later may work. For `office.restart`, though, it
+    /// means the office's reason is one a restart can't fix (`unsupported_version` or
+    /// `invalid_request`); the message says why. Clients show an office's `status_reason`, not
+    /// this code: the code says only why the call failed.
     Unavailable,
+    /// The host (or office) is still starting; retry shortly. Temporary, unlike
+    /// `unavailable`: e.g. `organization.create`, `office.restart` or `office.app_token` while
+    /// the host's startup discards run.
+    NotReady,
+    /// An `ask`'s deadline (`expires_at`) passed without a reply, including when the
+    /// recipient's office reports that the request expired.
+    Timeout,
+    /// A string, body, meta or note is over its size limit, in bytes (or, for a status line,
+    /// characters; see the limits in [`crate::msg`] and [`crate::directory`]), or a work write
+    /// whose encoded params exceed [`crate::work::WORK_PARAMS_MAX_BYTES`]. A number out of range
+    /// is `invalid_request` instead. Never stored as a write's answer.
+    TooLarge,
+    /// The connection hasn't bound with `msg.bind` (ADR-0003: an agent bound as itself, or the
+    /// app bound as the owner or a person), the bound member was moved out of this office or
+    /// removed, or the connection is bound app-wide and the call acts as a member. Also ends
+    /// held `msg.wait` and `msg.ask` calls when the connection re-binds. Every work call
+    /// ([`crate::work`]) needs a bound connection. Never stored as a write's answer: a retry may
+    /// succeed.
+    NotBound,
+    /// `task.set_status { done }` (or a bug's mark-fixed) while required checklist steps are
+    /// unticked and no `anyway_reason` is given; the message names the steps. Clients branch on
+    /// it ("Mark done anyway…"). A build that doesn't know it reads it as [`ErrorCode::Unknown`].
+    ChecklistIncomplete,
     /// A code this build doesn't know (sent by a newer server).
     #[serde(other)]
     Unknown,
@@ -93,7 +133,8 @@ impl std::error::Error for ApiError {}
 pub enum CallError {
     /// The server answered with an error.
     Api(ApiError),
-    /// The server's result didn't match the call's result type.
+    /// The server's result didn't match the call's result type. The serde error can quote the
+    /// result's values (e.g. a message body), so never log it for `msg.*` results.
     Decode(serde_json::Error),
 }
 

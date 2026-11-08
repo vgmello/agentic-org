@@ -386,6 +386,8 @@ impl Offices {
             host: THIS_MAC.to_owned(),
             endpoint,
             status,
+            status_reason: None,
+            next_restart_at: None,
         }
     }
 }

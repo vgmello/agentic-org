@@ -2,7 +2,7 @@
 kind: spec
 title: "Decisions, evaluations, designs and tech debt (UX)"
 status: for-review
-revision: 7
+revision: 8
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-08"
@@ -20,6 +20,8 @@ Extends `work-items-ux.md` rev 5 (Docs, work items) and `our-org-in-the-app.md` 
 > Capture tech debt: every shortcut or quicker implementation an agent takes should be captured. Have a structure for ADRs and design documents in a project, so agents can use them. Help us find **why a decision was made** and **what technology we evaluated**. And bring this project's own designs into the tool that manages it.
 >
 > These are features of the product: agents don't write them in their own folders any more. They write them **through the tool**, which saves them in the project, in a proper structure, in its repository. *(the user, rev 2)*
+
+**Revision 8 (2026-11-08): aligned with ada's W7 model.** Where docs are written: the app and `org-agent doc new`, `doc edit` and `doc status` write on docs branches the office makes. Only `debt add` (inside a task worktree) and `doc new --here` write on the agent's own task branch, where the agent commits the file (§0.2, §3.1). C18 resolved. A feature's status lives in the office, and the tool rewrites the doc's `status`, `tasks` and `delivered` from it (§0.2). Every doc has a stable `id` in its front matter, and renaming rewrites links (decision 2, §3). A value set by a commit made with git (for example `taken.by` from `debt add`) shows quietly as "from git", never as a warning (§0.2). Debt goes Paid only when at least one payback task is Done · Completed, and Planned or Paid is written once the debt doc is merged into the integration branch: before that it shows "Planned once merged" (§6). Task numbers follow `work-items-ux.md` rev 6 (`T-17` inside the project, `ac-T-17` outside it). **Criteria rewritten (same ID):** AUTH-1, AUTH-6, DBT-5. **Added:** AUTH-7, TPL-8 (52 criteria).
 
 **Revision 7 (2026-11-08): reviewer fixes.** §0.2 now says the docs flow **needs** an extension of the git design (A36), since that design lets the office push only an agent's own `task/…` branch and leaves merging for later. ada agreed office-created `docs/<slug>-<short-id>` branches (A36). "Integration branch" replaces "docs branch" where it meant the branch the Docs tab reads. Branch examples follow `task/<task-id>-<slug>`. The kind list matches §0.1. The Spec template includes `created` and `updated`, and member fields hold member ids.
 
@@ -77,14 +79,15 @@ docs/
 
 ### 0.2 How a doc change lands (rev 7: extends `docs/design/projects-git-github.md`, A36 agreed with ada)
 
-- **Never straight to the default branch.** Every doc change, whether a new doc, an edit, an Accept or a status change, is a commit on a branch: an agent's own `task/<task-id>-<slug>` branch, or for changes made in the app a **docs branch** the office creates (`docs/<slug>-<short-id>`). It lands through the project's normal merge flow. For us: an independent review, the reviewer's READY, ada's go, and a merge into `v1`.
-- **Docs branches (ada, A36):** for edits made in the app, the office creates `docs/<slug>-<short-id>` branches (owner as author, the editing agent or the app as co-author), with no stand-in tasks. Agents' own edits ride on their `task/…` branches. Docs merge through the **same flow as code**: the project's configured reviewer, the go, then the merge. "Waiting to merge" covers both. This extends `docs/design/projects-git-github.md`, which ada updates.
+- **Never straight to the default branch.** Every doc change, whether a new doc, an edit, an Accept or a status change, is a commit on a branch: a **docs branch** the office creates (`docs/<slug>-<short-id>`), or, for `debt add` and `doc new --here`, the agent's own `task/<ref>-<slug>` branch (for example `task/ac-T-17-office-client`) *(rev 8)*. It lands through the project's normal merge flow. For us: an independent review, the reviewer's READY, ada's go, and a merge into `v1`.
+- **Docs branches (ada, A36; rev 8):** for edits made in the app, and by default for `org-agent doc new`, `doc edit` and `doc status`, the office creates `docs/<slug>-<short-id>` branches and commits there (owner as author, the editing agent or the app as co-author), with no stand-in tasks. Only `org-agent debt add` (inside a task worktree; `--docs-branch` opts out) and `doc new --here` put the doc on the agent's own `task/…` branch: the CLI writes the file into the agent's worktree, and the agent commits it with the author and message the tool gives, so the doc travels with its code. The office never writes into an agent's worktree. Docs merge through the **same flow as code**: the project's configured reviewer, the go, then the merge. "Waiting to merge" covers both. This extends `docs/design/projects-git-github.md`, which ada updates.
 - **The app shows that honestly.** A changed doc reads "**Waiting to merge** · on docs/payment-step-a7f3 · 1 change" with **View change**. The reader shows the merged text, and a toggle shows the proposed one. An Accept shows as "Accepted · waiting to merge". Lists show the merged state, with a small "1 change waiting" marker.
-- **Authorship follows the commit-identity decision:** commits are authored under the owner's name and no-reply address, with the agent as `Co-authored-by`. The app shows the agent who made the change ("ada · committed as you"), read from the co-author trailer, and "you" for changes the owner made.
+- **Authorship follows the commit-identity decision:** commits are authored under the owner's name and no-reply address, with the agent as `Co-authored-by`. The app shows the agent who made the change ("ada · committed as you"), read from the co-author trailer, and "you" for changes the owner made. Fields that record who decided or did something (`decided`, `delivered`, `accepted`, `approved`, `taken.by`) are written by the tool. When such a value was set by a commit made with git (for example `taken.by` from `debt add`, which the agent commits itself), the app shows it with a quiet "from git" note, never as a warning. *(rev 8)*
 - **Which branch the Docs tab reads** is the project's integration branch (`v1` for us, `main` elsewhere), a project setting (C13).
+- **Fields the office owns** *(rev 8)*: a feature's status lives in the office (`features-ux.md`), and the tool rewrites the feature doc's `status`, `tasks` and `delivered` from it on each status commit. Don't edit them by hand: a hand edit is overwritten at the next status commit, and `doc validate` flags it.
 
 1. **Document kinds, one Docs tab:** **Features · Decisions (ADRs) · Designs · Evaluations · Specs · Plans · Reviews · Retrospectives · Debt · Limitations · Exceptions · Reports · Other** (guides, and the brief pinned on top), as listed in §0.1. Every kind is a Markdown file in its folder (§0.1), and the kind comes from the folder.
-2. **Markdown with front matter, shaped by a template.** Each doc starts with YAML front matter whose fields come from its kind's template (kind, number, title, status, owner, dates, relations), followed by the template's sections as `##` headings. The UI turns the front matter into a header card and the sections into a navigable page. Agents get the same structure from `org-agent doc schema <kind>`. *(rev 3: replaces the parsed status line.)*
+2. **Markdown with front matter, shaped by a template.** Each doc starts with YAML front matter whose fields come from its kind's template (kind, number, title, status, owner, dates, relations), followed by the template's sections as `##` headings. The UI turns the front matter into a header card and the sections into a navigable page. Agents get the same structure from `org-agent doc schema <kind>`. *(rev 3: replaces the parsed status line.)* Every doc has a stable `id` in its front matter: its number for numbered kinds (`ADR-0004`), otherwise `doc-<ULID>`, written when the doc is created or first saved (ada W7 §4.9). Renaming a doc keeps its id and rewrites the links to it in other docs in the same commit. *(rev 8)*
 3. **ADR statuses:** **Proposed · Accepted · Superseded · Rejected · Deprecated.** A superseded ADR names its replacement, and both link each other.
 4. **Design statuses:** **Draft · In review · Approved · Built · Obsolete.** Evaluations: **Planned · Running · Done** (with a verdict).
 5. **An evaluation is its own small doc** with a fixed shape: the question, the options tried, the criteria, the evidence (numbers, links, commits), and the verdict. ADRs link to the evaluations they rest on ("Evidence: Evaluation 0004 · Turso vs SQLCipher"). This is what makes "what tech did we evaluate?" answerable. Today it's buried in ADR prose.
@@ -120,7 +123,7 @@ docs/
  │   ADR-0002 Storage…    Acc.  │                    │ ─────────────────────────────────────────────  │
  │   ADR-0001 App is a…   Acc.  │                    │ Context …  Decisions …  Consequences …         │
  │   Earlier decisions (v0) · 9 │                    │ ─────────────────────────────────────────────  │
- │ DESIGNS · 4                  │                    │ Led to: ac-12 (task), DEBT-0012, ADR-0003      │
+ │ DESIGNS · 4                  │                    │ Led to: T-12 (task), DEBT-0012, ADR-0003       │
  │ EVALUATIONS · 2              │                    │ Mentioned in: 6 items · docs/adr/0002-….md     │
  │ SPECS · 5                    │                    └───────────────────────────────────────────────┘
  │ OTHER · 3                    │
@@ -152,7 +155,7 @@ supersedes: []              # [ADR-0002]
 superseded_by: null
 refines: [ADR-0001]
 evidence: [EVAL-0002]       # evaluations it rests on
-related: [ac-17, DEBT-0012] # tasks, bugs, debt
+related: [T-17, DEBT-0012]  # tasks, bugs, debt
 ---
 
 ## Context
@@ -163,15 +166,15 @@ related: [ac-17, DEBT-0012] # tasks, bugs, debt
 ## Not covered here
 ```
 
-**Design** (`docs/design/`): `kind: design` · `title` · `status: draft | in-review | approved | built | obsolete` · `owner` · `reviewers: []` · `approved: {on, by}` · `adrs: []` · `specs: []` · `related: []`. Sections: Goal · Users and jobs · The flow · States · Open questions.
+**Design** (`docs/design/`): `kind: design` · `id: doc-<ULID>` · `title` · `status: draft | in-review | approved | built | obsolete` · `owner` · `reviewers: []` · `approved: {on, by}` · `adrs: []` · `specs: []` · `related: []`. Sections: Goal · Users and jobs · The flow · States · Open questions.
 
 **Evaluation** (`docs/evaluations/`): `kind: evaluation` · `id: EVAL-0002` · `title` (the question) · `status: planned | running | done` · `owner` · `options: [Turso, SQLCipher]` · `verdict: SQLCipher` · `verdict_reason: "Turso's encryption is experimental"` · `decides: [ADR-0002]`. Sections: Question · Options · Criteria · Evidence (a table: option × criterion) · Verdict · Left open.
 
-**Spec** (`docs/specs/`): `kind: spec` · `title` · `status: draft | for-review | approved | built` · `revision: 3` · `owner` · `created` · `updated` · `requested_by` · `reviewers: []` · `builds_on: []`. Sections: Goal · Decisions · Flows · States · Acceptance criteria · Open questions · Changelog.
+**Spec** (`docs/specs/`): `kind: spec` · `id: doc-<ULID>` · `title` · `status: draft | for-review | approved | built` · `revision: 3` · `owner` · `created` · `updated` · `requested_by` · `reviewers: []` · `builds_on: []`. Sections: Goal · Decisions · Flows · States · Acceptance criteria · Open questions · Changelog.
 
-**Plan** (`docs/plans/`): `kind: plan` · `title` · `status: active | done | dropped` · `owner` · `period: {from, to}`. Sections: Goal · Workstreams · Finish line · Risks.
+**Plan** (`docs/plans/`): `kind: plan` · `id: doc-<ULID>` · `title` · `status: active | done | dropped` · `owner` · `period: {from, to}`. Sections: Goal · Workstreams · Finish line · Risks.
 
-**Review** (`docs/reviews/`): `kind: review` · `title` · `subject` (a doc id, branch or commit) · `reviewer` · `verdict: ready | changes-needed | blocked` · `findings: {blocker: 1, high: 7, medium: 19, low: 13}`. Sections: Summary · Findings (each with severity, evidence and fix) · For the user.
+**Review** (`docs/reviews/`): `kind: review` · `id: doc-<ULID>` · `title` · `subject` (a doc id, branch or commit) · `reviewer` · `verdict: ready | changes-needed | blocked` · `findings: {blocker: 1, high: 7, medium: 19, low: 13}`. Sections: Summary · Findings (each with severity, evidence and fix) · For the user.
 
 ### 3.0 How the UI presents a doc
 
@@ -180,7 +183,7 @@ related: [ac-17, DEBT-0012] # tasks, bugs, debt
  │ DECISION · ADR-0004                                    ● Proposed             │
  │ Docs storage                                                                  │
  │ Owner [A] ada · created 8 Nov · Refines ADR-0001 · Evidence EVAL-0002         │
- │ Related: ac-17 (task) · DEBT-0012                     [Accept] [Reject…] [⋯]  │
+ │ Related: T-17 (task) · DEBT-0012                      [Accept] [Reject…] [⋯]  │
  ├──────────────┬───────────────────────────────────────────────────────────────┤
  │ Context      │ ## Context                                                     │
  │ Options      │ …                                                              │
@@ -205,20 +208,21 @@ related: [ac-17, DEBT-0012] # tasks, bugs, debt
 
 ### 3.1 The agent's side: `org-agent doc` (C16)
 
-Agents use the tool the way the owner uses the app. Each command writes the file in the right folder from the template (front matter + sections), with the next number, commits it on the agent's branch (owner as author, agent as co-author, §0.2), and prints the number and path:
+Agents use the tool the way the owner uses the app. Each command writes the file in the right folder from the template (front matter + sections), with the next number, commits it on a docs branch the office makes (owner as author, agent as co-author, §0.2), and prints the number, path and branch. `doc new --here` and `debt add` (inside a task worktree) instead write the file into the agent's worktree, on its task branch, for the agent to commit *(rev 8)*:
 
 ```
 org-agent doc new adr "Docs storage" --project ac          → ADR-0004 · docs/adr/0004-docs-storage.md (proposed)
 org-agent doc new design|evaluation|spec|plan|review "<title>"
-org-agent doc edit ADR-0004                                 opens $EDITOR on the file, then commits
+org-agent doc new design "<title>" --here                   writes it into your task worktree, for you to commit
+org-agent doc edit ADR-0004                                 opens $EDITOR on the file, then commits on a docs branch
 org-agent doc status ADR-0004 accepted                      sets status and decided {on, by} in the front matter, commits
 org-agent doc schema adr                                    prints the fields (allowed values, required) and sections
 org-agent doc validate [path]                               checks front matter against the template
 org-agent doc supersede ADR-0002 --by ADR-0004
-org-agent doc link ac-17 ADR-0004                           the "Why" link
+org-agent doc link T-17 ADR-0004                            the "Why" link
 org-agent doc list --kind adr --status proposed
 org-agent doc show ADR-0004
-org-agent debt add "<what I did instead>" [--task ac-17] [--why …] [--fix …] [--cost low|medium|high]
+org-agent debt add "<what I did instead>" [--task T-17] [--why …] [--fix …] [--cost low|medium|high] [--docs-branch]
 ```
 
 The command words match the app's (decision 3, §1), and every write shows in Activity ("ada proposed ADR-0004 · Docs storage").
@@ -245,13 +249,13 @@ The command words match the app's (decision 3, §1), and every write shows in Ac
 kind: debt
 id: DEBT-0012
 title: Retry count hard-coded in the office client
-status: open                 # open | planned | paid | accepted
+status: open                 # open | planned | paid | accepted; planned and paid are written by the tool
 cost: medium                 # cost of leaving it: low | medium | high
 effort: s                    # to pay it back: s | m | l
 area: Office server
-taken: { by: ac-software-engineer-river, on: 2026-11-08, task: ac-17, commit: 9c1e0b2, branch: task/ac-17-office-client }
+taken: { by: ac-software-engineer-river, on: 2026-11-08, task: T-17, commit: 9c1e0b2, branch: task/ac-T-17-office-client }
 because: [ADR-0004]          # the decision that accepted it, if any
-payback: []                  # tasks that pay it back, e.g. [ac-40]
+payback: []                  # tasks that pay it back, e.g. [T-40]
 accepted: null               # { on, by, reason } when we decide to live with it
 ---
 
@@ -264,7 +268,7 @@ accepted: null               # { on, by, reason } when we decide to live with it
 
 | From | How | What's prefilled |
 | --- | --- | --- |
-| An agent, while working | `org-agent debt add "<what I did instead>"` writes the file **on the agent's current branch**, so the debt travels with the code that caused it and the reviewer sees both (C18) | the agent's current task, branch and commit, and the area from the task's team |
+| An agent, while working | `org-agent debt add "<what I did instead>"` writes the file **on the agent's current task branch** (the CLI puts it in the agent's worktree, and the agent commits it), so the debt travels with the code that caused it and the reviewer sees both (C18). Outside a task worktree, or with `--docs-branch`, it goes on a docs branch *(rev 8)* | the agent's current task, branch and commit, and the area from the task's team |
 | Finishing a task | Marking a task Done asks "Did you take a shortcut?" **No** · **Yes, record it**. Agents get the same question from the CLI (`task done --debt "…"`, or `--no-debt`) | the task, branch, commits |
 | A review | A finding the author leaves unfixed → **Record as debt** on the finding (the reviewer's verdict can list "Deferred" findings) | the review, the finding's text, the commit |
 | An ADR | each line under "Tech debt accepted" becomes a debt doc whose `because` is the ADR | the ADR |
@@ -273,11 +277,11 @@ accepted: null               # { on, by, reason } when we decide to live with it
 
 **Record debt** (slide-over, generated from the debt template's fields, §3.0): **What we did** * (the title, 1–200 characters) · **Why** · **The proper fix** · **Cost of leaving it** Low · Medium · High ("Low: harmless for now" · "Medium: slows us down or risks bugs" · "High: will hurt users, security or data, or blocks a phase") · **Effort to pay back** S · M · L · Area · Links. **Record debt** commits the file (from the app: to the docs branch). Only "What we did" is required. A doc with empty sections shows "Needs details".
 
-**Debt tab** (project, drawn from the files' front matter): grouped by area, sorted by cost, then effort (High cost, S effort first: "quick wins" at the top), with filters Status · Cost · Effort · Taken by · Area. A summary bar: "14 open · 3 High · 5 quick wins · 2 paid this week". Debt still on an unmerged branch shows with a "On task/ac-17-office-client, not merged" badge.
+**Debt tab** (project, drawn from the files' front matter): grouped by area, sorted by cost, then effort (High cost, S effort first: "quick wins" at the top), with filters Status · Cost · Effort · Taken by · Area. A summary bar: "14 open · 3 High · 5 quick wins · 2 paid this week". Debt still on an unmerged branch shows with a "On task/ac-T-17-office-client, not merged" badge.
 
-**Statuses:** **Open · Planned · Paid · Accepted.** Creating a payback task (a database task) adds it to `payback` and sets Planned. When all payback tasks are Done, the tool sets Paid in a commit on a docs branch, which lands through the merge flow (activity entry, with Undo as another commit). **Accept…** needs a reason, written to `accepted`, and can name the ADR in `because`.
+**Statuses:** **Open · Planned · Paid · Accepted.** Creating a payback task (a database task) adds it to `payback` and sets Planned. When all payback tasks are Done and at least one is **Done · Completed**, the tool sets Paid in a commit on a docs branch, which lands through the merge flow (activity entry, with Undo as another commit). If they were all cancelled, the debt stays Planned. *(rev 8)* The tool writes Planned and Paid only once the debt doc is merged into the integration branch (it never writes on an agent's task branch). Until then the debt shows "**Planned once merged**" (or "Paid once merged"), and the status is written when the doc lands. **Accept…** needs a reason, written to `accepted`, and can name the ADR in `because`.
 
-**Debt page:** the header card (§3.0) · What we did · Why · The proper fix · **Taken by** ("Taken by River in ac-17 · 9c1e0b2") · **Why** block (§5) · **Create payback task** · history (the file's commits).
+**Debt page:** the header card (§3.0) · What we did · Why · The proper fix · **Taken by** ("Taken by River in T-17 · 9c1e0b2 · from git") · **Why** block (§5) · **Create payback task** · history (the file's commits).
 
 **Where debt shows up besides its tab:** the task it was taken in ("Debt taken: DEBT-0012"), the commit, the area's header in the Bugs tab ("Payments · 2 open debt"), the project Overview tile ("Tech debt 14 · 3 High"), and Work › **Debt** (the third pill: Tasks | Bugs | Debt | Requests).
 
@@ -312,7 +316,7 @@ The tool helps agents work the way the organization wants by **prompting them at
 | Procedure changed | "New from <retro>: <the change>." (`retrospectives-ux.md` decision 7) | at the agent's next start or wake after the change merges |
 | Posting to chat | "Post only what someone must answer, act on or know. Put details in the task or doc and link it." (`chat-ux.md` §5) | `org-agent msg` |
 
-- **Settings › Agent guidance** (organization) and project Settings › Agent guidance (overrides): one row per moment with **On/Off**, the text (with placeholders like `{task}`, `{area}`, `{decisions}` and a picker to insert them), and a **Preview as** an agent and task ("What River will see on ac-17").
+- **Settings › Agent guidance** (organization) and project Settings › Agent guidance (overrides): one row per moment with **On/Off**, the text (with placeholders like `{task}`, `{area}`, `{decisions}` and a picker to insert them), and a **Preview as** an agent and task ("What River will see on T-17").
 - **Add guidance…** adds a moment from a list (task started, task done, bug fixed, branch created, review requested, message to the owner) with its own text, for the owner's own practices ("Always add a screenshot for UI work").
 - **Where it's kept:** a project's guidance is persistent, so it's a file in the repository (`docs/.guidance/<moment>.md`, Markdown with front matter: `moment`, `enabled`). The organization's defaults are settings in the office. A change shows in Activity ("You changed the guidance for Taking a shortcut").
 - **Agents' answers are recorded:** "No shortcut" or a debt id shows on the task, so the owner can see the guidance working (and turn it down if it's noise).
@@ -351,7 +355,7 @@ Criterion ids for debt, limitations and exceptions use **DBT-**, **LMT-** and **
 - DBT-2 · Marking a task Done asks "Did you take a shortcut?", and Yes opens Record debt prefilled with the task, branch and commits.
 - DBT-3 · *(rev 4)* A debt item is a file `docs/debt/<n>-<slug>.md` with front matter per the debt template, numbered DEBT-<n>, shown with its icon, and sits in an area.
 - DBT-4 · The Debt tab groups by area, sorts by cost then effort, and shows the summary bar with open, High, quick wins and paid this week.
-- DBT-5 · *(rev 4)* A debt doc becomes Planned when a payback task is linked and Paid when all of them are Done, each written to the front matter in a commit on a docs branch (never the default branch), with an activity entry and Undo.
+- DBT-5 · *(rev 8)* A debt doc becomes Planned when a payback task is linked and Paid when all of them are Done and at least one is Done · Completed, each written to the front matter in a commit on a docs branch (never the default branch), with an activity entry and Undo. While the debt doc isn't merged into the integration branch yet, it shows "Planned once merged", and the status is written after it lands.
 - DBT-6 · Accept needs a reason and can link the ADR that accepts it.
 - DBT-7 · Each line under "Tech debt accepted" in an Accepted ADR is offered as a debt item linked to that ADR.
 - DBT-8 · A review finding can be recorded as debt with the finding and commit linked.
@@ -364,12 +368,13 @@ Criterion ids for debt, limitations and exceptions use **DBT-**, **LMT-** and **
 - OURDOC-2 · *(rev 2)* Indexing offers to move specs, plans, reviews and design drafts from agents' home folders into `docs/specs`, `docs/plans`, `docs/reviews` and `docs/design`, file by file, with a pointer left in the old place.
 
 **Authoring through the tool (AUTH)**
-- AUTH-1 · *(rev 3)* Creating a decision, design, evaluation, spec, plan or review in the app or with `org-agent doc new` writes the file in its §0.1 folder from the template, with valid front matter and the next number, and commits it on a branch (the agent's task branch, or a docs branch from the app) with the owner as author and the agent as co-author. Nothing is pushed to the default branch.
+- AUTH-1 · *(rev 8)* Creating a decision, design, evaluation, spec, plan or review in the app or with `org-agent doc new` writes the file in its §0.1 folder from the template, with valid front matter and the next number, and commits it on a docs branch the office makes (from the app, and by default from `org-agent doc new`), or with `doc new --here` puts it on the agent's task branch for the agent to commit, with the owner as author and the agent as co-author. Nothing is pushed to the default branch.
 - AUTH-2 · *(rev 3)* `org-agent doc status` and the app's Accept/Reject change only the front-matter fields involved (status, decided), and commit.
 - AUTH-3 · A doc changed directly with git (outside the tool) shows in the app after it reaches the integration branch, with its author, and no data is lost.
 - AUTH-4 · Every create, status change, supersede and link appears in Activity with the actor and the doc's number.
 - AUTH-5 · `org-agent doc list` and `doc show` print the same kinds, numbers, statuses and words as the app.
-- AUTH-6 · *(rev 4)* `org-agent debt add` writes a debt doc on the agent's current branch with only the sentence, and prefills the task, branch and commit.
+- AUTH-6 · *(rev 8)* `org-agent debt add` needs only the sentence and prefills the task, branch and commit. Inside a task worktree it writes the debt doc there, on the agent's task branch, for the agent to commit. Elsewhere, or with `--docs-branch`, it goes on a docs branch.
+- AUTH-7 · *(new, rev 8)* Who-fields (`decided`, `delivered`, `accepted`, `approved`, `taken.by`) set by a commit made with git show with a quiet "from git" note, never a warning. A feature doc's `status`, `tasks` and `delivered` are rewritten by the tool from the office, and `doc validate` flags a hand edit to them.
 
 **Known limitations (LMT)**
 - LMT-1 · Limitations are docs in `docs/limitations/` with front matter, listed in the Docs tab's Limitations group with status Current or Lifted.
@@ -397,6 +402,7 @@ Criterion ids for debt, limitations and exceptions use **DBT-**, **LMT-** and **
 - TPL-5 · Add a doc kind creates a new kind with its folder and fields, which shows as a group in the Docs tab. Built-in kinds can't be deleted.
 - TPL-6 · Changing a template never rewrites existing docs. New required fields show "Missing: <field>" with Fill in, and removed fields show under "Other fields".
 - TPL-7 · Moving or indexing a doc with a bold status line offers Add front matter with a per-file diff, Apply or Skip.
+- TPL-8 · *(new, rev 8)* Every doc has a stable `id` in its front matter: its number for numbered kinds (`ADR-0004`, `FEAT-0007`), else `doc-<ULID>`, written when the doc is created or first saved (ada W7 §4.9). Renaming keeps the id and rewrites the links to the doc in other docs.
 
 ## 9. Open questions
 
@@ -404,7 +410,7 @@ Criterion ids for debt, limitations and exceptions use **DBT-**, **LMT-** and **
 - ~~C11~~ · *Resolved by the user (rev 3):* YAML front matter is the structure. Status lines are converted on the way in (TPL-7).
 - C17 · Templates as `docs/.templates/<kind>.md` with a field schema in their front matter, and built-in defaults in the app: does that fit the library? Does the office validate on write, or only the CLI and app?
 - C12 · *(rev 4)* Debt, limitations and exceptions are doc kinds with templates, not work items. The CLI: `org-agent debt add|list|show|accept|pay`, `task done --debt/--no-debt`, and `org-agent doc new limitation|exception`.
-- C18 · An agent's debt doc is written on its current task branch and reaches the integration branch with that merge, and the app shows unmerged debt from open branches. OK, or should agents' debt go on its own `docs/…` branch so it can land before the code?
+- ~~C18~~ · *Resolved (ada W7):* yes, an agent's debt doc goes on its task branch by default (the agent commits it, and it lands with its code), and the app shows unmerged debt from open branches. `--docs-branch` puts it on a docs branch instead. Its status is written once it's merged ("Planned once merged").
 - ~~C16~~ · *Resolved (agy-senior-dev):* the §3.1 commands fit org-agent's noun-verb style. Additions: `doc edit --set <field=val> --section <heading> --body <text|->` for headless agents (besides `$EDITOR`), `--no-commit`, `--as <member>`, and `--json` on every command, returning the front matter plus `path` and `commit`. The text output is the one-line summary (`ADR-0004 · docs/adr/0004-docs-storage.md (proposed)`).
 - C13 · Docs are read from the integration branch (`v1` for us), not always `main`: a per-project setting "Integration branch"?
 
@@ -418,4 +424,4 @@ Criterion ids for debt, limitations and exceptions use **DBT-**, **LMT-** and **
 
 **For the user**
 - ~~U14~~ · *Resolved (the user):* yes, as agent guidance the owner can customize (§6.2).
-- U15 · *My recommendation:* in phase 1, every proposed decision comes to you in Needs you (they're few), and a setting **Who accepts decisions: You (default) · Leads, in their area** lets you delegate later. Accepted decisions always show in Activity.
+- ~~U15~~ · *Resolved (the user, 2026-11-08): as recommended.* *My recommendation:* in phase 1, every proposed decision comes to you in Needs you (they're few), and a setting **Who accepts decisions: You (default) · Leads, in their area** lets you delegate later. Accepted decisions always show in Activity.
