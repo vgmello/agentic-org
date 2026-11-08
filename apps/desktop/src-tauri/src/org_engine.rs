@@ -1017,12 +1017,10 @@ fn apply_command(s: &mut OrgSnapshot, command: &OrgCommand, ctx: &Ctx) -> Outcom
                 .map(|x| x.team_id.clone())
                 .collect();
             match &p.areas_to_team_id {
-                Some(target)
-                    if !owns_areas || remaining.is_empty() || !remaining.contains(target) =>
-                {
+                Some(target) if remaining.is_empty() || !remaining.contains(target) => {
                     return err(
                         ErrorCode::InvalidRequest,
-                        "Areas can only go to another team that still works on the project, and only when the team owns some.",
+                        "Areas can only go to another team that still works on the project.",
                     );
                 }
                 None if owns_areas && !remaining.is_empty() => {
@@ -1137,6 +1135,7 @@ impl Hq {
     /// fingerprint, not a command's text), list them in `order`, and honour the cap. Older files
     /// written by earlier builds had neither.
     pub fn tidy(&mut self) {
+        projects::backfill_general_areas(&mut self.snapshot);
         self.answers.retain(|_, a| is_fingerprint(&a.command));
         let known: std::collections::HashSet<String> = self.answers.keys().cloned().collect();
         self.order.retain(|id| known.contains(id));
@@ -2115,7 +2114,7 @@ mod tests {
         let cases = vectors["cases"].as_array().unwrap();
         assert_eq!(
             cases.len(),
-            229,
+            239,
             "a case was lost or added: update this count"
         );
         for case in cases {
@@ -2284,6 +2283,34 @@ mod tests {
             ErrorCode::InvalidRequest
         );
         assert_eq!(serde_json::to_string(&h).unwrap().len(), size_before);
+    }
+
+    #[test]
+    fn an_organization_saved_before_areas_gets_each_projects_general_area_on_load() {
+        let mut h = hq();
+        h.snapshot.areas.clear();
+        h.tidy();
+        let ids: Vec<&str> = h.snapshot.areas.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "atlas-general",
+                "beacon-general",
+                "onboarding-general",
+                "scratch-general"
+            ]
+        );
+        let beacon = h
+            .snapshot
+            .areas
+            .iter()
+            .find(|a| a.id == "beacon-general")
+            .unwrap();
+        assert_eq!(beacon.team_id.as_deref(), Some("web"));
+        assert!(beacon.general && beacon.version == 1);
+        // Loading again adds nothing.
+        h.tidy();
+        assert_eq!(h.snapshot.areas.len(), 4);
     }
 
     #[test]

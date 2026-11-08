@@ -499,6 +499,33 @@ pub fn area_set_lead(s: &mut OrgSnapshot, p: &AreaSetLeadParams) -> Outcome {
     }])
 }
 
+/// An organization saved before projects had areas gets each project's General area (id `<project>-general`, owned
+/// by the project's first team, if it has one), so nothing filed under it is lost. Idempotent.
+pub fn backfill_general_areas(s: &mut OrgSnapshot) {
+    for i in 0..s.projects.len() {
+        let id = s.projects[i].id.clone();
+        if s.areas.iter().any(|a| a.project_id == id && a.general) {
+            continue;
+        }
+        let team_id = s
+            .project_teams
+            .iter()
+            .find(|l| l.project_id == id)
+            .map(|l| l.team_id.clone());
+        s.areas.push(Area {
+            id: format!("{id}-general"),
+            project_id: id,
+            name: "General".into(),
+            team_id,
+            lead_member_id: None,
+            general: true,
+            deleted: false,
+            replaced_by: None,
+            version: 1,
+        });
+    }
+}
+
 /// Restore the area invariants after any command (design §2.5): an area's team is one of its project's teams (else the
 /// area is team-less), and its lead is a live member of that team (else it has no lead). Each area that changes goes up
 /// one version and is reported. Idempotent, so it can run after every command.

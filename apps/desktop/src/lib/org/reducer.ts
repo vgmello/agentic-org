@@ -484,8 +484,7 @@ function apply(s: OrgSnapshot, c: OrgCommand, ctx: Ctx): OrgSnapshot {
 			// left team-less when it was the last one (then it may not be given).
 			const owned = (s.areas ?? []).filter((a) => a.project_id === link.project_id && !a.deleted && a.team_id === link.team_id);
 			const remaining = (s.project_teams ?? []).filter((x) => x.project_id === link.project_id && x.id !== link.id).map((x) => x.team_id);
-			if (p.areas_to_team_id !== undefined && (owned.length === 0 || remaining.length === 0 || !remaining.includes(p.areas_to_team_id)))
-				fail('invalid_request', 'Areas can only go to another team that still works on the project, and only when the team owns some.');
+			if (p.areas_to_team_id !== undefined && (remaining.length === 0 || !remaining.includes(p.areas_to_team_id))) fail('invalid_request', 'Areas can only go to another team that still works on the project.');
 			if (p.areas_to_team_id === undefined && owned.length > 0 && remaining.length > 0) fail('invalid_request', "Say which of the project's other teams takes over this team's areas.");
 			fresh(link, p.expected_version, 'That link');
 			const target = p.areas_to_team_id;
@@ -558,7 +557,12 @@ function apply(s: OrgSnapshot, c: OrgCommand, ctx: Ctx): OrgSnapshot {
 			const p = c.params;
 			const pr = projectOf(s, p.project_id);
 			fresh({ version: pr.version ?? 0 }, p.expected_version, pr.name);
-			return { ...s, projects: (s.projects ?? []).map((x) => (x.id === pr.id ? { ...x, archived: p.archived, version: (pr.version ?? 0) + 1 } : x)) };
+			return { ...s, projects: (s.projects ?? []).map((x) => {
+				if (x.id !== pr.id) return x;
+				const next = { ...x, version: (pr.version ?? 0) + 1 };
+				// Not archived is the absence of the field, as it is on the wire.
+				return p.archived ? { ...next, archived: true } : (without(next, 'archived') as ProjectSummary);
+			}) };
 		}
 		case 'area.create': {
 			const p = c.params;

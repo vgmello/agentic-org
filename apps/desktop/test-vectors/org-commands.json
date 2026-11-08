@@ -3443,7 +3443,15 @@
     {
      "in": "projects",
      "id": "neo",
-     "has": {}
+     "has": {
+      "created_at": "2026-11-08T12:00:00.000Z",
+      "version": 1,
+      "repo": {
+       "host": "local",
+       "default_branch": "main",
+       "path": "/repos/x.git"
+      }
+     }
     }
    ]
   },
@@ -3662,6 +3670,215 @@
      "id": "atlas-general",
      "has": {
       "version": 3
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.create: a new local repository is resolved by HQ",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "repo": {
+      "new_local": {}
+     }
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "neo",
+     "has": {
+      "repo": {
+       "host": "local",
+       "default_branch": "main",
+       "path": "/workspace/repos/neo.git"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.create: a description and a branch are kept",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "description": "Notes",
+     "integration_branch": "develop"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "neo",
+     "has": {
+      "description": "Notes",
+      "integration_branch": "develop"
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.archive: unarchiving removes the flag",
+   "command": {
+    "method": "project.archive",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 2,
+     "archived": false
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "project.archive",
+     "params": {
+      "project_id": "atlas",
+      "expected_version": 1,
+      "archived": true
+     }
+    }
+   ],
+   "after": [
+    {
+     "in": "projects",
+     "id": "atlas",
+     "has": {
+      "version": 3
+     }
+    },
+    {
+     "in": "projects",
+     "id": "atlas",
+     "lacks": [
+      "archived"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "area.create: an offboarded lead",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "x",
+     "project_id": "beacon",
+     "name": "Docs",
+     "team_id": "design",
+     "lead_member_id": "pax"
+    }
+   },
+   "expect": "invalid_request",
+   "setup": [
+    {
+     "method": "member.offboard",
+     "params": {
+      "member_id": "pax",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "area.set_team: a missing team",
+   "command": {
+    "method": "area.set_team",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 1,
+     "team_id": "ghost"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "area.set_team: a missing area",
+   "command": {
+    "method": "area.set_team",
+    "params": {
+     "area_id": "ghost",
+     "expected_version": 1,
+     "team_id": "platform"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "area.set_lead: a missing area",
+   "command": {
+    "method": "area.set_lead",
+    "params": {
+     "area_id": "ghost",
+     "expected_version": 1,
+     "lead_member_id": "kai"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "area.set_lead: a missing member",
+   "command": {
+    "method": "area.set_lead",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 1,
+     "lead_member_id": "ghost"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "area.set_lead: an offboarded lead",
+   "command": {
+    "method": "area.set_lead",
+    "params": {
+     "area_id": "beacon-general",
+     "expected_version": 1,
+     "lead_member_id": "pax"
+    }
+   },
+   "expect": "invalid_request",
+   "setup": [
+    {
+     "method": "member.offboard",
+     "params": {
+      "member_id": "pax",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.remove_team: a target is ignored for a team that owns no area when others remain",
+   "command": {
+    "method": "project.remove_team",
+    "params": {
+     "project_team_id": "pt-3",
+     "expected_version": 1,
+     "areas_to_team_id": "web"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "project_teams",
+     "id": "pt-3",
+     "absent": true
+    },
+    {
+     "in": "areas",
+     "id": "beacon-general",
+     "has": {
+      "team_id": "web",
+      "version": 1
      }
     }
    ]
