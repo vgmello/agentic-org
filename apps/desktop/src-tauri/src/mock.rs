@@ -6,8 +6,8 @@
 
 use crate::office::{OfficeConnection, SetupError, SetupErrorCode};
 use org_proto::{
-    ApiError, ErrorCode, HelloResult, OfficeInfo, Organization, API_VERSION,
-    ORGANIZATION_NAME_MAX_CHARS,
+    ApiError, ErrorCode, HelloResult, OfficeInfo, OfficeRole, OfficeStatus, Organization,
+    API_VERSION, ORGANIZATION_NAME_MAX_CHARS,
 };
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -52,6 +52,19 @@ impl MockOffice {
     pub fn from_env() -> Self {
         let scenario = Scenario::parse(std::env::var("AGENTIC_ORG_MOCK").ok().as_deref());
         Self::new(scenario, Duration::from_millis(900))
+    }
+}
+
+/// The HQ office every organization starts with, on this Mac.
+fn hq_office(organization_id: &str) -> OfficeInfo {
+    OfficeInfo {
+        id: format!("office-{organization_id}"),
+        organization_id: organization_id.to_string(),
+        name: "HQ".to_string(),
+        role: OfficeRole::Hq,
+        host: "This Mac".to_string(),
+        endpoint: None,
+        status: OfficeStatus::Active,
     }
 }
 
@@ -120,11 +133,8 @@ impl OfficeConnection for MockOffice {
             Scenario::Healthy | Scenario::StorageError => Ok(HelloResult {
                 api_version: API_VERSION,
                 server_version: "0.0.0-mock".to_string(),
-                office: OfficeInfo {
-                    id: "office-local".to_string(),
-                    name: "This Mac".to_string(),
-                    host: "This Mac".to_string(),
-                },
+                host: "This Mac".to_string(),
+                office: None,
             }),
         }
     }
@@ -147,8 +157,10 @@ impl OfficeConnection for MockOffice {
                 "An organization with that name already exists.",
             ));
         }
+        let id = unique_id(organizations.len());
         let organization = Organization {
-            id: unique_id(organizations.len()),
+            offices: vec![hq_office(&id)],
+            id,
             name,
             created_at: "1970-01-01T00:00:00.000Z".to_string(),
         };

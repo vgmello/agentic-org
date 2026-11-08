@@ -12,7 +12,15 @@ export type Scenario = 'healthy' | 'not_installed' | 'needs_approval' | 'unreach
 const SCENARIOS: Scenario[] = ['not_installed', 'needs_approval', 'unreachable', 'storage_error'];
 const STORAGE_KEY = 'agentic-org.mock.connections';
 
-const office: OfficeInfo = { id: 'office-local', name: 'This Mac', host: 'This Mac' };
+/** The HQ office every organization starts with, on this Mac. */
+const hqOffice = (organizationId: string): OfficeInfo => ({
+	id: `office-${organizationId}`,
+	organization_id: organizationId,
+	name: 'HQ',
+	role: 'hq',
+	host: 'This Mac',
+	status: 'active'
+});
 
 function scenarioFromUrl(): Scenario {
 	if (typeof location === 'undefined') return 'healthy';
@@ -79,7 +87,7 @@ export function createMockOffice({
 			if (scenario === 'unreachable')
 				fail({ source: 'setup', code: 'unreachable', message: "The office server started but isn't answering." });
 			connected = true;
-			return { api_version: 1, server_version: '0.0.0-mock', office };
+			return { api_version: 1, server_version: '0.0.0-mock', host: 'This Mac' };
 		},
 		async createOrganization(rawName): Promise<Connection> {
 			if (!connected) fail({ source: 'app', code: 'not_connected', message: "The office isn't running yet." });
@@ -91,9 +99,11 @@ export function createMockOffice({
 			const list = load();
 			if (list.some((c) => c.organization.name.toLowerCase() === checked.name.toLowerCase()))
 				fail({ source: 'api', code: 'already_exists', message: 'An organization with that name already exists.' });
+			const id = `org-${Date.now().toString(36)}-${list.length}`;
+			const office = hqOffice(id);
 			const connection: Connection = {
 				office,
-				organization: { id: `org-${Date.now().toString(36)}-${list.length}`, name: checked.name, created_at: new Date().toISOString() }
+				organization: { id, name: checked.name, created_at: new Date().toISOString(), offices: [office] }
 			};
 			save([...list, connection]);
 			return connection;

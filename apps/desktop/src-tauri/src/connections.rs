@@ -137,6 +137,7 @@ impl ConnectionStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use org_proto::{OfficeRole, OfficeStatus};
     use std::sync::atomic::{AtomicU32, Ordering};
 
     fn temp_dir() -> PathBuf {
@@ -153,14 +154,19 @@ mod tests {
     fn connection(org_id: &str, org_name: &str) -> Connection {
         Connection {
             office: OfficeInfo {
-                id: "office-local".into(),
-                name: "This Mac".into(),
+                id: format!("office-{org_id}"),
+                organization_id: org_id.into(),
+                name: "HQ".into(),
+                role: OfficeRole::Hq,
                 host: "This Mac".into(),
+                endpoint: None,
+                status: OfficeStatus::Active,
             },
             organization: Organization {
                 id: org_id.into(),
                 name: org_name.into(),
                 created_at: "1970-01-01T00:00:00.000Z".into(),
+                offices: vec![],
             },
         }
     }
@@ -334,6 +340,29 @@ mod tests {
             h.join().unwrap();
         }
         assert_eq!(store.list().unwrap().len(), 8);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_file_in_an_older_shape_is_set_aside_not_lost() {
+        // Written before `OfficeInfo` gained `organization_id`: same version number, old shape.
+        let dir = temp_dir();
+        fs::create_dir_all(&dir).unwrap();
+        let old = br#"{"version":1,"connections":[{"office":{"id":"o","name":"This Mac","host":"This Mac"},"organization":{"id":"org-1","name":"Acme","created_at":"2026-11-08T02:10:00.000Z"}}]}"#;
+        fs::write(dir.join("connections.json"), old).unwrap();
+        let store = ConnectionStore::new(dir.clone());
+        assert!(store.list().unwrap().is_empty());
+        let aside: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.to_string_lossy().contains(".corrupt-"))
+            .collect();
+        assert_eq!(aside.len(), 1);
+        assert_eq!(
+            fs::read(&aside[0]).unwrap(),
+            old,
+            "the old file is kept intact"
+        );
         fs::remove_dir_all(dir).unwrap();
     }
 }

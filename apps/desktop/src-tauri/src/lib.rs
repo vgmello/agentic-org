@@ -10,7 +10,7 @@ mod office;
 
 use connections::{Connection, ConnectionStore};
 use office::{OfficeConnection, SetupError};
-use org_proto::{ApiError, HelloResult, OfficeInfo};
+use org_proto::{ApiError, HelloResult, OfficeRole, Organization};
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, State};
@@ -19,8 +19,8 @@ use tauri::{Manager, State};
 struct AppState {
     office: Arc<dyn OfficeConnection>,
     store: ConnectionStore,
-    /// The office the last successful `ensure_running` reached.
-    connected: Mutex<Option<OfficeInfo>>,
+    /// The host the last successful `ensure_running` reached ("This Mac").
+    connected: Mutex<Option<String>>,
 }
 
 /// An error the UI can tell apart: `source` says which layer failed and `code` is its code.
@@ -71,24 +71,42 @@ impl From<ApiError> for CommandError {
 impl AppState {
     fn ensure_running(&self) -> Result<HelloResult, CommandError> {
         let hello = self.office.ensure_running()?;
-        *self.connected.lock().unwrap_or_else(|e| e.into_inner()) = Some(hello.office.clone());
+        *self.connected.lock().unwrap_or_else(|e| e.into_inner()) = Some(hello.host.clone());
         Ok(hello)
     }
 
-    /// Create the organization on the connected office and remember the connection.
-    ///
-    /// Known gap: if the office creates the organization but `remember` then fails (or the app
-    /// is closed in between), the organization exists on the office and the app doesn't know it.
-    /// A retry then gets `already_exists`. The real implementation must let the owner attach to
-    /// an existing organization (the "Open organization" flow).
-    fn create_organization(&self, name: &str) -> Result<Connection, CommandError> {
-        let office = self
-            .connected
+    fn ensure_connected(&self) -> Result<(), CommandError> {
+        self.connected
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .clone()
-            .ok_or_else(|| CommandError::local("not_connected", "The office isn't running yet."))?;
+            .as_ref()
+            .map(|_| ())
+            .ok_or_else(|| CommandError::local("not_connected", "The office isn't running yet."))
+    }
+
+    /// Create the organization on this machine (the host starts its HQ office) and remember the
+    /// connection to that office.
+    ///
+    /// Known gap: if the host creates the organization but `remember` then fails (or the app
+    /// is closed in between), the organization exists but the app doesn't know it. The Open
+    /// organization flow lists it, so the owner can attach to it.
+    fn create_organization(&self, name: &str) -> Result<Connection, CommandError> {
+        self.ensure_connected()?;
         let organization = self.office.create_organization(name)?;
+        self.remember(organization)
+    }
+
+    /// The connection for an organization: its office on this machine (HQ first), remembered.
+    fn remember(&self, organization: Organization) -> Result<Connection, CommandError> {
+        let office = organization
+            .offices
+            .iter()
+            .find(|o| o.role == OfficeRole::Hq)
+            .or_else(|| organization.offices.first())
+            .cloned()
+            .ok_or_else(|| {
+                CommandError::local("no_office", "That organization has no office on this Mac.")
+            })?;
         let connection = Connection {
             office,
             organization,
@@ -265,6 +283,58 @@ mod tests {
                 "{name} not registered"
             );
         }
+    }
+
+    fn office(id: &str, role: org_proto::OfficeRole) -> org_proto::OfficeInfo {
+        org_proto::OfficeInfo {
+            id: id.into(),
+            organization_id: "org-1".into(),
+            name: id.into(),
+            role,
+            host: "This Mac".into(),
+            endpoint: None,
+            status: org_proto::OfficeStatus::Active,
+        }
+    }
+
+    fn organization_with(offices: Vec<org_proto::OfficeInfo>) -> Organization {
+        Organization {
+            id: "org-1".into(),
+            name: "Acme".into(),
+            created_at: "2026-11-08T02:10:00.000Z".into(),
+            offices,
+        }
+    }
+
+    #[test]
+    fn the_connection_uses_the_hq_office_even_when_it_is_not_first() {
+        let (state, dir) = make_state(Scenario::Healthy);
+        let connection = state
+            .remember(organization_with(vec![
+                office("sat", org_proto::OfficeRole::Satellite),
+                office("hq", org_proto::OfficeRole::Hq),
+            ]))
+            .unwrap();
+        assert_eq!(connection.office.id, "hq");
+
+        // No HQ on this machine: the first office it does have.
+        let connection = state
+            .remember(organization_with(vec![office(
+                "sat",
+                org_proto::OfficeRole::Satellite,
+            )]))
+            .unwrap();
+        assert_eq!(connection.office.id, "sat");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn an_organization_without_an_office_here_is_refused_and_not_remembered() {
+        let (state, dir) = make_state(Scenario::Healthy);
+        let err = state.remember(organization_with(vec![])).unwrap_err();
+        assert_eq!((err.source, err.code.as_str()), ("app", "no_office"));
+        assert!(state.connections().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// The JSON the commands return is what `proto.ts` and `toAppError` expect. The same fixture is

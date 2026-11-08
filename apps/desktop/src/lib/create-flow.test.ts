@@ -73,7 +73,7 @@ describe('createOrganization', () => {
 			ensureRunning: async () => ({
 				api_version: 1,
 				server_version: 't',
-				office: { id: 'o', name: 'This Mac', host: 'This Mac' }
+				host: 'This Mac'
 			}),
 			createOrganization: async () =>
 				Promise.reject({ source: 'api', code: 'already_exists', message: 'Taken.' })

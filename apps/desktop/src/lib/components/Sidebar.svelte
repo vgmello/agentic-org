@@ -56,8 +56,8 @@
 			<li class="-mx-6 mt-auto">
 				<div class="flex items-center gap-x-3 px-6 py-3 text-sm/6">
 					<span class="min-w-0">
-						<span class="block truncate font-semibold text-white">{connection.office.name}</span>
-						<span class="block text-xs/5 text-gray-400">Saved connection</span>
+						<span class="block truncate font-semibold text-white">{connection.office.host}</span>
+						<span class="block text-xs/5 text-gray-400">{connection.office.name} office</span>
 					</span>
 				</div>
 			</li>

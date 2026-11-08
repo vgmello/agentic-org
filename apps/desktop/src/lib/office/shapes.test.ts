@@ -10,10 +10,13 @@ describe('what the Tauri commands return', () => {
 		expect(toAppError(shapes.command_error)).toEqual(shapes.command_error);
 	});
 
-	it('a connection has the shape proto.ts declares (checked at compile time)', () => {
-		const connection: Connection = shapes.connection;
+	it('a connection has the keys proto.ts declares', () => {
+		const connection = shapes.connection as Connection;
 		expect(Object.keys(connection).sort()).toEqual(['office', 'organization']);
-		expect(Object.keys(connection.organization).sort()).toEqual(['created_at', 'id', 'name']);
+		expect(Object.keys(connection.organization).sort()).toEqual(['created_at', 'id', 'name', 'offices']);
+		const officeKeys = ['host', 'id', 'name', 'organization_id', 'role', 'status'];
+		expect(Object.keys(connection.office).sort()).toEqual(officeKeys);
+		expect(Object.keys(connection.organization.offices[0]).sort()).toEqual(officeKeys);
 	});
 
 	it('tauri.ts invokes exactly the commands build.rs declares', () => {

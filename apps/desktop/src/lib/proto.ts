@@ -1,16 +1,45 @@
 // Hand-written mirror of the `org-proto` crate's types (crates/org-proto/src/{types,calls,error}.rs).
 // Keep every wire type in this one file, so swapping in generated types touches nothing else.
 
+/** An office's role in its organization. Missing or unrecognised means `unknown`, never HQ. */
+export type OfficeRole = 'hq' | 'satellite' | 'unknown';
+
+/** Missing or unrecognised means `unknown`, never healthy. */
+export type OfficeStatus =
+	| 'active'
+	| 'starting'
+	| 'pending'
+	| 'offline'
+	| 'unavailable'
+	| 'update_needed'
+	| 'unknown';
+
+/** An office: a node of one organization, run by its own server process. */
 export interface OfficeInfo {
 	id: string;
+	organization_id: string;
 	name: string;
+	role?: OfficeRole;
+	/** Where it runs, for display: "This Mac" or a machine name. */
 	host: string;
+	/** How to reach it from this machine, when it is on this machine. */
+	endpoint?: string;
+	status?: OfficeStatus;
+}
+
+/** Set when an office server answers `hello`. */
+export interface OfficeHello {
+	organization_name: string;
+	office: OfficeInfo;
 }
 
 export interface HelloResult {
 	api_version: number;
 	server_version: string;
-	office: OfficeInfo;
+	/** The machine, for display: "This Mac". */
+	host: string;
+	/** Absent when this machine's host answers. */
+	office?: OfficeHello;
 }
 
 export interface Organization {
@@ -18,9 +47,14 @@ export interface Organization {
 	name: string;
 	/** RFC 3339, UTC, with milliseconds. Ids are opaque (ULIDs): never parse them. */
 	created_at: string;
+	/** Its offices; from this machine's host, its offices on this machine (HQ first). */
+	offices: OfficeInfo[];
 }
 
-/** An office and the organization this app is connected to on it. Remembered between launches. */
+/**
+ * An organization and its office on this machine (HQ first), which the app is connected to.
+ * App-local: remembered between launches, not part of `org-proto`.
+ */
 export interface Connection {
 	office: OfficeInfo;
 	organization: Organization;
