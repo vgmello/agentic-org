@@ -137,6 +137,6 @@ pub enum BindTarget<'a> {
 /// Subscriber fan-out is outside the domain. These payloads never contain bodies.
 #[derive(Debug, Clone)]
 pub enum MessageEvent {
-    Received(MessageReceivedData),
+    Received(Box<MessageReceivedData>),
     StateChanged(MessageStateChangedData),
 }
