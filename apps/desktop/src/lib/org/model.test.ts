@@ -4,6 +4,7 @@ import {
 	highlightedByOffice,
 	leadOf,
 	membersOfTeam,
+	normalizeKinds,
 	notInATeam,
 	othersOf,
 	organizationCounts,
@@ -135,6 +136,14 @@ describe('TEAM-4 the office filter', () => {
 		expect(highlightedByOffice(member('hana'), unplaced)).toBe(false);
 	});
 
+	it('an agent placed in an office that is no longer listed counts as unplaced', () => {
+		const known = new Set(['office-1']);
+		const orphan = { ...member('sam'), office_id: 'removed' };
+		expect(highlightedByOffice(orphan, { kind: 'unplaced' }, known)).toBe(true);
+		expect(highlightedByOffice(orphan, hq, known)).toBe(false);
+		expect(highlightedByOffice(member('sam'), { kind: 'unplaced' }, known)).toBe(false);
+	});
+
 	it('no filter means nothing is highlighted or dimmed (and PEOPLE-6: people never highlight)', () => {
 		expect(highlightedByOffice(member('sam'), { kind: 'all' })).toBeUndefined();
 		for (const f of [hq, { kind: 'unplaced' } as const]) expect(highlightedByOffice(member('hana'), f)).toBe(false);
@@ -156,5 +165,15 @@ describe('TEAM-13 and TEAM-14 projects', () => {
 	it('projects with no team are unassigned', () => {
 		expect(names(unassignedProjects(s))).toEqual(['Scratchpad']);
 		expect(unassignedProjects(emptyOrg())).toEqual([]);
+	});
+});
+
+describe('what an office sends', () => {
+	it('a member kind this build does not know becomes unknown', () => {
+		const odd = { ...s, members: s.members.map((m) => (m.id === 'leo' ? { ...m, kind: 'robot-dog' as never } : m)) };
+		const fixed = normalizeKinds(odd);
+		expect(fixed.members.find((m) => m.id === 'leo')?.kind).toBe('unknown');
+		expect(fixed.members.find((m) => m.id === 'sam')?.kind).toBe('agent');
+		expect(fixed.members.find((m) => m.id === 'hana')?.kind).toBe('person');
 	});
 });

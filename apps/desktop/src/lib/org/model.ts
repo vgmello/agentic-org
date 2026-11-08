@@ -114,12 +114,15 @@ export type OfficeFilter = { kind: 'all' } | { kind: 'office'; id: string } | { 
 
 /**
  * Whether a member is highlighted by the office filter (TEAM-4, PEOPLE-6). `undefined` means no
- * filter is active. Only agents are placed in offices, so people are never highlighted.
+ * filter is active. Only agents are placed in offices, so people are never highlighted. `knownOffices`, when
+ * given, makes an agent whose office isn't among them count as unplaced.
  */
-export function highlightedByOffice(member: Member, filter: OfficeFilter): boolean | undefined {
+export function highlightedByOffice(member: Member, filter: OfficeFilter, knownOffices?: ReadonlySet<string>): boolean | undefined {
 	if (filter.kind === 'all') return undefined;
 	if (member.kind !== 'agent') return false;
-	return filter.kind === 'unplaced' ? !member.office_id : member.office_id === filter.id;
+	// An agent placed in an office that isn't in the list (it was removed) is unplaced too.
+	const placed = !!member.office_id && (!knownOffices || knownOffices.has(member.office_id));
+	return filter.kind === 'unplaced' ? !placed : member.office_id === filter.id;
 }
 
 // ---- counts -----------------------------------------------------------------------------------
@@ -128,4 +131,12 @@ export function highlightedByOffice(member: Member, filter: OfficeFilter): boole
 export function organizationCounts(s: OrgSnapshot) {
 	const members = nonOwners(s);
 	return { agents: agentsOf(members).length, people: peopleOf(members).length, others: othersOf(members).length, teams: s.teams.length };
+}
+
+/**
+ * Normalise what an office sent: a member kind this build doesn't know becomes `unknown`, so the rest of
+ * the app only ever sees the kinds it handles (like `toAppError` does for error codes).
+ */
+export function normalizeKinds(s: OrgSnapshot): OrgSnapshot {
+	return { ...s, members: s.members.map((m) => (m.kind === 'agent' || m.kind === 'person' ? m : { ...m, kind: 'unknown' as const })) };
 }
