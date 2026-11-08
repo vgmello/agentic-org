@@ -3,6 +3,11 @@ use std::io::Cursor;
 use serde_json::json;
 
 use crate::frame::{read_line, read_message, write_message, FrameError};
+use crate::org::{
+    BuiltinRole, HireApprove, HireApproveParams, HireFacts, HireFail, HireProposal, HireReject,
+    HireRequest, HireRequestParams, HireState, MemberAddAgentParams, MemberSetCanApproveHires,
+    MemberSetCanApproveHiresParams, HR_HANDLE,
+};
 use crate::*;
 
 fn org() -> Organization {
@@ -528,6 +533,7 @@ fn org_wire_names_are_pinned() {
         (ErrorCode::NotEmpty, "not_empty"),
         (ErrorCode::NotAMember, "not_a_member"),
         (ErrorCode::OwnerProtected, "owner_protected"),
+        (ErrorCode::BuiltinProtected, "builtin_protected"),
         (ErrorCode::NotFound, "not_found"),
         (ErrorCode::Conflict, "conflict"),
         (ErrorCode::UnknownRecipient, "unknown_recipient"),
@@ -572,6 +578,7 @@ fn subscribe_accepts_empty_params_and_a_position() {
 #[test]
 fn member_owner_flag_and_kind_round_trip() {
     let owner = Member {
+        builtin: None,
         id: "m1".into(),
         kind: MemberKind::Person,
         name: "Vitor".into(),
@@ -605,6 +612,7 @@ fn member_owner_flag_and_kind_round_trip() {
 #[test]
 fn snapshot_and_changes_round_trip_and_unknown_changes_are_tolerated() {
     let snap = OrgSnapshot {
+        hire_proposals: vec![],
         position: Position { epoch: 1, seq: 7 },
         teams: vec![Team {
             id: "t1".into(),
@@ -861,6 +869,7 @@ fn envelope_debug_elides_payloads_that_may_hold_secrets() {
 
 fn profile() -> AgentProfile {
     AgentProfile {
+        can_approve_hires: false,
         role: "software engineer".into(),
         title: "Senior Backend Engineer".into(),
         focus: Some("storage".into()),
@@ -931,6 +940,7 @@ fn agent_runtime_and_status_tolerate_values_from_a_newer_build() {
 #[test]
 fn a_member_carries_its_agent_profile_in_one_record() {
     let agent = Member {
+        builtin: None,
         id: "a1".into(),
         kind: MemberKind::Agent,
         name: "River".into(),
@@ -967,6 +977,7 @@ fn agent_commands_have_the_agreed_shapes() {
     let add = Request::new::<MemberAddAgent>(
         1,
         &MemberAddAgentParams {
+            hire_proposal_id: None,
             command_id: "01C".into(),
             member_id: "a1".into(),
             name: "River".into(),
@@ -1045,6 +1056,7 @@ fn agent_command_params_are_pinned_field_by_field() {
     let add = Request::new::<MemberAddAgent>(
         1,
         &MemberAddAgentParams {
+            hire_proposal_id: None,
             command_id: "01C".into(),
             member_id: "a1".into(),
             name: "River".into(),
@@ -1314,6 +1326,7 @@ fn an_offboarded_agent_is_a_status_and_a_timestamp_on_the_same_member_record() {
     // The member keeps its id, name and handle: offboarding changes the status, so it travels
     // as an ordinary member_upserted.
     let member = Member {
+        builtin: None,
         id: "a1".into(),
         kind: MemberKind::Agent,
         name: "River".into(),
@@ -1512,6 +1525,7 @@ fn set_run_mode_and_the_new_update_fields_are_pinned() {
 #[test]
 fn a_member_carries_when_hq_created_it_and_older_records_without_it_still_read() {
     let member = Member {
+        builtin: None,
         id: "a1".into(),
         kind: MemberKind::Agent,
         name: "River".into(),
@@ -1651,4 +1665,206 @@ fn member_ids_are_26_letters_and_digits_and_no_handle_has_that_shape() {
     ] {
         assert!(!is_valid_member_id(bad), "{bad:?}");
     }
+}
+
+// ---- the HR lead, can_approve_hires and hire proposals --------------------------------------
+
+fn facts() -> HireFacts {
+    HireFacts {
+        name: "Cameron".into(),
+        role: "qa engineer".into(),
+        title: "QA Engineer".into(),
+        team_id: Some("t1".into()),
+        reports_to_member_id: None,
+        runtime: AgentRuntime::Codex,
+        model: None,
+        run_mode: Some(RunMode::OnCall),
+        est_cost_cents_month: 4000,
+    }
+}
+
+fn proposal() -> HireProposal {
+    HireProposal {
+        id: "hp1".into(),
+        requester_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+        approver_id: Some("01ARZ3NDEKTSV4RRFFQ69G5FAW".into()),
+        state: HireState::Waiting,
+        facts: facts(),
+        reason: Some("we need QA".into()),
+        decided_by: None,
+        decision_reason: None,
+        provisioned_member_id: None,
+        failure: None,
+        created_at: "2026-11-08T12:00:00.000Z".into(),
+        decided_at: None,
+        version: 1,
+    }
+}
+
+#[test]
+fn the_hr_lead_is_a_builtin_member_and_older_members_have_none() {
+    assert_eq!(HR_HANDLE, "hr");
+    let hr: Member = serde_json::from_value(json!({
+        "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "kind": "agent", "name": "HR lead",
+        "builtin": "hr_lead", "version": 1
+    }))
+    .unwrap();
+    assert_eq!(hr.builtin, Some(BuiltinRole::HrLead));
+    // A member from before the field: no builtin, and it is not written back.
+    let plain: Member = serde_json::from_value(json!({
+        "id": "01ARZ3NDEKTSV4RRFFQ69G5FAW", "kind": "person", "name": "Ann", "version": 1
+    }))
+    .unwrap();
+    assert_eq!(plain.builtin, None);
+    assert!(serde_json::to_value(&plain)
+        .unwrap()
+        .get("builtin")
+        .is_none());
+    // A role from the future is Unknown, not an error.
+    let future: Member = serde_json::from_value(json!({
+        "id": "01ARZ3NDEKTSV4RRFFQ69G5FAX", "kind": "agent", "name": "x",
+        "builtin": "chief_of_something", "version": 1
+    }))
+    .unwrap();
+    assert_eq!(future.builtin, Some(BuiltinRole::Unknown));
+    assert_eq!(
+        serde_json::to_value(BuiltinRole::HrLead).unwrap(),
+        json!("hr_lead")
+    );
+}
+
+#[test]
+fn can_approve_hires_defaults_to_false_and_is_left_out_when_false() {
+    let profile: AgentProfile = serde_json::from_value(json!({
+        "role": "r", "title": "t", "runtime": "codex", "messaging_name": "x", "status": "active"
+    }))
+    .unwrap();
+    assert!(!profile.can_approve_hires);
+    assert!(serde_json::to_value(&profile)
+        .unwrap()
+        .get("can_approve_hires")
+        .is_none());
+    let flagged = AgentProfile {
+        can_approve_hires: true,
+        ..profile
+    };
+    assert_eq!(
+        serde_json::to_value(&flagged).unwrap()["can_approve_hires"],
+        json!(true)
+    );
+}
+
+#[test]
+fn hire_states_and_proposals_round_trip_and_tolerate_the_future() {
+    for (state, name) in [
+        (HireState::Draft, "draft"),
+        (HireState::Waiting, "waiting"),
+        (HireState::Approved, "approved"),
+        (HireState::Rejected, "rejected"),
+        (HireState::Provisioned, "provisioned"),
+        (HireState::Failed, "failed"),
+    ] {
+        assert_eq!(serde_json::to_value(state).unwrap(), json!(name));
+        assert_eq!(
+            serde_json::from_value::<HireState>(json!(name)).unwrap(),
+            state
+        );
+    }
+    assert_eq!(
+        serde_json::from_value::<HireState>(json!("on_hold")).unwrap(),
+        HireState::Unknown
+    );
+    let p = proposal();
+    let back: HireProposal = serde_json::from_value(serde_json::to_value(&p).unwrap()).unwrap();
+    assert_eq!(back, p);
+    // Optional fields are left out, and a newer field is ignored.
+    let json = serde_json::to_value(&p).unwrap();
+    for absent in [
+        "decided_by",
+        "decision_reason",
+        "provisioned_member_id",
+        "failure",
+        "decided_at",
+    ] {
+        assert!(json.get(absent).is_none(), "{absent}");
+    }
+    let mut future = json.clone();
+    future["something_new"] = json!(1);
+    assert!(serde_json::from_value::<HireProposal>(future).is_ok());
+}
+
+#[test]
+fn hire_calls_have_their_names_and_shapes() {
+    assert_eq!(HireRequest::METHOD, "hire.request");
+    assert_eq!(HireApprove::METHOD, "hire.approve");
+    assert_eq!(HireReject::METHOD, "hire.reject");
+    assert_eq!(HireFail::METHOD, "hire.fail");
+    assert_eq!(
+        MemberSetCanApproveHires::METHOD,
+        "member.set_can_approve_hires"
+    );
+    let request: HireRequestParams = serde_json::from_value(json!({
+        "command_id": "c1", "proposal_id": "hp1", "facts": serde_json::to_value(facts()).unwrap()
+    }))
+    .unwrap();
+    assert_eq!((request.reason, request.on_behalf_of), (None, None));
+    let approve = HireApproveParams {
+        command_id: "c2".into(),
+        proposal_id: "hp1".into(),
+        expected_version: 1,
+        reason: "ok".into(),
+    };
+    assert_eq!(
+        serde_json::to_value(&approve).unwrap(),
+        json!({"command_id":"c2","proposal_id":"hp1","expected_version":1,"reason":"ok"})
+    );
+    let flag: MemberSetCanApproveHiresParams = serde_json::from_value(json!({
+        "command_id": "c3", "member_id": "m", "expected_version": 2, "value": true
+    }))
+    .unwrap();
+    assert!(flag.value);
+}
+
+#[test]
+fn hire_changes_travel_in_org_changed_and_older_clients_survive_them() {
+    let change = OrgChange::HireProposalUpserted {
+        proposal: proposal(),
+    };
+    let json = serde_json::to_value(&change).unwrap();
+    assert_eq!(json["type"], json!("hire_proposal_upserted"));
+    assert_eq!(serde_json::from_value::<OrgChange>(json).unwrap(), change);
+    // A change kind this build doesn't know is still Unknown.
+    assert!(matches!(
+        serde_json::from_value::<OrgChange>(json!({"type": "hire_proposal_burned"})).unwrap(),
+        OrgChange::Unknown
+    ));
+    // A snapshot from before hire proposals has none.
+    let snapshot: OrgSnapshot = serde_json::from_value(json!({
+        "position": {"epoch": 1, "seq": 1}, "teams": [], "members": [], "memberships": []
+    }))
+    .unwrap();
+    assert!(snapshot.hire_proposals.is_empty());
+}
+
+#[test]
+fn add_agent_may_name_an_approved_proposal_and_old_callers_need_not() {
+    let params: MemberAddAgentParams = serde_json::from_value(json!({
+        "command_id": "c", "member_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV", "name": "Cameron",
+        "office_id": "office1",
+        "profile": {"role":"r","title":"t","runtime":"codex","messaging_name":"cameron","status":"active"}
+    }))
+    .unwrap();
+    assert_eq!(params.hire_proposal_id, None);
+    assert!(serde_json::to_value(&params)
+        .unwrap()
+        .get("hire_proposal_id")
+        .is_none());
+    let named = MemberAddAgentParams {
+        hire_proposal_id: Some("hp1".into()),
+        ..params
+    };
+    assert_eq!(
+        serde_json::to_value(&named).unwrap()["hire_proposal_id"],
+        json!("hp1")
+    );
 }

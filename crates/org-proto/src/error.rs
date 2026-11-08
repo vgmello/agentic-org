@@ -40,6 +40,12 @@ pub enum ErrorCode {
     /// The command would remove the owner, add the owner to a team, make it a lead, or give it
     /// someone to report to.
     OwnerProtected,
+    /// The command would change the built-in HR lead beyond its `runtime`, `model` and run mode,
+    /// or involve it where it may not be: offboard or remove it, rename it, edit its profile,
+    /// pause it, put it in a team (`team.add_member`, `member.move`), make it a lead, give it
+    /// reports or a manager, or let it approve hires. Also a hire request naming it as the team
+    /// member or the manager. Decided in the same place in the order as `owner_protected`.
+    BuiltinProtected,
     /// Something the command names doesn't exist (any more).
     NotFound,
     /// The `expected_version` is stale: the thing changed since the caller saw it.

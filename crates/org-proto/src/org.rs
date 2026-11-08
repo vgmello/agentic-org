@@ -19,15 +19,26 @@
 //! in on (the app's connection is bound with the app token, ADR-0003), enforces this before it
 //! queues or forwards the command, and HQ relies on that.
 //!
+//! **One exception, for hiring.** `member.add_agent` is also accepted from a connection bound as
+//! the built-in HR lead (its run, with its session token), and only when it names an APPROVED
+//! hire proposal (`hire_proposal_id`, see [`HireProposal`]) whose facts match the params; the
+//! proposal moves to `provisioned` in the same event. Nothing else is open to it except
+//! `hire.request` (on behalf of a requester) and `hire.fail`. `hire.request` is for the app and
+//! for agents; `hire.approve` and `hire.reject` are for the proposal's routed approver and the
+//! owner (see their docs). The wire still carries no identity: the office knows whose connection
+//! it is, and HQ relies on that.
+//!
 //! ## When several errors apply
 //! A command can break more than one rule at once. HQ returns the first of: `not_authorized`,
 //! `not_found`, `invalid_request` (unreadable, outside a limit, the wrong kind of member or the
 //! wrong state, a value that makes no sense), `invalid_name`, `conflict` (a stale
 //! `expected_version`), `already_exists`. Every command below checks in this one order (its
 //! `Errors:` list names the codes it can return, not the order they are checked in). The
-//! domain codes (`owner_protected`, `cycle`, `not_a_member`, `not_empty`) come after
+//! domain codes (`owner_protected`, `builtin_protected`, `cycle`, `not_a_member`, `not_empty`)
+//! come after
 //! `invalid_name` and before `conflict`: a rule that would refuse the command at any version
-//! is not hidden by a stale one. Among themselves `owner_protected` comes first, so a lead
+//! is not hidden by a stale one. Among themselves `owner_protected` comes first, then
+//! `builtin_protected`, so a lead
 //! who is the owner is `owner_protected`, not `not_a_member`.
 //!
 //! ## Limits every command shares
@@ -240,6 +251,10 @@ pub const OWNER_HANDLE: &str = "owner";
 /// [`OWNER_HANDLE`]: no member may have it as a handle.
 pub const OFFICE_HANDLE: &str = "office";
 
+/// The handle of the built-in HR lead (see [`BuiltinRole`]). Reserved like [`OWNER_HANDLE`]: no
+/// other member may have it as a handle, and the HR lead's `messaging_name` is exactly this.
+pub const HR_HANDLE: &str = "hr";
+
 /// A handle may not start with this (any case): `run:<id>` addresses a run in messaging, so a
 /// person named `Run: 1` would shadow it. See [`is_shaped_like_an_address`].
 pub const RUN_HANDLE_PREFIX: &str = "run:";
@@ -351,8 +366,9 @@ pub struct AgentProfile {
     /// reserved [`OWNER_HANDLE`], which no member other than the owner may use. HQ rejects a clash with `already_exists` in
     /// either direction (an agent whose `messaging_name` equals a person's `name`, or a person
     /// whose `name` equals an agent's `messaging_name`), so `--to <handle>` never names two
-    /// members. `Member.name` stays the agent's display name and is not a handle. Two reserved
-    /// words, [`OWNER_HANDLE`] and [`OFFICE_HANDLE`], clash with everyone, and a handle that
+    /// members. `Member.name` stays the agent's display name and is not a handle. Three reserved
+    /// words, [`OWNER_HANDLE`], [`OFFICE_HANDLE`] and [`HR_HANDLE`] (which is the built-in HR
+    /// lead's own `messaging_name`), clash with every other member, and a handle that
     /// [`is_shaped_like_an_address`] is `invalid_name`. **The owner's handle is only `owner`:
     /// its display name is exempt from the namespace** (no clash and no address-shape check).
     /// `member.update_person` on the owner never clashes, and `member.add_person` may reuse the
@@ -362,11 +378,41 @@ pub struct AgentProfile {
     /// `Offboarded` are refused: an agent is offboarded with `member.offboard`).
     #[serde(default)]
     pub status: AgentStatus,
+    /// Whether the agent may approve hire proposals routed to it (see [`HireProposal`]). Set by
+    /// the owner ONLY, with `member.set_can_approve_hires` (or by the app's `member.add_agent`
+    /// at hire): `member.update_agent` cannot change it, an agent can never give it to itself or
+    /// to the agents it hires, and the HR lead never has it. Default false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub can_approve_hires: bool,
     /// When HQ offboarded the agent (RFC 3339 UTC with milliseconds, HQ's clock). HQ keeps it
     /// present exactly when `status` is `offboarded`. Only `member.offboard` sets it: a client
     /// that sends it in a profile (`member.add_agent`) gets `invalid_request`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offboarded_at: Option<String>,
+}
+
+/// What a built-in member is. A role this build doesn't know decodes as
+/// [`BuiltinRole::Unknown`]; writers never send it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum BuiltinRole {
+    /// The organization's one HR lead: an agent that only provisions agents (it proposes and
+    /// sets up hires and cleans up after offboarding). Created with the organization.
+    HrLead,
+    /// Missing or not known to this build.
+    #[default]
+    Unknown,
+}
+
+impl<'de> Deserialize<'de> for BuiltinRole {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(d)?;
+        Ok(match value.as_str() {
+            Some("hr_lead") => BuiltinRole::HrLead,
+            _ => BuiltinRole::Unknown,
+        })
+    }
 }
 
 /// A member of the organization: an agent or a person. The owner is a person with
@@ -382,6 +428,14 @@ pub struct Member {
     pub contact: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub owner: bool,
+    /// Set on a built-in member, like `owner` is on the owner: the organization's HR lead
+    /// ([`BuiltinRole::HrLead`]), an agent made with the organization (one per organization, a
+    /// server-made id, `messaging_name` [`HR_HANDLE`], run mode `on_call`). It is in no team, has
+    /// no reports and no manager, cannot be offboarded or removed or renamed, and the owner can
+    /// change only its `runtime`, `model` and run mode: anything else is
+    /// [`crate::ErrorCode::BuiltinProtected`]. Absent on every other member.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub builtin: Option<BuiltinRole>,
     /// Agents only: the office the agent is placed in. People aren't placed in offices.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub office_id: Option<String>,
@@ -442,6 +496,9 @@ pub struct OrgSnapshot {
     pub projects: Vec<ProjectSummary>,
     #[serde(default)]
     pub project_teams: Vec<ProjectTeam>,
+    /// Every hire proposal, newest last.
+    #[serde(default)]
+    pub hire_proposals: Vec<HireProposal>,
 }
 
 /// What happened to an organization command.
@@ -530,7 +587,7 @@ command!(
 );
 command!(
     /// `team.set_lead`: a member of the team, or none. Errors: `not_a_member`,
-    /// `owner_protected`, `conflict`, `not_found`, `invalid_request` (the member is an offboarded
+    /// `owner_protected`, `builtin_protected`, `conflict`, `not_found`, `invalid_request` (the member is an offboarded
     /// agent).
     TeamSetLead, "team.set_lead", TeamSetLeadParams {
         team_id: String,
@@ -548,6 +605,7 @@ command!(
 );
 command!(
     /// `team.add_member`. `membership_id` is client-made. Errors: `owner_protected`,
+    /// `builtin_protected` (the HR lead is in no team),
     /// `not_found`, `invalid_request` (the member is an offboarded agent), `already_exists`.
     TeamAddMember, "team.add_member", TeamAddMemberParams {
         membership_id: String,
@@ -616,6 +674,7 @@ command!(
     /// organization's structure, not messages or tasks, and cannot tell). What HQ does refuse is
     /// an offboarded agent, whose record and handle are kept for good (`invalid_request`);
     /// offboard an agent that has worked, remove one that never did. Errors: `not_authorized`,
+    /// `builtin_protected` (the HR lead is never removed),
     /// `owner_protected`, `not_found`, `invalid_request`, `conflict`.
     MemberRemove, "member.remove", MemberRemoveParams {
         member_id: String,
@@ -625,8 +684,9 @@ command!(
 command!(
     /// `member.set_reports_to`: who a member reports to, or none (the owner). Errors:
     /// `cycle` (someone would report to themselves, directly or through others),
-    /// `owner_protected` (the owner reports to no one), `conflict`, `not_found`,
-    /// `invalid_request` (either member is an offboarded agent).
+    /// `owner_protected` (the owner reports to no one), `builtin_protected` (the HR lead has no
+    /// manager and no reports), `conflict`, `not_found`, `invalid_request` (either member is an
+    /// offboarded agent).
     MemberSetReportsTo, "member.set_reports_to", MemberSetReportsToParams {
         member_id: String,
         expected_version: u64,
@@ -635,7 +695,15 @@ command!(
     }
 );
 command!(
-    /// `member.add_agent`: adds an agent, placed in `office_id`. `member_id` is client-made. The
+    /// `member.add_agent`: adds an agent, placed in `office_id`. `member_id` is client-made.
+    /// App-only, except for the built-in HR lead: its connection may add an agent when
+    /// `hire_proposal_id` names an `approved` [`HireProposal`] and the params match its facts
+    /// (name, role, title, runtime, model, run mode, and the team and manager if it named them),
+    /// and then `profile.can_approve_hires` must be false; in the same event the proposal becomes
+    /// `provisioned` with this member as `provisioned_member_id`. Any other use of
+    /// `hire_proposal_id` (the app may name one too) is held to the same match; a proposal that
+    /// is not `approved` is `invalid_request`, one that does not exist `not_found`. A profile
+    /// with `can_approve_hires` true is accepted from the app only (`not_authorized` otherwise). The
     /// profile's `runtime` must be a known value (`Unknown` and a non-canonical `Other` such as
     /// `Other("codex")` are `invalid_request`), its `status` must be `active` or `paused`
     /// (`Unknown` and `offboarded` are refused: an agent is offboarded with `member.offboard`),
@@ -643,7 +711,8 @@ command!(
     /// and otherwise there must be none. Errors: `not_authorized`, `invalid_name` (the name, or a
     /// `messaging_name` that breaks its format or [`is_shaped_like_an_address`]),
     /// `invalid_request` (a profile that breaks its limits or rules above, or a `member_id` that
-    /// is not [`is_valid_member_id`]), `already_exists` (the id is taken, or `messaging_name` is
+    /// is not [`is_valid_member_id`], or a `hire_proposal_id` whose proposal is not approved or does
+    /// not match), `already_exists` (the id is taken, or `messaging_name` is
     /// already another member's handle: an agent's `messaging_name`, a person's `name`,
     /// [`OWNER_HANDLE`] or [`OFFICE_HANDLE`], ignoring case), `not_found` (no such office).
     MemberAddAgent, "member.add_agent", MemberAddAgentParams {
@@ -651,6 +720,8 @@ command!(
         name: String,
         office_id: String,
         profile: AgentProfile,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hire_proposal_id: Option<String>,
     }
 );
 command!(
@@ -668,7 +739,9 @@ command!(
     /// is already another member's handle, as for
     /// `member.add_agent`), `conflict`, `not_found`, and `invalid_request` if the member is not
     /// an agent (people are edited with `member.update_person`), is offboarded, or a value breaks
-    /// its limits.
+    /// its limits. On the built-in HR lead only `runtime` and `model` may be given; any other
+    /// field is `builtin_protected`. `can_approve_hires` is never changed here
+    /// (`member.set_can_approve_hires`).
     MemberUpdateAgent, "member.update_agent", MemberUpdateAgentParams {
         member_id: String,
         expected_version: u64,
@@ -700,7 +773,8 @@ command!(
     /// `member.set_agent_status`: pause or resume an agent. `status` must be `active` or
     /// `paused`; setting the status it already has is not an error. Anything else is
     /// `invalid_request`: `offboarded` (use `member.offboard`), `Unknown`, a member that is not
-    /// an agent, and an agent that is already offboarded. Errors: `not_authorized`, `not_found`,
+    /// an agent, and an agent that is already offboarded. Errors: `not_authorized`,
+    /// `builtin_protected` (the HR lead is never paused), `not_found`,
     /// `invalid_request`, `conflict`.
     MemberSetAgentStatus, "member.set_agent_status", MemberSetAgentStatusParams {
         member_id: String,
@@ -720,7 +794,8 @@ command!(
     /// version. Existing historical references (authorship, activity) keep pointing at the agent.
     /// Afterwards `team.add_member`, `team.set_lead` and `member.set_reports_to` that name it are
     /// `invalid_request`. Reclaiming the agent's open tasks is part of the work-items design.
-    /// Errors: `not_authorized`, `not_found`, `invalid_request` (the member is not an agent, or
+    /// Errors: `not_authorized`, `builtin_protected` (the HR lead is never offboarded),
+    /// `not_found`, `invalid_request` (the member is not an agent, or
     /// is already offboarded), `conflict`.
     MemberOffboard, "member.offboard", MemberOffboardParams {
         member_id: String,
@@ -728,7 +803,8 @@ command!(
     }
 );
 command!(
-    /// `member.set_run_mode`: how an agent is run, and when if it is scheduled. App-only (see
+    /// `member.set_run_mode`: how an agent is run, and when if it is scheduled (the built-in HR
+    /// lead's too: a run mode is one of the three things the owner may change on it). App-only (see
     /// "Who may send what"). `run_mode` is `always_on`, `on_call`, `scheduled`, or left out: left
     /// out means "not office-run", the agent is started by a person (this is how an agent is
     /// taken out of the office's control). `Unknown` is `invalid_request`. `schedule` is required
@@ -743,6 +819,18 @@ command!(
         run_mode: Option<RunMode>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         schedule: Option<Schedule>,
+    }
+);
+command!(
+    /// `member.set_can_approve_hires`: the owner lets an agent approve hire proposals (`value`
+    /// true) or stops it. App-only, and only the owner's connection: an agent can never set it,
+    /// on itself or anyone. Setting the value the agent already has is accepted. Errors:
+    /// `not_authorized`, `not_found`, `invalid_request` (the member is not an agent, or is
+    /// offboarded), `builtin_protected` (the HR lead never approves hires), `conflict`.
+    MemberSetCanApproveHires, "member.set_can_approve_hires", MemberSetCanApproveHiresParams {
+        member_id: String,
+        expected_version: u64,
+        value: bool,
     }
 );
 command!(
@@ -783,6 +871,164 @@ command!(
     }
 );
 
+/// Where a hire proposal is. A state this build doesn't know decodes as [`HireState::Unknown`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum HireState {
+    /// Being drafted by the HR lead; not yet sent to an approver.
+    Draft,
+    /// Waiting for its approver (`approver_id`).
+    Waiting,
+    /// Approved; the HR lead provisions the agent next.
+    Approved,
+    /// Rejected by the approver or the owner.
+    Rejected,
+    /// The agent exists (`provisioned_member_id`).
+    Provisioned,
+    /// Provisioning failed (`failure`).
+    Failed,
+    /// Missing or not known to this build.
+    #[default]
+    Unknown,
+}
+
+impl<'de> Deserialize<'de> for HireState {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(d)?;
+        Ok(match value.as_str() {
+            Some("draft") => HireState::Draft,
+            Some("waiting") => HireState::Waiting,
+            Some("approved") => HireState::Approved,
+            Some("rejected") => HireState::Rejected,
+            Some("provisioned") => HireState::Provisioned,
+            Some("failed") => HireState::Failed,
+            _ => HireState::Unknown,
+        })
+    }
+}
+
+/// What a hire would create: the facts the approver sees, and that `member.add_agent` must match.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HireFacts {
+    /// The new agent's display name.
+    pub name: String,
+    pub role: String,
+    pub title: String,
+    /// The team it joins, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_id: Option<String>,
+    /// Who it reports to, if not the owner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reports_to_member_id: Option<String>,
+    pub runtime: AgentRuntime,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// How it will run; absent means "not office-run".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_mode: Option<RunMode>,
+    /// The estimated cost per month at API prices, in cents. The approver sees it; HQ does not
+    /// check it against anything.
+    #[serde(default)]
+    pub est_cost_cents_month: u64,
+}
+
+/// A request to hire an agent, and what became of it. Organization data (HQ's), carried in
+/// `org.changed` as [`OrgChange::HireProposalUpserted`] and in [`OrgSnapshot`].
+///
+/// **Routing.** HQ sets `approver_id` when the request is made: the nearest manager up the
+/// requester's reporting line (the requester's own manager first, never the requester) that is an
+/// agent with `can_approve_hires`, not offboarded and not built in; if there is none, the owner.
+/// A request by the owner is approved at once (`decided_by` the owner, no reason). The owner can
+/// approve or reject any proposal at any time. The HR lead never approves, and the requester
+/// never approves their own request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HireProposal {
+    pub id: String,
+    /// Who asked: a member id (an agent, or the owner).
+    pub requester_id: String,
+    /// Who it waits for (the owner's id when it comes to the owner). Empty while a draft.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approver_id: Option<String>,
+    pub state: HireState,
+    pub facts: HireFacts,
+    /// Why the requester wants it, in their words.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Who approved or rejected it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decided_by: Option<String>,
+    /// The reason given with the decision (required for an approval or rejection by someone
+    /// other than the owner acting on its own request).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_reason: Option<String>,
+    /// The agent that was made, once `provisioned`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provisioned_member_id: Option<String>,
+    /// Why provisioning failed, once `failed`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
+    /// RFC 3339 UTC with milliseconds, HQ's clock.
+    pub created_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decided_at: Option<String>,
+    pub version: u64,
+}
+
+command!(
+    /// `hire.request`: asks to hire an agent. `proposal_id` is client-made ([`is_valid_id`]).
+    /// The requester is the caller (the connection's bound member: an agent, or the owner through
+    /// the app); the built-in HR lead may name another with `on_behalf_of` (a member id) when it
+    /// drafts a request an agent made in words, and nobody else may (`not_authorized`). HQ
+    /// creates the proposal `waiting` for its routed approver (see [`HireProposal`]), or
+    /// `approved` at once when the owner asks. `facts` are checked like `member.add_agent`'s
+    /// profile (`invalid_name` for the name, `invalid_request` for limits and `Unknown` values),
+    /// `team_id` and `reports_to_member_id` must exist (`not_found`) and not be the built-in HR
+    /// lead (`builtin_protected`). Errors: `not_authorized`, `not_found`, `invalid_request`,
+    /// `invalid_name`, `builtin_protected`, `already_exists` (the proposal id is taken).
+    HireRequest, "hire.request", HireRequestParams {
+        proposal_id: String,
+        facts: HireFacts,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        on_behalf_of: Option<String>,
+    }
+);
+command!(
+    /// `hire.approve`: approves a `waiting` proposal. Only its routed approver (`approver_id`) or
+    /// the owner may (`not_authorized`); never the requester (the owner acting on its own request
+    /// excepted: that is approved at once by `hire.request`), never the HR lead. `reason` is
+    /// required ([`AGENT_TEXT_MAX_CHARS`], trimmed, no control characters). A proposal that is
+    /// not `waiting` is `invalid_request`. Errors: `not_authorized`, `not_found`,
+    /// `invalid_request`, `conflict`.
+    HireApprove, "hire.approve", HireApproveParams {
+        proposal_id: String,
+        expected_version: u64,
+        reason: String,
+    }
+);
+command!(
+    /// `hire.reject`: rejects a `waiting` proposal, under the same rules as `hire.approve`.
+    /// Errors: `not_authorized`, `not_found`, `invalid_request`, `conflict`.
+    HireReject, "hire.reject", HireRejectParams {
+        proposal_id: String,
+        expected_version: u64,
+        reason: String,
+    }
+);
+command!(
+    /// `hire.fail`: the HR lead says provisioning an `approved` proposal failed, with `reason`
+    /// (the proposal becomes `failed`). Only the built-in HR lead's connection may
+    /// (`not_authorized`). Errors: `not_authorized`, `not_found`, `invalid_request` (not
+    /// `approved`, or a bad reason), `conflict`.
+    HireFail, "hire.fail", HireFailParams {
+        proposal_id: String,
+        expected_version: u64,
+        reason: String,
+    }
+);
+
 /// One change to the organization's structure, as committed by HQ. Entities are sent whole,
 /// as they are after the change. Kinds this build doesn't know decode as
 /// [`OrgChange::Unknown`]; a client that sees one should take a fresh snapshot.
@@ -816,6 +1062,9 @@ pub enum OrgChange {
     },
     ProjectTeamRemoved {
         project_team_id: String,
+    },
+    HireProposalUpserted {
+        proposal: HireProposal,
     },
     #[serde(other)]
     Unknown,
