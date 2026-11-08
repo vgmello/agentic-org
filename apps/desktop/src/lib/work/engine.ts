@@ -573,7 +573,7 @@ const timeOf = (item: StoredTask, now: string): TimeFigures => ({
 	cycle_ms: item.started_at ? Math.max(0, Date.parse(item.done_at ?? now) - Date.parse(item.started_at)) : undefined,
 	waiting_on_owner_ms: 0,
 	blocked_ms: 0,
-	idle_ms: 0,
+	rest_ms: Math.max(0, Date.parse(item.done_at ?? now) - Date.parse(item.summary.created_at)),
 	open: item.summary.kind === 'bug' ? item.summary.status !== 'closed' : item.summary.status !== 'done',
 	rounds: 1 + item.summary.reopen_count,
 	as_of: now

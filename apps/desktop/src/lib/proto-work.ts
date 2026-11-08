@@ -105,10 +105,14 @@ export interface DoneAnyway {
 export interface TimeFigures {
 	lead_ms: number;
 	cycle_ms?: number;
+	/** Present only when working time is tracked. */
 	working_ms?: number;
 	waiting_on_owner_ms: number;
 	blocked_ms: number;
-	idle_ms: number;
+	/** Present only when working time is tracked. */
+	idle_ms?: number;
+	/** lead - waiting on the owner - blocked: working and idle together while working time is untracked (ada/proto-work-p1 @ 6a17a70). */
+	rest_ms: number;
 	/** "so far": the item is still open. */
 	open: boolean;
 	rounds: number;

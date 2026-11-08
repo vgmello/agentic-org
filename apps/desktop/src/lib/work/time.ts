@@ -23,7 +23,6 @@ export function span(ms: number): string {
  * time isn't tracked. An open item says "so far".
  */
 export function timeBlock(t: TimeFigures): string {
-	const rest = Math.max(0, t.lead_ms - t.waiting_on_owner_ms - t.blocked_ms - (t.working_ms ?? 0));
 	const tail = t.working_ms === undefined ? ` (working time isn't tracked yet)` : '';
-	return `Lead time ${span(t.lead_ms)}${t.open ? ' so far' : ''} · waiting on you ${span(t.waiting_on_owner_ms)} · blocked ${span(t.blocked_ms)} · the rest ${span(rest)}${tail}`;
+	return `Lead time ${span(t.lead_ms)}${t.open ? ' so far' : ''} · waiting on you ${span(t.waiting_on_owner_ms)} · blocked ${span(t.blocked_ms)} · the rest ${span(t.rest_ms)}${tail}`;
 }

@@ -1097,7 +1097,7 @@ pub fn get(state: &WorkState, id: &str, now: &str) -> Result<Value, ApiError> {
     let created = task.summary["created_at"].as_str().unwrap_or(now);
     let end = task.done_at.as_deref().unwrap_or(now);
     let mut time = json!({
-        "lead_ms": ms(created, end), "waiting_on_owner_ms": 0, "blocked_ms": 0, "idle_ms": 0,
+        "lead_ms": ms(created, end), "waiting_on_owner_ms": 0, "blocked_ms": 0, "rest_ms": ms(created, end),
         "open": task.summary["status"] != json!("done") && task.summary["status"] != json!("closed"),
         "rounds": 1 + task.summary["reopen_count"].as_u64().unwrap_or(0), "as_of": now,
     });

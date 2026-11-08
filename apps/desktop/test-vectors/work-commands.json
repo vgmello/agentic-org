@@ -926,6 +926,7 @@
       "time": {
        "lead_ms": 10800000,
        "cycle_ms": 7200000,
+       "rest_ms": 10800000,
        "open": false,
        "rounds": 1
       }
