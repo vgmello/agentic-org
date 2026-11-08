@@ -57,8 +57,10 @@
 //!   creates each office's key and stores it in its own key store before the office's first
 //!   `--create`, and sends it on every create, start and discard line. The server never creates,
 //!   stores, loads or deletes a key, and never touches the Keychain: it uses only the key on its
-//!   first line. It wipes every copy after it first opens the databases, except the one its store
-//!   keeps for its reader pool: in memory only, zeroed on drop, never logged. A key that doesn't
+//!   first line. After it first opens the databases it wipes every copy it holds, except the one
+//!   its store keeps for its reader pool: in memory only, zeroed on drop, never logged. Wiping is
+//!   best effort, as for the app token (see `org_proto`'s token docs): the key's bytes live on
+//!   the heap, so moving it leaves no copy, but buffers it passed through can. A key that doesn't
 //!   open an office's existing databases is [`FailCode::KeyMissing`], and the server deletes
 //!   nothing on it.
 //! - **Zeroing is best effort.** [`read_host_message`] and [`write_host_message`] zero their own

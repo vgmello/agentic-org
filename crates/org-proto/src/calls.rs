@@ -231,13 +231,12 @@ impl Call for OfficeList {
 ///
 /// The result is a secret: never log it, or the response line that carries it.
 ///
-/// An app-only call is accepted only on a connection whose client sent it after reading `hello`'s
-/// answer. Bytes already buffered when the host accepted the connection are refused with
-/// `not_authorized`, so never pipeline an app-only call before `hello`'s answer.
-/// First thing in the app's main, before any output or threads: fstat fds 0-2 and dup2
-/// `/dev/null` over any that is a socket; the app never reads or writes an fd it didn't open.
-/// After sending an app-only call, the client sends nothing else on that connection until its
-/// answer arrives.
+/// The client rule: a client reads `hello`'s answer before sending an app-only call, and sends
+/// nothing else on that connection until its answer arrives. First thing in the app's main,
+/// before any output or threads: fstat fds 0-2 and dup2 `/dev/null` over any that is a socket;
+/// the app never reads or writes an fd it didn't open.
+/// The host check: the host accepts an app-only call only if it arrived after the connection's
+/// accept was sampled and nothing follows its request line (otherwise `not_authorized`).
 pub struct OfficeAppToken;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -291,13 +290,12 @@ impl Call for OfficeAppToken {
 /// this call answers `unknown_method`. Show the office's `status_reason`, not this call's
 /// error code: the code says only why the call failed.
 ///
-/// An app-only call is accepted only on a connection whose client sent it after reading `hello`'s
-/// answer. Bytes already buffered when the host accepted the connection are refused with
-/// `not_authorized`, so never pipeline an app-only call before `hello`'s answer.
-/// First thing in the app's main, before any output or threads: fstat fds 0-2 and dup2
-/// `/dev/null` over any that is a socket; the app never reads or writes an fd it didn't open.
-/// After sending an app-only call, the client sends nothing else on that connection until its
-/// answer arrives.
+/// The client rule: a client reads `hello`'s answer before sending an app-only call, and sends
+/// nothing else on that connection until its answer arrives. First thing in the app's main,
+/// before any output or threads: fstat fds 0-2 and dup2 `/dev/null` over any that is a socket;
+/// the app never reads or writes an fd it didn't open.
+/// The host check: the host accepts an app-only call only if it arrived after the connection's
+/// accept was sampled and nothing follows its request line (otherwise `not_authorized`).
 pub struct OfficeRestart;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -18,13 +18,13 @@
 //! in on. **App-only** calls are refused on any other connection with `not_authorized`: every
 //! organization command ([`org`]) and `work.delete` ([`work`]). Every work call needs a bound
 //! connection (`not_bound` otherwise), and acts as the member it is bound as.
-//! On the host, an app-only call (`office.app_token`, `office.restart`) is accepted only on a
-//! connection whose client sent it after reading `hello`'s answer. Bytes already buffered when
-//! the host accepted the connection are refused with `not_authorized`, so never pipeline an
-//! app-only call before `hello`'s answer. First thing in the app's main, before any output or
+//! On the host, for an app-only call (`office.app_token`, `office.restart`), the client rule: a
+//! client reads `hello`'s answer before sending an app-only call, and sends nothing else on that
+//! connection until its answer arrives. First thing in the app's main, before any output or
 //! threads: fstat fds 0-2 and dup2 `/dev/null` over any that is a socket; the app never reads or
-//! writes an fd it didn't open. After sending an app-only call, the client sends nothing else on
-//! that connection until its answer arrives.
+//! writes an fd it didn't open. The host check: the host accepts an app-only call only if it
+//! arrived after the connection's accept was sampled and nothing follows its request line
+//! (otherwise `not_authorized`).
 //!
 //! **The most depended-on crate: keep it small, stable, additive-only.** Every change needs
 //! ada's review (see AGENTS.md).
