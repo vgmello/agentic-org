@@ -111,6 +111,42 @@ mod tests {
         );
     }
 
+    /// A second vector, computed independently (Python hashlib over the §3.4 byte stream):
+    /// an empty subject, a reply_to, non-ASCII and a newline in the body, nested meta.
+    #[test]
+    fn independent_digest_with_reply_and_nested_meta() {
+        let meta = serde_json::from_value(json!({"k": [1, "two", {"b": null, "a": 1.5}]})).unwrap();
+        let hash = content_hash(
+            "01JCMPAT000000000000000000",
+            "msg",
+            MessagePriority::Normal,
+            None,
+            Some("01JCMSG0000000000000000001"),
+            "h\u{e9}llo\nworld",
+            &meta,
+        )
+        .unwrap();
+        let hex: String = hash.iter().map(|byte| format!("{byte:02x}")).collect();
+        assert_eq!(
+            hex,
+            "1608e0565043d65161f45e080a189102e1ecb1f970d398b6f91a6e8bfacbb20d"
+        );
+        // The empty subject and an absent one hash alike (§3.4: subject_or_empty).
+        assert_eq!(
+            hash,
+            content_hash(
+                "01JCMPAT000000000000000000",
+                "msg",
+                MessagePriority::Normal,
+                Some(""),
+                Some("01JCMSG0000000000000000001"),
+                "h\u{e9}llo\nworld",
+                &meta,
+            )
+            .unwrap()
+        );
+    }
+
     #[test]
     fn recursively_sorts_arrays_objects_and_escaped_keys() {
         let mut output = Vec::new();

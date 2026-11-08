@@ -47,6 +47,10 @@ impl WaiterRegistry {
         })
     }
 
+    pub(crate) fn len(&self) -> usize {
+        lock(&self.0).rows.len()
+    }
+
     pub(crate) fn notify(&self, member: &str) {
         let signals: Vec<_> = lock(&self.0)
             .rows

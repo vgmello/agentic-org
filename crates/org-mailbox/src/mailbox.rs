@@ -57,7 +57,7 @@ impl Mailbox {
         bound_member_id: &str,
         params: MsgSendParams,
     ) -> Result<SendResult, MailboxError> {
-        self.bound_member(bound_member_id)?;
+        let (sender, _) = self.bound_member(bound_member_id)?;
         size(&params.id, MAX_ID_BYTES)?;
         if ulid_time_ms(&params.id).is_none() {
             return Err(MailboxError::InvalidRequest);
@@ -88,10 +88,7 @@ impl Mailbox {
         if meta_bytes > MAX_META_BYTES {
             return Err(MailboxError::TooLarge);
         }
-        size(&params.to, MAX_HANDLE_BYTES)?;
-        if params.to.eq_ignore_ascii_case(OFFICE_SENDER) {
-            return Err(MailboxError::InvalidRequest);
-        }
+        let to = address(&params.to)?;
         let existing = self.store.get_message(&params.id)?;
         if existing
             .as_ref()
@@ -99,12 +96,15 @@ impl Mailbox {
         {
             return Err(MailboxError::AlreadyExists);
         }
-        let resolved = self.directory.resolve_member(&params.to)?;
+        let resolved = match to {
+            Some(to) => self.directory.resolve_member(to)?,
+            None => None,
+        };
         // An exact recipient id stays retryable after removal; a handle must
         // still resolve, so a reassigned handle cannot redirect a retry.
         let to_id = match (&existing, &resolved) {
-            (Some(stored), _) if params.to == stored.message.header.to_member_id => {
-                params.to.clone()
+            (Some(stored), _) if to == Some(stored.message.header.to_member_id.as_str()) => {
+                stored.message.header.to_member_id.clone()
             }
             (_, Some((member, _))) => member.id.clone(),
             _ => return Err(MailboxError::UnknownRecipient),
@@ -128,7 +128,6 @@ impl Mailbox {
         if !can_message(&recipient) {
             return Err(MailboxError::UnknownRecipient);
         }
-        let (sender, _) = self.bound_member(bound_member_id)?;
         // Slice 1 is local/HQ. Cross-office routing is a separate capability.
         if !self.owns_inbox(&recipient) {
             return Err(MailboxError::Unavailable);
@@ -240,8 +239,11 @@ impl Mailbox {
         }
         if let Some(stored) = &stored {
             let header = &stored.message.header;
-            self.waiters.notify(bound_member_id);
-            if header.state == MessageLifecycleState::Read {
+            // The store stamps read_at with this call's time only when it made the claim;
+            // an already read message keeps its earlier read_at and publishes nothing.
+            if header.state == MessageLifecycleState::Read
+                && header.read_at.as_deref() == Some(now.as_str())
+            {
                 self.events
                     .publish(MessageEvent::StateChanged(MessageStateChangedData {
                         id: header.id.clone(),
@@ -253,7 +255,7 @@ impl Mailbox {
                         snooze_after_task: header.snooze_after_task,
                         reason: None,
                         expired_waiting_person: header.expired_waiting_person,
-                        updated_at: header.read_at.clone().unwrap_or(now),
+                        updated_at: now.clone(),
                     }));
             }
         }
@@ -315,6 +317,12 @@ impl Mailbox {
         }
     }
 
+    /// Held `wait` registrations right now. Diagnostics and tests: a cancelled, finished or
+    /// timed-out wait leaves none behind.
+    pub fn held_waits(&self) -> usize {
+        self.waiters.len()
+    }
+
     fn now_utc(&self) -> Result<String, MailboxError> {
         format_utc(self.clock.now_ms()).ok_or(MailboxError::StorageError)
     }
@@ -344,18 +352,16 @@ impl Mailbox {
         &self,
         reference: Option<&str>,
     ) -> Result<Option<String>, MailboxError> {
-        reference
-            .map(|reference| {
-                size(reference, MAX_HANDLE_BYTES)?;
-                if reference.eq_ignore_ascii_case(OFFICE_SENDER) {
-                    return Err(MailboxError::InvalidRequest);
-                }
-                self.directory
-                    .resolve_member(reference)?
-                    .map(|(member, _)| member.id)
-                    .ok_or(MailboxError::NotFound)
-            })
-            .transpose()
+        let Some(reference) = reference else {
+            return Ok(None);
+        };
+        let Some(reference) = address(reference)? else {
+            return Err(MailboxError::NotFound);
+        };
+        self.directory
+            .resolve_member(reference)?
+            .map(|(member, _)| Some(member.id))
+            .ok_or(MailboxError::NotFound)
     }
 }
 
@@ -367,6 +373,17 @@ fn can_message(member: &Member) -> bool {
         }),
         _ => false,
     }
+}
+
+/// msg.rs Addressing: check the wire size, trim leading and trailing ASCII whitespace
+/// only, and refuse the reserved `office`. `None` when nothing is left (names no member).
+fn address(reference: &str) -> Result<Option<&str>, MailboxError> {
+    size(reference, MAX_HANDLE_BYTES)?;
+    let trimmed = reference.trim_ascii();
+    if trimmed.eq_ignore_ascii_case(OFFICE_SENDER) {
+        return Err(MailboxError::InvalidRequest);
+    }
+    Ok((!trimmed.is_empty()).then_some(trimmed))
 }
 
 fn size(value: &str, limit: usize) -> Result<(), MailboxError> {

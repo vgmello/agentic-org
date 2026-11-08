@@ -1,6 +1,8 @@
 use std::error::Error;
 use std::fmt;
 
+use org_proto::ErrorCode;
+
 /// Domain failures. The server maps these to the identically named wire errors.
 /// No variant contains message bodies, notes, credentials or database diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +37,24 @@ impl fmt::Display for MailboxError {
 }
 
 impl Error for MailboxError {}
+
+/// The boundary mapping: each variant is the identically named wire code.
+impl From<MailboxError> for ErrorCode {
+    fn from(error: MailboxError) -> Self {
+        match error {
+            MailboxError::InvalidRequest => Self::InvalidRequest,
+            MailboxError::TooLarge => Self::TooLarge,
+            MailboxError::UnknownRecipient => Self::UnknownRecipient,
+            MailboxError::AlreadyExists => Self::AlreadyExists,
+            MailboxError::NotFound => Self::NotFound,
+            MailboxError::NotBound => Self::NotBound,
+            MailboxError::NotAuthorized => Self::NotAuthorized,
+            MailboxError::StorageError => Self::StorageError,
+            MailboxError::Timeout => Self::Timeout,
+            MailboxError::Unavailable => Self::Unavailable,
+        }
+    }
+}
 
 /// Storage outcomes with domain meaning, plus an opaque infrastructure failure.
 /// The mailbox does not automatically retry: a commit may already be durable.
@@ -108,3 +128,40 @@ impl fmt::Display for AuthError {
 }
 
 impl Error for AuthError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_error_maps_to_its_wire_code() {
+        for (error, code) in [
+            (MailboxError::InvalidRequest, ErrorCode::InvalidRequest),
+            (MailboxError::TooLarge, ErrorCode::TooLarge),
+            (MailboxError::UnknownRecipient, ErrorCode::UnknownRecipient),
+            (MailboxError::AlreadyExists, ErrorCode::AlreadyExists),
+            (MailboxError::NotFound, ErrorCode::NotFound),
+            (MailboxError::NotBound, ErrorCode::NotBound),
+            (MailboxError::NotAuthorized, ErrorCode::NotAuthorized),
+            (MailboxError::StorageError, ErrorCode::StorageError),
+            (MailboxError::Timeout, ErrorCode::Timeout),
+            (MailboxError::Unavailable, ErrorCode::Unavailable),
+        ] {
+            assert_eq!(ErrorCode::from(error), code);
+            // The wire code's serialized name is the variant's snake_case name.
+            let wire = serde_json::to_value(code).unwrap();
+            assert_eq!(
+                wire.as_str().unwrap().replace('_', ""),
+                format!("{error:?}").to_ascii_lowercase()
+            );
+        }
+        assert_eq!(
+            MailboxError::from(StoreError::new("disk")),
+            MailboxError::StorageError
+        );
+        assert_eq!(
+            MailboxError::from(StoreError::AlreadyExists),
+            MailboxError::AlreadyExists
+        );
+    }
+}
