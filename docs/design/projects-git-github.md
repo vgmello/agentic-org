@@ -14,7 +14,7 @@ Each project is a **git repository on GitHub**. **One GitHub App, "Agentic Org"*
 - **On disk:** `<home>/offices/<office-id>/workspace/projects/<project-id>/`
   - `mirror.git` is the **office's own bare mirror**. Only the office runs git in it, and it's the only repository that talks to GitHub.
   - `work.git` is a **bare** local clone of the mirror, for agents. It has no checked-out branch, so any branch can get a worktree.
-  - `worktrees/<task-id>/` holds each task's working copy, from `work.git`, on branch `task/<task-id>-<slug>`.
+  - `worktrees/<task-id>/` holds each task's working copy, from `work.git`, on branch `task/<ref>-<slug>`.
 
   Agents' git settings (`git config` in a worktree writes to `work.git/config`) never touch the repository that holds the network settings and uses the token.
 
