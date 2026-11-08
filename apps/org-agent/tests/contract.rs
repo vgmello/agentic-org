@@ -1301,6 +1301,36 @@ fn a_fifo_or_symlink_at_last_seen_never_blocks_or_is_followed() {
 }
 
 #[test]
+fn a_hard_linked_last_seen_is_replaced_not_touched_through_the_link() {
+    let env = setup("last_seen_link");
+    let last_seen = env.root.join(format!("spool/inbox/{ME}/.last_seen"));
+    let other = env.root.join("someone-elses-file");
+    fs::write(&other, b"keep").unwrap();
+    let old = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+    fs::File::options()
+        .write(true)
+        .open(&other)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    let _ = fs::remove_file(&last_seen);
+    fs::hard_link(&other, &last_seen).unwrap();
+
+    let r = env.run(ME, &["msg", "inbox"]);
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    let meta = fs::metadata(&other).unwrap();
+    assert_eq!(
+        meta.modified().unwrap(),
+        old,
+        "the other file's mtime is untouched"
+    );
+    assert_eq!(fs::read(&other).unwrap(), b"keep");
+    use std::os::unix::fs::MetadataExt;
+    assert_eq!(meta.nlink(), 1, "the link was replaced");
+    assert_eq!(fs::metadata(&last_seen).unwrap().nlink(), 1);
+}
+
+#[test]
 fn a_fifo_or_symlink_at_meta_lock_is_a_clear_io_error() {
     let env = setup("meta_lock");
     let lock = env.root.join(format!("spool/inbox/{ME}/.meta.lock"));

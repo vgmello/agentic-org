@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io;
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 use std::process;
@@ -652,17 +652,26 @@ impl Spool {
                 &path,
             )
         };
-        // Never blocks on a FIFO or follows a symlink: anything but a regular file there is
-        // replaced (the entry itself, never its target).
+        // Never blocks on a FIFO or follows a symlink, and never touches another file through
+        // a hard link: anything but a regular file with one link there is replaced (the entry
+        // itself, never what it points to).
+        let single_link = |file: &File| file.metadata().is_ok_and(|m| m.nlink() == 1);
+        let replace = || {
+            let _ = fs::remove_file(&path);
+            open()
+        };
         let file = match open() {
-            Err(e) if e.kind() == io::ErrorKind::InvalidData => {
-                let _ = fs::remove_file(&path);
-                open()
+            Err(e) if e.kind() == io::ErrorKind::InvalidData => replace(),
+            Ok(file) if !single_link(&file) => {
+                drop(file);
+                replace()
             }
             other => other,
         };
         if let Ok(file) = file {
-            let _ = file.set_modified(SystemTime::now());
+            if single_link(&file) {
+                let _ = file.set_modified(SystemTime::now());
+            }
         }
     }
 
