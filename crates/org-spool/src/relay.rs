@@ -11,6 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::meta::{flock, LOCK_EX, LOCK_NB, LOCK_UN};
+use crate::safe_read::open_regular_nofollow;
 use crate::spool::{is_interrupted, poll_unix_listener, DeliverSummary, Spool, SpoolError};
 
 /// How a [`Spool::run_relay`] call ended.
@@ -24,6 +25,9 @@ pub enum RelayOutcome {
     Stopped,
 }
 
+/// `relay.lock` holds the relay's pid and a newline; never read more than this.
+const MAX_PID_BYTES: u64 = 64;
+
 struct RelayLockGuard {
     file: File,
 }
@@ -34,13 +38,16 @@ impl RelayLockGuard {
         if let Some(parent) = lock_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .mode(0o600)
-            .open(&lock_path)?;
+        // Never follows a symlink: `set_len(0)` below would truncate its target.
+        let mut file = open_regular_nofollow(
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .mode(0o600),
+            &lock_path,
+        )?;
         let rc = unsafe { flock(file.as_raw_fd(), LOCK_EX | LOCK_NB) };
         if rc != 0 {
             return Ok(None);
@@ -64,7 +71,7 @@ impl Spool {
     /// Whether a relay holds `relay.lock`, and its pid if it wrote one.
     pub fn is_relay_running(&self) -> (bool, Option<u32>) {
         let lock_path = self.relay_lock_path();
-        let Ok(mut file) = OpenOptions::new().read(true).write(true).open(&lock_path) else {
+        let Ok(file) = open_regular_nofollow(OpenOptions::new().read(true), &lock_path) else {
             return (false, None);
         };
         let rc = unsafe { flock(file.as_raw_fd(), LOCK_EX | LOCK_NB) };
@@ -75,7 +82,7 @@ impl Spool {
             (false, None)
         } else {
             let mut s = String::new();
-            let _ = file.read_to_string(&mut s);
+            let _ = file.take(MAX_PID_BYTES).read_to_string(&mut s);
             let pid = s.trim().parse::<u32>().ok();
             (true, pid)
         }

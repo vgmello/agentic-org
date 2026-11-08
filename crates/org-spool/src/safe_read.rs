@@ -2,7 +2,7 @@
 //! on a FIFO or device, and never reads more than a cap, whatever another process (or a v1-old
 //! CLI) left in a spool directory.
 
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, ErrorKind, Read};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
@@ -107,6 +107,40 @@ pub(crate) fn read_spool_file(path: &Path, max: usize) -> io::Result<SpoolFile> 
         return Ok(too_large());
     }
     Ok(SpoolFile::Bytes(bytes))
+}
+
+/// Open `path` with `options` plus `O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC` and require a
+/// regular file (checked on the descriptor), for files that are written as well as read
+/// (`relay.lock`): a symlink planted there must never redirect a write or a truncation. Any
+/// other kind of file is an `InvalidData` error naming it.
+pub(crate) fn open_regular_nofollow(options: &mut OpenOptions, path: &Path) -> io::Result<File> {
+    let not_regular = |kind: fs::FileType| {
+        io::Error::new(
+            ErrorKind::InvalidData,
+            format!(
+                "{} is not a regular file ({}); remove it",
+                path.display(),
+                describe(kind)
+            ),
+        )
+    };
+    let file = match options
+        .custom_flags(flags::O_NOFOLLOW | flags::O_NONBLOCK | flags::O_CLOEXEC)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(e) => {
+            return Err(match fs::symlink_metadata(path) {
+                Ok(meta) if !meta.file_type().is_file() => not_regular(meta.file_type()),
+                _ => e,
+            });
+        }
+    };
+    let kind = file.metadata()?.file_type();
+    if !kind.is_file() {
+        return Err(not_regular(kind));
+    }
+    Ok(file)
 }
 
 fn describe(kind: fs::FileType) -> &'static str {

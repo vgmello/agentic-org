@@ -30,6 +30,8 @@ org-agent msg read   <id> | --next [--as <agent>] [--json]
 org-agent msg wait   [--timeout 60s] [--from <agent>] [--urgent-only] [--as <agent>] [--json]
 
 # Spool Relay Daemon (also dispatched when invoked as `org-relay`)
+# relay.lock is never followed through a symlink: anything but a regular file there is an
+# error (exit 4) naming it, and is left alone.
 org-agent relay run [--once]
 org-agent relay status [--json]
 ```

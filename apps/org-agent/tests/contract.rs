@@ -997,6 +997,35 @@ fn status_and_profile_drop_variation_selectors_and_refuse_other_invisibles() {
 }
 
 #[test]
+fn a_symlink_at_relay_lock_is_refused_and_its_target_kept() {
+    // Regression: the relay opened relay.lock following symlinks and truncated it.
+    let env = setup("relay_lock");
+    let target = env.root.join("precious.txt");
+    fs::write(&target, b"keep me").unwrap();
+    let lock = env.root.join("relay.lock");
+    std::os::unix::fs::symlink(&target, &lock).unwrap();
+
+    let r = env.run(ME, &["relay", "run", "--once"]);
+    assert_ne!(r.code, 0, "{}", r.stdout);
+    assert!(
+        r.stderr.contains("relay.lock") && r.stderr.contains("symlink"),
+        "{}",
+        r.stderr
+    );
+    assert_eq!(fs::read(&target).unwrap(), b"keep me");
+    let status = env.run(ME, &["relay", "status", "--json"]);
+    assert_eq!(status.code, 0, "{}", status.stderr);
+    assert_eq!(json(&status.stdout)["running"], false);
+    assert_eq!(fs::read(&target).unwrap(), b"keep me");
+
+    // Removing it recovers.
+    fs::remove_file(&lock).unwrap();
+    let r = env.run(ME, &["relay", "run", "--once"]);
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    assert!(fs::symlink_metadata(&lock).unwrap().is_file());
+}
+
+#[test]
 fn any_msg_command_marks_the_caller_online_in_who() {
     let env = setup("presence_cli");
     // Registered on its behalf by someone else: never seen yet.
