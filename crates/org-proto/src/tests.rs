@@ -615,6 +615,7 @@ fn office_restart_wire_shapes() {
         (ErrorCode::NotFound, "not_found"),
         (ErrorCode::Conflict, "conflict"),
         (ErrorCode::Unavailable, "unavailable"),
+        (ErrorCode::NotReady, "not_ready"),
     ] {
         let line = serde_json::to_string(&Response::error(5, ApiError::new(code, "x"))).unwrap();
         assert_eq!(
@@ -959,10 +960,11 @@ fn office_app_token_wire_shapes() {
 }
 
 #[test]
-fn not_authorized_and_unavailable_codes_round_trip() {
+fn not_authorized_unavailable_and_not_ready_codes_round_trip() {
     for (code, name) in [
         (ErrorCode::NotAuthorized, "not_authorized"),
         (ErrorCode::Unavailable, "unavailable"),
+        (ErrorCode::NotReady, "not_ready"),
     ] {
         assert_eq!(serde_json::to_value(code).unwrap(), name);
         assert_eq!(

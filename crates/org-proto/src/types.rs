@@ -119,7 +119,7 @@ pub enum OfficeStatusReason {
     /// retries.
     StartTimeout,
     /// The office kept failing, so the host stopped retrying (status `unavailable`).
-    /// `office.restart` tries again.
+    /// `office.restart` tries again, with the failure count back at 0.
     RestartsExhausted,
     /// The owner stopped the office on purpose (status `offline`, no `next_restart_at`). No
     /// call stops an office yet; one may come later. `office.restart` starts it again.

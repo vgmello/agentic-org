@@ -31,6 +31,8 @@ pub struct OfficeStatusChangedData {
 ///
 /// The host's `subscribe` has no `from_position`, so to miss nothing: subscribe first, then
 /// call `office.list` on the same connection. Events after its response are newer than it.
+/// Host requirement: on one connection, the host writes responses and events in the order the
+/// state changed, so an event is never older than a response written before it.
 ///
 /// Sent on `host.sock` only (the host's `subscribe`); office servers never send it.
 pub struct OfficeStatusChanged;

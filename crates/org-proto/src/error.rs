@@ -61,8 +61,13 @@ pub enum ErrorCode {
     /// What was asked for exists but can't serve now, e.g. the office isn't running, so there's
     /// no app token to hand out. Trying again later may work. For `office.restart`, though, it
     /// means the office's reason is one a restart can't fix (`unsupported_version` or
-    /// `invalid_request`); the message says why.
+    /// `invalid_request`); the message says why. Clients show an office's `status_reason`, not
+    /// this code: the code says only why the call failed.
     Unavailable,
+    /// The host (or office) is still starting; retry shortly. Temporary, unlike
+    /// `unavailable`: e.g. `organization.create`, `office.restart` or `office.app_token` while
+    /// the host's startup discards run.
+    NotReady,
     /// A code this build doesn't know (sent by a newer server).
     #[serde(other)]
     Unknown,
