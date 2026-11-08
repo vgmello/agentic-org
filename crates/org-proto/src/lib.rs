@@ -64,9 +64,10 @@ pub use calls::{
 pub use error::{ApiError, CallError, ErrorCode};
 pub use events::{EventKind, OrganizationCreated};
 pub use org::{
-    CommandAccepted, CommandStatus, Member, MemberKind, Membership, OrgChange, OrgChanged,
-    OrgChangedData, OrgRejected, OrgRejectedData, OrgSnapshot, OrgSnapshotCall, Position,
-    ProjectSummary, ProjectTeam, Team,
+    AgentProfile, AgentRuntime, AgentStatus, CommandAccepted, CommandStatus, Member, MemberKind,
+    Membership, OrgChange, OrgChanged, OrgChangedData, OrgRejected, OrgRejectedData, OrgSnapshot,
+    OrgSnapshotCall, Position, ProjectSummary, ProjectTeam, Team, AGENT_HOME_MAX_BYTES,
+    AGENT_MESSAGING_NAME_MAX_CHARS, AGENT_TEXT_MAX_CHARS,
 };
 pub use types::{OfficeInfo, OfficeRole, OfficeStatus, Organization, ORGANIZATION_NAME_MAX_CHARS};
 pub use wire::{
