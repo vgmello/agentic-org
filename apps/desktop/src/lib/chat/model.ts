@@ -462,3 +462,7 @@ export function dayLabel(iso: string, now: string): string {
 	if (day(t) === day(ms(now) - 86_400_000)) return 'Yesterday';
 	return new Date(t).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
 }
+
+// ---- what the middle of the screen shows -----------------------------------------------------------
+
+export type ChatView = { type: 'needs' } | { type: 'mentions' } | { type: 'threads' } | { type: 'search' } | { type: 'conversation'; id: string };
