@@ -15,6 +15,8 @@ use serde::Serialize;
 pub enum SetupErrorCode {
     NotInstalled,
     NeedsApproval,
+    /// The owner turned the office's login service off in Settings: it stays off until they turn it on.
+    TurnedOff,
     Unreachable,
 }
 

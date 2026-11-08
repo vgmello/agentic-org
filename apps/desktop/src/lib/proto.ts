@@ -95,7 +95,7 @@ export const API_ERROR_CODES = [
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
 
 /** Errors from making the office ready. These belong to the app, not to `org-proto`. */
-export type SetupErrorCode = 'not_installed' | 'needs_approval' | 'unreachable';
+export type SetupErrorCode = 'not_installed' | 'needs_approval' | 'turned_off' | 'unreachable';
 
 /**
  * The office host's login service, as macOS reports it: running at login (`enabled`), waiting for the owner to allow

@@ -46,6 +46,53 @@ pub trait LoginService: Send + Sync {
     fn unregister(&self) -> Result<(), String>;
     /// Open System Settings at Login Items.
     fn open_settings(&self);
+    /// The owner turned the service off on purpose (Settings): the app must not turn it on again by itself.
+    fn turned_off(&self) -> bool {
+        false
+    }
+}
+
+/// A login service whose "off" is remembered: turning it off leaves a marker file in the app's data folder, turning it on
+/// removes it. The app starts the host itself only the first time and whenever the owner has not turned it off.
+pub struct Remembered {
+    inner: Box<dyn LoginService>,
+    marker: std::path::PathBuf,
+}
+
+impl Remembered {
+    pub fn new(inner: Box<dyn LoginService>, data_dir: &std::path::Path) -> Self {
+        Self {
+            inner,
+            marker: data_dir.join("login-item-off"),
+        }
+    }
+}
+
+impl LoginService for Remembered {
+    fn status(&self) -> LoginState {
+        self.inner.status()
+    }
+    fn register(&self) -> Result<(), String> {
+        let result = self.inner.register();
+        // On again, whether or not macOS wants approval first: the owner asked for it.
+        if result.is_ok() || self.inner.status() != LoginState::NotRegistered {
+            let _ = std::fs::remove_file(&self.marker);
+        }
+        result
+    }
+    fn unregister(&self) -> Result<(), String> {
+        let result = self.inner.unregister();
+        if result.is_ok() || self.inner.status() == LoginState::NotRegistered {
+            let _ = std::fs::write(&self.marker, b"off");
+        }
+        result
+    }
+    fn open_settings(&self) {
+        self.inner.open_settings()
+    }
+    fn turned_off(&self) -> bool {
+        self.marker.exists()
+    }
 }
 
 /// For a platform without the service (and for tests that don't care): nothing can be installed.
@@ -64,6 +111,11 @@ impl LoginService for Unsupported {
         Err("Login items aren't available on this system.".into())
     }
     fn open_settings(&self) {}
+}
+
+/// The service for this platform, with the owner's "off" remembered in `data_dir`.
+pub fn system_in(data_dir: &std::path::Path) -> Box<dyn LoginService> {
+    Box::new(Remembered::new(system(), data_dir))
 }
 
 /// The service for this platform.
@@ -87,6 +139,7 @@ pub struct FakeLogin {
     pub unregister_calls: std::sync::atomic::AtomicUsize,
     pub settings_opened: std::sync::atomic::AtomicUsize,
     pub register_result: Result<(), String>,
+    pub off: bool,
     pub on_register: Box<dyn Fn() + Send + Sync>,
 }
 
@@ -99,6 +152,7 @@ impl FakeLogin {
             unregister_calls: Default::default(),
             settings_opened: Default::default(),
             register_result: Ok(()),
+            off: false,
             on_register: Box::new(|| {}),
         }
     }
@@ -128,6 +182,9 @@ impl LoginService for FakeLogin {
     fn open_settings(&self) {
         self.settings_opened
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    fn turned_off(&self) -> bool {
+        self.off
     }
 }
 
@@ -220,5 +277,28 @@ mod tests {
             "office-bin/org-office-server"
         );
         assert!(std::path::Path::new(&format!("launch-agents/{PLIST_NAME}")).exists());
+    }
+
+    #[test]
+    fn off_is_remembered_until_the_owner_turns_it_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = FakeLogin::new(&[
+            LoginState::Enabled,
+            LoginState::NotRegistered,
+            LoginState::NotRegistered,
+            LoginState::Enabled,
+        ]);
+        let service = Remembered::new(Box::new(fake), dir.path());
+        assert!(!service.turned_off(), "a first run is not off");
+        service.unregister().unwrap();
+        assert!(service.turned_off());
+        // Remembered across launches: a new wrapper over the same folder sees it.
+        let again = Remembered::new(
+            Box::new(FakeLogin::new(&[LoginState::NotRegistered])),
+            dir.path(),
+        );
+        assert!(again.turned_off());
+        service.register().unwrap();
+        assert!(!service.turned_off());
     }
 }

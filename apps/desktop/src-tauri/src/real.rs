@@ -151,9 +151,9 @@ impl RealOffice {
     }
 
     /// The real office in this user's office home, or `None` when there is no home to look in.
-    pub fn from_env() -> Option<Self> {
+    pub fn from_env(data_dir: &std::path::Path) -> Option<Self> {
         org_proto::location::default_office_home()
-            .map(|home| Self::new(home, Arc::from(crate::login_item::system())))
+            .map(|home| Self::new(home, Arc::from(crate::login_item::system_in(data_dir))))
     }
 
     /// The host's connection: the cached one, or a new one that has said `hello` (so a host of another API version
@@ -198,6 +198,12 @@ impl RealOffice {
     fn start_host(&self) -> Result<HelloResult, SetupError> {
         let mut state = self.login.status();
         let mut refused = None;
+        if state == LoginState::NotRegistered && self.login.turned_off() {
+            return Err(SetupError {
+                code: SetupErrorCode::TurnedOff,
+                message: "The office is off. Turn it on to start your office on this Mac.".into(),
+            });
+        }
         if state == LoginState::NotRegistered {
             refused = self.login.register().err();
             state = self.login.status();
@@ -1084,6 +1090,18 @@ mod tests {
         let login = Arc::new(FakeLogin::new(&[LoginState::NotRegistered]));
         let err = office_with(&home, login.clone(), 50).ping().unwrap_err();
         assert_eq!(err.code, SetupErrorCode::Unreachable);
+        assert_eq!(login.register_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_service_the_owner_turned_off_is_not_turned_on_again_by_the_app() {
+        let home = without_host();
+        let mut login = FakeLogin::new(&[LoginState::NotRegistered]);
+        login.off = true;
+        let login = Arc::new(login);
+        let (code, message) = setup(office_with(&home, login.clone(), 50).ensure_running());
+        assert_eq!(code, SetupErrorCode::TurnedOff);
+        assert!(message.contains("Turn it on"), "{message}");
         assert_eq!(login.register_calls.load(Ordering::SeqCst), 0);
     }
 }

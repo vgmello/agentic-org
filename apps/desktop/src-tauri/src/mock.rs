@@ -25,6 +25,7 @@ pub enum Scenario {
     Healthy,
     NotInstalled,
     NeedsApproval,
+    TurnedOff,
     Unreachable,
     StorageError,
 }
@@ -34,6 +35,7 @@ impl Scenario {
         match value {
             Some("not_installed") => Self::NotInstalled,
             Some("needs_approval") => Self::NeedsApproval,
+            Some("turned_off") => Self::TurnedOff,
             Some("unreachable") => Self::Unreachable,
             Some("storage_error") => Self::StorageError,
             _ => Self::Healthy,
@@ -410,6 +412,10 @@ impl OfficeConnection for MockOffice {
                 SetupErrorCode::NeedsApproval,
                 "Allow Agentic Org to run in the background in System Settings, then try again.",
             )),
+            Scenario::TurnedOff => Err(setup_error(
+                SetupErrorCode::TurnedOff,
+                "The office is off. Turn it on to start your office on this Mac.",
+            )),
             Scenario::Unreachable => Err(setup_error(
                 SetupErrorCode::Unreachable,
                 "The office server started but isn't answering.",
@@ -426,9 +432,13 @@ impl OfficeConnection for MockOffice {
     fn ping(&self) -> Result<(), SetupError> {
         match self.scenario {
             Scenario::Healthy | Scenario::StorageError => Ok(()),
-            Scenario::NotInstalled | Scenario::NeedsApproval | Scenario::Unreachable => Err(
-                setup_error(SetupErrorCode::Unreachable, "The office isn't answering."),
-            ),
+            Scenario::NotInstalled
+            | Scenario::NeedsApproval
+            | Scenario::TurnedOff
+            | Scenario::Unreachable => Err(setup_error(
+                SetupErrorCode::Unreachable,
+                "The office isn't answering.",
+            )),
         }
     }
 

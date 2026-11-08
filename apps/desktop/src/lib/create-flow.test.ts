@@ -117,6 +117,7 @@ describe('the office host login service', () => {
 	it('approval offers to open Login Items; other failures do not', () => {
 		const setup = (code: 'needs_approval' | 'not_installed') => describeFailure({ source: 'setup', code, message: 'm' });
 		expect(setup('needs_approval').action).toBe('open_login_items');
+		expect(describeFailure({ source: 'setup', code: 'turned_off', message: 'm' })).toMatchObject({ title: 'The office is off', action: 'turn_on' });
 		expect(setup('not_installed').action).toBeUndefined();
 	});
 

@@ -436,10 +436,11 @@ pub fn run() {
             // The mock's connections live apart from anything the real office remembers, so choosing the real
             // office never opens a fake organization (and the other way round).
             let data = app.path().app_data_dir()?;
+            let data_for_login = data.clone();
             let (office, dir) = choose_office(
                 &data,
                 std::env::var("AGENTIC_ORG_OFFICE").ok().as_deref(),
-                real::RealOffice::from_env(),
+                real::RealOffice::from_env(&data),
             );
             app.manage(Arc::new(AppState {
                 office,
@@ -451,7 +452,7 @@ pub fn run() {
             let dock = tray::DockPreference::load(data);
             tray::apply_dock(app.handle(), dock.shown());
             app.manage(dock);
-            app.manage::<Arc<dyn LoginService>>(Arc::from(login_item::system()));
+            app.manage::<Arc<dyn LoginService>>(Arc::from(login_item::system_in(&data_for_login)));
             tray::create(app.handle())?;
             Ok(())
         })

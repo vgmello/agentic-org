@@ -54,7 +54,7 @@ export async function createOrganization(
 export function describeFailure(
 	error: AppError,
 	doing: 'create' | 'list' = 'create'
-): { title: string; hint: string; action?: 'open_login_items' } {
+): { title: string; hint: string; action?: 'open_login_items' | 'turn_on' } {
 	switch (error.code) {
 		case 'not_installed':
 			return { title: "The office isn't installed", hint: 'Agentic Org needs to install its office server on this Mac.' };
@@ -64,6 +64,8 @@ export function describeFailure(
 				hint: 'Open System Settings → General → Login Items, allow Agentic Org, then try again.',
 				action: 'open_login_items'
 			};
+		case 'turned_off':
+			return { title: 'The office is off', hint: 'You turned the office off on this Mac. Turn it on to use your organization.', action: 'turn_on' };
 		case 'unreachable':
 			return { title: "The office isn't answering", hint: 'It may still be starting. Try again in a moment.' };
 		case 'storage_error':

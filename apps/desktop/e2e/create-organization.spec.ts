@@ -65,6 +65,14 @@ for (const [scenario, title] of failures) {
 	});
 }
 
+test('an office the owner turned off says so and Turn on starts it', async ({ page }) => {
+	await visit(page, '/create?mock=turned_off');
+	await createOrg(page, 'Acme');
+	await expect(page.getByText('The office is off')).toBeVisible();
+	await page.getByRole('button', { name: 'Turn on' }).click();
+	await expect(page).toHaveURL(/\/agents$/);
+});
+
 test('an office waiting for approval offers to open Login Items', async ({ page }) => {
 	await visit(page, '/create?mock=needs_approval');
 	await createOrg(page, 'Acme');
