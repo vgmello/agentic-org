@@ -37,8 +37,25 @@ const OUTBOUND_QUEUE: usize = 256;
 
 /// Answers requests. Each call runs on its own thread and answers through `connection`.
 pub(crate) trait Handler: Send + Sync + 'static {
-    /// `sent_at` is the byte offset in the connection's stream where the request's line began.
-    fn handle(&self, request: Request, connection: &Arc<Connection>, sent_at: u64);
+    fn handle(&self, request: Request, connection: &Arc<Connection>, received: Received);
+
+    /// Whether `request` is handled on the connection's reader thread, before anything more is
+    /// read from the connection (the app-only calls: their check needs to know that nothing
+    /// arrived after the request).
+    fn inline(&self, request: &Request) -> bool {
+        let _ = request;
+        false
+    }
+}
+
+/// Where a request's line was in the connection's stream when the reader read it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Received {
+    /// The byte offset where the line began.
+    pub(crate) sent_at: u64,
+    /// The bytes the reader had already buffered past the line (none means nothing more had
+    /// reached the host's buffer; the socket may still hold some, see [`bytes_waiting`]).
+    pub(crate) buffered_after: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -282,7 +299,7 @@ impl Accepted {
 }
 
 /// How many bytes are waiting to be read on `stream` (`FIONREAD`).
-fn bytes_waiting(stream: &UnixStream) -> io::Result<u64> {
+pub(crate) fn bytes_waiting(stream: &UnixStream) -> io::Result<u64> {
     let mut waiting: libc::c_int = 0;
     // SAFETY: a valid socket fd, and an out-value of the size FIONREAD writes.
     let rc = unsafe { libc::ioctl(stream.as_raw_fd(), libc::FIONREAD, &mut waiting) };
@@ -367,7 +384,17 @@ fn serve(
                 continue;
             }
         };
+        let received = Received {
+            sent_at,
+            buffered_after: reader.inner.buffer().len(),
+        };
         in_flight.acquire();
+        if handler.inline(&request) {
+            // Nothing more is read from the connection until it's answered.
+            handler.handle(request, &connection, received);
+            in_flight.release();
+            continue;
+        }
         let id = request.id;
         let worker = {
             let (handler, connection, in_flight) = (
@@ -379,7 +406,7 @@ fn serve(
                 .name("host-request".into())
                 .spawn(move || {
                     let _done = Release(&in_flight);
-                    handler.handle(request, &connection, sent_at);
+                    handler.handle(request, &connection, received);
                 })
         };
         if worker.is_err() {
@@ -611,7 +638,7 @@ mod tests {
     struct Echo;
 
     impl Handler for Echo {
-        fn handle(&self, request: Request, connection: &Arc<Connection>, _sent_at: u64) {
+        fn handle(&self, request: Request, connection: &Arc<Connection>, _received: Received) {
             connection.send_response(Response {
                 id: request.id,
                 outcome: org_proto::Outcome::Result(Value::String(request.method)),
@@ -713,8 +740,12 @@ mod tests {
     struct Recorder(Mutex<Vec<(String, u64, u64)>>);
 
     impl Handler for Recorder {
-        fn handle(&self, request: Request, connection: &Arc<Connection>, sent_at: u64) {
-            lock(&self.0).push((request.method, sent_at, connection.accepted().buffered));
+        fn handle(&self, request: Request, connection: &Arc<Connection>, received: Received) {
+            lock(&self.0).push((
+                request.method,
+                received.sent_at,
+                connection.accepted().buffered,
+            ));
         }
     }
 

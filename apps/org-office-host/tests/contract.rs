@@ -520,3 +520,49 @@ fn write_on_fd3_when_asked() {
         .unwrap();
     thread::sleep(Duration::from_secs(1));
 }
+
+/// After an app-only call the client sends nothing until its answer (the client rule): an extra
+/// line, or even one byte, that arrived right after the call gets it refused. Each is sent in
+/// the same write as the call, so it's there when the host checks.
+#[cfg(debug_assertions)]
+#[test]
+fn an_app_only_call_with_anything_right_after_it_is_refused() {
+    use std::io::{BufRead, BufReader, Write};
+
+    let home = TestHome::new();
+    home.write_office(&hq(A, "01ORGA", "Acme", T));
+    let host = Host::start(app_config(&home)).unwrap();
+    wait_for_state(host.socket_path(), A, OfficeStatus::Active, None);
+    let call = format!(
+        "{{\"id\":2,\"method\":\"office.app_token\",\"params\":{{\"office_id\":\"{A}\"}}}}\n"
+    );
+    for after in ["{\"id\":3,\"method\":\"hello\",\"params\":{}}\n", "x"] {
+        let stream = std::os::unix::net::UnixStream::connect(host.socket_path()).unwrap();
+        let _ = stream.set_read_timeout(Some(WAIT));
+        let mut out = stream.try_clone().unwrap();
+        let mut reader = BufReader::new(stream);
+        let mut answer = |id: u64| loop {
+            let mut line = String::new();
+            assert!(reader.read_line(&mut line).unwrap() > 0, "the host hung up");
+            let response: org_proto::Response = serde_json::from_str(&line).unwrap();
+            if response.id == id {
+                return response;
+            }
+        };
+        out.write_all(b"{\"id\":1,\"method\":\"hello\",\"params\":{}}\n")
+            .unwrap();
+        answer(1);
+        out.write_all(format!("{call}{after}").as_bytes()).unwrap();
+        match answer(2).outcome {
+            org_proto::Outcome::Error(e) => {
+                assert_eq!(e.code, ErrorCode::NotAuthorized, "{after:?}")
+            }
+            org_proto::Outcome::Result(_) => {
+                panic!("the token was given with {after:?} after the call")
+            }
+        }
+    }
+    // The same call alone, after hello's answer, is accepted.
+    assert!(app_token(host.socket_path(), A).is_ok());
+    host.shutdown();
+}

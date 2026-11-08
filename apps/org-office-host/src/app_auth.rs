@@ -45,11 +45,15 @@ pub(crate) trait Peer {
     /// Whether the request was sent after the connection was accepted (its line starts at or
     /// after the bytes already buffered then).
     fn sent_after_accept(&self) -> bool;
+    /// Whether nothing has arrived after the request's line: nothing buffered past it, and
+    /// nothing waiting on the socket.
+    fn nothing_after_request(&self) -> bool;
     /// The caller's audit token when its connection was accepted.
     fn accepted_token(&self) -> Option<AuditToken>;
     /// The caller's audit token now.
     fn current_token(&self) -> Option<AuditToken>;
-    /// Whether the process `token` names satisfies the designated requirement `requirement`.
+    /// Whether the process `token` names satisfies the designated requirement `requirement`
+    /// and runs hardened code (see [`hardened_and_clean`]).
     fn satisfies(&self, token: &AuditToken, requirement: &str) -> bool;
     /// The caller's uid (the development fallback).
     #[cfg(debug_assertions)]
@@ -106,8 +110,15 @@ impl AppPolicy {
 
     /// Whether `peer` may use the app-only calls.
     pub(crate) fn allows(&self, peer: &impl Peer) -> bool {
-        // Sent after the accept, by the process the host accepted (see the module docs).
-        if !peer.sent_after_accept() {
+        let allowed = self.decide(peer);
+        // Nothing may have arrived after the request while it was checked, either.
+        allowed && peer.nothing_after_request()
+    }
+
+    fn decide(&self, peer: &impl Peer) -> bool {
+        // Sent after the accept, with nothing after it, by the process the host accepted (see
+        // the module docs).
+        if !peer.sent_after_accept() || !peer.nothing_after_request() {
             return false;
         }
         let Some(token) = peer.accepted_token() else {
@@ -191,8 +202,55 @@ pub(crate) fn designated_requirement(bundle_id: &str, team_id: &str) -> Result<S
         ));
     }
     Ok(format!(
-        "identifier \"{bundle_id}\" and anchor apple generic and certificate leaf[subject.OU] = \"{team_id}\""
+        "identifier \"{bundle_id}\" and anchor apple generic and {DEVELOPER_ID} and \
+         certificate leaf[subject.OU] = \"{team_id}\""
     ))
+}
+
+/// The Developer ID markers: the signing certificate is a Developer ID Application certificate
+/// (leaf extension 1.2.840.113635.100.6.1.13) issued by the Developer ID intermediate
+/// (1.2.840.113635.100.6.2.6). So only the app's notarizable Developer ID signature passes, not
+/// a development or distribution certificate of the same team.
+const DEVELOPER_ID: &str = "certificate 1[field.1.2.840.113635.100.6.2.6] exists and \
+                            certificate leaf[field.1.2.840.113635.100.6.1.13] exists";
+
+/// The code-signature flag of the hardened runtime (`kSecCodeSignatureRuntime`).
+pub(crate) const HARDENED_RUNTIME: u32 = 0x0001_0000;
+
+/// Entitlements that let another process or library reach into the app (a debugger, injected
+/// libraries, `DYLD_*` variables): an app with any of them could be made to hand its app token
+/// over, so it isn't trusted with one.
+pub(crate) const REJECTED_ENTITLEMENTS: [&str; 3] = [
+    "com.apple.security.get-task-allow",
+    "com.apple.security.cs.allow-dyld-environment-variables",
+    "com.apple.security.cs.disable-library-validation",
+];
+
+/// What the host reads from a caller's signing information.
+#[derive(Debug, Default)]
+pub(crate) struct Signing {
+    /// The code-signature flags (`kSecCodeInfoFlags`), if present.
+    pub(crate) flags: Option<u32>,
+    /// The entitlements (`kSecCodeInfoEntitlementsDict`): each key with its value when it's a
+    /// boolean (`None` for any other kind of value). `None` when the code has no entitlements.
+    pub(crate) entitlements: Option<Vec<(String, Option<bool>)>>,
+}
+
+/// Whether signed code may get an app token: it runs with the hardened runtime and has none of
+/// the [`REJECTED_ENTITLEMENTS`] (one that's present with any value but `false` counts). Missing
+/// flags fail closed.
+pub(crate) fn hardened_and_clean(signing: &Signing) -> bool {
+    let Some(flags) = signing.flags else {
+        return false;
+    };
+    if flags & HARDENED_RUNTIME == 0 {
+        return false;
+    }
+    !signing
+        .entitlements
+        .iter()
+        .flatten()
+        .any(|(key, value)| REJECTED_ENTITLEMENTS.contains(&key.as_str()) && *value != Some(false))
 }
 
 /// The caller on a `host.sock` connection, as the kernel and the Security framework see it.
@@ -201,14 +259,21 @@ pub(crate) struct SocketPeer<'a> {
     pub(crate) stream: &'a std::os::unix::net::UnixStream,
     /// What the host noted when it accepted the connection.
     pub(crate) accepted: crate::service::listener::Accepted,
-    /// Where the request's line began in the connection's stream.
-    pub(crate) sent_at: u64,
+    /// Where the request's line was in the connection's stream when it was read.
+    pub(crate) received: crate::service::listener::Received,
 }
 
 #[cfg(target_os = "macos")]
 impl Peer for SocketPeer<'_> {
     fn sent_after_accept(&self) -> bool {
-        self.sent_at >= self.accepted.buffered
+        self.received.sent_at >= self.accepted.buffered
+    }
+
+    fn nothing_after_request(&self) -> bool {
+        // The reader reads nothing more while an app-only call is handled (it runs inline), so
+        // the bytes it had buffered past the line are still all there is besides the socket's.
+        self.received.buffered_after == 0
+            && crate::service::listener::bytes_waiting(self.stream).is_ok_and(|n| n == 0)
     }
 
     fn accepted_token(&self) -> Option<AuditToken> {
@@ -220,7 +285,10 @@ impl Peer for SocketPeer<'_> {
     }
 
     fn satisfies(&self, token: &AuditToken, requirement: &str) -> bool {
-        code_satisfies(token, requirement)
+        // The requirement and the hardening checked on the same code object.
+        guest_code(token).is_some_and(|code| {
+            meets(&code, requirement) && signing(&code).is_some_and(|s| hardened_and_clean(&s))
+        })
     }
 
     #[cfg(debug_assertions)]
@@ -236,27 +304,113 @@ impl Peer for SocketPeer<'_> {
     }
 }
 
-/// Whether the process `token` names satisfies `requirement`, per the Security framework. Fails
-/// closed: any error is `false`, including a token whose process has exited or `exec`ed since.
+/// The code object of the process `token` names. `None` on any error, including a token whose
+/// process has exited or `exec`ed since.
 #[cfg(target_os = "macos")]
-fn code_satisfies(token: &AuditToken, requirement: &str) -> bool {
+fn guest_code(token: &AuditToken) -> Option<security_framework::os::macos::code_signing::SecCode> {
     use core_foundation::base::TCFType;
     use core_foundation::data::CFData;
-    use security_framework::os::macos::code_signing::{
-        Flags, GuestAttributes, SecCode, SecRequirement,
-    };
-    use std::str::FromStr;
+    use security_framework::os::macos::code_signing::{Flags, GuestAttributes, SecCode};
 
-    let Ok(requirement) = SecRequirement::from_str(requirement) else {
-        return false;
-    };
     let token = CFData::from_buffer(token);
     let mut attributes = GuestAttributes::new();
     attributes.set_audit_token(token.as_concrete_TypeRef());
-    let Ok(code) = SecCode::copy_guest_with_attribues(None, &attributes, Flags::NONE) else {
-        return false;
+    SecCode::copy_guest_with_attribues(None, &attributes, Flags::NONE).ok()
+}
+
+/// Whether `code` is valid and satisfies `requirement`. Fails closed.
+#[cfg(target_os = "macos")]
+fn meets(code: &security_framework::os::macos::code_signing::SecCode, requirement: &str) -> bool {
+    use security_framework::os::macos::code_signing::{Flags, SecRequirement};
+    use std::str::FromStr;
+
+    SecRequirement::from_str(requirement)
+        .is_ok_and(|requirement| code.check_validity(Flags::NONE, &requirement).is_ok())
+}
+
+/// Whether the process `token` names satisfies `requirement` (no hardening check: what the
+/// plumbing test can show on an unsigned-by-Developer-ID test binary).
+#[cfg(all(target_os = "macos", test))]
+fn code_satisfies(token: &AuditToken, requirement: &str) -> bool {
+    guest_code(token).is_some_and(|code| meets(&code, requirement))
+}
+
+/// `code`'s signing information: its flags and entitlements (`SecCodeCopySigningInformation`).
+/// `None` on any error.
+#[cfg(target_os = "macos")]
+fn signing(code: &security_framework::os::macos::code_signing::SecCode) -> Option<Signing> {
+    use core_foundation::base::{CFType, TCFType};
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
+    use core_foundation::number::CFNumber;
+    use core_foundation::string::{CFString, CFStringRef};
+
+    #[link(name = "Security", kind = "framework")]
+    extern "C" {
+        fn SecCodeCopySigningInformation(
+            code: *const std::ffi::c_void,
+            flags: u32,
+            information: *mut CFDictionaryRef,
+        ) -> i32;
+        static kSecCodeInfoFlags: CFStringRef;
+        static kSecCodeInfoEntitlementsDict: CFStringRef;
+    }
+    /// `kSecCSSigningInformation | kSecCSRequirementInformation`.
+    const INFORMATION: u32 = (1 << 1) | (1 << 2);
+
+    let mut information: CFDictionaryRef = std::ptr::null();
+    // SAFETY: a valid code object (a SecCode is accepted where a SecStaticCode is expected), and
+    // an out-pointer the call fills with a dictionary we then own (create rule).
+    let status = unsafe {
+        SecCodeCopySigningInformation(
+            code.as_concrete_TypeRef().cast(),
+            INFORMATION,
+            &mut information,
+        )
     };
-    code.check_validity(Flags::NONE, &requirement).is_ok()
+    if status != 0 || information.is_null() {
+        return None;
+    }
+    // SAFETY: a dictionary the call created for us.
+    let information: CFDictionary<CFString, CFType> =
+        unsafe { CFDictionary::wrap_under_create_rule(information) };
+    // SAFETY: framework constants, valid for the process's life.
+    let (flags_key, entitlements_key) = unsafe {
+        (
+            CFString::wrap_under_get_rule(kSecCodeInfoFlags),
+            CFString::wrap_under_get_rule(kSecCodeInfoEntitlementsDict),
+        )
+    };
+    let flags = information
+        .find(&flags_key)
+        .and_then(|value| value.downcast::<CFNumber>())
+        .and_then(|number| number.to_i64())
+        .and_then(|number| u32::try_from(number).ok());
+    let entitlements = information
+        .find(&entitlements_key)
+        .and_then(|value| value.downcast::<CFDictionary>())
+        .map(|dictionary| {
+            // SAFETY: an entitlements dictionary maps strings to property-list values.
+            let dictionary: CFDictionary<CFString, CFType> =
+                unsafe { CFDictionary::wrap_under_get_rule(dictionary.as_concrete_TypeRef()) };
+            let (keys, values) = dictionary.get_keys_and_values();
+            keys.into_iter()
+                .zip(values)
+                .map(|(key, value)| {
+                    // SAFETY: the keys and values of the dictionary, retained by it.
+                    let key = unsafe { CFString::wrap_under_get_rule(key.cast()) };
+                    let value = unsafe { CFType::wrap_under_get_rule(value) };
+                    (
+                        key.to_string(),
+                        value.downcast::<CFBoolean>().map(bool::from),
+                    )
+                })
+                .collect()
+        });
+    Some(Signing {
+        flags,
+        entitlements,
+    })
 }
 
 #[cfg(test)]
@@ -265,6 +419,7 @@ mod tests {
 
     struct FakePeer {
         sent_after_accept: bool,
+        nothing_after: bool,
         accepted: Option<AuditToken>,
         current: Option<AuditToken>,
         signed: bool,
@@ -277,6 +432,9 @@ mod tests {
     impl Peer for FakePeer {
         fn sent_after_accept(&self) -> bool {
             self.sent_after_accept
+        }
+        fn nothing_after_request(&self) -> bool {
+            self.nothing_after
         }
         fn accepted_token(&self) -> Option<AuditToken> {
             self.accepted
@@ -302,6 +460,7 @@ mod tests {
     fn caller(signed: bool) -> FakePeer {
         FakePeer {
             sent_after_accept: true,
+            nothing_after: true,
             accepted: Some([7; 32]),
             current: Some([7; 32]),
             signed,
@@ -317,6 +476,8 @@ mod tests {
         assert_eq!(
             designated_requirement(APP_BUNDLE_ID, "AB12CD34EF").unwrap(),
             "identifier \"com.ellosoft.agentic-org\" and anchor apple generic and \
+             certificate 1[field.1.2.840.113635.100.6.2.6] exists and \
+             certificate leaf[field.1.2.840.113635.100.6.1.13] exists and \
              certificate leaf[subject.OU] = \"AB12CD34EF\""
         );
         for team in ["", "ab12cd34ef", "AB12CD34E", "AB12CD34EFG", "AB12CD34\"F"] {
@@ -387,6 +548,101 @@ mod tests {
         }
     }
 
+    /// Anything that arrived after the request (an extra byte, another line), however it got
+    /// there: refused, though everything else checks out.
+    #[test]
+    fn a_request_with_anything_after_it_is_refused() {
+        let mut followed = caller(true);
+        followed.nothing_after = false;
+        let signed = AppPolicy::new(APP_BUNDLE_ID, Some("AB12CD34EF"), None).unwrap();
+        assert!(!signed.allows(&followed));
+        #[cfg(debug_assertions)]
+        {
+            let me = std::env::current_exe().unwrap();
+            let dev = AppPolicy::new(APP_BUNDLE_ID, None, Some(&me)).unwrap();
+            assert!(!dev.allows(&followed));
+        }
+    }
+
+    fn entitlements(pairs: &[(&str, Option<bool>)]) -> Option<Vec<(String, Option<bool>)>> {
+        Some(pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect())
+    }
+
+    #[test]
+    fn only_hardened_code_without_the_rejected_entitlements_passes() {
+        let hardened = Some(HARDENED_RUNTIME | 0x2);
+        let ok = |flags, entitlements| {
+            hardened_and_clean(&Signing {
+                flags,
+                entitlements,
+            })
+        };
+        assert!(ok(hardened, None));
+        assert!(ok(
+            hardened,
+            entitlements(&[
+                ("com.apple.security.network.client", Some(true)),
+                ("com.apple.security.get-task-allow", Some(false)),
+            ])
+        ));
+        // No hardened runtime, or no flags at all.
+        assert!(!ok(Some(0x2), None));
+        assert!(!ok(None, None));
+        // Each rejected entitlement, set true or with a value that isn't a boolean.
+        for key in REJECTED_ENTITLEMENTS {
+            assert!(!ok(hardened, entitlements(&[(key, Some(true))])), "{key}");
+            assert!(!ok(hardened, entitlements(&[(key, None)])), "{key}");
+        }
+    }
+
+    /// The real signing information of this test binary matches what `codesign` reports, and
+    /// it isn't hardened (a linker or ad-hoc signature): so the extraction works, and the
+    /// decision says no for it. (No Developer ID-signed, hardened binary is at hand for the
+    /// other answer; the decision itself is tested on synthetic information above.)
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_signing_information_of_this_process_is_read_as_codesign_shows_it() {
+        let Some(expected) = own_codesign_field("flags=") else {
+            eprintln!("skipped: this test binary has no code signature");
+            return;
+        };
+        let expected = u32::from_str_radix(
+            expected.split('(').next().unwrap().trim_start_matches("0x"),
+            16,
+        )
+        .unwrap();
+        let (a, _b) = std::os::unix::net::UnixStream::pair().unwrap();
+        let token = crate::peer::audit_token(&a).unwrap();
+        let code = guest_code(&token).expect("this process's code object");
+        let info = signing(&code).expect("its signing information");
+        assert_eq!(info.flags, Some(expected));
+        assert!(!hardened_and_clean(&info));
+    }
+
+    /// `nothing_after_request` on a real socket: true only while nothing waits past the
+    /// request, in the reader's buffer or on the socket.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_socket_peer_sees_bytes_after_the_request() {
+        use std::io::Write;
+        let (a, b) = std::os::unix::net::UnixStream::pair().unwrap();
+        let peer = |stream, buffered_after| SocketPeer {
+            stream,
+            accepted: crate::service::listener::Accepted {
+                token: None,
+                buffered: 0,
+            },
+            received: crate::service::listener::Received {
+                sent_at: 0,
+                buffered_after,
+            },
+        };
+        assert!(peer(&a, 0).nothing_after_request());
+        assert!(!peer(&a, 1).nothing_after_request());
+        (&b).write_all(b"x").unwrap();
+        assert!(!peer(&a, 0).nothing_after_request());
+    }
+
     #[cfg(debug_assertions)]
     #[test]
     fn the_development_fallback_needs_the_same_user_and_path() {
@@ -432,7 +688,10 @@ mod tests {
                 token: Some(token),
                 buffered: 0,
             },
-            sent_at: 0,
+            received: crate::service::listener::Received {
+                sent_at: 0,
+                buffered_after: 0,
+            },
         };
         let policy = AppPolicy::new(APP_BUNDLE_ID, Some("AB12CD34EF"), None).unwrap();
         assert!(!policy.allows(&peer));
@@ -450,7 +709,10 @@ mod tests {
                 token: None,
                 buffered: 10,
             },
-            sent_at,
+            received: crate::service::listener::Received {
+                sent_at,
+                buffered_after: 0,
+            },
         };
         assert!(!peer(0).sent_after_accept());
         assert!(!peer(9).sent_after_accept());
@@ -461,6 +723,12 @@ mod tests {
     /// This test binary's signing identifier, as `codesign` reports it (`None` if unsigned).
     #[cfg(target_os = "macos")]
     fn own_signing_identifier() -> Option<String> {
+        own_codesign_field("Identifier=")
+    }
+
+    /// A field of `codesign -dv`'s report on this test binary (`None` if unsigned).
+    #[cfg(target_os = "macos")]
+    fn own_codesign_field(prefix: &str) -> Option<String> {
         let out = std::process::Command::new("/usr/bin/codesign")
             .arg("-dv")
             .arg(std::env::current_exe().ok()?)
@@ -468,6 +736,10 @@ mod tests {
             .ok()?;
         String::from_utf8_lossy(&out.stderr)
             .lines()
-            .find_map(|line| line.strip_prefix("Identifier=").map(str::to_owned))
+            .find_map(|line| {
+                line.split_whitespace()
+                    .find_map(|word| word.strip_prefix(prefix))
+                    .map(str::to_owned)
+            })
     }
 }

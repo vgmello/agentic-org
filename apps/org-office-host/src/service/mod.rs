@@ -19,7 +19,7 @@ use serde::Serialize;
 use crate::app_auth::AppPolicy;
 use crate::broadcast::{Broadcast, Subscriber};
 use crate::offices::{Offices, THIS_MAC};
-use listener::{Connection, Handler, SecretLine};
+use listener::{Connection, Handler, Received, SecretLine};
 
 pub(crate) struct Service {
     offices: Arc<Offices>,
@@ -63,27 +63,27 @@ impl Service {
     }
 
     /// Whether the caller on `connection` is the desktop app.
-    /// `sent_at`: where the request's line began in the connection's stream.
-    fn is_app(&self, connection: &Connection, sent_at: u64) -> bool {
+    /// `received`: where the request's line was in the connection's stream.
+    fn is_app(&self, connection: &Connection, received: Received) -> bool {
         #[cfg(target_os = "macos")]
         {
             self.app.allows(&crate::app_auth::SocketPeer {
                 stream: connection.socket(),
                 accepted: connection.accepted(),
-                sent_at,
+                received,
             })
         }
         #[cfg(not(target_os = "macos"))]
         {
-            let _ = (connection, sent_at);
+            let _ = (connection, received);
             false
         }
     }
 
     /// `office.app_token`: the caller's signature first, then the office's token, written
     /// straight into the response line (never a `serde_json::Value` or a `String`).
-    fn app_token(&self, request: &Request, connection: &Arc<Connection>, sent_at: u64) {
-        if !self.is_app(connection, sent_at) {
+    fn app_token(&self, request: &Request, connection: &Arc<Connection>, received: Received) {
+        if !self.is_app(connection, received) {
             connection.send_response(not_authorized(request.id));
             return;
         }
@@ -109,8 +109,8 @@ impl Service {
     }
 
     /// `office.restart`: the caller's signature first, then the restart.
-    fn restart(&self, request: &Request, connection: &Arc<Connection>, sent_at: u64) {
-        if !self.is_app(connection, sent_at) {
+    fn restart(&self, request: &Request, connection: &Arc<Connection>, received: Received) {
+        if !self.is_app(connection, received) {
             connection.send_response(not_authorized(request.id));
             return;
         }
@@ -122,7 +122,13 @@ impl Service {
 }
 
 impl Handler for Service {
-    fn handle(&self, request: Request, connection: &Arc<Connection>, sent_at: u64) {
+    /// The app-only calls are handled on the reader thread: their check needs to know that
+    /// nothing arrived after the request (see `app_auth`).
+    fn inline(&self, request: &Request) -> bool {
+        request.is::<OfficeAppToken>() || request.is::<OfficeRestart>()
+    }
+
+    fn handle(&self, request: Request, connection: &Arc<Connection>, received: Received) {
         if request.is::<Hello>() {
             connection.send_response(answer::<Hello>(&request, |_| Ok(hello())));
         } else if request.is::<OrganizationCreate>() {
@@ -146,9 +152,9 @@ impl Handler for Service {
         } else if request.is::<Subscribe>() {
             self.subscribe(&request, connection);
         } else if request.is::<OfficeAppToken>() {
-            self.app_token(&request, connection, sent_at);
+            self.app_token(&request, connection, received);
         } else if request.is::<OfficeRestart>() {
-            self.restart(&request, connection, sent_at);
+            self.restart(&request, connection, received);
         } else {
             connection.send_response(Response::error(
                 request.id,
