@@ -162,9 +162,9 @@ impl Spool {
         target: &str,
         update: &ProfileUpdate,
     ) -> Result<MemberProfile, SpoolError> {
+        validate_agent_id(target, "profile").map_err(SpoolError::InvalidInput)?;
         let target = &canonical_member_id(target);
         authorize_profile_edit(editor, target)?;
-        validate_agent_id(target, "profile").map_err(SpoolError::InvalidInput)?;
         let edited = |current: MemberProfile| {
             let mut profile = current;
             update.apply_to(&mut profile);

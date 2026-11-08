@@ -405,6 +405,7 @@ impl Spool {
     /// `msg deregister <agent>` by `caller`: only the member itself, or the owner, may remove an
     /// inbox (v1-old didn't check). Phase A has no authentication, so this stops mistakes.
     pub fn deregister_as(&self, caller: &str, agent: &str) -> Result<(), SpoolError> {
+        validate_agent_id(agent, "deregister").map_err(SpoolError::InvalidInput)?;
         let agent = &canonical_member_id(agent);
         if canonical_member_id(caller) != *agent && !is_owner(caller) {
             return Err(SpoolError::InvalidInput(format!(

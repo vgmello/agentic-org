@@ -1808,6 +1808,13 @@ fn rule_the_owner_id_is_canonical_in_library_calls_too() {
         owner
     );
     assert!(org_spool::member_id_arg("Office", "register").is_err());
+    // Deregistering in another case removes the owner's inbox, not some other one.
+    t.spool.deregister_as(owner, "VGMELLO").unwrap();
+    assert!(!t.spool.is_registered(owner));
+    assert!(
+        t.spool.deregister_as(owner, " pat ").is_err(),
+        "validated, not trimmed"
+    );
 }
 
 #[test]
