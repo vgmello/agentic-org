@@ -246,3 +246,5 @@ export interface OfficeAppTokenParams {
 export interface OfficeAppTokenResult {
 	app_token: string;
 }
+
+export * from './proto-work';
