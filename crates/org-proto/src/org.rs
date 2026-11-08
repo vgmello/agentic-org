@@ -49,6 +49,11 @@ pub enum MemberKind {
 
 /// The program an agent runs on.
 ///
+/// Never resend a decoded profile verbatim: an older client that decoded a newer runtime holds
+/// `Unknown`, and sending that back would overwrite the real value (HQ refuses `Unknown`
+/// where it is a command's input, but a cache written back by the client would not be a
+/// command). Commands carry only the fields to change.
+///
 /// On the wire: `"claude_code"`, `"codex"`, `"antigravity"`, or `{"other": "<name>"}` for a
 /// runtime the sender knows by name but this enum has no variant for. Reading never fails:
 /// any string or object this build does not recognise, including a shape a newer build may
@@ -105,7 +110,8 @@ pub enum AgentStatus {
     /// Takes work and may message and be messaged.
     Active,
     /// Takes no new work; stays a member and keeps its place in teams. Resumed with
-    /// `member.set_agent_status`.
+    /// `member.set_agent_status`. What a paused agent still receives (messages, tasks) is
+    /// decided by ADR-0003 and the work-items design; this contract only carries the flag.
     Paused,
     /// Missing or not known to this build.
     #[default]
@@ -155,7 +161,9 @@ pub struct AgentProfile {
     /// Where the agent's files are: an absolute path on its office's machine, at most
     /// [`AGENT_HOME_MAX_BYTES`] bytes, with no control characters (NUL included) and no `..`
     /// component; HQ refuses anything else with `invalid_request`. Clients show it and never
-    /// open or interpret it.
+    /// open or interpret it. **It is visible organization-wide**: it is copied to every office
+    /// and shown to every client, so it can reveal a user name and folder layout to remote
+    /// offices.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<String>,
     /// The handle this agent is addressed by. 1 to
@@ -434,7 +442,8 @@ command!(
     /// `invalid_request`; so is a call that gives no field at all, though a value equal to the
     /// current one is accepted, and so is a `runtime` that is `Unknown` or a non-canonical
     /// `Other`). `role` and `title` cannot be cleared. `office_id` does
-    /// not change here. Errors: `invalid_name` (the name or a `messaging_name` that breaks its
+    /// not change here: moving an agent to another office needs its own command (a future
+    /// `member.place_agent`; ADR-0003 and the offices design rely on such a move). Errors: `invalid_name` (the name or a `messaging_name` that breaks its
     /// format), `already_exists` (`messaging_name` is another agent's, ignoring case),
     /// `conflict`, `not_found`, and `invalid_request` if the member is not an agent (people
     /// are edited with `member.update_person`) or a value breaks its limits.
