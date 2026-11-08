@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test';
 import { shot } from './shot';
 
-const SECTIONS = ['Agents', 'Projects', 'Tasks', 'Sessions', 'Activity', 'Settings'];
+const SECTIONS = ['Agents', 'Org chart', 'Projects', 'Tasks', 'Sessions', 'Activity', 'Settings'];
+const slug = (name: string) => name.toLowerCase().replace(' ', '-');
 
 test.beforeEach(async ({ page }) => {
 	await page.goto('/create');
@@ -23,10 +24,10 @@ for (const name of SECTIONS) {
 	test(`${name} opens its page and is marked current`, async ({ page }) => {
 		const link = page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name });
 		await link.click();
-		await expect(page).toHaveURL(new RegExp(`/${name.toLowerCase()}$`));
+		await expect(page).toHaveURL(new RegExp(`/${slug(name)}$`));
 		await expect(link).toHaveAttribute('aria-current', 'page');
 		await expect(page.getByRole('heading', { level: 1, name })).toBeVisible();
-		await shot(page, `nav-${name.toLowerCase()}`);
+		await shot(page, `nav-${slug(name)}`);
 	});
 }
 

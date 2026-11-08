@@ -9,6 +9,7 @@ export interface NavItem {
 /** The main navigation, in order. Only Agents has content so far; the rest show a placeholder. */
 export const NAV: NavItem[] = [
 	{ name: 'Agents', href: '/agents', icon: 'agents' },
+	{ name: 'Org chart', href: '/org-chart', icon: 'orgchart' },
 	{ name: 'Projects', href: '/projects', icon: 'projects' },
 	{ name: 'Tasks', href: '/tasks', icon: 'tasks' },
 	{ name: 'Sessions', href: '/sessions', icon: 'sessions' },
