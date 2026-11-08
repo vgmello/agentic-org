@@ -130,22 +130,24 @@ pub fn push(
                 break;
             }
             for data in batch {
-                // Counts per connection, so a client that subscribes again sees no restart.
-                let number = seq.fetch_add(1, Ordering::SeqCst) + 1;
-                let Ok(event) = Event::new::<OrgChanged>(number, &data) else {
-                    close(out);
-                    return;
-                };
                 let stream = out.lock().unwrap_or_else(|p| p.into_inner());
                 // Checked under the writer lock: once a re-bind has moved the generation on, not
-                // one more event goes out.
+                // one more event goes out, and none takes a number it does not send.
                 if generation.load(Ordering::SeqCst) != mine {
                     return;
                 }
+                // Counts per connection, so a client that subscribes again sees no restart and
+                // no gap (the number is taken here, under the lock, right before the write).
+                let number = seq.load(Ordering::SeqCst) + 1;
+                let Ok(event) = Event::new::<OrgChanged>(number, &data) else {
+                    let _ = stream.shutdown(std::net::Shutdown::Both);
+                    return;
+                };
                 if crate::bounded::write_message(&stream, &event, timing.write).is_err() {
                     let _ = stream.shutdown(std::net::Shutdown::Both);
                     return;
                 }
+                seq.store(number, Ordering::SeqCst);
                 last = data.position;
             }
         }

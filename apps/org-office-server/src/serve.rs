@@ -314,7 +314,12 @@ fn send(out: &Mutex<UnixStream>, request: &Request, response: &Response, timing:
             );
             bounded::write_message(&stream, &error, timing.write).is_ok()
         }
-        Err(_) => false,
+        // A frame may be half written: nothing more goes out on this connection, not even an
+        // event from the follower once it gets the lock.
+        Err(_) => {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+            false
+        }
     }
 }
 
@@ -1580,6 +1585,58 @@ mod tests {
         // The one being replaced, and the new one: a new subscription waits for the old to end.
         let peak = feed.peak_waiting.load(Ordering::SeqCst);
         assert!(peak <= 2, "{peak} followers at once");
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_rebind_in_the_middle_of_a_replay_leaves_no_gap_in_the_numbers() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (feed, stop, server) = following(&path);
+        for seq in 2..=2001 {
+            feed.push(seq);
+        }
+        let mut client = Client::connect(&path);
+        client.bind(None, Some(token()));
+        assert!(matches!(
+            client.subscribe(Some(1)),
+            org_proto::Outcome::Result(_)
+        ));
+        // Read part of the replay, then bind again while the follower is still sending.
+        let mut last = (0, 0);
+        for _ in 0..50 {
+            let (n, position, _) = event_of(&client.next_message());
+            last = (n, position);
+        }
+        client.stream.set_nonblocking(false).unwrap();
+        let rebind = Request::new::<MsgBind>(
+            900,
+            &MsgBindParams {
+                member: None,
+                app_token: Some(token()),
+            },
+        )
+        .unwrap();
+        frame::write_message(&mut client.stream, &rebind).unwrap();
+        // Events already on the wire come first; the bind's answer ends them.
+        loop {
+            let message = client.next_message();
+            if message.get("id") == Some(&serde_json::json!(900)) {
+                break;
+            }
+            let (n, position, _) = event_of(&message);
+            assert_eq!(n, last.0 + 1, "a number was skipped");
+            last = (n, position);
+        }
+        // Subscribing again from the last position continues the numbers, with no gap.
+        client.next = 900;
+        assert!(matches!(
+            client.subscribe(Some(last.1)),
+            org_proto::Outcome::Result(_)
+        ));
+        let (n, position, _) = event_of(&client.next_message());
+        assert_eq!((n, position), (last.0 + 1, last.1 + 1));
         stop.store(true, Ordering::SeqCst);
         server.join().unwrap();
     }
