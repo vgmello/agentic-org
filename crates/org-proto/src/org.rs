@@ -10,11 +10,11 @@
 //! ## Who may send what
 //! Every command in this module is for the app. A command that arrives on a connection that
 //! isn't the app's is refused with `not_authorized` unless a row of ADR-0003 §2.1.4 allows it
-//! (none does today). It applies to every command here, though only the ones below that change
-//! who works for the organization name `not_authorized` in their `Errors:` lists. In particular
-//! `member.add_agent`, `member.update_agent`, `member.set_agent_status`, `member.set_run_mode`,
-//! `member.offboard` and `member.remove` change
-//! who works for the organization and what it spends, and some cannot be undone. The wire
+//! (none does today). The refusal applies to every command here, though only the ones below
+//! that change who works for the organization name `not_authorized` in their `Errors:` lists. In
+//! particular `member.add_agent`, `member.update_agent`, `member.set_agent_status`,
+//! `member.set_run_mode`, `member.offboard` and `member.remove` change who works for the
+//! organization and what it spends, and some cannot be undone. The wire
 //! carries no caller identity: the office that receives a command knows whose connection it came
 //! in on (the app's connection is bound with the app token, ADR-0003), enforces this before it
 //! queues or forwards the command, and HQ relies on that.
@@ -214,8 +214,8 @@ pub struct Schedule {
 /// other member may have it as a handle (see [`AgentProfile::messaging_name`]).
 pub const OWNER_HANDLE: &str = "owner";
 
-/// The word that addresses the office itself in messaging (ADR-0003 and Remy's message
-/// contract). Reserved like [`OWNER_HANDLE`]: no member may have it as a handle.
+/// The word that addresses the office itself in messaging (ADR-0003). Reserved like
+/// [`OWNER_HANDLE`]: no member may have it as a handle.
 pub const OFFICE_HANDLE: &str = "office";
 
 /// A handle may not start with this (any case): `run:<id>` addresses a run in messaging, so a
@@ -303,8 +303,8 @@ pub struct AgentProfile {
     /// A name that breaks the format is `invalid_name`.
     ///
     /// **One handle namespace.** Handles are compared ignoring case across ALL members: every
-    /// agent's `messaging_name`, every person's `name`, and the reserved [`OWNER_HANDLE`], which
-    /// no member other than the owner may use. HQ rejects a clash with `already_exists` in
+    /// agent's `messaging_name`, every person's `name` (the owner's apart, see below), and the
+    /// reserved [`OWNER_HANDLE`], which no member other than the owner may use. HQ rejects a clash with `already_exists` in
     /// either direction (an agent whose `messaging_name` equals a person's `name`, or a person
     /// whose `name` equals an agent's `messaging_name`), so `--to <handle>` never names two
     /// members. `Member.name` stays the agent's display name and is not a handle. Two reserved
@@ -544,9 +544,9 @@ command!(
 command!(
     /// `member.update_person`: only the fields given change; `clear_contact` removes the
     /// contact. The owner can edit its own record, and its display name is not a handle, so
-    /// renaming the owner never clashes. Errors: `invalid_name` (as for
-    /// `member.add_person`), `already_exists`
-    /// (the new name is already another member's handle, as for `member.add_person`),
+    /// renaming the owner never clashes. Errors: `invalid_name` (as for `member.add_person`,
+    /// except that the owner is exempt from the address-shape part), `already_exists` (the new
+    /// name is already another member's handle, as for `member.add_person`),
     /// `conflict`, `not_found`, and `invalid_request` if the member is an agent (agents are
     /// edited with `member.update_agent`) or if both `contact` and `clear_contact` are given.
     MemberUpdatePerson, "member.update_person", MemberUpdatePersonParams {
