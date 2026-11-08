@@ -4,10 +4,12 @@
 | Area | Owner |
 | --- | --- |
 | `apps/desktop/` | the **app agent** |
-| `apps/org-office-server/`, `crates/org-office/`, `crates/org-client/` (later also `apps/org-agent/`, `crates/org-spool/`) | the **server agent** |
-| `crates/org-proto/` (the contract), `docs/`, this file | **ada** (`ac-staff-engineer-ada`), Staff Engineer, who also reviews and gives the "go" on every merge |
+| `apps/org-office-server/`, `apps/org-office-host/`, `crates/org-office/`, `crates/org-client/`, `crates/org-sync/`, `crates/org-pki/`, `crates/org-github/`, `crates/org-git/` (later also `apps/org-agent/`, `crates/org-spool/`) | the **server agent** |
+| `crates/org-proto/` and `crates/org-sync-proto/` (the contracts), `docs/`, this file | **ada** (`ac-staff-engineer-ada`), Staff Engineer, who also reviews and gives the "go" on every merge |
 
-Don't edit another owner's area. If you need a change there, message its owner. A change to `org-proto` goes through ada.
+Don't edit another owner's area. If you need a change there, message its owner. A change to `org-proto` or `org-sync-proto` goes through ada.
+
+The product is named **Agentic Org**. The designs that are the reference for current work are in `docs/design/` (offices, teams, projects and GitHub), with decisions in `docs/adr/`.
 
 ## Rules
 1. **Read [`docs/architecture-rules.md`](docs/architecture-rules.md) first.** Dependencies point one way (apps → crates; everything → `org-proto`). No cycles. Logic lives in libraries, and binaries stay thin.
