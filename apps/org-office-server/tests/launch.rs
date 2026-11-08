@@ -594,3 +594,115 @@ fn stopping_the_server_with_a_client_connected_closes_it_and_exits_clean() {
     assert!(started.elapsed() < Duration::from_secs(10));
     drop(idle);
 }
+
+/// A ULID made now (the command ids the office accepts), distinct for each `n`.
+fn command_id(n: u8) -> String {
+    const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let mut value = (ms << 80) | u128::from(n);
+    let mut out = [0u8; 26];
+    for slot in out.iter_mut().rev() {
+        *slot = CROCKFORD[(value & 0x1F) as usize];
+        value >>= 5;
+    }
+    String::from_utf8(out.to_vec()).unwrap()
+}
+
+fn bind(client: &Client, app_token: AppToken) -> Result<(), org_client::ClientError> {
+    client
+        .call::<org_proto::msg::MsgBind>(&org_proto::msg::MsgBindParams {
+            member: None,
+            app_token: Some(app_token),
+        })
+        .map(|_| ())
+}
+
+fn team_create(
+    client: &Client,
+    command: &str,
+    name: &str,
+) -> Result<org_proto::org::CommandAccepted, org_client::ClientError> {
+    client.call::<org_proto::org::TeamCreate>(&org_proto::org::TeamCreateParams {
+        command_id: command.into(),
+        team_id: "T1".into(),
+        name: name.into(),
+        owner_team_id: None,
+    })
+}
+
+fn api_code(error: org_client::ClientError) -> org_proto::ErrorCode {
+    match error {
+        org_client::ClientError::Api(e) => e.code,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn only_the_bound_app_changes_the_organization_and_what_it_changed_survives_a_restart() {
+    let world = World::new();
+    let mut first = create(&world);
+    let command = command_id(1);
+    let client = Client::connect(socket(&world)).unwrap();
+
+    // Anonymous, and bound with the wrong token: refused, nothing changes.
+    let refused = team_create(&client, &command, "Platform").unwrap_err();
+    assert_eq!(api_code(refused), org_proto::ErrorCode::NotAuthorized);
+    let wrong = AppToken::from_bytes([0xA8; 32]);
+    assert_eq!(
+        api_code(bind(&client, wrong).unwrap_err()),
+        org_proto::ErrorCode::NotAuthorized
+    );
+    assert_eq!(
+        api_code(team_create(&client, &command, "Platform").unwrap_err()),
+        org_proto::ErrorCode::NotAuthorized
+    );
+    let snapshot = |client: &Client| {
+        client
+            .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
+            .unwrap()
+    };
+    assert_eq!(
+        snapshot(&client).position,
+        org_proto::org::Position { epoch: 1, seq: 1 }
+    );
+
+    // The app's token: the command commits, and a retry is the same answer.
+    bind(&client, token()).unwrap();
+    let accepted = team_create(&client, &command, "Platform").unwrap();
+    assert_eq!(
+        accepted.position,
+        Some(org_proto::org::Position { epoch: 1, seq: 2 })
+    );
+    assert_eq!(
+        team_create(&client, &command, "Platform").unwrap(),
+        accepted
+    );
+    assert_eq!(
+        api_code(team_create(&client, &command, "Other").unwrap_err()),
+        org_proto::ErrorCode::InvalidRequest,
+        "the same id with other params"
+    );
+    let after = snapshot(&client);
+    assert_eq!(after.teams.len(), 1);
+    assert_eq!(after.teams[0].name, "Platform");
+    drop(client);
+    assert!(first.host_goes_away().success());
+
+    // After a restart the team is there, and the old command id still gets its answer.
+    let mut again = world.spawn(&["--office", OFFICE]);
+    again.send(&start_message());
+    assert!(matches!(again.event(), ServerEvent::Ready { .. }));
+    let client = Client::connect(socket(&world)).unwrap();
+    assert_eq!(snapshot(&client), after);
+    bind(&client, token()).unwrap();
+    assert_eq!(
+        team_create(&client, &command, "Platform").unwrap(),
+        accepted
+    );
+    assert_eq!(snapshot(&client), after);
+    drop(client);
+    assert!(again.host_goes_away().success());
+}
