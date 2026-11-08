@@ -2166,6 +2166,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "org-office-launch"
+version = "0.0.0"
+dependencies = [
+ "org-proto",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "org-office-server"
 version = "0.0.0"
 dependencies = [
