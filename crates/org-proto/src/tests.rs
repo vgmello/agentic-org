@@ -1561,3 +1561,49 @@ fn a_schedule_missing_a_field_still_reads_so_a_newer_writer_cannot_break_older_r
         })
     );
 }
+
+#[test]
+fn reserved_handle_words_and_address_shapes() {
+    assert_eq!(OFFICE_HANDLE, "office");
+    assert_eq!(RUN_HANDLE_PREFIX, "run:");
+    // A `run:` prefix, any case, after trimming.
+    for bad in ["run:1", "RUN:x", "Run:", " run:abc ", "rUn:0123456789"] {
+        assert!(is_shaped_like_an_address(bad), "{bad}");
+    }
+    // A ULID: exactly 26 Crockford base32 characters, either case.
+    for bad in [
+        "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "01arz3ndektsv4rrffq69g5fav",
+        " 01ARZ3NDEKTSV4RRFFQ69G5FAV ",
+    ] {
+        assert!(is_shaped_like_an_address(bad), "{bad}");
+    }
+    // Not addresses: a run word without the colon, wrong length, letters Crockford lacks
+    // (I, L, O, U), punctuation, or non-ASCII where a prefix would end.
+    for fine in [
+        "run",
+        "runner:1",
+        "Ana",
+        "pixel",
+        "owner",
+        "01ARZ3NDEKTSV4RRFFQ69G5FA",
+        "01ARZ3NDEKTSV4RRFFQ69G5FAVV",
+        "01ARZ3NDEKTSV4RRFFQ69G5FAI",
+        "01ARZ3NDEKTSV4RRFFQ69G5FAU",
+        "01ARZ3NDEKTSV4RRFFQ69G5F-V",
+        "rün:1",
+        "ab€c",
+        "a€bc",
+        "ru€:",
+        "😀run:",
+        "01ARZ3NDEKTSV4RRFFQ69G5FAL",
+        "01ARZ3NDEKTSV4RRFFQ69G5FAO",
+        "01arz3ndektsv4rrffq69g5fai",
+        "01arz3ndektsv4rrffq69g5fal",
+        "01arz3ndektsv4rrffq69g5fao",
+        "01arz3ndektsv4rrffq69g5fau",
+        "",
+    ] {
+        assert!(!is_shaped_like_an_address(fine), "{fine}");
+    }
+}

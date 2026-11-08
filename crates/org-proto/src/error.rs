@@ -18,11 +18,13 @@ pub enum ErrorCode {
     UnknownMethod,
     /// A name breaks its rule. Each kind of name (an organization, a team, a person, an agent)
     /// has its own rule; an organization's is [`crate::OrganizationName::parse`]. An agent's
-    /// `messaging_name` that breaks its format is also `invalid_name`.
+    /// `messaging_name` that breaks its format is also `invalid_name`, and so is a person's name
+    /// or an agent's `messaging_name` that looks like an address (a `run:` prefix, or a ULID).
     InvalidName,
     /// Something with that name or id already exists: an organization or a sibling team with
     /// that name (names compare ignoring case), another agent with that `messaging_name`
-    /// (ignoring case), a membership or project-team link that already exists, or a
+    /// (ignoring case), a person's name or `messaging_name` that is a reserved word (`owner`,
+    /// `office`), a membership or project-team link that already exists, or a
     /// client-made id that's taken.
     AlreadyExists,
     /// The server couldn't read or write its storage. Partial state is cleaned up.
