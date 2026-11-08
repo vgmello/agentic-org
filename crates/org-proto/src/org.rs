@@ -5,8 +5,9 @@
 //! Organization data is owned by HQ and copied to every office (offices design). Clients read
 //! it from their local office with [`OrgSnapshotCall`], then follow changes with
 //! `subscribe { from_position }` and the [`OrgChanged`] event (see [`crate::SubscribeParams`]). Every change is a command that
-//! HQ validates. A command carries a client-made `command_id` (a ULID), client-made ids for
-//! anything it creates, and the `expected_version` of what it edits.
+//! HQ validates. A command carries a client-made `command_id` (an uppercase Crockford ULID, see
+//! "Command ids and retries"), client-made ids for anything it creates, and the
+//! `expected_version` of what it edits.
 //!
 //! ## Who may send what
 //! Every command in this module is for the app. A command that arrives on a connection that
@@ -20,13 +21,38 @@
 //! in on (the app's connection is bound with the app token, ADR-0003), enforces this before it
 //! queues or forwards the command, and HQ relies on that.
 //!
+//! ## Command ids and retries
+//! `command_id` is a ULID in its canonical form: exactly 26 **uppercase** Crockford base32
+//! characters (`0-9`, `A-Z` without `I`, `L`, `O`, `U`), the first `0` to `7`. Its time part
+//! dates the command. Work writes' `change_id` ([`crate::work`]) has the same form.
+//!
+//! HQ keeps each command's answer, refusals included, until the id's time plus 30 days
+//! (offices design, "Dedup window"). A retry with the same `command_id` and the same params
+//! gets the stored answer again, without being validated again, even after the state changed.
+//! The same `command_id` with different params is refused with `invalid_request` ("command id
+//! reused with different params"). The refusals that come before HQ looks at the command
+//! itself (`not_authorized`, the id's format, `expired`, `clock_skew`; see below) are never
+//! kept, so a later retry may succeed. To try again after any other refusal, use a new
+//! `command_id`.
+//!
 //! ## When several errors apply
-//! A command can break more than one rule at once. HQ returns the first of: `not_authorized`,
-//! `not_found`, `invalid_request` (unreadable, outside a limit, the wrong kind of member or the
-//! wrong state, a value that makes no sense), `invalid_name`, `conflict` (a stale
-//! `expected_version`), `already_exists`. Every command below checks in this one order (its
-//! `Errors:` list names the codes it can return, not the order they are checked in). The
-//! domain codes (`owner_protected`, `cycle`, `not_a_member`, `not_empty`) come after
+//! A command can break more than one rule at once. The answer is the first that applies, in
+//! this order:
+//! 1. `not_authorized`: the receiving office's check of the connection ("Who may send what"),
+//!    before it queues or forwards the command.
+//! 2. **The stored answer.** HQ looks `command_id` up first: a command it has answered gets
+//!    that answer again (or `invalid_request` for different params, above), even when a check
+//!    below would now refuse it (a stored command's retry 29.5 days on is still answered).
+//! 3. **The `command_id` format**: not a canonical ULID (above) is `invalid_request`.
+//! 4. **Age and skew**, by HQ's clock (it keeps a monotonic high-water mark of it, so a clock
+//!    that steps back can't reopen the window): `expired` when the id is dated more than 29
+//!    days ago, `clock_skew` when it's more than 5 minutes ahead.
+//! 5. **The rules**: `not_found`, `invalid_request` (unreadable, outside a limit, the wrong
+//!    kind of member or the wrong state, a value that makes no sense), `invalid_name`,
+//!    `conflict` (a stale `expected_version`), `already_exists`.
+//!
+//! Every command below checks in this one order (its `Errors:` list names the codes it can
+//! return, not the order they are checked in). Within step 5, the domain codes (`owner_protected`, `cycle`, `not_a_member`, `not_empty`) come after
 //! `invalid_name` and before `conflict`: a rule that would refuse the command at any version
 //! is not hidden by a stale one. Among themselves `owner_protected` comes first, so a lead
 //! who is the owner is `owner_protected`, not `not_a_member`.
@@ -41,7 +67,9 @@
 //! - **Member ids** (`member.add_person`'s and `member.add_agent`'s `member_id`): exactly
 //!   [`MEMBER_ID_CHARS`] ASCII letters and digits, the shape of a ULID ([`is_valid_member_id`]).
 //!   No handle has this shape, so an id and a handle never collide.
-//! - **Command ids** (`command_id`, on every command): the same, [`is_valid_id`].
+//! - **Command ids** (`command_id`, on every command): an uppercase Crockford ULID, 26
+//!   characters ("Command ids and retries"); its format is checked after the stored-answer
+//!   lookup ("When several errors apply").
 //! - **Free text** (`contact`, `title_in_team`): trimmed, then 1 to [`AGENT_TEXT_MAX_CHARS`]
 //!   characters with no control characters. To remove a contact use `clear_contact`, not an
 //!   empty string.
@@ -692,8 +720,10 @@ macro_rules! command {
         #[doc = concat!("Params of `", $method, "`.")]
         #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
         pub struct $params {
-            /// Client-made (a ULID; [`is_valid_id`], `invalid_request` otherwise); a retry with the
-            /// same id gets the same answer.
+            /// Client-made: an uppercase Crockford ULID, 26 characters (`invalid_request`
+            /// otherwise). A retry with the same id and params gets the stored answer, refusals
+            /// included; the same id with different params is `invalid_request`. See the module
+            /// docs, "Command ids and retries".
             pub command_id: String,
             $($(#[$fattr])* pub $field: $ty,)*
         }

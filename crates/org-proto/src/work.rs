@@ -20,9 +20,10 @@
 //! - **No permissions in phase 1**: any bound member may make any call here, except the
 //!   **app-only** ones, which any other connection gets `not_authorized` for, before any check
 //!   but binding. In this module: `work.delete`. (Every organization command is app-only too.)
-//! - Every write's params start with **`change_id`**, a client-made ULID, and its result is
-//!   [`WorkAccepted`]. The owning office keeps `change_id → (params hash, result)` for 30 days:
-//!   a retry with the same `change_id` and params gets the stored answer (refusals included,
+//! - Every write's params start with **`change_id`**, a client-made ULID (26 **uppercase**
+//!   Crockford base32 characters, the first `0` to `7`; `invalid_request` otherwise), and its
+//!   result is [`WorkAccepted`]. The owning office keeps `change_id → (params hash, result)`
+//!   for 30 days: a retry with the same `change_id` and params gets the stored answer (refusals included,
 //!   except `storage_error`, `unavailable`, `not_bound`, `too_large`, `expired` and
 //!   `clock_skew`, which are never stored); the same `change_id` with other params is
 //!   `invalid_request` ("change id reused"). A `change_id` dated more than 29 days ago is
@@ -1181,7 +1182,9 @@ macro_rules! write_call {
         #[doc = concat!("Params of `", $method, "`.")]
         #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
         pub struct $params {
-            /// Client-made (a ULID); a retry with the same id and params gets the same answer.
+            /// Client-made: an uppercase Crockford ULID, 26 characters. A retry with the same id
+            /// and params gets the same answer; the same id with other params is
+            /// `invalid_request`.
             pub change_id: String,
             $($(#[$fattr])* pub $field: $ty,)*
         }
