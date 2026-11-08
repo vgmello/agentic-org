@@ -1,7 +1,7 @@
 // What the org chart's dialogs do, as functions over `OrgApi`: each is a small sequence of commands, and each
 // reports every failure instead of stopping at the first (TEAM-5, TEAM-6, TEAM-7). Pure of the UI.
 import { toAppError } from '$lib/office/api';
-import type { AppError, OrgSnapshot, Team } from '$lib/proto';
+import type { AgentRuntime, AppError, OrgSnapshot, RunMode, Schedule, Team } from '$lib/proto';
 import { newId } from './commands';
 import { membersOfTeam } from './model';
 import type { OrgSession } from './session';
@@ -230,4 +230,123 @@ export async function setMemberTeams(api: OrgSession, memberId: string, desired:
 		if (!desired.has(teamId))
 			steps.push(await attempt(`Remove from ${teamName(teamId)}`, () => api.command({ method: 'team.remove_member', params: { membership_id: mine.membershipId, expected_version: mine.version } })));
 	return { steps };
+}
+
+export interface NewAgentInput {
+	name: string;
+	messagingName: string;
+	runtime: AgentRuntime;
+	role: string;
+	title: string;
+	/** The office it is placed in (HQ's Mac in phase 1). */
+	officeId: string;
+	focus?: string;
+	model?: string;
+	home?: string;
+	runMode?: RunMode;
+	/** Teams to put it in, and who it reports to (none means the owner). */
+	teamIds: string[];
+	managerId?: string;
+}
+
+export interface NewAgentResult {
+	memberId: string;
+	created: StepResult;
+	steps: StepResult[];
+}
+
+/** Add an agent (spec §7, "Add an existing agent"), then its teams and manager, each its own command. Never throws. */
+export async function addAgent(api: OrgSession, input: NewAgentInput, teamName: (id: string) => string = (id) => id): Promise<NewAgentResult> {
+	const memberId = newId();
+	const created = await attempt(`Add ${input.name}`, () =>
+		api.command({
+			method: 'member.add_agent',
+			params: {
+				member_id: memberId,
+				name: input.name,
+				office_id: input.officeId,
+				profile: {
+					role: input.role,
+					title: input.title,
+					...(input.focus ? { focus: input.focus } : {}),
+					runtime: input.runtime,
+					...(input.model ? { model: input.model } : {}),
+					...(input.runMode ? { run_mode: input.runMode } : {}),
+					...(input.home ? { home: input.home } : {}),
+					messaging_name: input.messagingName,
+					status: 'active'
+				}
+			}
+		})
+	);
+	if (created.error) return { memberId, created, steps: [] };
+	const steps: StepResult[] = [];
+	for (const teamId of input.teamIds)
+		steps.push(await attempt(`Add ${input.name} to ${teamName(teamId)}`, () => api.command({ method: 'team.add_member', params: { membership_id: newId(), team_id: teamId, member_id: memberId } })));
+	if (input.managerId) {
+		const me = (await api.snapshot()).members.find((m) => m.id === memberId);
+		if (me) steps.push(await attempt('Set their manager', () => api.command({ method: 'member.set_reports_to', params: { member_id: memberId, expected_version: me.version, reports_to_member_id: input.managerId } })));
+	}
+	return { memberId, created, steps };
+}
+
+async function currentMember(api: OrgSession, memberId: string) {
+	const m = (await api.snapshot()).members.find((x) => x.id === memberId);
+	if (!m) throw { source: 'api', code: 'not_found', message: "That agent isn't in the organization any more." } satisfies AppError;
+	return m;
+}
+
+/** Pause or resume an agent, against its current version (DEAL-3). A paused agent isn't started or woken. */
+export async function setAgentStatus(api: OrgSession, memberId: string, status: 'active' | 'paused'): Promise<void> {
+	const m = await currentMember(api, memberId);
+	await api.command({ method: 'member.set_agent_status', params: { member_id: memberId, expected_version: m.version, status } });
+}
+
+/** Offboard an agent: a state, not a deletion (its record and name stay). */
+export async function offboardAgent(api: OrgSession, memberId: string): Promise<void> {
+	const m = await currentMember(api, memberId);
+	await api.command({ method: 'member.offboard', params: { member_id: memberId, expected_version: m.version } });
+}
+
+export interface AgentChange {
+	name?: string;
+	role?: string;
+	title?: string;
+	/** Empty clears it. */
+	focus?: string;
+	runtime?: AgentRuntime;
+	model?: string;
+	home?: string;
+	messagingName?: string;
+}
+
+/** Edit an agent's record: only what is given changes, and an empty focus, model or home clears it. */
+export async function updateAgent(api: OrgSession, memberId: string, change: AgentChange): Promise<void> {
+	const m = await currentMember(api, memberId);
+	const clear = (v: string | undefined) => v !== undefined && v.trim() === '';
+	const given = (v: string | undefined) => (v !== undefined && v.trim() !== '' ? v : undefined);
+	await api.command({
+		method: 'member.update_agent',
+		params: {
+			member_id: memberId,
+			expected_version: m.version,
+			...(change.name !== undefined ? { name: change.name } : {}),
+			...(change.role !== undefined ? { role: change.role } : {}),
+			...(change.title !== undefined ? { title: change.title } : {}),
+			...(given(change.focus) ? { focus: change.focus } : {}),
+			...(clear(change.focus) ? { clear_focus: true } : {}),
+			...(change.runtime !== undefined ? { runtime: change.runtime } : {}),
+			...(given(change.model) ? { model: change.model } : {}),
+			...(clear(change.model) ? { clear_model: true } : {}),
+			...(given(change.home) ? { home: change.home } : {}),
+			...(clear(change.home) ? { clear_home: true } : {}),
+			...(change.messagingName !== undefined ? { messaging_name: change.messagingName } : {})
+		}
+	});
+}
+
+/** Change how an agent runs (RUN-1): a mode, with a schedule for a scheduled one; none means a person starts it. */
+export async function setRunMode(api: OrgSession, memberId: string, mode: RunMode | undefined, schedule?: Schedule): Promise<void> {
+	const m = await currentMember(api, memberId);
+	await api.command({ method: 'member.set_run_mode', params: { member_id: memberId, expected_version: m.version, ...(mode ? { run_mode: mode } : {}), ...(mode === 'scheduled' && schedule ? { schedule } : {}) } });
 }

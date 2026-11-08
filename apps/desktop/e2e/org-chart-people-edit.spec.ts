@@ -87,13 +87,14 @@ test('PEOPLE-5: removing a person confirms first, naming the teams, who reports 
 	await expect(card(page, 'people')).toContainText('No lead');
 });
 
-test('an agent can be selected but not edited or removed here', async ({ page }) => {
+test('an agent can be selected, but it is paused or offboarded, never removed like a person', async ({ page }) => {
 	await openChart(page);
 	await card(page, 'platform').getByRole('button', { name: /^Kai Lindqvist/ }).click();
 	const strip = page.getByTestId('selected-member');
 	await expect(strip).toContainText('Kai Lindqvist');
-	await expect(strip.getByRole('button', { name: 'Edit…' })).toHaveCount(0);
-	await expect(strip.getByRole('button', { name: /^Remove from/ })).toHaveCount(0);
+	await expect(strip.getByRole('button', { name: /^Remove from/ })).toHaveCount(0); // an agent leaves by offboarding
+	await expect(strip.getByRole('button', { name: 'Offboard…' })).toBeVisible();
+	await expect(strip.getByRole('button', { name: 'Pause…' })).toBeVisible();
 });
 
 test('PEOPLE-3: the People tab has Add person too', async ({ page }) => {

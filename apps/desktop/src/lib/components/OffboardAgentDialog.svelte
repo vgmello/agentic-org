@@ -1,0 +1,69 @@
+<script lang="ts">
+	import LogOut from '@lucide/svelte/icons/log-out';
+	import { Button } from '$lib/components/ui/button';
+	import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '$lib/components/ui/dialog';
+	import { toAppError } from '$lib/office/api';
+	import { offboardAgent } from '$lib/org/actions';
+	import { offboardSummary } from '$lib/org/agents';
+	import type { OrgSession } from '$lib/org/session';
+	import type { Member, OrgSnapshot } from '$lib/proto';
+
+	let {
+		open = $bindable(false),
+		agent,
+		snapshot,
+		session,
+		ondone
+	}: {
+		open: boolean;
+		agent: Member | undefined;
+		snapshot: OrgSnapshot;
+		session: OrgSession;
+		ondone: (result: { name: string } | { stale: true }) => void;
+	} = $props();
+
+	let busy = $state(false);
+	let error = $state<string | undefined>();
+	let shown = $state<Member | undefined>();
+	$effect(() => {
+		if (open && agent) {
+			shown = agent;
+			error = undefined;
+		}
+	});
+	const lines = $derived(shown ? offboardSummary(snapshot, shown) : []);
+
+	async function confirm() {
+		if (!shown || busy) return;
+		busy = true;
+		try {
+			await offboardAgent(session, shown.id);
+			open = false;
+			ondone({ name: shown.name });
+		} catch (e) {
+			const failure = toAppError(e);
+			// Already changed elsewhere (spec §9): refresh, and nothing is applied twice.
+			error = failure.code === 'conflict' || failure.code === 'invalid_request' ? `${shown.name} changed at HQ while you were looking. Here's the latest.` : failure.message;
+			ondone({ stale: true });
+		} finally {
+			busy = false;
+		}
+	}
+</script>
+
+<Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
+	<DialogContent>
+		<DialogHeader>
+			<div class="mb-2 flex size-12 items-center justify-center rounded-full bg-red-500/15 text-red-400"><LogOut class="size-6" aria-hidden="true" /></div>
+			<DialogTitle class="[overflow-wrap:anywhere]">Offboard {shown?.name}?</DialogTitle>
+			<DialogDescription class="space-y-1 [overflow-wrap:anywhere]">
+				{#each lines as line (line)}<span class="block">{line}</span>{/each}
+			</DialogDescription>
+			{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
+		</DialogHeader>
+		<DialogFooter>
+			<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}>Cancel</Button>
+			<Button type="button" variant="destructive" disabled={busy} onclick={confirm} class="[overflow-wrap:anywhere]">Offboard {shown?.name}</Button>
+		</DialogFooter>
+	</DialogContent>
+</Dialog>

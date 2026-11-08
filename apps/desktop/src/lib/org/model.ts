@@ -10,6 +10,16 @@ export const owner = (s: OrgSnapshot): Member | undefined => s.members.find((m) 
 /** Everyone but the owner: the owner is shown once, apart, and never counted on a team (OWNER-1). */
 export const nonOwners = (s: OrgSnapshot): Member[] => s.members.filter((m) => !m.owner);
 
+/** An agent that has left the organization: its record and handle stay, but it takes no part in the chart. */
+export const isFormer = (m: Member): boolean => m.kind === 'agent' && m.agent?.status === 'offboarded';
+
+/** The organization as the chart shows it: without the agents who have left (they are listed apart). */
+export const withoutFormer = (s: OrgSnapshot): OrgSnapshot => (s.members.some(isFormer) ? { ...s, members: s.members.filter((m) => !isFormer(m)) } : s);
+
+/** The agents who have left, most recent first (HQ stamps when). */
+export const formerMembers = (s: OrgSnapshot): Member[] =>
+	s.members.filter(isFormer).sort((a, b) => (b.agent?.offboarded_at ?? '').localeCompare(a.agent?.offboarded_at ?? '') || byName(a, b));
+
 export const memberById = (s: OrgSnapshot, id: string | undefined): Member | undefined =>
 	id === undefined ? undefined : s.members.find((m) => m.id === id);
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createMockOrg, type MockStorage } from './api';
 import { sessionFor } from './session';
-import { addPerson, addProjectTeam, changeManager, createTeam, deleteConsequences, deleteTeam, ledTeamsLeft, moveTargets, moveTeam, removePerson, removeProjectTeam, setTeamLead, setMemberTeams, setTeamMembers, teamTitlesOf, updatePerson, wouldClearLead } from './actions';
+import { addAgent, addPerson, addProjectTeam, changeManager, createTeam, deleteConsequences, deleteTeam, ledTeamsLeft, moveTargets, moveTeam, removePerson, removeProjectTeam, setTeamLead, offboardAgent, setAgentStatus, setMemberTeams, setRunMode, setTeamMembers, teamTitlesOf, updateAgent, updatePerson, wouldClearLead } from './actions';
 import { membersOfTeam, teamTree, unassignedProjects } from './model';
 import { sharedBy } from './team-edit';
 
@@ -254,5 +254,78 @@ describe('REPORT-3/4 changing a manager, and TEAM-6 a member’s own teams', () 
 		const { steps } = await setMemberTeams(api, 'quinn', new Map([['ghost', undefined], ['web', undefined]]), (id) => id);
 		expect(steps[0]).toMatchObject({ what: 'Add to ghost', error: { code: 'not_found' } });
 		expect(steps[1].error).toBeUndefined();
+	});
+});
+
+describe('the agent actions', () => {
+	const agentProfile = { runtime: 'codex' as const, role: 'QA engineer', title: 'QA engineer', officeId: 'office-1' };
+
+	it('adds an existing agent with its teams and manager; it shows where asked and is not in the owner’s list of people', async () => {
+		const api = make();
+		const r = await addAgent(api, { ...agentProfile, name: 'Cameron', messagingName: 'cam', teamIds: ['web'], managerId: 'sam', home: '/Users/me/cam' });
+		expect(r.created.error).toBeUndefined();
+		expect(r.steps.every((x) => !x.error)).toBe(true);
+		const s = await api.snapshot();
+		const cam = s.members.find((m) => m.id === r.memberId)!;
+		expect(cam).toMatchObject({ kind: 'agent', name: 'Cameron', office_id: 'office-1', reports_to_member_id: 'sam' });
+		expect(cam.agent).toMatchObject({ messaging_name: 'cam', runtime: 'codex', status: 'active', home: '/Users/me/cam' });
+		expect(names(membersOfTeam(s, 'web'))).toContain('Cameron');
+	});
+
+	it('refuses a handle that is taken and creates nothing, and a bad office', async () => {
+		const api = make();
+		const clash = await addAgent(api, { ...agentProfile, name: 'Cameron', messagingName: 'SAM', teamIds: ['web'] });
+		expect(clash.created.error?.code).toBe('already_exists');
+		expect(clash.steps).toEqual([]);
+		const office = await addAgent(api, { ...agentProfile, name: 'Cameron', messagingName: 'cam', teamIds: [], officeId: 'nowhere' });
+		expect(office.created.error?.code).toBe('not_found');
+	});
+
+	it('pauses and resumes an agent, and refuses an agent who has left', async () => {
+		const api = make();
+		await setAgentStatus(api, 'sam', 'paused');
+		expect((await api.snapshot()).members.find((m) => m.id === 'sam')?.agent?.status).toBe('paused');
+		await setAgentStatus(api, 'sam', 'active');
+		expect((await api.snapshot()).members.find((m) => m.id === 'sam')?.agent?.status).toBe('active');
+		await offboardAgent(api, 'sam');
+		await expect(setAgentStatus(api, 'sam', 'paused')).rejects.toMatchObject({ code: 'invalid_request' });
+	});
+
+	it('offboards an agent: the record stays, its places end, reporters move up; a person is refused', async () => {
+		const api = make();
+		await offboardAgent(api, 'sam');
+		const s = await api.snapshot();
+		expect(s.members.find((m) => m.id === 'sam')?.agent).toMatchObject({ status: 'offboarded' });
+		expect(s.memberships.some((m) => m.member_id === 'sam')).toBe(false);
+		expect(s.members.find((m) => m.id === 'noor')?.reports_to_member_id).toBe('avery');
+		await expect(offboardAgent(api, 'avery')).rejects.toMatchObject({ code: 'invalid_request' });
+		await expect(offboardAgent(api, 'ghost')).rejects.toMatchObject({ code: 'not_found' });
+	});
+
+	it('edits the record: changes what is given and clears with an empty value', async () => {
+		const api = make();
+		await updateAgent(api, 'sam', { title: 'Principal engineer', focus: 'the office server', model: 'gpt-x', home: '/Users/me/sam' });
+		let a = (await api.snapshot()).members.find((m) => m.id === 'sam')!.agent!;
+		expect(a).toMatchObject({ title: 'Principal engineer', focus: 'the office server', model: 'gpt-x', home: '/Users/me/sam', role: 'software engineer' });
+		await updateAgent(api, 'sam', { focus: '  ', model: '', home: '' });
+		a = (await api.snapshot()).members.find((m) => m.id === 'sam')!.agent!;
+		expect(a.focus).toBeUndefined();
+		expect(a.model).toBeUndefined();
+		expect(a.home).toBeUndefined();
+		await expect(updateAgent(api, 'sam', { messagingName: 'noor' })).rejects.toMatchObject({ code: 'already_exists' });
+		await expect(updateAgent(api, 'sam', { runtime: 'unknown' })).rejects.toMatchObject({ code: 'invalid_request' });
+	});
+
+	it('changes how an agent runs, and a schedule only goes with scheduled', async () => {
+		const api = make();
+		await setRunMode(api, 'sam', 'scheduled', { spec: 'weekdays at 9', time_zone: 'Europe/Lisbon' });
+		expect((await api.snapshot()).members.find((m) => m.id === 'sam')?.agent).toMatchObject({ run_mode: 'scheduled', schedule: { spec: 'weekdays at 9' } });
+		await setRunMode(api, 'sam', 'always_on');
+		const a = (await api.snapshot()).members.find((m) => m.id === 'sam')!.agent!;
+		expect(a.run_mode).toBe('always_on');
+		expect(a.schedule).toBeUndefined();
+		await setRunMode(api, 'sam', undefined);
+		expect((await api.snapshot()).members.find((m) => m.id === 'sam')?.agent?.run_mode).toBeUndefined();
+		await expect(setRunMode(api, 'sam', 'scheduled')).rejects.toMatchObject({ code: 'invalid_request' });
 	});
 });

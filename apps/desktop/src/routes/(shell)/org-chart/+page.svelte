@@ -9,6 +9,11 @@
 	import { Button } from '$lib/components/ui/button';
 	import ProjectTeamDialog from '$lib/components/ProjectTeamDialog.svelte';
 	import RemoveProjectDialog from '$lib/components/RemoveProjectDialog.svelte';
+	import AddAgentSheet from '$lib/components/AddAgentSheet.svelte';
+	import EditAgentDialog from '$lib/components/EditAgentDialog.svelte';
+	import HowItRunsDialog from '$lib/components/HowItRunsDialog.svelte';
+	import OffboardAgentDialog from '$lib/components/OffboardAgentDialog.svelte';
+	import PauseAgentDialog from '$lib/components/PauseAgentDialog.svelte';
 	import AddPersonSheet from '$lib/components/AddPersonSheet.svelte';
 	import EditPersonDialog from '$lib/components/EditPersonDialog.svelte';
 	import RemovePersonDialog from '$lib/components/RemovePersonDialog.svelte';
@@ -28,6 +33,7 @@
 	import TeamsChart from '$lib/components/TeamsChart.svelte';
 	import TeamsList from '$lib/components/TeamsList.svelte';
 	import {
+		formerMembers,
 		highlightedByOffice,
 		nonOwners,
 		memberById,
@@ -36,6 +42,7 @@
 		owner,
 		teamTree,
 		unassignedProjects,
+		withoutFormer,
 		type OfficeFilter,
 		type TeamNode
 	} from '$lib/org/model';
@@ -43,12 +50,15 @@
 	import { orgApi } from '$lib/org/api';
 	import { reportingTree, type ReportNode } from '$lib/org/reporting';
 	import { sessionFor } from '$lib/org/session';
-	import { removeProjectTeam } from '$lib/org/actions';
+	import { removeProjectTeam, setAgentStatus } from '$lib/org/actions';
 	import { isLastTeam } from '$lib/org/team-edit';
 	import type { Member, Team } from '$lib/proto';
 
 	let { data } = $props();
-	const snapshot = $derived(data.snapshot);
+	// Everyone, including agents who have left (their names stay reserved), and the organization as the chart shows it.
+	const full = $derived(data.snapshot);
+	const snapshot = $derived(withoutFormer(full));
+	const former = $derived(formerMembers(full));
 
 	const TABS = [
 		{ id: 'teams', label: 'Teams' },
@@ -119,6 +129,15 @@
 	let managerOpen = $state(false);
 	let memberTeams = $state<Member | undefined>();
 	let memberTeamsOpen = $state(false);
+	let addAgentOpen = $state(false);
+	let pausing = $state<Member | undefined>();
+	let pauseOpen = $state(false);
+	let offboarding = $state<Member | undefined>();
+	let offboardOpen = $state(false);
+	let editingAgent = $state<Member | undefined>();
+	let editAgentOpen = $state(false);
+	let howRuns = $state<Member | undefined>();
+	let howRunsOpen = $state(false);
 	let moving = $state<Team | undefined>();
 	let moveOpen = $state(false);
 	let justAdded = $state<string | undefined>();
@@ -218,6 +237,36 @@
 		await reload();
 		if (r.problems.length === 0 && r.changed) toast.success(`Updated the teams of ${r.name}.`);
 	}
+	async function agentAdded(r: { memberId: string; name: string; problems: string[] }) {
+		await reload();
+		selected = r.memberId;
+		if (r.problems.length === 0) toast.success(`Added ${r.name}. Everyone in ${organizationName} can reach ${r.name}.`);
+		else toast.warning(`Added ${r.name}, but not everything went through.`, { description: r.problems.join(' ') });
+	}
+	async function agentPaused(r: { name: string } | { stale: true }) {
+		await reload();
+		if ('name' in r) toast.success(`Paused ${r.name}. Messages and tasks wait until you resume.`);
+	}
+	async function resumeAgent(m: Member) {
+		try {
+			await setAgentStatus(session, m.id, 'active');
+			toast.success(`Resumed ${m.name}.`);
+		} catch (e) {
+			toast.error(`Couldn't resume ${m.name}: ${toAppError(e).message}`);
+		}
+		await reload();
+	}
+	async function agentOffboarded(r: { name: string } | { stale: true }) {
+		await reload();
+		if ('name' in r) {
+			selected = undefined;
+			toast.success(`Offboarded ${r.name}. The record and name stay.`);
+		}
+	}
+	async function agentEdited(r: { name: string; stale?: boolean }) {
+		await reload();
+		if (!r.stale) toast.success(`Saved ${r.name}.`);
+	}
 	async function teamMoved(r: { name: string; to: string; undo: () => Promise<void> } | { stale: true }) {
 		await reload();
 		if ('stale' in r) return;
@@ -284,7 +333,7 @@
 		</p>
 	</div>
 
-	<SelectedMember {snapshot} member={selectedMember} offices={offices} organization={organizationName} onclear={() => (selected = undefined)} onedit={(m) => ((editingPerson = m), (editPersonOpen = true))} onremove={(m) => ((removingPerson = m), (removePersonOpen = true))} onmanager={(m) => ((managing = m), (managerOpen = true))} onteams={(m) => ((memberTeams = m), (memberTeamsOpen = true))} />
+	<SelectedMember {snapshot} member={selectedMember} offices={offices} organization={organizationName} onclear={() => (selected = undefined)} onedit={(m) => ((editingPerson = m), (editPersonOpen = true))} onremove={(m) => ((removingPerson = m), (removePersonOpen = true))} onmanager={(m) => ((managing = m), (managerOpen = true))} onteams={(m) => ((memberTeams = m), (memberTeamsOpen = true))} oneditagent={(m) => ((editingAgent = m), (editAgentOpen = true))} onpause={(m) => ((pausing = m), (pauseOpen = true))} onresume={resumeAgent} onhowitruns={(m) => ((howRuns = m), (howRunsOpen = true))} onoffboard={(m) => ((offboarding = m), (offboardOpen = true))} />
 
 	{#if tab === 'teams'}
 		<div id="panel-teams" role="tabpanel" aria-labelledby="tab-teams" class="space-y-5">
@@ -301,6 +350,7 @@
 				<div class="ml-auto flex items-center gap-x-2">
 					<Button size="sm" onclick={() => newTeam()}><Plus aria-hidden="true" /> New team</Button>
 					<Button variant="outline" size="sm" onclick={() => ((addPersonTeam = undefined), (addPersonOpen = true))}><Plus aria-hidden="true" /> Add person</Button>
+					<Button variant="outline" size="sm" onclick={() => (addAgentOpen = true)}><Plus aria-hidden="true" /> Add agent</Button>
 					<Button variant="outline" size="sm" onclick={() => (asList = !asList)}>
 						{#if asList}<Network aria-hidden="true" /> Chart{:else}<LayoutList aria-hidden="true" /> List{/if}
 					</Button>
@@ -433,6 +483,23 @@
 	{/if}
 </div>
 
+{#if former.length > 0}
+	<div class="px-8 pb-6">
+		<details class="rounded-xl bg-gray-800/50 p-3 outline-1 -outline-offset-1 outline-white/10" data-testid="former-members">
+			<summary class="cursor-pointer text-sm/6 font-semibold text-white">Former members <span class="font-normal text-gray-400">{former.length}</span></summary>
+			<ul class="mt-2 space-y-1 text-sm/6 text-gray-300">
+				{#each former as m (m.id)}
+					<li class="flex flex-wrap items-baseline gap-x-3">
+						<span class="font-medium text-white [overflow-wrap:anywhere]">{m.name}</span>
+						<span class="text-gray-400">{m.agent?.title ?? ''}</span>
+						<span class="text-xs/5 text-gray-400">left {m.agent?.offboarded_at ? new Date(m.agent.offboarded_at).toLocaleDateString(undefined, { dateStyle: 'medium' }) : ''} · the name <code class="font-mono">{m.agent?.messaging_name}</code> stays reserved</span>
+					</li>
+				{/each}
+			</ul>
+		</details>
+	</div>
+{/if}
+
 <NewTeamSheet bind:open={newTeamOpen} {snapshot} {session} ownerTeamId={newTeamUnder} ondone={teamCreated} />
 <RenameTeamDialog bind:open={renameOpen} team={renaming && snapshot.teams.find((x) => x.id === renaming?.id)} {snapshot} {session} ondone={teamRenamed} />
 <DeleteTeamDialog bind:open={deleteOpen} team={deleting && snapshot.teams.find((x) => x.id === deleting?.id)} {snapshot} {session} ondone={teamDeleted} />
@@ -440,8 +507,13 @@
 <EditMembersDialog bind:open={membersOpen} team={editingMembers && snapshot.teams.find((x) => x.id === editingMembers?.id)} {snapshot} {session} ondone={membersEdited} />
 <ProjectTeamDialog bind:open={projectTeamOpen} team={projectTeam && snapshot.teams.find((x) => x.id === projectTeam?.id)} project={assigning} {snapshot} {session} ondone={projectGiven} />
 <RemoveProjectDialog bind:open={removeProjectOpen} target={removeProject} {session} ondone={projectGiven} />
-<AddPersonSheet bind:open={addPersonOpen} {snapshot} {session} organization={organizationName} presetTeamId={addPersonTeam} ondone={personAdded} />
-<EditPersonDialog bind:open={editPersonOpen} person={editingPerson && snapshot.members.find((x) => x.id === editingPerson?.id)} {snapshot} {session} organization={organizationName} ondone={personEdited} />
+<AddPersonSheet bind:open={addPersonOpen} snapshot={full} {session} organization={organizationName} presetTeamId={addPersonTeam} ondone={personAdded} />
+<EditPersonDialog bind:open={editPersonOpen} person={editingPerson && snapshot.members.find((x) => x.id === editingPerson?.id)} snapshot={full} {session} organization={organizationName} ondone={personEdited} />
 <RemovePersonDialog bind:open={removePersonOpen} person={removingPerson && snapshot.members.find((x) => x.id === removingPerson?.id)} {snapshot} {session} organization={organizationName} ondone={personRemoved} />
 <ChangeManagerDialog bind:open={managerOpen} member={managing && snapshot.members.find((x) => x.id === managing?.id)} {snapshot} {session} ondone={managerChanged} />
 <EditMemberTeamsDialog bind:open={memberTeamsOpen} member={memberTeams && snapshot.members.find((x) => x.id === memberTeams?.id)} {snapshot} {session} ondone={memberTeamsEdited} />
+<AddAgentSheet bind:open={addAgentOpen} {snapshot} fullSnapshot={full} {session} officeId={data.connection.office.id} officeName={data.connection.office.name} organization={organizationName} ondone={agentAdded} />
+<PauseAgentDialog bind:open={pauseOpen} agent={pausing && snapshot.members.find((x) => x.id === pausing?.id)} {snapshot} {session} ondone={agentPaused} />
+<OffboardAgentDialog bind:open={offboardOpen} agent={offboarding && snapshot.members.find((x) => x.id === offboarding?.id)} {snapshot} {session} ondone={agentOffboarded} />
+<EditAgentDialog bind:open={editAgentOpen} agent={editingAgent && snapshot.members.find((x) => x.id === editingAgent?.id)} snapshot={full} {session} ondone={agentEdited} />
+<HowItRunsDialog bind:open={howRunsOpen} agent={howRuns && snapshot.members.find((x) => x.id === howRuns?.id)} {session} ondone={agentEdited} />
