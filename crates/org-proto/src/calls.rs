@@ -40,19 +40,21 @@ pub struct HelloResult {
     /// `api_version` has, by wire name (see [`capability`]). A client checks for one before
     /// calling it or waiting for it, and ignores names it doesn't know. Empty (and absent on
     /// the wire) for a server that implements none, including servers older than this field.
+    /// When present it's always a JSON array of strings (never `null`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capabilities: Vec<String>,
 }
 
 /// Capability names a server may list in [`HelloResult::capabilities`]. Each one is the wire
-/// name of the call or event it stands for.
+/// name of the call or event it stands for. The three below are host calls and events: only
+/// this machine's host lists them, never an office server.
 pub mod capability {
     /// The host serves `office.app_token`.
     pub const OFFICE_APP_TOKEN: &str = "office.app_token";
     /// The host serves `office.restart`.
     pub const OFFICE_RESTART: &str = "office.restart";
-    /// The host publishes `office.status_changed` to subscribers, with `status_reason` and
-    /// `next_restart_at` set.
+    /// The host publishes `office.status_changed` to subscribers **and** sets `status_reason`
+    /// and `next_restart_at` (on the event and in `office.list`). Listing it means both.
     pub const OFFICE_STATUS_CHANGED: &str = "office.status_changed";
 }
 
