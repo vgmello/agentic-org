@@ -55,20 +55,21 @@ describe('LIVE when the screens are behind the office', () => {
 	it('answers a burst of changes with one reload at a time, and one more if the office moved on meanwhile', async () => {
 		const id = fresh();
 		noteShown(id, at(1, 1));
-		let showing = at(1, 3); // the first reload sees the office as it was when it started
-		const { reload, calls } = reloader(id, () => showing);
-		for (let seq = 2; seq <= 30; seq++) noteChanged(notice(id, 1, seq), reload);
-		showing = at(1, 30); // by the time the first reload ends, all 30 are in
+		let office = at(1, 3);
+		const calls = { count: 0 };
+		const reload = async () => {
+			calls.count++;
+			const seen = office; // the reload sees the office as it is when it starts
+			await tick();
+			noteShown(id, seen);
+		};
+		for (let seq = 2; seq <= 3; seq++) noteChanged(notice(id, 1, seq), reload);
+		office = at(1, 30); // more changes land while that reload runs
+		for (let seq = 4; seq <= 30; seq++) noteChanged(notice(id, 1, seq), reload);
+		for (let i = 0; i < 6; i++) await tick();
+		expect(calls.count).toBe(2); // the first, and one for everything that landed meanwhile (not 29)
 		await tick();
-		await tick();
-		await tick();
-		await tick();
-		expect(calls.count).toBeLessThanOrEqual(2);
-		expect(calls.count).toBeGreaterThanOrEqual(1);
-		// ...and the screens end up showing the last one (no further reload is wanted).
-		const after = calls.count;
-		await tick();
-		expect(calls.count).toBe(after);
+		expect(calls.count).toBe(2);
 	});
 
 	it('stops when a reload shows nothing newer, and tries again on the next notice', async () => {
@@ -86,6 +87,19 @@ describe('LIVE when the screens are behind the office', () => {
 		await tick();
 		await tick();
 		expect(calls.count).toBe(2);
+	});
+
+	it('forgets what it was told once a reload shows nothing newer, so later loads do not reload again', async () => {
+		const id = fresh();
+		noteShown(id, at(1, 5));
+		const { reload, calls } = reloader(id, () => at(1, 5)); // the office is behind what it told us
+		noteChanged(notice(id, 1, 8), reload);
+		for (let i = 0; i < 4; i++) await tick();
+		expect(calls.count).toBe(1);
+		noteShown(id, at(1, 5)); // the next page load
+		noteShown(id, at(1, 5));
+		for (let i = 0; i < 4; i++) await tick();
+		expect(calls.count).toBe(1);
 	});
 
 	it('catches up a change told while the screens were still loading', async () => {

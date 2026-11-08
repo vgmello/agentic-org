@@ -20,7 +20,7 @@ const behind = (organizationId: string): boolean => {
 /**
  * Reload until the screens show what the office last told us, one reload at a time: a burst of changes costs one
  * reload and perhaps a second, not one per change. A reload that shows nothing newer (it failed, or the office is
- * behind) ends the loop; the next notice starts it again.
+ * behind) ends the loop and forgets what it was told; the next notice starts it again.
  */
 function catchUp(organizationId: string): void {
 	const reload = reloaders.get(organizationId);
@@ -30,8 +30,14 @@ function catchUp(organizationId: string): void {
 		try {
 			while (behind(organizationId)) {
 				const before = shown.get(organizationId);
+				const told = heard.get(organizationId);
 				await reload();
-				if (same(shown.get(organizationId), before)) break;
+				if (same(shown.get(organizationId), before) && same(heard.get(organizationId), told)) {
+					// Nothing newer to show, and nothing newer told meanwhile: the office is behind what it told us (or was
+					// restored). Take what is shown as the truth, or every later load would try again.
+					heard.set(organizationId, shown.get(organizationId)!);
+					break;
+				}
 			}
 		} catch {
 			// The next notice tries again.
