@@ -14,6 +14,17 @@ pub(crate) fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+/// How many days `month` (1 to 12) of `year` has, by the Gregorian leap rule.
+fn days_in_month(year: i64, month: i64) -> i64 {
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    match month {
+        2 if leap => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    }
+}
+
 /// Unix milliseconds of an RFC 3339 time: `YYYY-MM-DDTHH:MM:SS`, an optional fraction (any
 /// length, truncated to milliseconds), then `Z` or a `+HH:MM` / `-HH:MM` offset. `None` for
 /// anything else (or a time before 1970). Compare times with this, never as text: `...00Z` and
@@ -34,7 +45,8 @@ pub(crate) fn parse_rfc3339_ms(text: &str) -> Option<u64> {
         || b.get(13) != Some(&b':')
         || b.get(16) != Some(&b':')
         || !(1..=12).contains(&month)
-        || !(1..=31).contains(&day)
+        || day < 1
+        || day > days_in_month(year, month)
         || hour > 23
         || minute > 59
         || second > 60
@@ -167,6 +179,18 @@ mod tests {
             parse_rfc3339_ms("2000-02-29T00:00:00Z"),
             Some(951_782_400_000)
         );
+        assert_eq!(
+            parse_rfc3339_ms("2028-02-29T00:00:00Z"),
+            Some(1835395200000)
+        );
+        assert_eq!(
+            parse_rfc3339_ms("2027-04-30T00:00:00Z"),
+            Some(1809043200000)
+        );
+        assert_eq!(
+            parse_rfc3339_ms("2400-02-29T00:00:00Z"),
+            Some(13574563200000)
+        ); // divisible by 400
     }
 
     #[test]
@@ -182,6 +206,10 @@ mod tests {
             "2027-01-15T08:00:00+25:00",
             "2027-13-15T08:00:00Z",
             "2027-01-32T08:00:00Z",
+            "2027-02-29T08:00:00Z", // 2027 is not a leap year
+            "2027-02-30T08:00:00Z",
+            "2027-04-31T08:00:00Z",
+            "2100-02-29T08:00:00Z", // a century year that is not divisible by 400
             "2027-01-15T24:00:00Z",
             "2027-01-15T08:60:00Z",
             "2027-01-15T08:00:00Zjunk",

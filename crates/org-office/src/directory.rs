@@ -124,9 +124,11 @@ fn member_ref(member: &Member) -> MemberRef {
 /// name (ignoring case) and then id. Offboarded agents are not listed, and naming one is
 /// `not_found`.
 ///
-/// Errors, in this order: `too_large` (a `member` or `team` over [`MAX_HANDLE_BYTES`]),
-/// `invalid_request` (an `Unknown` kind, `office` as the member, a team name that matches more
-/// than one team), `not_found` (the member, or the team).
+/// Errors, in this order: `too_large` (a `member` or `team` over [`MAX_HANDLE_BYTES`]);
+/// `invalid_request` (an `Unknown` kind, `office` as the member); the member (`not_found`, or
+/// `storage_error` when two members have the handle); then the team (`not_found`, or
+/// `invalid_request` for a name that matches more than one team). The member is looked up before
+/// the team, so an unknown member with an ambiguous team is `not_found`.
 pub fn who(
     snapshot: &OrgSnapshot,
     office: ThisOffice<'_>,
@@ -290,6 +292,8 @@ fn card(
             .map(member_ref),
         office: member.office_id.as_ref().map(|id| OfficeRef {
             id: id.clone(),
+            // This office knows its own name only: another office is shown by its id for now
+            // (the organization carries no office names; they come with the sync work).
             name: if id == office.id {
                 office.name.to_owned()
             } else {
