@@ -14,6 +14,7 @@ mod flags {
     pub const O_NONBLOCK: i32 = 0x0004;
     pub const O_NOFOLLOW: i32 = 0x0100;
     pub const O_CLOEXEC: i32 = 0x0100_0000;
+    pub const ELOOP: i32 = 62;
 }
 
 #[cfg(all(
@@ -24,6 +25,7 @@ mod flags {
     pub const O_NONBLOCK: i32 = 0o4000;
     pub const O_NOFOLLOW: i32 = 0o400000;
     pub const O_CLOEXEC: i32 = 0o2000000;
+    pub const ELOOP: i32 = 40;
 }
 
 #[cfg(all(target_os = "linux", any(target_arch = "aarch64", target_arch = "arm")))]
@@ -31,6 +33,7 @@ mod flags {
     pub const O_NONBLOCK: i32 = 0o4000;
     pub const O_NOFOLLOW: i32 = 0o100000;
     pub const O_CLOEXEC: i32 = 0o2000000;
+    pub const ELOOP: i32 = 40;
 }
 
 #[cfg(not(any(
@@ -46,7 +49,7 @@ mod flags {
         )
     )
 )))]
-compile_error!("org-spool: add this platform's O_NONBLOCK / O_NOFOLLOW / O_CLOEXEC values");
+compile_error!("org-spool: add this platform's O_NONBLOCK / O_NOFOLLOW / O_CLOEXEC / ELOOP values");
 
 /// What [`read_spool_file`] found at a path.
 #[derive(Debug)]
@@ -157,6 +160,15 @@ pub(crate) fn create_new_nofollow(path: &Path, bytes: &[u8]) -> io::Result<()> {
     file.write_all(bytes)
 }
 
+/// Whether an error reading a spool file is about the file itself, so it will fail the same
+/// way every time (dead-letter it): no permission (EACCES/EPERM) or a symlink (ELOOP).
+/// Anything else (EMFILE, ENFILE, EIO, EINTR, EAGAIN, ENOMEM, ...) may pass: leave the file
+/// and retry it later. (Not a regular file, over the cap and invalid content are not errors
+/// here: [`SpoolFile::Rejected`] and the envelope check cover them.)
+pub(crate) fn is_permanent_file_error(e: &io::Error) -> bool {
+    e.kind() == ErrorKind::PermissionDenied || e.raw_os_error() == Some(flags::ELOOP)
+}
+
 fn describe(kind: fs::FileType) -> &'static str {
     use std::os::unix::fs::FileTypeExt;
     if kind.is_symlink() {
@@ -171,5 +183,35 @@ fn describe(kind: fs::FileType) -> &'static str {
         "device"
     } else {
         "special file"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_errors_about_the_file_itself_are_permanent() {
+        const EPERM: i32 = 1;
+        const EACCES: i32 = 13;
+        for code in [EPERM, EACCES, flags::ELOOP] {
+            assert!(
+                is_permanent_file_error(&io::Error::from_raw_os_error(code)),
+                "errno {code}"
+            );
+        }
+        // EINTR, EIO, ENOMEM, ENFILE, EMFILE, EAGAIN (macOS 35, Linux 11).
+        let eagain = if cfg!(target_vendor = "apple") {
+            35
+        } else {
+            11
+        };
+        for code in [4, 5, 12, 23, 24, eagain] {
+            assert!(
+                !is_permanent_file_error(&io::Error::from_raw_os_error(code)),
+                "errno {code}"
+            );
+        }
+        assert!(!is_permanent_file_error(&io::Error::other("transient")));
     }
 }

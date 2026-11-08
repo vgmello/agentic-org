@@ -25,6 +25,23 @@ pub enum RelayOutcome {
     Stopped,
 }
 
+/// The relay delivers at least this often.
+const RELAY_POLL_INTERVAL: Duration = Duration::from_millis(500);
+/// Between passes it checks `outbox/new` this often (for writers that didn't nudge it).
+const RELAY_PENDING_CHECK: Duration = Duration::from_millis(2);
+
+/// Whether the relay loop runs a delivery pass now: on a nudge, once the poll interval has
+/// passed, or when something is pending, unless the last pass left a file it couldn't
+/// deliver (a transient error), which would otherwise be retried every few milliseconds.
+fn should_sweep(
+    nudged: bool,
+    stuck: bool,
+    since_last: Duration,
+    pending: impl FnOnce() -> bool,
+) -> bool {
+    nudged || since_last >= RELAY_POLL_INTERVAL || (!stuck && pending())
+}
+
 /// `relay.lock` holds the relay's pid and a newline; never read more than this.
 const MAX_PID_BYTES: u64 = 64;
 
@@ -120,8 +137,10 @@ impl Spool {
             Err(_) => None,
         };
 
-        let poll_interval = Duration::from_millis(500);
         let mut last_sweep = Instant::now();
+        // Whether the last pass left a file it couldn't deliver (a transient error): then
+        // only a nudge or the poll interval triggers the next pass, not the pending file.
+        let mut stuck = false;
 
         while !is_interrupted() {
             let mut nudged = false;
@@ -132,21 +151,51 @@ impl Spool {
                     nudged = true;
                 }
             }
-            if nudged || self.has_pending_outbox() || last_sweep.elapsed() >= poll_interval {
-                let _ = self.deliver_all();
+            if should_sweep(nudged, stuck, last_sweep.elapsed(), || {
+                self.has_pending_outbox()
+            }) {
+                stuck = self.deliver_all().is_err();
                 last_sweep = Instant::now();
             }
+            let remaining = RELAY_POLL_INTERVAL.saturating_sub(last_sweep.elapsed());
+            let wait_slice = if stuck {
+                remaining
+            } else {
+                remaining.min(RELAY_PENDING_CHECK)
+            };
             if let Some(ref l) = listener {
-                let remaining = poll_interval.saturating_sub(last_sweep.elapsed());
-                let wait_slice = remaining.min(Duration::from_millis(2));
                 let _ = poll_unix_listener(l, wait_slice);
             } else {
-                thread::sleep(Duration::from_millis(2));
+                thread::sleep(wait_slice.max(RELAY_PENDING_CHECK));
             }
         }
 
         let _ = self.deliver_all();
         let _ = fs::remove_file(&sock_path);
         Ok(RelayOutcome::Stopped)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_file_that_keeps_failing_waits_for_the_poll_interval() {
+        let soon = Duration::from_millis(3);
+        assert!(should_sweep(false, false, soon, || true), "pending work");
+        assert!(!should_sweep(false, false, soon, || false), "nothing to do");
+        assert!(
+            !should_sweep(false, true, soon, || panic!("not even checked")),
+            "stuck: no 2 ms re-sweep"
+        );
+        assert!(
+            should_sweep(true, true, soon, || false),
+            "a nudge still delivers"
+        );
+        assert!(
+            should_sweep(false, true, RELAY_POLL_INTERVAL, || false),
+            "retried at the poll interval"
+        );
     }
 }

@@ -17,7 +17,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::envelope::{validate_agent_id, Envelope, MAX_ENVELOPE_BYTES};
-use crate::safe_read::{create_new_nofollow, read_spool_file, SpoolFile};
+use crate::safe_read::{create_new_nofollow, is_permanent_file_error, read_spool_file, SpoolFile};
 use crate::time::{check_wait_timeout, format_iso8601_utc};
 use crate::ulid::{generate_ulid, is_valid_ulid};
 
@@ -573,11 +573,12 @@ impl Spool {
                     outbox_file.display()
                 )));
             }
-            // A file we can't read (e.g. mode 000) would otherwise block every delivery
-            // behind it, for good.
-            Err(err) => {
+            // A file we can never read (e.g. mode 000) is dead-lettered (it would come up
+            // again at every pass); a transient error leaves it for the next pass.
+            Err(SpoolError::Io(err)) if is_permanent_file_error(&err) => {
                 return self.move_to_dead(outbox_file, id_stem, &format!("unreadable: {err}"));
             }
+            Err(err) => return Err(err),
         };
 
         let env = match parsed {
