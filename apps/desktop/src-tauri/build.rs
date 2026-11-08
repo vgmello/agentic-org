@@ -12,6 +12,8 @@ fn main() {
             "organization_open",
             "org_snapshot",
             "org_command",
+            "org_live_retry",
+            "org_live",
             "connections_list",
             "work_snapshot",
             "work_get",

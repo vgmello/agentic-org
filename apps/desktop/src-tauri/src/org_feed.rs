@@ -15,11 +15,21 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::{Duration, Instant};
 
-/// What the feed tells the UI: the organization changed, and the log is now at `position`.
+/// What the feed tells the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct OrgUpdate<'a> {
-    pub organization_id: &'a str,
-    pub position: Position,
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OrgUpdate<'a> {
+    /// The organization changed, and its log is now at `position`.
+    Changed {
+        organization_id: &'a str,
+        position: Position,
+    },
+    /// Whether the feed is subscribed: `true` once it is, `false` from the moment its connection ends or cannot be
+    /// made (told once, not on every try). While it is `false` the screens are not being kept up to date.
+    Live {
+        organization_id: &'a str,
+        live: bool,
+    },
 }
 
 /// Where connections to an organization's HQ office come from.
@@ -29,17 +39,27 @@ pub trait OrgSource {
     fn open_hq(&self, organization_id: &str) -> Result<Client, ClientError>;
 }
 
-/// Follow `organization_id` until `stop` is set, calling `emit` with each update.
+/// Follow `organization_id` until `stop` is set, calling `emit` with each update. `retry` set means "try now": it
+/// cuts the wait before the next connection short.
 pub fn follow(
     source: &dyn OrgSource,
     organization_id: &str,
     stop: &AtomicBool,
+    retry: &AtomicBool,
     emit: &dyn Fn(OrgUpdate),
 ) {
     let mut pacer = Pacer::new();
+    let mut lost_told = false;
     while !stop.load(Ordering::SeqCst) {
-        let up_for = follow_once(source, organization_id, stop, emit).ok();
-        wait(pacer.next(up_for), stop);
+        let up_for = follow_once(source, organization_id, stop, retry, &mut lost_told, emit).ok();
+        if !lost_told && !stop.load(Ordering::SeqCst) {
+            emit(OrgUpdate::Live {
+                organization_id,
+                live: false,
+            });
+            lost_told = true;
+        }
+        wait(pacer.next(up_for), stop, retry);
     }
 }
 
@@ -49,14 +69,23 @@ fn follow_once(
     source: &dyn OrgSource,
     organization_id: &str,
     stop: &AtomicBool,
+    retry: &AtomicBool,
+    lost_told: &mut bool,
     emit: &dyn Fn(OrgUpdate),
 ) -> Result<Duration, ClientError> {
     let client = source.open_hq(organization_id)?;
     let snapshot = client.call::<OrgSnapshotCall>(&Empty {})?;
     let events = client.subscribe_from(Some(snapshot.position))?;
     let subscribed = Instant::now();
+    emit(OrgUpdate::Live {
+        organization_id,
+        live: true,
+    });
+    *lost_told = false;
+    // A Retry pressed while this was connecting is answered by it: it must not cut the next wait short.
+    retry.store(false, Ordering::SeqCst);
     // The snapshot is the baseline: the UI may have missed changes while the feed was away.
-    emit(OrgUpdate {
+    emit(OrgUpdate::Changed {
         organization_id,
         position: snapshot.position,
     });
@@ -64,7 +93,7 @@ fn follow_once(
         match events.recv_timeout(LOOK) {
             Ok(event) => {
                 if let Some(Ok(data)) = event.data::<OrgChanged>() {
-                    emit(OrgUpdate {
+                    emit(OrgUpdate::Changed {
                         organization_id,
                         position: data.position,
                     });
@@ -200,32 +229,58 @@ mod tests {
         }
     }
 
-    fn collect(source: &Office, want: usize) -> Vec<(String, Position)> {
-        collect_within(source, want, Duration::from_secs(10))
+    /// What the feed said: positions it reached, and every liveness it announced.
+    #[derive(Default, Clone)]
+    struct Heard {
+        positions: Vec<(String, Position)>,
+        live: Vec<bool>,
     }
 
-    fn collect_within(source: &Office, want: usize, within: Duration) -> Vec<(String, Position)> {
+    fn collect(source: &Office, want: usize) -> Vec<(String, Position)> {
+        collect_within(source, want, Duration::from_secs(10)).positions
+    }
+
+    /// Runs the feed until `want` positions arrived (or `within` passed).
+    fn collect_within(source: &Office, want: usize, within: Duration) -> Heard {
+        collect_until(source, within, |heard| heard.positions.len() >= want)
+    }
+
+    /// Runs the feed until it has announced `want` livenesses.
+    fn collect_live(source: &Office, want: usize) -> Heard {
+        collect_until(source, Duration::from_secs(10), |heard| {
+            heard.live.len() >= want
+        })
+    }
+
+    fn collect_until(source: &Office, within: Duration, done: impl Fn(&Heard) -> bool) -> Heard {
         let stop = Arc::new(AtomicBool::new(false));
-        let got = Arc::new(Mutex::new(Vec::new()));
+        let got = Arc::new(Mutex::new(Heard::default()));
         let seen = Arc::clone(&got);
         let until = Instant::now() + within;
         std::thread::scope(|scope| {
             let flag = Arc::clone(&stop);
             let thread = scope.spawn(move || {
-                follow(source, "org1", &flag, &|u| {
-                    seen.lock()
-                        .unwrap()
-                        .push((u.organization_id.to_string(), u.position));
+                follow(source, "org1", &flag, &AtomicBool::new(false), &|u| {
+                    let mut heard = seen.lock().unwrap();
+                    match u {
+                        OrgUpdate::Changed {
+                            organization_id,
+                            position,
+                        } => heard
+                            .positions
+                            .push((organization_id.to_string(), position)),
+                        OrgUpdate::Live { live, .. } => heard.live.push(live),
+                    }
                 })
             });
-            while got.lock().unwrap().len() < want && Instant::now() < until {
+            while !done(&got.lock().unwrap()) && Instant::now() < until {
                 std::thread::sleep(Duration::from_millis(20));
             }
             stop.store(true, Ordering::SeqCst);
             thread.join().unwrap();
         });
-        let updates = got.lock().unwrap().clone();
-        updates
+        let heard = got.lock().unwrap().clone();
+        heard
     }
 
     #[test]
@@ -288,33 +343,112 @@ mod tests {
     fn an_office_that_closes_the_subscription_at_once_is_not_knocked_on_every_second() {
         // Each connection is accepted, answered and hung up on: the pause must grow (1 s, then 2 s, ...).
         let source = office(vec![vec![]; 20], true);
-        let updates = collect_within(&source, usize::MAX, Duration::from_millis(3500));
+        let heard = collect_within(&source, usize::MAX, Duration::from_millis(3500));
         let opened = *source.opened.lock().unwrap();
         assert!(
             (2..=3).contains(&opened),
             "opened {opened} connections in 3.5 s"
         );
-        assert_eq!(updates.len(), opened, "one baseline per connection");
+        assert_eq!(heard.positions.len(), opened, "one baseline per connection");
     }
 
     #[test]
-    fn with_no_office_it_says_nothing_and_stops_when_told() {
-        struct Nobody;
-        impl OrgSource for Nobody {
-            fn open_hq(&self, _: &str) -> Result<Client, ClientError> {
-                Err(ClientError::OfficeNotReachable)
+    fn it_tells_when_it_is_live_and_when_it_is_not_once_each() {
+        // Connected, then hung up on, then connected again: live, not live, live, not live...
+        let source = office(vec![vec![changed(2)], vec![changed(3)]], true);
+        let heard = collect_live(&source, 4);
+        assert_eq!(
+            &heard.live[..4],
+            [true, false, true, false],
+            "told when subscribed and when the connection ends, not on every try"
+        );
+    }
+
+    /// A source that cannot be reached, counting how often it was tried.
+    struct Nobody(Mutex<usize>);
+    impl OrgSource for Nobody {
+        fn open_hq(&self, _: &str) -> Result<Client, ClientError> {
+            *self.0.lock().unwrap() += 1;
+            Err(ClientError::OfficeNotReachable)
+        }
+    }
+
+    #[test]
+    fn with_no_office_it_says_it_is_not_live_once_and_stops_when_told() {
+        let nobody = Arc::new(Nobody(Mutex::new(0)));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (told, source) = (Arc::clone(&stop), Arc::clone(&nobody));
+        let thread = std::thread::spawn(move || {
+            let heard = Mutex::new(Vec::new());
+            follow(&*source, "org1", &told, &AtomicBool::new(false), &|u| {
+                heard.lock().unwrap().push(format!("{u:?}"))
+            });
+            let said = heard.lock().unwrap().clone();
+            said
+        });
+        std::thread::sleep(Duration::from_millis(1500)); // several tries (after 1 s, then 2 s)
+        stop.store(true, Ordering::SeqCst);
+        let said = thread.join().unwrap();
+        assert!(*nobody.0.lock().unwrap() >= 2);
+        assert_eq!(said.len(), 1, "{said:?}");
+        assert!(said[0].contains("Live") && said[0].contains("false"));
+    }
+
+    #[test]
+    fn retry_cuts_a_long_pause_to_one_second_but_not_to_nothing() {
+        let nobody = Arc::new(Nobody(Mutex::new(0)));
+        let (stop, retry) = (
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let (told, kick, source) = (Arc::clone(&stop), Arc::clone(&retry), Arc::clone(&nobody));
+        let thread = std::thread::spawn(move || follow(&*source, "org1", &told, &kick, &|_| {}));
+        // Tries at 0 s, 1 s and 3 s; the next would come at 7 s.
+        std::thread::sleep(Duration::from_millis(3400));
+        assert_eq!(*nobody.0.lock().unwrap(), 3);
+        retry.store(true, Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(500));
+        assert_eq!(
+            *nobody.0.lock().unwrap(),
+            3,
+            "not at once: a second apart at least"
+        );
+        std::thread::sleep(Duration::from_millis(1200));
+        assert_eq!(
+            *nobody.0.lock().unwrap(),
+            4,
+            "and not after the long pause either"
+        );
+        stop.store(true, Ordering::SeqCst);
+        thread.join().unwrap();
+    }
+
+    #[test]
+    fn a_retry_pressed_while_connecting_is_answered_by_that_connection() {
+        // The source says "Retry" while it connects: the connection that follows is the answer to it.
+        struct Pressing(Office, Arc<AtomicBool>);
+        impl OrgSource for Pressing {
+            fn open_hq(&self, id: &str) -> Result<Client, ClientError> {
+                self.1.store(true, Ordering::SeqCst);
+                self.0.open_hq(id)
             }
         }
-        let stop = Arc::new(AtomicBool::new(false));
-        let told = Arc::clone(&stop);
-        let thread = std::thread::spawn(move || {
-            let heard = Mutex::new(0);
-            follow(&Nobody, "org1", &told, &|_| *heard.lock().unwrap() += 1);
-            let n = *heard.lock().unwrap();
-            n
+        let retry = Arc::new(AtomicBool::new(false));
+        let source = Pressing(office(vec![vec![]], false), Arc::clone(&retry));
+        let stop = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            let thread = scope.spawn(|| follow(&source, "org1", &stop, &retry, &|_| {}));
+            let until = Instant::now() + Duration::from_secs(10);
+            while *source.0.opened.lock().unwrap() == 0 && Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            std::thread::sleep(Duration::from_millis(500)); // subscribed by now
+            stop.store(true, Ordering::SeqCst);
+            thread.join().unwrap();
         });
-        std::thread::sleep(Duration::from_millis(300));
-        stop.store(true, Ordering::SeqCst);
-        assert_eq!(thread.join().unwrap(), 0);
+        assert!(
+            !retry.load(Ordering::SeqCst),
+            "answered by the connection, so cleared"
+        );
     }
 }
