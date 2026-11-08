@@ -9,7 +9,8 @@ pub trait EventKind {
     type Data: Serialize + DeserializeOwned;
 }
 
-/// `organization.created`: an organization was created on this office server.
+/// `organization.created`: sent by this machine's host to its subscribers when an
+/// organization (and its HQ office) is created here, so the app's menu refreshes live.
 pub struct OrganizationCreated;
 
 impl EventKind for OrganizationCreated {

@@ -10,6 +10,19 @@ fn org() -> Organization {
         id: "01M6WEQ98NHCE6ZVZWJGWQAJT3".into(),
         name: "Acme".into(),
         created_at: "2026-11-08T02:10:00.000Z".into(),
+        offices: vec![hq()],
+    }
+}
+
+fn hq() -> OfficeInfo {
+    OfficeInfo {
+        id: "01M6WGY1WJCC503RXF2NS0SH83".into(),
+        organization_id: "01M6WEQ98NHCE6ZVZWJGWQAJT3".into(),
+        name: "HQ".into(),
+        role: OfficeRole::Hq,
+        host: "This Mac".into(),
+        endpoint: Some("/tmp/o1/run/3RXF2NS0SH83.sock".into()),
+        status: OfficeStatus::Active,
     }
 }
 
@@ -128,15 +141,13 @@ fn hello_and_list_wire_shapes() {
     let hello = HelloResult {
         api_version: API_VERSION,
         server_version: "0.0.0".into(),
-        office: OfficeInfo {
-            id: "o1".into(),
-            name: "Office".into(),
-            host: "This Mac".into(),
-        },
+        host: "This Mac".into(),
+        office: None,
     };
     let v = serde_json::to_value(Response::ok::<Hello>(1, &hello).unwrap()).unwrap();
     assert_eq!(v["result"]["api_version"], 1);
-    assert_eq!(v["result"]["office"]["host"], "This Mac");
+    assert_eq!(v["result"]["host"], "This Mac");
+    assert!(v["result"].get("office").is_none());
 
     let list = ListOrganizationsResult {
         organizations: vec![org()],
@@ -396,4 +407,87 @@ fn wire_names_are_pinned() {
     assert_eq!(API_VERSION, 1);
     assert_eq!(MAX_FRAME_BYTES, 1_048_576);
     assert_eq!(ORGANIZATION_NAME_MAX_CHARS, 64);
+}
+
+#[test]
+fn office_server_hello_carries_its_identity() {
+    let hello = HelloResult {
+        api_version: API_VERSION,
+        server_version: "0.0.0".into(),
+        host: "This Mac".into(),
+        office: Some(OfficeHello {
+            organization_name: "Acme".into(),
+            office: hq(),
+        }),
+    };
+    let v = serde_json::to_value(&hello).unwrap();
+    assert_eq!(v["office"]["office"]["role"], "hq");
+    assert_eq!(v["office"]["organization_name"], "Acme");
+    let back: HelloResult = serde_json::from_value(v).unwrap();
+    assert_eq!(back, hello);
+}
+
+#[test]
+fn office_fields_default_and_tolerate_unknown_values() {
+    let minimal = json!({"id": "o", "organization_id": "g", "name": "HQ", "host": "This Mac"});
+    let o: OfficeInfo = serde_json::from_value(minimal).unwrap();
+    assert_eq!(o.role, OfficeRole::Unknown);
+    assert_eq!(o.status, OfficeStatus::Unknown);
+    assert_eq!(o.endpoint, None);
+    assert!(serde_json::to_value(&o).unwrap().get("endpoint").is_none());
+
+    let newer = json!({"id": "o", "organization_id": "g", "name": "X", "host": "h",
+        "role": "observer", "status": "migrating"});
+    let o: OfficeInfo = serde_json::from_value(newer).unwrap();
+    assert_eq!(o.role, OfficeRole::Unknown);
+    assert_eq!(o.status, OfficeStatus::Unknown);
+
+    for (status, name) in [
+        (OfficeStatus::Starting, "starting"),
+        (OfficeStatus::Pending, "pending"),
+        (OfficeStatus::Offline, "offline"),
+        (OfficeStatus::Unavailable, "unavailable"),
+        (OfficeStatus::UpdateNeeded, "update_needed"),
+    ] {
+        assert_eq!(serde_json::to_value(status).unwrap(), name);
+    }
+    assert_eq!(
+        serde_json::to_value(OfficeRole::Satellite).unwrap(),
+        "satellite"
+    );
+}
+
+#[test]
+fn organization_without_offices_still_decodes() {
+    let o: Organization = serde_json::from_value(json!({
+        "id": "x", "name": "n", "created_at": "2026-11-08T02:10:00.000Z"
+    }))
+    .unwrap();
+    assert!(o.offices.is_empty());
+}
+
+#[test]
+fn office_list_wire_shape() {
+    assert_eq!(OfficeList::METHOD, "office.list");
+    let v = serde_json::to_value(
+        Response::ok::<OfficeList>(
+            3,
+            &ListOfficesResult {
+                offices: vec![hq()],
+            },
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        v["result"]["offices"][0]["endpoint"],
+        "/tmp/o1/run/3RXF2NS0SH83.sock"
+    );
+}
+
+#[test]
+fn trimming_is_rust_str_trim_unicode_white_space() {
+    // U+0085 (NEL) is White_Space; U+FEFF (BOM) is not. JS trim() does the opposite.
+    assert_eq!("\u{85}Acme\u{85}".trim(), "Acme");
+    assert_eq!("\u{feff}Acme".trim(), "\u{feff}Acme");
 }
