@@ -352,7 +352,7 @@ pub trait OrgView {
     fn project_by_key(&self, key: &str) -> Result<Option<ProjectView>, StoreError>;
     fn project_teams(&self, project_id: &str) -> Result<Vec<String>, StoreError>;  // team ids
     fn area(&self, id: &str) -> Result<Option<AreaView>, StoreError>;           // incl. deleted, replaced_by
-    fn general_area(&self, project_id: &str) -> Result<String, StoreError>;
+    fn general_area(&self, project_id: &str) -> Result<Option<String>, StoreError>; // (amended 2026-11-08: P2) None: none found
     fn team_lead(&self, team_id: &str) -> Result<Option<String>, StoreError>;
 }
 
@@ -394,6 +394,9 @@ pub trait WorkTxn {
     /// The open items linked to a doc (`relates_to`) or named in its front-matter `related`; P4 (§6).
     fn items_for_doc(&mut self, project_id: &str, doc_key: &str) -> Result<Vec<StoredItem>, StoreError>;
     fn open_items(&mut self, filter: &CascadeFilter) -> Result<Vec<StoredItem>, StoreError>; // cascades
+    /// (amended 2026-11-08: P2) The bugs that aren't closed or deleted, of one project or (None) of
+    /// every project: the bug cascades' scan (`reconcile_bugs`: deleted areas, triage spans).
+    fn open_bugs(&mut self, project_id: Option<&str>) -> Result<Vec<StoredItem>, StoreError>;
     fn events_since(&mut self, item_id: &str, after_version: u64) -> Result<Vec<WorkEvent>, StoreError>;
     fn change_result(&mut self, change_id: &str) -> Result<Option<StoredResult>, StoreError>;
 
@@ -412,6 +415,8 @@ pub trait WorkTxn {
 
 pub trait Clock { fn now_ms(&self) -> u64; }
 ```
+(amended 2026-11-08: P2) As implemented on `v1`: `OrgView::general_area` returns `Option<String>`: `None` when it finds no General area for the project, which `bug.report` refuses with `invalid_request` instead of failing the store, and the bug cascades scan with `WorkTxn::open_bugs(project_id)`. The member and team cascades, when they land, may generalise that scan into `open_items(&CascadeFilter)`.
+
 `OrgView` is wider than ADR-0003's `MemberDirectory` (projects, areas, teams); `store.rs` implements both over the same queries. `org-work` defines its own port rather than depending on the messaging library, so the two domains stay independent.
 
 Exact names and signatures are the library owner's, agreed with server-dev (AGENTS.md: the trait's owner and its implementer agree changes). **The library decides before it writes:** it reads, checks every rule and computes the whole outcome (automatic changes included) first, and only then writes. So a refusal has nothing to undo: it writes only the change-result row (plus any org catch-up, which has its own savepoint, §2.5) and returns `Ok(TxnOutput::Refused(error))`, and refusals are stored (§2.3). `Err` is kept for storage failures, which roll everything back and aren't stored. What is fixed here: **all reads a rule depends on happen inside `transact`**, so a decision is never made on state another write changed in between; and **one call = one `transact`**, its automatic changes and its origin records included. The one exception is a call that writes git (`feature.create`, `doc.*`): an intent transaction, then the git work, then a record transaction (§4.9).
@@ -584,7 +589,10 @@ pub enum WorkEventKind {
     Created,
     FieldsChanged { fields: Vec<FieldChange> },         // { field, from?, to? } as JSON values
     StatusChanged { from: ItemStatus, to: ItemStatus, resolution: Option<Resolution>, reason: Option<String>,
-                    anyway: Option<DoneAnyway> },   // Done or Fixed with required steps left
+                    anyway: Option<DoneAnyway>,     // Done or Fixed with required steps left
+                    duplicate_of: Option<String> }, // (amended 2026-11-08: P2) a bug closed as a duplicate: the
+                                                    // original's id; absent otherwise. `reason` is free text, never an id.
+                                                    // The reopen of a duplicate is `Reopened`; its item state has it cleared.
     Assigned { from: Option<String>, to: Option<String> },
     Triaged { area_id: String, severity: Severity, priority: Priority, assignee_id: Option<String> },
     Verified { outcome: VerifyOutcome, by_reporter: bool, note: Option<String> },
@@ -663,7 +671,7 @@ Rust details (derives, `#[serde(default)]` and `skip_serializing_if` on every op
 | `bug.report` | `item_id`, `project_id`, `title`, `what_happened`, `severity`, `area_id?`, `expected?`, `steps?`, `environment?`, `from?: { link_id, to: LinkTarget }`, `affects_feature_id?` (P3), `checklist?` | `not_found`, `invalid_request` (limits; archived project; area not in the project or deleted), `already_exists` |
 | `bug.update` | `item_id`, `expected_version`, `title?`, `what_happened?`, `expected?`, `clear_expected?`, `steps?`, `clear_steps?`, `environment?`, `clear_environment?`, `severity?`, `priority?`, `area_id?`, `affects_feature_id?`, `clear_affects_feature?` | `not_found`, `invalid_request`, `conflict` |
 | `bug.triage` | `item_id`, `expected_version`, `area_id`, `severity`, `priority`, `assignee_id?` | `not_found`, `invalid_request` (wrong state; area), `unknown_recipient`, `conflict` |
-| `bug.assign` | `item_id`, `expected_version`, `assignee_id?` | `not_found`, `unknown_recipient`, `conflict` |
+| `bug.assign` | `item_id`, `expected_version`, `assignee_id?` | `not_found`, `invalid_request` (the bug is closed; amended 2026-11-08: P2), `unknown_recipient`, `conflict` |
 | `bug.mark_fixed` | `item_id`, `expected_version`, `note`, `anyway_reason?` | `not_found`, `invalid_request`, `conflict`, `checklist_incomplete` |
 | `bug.verify` | `item_id`, `expected_version`, `outcome: fixed \| still_happens`, `note?` (required for `still_happens`) | `not_found`, `invalid_request` (not `fixed`; note missing), `conflict` |
 | `bug.close` | `item_id`, `expected_version`, one of `duplicate_of` or `{ resolution: wont_fix \| cant_reproduce, reason }` | `not_found` (the original), `invalid_request` (wrong state; the original in another project, itself, or closed as a duplicate; reason missing), `conflict` |
