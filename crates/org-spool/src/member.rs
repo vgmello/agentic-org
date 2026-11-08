@@ -77,7 +77,13 @@ pub fn resolve_caller(as_flag: Option<&str>, env_agent: Option<&str>) -> Result<
         Some(as_member) => {
             if let Some(session) = session.as_deref().filter(|s| !is_owner(s)) {
                 if is_owner(&as_member) {
-                    return Err(format!("can't act as the owner from {session}'s session"));
+                    // Only a valid id goes into the message ($ORG_AGENT is free text).
+                    let whose = if validate_agent_id(session, "session").is_ok() {
+                        format!("{session}'s")
+                    } else {
+                        "another member's".to_string()
+                    };
+                    return Err(format!("can't act as the owner from {whose} session"));
                 }
             }
             as_member

@@ -832,6 +832,16 @@ fn the_owner_cannot_be_impersonated_by_case_or_from_another_session() {
             r.stderr
         );
     }
+    // An invalid $ORG_AGENT is never echoed back.
+    let mut bad =
+        TempOrgHome::command(&env.root, "bad\u{1b}[31mid", &["--as", "vgmello", "whoami"]);
+    let out = bad.output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("from another member's session") && !err.contains('\u{1b}'),
+        "{err}"
+    );
     // The owner's own session, in any case, is the owner (not a way around the check).
     let r = env.run(
         "VGMELLO",
