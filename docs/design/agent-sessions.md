@@ -269,7 +269,7 @@ Both arrive alongside `org-sync-proto`.
 | `org-office` | sessions, runs, approvals, policies and desired state as domain data; the wake queue and run rules; quota | server-dev |
 | `org-office-server` | the composition root: wires `org-supervise` and the adapters, the scheduler, the handlers | server-dev |
 | `org-office-host` | the watchdog: kills a dead office's child groups before restarting it | River |
-| the messaging library and `org-agent` | the session token on `msg.bind` | agy-senior-dev |
+| the messaging library and `org-agent` | the session token on `msg.bind` | ac-software-engineer-remy (Remy, the messaging owner) |
 | `apps/desktop` | the session panel (events), take-over (attach to the office's PTY, the lease), Needs you approvals, the Runs tab | app-frontend-dev |
 | `org-proto` | the calls and events above | ada |
 
@@ -279,7 +279,7 @@ Both arrive alongside `org-sync-proto`.
 | S0 | Spikes, one per runtime:<br>• **Claude:** the `can_use_tool` round trip; which `--setting-sources` value loads no file, and whether user `CLAUDE.md`, skills and agents still load; resume with the spec replayed; resume after the cwd is gone; memory per idle process.<br>• **Codex:** one app-server over a 0700 Unix socket with two threads in two cwds; per-thread env and whether the thread config is written to rollouts; what leaks from the user's Codex home; approvals; interrupt; `--remote` TUI joining.<br>• **Antigravity:** ACP versus stream-json; interrupt; resume; `request_permission`; a custom agent from `--add-dir`; sign-in with `--gemini-dir`. | River (Claude), codex-dev (Codex, Antigravity) | — |
 | S1 | `org-runtime` (first version), `org-supervise` and the Claude adapter, with fixture tests and a fake runtime | River | S0 Claude |
 | S2 | Contract in org-proto, and the ADR-0003 amendments | ada | S0 |
-| S2b | The session token: `org-agent` sends `ORG_SESSION_TOKEN` on `msg.bind`, and the messaging library requires it for office-run agents | agy-senior-dev | S2 |
+| S2b | The session token: `org-agent` sends `ORG_SESSION_TOKEN` on `msg.bind`, and the messaging library requires it for office-run agents | ac-software-engineer-remy (Remy, the messaging owner) | S2 |
 | S3a | Office: sessions and runs (the wake queue, preflight, start and resume, limits, desired state, restart, orphans), with `org-supervise` wired in | server-dev | S1, S2, the HQ office server (server-dev's phase 1 storage + server) |
 | S3b | Office: approvals, schedules and quota | server-dev | S3a |
 | S4 | The Codex and Antigravity adapters | codex-dev | S0, S1 |
