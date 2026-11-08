@@ -644,6 +644,11 @@ fn run(argv0: &str, args: Vec<String>) -> Result<u8, CliError> {
             let mut j = 1usize;
             while j < filtered.len() {
                 match filtered[j].as_str() {
+                    "--" => {
+                        // Everything after `--` is status text, even if it starts with '-'.
+                        text_parts.extend(filtered[j + 1..].iter().cloned());
+                        break;
+                    }
                     "--clear" => clear = true,
                     "--ttl" => {
                         j += 1;

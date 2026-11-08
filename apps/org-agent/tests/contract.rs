@@ -987,6 +987,17 @@ fn a_huge_timeout_is_a_usage_error_not_a_panic() {
 }
 
 #[test]
+fn status_after_double_dash_may_start_with_a_dash() {
+    let env = setup("status_dash");
+    let r = env.run(ME, &["status", "--", "-x", "--y", "--json"]);
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    assert_eq!(
+        json(&env.run(ME, &["status", "--json"]).stdout)["status"],
+        "-x --y --json"
+    );
+}
+
+#[test]
 fn status_and_profile_drop_variation_selectors_and_refuse_other_invisibles() {
     let env = setup("status_vs");
     let set = env.run(ME, &["status", "\u{26A0}\u{FE0F} blocked", "--json"]);
