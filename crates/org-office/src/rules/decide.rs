@@ -18,6 +18,18 @@ type Decision = Result<Vec<OrgChange>, ApiError>;
 /// Decides one command against the current state: the resolved changes it makes, or the error
 /// HQ answers with. `now` is HQ's clock (RFC 3339 UTC with milliseconds). Changes nothing.
 pub fn decide(view: &dyn OrgView, now: &str, command: &OrgCommand) -> Decision {
+    let decision = decide_one(view, now, command);
+    // The command's own id is an `invalid_request` like the other ids, so a missing target
+    // (`not_found`, which comes first) still wins, and any later error or success gives way
+    // to it. The id is stored to answer a retry, so a command with a bad one never commits.
+    match check_id(command.command_id()) {
+        Ok(()) => decision,
+        Err(_) if matches!(&decision, Err(e) if e.code == ErrorCode::NotFound) => decision,
+        Err(bad_id) => Err(bad_id),
+    }
+}
+
+fn decide_one(view: &dyn OrgView, now: &str, command: &OrgCommand) -> Decision {
     match command {
         OrgCommand::TeamCreate(p) => team_create(view, p),
         OrgCommand::TeamRename(p) => team_rename(view, p),

@@ -5,6 +5,7 @@ use tempfile::TempDir;
 use super::*;
 use crate::key::{InMemoryKeys, KeyError};
 use crate::model::OfficeRole;
+use org_proto::org::CommandStatus;
 
 const ID: &str = "OFFICE1";
 const SHORT: Duration = Duration::from_millis(100);
@@ -1143,4 +1144,177 @@ fn a_created_office_has_its_owner_in_the_first_log_entry_and_keeps_it_across_a_r
 
     let again = Office::open(folder_of(&dir, ID), &keys).unwrap();
     assert_eq!(again.org_snapshot().unwrap(), snapshot);
+}
+
+fn team_create(command_id: &str, team_id: &str, name: &str) -> OrgCommand {
+    OrgCommand::TeamCreate(org_proto::org::TeamCreateParams {
+        command_id: command_id.into(),
+        team_id: team_id.into(),
+        name: name.into(),
+        owner_team_id: None,
+    })
+}
+
+fn at(seq: u64) -> org_proto::org::Position {
+    org_proto::org::Position { epoch: 1, seq }
+}
+
+#[test]
+fn a_command_is_logged_at_the_next_position_and_changes_the_snapshot() {
+    let (_dir, _keys, office) = made();
+
+    let accepted = office
+        .submit_org(team_create("C1", "T1", "Platform"))
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(accepted.status, CommandStatus::Committed);
+    assert_eq!(accepted.position, Some(at(2)));
+    let snapshot = office.org_snapshot().unwrap();
+    assert_eq!(snapshot.position, at(2));
+    assert_eq!(snapshot.teams.len(), 1);
+    assert_eq!(snapshot.teams[0].name, "Platform");
+}
+
+#[test]
+fn a_retried_command_gets_its_own_commit_back_and_changes_nothing_again() {
+    let (dir, keys, office) = made();
+    let first = office
+        .submit_org(team_create("C1", "T1", "Platform"))
+        .unwrap()
+        .unwrap();
+    office
+        .submit_org(team_create("C2", "T2", "Design"))
+        .unwrap()
+        .unwrap();
+    let snapshot = office.org_snapshot().unwrap();
+    assert_eq!(first.position, Some(at(2)));
+    assert_eq!(snapshot.position, at(3));
+
+    // Same id again, in this process and after a restart: the first commit's position, not the
+    // head.
+    assert_eq!(
+        office
+            .submit_org(team_create("C1", "T1", "Platform"))
+            .unwrap()
+            .unwrap(),
+        first
+    );
+    drop(office);
+    let office = Office::open(folder_of(&dir, ID), &keys).unwrap();
+    assert_eq!(
+        office
+            .submit_org(team_create("C1", "T1", "Platform"))
+            .unwrap()
+            .unwrap(),
+        first
+    );
+
+    assert_eq!(office.org_snapshot().unwrap(), snapshot);
+}
+
+#[test]
+fn the_same_command_sent_at_once_commits_once() {
+    let (_dir, _keys, office) = made();
+
+    let answers: Vec<_> = std::thread::scope(|scope| {
+        let sends: Vec<_> = (0..8)
+            .map(|_| scope.spawn(|| office.submit_org(team_create("C1", "T1", "Platform"))))
+            .collect();
+        sends
+            .into_iter()
+            .map(|send| send.join().unwrap().unwrap().unwrap())
+            .collect()
+    });
+
+    assert!(answers.iter().all(|answer| *answer == answers[0]));
+    assert_eq!(answers[0].position, Some(at(2)));
+    assert_eq!(office.org_snapshot().unwrap().position, at(2));
+}
+
+#[test]
+fn a_command_id_that_is_not_a_plain_id_is_refused_and_not_remembered() {
+    let (_dir, _keys, office) = made();
+    let before = office.org_snapshot().unwrap();
+
+    for bad in ["", "has space", "line\nbreak", &"x".repeat(65)] {
+        let refusal = office
+            .submit_org(team_create(bad, "T1", "Platform"))
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(
+            refusal.code,
+            org_proto::ErrorCode::InvalidRequest,
+            "{bad:?}"
+        );
+    }
+
+    assert_eq!(office.org_snapshot().unwrap(), before);
+}
+
+#[test]
+fn a_refused_command_writes_nothing_and_is_decided_again_on_a_retry() {
+    let (_dir, _keys, office) = made();
+    let before = office.org_snapshot().unwrap();
+
+    let refusal = office
+        .submit_org(team_create("C1", "T1", "   "))
+        .unwrap()
+        .unwrap_err();
+
+    assert_eq!(refusal.code, org_proto::ErrorCode::InvalidName);
+    assert_eq!(office.org_snapshot().unwrap(), before);
+    // The id was not used up: the same id with a good name commits.
+    let accepted = office
+        .submit_org(team_create("C1", "T1", "Platform"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(accepted.position, Some(at(2)));
+}
+
+#[test]
+fn commands_are_logged_one_after_another_without_gaps() {
+    let (_dir, _keys, office) = made();
+    for (n, name) in ["A", "B", "C"].into_iter().enumerate() {
+        let accepted = office
+            .submit_org(team_create(&format!("C{n}"), &format!("T{n}"), name))
+            .unwrap()
+            .unwrap();
+        assert_eq!(accepted.position, Some(at(n as u64 + 2)));
+    }
+}
+
+#[test]
+fn a_bad_command_id_comes_after_not_found_and_before_the_later_errors() {
+    let (_dir, _keys, office) = made();
+    let code = |command| office.submit_org(command).unwrap().unwrap_err().code;
+
+    let missing_owner = OrgCommand::TeamCreate(org_proto::org::TeamCreateParams {
+        command_id: "bad id!".into(),
+        team_id: "T1".into(),
+        name: "Platform".into(),
+        owner_team_id: Some("nope".into()),
+    });
+    assert_eq!(code(missing_owner), org_proto::ErrorCode::NotFound);
+    // Everything after `invalid_request` gives way to it: a blank name, a taken id, a stale
+    // version.
+    assert_eq!(
+        code(team_create("bad id!", "T1", "  ")),
+        org_proto::ErrorCode::InvalidRequest
+    );
+    office
+        .submit_org(team_create("C1", "T1", "Platform"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        code(team_create("bad id!", "T1", "Other")),
+        org_proto::ErrorCode::InvalidRequest
+    );
+    let stale = OrgCommand::TeamRename(org_proto::org::TeamRenameParams {
+        command_id: "bad id!".into(),
+        team_id: "T1".into(),
+        expected_version: 99,
+        name: "Renamed".into(),
+    });
+    assert_eq!(code(stale), org_proto::ErrorCode::InvalidRequest);
 }

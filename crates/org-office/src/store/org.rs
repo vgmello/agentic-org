@@ -23,13 +23,14 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use org_proto::org::{
-    Area, Member, MemberKind, Membership, OrgChange, OrgSnapshot, Position, Project, ProjectTeam,
-    Team,
+    Area, CommandAccepted, CommandStatus, Member, MemberKind, Membership, OrgChange, OrgSnapshot,
+    Position, Project, ProjectTeam, Team,
 };
+use org_proto::ApiError;
 
 use super::Schema;
 use crate::error::OfficeError;
-use crate::rules::{self, OrgView, OrgWrite};
+use crate::rules::{self, OrgCommand, OrgView, OrgWrite};
 
 /// The epoch of every entry until promotion exists (phase 4).
 const EPOCH: u64 = 1;
@@ -350,6 +351,62 @@ pub(crate) fn append_event(
     )
     .map_err(OfficeError::storage)?;
     Ok(next)
+}
+
+/// Runs one command: a retry of a committed `command_id` gets that commit's answer without
+/// deciding again; otherwise the rules decide, and the resolved changes are applied and logged
+/// in the caller's savepoint, together with the `command_id`. A command the rules refuse writes
+/// nothing, so it is not remembered: a retry decides again, against the state then.
+///
+/// The retry is matched on the `command_id` alone: the same id with other params gets the first
+/// command's answer (the contract: a retry with the same id gets the same answer).
+///
+/// `expires_at` is when the `command_id` may be forgotten (nothing purges yet).
+pub(crate) fn submit(
+    db: &Connection,
+    now: &str,
+    expires_at: &str,
+    command: &OrgCommand,
+) -> Result<Result<CommandAccepted, ApiError>, OfficeError> {
+    let committed = |position| {
+        Ok(CommandAccepted {
+            status: CommandStatus::Committed,
+            position: Some(position),
+        })
+    };
+    let seen = db
+        .query_row(
+            "SELECT epoch, seq FROM commands WHERE command_id = ?1",
+            [command.command_id()],
+            |row| {
+                Ok(Position {
+                    epoch: row.get::<_, i64>(0)? as u64,
+                    seq: row.get::<_, i64>(1)? as u64,
+                })
+            },
+        )
+        .optional()
+        .map_err(OfficeError::storage)?;
+    if let Some(position) = seen {
+        return Ok(committed(position));
+    }
+    let changes = match rules::decide(&OrgSql(db), now, command) {
+        Ok(changes) => changes,
+        Err(refusal) => return Ok(Err(refusal)),
+    };
+    apply_changes(db, &changes)?;
+    let position = append_event(db, command.command_id(), now, &changes)?;
+    db.execute(
+        "INSERT INTO commands (command_id, epoch, seq, expires_at) VALUES (?1, ?2, ?3, ?4)",
+        (
+            command.command_id(),
+            position.epoch as i64,
+            position.seq as i64,
+            expires_at,
+        ),
+    )
+    .map_err(OfficeError::storage)?;
+    Ok(committed(position))
 }
 
 /// Whether the organization is committed: the log has an entry, or (an `org.db` from before the
