@@ -8,7 +8,7 @@ import {
 	type Organization,
 	type StatusUpdate
 } from '$lib/proto';
-import { mockOffice } from './mock';
+import { createMockOffice } from './mock';
 import { tauriOffice } from './tauri';
 
 /**
@@ -58,4 +58,4 @@ export function inTauri(): boolean {
 	return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
-export const officeApi: OfficeApi = inTauri() ? tauriOffice : mockOffice;
+export const officeApi: OfficeApi = inTauri() ? tauriOffice : createMockOffice({ testHook: true });

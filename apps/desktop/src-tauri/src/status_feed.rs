@@ -6,7 +6,7 @@
 //! stopped) the feed reconnects with a growing pause, and each new connection starts with a fresh list, so a
 //! change made while it was away is not lost. The feed never starts the host; it only listens.
 
-use crate::pacing::{next_pause, wait, FIRST_PAUSE, LOOK};
+use crate::pacing::{wait, Pacer, LOOK};
 use org_client::{Client, ClientError};
 use org_proto::{ApiError, ErrorCode, OfficeInfo, OfficeStatusChanged};
 use serde::Serialize;
@@ -14,6 +14,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 /// What the feed tells the UI. `Offices` replaces everything it knew (the start, and after a reconnect);
 /// `Office` replaces one office's record.
@@ -29,20 +30,19 @@ pub type StatusSink = Arc<dyn Fn(StatusUpdate) + Send + Sync>;
 
 /// Follow the host in `home` until `stop` is set, calling `emit` with each update.
 pub fn follow(home: &Path, stop: &AtomicBool, emit: &dyn Fn(StatusUpdate)) {
-    let mut pause = FIRST_PAUSE;
+    let mut pacer = Pacer::new();
     while !stop.load(Ordering::SeqCst) {
-        let delivered = follow_once(home, stop, emit).is_ok();
-        wait(pause, stop);
-        pause = next_pause(pause, delivered);
+        let up_for = follow_once(home, stop, emit).ok();
+        wait(pacer.next(up_for), stop);
     }
 }
 
-/// One connection: `Err` if it never reached the list, `Ok` once it ended after delivering it.
+/// One connection: `Err` if it never reached the list, `Ok` with how long it listened once it ended.
 fn follow_once(
     home: &Path,
     stop: &AtomicBool,
     emit: &dyn Fn(StatusUpdate),
-) -> Result<(), ClientError> {
+) -> Result<Duration, ClientError> {
     let client = Client::connect_host_in(home)?;
     // A host that does not publish status changes would leave the feed listening to nothing: leave it to the
     // checks the screen makes, and ask again later (the host may be updated).
@@ -58,6 +58,7 @@ fn follow_once(
     let events = client.subscribe()?;
     let offices = client.list_offices()?;
     emit(StatusUpdate::Offices { offices });
+    let listening = Instant::now();
     while !stop.load(Ordering::SeqCst) {
         match events.recv_timeout(LOOK) {
             Ok(event) => {
@@ -72,7 +73,7 @@ fn follow_once(
             Err(RecvTimeoutError::Disconnected) => break,
         }
     }
-    Ok(())
+    Ok(listening.elapsed())
 }
 
 #[cfg(test)]
@@ -87,7 +88,6 @@ mod tests {
     use std::io::BufReader;
     use std::os::unix::net::UnixListener;
     use std::sync::Mutex;
-    use std::time::{Duration, Instant};
 
     fn office(status: OfficeStatus) -> OfficeInfo {
         OfficeInfo {
