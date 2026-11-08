@@ -554,6 +554,16 @@ fn the_snapshot_has_the_owner_at_position_1_1_and_survives_a_restart() {
     let world = World::new();
     let mut first = create(&world);
     let client = Client::connect(socket(&world)).unwrap();
+    // The organization is read by a bound connection only.
+    assert_eq!(
+        api_code(
+            client
+                .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
+                .unwrap_err()
+        ),
+        org_proto::ErrorCode::NotAuthorized
+    );
+    bind(&client, token()).unwrap();
     let snapshot = client
         .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
         .unwrap();
@@ -573,6 +583,7 @@ fn the_snapshot_has_the_owner_at_position_1_1_and_survives_a_restart() {
     again.send(&start_message());
     assert!(matches!(again.event(), ServerEvent::Ready { .. }));
     let client = Client::connect(socket(&world)).unwrap();
+    bind(&client, token()).unwrap();
     let after = client
         .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
         .unwrap();
@@ -647,9 +658,19 @@ fn only_the_bound_app_changes_the_organization_and_what_it_changed_survives_a_re
     let command = command_id(1);
     let client = Client::connect(socket(&world)).unwrap();
 
-    // Anonymous, and bound with the wrong token: refused, nothing changes.
+    // Anonymous, and bound with the wrong token: refused, nothing changes. A garbled command is
+    // refused the same way (not told apart from a good one).
     let refused = team_create(&client, &command, "Platform").unwrap_err();
     assert_eq!(api_code(refused), org_proto::ErrorCode::NotAuthorized);
+    let garbled = client
+        .call::<org_proto::org::TeamCreate>(&org_proto::org::TeamCreateParams {
+            command_id: "not a ulid".into(),
+            team_id: String::new(),
+            name: String::new(),
+            owner_team_id: None,
+        })
+        .unwrap_err();
+    assert_eq!(api_code(garbled), org_proto::ErrorCode::NotAuthorized);
     let wrong = AppToken::from_bytes([0xA8; 32]);
     assert_eq!(
         api_code(bind(&client, wrong).unwrap_err()),
@@ -664,13 +685,14 @@ fn only_the_bound_app_changes_the_organization_and_what_it_changed_survives_a_re
             .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
             .unwrap()
     };
+    // The organization is read by a bound connection only.
+    bind(&client, token()).unwrap();
     assert_eq!(
         snapshot(&client).position,
         org_proto::org::Position { epoch: 1, seq: 1 }
     );
 
-    // The app's token: the command commits, and a retry is the same answer.
-    bind(&client, token()).unwrap();
+    // Bound as the app: the command commits, and a retry is the same answer.
     let accepted = team_create(&client, &command, "Platform").unwrap();
     assert_eq!(
         accepted.position,
@@ -696,8 +718,8 @@ fn only_the_bound_app_changes_the_organization_and_what_it_changed_survives_a_re
     again.send(&start_message());
     assert!(matches!(again.event(), ServerEvent::Ready { .. }));
     let client = Client::connect(socket(&world)).unwrap();
-    assert_eq!(snapshot(&client), after);
     bind(&client, token()).unwrap();
+    assert_eq!(snapshot(&client), after);
     assert_eq!(
         team_create(&client, &command, "Platform").unwrap(),
         accepted

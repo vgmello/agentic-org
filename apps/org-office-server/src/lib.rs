@@ -325,7 +325,18 @@ fn serve_office(
 /// fixed text.
 fn logged(what: &str, error: &OfficeError) -> String {
     eprintln!("org-office-server: {what} failed: {error}");
+    log_causes(error);
     error.to_string()
+}
+
+/// The causes behind a storage failure (a path, the OS error, SQLite's text) belong in the log
+/// and not on the pipe or the socket; they never hold the key or the token.
+fn log_causes(error: &OfficeError) {
+    let mut cause = std::error::Error::source(error);
+    while let Some(inner) = cause {
+        eprintln!("org-office-server:   caused by: {inner}");
+        cause = inner.source();
+    }
 }
 
 /// The office's socket path, or why it cannot be one.
@@ -355,13 +366,7 @@ fn fail(control: &mut ControlPipe, code: FailCode, message: &str) -> i32 {
 }
 
 fn fail_with(control: &mut ControlPipe, error: &OfficeError) -> i32 {
-    // The cause behind a storage failure (a path, the OS error, SQLite's text) belongs in the log
-    // and not on the pipe; it never holds the key or the token.
-    let mut cause = std::error::Error::source(error);
-    while let Some(inner) = cause {
-        eprintln!("org-office-server:   caused by: {inner}");
-        cause = inner.source();
-    }
+    log_causes(error);
     // `Display` never carries a path, SQL or a key.
     fail(control, fail_code(error), &error.to_string())
 }

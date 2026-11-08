@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use org_office::rules::OrgCommand;
 use org_proto::frame;
-use org_proto::msg::{MsgBind, MsgBindParams, MsgBindResult};
+use org_proto::msg::{MsgBind, MsgBindParams, MsgBindResult, MAX_HANDLE_BYTES, OFFICE_SENDER};
 use org_proto::org::{CommandAccepted, TeamCreate};
 use org_proto::{
     ApiError, AppToken, ErrorCode, Hello, HelloResult, OfficeHello, OfficeInfo, OfficeRole,
@@ -50,6 +50,11 @@ impl Binding {
     /// owner bound with it): the only kind that may send organization commands.
     fn is_app_bound(self) -> bool {
         self == Binding::App
+    }
+
+    /// Whether the connection is bound at all.
+    fn is_bound(self) -> bool {
+        self != Binding::Anonymous
     }
 }
 
@@ -245,6 +250,17 @@ fn serve_connection(stream: UnixStream, shared: &Shared) {
 
 fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response {
     if request.is::<OrgSnapshotCall>() {
+        // The whole organization: for a bound connection (the app; agents bind with messaging),
+        // like `who` and `subscribe`.
+        if !binding.is_bound() {
+            return Response::error(
+                request.id,
+                ApiError::new(
+                    ErrorCode::NotAuthorized,
+                    "bind before reading the organization",
+                ),
+            );
+        }
         return match (shared.ports.snapshot)() {
             Ok(snapshot) => Response::ok::<OrgSnapshotCall>(request.id, &snapshot)
                 .unwrap_or_else(|_| internal(request.id)),
@@ -293,7 +309,9 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
 }
 
 /// `msg.bind`, app-wide only for now: with the office's `app_token` and no member. Binding as a
-/// member is messaging's and arrives with it. Each call replaces the previous binding, and a
+/// member is messaging's and arrives with it; until then every member bind fails closed
+/// (`not_authorized`, the contract's answer to a lookup that fails) after the contract's
+/// input-only checks. Each call replaces the previous binding, and a
 /// failed one leaves the connection unbound.
 fn bind_connection(request: &Request, shared: &Shared, binding: &mut Binding) -> Response {
     *binding = Binding::Anonymous;
@@ -302,11 +320,24 @@ fn bind_connection(request: &Request, shared: &Shared, binding: &mut Binding) ->
         Err(_) => return bind_error(request.id, ErrorCode::InvalidRequest, "bad msg.bind params"),
     };
     let MsgBindParams { member, app_token } = params;
-    if member.is_some() {
+    // The contract's step 1, which needs no member lookup (`org_proto::msg::MsgBind`).
+    if let Some(member) = &member {
+        if member.len() > MAX_HANDLE_BYTES {
+            return bind_error(request.id, ErrorCode::TooLarge, "the member is too long");
+        }
+        if member.eq_ignore_ascii_case(OFFICE_SENDER) {
+            return bind_error(
+                request.id,
+                ErrorCode::InvalidRequest,
+                "a connection cannot bind as the office",
+            );
+        }
+        // Step 2: this office cannot resolve members yet (messaging's), which the contract
+        // treats as a failed lookup: it fails closed, whatever else the call sends.
         return bind_error(
             request.id,
-            ErrorCode::UnknownMethod,
-            "this office does not bind members yet",
+            ErrorCode::NotAuthorized,
+            "this office cannot bind this member",
         );
     }
     let Some(token) = app_token else {
@@ -441,6 +472,25 @@ mod tests {
         (stop, server)
     }
 
+    /// A connection bound as the app (it reads the organization), with nothing left unread.
+    fn connect_bound(path: &Path) -> UnixStream {
+        let mut stream = UnixStream::connect(path).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        let params = org_proto::msg::MsgBindParams {
+            member: None,
+            app_token: Some(token()),
+        };
+        let bind = Request::new::<org_proto::msg::MsgBind>(100, &params).unwrap();
+        frame::write_message(&mut stream, &bind).unwrap();
+        let answer = frame::read_message::<Response>(&mut BufReader::new(&stream))
+            .unwrap()
+            .unwrap();
+        assert!(matches!(answer.outcome, org_proto::Outcome::Result(_)));
+        stream
+    }
+
     fn snapshot_request(id: u64) -> Request {
         Request::new::<org_proto::OrgSnapshotCall>(id, &org_proto::Empty {}).unwrap()
     }
@@ -462,7 +512,7 @@ mod tests {
             }),
         );
         let (stop, server) = start(&path, &shared);
-        let mut client = UnixStream::connect(&path).unwrap();
+        let mut client = connect_bound(&path);
         frame::write_message(&mut client, &snapshot_request(1)).unwrap();
         inside.recv_timeout(Duration::from_secs(5)).unwrap();
 
@@ -484,7 +534,7 @@ mod tests {
         let path = dir.path().join("s.sock");
         let shared = shared_with(&path, Box::new(|| panic!("a bug in a handler")));
         let (stop, server) = start(&path, &shared);
-        let mut client = UnixStream::connect(&path).unwrap();
+        let mut client = connect_bound(&path);
         frame::write_message(&mut client, &snapshot_request(1)).unwrap();
         // The thread panics: the client sees the end of the stream, it does not hang.
         client
@@ -528,7 +578,7 @@ mod tests {
             }),
         );
         let (stop, server) = start(&path, &shared);
-        let mut client = UnixStream::connect(&path).unwrap();
+        let mut client = connect_bound(&path);
         client
             .set_read_timeout(Some(Duration::from_secs(10)))
             .unwrap();
@@ -776,13 +826,33 @@ mod tests {
         client.bind(None, Some(token()));
         assert_eq!(
             code_of(client.bind(Some("ana"), None)),
-            ErrorCode::UnknownMethod
+            ErrorCode::NotAuthorized
         );
         assert_eq!(code_of(client.team_create()), ErrorCode::NotAuthorized);
         client.bind(None, Some(token()));
         assert_eq!(
             code_of(client.bind(Some("owner"), Some(token()))),
-            ErrorCode::UnknownMethod
+            ErrorCode::NotAuthorized
+        );
+        // The input-only checks come first: the office is never a member, and a member over
+        // the limit is too large, whatever else the call sends.
+        for office in ["office", "OFFICE", "Office"] {
+            client.bind(None, Some(token()));
+            assert_eq!(
+                code_of(client.bind(Some(office), Some(token()))),
+                ErrorCode::InvalidRequest,
+                "{office}"
+            );
+            assert_eq!(code_of(client.team_create()), ErrorCode::NotAuthorized);
+        }
+        client.bind(None, Some(token()));
+        let long = "x".repeat(MAX_HANDLE_BYTES + 1);
+        assert_eq!(code_of(client.bind(Some(&long), None)), ErrorCode::TooLarge);
+        assert_eq!(code_of(client.team_create()), ErrorCode::NotAuthorized);
+        let longest = "x".repeat(MAX_HANDLE_BYTES);
+        assert_eq!(
+            code_of(client.bind(Some(&longest), None)),
+            ErrorCode::NotAuthorized
         );
         assert_eq!(code_of(client.team_create()), ErrorCode::NotAuthorized);
         client.bind(None, Some(token()));
@@ -845,6 +915,74 @@ mod tests {
             client.team_create(),
             org_proto::Outcome::Result(_)
         ));
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn every_organization_command_is_refused_to_a_connection_that_is_not_the_apps() {
+        use org_proto::org::*;
+        use org_proto::Call;
+        let methods = [
+            TeamCreate::METHOD,
+            TeamRename::METHOD,
+            TeamMove::METHOD,
+            TeamSetLead::METHOD,
+            TeamDelete::METHOD,
+            TeamAddMember::METHOD,
+            TeamRemoveMember::METHOD,
+            TeamSetTitle::METHOD,
+            MemberAddPerson::METHOD,
+            MemberUpdatePerson::METHOD,
+            MemberMove::METHOD,
+            MemberRemove::METHOD,
+            MemberSetReportsTo::METHOD,
+            ProjectAddTeam::METHOD,
+            ProjectRemoveTeam::METHOD,
+        ];
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (submitted, stop, server) = serving(&path, committed);
+        let mut client = Client::connect(&path);
+
+        for method in methods {
+            let request = |id| Request {
+                id,
+                method: method.to_owned(),
+                params: serde_json::json!({}),
+            };
+            assert_eq!(
+                code_of(client.ask(request)),
+                ErrorCode::NotAuthorized,
+                "{method}"
+            );
+        }
+
+        assert_eq!(submitted.load(Ordering::SeqCst), 0);
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn the_organization_is_read_only_by_a_bound_connection() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        // The fake office cannot read (`Err`), so reaching it shows as a storage error.
+        let (_submitted, stop, server) = serving(&path, committed);
+        let mut client = Client::connect(&path);
+
+        let snapshot = |id| snapshot_request(id);
+        assert_eq!(code_of(client.ask(snapshot)), ErrorCode::NotAuthorized);
+        // Hello stays open: a client learns what it is talking to before it binds.
+        assert!(matches!(
+            client.ask(|id| Request::new::<Hello>(id, &org_proto::Empty {}).unwrap()),
+            org_proto::Outcome::Result(_)
+        ));
+        client.bind(None, Some(token()));
+        assert_eq!(code_of(client.ask(snapshot)), ErrorCode::StorageError);
+        // A failed bind takes the right to read away too.
+        client.bind(None, None);
+        assert_eq!(code_of(client.ask(snapshot)), ErrorCode::NotAuthorized);
         stop.store(true, Ordering::SeqCst);
         server.join().unwrap();
     }
