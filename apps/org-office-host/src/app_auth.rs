@@ -5,19 +5,33 @@
 //! an app-only call, then `exec`s the signed app, so the host checks the app while the child
 //! reads the answer. `LOCAL_PEERTOKEN` gives the *current* audit token of the process that last
 //! touched the socket, and an `exec` keeps the pid but changes the audit token (its pid
-//! version). So, on every app-only call:
+//! version). Any touch, even a read or a zero-length write, moves it to the toucher. So, on
+//! every app-only call (handled on the connection's reader, which reads nothing more meanwhile):
 //! 1. The request must have been sent after the connection was accepted: its line starts at or
 //!    after the bytes already buffered then (`FIONREAD`, read right after the token at accept).
 //!    Bytes buffered earlier may have been written by the image the process `exec`ed away from.
-//! 2. The caller's audit token now must equal, byte for byte, the one taken at accept. A byte
+//! 2. Nothing may have arrived after the request's line: nothing buffered past it in the
+//!    reader, nothing waiting on the socket (`FIONREAD` 0).
+//! 3. The caller's audit token now must equal, byte for byte, the one taken at accept. A byte
 //!    written by another process (the child) or after an `exec` changes it.
-//! 3. That audit token gives the caller's code object (`SecCodeCopyGuestWithAttributes`), which
+//! 4. That audit token gives the caller's code object (`SecCodeCopyGuestWithAttributes`), which
 //!    must satisfy the app's designated requirement, built from the configured bundle id and
-//!    team id:
+//!    team id (a Developer ID Application certificate of that team only):
 //!
 //! ```text
-//! identifier "<bundle id>" and anchor apple generic and certificate leaf[subject.OU] = "<team id>"
+//! identifier "<bundle id>" and anchor apple generic
+//!   and certificate 1[field.1.2.840.113635.100.6.2.6] exists
+//!   and certificate leaf[field.1.2.840.113635.100.6.1.13] exists
+//!   and certificate leaf[subject.OU] = "<team id>"
 //! ```
+//!
+//! 5. The same code object's signing information (`SecCodeCopySigningInformation`) must show the
+//!    hardened runtime and none of the entitlements that let another process or library reach
+//!    into it ([`REJECTED_ENTITLEMENTS`]).
+//! 6. After the decision, checks 2 and 3 are made again, so nothing that happened while it was
+//!    taken slips through.
+//!
+//! Every check fails closed: any error refuses the call (`not_authorized`).
 //!
 //! An exec between the host's accept and its token sample can still slip through steps 1 and 2
 //! if it happens before the client sends anything: the defence is that the app answers only
@@ -26,18 +40,17 @@
 //! A request buffered before the accept is refused with `not_authorized`.
 //!
 //! With no team id configured, no signed app passes. Debug builds only (the code isn't even
-//! compiled into release builds) may also allow an unsigned development app instead of step 3:
-//! a caller running as this user whose executable is exactly the configured path.
+//! compiled into release builds) may also allow an unsigned development app instead of steps 4
+//! and 5: a caller running as this user whose executable is exactly the configured path (the
+//! app's executable, `Contents/MacOS/<exe>`, as `proc_pidpath` reports it), every use logged.
 
-use std::path::Path;
 #[cfg(debug_assertions)]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The desktop app's bundle id.
 pub const APP_BUNDLE_ID: &str = "com.ellosoft.agentic-org";
 
-/// A process's audit token (`audit_token_t`: eight 32-bit words).
-pub(crate) type AuditToken = [u8; 32];
+pub(crate) use crate::peer::AuditToken;
 
 /// What the policy needs to know about a caller. The real one asks the kernel and the Security
 /// framework about a connection; tests use fakes.
@@ -77,42 +90,49 @@ impl AppPolicy {
     /// The policy for `bundle_id` and `team_id`, and, in debug builds only, the development
     /// app `dev_app` (release builds ignore it). A bundle id, team id or development path that
     /// isn't well formed is an error, never a weaker policy.
-    pub(crate) fn new(
-        bundle_id: &str,
-        team_id: Option<&str>,
-        dev_app: Option<&Path>,
-    ) -> Result<Self, String> {
+    pub(crate) fn new(bundle_id: &str, team_id: Option<&str>) -> Result<Self, String> {
         let requirement = team_id
             .map(|team_id| designated_requirement(bundle_id, team_id))
             .transpose()?;
-        #[cfg(debug_assertions)]
-        let dev_app = match dev_app {
-            Some(path) if !path.is_absolute() => {
-                return Err(format!(
-                    "the development app path {} isn't absolute",
-                    path.display()
-                ))
-            }
-            Some(path) => Some(
-                path.canonicalize()
-                    .map_err(|e| format!("the development app path {}: {e}", path.display()))?,
-            ),
-            None => None,
-        };
-        #[cfg(not(debug_assertions))]
-        let _ = dev_app;
         Ok(Self {
             requirement,
             #[cfg(debug_assertions)]
-            dev_app,
+            dev_app: None,
         })
+    }
+
+    /// Debug builds only: also accept the unsigned development app at `path` (its executable).
+    /// A path that isn't absolute is an error. One that doesn't exist (yet: the app isn't built)
+    /// is logged, and the fallback stays off.
+    #[cfg(debug_assertions)]
+    pub(crate) fn with_dev_app(mut self, path: &Path) -> Result<Self, String> {
+        if !path.is_absolute() {
+            return Err(format!(
+                "the development app path {} isn't absolute",
+                path.display()
+            ));
+        }
+        match path.canonicalize() {
+            Ok(path) => self.dev_app = Some(path),
+            Err(e) => crate::host_log::log(&format!(
+                "the development fallback is off: the development app {} can't be found ({e}); \
+                 build the app, then restart the host",
+                path.display()
+            )),
+        }
+        Ok(self)
     }
 
     /// Whether `peer` may use the app-only calls.
     pub(crate) fn allows(&self, peer: &impl Peer) -> bool {
-        let allowed = self.decide(peer);
-        // Nothing may have arrived after the request while it was checked, either.
-        allowed && peer.nothing_after_request()
+        if !self.decide(peer) {
+            return false;
+        }
+        // Nothing may have happened while it was decided either: nothing arrived after the
+        // request, and the caller is still the process accepted.
+        peer.nothing_after_request()
+            && peer.accepted_token().is_some()
+            && peer.current_token() == peer.accepted_token()
     }
 
     fn decide(&self, peer: &impl Peer) -> bool {
@@ -258,9 +278,9 @@ pub(crate) fn hardened_and_clean(signing: &Signing) -> bool {
 pub(crate) struct SocketPeer<'a> {
     pub(crate) stream: &'a std::os::unix::net::UnixStream,
     /// What the host noted when it accepted the connection.
-    pub(crate) accepted: crate::service::listener::Accepted,
+    pub(crate) accepted: crate::peer::Accepted,
     /// Where the request's line was in the connection's stream when it was read.
-    pub(crate) received: crate::service::listener::Received,
+    pub(crate) received: crate::peer::Received,
 }
 
 #[cfg(target_os = "macos")]
@@ -273,7 +293,7 @@ impl Peer for SocketPeer<'_> {
         // The reader reads nothing more while an app-only call is handled (it runs inline), so
         // the bytes it had buffered past the line are still all there is besides the socket's.
         self.received.buffered_after == 0
-            && crate::service::listener::bytes_waiting(self.stream).is_ok_and(|n| n == 0)
+            && crate::peer::bytes_waiting(self.stream).is_ok_and(|n| n == 0)
     }
 
     fn accepted_token(&self) -> Option<AuditToken> {
@@ -293,7 +313,7 @@ impl Peer for SocketPeer<'_> {
 
     #[cfg(debug_assertions)]
     fn uid(&self) -> Option<u32> {
-        crate::service::listener::peer_uid(self.stream).ok()
+        crate::peer::peer_uid(self.stream).ok()
     }
 
     #[cfg(debug_assertions)]
@@ -422,6 +442,9 @@ mod tests {
         nothing_after: bool,
         accepted: Option<AuditToken>,
         current: Option<AuditToken>,
+        /// After this many reads of the current token, it changes (another process wrote).
+        swap_after: Option<usize>,
+        reads: std::cell::Cell<usize>,
         signed: bool,
         #[cfg(debug_assertions)]
         uid: u32,
@@ -440,7 +463,12 @@ mod tests {
             self.accepted
         }
         fn current_token(&self) -> Option<AuditToken> {
-            self.current
+            let reads = self.reads.get() + 1;
+            self.reads.set(reads);
+            match self.swap_after {
+                Some(after) if reads > after => Some([9; 32]),
+                _ => self.current,
+            }
         }
         fn satisfies(&self, _token: &AuditToken, _requirement: &str) -> bool {
             self.signed
@@ -463,6 +491,8 @@ mod tests {
             nothing_after: true,
             accepted: Some([7; 32]),
             current: Some([7; 32]),
+            swap_after: None,
+            reads: std::cell::Cell::new(0),
             signed,
             #[cfg(debug_assertions)]
             uid: crate::home::euid(),
@@ -498,13 +528,13 @@ mod tests {
     /// a caller whose code would satisfy any requirement.
     #[test]
     fn with_no_team_id_and_no_development_app_everyone_is_refused() {
-        let policy = AppPolicy::new(APP_BUNDLE_ID, None, None).unwrap();
+        let policy = AppPolicy::new(APP_BUNDLE_ID, None).unwrap();
         assert!(!policy.allows(&caller(true)));
     }
 
     #[test]
     fn a_signed_caller_passes() {
-        let policy = AppPolicy::new(APP_BUNDLE_ID, Some("AB12CD34EF"), None).unwrap();
+        let policy = AppPolicy::new(APP_BUNDLE_ID, Some("AB12CD34EF")).unwrap();
         assert!(policy.allows(&caller(true)));
         assert!(!policy.allows(&caller(false)));
     }
@@ -516,12 +546,15 @@ mod tests {
     fn a_caller_whose_audit_token_changed_since_accept_is_refused() {
         let mut swapped = caller(true);
         swapped.current = Some([8; 32]);
-        let signed = AppPolicy::new(APP_BUNDLE_ID, Some("AB12CD34EF"), None).unwrap();
+        let signed = AppPolicy::new(APP_BUNDLE_ID, Some("AB12CD34EF")).unwrap();
         assert!(!signed.allows(&swapped));
         #[cfg(debug_assertions)]
         {
             let me = std::env::current_exe().unwrap();
-            let dev = AppPolicy::new(APP_BUNDLE_ID, None, Some(&me)).unwrap();
+            let dev = AppPolicy::new(APP_BUNDLE_ID, None)
+                .unwrap()
+                .with_dev_app(&me)
+                .unwrap();
             assert!(!dev.allows(&swapped));
         }
         // And one whose token can't be read, then or now.
@@ -532,18 +565,54 @@ mod tests {
         assert!(!signed.allows(&unknown));
     }
 
+    /// Another process touches the connection after the decision was taken: the caller's audit
+    /// token changes between the decision and the answer. Refused by the final re-check.
+    #[test]
+    fn a_caller_whose_audit_token_changes_after_the_decision_is_refused() {
+        #[allow(unused_mut)] // Release builds have no development app.
+        let mut policies = vec![AppPolicy::new(APP_BUNDLE_ID, Some("AB12CD34EF")).unwrap()];
+        #[cfg(debug_assertions)]
+        {
+            let me = std::env::current_exe().unwrap();
+            policies.push(
+                AppPolicy::new(APP_BUNDLE_ID, None)
+                    .unwrap()
+                    .with_dev_app(&me)
+                    .unwrap(),
+            );
+        }
+        for policy in policies {
+            // How many times the decision alone reads the current token.
+            let unchanged = caller(true);
+            assert!(policy.decide(&unchanged));
+            let decision_reads = unchanged.reads.get();
+            // The token changes right after those reads: the decision still says yes...
+            let mut late = caller(true);
+            late.swap_after = Some(decision_reads);
+            assert!(policy.decide(&late));
+            // ...and the whole check says no.
+            let mut late = caller(true);
+            late.swap_after = Some(decision_reads);
+            assert!(!policy.allows(&late));
+            assert!(policy.allows(&caller(true)));
+        }
+    }
+
     /// A request already buffered when the connection was accepted: refused, though everything
     /// else checks out (it may have been written by the image the process `exec`ed away from).
     #[test]
     fn a_request_buffered_before_the_accept_is_refused() {
         let mut early = caller(true);
         early.sent_after_accept = false;
-        let signed = AppPolicy::new(APP_BUNDLE_ID, Some("AB12CD34EF"), None).unwrap();
+        let signed = AppPolicy::new(APP_BUNDLE_ID, Some("AB12CD34EF")).unwrap();
         assert!(!signed.allows(&early));
         #[cfg(debug_assertions)]
         {
             let me = std::env::current_exe().unwrap();
-            let dev = AppPolicy::new(APP_BUNDLE_ID, None, Some(&me)).unwrap();
+            let dev = AppPolicy::new(APP_BUNDLE_ID, None)
+                .unwrap()
+                .with_dev_app(&me)
+                .unwrap();
             assert!(!dev.allows(&early));
         }
     }
@@ -554,12 +623,15 @@ mod tests {
     fn a_request_with_anything_after_it_is_refused() {
         let mut followed = caller(true);
         followed.nothing_after = false;
-        let signed = AppPolicy::new(APP_BUNDLE_ID, Some("AB12CD34EF"), None).unwrap();
+        let signed = AppPolicy::new(APP_BUNDLE_ID, Some("AB12CD34EF")).unwrap();
         assert!(!signed.allows(&followed));
         #[cfg(debug_assertions)]
         {
             let me = std::env::current_exe().unwrap();
-            let dev = AppPolicy::new(APP_BUNDLE_ID, None, Some(&me)).unwrap();
+            let dev = AppPolicy::new(APP_BUNDLE_ID, None)
+                .unwrap()
+                .with_dev_app(&me)
+                .unwrap();
             assert!(!dev.allows(&followed));
         }
     }
@@ -628,11 +700,11 @@ mod tests {
         let (a, b) = std::os::unix::net::UnixStream::pair().unwrap();
         let peer = |stream, buffered_after| SocketPeer {
             stream,
-            accepted: crate::service::listener::Accepted {
+            accepted: crate::peer::Accepted {
                 token: None,
                 buffered: 0,
             },
-            received: crate::service::listener::Received {
+            received: crate::peer::Received {
                 sent_at: 0,
                 buffered_after,
             },
@@ -647,7 +719,10 @@ mod tests {
     #[test]
     fn the_development_fallback_needs_the_same_user_and_path() {
         let me = std::env::current_exe().unwrap();
-        let dev = AppPolicy::new(APP_BUNDLE_ID, None, Some(&me)).unwrap();
+        let dev = AppPolicy::new(APP_BUNDLE_ID, None)
+            .unwrap()
+            .with_dev_app(&me)
+            .unwrap();
         assert!(dev.allows(&caller(false)));
         let mut other_user = caller(false);
         other_user.uid = crate::home::euid().wrapping_add(1);
@@ -655,7 +730,27 @@ mod tests {
         let mut other_exe = caller(false);
         other_exe.executable = "/bin/sh".into();
         assert!(!dev.allows(&other_exe));
-        assert!(AppPolicy::new(APP_BUNDLE_ID, None, Some(Path::new("relative"))).is_err());
+        assert!(AppPolicy::new(APP_BUNDLE_ID, None)
+            .unwrap()
+            .with_dev_app(Path::new("relative"))
+            .is_err());
+    }
+
+    /// The development app isn't built yet: the host still starts, with the fallback off.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_development_app_that_isnt_built_leaves_the_fallback_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("Org.app/Contents/MacOS/Org");
+        let dev = AppPolicy::new(APP_BUNDLE_ID, None)
+            .unwrap()
+            .with_dev_app(&missing)
+            .unwrap();
+        assert!(dev.dev_app.is_none());
+        assert!(!dev.describe().iter().any(|line| line.contains("FALLBACK")));
+        let mut there = caller(false);
+        there.executable = missing;
+        assert!(!dev.allows(&there));
     }
 
     /// The real Security-framework path, both ways, on this test process's own audit token: a
@@ -684,16 +779,16 @@ mod tests {
         // Through the policy, as the host takes it: refused (not the app).
         let peer = SocketPeer {
             stream: &a,
-            accepted: crate::service::listener::Accepted {
+            accepted: crate::peer::Accepted {
                 token: Some(token),
                 buffered: 0,
             },
-            received: crate::service::listener::Received {
+            received: crate::peer::Received {
                 sent_at: 0,
                 buffered_after: 0,
             },
         };
-        let policy = AppPolicy::new(APP_BUNDLE_ID, Some("AB12CD34EF"), None).unwrap();
+        let policy = AppPolicy::new(APP_BUNDLE_ID, Some("AB12CD34EF")).unwrap();
         assert!(!policy.allows(&peer));
     }
 
@@ -705,11 +800,11 @@ mod tests {
         let (a, _b) = std::os::unix::net::UnixStream::pair().unwrap();
         let peer = |sent_at| SocketPeer {
             stream: &a,
-            accepted: crate::service::listener::Accepted {
+            accepted: crate::peer::Accepted {
                 token: None,
                 buffered: 10,
             },
-            received: crate::service::listener::Received {
+            received: crate::peer::Received {
                 sent_at,
                 buffered_after: 0,
             },

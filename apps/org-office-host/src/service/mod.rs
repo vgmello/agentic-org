@@ -19,7 +19,8 @@ use serde::Serialize;
 use crate::app_auth::AppPolicy;
 use crate::broadcast::{Broadcast, Subscriber};
 use crate::offices::{Offices, THIS_MAC};
-use listener::{Connection, Handler, Received, SecretLine};
+use crate::peer::Received;
+use listener::{Connection, Handler, SecretLine};
 
 pub(crate) struct Service {
     offices: Arc<Offices>,

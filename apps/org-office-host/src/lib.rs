@@ -26,7 +26,6 @@ mod host_log;
 mod ids;
 mod logs;
 mod offices;
-#[cfg(target_os = "macos")]
 mod peer;
 mod service;
 pub mod signals;
@@ -78,10 +77,13 @@ pub struct Config {
     /// The team id that signs the desktop app. Required for the app-only calls: with none,
     /// every caller is refused (`not_authorized`).
     pub app_team_id: Option<String>,
-    /// Debug builds only: an unsigned development app (this exact executable, run by this user)
-    /// that the app-only calls accept without a code signature. The binary sets it from the
-    /// build-time constant `ORG_DEV_APP_PATH`, never from run-time input; tests set it directly.
-    /// Ignored by release builds, and every use is logged.
+    /// Debug builds only (release builds don't have the field): an unsigned development app
+    /// (this exact executable, `Contents/MacOS/<exe>`, run by this user) that the app-only calls
+    /// accept without a code signature. The binary sets it from the build-time constant
+    /// `ORG_DEV_APP_PATH`, never from run-time input; tests set it directly. If the path doesn't
+    /// exist when the host starts (the app isn't built yet), that's logged and the fallback stays
+    /// off. Every use is logged.
+    #[cfg(debug_assertions)]
     pub dev_app_path: Option<PathBuf>,
 }
 
@@ -96,6 +98,7 @@ impl Config {
             max_connections: 64,
             app_bundle_id: APP_BUNDLE_ID.to_owned(),
             app_team_id: None,
+            #[cfg(debug_assertions)]
             dev_app_path: None,
         }
     }
@@ -127,17 +130,15 @@ impl Host {
         if !config.home.is_absolute() {
             return Err(HostError::RelativeHome { path: config.home });
         }
-        let app = AppPolicy::new(
-            &config.app_bundle_id,
-            config.app_team_id.as_deref(),
-            config.dev_app_path.as_deref(),
-        )
-        .map_err(|why| HostError::InvalidAppIdentity { why })?;
+        let app = AppPolicy::new(&config.app_bundle_id, config.app_team_id.as_deref());
+        #[cfg(debug_assertions)]
+        let app = app.and_then(|app| match &config.dev_app_path {
+            Some(path) => app.with_dev_app(path),
+            None => Ok(app),
+        });
+        let app = app.map_err(|why| HostError::InvalidAppIdentity { why })?;
         for line in app.describe() {
             host_log::log(&line);
-        }
-        if !cfg!(debug_assertions) && config.dev_app_path.is_some() {
-            host_log::log("the development app path is ignored: this is a release build");
         }
         let layout = Layout::new(&config.home);
         layout.check_socket_paths()?;

@@ -317,7 +317,7 @@ fn servers_get_only_the_allowed_environment() {
         "TMPDIR",
         "LANG",
         "ORG_OFFICE_HOME",
-        // Debug builds only (these tests run the debug host).
+        // Debug builds only (checked below).
         "ORG_OFFICE_DEV_KEY_DIR",
     ];
     let runs = home.env_names(A);
@@ -325,11 +325,17 @@ fn servers_get_only_the_allowed_environment() {
     for names in runs {
         assert!(names.iter().any(|n| n == "ORG_OFFICE_HOME"), "{names:?}");
         assert!(!names.iter().any(|n| n == CANARY), "the canary got through");
-        // The debug host passes a dev-keys server its key folder.
-        assert!(
-            names.iter().any(|n| n == "ORG_OFFICE_DEV_KEY_DIR"),
-            "the dev key folder wasn't passed on: {names:?}"
-        );
+        // The test host is given a dev key folder (see `spawn_host`). A debug host passes it on
+        // to a dev-keys server; a release host never does.
+        let dev_keys = names.iter().any(|n| n == "ORG_OFFICE_DEV_KEY_DIR");
+        if cfg!(debug_assertions) {
+            assert!(dev_keys, "the dev key folder wasn't passed on: {names:?}");
+        } else {
+            assert!(
+                !dev_keys,
+                "a release host passed the dev key folder on: {names:?}"
+            );
+        }
         for name in names.iter().filter(|n| !n.is_empty()) {
             assert!(allowed.contains(&name.as_str()), "{name} was passed on");
         }

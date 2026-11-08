@@ -20,9 +20,9 @@ use org_proto::frame::{self, FrameError};
 use org_proto::{salvage_id, ApiError, ErrorCode, Event, Request, Response, UNREADABLE_REQUEST_ID};
 use serde_json::Value;
 
-use crate::app_auth::AuditToken;
 use crate::cloexec::SPAWN_LOCK;
 use crate::host_log;
+use crate::peer::{peer_uid, Accepted, Received};
 use crate::sync::lock;
 
 /// How long the accept thread waits for a connection before checking whether to stop.
@@ -46,16 +46,6 @@ pub(crate) trait Handler: Send + Sync + 'static {
         let _ = request;
         false
     }
-}
-
-/// Where a request's line was in the connection's stream when the reader read it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Received {
-    /// The byte offset where the line began.
-    pub(crate) sent_at: u64,
-    /// The bytes the reader had already buffered past the line (none means nothing more had
-    /// reached the host's buffer; the socket may still hold some, see [`bytes_waiting`]).
-    pub(crate) buffered_after: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -92,41 +82,6 @@ pub(crate) fn bind(path: &Path) -> Result<UnixListener, BindError> {
     };
     fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(BindError::Io)?;
     Ok(listener)
-}
-
-/// The uid of the process at the other end of a Unix socket.
-pub(crate) fn peer_uid(stream: &UnixStream) -> io::Result<u32> {
-    #[cfg(not(target_os = "linux"))]
-    {
-        let (mut uid, mut gid) = (0, 0);
-        // SAFETY: a valid socket fd and two valid out-pointers.
-        let rc = unsafe { libc::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) };
-        if rc == 0 {
-            Ok(uid)
-        } else {
-            Err(io::Error::last_os_error())
-        }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        // SAFETY: zeroed ucred is valid; getsockopt writes at most `len` bytes into it.
-        let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
-        let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
-        let rc = unsafe {
-            libc::getsockopt(
-                stream.as_raw_fd(),
-                libc::SOL_SOCKET,
-                libc::SO_PEERCRED,
-                (&mut cred as *mut libc::ucred).cast(),
-                &mut len,
-            )
-        };
-        if rc == 0 {
-            Ok(cred.uid)
-        } else {
-            Err(io::Error::last_os_error())
-        }
-    }
 }
 
 /// Whether the peer runs as `expected_uid` (defence in depth: `host.sock` is already 0600 in
@@ -272,41 +227,6 @@ fn accept_loop(
         if let Ok(reader) = reader {
             table.insert(id, Live { connection, reader });
         }
-    }
-}
-
-/// What the host notes about a client as it accepts its connection, for the app-only calls
-/// (`app_auth`): its audit token, taken first, then how many bytes it had already sent. A byte
-/// buffered before the token was taken may come from a process image that was replaced since
-/// (the exec swap), so an app-only call is accepted only from a request line that starts at or
-/// after `buffered`.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct Accepted {
-    pub(crate) token: Option<AuditToken>,
-    pub(crate) buffered: u64,
-}
-
-impl Accepted {
-    pub(crate) fn sample(stream: &UnixStream) -> Self {
-        #[cfg(target_os = "macos")]
-        let token = crate::peer::audit_token(stream).ok();
-        #[cfg(not(target_os = "macos"))]
-        let token = None;
-        // After the token: anything sent before it was taken is counted as buffered.
-        let buffered = bytes_waiting(stream).unwrap_or(u64::MAX);
-        Self { token, buffered }
-    }
-}
-
-/// How many bytes are waiting to be read on `stream` (`FIONREAD`).
-pub(crate) fn bytes_waiting(stream: &UnixStream) -> io::Result<u64> {
-    let mut waiting: libc::c_int = 0;
-    // SAFETY: a valid socket fd, and an out-value of the size FIONREAD writes.
-    let rc = unsafe { libc::ioctl(stream.as_raw_fd(), libc::FIONREAD, &mut waiting) };
-    if rc == 0 {
-        Ok(u64::try_from(waiting).unwrap_or(0))
-    } else {
-        Err(io::Error::last_os_error())
     }
 }
 

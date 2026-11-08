@@ -10,9 +10,11 @@
 //! `--server-bin` the office server program (otherwise `org-office-server` next to this one);
 //! both are for development and tests. `--app-team-id` is the team id that signs the desktop
 //! app: without it, `office.app_token` and `office.restart` refuse every caller.
-//! A debug build may accept one unsigned development app for those calls: its path is the
-//! build-time constant `ORG_DEV_APP_PATH` (set when the host is compiled), never read from the
-//! command line, a config file or the environment at run time. Release builds have no such path.
+//! A debug build may accept one unsigned development app for those calls: the path of its
+//! executable (`Contents/MacOS/<exe>`) is the build-time constant `ORG_DEV_APP_PATH` (set when
+//! the host is compiled), never read from the command line, a config file or the environment at
+//! run time. If it doesn't exist when the host starts, the fallback is off (logged). Release
+//! builds have no such path.
 
 use std::path::PathBuf;
 use std::process::ExitCode;

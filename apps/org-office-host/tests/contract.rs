@@ -13,7 +13,7 @@
 mod support;
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -103,11 +103,17 @@ fn the_app_gets_the_token_its_office_was_started_with() {
 fn a_caller_that_isnt_the_app_is_refused() {
     let home = TestHome::new();
     home.write_office(&hq(A, "01ORGA", "Acme", T));
-    // Another executable is the allowed development app; this test process isn't it. Then, no
-    // development app and no team id: nobody.
-    let mut other = home.config();
-    other.dev_app_path = Some(PathBuf::from("/bin/sh"));
-    for config in [other, home.config()] {
+    // No development app and no team id: nobody. Debug builds also try another executable as the
+    // allowed development app (this test process isn't it), and one that isn't built yet.
+    #[allow(unused_mut)]
+    let mut configs = vec![home.config()];
+    #[cfg(debug_assertions)]
+    for dev_app in ["/bin/sh", "/nonexistent/Org.app/Contents/MacOS/Org"] {
+        let mut config = home.config();
+        config.dev_app_path = Some(std::path::PathBuf::from(dev_app));
+        configs.push(config);
+    }
+    for config in configs {
         // The same home, one host after another.
         let host = support::restart_host(&config);
         wait_for_state(host.socket_path(), A, OfficeStatus::Active, None);
@@ -233,6 +239,18 @@ fn restart_follows_the_contract() {
 fn every_way_a_start_ends_has_its_reason() {
     use OfficeStatus::{Offline, Unavailable};
     use OfficeStatusReason as R;
+    // The ready timeout is short only where the case needs it to pass (a server that hangs, or
+    // lingers after a non-fatal `failed`). Elsewhere it is long, so a slow first launch of the
+    // fake server under load can't turn into `start_timeout`.
+    let ready_timeout = |step: &Value| {
+        if step.get("do") == Some(&json!("hang")) {
+            Duration::from_secs(1)
+        } else if step.get("linger") == Some(&json!(true)) {
+            Duration::from_secs(4)
+        } else {
+            WAIT
+        }
+    };
     let cases = [
         (json!({"do": "crash"}), Offline, R::Crashed),
         (
@@ -276,9 +294,9 @@ fn every_way_a_start_ends_has_its_reason() {
     for (step, status, reason) in cases {
         let home = TestHome::new();
         home.write_office(&hq(A, "01ORGA", "Acme", T));
-        home.script(json!({ A: step }));
+        home.script(json!({ A: step.clone() }));
         let mut config = home.config();
-        config.timings.ready_timeout = Duration::from_millis(600);
+        config.timings.ready_timeout = ready_timeout(&step);
         // Long enough to see the office offline, waiting for its restart.
         config.timings.backoff_initial = Duration::from_secs(5);
         let host = Host::start(config).unwrap();

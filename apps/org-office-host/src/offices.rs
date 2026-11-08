@@ -738,4 +738,71 @@ mod tests {
         let ran = fs::read_to_string(home.join("ran")).unwrap_or_default();
         assert_eq!(ran, "--discard UNFINISHED\n");
     }
+
+    const OFFICE: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
+
+    fn hq() -> OfficeFile {
+        OfficeFile::new(
+            OFFICE,
+            "HQ",
+            org_proto::OfficeRole::Hq,
+            "01ORGA",
+            "Acme",
+            "2026-11-08T00:00:00.000Z",
+        )
+    }
+
+    /// Offices over `catalog` in `home`, whose server program doesn't exist (nothing here needs
+    /// it to run). With `stopped`, the supervisor is shut down first, so it can't start anything.
+    fn offices(home: &Path, catalog: Catalog, stopped: bool) -> Arc<Offices> {
+        let supervisor = Supervisor::new(SupervisorConfig {
+            program: home.join("no-such-server"),
+            home: home.to_path_buf(),
+            logs_dir: home.join("logs"),
+            log_max_bytes: 1024,
+            timings: Timings::default(),
+        });
+        if stopped {
+            supervisor.shutdown();
+        }
+        let broadcast = Arc::new(Broadcast::default());
+        Offices::start(
+            home,
+            catalog,
+            Vec::new(),
+            supervisor,
+            broadcast,
+            &Timings::default(),
+        )
+    }
+
+    /// `office.restart` on an office the host couldn't supervise, when it still can't: listed
+    /// `unavailable`, and the restart answers `unavailable` too.
+    #[test]
+    fn restarting_an_office_the_host_still_cant_supervise_is_unavailable() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut catalog = Catalog::default();
+        catalog.insert(hq());
+        let offices = offices(dir.path(), catalog, true);
+        assert_eq!(offices.state_of(OFFICE).status, OfficeStatus::Unavailable);
+        let err = offices.restart_office(OFFICE).unwrap_err();
+        assert_eq!(err.code, ErrorCode::Unavailable);
+        assert!(offices.supervisor.state(OFFICE).is_none());
+        offices.shutdown();
+    }
+
+    /// `office.restart` on an office the host doesn't supervise, when it now can: supervision
+    /// starts. (The office is put in the catalog after the start, so supervision never began for
+    /// it: the state an office is left in when the host couldn't supervise it.)
+    #[test]
+    fn restarting_an_office_the_host_couldnt_supervise_starts_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let offices = offices(dir.path(), Catalog::default(), false);
+        lock(&offices.catalog).insert(hq());
+        assert!(offices.supervisor.state(OFFICE).is_none());
+        assert_eq!(offices.state_of(OFFICE).status, OfficeStatus::Unavailable);
+        offices.restart_office(OFFICE).unwrap();
+        assert!(offices.supervisor.state(OFFICE).is_some());
+        offices.shutdown();
+    }
 }
