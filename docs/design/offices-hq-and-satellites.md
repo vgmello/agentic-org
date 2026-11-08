@@ -142,13 +142,13 @@ Agents run on their office's machine and talk only to that office, through the l
      - The satellite pins HQ's office id and accepts only a server certificate with role HQ for that id. So no satellite can pose as HQ.
    - Certificates last one year and renew automatically over the authenticated connection.
 5. HQ sends a snapshot, the stream starts, and the entry becomes `active`.
-6. **Removing an office** revokes its certificate (the revocation list is copied data), so it can't sync again. An offline machine keeps whatever copy it already had until it next connects, when it's told to delete it. HQ can't force that.
+6. **Removing an office** revokes its certificate (the revocation list is copied data), so it can't sync again. HQ reclaims its tasks (see Reclaim), and its agents become **unplaced**: the owner places each one in another office, or offboards it. An offline machine keeps whatever copy it already had until it next connects, when it's told to delete it. HQ can't force that.
 
 ## The invitation link
 *(The user, 2026-11-08: a link that HQ generates, which the owner copies and opens on the other machine. This section's details are **proposed**, awaiting the user's confirmation.)*
 - **Shape:** `agenticorg://join#<token>`.
-  - agentic.org registers the `agenticorg` URL scheme. Opening the link opens agentic.org at **Open organization**, with the details **filled in, never joined automatically**. The owner sees the organization's name and HQ's address and must confirm, so a hostile link can't quietly enroll a Mac into someone else's organization.
-    - The confirmation says plainly that **joining lets that organization run its agents on this Mac**.
+  - agentic.org registers the `agenticorg` URL scheme. Opening the link opens agentic.org at **Open organization → Join with a link** (the other path there opens an organization this Mac already has), with the details **filled in, never joined automatically**. The owner sees the organization's name and HQ's address and must confirm, so a hostile link can't quietly enroll a Mac into someone else's organization.
+    - The confirmation says plainly that **joining lets that organization run its agents on this Mac**: until v2, agents run as you, so they can read and change your files, use your apps and network, and act on your behalf. Only join organizations you own.
     - It flags a name that matches an organization this Mac already knows under a different id.
   - The token is in the fragment (after `#`), so it isn't sent to a server if the link passes through a browser, and the app never logs it. A browser may still keep it in history, so **pasting it into the app is the recommended way**.
   - The same token can be pasted into the app as text.
@@ -166,9 +166,10 @@ Agents run on their office's machine and talk only to that office, through the l
   - **HQ keeps only the public half** of the invitation key, in its encrypted `office.db`. A leaked HQ database can't be used to join.
   - **The secret never crosses the network.** The joining office connects with TLS, pins HQ by **HQ's office id and the CA fingerprint** from the link, and signs the TLS session's exporter value (channel binding, RFC 9266) with the invitation key. Someone watching the network learns nothing, and a fake HQ can't reuse the proof.
   - **The owner approves every join at HQ, by typing a check code.**
-    - The joining machine shows a short code, derived from the TLS session and its public key.
+    - The joining machine shows a short code, derived from **the invitation id and its public key**, so it stays the same if the connection restarts. It's 8 characters from an alphabet without look-alike letters (Crockford base32), shown as two groups of four. The proof itself is still bound to the TLS session (above).
     - HQ shows the joining machine's name and IP, and the owner **types that code** at HQ to approve, rather than just clicking. A thief holding a stolen link can't produce a code the owner sees on their own machine.
-    - Rejecting a join cancels the invitation.
+    - Rejecting a join cancels the invitation, and so do **three wrong codes** in a row.
+    - In phase 3, adding an office and approving a join happen in the app on **HQ's Mac**.
   - **Single use, short expiry, cancellable:** the owner can cancel a pending invitation in the app. Failed attempts are rate-limited per source address, without using up the invitation.
   - **The joining office makes its own key pair first.** Its certificate request travels in the same TLS session as the proof, and the check code covers that request's public key. So what the owner approves is exactly the key that gets certified (Provisioning step 4).
 - **"Internally encrypted", honestly:** everything the joiner needs travels in the link, so encrypting the token with a key in that same link would add nothing, and signing it wouldn't help either, because the joiner gets the checking key from the same link. The link's integrity rests on how the owner sends it: a private message, not a public channel. The real protections are the one-time key that never crosses the wire, the pinned HQ identity, and the owner's check-code approval.
