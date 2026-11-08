@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { OfficeInfo } from '$lib/proto';
+import type { OfficeInfo, OfficeStatusReason } from '$lib/proto';
 import { sampleOrg } from '$lib/org/sample';
-import { agentsIn, displayStatus, displayStatusFor, isHere, orderOffices, roleInfo, rowLabel, secondaryText, statusIcon, statusInfo, unplacedAgents } from './model';
+import { agentsIn, copyDetails, displayStatus, displayStatusFor, isHere, orderOffices, roleInfo, rowLabel, secondaryText, statusIcon, statusInfo, unplacedAgents, whyStopped } from './model';
 
 const office = (id: string, name: string, over: Partial<OfficeInfo> = {}): OfficeInfo => ({
 	id,
@@ -137,5 +137,39 @@ describe('OFC-12 which office is verified', () => {
 		expect(displayStatusFor('hq', 'hq', 'up')).toBe('active');
 		expect(displayStatusFor('office-2', 'hq', 'up')).toBe('status_unknown');
 		expect(displayStatusFor('office-2', 'hq', 'down')).toBe('status_unknown');
+	});
+});
+
+describe('OFC-11..13 why an office stopped', () => {
+	const NOW = new Date('2026-11-08T12:00:00.000Z');
+	const stopped = (status_reason?: OfficeStatusReason, next_restart_at?: string, status: OfficeInfo['status'] = 'offline') => ({ status, status_reason, next_restart_at });
+
+	it('gives each reason its words, and "It isn’t running" when the host does not know why', () => {
+		expect(whyStopped(stopped('crashed'), NOW)).toBe('It stopped unexpectedly');
+		expect(whyStopped(stopped('start_timeout', undefined, 'unavailable'), NOW)).toBe("It didn't start in time");
+		expect(whyStopped(stopped('key_missing', undefined, 'unavailable'), NOW)).toContain('data key is missing');
+		expect(whyStopped(stopped('stopped_by_owner', undefined, 'unavailable'), NOW)).toBe('You stopped it');
+		expect(whyStopped(stopped(undefined, undefined, 'unavailable'), NOW)).toBe("It isn't running");
+	});
+
+	it('ends with the countdown while a restart is pending, and "Trying again" for in_use', () => {
+		expect(whyStopped(stopped('crashed', '2026-11-08T12:00:20.000Z'), NOW)).toBe('It stopped unexpectedly. Restarting in 20 s');
+		expect(whyStopped(stopped('in_use', '2026-11-08T12:00:07.200Z'), NOW)).toBe('Its data is still in use by another Agentic Org process. Trying again in 8 s');
+		expect(whyStopped(stopped(undefined, '2026-11-08T12:00:05.000Z'), NOW)).toBe("It isn't running. Restarting in 5 s");
+		// A time in the past counts down to 0, never negative; junk is ignored.
+		expect(whyStopped(stopped('crashed', '2026-11-08T11:59:00.000Z'), NOW)).toBe('It stopped unexpectedly. Restarting in 0 s');
+		expect(whyStopped(stopped('crashed', 'soon'), NOW)).toBe('It stopped unexpectedly');
+	});
+
+	it('only an office the host reports offline or unavailable has a reason line', () => {
+		for (const status of ['active', 'starting', 'pending', 'update_needed'] as const) expect(whyStopped(stopped('crashed', undefined, status), NOW)).toBeUndefined();
+		expect(whyStopped({ status: undefined, status_reason: 'crashed' }, NOW)).toBeUndefined();
+	});
+
+	it('copies the office, status, reason, time and app version, never a key', () => {
+		const o = { id: 'o1', organization_id: 'org', name: 'HQ', host: 'This Mac', status: 'unavailable', status_reason: 'key_missing' } as OfficeInfo;
+		const text = copyDetails(o, 'Stopped', NOW, '0.1.0');
+		expect(text).toBe(['Office: HQ', 'Id: o1', 'Status: Stopped', 'Reason: key_missing', 'Time: 2026-11-08T12:00:00.000Z', 'Agentic Org: 0.1.0'].join('\n'));
+		expect(text.toLowerCase()).not.toContain('token');
 	});
 });

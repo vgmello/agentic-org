@@ -15,6 +15,19 @@ export type OfficeStatus =
 	| 'unknown';
 
 /** An office: a node of one organization, run by its own server process. */
+/** Why an office is not running (`org_proto::OfficeStatusReason`); a reason this build doesn't know reads as `unknown`. */
+export type OfficeStatusReason =
+	| 'key_missing'
+	| 'in_use'
+	| 'storage_error'
+	| 'invalid_request'
+	| 'unsupported_version'
+	| 'crashed'
+	| 'start_timeout'
+	| 'restarts_exhausted'
+	| 'stopped_by_owner'
+	| 'unknown';
+
 export interface OfficeInfo {
 	id: string;
 	organization_id: string;
@@ -25,6 +38,10 @@ export interface OfficeInfo {
 	/** How to reach it from this machine, when it is on this machine. */
 	endpoint?: string;
 	status?: OfficeStatus;
+	/** Why it is `offline` or `unavailable`, when the host knows (`office.status_changed` capability). */
+	status_reason?: OfficeStatusReason;
+	/** RFC 3339: when the host will start it again, while it is `offline` with a restart pending. */
+	next_restart_at?: string;
 }
 
 /** Set when an office server answers `hello`. */
@@ -92,6 +109,8 @@ export const API_ERROR_CODES = [
 	'unknown_recipient',
 	'not_authorized',
 	'unavailable',
+	// The host is still starting (its startup discards are running): retry shortly.
+	'not_ready',
 	// org_proto::work (ada/proto-work-p1 @ 495ccff): the connection is not bound to a member; a write over the size limit;
 	// required checklist steps are not done.
 	'not_bound',

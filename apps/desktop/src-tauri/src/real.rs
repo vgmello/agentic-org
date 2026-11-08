@@ -30,12 +30,19 @@ use std::time::{Duration, Instant};
 // Longer than the plist's ThrottleInterval (10 s), so a host that crashed once is back inside it.
 const HOST_START_WAIT: Duration = Duration::from_secs(15);
 const HOST_START_POLL: Duration = Duration::from_millis(200);
+/// How long a host call that answers `not_ready` (the host is still starting) is retried, backing off from 0.5 s to 5 s.
+const NOT_READY_WAIT: Duration = Duration::from_secs(60);
+const NOT_READY_FIRST_PAUSE: Duration = Duration::from_millis(500);
+const NOT_READY_LONGEST_PAUSE: Duration = Duration::from_secs(5);
 
 pub struct RealOffice {
     home: PathBuf,
     /// The login service the host runs under: turned on when the host isn't there.
     login: Arc<dyn LoginService>,
     start_wait: Duration,
+    /// How long a call answered `not_ready` is retried, and the first pause between tries (it doubles up to 5 s).
+    not_ready_wait: Duration,
+    not_ready_pause: Duration,
     host: Mutex<Option<Arc<Client>>>,
     /// Open connections to HQ offices, by office id.
     offices: Mutex<HashMap<String, Arc<Client>>>,
@@ -69,6 +76,9 @@ fn failure_words(e: &ClientError) -> &'static str {
             "The app can't reach that office on this Mac."
         }
         ClientError::Protocol(_) => "The office sent an answer the app couldn't read.",
+        ClientError::Api(api) if api.code == ErrorCode::NotReady => {
+            "The office host is still starting. Try again in a moment."
+        }
         _ => "The office host isn't answering.",
     }
 }
@@ -80,6 +90,8 @@ fn failure_words(e: &ClientError) -> &'static str {
 /// there: start it again" (see `with_restart`).
 fn api_error(e: ClientError) -> ApiError {
     let code = match &e {
+        // The host is still starting and the wait for it ran out: not an error to restart over.
+        ClientError::Api(api) if api.code == ErrorCode::NotReady => ErrorCode::Unavailable,
         ClientError::Api(api) => return api.clone(),
         ClientError::RequestTooLarge => ErrorCode::InvalidRequest,
         ClientError::NoOfficeHome
@@ -145,6 +157,8 @@ impl RealOffice {
             home,
             login,
             start_wait: HOST_START_WAIT,
+            not_ready_wait: NOT_READY_WAIT,
+            not_ready_pause: NOT_READY_FIRST_PAUSE,
             host: Mutex::new(None),
             offices: Mutex::new(HashMap::new()),
             hq: Mutex::new(HashMap::new()),
@@ -259,16 +273,36 @@ impl RealOffice {
         f: impl Fn(&Client) -> Result<T, ClientError>,
     ) -> Result<T, ClientError> {
         let client = self.host()?;
-        match f(&client) {
+        match self.until_ready(|| f(&client)) {
             Err(e) if dead(&e) => {
                 self.forget_host(Some(&client));
                 if again {
-                    f(&*self.host()?)
+                    let client = self.host()?;
+                    self.until_ready(|| f(&client))
                 } else {
                     Err(e)
                 }
             }
             other => other,
+        }
+    }
+
+    /// Run `f`; while the host answers `not_ready` (its startup discards are still running; nothing was done), wait and
+    /// run it again, backing off, for up to `not_ready_wait`. Safe for every host call, creating an organization included:
+    /// `not_ready` means the call was not carried out.
+    fn until_ready<T>(&self, f: impl Fn() -> Result<T, ClientError>) -> Result<T, ClientError> {
+        let deadline = Instant::now() + self.not_ready_wait;
+        let mut pause = self.not_ready_pause;
+        loop {
+            match f() {
+                Err(ClientError::Api(api))
+                    if api.code == ErrorCode::NotReady && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(pause);
+                    pause = (pause * 2).min(NOT_READY_LONGEST_PAUSE);
+                }
+                other => return other,
+            }
         }
     }
 
@@ -524,6 +558,8 @@ mod tests {
         asked: Arc<Mutex<Vec<String>>>,
         /// How many requests the host has answered or refused to.
         host_requests: Arc<AtomicUsize>,
+        /// How many more times the host answers `organization.list` / `organization.create` with `not_ready`.
+        not_ready: Arc<AtomicUsize>,
     }
 
     /// `host_hangs_up_on_request`: the host closes the connection on its Nth request (0: never).
@@ -537,6 +573,8 @@ mod tests {
         std::fs::create_dir_all(home.path().join("run")).unwrap();
         let asked = Arc::new(Mutex::new(Vec::new()));
         let host_requests = Arc::new(AtomicUsize::new(0));
+        let not_ready = Arc::new(AtomicUsize::new(0));
+        let host_not_ready = Arc::clone(&not_ready);
         let organization = Organization {
             id: "org1".into(),
             name: "Acme".into(),
@@ -565,6 +603,13 @@ mod tests {
                         },
                     )
                     .unwrap(),
+                    "organization.list" | "organization.create"
+                        if host_not_ready
+                            .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                            .is_ok() =>
+                    {
+                        Response::error(r.id, ApiError::new(ErrorCode::NotReady, "starting"))
+                    }
                     "organization.list" => Response::ok::<OrganizationList>(
                         r.id,
                         &ListOrganizationsResult {
@@ -624,6 +669,7 @@ mod tests {
             home,
             asked,
             host_requests,
+            not_ready,
         }
     }
 
@@ -1144,5 +1190,46 @@ mod tests {
         assert_eq!(code, SetupErrorCode::TurnedOff);
         assert!(message.contains("Turn it on"), "{message}");
         assert_eq!(login.register_calls.load(Ordering::SeqCst), 0);
+    }
+
+    fn quick(f: &Fake, wait_ms: u64) -> RealOffice {
+        let mut office = real(f);
+        office.not_ready_wait = Duration::from_millis(wait_ms);
+        office.not_ready_pause = Duration::from_millis(5);
+        office
+    }
+
+    #[test]
+    fn a_host_that_is_still_starting_is_asked_again_until_it_answers() {
+        let f = fake(OfficeStatus::Active, 0);
+        f.not_ready.store(3, Ordering::SeqCst);
+        let office = quick(&f, 5000);
+        assert_eq!(office.list_organizations().unwrap()[0].name, "Acme");
+        assert_eq!(
+            f.not_ready.load(Ordering::SeqCst),
+            0,
+            "all three not_ready answers were used up"
+        );
+    }
+
+    #[test]
+    fn creating_an_organization_waits_out_not_ready_and_creates_it_once() {
+        let f = fake(OfficeStatus::Active, 0);
+        f.not_ready.store(2, Ordering::SeqCst);
+        let office = quick(&f, 5000);
+        assert_eq!(office.create_organization("Acme 2").unwrap().id, "org1");
+        // hello (connect), hello (check), create x3 (2 refused + 1 done).
+        assert_eq!(f.host_requests.load(Ordering::SeqCst), 5);
+    }
+
+    #[test]
+    fn a_host_that_stays_not_ready_gives_up_as_unavailable_not_as_a_reason_to_restart() {
+        let f = fake(OfficeStatus::Active, 0);
+        f.not_ready.store(1_000_000, Ordering::SeqCst);
+        let started = Instant::now();
+        let err = quick(&f, 150).list_organizations().unwrap_err();
+        assert_eq!(err.code, ErrorCode::Unavailable);
+        assert!(err.message.contains("still starting"), "{}", err.message);
+        assert!(started.elapsed() >= Duration::from_millis(150));
     }
 }

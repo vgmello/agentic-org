@@ -3,7 +3,9 @@
 	import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '$lib/components/ui/sheet';
 	import OfficeStatusBadge from './OfficeStatusBadge.svelte';
 	import { Badge } from '$lib/components/ui/badge';
-	import { agentsIn, roleInfo, secondaryText, type DisplayStatus } from '$lib/offices/model';
+	import { toast } from 'svelte-sonner';
+	import pkg from '../../../package.json';
+	import { agentsIn, copyDetails, roleInfo, secondaryText, statusInfo, type DisplayStatus } from '$lib/offices/model';
 	import type { OfficeInfo, OrgSnapshot } from '$lib/proto';
 
 	let {
@@ -13,7 +15,9 @@
 		status,
 		counting = false,
 		sample = false,
-		here = false
+		here = false,
+		why,
+		now = new Date()
 	}: {
 		open: boolean;
 		office: OfficeInfo | undefined;
@@ -26,9 +30,22 @@
 		sample?: boolean;
 		/** This is the office the app is connected to. */
 		here?: boolean;
+		/** Why the office is stopped, when the host says it is (spec §3.3). */
+		why?: string;
+		now?: Date;
 	} = $props();
 
 	const agents = $derived(office && snapshot ? agentsIn(snapshot, office.id) : []);
+
+	async function copy() {
+		if (!office) return;
+		try {
+			await navigator.clipboard.writeText(copyDetails(office, statusInfo(status).label, new Date(), pkg.version));
+			toast.success('Copied the details.');
+		} catch {
+			toast.error("Couldn't copy. Select the details and copy them yourself.");
+		}
+	}
 </script>
 
 <Sheet bind:open>
@@ -45,6 +62,10 @@
 				<dd class="text-white">{secondaryText(office) + (here ? " (you're here)" : '')}</dd>
 				<dt class="text-gray-400">Status</dt>
 				<dd><OfficeStatusBadge {status} /></dd>
+				{#if why}
+					<dt class="text-gray-400">Why</dt>
+					<dd class="text-white [overflow-wrap:anywhere]" data-testid="office-why">{why}</dd>
+				{/if}
 				<dt class="text-gray-400">Agents here</dt>
 				<dd class="min-w-0 text-white [overflow-wrap:anywhere]">
 					{#if !snapshot}{counting ? 'Counting…' : "Couldn't be counted"}{:else}{agents.length === 0 ? 'None' : agents.map((a) => a.name).join(', ')}{/if}
@@ -52,6 +73,7 @@
 				</dd>
 			</dl>
 			<SheetFooter class="mt-auto">
+				{#if why}<Button variant="outline" onclick={copy}>Copy details</Button>{/if}
 				<Button variant="outline" onclick={() => (open = false)}>Close</Button>
 			</SheetFooter>
 		{/if}
