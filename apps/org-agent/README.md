@@ -43,6 +43,11 @@ against the same spool. Per-agent metadata sits next to the mail, guarded by an 
 `profile.json`, `status.json` and `.last_seen`. Tests point `ORG_HOME` (and `HOME`) at a
 temporary directory.
 
+**Durability (Phase A):** a send writes `outbox/tmp/<id>.json`, `fsync`s it and renames it
+into `outbox/new/`, as the v1-old CLI does. That is not the `F_FULLFSYNC` + directory `fsync`
+of ADR-0003 §3.5, which applies to the Phase B offline fallback spool: on macOS a power loss
+right after a send can still lose it.
+
 `--office` is accepted everywhere and ignored: Phase A has one spool. `msg inbox --cursor` is a usage error (the spool has no sequence numbers; use `--limit`).
 
 ## Directory and presence
@@ -89,3 +94,8 @@ When `org-relay` delivers a message into `inbox/<to>/new/<id>.json`, it notifies
 - `'N'` (`0x4e`): Normal message (`priority == "normal"`).
 
 `org-agent msg wait --urgent-only` wakes and exits `0` only when an unsnoozed urgent message is present in `new/`.
+
+It is level-triggered, not edge-triggered: it doesn't remember what it already returned, so it
+returns at once, every time, while any unsnoozed urgent message is still unread. A watcher that
+loops on it must back off after reporting (e.g. wait until the agent has triaged, or sleep)
+rather than call it again straight away, or it spins on the same message.
