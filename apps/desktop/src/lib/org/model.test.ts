@@ -205,6 +205,17 @@ describe('normalizeKinds and an agent’s profile', () => {
 		expect(m.agent).toMatchObject({ status: 'unknown', runtime: 'unknown', run_mode: 'unknown' });
 	});
 
+	it('reads a runtime that is not a name or a named other as unknown', () => {
+		for (const runtime of [{ other: 5 }, {}, 7, null]) expect(read(agent({ runtime })).agent?.runtime).toBe('unknown');
+	});
+
+	it('passes an offboarded agent with its date through, and normalizes a person that carries a profile too', () => {
+		expect(read(agent({ status: 'offboarded', offboarded_at: '2026-11-08T10:00:00.000Z' })).agent).toMatchObject({ status: 'offboarded', offboarded_at: '2026-11-08T10:00:00.000Z' });
+		const odd = read({ ...agent({ status: 'sleeping' }), kind: 'person' });
+		expect(odd.kind).toBe('person');
+		expect(odd.agent?.status).toBe('unknown');
+	});
+
 	it('leaves a missing run mode missing, and a person without a profile alone', () => {
 		expect(read(agent({})).agent).not.toHaveProperty('run_mode');
 		const person = { id: 'p', kind: 'person', name: 'P', version: 1 };

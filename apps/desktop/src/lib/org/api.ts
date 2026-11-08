@@ -17,7 +17,9 @@ export interface OrgApi {
 export function createMockOrg(hqOfficeId: (organizationId: string) => Promise<string>, empty: () => boolean = () => false): OrgApi {
 	return {
 		async view(organizationId) {
-			return { snapshot: normalizeKinds(empty() ? emptyOrg() : sampleOrg(await hqOfficeId(organizationId))), sample: true };
+			// Asked even for an empty organization: an organization that isn't here is not_found either way.
+			const office = await hqOfficeId(organizationId);
+			return { snapshot: normalizeKinds(empty() ? emptyOrg() : sampleOrg(office)), sample: true };
 		}
 	};
 }
