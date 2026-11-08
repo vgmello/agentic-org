@@ -385,6 +385,38 @@ fn rule_a_sessionless_break_ends_only_with_a_sessionless_plain_check() {
 }
 
 #[test]
+fn rule_a_sessionless_check_never_changes_a_sessions_break() {
+    let t = TempSpool::new("break_scope");
+    let session = Some("claude:s1");
+    let m = t.send("m", None);
+    t.spool.notify(ME, &opts(session, true, false)).unwrap();
+    t.spool.defer_message(ME, &m, "after-task", None).unwrap();
+    let before = t.triage_json();
+    let state = |v: &serde_json::Value| {
+        (
+            v["break_seq"].clone(),
+            v["in_break"].clone(),
+            v["break_session"].clone(),
+        )
+    };
+    // `msg due --after-task` and `msg due`, no session: the session's break is untouched.
+    assert_eq!(
+        t.spool.notify(ME, &opts(None, true, false)).unwrap().count,
+        0
+    );
+    t.spool.notify(ME, &opts(None, false, false)).unwrap();
+    assert_eq!(state(&t.triage_json()), state(&before));
+    // And the session's own Stop still sees the same break.
+    assert_eq!(
+        t.spool
+            .notify(ME, &opts(session, true, false))
+            .unwrap()
+            .count,
+        0
+    );
+}
+
+#[test]
 fn rule_a_triage_turn_stop_ends_the_break_as_the_hooks_run_it() {
     // The inbox adapter runs `notify --after-task` only at the Stop after a real task; a
     // triage turn's Stop (and the next prompt) runs a plain `notify` in the same session.

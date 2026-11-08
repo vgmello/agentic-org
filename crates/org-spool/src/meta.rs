@@ -319,9 +319,13 @@ impl TriageState {
     }
 
     /// An `--after-task` check (a Stop after a task) begins: a new break starts unless one is
-    /// under way in the same session. Returns whether the state changed.
+    /// under way in the same session. A session-less check never takes over another session's
+    /// break (it just checks within it). Returns whether the state changed.
     fn begin_after_task_check(&mut self, session: Option<&str>) -> bool {
         if self.in_break && self.break_session.as_deref() == session {
+            return false;
+        }
+        if self.in_break && session.is_none() {
             return false;
         }
         self.break_seq = self.break_seq.saturating_add(1);
