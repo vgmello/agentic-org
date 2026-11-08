@@ -15,7 +15,9 @@ const EDGES = new RegExp(`^[${WHITE_SPACE}]+|[${WHITE_SPACE}]+$`, 'g');
 export const trimWhiteSpace = (s: string) => s.replace(EDGES, '');
 
 // Format characters (Cf), default-ignorable code points, and the line/paragraph separators are refused,
-// except the four that scripts and emoji need.
+// except the four that scripts and emoji need. These property escapes use the web view's own Unicode
+// tables, which can lag the server's (Unicode 17): a newly assigned character could pass here and be
+// refused by the office. That fails safe (the office answers invalid_name); the office is the authority.
 const INVISIBLE = /[\p{Cf}\p{Default_Ignorable_Code_Point}\u2028\u2029]/u;
 const ALLOWED_INVISIBLE = new Set(['\u200c', '\u200d', '\ufe0e', '\ufe0f']);
 // eslint-disable-next-line no-control-regex
