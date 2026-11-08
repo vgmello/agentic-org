@@ -2,7 +2,7 @@
 kind: spec
 title: "Decisions, evaluations, designs and tech debt (UX)"
 status: for-review
-revision: 8
+revision: 9
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-08"
@@ -20,6 +20,8 @@ Extends `work-items-ux.md` rev 5 (Docs, work items) and `our-org-in-the-app.md` 
 > Capture tech debt: every shortcut or quicker implementation an agent takes should be captured. Have a structure for ADRs and design documents in a project, so agents can use them. Help us find **why a decision was made** and **what technology we evaluated**. And bring this project's own designs into the tool that manages it.
 >
 > These are features of the product: agents don't write them in their own folders any more. They write them **through the tool**, which saves them in the project, in a proper structure, in its repository. *(the user, rev 2)*
+
+**Revision 9 (2026-11-08): processes.** **Processes** are a doc kind (`processes-ux.md`): decision 1 lists them, and §0.1 adds `docs/processes/<slug>.md` for a project's processes. Organization and team processes live in the organization's handbook repo that HQ manages (ada), and agents' private processes in the handbook under `agents/<member id>/processes/` (`processes-ux.md` A52). §6.2: a process's prompt for a moment follows that moment's text and hides when it's Off. No criteria changed.
 
 **Revision 8 (2026-11-08): aligned with ada's W7 model.** Where docs are written: the app and `org-agent doc new`, `doc edit` and `doc status` write on docs branches the office makes. Only `debt add` (inside a task worktree) and `doc new --here` write on the agent's own task branch, where the agent commits the file (§0.2, §3.1). C18 resolved. A feature's status lives in the office, and the tool rewrites the doc's `status`, `tasks` and `delivered` from it (§0.2). Every doc has a stable `id` in its front matter, and renaming rewrites links (decision 2, §3). A value set by a commit made with git (for example `taken.by` from `debt add`) shows quietly as "from git", never as a warning (§0.2). Debt goes Paid only when at least one payback task is Done · Completed, and Planned or Paid is written once the debt doc is merged into the integration branch: before that it shows "Planned once merged" (§6). Task numbers follow `work-items-ux.md` rev 6 (`T-17` inside the project, `ac-T-17` outside it). **Criteria rewritten (same ID):** AUTH-1, AUTH-6, DBT-5. **Added:** AUTH-7, TPL-8 (52 criteria).
 
@@ -68,12 +70,15 @@ docs/
   reviews/<date>-<slug>.md reviews (architecture, design, UX)
   features/0007-<slug>.md  features (FEAT-0007, `features-ux.md`)
   retros/<date>-<slug>.md  retrospectives (`retrospectives-ux.md`)
+  processes/<slug>.md      the project's processes (`processes-ux.md`, rev 9)
   debt/0012-<slug>.md      tech debt (DEBT-0012)
   limitations/0003-<slug>.md   known limitations (LIM-0003)
   exceptions/0002-<slug>.md    exceptions to a rule or decision (EXC-0002)
   reports/<date>-status.md status reports, weekly or monthly (`project-status-ux.md`)
   <anything else>.md       other docs
 ```
+
+Organization and team processes don't live in a project: they're in the organization's **handbook** repo, which HQ manages (`processes/`, `teams/<team id>/processes/`; ada, `processes-ux.md` A51). Agents' private processes are there too, under `agents/<member id>/processes/` (A52).
 
 **The rule (the user, rev 4): persistent in the repository, transitional in the database.** Anything the team will want to read in a year (why we built it this way, what we evaluated, what we knowingly left unfinished, what doesn't work and why, which rules we bent) is a file here. Tasks, bugs, messages, queues, sessions, statuses and other working state are office records: they're acted on, closed and can be deleted, and they never go into the repository. Docs link them by number, and they link docs by id.
 
@@ -86,7 +91,7 @@ docs/
 - **Which branch the Docs tab reads** is the project's integration branch (`v1` for us, `main` elsewhere), a project setting (C13).
 - **Fields the office owns** *(rev 8)*: a feature's status lives in the office (`features-ux.md`), and the tool rewrites the feature doc's `status`, `tasks` and `delivered` from it on each status commit. Don't edit them by hand: a hand edit is overwritten at the next status commit, and `doc validate` flags it.
 
-1. **Document kinds, one Docs tab:** **Features · Decisions (ADRs) · Designs · Evaluations · Specs · Plans · Reviews · Retrospectives · Debt · Limitations · Exceptions · Reports · Other** (guides, and the brief pinned on top), as listed in §0.1. Every kind is a Markdown file in its folder (§0.1), and the kind comes from the folder.
+1. **Document kinds, one Docs tab:** **Features · Decisions (ADRs) · Designs · Evaluations · Specs · Plans · Reviews · Retrospectives · Processes *(rev 9)* · Debt · Limitations · Exceptions · Reports · Other** (guides, and the brief pinned on top), as listed in §0.1. Every kind is a Markdown file in its folder (§0.1), and the kind comes from the folder.
 2. **Markdown with front matter, shaped by a template.** Each doc starts with YAML front matter whose fields come from its kind's template (kind, number, title, status, owner, dates, relations), followed by the template's sections as `##` headings. The UI turns the front matter into a header card and the sections into a navigable page. Agents get the same structure from `org-agent doc schema <kind>`. *(rev 3: replaces the parsed status line.)* Every doc has a stable `id` in its front matter: its number for numbered kinds (`ADR-0004`), otherwise `doc-<ULID>`, written when the doc is created or first saved (ada W7 §4.9). Renaming a doc keeps its id and rewrites the links to it in other docs in the same commit. *(rev 8)*
 3. **ADR statuses:** **Proposed · Accepted · Superseded · Rejected · Deprecated.** A superseded ADR names its replacement, and both link each other.
 4. **Design statuses:** **Draft · In review · Approved · Built · Obsolete.** Evaluations: **Planned · Running · Done** (with a verdict).
@@ -318,6 +323,7 @@ The tool helps agents work the way the organization wants by **prompting them at
 
 - **Settings › Agent guidance** (organization) and project Settings › Agent guidance (overrides): one row per moment with **On/Off**, the text (with placeholders like `{task}`, `{area}`, `{decisions}` and a picker to insert them), and a **Preview as** an agent and task ("What River will see on T-17").
 - **Add guidance…** adds a moment from a list (task started, task done, bug fixed, branch created, review requested, message to the owner) with its own text, for the owner's own practices ("Always add a screenshot for UI work").
+- **Processes add to it** *(rev 9)*: a process can add its own prompt to a moment (`processes-ux.md` decision 9). It's shown after this text, and only while the moment is On.
 - **Where it's kept:** a project's guidance is persistent, so it's a file in the repository (`docs/.guidance/<moment>.md`, Markdown with front matter: `moment`, `enabled`). The organization's defaults are settings in the office. A change shows in Activity ("You changed the guidance for Taking a shortcut").
 - **Agents' answers are recorded:** "No shortcut" or a debt id shows on the task, so the owner can see the guidance working (and turn it down if it's noise).
 
