@@ -28,6 +28,19 @@
 //! domain codes (`owner_protected`, `cycle`, `not_a_member`, `not_empty`) come after
 //! `invalid_name` and before `conflict`: a rule that would refuse the command at any version
 //! is not hidden by a stale one.
+//!
+//! ## Limits every command shares
+//! All are `invalid_request`, so a client can check them before sending:
+//! - **Client-made ids** (`team_id`, `member_id`, `membership_id`, `project_team_id`, the new
+//!   ids of `member.move` and so on): 1 to [`ID_MAX_CHARS`] ASCII letters, digits, `-` or `_`
+//!   ([`is_valid_id`]). A ULID fits.
+//! - **Free text** (`contact`, `title_in_team`): trimmed, then 1 to [`AGENT_TEXT_MAX_CHARS`]
+//!   characters with no control characters. To remove a contact use `clear_contact`, not an
+//!   empty string.
+//! - **A command that changes nothing still counts.** Setting a field to the value it has, or
+//!   a `member.update_person` that gives no field, is accepted and raises the entity's
+//!   version by one (and so produces an `org.changed`). Only `member.update_agent` refuses a
+//!   call that gives no field.
 
 use serde::{Deserialize, Serialize};
 
@@ -241,6 +254,19 @@ pub fn is_shaped_like_an_address(handle: &str) -> bool {
                 && !matches!(b.to_ascii_uppercase(), b'I' | b'L' | b'O' | b'U')
         });
     run || ulid
+}
+
+/// The longest client-made id, in characters (see [`is_valid_id`]).
+pub const ID_MAX_CHARS: usize = 64;
+
+/// Whether `id` is a valid client-made id: 1 to [`ID_MAX_CHARS`] ASCII letters, digits, `-` or
+/// `_`. HQ refuses anything else with `invalid_request`.
+pub fn is_valid_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= ID_MAX_CHARS
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// The longest `messaging_name`, in characters.

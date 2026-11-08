@@ -1607,3 +1607,20 @@ fn reserved_handle_words_and_address_shapes() {
         assert!(!is_shaped_like_an_address(fine), "{fine}");
     }
 }
+
+#[test]
+fn client_made_ids_are_short_and_plain() {
+    assert_eq!(ID_MAX_CHARS, 64);
+    for good in [
+        "a",
+        "t1",
+        "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "ms-ann_2",
+        &"x".repeat(64),
+    ] {
+        assert!(is_valid_id(good), "{good}");
+    }
+    for bad in ["", " ", "a b", "a.b", "a/b", "é", "a\n", &"x".repeat(65)] {
+        assert!(!is_valid_id(bad), "{bad:?}");
+    }
+}
