@@ -195,6 +195,7 @@ export type OfficeWithExtras = OfficeInfo & OfficeExtras;
 export interface OfficeAddParams {
 	name: string;
 	where: 'this_mac';
+}
 
 // ---- office.app_token (crates/org-proto/src/calls.rs) -------------------------------------------
 
