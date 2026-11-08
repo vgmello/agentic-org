@@ -33,6 +33,7 @@
  "org_view": {
   "sample": true,
   "snapshot": {
+   "areas": [],
    "position": {
     "epoch": 1,
     "seq": 4
@@ -82,7 +83,9 @@
    "projects": [
     {
      "id": "atlas",
-     "name": "Atlas"
+     "key": "",
+     "name": "Atlas",
+     "version": 0
     }
    ],
    "project_teams": [

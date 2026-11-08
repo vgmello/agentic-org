@@ -22,7 +22,7 @@ describe('what the Tauri commands return', () => {
 	it('an organization view has the keys proto.ts declares, and an agent is placed in an office', () => {
 		const view = shapes.org_view as OrgView;
 		expect(Object.keys(view).sort()).toEqual(['sample', 'snapshot']);
-		expect(Object.keys(view.snapshot).sort()).toEqual(['members', 'memberships', 'position', 'project_teams', 'projects', 'teams']);
+		expect(Object.keys(view.snapshot).sort()).toEqual(['areas', 'members', 'memberships', 'position', 'project_teams', 'projects', 'teams']);
 		expect(view.snapshot.members.find((m) => m.kind === 'agent')).toMatchObject({ office_id: 'office-1', reports_to_member_id: 'you' });
 		expect(view.snapshot.members.find((m) => m.owner)).not.toHaveProperty('office_id');
 		const agent = view.snapshot.members.find((m) => m.kind === 'agent')!;

@@ -112,6 +112,7 @@ pub fn empty_org() -> OrgSnapshot {
         memberships: vec![],
         projects: vec![],
         project_teams: vec![],
+        areas: vec![],
     }
 }
 
@@ -156,10 +157,7 @@ pub fn sample_org(hq: &str) -> OrgSnapshot {
         joined(10, "people", "leo", None),
         joined(11, "people", "ines", None),
     ];
-    let project = |id: &str, name: &str| ProjectSummary {
-        id: id.into(),
-        name: name.into(),
-    };
+    let project = |id: &str, name: &str| ProjectSummary::new(id, name);
     let project_team = |id: &str, project_id: &str, team_id: &str| ProjectTeam {
         id: id.into(),
         project_id: project_id.into(),
@@ -183,6 +181,7 @@ pub fn sample_org(hq: &str) -> OrgSnapshot {
             project_team("pt-3", "beacon", "design"),
             project_team("pt-4", "onboarding", "people"),
         ],
+        areas: vec![],
     }
 }
 

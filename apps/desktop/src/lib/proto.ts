@@ -199,10 +199,27 @@ export interface ProjectTeam {
 	version: number;
 }
 
-/** What the charts need to show a project. */
+/** What the charts need to show a project (`org_proto::Project`; only the fields the app reads so far). */
 export interface ProjectSummary {
 	id: string;
+	/** The project's short key; empty on a record from before keys existed. */
+	key?: string;
 	name: string;
+	/** 0 on a record from before projects had versions. */
+	version?: number;
+}
+
+/** A part of a project, for routing bugs (`org_proto::Area`). */
+export interface Area {
+	id: string;
+	project_id: string;
+	name: string;
+	team_id?: string;
+	lead_member_id?: string;
+	general?: boolean;
+	deleted?: boolean;
+	replaced_by?: string;
+	version: number;
 }
 
 /**
@@ -232,6 +249,8 @@ export interface OrgSnapshot {
 	memberships: Membership[];
 	projects?: ProjectSummary[];
 	project_teams?: ProjectTeam[];
+	/** Every project's areas, deleted ones (tombstones) included. */
+	areas?: Area[];
 }
 
 // ---- office.app_token (crates/org-proto/src/calls.rs) -------------------------------------------
