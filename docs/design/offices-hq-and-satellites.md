@@ -66,7 +66,7 @@ Agents run on their office's machine and talk only to that office, through the l
     - Its change id is built from the version's (origin, seq), so it happens once. Its age for the 30-day rule is the version's creation time.
     - The first such request expects the reclaim's base version, and each later one the version its predecessor produces, as in the outbox.
     - Each is accepted or rejected like any other request, and rejected ones stay visible, flagged, for the owner to resolve.
-    - Other offices simply skip older-generation versions.
+    - HQ **never forwards** older-generation versions. Applying a reclaim resets the task to (new generation, base version) at every office, so an office that receives the reclaim late can't keep a diverged copy.
   - Change requests already in flight at a handover are forwarded, as above. The generation applies to task versions, not to requests.
 
   Every change has exactly one office in charge, so offices don't conflict over work data. The one exception is a reclaim from an office that was only offline, handled above.
@@ -156,7 +156,7 @@ Agents run on their office's machine and talk only to that office, through the l
   - A message between two agents **in the same office** is delivered by that office directly, even with HQ unreachable.
   - A message to an agent **in another office** goes through HQ, which delivers it to the recipient's office. While HQ is unreachable it waits in the sender office's **message queue**, which is separate from the command outbox, so a blocked command never holds messages back.
 - **The app on a Mac with only a satellite:**
-  - A task created in the app is still created **at HQ**: the satellite relays it there, and queues it in its command outbox while HQ is unreachable (the one work change that travels there). It shows as pending until HQ confirms it. The create carries a client-made task id and change id, so a retry can't create it twice. HQ always returns the create's result to the relaying office (as change-request results go back to the requester), so the satellite knows the outcome even when the task is handed to another office it doesn't follow.
+  - A task created in the app is still created **at HQ**: the satellite relays it there, and queues it in its command outbox while HQ is unreachable (the one work change that travels there). It shows as pending until HQ confirms it. The create carries a client-made task id and change id, so a retry can't create it twice. HQ always returns the create's result to the relaying office (as change-request results go back to the requester), and keeps that result for 30 days even after it hands the task over, so a retried create gets its original answer, so the satellite knows the outcome even when the task is handed to another office it doesn't follow.
   - Changes to person-owned tasks (owned by HQ) are change requests, queued while HQ is unreachable, like any other.
 - **"Backup", honestly:** satellites follow HQ immediately, so a deletion or bad change reaches them too, and a local satellite shares HQ's disk. Satellites protect against losing HQ's machine, not against mistakes. Real backups (point-in-time snapshots) are a separate feature.
 
