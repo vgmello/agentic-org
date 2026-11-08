@@ -13,15 +13,19 @@ const SCENARIOS: Scenario[] = ['not_installed', 'needs_approval', 'turned_off', 
 const STORAGE_KEY = 'agentic-org.mock.connections';
 const ORGANIZATIONS_KEY = 'agentic-org.mock.organizations';
 
-/** The HQ office every organization starts with, on this Mac. */
-const hqOffice = (organizationId: string): OfficeInfo => ({
-	id: `office-${organizationId}`,
-	organization_id: organizationId,
-	name: 'HQ',
-	role: 'hq',
-	host: 'This Mac',
-	status: 'active'
-});
+/**
+ * The HQ office every organization starts with, on this Mac. `?office=crashed|restarting|key_missing|unknown` makes it a
+ * stopped office with a reason, so the Offices screen's reason lines can be seen and tested (spec §3.3).
+ */
+const hqOffice = (organizationId: string): OfficeInfo => {
+	const base: OfficeInfo = { id: `office-${organizationId}`, organization_id: organizationId, name: 'HQ', role: 'hq', host: 'This Mac', status: 'active' };
+	const stopped = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('office');
+	if (stopped === 'crashed') return { ...base, status: 'unavailable', status_reason: 'crashed' };
+	if (stopped === 'restarting') return { ...base, status: 'offline', status_reason: 'crashed', next_restart_at: new Date(Date.now() + 10 * 60_000).toISOString() };
+	if (stopped === 'key_missing') return { ...base, status: 'unavailable', status_reason: 'key_missing' };
+	if (stopped === 'unknown') return { ...base, status: 'unavailable' };
+	return base;
+};
 
 /** What a fresh mock Mac already has, so there is something to open on first launch. */
 const sampleOrganizations = (): Organization[] =>

@@ -2,8 +2,9 @@ import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
 
-async function openOffices(page: Page) {
-	await visit(page, '/create');
+async function openOffices(page: Page, stopped?: string) {
+	// `?office=` makes the new organization's HQ a stopped office with a reason (the mock's scenario).
+	await visit(page, stopped ? `/create?office=${stopped}` : '/create');
 	await page.getByLabel('Organization name').fill('Acme');
 	await page.getByRole('button', { name: 'Create organization' }).click();
 	await expect(page).toHaveURL(/\/agents$/);
@@ -173,4 +174,48 @@ test('OFC-12: when the office does not answer, the row says Unreachable with a R
 	await expect(hq).toContainText('Unreachable');
 	await expect(retry).toBeFocused();
 	await expect(page.getByTestId('live-status')).toHaveText('HQ: Unreachable');
+});
+
+test('OFC-11: a stopped office says why, in its row and in its details, with Copy details', async ({ page, context }) => {
+	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+	await openOffices(page, 'crashed');
+	const hq = rows(page).first();
+	await expect(hq).toContainText('Stopped');
+	await expect(hq).toContainText('It stopped unexpectedly');
+	await shot(page, 'office-stopped-crashed');
+	await hq.getByRole('button').first().click();
+	const sheet = page.getByRole('dialog');
+	await expect(sheet.getByTestId('office-why')).toHaveText('It stopped unexpectedly');
+	await shot(page, 'office-stopped-details');
+	await sheet.getByRole('button', { name: 'Copy details' }).click();
+	await expect(page.getByText('Copied the details.')).toBeVisible();
+	const text = await page.evaluate(() => navigator.clipboard.readText());
+	expect(text).toMatch(/^Office: HQ\nId: office-/);
+	expect(text).toContain('Status: Stopped\nReason: crashed');
+	expect(text.toLowerCase()).not.toContain('token');
+});
+
+test('OFC-11: other reasons have their words; no reason reads "It isn’t running"', async ({ page }) => {
+	await openOffices(page, 'key_missing');
+	await expect(rows(page).first()).toContainText("Its data key is missing from this Mac's Keychain");
+	const other = await page.context().newPage();
+	await visit(other, '/create?office=unknown');
+	await other.getByLabel('Organization name').fill('Beta');
+	await other.getByRole('button', { name: 'Create organization' }).click();
+	await expect(other).toHaveURL(/\/agents$/);
+	await visit(other, '/offices');
+	await expect(other.getByTestId('office-row').first()).toContainText("It isn't running");
+});
+
+test('OFC-11: a restart that is pending counts down, and the office reads Stopped, never Offline', async ({ page }) => {
+	await openOffices(page, 'restarting');
+	const hq = rows(page).first();
+	await expect(hq).toContainText('Stopped');
+	await expect(hq).not.toContainText('Offline');
+	await expect(hq).toContainText(/It stopped unexpectedly\. Restarting in \d+ s/);
+	// The screen-reader label keeps where it runs, puts the reason after the status, and never ticks (spec §6.1).
+	const label = (await hq.getByRole('button').first().getAttribute('aria-label')) ?? '';
+	expect(label).toContain('This Mac');
+	expect(label).toMatch(/Stopped: it stopped unexpectedly, restarting at \d\d:\d\d/);
+	expect(label).not.toMatch(/\d+ s\b/);
 });
