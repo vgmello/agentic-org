@@ -192,3 +192,6 @@ export interface OfficeAppTokenParams {
 export interface OfficeAppTokenResult {
 	app_token: string;
 }
+
+/** What happened to an organization command: committed by HQ, or queued while HQ is unreachable. */
+export type CommandStatus = 'committed' | 'queued' | 'unknown';

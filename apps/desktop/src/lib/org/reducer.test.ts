@@ -1,0 +1,187 @@
+import { describe, expect, it } from 'vitest';
+import type { AppError } from '$lib/proto';
+import { newId, withId, type OrgCommandInput } from './commands';
+import { applyCommand } from './reducer';
+import { notInATeam, teamTree, unassignedProjects } from './model';
+import { sampleOrg } from './sample';
+
+const s0 = sampleOrg('office-1');
+const run = (s = s0, ...inputs: OrgCommandInput[]) => inputs.reduce((acc, i) => applyCommand(acc, withId(i)), s);
+const err = (fn: () => unknown): AppError => {
+	try {
+		fn();
+	} catch (e) {
+		return e as AppError;
+	}
+	throw new Error('expected an error');
+};
+const team = (s: typeof s0, id: string) => s.teams.find((t) => t.id === id)!;
+const member = (s: typeof s0, id: string) => s.members.find((m) => m.id === id)!;
+
+describe('commands', () => {
+	it('new ids are 26-character ULIDs, sortable by time and different each time', () => {
+		const a = newId(1_000_000), b = newId(1_000_001);
+		expect(a).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+		expect(a.slice(0, 10) < b.slice(0, 10)).toBe(true);
+		expect(newId()).not.toBe(newId());
+	});
+
+	it('every command advances the position by one and does not touch the input snapshot', () => {
+		const before = JSON.stringify(s0);
+		const s1 = run(s0, { method: 'team.create', params: { team_id: 't1', name: 'Ops' } });
+		expect(s1.position).toEqual({ epoch: 1, seq: s0.position.seq + 1 });
+		expect(JSON.stringify(s0)).toBe(before);
+	});
+});
+
+describe('TEAM-5 creating a team', () => {
+	it('creates it under a team, or at the top, with version 1', () => {
+		const s = run(s0, { method: 'team.create', params: { team_id: 'qa', name: '  QA  ', owner_team_id: 'eng' } }, { method: 'team.create', params: { team_id: 'ops', name: 'Ops' } });
+		expect(team(s, 'qa')).toMatchObject({ name: 'QA', owner_team_id: 'eng', version: 1 });
+		expect(team(s, 'ops').owner_team_id).toBeUndefined();
+		expect(teamTree(s).map((n) => n.team.name)).toEqual(['Design', 'Engineering', 'Ops', 'People']);
+	});
+
+	it('a duplicate sibling name is refused, ignoring case; the same name elsewhere is fine', () => {
+		expect(err(() => run(s0, { method: 'team.create', params: { team_id: 'x', name: 'platform', owner_team_id: 'eng' } })).code).toBe('already_exists');
+		expect(err(() => run(s0, { method: 'team.create', params: { team_id: 'x', name: 'design' } })).code).toBe('already_exists');
+		expect(() => run(s0, { method: 'team.create', params: { team_id: 'x', name: 'Design', owner_team_id: 'people' } })).not.toThrow();
+	});
+
+	it('an empty or invalid name, a taken id and a missing owner team are refused', () => {
+		expect(err(() => run(s0, { method: 'team.create', params: { team_id: 'x', name: '  ' } })).code).toBe('invalid_name');
+		expect(err(() => run(s0, { method: 'team.create', params: { team_id: 'eng', name: 'New' } })).code).toBe('already_exists');
+		expect(err(() => run(s0, { method: 'team.create', params: { team_id: 'x', name: 'New', owner_team_id: 'ghost' } })).code).toBe('not_found');
+	});
+
+	it('the lead must be a member of the team and never the owner (TEAM-5, OWNER-2)', () => {
+		const lead = (id?: string) => () => run(s0, { method: 'team.set_lead', params: { team_id: 'web', expected_version: 1, lead_member_id: id } });
+		expect(team(lead('mira')(), 'web').lead_member_id).toBe('mira');
+		expect(err(lead('you')).code).toBe('owner_protected');
+		expect(err(lead('juno')).code).toBe('not_a_member');
+		expect(team(lead(undefined)(), 'web').lead_member_id).toBeUndefined();
+	});
+});
+
+describe('TEAM-6 members in several teams', () => {
+	it('adds a member to a team, refuses a duplicate and the owner, and a stale version conflicts', () => {
+		const s = run(s0, { method: 'team.add_member', params: { membership_id: 'm1', team_id: 'design', member_id: 'quinn', title_in_team: 'Intern' } });
+		expect(s.memberships.find((m) => m.id === 'm1')).toMatchObject({ team_id: 'design', member_id: 'quinn', title_in_team: 'Intern', version: 1 });
+		expect(notInATeam(s).map((m) => m.id)).not.toContain('quinn');
+		expect(err(() => run(s, { method: 'team.add_member', params: { membership_id: 'm2', team_id: 'design', member_id: 'quinn' } })).code).toBe('already_exists');
+		expect(err(() => run(s0, { method: 'team.add_member', params: { membership_id: 'm2', team_id: 'design', member_id: 'you' } })).code).toBe('owner_protected');
+		expect(err(() => run(s0, { method: 'team.add_member', params: { membership_id: 'm2', team_id: 'design', member_id: 'ghost' } })).code).toBe('not_found');
+		const stale = s0.memberships[0];
+		expect(err(() => run(s0, { method: 'team.remove_member', params: { membership_id: stale.id, expected_version: 9 } })).code).toBe('conflict');
+	});
+
+	it('removing the lead from the team clears the lead', () => {
+		const lead = s0.memberships.find((m) => m.team_id === 'web' && m.member_id === 'noor')!;
+		const s = run(s0, { method: 'team.remove_member', params: { membership_id: lead.id, expected_version: lead.version } });
+		expect(team(s, 'web').lead_member_id).toBeUndefined();
+		expect(s.memberships.some((m) => m.id === lead.id)).toBe(false);
+	});
+
+	it('a title can be set and cleared', () => {
+		const ms = s0.memberships[0];
+		const s = run(s0, { method: 'team.set_title', params: { membership_id: ms.id, expected_version: ms.version, title_in_team: 'Lead' } });
+		expect(s.memberships.find((m) => m.id === ms.id)).toMatchObject({ title_in_team: 'Lead', version: ms.version + 1 });
+	});
+});
+
+describe('TEAM-7 moving a team', () => {
+	it('moves a team and its sub-teams go with it; a team can go to the top', () => {
+		const s = run(s0, { method: 'team.move', params: { team_id: 'platform', expected_version: 1, owner_team_id: 'design' } });
+		expect(team(s, 'platform')).toMatchObject({ owner_team_id: 'design', version: 2 });
+		const top = run(s0, { method: 'team.move', params: { team_id: 'web', expected_version: 1 } });
+		expect(team(top, 'web').owner_team_id).toBeUndefined();
+	});
+
+	it('a team can’t go under itself or a team below it', () => {
+		expect(err(() => run(s0, { method: 'team.move', params: { team_id: 'eng', expected_version: 1, owner_team_id: 'web' } })).code).toBe('cycle');
+		expect(err(() => run(s0, { method: 'team.move', params: { team_id: 'eng', expected_version: 1, owner_team_id: 'eng' } })).code).toBe('cycle');
+	});
+
+	it('a sibling with the same name at the destination refuses the move', () => {
+		const withDup = run(s0, { method: 'team.create', params: { team_id: 'web2', name: 'Web', owner_team_id: 'design' } });
+		expect(err(() => run(withDup, { method: 'team.move', params: { team_id: 'web', expected_version: 1, owner_team_id: 'design' } })).code).toBe('already_exists');
+	});
+
+	it('renaming checks the name and the siblings, and a stale version conflicts', () => {
+		expect(team(run(s0, { method: 'team.rename', params: { team_id: 'web', expected_version: 1, name: 'Frontend' } }), 'web').name).toBe('Frontend');
+		expect(err(() => run(s0, { method: 'team.rename', params: { team_id: 'web', expected_version: 1, name: 'platform' } })).code).toBe('already_exists');
+		expect(err(() => run(s0, { method: 'team.rename', params: { team_id: 'web', expected_version: 5, name: 'X' } })).code).toBe('conflict');
+	});
+});
+
+describe('TEAM-8 and TEAM-9 projects and deleting teams', () => {
+	it('adds and removes a project’s team; the last removal leaves the project unassigned', () => {
+		let s = run(s0, { method: 'project.add_team', params: { project_team_id: 'pt-9', project_id: 'scratch', team_id: 'web' } });
+		expect(unassignedProjects(s)).toEqual([]);
+		expect(err(() => run(s, { method: 'project.add_team', params: { project_team_id: 'pt-10', project_id: 'scratch', team_id: 'web' } })).code).toBe('already_exists');
+		s = run(s, { method: 'project.remove_team', params: { project_team_id: 'pt-9', expected_version: 1 } });
+		expect(unassignedProjects(s).map((p) => p.id)).toEqual(['scratch']);
+		expect(err(() => run(s0, { method: 'project.add_team', params: { project_team_id: 'x', project_id: 'ghost', team_id: 'web' } })).code).toBe('not_found');
+	});
+
+	it('a team that owns teams can’t be deleted', () => {
+		expect(err(() => run(s0, { method: 'team.delete', params: { team_id: 'eng', expected_version: 1 } })).code).toBe('not_empty');
+	});
+
+	it('deleting another team moves its members to Not in a team and unassigns its projects', () => {
+		const s = run(s0, { method: 'team.delete', params: { team_id: 'people', expected_version: 1 } });
+		expect(s.teams.some((t) => t.id === 'people')).toBe(false);
+		expect(notInATeam(s).map((m) => m.id)).toEqual(expect.arrayContaining(['hana', 'leo', 'ines']));
+		expect(unassignedProjects(s).map((p) => p.id)).toContain('onboarding');
+	});
+});
+
+describe('PEOPLE-3, 4, 5 adding, editing and removing people', () => {
+	it('adds a person (not in a team yet), with an optional contact; the name rule applies', () => {
+		const s = run(s0, { method: 'member.add_person', params: { member_id: 'p1', name: ' Robin Tate ', contact: 'robin@example.com' } });
+		expect(member(s, 'p1')).toMatchObject({ kind: 'person', name: 'Robin Tate', contact: 'robin@example.com', version: 1 });
+		expect(notInATeam(s).map((m) => m.id)).toContain('p1');
+		expect(err(() => run(s0, { method: 'member.add_person', params: { member_id: 'p2', name: '' } })).code).toBe('invalid_name');
+		expect(err(() => run(s0, { method: 'member.add_person', params: { member_id: 'avery', name: 'Dup' } })).code).toBe('already_exists');
+	});
+
+	it('updates only the given fields, can clear the contact, and agents are not edited here', () => {
+		const avery = member(s0, 'avery');
+		const s = run(s0, { method: 'member.update_person', params: { member_id: 'avery', expected_version: avery.version, name: 'Avery S.' } });
+		expect(member(s, 'avery')).toMatchObject({ name: 'Avery S.', contact: 'avery@example.com', version: avery.version + 1 });
+		const cleared = run(s, { method: 'member.update_person', params: { member_id: 'avery', expected_version: 2, clear_contact: true } });
+		expect(member(cleared, 'avery').contact).toBeUndefined();
+		expect(err(() => run(s0, { method: 'member.update_person', params: { member_id: 'sam', expected_version: 1, name: 'X' } })).code).toBe('invalid_request');
+		expect(err(() => run(s0, { method: 'member.update_person', params: { member_id: 'avery', expected_version: 1, contact: 'a', clear_contact: true } })).code).toBe('invalid_request');
+		expect(err(() => run(s0, { method: 'member.update_person', params: { member_id: 'avery', expected_version: 7, name: 'X' } })).code).toBe('conflict');
+	});
+
+	it('removing a person leaves their teams and leads, and whoever reported to them reports to the owner', () => {
+		const s = run(s0, { method: 'member.remove', params: { member_id: 'hana', expected_version: 1 } });
+		expect(s.members.some((m) => m.id === 'hana')).toBe(false);
+		expect(s.memberships.some((m) => m.member_id === 'hana')).toBe(false);
+		expect(team(s, 'people').lead_member_id).toBeUndefined();
+		expect(member(s, 'leo').reports_to_member_id).toBeUndefined(); // Leo reported to Hana: now the owner
+		expect(err(() => run(s0, { method: 'member.remove', params: { member_id: 'you', expected_version: 1 } })).code).toBe('owner_protected');
+	});
+});
+
+describe('REPORT-3 and REPORT-4 changing a manager', () => {
+	it('sets a manager, or the owner (stored as empty), and bumps the version', () => {
+		const s = run(s0, { method: 'member.set_reports_to', params: { member_id: 'kai', expected_version: 1, reports_to_member_id: 'juno' } });
+		expect(member(s, 'kai')).toMatchObject({ reports_to_member_id: 'juno', version: 2 });
+		const toOwner = run(s0, { method: 'member.set_reports_to', params: { member_id: 'kai', expected_version: 1, reports_to_member_id: 'you' } });
+		expect(member(toOwner, 'kai').reports_to_member_id).toBeUndefined();
+	});
+
+	it('refuses a loop and the owner reporting to anyone', () => {
+		expect(err(() => run(s0, { method: 'member.set_reports_to', params: { member_id: 'sam', expected_version: 1, reports_to_member_id: 'noor' } })).code).toBe('cycle');
+		expect(err(() => run(s0, { method: 'member.set_reports_to', params: { member_id: 'sam', expected_version: 1, reports_to_member_id: 'sam' } })).code).toBe('cycle');
+		expect(err(() => run(s0, { method: 'member.set_reports_to', params: { member_id: 'you', expected_version: 1, reports_to_member_id: 'sam' } })).code).toBe('owner_protected');
+	});
+
+	it('no team change changes anyone’s manager (REPORT-5)', () => {
+		const s = run(s0, { method: 'team.delete', params: { team_id: 'people', expected_version: 1 } }, { method: 'team.move', params: { team_id: 'web', expected_version: 1, owner_team_id: 'design' } });
+		for (const m of s0.members) expect(member(s, m.id).reports_to_member_id).toBe(m.reports_to_member_id);
+	});
+});
