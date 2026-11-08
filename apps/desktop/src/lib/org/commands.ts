@@ -16,6 +16,8 @@ export function newId(now: number = Date.now(), random: () => number = Math.rand
 	return time + rand;
 }
 
+import type { AgentProfile, AgentRuntime, AgentStatus, RunMode, Schedule } from '$lib/proto';
+
 type C<M extends string, P> = { method: M; params: { command_id: string } & P };
 
 export type OrgCommand =
@@ -32,6 +34,28 @@ export type OrgCommand =
 	| C<'member.remove', { member_id: string; expected_version: number }>
 	| C<'member.set_reports_to', { member_id: string; expected_version: number; reports_to_member_id?: string }>
 	| C<'member.move', { membership_id: string; expected_version: number; new_membership_id: string; to_team_id: string; title_in_team?: string }>
+	| C<'member.add_agent', { member_id: string; name: string; office_id: string; profile: AgentProfile }>
+	| C<
+			'member.update_agent',
+			{
+				member_id: string;
+				expected_version: number;
+				name?: string;
+				role?: string;
+				title?: string;
+				focus?: string;
+				clear_focus?: boolean;
+				runtime?: AgentRuntime;
+				model?: string;
+				clear_model?: boolean;
+				home?: string;
+				clear_home?: boolean;
+				messaging_name?: string;
+			}
+	  >
+	| C<'member.set_agent_status', { member_id: string; expected_version: number; status: AgentStatus }>
+	| C<'member.set_run_mode', { member_id: string; expected_version: number; run_mode?: RunMode; schedule?: Schedule }>
+	| C<'member.offboard', { member_id: string; expected_version: number }>
 	| C<'project.add_team', { project_team_id: string; project_id: string; team_id: string }>
 	| C<'project.remove_team', { project_team_id: string; expected_version: number }>;
 
@@ -43,7 +67,10 @@ export type OrgCommandInput = { [M in OrgMethod]: { method: M; params: Without<E
 
 /** `null` means "not given", as it does on the wire (an Option): drop it so `{ lead_member_id: null }` clears a lead. */
 export function withoutNulls<T extends OrgCommand | OrgCommandInput>(command: T): T {
-	const params = Object.fromEntries(Object.entries(command.params).filter(([, v]) => v !== null));
+	const clean = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null));
+	const params = clean(command.params as Record<string, unknown>);
+	// An agent's profile (member.add_agent) and a schedule are nested: their nulls mean "not given" too.
+	for (const key of ['profile', 'schedule']) if (params[key] && typeof params[key] === 'object') params[key] = clean(params[key] as Record<string, unknown>);
 	return { ...command, params } as T;
 }
 

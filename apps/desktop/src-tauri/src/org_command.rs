@@ -3,10 +3,12 @@
 //! the mock. Each variant carries `org_proto`'s own params type, and its `method` name is the contract's.
 
 use org_proto::org::{
-    MemberAddPersonParams, MemberMoveParams, MemberRemoveParams, MemberSetReportsToParams,
-    MemberUpdatePersonParams, ProjectAddTeamParams, ProjectRemoveTeamParams, TeamAddMemberParams,
-    TeamCreateParams, TeamDeleteParams, TeamMoveParams, TeamRemoveMemberParams, TeamRenameParams,
-    TeamSetLeadParams, TeamSetTitleParams,
+    MemberAddAgentParams, MemberAddPersonParams, MemberMoveParams, MemberOffboardParams,
+    MemberRemoveParams, MemberSetAgentStatusParams, MemberSetReportsToParams,
+    MemberSetRunModeParams, MemberUpdateAgentParams, MemberUpdatePersonParams,
+    ProjectAddTeamParams, ProjectRemoveTeamParams, TeamAddMemberParams, TeamCreateParams,
+    TeamDeleteParams, TeamMoveParams, TeamRemoveMemberParams, TeamRenameParams, TeamSetLeadParams,
+    TeamSetTitleParams,
 };
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +43,16 @@ pub enum OrgCommand {
     MemberSetReportsTo(MemberSetReportsToParams),
     #[serde(rename = "member.move")]
     MemberMove(MemberMoveParams),
+    #[serde(rename = "member.add_agent")]
+    MemberAddAgent(MemberAddAgentParams),
+    #[serde(rename = "member.update_agent")]
+    MemberUpdateAgent(MemberUpdateAgentParams),
+    #[serde(rename = "member.set_agent_status")]
+    MemberSetAgentStatus(MemberSetAgentStatusParams),
+    #[serde(rename = "member.set_run_mode")]
+    MemberSetRunMode(MemberSetRunModeParams),
+    #[serde(rename = "member.offboard")]
+    MemberOffboard(MemberOffboardParams),
     #[serde(rename = "project.add_team")]
     ProjectAddTeam(ProjectAddTeamParams),
     #[serde(rename = "project.remove_team")]
@@ -64,6 +76,11 @@ impl OrgCommand {
             Self::MemberRemove(p) => &p.command_id,
             Self::MemberSetReportsTo(p) => &p.command_id,
             Self::MemberMove(p) => &p.command_id,
+            Self::MemberAddAgent(p) => &p.command_id,
+            Self::MemberUpdateAgent(p) => &p.command_id,
+            Self::MemberSetAgentStatus(p) => &p.command_id,
+            Self::MemberSetRunMode(p) => &p.command_id,
+            Self::MemberOffboard(p) => &p.command_id,
             Self::ProjectAddTeam(p) => &p.command_id,
             Self::ProjectRemoveTeam(p) => &p.command_id,
         }
@@ -74,9 +91,10 @@ impl OrgCommand {
 mod tests {
     use super::*;
     use org_proto::org::{
-        MemberAddPerson, MemberMove, MemberRemove, MemberSetReportsTo, MemberUpdatePerson,
-        ProjectAddTeam, ProjectRemoveTeam, TeamAddMember, TeamCreate, TeamDelete, TeamMove,
-        TeamRemoveMember, TeamRename, TeamSetLead, TeamSetTitle,
+        MemberAddAgent, MemberAddPerson, MemberMove, MemberOffboard, MemberRemove,
+        MemberSetAgentStatus, MemberSetReportsTo, MemberSetRunMode, MemberUpdateAgent,
+        MemberUpdatePerson, ProjectAddTeam, ProjectRemoveTeam, TeamAddMember, TeamCreate,
+        TeamDelete, TeamMove, TeamRemoveMember, TeamRename, TeamSetLead, TeamSetTitle,
     };
     use org_proto::Call;
 
@@ -97,6 +115,11 @@ mod tests {
             "member.remove",
             "member.set_reports_to",
             "member.move",
+            "member.add_agent",
+            "member.update_agent",
+            "member.set_agent_status",
+            "member.set_run_mode",
+            "member.offboard",
             "project.add_team",
             "project.remove_team",
         ];
@@ -114,6 +137,11 @@ mod tests {
             MemberRemove::METHOD,
             MemberSetReportsTo::METHOD,
             MemberMove::METHOD,
+            MemberAddAgent::METHOD,
+            MemberUpdateAgent::METHOD,
+            MemberSetAgentStatus::METHOD,
+            MemberSetRunMode::METHOD,
+            MemberOffboard::METHOD,
             ProjectAddTeam::METHOD,
             ProjectRemoveTeam::METHOD,
         ];
@@ -143,6 +171,13 @@ mod tests {
             c(
                 serde_json::json!({"membership_id": "m", "expected_version": 1, "new_membership_id": "n", "to_team_id": "t"}),
             ),
+            c(
+                serde_json::json!({"member_id": "a", "name": "A", "office_id": "o", "profile": {"role": "r", "title": "t", "runtime": "claude_code", "messaging_name": "a", "status": "active"}}),
+            ),
+            c(serde_json::json!({"member_id": "a", "expected_version": 1, "role": "r"})),
+            c(serde_json::json!({"member_id": "a", "expected_version": 1, "status": "paused"})),
+            c(serde_json::json!({"member_id": "a", "expected_version": 1, "run_mode": "on_call"})),
+            c(serde_json::json!({"member_id": "a", "expected_version": 1})),
             c(serde_json::json!({"project_team_id": "x", "project_id": "p", "team_id": "t"})),
             c(serde_json::json!({"project_team_id": "x", "expected_version": 1})),
         ];

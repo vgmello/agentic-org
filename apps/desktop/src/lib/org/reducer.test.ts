@@ -218,3 +218,51 @@ describe('member.move', () => {
 		expect(err(() => run(s0, { method: 'member.move', params: { membership_id: ms.id, expected_version: ms.version, new_membership_id: 'm2', to_team_id: 'ghost' } })).code).toBe('not_found');
 	});
 });
+
+describe('agent commands: what is stored', () => {
+	const agentProfile = { role: '  QA engineer ', title: 'QA', runtime: 'codex' as const, messaging_name: 'cam', status: 'active' as const, focus: ' tests ' };
+	const ctx = { now: '2026-11-08T12:00:00.000Z', offices: ['office-1'] };
+	const add = () => applyCommand(s0, withId({ method: 'member.add_agent', params: { member_id: 'cam', name: '  Cameron ', office_id: 'office-1', profile: agentProfile } }), ctx);
+
+	it('stores an added agent trimmed, in its office, with HQ’s clock and no manager', () => {
+		const cam = member(add(), 'cam');
+		expect(cam).toMatchObject({ name: 'Cameron', kind: 'agent', office_id: 'office-1', created_at: '2026-11-08T12:00:00.000Z', version: 1 });
+		expect(cam.reports_to_member_id).toBeUndefined();
+		expect(cam.agent).toMatchObject({ role: 'QA engineer', focus: 'tests', status: 'active' });
+	});
+
+	it('an unknown office is not_found, and a null inside the profile means not given', () => {
+		expect(err(() => applyCommand(s0, withId({ method: 'member.add_agent', params: { member_id: 'cam', name: 'C', office_id: 'nowhere', profile: agentProfile } }), ctx)).code).toBe('not_found');
+		const nulls = { ...agentProfile, focus: null as unknown as undefined, model: null as unknown as undefined, home: null as unknown as undefined };
+		const s = applyCommand(s0, withId({ method: 'member.add_agent', params: { member_id: 'cam', name: 'Cameron', office_id: 'office-1', profile: nulls } }), ctx);
+		expect(member(s, 'cam').agent).not.toHaveProperty('focus');
+	});
+
+	it('update changes only what is given and clears with the flags', () => {
+		const s1 = applyCommand(add(), withId({ method: 'member.update_agent', params: { member_id: 'cam', expected_version: 1, title: ' Lead QA ', model: ' m ' } }), ctx);
+		expect(member(s1, 'cam')).toMatchObject({ version: 2 });
+		expect(member(s1, 'cam').agent).toMatchObject({ title: 'Lead QA', model: 'm', role: 'QA engineer', focus: 'tests' });
+		const s2 = applyCommand(s1, withId({ method: 'member.update_agent', params: { member_id: 'cam', expected_version: 2, clear_focus: true, clear_model: true } }), ctx);
+		expect(member(s2, 'cam').agent).not.toHaveProperty('focus');
+		expect(member(s2, 'cam').agent).not.toHaveProperty('model');
+	});
+
+	it('pausing and the run mode change the profile and the version; a schedule only goes with scheduled', () => {
+		let s = applyCommand(s0, withId({ method: 'member.set_agent_status', params: { member_id: 'sam', expected_version: 1, status: 'paused' } }), ctx);
+		expect(member(s, 'sam').agent?.status).toBe('paused');
+		s = applyCommand(s, withId({ method: 'member.set_run_mode', params: { member_id: 'sam', expected_version: 2, run_mode: 'scheduled', schedule: { spec: ' daily ', time_zone: 'UTC' } } }), ctx);
+		expect(member(s, 'sam').agent?.schedule?.spec).toBe('daily');
+		s = applyCommand(s, withId({ method: 'member.set_run_mode', params: { member_id: 'sam', expected_version: 3, run_mode: 'on_call' } }), ctx);
+		expect(member(s, 'sam').agent).not.toHaveProperty('schedule');
+		expect(member(s, 'sam').version).toBe(4);
+	});
+
+	it('offboarding keeps the record and handle, stamps HQ’s date, and moves reporters up in one step', () => {
+		const s = applyCommand(s0, withId({ method: 'member.offboard', params: { member_id: 'sam', expected_version: 1 } }), ctx);
+		expect(member(s, 'sam')).toMatchObject({ version: 2, agent: { status: 'offboarded', offboarded_at: '2026-11-08T12:00:00.000Z', messaging_name: 'sam' } });
+		expect(s.memberships.some((m) => m.member_id === 'sam')).toBe(false);
+		expect(team(s, 'eng')).toMatchObject({ version: 2 });
+		expect(team(s, 'eng').lead_member_id).toBeUndefined();
+		for (const id of ['noor', 'kai', 'mira']) expect(member(s, id)).toMatchObject({ reports_to_member_id: 'avery', version: 2 });
+	});
+});

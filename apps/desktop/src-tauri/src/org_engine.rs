@@ -7,10 +7,11 @@
 //! (`owner_protected`, `cycle`, `not_a_member`, `not_empty`), `already_exists` is returned, as the
 //! contract says.
 
+use crate::org_agent_rules as rules;
 use crate::org_command::OrgCommand;
 use org_proto::org::{
-    AgentStatus, CommandAccepted, CommandStatus, Member, MemberKind, Membership, OrgChange,
-    OrgChangedData, OrgSnapshot, Position, ProjectTeam, Team,
+    AgentProfile, AgentStatus, CommandAccepted, CommandStatus, Member, MemberKind, Membership,
+    OrgChange, OrgChangedData, OrgSnapshot, Position, ProjectTeam, Team,
 };
 use org_proto::{
     ApiError, ErrorCode, NameError, OrganizationName, AGENT_TEXT_MAX_CHARS, OWNER_HANDLE,
@@ -140,13 +141,66 @@ fn clear_lead(s: &mut OrgSnapshot, team_id: &str, member_id: &str) -> Option<Org
     Some(OrgChange::TeamUpserted { team: t.clone() })
 }
 
+/// What happens to a member's place in the organization when they leave it (removed, or an agent offboarded):
+/// their memberships end, the teams they led lose the lead, and whoever reported to them reports to their own
+/// manager (the owner if they had none). Each affected team and member gets a new version.
+fn detach(s: &mut OrgSnapshot, id: &str, manager: Option<String>, changes: &mut Vec<OrgChange>) {
+    for ms in s.memberships.iter().filter(|m| m.member_id == id) {
+        changes.push(OrgChange::MembershipRemoved {
+            membership_id: ms.id.clone(),
+        });
+    }
+    s.memberships.retain(|m| m.member_id != id);
+    let led: Vec<String> = s
+        .teams
+        .iter()
+        .filter(|t| t.lead_member_id.as_deref() == Some(id))
+        .map(|t| t.id.clone())
+        .collect();
+    for team_id in led {
+        changes.extend(clear_lead(s, &team_id, id));
+    }
+    for m in s
+        .members
+        .iter_mut()
+        .filter(|m| m.reports_to_member_id.as_deref() == Some(id))
+    {
+        m.reports_to_member_id = manager.clone();
+        m.version += 1;
+        changes.push(OrgChange::MemberUpserted { member: m.clone() });
+    }
+}
+
+/// What HQ knows besides the structure: its clock (RFC 3339 UTC with milliseconds) and which offices exist.
+#[derive(Debug, Clone)]
+pub struct Ctx {
+    pub now: String,
+    pub offices: Vec<String>,
+}
+
+#[cfg(test)]
+impl Ctx {
+    /// The clock and the one office the shared cases and the sample organization use.
+    pub fn for_tests() -> Self {
+        Self {
+            now: "2026-11-08T12:00:00.000Z".into(),
+            offices: vec!["office-1".into()],
+        }
+    }
+}
+
 /// Apply `command` to `s`. On success `s` has the changes and they are returned, in the order they
 /// were made; on an error `s` is untouched.
-pub fn apply(s: &mut OrgSnapshot, command: &OrgCommand) -> Outcome {
+pub fn apply_with(s: &mut OrgSnapshot, command: &OrgCommand, ctx: &Ctx) -> Outcome {
     let mut next = s.clone();
-    let changes = apply_to(&mut next, command)?;
+    let changes = apply_to(&mut next, command, ctx)?;
     *s = next;
     Ok(changes)
+}
+
+#[cfg(test)]
+pub fn apply(s: &mut OrgSnapshot, command: &OrgCommand) -> Outcome {
+    apply_with(s, command, &Ctx::for_tests())
 }
 
 /// The longest id the mock accepts. The real ones are ULIDs (26 characters); the sample uses short
@@ -205,6 +259,13 @@ fn ids_of(command: &OrgCommand) -> Vec<&str> {
         OrgCommand::MemberMove(p) => {
             ids.extend([&p.membership_id, &p.new_membership_id, &p.to_team_id].map(String::as_str))
         }
+        OrgCommand::MemberAddAgent(p) => {
+            ids.extend([&p.member_id, &p.office_id].map(String::as_str))
+        }
+        OrgCommand::MemberUpdateAgent(p) => ids.push(&p.member_id),
+        OrgCommand::MemberSetAgentStatus(p) => ids.push(&p.member_id),
+        OrgCommand::MemberSetRunMode(p) => ids.push(&p.member_id),
+        OrgCommand::MemberOffboard(p) => ids.push(&p.member_id),
         OrgCommand::ProjectAddTeam(p) => {
             ids.extend([&p.project_team_id, &p.project_id, &p.team_id].map(String::as_str))
         }
@@ -237,7 +298,7 @@ fn check_text(text: &Option<String>) -> Outcome<()> {
     Ok(())
 }
 
-fn apply_to(s: &mut OrgSnapshot, command: &OrgCommand) -> Outcome {
+fn apply_to(s: &mut OrgSnapshot, command: &OrgCommand, ctx: &Ctx) -> Outcome {
     well_formed(command)?;
     match command {
         OrgCommand::TeamCreate(p) => {
@@ -554,31 +615,7 @@ fn apply_to(s: &mut OrgSnapshot, command: &OrgCommand) -> Outcome {
             let mut changes = vec![OrgChange::MemberRemoved {
                 member_id: gone.id.clone(),
             }];
-            for ms in s.memberships.iter().filter(|m| m.member_id == gone.id) {
-                changes.push(OrgChange::MembershipRemoved {
-                    membership_id: ms.id.clone(),
-                });
-            }
-            s.memberships.retain(|m| m.member_id != gone.id);
-            let led: Vec<String> = s
-                .teams
-                .iter()
-                .filter(|t| t.lead_member_id.as_deref() == Some(gone.id.as_str()))
-                .map(|t| t.id.clone())
-                .collect();
-            for team_id in led {
-                changes.extend(clear_lead(s, &team_id, &gone.id));
-            }
-            // Whoever reported to them now reports to their own manager (the owner if they had none).
-            for m in s
-                .members
-                .iter_mut()
-                .filter(|m| m.reports_to_member_id.as_deref() == Some(gone.id.as_str()))
-            {
-                m.reports_to_member_id = gone.reports_to_member_id.clone();
-                m.version += 1;
-                changes.push(OrgChange::MemberUpserted { member: m.clone() });
-            }
+            detach(s, &gone.id, gone.reports_to_member_id.clone(), &mut changes);
             Ok(changes)
         }
         OrgCommand::MemberSetReportsTo(p) => {
@@ -656,6 +693,222 @@ fn apply_to(s: &mut OrgSnapshot, command: &OrgCommand) -> Outcome {
                 OrgChange::MembershipUpserted { membership },
             ];
             changes.extend(clear_lead(s, &old.team_id, &old.member_id));
+            Ok(changes)
+        }
+        OrgCommand::MemberAddAgent(p) => {
+            if !ctx.offices.contains(&p.office_id) {
+                return err(
+                    ErrorCode::NotFound,
+                    "That office isn't in the organization.",
+                );
+            }
+            let profile = rules::new_profile(&p.profile)?;
+            let name = checked_name(&p.name)?;
+            if s.members.iter().any(|m| m.id == p.member_id) {
+                return err(ErrorCode::AlreadyExists, "That agent id is taken.");
+            }
+            if handle_taken(s, &profile.messaging_name, None) {
+                return err(
+                    ErrorCode::AlreadyExists,
+                    format!(
+                        "{} is already taken as a name here.",
+                        profile.messaging_name
+                    ),
+                );
+            }
+            let member = Member {
+                id: p.member_id.clone(),
+                kind: MemberKind::Agent,
+                name,
+                contact: None,
+                owner: false,
+                office_id: Some(p.office_id.clone()),
+                agent: Some(profile),
+                reports_to_member_id: None,
+                created_at: Some(ctx.now.clone()),
+                version: 1,
+            };
+            s.members.push(member.clone());
+            Ok(vec![OrgChange::MemberUpserted { member }])
+        }
+        OrgCommand::MemberUpdateAgent(p) => {
+            let i = member_ix(s, &p.member_id)?;
+            let Some(current) = s.members[i]
+                .agent
+                .clone()
+                .filter(|_| s.members[i].kind == MemberKind::Agent)
+            else {
+                return err(
+                    ErrorCode::InvalidRequest,
+                    "That member isn't an agent: people are edited another way.",
+                );
+            };
+            if is_offboarded(&s.members[i]) {
+                return err(
+                    ErrorCode::InvalidRequest,
+                    "An agent who has left isn't edited: its record is history.",
+                );
+            }
+            let nothing = p.name.is_none()
+                && p.role.is_none()
+                && p.title.is_none()
+                && p.focus.is_none()
+                && p.runtime.is_none()
+                && p.model.is_none()
+                && p.home.is_none()
+                && p.messaging_name.is_none()
+                && !p.clear_focus
+                && !p.clear_model
+                && !p.clear_home;
+            if nothing
+                || (p.focus.is_some() && p.clear_focus)
+                || (p.model.is_some() && p.clear_model)
+                || (p.home.is_some() && p.clear_home)
+            {
+                return err(
+                    ErrorCode::InvalidRequest,
+                    "Give a value to change, and not both a value and its clear flag.",
+                );
+            }
+            let mut next: AgentProfile = current;
+            if let Some(role) = &p.role {
+                next.role = rules::text(role, "The role")?;
+            }
+            if let Some(title) = &p.title {
+                next.title = rules::text(title, "The title")?;
+            }
+            if let Some(focus) = &p.focus {
+                next.focus = Some(rules::text(focus, "The focus")?);
+            }
+            if p.clear_focus {
+                next.focus = None;
+            }
+            if let Some(rt) = &p.runtime {
+                next.runtime = rules::runtime(rt)?;
+            }
+            if let Some(model) = &p.model {
+                next.model = Some(rules::text(model, "The model")?);
+            }
+            if p.clear_model {
+                next.model = None;
+            }
+            if let Some(home) = &p.home {
+                next.home = Some(rules::home(home)?);
+            }
+            if p.clear_home {
+                next.home = None;
+            }
+            let name = p.name.as_deref().map(checked_name).transpose()?;
+            if let Some(mn) = &p.messaging_name {
+                next.messaging_name = rules::messaging_name(mn)?;
+            }
+            if s.members[i].version != p.expected_version {
+                return err(
+                    ErrorCode::Conflict,
+                    format!("{} changed since you looked.", s.members[i].name),
+                );
+            }
+            if p.messaging_name.is_some()
+                && handle_taken(s, &next.messaging_name, Some(&p.member_id))
+            {
+                return err(
+                    ErrorCode::AlreadyExists,
+                    format!("{} is already taken as a name here.", next.messaging_name),
+                );
+            }
+            if let Some(name) = name {
+                s.members[i].name = name;
+            }
+            s.members[i].agent = Some(next);
+            s.members[i].version += 1;
+            Ok(vec![OrgChange::MemberUpserted {
+                member: s.members[i].clone(),
+            }])
+        }
+        OrgCommand::MemberSetAgentStatus(p) => {
+            let i = member_ix(s, &p.member_id)?;
+            if s.members[i].kind != MemberKind::Agent || s.members[i].agent.is_none() {
+                return err(ErrorCode::InvalidRequest, "That member isn't an agent.");
+            }
+            if is_offboarded(&s.members[i]) {
+                return err(
+                    ErrorCode::InvalidRequest,
+                    "An agent who has left can't be paused or resumed.",
+                );
+            }
+            if !matches!(p.status, AgentStatus::Active | AgentStatus::Paused) {
+                return err(ErrorCode::InvalidRequest, "An agent is active or paused.");
+            }
+            if s.members[i].version != p.expected_version {
+                return err(
+                    ErrorCode::Conflict,
+                    format!("{} changed since you looked.", s.members[i].name),
+                );
+            }
+            if let Some(a) = s.members[i].agent.as_mut() {
+                a.status = p.status;
+            }
+            s.members[i].version += 1;
+            Ok(vec![OrgChange::MemberUpserted {
+                member: s.members[i].clone(),
+            }])
+        }
+        OrgCommand::MemberSetRunMode(p) => {
+            let i = member_ix(s, &p.member_id)?;
+            if s.members[i].kind != MemberKind::Agent || s.members[i].agent.is_none() {
+                return err(ErrorCode::InvalidRequest, "That member isn't an agent.");
+            }
+            if is_offboarded(&s.members[i]) {
+                return err(
+                    ErrorCode::InvalidRequest,
+                    "An agent who has left isn't run.",
+                );
+            }
+            let (run_mode, schedule) = rules::run_mode(p.run_mode, p.schedule.as_ref())?;
+            if s.members[i].version != p.expected_version {
+                return err(
+                    ErrorCode::Conflict,
+                    format!("{} changed since you looked.", s.members[i].name),
+                );
+            }
+            if let Some(a) = s.members[i].agent.as_mut() {
+                a.run_mode = run_mode;
+                a.schedule = schedule;
+            }
+            s.members[i].version += 1;
+            Ok(vec![OrgChange::MemberUpserted {
+                member: s.members[i].clone(),
+            }])
+        }
+        OrgCommand::MemberOffboard(p) => {
+            let i = member_ix(s, &p.member_id)?;
+            if s.members[i].kind != MemberKind::Agent || s.members[i].agent.is_none() {
+                return err(
+                    ErrorCode::InvalidRequest,
+                    "That member isn't an agent: people are removed instead.",
+                );
+            }
+            if is_offboarded(&s.members[i]) {
+                return err(ErrorCode::InvalidRequest, "That agent has already left.");
+            }
+            if s.members[i].version != p.expected_version {
+                return err(
+                    ErrorCode::Conflict,
+                    format!("{} changed since you looked.", s.members[i].name),
+                );
+            }
+            // Offboarding is a state, not a deletion: the record and its handle stay for good.
+            if let Some(a) = s.members[i].agent.as_mut() {
+                a.status = AgentStatus::Offboarded;
+                a.offboarded_at = Some(ctx.now.clone());
+            }
+            s.members[i].version += 1;
+            let id = s.members[i].id.clone();
+            let manager = s.members[i].reports_to_member_id.clone();
+            let mut changes = vec![OrgChange::MemberUpserted {
+                member: s.members[i].clone(),
+            }];
+            detach(s, &id, manager, &mut changes);
             Ok(changes)
         }
         OrgCommand::ProjectAddTeam(p) => {
@@ -777,9 +1030,18 @@ impl Hq {
 
     /// Answer a command. Returns the answer and, for a new commit, the `org.changed` data to
     /// send; a retry (same `command_id`, same command) is answered the same and sends nothing.
+    #[cfg(test)]
     pub fn handle(
         &mut self,
         command: &OrgCommand,
+    ) -> (Result<CommandAccepted, ApiError>, Option<OrgChangedData>) {
+        self.handle_with(command, &Ctx::for_tests())
+    }
+
+    pub fn handle_with(
+        &mut self,
+        command: &OrgCommand,
+        ctx: &Ctx,
     ) -> (Result<CommandAccepted, ApiError>, Option<OrgChangedData>) {
         let id = command.command_id().to_string();
         // A request that can't be read as a command is refused and never remembered.
@@ -801,7 +1063,7 @@ impl Hq {
                 None,
             );
         }
-        let (result, changed) = match apply(&mut self.snapshot, command) {
+        let (result, changed) = match apply_with(&mut self.snapshot, command, ctx) {
             Ok(changes) => {
                 self.snapshot.position.seq += 1;
                 let position: Position = self.snapshot.position;
@@ -1730,7 +1992,7 @@ mod tests {
         let cases = vectors["cases"].as_array().unwrap();
         assert_eq!(
             cases.len(),
-            80,
+            142,
             "a case was lost or added: update this count"
         );
         for case in cases {
@@ -1893,5 +2155,123 @@ mod tests {
         assert!(!serde_json::to_string(&loaded)
             .unwrap()
             .contains("team.create\\\"}"));
+    }
+
+    fn profile_of<'a>(s: &'a OrgSnapshot, id: &str) -> &'a AgentProfile {
+        member(s, id).agent.as_ref().unwrap()
+    }
+
+    #[test]
+    fn an_added_agent_is_stored_trimmed_in_its_office_with_the_clock_and_no_manager() {
+        let mut h = hq();
+        let changes = run(
+            &mut h,
+            "member.add_agent",
+            1,
+            json!({"member_id": "cam", "name": "  Cameron  ", "office_id": "office-1",
+                   "profile": {"role": "  QA engineer ", "title": "QA", "focus": " tests ", "runtime": "codex",
+                               "model": " gpt ", "messaging_name": "cam", "status": "active"}}),
+        )
+        .unwrap();
+        assert!(
+            matches!(&changes[..], [OrgChange::MemberUpserted { member }] if member.id == "cam")
+        );
+        let cam = member(&h.snapshot, "cam");
+        assert_eq!(
+            (cam.name.as_str(), cam.kind, cam.version),
+            ("Cameron", MemberKind::Agent, 1)
+        );
+        assert_eq!(cam.office_id.as_deref(), Some("office-1"));
+        assert_eq!(cam.created_at.as_deref(), Some("2026-11-08T12:00:00.000Z"));
+        assert_eq!(cam.reports_to_member_id, None);
+        let a = profile_of(&h.snapshot, "cam");
+        assert_eq!(
+            (a.role.as_str(), a.focus.as_deref(), a.model.as_deref()),
+            ("QA engineer", Some("tests"), Some("gpt"))
+        );
+    }
+
+    #[test]
+    fn offboarding_keeps_the_record_and_its_handle_and_ends_everything_else_in_one_set_of_changes()
+    {
+        let mut h = hq();
+        let changes = run(
+            &mut h,
+            "member.offboard",
+            1,
+            json!({"member_id": "sam", "expected_version": 1}),
+        )
+        .unwrap();
+        // First the agent itself, with its state and date.
+        match &changes[0] {
+            OrgChange::MemberUpserted { member } => {
+                assert_eq!(member.version, 2);
+                let a = member.agent.as_ref().unwrap();
+                assert_eq!(a.status, AgentStatus::Offboarded);
+                assert_eq!(a.offboarded_at.as_deref(), Some("2026-11-08T12:00:00.000Z"));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(changes.iter().any(|c| matches!(c, OrgChange::MembershipRemoved { membership_id } if membership_id == "ms-1")));
+        assert!(changes.iter().any(|c| matches!(c, OrgChange::TeamUpserted { team } if team.id == "eng" && team.lead_member_id.is_none() && team.version == 2)));
+        for id in ["noor", "kai", "mira"] {
+            let m = member(&h.snapshot, id);
+            assert_eq!(
+                (m.reports_to_member_id.as_deref(), m.version),
+                (Some("avery"), 2),
+                "{id}"
+            );
+        }
+        // The record stays (history), and nothing left refers to it as a team member or lead.
+        assert_eq!(
+            member(&h.snapshot, "sam").agent.as_ref().unwrap().status,
+            AgentStatus::Offboarded
+        );
+        assert!(h.snapshot.memberships.iter().all(|m| m.member_id != "sam"));
+    }
+
+    #[test]
+    fn updating_an_agent_changes_only_what_is_given_and_trims() {
+        let mut h = hq();
+        run(&mut h, "member.update_agent", 1, json!({"member_id": "sam", "expected_version": 1, "role": " staff ", "model": " m ", "home": "/a/b"})).unwrap();
+        let a = profile_of(&h.snapshot, "sam");
+        assert_eq!(
+            (a.role.as_str(), a.model.as_deref(), a.home.as_deref()),
+            ("staff", Some("m"), Some("/a/b"))
+        );
+        assert_eq!(a.title, "software engineer", "untouched");
+        assert_eq!(member(&h.snapshot, "sam").version, 2);
+        run(&mut h, "member.update_agent", 2, json!({"member_id": "sam", "expected_version": 2, "clear_model": true, "clear_home": true})).unwrap();
+        let a = profile_of(&h.snapshot, "sam");
+        assert_eq!((a.model.as_deref(), a.home.as_deref()), (None, None));
+    }
+
+    #[test]
+    fn pausing_and_the_run_mode_change_the_profile_and_the_version() {
+        let mut h = hq();
+        run(
+            &mut h,
+            "member.set_agent_status",
+            1,
+            json!({"member_id": "sam", "expected_version": 1, "status": "paused"}),
+        )
+        .unwrap();
+        assert_eq!(profile_of(&h.snapshot, "sam").status, AgentStatus::Paused);
+        run(&mut h, "member.set_run_mode", 2, json!({"member_id": "sam", "expected_version": 2, "run_mode": "scheduled", "schedule": {"spec": " daily ", "time_zone": "UTC"}})).unwrap();
+        let a = profile_of(&h.snapshot, "sam");
+        assert_eq!(a.schedule.as_ref().map(|s| s.spec.as_str()), Some("daily"));
+        run(
+            &mut h,
+            "member.set_run_mode",
+            3,
+            json!({"member_id": "sam", "expected_version": 3, "run_mode": "on_call"}),
+        )
+        .unwrap();
+        assert_eq!(
+            profile_of(&h.snapshot, "sam").schedule,
+            None,
+            "a schedule only goes with scheduled"
+        );
+        assert_eq!(member(&h.snapshot, "sam").version, 4);
     }
 }

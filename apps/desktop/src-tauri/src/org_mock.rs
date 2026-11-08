@@ -99,7 +99,7 @@ fn joined(n: usize, team_id: &str, member_id: &str, title: Option<&str>) -> Memb
 fn owner() -> Member {
     Member {
         owner: true,
-        ..person("you", "You", None)
+        ..person("you", "Alex Kim", None)
     }
 }
 

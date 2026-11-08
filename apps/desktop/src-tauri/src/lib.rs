@@ -8,6 +8,7 @@ mod connections;
 mod menu_model;
 mod mock;
 mod office;
+mod org_agent_rules;
 mod org_command;
 mod org_engine;
 mod org_mock;

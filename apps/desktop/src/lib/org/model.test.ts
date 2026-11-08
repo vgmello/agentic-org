@@ -18,8 +18,7 @@ import {
 	teamTree,
 	teamsOfMember,
 	unassignedProjects,
-	type OfficeFilter
-} from './model';
+	type OfficeFilter, searchMembers } from './model';
 import { emptyOrg, sampleOrg } from './sample';
 
 const s = sampleOrg('office-1');
@@ -112,7 +111,7 @@ describe('TEAM-3 and OWNER-1 not in a team', () => {
 	});
 
 	it('counts leave the owner out', () => {
-		expect(owner(s)?.name).toBe('You');
+		expect(owner(s)?.name).toBe('Alex Kim');
 		expect(organizationCounts(s)).toEqual({ agents: 8, people: 3, others: 0, teams: 5 });
 		expect(organizationCounts(emptyOrg())).toEqual({ agents: 0, people: 0, others: 0, teams: 0 });
 		const odd = { ...s, members: s.members.map((m) => (m.id === 'leo' ? { ...m, kind: 'unknown' as const } : m)) };
@@ -220,5 +219,22 @@ describe('normalizeKinds and an agent’s profile', () => {
 		expect(read(agent({})).agent).not.toHaveProperty('run_mode');
 		const person = { id: 'p', kind: 'person', name: 'P', version: 1 };
 		expect(read(person)).toEqual(person);
+	});
+});
+
+describe('TEAM-11 searching members', () => {
+	const s = sampleOrg('office-1');
+	it('matches names, ignoring case and accents, and an agent’s role, title and messaging name', () => {
+		expect([...searchMembers(s, 'ines')!]).toEqual(['ines']); // "Inês"
+		expect([...searchMembers(s, 'HANA')!]).toEqual(['hana']);
+		expect([...searchMembers(s, 'designer')!].sort()).toEqual(['juno', 'pax']); // role
+		expect([...searchMembers(s, 'sam')!]).toEqual(['sam']); // messaging name
+	});
+
+	it('finds no one for nonsense, and never the owner; an empty search dims nothing', () => {
+		expect(searchMembers(s, 'zzzz')!.size).toBe(0);
+		expect(searchMembers(s, 'alex')!.size).toBe(0); // the owner is shown apart
+		expect(searchMembers(s, '   ')).toBeUndefined();
+		expect(searchMembers(s, '')).toBeUndefined();
 	});
 });

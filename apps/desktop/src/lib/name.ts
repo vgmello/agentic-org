@@ -23,9 +23,10 @@ const ALLOWED_INVISIBLE = new Set(['\u200c', '\u200d', '\ufe0e', '\ufe0f']);
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 
-export function validateName(raw: string): NameCheck {
+/** `empty` words the "nothing typed" case for what is being named (an organization by default). */
+export function validateName(raw: string, empty = 'Give the organization a name.'): NameCheck {
 	const name = trimWhiteSpace(raw);
-	if (name === '') return { ok: false, message: 'Give the organization a name.' };
+	if (name === '') return { ok: false, message: empty };
 	if ([...name].length > ORGANIZATION_NAME_MAX_CHARS)
 		return { ok: false, message: `Use ${ORGANIZATION_NAME_MAX_CHARS} characters or fewer.` };
 	if (CONTROL.test(name)) return { ok: false, message: "The name can't contain control characters." };

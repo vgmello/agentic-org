@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Sidebar from '$lib/components/Sidebar.svelte';
+	import { Toaster } from '$lib/components/ui/sonner';
 
 	import { page } from '$app/state';
 	import { navFor } from '$lib/nav';
@@ -20,3 +21,4 @@
 		{@render children()}
 	</div>
 </div>
+<Toaster position="bottom-right" />

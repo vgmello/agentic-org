@@ -6,7 +6,7 @@
 
 use crate::office::{OfficeConnection, SetupError, SetupErrorCode};
 use crate::org_command::OrgCommand;
-use crate::org_engine::Hq;
+use crate::org_engine::{Ctx, Hq};
 use crate::org_mock::Seed;
 use org_proto::{
     ApiError, CommandAccepted, ErrorCode, HelloResult, OfficeInfo, OfficeRole, OfficeStatus,
@@ -177,6 +177,17 @@ impl MockOffice {
             .find(|o| o.role == OfficeRole::Hq)
             .map(|o| o.id.clone())
             .ok_or_else(|| api_error(ErrorCode::NotFound, "That organization has no HQ office."))
+    }
+
+    /// Every office the organization has: where an agent can be placed.
+    fn office_ids(&self, organization_id: &str) -> Vec<String> {
+        self.organizations
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .find(|o| o.id == organization_id)
+            .map(|o| o.offices.iter().map(|office| office.id.clone()).collect())
+            .unwrap_or_default()
     }
 
     /// The organization's HQ state, seeded the first time it is asked for.
@@ -470,10 +481,15 @@ impl OfficeConnection for MockOffice {
         command: &OrgCommand,
     ) -> Result<CommandAccepted, ApiError> {
         let hq_office = self.hq_office_id(organization_id)?;
+        let offices = self.office_ids(organization_id);
         let mut structures = self.structures.lock().unwrap_or_else(|e| e.into_inner());
         let hq = self.hq(&mut structures, organization_id, &hq_office);
         let before = hq.clone();
-        let (answer, _changed) = hq.handle(command);
+        let ctx = Ctx {
+            now: now_rfc3339(),
+            offices,
+        };
+        let (answer, _changed) = hq.handle_with(command, &ctx);
         // A retry changes nothing; anything else (a commit, or a first refusal) is kept.
         if *hq != before {
             if let Err(e) = self.persist_structures(&structures) {
