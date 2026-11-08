@@ -136,6 +136,14 @@ pub struct OfficeAppTokenParams {
 
 /// `office.app_token`'s result. Its `Debug` shows no token, and it isn't `Clone`, like the
 /// token.
+///
+/// ```compile_fail,E0599
+/// use org_proto::{AppToken, OfficeAppTokenResult, APP_TOKEN_BYTES};
+/// let result = OfficeAppTokenResult {
+///     app_token: AppToken::from_bytes([0; APP_TOKEN_BYTES]),
+/// };
+/// let _copy = result.clone();
+/// ```
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OfficeAppTokenResult {
     pub app_token: AppToken,
