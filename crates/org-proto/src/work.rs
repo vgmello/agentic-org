@@ -20,13 +20,15 @@
 //! - **No permissions in phase 1**: any bound member may make any call here, except the
 //!   **app-only** ones, which any other connection gets `not_authorized` for, before any check
 //!   but binding. In this module: `work.delete`. (Every organization command is app-only too.)
-//! - Every write's params start with **`change_id`**, a client-made ULID, and its result is
-//!   [`WorkAccepted`]. The owning office keeps `change_id → (params hash, result)` for 30 days:
-//!   a retry with the same `change_id` and params gets the stored answer (refusals included,
-//!   except `storage_error`, `unavailable`, `not_bound`, `too_large`, `expired` and
-//!   `clock_skew`, which are never stored); the same `change_id` with other params is
-//!   `invalid_request` ("change id reused"). A `change_id` dated more than 29 days ago is
-//!   `expired`, more than 5 minutes ahead of the office's clock `clock_skew`.
+//! - Every write's params start with **`change_id`**, a client-made ULID (26 **uppercase**
+//!   Crockford base32 characters, the first `0` to `7`; `invalid_request` otherwise), and its
+//!   result is [`WorkAccepted`]. The owning office keeps `change_id → (params hash, result)` for
+//!   30 days: a retry with the same `change_id` and params gets the stored answer (refusals
+//!   included, except `storage_error`, `unavailable`, `not_bound`, `not_authorized`,
+//!   `too_large`, a `change_id` that isn't a ULID, `expired` and `clock_skew`, which are never
+//!   stored); the same `change_id` with other params is `invalid_request` ("change id
+//!   reused"). A `change_id` dated more than 29 days ago is `expired`, more than 5 minutes
+//!   ahead of the office's clock `clock_skew`.
 //! - Client-made ids (`item_id`, `step_id`, `link_id`, `comment_id`, `task_id`, …) are ULIDs
 //!   (`invalid_request` otherwise) not already used (`already_exists`).
 //! - **`expected_version`** is required on every call that changes an existing item, except
@@ -795,14 +797,19 @@ pub enum WorkEventKind {
         to: ItemStatus,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         resolution: Option<Resolution>,
-        /// The blocked reason, or another reason the move needed. For a bug (phase 2): the
-        /// note of `bug.mark_fixed`, the reason of a won't fix or can't reproduce close, and,
-        /// for a close with `resolution: duplicate`, the id of the original bug.
+        /// The blocked reason, or another reason the move needed: free text, never an id (except
+        /// in events recorded before `duplicate_of` existed, below). For a bug (phase 2): the
+        /// note of `bug.mark_fixed`, or the reason of a won't fix or can't reproduce close.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
         /// Done (or Fixed) with required steps left.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         anyway: Option<DoneAnyway>,
+        /// A bug closed as a duplicate (`resolution: duplicate`, phase 2): the id of the
+        /// original bug. Absent on every other status change. Added 2026-11-08 (P2): an event
+        /// recorded before it has the original's id in `reason` instead.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duplicate_of: Option<String>,
     },
     Assigned {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -829,7 +836,8 @@ pub enum WorkEventKind {
         note: Option<String>,
     },
     /// A closed bug was reopened (`bug.reopen`): to `triaged`, or to `new` when it had been
-    /// closed as a duplicate (phase 2).
+    /// closed as a duplicate, which also clears the bug's `duplicate_of` (phase 2). The item's
+    /// new state, sent with the event as a [`WorkChange::ItemUpserted`], has it cleared.
     Reopened {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         note: Option<String>,
@@ -1175,7 +1183,9 @@ macro_rules! write_call {
         #[doc = concat!("Params of `", $method, "`.")]
         #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
         pub struct $params {
-            /// Client-made (a ULID); a retry with the same id and params gets the same answer.
+            /// Client-made: an uppercase Crockford ULID, 26 characters. A retry with the same id
+            /// and params gets the same answer; the same id with other params is
+            /// `invalid_request`.
             pub change_id: String,
             $($(#[$fattr])* pub $field: $ty,)*
         }

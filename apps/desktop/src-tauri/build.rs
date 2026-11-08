@@ -19,6 +19,7 @@ fn main() {
             "login_item_status",
             "login_item_set",
             "login_item_open_settings",
+            "open_external_url",
         ]),
     ))
     .expect("failed to run tauri-build");

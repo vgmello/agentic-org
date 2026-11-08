@@ -31,6 +31,7 @@ fn status(at: u64, from: ItemStatus, to: ItemStatus) -> WorkEvent {
             resolution: (to == Done).then_some(Resolution::Completed),
             reason: None,
             anyway: None,
+            duplicate_of: None,
         },
     )
 }

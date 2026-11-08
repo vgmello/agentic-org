@@ -689,13 +689,8 @@ mod tests {
                 Some(match r.method.as_str() {
                     "hello" => Response::ok::<Hello>(
                         r.id,
-                        &HelloResult {
-                            api_version: org_proto::API_VERSION,
-                            server_version: "test".into(),
-                            host: "This Mac".into(),
-                            office: None,
-                            capabilities: host_capabilities.lock().unwrap().clone(),
-                        },
+                        &HelloResult::host("test", "This Mac")
+                            .with_capabilities(host_capabilities.lock().unwrap().clone()),
                     )
                     .unwrap(),
                     "office.app_token" => Response::ok::<org_proto::OfficeAppToken>(
@@ -762,17 +757,8 @@ mod tests {
             Arc::new(move |r| {
                 if r.method == "hello" {
                     return Some(
-                        Response::ok::<Hello>(
-                            r.id,
-                            &HelloResult {
-                                api_version: org_proto::API_VERSION,
-                                server_version: "test".into(),
-                                host: "This Mac".into(),
-                                office: None,
-                                capabilities: vec![],
-                            },
-                        )
-                        .unwrap(),
+                        Response::ok::<Hello>(r.id, &HelloResult::host("test", "This Mac"))
+                            .unwrap(),
                     );
                 }
                 log.lock().unwrap().push(r.method.clone());
@@ -1241,17 +1227,8 @@ mod tests {
                 listener,
                 Arc::new(|r| {
                     Some(
-                        Response::ok::<Hello>(
-                            r.id,
-                            &HelloResult {
-                                api_version: org_proto::API_VERSION,
-                                server_version: "test".into(),
-                                host: "This Mac".into(),
-                                office: None,
-                                capabilities: vec![],
-                            },
-                        )
-                        .unwrap(),
+                        Response::ok::<Hello>(r.id, &HelloResult::host("test", "This Mac"))
+                            .unwrap(),
                     )
                 }),
             );
