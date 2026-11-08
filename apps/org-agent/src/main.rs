@@ -11,10 +11,9 @@ use std::process::ExitCode;
 use std::time::{Duration, SystemTime};
 
 use org_spool::{
-    check_wait_timeout, format_iso8601_utc, json_quote, parse_duration_arg, request_interrupt,
-    sanitize_inline_text, validate_agent_id, DirectoryCard, Envelope, MemberProfile,
-    MessagePriority, MetaValue, NotifyOptions, RefEntry, RelayOutcome, Spool, SpoolError,
-    TeamEntry, OWNER_ID,
+    format_iso8601_utc, json_quote, parse_duration_arg, request_interrupt, sanitize_inline_text,
+    validate_agent_id, DirectoryCard, Envelope, InboxQuery, MessagePriority, MetaValue,
+    NotifyOptions, Outgoing, ProfileUpdate, RelayOutcome, Spool, SpoolError,
 };
 
 const EXIT_OK: u8 = 0;
@@ -193,45 +192,82 @@ fn parse_meta_kv(raw: &str) -> Result<(String, MetaValue), CliError> {
     Ok((key.to_string(), MetaValue::String(v.to_string())))
 }
 
-fn parse_team_spec(raw: &str) -> Result<TeamEntry, CliError> {
-    let parts: Vec<&str> = raw.splitn(3, ':').collect();
-    let id = parts[0].trim();
-    if id.is_empty() {
-        return Err(CliError::Usage(
-            "--team requires <id[:name[:title]]>".into(),
-        ));
-    }
-    let name = parts
-        .get(1)
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .unwrap_or(id);
-    let title_in_team = parts
-        .get(2)
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    Ok(TeamEntry {
-        id: id.to_string(),
-        name: name.to_string(),
-        title_in_team,
-    })
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OutgoingKind {
+    Send,
+    Ask,
+    Reply,
 }
 
-fn parse_ref_spec(raw: &str, flag: &str) -> Result<RefEntry, CliError> {
-    let parts: Vec<&str> = raw.splitn(2, ':').collect();
-    let id = parts[0].trim();
-    if id.is_empty() {
-        return Err(CliError::Usage(format!("{flag} requires <id[:name]>")));
+/// The flags and positionals of `msg send`, `ask` and `reply`.
+#[derive(Default)]
+struct OutgoingArgs {
+    to: Option<String>,
+    timeout: Option<Duration>,
+    subject: Option<String>,
+    priority: Option<MessagePriority>,
+    body: Option<String>,
+    meta: BTreeMap<String, MetaValue>,
+    positional: Vec<String>,
+}
+
+impl OutgoingArgs {
+    /// The message, its body from `--body`, the positionals after the first `skip` (joined),
+    /// or stdin for `-`.
+    fn outgoing(self, skip: usize) -> Result<Outgoing, CliError> {
+        let body = read_body_arg(self.body, &self.positional[skip..])?;
+        Ok(Outgoing {
+            subject: self.subject,
+            body,
+            meta: self.meta,
+            priority: self.priority,
+        })
     }
-    let name = parts
-        .get(1)
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .unwrap_or(id);
-    Ok(RefEntry {
-        id: id.to_string(),
-        name: name.to_string(),
-    })
+}
+
+fn parse_outgoing(args: &[String], kind: OutgoingKind) -> Result<OutgoingArgs, CliError> {
+    let mut out = OutgoingArgs::default();
+    let mut after_double_dash = false;
+    let mut j = 0usize;
+    while j < args.len() {
+        if after_double_dash {
+            out.positional.push(args[j].clone());
+            j += 1;
+            continue;
+        }
+        let flag = args[j].as_str();
+        let mut value = || {
+            j += 1;
+            args.get(j)
+                .cloned()
+                .ok_or_else(|| CliError::Usage(format!("missing value for {flag}")))
+        };
+        match flag {
+            "--" => after_double_dash = true,
+            "--to" if kind != OutgoingKind::Reply => out.to = Some(value()?),
+            "--timeout" if kind == OutgoingKind::Ask => {
+                out.timeout = Some(parse_duration_arg(&value()?).map_err(CliError::Usage)?);
+            }
+            "--subject" => out.subject = Some(value()?),
+            "--priority" => {
+                out.priority = Some(MessagePriority::parse(&value()?).map_err(CliError::Usage)?);
+            }
+            "--body" => out.body = Some(value()?),
+            "--meta" => {
+                let (k, v) = parse_meta_kv(&value()?)?;
+                out.meta.insert(k, v);
+            }
+            "--office" => {
+                value()?;
+            }
+            other if other.starts_with('-') && other != "-" => {
+                return Err(CliError::Usage(format!("unknown flag '{other}'")));
+            }
+            other => out.positional.push(other.to_string()),
+        }
+        j += 1;
+    }
+    Ok(out)
 }
 
 fn print_envelope(env: &Envelope, json: bool) -> Result<(), CliError> {
@@ -261,19 +297,6 @@ fn print_envelope(env: &Envelope, json: bool) -> Result<(), CliError> {
         );
     }
     Ok(())
-}
-
-/// A member edits its own profile; only the owner may edit someone else's (Phase A has no
-/// authentication, so this guards against mistakes, not against an agent passing `--as`).
-fn ensure_may_edit_profile(as_flag: Option<&str>, target: &str) -> Result<(), CliError> {
-    let me = resolve_identity(as_flag)?;
-    if me == target || me == OWNER_ID {
-        Ok(())
-    } else {
-        Err(CliError::Usage(format!(
-            "{me} can't edit {target}'s profile (only its own; the owner can edit any)"
-        )))
-    }
 }
 
 fn now_iso() -> String {
@@ -394,87 +417,34 @@ Usage:
     );
 }
 
-fn apply_profile_flags(
-    spool: &Spool,
-    target_id: String,
-    args: &[String],
-) -> Result<MemberProfile, CliError> {
-    let mut profile = spool
-        .get_profile(&target_id)
-        .unwrap_or_else(|_| MemberProfile::default_for(&target_id));
-    let mut teams_overridden = false;
+/// Parse `profile set` / `msg register` flags into a [`ProfileUpdate`] (its semantics live in
+/// org-spool), before anything is written.
+fn parse_profile_flags(args: &[String]) -> Result<ProfileUpdate, CliError> {
+    let mut update = ProfileUpdate::default();
     let mut j = 0usize;
     while j < args.len() {
-        match args[j].as_str() {
-            "--name" => {
-                j += 1;
-                let v = args
-                    .get(j)
-                    .ok_or_else(|| CliError::Usage("missing value for --name".into()))?;
-                profile.name = v.trim().to_string();
-            }
-            "--kind" => {
-                j += 1;
-                let v = args
-                    .get(j)
-                    .ok_or_else(|| CliError::Usage("missing value for --kind".into()))?
-                    .trim()
-                    .to_ascii_lowercase();
-                if v == "owner" {
-                    profile.kind = "person".to_string();
-                    profile.owner = true;
-                } else if v == "agent" || v == "person" {
-                    profile.kind = v;
-                } else {
-                    return Err(CliError::Usage(
-                        "--kind must be agent, person, or owner".into(),
-                    ));
-                }
-            }
-            "--owner" => {
-                profile.owner = true;
-                profile.kind = "person".to_string();
-            }
-            "--role" | "--role-title" => {
-                j += 1;
-                let v = args
-                    .get(j)
-                    .ok_or_else(|| CliError::Usage("missing value for --role".into()))?;
-                profile.role_title = Some(v.trim().to_string());
-            }
-            "--team" => {
-                j += 1;
-                let v = args
-                    .get(j)
-                    .ok_or_else(|| CliError::Usage("missing value for --team".into()))?;
-                let team = parse_team_spec(v)?;
-                if !teams_overridden {
-                    profile.teams.clear();
-                    teams_overridden = true;
-                }
-                profile.teams.push(team);
-            }
-            "--reports-to" => {
-                j += 1;
-                let v = args
-                    .get(j)
-                    .ok_or_else(|| CliError::Usage("missing value for --reports-to".into()))?;
-                profile.reports_to = Some(parse_ref_spec(v, "--reports-to")?);
-            }
-            "--office" => {
-                j += 1;
-                let v = args
-                    .get(j)
-                    .ok_or_else(|| CliError::Usage("missing value for --office".into()))?;
-                profile.office = Some(parse_ref_spec(v, "--office")?);
-            }
+        let flag = args[j].as_str();
+        let mut value = || {
+            j += 1;
+            args.get(j)
+                .map(String::as_str)
+                .ok_or_else(|| CliError::Usage(format!("missing value for {flag}")))
+        };
+        match flag {
+            "--name" => update.name(value()?),
+            "--kind" => update.kind(value()?).map_err(CliError::Usage)?,
+            "--owner" => update.owner(),
+            "--role" | "--role-title" => update.role(value()?),
+            "--team" => update.team(value()?).map_err(CliError::Usage)?,
+            "--reports-to" => update.reports_to(value()?).map_err(CliError::Usage)?,
+            "--office" => update.office(value()?).map_err(CliError::Usage)?,
             other => {
                 return Err(CliError::Usage(format!("unknown profile flag '{other}'")));
             }
         }
         j += 1;
     }
-    Ok(spool.set_profile(&profile)?)
+    Ok(update)
 }
 
 fn run(argv0: &str, args: Vec<String>) -> Result<u8, CliError> {
@@ -649,11 +619,10 @@ fn run(argv0: &str, args: Vec<String>) -> Result<u8, CliError> {
             } else {
                 (resolve_identity(as_agent.as_deref())?, rest)
             };
-            ensure_may_edit_profile(as_agent.as_deref(), &target_id)?;
-            let updated = apply_profile_flags(&spool, target_id, flag_slice)?;
-            if let Ok(me) = resolve_identity(as_agent.as_deref()) {
-                spool.touch_last_seen(&me);
-            }
+            let update = parse_profile_flags(flag_slice)?;
+            let me = resolve_identity(as_agent.as_deref())?;
+            let updated = spool.edit_profile(&me, &target_id, &update)?;
+            spool.touch_last_seen(&me);
             if json_flag {
                 println!(
                     "{}",
@@ -773,12 +742,13 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
             } else {
                 (resolve_identity(as_agent.as_deref())?, sub_args)
             };
-            if !flag_slice.is_empty() {
-                ensure_may_edit_profile(as_agent.as_deref(), &id)?;
-            }
-            spool.register(&id)?;
-            if !flag_slice.is_empty() {
-                let _ = apply_profile_flags(&spool, id.clone(), flag_slice)?;
+            // Flags are parsed (and refused) before anything is created.
+            let update = parse_profile_flags(flag_slice)?;
+            if update.is_empty() {
+                spool.register(&id)?;
+            } else {
+                let me = resolve_identity(as_agent.as_deref())?;
+                spool.edit_profile(&me, &id, &update)?;
             }
             if let Ok(me) = resolve_identity(as_agent.as_deref()) {
                 spool.touch_last_seen(&me);
@@ -811,96 +781,13 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
 
         "send" => {
             let from = resolve_identity(as_agent.as_deref())?;
-            let mut to: Option<String> = None;
-            let mut subject: Option<String> = None;
-            let mut priority: Option<MessagePriority> = None;
-            let mut body_flag: Option<String> = None;
-            let mut meta: BTreeMap<String, MetaValue> = BTreeMap::new();
-            let mut pos: Vec<String> = Vec::new();
-            let mut after_double_dash = false;
-
-            let mut j = 0usize;
-            while j < sub_args.len() {
-                if after_double_dash {
-                    pos.push(sub_args[j].clone());
-                    j += 1;
-                    continue;
-                }
-                match sub_args[j].as_str() {
-                    "--" => after_double_dash = true,
-                    "--to" => {
-                        j += 1;
-                        to = Some(
-                            sub_args
-                                .get(j)
-                                .ok_or_else(|| CliError::Usage("missing value for --to".into()))?
-                                .clone(),
-                        );
-                    }
-                    "--subject" => {
-                        j += 1;
-                        subject = Some(
-                            sub_args
-                                .get(j)
-                                .ok_or_else(|| {
-                                    CliError::Usage("missing value for --subject".into())
-                                })?
-                                .clone(),
-                        );
-                    }
-                    "--priority" => {
-                        j += 1;
-                        let raw = sub_args.get(j).ok_or_else(|| {
-                            CliError::Usage("missing value for --priority".into())
-                        })?;
-                        priority = Some(MessagePriority::parse(raw).map_err(CliError::Usage)?);
-                    }
-                    "--body" => {
-                        j += 1;
-                        body_flag = Some(
-                            sub_args
-                                .get(j)
-                                .ok_or_else(|| CliError::Usage("missing value for --body".into()))?
-                                .clone(),
-                        );
-                    }
-                    "--meta" => {
-                        j += 1;
-                        let kv = sub_args
-                            .get(j)
-                            .ok_or_else(|| CliError::Usage("missing value for --meta".into()))?;
-                        let (k, v) = parse_meta_kv(kv)?;
-                        meta.insert(k, v);
-                    }
-                    "--office" => {
-                        j += 1;
-                        let _ = sub_args
-                            .get(j)
-                            .ok_or_else(|| CliError::Usage("missing value for --office".into()))?;
-                    }
-                    other if other.starts_with('-') && other != "-" => {
-                        return Err(CliError::Usage(format!("unknown flag '{other}'")));
-                    }
-                    other => pos.push(other.to_string()),
-                }
-                j += 1;
-            }
-
-            let to = to.ok_or_else(|| CliError::Usage("send requires --to <agent>".into()))?;
-            let body = read_body_arg(body_flag, &pos)?;
-
-            if !spool.is_registered(&to) {
-                return Err(CliError::Spool(SpoolError::UnknownRecipient(to)));
-            }
-
-            let mut env =
-                Envelope::new_msg(from, to, subject, body, meta).map_err(CliError::Usage)?;
-            if let Some(p) = priority {
-                env.set_priority(p);
-            }
-            spool.enqueue(&env)?;
-            spool.nudge_relay();
-
+            let parsed = parse_outgoing(sub_args, OutgoingKind::Send)?;
+            let to = parsed
+                .to
+                .clone()
+                .ok_or_else(|| CliError::Usage("send requires --to <agent>".into()))?;
+            let msg = parsed.outgoing(0)?;
+            let env = spool.send(&from, &to, msg)?;
             if json_flag {
                 println!("{{\"id\":{}}}", json_quote(&env.id));
             } else {
@@ -911,111 +798,14 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
 
         "ask" => {
             let from = resolve_identity(as_agent.as_deref())?;
-            let mut to: Option<String> = None;
-            let mut subject: Option<String> = None;
-            let mut priority: Option<MessagePriority> = None;
-            let mut body_flag: Option<String> = None;
-            let mut timeout = Duration::from_secs(120);
-            let mut meta: BTreeMap<String, MetaValue> = BTreeMap::new();
-            let mut pos: Vec<String> = Vec::new();
-            let mut after_double_dash = false;
-
-            let mut j = 0usize;
-            while j < sub_args.len() {
-                if after_double_dash {
-                    pos.push(sub_args[j].clone());
-                    j += 1;
-                    continue;
-                }
-                match sub_args[j].as_str() {
-                    "--" => after_double_dash = true,
-                    "--to" => {
-                        j += 1;
-                        to = Some(
-                            sub_args
-                                .get(j)
-                                .ok_or_else(|| CliError::Usage("missing value for --to".into()))?
-                                .clone(),
-                        );
-                    }
-                    "--timeout" => {
-                        j += 1;
-                        let raw = sub_args
-                            .get(j)
-                            .ok_or_else(|| CliError::Usage("missing value for --timeout".into()))?;
-                        timeout = parse_duration_arg(raw).map_err(CliError::Usage)?;
-                        check_wait_timeout(timeout).map_err(CliError::Usage)?;
-                    }
-                    "--subject" => {
-                        j += 1;
-                        subject = Some(
-                            sub_args
-                                .get(j)
-                                .ok_or_else(|| {
-                                    CliError::Usage("missing value for --subject".into())
-                                })?
-                                .clone(),
-                        );
-                    }
-                    "--priority" => {
-                        j += 1;
-                        let raw = sub_args.get(j).ok_or_else(|| {
-                            CliError::Usage("missing value for --priority".into())
-                        })?;
-                        priority = Some(MessagePriority::parse(raw).map_err(CliError::Usage)?);
-                    }
-                    "--body" => {
-                        j += 1;
-                        body_flag = Some(
-                            sub_args
-                                .get(j)
-                                .ok_or_else(|| CliError::Usage("missing value for --body".into()))?
-                                .clone(),
-                        );
-                    }
-                    "--meta" => {
-                        j += 1;
-                        let kv = sub_args
-                            .get(j)
-                            .ok_or_else(|| CliError::Usage("missing value for --meta".into()))?;
-                        let (k, v) = parse_meta_kv(kv)?;
-                        meta.insert(k, v);
-                    }
-                    "--office" => {
-                        j += 1;
-                        let _ = sub_args
-                            .get(j)
-                            .ok_or_else(|| CliError::Usage("missing value for --office".into()))?;
-                    }
-                    other if other.starts_with('-') && other != "-" => {
-                        return Err(CliError::Usage(format!("unknown flag '{other}'")));
-                    }
-                    other => pos.push(other.to_string()),
-                }
-                j += 1;
-            }
-
-            let to = to.ok_or_else(|| CliError::Usage("ask requires --to <agent>".into()))?;
-            let body = read_body_arg(body_flag, &pos)?;
-
-            if !spool.is_registered(&to) {
-                return Err(CliError::Spool(SpoolError::UnknownRecipient(to)));
-            }
-
-            // Build and size-check the request before any side effect (inbox, wake socket).
-            let mut req = Envelope::new_request(&from, to, subject, body, meta, timeout)
-                .map_err(CliError::Usage)?;
-            if let Some(p) = priority {
-                req.set_priority(p);
-            }
-            req.to_json_bytes().map_err(CliError::Usage)?;
-
-            spool.register(&from)?;
-            let listener = spool.bind_wake_listener(&from)?;
-            spool.enqueue(&req)?;
-            spool.nudge_relay();
-
-            let reply = spool.wait_for_reply_with_listener(&from, &req.id, &listener, timeout)?;
+            let parsed = parse_outgoing(sub_args, OutgoingKind::Ask)?;
+            let to = parsed
+                .to
+                .clone()
+                .ok_or_else(|| CliError::Usage("ask requires --to <agent>".into()))?;
+            let timeout = parsed.timeout.unwrap_or(Duration::from_secs(120));
+            let msg = parsed.outgoing(0)?;
+            let reply = spool.ask(&from, &to, msg, timeout)?;
             if json_flag {
                 print_envelope(&reply, true)?;
             } else {
@@ -1052,15 +842,10 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
                         let raw = sub_args
                             .get(j)
                             .ok_or_else(|| CliError::Usage("missing value for --limit".into()))?;
-                        let parsed = raw
-                            .parse::<usize>()
-                            .map_err(|_| CliError::Usage(format!("invalid --limit '{raw}'")))?;
-                        if parsed == 0 || parsed > 1000 {
-                            return Err(CliError::Usage(
-                                "--limit must be between 1 and 1000".into(),
-                            ));
-                        }
-                        limit = Some(parsed);
+                        limit =
+                            Some(raw.parse::<usize>().map_err(|_| {
+                                CliError::Usage(format!("invalid --limit '{raw}'"))
+                            })?);
                     }
                     "--thread" => {
                         j += 1;
@@ -1091,18 +876,16 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
                 j += 1;
             }
 
-            let effective_limit = limit.or(if summary_only { Some(50) } else { None });
-            let mut items = spool.list_inbox_items(&me, include_all, summary_only, None)?;
-            if let Some(ref f) = from_filter {
-                items.retain(|i| i.from.eq_ignore_ascii_case(f));
-            }
-            if let Some(ref t) = thread_filter {
-                // Phase A threads: the message itself and direct replies to it.
-                items.retain(|i| &i.id == t || i.reply_to.as_deref() == Some(t.as_str()));
-            }
-            if let Some(lim) = effective_limit {
-                items.truncate(lim);
-            }
+            let items = spool.inbox(
+                &me,
+                &InboxQuery {
+                    include_all,
+                    summary_only,
+                    from: from_filter,
+                    thread: thread_filter,
+                    limit,
+                },
+            )?;
 
             if json_flag {
                 let s = serde_json::to_string(&items)
@@ -1163,96 +946,14 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
 
         "reply" => {
             let me = resolve_identity(as_agent.as_deref())?;
-            let mut subject: Option<String> = None;
-            let mut priority: Option<MessagePriority> = None;
-            let mut body_flag: Option<String> = None;
-            let mut meta: BTreeMap<String, MetaValue> = BTreeMap::new();
-            let mut pos: Vec<String> = Vec::new();
-            let mut after_double_dash = false;
-
-            let mut j = 0usize;
-            while j < sub_args.len() {
-                if after_double_dash {
-                    pos.push(sub_args[j].clone());
-                    j += 1;
-                    continue;
-                }
-                match sub_args[j].as_str() {
-                    "--" => after_double_dash = true,
-                    "--subject" => {
-                        j += 1;
-                        subject = Some(
-                            sub_args
-                                .get(j)
-                                .ok_or_else(|| {
-                                    CliError::Usage("missing value for --subject".into())
-                                })?
-                                .clone(),
-                        );
-                    }
-                    "--priority" => {
-                        j += 1;
-                        let raw = sub_args.get(j).ok_or_else(|| {
-                            CliError::Usage("missing value for --priority".into())
-                        })?;
-                        priority = Some(MessagePriority::parse(raw).map_err(CliError::Usage)?);
-                    }
-                    "--body" => {
-                        j += 1;
-                        body_flag = Some(
-                            sub_args
-                                .get(j)
-                                .ok_or_else(|| CliError::Usage("missing value for --body".into()))?
-                                .clone(),
-                        );
-                    }
-                    "--meta" => {
-                        j += 1;
-                        let kv = sub_args
-                            .get(j)
-                            .ok_or_else(|| CliError::Usage("missing value for --meta".into()))?;
-                        let (k, v) = parse_meta_kv(kv)?;
-                        meta.insert(k, v);
-                    }
-                    "--office" => {
-                        j += 1;
-                        let _ = sub_args
-                            .get(j)
-                            .ok_or_else(|| CliError::Usage("missing value for --office".into()))?;
-                    }
-                    other if other.starts_with('-') && other != "-" => {
-                        return Err(CliError::Usage(format!("unknown flag '{other}'")));
-                    }
-                    other => pos.push(other.to_string()),
-                }
-                j += 1;
-            }
-
-            let Some(orig_id) = pos.first().cloned() else {
+            let parsed = parse_outgoing(sub_args, OutgoingKind::Reply)?;
+            let Some(orig_id) = parsed.positional.first().cloned() else {
                 return Err(CliError::Usage(
                     "usage: org-agent msg reply <id> [--body <body> | <body | ->]".into(),
                 ));
             };
-            let body = read_body_arg(body_flag, &pos[1..])?;
-            let orig = spool.find_for_reply(&me, &orig_id)?;
-
-            if !spool.is_registered(&orig.from) {
-                return Err(CliError::Spool(SpoolError::UnknownRecipient(
-                    orig.from.clone(),
-                )));
-            }
-
-            let mut reply = orig
-                .new_reply(&me, subject, body, meta)
-                .map_err(CliError::Usage)?;
-            if let Some(p) = priority {
-                reply.set_priority(p);
-            }
-            spool.enqueue(&reply)?;
-            spool.nudge_relay();
-            // Answering a message marks it read (only once the reply is safely queued).
-            let _ = spool.claim(&me, &orig_id);
-
+            let msg = parsed.outgoing(1)?;
+            let reply = spool.reply(&me, &orig_id, msg)?;
             if json_flag {
                 println!("{{\"id\":{}}}", json_quote(&reply.id));
             } else {
@@ -1491,7 +1192,6 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
                             .get(j)
                             .ok_or_else(|| CliError::Usage("missing value for --timeout".into()))?;
                         timeout = parse_duration_arg(raw).map_err(CliError::Usage)?;
-                        check_wait_timeout(timeout).map_err(CliError::Usage)?;
                     }
                     "--from" => {
                         j += 1;

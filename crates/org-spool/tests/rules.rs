@@ -987,6 +987,64 @@ fn rule_wake_nudges_go_only_to_real_sockets_not_through_symlinks() {
 }
 
 #[test]
+fn rule_profile_edits_are_authorized_and_applied_in_order() {
+    let t = TempSpool::new("profile_edit");
+    assert!(org_spool::authorize_profile_edit(ME, ME).is_ok());
+    assert!(org_spool::authorize_profile_edit(org_spool::OWNER_ID, ME).is_ok());
+    assert!(org_spool::authorize_profile_edit(PEER, ME).is_err());
+
+    let mut update = org_spool::ProfileUpdate::default();
+    assert!(update.is_empty());
+    update.name("  Agy  ");
+    update.team("core:Core:lead").unwrap();
+    update.team("ops").unwrap();
+    update.reports_to("ada").unwrap();
+    assert!(update.kind("robot").is_err());
+    let p = t.spool.edit_profile(ME, ME, &update).unwrap();
+    assert_eq!(p.name, "Agy");
+    assert_eq!(
+        p.teams.len(),
+        2,
+        "the first --team replaces, later ones add"
+    );
+    assert_eq!(
+        (p.teams[1].id.as_str(), p.teams[1].name.as_str()),
+        ("ops", "ops")
+    );
+    assert_eq!(p.reports_to.unwrap().name, "ada");
+    assert!(t.spool.edit_profile(PEER, ME, &update).is_err());
+}
+
+#[test]
+fn rule_inbox_query_filters_by_sender_and_thread_with_defaults() {
+    let t = TempSpool::new("inbox_query");
+    let a = t.send("a", None);
+    let _b = t.send("b", None);
+    let query = |q: org_spool::InboxQuery| t.spool.inbox(ME, &q).unwrap();
+    assert_eq!(query(Default::default()).len(), 2);
+    let from_other = org_spool::InboxQuery {
+        from: Some("nobody".into()),
+        ..Default::default()
+    };
+    assert!(query(from_other).is_empty());
+    let thread = org_spool::InboxQuery {
+        thread: Some(a.clone()),
+        ..Default::default()
+    };
+    assert_eq!(query(thread)[0].id, a);
+    let limited = org_spool::InboxQuery {
+        limit: Some(1),
+        ..Default::default()
+    };
+    assert_eq!(query(limited).len(), 1);
+    let bad = org_spool::InboxQuery {
+        limit: Some(0),
+        ..Default::default()
+    };
+    assert!(t.spool.inbox(ME, &bad).is_err());
+}
+
+#[test]
 fn rule_a_corrupt_triage_file_is_set_aside_not_fatal() {
     let t = TempSpool::new("corrupt");
     let id = t.ask("q");

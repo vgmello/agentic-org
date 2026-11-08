@@ -6,7 +6,9 @@
 //! - Instability (`I`): ~0.20 (Stable platform primitive)
 
 pub mod envelope;
+pub mod messaging;
 pub mod meta;
+pub mod profile_edit;
 pub mod relay;
 mod safe_read;
 pub mod spool;
@@ -17,11 +19,13 @@ pub use envelope::{
     json_quote, validate_agent_id, Envelope, MessageKind, MessagePriority, MetaValue,
     ENVELOPE_VERSION, MAX_BODY_BYTES, MAX_ENVELOPE_BYTES, MAX_SUBJECT_BYTES,
 };
+pub use messaging::{InboxQuery, Outgoing, INBOX_MAX_LIMIT, INBOX_SUMMARY_DEFAULT_LIMIT};
 pub use meta::{
     parse_snooze_until, sanitize_inline_text, DeferOutcome, DirectoryCard, DoneOutcome, InboxItem,
     MemberProfile, MemberStatus, MessageTriageEntry, NotifyItem, NotifyOptions, NotifyReport,
     RefEntry, TeamEntry, TriageState, NOTIFY_MAX_ITEMS, OWNER_ID,
 };
+pub use profile_edit::{authorize_profile_edit, ProfileUpdate};
 pub use relay::RelayOutcome;
 pub use spool::{
     is_interrupted, poll_unix_listener, poll_unix_listener_events, request_interrupt,

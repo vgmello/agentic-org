@@ -699,6 +699,23 @@ fn defer_racing_notify_never_loses_a_snooze() {
 }
 
 #[test]
+fn register_refuses_bad_flags_before_creating_anything() {
+    let env = TempOrgHome::new("register_flags");
+    for args in [
+        &["msg", "register", "--bogus"][..],
+        &["msg", "register", "newbie", "--kind", "robot"],
+        &["msg", "register", "newbie", "--team", ":x"],
+    ] {
+        let r = env.run("newbie", args);
+        assert_eq!(r.code, 1, "{args:?}: {}", r.stderr);
+        assert!(
+            !env.root.join("spool/inbox/newbie").exists(),
+            "{args:?} created the inbox"
+        );
+    }
+}
+
+#[test]
 fn deregister_requires_an_agent_and_never_falls_back_to_the_caller() {
     let env = setup("deregister");
     let id = env.send(PEER, ME, &["keep me"]);
