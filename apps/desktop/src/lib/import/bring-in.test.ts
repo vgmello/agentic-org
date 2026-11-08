@@ -253,6 +253,60 @@ describe('IMP-8 running it again', () => {
 	});
 });
 
+describe('a refusal a retry cannot change', () => {
+	/** `set_reports_to` is refused with `code` for Remy, once or always. */
+	const refusing = (w: World, code: string, always: boolean) => {
+		let left = always ? Infinity : 1;
+		const session: OrgSession = {
+			snapshot: () => w.s.snapshot(),
+			command: (c) => {
+				if (c.method === 'member.set_reports_to' && left > 0) {
+					const asked = c.params.member_id;
+					return w.s.snapshot().then((s) => {
+						if (s.members.find((m) => m.id === asked)?.name !== 'Remy') return w.s.command(c);
+						left -= 1;
+						return Promise.reject({ source: 'api', code, message: `refused: ${code}` });
+					});
+				}
+				return w.s.command(c);
+			}
+		};
+		return session;
+	};
+
+	it('says a cycle once and settles it: the next run has nothing to report', async () => {
+		const w = world();
+		const s = refusing(w, 'cycle', true);
+		const first = await run(w, reviewed(), s);
+		expect(first.failures.map((f) => f.what)).toEqual(['Make Remy report to their manager']);
+		const again = await run(w, reviewed(), s);
+		expect(again).toMatchObject({ agents: 0, teams: 0, failures: [] });
+	});
+
+	it('does not settle a not_found while the member and the manager are both still there: a retry sets the line', async () => {
+		const w = world();
+		const s = refusing(w, 'not_found', false);
+		const first = await run(w, reviewed(), s);
+		expect(first.failures).toHaveLength(1);
+		const retry = await run(w, reviewed(), s);
+		expect(retry.failures).toEqual([]);
+		const { member } = await find(w.s);
+		expect(member('ac-software-engineer-remy').reports_to_member_id).toBe(member('ac-staff-engineer-ada').id);
+	});
+
+	it('leaves a team the owner already had as it is, lead and all, on this run and the ones after it', async () => {
+		const w = world();
+		// The owner made an empty Engineering before the import.
+		await w.s.command({ method: 'team.create', params: { team_id: 'owner-made-engineering', name: 'Engineering' } });
+		const first = await run(w);
+		expect(first.teams).toBe(5);
+		expect((await find(w.s)).team('Engineering').lead_member_id).toBeUndefined();
+		const second = await run(w);
+		expect(second).toMatchObject({ teams: 0, failures: [] });
+		expect((await find(w.s)).team('Engineering').lead_member_id).toBeUndefined();
+	});
+});
+
 describe('IMP-9 an interrupted import continues where it stopped', () => {
 	it('reports the agent that failed, brings the others in, and Try again adds only what is missing', async () => {
 		const w = world();

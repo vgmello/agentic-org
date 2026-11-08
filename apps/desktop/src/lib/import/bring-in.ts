@@ -198,9 +198,14 @@ async function execute(session: OrgSession, input: BringInInput): Promise<BringI
 			// Set from the version that was seen, so a change made meanwhile is a conflict, not overwritten.
 			if (me && !me.reports_to_member_id) {
 				ok = await attempt(`Make ${row.name} report to their manager`, result.failures, () => session.command({ method: 'member.set_reports_to', params: { member_id: memberId, expected_version: me.version, reports_to_member_id: managerId } }));
-				// A refusal that a retry can't change (a cycle with lines the owner already has) is said once, then settled.
+				// A refusal that a retry can't change is said once, then settled: a cycle with lines the owner already has, or
+				// someone who is gone. A not_found is settled only when a fresh look confirms it: it may be a copy that lags.
 				const refusal = result.failures.at(-1)?.error;
-				if (!ok && refusal?.source === 'api' && (refusal.code === 'cycle' || refusal.code === 'not_found')) ok = true;
+				if (!ok && refusal?.source === 'api' && refusal.code === 'cycle') ok = true;
+				if (!ok && refusal?.source === 'api' && refusal.code === 'not_found') {
+					const now = await session.snapshot();
+					ok = !now.members.some((m) => m.id === memberId) || !now.members.some((m) => m.id === managerId);
+				}
 			}
 		} else if (managerTakesPart) {
 			ok = false; // its manager could not be made (yet): the line is set when a retry has them
