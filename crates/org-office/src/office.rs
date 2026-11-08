@@ -5,11 +5,11 @@ use std::time::{Duration, Instant};
 use crate::error::OfficeError;
 use crate::key::{Key, KeyProvider};
 use crate::model::{NewOffice, OfficeInfo};
-use crate::name::OrganizationName;
 use crate::office_file::{self, is_plain_id};
 use crate::private_fs::{absolute, private_dir, private_file, tighten_dir};
 use crate::store::{Opening, Schema, Store};
 use crate::time;
+use org_proto::OrganizationName;
 
 /// How long `create`, `open` and `discard` wait for the folder's lock: a slow-exiting old
 /// server and its replacement never overlap.
@@ -106,14 +106,13 @@ impl Office {
             org_name: new.org_name.trim().to_owned(),
             created_at: time::now_rfc3339(),
         };
-        // The same checks `office.json` will make, before anything is touched.
-        let names_valid = [&info.office_name, &info.org_name]
-            .iter()
-            .all(|name| OrganizationName::parse(name).is_ok());
-        if !is_plain_id(&info.office_id) || !is_plain_id(&info.org_id) || !names_valid {
-            return Err(OfficeError::Invalid(
-                "ids are 1 to 64 letters and digits, and names must be valid",
-            ));
+        // The same checks `office.json` will make, before anything is touched. A bad name is
+        // `InvalidName` (the host answers `invalid_name`), a bad id is `Invalid`.
+        for name in [&info.office_name, &info.org_name] {
+            OrganizationName::parse(name).map_err(OfficeError::InvalidName)?;
+        }
+        if !is_plain_id(&info.office_id) || !is_plain_id(&info.org_id) {
+            return Err(OfficeError::Invalid("ids are 1 to 64 letters and digits"));
         }
         let folder = plain_folder(folder.into())?;
         check_named_by(&folder, &info.office_id)?;
@@ -255,11 +254,13 @@ impl Office {
         }
         let folder = plain_folder(folder.into())?;
         check_named_by(&folder, office_id)?;
-        // Lock first, even when there is no folder yet: a create of this id that starts now
-        // must not have its key deleted under it. (An empty folder is left behind only if the
-        // delete below fails; the next discard or create finds it empty.)
+        // No folder means no unfinished create to remove: take no lock and make nothing; only
+        // the key a failed create may have left is removed (the host serializes creates and
+        // discards of one office id).
         check_not_a_link(&folder)?;
-        private_dir(&folder).map_err(OfficeError::storage)?;
+        if !exists(&folder)? {
+            return keys.delete(office_id).map_err(OfficeError::Storage);
+        }
         let _lock = lock_folder(&folder, lock_wait)?;
 
         if exists(&folder.join(office_file::FILE_NAME))? {

@@ -551,8 +551,8 @@ mod tests {
 
     use super::*;
 
-    use crate::name::OrganizationName;
     use crate::{time, ulid};
+    use org_proto::OrganizationName;
 
     const SCHEMA_VERSION: i64 = 1;
 
@@ -607,7 +607,7 @@ mod tests {
             before_commit: impl Fn(&Organization) -> std::io::Result<Undo> + Send + 'static,
         ) -> Result<Organization, OfficeError> {
             let display_name = name.as_str().to_owned();
-            let name_key = name.uniqueness_key();
+            let name_key = name.key().to_owned();
             self.write(move |db| {
                 // Stamped on the writer, so `created_at` never runs against insertion order
                 // (barring a backwards clock step). Ids are random within a millisecond: don't

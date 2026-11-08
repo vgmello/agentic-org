@@ -596,7 +596,7 @@ fn discard_checks_the_id_and_the_folder_name() {
 }
 
 #[test]
-fn discard_waits_for_the_lock_even_when_there_is_no_folder_yet() {
+fn discard_without_a_folder_removes_the_key_and_with_a_held_lock_gives_up() {
     let dir = TempDir::new().unwrap();
     let keys = InMemoryKeys::new();
     let folder = folder_of(&dir, ID);
@@ -750,20 +750,15 @@ fn discard_looks_at_office_db_alone_too_and_refuses_what_it_cannot_check() {
 }
 
 #[test]
-fn discard_of_a_missing_folder_deletes_the_orphan_key_under_the_lock() {
+fn discard_of_a_missing_folder_takes_no_lock_makes_nothing_and_removes_the_orphan_key() {
     let dir = TempDir::new().unwrap();
-    let folder = folder_of(&dir, ID);
-    let keys = ChecksLock {
-        inner: InMemoryKeys::new(),
-        folder: folder.clone(),
-        lock_was_held: false.into(),
-    };
-    keys.inner.store(ID, &Key::from_bytes([2; 32])).unwrap();
+    let keys = InMemoryKeys::new();
+    keys.store(ID, &Key::from_bytes([2; 32])).unwrap();
 
-    Office::discard(&folder, ID, &keys).unwrap();
+    Office::discard(folder_of(&dir, ID), ID, &keys).unwrap();
 
-    assert!(keys.lock_was_held.load(std::sync::atomic::Ordering::SeqCst));
-    assert!(keys.inner.load(ID).unwrap().is_none());
+    assert!(keys.load(ID).unwrap().is_none());
+    assert!(!dir.path().join("offices").exists(), "it made a folder");
 }
 
 #[test]

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::OfficeError;
 use crate::model::{OfficeInfo, OfficeRole};
-use crate::name::OrganizationName;
+use org_proto::OrganizationName;
 
 pub(crate) const FILE_NAME: &str = "office.json";
 const TEMP_NAME: &str = "office.json.tmp";
@@ -57,16 +57,17 @@ fn is_timestamp(text: &str) -> bool {
 
 /// The checks every read and write makes, so the server never writes a file it would refuse.
 fn check(info: &OfficeInfo) -> Result<(), OfficeError> {
-    let names_fine = [&info.office_name, &info.org_name]
-        .iter()
-        .all(|name| OrganizationName::parse(name).is_ok_and(|n| n.as_str() == name.as_str()));
+    // The name rule is the contract's (`org_proto::OrganizationName`, the host's reader uses
+    // it too), and a name is stored trimmed.
+    for name in [&info.office_name, &info.org_name] {
+        let parsed = OrganizationName::parse(name).map_err(OfficeError::InvalidName)?;
+        if parsed.as_str() != name.as_str() {
+            return Err(OfficeError::Invalid("a name is not trimmed"));
+        }
+    }
     if !is_plain_id(&info.office_id) || !is_plain_id(&info.org_id) {
         Err(OfficeError::Invalid(
             "an id must be 1 to 64 letters and digits",
-        ))
-    } else if !names_fine {
-        Err(OfficeError::Invalid(
-            "a name is empty, untrimmed or has bad characters",
         ))
     } else if !is_timestamp(&info.created_at) {
         Err(OfficeError::Invalid(
@@ -199,7 +200,10 @@ mod tests {
         assert!(matches!(encode(&bad), Err(OfficeError::Invalid(_))));
         let mut bad = info();
         bad.office_name = "".into();
-        assert!(matches!(encode(&bad), Err(OfficeError::Invalid(_))));
+        assert!(matches!(encode(&bad), Err(OfficeError::InvalidName(_))));
+        let mut bad = info();
+        bad.org_name = "zero\u{200B}width".into(); // a format character: the contract's rule
+        assert!(matches!(encode(&bad), Err(OfficeError::InvalidName(_))));
         let mut bad = info();
         bad.created_at = "yesterday".into();
         assert!(matches!(encode(&bad), Err(OfficeError::Invalid(_))));

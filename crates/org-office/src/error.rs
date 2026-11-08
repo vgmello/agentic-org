@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
-pub use crate::name::NameError;
+pub use org_proto::NameError;
 
 #[derive(Debug)]
 pub enum OfficeError {

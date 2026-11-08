@@ -12,7 +12,6 @@
 mod error;
 mod key;
 mod model;
-mod name;
 mod office;
 mod office_file;
 mod private_fs;
@@ -25,5 +24,4 @@ pub use error::{NameError, OfficeError};
 pub use key::InMemoryKeys;
 pub use key::{Key, KeyError, KeyProvider};
 pub use model::{NewOffice, OfficeInfo, OfficeRole};
-pub use name::MAX_NAME_CHARS;
 pub use office::{Office, LOCK_WAIT};
