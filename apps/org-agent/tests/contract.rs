@@ -800,6 +800,8 @@ fn owner_is_an_alias_and_owner_office_are_reserved() {
     env.deliver();
     let from_owner = env.run(ME, &["msg", "inbox", "--from", "Owner"]).stdout;
     assert_eq!(from_owner.lines().count(), 1, "{from_owner}");
+    let waited = env.run(ME, &["msg", "wait", "--from", "owner", "--timeout", "2s"]);
+    assert_eq!(waited.code, 0, "{}", waited.stderr);
 
     // Reserved: never registered, never a recipient, never in the "register it with" hint.
     for name in ["owner", "office", "OFFICE"] {

@@ -1041,8 +1041,16 @@ mod tests {
 
     #[test]
     fn a_transient_profile_error_leaves_an_expired_ask_in_the_outbox() {
+        /// Removes the temp spool even when an assertion fails.
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
         let dir =
             PathBuf::from("/tmp").join(format!("osd_{}_{}", process::id(), &generate_ulid()[20..]));
+        let _cleanup = Cleanup(dir.clone());
         let spool = Spool::open(&dir).unwrap();
         spool.register("pat").unwrap();
         let mut ask = Envelope::new_request(

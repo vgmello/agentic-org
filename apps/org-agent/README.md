@@ -79,7 +79,10 @@ accept `owner` (any case) for the owner, `vgmello`; the owner's id in any case i
 `--to` refuse them (exit 1), and no error suggests registering them. `--as vgmello` (or
 `--as owner`) while `$ORG_AGENT` names another member is refused ("can't act as the owner
 from <member>'s session", exit 1). An `ask` to the owner keeps the 120 s default timeout in
-Phase A.
+Phase A. `who` always lists the owner, but `--to owner` is an unknown recipient (exit 3)
+until the owner's inbox exists (`org-agent msg register vgmello`). Names written before
+these rules (an inbox or a profile name `owner`/`office`) still show as they are; a later
+`profile set` on such a profile must change the name.
 
 ## Triage Notification Contract (`org-agent msg notify`)
 
