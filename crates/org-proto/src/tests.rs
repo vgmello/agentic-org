@@ -1,0 +1,399 @@
+use std::io::Cursor;
+
+use serde_json::json;
+
+use crate::frame::{read_line, read_message, write_message, FrameError};
+use crate::*;
+
+fn org() -> Organization {
+    Organization {
+        id: "01M6WEQ98NHCE6ZVZWJGWQAJT3".into(),
+        name: "Acme".into(),
+        created_at: "2026-11-08T02:10:00.000Z".into(),
+    }
+}
+
+#[test]
+fn request_wire_shape_and_typed_params() {
+    let req = Request::new::<OrganizationCreate>(
+        7,
+        &OrganizationCreateParams {
+            name: "Acme".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(&req).unwrap(),
+        json!({"id": 7, "method": "organization.create", "params": {"name": "Acme"}})
+    );
+    assert!(req.is::<OrganizationCreate>());
+    assert!(!req.is::<Hello>());
+    assert_eq!(req.params::<OrganizationCreate>().unwrap().name, "Acme");
+}
+
+#[test]
+fn missing_or_null_params_read_as_empty() {
+    let req: Request = serde_json::from_str(r#"{"id":1,"method":"hello"}"#).unwrap();
+    assert_eq!(req.params::<Hello>().unwrap(), Empty {});
+    let req: Request = serde_json::from_str(r#"{"id":1,"method":"hello","params":null}"#).unwrap();
+    assert_eq!(req.params::<Hello>().unwrap(), Empty {});
+    assert_eq!(
+        serde_json::to_value(Request::new::<Hello>(1, &Empty {}).unwrap()).unwrap()["params"],
+        json!({})
+    );
+}
+
+#[test]
+fn wrong_params_shape_is_an_error_not_a_panic() {
+    let req: Request =
+        serde_json::from_str(r#"{"id":1,"method":"organization.create","params":{"name":5}}"#)
+            .unwrap();
+    assert!(req.params::<OrganizationCreate>().is_err());
+    let req: Request = serde_json::from_str(r#"{"id":1,"method":"organization.create"}"#).unwrap();
+    assert!(req.params::<OrganizationCreate>().is_err());
+}
+
+#[test]
+fn unknown_method_still_parses() {
+    let req: Request =
+        serde_json::from_str(r#"{"id":3,"method":"org.frobnicate","params":{}}"#).unwrap();
+    assert_eq!(req.method, "org.frobnicate");
+}
+
+#[test]
+fn response_ok_and_error_wire_shapes() {
+    let ok = Response::ok::<OrganizationCreate>(7, &org()).unwrap();
+    let v = serde_json::to_value(&ok).unwrap();
+    assert_eq!(v["id"], 7);
+    assert_eq!(v["result"]["name"], "Acme");
+    assert!(v.get("error").is_none());
+
+    let err = Response::error(8, ApiError::new(ErrorCode::AlreadyExists, "taken"));
+    assert_eq!(
+        serde_json::to_value(&err).unwrap(),
+        json!({"id": 8, "error": {"code": "already_exists", "message": "taken"}})
+    );
+}
+
+#[test]
+fn response_round_trip_into_typed_result() {
+    let line =
+        serde_json::to_string(&Response::ok::<OrganizationCreate>(7, &org()).unwrap()).unwrap();
+    let back: Response = serde_json::from_str(&line).unwrap();
+    assert_eq!(back.id, 7);
+    assert_eq!(back.into_result::<OrganizationCreate>().unwrap(), org());
+
+    let back: Response =
+        serde_json::from_str(r#"{"id":8,"error":{"code":"invalid_name","message":"empty"}}"#)
+            .unwrap();
+    match back.into_result::<OrganizationCreate>() {
+        Err(CallError::Api(e)) => assert_eq!(e.code, ErrorCode::InvalidName),
+        other => panic!("expected an api error, got {other:?}"),
+    }
+}
+
+#[test]
+fn result_of_wrong_shape_is_a_decode_error() {
+    let r: Response = serde_json::from_str(r#"{"id":1,"result":{"nope":true}}"#).unwrap();
+    assert!(matches!(
+        r.into_result::<Hello>(),
+        Err(CallError::Decode(_))
+    ));
+}
+
+#[test]
+fn response_with_neither_result_nor_error_is_rejected() {
+    assert!(serde_json::from_str::<Response>(r#"{"id":1}"#).is_err());
+}
+
+#[test]
+fn unknown_error_code_and_unknown_fields_are_tolerated() {
+    let r: Response = serde_json::from_str(
+        r#"{"id":1,"error":{"code":"quota_exceeded","message":"x","hint":"y"},"trace":"z"}"#,
+    )
+    .unwrap();
+    match r.outcome {
+        Outcome::Error(e) => assert_eq!(e.code, ErrorCode::Unknown),
+        other => panic!("expected an error, got {other:?}"),
+    }
+    let o: Organization = serde_json::from_value(json!({
+        "id": "x", "name": "n", "created_at": "2026-11-08T02:10:00.000Z", "owner": "later"
+    }))
+    .unwrap();
+    assert_eq!(o.name, "n");
+}
+
+#[test]
+fn hello_and_list_wire_shapes() {
+    let hello = HelloResult {
+        api_version: API_VERSION,
+        server_version: "0.0.0".into(),
+        office: OfficeInfo {
+            id: "o1".into(),
+            name: "Office".into(),
+            host: "This Mac".into(),
+        },
+    };
+    let v = serde_json::to_value(Response::ok::<Hello>(1, &hello).unwrap()).unwrap();
+    assert_eq!(v["result"]["api_version"], 1);
+    assert_eq!(v["result"]["office"]["host"], "This Mac");
+
+    let list = ListOrganizationsResult {
+        organizations: vec![org()],
+    };
+    let v = serde_json::to_value(Response::ok::<OrganizationList>(2, &list).unwrap()).unwrap();
+    assert_eq!(
+        v["result"]["organizations"][0]["id"],
+        "01M6WEQ98NHCE6ZVZWJGWQAJT3"
+    );
+}
+
+#[test]
+fn server_message_tells_responses_from_events() {
+    let resp: ServerMessage = serde_json::from_str(r#"{"id":4,"result":{}}"#).unwrap();
+    assert!(matches!(
+        resp,
+        ServerMessage::Response(Response { id: 4, .. })
+    ));
+
+    let ev = Event::new::<OrganizationCreated>(1, &org()).unwrap();
+    let line = serde_json::to_string(&ev).unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&line).unwrap()["event"],
+        "organization.created"
+    );
+    match serde_json::from_str::<ServerMessage>(&line).unwrap() {
+        ServerMessage::Event(e) => {
+            assert_eq!(e.seq, 1);
+            assert_eq!(e.data::<OrganizationCreated>().unwrap().unwrap(), org());
+        }
+        other => panic!("expected an event, got {other:?}"),
+    }
+}
+
+#[test]
+fn unknown_event_parses_and_typed_read_returns_none() {
+    let m: ServerMessage =
+        serde_json::from_str(r#"{"event":"agent.hired","seq":9,"data":{"x":1}}"#).unwrap();
+    match m {
+        ServerMessage::Event(e) => assert!(e.data::<OrganizationCreated>().is_none()),
+        other => panic!("expected an event, got {other:?}"),
+    }
+}
+
+#[test]
+fn frames_round_trip_and_newlines_in_strings_are_escaped() {
+    let mut buf = Vec::new();
+    let params = OrganizationCreateParams {
+        name: "two\nlines".into(),
+    };
+    write_message(
+        &mut buf,
+        &Request::new::<OrganizationCreate>(1, &params).unwrap(),
+    )
+    .unwrap();
+    write_message(&mut buf, &Request::new::<Hello>(2, &Empty {}).unwrap()).unwrap();
+    assert_eq!(buf.iter().filter(|b| **b == b'\n').count(), 2);
+
+    let mut r = Cursor::new(buf);
+    let a: Request = read_message(&mut r).unwrap().unwrap();
+    assert_eq!(a.params::<OrganizationCreate>().unwrap().name, "two\nlines");
+    let b: Request = read_message(&mut r).unwrap().unwrap();
+    assert_eq!(b.id, 2);
+    assert!(read_message::<Request>(&mut r).unwrap().is_none());
+}
+
+#[test]
+fn frame_at_the_limit_is_accepted_and_one_byte_over_is_rejected() {
+    let mut at_limit = vec![b'x'; MAX_FRAME_BYTES];
+    at_limit.push(b'\n');
+    assert_eq!(
+        read_line(&mut Cursor::new(at_limit))
+            .unwrap()
+            .unwrap()
+            .len(),
+        MAX_FRAME_BYTES
+    );
+
+    let mut over = vec![b'x'; MAX_FRAME_BYTES + 1];
+    over.push(b'\n');
+    assert!(matches!(
+        read_line(&mut Cursor::new(over)),
+        Err(FrameError::TooLarge)
+    ));
+}
+
+#[test]
+fn truncated_and_invalid_frames_are_errors() {
+    assert!(matches!(
+        read_line(&mut Cursor::new(b"{\"id\":1".to_vec())),
+        Err(FrameError::Truncated)
+    ));
+    assert!(matches!(
+        read_message::<Request>(&mut Cursor::new(b"not json\n".to_vec())),
+        Err(FrameError::Json(_))
+    ));
+    assert!(matches!(
+        read_message::<Request>(&mut Cursor::new(
+            b"{\"id\":1,\"method\":\"\xff\"}\n".to_vec()
+        )),
+        Err(FrameError::Json(_))
+    ));
+    assert!(read_line(&mut Cursor::new(Vec::new())).unwrap().is_none());
+}
+
+#[test]
+fn response_with_both_result_and_error_is_rejected_in_either_order() {
+    let a = r#"{"id":1,"result":{},"error":{"code":"invalid_name","message":"x"}}"#;
+    let b = r#"{"id":1,"error":{"code":"invalid_name","message":"x"},"result":{}}"#;
+    assert!(serde_json::from_str::<Response>(a).is_err());
+    assert!(serde_json::from_str::<Response>(b).is_err());
+    assert!(serde_json::from_str::<ServerMessage>(a).is_err());
+    assert!(serde_json::from_str::<Response>(r#"{"id":1,"result":{},"result":{}}"#).is_err());
+}
+
+#[test]
+fn array_or_scalar_params_are_rejected() {
+    for params in [r#"["Acme"]"#, "[]", "5", r#""Acme""#] {
+        let line = format!(r#"{{"id":1,"method":"organization.create","params":{params}}}"#);
+        let req: Request = serde_json::from_str(&line).unwrap();
+        assert!(
+            req.params::<OrganizationCreate>().is_err(),
+            "accepted {params}"
+        );
+    }
+    let req: Request = serde_json::from_str(r#"{"id":1,"method":"hello","params":[]}"#).unwrap();
+    assert!(req.params::<Hello>().is_err());
+}
+
+#[test]
+fn event_carrying_an_id_is_still_an_event() {
+    let m: ServerMessage =
+        serde_json::from_str(r#"{"id":3,"event":"organization.created","seq":1,"data":{}}"#)
+            .unwrap();
+    assert!(matches!(m, ServerMessage::Event(_)));
+}
+
+#[test]
+fn event_without_data_reads_as_null() {
+    let m: ServerMessage = serde_json::from_str(r#"{"event":"ping","seq":2}"#).unwrap();
+    match m {
+        ServerMessage::Event(e) => assert_eq!(e.data, serde_json::Value::Null),
+        other => panic!("expected an event, got {other:?}"),
+    }
+}
+
+#[test]
+fn unknown_server_message_shapes_are_kept_not_rejected() {
+    // e.g. a newer server asking the client something: an id but no result or error
+    let m: ServerMessage =
+        serde_json::from_str(r#"{"id":5,"method":"msg.deliver","params":{}}"#).unwrap();
+    assert!(matches!(m, ServerMessage::Unknown(_)));
+    assert!(serde_json::from_str::<ServerMessage>("[1,2]").is_err());
+    // a known shape that is malformed is still an error
+    assert!(serde_json::from_str::<ServerMessage>(r#"{"event":"x"}"#).is_err());
+    assert!(serde_json::from_str::<ServerMessage>(r#"{"id":"one","result":{}}"#).is_err());
+}
+
+#[test]
+fn bad_json_line_keeps_the_stream_in_step() {
+    let mut r = Cursor::new(b"not json\n{\"id\":2,\"method\":\"hello\"}\n".to_vec());
+    let err = read_message::<Request>(&mut r).unwrap_err();
+    assert!(!err.closes_stream());
+    let next: Request = read_message(&mut r).unwrap().unwrap();
+    assert_eq!(next.id, 2);
+    assert!(FrameError::TooLarge.closes_stream());
+    assert!(FrameError::Truncated.closes_stream());
+}
+
+#[test]
+fn salvage_id_recovers_the_id_of_a_bad_request_or_response() {
+    let bad_req = br#"{"id":42,"method":5}"#;
+    assert!(serde_json::from_slice::<Request>(bad_req).is_err());
+    assert_eq!(salvage_id(bad_req), Some(42));
+
+    let bad_resp = br#"{"id":43,"error":"boom"}"#;
+    assert!(serde_json::from_slice::<ServerMessage>(bad_resp).is_err());
+    assert_eq!(salvage_id(bad_resp), Some(43));
+
+    assert_eq!(salvage_id(b"not json"), None);
+    assert_eq!(salvage_id(br#"{"method":"hello"}"#), None);
+    assert_eq!(salvage_id(br#"{"id":"one"}"#), None);
+    assert_eq!(salvage_id(br#"{"id":-1}"#), None);
+    assert_eq!(UNREADABLE_REQUEST_ID, 0);
+}
+
+#[test]
+fn error_responses_decode_through_server_message() {
+    let m: ServerMessage =
+        serde_json::from_str(r#"{"id":9,"error":{"code":"storage_error","message":"disk full"}}"#)
+            .unwrap();
+    match m {
+        ServerMessage::Response(r) => match r.into_result::<OrganizationCreate>() {
+            Err(CallError::Api(e)) => assert_eq!(e.code, ErrorCode::StorageError),
+            other => panic!("expected an api error, got {other:?}"),
+        },
+        other => panic!("expected a response, got {other:?}"),
+    }
+    let m: ServerMessage =
+        serde_json::from_str(r#"{"id":9,"error":{"code":"brand_new","message":"x"}}"#).unwrap();
+    match m {
+        ServerMessage::Response(Response {
+            outcome: Outcome::Error(e),
+            ..
+        }) => {
+            assert_eq!(e.code, ErrorCode::Unknown)
+        }
+        other => panic!("expected an error response, got {other:?}"),
+    }
+}
+
+#[test]
+fn oversize_outgoing_message_keeps_the_stream_open() {
+    let huge = OrganizationCreateParams {
+        name: "x".repeat(MAX_FRAME_BYTES),
+    };
+    let req = Request::new::<OrganizationCreate>(1, &huge).unwrap();
+    let mut out = Vec::new();
+    let err = write_message(&mut out, &req).unwrap_err();
+    assert!(matches!(err, FrameError::TooLargeToSend));
+    assert!(!err.closes_stream());
+    assert!(out.is_empty());
+}
+
+#[test]
+fn null_result_is_refused_when_building_a_response() {
+    struct NullCall;
+    impl Call for NullCall {
+        const METHOD: &'static str = "test.null";
+        type Params = Empty;
+        type Result = Option<Empty>;
+    }
+    assert!(Response::ok::<NullCall>(1, &None).is_err());
+    assert!(Response::ok::<NullCall>(1, &Some(Empty {})).is_ok());
+}
+
+#[test]
+fn wire_names_are_pinned() {
+    assert_eq!(Hello::METHOD, "hello");
+    assert_eq!(OrganizationCreate::METHOD, "organization.create");
+    assert_eq!(OrganizationList::METHOD, "organization.list");
+    assert_eq!(Subscribe::METHOD, "subscribe");
+    assert_eq!(OrganizationCreated::NAME, "organization.created");
+    for (code, name) in [
+        (ErrorCode::InvalidRequest, "invalid_request"),
+        (ErrorCode::UnknownMethod, "unknown_method"),
+        (ErrorCode::InvalidName, "invalid_name"),
+        (ErrorCode::AlreadyExists, "already_exists"),
+        (ErrorCode::StorageError, "storage_error"),
+    ] {
+        assert_eq!(serde_json::to_value(code).unwrap(), name);
+        assert_eq!(
+            serde_json::from_value::<ErrorCode>(name.into()).unwrap(),
+            code
+        );
+    }
+    assert_eq!(API_VERSION, 1);
+    assert_eq!(MAX_FRAME_BYTES, 1_048_576);
+    assert_eq!(ORGANIZATION_NAME_MAX_CHARS, 64);
+}

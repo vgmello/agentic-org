@@ -9,7 +9,7 @@ crates/                         libraries only
   org-proto/                    the contract between app, agent CLI and office server (types)
   org-client/                   connects to an office server (used by the app)
   org-office/                   the office's domain and storage (organizations, agents, SQLite, files)
-  org-spool/                    an agent's fast local queue, picked up by the office server
+  org-spool/                    an agent's local queue (its role beside the message hub: see the messaging ADR, to come)
 apps/                           things you run or ship
   desktop/                      agentic.org, the app (Tauri 2 + SvelteKit)
   org-office-server/            the office daemon (macOS login service)
@@ -26,8 +26,9 @@ Dependencies point one way, and apps depend on crates, never the reverse:
 apps/desktop          ─▶ org-client ─▶ org-proto
 apps/org-office-server ─▶ org-office ─▶ org-proto
 apps/org-agent        ─▶ org-spool
+apps/org-agent        ─▶ org-proto   (planned)
 ```
-At runtime (not a code dependency), the server reads what `org-agent` writes into the spool. It gains a dependency on `org-spool` when it starts ingesting.
+The office server is also the agents' message hub (ADR-0001, decision 4): `org-agent` will talk to it over the local socket in `org-proto`. A messaging ADR, to be written before that is built, sets the details, including what happens while the server is down.
 
 ## Build
 
