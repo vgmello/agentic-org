@@ -13,8 +13,8 @@ updates the crate.
 | Path | Written by | Read by |
 | --- | --- | --- |
 | `<home>/host.lock` | host: **the single-host lock**, an exclusive `flock` held for the host's whole life. A second host on the same home exits at once, so one host creates every office. Inside it, the **catalog mutex** (in-process) guards only a create's name check and reservation (see 4). | host |
-| `<home>/host.sock` | host (0600) | app, `org-agent` |
-| `<home>/run/<handle>.sock` | server (0600) | app, `org-agent` (address from the host's `office.list`) |
+| `<home>/host.sock` | host (0600) | app, `org-agent` (run by hand; office-run sessions compute their socket path, §3) |
+| `<home>/run/<handle>.sock` | server (0600) | app, `org-agent` (address from the host's `office.list`, or computed when `ORG_OFFICE` is set, as in office-run sessions, §3) |
 | `<home>/offices/<office-id>/` | **server** creates it (0700) on `--create` | host lists the folder names |
 | `…/office.lock` | server: `flock` from before it opens anything until it exits | nobody else, ever |
 | `…/office.json` | server, **written last** on `--create` (tmp + rename + fsync): this is the "stored" marker | host (the catalog) |
@@ -142,6 +142,11 @@ first line is `invalid_request`.
   and the host adopts it (see 4). A crash before that point can still leave an orphan item; the host's
   `--discard` then removes it with the folder (rule in 1).
 - EOF on stdout with no `failed` line, or exit before `ready`, means a crash: restart with backoff.
+- (amended 2026-11-08: agent sessions rev 3.3, ada) **Children, for the watchdog.** After `ready`, the server also sends a line for each agent runtime it spawns, and one when that child is reaped and cleaned up ([`agent-sessions.md`](agent-sessions.md), "Processes and safety"):
+  `{"v":1,"event":"child","pgid":4250,"pid":4250,"started_at":"…","mark":"…"}` and `{"v":1,"event":"child_gone","pgid":4250}`.
+  The host keeps them in memory only, and when the server dies it runs the orphan cleanup on them before it restarts the server. The mark isn't a secret.
+  Office-run agents' tools can't connect to `host.sock` (a fixed deny in `agent-sessions.md`). `org-agent` there always has `ORG_OFFICE`, so it computes its office's socket path (`org_proto::location::office_socket_path`) and never needs `host.sock` or `office.list`.
+- (amended 2026-11-08: agent sessions rev 3.3, ada) **A host ignores an event it doesn't know** (it logs the event's name once), so a server can add events without a host change. Only `failed` codes have their own unknown rule (above).
 
 ## 4. What the host does
 - **Status per office** (`OfficeInfo.status`): `starting` (spawned, no `ready` yet; at host startup,
