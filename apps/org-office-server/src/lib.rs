@@ -260,6 +260,15 @@ fn serve_office(
                 let office = Arc::clone(&office);
                 Box::new(move || office.org_snapshot().map_err(|e| logged("snapshot", &e)))
             },
+            who: {
+                let office = Arc::clone(&office);
+                Box::new(move |params| {
+                    // Nothing reports presence yet (agents bind with messaging): all offline.
+                    office
+                        .who(params, &org_office::directory::NothingLive)
+                        .map_err(|e| logged("who", &e))
+                })
+            },
             feed: Box::new(OfficeFeed(Arc::clone(&office))),
             submit: {
                 let office = Arc::clone(&office);

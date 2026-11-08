@@ -17,6 +17,7 @@ use std::time::Duration;
 use crate::bounded;
 use crate::follow::{self, OrgFeed, Timing};
 use org_office::rules::OrgCommand;
+use org_proto::directory::{Who, WhoParams, WhoResult};
 use org_proto::frame;
 use org_proto::msg::{MsgBind, MsgBindParams, MsgBindResult, MAX_HANDLE_BYTES, OFFICE_SENDER};
 use org_proto::org::{CommandAccepted, TeamCreate};
@@ -33,10 +34,16 @@ pub type SnapshotFn = Box<dyn Fn() -> Result<OrgSnapshot, String> + Send + Sync>
 pub type SubmitFn =
     Box<dyn Fn(OrgCommand) -> Result<Result<CommandAccepted, ApiError>, String> + Send + Sync>;
 
+/// Answers `who` (the office's `who`): the cards, the caller's mistake, or why it could not
+/// answer at all (storage).
+pub type WhoFn =
+    Box<dyn Fn(&WhoParams) -> Result<Result<WhoResult, ApiError>, String> + Send + Sync>;
+
 /// What the connections ask of the office.
 pub struct OfficePorts {
     pub snapshot: SnapshotFn,
     pub submit: SubmitFn,
+    pub who: WhoFn,
     /// The log, for `subscribe`.
     pub feed: Box<dyn OrgFeed>,
 }
@@ -342,6 +349,9 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
             Err(_) => internal(request.id),
         };
     }
+    if request.is::<Who>() {
+        return who(request, shared, binding);
+    }
     if request.is::<Hello>() {
         return Response::ok::<Hello>(request.id, &shared.hello)
             .unwrap_or_else(|_| internal(request.id));
@@ -383,6 +393,31 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
     )
 }
 
+/// `who`: the directory, for a bound connection (`not_bound` otherwise, as that call's contract
+/// says). The binding is checked before the params are read.
+fn who(request: &Request, shared: &Shared, binding: &Binding) -> Response {
+    if !binding.is_bound() {
+        return Response::error(
+            request.id,
+            ApiError::new(ErrorCode::NotBound, "bind before asking who"),
+        );
+    }
+    let Ok(params) = request.params::<Who>() else {
+        return bind_error(
+            request.id,
+            ErrorCode::InvalidRequest,
+            "the params of `who` are not valid",
+        );
+    };
+    match (shared.ports.who)(&params) {
+        Ok(Ok(result)) => {
+            Response::ok::<Who>(request.id, &result).unwrap_or_else(|_| internal(request.id))
+        }
+        Ok(Err(refusal)) => Response::error(request.id, refusal),
+        Err(_) => internal(request.id),
+    }
+}
+
 /// `msg.bind`, app-wide only for now: with the office's `app_token` and no member. Binding as a
 /// member is messaging's and arrives with it; until then every member bind fails closed
 /// (`not_authorized`, the contract's answer to a lookup that fails) after the contract's
@@ -400,7 +435,7 @@ fn bind_connection(request: &Request, shared: &Shared, binding: &mut Binding) ->
         if member.len() > MAX_HANDLE_BYTES {
             return bind_error(request.id, ErrorCode::TooLarge, "the member is too long");
         }
-        if member.eq_ignore_ascii_case(OFFICE_SENDER) {
+        if org_office::directory::trim_address(member).eq_ignore_ascii_case(OFFICE_SENDER) {
             return bind_error(
                 request.id,
                 ErrorCode::InvalidRequest,
@@ -478,6 +513,7 @@ mod tests {
         OfficePorts {
             snapshot,
             submit: Box::new(|_| Err("none".to_owned())),
+            who: Box::new(|_| Err("none".to_owned())),
             feed: Box::new(Arc::new(FakeFeed::default())),
         }
     }
@@ -809,6 +845,7 @@ mod tests {
                     counter.fetch_add(1, Ordering::SeqCst);
                     answer()
                 }),
+                who: Box::new(|_| Err("none".to_owned())),
                 feed: Box::new(Arc::new(FakeFeed::default())),
             },
             token(),
@@ -1047,7 +1084,7 @@ mod tests {
         );
         // The input-only checks come first: the office is never a member, and a member over
         // the limit is too large, whatever else the call sends.
-        for office in ["office", "OFFICE", "Office"] {
+        for office in ["office", "OFFICE", "Office", " office ", "\toffice\n"] {
             client.bind(None, Some(token()));
             assert_eq!(
                 code_of(client.bind(Some(office), Some(token()))),
@@ -1221,6 +1258,7 @@ mod tests {
                 OfficePorts {
                     snapshot: Box::new(|| Err("none".to_owned())),
                     submit: Box::new(|_| Err("none".to_owned())),
+                    who: Box::new(|_| Err("none".to_owned())),
                     feed: Box::new(Arc::clone(&feed)),
                 },
                 token(),
@@ -1642,6 +1680,122 @@ mod tests {
         ));
         let (n, position, _) = event_of(&client.next_message());
         assert_eq!((n, position), (last.0 + 1, last.1 + 1));
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    // ---- who -------------------------------------------------------------------------
+
+    /// A server whose `who` answers from `answer` and counts its calls.
+    fn asking(
+        path: &Path,
+        answer: impl Fn(&WhoParams) -> Result<Result<WhoResult, ApiError>, String>
+            + Send
+            + Sync
+            + 'static,
+    ) -> (
+        Arc<AtomicUsize>,
+        Arc<AtomicBool>,
+        std::thread::JoinHandle<()>,
+    ) {
+        let asked = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&asked);
+        let shared = Arc::new(Shared::new(
+            &test_info(),
+            path,
+            OfficePorts {
+                snapshot: Box::new(|| Err("none".to_owned())),
+                submit: Box::new(|_| Err("none".to_owned())),
+                who: Box::new(move |params| {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    answer(params)
+                }),
+                feed: Box::new(Arc::new(FakeFeed::default())),
+            },
+            token(),
+        ));
+        let (stop, server) = start(path, &shared);
+        (asked, stop, server)
+    }
+
+    fn who_ask(client: &mut Client, params: serde_json::Value) -> org_proto::Outcome {
+        client.ask(|id| Request {
+            id,
+            method: "who".to_owned(),
+            params,
+        })
+    }
+
+    #[test]
+    fn who_is_for_a_bound_connection_and_an_unbound_one_is_not_bound_before_its_params_are_read() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (asked, stop, server) = asking(&path, |_| Ok(Ok(WhoResult { members: vec![] })));
+        let mut client = Client::connect(&path);
+
+        assert_eq!(
+            code_of(who_ask(&mut client, serde_json::json!({}))),
+            ErrorCode::NotBound
+        );
+        assert_eq!(
+            code_of(who_ask(&mut client, serde_json::json!({"kind": 7}))),
+            ErrorCode::NotBound
+        );
+        assert_eq!(asked.load(Ordering::SeqCst), 0);
+
+        client.bind(None, Some(token()));
+        let org_proto::Outcome::Result(value) = who_ask(&mut client, serde_json::json!({})) else {
+            panic!("a bound connection was refused")
+        };
+        assert_eq!(value["members"], serde_json::json!([]));
+        // Params that do not decode are told to a bound connection.
+        assert_eq!(
+            code_of(who_ask(&mut client, serde_json::json!({"kind": 7}))),
+            ErrorCode::InvalidRequest
+        );
+        assert_eq!(asked.load(Ordering::SeqCst), 1);
+        // A failed bind takes the right away.
+        client.bind(None, None);
+        assert_eq!(
+            code_of(who_ask(&mut client, serde_json::json!({}))),
+            ErrorCode::NotBound
+        );
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn what_who_answers_is_what_the_caller_gets() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&calls);
+        let (_asked, stop, server) = asking(&path, move |params| {
+            match seen.fetch_add(1, Ordering::SeqCst) {
+                0 => {
+                    assert_eq!(params.member.as_deref(), Some("pixel"));
+                    assert_eq!(params.team.as_deref(), Some("t1"));
+                    Ok(Err(ApiError::new(ErrorCode::NotFound, "no such member")))
+                }
+                _ => Err("disk on fire at /secret/path".to_owned()),
+            }
+        });
+        let mut client = Client::connect(&path);
+        client.bind(None, Some(token()));
+
+        // A refusal keeps its code; a storage failure is a fixed text, not the cause.
+        assert_eq!(
+            code_of(who_ask(
+                &mut client,
+                serde_json::json!({"member": "pixel", "team": "t1"})
+            )),
+            ErrorCode::NotFound
+        );
+        let org_proto::Outcome::Error(error) = who_ask(&mut client, serde_json::json!({})) else {
+            panic!("expected an error")
+        };
+        assert_eq!(error.code, ErrorCode::StorageError);
+        assert!(!error.message.contains("secret"), "{}", error.message);
         stop.store(true, Ordering::SeqCst);
         server.join().unwrap();
     }
