@@ -1,0 +1,21 @@
+[package]
+name = "agentic-org"
+description = "agentic.org: the desktop client for an AI organization's office servers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lib]
+name = "agentic_org_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.7.4", features = [] }
+
+[dependencies]
+org-proto = { path = "../../../crates/org-proto" }
+tauri = { version = "=2.12.5", features = [] }
+serde.workspace = true
+serde_json.workspace = true
