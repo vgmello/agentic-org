@@ -2,7 +2,7 @@
 kind: spec
 title: "Offices, organizations and teams (UX)"
 status: for-review
-revision: 5
+revision: 6
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-08"
@@ -20,6 +20,8 @@ Requested by ada for the user.
 **What it changes in my earlier work:** it replaces, for the office model, `desktop-app-v1.md` (in Eden's notes, not in this repository) §2.5 (workspace switcher), §3.2 (department and reporting-line chart) and §7.1 (Machines). Revision 5 of that spec folds this in. Acceptance-criterion IDs here are stable: changed criteria are rewritten under the same ID, retired IDs are never reused.
 
 ## Changelog
+
+**Revision 6 (2026-11-08): why an office stopped, in plain words.** ada's `OfficeInfo.status_reason`, `next_restart_at`, the live `office.status_changed` event and `office.restart` (branch ada/proto-office-status, with the reasons `unsupported_version`, `invalid_request`, `unknown` and the error `not_ready`) get their copy and actions in §3.3. From the Offices review: status is shown only when live, each status has its own icon, and the build's good choices are now part of the spec (an Unknown row in §3.1, and Sample data and the disabled Add office in §6.1). `key_missing` and `storage_error` copy follows `office-host-boundary.md`. The remove dialog's no-manager variant is written outside the dialog text (§7.4). OFC-11 to OFC-13 added.
 
 **Revision 5 (2026-11-08): reporting lines follow org-proto on v1.** Removing a member sends their reports to that member's own manager, or to the owner if they had none (§7.4, §7.8, PEOPLE-5).
 
@@ -116,6 +118,7 @@ Status colors reuse the existing tokens: green = online, blue = starting, gray =
 | Invited | `mail` | gray | An invitation link exists and hasn't been used | "expires in 21 h" |
 | Wants to join | `bell-ring` | amber (needs you) | A computer used the link and waits for its check code at HQ | "from 192.168.1.44 · 2 min ago" |
 | Waiting for approval | `hourglass` | amber | This Mac's own pending join | "type the code at HQ" |
+| Unknown | `circle-help` | gray | The app has no live status for it (never shown as healthy) *(rev 6)* | "Status unknown" |
 
 ### 3.2 Organization availability (menu and Open organization screen)
 
@@ -123,15 +126,36 @@ An organization is **unavailable** only when the app can't read it on this Mac a
 
 | Reason (exact copy) | Fix offered in the window |
 | --- | --- |
-| "Its office on this Mac stopped" | **Restart office** · Copy details |
+| "Its office on this Mac stopped", followed by the reason's copy from §3.3 | The action for that reason from §3.3 (for example no Restart for `in_use`) · Copy details |
 | "Offices aren't running. Allow Agentic Org in Login Items" (all organizations) | **Open Login Items settings** |
 | "Needs a newer version of Agentic Org" | **Check for updates** |
-| "Can't unlock its data. Keychain didn't allow access" | **Try again** · Copy details |
+| "Can't open its data", followed by §3.3's copy for `key_missing` or `storage_error` | The action from §3.3 (**Try again** for `key_missing`, **Restart office** for `storage_error`) · Copy details |
 | "This Mac was removed from the organization" | **Delete its copy from this Mac** |
 | "Waiting for approval at HQ" | **Show check code** · Cancel join |
 | "Joining… copying data (40%)" | (progress only) |
 
 **Not unavailable:** a Mac whose office can't reach HQ (it opens with a banner and queues changes, §6.5), and an office too old to sync (it opens read-only with "Update needed").
+
+### 3.3 Why an office stopped (rev 6)
+
+Shown as the Stopped row's secondary text and at the top of its details, with the fix as a button. The office's status updates live (`office.status_changed`), and a status that isn't live is never shown: the row reads "Status unknown" instead.
+
+| `status_reason` | Copy (secondary text) | Action |
+| --- | --- | --- |
+| `crashed` | "It stopped unexpectedly. Restarting in 20 s" (from `next_restart_at`), or "It stopped unexpectedly" | **Restart now** · Copy details |
+| `start_timeout` | "It didn't start in time" | **Restart office** · Copy details |
+| `restarts_exhausted` | "It kept stopping, so it won't restart on its own" | **Restart office** · Copy details |
+| `storage_error` | "It can't read or write its data on this Mac" (also used when the Keychain doesn't allow access, `office-host-boundary.md`) | **Restart office** · Reveal data folder · Copy details |
+| `in_use` | "Another copy of this office is already running. Quit it, and this office starts again." | Copy details (it restarts by itself with backoff, so there's no Restart button) |
+| `key_missing` | "Its data key is missing from this Mac's Keychain, so its data can't be opened" (the databases exist, the key doesn't) | **Try again** (`office.restart`, which asks the Keychain again and returns straight to this reason if the key is still missing) · Copy details. The button says Try again, never Restart. |
+| `stopped_by_owner` | "You stopped it" | **Start office** (`office.restart`). Phase 1 has no stop call, so this appears only once one exists. |
+| `unsupported_version` | "Needs a newer version of Agentic Org" | **Check for updates** |
+| `invalid_request` | "It couldn't start because of an internal error" | Copy details (to send to support) |
+| `unknown`, or anything else | "It stopped for a reason this version doesn't know" | **Restart office** · Copy details |
+
+- **Restart office** calls `office.restart`. While it runs: "Restarting…" with a spinner, then the live status. `office.restart` covers Restart, Try again and Start office (ada). It refuses only `unsupported_version` ("Needs a newer version of Agentic Org" · **Check for updates**) and `invalid_request` (shown as an error with Copy details).
+- **The host is still starting** (`office.restart` answers `not_ready`): the button shows "Starting…" and retries by itself for up to 30 s, then "The office host isn't ready yet" with **Try again**.
+- **Copy details** copies the office name, id, status, reason, the time and the app version. It never includes keys or tokens.
 
 ## 4. Flow 1 · Menu-bar dropdown
 
@@ -318,6 +342,8 @@ The app lives in the menu bar (ADR-0001). The icon is a monochrome template imag
 - **Version holding back a feature:** when HQ can't raise the organization level, a quiet note above the list: "Build box runs an older version of Agentic Org, so new features wait until it updates." It links to the row.
 - **Empty is impossible** (HQ always exists). With HQ alone, a one-line hint under the list: "Add an office to run agents on another Mac, or to keep a copy of the records there."
 - **Loading:** skeleton rows. **Live:** statuses update in place; a row that changes status doesn't move.
+- **Row label for screen readers** *(rev 6, OFC-13)*: "Main office, HQ, This Mac, Online, 6 agents. Opens details." (with the reason for Stopped: "…, Stopped: it stopped unexpectedly, restarting in 20 s, …").
+- **Phase 1** *(rev 6, from the build)*: **Add office** is shown disabled with "Available in a later release." While the data is invented, a **Sample data** badge says so. A status the app can't confirm shows as **Unknown** (§3.1), never as healthy.
 - **HQ-only actions** (A5, resolved): **Add office**, **Review and approve** and **Remove office…** happen in the app on HQ's Mac. On any other office, Add office is disabled with "Add offices from HQ's Mac (Main office)", and a join request shows read-only with "Approve on HQ's Mac (Main office)".
 
 ### 6.2 Add office (slide-over, HQ's Mac only)
@@ -520,10 +546,12 @@ Entry points: the People toolbar's **Add person**; a team's ⋯ › **Add person
 - **Remove a person** (modal, red icon), naming everything that changes, only the lines that apply:
   > Remove Sam Ortiz from Lumen Labs?
   > - Sam leaves Product and Checkout, and stops leading Product.
-  > - Jo Park, who reports to Sam, will report to Sam's manager, Lee Chen (or to you, if Sam had no manager).
+  > - Jo Park, who reports to Sam, will report to Sam's manager, Lee Chen.
   > - Agents can no longer reach Sam. 3 messages waiting for Sam won't be delivered, and Sam's 2 open tasks come back unassigned for you to reassign.
   >
   > **Remove Sam Ortiz** (red)
+
+  When Sam has no manager, the second line reads "Jo Park, who reports to Sam, will report to you."
 - **Removing an agent** isn't done here: an agent's quick view offers **Offboard…**, which is the HR flow (same consequences, listed the same way).
 - **When an agent can't reach someone** (the recipient isn't in the organization, or was removed): the agent's activity shows "Couldn't reach "Sam": Sam isn't in Lumen Labs. **Add a person…**". Removed recipients read "…was removed from Lumen Labs". The owner also sees the reclaimed tasks in Needs you, to reassign.
 
@@ -665,6 +693,9 @@ Two directions, same result:
 - OFC-8 · *(rev 2)* Remove office names the office, its agents (which become unplaced), their tasks and the offline case before removing.
 - OFC-9 · On an office that can't reach HQ, the banner shows last sync and the waiting count; changes show Pending; a rejection shows Blocked with Retry and Discard; HQ-only actions are disabled with the reason.
 - OFC-10 · *(new, rev 2)* After an office is removed, its agents show as Unplaced (Offices list, org chart tag, office filter), with Place… and Offboard… for each, and a needs-you item until every one is handled.
+- OFC-11 · *(new, rev 6)* A Stopped office shows its reason in plain words (§3.3) as secondary text and in its details, with the action for that reason, and Restart is never offered for `in_use` (for `key_missing` the action is Try again).
+- OFC-12 · *(new, rev 6)* Office status updates live from the host. When the app has no live status, the row says "Status unknown" and never shows a stale Online.
+- OFC-13 · *(new, rev 6)* Each status has its icon and word from §3.1, and a row's accessible label includes the name, HQ, where it runs, the status (and reason) and the agent count, and says it opens details.
 
 **Org chart: Teams (TEAM)**
 - TEAM-1 · *(rev 2)* The Teams view draws the ownership tree from the organization root; each card shows its name, the lead or "No lead", an Agents row and a People row with avatars and counts, its sub-team count and its projects.

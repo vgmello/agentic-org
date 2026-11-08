@@ -581,4 +581,4 @@ Nav **Work**, pill tabs **Tasks | Bugs | Debt | Requests** *(rev 5)*: the same l
 
 ## 16. Out of scope here (follow-ups)
 
-Attachments and screenshots on bugs · labels and custom fields (none, as for teams) · milestones and releases · bugs across projects and moving a bug between projects · email or Slack notices to people · time tracking · import from GitHub Issues (v2, with GitHub) · the agent CLI's own output design (with agy, C5) · the v1 spec revision 5 and the glossary, which fold this spec in.
+Attachments and screenshots on bugs · labels and custom fields (none, as for teams) · milestones and releases · bugs across projects and moving a bug between projects · email or Slack notices to people · time tracking · import from GitHub Issues (v2, with GitHub) · the agent CLI's own output design (with Remy, C5) · the v1 spec revision 5 and the glossary, which fold this spec in.
