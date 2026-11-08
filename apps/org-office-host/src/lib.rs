@@ -64,24 +64,32 @@ pub const SERVER_PROGRAM_NAME: &str = "org-office-server";
 /// Requests one connection may have running at once.
 const MAX_IN_FLIGHT_PER_CONNECTION: usize = 16;
 
+/// The team id that signs the desktop app, fixed when the host is built (`ORG_APP_TEAM_ID`).
+/// Without it no signed app can use the app-only calls (logged loudly at startup).
+pub const APP_TEAM_ID: Option<&str> = option_env!("ORG_APP_TEAM_ID");
+
 /// How to run the host.
+///
+/// A release build trusts only what it was built with: the app's bundle id
+/// ([`APP_BUNDLE_ID`]) and team id ([`APP_TEAM_ID`]), its Keychain access group, and the office
+/// server next to its own executable. So the trust inputs can't be set from outside: the only
+/// release constructor is [`Config::trusted`], and the setters that change them
+/// ([`Config::new`], [`Config::set_server_program`], [`Config::set_app_team_id`] and the
+/// development fields) exist in debug builds only. The timings and limits stay settable.
 #[derive(Debug, Clone)]
 pub struct Config {
-    /// The office home (absolute). Normally `org_proto::location::default_office_home()`.
-    pub home: PathBuf,
+    /// The office home (absolute).
+    home: PathBuf,
     /// The office server program (see [`default_server_program`]).
-    pub server_program: PathBuf,
+    server_program: PathBuf,
     pub timings: Timings,
     /// The size at which an office's stderr log is rotated.
     pub log_max_bytes: u64,
     /// Client connections beyond this are closed on arrival.
     pub max_connections: usize,
-    /// The desktop app's bundle id, for the code-signature check of the app-only calls
-    /// (`office.app_token`, `office.restart`).
-    pub app_bundle_id: String,
     /// The team id that signs the desktop app. Required for the app-only calls: with none,
     /// every caller is refused (`not_authorized`).
-    pub app_team_id: Option<String>,
+    app_team_id: Option<String>,
     /// Debug builds only (release builds don't have the field): an unsigned development app
     /// (this exact executable, `Contents/MacOS/<exe>`, run by this user) that the app-only calls
     /// accept without a code signature. The binary sets it from the build-time constant
@@ -100,22 +108,94 @@ pub struct Config {
 }
 
 impl Config {
-    /// The agreed defaults for this home and server program.
+    /// What this build trusts: the office home ([`trusted_office_home`]), the office server
+    /// next to this executable, and the team id it was built with. The only way to make a
+    /// release config.
+    pub fn trusted() -> Result<Self, String> {
+        let home = trusted_office_home()?;
+        let server =
+            default_server_program().map_err(|e| format!("finding the office server: {e}"))?;
+        Ok(Self::with(home, server, APP_TEAM_ID))
+    }
+
+    /// Debug builds only: the agreed defaults for this home and server program, with no app
+    /// team id.
+    #[cfg(debug_assertions)]
     pub fn new(home: impl Into<PathBuf>, server_program: impl Into<PathBuf>) -> Self {
+        Self::with(home.into(), server_program.into(), None)
+    }
+
+    fn with(home: PathBuf, server_program: PathBuf, app_team_id: Option<&str>) -> Self {
         Self {
-            home: home.into(),
-            server_program: server_program.into(),
+            home,
+            server_program,
             timings: Timings::default(),
             log_max_bytes: DEFAULT_LOG_MAX_BYTES,
             max_connections: 64,
-            app_bundle_id: APP_BUNDLE_ID.to_owned(),
-            app_team_id: None,
+            app_team_id: app_team_id.map(str::to_owned),
             #[cfg(debug_assertions)]
             dev_app_path: None,
             #[cfg(debug_assertions)]
             dev_key_dir: None,
         }
     }
+
+    /// Debug builds only: another office server program.
+    #[cfg(debug_assertions)]
+    pub fn set_server_program(&mut self, program: impl Into<PathBuf>) {
+        self.server_program = program.into();
+    }
+
+    /// Debug builds only: another app team id (or none).
+    #[cfg(debug_assertions)]
+    pub fn set_app_team_id(&mut self, team_id: Option<String>) {
+        self.app_team_id = team_id;
+    }
+
+    /// The office home.
+    pub fn home(&self) -> &Path {
+        &self.home
+    }
+}
+
+/// The office home a release host serves: today `org_proto::location`'s rule
+/// (`ORG_OFFICE_HOME`, else `$HOME/Library/Application Support/agentic.org`), the one the app
+/// and `org-agent` use to find `host.sock`.
+// TODO(trust inputs, pending a ruling): pin a release host to
+// `home::account_office_home()` (from the account's `pw_dir`, ignoring `ORG_OFFICE_HOME`). It
+// can't be done here alone: the app and `org-agent` find the host through the same
+// `org_proto::location` rule, so they would look elsewhere whenever the variable (or `HOME`)
+// differs. Until then the orphan-key sweep is off (`may_sweep_orphan_keys`).
+fn trusted_office_home() -> Result<PathBuf, String> {
+    org_proto::location::default_office_home().ok_or_else(|| {
+        "no office home: neither ORG_OFFICE_HOME nor HOME is an absolute path".into()
+    })
+}
+
+/// Whether this host may delete the keys of offices with no folder at startup
+/// (`keys::sweep_orphans`). That is safe only when the key store belongs to this office home
+/// alone, and today no build can be sure of it:
+/// - a debug build's development key folder may be shared by several homes;
+/// - a release build's Keychain group is shared by every release host of this account, and a
+///   release host's home can still be moved by `ORG_OFFICE_HOME` or `HOME` (see
+///   [`trusted_office_home`]): a host on one home would take another home's keys for orphans.
+///
+/// So the sweep is off (logged) until a release host is pinned to its account's office home
+/// (`home::account_office_home`); then it turns on for a release host serving exactly that home.
+fn may_sweep_orphan_keys(home: &Path) -> bool {
+    // TODO(trust inputs, pending the office-home ruling): once `trusted_office_home` pins a
+    // release host to `home::account_office_home()`, return true for a release build whose
+    // `home` is that one.
+    host_log::log(&format!(
+        "no orphan-key sweep for {}: {}",
+        home.display(),
+        if cfg!(debug_assertions) {
+            "a debug build's development key folder may be shared by several homes"
+        } else {
+            "another release host on another office home may share this Keychain group"
+        }
+    ));
+    false
 }
 
 /// `org-office-server` next to this executable (both live in the app bundle).
@@ -144,7 +224,7 @@ impl Host {
         if !config.home.is_absolute() {
             return Err(HostError::RelativeHome { path: config.home });
         }
-        let app = AppPolicy::new(&config.app_bundle_id, config.app_team_id.as_deref());
+        let app = AppPolicy::new(APP_BUNDLE_ID, config.app_team_id.as_deref());
         #[cfg(debug_assertions)]
         let app = app.and_then(|app| match &config.dev_app_path {
             Some(path) => app.with_dev_app(path),
@@ -155,11 +235,13 @@ impl Host {
             host_log::log(&line);
         }
         // Before anything is made on disk or started: no office runs without its key store.
-        let keys = keys::store_for(&config)?;
+        let keys = keys::store_for(&config, app_auth::own_keychain_access_groups)?;
         let layout = Layout::new(&config.home);
         layout.check_socket_paths()?;
         layout.prepare()?;
         let lock = HostLock::acquire(&layout)?;
+        // Decided only by the host that holds the home.
+        let sweep_orphans = may_sweep_orphan_keys(&layout.home);
         let io = |context| move |source| HostError::Io { context, source };
         let catalog = Catalog::scan(&layout.home).map_err(io("reading the office folders"))?;
         let unfinished =
@@ -183,6 +265,7 @@ impl Host {
             log_max_bytes: config.log_max_bytes,
             timings: config.timings.clone(),
             keys,
+            sweep_orphans,
         });
         let broadcast = Arc::new(Broadcast::default());
         let offices = Offices::start(

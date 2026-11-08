@@ -7,7 +7,8 @@
 //! group gets `errSecItemNotFound`, never a prompt.
 //!
 //! `create` is a direct `SecItemAdd`, so it only ever adds (`errSecDuplicateItem` is
-//! [`KeyStoreError::Exists`]); `load` and `delete` go through `security_framework::passwords`.
+//! [`KeyStoreError::Exists`]); `load` and `delete` go through `security_framework::passwords`;
+//! `list` searches the service and access group for attributes only (never the data).
 //! Every `Vec` a key passes through is zeroed. The copies inside Core Foundation (the `CFData`
 //! the key is added from or read into) are freed by Core Foundation and can't be zeroed; reading
 //! them needs local memory access as the same user.
@@ -168,6 +169,36 @@ impl KeyStore for Keychain {
             Err(e) if e.code() == errSecItemNotFound => Ok(()),
             Err(e) => Err(KeyStoreError::Os(e.code())),
         }
+    }
+
+    fn list(&self) -> Result<Vec<String>, KeyStoreError> {
+        use security_framework::item::{ItemClass, ItemSearchOptions, Limit};
+
+        // Every item of this service in this access group, in the Data Protection keychain
+        // (`ignore_legacy_keychains`), attributes only: never the keys.
+        let mut search = ItemSearchOptions::new();
+        search
+            .class(ItemClass::generic_password())
+            .service(SERVICE)
+            .access_group(&self.group)
+            .ignore_legacy_keychains()
+            .load_attributes(true)
+            .limit(Limit::All);
+        let items = match search.search() {
+            Ok(items) => items,
+            Err(e) if e.code() == errSecItemNotFound => return Ok(Vec::new()),
+            Err(e) => return Err(KeyStoreError::Os(e.code())),
+        };
+        // SAFETY: an immutable framework constant (as in `item_attributes`).
+        let account = unsafe { CFString::wrap_under_get_rule(kSecAttrAccount) }.to_string();
+        let mut ids: Vec<String> = items
+            .iter()
+            .filter_map(|item| item.simplify_dict()?.remove(&account))
+            .filter(|id| is_plain_id(id))
+            .collect();
+        ids.sort();
+        ids.dedup();
+        Ok(ids)
     }
 }
 

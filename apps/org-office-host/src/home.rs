@@ -101,6 +101,45 @@ pub(crate) fn euid() -> u32 {
     unsafe { libc::geteuid() }
 }
 
+/// The office home of this process's user account: `<pw_dir>/Library/Application
+/// Support/agentic.org`, from the account database (`getpwuid_r`), never from the environment.
+/// `None` if the account has no absolute home folder.
+// Used once a release host is pinned to it (pending a ruling: see `trusted_office_home`), which
+// also turns the orphan-key sweep on.
+#[allow(dead_code)]
+pub(crate) fn account_office_home() -> Option<PathBuf> {
+    account_home(euid()).map(|dir| dir.join("Library/Application Support/agentic.org"))
+}
+
+/// The home folder (`pw_dir`) of the account `uid`, if it is absolute.
+#[allow(dead_code)] // see `account_office_home`
+fn account_home(uid: u32) -> Option<PathBuf> {
+    use std::ffi::CStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let mut buf = vec![0 as libc::c_char; 4096];
+    loop {
+        // SAFETY: an all-zero `passwd` is a valid value for the call to fill in.
+        let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut found: *mut libc::passwd = std::ptr::null_mut();
+        // SAFETY: `entry`, `buf` (of the length given) and `found` are valid for the call,
+        // which writes the strings `entry` points to into `buf`.
+        let rc =
+            unsafe { libc::getpwuid_r(uid, &mut entry, buf.as_mut_ptr(), buf.len(), &mut found) };
+        if rc == libc::ERANGE && buf.len() < 1 << 20 {
+            buf.resize(buf.len() * 2, 0);
+            continue;
+        }
+        if rc != 0 || found.is_null() || entry.pw_dir.is_null() {
+            return None;
+        }
+        // SAFETY: `pw_dir` is a NUL-terminated string inside `buf`, which is still alive.
+        let dir = unsafe { CStr::from_ptr(entry.pw_dir) };
+        let dir = PathBuf::from(std::ffi::OsStr::from_bytes(dir.to_bytes()));
+        return dir.is_absolute().then_some(dir);
+    }
+}
+
 /// `host.lock`, held (an exclusive `flock`) for as long as this value lives.
 #[derive(Debug)]
 pub(crate) struct HostLock {
@@ -139,6 +178,28 @@ impl HostLock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_account_office_home_comes_from_the_account_database() {
+        let Some(home) = account_office_home() else {
+            // A uid with no account entry (some CI containers): nothing to compare.
+            assert!(account_home(euid()).is_none());
+            eprintln!("skipped: this uid has no account home folder");
+            return;
+        };
+        assert!(home.is_absolute(), "{}", home.display());
+        assert!(
+            home.ends_with("Library/Application Support/agentic.org"),
+            "{}",
+            home.display()
+        );
+        // Built from the account's `pw_dir`.
+        assert_eq!(
+            home.parent().and_then(Path::parent).and_then(Path::parent),
+            account_home(euid()).as_deref()
+        );
+        assert_eq!(account_home(u32::MAX - 7), None);
+    }
 
     #[test]
     fn prepare_makes_and_tightens_owner_only_folders() {

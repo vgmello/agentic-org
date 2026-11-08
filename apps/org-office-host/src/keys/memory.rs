@@ -18,6 +18,7 @@ pub(crate) enum Op {
     Create,
     Load,
     Delete,
+    List,
 }
 
 /// An error to inject (a [`KeyStoreError`] isn't `Clone`).
@@ -111,6 +112,16 @@ impl KeyStore for MemoryKeys {
         lock(&self.keys).remove(office_id);
         Ok(())
     }
+
+    fn list(&self) -> Result<Vec<String>, KeyStoreError> {
+        lock(&self.calls).push((Op::List, String::new()));
+        if let Some(fault) = lock(&self.faults).get(&Op::List) {
+            return Err(fault.error());
+        }
+        let mut ids: Vec<String> = lock(&self.keys).keys().cloned().collect();
+        ids.sort();
+        Ok(ids)
+    }
 }
 
 mod tests {
@@ -128,9 +139,11 @@ mod tests {
         assert!(matches!(store.create(A, &two), Err(KeyStoreError::Exists)));
         assert!(store.holds(A, &one));
         assert_eq!(*store.load(A).unwrap().unwrap(), one);
+        assert_eq!(store.list().unwrap(), [A]);
         store.delete(A).unwrap();
         assert!(!store.has(A));
         store.delete(A).unwrap();
+        assert_eq!(store.list().unwrap(), Vec::<String>::new());
     }
 
     #[test]

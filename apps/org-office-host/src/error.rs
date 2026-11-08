@@ -26,6 +26,10 @@ pub enum HostError {
     /// A release build was compiled without its Keychain access group
     /// (`ORG_HOST_KEYCHAIN_GROUP`), so it has nowhere to keep the offices' keys.
     NoKeychainGroup,
+    /// A release build's Keychain access group isn't in the host's own
+    /// `keychain-access-groups` entitlement (or the host isn't signed with one), so the
+    /// Keychain would refuse every key.
+    KeychainGroupNotEntitled { group: String },
     Io {
         context: &'static str,
         source: io::Error,
@@ -74,6 +78,12 @@ impl fmt::Display for HostError {
                 "this build has no Keychain access group for the offices' keys: build it with \
                  ORG_HOST_KEYCHAIN_GROUP set to the group in its keychain-access-groups \
                  entitlement",
+            ),
+            HostError::KeychainGroupNotEntitled { group } => write!(
+                f,
+                "this build keeps the offices' keys in the Keychain access group {group}, but \
+                 its code signature doesn't list that group in its keychain-access-groups \
+                 entitlement: sign the host with it"
             ),
             HostError::Io { context, source } => write!(f, "{context}: {source}"),
         }

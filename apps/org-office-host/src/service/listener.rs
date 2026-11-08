@@ -706,6 +706,87 @@ mod tests {
         assert!(seen[0].1 < seen[0].2 && seen[1].1 >= seen[1].2);
     }
 
+    /// A handler whose `app` calls (inline when `inline_app`) wait until the client has written
+    /// its next line, then note how many bytes are waiting on the socket. Its other calls note
+    /// that they ran.
+    struct Probe {
+        inline_app: bool,
+        started: Mutex<mpsc::Sender<()>>,
+        next_written: Mutex<mpsc::Receiver<()>>,
+        next_handled: (Mutex<bool>, Condvar),
+        waiting: Mutex<Option<u64>>,
+    }
+
+    impl Handler for Probe {
+        fn inline(&self, request: &Request) -> bool {
+            self.inline_app && request.method == "app"
+        }
+
+        fn handle(&self, request: Request, connection: &Arc<Connection>, _received: Received) {
+            let (handled, changed) = &self.next_handled;
+            if request.method != "app" {
+                *lock(handled) = true;
+                changed.notify_all();
+                return;
+            }
+            lock(&self.started).send(()).unwrap();
+            lock(&self.next_written).recv().unwrap();
+            // A reader that isn't held back reads the next line and runs it at once: give it
+            // the time to.
+            let guard = lock(handled);
+            drop(
+                changed
+                    .wait_timeout_while(guard, Duration::from_millis(500), |handled| !*handled)
+                    .unwrap(),
+            );
+            *lock(&self.waiting) = Some(crate::peer::bytes_waiting(connection.socket()).unwrap());
+        }
+    }
+
+    /// How many bytes were waiting on the socket while an `app` call was handled, once the
+    /// client had written its next line.
+    fn bytes_waiting_during_an_app_call(inline_app: bool) -> u64 {
+        let (client, server) = UnixStream::pair().unwrap();
+        let (started, has_started) = mpsc::channel();
+        let (written, next_written) = mpsc::channel();
+        let probe = Arc::new(Probe {
+            inline_app,
+            started: Mutex::new(started),
+            next_written: Mutex::new(next_written),
+            next_handled: (Mutex::new(false), Condvar::new()),
+            waiting: Mutex::new(None),
+        });
+        let accepted = Accepted::sample(&server);
+        let (connection, queue) = Connection::new(server.try_clone().unwrap(), accepted);
+        let handler: Arc<dyn Handler> = probe.clone();
+        let serving = thread::spawn(move || serve(server, connection, queue, handler, 4));
+        (&client)
+            .write_all(b"{\"id\":1,\"method\":\"app\"}\n")
+            .unwrap();
+        // The reader has read the call (alone: nothing else was written yet).
+        has_started.recv_timeout(Duration::from_secs(5)).unwrap();
+        (&client)
+            .write_all(b"{\"id\":2,\"method\":\"next\"}\n")
+            .unwrap();
+        written.send(()).unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+        serving.join().unwrap();
+        let waiting = lock(&probe.waiting).expect("the app call ran");
+        waiting
+    }
+
+    /// L1: the calls `Handler::inline` picks (the app-only calls) run on the connection's
+    /// reader thread, which reads nothing more until they're answered: a line the client wrote
+    /// meanwhile is still waiting on the socket, which is what their check (`app_auth`,
+    /// "nothing after the request") relies on. A call run on its own thread lets the reader read
+    /// on, so nothing is waiting.
+    #[test]
+    fn an_inline_call_runs_before_anything_more_is_read() {
+        let next_line = b"{\"id\":2,\"method\":\"next\"}\n".len() as u64;
+        assert_eq!(bytes_waiting_during_an_app_call(true), next_line);
+        assert_eq!(bytes_waiting_during_an_app_call(false), 0);
+    }
+
     #[test]
     fn bind_replaces_a_stale_socket_but_nothing_else() {
         let dir = short_tempdir();

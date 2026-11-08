@@ -66,13 +66,13 @@ impl TestHome {
         self.dir.path().join("k")
     }
 
+    /// A debug host's config for this home (release builds can't set one: they trust only what
+    /// they were built with).
+    #[cfg(debug_assertions)]
     pub fn config(&self) -> Config {
         let mut config = Config::new(self.path(), fake_server());
         config.timings = fast_timings();
-        #[cfg(debug_assertions)]
-        {
-            config.dev_key_dir = Some(self.keys_dir());
-        }
+        config.dev_key_dir = Some(self.keys_dir());
         config
     }
 

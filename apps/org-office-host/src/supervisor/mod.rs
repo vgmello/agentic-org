@@ -57,6 +57,9 @@ pub(crate) struct SupervisorConfig {
     pub(crate) timings: Timings,
     /// Where every office's database key is kept.
     pub(crate) keys: Arc<dyn KeyStore>,
+    /// Whether [`Supervisor::sweep_orphan_keys`] may delete keys (see `keys::sweep_orphans`
+    /// for when that's safe).
+    pub(crate) sweep_orphans: bool,
 }
 
 pub(crate) struct Supervisor {
@@ -212,6 +215,15 @@ impl Supervisor {
     /// Where every office's state changes are announced from now on (set once).
     pub(crate) fn observe(&self, observer: Weak<dyn StatusObserver>) {
         let _ = self.observer.set(observer);
+    }
+
+    /// Deletes the keys of offices with no folder (see `keys::sweep_orphans`), if this host may
+    /// (`SupervisorConfig::sweep_orphans`). Run once at startup, after the startup discards and
+    /// before any create.
+    pub(crate) fn sweep_orphan_keys(&self) {
+        if self.config.sweep_orphans {
+            crate::keys::sweep_orphans(&*self.config.keys, &self.config.home);
+        }
     }
 
     /// Starts supervising an existing office (`--office <id>`), with a fresh app token.
@@ -661,6 +673,7 @@ mod tests {
             log_max_bytes: 1024,
             timings,
             keys: Arc::clone(keys) as Arc<dyn KeyStore>,
+            sweep_orphans: false,
         })
     }
 

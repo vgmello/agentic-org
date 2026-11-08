@@ -132,7 +132,8 @@ impl Offices {
         offices
     }
 
-    /// Discards the unfinished folders found at startup, a few at a time, then lets creates in.
+    /// Discards the unfinished folders found at startup, a few at a time, sweeps the keys of
+    /// offices that have no folder, then lets creates in.
     fn discard_at_startup(&self, unfinished: Vec<String>) {
         // Creates are let in however this ends, a panic included, so they never wait forever.
         struct LetCreatesIn<'a>(&'a Offices);
@@ -154,6 +155,9 @@ impl Offices {
                 });
             }
         });
+        // After the discards (which need their keys), before creates are let in (a create
+        // stores its key before its folder exists).
+        self.supervisor.sweep_orphan_keys();
     }
 
     fn startup_done(&self) {
@@ -758,6 +762,7 @@ mod tests {
             log_max_bytes: 1024,
             timings: Timings::default(),
             keys: Arc::new(MemoryKeys::default()),
+            sweep_orphans: false,
         });
         for (id, stored) in [("STORED", true), ("UNFINISHED", false)] {
             let folder = home.join("offices").join(id);
@@ -794,6 +799,7 @@ mod tests {
             log_max_bytes: 1024,
             timings: Timings::default(),
             keys: Arc::new(MemoryKeys::default()),
+            sweep_orphans: false,
         });
         if stopped {
             supervisor.shutdown();
@@ -807,6 +813,47 @@ mod tests {
             broadcast,
             &Timings::default(),
         )
+    }
+
+    /// At startup, after the discards, the keys of offices with no folder are deleted, but only
+    /// when the host may (`sweep_orphans`); a key whose folder exists is always kept.
+    #[test]
+    fn the_startup_sweeps_orphan_keys_only_when_allowed() {
+        use crate::keys::KeyStore;
+        use org_proto::DbKey;
+        const ORPHAN: &str = "01ORPHANORPHANORPHANORPHAN";
+        for sweep in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let home = dir.path();
+            fs::create_dir_all(home.join("offices").join(OFFICE)).unwrap();
+            let keys = Arc::new(MemoryKeys::default());
+            for id in [OFFICE, ORPHAN] {
+                keys.create(id, &DbKey::from_bytes([1; 32])).unwrap();
+            }
+            let supervisor = Supervisor::new(SupervisorConfig {
+                program: home.join("no-such-server"),
+                home: home.to_path_buf(),
+                logs_dir: home.join("logs"),
+                log_max_bytes: 1024,
+                timings: Timings::default(),
+                keys: Arc::clone(&keys) as Arc<dyn KeyStore>,
+                sweep_orphans: sweep,
+            });
+            let offices = Offices::start(
+                home,
+                Catalog::default(),
+                Vec::new(),
+                supervisor,
+                Arc::new(Broadcast::default()),
+                &Timings::default(),
+            );
+            offices
+                .wait_for_startup(Instant::now() + Duration::from_secs(10))
+                .unwrap();
+            assert_eq!(keys.has(ORPHAN), !sweep, "sweep {sweep}");
+            assert!(keys.has(OFFICE), "sweep {sweep}");
+            offices.shutdown();
+        }
     }
 
     /// `office.restart` on an office the host couldn't supervise, when it still can't: listed

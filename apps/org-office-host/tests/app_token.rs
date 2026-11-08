@@ -177,7 +177,7 @@ fn a_malformed_or_wrong_first_line_makes_the_office_unavailable() {
         let home = TestHome::new();
         home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
         let mut config = home.config();
-        config.server_program = home.wrapper(name, &body);
+        config.set_server_program(home.wrapper(name, &body));
         let host = Host::start(config).unwrap();
         wait_for(&host, A, OfficeStatus::Unavailable);
         // Several backoff periods (100 + 200 + 400 ms) pass without a restart:
@@ -196,7 +196,7 @@ fn a_server_whose_stdin_closes_before_its_first_line_exits_and_is_restarted() {
     let home = TestHome::new();
     home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
     let mut config = home.config();
-    config.server_program = home.wrapper("no-first-line", r#"exec "$FAKE" "$@" </dev/null"#);
+    config.set_server_program(home.wrapper("no-first-line", r#"exec "$FAKE" "$@" </dev/null"#));
     let host = Host::start(config).unwrap();
     // The contract: the host is gone, so the server exits 0 without a `failed` line. That
     // isn't fatal: the host restarts it with backoff.
@@ -217,10 +217,10 @@ fn a_create_whose_first_line_is_a_start_line_fails() {
     }));
     let home = TestHome::new();
     let mut config = home.config();
-    config.server_program = home.wrapper(
+    config.set_server_program(home.wrapper(
         "start-op",
         &format!(r#"printf '%s' '{start}' | "$FAKE" "$@""#),
-    );
+    ));
     let host = Host::start(config).unwrap();
     let err = Client::connect(host.socket_path())
         .call::<OrganizationCreate>(&OrganizationCreateParams {

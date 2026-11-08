@@ -98,14 +98,14 @@ fn a_create_stores_its_key_before_its_server_starts_and_every_start_gets_it() {
     let home = TestHome::new();
     let mut config = home.config();
     // Lists the key folder as each `--create` server starts.
-    config.server_program = home.wrapper(
+    config.set_server_program(home.wrapper(
         "list-keys",
         &format!(
             "if [ \"$1\" = --create ]; then ls '{}' > \"$ORG_OFFICE_HOME/keys-at-create\"; fi\n\
              exec \"$FAKE\" \"$@\"",
             home.keys_dir().display()
         ),
-    );
+    ));
     let host = Host::start(config.clone()).unwrap();
     let org = create(host.socket_path(), "Acme").unwrap();
     let office_id = org.offices[0].id.clone();
@@ -315,7 +315,7 @@ fn already_exists_and_a_refused_create_keep_the_key_and_discard_nothing() {
 fn a_create_whose_server_cant_start_keeps_its_key() {
     let home = TestHome::new();
     let mut config = home.config();
-    config.server_program = home.path().join("no-such-server");
+    config.set_server_program(home.path().join("no-such-server"));
     let host = Host::start(config).unwrap();
     let err = create(host.socket_path(), "Acme").unwrap_err();
     assert_eq!(err.code, ErrorCode::StorageError);

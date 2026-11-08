@@ -27,6 +27,9 @@ mod dev;
 mod keychain;
 #[cfg(test)]
 pub(crate) mod memory;
+mod sweep;
+
+pub(crate) use sweep::sweep_orphans;
 
 use std::fmt;
 use std::io;
@@ -52,6 +55,10 @@ pub(crate) trait KeyStore: Send + Sync {
 
     /// Deletes office `office_id`'s key. A missing item is `Ok`.
     fn delete(&self, office_id: &str) -> Result<(), KeyStoreError>;
+
+    /// The office ids the store holds a key for, never the keys themselves. Items whose name
+    /// isn't a plain id are left out.
+    fn list(&self) -> Result<Vec<String>, KeyStoreError>;
 }
 
 /// Why a key store call failed. It never holds key bytes, and neither does its `Display`.
@@ -99,16 +106,23 @@ impl From<io::Error> for KeyStoreError {
 /// The key store this host uses. Debug builds: the development folder `config.dev_key_dir`
 /// (absolute), and [`HostError::NoDevKeyDir`] without one, so a debug host never writes a real
 /// Keychain item. Release builds: the Data Protection keychain in the access group compiled in
-/// as `ORG_HOST_KEYCHAIN_GROUP`, and [`HostError::NoKeychainGroup`] without one.
-pub(crate) fn store_for(config: &Config) -> Result<Arc<dyn KeyStore>, HostError> {
+/// as `ORG_HOST_KEYCHAIN_GROUP`: [`HostError::NoKeychainGroup`] without one, and
+/// [`HostError::KeychainGroupNotEntitled`] unless `own_access_groups` (the host's own
+/// `keychain-access-groups` entitlement) lists it, so a misbuilt host fails at startup rather
+/// than at its first `SecItemAdd`.
+pub(crate) fn store_for(
+    config: &Config,
+    own_access_groups: impl FnOnce() -> Option<Vec<String>>,
+) -> Result<Arc<dyn KeyStore>, HostError> {
     #[cfg(debug_assertions)]
     {
+        let _ = own_access_groups;
         dev_store(config.dev_key_dir.as_deref(), &config.home)
     }
     #[cfg(not(debug_assertions))]
     {
         let _ = config;
-        release_store(option_env!("ORG_HOST_KEYCHAIN_GROUP"))
+        release_store(option_env!("ORG_HOST_KEYCHAIN_GROUP"), own_access_groups)
     }
 }
 
@@ -136,17 +150,42 @@ fn dev_store(
     }
 }
 
-/// The release store for the access group `group` (`ORG_HOST_KEYCHAIN_GROUP` at build time).
-// TODO(host-keys follow-up): at startup, check `group` against the host's own
-// `keychain-access-groups` entitlement (and fail clearly if it isn't there), instead of
-// finding out at the first `SecItemAdd`.
+/// The release store for the access group `group` (`ORG_HOST_KEYCHAIN_GROUP` at build time),
+/// once `entitled` (the host's own `keychain-access-groups`) shows the host may use it.
+///
+/// The live entitlement check can't run in the tests: an unsigned (or ad-hoc signed) test
+/// binary has no `keychain-access-groups`, so it would always refuse. [`group_entitled`], the
+/// decision, is tested on synthetic entitlements; the reading is `app_auth`'s, tested on
+/// synthetic signing information. Check it live on the first signed build.
 #[cfg_attr(debug_assertions, allow(dead_code))]
-fn release_store(group: Option<&str>) -> Result<Arc<dyn KeyStore>, HostError> {
-    match group {
-        #[cfg(target_os = "macos")]
-        Some(group) if !group.trim().is_empty() => Ok(Arc::new(keychain::Keychain::new(group))),
-        _ => Err(HostError::NoKeychainGroup),
+fn release_store(
+    group: Option<&str>,
+    entitled: impl FnOnce() -> Option<Vec<String>>,
+) -> Result<Arc<dyn KeyStore>, HostError> {
+    let group = match group {
+        Some(group) if !group.trim().is_empty() => group,
+        _ => return Err(HostError::NoKeychainGroup),
+    };
+    if !group_entitled(group, entitled().as_deref()) {
+        return Err(HostError::KeychainGroupNotEntitled {
+            group: group.to_owned(),
+        });
     }
+    #[cfg(target_os = "macos")]
+    {
+        Ok(Arc::new(keychain::Keychain::new(group)))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err(HostError::NoKeychainGroup)
+    }
+}
+
+/// Whether the access group `group` is one of the host's own `entitled` groups (exactly). No
+/// entitlement, or one that couldn't be read, entitles nothing.
+#[cfg_attr(debug_assertions, allow(dead_code))]
+fn group_entitled(group: &str, entitled: Option<&[String]>) -> bool {
+    entitled.is_some_and(|groups| groups.iter().any(|g| g == group))
 }
 
 #[cfg(test)]
@@ -172,12 +211,47 @@ mod tests {
 
     #[test]
     fn a_release_build_without_an_access_group_has_no_store() {
+        let mut asked = false;
         for group in [None, Some(""), Some("  ")] {
+            let store = release_store(group, || {
+                asked = true;
+                Some(vec!["G".to_owned()])
+            });
             assert!(
-                matches!(release_store(group), Err(HostError::NoKeychainGroup)),
+                matches!(store, Err(HostError::NoKeychainGroup)),
                 "{group:?}"
             );
         }
+        assert!(!asked, "the entitlement was read without a group");
+    }
+
+    #[test]
+    fn a_release_build_needs_its_access_group_in_its_own_entitlement() {
+        const GROUP: &str = "TEAMID1234.org.agentic.host";
+        let groups = |list: &[&str]| Some(list.iter().map(|g| (*g).to_owned()).collect());
+        for entitled in [
+            None,
+            groups(&[]),
+            groups(&["TEAMID1234.other"]),
+            groups(&[
+                "TEAMID1234.org.agentic.host.x",
+                "teamid1234.org.agentic.host",
+            ]),
+        ] {
+            assert!(!group_entitled(GROUP, entitled.as_deref()), "{entitled:?}");
+            let err = release_store(Some(GROUP), || entitled.clone())
+                .err()
+                .unwrap();
+            assert!(
+                matches!(&err, HostError::KeychainGroupNotEntitled { group } if group == GROUP),
+                "{entitled:?}: {err}"
+            );
+            assert!(err.to_string().contains(GROUP), "{err}");
+        }
+        let entitled = groups(&["TEAMID1234.other", GROUP]);
+        assert!(group_entitled(GROUP, entitled.as_deref()));
+        // Choosing the store touches no Keychain item.
+        assert!(release_store(Some(GROUP), || entitled).is_ok());
     }
 
     #[cfg(debug_assertions)]

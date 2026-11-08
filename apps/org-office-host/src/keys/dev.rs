@@ -135,6 +135,25 @@ impl KeyStore for DevKeys {
             Err(e) => Err(e.into()),
         }
     }
+
+    fn list(&self) -> Result<Vec<String>, KeyStoreError> {
+        let entries = match fs::read_dir(&self.dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e.into()),
+        };
+        let mut ids = Vec::new();
+        for entry in entries {
+            let name = entry?.file_name();
+            if let Some(id) = name.to_str().and_then(|n| n.strip_suffix(".key")) {
+                if is_plain_id(id) {
+                    ids.push(id.to_owned());
+                }
+            }
+        }
+        ids.sort();
+        Ok(ids)
+    }
 }
 
 const HEX: &[u8; 16] = b"0123456789abcdef";
@@ -220,6 +239,20 @@ mod tests {
             Err(KeyStoreError::Exists)
         ));
         assert_eq!(*store.load(A).unwrap().unwrap(), key(1));
+    }
+
+    #[test]
+    fn list_names_the_offices_with_a_key_and_nothing_else() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = DevKeys::new(dir.path().join("keys"));
+        assert_eq!(store.list().unwrap(), Vec::<String>::new());
+        const B: &str = "01BBBBBBBBBBBBBBBBBBBBBBBB";
+        store.create(B, &key(1)).unwrap();
+        store.create(A, &key(2)).unwrap();
+        for other in ["notes.txt", "a.b.key", ".key"] {
+            fs::write(dir.path().join("keys").join(other), b"x").unwrap();
+        }
+        assert_eq!(store.list().unwrap(), [A, B]);
     }
 
     #[test]

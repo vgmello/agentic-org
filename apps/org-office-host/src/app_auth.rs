@@ -207,9 +207,9 @@ impl AppPolicy {
                 "office.app_token and office.restart accept the app satisfying: {requirement}"
             )),
             None => lines.push(
-                "no app team id configured: office.app_token and office.restart accept no signed \
-                 app"
-                .to_owned(),
+                "WARNING: no app team id (a release build takes it from ORG_APP_TEAM_ID when it's \
+                 built): office.app_token and office.restart accept no signed app"
+                    .to_owned(),
             ),
         }
         #[cfg(debug_assertions)]
@@ -286,7 +286,13 @@ pub(crate) struct Signing {
     /// The entitlements (`kSecCodeInfoEntitlementsDict`): each key with its value when it's a
     /// boolean (`None` for any other kind of value). `None` when the code has no entitlements.
     pub(crate) entitlements: Option<Vec<(String, Option<bool>)>>,
+    /// The `keychain-access-groups` entitlement: its groups, when it's an array of strings.
+    /// `None` when it's missing or anything else.
+    pub(crate) keychain_access_groups: Option<Vec<String>>,
 }
+
+/// The entitlement that lists the Keychain access groups a signed program may use.
+pub(crate) const KEYCHAIN_ACCESS_GROUPS: &str = "keychain-access-groups";
 
 /// Whether signed code may get an app token: it runs with the hardened runtime and has none of
 /// the [`REJECTED_ENTITLEMENTS`] (one that's present with any value but `false` counts). Missing
@@ -387,26 +393,26 @@ fn code_satisfies(token: &AuditToken, requirement: &str) -> bool {
     guest_code(token).is_some_and(|code| meets(&code, requirement))
 }
 
+#[cfg(target_os = "macos")]
+#[link(name = "Security", kind = "framework")]
+extern "C" {
+    fn SecCodeCopySigningInformation(
+        code: *const std::ffi::c_void,
+        flags: u32,
+        information: *mut core_foundation::dictionary::CFDictionaryRef,
+    ) -> i32;
+    static kSecCodeInfoFlags: core_foundation::string::CFStringRef;
+    static kSecCodeInfoEntitlementsDict: core_foundation::string::CFStringRef;
+}
+
 /// `code`'s signing information: its flags and entitlements (`SecCodeCopySigningInformation`).
 /// `None` on any error.
 #[cfg(target_os = "macos")]
 fn signing(code: &security_framework::os::macos::code_signing::SecCode) -> Option<Signing> {
     use core_foundation::base::{CFType, TCFType};
-    use core_foundation::boolean::CFBoolean;
     use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
-    use core_foundation::number::CFNumber;
-    use core_foundation::string::{CFString, CFStringRef};
+    use core_foundation::string::CFString;
 
-    #[link(name = "Security", kind = "framework")]
-    extern "C" {
-        fn SecCodeCopySigningInformation(
-            code: *const std::ffi::c_void,
-            flags: u32,
-            information: *mut CFDictionaryRef,
-        ) -> i32;
-        static kSecCodeInfoFlags: CFStringRef;
-        static kSecCodeInfoEntitlementsDict: CFStringRef;
-    }
     /// `kSecCSSigningInformation | kSecCSRequirementInformation`.
     const INFORMATION: u32 = (1 << 1) | (1 << 2);
 
@@ -426,6 +432,26 @@ fn signing(code: &security_framework::os::macos::code_signing::SecCode) -> Optio
     // SAFETY: a dictionary the call created for us.
     let information: CFDictionary<CFString, CFType> =
         unsafe { CFDictionary::wrap_under_create_rule(information) };
+    parse_signing(&information)
+}
+
+/// What the host reads from a signing-information dictionary. Fails closed: an entitlements
+/// value that is present but isn't a dictionary gives `None` (refused), never "no
+/// entitlements".
+#[cfg(target_os = "macos")]
+fn parse_signing(
+    information: &core_foundation::dictionary::CFDictionary<
+        core_foundation::string::CFString,
+        core_foundation::base::CFType,
+    >,
+) -> Option<Signing> {
+    use core_foundation::array::CFArray;
+    use core_foundation::base::{CFType, TCFType};
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::dictionary::CFDictionary;
+    use core_foundation::number::CFNumber;
+    use core_foundation::string::CFString;
+
     // SAFETY: framework constants, valid for the process's life.
     let (flags_key, entitlements_key) = unsafe {
         (
@@ -438,31 +464,59 @@ fn signing(code: &security_framework::os::macos::code_signing::SecCode) -> Optio
         .and_then(|value| value.downcast::<CFNumber>())
         .and_then(|number| number.to_i64())
         .and_then(|number| u32::try_from(number).ok());
-    let entitlements = information
-        .find(&entitlements_key)
-        .and_then(|value| value.downcast::<CFDictionary>())
-        .map(|dictionary| {
-            // SAFETY: an entitlements dictionary maps strings to property-list values.
-            let dictionary: CFDictionary<CFString, CFType> =
-                unsafe { CFDictionary::wrap_under_get_rule(dictionary.as_concrete_TypeRef()) };
-            let (keys, values) = dictionary.get_keys_and_values();
-            keys.into_iter()
-                .zip(values)
-                .map(|(key, value)| {
-                    // SAFETY: the keys and values of the dictionary, retained by it.
-                    let key = unsafe { CFString::wrap_under_get_rule(key.cast()) };
-                    let value = unsafe { CFType::wrap_under_get_rule(value) };
-                    (
-                        key.to_string(),
-                        value.downcast::<CFBoolean>().map(bool::from),
-                    )
-                })
-                .collect()
-        });
+    let entitlements = match information.find(&entitlements_key) {
+        None => None,
+        Some(value) => Some(value.downcast::<CFDictionary>()?),
+    };
+    let mut keychain_access_groups = None;
+    let entitlements = entitlements.map(|dictionary| {
+        // SAFETY: an entitlements dictionary maps strings to property-list values.
+        let dictionary: CFDictionary<CFString, CFType> =
+            unsafe { CFDictionary::wrap_under_get_rule(dictionary.as_concrete_TypeRef()) };
+        let (keys, values) = dictionary.get_keys_and_values();
+        keys.into_iter()
+            .zip(values)
+            .map(|(key, value)| {
+                // SAFETY: the keys and values of the dictionary, retained by it.
+                let key = unsafe { CFString::wrap_under_get_rule(key.cast()) }.to_string();
+                let value = unsafe { CFType::wrap_under_get_rule(value) };
+                if key == KEYCHAIN_ACCESS_GROUPS {
+                    keychain_access_groups = value.downcast::<CFArray>().and_then(|array| {
+                        array
+                            .iter()
+                            .map(|item| {
+                                // SAFETY: an item of the array, retained by it.
+                                unsafe { CFType::wrap_under_get_rule(*item) }
+                                    .downcast::<CFString>()
+                                    .map(|group| group.to_string())
+                            })
+                            .collect::<Option<Vec<String>>>()
+                    });
+                }
+                (key, value.downcast::<CFBoolean>().map(bool::from))
+            })
+            .collect()
+    });
     Some(Signing {
         flags,
         entitlements,
+        keychain_access_groups,
     })
+}
+
+/// The Keychain access groups this process's own code is entitled to
+/// (`keychain-access-groups`, from its signing information through `SecCodeCopySelf`). `None`
+/// when it can't be read, the process is unsigned, or the entitlement is missing or malformed.
+/// An unsigned test binary has none, so the live answer can only be seen on a signed build.
+#[cfg(target_os = "macos")]
+pub(crate) fn own_keychain_access_groups() -> Option<Vec<String>> {
+    use security_framework::os::macos::code_signing::{Flags, SecCode};
+    signing(&SecCode::for_self(Flags::NONE).ok()?)?.keychain_access_groups
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn own_keychain_access_groups() -> Option<Vec<String>> {
+    None
 }
 
 #[cfg(test)]
@@ -688,6 +742,7 @@ mod tests {
             hardened_and_clean(&Signing {
                 flags,
                 entitlements,
+                keychain_access_groups: None,
             })
         };
         assert!(ok(hardened, None));
@@ -706,6 +761,98 @@ mod tests {
             assert!(!ok(hardened, entitlements(&[(key, Some(true))])), "{key}");
             assert!(!ok(hardened, entitlements(&[(key, None)])), "{key}");
         }
+    }
+
+    /// Signing information as `SecCodeCopySigningInformation` gives it: the flags, and the
+    /// entitlements as `entitlements` (any property-list value).
+    #[cfg(target_os = "macos")]
+    fn information(
+        flags: u32,
+        entitlements: Option<core_foundation::base::CFType>,
+    ) -> core_foundation::dictionary::CFDictionary<
+        core_foundation::string::CFString,
+        core_foundation::base::CFType,
+    > {
+        use core_foundation::base::TCFType;
+        use core_foundation::dictionary::CFDictionary;
+        use core_foundation::number::CFNumber;
+        use core_foundation::string::CFString;
+        // SAFETY: framework constants, valid for the process's life.
+        let (flags_key, entitlements_key) = unsafe {
+            (
+                CFString::wrap_under_get_rule(kSecCodeInfoFlags),
+                CFString::wrap_under_get_rule(kSecCodeInfoEntitlementsDict),
+            )
+        };
+        let mut pairs = vec![(flags_key, CFNumber::from(i64::from(flags)).into_CFType())];
+        if let Some(entitlements) = entitlements {
+            pairs.push((entitlements_key, entitlements));
+        }
+        CFDictionary::from_CFType_pairs(&pairs)
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn entitlements_that_arent_a_dictionary_fail_closed() {
+        use core_foundation::base::TCFType;
+        use core_foundation::string::CFString;
+        let hardened = HARDENED_RUNTIME | 0x2;
+        // No entitlements at all: read as none, and clean.
+        let info = parse_signing(&information(hardened, None)).unwrap();
+        assert!(info.entitlements.is_none());
+        assert!(hardened_and_clean(&info));
+        // Entitlements that aren't a dictionary: refused, never read as "none".
+        let bogus = CFString::new("com.apple.security.get-task-allow").into_CFType();
+        assert!(parse_signing(&information(hardened, Some(bogus))).is_none());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_keychain_access_groups_are_read_only_from_an_array_of_strings() {
+        use core_foundation::array::CFArray;
+        use core_foundation::base::TCFType;
+        use core_foundation::boolean::CFBoolean;
+        use core_foundation::dictionary::CFDictionary;
+        use core_foundation::string::CFString;
+        let entitled = |value: core_foundation::base::CFType| {
+            let pairs = [
+                (CFString::new(KEYCHAIN_ACCESS_GROUPS), value),
+                (
+                    CFString::new("com.apple.security.get-task-allow"),
+                    CFBoolean::false_value().into_CFType(),
+                ),
+            ];
+            parse_signing(&information(
+                HARDENED_RUNTIME,
+                Some(CFDictionary::from_CFType_pairs(&pairs).into_CFType()),
+            ))
+            .unwrap()
+        };
+        let groups = CFArray::from_CFTypes(&[
+            CFString::new("TEAMID1234.org.agentic.host"),
+            CFString::new("TEAMID1234.other"),
+        ]);
+        let info = entitled(groups.into_CFType());
+        assert_eq!(
+            info.keychain_access_groups,
+            Some(vec![
+                "TEAMID1234.org.agentic.host".to_owned(),
+                "TEAMID1234.other".to_owned()
+            ])
+        );
+        // The other entitlements are still read.
+        assert!(info
+            .entitlements
+            .unwrap()
+            .contains(&("com.apple.security.get-task-allow".to_owned(), Some(false))));
+        // A single string, or an array holding anything but strings: no groups.
+        let one = CFString::new("TEAMID1234.org.agentic.host").into_CFType();
+        assert_eq!(entitled(one).keychain_access_groups, None);
+        let mixed = CFArray::from_CFTypes(&[
+            CFString::new("TEAMID1234.org.agentic.host").into_CFType(),
+            CFBoolean::true_value().into_CFType(),
+        ]);
+        assert_eq!(entitled(mixed.into_CFType()).keychain_access_groups, None);
     }
 
     /// The real signing information of this test binary matches what `codesign` reports, and

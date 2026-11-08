@@ -199,6 +199,28 @@ fn bad_arguments_are_refused() {
     assert!(!status.success());
 }
 
+/// A release build trusts only what it was built with: it refuses every argument that would
+/// change that, before it starts anything.
+#[cfg(not(debug_assertions))]
+#[test]
+fn a_release_host_refuses_the_arguments_that_change_what_it_trusts() {
+    let home = TestHome::new();
+    for flag in ["--home", "--server-bin", "--app-team-id"] {
+        let out = Command::new(env!("CARGO_BIN_EXE_org-office-host"))
+            .args([flag, home.path().to_str().unwrap()])
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(!out.status.success(), "{flag}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains(flag) && stderr.contains("release build"),
+            "{flag}: {stderr}"
+        );
+        assert!(!home.path().exists(), "{flag}: it made the home");
+    }
+}
+
 #[cfg(debug_assertions)]
 #[test]
 fn the_host_never_logs_a_token() {
