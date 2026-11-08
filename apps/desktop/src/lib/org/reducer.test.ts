@@ -138,11 +138,11 @@ describe('TEAM-8 and TEAM-9 projects and deleting teams', () => {
 
 describe('PEOPLE-3, 4, 5 adding, editing and removing people', () => {
 	it('adds a person (not in a team yet), with an optional contact; the name rule applies', () => {
-		const s = run(s0, { method: 'member.add_person', params: { member_id: 'p1', name: ' Robin Tate ', contact: 'robin@example.com' } });
-		expect(member(s, 'p1')).toMatchObject({ kind: 'person', name: 'Robin Tate', contact: 'robin@example.com', version: 1 });
-		expect(notInATeam(s).map((m) => m.id)).toContain('p1');
-		expect(err(() => run(s0, { method: 'member.add_person', params: { member_id: 'p2', name: '' } })).code).toBe('invalid_name');
-		expect(err(() => run(s0, { method: 'member.add_person', params: { member_id: 'avery', name: 'Dup' } })).code).toBe('already_exists');
+		const s = run(s0, { method: 'member.add_person', params: { member_id: '01JC00000000000000000000P1', name: ' Robin Tate ', contact: 'robin@example.com' } });
+		expect(member(s, '01JC00000000000000000000P1')).toMatchObject({ kind: 'person', name: 'Robin Tate', contact: 'robin@example.com', version: 1 });
+		expect(notInATeam(s).map((m) => m.id)).toContain('01JC00000000000000000000P1');
+		expect(err(() => run(s0, { method: 'member.add_person', params: { member_id: '01JC00000000000000000000P2', name: '' } })).code).toBe('invalid_name');
+		expect(err(() => run(s, { method: 'member.add_person', params: { member_id: '01JC00000000000000000000P1', name: 'Dup' } })).code).toBe('already_exists'); // that id is taken now
 	});
 
 	it('updates only the given fields, can clear the contact, and agents are not edited here', () => {
@@ -192,10 +192,10 @@ describe('REPORT-3 and REPORT-4 changing a manager', () => {
 describe('PEOPLE-4 and PEOPLE-8 one handle namespace', () => {
 	it('a person can’t take another member’s name, an agent’s handle or "owner", ignoring case', () => {
 		for (const name of ['avery stone', 'SAM', 'OWNER']) {
-			expect(err(() => run(s0, { method: 'member.add_person', params: { member_id: 'p-new', name } })).code).toBe('already_exists');
+			expect(err(() => run(s0, { method: 'member.add_person', params: { member_id: '01JC000000000000000000PNEW', name } })).code).toBe('already_exists');
 		}
-		const added = run(s0, { method: 'member.add_person', params: { member_id: 'p-new', name: 'Sam Okafor' } });
-		expect(member(added, 'p-new').name).toBe('Sam Okafor'); // an agent's display name is not a handle
+		const added = run(s0, { method: 'member.add_person', params: { member_id: '01JC000000000000000000PNEW', name: 'Sam Okafor' } });
+		expect(member(added, '01JC000000000000000000PNEW').name).toBe('Sam Okafor'); // an agent's display name is not a handle
 	});
 
 	it('renaming to your own name in another case is fine; to someone else’s is refused', () => {
@@ -222,29 +222,29 @@ describe('member.move', () => {
 describe('agent commands: what is stored', () => {
 	const agentProfile = { role: '  QA engineer ', title: 'QA', runtime: 'codex' as const, messaging_name: 'cam', status: 'active' as const, focus: ' tests ' };
 	const ctx = { now: '2026-11-08T12:00:00.000Z', offices: ['office-1'] };
-	const add = () => applyCommand(s0, withId({ method: 'member.add_agent', params: { member_id: 'cam', name: '  Cameron ', office_id: 'office-1', profile: agentProfile } }), ctx);
+	const add = () => applyCommand(s0, withId({ method: 'member.add_agent', params: { member_id: '01JC0000000000000000000CAM', name: '  Cameron ', office_id: 'office-1', profile: agentProfile } }), ctx);
 
 	it('stores an added agent trimmed, in its office, with HQ’s clock and no manager', () => {
-		const cam = member(add(), 'cam');
+		const cam = member(add(), '01JC0000000000000000000CAM');
 		expect(cam).toMatchObject({ name: 'Cameron', kind: 'agent', office_id: 'office-1', created_at: '2026-11-08T12:00:00.000Z', version: 1 });
 		expect(cam.reports_to_member_id).toBeUndefined();
 		expect(cam.agent).toMatchObject({ role: 'QA engineer', focus: 'tests', status: 'active' });
 	});
 
 	it('an unknown office is not_found, and a null inside the profile means not given', () => {
-		expect(err(() => applyCommand(s0, withId({ method: 'member.add_agent', params: { member_id: 'cam', name: 'C', office_id: 'nowhere', profile: agentProfile } }), ctx)).code).toBe('not_found');
+		expect(err(() => applyCommand(s0, withId({ method: 'member.add_agent', params: { member_id: '01JC0000000000000000000CAM', name: 'C', office_id: 'nowhere', profile: agentProfile } }), ctx)).code).toBe('not_found');
 		const nulls = { ...agentProfile, focus: null as unknown as undefined, model: null as unknown as undefined, home: null as unknown as undefined };
-		const s = applyCommand(s0, withId({ method: 'member.add_agent', params: { member_id: 'cam', name: 'Cameron', office_id: 'office-1', profile: nulls } }), ctx);
-		expect(member(s, 'cam').agent).not.toHaveProperty('focus');
+		const s = applyCommand(s0, withId({ method: 'member.add_agent', params: { member_id: '01JC0000000000000000000CAM', name: 'Cameron', office_id: 'office-1', profile: nulls } }), ctx);
+		expect(member(s, '01JC0000000000000000000CAM').agent).not.toHaveProperty('focus');
 	});
 
 	it('update changes only what is given and clears with the flags', () => {
-		const s1 = applyCommand(add(), withId({ method: 'member.update_agent', params: { member_id: 'cam', expected_version: 1, title: ' Lead QA ', model: ' m ' } }), ctx);
-		expect(member(s1, 'cam')).toMatchObject({ version: 2 });
-		expect(member(s1, 'cam').agent).toMatchObject({ title: 'Lead QA', model: 'm', role: 'QA engineer', focus: 'tests' });
-		const s2 = applyCommand(s1, withId({ method: 'member.update_agent', params: { member_id: 'cam', expected_version: 2, clear_focus: true, clear_model: true } }), ctx);
-		expect(member(s2, 'cam').agent).not.toHaveProperty('focus');
-		expect(member(s2, 'cam').agent).not.toHaveProperty('model');
+		const s1 = applyCommand(add(), withId({ method: 'member.update_agent', params: { member_id: '01JC0000000000000000000CAM', expected_version: 1, title: ' Lead QA ', model: ' m ' } }), ctx);
+		expect(member(s1, '01JC0000000000000000000CAM')).toMatchObject({ version: 2 });
+		expect(member(s1, '01JC0000000000000000000CAM').agent).toMatchObject({ title: 'Lead QA', model: 'm', role: 'QA engineer', focus: 'tests' });
+		const s2 = applyCommand(s1, withId({ method: 'member.update_agent', params: { member_id: '01JC0000000000000000000CAM', expected_version: 2, clear_focus: true, clear_model: true } }), ctx);
+		expect(member(s2, '01JC0000000000000000000CAM').agent).not.toHaveProperty('focus');
+		expect(member(s2, '01JC0000000000000000000CAM').agent).not.toHaveProperty('model');
 	});
 
 	it('pausing and the run mode change the profile and the version; a schedule only goes with scheduled', () => {
@@ -264,5 +264,16 @@ describe('agent commands: what is stored', () => {
 		expect(team(s, 'eng')).toMatchObject({ version: 2 });
 		expect(team(s, 'eng').lead_member_id).toBeUndefined();
 		for (const id of ['noor', 'kai', 'mira']) expect(member(s, id)).toMatchObject({ reports_to_member_id: 'avery', version: 2 });
+	});
+});
+
+describe('a new member’s id is 26 letters or digits', () => {
+	it('is refused otherwise, for people and for agents, and a missing office still comes first', () => {
+		expect(err(() => run(s0, { method: 'member.add_person', params: { member_id: 'robin', name: 'Robin' } })).code).toBe('invalid_request');
+		expect(err(() => run(s0, { method: 'member.add_person', params: { member_id: '0'.repeat(25) + '-', name: 'Robin' } })).code).toBe('invalid_request');
+		const profile = { role: 'r', title: 't', runtime: 'codex' as const, messaging_name: 'rob', status: 'active' as const };
+		const ctx = { now: '2026-11-08T12:00:00.000Z', offices: ['office-1'] };
+		expect(err(() => applyCommand(s0, withId({ method: 'member.add_agent', params: { member_id: 'rob', name: 'Rob', office_id: 'office-1', profile } }), ctx)).code).toBe('invalid_request');
+		expect(err(() => applyCommand(s0, withId({ method: 'member.add_agent', params: { member_id: 'rob', name: 'Rob', office_id: 'ghost', profile } }), ctx)).code).toBe('not_found');
 	});
 });
