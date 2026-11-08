@@ -519,6 +519,7 @@ fn serve_connection(stream: UnixStream, office: &OfficeFile) {
                         next_restart_at: None,
                     },
                 }),
+                capabilities: vec![],
             };
             Response::ok::<Hello>(request.id, &result).expect("serializes")
         } else {

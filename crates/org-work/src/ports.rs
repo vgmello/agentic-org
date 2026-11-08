@@ -7,8 +7,8 @@ use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
-use org_proto::org::{Member, Position, Project};
-use org_proto::work::{EventRef, ItemKind, Link, WorkEvent, WorkPosition};
+use org_proto::org::{Area, Member, Position, Project};
+use org_proto::work::{EventRef, ItemKind, Link, LinkKind, WorkEvent, WorkPosition};
 use serde::{Deserialize, Serialize};
 
 use crate::engine::TxnOutput;
@@ -42,8 +42,8 @@ impl Error for StoreError {
 /// [`WorkStore::transact`] and held for its duration, so every check and the recorded
 /// organization position come from the same point in time.
 ///
-/// Phase 1 needs these reads; the cascades (`on_org_applied`) add `changes_after`, and bugs add
-/// areas and team leads.
+/// Phase 1 needs the member and project reads; bugs (phase 2) add areas and team leads. The
+/// cascades (`on_org_applied`) will add `changes_after`.
 pub trait OrgView {
     /// The organization position this view shows. Recorded on every event (`org_position`).
     fn applied_position(&self) -> Result<Position, StoreError>;
@@ -57,6 +57,13 @@ pub trait OrgView {
     fn project_by_key(&self, key: &str) -> Result<Option<Project>, StoreError>;
     /// The ids of the teams working on the project.
     fn project_teams(&self, project_id: &str) -> Result<Vec<String>, StoreError>;
+    /// An area by id, whatever its state: a deleted one is still here as a tombstone, with
+    /// `replaced_by` (closed bugs keep showing its name).
+    fn area(&self, id: &str) -> Result<Option<Area>, StoreError>;
+    /// The id of the project's General area (every project has exactly one, never deleted).
+    fn general_area(&self, project_id: &str) -> Result<Option<String>, StoreError>;
+    /// A team's lead, if it has one.
+    fn team_lead(&self, team_id: &str) -> Result<Option<String>, StoreError>;
 }
 
 /// A numbering scope (§2.6): tasks and bugs per project, requests per organization. Numbers
@@ -110,6 +117,13 @@ pub trait WorkTxn {
     /// space, so a store keeps them in one unique index (a `work_ids` table, or a union over
     /// the item, step, link and comment rows); §3.3's sketch has no comment table yet.
     fn id_in_use(&mut self, id: &str) -> Result<bool, StoreError>;
+    /// The items that have a live link of `kind` to the item `target_id` (a bug's fix tasks:
+    /// the tasks with a `fixes` link to it), deleted ones included.
+    fn linked_to(&mut self, target_id: &str, kind: LinkKind)
+        -> Result<Vec<StoredItem>, StoreError>;
+    /// The bugs that aren't closed or deleted, of `project_id` or of every project (the
+    /// bug cascades of [`crate::reconcile_bugs`]).
+    fn open_bugs(&mut self, project_id: Option<&str>) -> Result<Vec<StoredItem>, StoreError>;
     /// The item's events after `after_version`, oldest first.
     fn events_since(
         &mut self,
@@ -179,6 +193,9 @@ pub trait WorkReads {
     ) -> Result<Vec<WorkEvent>, StoreError>;
     /// Live links whose target is the item `target_id` (its backlinks), at most `limit`.
     fn backlinks(&self, target_id: &str, limit: u32) -> Result<Vec<Link>, StoreError>;
+    /// The items that have a live link of `kind` to the item `target_id`, deleted ones
+    /// included (a bug's fix tasks, for its summary's `fixed_by`).
+    fn linked_to(&self, target_id: &str, kind: LinkKind) -> Result<Vec<StoredItem>, StoreError>;
 }
 
 /// The owning office's clock, in Unix milliseconds. The office keeps it monotonic (offices

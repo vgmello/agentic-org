@@ -12,9 +12,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use org_proto::org::{
-    AgentProfile, AgentRuntime, AgentStatus, Member, MemberKind, Position, Project,
+    AgentProfile, AgentRuntime, AgentStatus, Area, Member, MemberKind, Position, Project,
 };
-use org_proto::work::{EventRef, Link, LinkTarget, WorkEvent, WorkPosition};
+use org_proto::work::{
+    EventRef, ItemKind, ItemStatus, Link, LinkKind, LinkTarget, WorkEvent, WorkPosition,
+};
 
 use crate::engine::TxnOutput;
 use crate::model::{link_view, StoredItem, StoredResult};
@@ -28,6 +30,10 @@ pub struct MemOrg {
     pub projects: BTreeMap<String, Project>,
     /// Project id → the ids of its teams.
     pub project_teams: BTreeMap<String, Vec<String>>,
+    /// Every area, deleted ones (tombstones) included.
+    pub areas: BTreeMap<String, Area>,
+    /// Team id → its lead.
+    pub team_leads: BTreeMap<String, String>,
     pub position: Position,
 }
 
@@ -86,7 +92,8 @@ impl MemOrg {
         self
     }
 
-    /// Adds a project with `key` and teams.
+    /// Adds a project with `key` and teams, and its General area (`<id>-general`, owned by
+    /// the first team).
     pub fn with_project(mut self, id: &str, key: &str, teams: &[&str]) -> Self {
         let mut p = Project::new(id, format!("Project {key}"));
         p.key = key.to_owned();
@@ -96,7 +103,69 @@ impl MemOrg {
             id.to_owned(),
             teams.iter().map(|t| (*t).to_owned()).collect(),
         );
+        self.areas.insert(
+            format!("{id}-general"),
+            Area {
+                id: format!("{id}-general"),
+                project_id: id.to_owned(),
+                name: "General".to_owned(),
+                team_id: teams.first().map(|t| (*t).to_owned()),
+                lead_member_id: None,
+                general: true,
+                deleted: false,
+                replaced_by: None,
+                version: 1,
+            },
+        );
         self
+    }
+
+    /// Adds an area to a project, owned by `team_id`, with an optional lead.
+    pub fn with_area(
+        mut self,
+        id: &str,
+        project_id: &str,
+        team_id: Option<&str>,
+        lead: Option<&str>,
+    ) -> Self {
+        self.areas.insert(
+            id.to_owned(),
+            Area {
+                id: id.to_owned(),
+                project_id: project_id.to_owned(),
+                name: id.to_owned(),
+                team_id: team_id.map(str::to_owned),
+                lead_member_id: lead.map(str::to_owned),
+                general: false,
+                deleted: false,
+                replaced_by: None,
+                version: 1,
+            },
+        );
+        self
+    }
+
+    /// Gives a team a lead.
+    pub fn with_team_lead(mut self, team_id: &str, lead: &str) -> Self {
+        self.team_leads.insert(team_id.to_owned(), lead.to_owned());
+        self
+    }
+
+    /// Deletes an area the way `area.delete` does: a tombstone pointing at its replacement.
+    pub fn delete_area(&mut self, id: &str, replaced_by: &str) {
+        if let Some(a) = self.areas.get_mut(id) {
+            a.deleted = true;
+            a.replaced_by = Some(replaced_by.to_owned());
+            a.version += 1;
+        }
+    }
+
+    /// Sets (or clears) an area's lead.
+    pub fn set_area_lead(&mut self, id: &str, lead: Option<&str>) {
+        if let Some(a) = self.areas.get_mut(id) {
+            a.lead_member_id = lead.map(str::to_owned);
+            a.version += 1;
+        }
     }
 
     /// Archives (or unarchives) a project.
@@ -144,6 +213,19 @@ impl OrgView for MemOrg {
             .get(project_id)
             .cloned()
             .unwrap_or_default())
+    }
+    fn area(&self, id: &str) -> Result<Option<Area>, StoreError> {
+        Ok(self.areas.get(id).cloned())
+    }
+    fn general_area(&self, project_id: &str) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .areas
+            .values()
+            .find(|a| a.project_id == project_id && a.general)
+            .map(|a| a.id.clone()))
+    }
+    fn team_lead(&self, team_id: &str) -> Result<Option<String>, StoreError> {
+        Ok(self.team_leads.get(team_id).cloned())
     }
 }
 
@@ -315,6 +397,27 @@ impl WorkReads for MemStore {
             .take(limit as usize)
             .collect())
     }
+    fn linked_to(&self, target_id: &str, kind: LinkKind) -> Result<Vec<StoredItem>, StoreError> {
+        Ok(linking_to(
+            &self.work.lock().expect("lock"),
+            target_id,
+            kind,
+        ))
+    }
+}
+
+/// The items with a live link of `kind` to `target_id`.
+fn linking_to(work: &MemWork, target_id: &str, kind: LinkKind) -> Vec<StoredItem> {
+    work.items
+        .values()
+        .filter(|i| {
+            i.live_links().any(|l| {
+                l.kind == kind
+                    && matches!(&l.to, LinkTarget::Item { item_id } if item_id == target_id)
+            })
+        })
+        .cloned()
+        .collect()
 }
 
 /// One transaction over a copy of the work data.
@@ -353,6 +456,27 @@ impl WorkTxn for MemTxn<'_> {
             .values()
             .find(|i| i.links.iter().any(|l| l.id == link_id))
             .cloned())
+    }
+    fn linked_to(
+        &mut self,
+        target_id: &str,
+        kind: LinkKind,
+    ) -> Result<Vec<StoredItem>, StoreError> {
+        Ok(linking_to(&self.work, target_id, kind))
+    }
+    fn open_bugs(&mut self, project_id: Option<&str>) -> Result<Vec<StoredItem>, StoreError> {
+        Ok(self
+            .work
+            .items
+            .values()
+            .filter(|i| {
+                i.kind == ItemKind::Bug
+                    && !i.deleted
+                    && i.status != ItemStatus::Closed
+                    && project_id.is_none_or(|p| i.project_id.as_deref() == Some(p))
+            })
+            .cloned()
+            .collect())
     }
     fn id_in_use(&mut self, id: &str) -> Result<bool, StoreError> {
         Ok(self.work.items.values().any(|i| {

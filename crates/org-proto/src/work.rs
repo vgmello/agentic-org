@@ -6,8 +6,9 @@
 //! source of its [`TimeFigures`]. In phase 1 there is one office (HQ), which owns every item.
 //! Projects and areas are organization data: see [`crate::org`].
 //!
-//! This module holds phase 1's calls: the reads, the task calls, the shared item calls and the
-//! checklist calls. Bugs, requests, features and docs add their calls later, additively. The
+//! This module holds phase 1's calls (the reads, the task calls, the shared item calls and the
+//! checklist calls) and phase 2's bug calls (`bug.*`). Requests, features and docs add their
+//! calls later, additively. The
 //! record types ([`WorkItemSummary`], [`WorkItem`], [`Feature`], …) already carry every kind's
 //! fields, so those phases add calls and event kinds, not fields.
 //!
@@ -288,6 +289,16 @@ wire_enum!(
         Note = "note",
         Question = "question",
         Answer = "answer",
+    }
+);
+
+wire_enum!(
+    /// What a bug's verification found (`bug.verify`): the fix works (`fixed`, the bug is
+    /// closed as verified), or the bug still happens (`still_happens`, it goes back to
+    /// `triaged`).
+    VerifyOutcome {
+        Fixed = "fixed",
+        StillHappens = "still_happens",
     }
 );
 
@@ -784,7 +795,9 @@ pub enum WorkEventKind {
         to: ItemStatus,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         resolution: Option<Resolution>,
-        /// The blocked reason, or another reason the move needed.
+        /// The blocked reason, or another reason the move needed. For a bug (phase 2): the
+        /// note of `bug.mark_fixed`, the reason of a won't fix or can't reproduce close, and,
+        /// for a close with `resolution: duplicate`, the id of the original bug.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
         /// Done (or Fixed) with required steps left.
@@ -796,6 +809,30 @@ pub enum WorkEventKind {
         from: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         to: Option<String>,
+    },
+    /// A bug went from `new` to `triaged` (`bug.triage`): the area and severity are confirmed,
+    /// the priority set, and the bug assigned when `assignee_id` is given (phase 2).
+    Triaged {
+        area_id: String,
+        severity: Severity,
+        priority: Priority,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        assignee_id: Option<String>,
+    },
+    /// A fixed bug was verified (`bug.verify`): `fixed` closes it as verified; `still_happens`
+    /// sends it back to `triaged` with one more reopening (phase 2). `by_reporter` says
+    /// whether the actor was the bug's reporter.
+    Verified {
+        outcome: VerifyOutcome,
+        by_reporter: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+    },
+    /// A closed bug was reopened (`bug.reopen`): to `triaged`, or to `new` when it had been
+    /// closed as a duplicate (phase 2).
+    Reopened {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
     },
     Linked {
         link: Link,
@@ -1158,6 +1195,14 @@ pub struct NewFixLink {
     pub bug_id: String,
 }
 
+/// Where a bug was reported from (`bug.report { from }`): a `reported_from` link (client-made
+/// `link_id`) to a task ("Report a bug from this task") or to a doc ("about this doc").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BugReportedFrom {
+    pub link_id: String,
+    pub to: LinkTarget,
+}
+
 write_call!(
     /// `task.create`: a task in `todo`, numbered `T-n` in its project. The project must exist
     /// and not be archived; `team_id` must be one of its teams; `assignee_id` a valid
@@ -1272,6 +1317,166 @@ impl Call for WorkSetCurrent {
     type Params = WorkSetCurrentParams;
     type Result = Empty;
 }
+
+// ---- Bugs (phase 2) ------------------------------------------------------------------------
+//
+// A bug is `new → triaged → in_progress → fixed → closed`, and a closed bug can be reopened
+// (design §1.10). A bug links to the tasks that fix it (`fixes`, from the task) and never turns
+// into one; its status follows those tasks (§2.4). Each call below is one event on the bug.
+
+write_call!(
+    /// `bug.report`: a bug in `new`, numbered `B-n` in its project, reported by the caller and
+    /// unassigned, with priority `normal`. `severity` is required (and unconfirmed until
+    /// triage); `area_id` defaults to the project's General area and must be a live area of the
+    /// project. `what_happened` is 1 to [`WORK_TEXT_MAX_CHARS`] characters; `expected` and
+    /// `steps` up to [`WORK_TEXT_MAX_CHARS`], `environment` up to [`WORK_ENVIRONMENT_MAX_CHARS`].
+    /// `from` makes a `reported_from` link. `affects_feature_id` is phase 3: a server before it
+    /// refuses it with `invalid_request`. Errors: `not_found` (project, area, the linked task),
+    /// `invalid_request` (limits; archived project; area not in the project or deleted; a
+    /// severity that is `unknown`), `already_exists` (an id).
+    BugReport, "bug.report", BugReportParams {
+        item_id: String,
+        project_id: String,
+        title: String,
+        what_happened: String,
+        severity: Severity,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        area_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        steps: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        environment: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from: Option<BugReportedFrom>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        affects_feature_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        checklist: Vec<NewStep>,
+    }
+);
+write_call!(
+    /// `bug.update`: only the fields given change; a `clear_` flag removes an optional field.
+    /// A field with its `clear_` flag, or nothing to change, is `invalid_request`. A new
+    /// `area_id` on a `new` bug is a **reroute** (the suggested triager changes; nothing else
+    /// does); a closed bug keeps its area. `affects_feature_id` and `clear_affects_feature` are
+    /// phase 3: a server before it refuses them with `invalid_request`. Errors: `not_found`
+    /// (also the area), `invalid_request`, `conflict`.
+    BugUpdate, "bug.update", BugUpdateParams {
+        item_id: String,
+        expected_version: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        what_happened: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        clear_expected: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        steps: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        clear_steps: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        environment: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        clear_environment: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        severity: Option<Severity>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        priority: Option<Priority>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        area_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        affects_feature_id: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        clear_affects_feature: bool,
+    }
+);
+write_call!(
+    /// `bug.triage`: `new → triaged`. Confirms the area and severity, sets the priority and,
+    /// when `assignee_id` is given, assigns the bug (absent: the assignee stays). One
+    /// [`WorkEventKind::Triaged`] event. Errors: `not_found` (also the area), `invalid_request`
+    /// (wrong state; the area isn't a live area of the project), `unknown_recipient`,
+    /// `conflict` (two triages of the same bug: the second).
+    BugTriage, "bug.triage", BugTriageParams {
+        item_id: String,
+        expected_version: u64,
+        area_id: String,
+        severity: Severity,
+        priority: Priority,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        assignee_id: Option<String>,
+    }
+);
+write_call!(
+    /// `bug.assign`: `assignee_id` absent unassigns. A closed bug can't be assigned. Errors:
+    /// `not_found`, `invalid_request` (wrong state), `unknown_recipient`, `conflict`.
+    BugAssign, "bug.assign", BugAssignParams {
+        item_id: String,
+        expected_version: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        assignee_id: Option<String>,
+    }
+);
+write_call!(
+    /// `bug.mark_fixed`: `triaged` or `in_progress → fixed` by hand. `note` is "what fixed it"
+    /// (1 to [`WORK_REASON_MAX_CHARS`] characters), kept as the bug's `closed_reason`. Required
+    /// checklist steps unticked are `checklist_incomplete` unless `anyway_reason` is given
+    /// (then recorded as `done_anyway`). Errors: `not_found`, `invalid_request` (wrong state),
+    /// `conflict`, `checklist_incomplete`.
+    BugMarkFixed, "bug.mark_fixed", BugMarkFixedParams {
+        item_id: String,
+        expected_version: u64,
+        note: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        anyway_reason: Option<String>,
+    }
+);
+write_call!(
+    /// `bug.verify`: on a `fixed` bug. `fixed` closes it as `verified` (the event records
+    /// whether the actor was the reporter); `still_happens` sends it back to `triaged` with
+    /// one more reopening, keeping its assignee and fix links, and needs a `note`. Errors:
+    /// `not_found`, `invalid_request` (not `fixed`; the note missing), `conflict`.
+    BugVerify, "bug.verify", BugVerifyParams {
+        item_id: String,
+        expected_version: u64,
+        outcome: VerifyOutcome,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+    }
+);
+write_call!(
+    /// `bug.close`: closes an open bug, either as a duplicate (`duplicate_of`) or as
+    /// `wont_fix` / `cant_reproduce` (`resolution` and `reason`, 1 to
+    /// [`WORK_REASON_MAX_CHARS`] characters); exactly one of the two. The original of a
+    /// duplicate is a bug of the same project, not this one, not deleted and not itself closed
+    /// as a duplicate; the reporter starts watching it. Errors: `not_found` (the original),
+    /// `invalid_request` (wrong state; the original in another project, itself, deleted or
+    /// closed as a duplicate; the reason missing), `conflict`.
+    BugClose, "bug.close", BugCloseParams {
+        item_id: String,
+        expected_version: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duplicate_of: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resolution: Option<Resolution>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    }
+);
+write_call!(
+    /// `bug.reopen`: `closed → triaged` (a bug closed as a duplicate goes to `new` instead,
+    /// with `duplicate_of` cleared, so triage looks again). `note` is required; the reopening
+    /// count goes up and a new round starts. Errors: `not_found`, `invalid_request` (not
+    /// closed; the note missing), `conflict`.
+    BugReopen, "bug.reopen", BugReopenParams {
+        item_id: String,
+        expected_version: u64,
+        note: String,
+    }
+);
 
 write_call!(
     /// `work.comment`: `body` is 1 to [`WORK_TEXT_MAX_CHARS`] characters; `comment_kind`

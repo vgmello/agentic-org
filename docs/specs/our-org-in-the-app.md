@@ -2,7 +2,7 @@
 kind: spec
 title: "Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)"
 status: for-review
-revision: 9
+revision: 10
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-08"
@@ -14,6 +14,8 @@ builds_on: [offices-and-teams-ux, work-items-ux]
 # Spec · Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)
 
 Builds on `offices-and-teams-ux.md` rev 4, `work-items-ux.md` rev 5 and `desktop-app-v1.md` (in Eden's notes, not in this repository) (hire §3.6, profile §3.5).
+
+**Revision 10 (2026-11-08): small fixes.** HRL-2 lists member, lead and manager pickers, matching §2a. The profile tabs include **Processes** (`processes-ux.md` §2).
 
 **Revision 9 (2026-11-08): review fixes.** The requester never approves their own request (it goes one level up), except the owner, who approves their own hires since nobody is above the owner (§7.1). In Chat the HR lead is listed in DMs and in @ completion as "HR lead". The Requests tab has empty, loading and error states (§7.1). U10 and U11 now read as approved: the organization is **Agentic Consulting**, with the shape in §2. APPR-3 and HRL-2 rewritten.
 
@@ -171,7 +173,7 @@ Every organization has one built-in agent, **HR lead**, created with the organiz
 - **Card (org chart):** avatar (agent square) · name · title · status dot + word (Working · Waiting · Idle · Needs you · Paused · Offline) · team role (Lead). There's no runtime on cards (decision 3).
 - **Quick view:** name, title, status, **Runs on Codex** · messaging name (mono, copy) · office ("This Mac") · teams · reports to · current task · last activity ("Sent ada a status reply · 4 min ago"). Actions: **Message** · **Assign task** · **Move to team…** · ⋯ (Add to team… · Pause · Offboard…).
 - **Profile header** (v1 §3.5, extended): name · messaging name · title · focus · runtime · model · office · status · **Open in <runtime>** / **Open session** · **Assign task** · ⋯.
-- **Profile tabs:** Overview · **Activity** (this agent's feed, §6) · Tasks · Messages (threads it's in) · Sessions · Knowledge (its home folder, when the app can read it) · Settings (the record, editable: title, focus, model, runtime and home, with "Changes take effect at the agent's next session").
+- **Profile tabs:** Overview · **Activity** (this agent's feed, §6) · Tasks · Messages (threads it's in) · Sessions · Knowledge (its home folder, when the app can read it) · Processes (what it follows, `processes-ux.md` §2) · Settings (the record, editable: title, focus, model, runtime and home, with "Changes take effect at the agent's next session").
 - **Missing data** reads plainly, never blank: "Runtime not set · **Set runtime**", "No home folder (this agent runs elsewhere)".
 
 ## 6. Flow 3 · See everything that's happening (Activity and Home)
@@ -309,7 +311,7 @@ The owner can always approve or reject any proposal. Someone who requests a hire
 
 **HR lead (HRL)** *(new, rev 7)*
 - HRL-1 · Every organization has one built-in HR lead from its creation, with the reserved handle `hr`, and it can't be offboarded, deleted, renamed, put in a team, given reports or chosen as anyone's manager.
-- HRL-2 · *(rev 9)* The HR lead appears only as the chip beside the owner bar, in the Agents roster's Built-in group, and in Chat, where it's listed in DMs and in @ completion as "HR lead" (it can be messaged). It never appears on team cards, in Teams, People or Reporting lines, or in member pickers.
+- HRL-2 · *(rev 10)* The HR lead appears only as the chip beside the owner bar, in the Agents roster's Built-in group, and in Chat, where it's listed in DMs and in @ completion as "HR lead" (it can be messaged). It never appears on team cards, in Teams, People or Reporting lines, or in member, lead and manager pickers.
 - HRL-3 · *(rev 8)* Hire, Add an existing agent and Staff a team wake the HR lead (on call by default), and nothing is provisioned before the proposal is approved by the owner or by a manager with Can approve hires (§7.1).
 - HRL-4 · *(rev 8)* An agent's request to the HR lead becomes a hire proposal routed to its approver (§7.1), never an automatic hire.
 - HRL-5 · The owner can change the HR lead's runtime, model and run mode only, and its runs and cost show under "HR lead" in Insights.

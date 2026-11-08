@@ -45,6 +45,15 @@ const isAnswer = (x: unknown): x is Answer => {
 	return !!a && typeof a.command === 'string' && !!a.result && typeof a.result === 'object' && ('accepted' in a.result || 'error' in a.result);
 };
 
+/** A snapshot saved before projects had areas gets each project's General area (the browser mock's old storage). */
+function withGeneralAreas(s: OrgSnapshot): OrgSnapshot {
+	const areas = s.areas ?? [];
+	const missing = (s.projects ?? []).filter((p) => !areas.some((a) => a.project_id === p.id && a.general));
+	if (missing.length === 0) return s;
+	const owner = (id: string) => (s.project_teams ?? []).find((l) => l.project_id === id)?.team_id;
+	return { ...s, areas: [...areas, ...missing.map((p) => ({ id: `${p.id}-general`, project_id: p.id, name: 'General', general: true, version: 1, ...(owner(p.id) ? { team_id: owner(p.id) } : {}) }))] };
+}
+
 const refusal = (code: ApiErrorCode, message: string): AppError => ({ source: 'api', code, message });
 
 /** As in the Rust mock HQ: only recent answers are kept, and a command can't be bigger than a command. */
@@ -96,7 +105,7 @@ export function createMockOrg(
 		const store = isEmpty || !storage ? inMemory : storage;
 		try {
 			const parsed: unknown = JSON.parse(store.getItem(key) ?? 'null');
-			if (isStored(parsed)) return { key, store, state: parsed };
+			if (isStored(parsed)) return { key, store, state: { ...parsed, snapshot: withGeneralAreas(parsed.snapshot) } };
 		} catch {
 			// unreadable: start from the sample
 		}

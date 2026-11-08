@@ -1,13 +1,16 @@
-//! The work writes this build handles (phase 1), and who makes them.
+//! The work writes this build handles (phases 1 and 2), and who makes them.
 
 use org_proto::work::{
-    ChecklistAdd, ChecklistAddParams, ChecklistCheck, ChecklistCheckParams, ChecklistEdit,
-    ChecklistEditParams, ChecklistMakeTask, ChecklistMakeTaskParams, ChecklistMove,
-    ChecklistMoveParams, ChecklistRemove, ChecklistRemoveParams, ChecklistUnlinkTask,
-    ChecklistUnlinkTaskParams, TaskAssign, TaskAssignParams, TaskCreate, TaskCreateParams,
-    TaskSetStatus, TaskSetStatusParams, TaskUpdate, TaskUpdateParams, WorkComment,
-    WorkCommentParams, WorkDelete, WorkDeleteParams, WorkLink, WorkLinkParams, WorkUndo,
-    WorkUndoParams, WorkUnlink, WorkUnlinkParams, WorkWatch, WorkWatchParams,
+    BugAssign, BugAssignParams, BugClose, BugCloseParams, BugMarkFixed, BugMarkFixedParams,
+    BugReopen, BugReopenParams, BugReport, BugReportParams, BugTriage, BugTriageParams, BugUpdate,
+    BugUpdateParams, BugVerify, BugVerifyParams, ChecklistAdd, ChecklistAddParams, ChecklistCheck,
+    ChecklistCheckParams, ChecklistEdit, ChecklistEditParams, ChecklistMakeTask,
+    ChecklistMakeTaskParams, ChecklistMove, ChecklistMoveParams, ChecklistRemove,
+    ChecklistRemoveParams, ChecklistUnlinkTask, ChecklistUnlinkTaskParams, TaskAssign,
+    TaskAssignParams, TaskCreate, TaskCreateParams, TaskSetStatus, TaskSetStatusParams, TaskUpdate,
+    TaskUpdateParams, WorkComment, WorkCommentParams, WorkDelete, WorkDeleteParams, WorkLink,
+    WorkLinkParams, WorkUndo, WorkUndoParams, WorkUnlink, WorkUnlinkParams, WorkWatch,
+    WorkWatchParams,
 };
 use org_proto::{ApiError, Call, ErrorCode, Request};
 
@@ -107,6 +110,14 @@ work_calls!(
     ChecklistRemove(ChecklistRemove, ChecklistRemoveParams),
     ChecklistMakeTask(ChecklistMakeTask, ChecklistMakeTaskParams),
     ChecklistUnlinkTask(ChecklistUnlinkTask, ChecklistUnlinkTaskParams),
+    BugReport(BugReport, BugReportParams),
+    BugUpdate(BugUpdate, BugUpdateParams),
+    BugTriage(BugTriage, BugTriageParams),
+    BugAssign(BugAssign, BugAssignParams),
+    BugMarkFixed(BugMarkFixed, BugMarkFixedParams),
+    BugVerify(BugVerify, BugVerifyParams),
+    BugClose(BugClose, BugCloseParams),
+    BugReopen(BugReopen, BugReopenParams),
 );
 
 impl WorkCall {

@@ -476,7 +476,8 @@ fn create_refusals() {
                     bug_id: "b".into(),
                 }]
             }),
-            ErrorCode::InvalidRequest,
+            // Bugs exist from phase 2: a bug that isn't there is `not_found`.
+            ErrorCode::NotFound,
         ),
         (
             Box::new(|p| p.priority = Some(Priority::Unknown)),

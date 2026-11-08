@@ -40,6 +40,8 @@ export interface HelloResult {
 	host: string;
 	/** Absent when this machine's host answers. */
 	office?: OfficeHello;
+	/** Optional calls and events the server implements (`office.app_token`, `office.restart`, `office.status_changed`, ...). Absent means none; ignore names you don't know. */
+	capabilities?: string[];
 }
 
 export interface Organization {
@@ -213,6 +215,12 @@ export interface ProjectSummary {
 	/** The project's short key; empty on a record from before keys existed. */
 	key?: string;
 	name: string;
+	description?: string;
+	/** The repository HQ resolved from the spec it was given (`org_proto::ProjectRepo`); the app never sends one. */
+	repo?: { host: string; default_branch: string; path?: string };
+	integration_branch?: string;
+	archived?: boolean;
+	created_at?: string;
 	/** 0 on a record from before projects had versions. */
 	version?: number;
 }

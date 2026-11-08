@@ -8,7 +8,6 @@
 	import { toAppError } from '$lib/office/api';
 	import type { OrgSnapshot, WorkItemSummary } from '$lib/proto';
 	import { sender, workApi } from '$lib/work';
-	import { generalAreaId } from '$lib/work/api';
 	import { BUG_STATUS_LABEL, bugRef, closedWord, FILTERS, filterBugs, groupByArea, severityWord, type BugFilter } from '$lib/work/bugs';
 	import SeverityIcon from '$lib/components/SeverityIcon.svelte';
 	import { nameOf } from '$lib/work/people';
@@ -31,8 +30,7 @@
 	let announced = 0;
 	const announce = (text: string) => (announcement = text + (announced++ % 2 ? '​' : ''));
 
-	// Until the area commands exist every project has just General.
-	const areas = $derived([{ id: generalAreaId(projectId), name: 'General', general: true }]);
+	const areas = $derived((snapshot.areas ?? []).filter((a) => a.project_id === projectId && !a.deleted).map((a) => ({ id: a.id, name: a.name, general: a.general })));
 	const send = $derived(sender(organizationId));
 	const bugs = $derived((all ?? []).filter((b) => b.kind === 'bug'));
 	const shown = $derived(filterBugs(bugs, filter));
