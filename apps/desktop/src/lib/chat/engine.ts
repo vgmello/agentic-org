@@ -112,7 +112,7 @@ export function syncAuto(state: ChatState, ctx: ChatContext): ChatState {
 		...ctx.projects.map((p) => ({
 			key: `project:${p.id}`,
 			auto: { type: 'project', project_id: p.id } as const,
-			name: slug(p.key || p.name),
+			name: slug(p.name) || slug(p.key ?? ""),
 			members: unique([ctx.owner, ...p.team_ids.flatMap((t) => ctx.teams.find((x) => x.id === t)?.member_ids ?? [])]).filter((id) => live.includes(id))
 		})),
 		...ctx.teams.map((t) => ({ key: `team:${t.id}`, auto: { type: 'team', team_id: t.id } as const, name: slug(t.name), members: unique([ctx.owner, ...t.member_ids]).filter((id) => live.includes(id)) }))
