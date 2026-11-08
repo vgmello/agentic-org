@@ -395,7 +395,7 @@ mod tests {
     }
 
     #[test]
-    fn retry_connects_now_instead_of_after_the_pause() {
+    fn retry_cuts_a_long_pause_to_one_second_but_not_to_nothing() {
         let nobody = Arc::new(Nobody(Mutex::new(0)));
         let (stop, retry) = (
             Arc::new(AtomicBool::new(false)),
@@ -403,16 +403,52 @@ mod tests {
         );
         let (told, kick, source) = (Arc::clone(&stop), Arc::clone(&retry), Arc::clone(&nobody));
         let thread = std::thread::spawn(move || follow(&*source, "org1", &told, &kick, &|_| {}));
-        std::thread::sleep(Duration::from_millis(300));
+        // Tries at 0 s, 1 s and 3 s; the next would come at 7 s.
+        std::thread::sleep(Duration::from_millis(3400));
+        assert_eq!(*nobody.0.lock().unwrap(), 3);
+        retry.store(true, Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(500));
         assert_eq!(
             *nobody.0.lock().unwrap(),
-            1,
-            "the second try is a second away"
+            3,
+            "not at once: a second apart at least"
         );
-        retry.store(true, Ordering::SeqCst);
-        std::thread::sleep(Duration::from_millis(400));
-        assert_eq!(*nobody.0.lock().unwrap(), 2, "Retry did not wait for it");
+        std::thread::sleep(Duration::from_millis(1200));
+        assert_eq!(
+            *nobody.0.lock().unwrap(),
+            4,
+            "and not after the long pause either"
+        );
         stop.store(true, Ordering::SeqCst);
         thread.join().unwrap();
+    }
+
+    #[test]
+    fn a_retry_pressed_while_connecting_is_answered_by_that_connection() {
+        // The source says "Retry" while it connects: the connection that follows is the answer to it.
+        struct Pressing(Office, Arc<AtomicBool>);
+        impl OrgSource for Pressing {
+            fn open_hq(&self, id: &str) -> Result<Client, ClientError> {
+                self.1.store(true, Ordering::SeqCst);
+                self.0.open_hq(id)
+            }
+        }
+        let retry = Arc::new(AtomicBool::new(false));
+        let source = Pressing(office(vec![vec![]], false), Arc::clone(&retry));
+        let stop = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            let thread = scope.spawn(|| follow(&source, "org1", &stop, &retry, &|_| {}));
+            let until = Instant::now() + Duration::from_secs(10);
+            while *source.0.opened.lock().unwrap() == 0 && Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            std::thread::sleep(Duration::from_millis(500)); // subscribed by now
+            stop.store(true, Ordering::SeqCst);
+            thread.join().unwrap();
+        });
+        assert!(
+            !retry.load(Ordering::SeqCst),
+            "answered by the connection, so cleared"
+        );
     }
 }

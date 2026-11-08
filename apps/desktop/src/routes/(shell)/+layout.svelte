@@ -30,6 +30,9 @@
 	// Listening itself failed (not the office): Retry listens again.
 	let cannotListen = $state(false);
 	let retrying = $state(false);
+	let listening = $state(false);
+	// How many `live` notices each organization has sent, to tell an answer from `feedLive` that a newer notice overtook.
+	const liveNotices: Record<string, number> = {};
 	let retryTimer: ReturnType<typeof setTimeout> | undefined;
 	const showPaused = $derived(liveState.paused[organizationId] === true || cannotListen);
 	$effect(() => {
@@ -43,7 +46,10 @@
 	function listen() {
 		orgApi
 			.onFeed((notice) => {
-				if (notice.kind === 'live') liveState.paused[notice.organization_id] = !notice.live;
+				if (notice.kind === 'live') {
+					liveNotices[notice.organization_id] = (liveNotices[notice.organization_id] ?? 0) + 1;
+					liveState.paused[notice.organization_id] = !notice.live;
+				}
 				else if (notice.organization_id === organizationId) noteChanged(notice, reload);
 			})
 			.then((unlisten) => {
@@ -51,16 +57,26 @@
 				else {
 					stop = unlisten;
 					cannotListen = false;
-					// What it said before this was listening (a feed that went down while the shell was away or starting).
-					void orgApi.feedLive(organizationId).then((live) => {
-						if (live !== undefined) liveState.paused[organizationId] = !live;
-					}).catch(() => undefined);
+					listening = true;
 				}
 			})
 			.catch(() => {
 				cannotListen = true;
 			});
 	}
+	// What the feed said before this was listening (it went down while the shell was away or starting), and again for each
+	// organization the shell switches to: its last notice may have been missed.
+	$effect(() => {
+		const id = organizationId;
+		if (!listening) return;
+		const noticesBefore = liveNotices[id] ?? 0;
+		void orgApi
+			.feedLive(id)
+			.then((live) => {
+				if (live !== undefined && (liveNotices[id] ?? 0) === noticesBefore) liveState.paused[id] = !live;
+			})
+			.catch(() => undefined);
+	});
 	function retry() {
 		retrying = true;
 		// The feed answers by saying it is live; if it is not back, the button comes back after a moment.
