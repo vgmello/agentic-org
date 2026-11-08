@@ -95,6 +95,13 @@ describe('the browser mock office’s organization view', () => {
 		expect(view.snapshot.members.map((m) => m.owner)).toEqual([true]);
 	});
 
+	it('refuses an organization that is not here even when it would show an empty one', async () => {
+		const org = createMockOrg(async () => {
+			throw { source: 'api', code: 'not_found', message: 'gone' };
+		}, () => true);
+		await expect(org.view('nope')).rejects.toMatchObject({ code: 'not_found' });
+	});
+
 	it('asks which organization it is for, and passes a refusal on', async () => {
 		const asked: string[] = [];
 		const org = createMockOrg(
