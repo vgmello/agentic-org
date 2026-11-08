@@ -362,6 +362,50 @@ fn rule_after_task_deferred_during_a_break_waits_for_the_next_break() {
 }
 
 #[test]
+fn rule_a_message_left_untriaged_does_not_hold_back_after_task_snoozes() {
+    // Without a session (or with a new session per Stop) a message the agent leaves unread is
+    // listed at every check; it must not keep one break going forever.
+    let t = TempSpool::new("break_starve");
+    let left = t.send("left unread", None);
+    let deferred = t.send("deferred", None);
+    let stop = || t.spool.notify(ME, &opts(None, true, false)).unwrap();
+
+    assert_eq!(ids(&stop()), vec![left.clone(), deferred.clone()]);
+    t.spool
+        .defer_message(ME, &deferred, "after-task", None)
+        .unwrap();
+    // Same break: only the untriaged one, listed again (nothing new: the break ends).
+    assert_eq!(ids(&stop()), vec![left.clone()]);
+    // The next break: the deferral is back.
+    let next = stop();
+    assert_eq!(ids(&next), vec![left, deferred.clone()]);
+    assert_eq!(next.items[1].reason, "after_task");
+}
+
+#[test]
+fn rule_a_new_session_starts_a_new_break() {
+    // A session that ended mid-break (the agent deferred, then the run was quit) must not
+    // carry the break into the next run.
+    let t = TempSpool::new("break_session");
+    let id = t.send("x", None);
+    assert_eq!(
+        ids(&t
+            .spool
+            .notify(ME, &opts(Some("run-1"), true, false))
+            .unwrap()),
+        vec![id.clone()]
+    );
+    t.spool.defer_message(ME, &id, "after-task", None).unwrap();
+    assert_eq!(t.triage_json()["in_break"], true);
+    let next_run = t
+        .spool
+        .notify(ME, &opts(Some("run-2"), true, false))
+        .unwrap();
+    assert_eq!(ids(&next_run), vec![id]);
+    assert_eq!(next_run.items[0].reason, "after_task");
+}
+
+#[test]
 fn rule_a_triage_file_without_break_fields_still_loads() {
     let t = TempSpool::new("old_triage");
     let snoozed = t.send("old after-task snooze", None);

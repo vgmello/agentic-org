@@ -218,6 +218,10 @@ pub struct MessageTriageEntry {
     /// Absent on snoozes written before breaks were counted: those go at the next break.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after_task_break: Option<u64>,
+    /// The break in which an `--after-task` check last listed this message, so a message the
+    /// agent leaves untriaged doesn't keep a break going (see [`TriageState::in_break`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reported_break: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -226,14 +230,20 @@ pub struct TriageState {
     pub v: u32,
     #[serde(default)]
     pub messages: BTreeMap<String, MessageTriageEntry>,
-    /// Counts the agent's natural breaks (`notify --after-task` runs). A break starts at the
-    /// first `--after-task` check after one that had nothing to report, and lasts while each
-    /// check reports something (the agent is triaging). Missing in older files: 0.
+    /// Counts the agent's natural breaks (`--after-task` checks, i.e. Stops). A break starts
+    /// at the first check after one that listed nothing new, or the first check from another
+    /// `--session`; it lasts while each check lists something not yet listed in this break
+    /// (the agent is triaging). Missing in older files: 0.
     #[serde(default)]
     pub break_seq: u64,
-    /// Whether the last `--after-task` check reported something, i.e. a break is under way.
+    /// Whether the last `--after-task` check listed something new to this break, i.e. a break
+    /// is under way.
     #[serde(default)]
     pub in_break: bool,
+    /// The `--session` of the last `--after-task` check that had one: a check from another
+    /// session (a new run) always starts a new break.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub break_session: Option<String>,
 }
 
 fn default_triage_version() -> u32 {
@@ -247,24 +257,32 @@ impl TriageState {
             messages: BTreeMap::new(),
             break_seq: 0,
             in_break: false,
+            break_session: None,
         }
     }
 
-    /// An `--after-task` check begins: unless a break is already under way, a new one starts.
-    /// Returns whether the state changed.
-    fn begin_after_task_check(&mut self) -> bool {
-        if self.in_break {
-            return false;
+    /// An `--after-task` check begins: a new break starts unless one is under way in the same
+    /// session. Returns whether the state changed.
+    fn begin_after_task_check(&mut self, session: Option<&str>) -> bool {
+        let mut changed = false;
+        let other_session = session.is_some_and(|s| self.break_session.as_deref() != Some(s));
+        if other_session {
+            self.break_session = session.map(str::to_string);
+            changed = true;
         }
-        self.break_seq = self.break_seq.saturating_add(1);
-        true
+        if !self.in_break || other_session {
+            self.break_seq = self.break_seq.saturating_add(1);
+            changed = true;
+        }
+        changed
     }
 
-    /// An `--after-task` check ended: the break goes on while it had something to report and
-    /// ends with the first check that has nothing. Returns whether the state changed.
-    fn end_after_task_check(&mut self, reported: bool) -> bool {
-        let changed = self.in_break != reported;
-        self.in_break = reported;
+    /// An `--after-task` check ended: the break goes on while it listed something new to this
+    /// break and ends with the first check that didn't (nothing, or only messages the agent
+    /// left untriaged). Returns whether the state changed.
+    fn end_after_task_check(&mut self, listed_new: bool) -> bool {
+        let changed = self.in_break != listed_new;
+        self.in_break = listed_new;
         changed
     }
 }
@@ -1200,7 +1218,7 @@ impl Spool {
 
         let (count, urgent_count, items) = self.with_agent_meta_lock(agent, || {
             let mut state = self.load_triage_unlocked(agent)?;
-            let mut dirty = opts.after_task && state.begin_after_task_check();
+            let mut dirty = opts.after_task && state.begin_after_task_check(session);
             dirty |= Self::release_due_in_state(&mut state, &now_iso, opts.after_task);
 
             let mut candidates: Vec<(Envelope, bool, String)> = Vec::new();
@@ -1237,8 +1255,17 @@ impl Spool {
             candidates.truncate(NOTIFY_MAX_ITEMS);
 
             let mut items = Vec::with_capacity(candidates.len());
+            let mut listed_new = false;
             for (env, urgent, reason) in candidates {
                 let triage_gen = state.messages.get(&env.id).map_or(0, |e| e.triage_gen);
+                if opts.after_task {
+                    let entry = state.messages.entry(env.id.clone()).or_default();
+                    if entry.reported_break != Some(state.break_seq) {
+                        entry.reported_break = Some(state.break_seq);
+                        listed_new = true;
+                        dirty = true;
+                    }
+                }
                 if let Some(sess) = session {
                     let entry = state.messages.entry(env.id.clone()).or_default();
                     if !entry.reported_sessions.contains_key(sess)
@@ -1257,7 +1284,7 @@ impl Spool {
             }
 
             if opts.after_task {
-                dirty |= state.end_after_task_check(count > 0);
+                dirty |= state.end_after_task_check(listed_new);
             }
             if dirty {
                 self.prune_triage_entries(agent, &mut state)?;
