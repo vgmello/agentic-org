@@ -2,7 +2,7 @@
 kind: spec
 title: "Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)"
 status: for-review
-revision: 13
+revision: 14
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-08"
@@ -14,6 +14,8 @@ builds_on: [offices-and-teams-ux, work-items-ux]
 # Spec · Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)
 
 Builds on `offices-and-teams-ux.md` rev 4, `work-items-ux.md` rev 5 and `desktop-app-v1.md` (in Eden's notes, not in this repository) (hire §3.6, profile §3.5).
+
+**Revision 14 (2026-11-08): role and title, messaging names (app-frontend-dev's import work).** The agent record needs both a role and a title (org-proto `AgentProfile`), so a messaging-only row needs a role, a title and a runtime: the Role combobox sets the role and defaults the title to its words, and **Custom title…** adds a title beside the role, which stays visible and required (suggested from the title when empty, marked "Suggested"). A row whose messaging name the organization would refuse shows "Needs a messaging name" with the reason (§4). Add an existing agent also asks for both (§7, STAFF-4). **Criteria rewritten (same ID):** IMP-3, STAFF-4 *(rev 14)*.
 
 **Revision 13 (2026-11-08): where suggested teams come from (app-frontend-dev's question).** The HR records have a `department` but nothing about sub-teams, and `AGENTS.md` isn't in the HR workspace, so teams can't be suggested "from roles and AGENTS.md ownership". Now: top-level teams come from `department`; every review row has a **Team** picker (default: its department's team, or "Not in a team" for an agent with no department); and an optional team hints file the owner chooses (the **Team hints** row's **Choose…**, a `teams.toml` from anywhere, never in or written into `hr/`, HR's ground, ada) prefills teams, parents, leads and members (§4). **Added:** IMP-10.
 
@@ -161,7 +163,7 @@ Every organization has one built-in agent, **HR lead**, created with the organiz
 ```
 
 - **Merged rows:** an agent in both sources shows "HR + messaging" and links its messaging name automatically when the HR id matches the inbox name.
-- **Messaging-only agents** need a **role** (a catalog combobox, or "Custom title…") and a **runtime**. The row says "2 to fill", and **Bring in** counts only complete rows ("Bring in 5 agents · 5 need details").
+- **Messaging-only agents** need a **role**, a **title** and a **runtime** *(rev 14)*. The **Role** combobox (the role catalog) sets the role, and the title defaults to the role's words ("software engineer" → "Software Engineer"). **Custom title…** adds a **Title** field beside the Role combobox, never instead of it: if no role is chosen yet, the combobox is prefilled with its best catalog match for the title, marked "Suggested", which the owner can change. A row's messaging name must be one the organization accepts (1 to 64 ASCII letters, digits, `-`, `_` and `.`, starting with a letter or digit, not `owner` or `office` in any case, and not exactly 26 letters and digits, the shape of a member id; org-proto `AgentProfile.messaging_name`, `is_shaped_like_an_address`); otherwise the row shows "Needs a messaging name" with the reason in plain words ("Messaging names use letters, digits, - _ and ., and start with a letter or digit.", "owner is reserved." or "This looks like a member id. Choose another name.") and an editable name, and it counts as needing details. A name another member already has keeps the "Already in <org>" state below, not this one. A "Suggested" role counts as filled; the owner can still change it. The row says "2 to fill", and **Bring in** counts only complete rows ("Bring in 5 agents · 5 need details").
 - **HR-only agents with no messaging inbox** get an info note, "No messages from Riley yet", and a per-row choice **Active · Paused · Skip**, defaulting to Active. The note explains: "Riley is active in HR but hasn't joined messaging. Bring in as Paused if Riley isn't working now."
 - **Offboarded HR agents** are listed collapsed under "Offboarded in HR (n)", unchecked, as a record.
 - **Teams** *(rev 13)*: HR has no teams, only each agent's `department`. So:
@@ -225,7 +227,7 @@ v1 §3.6 holds, with these changes for the office model:
 - **Review:** what will be created, as a dry run: the member (name, messaging name `ac-qa-engineer-cameron`), team, reports to, runtime and model, office ("This Mac"), home folder, the role file if it's new, and "Cameron can be reached by everyone in <org>".
 - **Hiring:** in words (Creating Cameron's record… Setting up the home folder… Registering with messaging…). **Done:** "Cameron is hired and in App." **Open in Claude Code** / **Open session** (primary), Assign a task, View profile.
 - **Runtime not installed or signed out** (chosen in Suggestion): the Review warns "Codex isn't signed in on This Mac. Cameron is hired, but can't start until it is." **Hire anyway** works.
-- **Add an existing agent** (the Hire panel's second tab, for an agent already running elsewhere, like ours were): name · messaging name · runtime · role/title · team · reports to · home folder (optional). **Add agent**. This is the one-row version of the import.
+- **Add an existing agent** (the Hire panel's second tab, for an agent already running elsewhere, like ours were): name · messaging name · runtime · role and title *(rev 14)* · team · reports to · home folder (optional). **Add agent**. This is the one-row version of the import.
 
 ### 7.1 Who approves a hire (rev 8, the user)
 
@@ -275,7 +277,7 @@ The owner can always approve or reject any proposal. Someone who requests a hire
 **Import (IMP)**
 - IMP-1 · Bring in an existing team is offered after creating an organization, in Org chart's empty state and in Settings › Team, and scanning writes nothing.
 - IMP-2 · With the HR workspace and messaging folders, the review lists every agent once, merged by name, with its sources ("HR + messaging", "HR only", "messaging only").
-- IMP-3 · A messaging-only agent can't be brought in until it has a role or title and a runtime, and the button counts only complete rows.
+- IMP-3 · *(rev 14)* A messaging-only agent can't be brought in until it has a role, a title and a runtime, and a messaging name the organization accepts; the button counts only complete rows. The title defaults to the role's words; Custom title… adds a title beside the role, which stays visible and required (suggested from the title, marked Suggested). A messaging name that breaks the format, is a reserved word (in any case) or is shaped like a member id shows "Needs a messaging name" with the reason; a name already taken keeps "Already in <org>" (IMP-8). A Suggested role counts as filled.
 - IMP-4 · An HR-active agent with no messaging inbox shows "No messages from <name> yet" and the choice Active / Paused / Skip.
 - IMP-5 · The suggested teams, reporting lines and project are shown before anything is created, and each can be edited or skipped.
 - IMP-6 · "What happens" names the counts and says nothing changes in the HR workspace or messaging.
@@ -304,7 +306,7 @@ The owner can always approve or reject any proposal. Someone who requests a hire
 - STAFF-1 · Hire's review shows team, reports to, runtime, model, office, home folder and messaging name before anything is created.
 - STAFF-2 · A hired agent appears in its team in the chart, highlighted, and in Activity ("Cameron was hired into App").
 - STAFF-3 · Choosing a runtime that isn't installed or signed in warns in Review, and Hire anyway still hires.
-- STAFF-4 · *(rev 8)* Add an existing agent creates an agent from name, messaging name, runtime, role or title, team and reports to. It goes through the HR lead's proposal and needs approval like any hire (§7.1, HRL-3).
+- STAFF-4 · *(rev 8)* Add an existing agent creates an agent from name, messaging name, runtime, role and title *(rev 14: both, as the agent record needs)*, team and reports to. It goes through the HR lead's proposal and needs approval like any hire (§7.1, HRL-3).
 
 **Assign and move (MOVE)**
 - MOVE-1 · Move to team is one action: the agent never appears in Not in a team in between, and the toast offers Undo.
