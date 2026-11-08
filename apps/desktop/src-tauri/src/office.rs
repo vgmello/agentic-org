@@ -4,7 +4,7 @@
 //! implements it. The real implementation will sit on `org-client` and the office-setup layer
 //! (install, login-service registration, start), neither of which exists yet.
 
-use crate::org_engine::OrgCommand;
+use crate::org_command::OrgCommand;
 use org_proto::{ApiError, CommandAccepted, HelloResult, OrgSnapshot, Organization};
 use serde::Serialize;
 

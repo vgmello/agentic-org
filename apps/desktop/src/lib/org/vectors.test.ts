@@ -16,6 +16,7 @@ describe('shared organization command cases', () => {
 		if (outcome === 'ok') {
 			expect(() => applyCommand(s, cmd(command as Step, 99))).not.toThrow();
 		} else {
+			const before = structuredClone(s);
 			let thrown: AppError | undefined;
 			try {
 				applyCommand(s, cmd(command as Step, 99));
@@ -23,6 +24,7 @@ describe('shared organization command cases', () => {
 				thrown = e as AppError;
 			}
 			expect(thrown?.code).toBe(outcome);
+			expect(s).toEqual(before); // a refused command changes nothing
 		}
 	});
 });

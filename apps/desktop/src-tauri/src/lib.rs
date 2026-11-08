@@ -8,13 +8,14 @@ mod connections;
 mod menu_model;
 mod mock;
 mod office;
+mod org_command;
 mod org_engine;
 mod org_mock;
 mod tray;
 
 use connections::{local_office, Connection, ConnectionStore};
 use office::{OfficeConnection, SetupError};
-use org_engine::OrgCommand;
+use org_command::OrgCommand;
 use org_proto::{ApiError, CommandAccepted, HelloResult, OfficeStatus, OrgSnapshot, Organization};
 use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};

@@ -7,78 +7,15 @@
 //! (`owner_protected`, `cycle`, `not_a_member`, `not_empty`), `already_exists` is returned, as the
 //! contract says.
 
+use crate::org_command::OrgCommand;
 use org_proto::org::{
-    AgentStatus, CommandAccepted, CommandStatus, Member, MemberAddPersonParams, MemberKind,
-    MemberMoveParams, MemberRemoveParams, MemberSetReportsToParams, MemberUpdatePersonParams,
-    Membership, OrgChange, OrgChangedData, OrgSnapshot, Position, ProjectAddTeamParams,
-    ProjectRemoveTeamParams, ProjectTeam, Team, TeamAddMemberParams, TeamCreateParams,
-    TeamDeleteParams, TeamMoveParams, TeamRemoveMemberParams, TeamRenameParams, TeamSetLeadParams,
-    TeamSetTitleParams,
+    AgentStatus, CommandAccepted, CommandStatus, Member, MemberKind, Membership, OrgChange,
+    OrgChangedData, OrgSnapshot, Position, ProjectTeam, Team,
 };
 use org_proto::{
     ApiError, ErrorCode, NameError, OrganizationName, AGENT_TEXT_MAX_CHARS, OWNER_HANDLE,
 };
 use serde::{Deserialize, Serialize};
-
-/// The commands the app sends for the org chart, as one value that carries its own method name.
-/// Anything else is refused when the UI's JSON is read, not here.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "method", content = "params")]
-pub enum OrgCommand {
-    #[serde(rename = "team.create")]
-    TeamCreate(TeamCreateParams),
-    #[serde(rename = "team.rename")]
-    TeamRename(TeamRenameParams),
-    #[serde(rename = "team.move")]
-    TeamMove(TeamMoveParams),
-    #[serde(rename = "team.set_lead")]
-    TeamSetLead(TeamSetLeadParams),
-    #[serde(rename = "team.delete")]
-    TeamDelete(TeamDeleteParams),
-    #[serde(rename = "team.add_member")]
-    TeamAddMember(TeamAddMemberParams),
-    #[serde(rename = "team.remove_member")]
-    TeamRemoveMember(TeamRemoveMemberParams),
-    #[serde(rename = "team.set_title")]
-    TeamSetTitle(TeamSetTitleParams),
-    #[serde(rename = "member.add_person")]
-    MemberAddPerson(MemberAddPersonParams),
-    #[serde(rename = "member.update_person")]
-    MemberUpdatePerson(MemberUpdatePersonParams),
-    #[serde(rename = "member.remove")]
-    MemberRemove(MemberRemoveParams),
-    #[serde(rename = "member.set_reports_to")]
-    MemberSetReportsTo(MemberSetReportsToParams),
-    #[serde(rename = "member.move")]
-    MemberMove(MemberMoveParams),
-    #[serde(rename = "project.add_team")]
-    ProjectAddTeam(ProjectAddTeamParams),
-    #[serde(rename = "project.remove_team")]
-    ProjectRemoveTeam(ProjectRemoveTeamParams),
-}
-
-impl OrgCommand {
-    /// The client-made id that makes a retry safe.
-    pub fn command_id(&self) -> &str {
-        match self {
-            Self::TeamCreate(p) => &p.command_id,
-            Self::TeamRename(p) => &p.command_id,
-            Self::TeamMove(p) => &p.command_id,
-            Self::TeamSetLead(p) => &p.command_id,
-            Self::TeamDelete(p) => &p.command_id,
-            Self::TeamAddMember(p) => &p.command_id,
-            Self::TeamRemoveMember(p) => &p.command_id,
-            Self::TeamSetTitle(p) => &p.command_id,
-            Self::MemberAddPerson(p) => &p.command_id,
-            Self::MemberUpdatePerson(p) => &p.command_id,
-            Self::MemberRemove(p) => &p.command_id,
-            Self::MemberSetReportsTo(p) => &p.command_id,
-            Self::MemberMove(p) => &p.command_id,
-            Self::ProjectAddTeam(p) => &p.command_id,
-            Self::ProjectRemoveTeam(p) => &p.command_id,
-        }
-    }
-}
 
 type Outcome<T = Vec<OrgChange>> = Result<T, ApiError>;
 
@@ -276,8 +213,8 @@ fn ids_of(command: &OrgCommand) -> Vec<&str> {
     ids
 }
 
-/// What HQ refuses as `invalid_request` before looking at the organization: an id that is not an
-/// id, or a title or contact that is empty (clear it instead), too long or has control characters.
+/// An id that is not an id (empty, long, with control characters) can never name anything, so it is
+/// refused before the organization is looked at.
 fn well_formed(command: &OrgCommand) -> Outcome<()> {
     if ids_of(command).into_iter().any(bad_id) {
         return err(
@@ -285,15 +222,13 @@ fn well_formed(command: &OrgCommand) -> Outcome<()> {
             "An id in that request isn't valid.",
         );
     }
-    let texts: Vec<&Option<String>> = match command {
-        OrgCommand::TeamAddMember(p) => vec![&p.title_in_team],
-        OrgCommand::TeamSetTitle(p) => vec![&p.title_in_team],
-        OrgCommand::MemberAddPerson(p) => vec![&p.contact],
-        OrgCommand::MemberUpdatePerson(p) => vec![&p.contact],
-        OrgCommand::MemberMove(p) => vec![&p.title_in_team],
-        _ => vec![],
-    };
-    if texts.into_iter().any(bad_text) {
+    Ok(())
+}
+
+/// A title or contact that is empty (clear it instead), too long or has control characters: refused
+/// in the command's own `invalid_request` step, after what it names has been found.
+fn check_text(text: &Option<String>) -> Outcome<()> {
+    if bad_text(text) {
         return err(
             ErrorCode::InvalidRequest,
             "A title or contact can't be empty, too long or contain control characters.",
@@ -474,6 +409,7 @@ fn apply_to(s: &mut OrgSnapshot, command: &OrgCommand) -> Outcome {
         OrgCommand::TeamAddMember(p) => {
             let i = team_ix(s, &p.team_id)?;
             let m = s.members[member_ix(s, &p.member_id)?].clone();
+            check_text(&p.title_in_team)?;
             if is_offboarded(&m) {
                 return err(
                     ErrorCode::InvalidRequest,
@@ -521,6 +457,7 @@ fn apply_to(s: &mut OrgSnapshot, command: &OrgCommand) -> Outcome {
         }
         OrgCommand::TeamSetTitle(p) => {
             let i = membership_ix(s, &p.membership_id)?;
+            check_text(&p.title_in_team)?;
             if s.memberships[i].version != p.expected_version {
                 return err(
                     ErrorCode::Conflict,
@@ -534,6 +471,7 @@ fn apply_to(s: &mut OrgSnapshot, command: &OrgCommand) -> Outcome {
             }])
         }
         OrgCommand::MemberAddPerson(p) => {
+            check_text(&p.contact)?;
             let name = checked_name(&p.name)?;
             if s.members.iter().any(|m| m.id == p.member_id) {
                 return err(ErrorCode::AlreadyExists, "That person id is taken.");
@@ -561,6 +499,7 @@ fn apply_to(s: &mut OrgSnapshot, command: &OrgCommand) -> Outcome {
         }
         OrgCommand::MemberUpdatePerson(p) => {
             let i = member_ix(s, &p.member_id)?;
+            check_text(&p.contact)?;
             if s.members[i].kind != MemberKind::Person || (p.contact.is_some() && p.clear_contact) {
                 return err(
                     ErrorCode::InvalidRequest,
@@ -684,6 +623,7 @@ fn apply_to(s: &mut OrgSnapshot, command: &OrgCommand) -> Outcome {
         OrgCommand::MemberMove(p) => {
             let i = membership_ix(s, &p.membership_id)?;
             let to = team_ix(s, &p.to_team_id)?;
+            check_text(&p.title_in_team)?;
             if s.memberships[i].version != p.expected_version {
                 return err(
                     ErrorCode::Conflict,
@@ -760,12 +700,30 @@ fn apply_to(s: &mut OrgSnapshot, command: &OrgCommand) -> Outcome {
     }
 }
 
-/// What HQ answered a command id, and the command it answered, so the same id sent for a
+/// What HQ answered a command id, and (a hash of) the command it answered, so the same id sent for a
 /// different command is refused instead of getting the first one's answer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Answer {
     command: String,
     result: Result<CommandAccepted, ApiError>,
+}
+
+/// How many answers HQ keeps: a retry only needs the recent ones, and the file must not grow for ever.
+const ANSWERS_KEPT: usize = 1000;
+
+/// The most a command may weigh once written as JSON. Real commands are a few hundred bytes.
+const COMMAND_MAX_BYTES: usize = 16 * 1024;
+
+/// FNV-1a over the command's JSON: small and the same on every launch (a `DefaultHasher` is not).
+fn fingerprint(command: &OrgCommand) -> Option<String> {
+    let json = serde_json::to_string(command).ok()?;
+    if json.len() > COMMAND_MAX_BYTES {
+        return None;
+    }
+    let hash = json.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    });
+    Some(format!("{hash:016x}:{}", json.len()))
 }
 
 /// A structure with its history of answers: HQ's side of "a retry with the same `command_id` gets
@@ -775,6 +733,9 @@ pub struct Hq {
     pub snapshot: OrgSnapshot,
     /// What each command id was answered, so a retry is answered again, not applied again.
     answers: std::collections::HashMap<String, Answer>,
+    /// The ids in `answers`, oldest first: the oldest is forgotten past `ANSWERS_KEPT`.
+    #[serde(default)]
+    order: std::collections::VecDeque<String>,
 }
 
 impl Hq {
@@ -782,6 +743,7 @@ impl Hq {
         Self {
             snapshot,
             answers: Default::default(),
+            order: Default::default(),
         }
     }
 
@@ -792,16 +754,13 @@ impl Hq {
         command: &OrgCommand,
     ) -> (Result<CommandAccepted, ApiError>, Option<OrgChangedData>) {
         let id = command.command_id().to_string();
-        if bad_id(&id) {
+        // A request that can't be read as a command is refused and never remembered.
+        let Some(fingerprint) = fingerprint(command).filter(|_| !bad_id(&id)) else {
             return (
-                err(
-                    ErrorCode::InvalidRequest,
-                    "An id in that request isn't valid.",
-                ),
+                err(ErrorCode::InvalidRequest, "That request isn't valid."),
                 None,
             );
-        }
-        let fingerprint = serde_json::to_string(command).unwrap_or_default();
+        };
         if let Some(answer) = self.answers.get(&id) {
             if answer.command == fingerprint {
                 return (answer.result.clone(), None);
@@ -832,12 +791,18 @@ impl Hq {
             Err(e) => (Err(e), None),
         };
         self.answers.insert(
-            id,
+            id.clone(),
             Answer {
                 command: fingerprint,
                 result: result.clone(),
             },
         );
+        self.order.push_back(id);
+        while self.order.len() > ANSWERS_KEPT {
+            if let Some(oldest) = self.order.pop_front() {
+                self.answers.remove(&oldest);
+            }
+        }
         (result, changed)
     }
 }
@@ -1742,7 +1707,15 @@ mod tests {
                 apply(&mut h.snapshot, &build(step, i))
                     .unwrap_or_else(|e| panic!("setup of {}: {e}", case["name"]));
             }
+            let before = h.snapshot.clone();
             let outcome = apply(&mut h.snapshot, &build(&case["command"], 99));
+            if outcome.is_err() {
+                assert_eq!(
+                    h.snapshot, before,
+                    "{} changed the state while refused",
+                    case["name"]
+                );
+            }
             match case["expect"].as_str().unwrap() {
                 "ok" => assert!(outcome.is_ok(), "{}: {:?}", case["name"], outcome),
                 code => {
@@ -1788,15 +1761,72 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_command_after_a_partial_change_leaves_the_state_alone() {
-        // `apply` works on a copy: even a rule that is checked late can't leave half a change.
+    fn a_refusal_is_remembered_even_when_the_same_command_would_now_succeed() {
         let mut h = hq();
-        let before = h.snapshot.clone();
+        // Under a team that doesn't exist yet: refused.
         let c = cmd(
-            "member.remove",
-            json!({"member_id": "you", "expected_version": 1}),
+            "team.create",
+            json!({"team_id": "ops", "name": "Ops", "owner_team_id": "later"}),
         );
-        assert!(apply(&mut h.snapshot, &c).is_err());
-        assert_eq!(h.snapshot, before);
+        assert_eq!(h.handle(&c).0.unwrap_err().code, ErrorCode::NotFound);
+        // The team appears; the same command, sent again, would succeed now, but its answer stands.
+        run_handled(
+            &mut h,
+            "team.create",
+            7,
+            json!({"team_id": "later", "name": "Later"}),
+        );
+        assert_eq!(h.handle(&c).0.unwrap_err().code, ErrorCode::NotFound);
+        assert!(h.snapshot.teams.iter().all(|t| t.id != "ops"));
+        // A new command id for it is a new command.
+        let again = cmd(
+            "team.create",
+            json!({"team_id": "ops", "name": "Ops", "owner_team_id": "later"}),
+        );
+        let mut again = serde_json::to_value(again).unwrap();
+        again["params"]["command_id"] = json!("fresh");
+        let again: OrgCommand = serde_json::from_value(again).unwrap();
+        assert!(h.handle(&again).0.is_ok());
+    }
+
+    fn run_handled(h: &mut Hq, method: &str, n: u32, params: serde_json::Value) {
+        let mut params = params;
+        params["command_id"] = json!(format!("h-{method}-{n}"));
+        let c: OrgCommand =
+            serde_json::from_value(json!({"method": method, "params": params})).unwrap();
+        assert!(h.handle(&c).0.is_ok());
+    }
+
+    #[test]
+    fn only_the_recent_answers_are_kept_and_an_oversize_command_is_refused_unrecorded() {
+        let mut h = hq();
+        let first = cmd("team.create", json!({"team_id": "t0", "name": "T0"}));
+        assert!(h.handle(&first).0.is_ok());
+        for n in 1..=ANSWERS_KEPT {
+            run_handled(
+                &mut h,
+                "team.create",
+                n as u32,
+                json!({"team_id": format!("t{n}"), "name": format!("T{n}")}),
+            );
+        }
+        // The first answer was forgotten: its retry is judged afresh (the team now exists).
+        assert_eq!(
+            h.handle(&first).0.unwrap_err().code,
+            ErrorCode::AlreadyExists
+        );
+        // The history is bounded in memory and in the file.
+        assert!(serde_json::to_string(&h).unwrap().len() < 1_000_000);
+        // A command too big to be a command is refused and leaves no trace.
+        let size_before = serde_json::to_string(&h).unwrap().len();
+        let huge = cmd(
+            "team.create",
+            json!({"team_id": "big", "name": "x".repeat(20_000)}),
+        );
+        assert_eq!(
+            h.handle(&huge).0.unwrap_err().code,
+            ErrorCode::InvalidRequest
+        );
+        assert_eq!(serde_json::to_string(&h).unwrap().len(), size_before);
     }
 }

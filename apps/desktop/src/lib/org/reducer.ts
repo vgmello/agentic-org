@@ -59,16 +59,20 @@ const ID_MAX = 64;
 const AGENT_TEXT_MAX = 200;
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
-const badId = (id: string | undefined) => id !== undefined && (id === '' || [...id].length > ID_MAX || CONTROL.test(id));
+export const badId = (id: string | undefined) => id !== undefined && (id === '' || [...id].length > ID_MAX || CONTROL.test(id));
 const badText = (t: string | undefined) => t !== undefined && (t.trim() === '' || [...t].length > AGENT_TEXT_MAX || CONTROL.test(t));
 
-function wellFormed(c: OrgCommand) {
+/** An id that is not an id can never name anything, so it is refused before the organization is looked at. */
+export function wellFormed(c: OrgCommand) {
 	const p = c.params as Record<string, unknown>;
 	const idKeys = ['command_id', 'team_id', 'owner_team_id', 'lead_member_id', 'membership_id', 'new_membership_id', 'to_team_id', 'member_id', 'reports_to_member_id', 'project_team_id', 'project_id'];
 	if (idKeys.some((k) => badId(p[k] as string | undefined))) fail('invalid_request', "An id in that request isn't valid.");
-	if (badText(p.title_in_team as string | undefined) || badText(p.contact as string | undefined))
-		fail('invalid_request', "A title or contact can't be empty, too long or contain control characters.");
 }
+
+/** A title or contact that is empty (clear it instead), too long or has control characters: in the command's own invalid_request step. */
+const checkText = (t: string | undefined) => {
+	if (badText(t)) fail('invalid_request', "A title or contact can't be empty, too long or contain control characters.");
+};
 
 // ---- names ------------------------------------------------------------------------------------------------------
 
@@ -161,6 +165,7 @@ function apply(s: OrgSnapshot, c: OrgCommand): OrgSnapshot {
 			const p = c.params;
 			const t = team(s, p.team_id);
 			const m = member(s, p.member_id);
+			checkText(p.title_in_team);
 			if (isOffboarded(m)) fail('invalid_request', `${m.name} has left the organization.`);
 			if (m.owner) fail('owner_protected', "The owner isn't on a team: they are in every team already.");
 			if (s.memberships.some((x) => x.id === p.membership_id || (x.team_id === t.id && x.member_id === m.id)))
@@ -177,12 +182,14 @@ function apply(s: OrgSnapshot, c: OrgCommand): OrgSnapshot {
 		case 'team.set_title': {
 			const p = c.params;
 			const ms = membership(s, p.membership_id);
+			checkText(p.title_in_team);
 			fresh(ms, p.expected_version, 'That membership');
 			const titled = bump(p.title_in_team !== undefined ? { ...ms, title_in_team: p.title_in_team } : (without(ms, 'title_in_team') as Membership));
 			return { ...s, memberships: replace(s.memberships, titled) };
 		}
 		case 'member.add_person': {
 			const p = c.params;
+			checkText(p.contact);
 			const name = checkedName(p.name);
 			if (s.members.some((m) => m.id === p.member_id)) fail('already_exists', 'That person id is taken.');
 			if (handleTaken(s, name)) fail('already_exists', `${name} is already taken as a name here.`);
@@ -192,6 +199,7 @@ function apply(s: OrgSnapshot, c: OrgCommand): OrgSnapshot {
 		case 'member.update_person': {
 			const p = c.params;
 			const m = member(s, p.member_id);
+			checkText(p.contact);
 			if (m.kind !== 'person' || (p.contact !== undefined && p.clear_contact)) fail('invalid_request', "That change doesn't apply to this member.");
 			const renamed = p.name !== undefined ? checkedName(p.name) : undefined;
 			fresh(m, p.expected_version, m.name);
@@ -234,6 +242,7 @@ function apply(s: OrgSnapshot, c: OrgCommand): OrgSnapshot {
 			const p = c.params;
 			const old = membership(s, p.membership_id);
 			const to = team(s, p.to_team_id);
+			checkText(p.title_in_team);
 			fresh(old, p.expected_version, 'That membership');
 			if (s.memberships.some((x) => x.id === p.new_membership_id || (x.team_id === to.id && x.member_id === old.member_id)))
 				fail('already_exists', `They are already in ${to.name}.`);
