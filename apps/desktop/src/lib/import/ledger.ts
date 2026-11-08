@@ -1,6 +1,7 @@
 // What an import has made, kept across runs, so a later run knows its own work (the team the owner renamed, the agent
 // whose lines the owner changed) and doesn't make it again or undo the owner's edits. Per organization, in this app's
-// storage; losing it is safe: a run then finds teams and agents by name and fills in only what is empty.
+// storage. Without it a run adopts whatever it finds in the organization as the owner's own and makes only what is not
+// there; it never fills in or changes what it finds.
 
 /** A team the import made or adopted. `led`: its lead has been dealt with (set, or already had one). */
 export interface LedgerTeam {

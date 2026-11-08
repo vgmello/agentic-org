@@ -75,7 +75,15 @@ async function execute(session: OrgSession, input: BringInInput): Promise<BringI
 	const ledger = input.ledger.load();
 	const keep = () => input.ledger.save(ledger);
 	const taking = input.rows.filter(takesPart);
-	const wanted = teamsToCreate(taking, input.drafts);
+	// What this run still owes: the agents it will make, and those an earlier run made and has not finished linking. What it
+	// merely finds already in the organization is the owner's: it is adopted as it is, and no team is made for it.
+	const owedRows = taking.filter((r) => {
+		const entry = ledger.agents[lower(r.messagingName)];
+		return entry ? !entry.linked : !r.existingMemberId;
+	});
+	const owedTeams = input.drafts.filter((d) => ledger.teams[d.key] && !ledger.teams[d.key].led);
+	const wanted = [...teamsToCreate(owedRows, input.drafts)];
+	for (const d of owedTeams) if (!wanted.some((w) => w.key === d.key)) wanted.push(d);
 
 	// 1. Teams, owners first. A team is the same team when it has the same name under the same owner.
 	say('Creating teams…');
@@ -98,8 +106,9 @@ async function execute(session: OrgSession, input: BringInInput): Promise<BringI
 		}
 		const found = s.teams.find((t) => lower(t.name) === lower(draft.name) && (t.owner_team_id ?? undefined) === parentId);
 		if (found) {
+			// Already there (made by the owner, or by a run whose ledger is gone): adopted as it is, lead and all.
 			teamIds.set(draft.key, found.id);
-			ledger.teams[draft.key] = { id: found.id, led: false };
+			ledger.teams[draft.key] = { id: found.id, led: true };
 			keep();
 			continue;
 		}
@@ -126,8 +135,8 @@ async function execute(session: OrgSession, input: BringInInput): Promise<BringI
 		}
 		const there = row.existingMemberId && row.existingKind === 'agent' ? s.members.find((m) => m.id === row.existingMemberId) : agentByHandle(s, row.messagingName);
 		if (isLive(there)) {
-			memberIds.set(row.key, there.id); // already there: it gets what it is missing, once
-			ledger.agents[handle] = { id: there.id, created: false, linked: false };
+			memberIds.set(row.key, there.id); // already there: the owner's, adopted as it is
+			ledger.agents[handle] = { id: there.id, created: false, linked: true };
 			keep();
 			continue;
 		}
@@ -173,6 +182,7 @@ async function execute(session: OrgSession, input: BringInInput): Promise<BringI
 		} else if (row.teamKey && wanted.some((t) => t.key === lower(row.teamKey!)) && !ledger.teams[lower(row.teamKey)]) {
 			ok = false; // its team could not be made: the failure above says so, and a retry puts it there
 		}
+		// A team or manager that is not there yet (its own creation failed) leaves this one unlinked for the retry.
 		settled.set(row.key, ok);
 	}
 	say('Linking leads and reporting lines…');
@@ -181,12 +191,19 @@ async function execute(session: OrgSession, input: BringInInput): Promise<BringI
 		const entry = ledger.agents[lower(row.messagingName)];
 		if (!memberId || !entry || entry.linked || settled.get(row.key) === false) continue;
 		const managerId = row.managerKey === OWNER ? undefined : memberIds.get(row.managerKey);
+		const managerTakesPart = row.managerKey !== OWNER && taking.some((r) => r.key === row.managerKey);
 		let ok = true;
 		if (managerId) {
 			const me = (await session.snapshot()).members.find((m) => m.id === memberId);
 			// Set from the version that was seen, so a change made meanwhile is a conflict, not overwritten.
-			if (me && !me.reports_to_member_id)
+			if (me && !me.reports_to_member_id) {
 				ok = await attempt(`Make ${row.name} report to their manager`, result.failures, () => session.command({ method: 'member.set_reports_to', params: { member_id: memberId, expected_version: me.version, reports_to_member_id: managerId } }));
+				// A refusal that a retry can't change (a cycle with lines the owner already has) is said once, then settled.
+				const refusal = result.failures.at(-1)?.error;
+				if (!ok && refusal?.source === 'api' && (refusal.code === 'cycle' || refusal.code === 'not_found')) ok = true;
+			}
+		} else if (managerTakesPart) {
+			ok = false; // its manager could not be made (yet): the line is set when a retry has them
 		}
 		if (ok) {
 			entry.linked = true;

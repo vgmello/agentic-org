@@ -188,26 +188,56 @@ describe('IMP-8 running it again', () => {
 		const first = reviewed();
 		first.project = { ...first.project!, teamKeys: ['engineering'] };
 		await run(w, first);
-		// Another run with no memory of the first (a ledger that was lost) adopts the project instead of making a second.
-		const second = await bringIn(w.s, { ...input(w), ledger: memoryLedger() });
+		// The next run, with the memory of the first, has nothing new for the project.
+		const second = await run(w);
 		expect(second).toMatchObject({ projects: 0, failures: [] });
+		// A run with no memory of the first (a ledger that was lost) finds the project and makes no second one.
+		const third = await bringIn(w.s, { ...input(w, reviewed((await w.s.snapshot()).members)), ledger: memoryLedger() });
+		expect(third).toMatchObject({ projects: 0, failures: [] });
 		const snap = await w.s.snapshot();
 		expect(snap.projects).toHaveLength(1);
-		expect(snap.project_teams?.map((l) => snap.teams.find((t) => t.id === l.team_id)!.name).sort()).toEqual(['Design', 'Engineering']);
+		expect(snap.project_teams?.map((l) => snap.teams.find((t) => t.id === l.team_id)!.name)).toEqual(['Engineering']);
 	});
 
-	it('with no memory of an earlier run, finds teams and agents by name and fills in only what is empty', async () => {
+	it('with no memory of an earlier run, treats what it finds as the owner’s: nothing is recreated, filled in or changed', async () => {
 		const w = world();
 		await run(w);
-		const { team, member } = await find(w.s);
-		await w.s.command({ method: 'member.set_reports_to', params: { member_id: member('ac-software-engineer-river').id, expected_version: member('ac-software-engineer-river').version, reports_to_member_id: member('ac-product-designer-eden').id } });
+		const { snap, team, member } = await find(w.s);
+		// The owner renames App, makes River report to the owner, takes server-dev out of Office, clears Quality's lead and
+		// moves Riley's line. Then the ledger is gone (another Mac, cleared website data, a dev build against a release build).
+		await w.s.command({ method: 'team.rename', params: { team_id: team('App').id, expected_version: team('App').version, name: 'Desktop' } });
+		await w.s.command({ method: 'member.set_reports_to', params: { member_id: member('ac-software-engineer-river').id, expected_version: member('ac-software-engineer-river').version, reports_to_member_id: undefined } });
+		const link = snap.memberships.find((m) => m.team_id === team('Office').id && m.member_id === member('server-dev').id)!;
+		await w.s.command({ method: 'team.remove_member', params: { membership_id: link.id, expected_version: link.version } });
+		await w.s.command({ method: 'team.set_lead', params: { team_id: team('Quality').id, expected_version: team('Quality').version, lead_member_id: undefined } });
 		const members = (await w.s.snapshot()).members;
 		const lost = { ...input(w, reviewed(members)), ledger: memoryLedger() };
 		const result = await bringIn(w.s, lost);
-		expect(result).toMatchObject({ agents: 0, teams: 0, projects: 0, failures: [] });
+		expect(result).toMatchObject({ agents: 0, teams: 0, projects: 0, paused: 0, failures: [] });
 		const after = await find(w.s);
-		expect(after.team('Office').id).toBe(team('Office').id);
-		expect(after.member('ac-software-engineer-river').reports_to_member_id).toBe(member('ac-product-designer-eden').id);
+		expect(after.snap.teams.map((t) => t.name).sort()).toEqual(['Agent tooling', 'Design', 'Desktop', 'Engineering', 'Office', 'Quality']);
+		expect(after.member('ac-software-engineer-river').reports_to_member_id).toBeUndefined();
+		expect(after.snap.memberships.some((m) => m.member_id === after.member('server-dev').id && m.team_id === after.team('Office').id)).toBe(false);
+		expect(after.team('Quality').lead_member_id).toBeUndefined();
+	});
+
+	it('does not take an agent into a team when the review was built before the owner offboarded it', async () => {
+		const w = world();
+		const first = reviewed();
+		first.rows.find((r) => r.name === 'codex-dev')!.choice = 'skip';
+		await run(w, first);
+		// A review is built (codex-dev is not in yet), then the owner brings codex-dev in elsewhere and offboards them.
+		const stale = reviewed();
+		const made = await w.s.command({ method: 'member.add_agent', params: { member_id: 'M'.repeat(26), name: 'codex-dev', office_id: 'office-1', profile: { role: 'r', title: 't', runtime: 'codex', messaging_name: 'codex-dev', status: 'active' } } });
+		expect(made.status).toBe('committed');
+		const snap = await w.s.snapshot();
+		const codex = snap.members.find((m) => m.agent?.messaging_name === 'codex-dev')!;
+		await w.s.command({ method: 'member.offboard', params: { member_id: codex.id, expected_version: codex.version } });
+		const added: string[] = [];
+		const spy: OrgSession = { snapshot: () => w.s.snapshot(), command: (c) => (c.method === 'team.add_member' && added.push(c.params.member_id), w.s.command(c)) };
+		const result = await bringIn(spy, { ...input(w, stale), ledger: memoryLedger() });
+		expect(result.failures).toEqual([]);
+		expect(added).not.toContain(codex.id);
 	});
 
 	it('does not take an agent offboarded in the organization into the team again', async () => {
@@ -267,6 +297,24 @@ describe('IMP-9 an interrupted import continues where it stopped', () => {
 		const { snap, team } = await find(w.s);
 		expect(snap.memberships.filter((m) => m.team_id === team('Agent tooling').id)).toHaveLength(3);
 		expect(team('Agent tooling').lead_member_id).toBeDefined();
+	});
+
+	it('sets the reporting line of an agent whose manager could not be made, once a retry has the manager', async () => {
+		const w = world();
+		let fail = true;
+		const flaky: OrgSession = {
+			snapshot: () => w.s.snapshot(),
+			command: (c) => (fail && c.method === 'member.add_agent' && c.params.name === 'ada' ? Promise.reject({ source: 'api', code: 'unavailable', message: 'gone' }) : w.s.command(c))
+		};
+		const first = await run(w, reviewed(), flaky);
+		expect(first.failures.map((f) => f.what)).toEqual(['Add ada']);
+		fail = false;
+		const retry = await run(w, reviewed(), flaky);
+		expect(retry).toMatchObject({ agents: 1, failures: [] });
+		const { member, team } = await find(w.s);
+		expect(member('ac-software-engineer-river').reports_to_member_id).toBe(member('ac-staff-engineer-ada').id);
+		expect(member('ac-software-engineer-remy').reports_to_member_id).toBe(member('ac-staff-engineer-ada').id);
+		expect(team('Engineering').lead_member_id).toBe(member('ac-staff-engineer-ada').id);
 	});
 
 	it('does not make a team whose owner could not be made, and says why for each', async () => {
