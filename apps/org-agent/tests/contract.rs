@@ -1113,6 +1113,40 @@ fn org_relay_symlink_behaves_like_v1_old_org_relay() {
 }
 
 #[test]
+fn inbox_all_text_adds_status_and_due_columns() {
+    let env = setup("inbox_all");
+    let unread = env.send(PEER, ME, &["--subject", "u", "b"]);
+    let snoozed = env.send(PEER, ME, &["--subject", "s", "b"]);
+    let later = env.send(PEER, ME, &["--subject", "l", "b"]);
+    let done = env.send(PEER, ME, &["--subject", "d", "b"]);
+    let d = env.run(ME, &["msg", "defer", &snoozed, "--until", "2h", "--json"]);
+    let due = json(&d.stdout)["snoozed_until"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    env.run(ME, &["msg", "defer", &later, "--until", "after-task"]);
+    env.run(ME, &["msg", "done", &done]);
+
+    let all = env.run(ME, &["msg", "inbox", "--all"]).stdout;
+    let row = |id: &str| -> Vec<String> {
+        all.lines()
+            .find(|l| l.starts_with(id))
+            .unwrap_or_else(|| panic!("{id} missing: {all}"))
+            .split('\t')
+            .map(str::to_string)
+            .collect()
+    };
+    assert_eq!(row(&unread)[5..], ["unread", "-"]);
+    assert_eq!(row(&snoozed)[5..], ["snoozed".to_string(), due]);
+    assert_eq!(row(&later)[5..], ["snoozed", "after-task"]);
+    assert_eq!(row(&done)[5..], ["done", "-"]);
+
+    // Plain inbox: v1-old's five columns.
+    let plain = env.run(ME, &["msg", "inbox"]).stdout;
+    assert!(plain.lines().all(|l| l.split('\t').count() == 5), "{plain}");
+}
+
+#[test]
 fn read_text_output_sanitizes_the_subject_line() {
     let env = setup("read_subject");
     let id = env.send(

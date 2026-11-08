@@ -110,8 +110,10 @@ Inputs now refused with a usage error (exit 1), nothing written:
   `msg deregister` without `<agent>`.
 
 `msg inbox` text: the subject is sanitized so each message stays one row (control, format and
-invisible characters become spaces, `"` becomes `'`) and cut to 200 characters (`…`); so is
-the header line of `msg read` and `msg wait` text output (the body is printed as is). Profile
+invisible characters become spaces, `"` becomes `'`) and cut to 200 characters (`…`). With
+`--all` each row has two more columns: the status (`unread`, `snoozed`, `done`, `read`) and,
+for a snooze, when it's due (a time or `after-task`; `-` otherwise); plain `inbox` keeps
+v1-old's five. The same sanitizing applies to the header line of `msg read` and `msg wait` text output (the body is printed as is). Profile
 names refuse `( ) [ ] : "`: a member whose saved name already has one must fix the name
 (`--name`) in the same `profile set` as any other change, since the whole profile is checked.
 `msg reply` marks the original read (above).

@@ -949,10 +949,22 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
                 for item in items {
                     // Keep the TSV one row per message for the scripts that parse it.
                     let subj = sanitize_inline_text(item.subject.as_deref().unwrap_or("-"), 200);
-                    println!(
+                    let row = format!(
                         "{}\t{}\t{}\t{}\t{}",
                         item.id, item.kind, item.from, item.created_at, subj
                     );
+                    if include_all {
+                        // `--all` mixes unread, snoozed, done and read: two more columns, the
+                        // status and (for a snooze) when it's due. Plain `inbox` keeps
+                        // v1-old's five.
+                        let due = match item.status.as_str() {
+                            "snoozed" => item.snoozed_until.as_deref().unwrap_or("-"),
+                            _ => "-",
+                        };
+                        println!("{row}\t{}\t{due}", item.status);
+                    } else {
+                        println!("{row}");
+                    }
                 }
             }
             Ok(EXIT_OK)
