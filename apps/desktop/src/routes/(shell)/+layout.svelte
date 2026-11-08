@@ -6,7 +6,7 @@
 	import { invalidate } from '$app/navigation';
 	import { page } from '$app/state';
 	import { orgApi } from '$lib/org/api';
-	import { shouldReload } from '$lib/org/live';
+	import { noteChanged } from '$lib/org/live';
 	import { navFor } from '$lib/nav';
 
 	let { data, children } = $props();
@@ -18,7 +18,7 @@
 		let leaving = false;
 		orgApi
 			.onChanged((notice) => {
-				if (notice.organization_id === data.connection.organization.id && shouldReload(notice)) void invalidate('app:org');
+				if (notice.organization_id === data.connection.organization.id) noteChanged(notice, () => invalidate('app:org'));
 			})
 			.then((unlisten) => {
 				if (leaving) unlisten();

@@ -73,12 +73,13 @@ function fail(error: AppError): never {
 export function createMockOffice({
 	delayMs = 900,
 	scenario = scenarioFromUrl(),
-	storage = browserStorage()
-}: { delayMs?: number; scenario?: Scenario; storage?: MockStorage } = {}): OfficeApi {
+	storage = browserStorage(),
+	testHook = false
+}: { delayMs?: number; scenario?: Scenario; storage?: MockStorage; testHook?: boolean } = {}): OfficeApi {
 	let connected = false;
-	// Who listens to status updates. A test pushes one with `window.__mockOfficeStatus(update)`.
+	// Who listens to status updates. With `testHook`, a browser test pushes one with `window.__mockOfficeStatus(update)`.
 	const listeners = new Set<(update: StatusUpdate) => void>();
-	if (typeof window !== 'undefined') (window as unknown as { __mockOfficeStatus: (update: StatusUpdate) => void }).__mockOfficeStatus = (update) => listeners.forEach((l) => l(update));
+	if (testHook && typeof window !== 'undefined') (window as unknown as { __mockOfficeStatus: (update: StatusUpdate) => void }).__mockOfficeStatus = (update) => listeners.forEach((l) => l(update));
 	// What macOS would say about the host's login service in each scenario.
 	let login: LoginState =
 		scenario === 'needs_approval' ? 'requires_approval' : scenario === 'not_installed' ? 'not_found' : scenario === 'turned_off' ? 'not_registered' : 'enabled';
@@ -213,4 +214,3 @@ export function createMockOffice({
 	};
 }
 
-export const mockOffice = createMockOffice();

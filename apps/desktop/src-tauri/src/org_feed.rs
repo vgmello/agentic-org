@@ -7,12 +7,13 @@
 //! restarted, the app's token changed) the feed reconnects with a growing pause, binds again, and starts from a
 //! fresh snapshot, so a change made while it was away is not lost. The feed never starts anything.
 
-use crate::pacing::{next_pause, wait, FIRST_PAUSE, LOOK};
+use crate::pacing::{wait, Pacer, LOOK};
 use org_client::{Client, ClientError};
 use org_proto::{Empty, OrgChanged, OrgSnapshotCall, Position};
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
+use std::time::{Duration, Instant};
 
 /// What the feed tells the UI: the organization changed, and the log is now at `position`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -35,24 +36,25 @@ pub fn follow(
     stop: &AtomicBool,
     emit: &dyn Fn(OrgUpdate),
 ) {
-    let mut pause = FIRST_PAUSE;
+    let mut pacer = Pacer::new();
     while !stop.load(Ordering::SeqCst) {
-        let delivered = follow_once(source, organization_id, stop, emit).is_ok();
-        wait(pause, stop);
-        pause = next_pause(pause, delivered);
+        let up_for = follow_once(source, organization_id, stop, emit).ok();
+        wait(pacer.next(up_for), stop);
     }
 }
 
-/// One connection: `Err` if it never got as far as the first snapshot's subscription, `Ok` once it ended after.
+/// One connection: `Err` if it never got as far as the first snapshot's subscription, `Ok` with how long the
+/// subscription lasted once it ended.
 fn follow_once(
     source: &dyn OrgSource,
     organization_id: &str,
     stop: &AtomicBool,
     emit: &dyn Fn(OrgUpdate),
-) -> Result<(), ClientError> {
+) -> Result<Duration, ClientError> {
     let client = source.open_hq(organization_id)?;
     let snapshot = client.call::<OrgSnapshotCall>(&Empty {})?;
     let events = client.subscribe_from(Some(snapshot.position))?;
+    let subscribed = Instant::now();
     // The snapshot is the baseline: the UI may have missed changes while the feed was away.
     emit(OrgUpdate {
         organization_id,
@@ -72,7 +74,7 @@ fn follow_once(
             Err(RecvTimeoutError::Disconnected) => break,
         }
     }
-    Ok(())
+    Ok(subscribed.elapsed())
 }
 
 #[cfg(test)]
@@ -86,7 +88,6 @@ mod tests {
     use std::os::unix::net::UnixListener;
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
-    use std::time::{Duration, Instant};
 
     fn at(seq: u64) -> Position {
         Position { epoch: 1, seq }
@@ -200,10 +201,14 @@ mod tests {
     }
 
     fn collect(source: &Office, want: usize) -> Vec<(String, Position)> {
+        collect_within(source, want, Duration::from_secs(10))
+    }
+
+    fn collect_within(source: &Office, want: usize, within: Duration) -> Vec<(String, Position)> {
         let stop = Arc::new(AtomicBool::new(false));
         let got = Arc::new(Mutex::new(Vec::new()));
         let seen = Arc::clone(&got);
-        let until = Instant::now() + Duration::from_secs(10);
+        let until = Instant::now() + within;
         std::thread::scope(|scope| {
             let flag = Arc::clone(&stop);
             let thread = scope.spawn(move || {
@@ -277,6 +282,19 @@ mod tests {
             "a new connection, a new bind, a new snapshot"
         );
         assert_eq!(source.subscribes.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn an_office_that_closes_the_subscription_at_once_is_not_knocked_on_every_second() {
+        // Each connection is accepted, answered and hung up on: the pause must grow (1 s, then 2 s, ...).
+        let source = office(vec![vec![]; 20], true);
+        let updates = collect_within(&source, usize::MAX, Duration::from_millis(3500));
+        let opened = *source.opened.lock().unwrap();
+        assert!(
+            (2..=3).contains(&opened),
+            "opened {opened} connections in 3.5 s"
+        );
+        assert_eq!(updates.len(), opened, "one baseline per connection");
     }
 
     #[test]
