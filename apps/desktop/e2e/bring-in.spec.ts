@@ -13,11 +13,13 @@ async function openEmptyChart(page: Page) {
 const dialog = (page: Page) => page.getByTestId('bring-in');
 const row = (page: Page, key: string) => page.locator(`[data-testid=import-row][data-row="${key}"]`);
 
-async function scanToReview(page: Page) {
+async function scanToReview(page: Page, hints = false) {
 	await page.getByTestId('bring-in-empty').click();
 	await expect(dialog(page).getByTestId('bring-in-sources')).toContainText('Found 5 agents in 1 project (ac)');
 	await expect(dialog(page).getByTestId('bring-in-sources')).toContainText('Found 9 names, 5 not in the HR workspace');
+	await expect(dialog(page).getByTestId('hints-source')).toContainText('A teams.toml that says who is in which team.');
 	await shot(page, 'bring-in-sources');
+	if (hints) await dialog(page).getByTestId('hints-source').getByRole('button', { name: 'Choose…' }).click();
 	await dialog(page).getByRole('button', { name: 'Scan' }).click();
 	await expect(dialog(page).getByTestId('bring-in-review')).toBeVisible();
 }
@@ -45,9 +47,11 @@ test('IMP-1..4: scanning lists every agent once, with its sources, and counts on
 
 test('IMP-10: the team hints file prefills the teams, the leads and the members', async ({ page }) => {
 	await openEmptyChart(page);
-	await scanToReview(page);
-	await dialog(page).getByRole('button', { name: 'Team hints (optional)…' }).click();
+	await scanToReview(page, true);
 	await expect(dialog(page).getByTestId('teams-line')).toContainText('Teams: from teams.toml (6)');
+	// Rev 15: with no line in HR, a row reports to the lead of its top-level team: ada, with no edits.
+	await expect(dialog(page).getByLabel('Reports to for server-dev')).toHaveValue('ac-staff-engineer-ada');
+	await expect(dialog(page).getByLabel('Reports to for ada')).toHaveValue('owner');
 	await expect(dialog(page).getByLabel('Team for Riley')).toHaveValue('app');
 	await expect(dialog(page).getByLabel('Team for server-dev')).toHaveValue('office');
 	await dialog(page).getByRole('button', { name: 'Edit…' }).click();
@@ -58,8 +62,7 @@ test('IMP-10: the team hints file prefills the teams, the leads and the members'
 
 test('IMP-7: Bring in creates the team, highlights it on the chart, and a second run finds nothing new', async ({ page }) => {
 	await openEmptyChart(page);
-	await scanToReview(page);
-	await dialog(page).getByRole('button', { name: 'Team hints (optional)…' }).click();
+	await scanToReview(page, true);
 	for (const name of ['server-dev', 'app-frontend-dev', 'codex-dev', 'agy-senior-dev', 'reviewer']) {
 		await dialog(page).getByLabel(`Role for ${name}`).selectOption('software engineer');
 		await dialog(page).getByLabel(`Runtime for ${name}`).selectOption(name === 'codex-dev' || name === 'server-dev' ? 'codex' : name === 'agy-senior-dev' ? 'antigravity' : 'claude_code');
@@ -67,6 +70,7 @@ test('IMP-7: Bring in creates the team, highlights it on the chart, and a second
 	await expect(dialog(page).getByRole('button', { name: /^Bring in 10 agents$/ })).toBeVisible();
 	await dialog(page).getByRole('button', { name: /^Bring in 10 agents$/ }).click();
 	await expect(dialog(page).getByTestId('bring-in-done')).toContainText('10 agents, 6 teams and 1 project.', { timeout: 30_000 });
+	await expect(dialog(page).getByRole('button', { name: 'View Activity' })).toBeVisible();
 	await shot(page, 'bring-in-done');
 	await dialog(page).getByRole('button', { name: 'View org chart' }).click();
 	await expect(page.getByTestId('team-card')).toHaveCount(6);

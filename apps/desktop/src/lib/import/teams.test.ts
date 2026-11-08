@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { SAMPLE_SCAN } from './mock';
 import { buildRows } from './rows';
-import { membersOf, suggestProject, suggestTeams, teamsToCreate, whatHappens, type TeamDraft } from './teams';
+import { applyHints } from './hints';
+import { SAMPLE_HINTS } from './mock';
+import { membersOf, suggestProject, suggestTeams, teamsToCreate, whatHappens, withDefaultManagers, type TeamDraft } from './teams';
 
 const rows = () => buildRows(SAMPLE_SCAN, { exclude: ['sample'] }).rows;
 
@@ -72,5 +74,43 @@ describe('IMP-6 what happens, in words', () => {
 		expect(suggestTeams(all).map((t) => t.key)).toEqual(['engineering']);
 		all.find((r) => r.name === 'ada')!.choice = 'skip';
 		expect(suggestTeams(all).find((t) => t.key === 'engineering')?.leadKey).toBeUndefined();
+	});
+});
+
+describe('rev 15 who a row reports to when HR does not say', () => {
+	const fitted = () => {
+		const all = rows();
+		const f = applyHints(all, SAMPLE_HINTS, suggestTeams(all));
+		return withDefaultManagers(f.rows, f.drafts);
+	};
+	const managerOf = (all: ReturnType<typeof fitted>, name: string) => all.find((r) => r.name === name)!.managerKey;
+
+	it('is the lead of the top-level team, so the shape of our team needs no edits', () => {
+		const all = fitted();
+		for (const name of ['server-dev', 'app-frontend-dev', 'codex-dev', 'agy-senior-dev', 'reviewer']) expect(managerOf(all, name)).toBe('ac-staff-engineer-ada');
+		// HR's own lines stay: ada and Eden report to the owner, River to ada.
+		expect(managerOf(all, 'ada')).toBe('owner');
+		expect(managerOf(all, 'Eden')).toBe('owner');
+		expect(managerOf(all, 'River')).toBe('ac-staff-engineer-ada');
+	});
+
+	it('is the owner for the lead of the top-level team itself, for a row in no team, and when the lead is skipped', () => {
+		const all = rows();
+		const f = applyHints(all, SAMPLE_HINTS, suggestTeams(all));
+		f.rows.find((r) => r.name === 'codex-dev')!.teamKey = undefined;
+		f.rows.find((r) => r.name === 'ada')!.choice = 'skip';
+		const out = withDefaultManagers(f.rows, f.drafts);
+		expect(out.find((r) => r.name === 'codex-dev')!.managerKey).toBe('owner');
+		expect(out.find((r) => r.name === 'server-dev')!.managerKey).toBe('owner');
+	});
+
+	it('does not leave a circle', () => {
+		const all = rows();
+		const hints = { path: 'f', teams: [{ key: 'x', name: 'X', lead: 'server-dev', members: ['server-dev', 'codex-dev'] }, { key: 'y', name: 'Y', parent: 'x', lead: 'codex-dev', members: ['codex-dev'] }] };
+		const f = applyHints(all, hints, []);
+		const out = withDefaultManagers(f.rows, f.drafts);
+		const boss = (k: string) => out.find((r) => r.key === k)!.managerKey;
+		expect(boss('server-dev')).toBe('owner');
+		expect(boss('codex-dev')).toBe('server-dev');
 	});
 });

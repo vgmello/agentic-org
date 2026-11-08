@@ -2,7 +2,7 @@
 // teams: a department becomes a top-level team, and the owner shapes the rest (App, Office, ... under Engineering) in the
 // editable preview. Pure.
 
-import { isReady, takesPart, type Row } from './rows';
+import { breakCycles, isReady, OWNER, takesPart, type Row } from './rows';
 
 /** A team to create. `key` is its name in lower case: the same team is the same team whatever its capitals. */
 export interface TeamDraft {
@@ -54,6 +54,27 @@ export function teamsToCreate(rows: Row[], drafts: TeamDraft[]): TeamDraft[] {
 		for (const draft of drafts) if (used.has(draft.key) && draft.parentKey && !used.has(draft.parentKey)) (used.add(draft.parentKey), (grew = true));
 	}
 	return drafts.filter((d) => used.has(d.key));
+}
+
+/**
+ * Who a row reports to when HR does not say: the lead of the top-level team it is in, unless that is the row itself; otherwise the
+ * owner. A row with a reports_to in HR keeps it. Applied once the teams are known (the hints file and the department teams), so the
+ * lines of an organization shaped by its teams need no edits. A circle this could make is cut at the owner.
+ */
+export function withDefaultManagers(rows: Row[], drafts: TeamDraft[]): Row[] {
+	const byKey = new Map(drafts.map((d) => [d.key, d]));
+	const topOf = (teamKey: string): TeamDraft | undefined => {
+		let at = byKey.get(key(teamKey));
+		for (let hops = 0; at?.parentKey && hops <= drafts.length; hops++) at = byKey.get(at.parentKey) ?? at;
+		return at;
+	};
+	const next = rows.map((row) => {
+		if (row.hr?.reports_to?.trim() || !row.teamKey) return row;
+		const lead = topOf(row.teamKey)?.leadKey;
+		return lead && lead !== row.key && rows.some((r) => r.key === lead && r.choice !== 'skip') ? { ...row, managerKey: lead } : { ...row, managerKey: OWNER };
+	});
+	breakCycles(next);
+	return next;
 }
 
 /** The project HR knows the agents by (`ac`), shared by the top-level teams that will exist. HR keeps only the code. */

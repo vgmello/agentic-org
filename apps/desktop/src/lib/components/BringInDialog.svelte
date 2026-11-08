@@ -10,8 +10,9 @@
 	import { applyHints, type HintNotes } from '$lib/import/hints';
 	import { browserLedger } from '$lib/import/ledger';
 	import { buildRows, counts, type Row } from '$lib/import/rows';
-	import { suggestProject, suggestTeams, whatHappens, type ProjectDraft, type TeamDraft } from '$lib/import/teams';
+	import { suggestProject, suggestTeams, whatHappens, withDefaultManagers, type ProjectDraft, type TeamDraft } from '$lib/import/teams';
 	import type { Defaults, Hints, HrAgent, Scan } from '$lib/import/types';
+	import { goto } from '$app/navigation';
 	import { toAppError } from '$lib/office/api';
 	import type { OrgSession } from '$lib/org/session';
 	import type { Member, OrgSnapshot } from '$lib/proto';
@@ -126,8 +127,8 @@
 		const review = buildRows(scan, { exclude, members: snapshot.members as Member[] });
 		const base = suggestTeams(review.rows);
 		const fitted = hints ? applyHints(review.rows, hints, base) : { rows: review.rows, drafts: base, notes: undefined };
-		rows = fitted.rows;
 		drafts = fitted.drafts;
+		rows = withDefaultManagers(fitted.rows, drafts);
 		hintNotes = fitted.notes;
 		offboarded = review.offboarded;
 		project = suggestProject(rows, drafts);
@@ -207,6 +208,19 @@
 						<Button type="button" variant="outline" size="sm" disabled={scanning} onclick={() => choose(source.id as 'hr' | 'spool')}>Change…</Button>
 					</div>
 				{/each}
+				<div class="flex flex-wrap items-start gap-x-3 gap-y-1 rounded-lg bg-white/5 p-3 outline-1 -outline-offset-1 outline-white/10" data-testid="hints-source">
+					<div class="min-w-0 flex-1">
+						<p class="font-medium text-white">Team hints <span class="font-normal text-gray-400">(optional)</span></p>
+						{#if hintsPath}
+							<p class="font-mono text-xs/5 text-gray-400 [overflow-wrap:anywhere]">{hintsPath}</p>
+							{#if hints?.error}<p class="mt-1 text-sm/6 text-amber-200" role="status">Couldn't read {fileName(hintsPath)}: {hints.error} The import goes on without it.</p>
+							{:else if hints}<p class="text-sm/6 text-gray-300">{hints.teams.length} {hints.teams.length === 1 ? 'team' : 'teams'} in {fileName(hintsPath)}</p>{/if}
+						{:else}
+							<p class="text-sm/6 text-gray-400">A teams.toml that says who is in which team.</p>
+						{/if}
+					</div>
+					<Button type="button" variant="outline" size="sm" disabled={scanning} onclick={chooseHints}>{hintsPath ? 'Change…' : 'Choose…'}</Button>
+				</div>
 				{#if scanning}<p class="flex items-center gap-x-2 text-sm/6 text-gray-300" role="status"><LoaderCircle class="size-4 animate-spin" aria-hidden="true" /> Reading…</p>{/if}
 				{#if scanFailure}<p class="text-sm/6 text-red-300" role="alert">{scanFailure}</p>{/if}
 				{#if scan && !scanning && !found && !scan.hr?.error && !scan.messaging?.error}
@@ -263,6 +277,7 @@
 				<Button type="button" disabled={c.ready === 0} onclick={run}>{bringLabel}</Button>
 			{:else if step === 'done'}
 				{#if (result && result.failures.length > 0) || crashed}<Button type="button" variant="outline" onclick={run}>Try again</Button>{/if}
+				{#if result && result.failures.length === 0 && !nothingNew}<Button type="button" variant="outline" onclick={() => (close(), void goto('/activity'))}>View Activity</Button>{/if}
 				<Button type="button" onclick={close}>{result && result.failures.length === 0 && !nothingNew ? 'View org chart' : 'Close'}</Button>
 			{/if}
 		</DialogFooter>

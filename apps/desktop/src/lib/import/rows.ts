@@ -109,7 +109,7 @@ export function buildRows(scan: Scan, { exclude = [], members = [] }: { exclude?
 }
 
 /** HR can say A reports to B and B to A; HQ refuses a cycle. The row that closes it reports to the owner instead. */
-function breakCycles(rows: Row[]): void {
+export function breakCycles(rows: Row[]): void {
 	const byKey = new Map(rows.map((r) => [r.key, r]));
 	for (const row of rows) {
 		const seen = new Set<string>([row.key]);
