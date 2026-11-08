@@ -19,6 +19,11 @@ use serde_json::json;
 use support::{alive, eventually, fake_server, has_hex_run, hq, Client, TestHome};
 
 const WAIT: Duration = Duration::from_secs(10);
+
+/// How long a stopping host gets to exit. The binary runs with the default timings, so it may
+/// itself wait the full 10 s shutdown grace for a server before SIGKILLing it; on a loaded
+/// machine a server can be that slow. A host still running after this is stuck.
+const EXIT_WAIT: Duration = Duration::from_secs(30);
 const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
 
 /// A host process that is killed (and reaped) when dropped, so a failed assertion never leaves
@@ -86,7 +91,7 @@ fn wait_until_active(home: &TestHome) {
 }
 
 fn wait_for_exit(child: &mut Child) -> ExitStatus {
-    let deadline = Instant::now() + WAIT;
+    let deadline = Instant::now() + EXIT_WAIT;
     loop {
         if let Some(status) = child.try_wait().unwrap() {
             return status;

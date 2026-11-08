@@ -18,6 +18,11 @@ use listener::{Connection, Handler};
 pub(crate) struct Service {
     offices: Arc<Offices>,
     subscribers: Mutex<Vec<Weak<Connection>>>,
+    /// Orders snapshots against events. An event is queued to every subscriber under it, and a
+    /// list answer is computed and queued under it, so on any connection an event published
+    /// after a snapshot was taken is queued after that snapshot's answer, and an event queued
+    /// before it is already reflected in it (the catalog changes before the event is published).
+    fan_out: Mutex<()>,
 }
 
 impl Service {
@@ -25,15 +30,18 @@ impl Service {
         Self {
             offices,
             subscribers: Mutex::new(Vec::new()),
+            fan_out: Mutex::new(()),
         }
     }
 
-    /// Pushes event `E` to every subscribed connection. The subscriber list is only locked
-    /// to copy it; queueing never blocks (a client that doesn't read is disconnected).
+    /// Pushes event `E` to every subscribed connection, under the fan-out lock (see
+    /// [`Service::fan_out`]). Queueing never blocks (a client that doesn't read is
+    /// disconnected).
     fn publish<E: EventKind>(&self, data: &E::Data) {
         let Ok(data) = serde_json::to_value(data) else {
             return;
         };
+        let _ordered = lock(&self.fan_out);
         let live: Vec<Arc<Connection>> = {
             let mut subscribers = lock(&self.subscribers);
             subscribers.retain(|s| s.strong_count() > 0);
@@ -45,7 +53,10 @@ impl Service {
     }
 
     fn subscribe(&self, request: &Request, connection: &Arc<Connection>) {
-        // The response goes out before the connection is added, so no event can overtake it.
+        // Under the fan-out lock, like a snapshot: the response goes out before the connection
+        // is added, so no event overtakes it, and an event published while it's being added
+        // either reaches it or has its change in every list the client takes after the response.
+        let _ordered = lock(&self.fan_out);
         let response = answer::<Subscribe>(request, |_from_position_is_ignored| Ok(Empty {}));
         let ok = matches!(response.outcome, org_proto::Outcome::Result(_));
         connection.send_response(response);
@@ -80,12 +91,15 @@ impl Handler for Service {
         } else if request.is::<OrganizationCreate>() {
             self.create(&request, connection);
         } else if request.is::<OrganizationList>() {
+            // A snapshot: taken and queued under the fan-out lock.
+            let _ordered = lock(&self.fan_out);
             connection.send_response(answer::<OrganizationList>(&request, |_| {
                 Ok(ListOrganizationsResult {
                     organizations: self.offices.organizations(),
                 })
             }));
         } else if request.is::<OfficeList>() {
+            let _ordered = lock(&self.fan_out);
             connection.send_response(answer::<OfficeList>(&request, |_| {
                 Ok(ListOfficesResult {
                     offices: self.offices.offices(),

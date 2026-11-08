@@ -2,6 +2,8 @@
 
 Status: **approved by ada** 2026-11-08, and **agreed by River** (the host) **and server-dev** (the server), `--discard` included. Updated for ADR-0003 §2.1 (the app token on every start) and the code review of `org-office-launch` (rev 2, 2026-11-08). Amended by ada 2026-11-08 for the boundary review (adopt vs discard, `not_ready` at startup, the give-up count, the status-reason mapping, the stdin and `--discard` wording, `org-supervise`). It implements
 `docs/design/offices-hq-and-satellites.md` ("Processes on one Mac") and the `org-proto` host calls.
+
+**Implementation status** (2026-11-08): `org-office-host` on `v1` (River's `river/office-host`, merged at `7c34096`) implements the catalog, the supervisor, `hello`, `organization.create` (with `not_ready` at startup and at most 4 creates in flight), `organization.list`, `office.list` and `subscribe`. Not built yet, and **committed to River's next host piece** (`river/host-contract`): `office.app_token` with the peer code-signature check, `office.restart`, `office.status_changed` (published under the same lock as the list answers, so their ordering holds), and `status_reason` / `next_restart_at` per §4 (until then both are always `None`), with the give-up rule. Also in that piece: clearing the server's environment to an allowlist until `org-supervise` spawns it, counting backoff uptime from `ready`, and documenting the "too many creates" answer (`unavailable` today) among `organization.create`'s errors in `org-proto` (a separate small commit for ada, the contract owner).
 The contract crate `crates/org-office-launch` holds the exact shapes. **This design is the reference:**
 where this design and `crates/org-office-launch` differ, this design wins until River's next commit
 updates the crate.

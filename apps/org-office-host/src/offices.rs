@@ -137,13 +137,13 @@ impl Offices {
     }
 
     /// Waits until `deadline` for the startup discards to finish, so a create never races the
-    /// discard of an unfinished folder; then `unavailable` ("host starting").
+    /// discard of an unfinished folder; then `not_ready` ("host starting"), so a client retries.
     fn wait_for_startup(&self, deadline: Instant) -> Result<(), ApiError> {
         let mut started = lock(&self.started);
         while !*started {
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
-                return Err(ApiError::new(ErrorCode::Unavailable, HOST_STARTING));
+                return Err(ApiError::new(ErrorCode::NotReady, HOST_STARTING));
             }
             started = self
                 .started_changed
@@ -201,6 +201,11 @@ impl Offices {
         // One budget for both waits.
         let deadline = Instant::now() + self.create_wait;
         self.wait_for_startup(deadline)?;
+        // A taken name is answered at once, not after waiting for a slot. (`plan_create` checks
+        // again, under the same lock as the reservation.)
+        if lock(&self.catalog).has_organization_named(&name) {
+            return Err(already_exists());
+        }
         let _slot = self.create_slot(deadline)?;
         // The catalog mutex is held only for this statement.
         let plan = lock(&self.catalog)
@@ -274,11 +279,11 @@ impl Offices {
         }
     }
 
-    /// A create whose server ended (crashed, was killed when it timed out, or reported `failed`
-    /// after storing the office) without `created`. `office.json` is written last, so if the server stored it, the create
-    /// happened: when the stored office is the one asked for, the create succeeds after all (its
-    /// server is started with `--office`, status `starting`); another office is a refused create
-    /// (moved to `.refused/`). With no `office.json` the create is unfinished and is discarded;
+    /// A create whose server ended without `created`: it crashed, was killed when it timed out,
+    /// or reported `failed` after storing the office. `office.json` is written last, so if the
+    /// server stored it, the create happened: when the stored office is the one asked for, the
+    /// create succeeds after all (its server is started with `--office`, status `starting`);
+    /// another office is a refused create (moved to `.refused/`). With no `office.json` the create is unfinished and is discarded;
     /// one that can't be read is left alone, its name still taken (see [`Reserved`]).
     fn finish_unreported(&self, plan: &CreatePlan) -> Result<Organization, ApiError> {
         let stored = office_dir(&self.home, &plan.office_id)
@@ -291,7 +296,8 @@ impl Offices {
             }
             Ok(Some(office)) if matches_plan(&office, plan) => {
                 host_log::log(&format!(
-                    "office {} was stored, but its server ended before reporting it; starting it",
+                    "office {} was stored, but its server ended without reporting it created; \
+                     starting it",
                     office.office_id
                 ));
                 let status = match self.supervisor.start_office(&office.office_id) {
@@ -317,7 +323,7 @@ impl Offices {
             }
             Err(why) => {
                 host_log::log(&format!(
-                    "kept office {}: its server ended before reporting it, and {why}",
+                    "kept office {}: its server ended without reporting it created, and {why}",
                     plan.office_id
                 ));
                 Err(storage_error())
