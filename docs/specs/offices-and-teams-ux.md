@@ -2,7 +2,7 @@
 kind: spec
 title: "Offices, organizations and teams (UX)"
 status: for-review
-revision: 6
+revision: 8
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-08"
@@ -20,6 +20,22 @@ Requested by ada for the user.
 **What it changes in my earlier work:** it replaces, for the office model, `desktop-app-v1.md` (in Eden's notes, not in this repository) §2.5 (workspace switcher), §3.2 (department and reporting-line chart) and §7.1 (Machines). Revision 5 of that spec folds this in. Acceptance-criterion IDs here are stable: changed criteria are rewritten under the same ID, retired IDs are never reused.
 
 ## Changelog
+
+**Revision 8 (2026-11-08): office status follows the contract (team reviewer).** §3.3 now follows ada's branch ada/proto-office-status (`2f78e40`) and `office-host-boundary.md` at `504f112` (branch ada/docs-followups-3), neither on v1 yet.
+
+- §3.1 maps each wire status to one label: `offline` and `unavailable` on this Mac show as Stopped with §3.3's reason; Offline is only for another computer's office.
+- `in_use`: new copy ("still in use by another Agentic Org process"), and Restart office is offered, as the contract accepts it.
+- `unsupported_version`: its own copy ("Parts of Agentic Org on this Mac don't match…") with Check for updates · Copy details, no longer update_needed's words.
+- `office.restart`'s answers are one list (§3.3): `conflict` keeps the spinner, `unknown_method` hides the button, `not_found` refreshes the list, `not_authorized` is an error, `not_ready` retries once (the app's request timeout must be over 30 s).
+- "Restarting in N s" shows whenever `next_restart_at` is present, whatever the reason. The crash countdown's button is now **Restart office** too, the one label for that call and state.
+- A missing `status_reason` (an older host, or the host doesn't know) has its own row, "It isn't running", kept apart from `unknown`.
+- §3.2 says which reasons each row covers: "Can't open its data" for `key_missing` and `storage_error`, "Its office on this Mac stopped" for every other.
+- Accessibility (§6.1): the row label doesn't tick ("restarting shortly"), the visible countdown updates at most every 10 s, and status changes of this Mac's offices are announced politely.
+- `storage_error` no longer offers to show its data folder (the folder layout isn't part of the contract).
+- A host that never sends `office.status_changed` counts as not live: its offices show "Status unknown".
+- **Criteria rewritten (same ID):** OFC-11, OFC-12, OFC-13.
+
+**Revision 7 (2026-11-08): review fixes.** §3.3: `office.restart` answers `conflict` only when it's pressed while the office is already starting or running. During a crash countdown the office is offline, so the restart button is accepted (the old example said otherwise). The list of refusals is now complete: `not_authorized` ("You can't restart this office from here.") and `not_found` ("This office no longer exists.") show as errors in plain words with Copy details. No criteria changed.
 
 **Revision 6 (2026-11-08): why an office stopped, in plain words.** ada's `OfficeInfo.status_reason`, `next_restart_at`, the live `office.status_changed` event and `office.restart` (branch ada/proto-office-status, with the reasons `unsupported_version`, `invalid_request`, `unknown` and the error `not_ready`) get their copy and actions in §3.3. From the Offices review: status is shown only when live, each status has its own icon, and the build's good choices are now part of the spec (an Unknown row in §3.1, and Sample data and the disabled Add office in §6.1). `key_missing` and `storage_error` copy follows `office-host-boundary.md`. The remove dialog's no-manager variant is written outside the dialog text (§7.4). OFC-11 to OFC-13 added.
 
@@ -111,14 +127,21 @@ Status colors reuse the existing tokens: green = online, blue = starting, gray =
 | --- | --- | --- | --- | --- |
 | Online | `circle` filled | green | The office runs and is in sync with HQ (HQ itself: it runs) | — |
 | Starting | `loader` | blue | An office on this Mac is starting | — |
-| Offline | `circle` outline | gray | Another computer's office isn't connected to HQ | "last seen 2 h ago" |
+| Offline | `circle` outline | gray | Another computer's office isn't connected to HQ (never an office on this Mac) *(rev 8)* | "last seen 2 h ago" |
 | Unreachable | `wifi-off` | red | Seen from an office that can't reach HQ: the HQ row | "last synced 10 min ago" |
-| Stopped | `circle-x` | red | An office on this Mac isn't running (crashed, failed to start) | the reason, in plain words |
+| Stopped | `circle-x` | red | An office on this Mac isn't running: `offline` or `unavailable` *(rev 8)* | the reason from §3.3, in plain words |
 | Update needed | `circle-arrow-up` | amber | The office's app is too old for the organization's level | "needs Agentic Org 1.4 or later" |
 | Invited | `mail` | gray | An invitation link exists and hasn't been used | "expires in 21 h" |
 | Wants to join | `bell-ring` | amber (needs you) | A computer used the link and waits for its check code at HQ | "from 192.168.1.44 · 2 min ago" |
 | Waiting for approval | `hourglass` | amber | This Mac's own pending join | "type the code at HQ" |
-| Unknown | `circle-help` | gray | The app has no live status for it (never shown as healthy) *(rev 6)* | "Status unknown" |
+| Unknown | `circle-help` | gray | The app has no live status for it, or the status is `unknown` or missing (never shown as healthy) *(rev 6, rev 8)* | "Status unknown" |
+
+**From the wire to the label** *(rev 8)*. `OfficeInfo.status` shows as one label:
+
+- `active` → **Online**. `starting` → **Starting**. `update_needed` → **Update needed**. `pending` (invited, not joined yet) → **Invited**.
+- `offline` or `unavailable`, for an office on this Mac → **Stopped**, with §3.3's reason as secondary text. The two look the same; the reason and its action say what differs.
+- **Offline** is only for another computer's office that isn't connected to HQ. An office on this Mac never shows as Offline.
+- `unknown`, or no status at all → **Unknown** ("Status unknown").
 
 ### 3.2 Organization availability (menu and Open organization screen)
 
@@ -126,10 +149,10 @@ An organization is **unavailable** only when the app can't read it on this Mac a
 
 | Reason (exact copy) | Fix offered in the window |
 | --- | --- |
-| "Its office on this Mac stopped", followed by the reason's copy from §3.3 (reasons other than the data ones below) | The action for that reason from §3.3 (for example no Restart for `in_use`) · Copy details |
+| "Its office on this Mac stopped", followed by the reason's copy from §3.3. It covers every reason, and a missing one, except `key_missing` and `storage_error`, which use "Can't open its data" below *(rev 8)* | The action for that reason from §3.3 (**Restart office** for most; **Check for updates** for `unsupported_version`) · Copy details |
 | "Offices aren't running. Allow Agentic Org in Login Items" (all organizations) | **Open Login Items settings** |
 | "Needs a newer version of Agentic Org" | **Check for updates** |
-| "Can't open its data", followed by §3.3's copy for `key_missing` or `storage_error` | The action from §3.3 (**Try again** for `key_missing`, **Restart office** for `storage_error`) · Copy details |
+| "Can't open its data", followed by §3.3's copy. Only for `key_missing` and `storage_error` *(rev 8)* | The action from §3.3 (**Try again** for `key_missing`, **Restart office** for `storage_error`) · Copy details |
 | "This Mac was removed from the organization" | **Delete its copy from this Mac** |
 | "Waiting for approval at HQ" | **Show check code** · Cancel join |
 | "Joining… copying data (40%)" | (progress only) |
@@ -138,25 +161,33 @@ An organization is **unavailable** only when the app can't read it on this Mac a
 
 ### 3.3 Why an office stopped (rev 6)
 
-Shown as the Stopped row's secondary text and at the top of its details, with the fix as a button. The office's status updates live (`office.status_changed`), and a status that isn't live is never shown: the row reads "Status unknown" instead.
+Shown as the Stopped row's secondary text and at the top of its details, with the fix as a button. The office's status updates live (`office.status_changed`), and a status that isn't live is never shown: the row reads "Status unknown" instead. A host that never sends `office.status_changed` (an older host) counts as not live, so its offices show "Status unknown" *(rev 8)*.
+
+**Countdown** *(rev 8)*: whenever `next_restart_at` is present, whatever the reason, the copy ends with "Restarting in N s" (N from `next_restart_at`; for `in_use` the row's own "Trying again in N s"). The host sends it only while the office is `offline` with a restart pending. The visible countdown updates no more often than every 10 s; the screen-reader label doesn't tick (§6.1).
 
 | `status_reason` | Copy (secondary text) | Action |
 | --- | --- | --- |
-| `crashed` | "It stopped unexpectedly. Restarting in 20 s" (from `next_restart_at`), or "It stopped unexpectedly" | **Restart now** · Copy details |
+| `crashed` | "It stopped unexpectedly", then "Restarting in 20 s" when a restart is pending | **Restart office** · Copy details *(rev 8)* |
 | `start_timeout` | "It didn't start in time" | **Restart office** · Copy details |
 | `restarts_exhausted` | "It kept stopping, so it won't restart on its own" | **Restart office** · Copy details |
-| `storage_error` | "It can't read or write its data on this Mac" (also used when the Keychain doesn't allow access, `office-host-boundary.md`) | **Restart office** · Reveal data folder · Copy details |
-| `in_use` | "Another copy of this office is already running. Quit it, and this office starts again." | Copy details (it restarts by itself with backoff, so there's no Restart button) |
+| `storage_error` | "It can't read or write its data on this Mac" (also used when the Keychain doesn't allow access, `office-host-boundary.md`) | **Restart office** · Copy details *(rev 8)* |
+| `in_use` | "Its data is still in use by another Agentic Org process. Trying again in N s" (N from `next_restart_at`) *(rev 8)* | **Restart office** · Copy details (the host also retries by itself) *(rev 8)* |
 | `key_missing` | "Its data key is missing from this Mac's Keychain, so its data can't be opened" (the databases exist, the key doesn't) | **Try again** (`office.restart`, which asks the Keychain again and returns straight to this reason if the key is still missing) · Copy details. The button says Try again, never Restart. |
 | `stopped_by_owner` | "You stopped it" | **Start office** (`office.restart`). Phase 1 has no stop call, so this appears only once one exists. |
-| `unsupported_version` | "Needs a newer version of Agentic Org" | **Check for updates** |
-| `invalid_request` | "It couldn't start because of an internal error" | Copy details (to send to support) |
-| `unknown`, or anything else | "It stopped for a reason this version doesn't know" | **Restart office** · Copy details |
+| `unsupported_version` | "Parts of Agentic Org on this Mac don't match. Update or reinstall Agentic Org, then log out and back in." *(rev 8)* | **Check for updates** · Copy details. No Restart: the contract refuses it. |
+| `invalid_request` | "It couldn't start because of an internal error" | Copy details (to send to support). No Restart: the contract refuses it. |
+| `unknown` (a reason this version doesn't know, from a newer host) | "It stopped for a reason this version doesn't know" | **Restart office** · Copy details |
+| No `status_reason` (an older host, or the host doesn't know) *(rev 8)* | "It isn't running" | **Restart office** · Copy details |
 
-- **Restart office** calls `office.restart`. While it runs: "Restarting…" with a spinner, then the live status. `office.restart` covers Restart, Try again and Start office (ada). Besides `not_ready`, `conflict` and `unknown_method` (below), it refuses only `unsupported_version` ("Needs a newer version of Agentic Org" · **Check for updates**) and `invalid_request` (shown as an error with Copy details).
-- **Already starting** (`office.restart` answers `conflict`, for example Restart now during a crash countdown): no error. The row just shows the live status (Starting, then Online).
-- **Older host** (`unknown_method`): the restart button is hidden, and the details say "Restarting from here needs a newer version of Agentic Org."
-- **The host is still starting** (`office.restart` answers `not_ready`): the button shows "Starting…" and retries by itself for up to 30 s, then "The office host isn't ready yet" with **Try again**.
+- **Restart office** calls `office.restart`. While it runs: "Restarting…" with a spinner, then the live status. `office.restart` covers Restart office, Try again and Start office (ada). The contract refuses a restart only for `unsupported_version` and `invalid_request`, so only those two rows go without it; every other reason, and a missing one, offers it *(rev 8)*.
+- **What `office.restart` answers, and what the app does** *(rev 8)*. The row always shows the office's `status_reason`, not the call's error code.
+  - Accepted: keep the spinner until the live status arrives.
+  - `conflict` (the office is already starting or running, e.g. a double click or the host's own countdown got there first): no error. Keep the spinner until the live status arrives (Starting, then Online).
+  - `unknown_method` (an older host): hide the restart button and show "Update Agentic Org to restart offices from here".
+  - `not_found` (the office is gone): refresh the list.
+  - `not_authorized`: an error in plain words, "You can't restart this office from here." · Copy details.
+  - `not_ready` (the host is still starting): retry once. The host may already hold the call for up to 30 s before it answers, so the app's request timeout must be longer than 30 s. If the retry answers `not_ready` too: "The office host is still starting. Try again in a moment." and the button comes back.
+  - `unavailable` (the office's reason is `unsupported_version` or `invalid_request`; it can arrive if the reason changed after the row was drawn): show that reason's row from the table.
 - **Copy details** copies the office name, id, status, reason, the time and the app version. It never includes keys or tokens.
 
 ## 4. Flow 1 · Menu-bar dropdown
@@ -344,7 +375,7 @@ The app lives in the menu bar (ADR-0001). The icon is a monochrome template imag
 - **Version holding back a feature:** when HQ can't raise the organization level, a quiet note above the list: "Build box runs an older version of Agentic Org, so new features wait until it updates." It links to the row.
 - **Empty is impossible** (HQ always exists). With HQ alone, a one-line hint under the list: "Add an office to run agents on another Mac, or to keep a copy of the records there."
 - **Loading:** skeleton rows. **Live:** statuses update in place; a row that changes status doesn't move.
-- **Row label for screen readers** *(rev 6, OFC-13)*: "Main office, HQ, This Mac, Online, 6 agents. Opens details." (with the reason for Stopped: "…, Stopped: it stopped unexpectedly, restarting in 20 s, …").
+- **Row label for screen readers** *(rev 6, rev 8, OFC-13)*: "Main office, HQ, This Mac, Online, 6 agents. Opens details." For Stopped it adds the reason, with a restart in a form that doesn't tick: "…, Stopped: it stopped unexpectedly, restarting shortly, …", or "restarting at 10:42" when the restart is a minute or more away. The visible countdown updates no more often than every 10 s. A status change of an office on this Mac is announced through a polite live region ("Office 2 stopped: it stopped unexpectedly", "Office 2 is online").
 - **Phase 1** *(rev 6, from the build)*: **Add office** is shown disabled with "Available in a later release." While the data is invented, a **Sample data** badge says so. A status the app can't confirm shows as **Unknown** (§3.1), never as healthy.
 - **HQ-only actions** (A5, resolved): **Add office**, **Review and approve** and **Remove office…** happen in the app on HQ's Mac. On any other office, Add office is disabled with "Add offices from HQ's Mac (Main office)", and a join request shows read-only with "Approve on HQ's Mac (Main office)".
 
@@ -695,9 +726,9 @@ Two directions, same result:
 - OFC-8 · *(rev 2)* Remove office names the office, its agents (which become unplaced), their tasks and the offline case before removing.
 - OFC-9 · On an office that can't reach HQ, the banner shows last sync and the waiting count; changes show Pending; a rejection shows Blocked with Retry and Discard; HQ-only actions are disabled with the reason.
 - OFC-10 · *(new, rev 2)* After an office is removed, its agents show as Unplaced (Offices list, org chart tag, office filter), with Place… and Offboard… for each, and a needs-you item until every one is handled.
-- OFC-11 · *(new, rev 6)* A Stopped office shows its reason in plain words (§3.3) as secondary text and in its details, with the action for that reason, and Restart is never offered for `in_use` (for `key_missing` the action is Try again).
-- OFC-12 · *(new, rev 6)* Office status updates live from the host. When the app has no live status, the row says "Status unknown" and never shows a stale Online.
-- OFC-13 · *(new, rev 6)* Each status has its icon and word from §3.1, and a row's accessible label includes the name, HQ, where it runs, the status (and reason) and the agent count, and says it opens details.
+- OFC-11 · *(rev 8)* A Stopped office shows its reason in plain words (§3.3) as secondary text and in its details, with the action for that reason. Restart office isn't offered only where the contract refuses it (`unsupported_version`, `invalid_request`); for `key_missing` the action is Try again.
+- OFC-12 · *(rev 8)* Office status updates live from the host. When the app has no live status, the row says "Status unknown" and never shows a stale Online. A host that never sends `office.status_changed` (an older host) counts as not live, so its offices show "Status unknown".
+- OFC-13 · *(rev 8)* Each status has its icon and word from §3.1. A row's accessible label includes the name, HQ, where it runs, the status (and reason) and the agent count, says it opens details, and gives a pending restart in a form that doesn't tick ("restarting shortly" or "restarting at 10:42"). The visible countdown updates no more often than every 10 s, and a status change of an office on this Mac is announced through a polite live region.
 
 **Org chart: Teams (TEAM)**
 - TEAM-1 · *(rev 2)* The Teams view draws the ownership tree from the organization root; each card shows its name, the lead or "No lead", an Agents row and a People row with avatars and counts, its sub-team count and its projects.

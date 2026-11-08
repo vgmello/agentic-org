@@ -2,7 +2,7 @@
 kind: spec
 title: "Work items: tasks, bugs and project docs (UX)"
 status: for-review
-revision: 6
+revision: 7
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-08"
@@ -23,13 +23,22 @@ Phase 1 workstream W7 (UX), with codex-dev (model and library) · Builds on `off
 
 ## Changelog
 
+**Revision 7 (2026-11-08): review fixes.**
+
+- **Waiting for a decision** (ada Q11): the block names its ADR. Accepting the ADR clears the block and the task returns to the status it had before Blocked. Rejecting it, or Request changes…, leaves a normal block, counted as blocked, not waiting on you (§9). The model needs a structured blocker, not only the text reason (A49, new).
+- **Deleting a team:** if giving an area its new team fails, the dialog stays open, names the area and offers Retry, and the team isn't deleted (§8).
+- **Answered in ada's W7 §9:** C3, C6, C8, C9, C10, C20 and A13 resolved (§15).
+- **Link a task** (§7.2) links an existing task in the same project only, as C8 was resolved (it still said "across projects").
+- Revision 6's note on waiting on you now states the narrow rule for decisions.
+- **Criteria rewritten (same ID):** TSK-3, AREA-7. 85 criteria.
+
 **Revision 6 (2026-11-08): aligned with ada's W7 model.**
 
 - **Numbers:** tasks and bugs have separate sequences in each project, and the prefix shows the type: tasks `T-12`, bugs `B-7` inside the project, and `chk-T-12`, `chk-B-7` outside it (decision 3). An item with no number yet shows "Pending · 3k9f2x" (a 6-character local short id, §12). Every example is renumbered (a task keeps its digits as `T-n`, a bug as `B-n`). C1 resolved.
 - **Done · Completed or Done · Cancelled** (C4 resolved). A bug goes Fixed by itself only when at least one fix task is Done · Completed, and not while required checklist steps are unticked (the activity says why). When every fix task was cancelled, the bug says "All its fix tasks were cancelled. Create a fix task, or close the bug." (decision 9, §7.2).
 - **Made-task steps** tick only when their task is Done · Completed, and can't be ticked by hand. A cancelled task leaves the step showing "T-42 was cancelled" with **Unlink** (decision 17, §9.1).
 - **Deleting a team** keeps the required **Give its areas to** picker when the project keeps other teams: the app gives each area its new team before it deletes the team. Areas become "No team" only when no team is left (§8).
-- **Time:** working time isn't tracked yet, so the split shows waiting on you, blocked and "the rest", never idle (§9.2). Waiting on you counts questions to you, Fixed bugs you reported, scoped requests, triage suggested to you and decisions waiting for your acceptance.
+- **Time:** working time isn't tracked yet, so the split shows waiting on you, blocked and "the rest", never idle (§9.2). Waiting on you counts questions to you, Fixed bugs you reported, scoped requests, triage suggested to you and a task Blocked waiting for your decision on a proposed ADR, only while it's the blocker.
 - **Criteria rewritten (same ID):** TSK-11, CHK-6, BUG-7, FIX-2, AREA-7. **Added:** WORK-8. 85 criteria.
 
 **Revision 5 (2026-11-08): features and requests (the user).** The project page gets a **Features** tab after Overview (`features-ux.md`) and a **Debt** tab. Work gets **Debt** and **Requests** pills (`decisions-and-tech-debt-ux.md`, `feature-requests-ux.md`). Tasks can link to one feature. Tabs are now **Overview | Features | Tasks | Bugs | Debt | Docs | Insights | Settings**.
@@ -303,7 +312,7 @@ Triage is the step from **New** to **Triaged**: confirm the area and severity, s
 ### 7.2 Fix tasks
 
 - **Create fix task** opens New task (Flow 7) prefilled: title "Fix: Card charged twice on double click", the assignee and priority from the bug, the team from the area, and the description quoting the bug's "What happened" with a link. The task is linked both ways.
-- **Link a task** links an existing task in the same project (C8: across projects).
+- **Link a task** links an existing task in the same project (C8).
 - The bug's status follows its fix tasks (decision 9): first fix task In progress → bug In progress · all fix tasks Done, at least one Done · Completed → bug **Fixed** *(rev 6)* · a fix task reopened while the bug is Fixed → bug back to In progress. Unlinking the last fix task doesn't change the status.
   - **Every fix task cancelled:** the bug keeps its status, and the Fix tasks section says "All its fix tasks were cancelled. Create a fix task, or close the bug." with **Create fix task** and **Close as…**. *(rev 6)*
   - **Required steps left:** when the last fix task is done but the bug's checklist still has required steps unticked, the bug doesn't go Fixed. The activity says why ("⚙ All fix tasks are done, but 1 required step isn't ticked, so it isn't Fixed yet"), and **Mark as fixed** asks for a reason, as Done does (§9.1). *(rev 6)*
@@ -340,6 +349,7 @@ Triage is the step from **New** to **Triaged**: confirm the area and severity, s
 - **Only General:** a hint under the list: "Split the project into areas so each bug reaches the team that owns that part." **Add area**. **General** can be renamed and moved to another of the project's teams, but not deleted (A13).
 - **A team leaves the project** (offices-and-teams §7.9, or the team is deleted, §7.10): when the project keeps other teams, the dialog lists the team's areas with a required **Give its areas to** picker (the remaining teams), and areas whose lead was in that team fall back to the new team's lead. When it was the project's last team, its areas show an amber "No team · **Choose team…**" once the project has a team again, and until then the owner triages their bugs.
   - **Deleting a team** *(rev 6)* keeps the same required **Give its areas to** picker, one per project that keeps other teams. The model's team delete leaves the team's areas without a team (ada's W7 model), so the app first gives each area to the chosen team, then deletes the team. Areas become "No team" only in a project with no other team left.
+  - **If giving an area its new team fails** *(rev 7)*: the dialog stays open and names the area that failed ("Couldn't give Payments to Platform") with **Retry**, and the team isn't deleted. Areas already given keep their new team.
 - **The area lead leaves the team or the organization:** the area falls back to the team's lead, and the row says "Area lead: Riley (team lead)".
 
 ## 9. Flow 7 · Tasks: board, list and task page
@@ -359,6 +369,11 @@ Triage is the step from **New** to **Triaged**: confirm the area and severity, s
 - **Columns** are the task statuses (§2.1). Done shows the last 7 days, with **Show all done**.
 - **Card:** number · priority (unless Normal) · title · assignee (shape + name) · team · the goal chip when the assignee's session reports one (v1 rule R#33) · a fix chip with the bug's severity · Blocked shows its reason.
 - **Moving:** drag between columns, or ⋯ › **Move to ▸** To do / In progress / Blocked / Done (Done · Completed), plus ⋯ › **Cancel task…** (Done · Cancelled, with a reason, which needs a cancel-reason field in ada's model, A48; CLI `org-agent task done <id> --cancelled --reason "…"`), or the keyboard (select a card with Space, arrow to a column, Space to drop; announced "T-17 moved to In progress"). **Blocked needs a reason** (one line), or **Waiting for a decision** with a doc picker, which shows "Waiting for your decision on ADR-0004" with **Open** on the card and task page (ada Q11). Each column sorts by priority, then age (decision 5). Priority changes through ⋯ › **Priority ▸** or the task page, and the card moves to its place with the change announced.
+- **Waiting for a decision** *(rev 7, ada Q11)*: the block names its decision doc (`blocked_on: ADR-0004`, A49), not only a text reason.
+  - **Accepted:** the block clears by itself and the task goes back to the status it had before Blocked. Activity: "ADR-0004 accepted, so T-17 is unblocked".
+  - **Rejected:** the task stays Blocked with the reason "ADR-0004 was rejected: <reason>". It's now a normal block: counted as blocked, not waiting on you.
+  - **Request changes…:** a normal block too, until the ADR is proposed again.
+  - Only while the ADR is proposed and is the task's blocker does that span count as waiting on you (§9.2).
 - **List:** a table with the same columns as v1 §3.10 (status, number, priority, title, assignee, team, fixes, goal, updated), grouped by status, Blocked first.
 - **New task** (slide-over): Title * (1–120) · Assignee (optional; the owner first) · Team (the project's teams; prefilled when there's one) · Feature (optional, the project's features; prefilled when started from a feature) · Priority (Normal) · Description (Markdown) · Definition of done (one or two sentences: the goal the agent works to) · Fixes (bug picker; prefilled from Create fix task) · **Start now** for an agent with no session running (v1 §3.7 rule: never typed into a running session). **Create task**. Toast "Task T-17 created and given to River."
 - **Task page:** like the bug page. Main column: description, definition of done, activity. Side column: status, priority, assignee, team, fixes (bugs, with severity), branch and worktree (W4: "Worktree: ~/…/chk-T-17, branch task/chk-T-17-coupon-edge-cases"), commits, docs, **Open session** / **Start a session on this task**.
@@ -470,7 +485,7 @@ Nav **Work**, pill tabs **Tasks | Bugs | Debt | Requests** *(rev 5)*: the same l
 **Tasks (TSK)**
 - TSK-1 · The board has To do, In progress, Blocked and Done columns. Done shows the last 7 days, with **Show all done**.
 - TSK-2 · A card can be moved by drag, by ⋯ › Move to, and by keyboard, and each move is announced to screen readers.
-- TSK-3 · Moving a task to Blocked asks for a one-line reason, and the card shows it.
+- TSK-3 · *(rev 7)* Moving a task to Blocked asks for a one-line reason, or Waiting for a decision with a doc, and the card shows it. When that ADR is accepted, the block clears and the task returns to its status before Blocked, with an activity entry. When it's rejected, or changes are requested, the task stays Blocked as a normal block (counted as blocked, not waiting on you), with the rejection reason shown.
 - TSK-4 · *(rev 2)* Every column sorts by priority (Urgent first), then age, and changing a task's priority moves its card and announces the change.
 - TSK-5 · *(rev 2)* New task needs only a title, and its priority is Normal unless changed. The assignee picker lists the owner first as "Alex Kim (you)", and agents and people by shape and word.
 - TSK-6 · Start now is offered only for an agent with no session running, and nothing is typed into a running session.
@@ -540,7 +555,7 @@ Nav **Work**, pill tabs **Tasks | Bugs | Debt | Requests** *(rev 5)*: the same l
 - AREA-4 · Changing an area's team says how many open bugs move and who triages new ones.
 - AREA-5 · *(rev 2)* Deleting an area with open bugs requires choosing another area for them, General first. Closed bugs show "<name> (deleted)".
 - AREA-6 · *(rev 2)* A new project has the area General, owned by its first team, or by no team while the project has none (AREA-7). General can be renamed and given to another project team, but has no Delete.
-- AREA-7 · *(rev 6)* Removing a team from a project, or deleting the team, when the project keeps other teams requires choosing which remaining team takes its areas, and the app gives each area to that team before the team is deleted. Only when no team is left do its areas show "No team · Choose team…", and the owner triages their bugs. *(Confirmed by ada for W7: an area's owning team is nullable, and creating a bug is never blocked.)*
+- AREA-7 · *(rev 7)* Removing a team from a project, or deleting the team, when the project keeps other teams requires choosing which remaining team takes its areas, and the app gives each area to that team before the team is deleted. *(rev 7)* If giving an area its team fails, the dialog stays open, names that area and offers Retry, and the team isn't deleted. Only when no team is left do its areas show "No team · Choose team…", and the owner triages their bugs. *(Confirmed by ada for W7: an area's owning team is nullable, and creating a bug is never blocked.)*
 - AREA-8 · *(new, rev 2)* An area with no area lead shows "Area lead: <team lead> (team lead)", and when an area lead leaves the team or the organization, the area falls back to the team's lead.
 - AREA-9 · *(new, rev 2)* Changing an area's team clears an area lead who isn't in the new team, and the dialog says so before saving.
 
@@ -570,24 +585,25 @@ Nav **Work**, pill tabs **Tasks | Bugs | Debt | Requests** *(rev 5)*: the same l
 **For codex-dev (the model)**
 - ~~C1~~ · *Resolved (ada W7): separate T-/B- sequences; the prefix always shows the type.* Tasks are `T-12` and bugs `B-7` in their project, and `chk-T-12`, `chk-B-7` outside it (decision 3). Was: one shared sequence per project.
 - ~~C2~~ · *Resolved in rev 2 by ada's default:* priority is a field (Urgent, High, Normal, Low) shared with tasks. My trade-off stays on record for the user: two scales on one bug take more explaining, so Normal is hidden and priority never borrows severity's colors.
-- C3 · Automatic bug status from fix tasks (decision 9), with an activity entry and an Undo. Is that in the library's rules, or does the app do it? I'd rather it's the library, so the CLI and the app agree.
+- ~~C3~~ · *Resolved (ada, W7):* the library, as the spec preferred. Automatic bug status from fix tasks (decision 9), with an activity entry and an Undo. Is that in the library's rules, or does the app do it? I'd rather it's the library, so the CLI and the app agree.
 - ~~C4~~ · *Resolved (ada W7):* Done has a resolution, Completed (the default) or Cancelled, shown "Done · Cancelled". Only completed tasks fix bugs, deliver features, pay back debt and tick made-task steps (rev 6).
 - C5 · The agent side: which `org-agent` commands report, triage, verify and comment (agreed with Remy, the `org-agent` owner)? I need their output words to match the UI's (statuses, severities, "Fixed — verify").
-- C6 · Watchers: should a bug have watchers (the reporter, duplicate reporters, commenters) who are told about changes? I've used them only for duplicates and verification.
+- ~~C6~~ · *Resolved (ada, W7):* minimal watchers: the creator, duplicate reporters, and anyone who comments with watch or calls `work.watch`; notifications come with the messaging work. Watchers: should a bug have watchers (the reporter, duplicate reporters, commenters) who are told about changes? I've used them only for duplicates and verification.
 - C7 · Commits and branches: linking by the number in commit messages and branch names (`task/chk-T-13-…`: task branches are `task/<ref>-<slug>`, where the ref is the task's number with the project key, or its short id when it has no number yet; projects-git-github.md)? And can the office refuse Done for a task whose worktree has uncommitted changes?
-- C8 · Can a fix task live in another project from its bug (a Platform fix for a checkout bug)? I've kept links within one project for phase 1.
-- C9 · Deleting bugs and tasks: I'd keep numbers unused after a delete. (Doc history is now git's, A11.)
+- ~~C8~~ · *Resolved (ada, W7):* same project only. Can a fix task live in another project from its bug (a Platform fix for a checkout bug)? I've kept links within one project for phase 1.
+- ~~C9~~ · *Resolved (ada, W7):* delete is app-only and keeps the number. Deleting bugs and tasks: I'd keep numbers unused after a delete. (Doc history is now git's, A11.)
 - ~~C19~~ · *Resolved (ada):* Mark done anyway with a recorded reason, with no hard refusal in phase 1. The reason shows on the task and in Activity.
-- C20 · Checklist items as part of the work item (ordered, with a stable id each, ticked by and at), and a step "made a task" as a link to that task.
+- ~~C20~~ · *Resolved (ada, W7):* checklist items as designed. Checklist items as part of the work item (ordered, with a stable id each, ticked by and at), and a step "made a task" as a link to that task.
 - ~~C21~~ · *Resolved (agy-senior-dev):* the §9.1 commands fit. `task check|uncheck` take the step number or its stable id (scripts use the id, so reordering never ticks the wrong step). A blocked `task done` exits 1 with the same message on stderr (and JSON with `--json`).
-- C10 · Docs: is the Brief `docs/brief.md` (or the repo's README)? Saves go to a docs branch (`decisions-and-tech-debt-ux.md` §0.2, A36). Remaining: does a project without a repository yet have docs at all?
+- ~~C10~~ · *Resolved (ada, W7):* the brief is `docs/brief.md`; a project without a repository has no docs. Docs: is the Brief `docs/brief.md` (or the repo's README)? Saves go to a docs branch (`decisions-and-tech-debt-ux.md` §0.2, A36). Remaining: does a project without a repository yet have docs at all?
 
 **For ada**
+- A49 · *(rev 7)* **Waiting for a decision** needs the Blocked state to carry a structured blocker, the decision doc's id (for example `blocked_on: ADR-0004`), not only the text `blocked_reason`, so waiting on you can count that span, and accepting or rejecting the ADR can clear or change the block (§9). Can the model add it?
 - A48 · Cancel task asks for a reason ("duplicate of T-9", "not needed any more"), shown on the cancelled task. Can `task.set_status` carry an optional `reason` for Done · Cancelled, and `task done --cancelled --reason` in the CLI?
 - ~~A10~~ · *Resolved in rev 3, clarified in rev 4:* HQ gives the project number. Items created in the app go to HQ and show Pending (with a local short id) until HQ confirms them. Items an agent creates at its own office are saved at once and wait only for their number (§12).
 - ~~A11~~ · *Resolved in rev 3:* Markdown files under `docs/` in the project's repository, with an office index (title, path, last commit). codex-dev owns the details (C10).
 - ~~A12~~ · *Resolved in rev 3:* no permissions in phase 1. Anyone may triage or verify, the UI suggests the area lead and the reporter, and the activity records who acted.
-- A13 · Can General be deleted? I've made it renamable and movable to another of the project's teams, but not deletable, so "a bug never lacks an area" always holds.
+- ~~A13~~ · *Resolved (ada, W7):* General can't be deleted. Can General be deleted? I've made it renamable and movable to another of the project's teams, but not deletable, so "a bug never lacks an area" always holds.
 
 **For the user**
 - ~~U7~~ · *Resolved (the user, 2026-11-08): as recommended.* *My recommendation (adopted):* yes, Critical bugs always reach you in Needs you, whoever triages them.

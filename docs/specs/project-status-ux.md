@@ -2,7 +2,7 @@
 kind: spec
 title: "Project status: a visual status and a periodic report for each project (UX)"
 status: for-review
-revision: 3
+revision: 4
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-08"
@@ -19,7 +19,9 @@ Extends `features-ux.md` (feature progress), `work-items-ux.md` (tasks, bugs, ti
 
 > Every once in a while I want a **status**, a **visualization of the status of my project**. One of those ephemeral (one-off) runs, using the smartness of the system, calculates it for us and **creates a report for each project**.
 
-**Revision 3 (2026-11-08): aligned with ada's W7 model.** "Waiting on you" (the Flow tile, the health rule and Home › Projects status) counts what `costs-and-insights-ux.md` decision 5 counts: questions to you, Fixed bugs you reported, scoped requests, triage suggested to you and decisions waiting for your acceptance (§4). No criteria changed.
+**Revision 4 (2026-11-08): review fixes.** Revision 3's note on waiting on you now states the narrow rule for decisions, as §4 does: only a task Blocked waiting for your decision on a proposed ADR, while it's the blocker. No criteria changed.
+
+**Revision 3 (2026-11-08): aligned with ada's W7 model.** "Waiting on you" (the Flow tile, the health rule and Home › Projects status) counts what `costs-and-insights-ux.md` decision 5 counts: questions to you, Fixed bugs you reported, scoped requests, triage suggested to you and a task Blocked waiting for your decision on a proposed ADR, only while it's the blocker (§4). No criteria changed.
 
 **Revision 2 (2026-11-08): review fixes.** Starting a report on demand is app-only (no `org-agent report status`). Example dates and figures are set in December 2026. Health reasons cite only the rules. The Stop on a running report cancels that run.
 

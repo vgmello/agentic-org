@@ -2,7 +2,7 @@
 kind: spec
 title: "Costs, tokens, time and insights (UX)"
 status: for-review
-revision: 4
+revision: 5
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-08"
@@ -21,7 +21,9 @@ Extends `work-items-ux.md` (tasks, bugs), `our-org-in-the-app.md` (sessions, run
 
 > *(rev 2, the user)* No clients: the point is to see **what each project has cost (the investment)**. Immediate figures are fine. Don't worry about plans: value everything by its tokens at **API prices**, in **US dollars**.
 
-**Revision 4 (2026-11-08): aligned with ada's W7 model.** Working time isn't tracked yet (it needs session tracking). Until it is, the time split shows waiting on you, blocked and **the rest**, never idle, so untracked work is never counted as idle (decision 5, §2). Waiting on you counts questions to you, Fixed bugs you reported, scoped requests, triage suggested to you and decisions waiting for your acceptance. An agent sets its current task with `org-agent task current <id>` (was `status --task`, C14 resolved). Task numbers follow `work-items-ux.md` rev 6 (`T-13`). **Criteria rewritten (same ID):** TIME-1. **Added:** TIME-7.
+**Revision 5 (2026-11-08): review fixes.** Working time isn't tracked yet, so wherever Insights shows it (the Working time tile, the investment line, the breakdowns' Working column, Insights › Projects and the agent profile line) it shows "—" with "not tracked yet" until session tracking exists, never a number (§1). Revision 4's note on waiting on you now states the narrow rule. **Criteria rewritten (same ID):** INS-1.
+
+**Revision 4 (2026-11-08): aligned with ada's W7 model.** Working time isn't tracked yet (it needs session tracking). Until it is, the time split shows waiting on you, blocked and **the rest**, never idle, so untracked work is never counted as idle (decision 5, §2). Waiting on you counts questions to you, Fixed bugs you reported, scoped requests, triage suggested to you and a task Blocked waiting for your decision on a proposed ADR, only while it's the blocker. An agent sets its current task with `org-agent task current <id>` (was `status --task`, C14 resolved). Task numbers follow `work-items-ux.md` rev 6 (`T-13`). **Criteria rewritten (same ID):** TIME-1. **Added:** TIME-7.
 
 **Revision 3 (2026-11-08): reviewer fix.** A39: organization totals need session usage from every office (§7).
 
@@ -50,27 +52,31 @@ Extends `work-items-ux.md` (tasks, bugs), `our-org-in-the-app.md` (sessions, run
 | **Project › Insights tab** (new tab, after Docs) | this month and last: cost, tokens, working time, tasks and bugs done · cost by team, area, agent, model and kind (task, bug, debt payback, copilot, retro, report, not linked; was: task, bug, debt, copilot, not linked) · speed (median lead time, working time, waiting on you, by kind) · the insights list · the budget bar |
 | **Insights** (nav, org-wide) | the same, across projects · a Projects table (investment to date, this month, last month, change, working time, items done) · Export |
 | **Projects list** | an **Investment** column (total to date, US dollars) |
-| **Agent profile › Overview** | this week's cost, working time and tasks done, and cost per task done, vs the team median |
+| **Agent profile › Overview** | this week's cost, working time ("— not tracked yet") and tasks done, and cost per task done, vs the team median |
 | **Home** | one line: "This month: ≈ $412 · 63 tasks done · 30 h waiting on you" with **Insights** · budget warnings |
+
+**Working time isn't tracked yet** (it needs session tracking). Until it is, every place that shows working time (the Working time tile, the investment line, the breakdowns' Working column, Insights › Projects, speed and the agent profile) shows "—" with "not tracked yet", never a number. Cost, tokens, items done and the time split (§2) are unchanged.
 
 ```
  Projects › Agentic Org › Insights                     [This month ▾]  [Export ▾]
  ┌ Cost ─────────────┐ ┌ Tokens ──────────┐ ┌ Working time ──┐ ┌ Done ──────────────┐
- │ ≈ $412  ▲ 18%     │ │ 61.2 M           │ │ 96 h           │ │ 63 tasks · 21 bugs │
- │ budget $600 ▓▓▓▓░ │ │ 74% cache reads  │ │30 h waiting on │ │ 4 debt paid        │
- └───────────────────┘ └──────────────────┘ │ you            │ └────────────────────┘
+ │ ≈ $412  ▲ 18%     │ │ 61.2 M           │ │ —              │ │ 63 tasks · 21 bugs │
+ │ budget $600 ▓▓▓▓░ │ │ 74% cache reads  │ │ not tracked yet│ │ 4 debt paid        │
+ └───────────────────┘ └──────────────────┘ │30 h waiting on │ └────────────────────┘
+                                            │ you            │
                                             └────────────────┘
  Insights
   ⚠ T-13 "Disable Pay while submitting" cost 4× the median task in App ($18 vs $4.50)  [Open]
   ⓘ Agents waited 30 h for your answers this month, most on ada's questions (19 h)        [See]
   ⓘ codex-dev's tasks finish 2× faster than the team median this month                  [Open]
  By team            Cost       Working   Tasks  Cost/task   Median lead time
-  Office            ≈ $171     41 h      22     ≈ $7.80     1.6 d
-  App               ≈ $132     30 h      25     ≈ $5.30     1.1 d
-  Agent tooling       $68 *    17 h      12       $5.70     0.9 d
-  Design            ≈ $29       6 h       4     ≈ $7.20     0.4 d
-  Not linked        ≈ $12       2 h       —        —          —
+  Office            ≈ $171     — †       22     ≈ $7.80     1.6 d
+  App               ≈ $132     — †       25     ≈ $5.30     1.1 d
+  Agent tooling       $68 *    — †       12       $5.70     0.9 d
+  Design            ≈ $29      — †        4     ≈ $7.20     0.4 d
+  Not linked        ≈ $12      — †        —        —          —
   * includes 1 runtime with no cost data (Antigravity): tokens only
+  † working time: not tracked yet
 ```
 
 - **Breakdowns** switch with pills: Team · Area · Agent · Model · Kind. Each row opens a filtered list of the sessions or items behind it, so every total can be traced to sessions.
@@ -92,7 +98,7 @@ Extends `work-items-ux.md` (tasks, bugs), `our-org-in-the-app.md` (sessions, run
 
 ## 3. Flow · Investment and export
 
-- **Project › Insights** opens with **Investment**: "Agentic Org has cost ≈ $1,240 so far (since 7 Nov) · 212 h of agent work · 180 tasks and 64 bugs done", then this month.
+- **Project › Insights** opens with **Investment**: "Agentic Org has cost ≈ $1,240 so far (since 7 Nov) · agent work: — (not tracked yet) · 180 tasks and 64 bugs done", then this month.
 - **Insights › Projects** (org-wide): project · investment to date · this month · last month · change · working time · items done · budget.
 - **Export ▾:** **CSV** (one row per session, with project, task, agent, runtime, model, tokens, cost, the cost source and times) · **Status report for the month** (`project-status-ux.md`, which replaces a separate monthly report; a Markdown doc saved to the project's `docs/reports/`, with totals, the breakdowns and the insights).
 
@@ -134,7 +140,7 @@ Extends `work-items-ux.md` (tasks, bugs), `our-org-in-the-app.md` (sessions, run
 - TIME-7 · *(new, rev 4)* Waiting on you counts questions to the owner, Fixed bugs the owner reported (waiting for the owner's check), scoped requests waiting for approval, triage suggested to the owner, and tasks Blocked waiting for the owner's decision on a proposed ADR (only while that decision is the task's blocker, ada Q11).
 
 **Insights (INS)**
-- INS-1 · The project's Insights tab shows cost, tokens, working time and items done for the period, with the change from the previous period.
+- INS-1 · *(rev 5)* The project's Insights tab shows cost, tokens, working time and items done for the period, with the change from the previous period. Until session tracking exists, working time shows "—" with "not tracked yet" (tile, investment line, breakdowns, Insights › Projects and the agent profile), never a number.
 - INS-2 · Breakdowns by team, area, agent, model and kind are available, each with a table view for screen readers.
 - INS-3 · Insights are sentences with a link to the items behind them. At least these exist: an outlier task or bug (≥ 3× its team's median), waiting on you this period, and a cost concentration (one area or team ≥ 40%).
 - INS-4 · A runtime with no usage data is marked in every total it affects, never counted as zero.

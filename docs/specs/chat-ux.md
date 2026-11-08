@@ -2,7 +2,7 @@
 kind: spec
 title: "Chat: channels, DMs and threads where agents and people talk (UX)"
 status: for-review
-revision: 3
+revision: 4
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-08"
@@ -18,6 +18,8 @@ Extends `our-org-in-the-app.md` (Activity, the owner reads messages, A17), `agen
 ## The request (the user, 2026-11-08)
 
 > A chat, using chat-sdk.dev, where **agents talk to agents and I can talk to them too, like Slack**: channels, DMs and so on. Agents **don't output everything**: only their questions and their interactions with people, the responses that require interaction. That's what goes in the chat.
+
+**Revision 4 (2026-11-08): review fixes.** The built-in hiring agent is always called "HR lead" (`our-org-in-the-app.md` §2a, HRL-1): the DM list and the asleep-agent example say "HR lead". Its handle stays `hr`. No criteria changed.
 
 **Revision 3 (2026-11-08): aligned with ada's W7 model.** Item numbers in messages follow `work-items-ux.md` rev 6 and carry the project key, since messages sit outside projects: `ac-T-17` for a task, `ac-B-15` for a bug. No criteria changed.
 
@@ -38,7 +40,7 @@ Extends `our-org-in-the-app.md` (Activity, the owner reads messages, A17), `agen
 5. **DMs** with any member: an agent, a person or a group (up to 8). The owner can read every conversation in the organization (A17). Conversations the owner isn't in are marked "You're reading as the owner", and the owner can reply in any of them.
 6. **Questions are cards that answer themselves.** An agent's ask shows as a card with its options as buttons ("ada asks: Rename Open organization? **Yes** · **No** · **Reply…**"). Answering in the chat answers the ask, unblocks the agent and clears it from Needs you, all at once.
 7. **Threads keep channels readable.** Agent conversations reply in threads by default. A thread can be sent to the channel ("Also send to #agentic-org") like Slack.
-8. **Talking to an asleep agent wakes it** (run modes). The composer says "HR is asleep. Your message will wake it." A typing indicator shows while it works ("HR is typing…").
+8. **Talking to an asleep agent wakes it** (run modes). The composer says "HR lead is asleep. Your message will wake it." A typing indicator shows while it works ("HR lead is typing…").
 9. **Chat SDK runs as an optional bridge** *(ada, A42)*. The office's messaging is the source of truth, agents keep using `org-agent`, and the app's chat is our own UI over the same messages. Chat SDK (in `org-chat-bridge`, supervised by the office) brings platform bridges and its card and approval semantics. Optional **bridges** (Chat SDK's platform adapters) mirror chosen channels to Slack, Teams or Discord, so people can follow and join chosen channels there, never acting as the owner (§6, decision 11, A42).
 10. **What an agent can read** *(ada, C1)*: an agent reads a conversation's messages only while it's a **member** of that conversation (a channel or group DM), and a thread's messages only if it's a member of the parent conversation. Leaving a channel stops further reads. DMs follow ADR-0003 (only messages the agent sent or received). The owner reads everything (A17).
 11. **Bridges never act as the owner** *(ada, C3)*: a message arriving from Slack, Teams or Discord is posted as the bridged **person** (their own handle, with a person's rights only). Asks addressed to the owner and every approval are answered **only in the app**: on a bridge they show read-only with **Open in Agentic Org**. An agent's ask addressed to a bridged person can be answered from the bridge.
@@ -60,7 +62,7 @@ Extends `our-org-in-the-app.md` (Activity, the owner reads messages, A17), `agen
  │                           │   ✅ reviewer  👀 ada                                      │
  │ DIRECT MESSAGES           │ [E] Eden  10:20                                           │
  │ ● [A] ada        Working  │   @ada the specs branch is ready for your go ↳ 2 replies  │
- │ ◌ [H] HR         Asleep   │                                                           │
+ │ ◌ [H] HR lead    Asleep   │                                                           │
  │ ○ [R] Riley      Offline  │ ┌─────────────────────────────────────────────────────┐   │
  │ ● (S) Sam Ortiz           │ │ Message #agentic-org      @ mention  / command  📎   │   │
  │ + New message             │ └─────────────────────────────────────────────────────┘   │
