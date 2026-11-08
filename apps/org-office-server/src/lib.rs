@@ -1,0 +1,354 @@
+//! # org-office-server: one process per office
+//!
+//! Started by the host on the launch protocol (`org-office-launch`):
+//! ```text
+//! org-office-server --create        # first stdin line: the create message; makes the office, serves it
+//! org-office-server --office <id>   # first stdin line: the start message; serves the office
+//! org-office-server --discard <id>  # removes an unfinished create; reads no line
+//! ```
+//! stdout carries only [`ServerEvent`] lines (`created`, `ready`, `discarded`, `failed`), logs go
+//! to stderr, and EOF on stdin means the host is gone: the server closes its databases and exits 0.
+//! The office, its folder, lock, key and databases are `org_office::Office`; this crate is the
+//! process around it: the control pipe, the Keychain, the socket.
+
+#![deny(unsafe_code)]
+
+pub mod fdswap;
+mod keys;
+mod serve;
+mod signals;
+
+use std::fs::File;
+use std::io::{BufReader, Read, Write};
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+use org_office::{NewOffice, Office, OfficeError};
+use org_office_launch::{
+    office_dir, read_first_host_message, write_server_event, FailCode, FirstLine, HostMessage,
+    OfficeFile, ServerEvent, CREATE_FLAG, DISCARD_FLAG, OFFICE_FLAG,
+};
+use org_proto::location::{check_socket_path, default_office_home, office_socket_path};
+use org_proto::{AppToken, OfficeRole};
+
+use fdswap::ControlPipe;
+
+/// A panic prints where it happened and nothing else: its message could carry a path or data.
+pub fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        let place = info
+            .location()
+            .map_or_else(String::new, |l| format!(" at {}:{}", l.file(), l.line()));
+        eprintln!("org-office-server: internal error{place}");
+    }));
+}
+
+/// What the server was asked to do.
+#[derive(Debug, PartialEq, Eq)]
+enum Mode {
+    Create,
+    Serve(String),
+    Discard(String),
+}
+
+fn parse_args(args: &[String]) -> Result<Mode, &'static str> {
+    match args {
+        [flag] if flag == CREATE_FLAG => Ok(Mode::Create),
+        [flag, id] if flag == OFFICE_FLAG => Ok(Mode::Serve(id.clone())),
+        [flag, id] if flag == DISCARD_FLAG => Ok(Mode::Discard(id.clone())),
+        _ => Err("usage: org-office-server --create | --office <id> | --discard <id>"),
+    }
+}
+
+/// Runs the server and returns its exit code.
+pub fn run(args: &[String], mut control: ControlPipe) -> i32 {
+    let mode = match parse_args(args) {
+        Ok(mode) => mode,
+        Err(usage) => return fail(&mut control, FailCode::InvalidRequest, usage),
+    };
+    let Some(home) = default_office_home() else {
+        return fail(&mut control, FailCode::InvalidRequest, "no office home");
+    };
+    let keys = match keys::provider() {
+        Ok(keys) => keys,
+        Err(why) => return fail(&mut control, FailCode::StorageError, &why),
+    };
+    signals::install();
+    match mode {
+        Mode::Discard(id) => discard(&mut control, &home, &id, &*keys),
+        Mode::Create => create_and_serve(control, &home, &*keys),
+        Mode::Serve(id) => open_and_serve(control, &home, &id, &*keys),
+    }
+}
+
+fn discard(
+    control: &mut ControlPipe,
+    home: &Path,
+    id: &str,
+    keys: &dyn org_office::KeyProvider,
+) -> i32 {
+    let Some(folder) = office_dir(home, id) else {
+        return fail(control, FailCode::InvalidRequest, "not a plain office id");
+    };
+    match Office::discard(folder, id, keys) {
+        Ok(()) => {
+            emit(control, &ServerEvent::Discarded);
+            0
+        }
+        Err(e) => fail_with(control, &e),
+    }
+}
+
+fn create_and_serve(
+    mut control: ControlPipe,
+    home: &Path,
+    keys: &dyn org_office::KeyProvider,
+) -> i32 {
+    let (message, from_host) = match first_line(&mut control, FirstLine::Create) {
+        Ok(first) => first,
+        Err(code) => return code,
+    };
+    let HostMessage::Create(create) = message else {
+        return fail(
+            &mut control,
+            FailCode::InvalidRequest,
+            "not a create message",
+        );
+    };
+    if create.role != OfficeRole::Hq {
+        return fail(
+            &mut control,
+            FailCode::InvalidRequest,
+            "this version creates only HQ offices",
+        );
+    }
+    let Some(folder) = office_dir(home, &create.office_id) else {
+        return fail(
+            &mut control,
+            FailCode::InvalidRequest,
+            "not a plain office id",
+        );
+    };
+    let new = NewOffice {
+        office_id: create.office_id.clone(),
+        office_name: create.office_name.clone(),
+        role: org_office::OfficeRole::Hq,
+        org_id: create.org_id.clone(),
+        org_name: create.org_name.clone(),
+    };
+    let office = match Office::create(folder, &new, keys) {
+        Ok(office) => office,
+        Err(e) => return fail_with(&mut control, &e),
+    };
+    let info = office.info();
+    let file = OfficeFile::new(
+        info.office_id.clone(),
+        info.office_name.clone(),
+        OfficeRole::Hq,
+        info.org_id.clone(),
+        info.org_name.clone(),
+        info.created_at.clone(),
+    );
+    // `office.json` is in place and durable: from here the office is stored, whatever happens.
+    emit(&mut control, &ServerEvent::Created { office: file });
+    serve_office(control, from_host, home, office, create.app_token)
+}
+
+fn open_and_serve(
+    mut control: ControlPipe,
+    home: &Path,
+    id: &str,
+    keys: &dyn org_office::KeyProvider,
+) -> i32 {
+    let (message, from_host) = match first_line(&mut control, FirstLine::Start) {
+        Ok(first) => first,
+        Err(code) => return code,
+    };
+    let HostMessage::Start(start) = message else {
+        return fail(
+            &mut control,
+            FailCode::InvalidRequest,
+            "not a start message",
+        );
+    };
+    let Some(folder) = office_dir(home, id) else {
+        return fail(
+            &mut control,
+            FailCode::InvalidRequest,
+            "not a plain office id",
+        );
+    };
+    let office = match Office::open(folder, keys) {
+        Ok(office) => office,
+        Err(e) => return fail_with(&mut control, &e),
+    };
+    serve_office(control, from_host, home, office, start.app_token)
+}
+
+/// Reads the first line from the host. `Err(code)` is the exit code to return: 0 when the host
+/// is gone, otherwise a `failed` line has been written.
+fn first_line(control: &mut ControlPipe, expected: FirstLine) -> Result<(HostMessage, File), i32> {
+    let from_host = control.from_host.try_clone().map_err(|_| {
+        fail(
+            control,
+            FailCode::StorageError,
+            "cannot read the control pipe",
+        )
+    })?;
+    // A small buffer we control, since the line carries the app token.
+    let mut reader = BufReader::with_capacity(1024, from_host);
+    match read_first_host_message(&mut reader, expected) {
+        Ok(Some(message)) => Ok((message, reader.into_inner())),
+        Ok(None) => Err(0),
+        Err(e) if e.is_host_gone() => Err(0),
+        Err(e) => Err(fail(control, e.fail_code(), &e.to_string())),
+    }
+}
+
+/// Binds the socket, says `ready`, serves until the host goes away or a stop signal arrives,
+/// then closes the office (databases, lock) and exits 0.
+fn serve_office(
+    mut control: ControlPipe,
+    from_host: File,
+    home: &Path,
+    office: Office,
+    _app_token: AppToken,
+) -> i32 {
+    let info = office.info().clone();
+    let Some(socket) = office_socket_path(home, &info.office_id) else {
+        return fail(
+            &mut control,
+            FailCode::InvalidRequest,
+            "not a plain office id",
+        );
+    };
+    if check_socket_path(&socket).is_err() {
+        return fail(
+            &mut control,
+            FailCode::InvalidRequest,
+            "the socket path is too long",
+        );
+    }
+    let listener = match serve::bind(&socket) {
+        Ok(listener) => listener,
+        Err(_) => {
+            return fail(
+                &mut control,
+                FailCode::StorageError,
+                "cannot bind the socket",
+            )
+        }
+    };
+    let shared = Arc::new(serve::Shared::new(
+        &info.org_name,
+        &info.office_id,
+        &info.org_id,
+        &info.office_name,
+        OfficeRole::Hq,
+        &socket,
+    ));
+    emit(
+        &mut control,
+        &ServerEvent::Ready {
+            socket: socket.display().to_string(),
+            pid: std::process::id(),
+        },
+    );
+
+    // EOF on the control pipe means the host is gone. What the host writes after the first line
+    // is read into a fixed buffer and thrown away, unparsed, so nothing on a later line can
+    // stop the server from seeing the end.
+    let host_gone = Arc::new(AtomicBool::new(false));
+    let watcher = {
+        let host_gone = Arc::clone(&host_gone);
+        std::thread::Builder::new()
+            .name("org-office-control".into())
+            .spawn(move || {
+                let mut from_host = from_host;
+                let mut sink = [0u8; 4096];
+                while matches!(from_host.read(&mut sink), Ok(n) if n > 0) {}
+                host_gone.store(true, Ordering::SeqCst);
+            })
+    };
+    if watcher.is_err() {
+        let _ = std::fs::remove_file(&socket);
+        return fail(
+            &mut control,
+            FailCode::StorageError,
+            "cannot watch the control pipe",
+        );
+    }
+
+    let stop = || host_gone.load(Ordering::SeqCst) || signals::stop_requested();
+    serve::run(&listener, &shared, &stop);
+
+    drop(listener);
+    let _ = std::fs::remove_file(&socket);
+    drop(office);
+    0
+}
+
+fn emit(control: &mut ControlPipe, event: &ServerEvent) {
+    // The host may already be gone; the server notices at EOF.
+    let _ = write_server_event(&mut control.to_host, event);
+    let _ = control.to_host.flush();
+}
+
+fn fail(control: &mut ControlPipe, code: FailCode, message: &str) -> i32 {
+    emit(
+        control,
+        &ServerEvent::Failed {
+            code,
+            message: message.to_owned(),
+        },
+    );
+    1
+}
+
+fn fail_with(control: &mut ControlPipe, error: &OfficeError) -> i32 {
+    let code = match error {
+        OfficeError::InvalidName(_) => FailCode::InvalidName,
+        OfficeError::OfficeExists | OfficeError::AlreadyExists | OfficeError::KeyExists => {
+            FailCode::AlreadyExists
+        }
+        OfficeError::KeyMissing => FailCode::KeyMissing,
+        OfficeError::InUse => FailCode::InUse,
+        OfficeError::Invalid(_) | OfficeError::NotFound => FailCode::InvalidRequest,
+        _ => FailCode::StorageError,
+    };
+    // `Display` never carries a path, SQL or a key.
+    fail(control, code, &error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[test]
+    fn the_three_modes_and_nothing_else() {
+        assert_eq!(parse_args(&args(&["--create"])), Ok(Mode::Create));
+        assert_eq!(
+            parse_args(&args(&["--office", "ABC"])),
+            Ok(Mode::Serve("ABC".into()))
+        );
+        assert_eq!(
+            parse_args(&args(&["--discard", "ABC"])),
+            Ok(Mode::Discard("ABC".into()))
+        );
+        for bad in [
+            args(&[]),
+            args(&["--create", "ABC"]),
+            args(&["--office"]),
+            args(&["--discard"]),
+            args(&["--serve", "ABC"]),
+            args(&["--office", "ABC", "extra"]),
+        ] {
+            assert!(parse_args(&bad).is_err(), "{bad:?}");
+        }
+    }
+}

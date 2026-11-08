@@ -43,6 +43,7 @@ rusqlite = { version = "=0.41.1", features = ["bundled-sqlcipher"] }
 tempfile = "=3.27.0"
 sha2 = "=0.10.9"
 libc = "=0.2.191"
+security-framework = "=3.7.0"
 
 [profile.release]
 lto = "thin"
