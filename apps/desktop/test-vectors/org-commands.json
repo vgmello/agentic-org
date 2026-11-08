@@ -164,7 +164,7 @@
    "expect": "not_found"
   },
   {
-   "name": "move: a stale version beats a loop",
+   "name": "move: a loop beats a stale version",
    "command": {
     "method": "team.move",
     "params": {
@@ -173,7 +173,7 @@
      "owner_team_id": "web"
     }
    },
-   "expect": "conflict"
+   "expect": "cycle"
   },
   {
    "name": "move: under a team below it",
@@ -223,7 +223,7 @@
    "expect": "not_found"
   },
   {
-   "name": "lead: a stale version beats the owner",
+   "name": "lead: the owner beats a stale version",
    "command": {
     "method": "team.set_lead",
     "params": {
@@ -232,7 +232,7 @@
      "lead_member_id": "you"
     }
    },
-   "expect": "conflict"
+   "expect": "owner_protected"
   },
   {
    "name": "lead: the owner",
@@ -271,7 +271,7 @@
    "expect": "ok"
   },
   {
-   "name": "delete: a stale version beats not empty",
+   "name": "delete: not empty beats a stale version",
    "command": {
     "method": "team.delete",
     "params": {
@@ -279,7 +279,7 @@
      "expected_version": 9
     }
    },
-   "expect": "conflict"
+   "expect": "not_empty"
   },
   {
    "name": "delete: a team that owns teams",
@@ -552,7 +552,7 @@
    "expect": "ok"
   },
   {
-   "name": "remove: a stale version beats the owner",
+   "name": "remove: the owner beats a stale version",
    "command": {
     "method": "member.remove",
     "params": {
@@ -560,7 +560,7 @@
      "expected_version": 9
     }
    },
-   "expect": "conflict"
+   "expect": "owner_protected"
   },
   {
    "name": "remove: a stale version",
@@ -626,7 +626,7 @@
    "expect": "not_found"
   },
   {
-   "name": "reports to: a stale version beats the owner",
+   "name": "reports to: the owner beats a stale version",
    "command": {
     "method": "member.set_reports_to",
     "params": {
@@ -635,7 +635,7 @@
      "reports_to_member_id": "avery"
     }
    },
-   "expect": "conflict"
+   "expect": "owner_protected"
   },
   {
    "name": "reports to: a stale version",
