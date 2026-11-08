@@ -873,6 +873,31 @@ fn rule_an_unreadable_outbox_file_is_dead_lettered_and_delivery_goes_on() {
 }
 
 #[test]
+fn rule_a_failing_delivery_does_not_stop_the_ones_after_it() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = TempSpool::new("keep_going");
+    // The first message (older ULID) can't be moved into ME's read-only new/.
+    let first = Envelope::new_msg(PEER, ME, None, "1", BTreeMap::new()).unwrap();
+    let second = Envelope::new_msg(ME, PEER, None, "2", BTreeMap::new()).unwrap();
+    t.spool.enqueue(&first).unwrap();
+    t.spool.enqueue(&second).unwrap();
+    let my_new = t.dir.join(format!("spool/inbox/{ME}/new"));
+    fs::set_permissions(&my_new, fs::Permissions::from_mode(0o500)).unwrap();
+
+    let result = t.spool.deliver_all();
+    fs::set_permissions(&my_new, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(matches!(result, Err(SpoolError::Io(_))), "{result:?}");
+    assert!(
+        t.dir
+            .join(format!("spool/inbox/{PEER}/new/{}.json", second.id))
+            .is_file(),
+        "the later message was still delivered"
+    );
+    // The failed one stays queued for the next pass.
+    assert_eq!(t.spool.deliver_all().unwrap().delivered, 1);
+}
+
+#[test]
 fn rule_a_symlinked_dead_reason_is_never_written_through() {
     let t = TempSpool::new("dead_reason");
     let target = t.dir.join("precious.txt");
