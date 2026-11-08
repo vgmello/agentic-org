@@ -2,14 +2,14 @@
 
 Status: **approved by the user** 2026-11-08 (decisions at the end). Owner: ada. It follows the user's decisions: project files are git repositories, the GitHub connection comes first, and **one GitHub App, managed by HQ** (revised the same day). It builds on `offices-hq-and-satellites.md`.
 
-> **For now: local git** *(the user, 2026-11-08: "let's use a local git for now")*. Projects use a local bare repository on disk as their remote, with the same `mirror.git`/`work.git` layout, the same office-run push and the same hardening. The remote sits behind a small interface (a URL plus a credential source), so moving to GitHub later is a configuration change. Everything GitHub-specific below (the app, tokens, repository creation) waits until you say so.
+> **For now: local git** *(the user, 2026-11-08: "let's use a local git for now")*. Projects use a local bare repository on disk as their remote, with the same `mirror.git`/`work.git` layout, the same office-run push and the same hardening. The remote sits behind a small interface (a URL plus a credential source), so moving to GitHub later is a configuration change. Phase 1 projects still run on local git. The GitHub pieces below (the app, tokens, repository creation) are built and tested in phase 1 against a fake GitHub. Real GitHub comes in v2 *(the user, 2026-11-08)*.
 
 ## In one paragraph
 Each project is a **git repository on GitHub**. **One GitHub App, "Agentic Org"**, is installed on your account, and **HQ holds its private key**. Whenever an office needs GitHub (fetch, push, a pull request), **HQ mints it a short-lived token** (one hour) limited to **that one repository and only the permissions that job needs**, and sends it over the office's connection. Offices never sign in to GitHub and never keep a GitHub credential. Every office clones the projects it works on, and its agents work in their own **git worktrees**, one per task. GitHub is the hub for files: offices tell each other "I pushed" through the work-data stream, and the others fetch. HQ also **creates project repositories automatically**.
 
 ## What lives where
 - **Organization data** (HQ-owned, copied everywhere): the project record. It holds the project's id, name and team, and **its repository**: `github`, owner, name, numeric id, default branch, private or public. It never holds a token.
-- **HQ-only data** (never copied): the app's **private key** (in HQ's Keychain), the app's installation id, and, if repository creation needs it, HQ's own user token (see "Creating repositories").
+- **HQ-only data** (never copied): the app's **private key** (in HQ's Keychain), the app's installation id, and, if v2's live run picks that path, HQ's own user token for creating repositories (see "Creating repositories").
 - **Office data** (each office's own): its clones and worktrees, each project's clone status, and **tokens in memory only**, never written to disk.
 - **On disk:** `<home>/offices/<office-id>/workspace/projects/<project-id>/`
   - `mirror.git` is the **office's own bare mirror**. Only the office runs git in it, and it's the only repository that talks to GitHub.
@@ -54,9 +54,9 @@ Each project is a **git repository on GitHub**. **One GitHub App, "Agentic Org"*
 
 ## Creating repositories
 - **Create project** (in the app, so at HQ): a name, a team, and either **a new repository** (created automatically under your account, **private**, named after the project unless you change it) or **an existing one**, picked from the installation's repositories.
-- **Which credential creates it** is confirmed in G2a. Creating a repository under a **personal** account may not work with an installation token: community reports say installation tokens can only create repositories in GitHub organizations.
-  - If it works, HQ uses an installation token with `repository_creation: write`.
-  - Otherwise, HQ signs in **once** with the same app through the device flow (Settings → GitHub → "Allow creating repositories"), and keeps that user token and its refresh token in its Keychain as HQ-only data, using it only to create repositories.
+- **Which credential creates it** isn't known yet. Creating a repository under a **personal** account may not work with an installation token: community reports say installation tokens can only create repositories in GitHub organizations. So phase 1 builds **both paths** against the fake GitHub, and v2's live run (G2a) picks or confirms one:
+  - an installation token with `repository_creation: write`;
+  - or, as the fallback, HQ signs in **once** with the same app through the device flow (Settings → GitHub → "Allow creating repositories"), and keeps that user token and its refresh token in its Keychain as HQ-only data, using it only to create repositories.
     - **Stated plainly:** a GitHub App user token can do everything the app can that you can too, on every repository the app is installed on. It isn't limited to creating repositories.
     - Its refresh token lasts 6 months and refreshes without a client secret. So it's as sensitive as the private key, with the same residual risk.
 - **It happens before the command.** GitHub calls never happen inside a command, so events stay deterministic (offices design). HQ's office server:
@@ -123,31 +123,31 @@ A promoted satellite needs the app's private key.
 
 ## Code layout (architecture rules)
 - **`org-github`** (new adapter crate): the GitHub calls we need, over a blocking HTTPS client (`ureq` with rustls, exact pins).
-  - It covers: the app JWT (RS256), minting scoped installation tokens, finding the installation, listing its repositories, looking a repository up by id, creating a repository, and, if needed, the device flow for HQ's user token.
+  - It covers: the app JWT (RS256), minting scoped installation tokens, finding the installation, listing its repositories, looking a repository up by id, creating a repository, and the device flow for HQ's user token (both creation paths are built in phase 1).
   - It handles rate limits and gives clear errors. No async runtime.
 - **`org-git`** (new adapter crate): runs the system `git` (mirror, work clone, fetch, worktree add and remove, push) with the hardening above, one operation per repository at a time. Using the system `git` from Xcode's command line tools keeps agents and the office on the same git.
-- **`org-office`** (domain): project commands and events, the repository record, and the follow list. It depends on neither adapter. It uses small traits: "create repository" and "token for a job" (implemented at HQ with `org-github`, and at satellites as a request to HQ), and "clone project" (implemented with `org-git`).
+- **`org-office`** (domain): project commands and events, the repository record, and the follow list. It depends on neither adapter. It defines small traits: "create repository" and "token for a job" (implemented at HQ with `org-github`, and at satellites as a request to HQ), and "clone project" (implemented with `org-git`).
 - **`org-sync-proto`** (office-to-office contract) gains the token request. **`org-proto`** (client contract) gains the calls below.
 - **`org-agent`** gains `push` and `gh-token`. Both are socket calls only, so it stays tiny and doesn't depend on `org-git`.
-- **Owners (AGENTS.md):** River (`ac-software-engineer-river`) owns `org-github` and `org-git` (moved from the server agent on 2026-11-08 to spread the load); the server agent implements their storage traits in `store.rs`.
+- **Owners (AGENTS.md):** River (`ac-software-engineer-river`) owns `org-github` and `org-git` (moved from server-dev on 2026-11-08 to spread the load). The traits ("create repository", "token for a job", "clone project") are defined by `org-office`, so they're server-dev's, and River's adapters implement them. All SQL stays in server-dev's `store.rs`, including the repository-creation intent in `office.db`.
 
 ## Implementation plan
-Order: **after the HQ office is serving** (create organization, phase 1), and **before satellites**, as the user asked.
+Order: **after the HQ office is serving** (create organization, phase 1), and **before satellites**, as the user asked. G2a, the live run against real GitHub, comes last, in v2.
 
 | Step | What | Who | Depends on |
 | --- | --- | --- | --- |
-| G2a | A **spike** (about half a day) with the registered app. It confirms: the JWT and **minting a token scoped to one repository and chosen permissions**; git over HTTPS with that token; `gh` with `GH_TOKEN`; creating a private repository under your account with an installation token, or else with HQ's user token (device flow); a new repository showing up in the all-repositories installation. Then the office does a bare clone, a worktree and a push with the hardened commands | **v2** (the user, 2026-11-08: testing against real GitHub moves to v2) | you register the app and import its key |
 | G1 | The contract in `org-proto` and `org-sync-proto`, built against the fake GitHub now and confirmed by G2a in v2 | ada | design approved |
 | G2b | `org-github`, key import with checks and storage in HQ's Keychain, token minting, caching and revocation per office, and the token request from offices, tested against a local fake GitHub | River | G1 |
 | G2c | `org-git`, the mirror and work clones, the worktree per task, `org-agent push` and `gh-token`, tested over HTTP (`git http-backend` behind the fake GitHub, so authentication is exercised; `file://` would skip it). Includes tests with a **hostile `work.git` config** (a credential helper, `insteadOf`, a proxy, filters) and a push to the default branch, all of which must fail to leak or succeed | River | G1, G2b |
-| G2d | Project commands and events in `org-office` (create with a new or existing repository, list, get, follow), with HQ's repository creation or lookup before the command | server-dev, with River for the git and GitHub traits | G1, G2b, the HQ event log |
-| G3 | App: Settings → GitHub at HQ (import key, connection status, the installation's repositories, "allow creating repositories" if needed); Create project (name, team; a new repository, or pick one); the project list with clone status. Built on a mock first | app-frontend-dev | G1 (mock), then G2b–d |
-| G4 | End-to-end test: create an organization → import the key (a fake GitHub in CI; the real-GitHub run is v2) → create a project with a new repository → an agent task gets a worktree, commits, pushes through its office, and opens a pull request with `gh` | River + app-frontend-dev | all |
+| G2d | Project commands and events in `org-office` (create with a new or existing repository, list, get, follow), with HQ's repository creation or lookup before the command | server-dev; River's adapters implement `org-office`'s traits | G1, G2b, the HQ event log |
+| G3 | App: Settings → GitHub at HQ (import key, connection status, the installation's repositories, "allow creating repositories" for the device-flow path); Create project (name, team; a new repository, or pick one); the project list with clone status. Built on a mock first | app-frontend-dev | G1 (mock), then G2b–d |
+| G4 | End-to-end test: create an organization → import the key (a fake GitHub in CI; the real-GitHub run is v2) → create a project with a new repository → an agent task gets a worktree, commits, pushes through its office, and opens a pull request with `gh` | River + server-dev + app-frontend-dev | all |
+| G2a | **v2.** A **spike** (about half a day) with the registered app. It confirms: the JWT and **minting a token scoped to one repository and chosen permissions**; git over HTTPS with that token; `gh` with `GH_TOKEN`; creating a private repository under your account with an installation token, or else with HQ's user token (device flow); a new repository showing up in the all-repositories installation. Then the office does a bare clone, a worktree and a push with the hardened commands. Testing against real GitHub moves to v2 (the user, 2026-11-08) | River | you register the app and import its key |
 
 Each step: its own branch, an independent review, my go, then a merge into `v1`.
 
-**G1, the contract** (drafted now, frozen after G2a):
-- App → HQ: `github.import_key { client_id, pem }` (HQ only; checked against GitHub, then stored in the Keychain), `github.status → { app_id, installation?: { account, all_repositories }, can_create_repos }`, `github.repos.list { cursor? }`, and, if needed, `github.connect.start/wait` for HQ's user token
+**G1, the contract** (built against the fake GitHub now, confirmed by G2a in v2):
+- App → HQ: `github.import_key { client_id, pem }` (HQ only; checked against GitHub, then stored in the Keychain), `github.status → { app_id, installation?: { account, all_repositories }, can_create_repos }`, `github.repos.list { cursor? }`, and `github.connect.start/wait` for HQ's user token (the device-flow path; both creation paths are built in phase 1)
 - `project.create { command_id, project_id, name, team_id?, repo: { new: { name } } | { existing: { repo_id } } } → Project`. New repositories are private, under your account.
 - `project.list`, `project.get { id }` (with this office's clone status), `project.follow { id, follow }`
 - **`org-agent` → its office:** `git.push { task_id, branch } → { commit }` and `gh.token { task_id } → { token, expires_at }`
