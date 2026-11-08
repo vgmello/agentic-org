@@ -2,7 +2,7 @@
 kind: spec
 title: "Retrospectives: learn from each delivery, and apply it to every agent (UX)"
 status: for-review
-revision: 1
+revision: 2
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-08"
@@ -19,12 +19,14 @@ Extends `features-ux.md` (delivered features), `feature-requests-ux.md`, `decisi
 
 > From time to time, after a larger delivery, the agents run a **retrospective**: what could we have done better, what did we do well that we should keep doing, what should we **stop** doing because it doesn't work, and why did problems happen, so they don't happen next time. Agents work fast, so retros are more frequent: at the end of each feature, or every X hours (every hour, three or four hours), **configurable**, **whichever comes first**. On a time interval, only the features **finished** in that period are included, never the ones in flight. After the retro, the **action items** become **tasks** and updated **procedures**, so next time every agent applies them. For example, if running tests always takes too long, the process for running tests (say, on a single branch) is improved and applied to all agents.
 
+**Revision 2 (2026-11-08): aligned with ada's W7 model.** Task numbers follow `work-items-ux.md` rev 6: `T-17` inside the project (`ac-T-17` elsewhere). No criteria changed.
+
 ## 0. Decisions
 
 1. **A retro runs on whichever comes first:** a **feature is delivered** (a feature reaches Delivered, `features-ux.md`), or **the interval** passes (default every 4 h, from 1 h to 1 week). Both are configurable per project, and either can be turned off. Running a retro resets the clock.
 2. **A retro covers finished work only.** Its scope is the features (and their tasks and bugs) that finished since the last retro. Work still in flight waits for the next one. A period with nothing finished is **skipped** and noted ("Nothing finished since 14:00. No retro"), so it costs nothing.
 3. **Four questions, in plain words:** **Keep doing** (what worked) · **Do better** (what could improve) · **Stop doing** (what doesn't work) · **Problems** (what went wrong, **why**, and how to prevent it next time).
-4. **Evidence first, opinions second.** Before anyone answers, the tool gathers the period's facts: the features and their cycle times, waiting on the owner, blocked time, review rounds, reopened bugs, failed runs, tests and their time (when reported), debt taken, exceptions, and cost. Every answer can cite them ("ac-17 needed 5 review rounds").
+4. **Evidence first, opinions second.** Before anyone answers, the tool gathers the period's facts: the features and their cycle times, waiting on the owner, blocked time, review rounds, reopened bugs, failed runs, tests and their time (when reported), debt taken, exceptions, and cost. Every answer can cite them ("T-17 needed 5 review rounds").
 5. **The agents who did the work take part.** Everyone with a finished task in the scope is asked for input (woken if on call), plus the **facilitator**, by default the project's lead, who merges the answers, groups duplicates, and proposes action items. The owner can add input any time and is never required to.
 6. **Action items are changes, not wishes.** Each has a **kind**: **Task** (work to do) · **Guidance** (a change to agent guidance, §6.2 of the decisions spec) · **Checklist** (a change to a checklist template) · **Template** (a doc template) · **Decision** (a new ADR) · **Rule** (AGENTS.md or the project brief). Each has an owner and, for non-tasks, the exact proposed change (a diff).
 7. **The owner approves, and then it's applied everywhere.** **Approve** creates the tasks and proposes every procedure change through the normal branch and merge flow (docs land through branches). Once merged, every agent gets it at its next start or wake: the guidance moment, the checklist or the rule. The owner can turn on **"Apply procedure changes without asking"** for low-risk kinds (guidance and checklists). That skips only the owner's approval: the changes still land through review, go and merge (`decisions-and-tech-debt-ux.md` A36).
@@ -80,7 +82,7 @@ The retro's page shows its stage at the top: Gathering · Waiting for input (3 o
  ☑ Run only the changed crate's tests before review     Guidance    ada        [diff]
  ☑ Add "checked docs/design/*" to the Spec checklist     Checklist   Eden       [diff]
  ☑ Ask the owner's questions in one batch per hour       Guidance    ada        [diff]
- ☑ Cache cargo builds per worktree                       Task        server-dev [ac-88]
+ ☑ Cache cargo builds per worktree                       Task        server-dev [T-88]
  Last retro's actions: "Docs land through branches" helped: review rounds 5 → 2 ✓
 ```
 
@@ -99,7 +101,7 @@ The retro's page shows its stage at the top: Gathering · Waiting for input (3 o
 
 ## 5. CLI (agents)
 
-`org-agent retro show [<id>]` · `retro input <id> --keep "…" --better "…" --stop "…" --problem "…" --why "…" --prevent "…" [--evidence ac-17]` · `retro synthesize <id>` (facilitator) · `retro list`. The words match the app's.
+`org-agent retro show [<id>]` · `retro input <id> --keep "…" --better "…" --stop "…" --problem "…" --why "…" --prevent "…" [--evidence T-17]` · `retro synthesize <id>` (facilitator) · `retro list`. The words match the app's.
 
 ## 6. UX acceptance criteria (RETRO)
 
@@ -124,4 +126,4 @@ The retro's page shows its stage at the top: Gathering · Waiting for input (3 o
 - A33 · Who's the facilitator by default: the project's lead, or a scheduled "retro" role (a one-off run, `agent-run-modes-ux.md`)?
 
 **For the user**
-- U22 · Defaults: after each feature **or every 4 h**, whichever comes first, 30 min for input, ada facilitating, and you approve all action items. OK?
+- ~~U22~~ · *Resolved (the user, 2026-11-08): as recommended.* Defaults: after each feature **or every 4 h**, whichever comes first, 30 min for input, ada facilitating, and you approve all action items. OK?

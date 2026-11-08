@@ -2,7 +2,7 @@
 kind: spec
 title: "Project status: a visual status and a periodic report for each project (UX)"
 status: for-review
-revision: 2
+revision: 4
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-08"
@@ -19,6 +19,10 @@ Extends `features-ux.md` (feature progress), `work-items-ux.md` (tasks, bugs, ti
 
 > Every once in a while I want a **status**, a **visualization of the status of my project**. One of those ephemeral (one-off) runs, using the smartness of the system, calculates it for us and **creates a report for each project**.
 
+**Revision 4 (2026-11-08): review fixes.** Revision 3's note on waiting on you now states the narrow rule for decisions, as §4 does: only a task Blocked waiting for your decision on a proposed ADR, while it's the blocker. No criteria changed.
+
+**Revision 3 (2026-11-08): aligned with ada's W7 model.** "Waiting on you" (the Flow tile, the health rule and Home › Projects status) counts what `costs-and-insights-ux.md` decision 5 counts: questions to you, Fixed bugs you reported, scoped requests, triage suggested to you and a task Blocked waiting for your decision on a proposed ADR, only while it's the blocker (§4). No criteria changed.
+
 **Revision 2 (2026-11-08): review fixes.** Starting a report on demand is app-only (no `org-agent report status`). Example dates and figures are set in December 2026. Health reasons cite only the rules. The Stop on a running report cancels that run.
 
 ## 0. Decisions
@@ -26,7 +30,7 @@ Extends `features-ux.md` (feature progress), `work-items-ux.md` (tasks, bugs, ti
 1. **Two things, one source:** a live **Status** page per project (always current, no run needed) and a periodic **status report**, a dated snapshot with a written summary, saved in the repository (`docs/reports/<date>-status.md`). The report is the page frozen at a moment, plus what changed and what to do next.
 2. **Numbers are facts, words are drafted.** The office computes every number (progress, cycle time, cost, bugs, debt) the same way as Insights. A **one-off run** (role "Reporter", `agent-run-modes-ux.md`) writes only the narrative: the summary, the risks and the recommendations, each citing the facts. The narrative is marked **Drafted** until the owner reads it, and nothing in it can change a number.
 3. **Health in three words:** **On track · At risk · Off track**, from plain rules first (the defaults in §4: Off track when a Critical bug is open for more than a day; At risk when a feature in progress is past twice its typical cycle time, you've been waited on for more than 24 h, or the project is over budget) and the Reporter's reasoning second. The badge always shows **why** ("At risk: you've been waited on for 26 h, and FEAT-0006 is past twice its typical cycle time").
-4. **When:** on a schedule per project (default: **weekly, Monday 08:00**, and also daily, after each delivered feature, or off) and **on demand** (**Generate report** on the Status page or ⌘K. Starting a one-off is app-only, so agents ask the owner instead.). A period with no activity produces a one-line report ("No changes since 3 Nov") without a run, so it costs nothing.
+4. **When:** on a schedule per project (default: **weekly, Monday 08:00**, and also daily, after each delivered feature, or off) and **on demand** (**Generate report** on the Status page or ⌘K. Starting a one-off is app-only, so agents ask the owner instead.). A period with no activity produces a one-line report ("No changes since 30 Nov") without a run, so it costs nothing.
 5. **It ends with what needs the owner:** decisions waiting (proposed ADRs and features, scoped requests, retro actions, expiring exceptions) and questions waiting, each a link. A report is useful only if it's actionable.
 6. **The costs spec's monthly report becomes this report** with a month period (`costs-and-insights-ux.md` §3), so there's one report type, not two.
 
@@ -85,6 +89,8 @@ Sorted by health (Off track first). Each row opens the project's Status page. **
 
 Schedule: **Weekly ▾** (Daily · Weekly on <day> at <time> · After each delivered feature · Monthly · Off) · Health rules (the defaults, each editable: Critical bug open more than **1 day** → Off track · waiting on you more than **24 h** → At risk · a feature past **2×** its typical cycle time → At risk · over budget → At risk) · Reporter's model and runtime (default: the organization's copilot runtime) · Include a cost section ☑.
 
+**Waiting on you** *(rev 3)*, in the health rule, the Flow tile and Home › Projects status, counts what `costs-and-insights-ux.md` decision 5 counts: questions to you, Fixed bugs you reported, scoped requests, triage suggested to you and tasks Blocked waiting for your decision on a proposed ADR, only while that decision is the task's blocker (ada Q11).
+
 ## 5. UX acceptance criteria (STATUS)
 
 - STATUS-1 · Each project has a Status page with health, features, investment, flow, quality, Needs you and an 8-week trend, computed live by the office.
@@ -106,4 +112,4 @@ Schedule: **Weekly ▾** (Daily · Weekly on <day> at <time> · After each deliv
 - A41 · The Reporter as a one-off run (A28) with read-only, tool-less input (smart features P2): the office passes the facts as data, and the run returns the narrative in a schema. OK?
 
 **For the user**
-- U23 · Defaults: a weekly report on Monday at 08:00, health rules as in §4, and the costs spec's monthly report folded into this one. OK?
+- ~~U23~~ · *Resolved (the user, 2026-11-08): as recommended.* Defaults: a weekly report on Monday at 08:00, health rules as in §4, and the costs spec's monthly report folded into this one. OK?
