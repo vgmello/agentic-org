@@ -11,7 +11,9 @@ pub enum ErrorCode {
     /// it can be read but makes no sense: a value outside its documented limits (e.g. an
     /// agent's `title` or `home`), a call that changes nothing, `Unknown` or a non-canonical
     /// value where a known one is required, or an agent-only call on a person (or the other
-    /// way round).
+    /// way round). In [`crate::msg`] and [`crate::directory`], a number out of range (a
+    /// `limit`, `timeout_ms`, `wait_ms` or `ttl_ms`) is `invalid_request`, while a string,
+    /// body, meta or note over its size limit is `too_large`.
     InvalidRequest,
     /// The server doesn't know the method.
     UnknownMethod,
@@ -57,6 +59,17 @@ pub enum ErrorCode {
     /// What was asked for exists but can't serve now, e.g. the office isn't running, so there's
     /// no app token to hand out. Trying again later may work.
     Unavailable,
+    /// An `ask`'s deadline (`expires_at`) passed without a reply, including when the
+    /// recipient's office reports that the request expired.
+    Timeout,
+    /// A string, body, meta or note is over its size limit, in bytes (or, for a status line,
+    /// characters; see the limits in [`crate::msg`] and [`crate::directory`]). A number out
+    /// of range is `invalid_request` instead.
+    TooLarge,
+    /// The connection hasn't bound with `msg.bind`, the bound member was moved out of this
+    /// office or removed, or the connection is bound app-wide and the call acts as a member.
+    /// Also ends held `msg.wait` and `msg.ask` calls when the connection re-binds.
+    NotBound,
     /// A code this build doesn't know (sent by a newer server).
     #[serde(other)]
     Unknown,
@@ -91,7 +104,8 @@ impl std::error::Error for ApiError {}
 pub enum CallError {
     /// The server answered with an error.
     Api(ApiError),
-    /// The server's result didn't match the call's result type.
+    /// The server's result didn't match the call's result type. The serde error can quote the
+    /// result's values (e.g. a message body), so never log it for `msg.*` results.
     Decode(serde_json::Error),
 }
 

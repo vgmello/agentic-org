@@ -27,6 +27,9 @@
 //! them, so method names and payload shapes live in one place. The app will keep a
 //! TypeScript mirror (`apps/desktop/src/lib/proto.ts`) in step by hand for now.
 //!
+//! Agent messaging on an office server (ADR-0003) is in [`msg`]; the organization directory
+//! (`who`), status lines (`status.set`) and presence are in [`directory`].
+//!
 //! ## Client duties
 //! - Number requests from 1 and keep ids below 2^53 (id 0 is [`UNREADABLE_REQUEST_ID`]).
 //! - Put a timeout on every pending request: a reply can be lost to a line neither side
@@ -50,8 +53,10 @@
 // One test there also allows it, to read a token's bytes after it's dropped.
 #![deny(unsafe_code)]
 
+pub mod directory;
 pub mod frame;
 pub mod location;
+pub mod msg;
 pub mod org;
 
 mod calls;
