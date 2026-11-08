@@ -19,7 +19,7 @@ How every change reaches the release branch. Follow it from the moment you start
 
 ## 1. One branch at a time
 - You have exactly **one open working branch**. Don't start new work, open another branch or stack branches until that branch is merged into the release branch.
-- Start every branch **from the release branch**: `git fetch origin && git switch -c <you>/<topic> origin/<release>`.
+- Start every branch **from the release branch**: `git fetch origin && git switch -c <you>/<topic> origin/<release>`, in your own worktree when the repository's rules say so (`git worktree add ../<repo>-<you> -b <you>/<topic> origin/<release>`). Never branch in a checkout another agent uses.
 - Keep it **small**: one reviewable piece. Merge often; don't let work pile up.
 
 ## 2. Build and check
