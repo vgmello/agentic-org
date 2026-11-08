@@ -2,7 +2,7 @@
 kind: spec
 title: "Work items: tasks, bugs and project docs (UX)"
 status: for-review
-revision: 7
+revision: 8
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-08"
@@ -22,6 +22,8 @@ Phase 1 workstream W7 (UX), with codex-dev (model and library) · Builds on `off
 **Acceptance-criterion IDs** are new prefixes (PRJ, TSK, BUG, TRI, FIX, AREA, DOC, WORK) so they never collide with v1's PROJ and TASKS. They're stable from this revision: changed criteria are rewritten under the same ID, retired IDs are never reused.
 
 ## Changelog
+
+**Revision 8 (2026-11-08): processes.** A new task gets the project's default checklist plus the checklists of the project's processes, not private ones (`processes-ux.md` decision 9, §9.1). **Criteria rewritten (same ID):** CHK-8 *(rev 8)*.
 
 **Revision 7 (2026-11-08): review fixes.**
 
@@ -397,7 +399,7 @@ Triage is the step from **New** to **Triaged**: confirm the area and severity, s
 - **Make a task:** creates a task with the step's text, in the same project and team, linked as "part of T-17". The step then shows the task's number and status. It ticks itself only when that task is **Done · Completed**, and unticks if the task is reopened. Its checkbox can't be ticked by hand (the tooltip says "Ticks when T-42 is done"). If the task is cancelled, the step stays unticked and shows "T-42 was cancelled" with **Unlink**. Unlinking turns it back into a plain step. *(rev 6)*
 - **Reordering:** drag, or ⋯ › Move up/down, or Alt+↑/↓ on a focused step, with the change announced.
 - **Done with required steps left:** the Done action (board move, task page, CLI) shows "2 required steps aren't done: Reviewer's READY, Tests pass." with **Mark done anyway…** (a reason is required, and it's shown at the top of the done task: "Done with 1 required step unticked: <reason> · River") and **Cancel**. Unticked optional steps don't ask: the toast says "Done · 1 optional step left unticked".
-- **Checklist templates:** project Settings › **Checklists** defines named checklists (for example "Our merge flow: tests pass · own review · reviewer READY · ada's go · merged into v1"). New task offers **Add checklist ▾**, and a project can set one as the default for new tasks or fix tasks. Templates are persistent, so they're files in the repository (`docs/.templates/checklists/<name>.md`, per `decisions-and-tech-debt-ux.md` §3.2). The items on a task are work-item data in the database (C20).
+- **Checklist templates:** project Settings › **Checklists** defines named checklists (for example "Our merge flow: tests pass · own review · reviewer READY · ada's go · merged into v1"). New task offers **Add checklist ▾**, and a project can set one as the default for new tasks or fix tasks. Templates are persistent, so they're files in the repository (`docs/.templates/checklists/<name>.md`, per `decisions-and-tech-debt-ux.md` §3.2). The items on a task are work-item data in the database (C20). *(rev 8)* Processes add to the default: a new task gets the project's default checklist plus the `checklist` steps of the project's processes (organization ⊕ team chain ⊕ project, not private ones; a later assignment doesn't change it), after the project's, with duplicate steps (same text) merged and required winning (`processes-ux.md` decision 9).
 - **Agents** (C21): `org-agent task checklist T-17` (lists steps with their numbers and stable ids), `task check T-17 2` / `task uncheck T-17 2`, `task step add T-17 "…" [--required]`, and `task done T-17` fails with the same message as the app unless `--anyway --reason "…"`.
 - **States:** empty ("No steps. **+ Add step** or **Add checklist ▾**") · someone ticks while I'm editing (the tick shows live, and my text edit is kept) · a step deleted by someone else while focused (focus moves to the next step, announced) · the made task deleted (the step becomes plain again, with "T-42 was deleted").
 
@@ -503,7 +505,7 @@ Nav **Work**, pill tabs **Tasks | Bugs | Debt | Requests** *(rev 5)*: the same l
 - CHK-5 · Done (or Fixed for a bug) with required steps unticked asks first and needs a reason, which is shown on the done item. Optional steps never block.
 - CHK-6 · *(rev 6)* Make a task turns a step into a linked task. The step ticks itself only when that task is Done · Completed (and unticks if it's reopened), and it can't be ticked by hand. If the task is cancelled, the step shows "T-42 was cancelled" with Unlink.
 - CHK-7 · Steps can be reordered by drag, menu and Alt+↑/↓, and the change is announced.
-- CHK-8 · Project Settings › Checklists defines named checklists stored as files in `docs/.templates/checklists/`, and New task can add one or apply the project's default.
+- CHK-8 · *(rev 8)* Project Settings › Checklists defines named checklists stored as files in `docs/.templates/checklists/`, and New task can add one or apply the project's default, which includes the steps of the project's processes (`processes-ux.md` PROC-12).
 - CHK-9 · `org-agent task check|uncheck|step add|checklist` and `task done` behave like the app, including the required-steps refusal and `--anyway --reason`.
 
 **Report a bug (BUG)**
