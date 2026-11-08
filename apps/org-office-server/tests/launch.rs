@@ -623,12 +623,10 @@ fn command_id(n: u8) -> String {
 }
 
 fn bind(client: &Client, app_token: AppToken) -> Result<(), org_client::ClientError> {
-    client
-        .call::<org_proto::msg::MsgBind>(&org_proto::msg::MsgBindParams {
-            member: None,
-            app_token: Some(app_token),
-        })
-        .map(|_| ())
+    let bound = client.bind_app(app_token)?;
+    assert_eq!(bound.office_id, OFFICE);
+    assert_eq!(bound.member_id, None);
+    Ok(())
 }
 
 fn team_create(
