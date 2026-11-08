@@ -2,7 +2,7 @@
 // place and the rules are tested without a browser. Nothing here changes a snapshot.
 import type { Member, OrgSnapshot, ProjectSummary, Team } from '$lib/proto';
 
-const byName = <T extends { name: string }>(a: T, b: T) =>
+export const byName = <T extends { name: string }>(a: T, b: T) =>
 	a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
 
 export const owner = (s: OrgSnapshot): Member | undefined => s.members.find((m) => m.owner);
