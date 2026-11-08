@@ -959,13 +959,7 @@ mod tests {
                     message: "down".into(),
                 });
             }
-            Ok(HelloResult {
-                api_version: org_proto::API_VERSION,
-                server_version: "t".into(),
-                host: "This Mac".into(),
-                office: None,
-                capabilities: vec![],
-            })
+            Ok(HelloResult::host("t", "This Mac"))
         }
         fn ping(&self) -> Result<(), office::SetupError> {
             Ok(())

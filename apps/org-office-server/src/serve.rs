@@ -16,7 +16,7 @@ use std::time::Duration;
 use org_proto::frame;
 use org_proto::{
     ApiError, ErrorCode, Hello, HelloResult, OfficeHello, OfficeInfo, OfficeRole, OfficeStatus,
-    OrgSnapshot, OrgSnapshotCall, Request, Response, API_VERSION,
+    OrgSnapshot, OrgSnapshotCall, Request, Response,
 };
 
 /// Reads the organization's snapshot (the office's `org_snapshot`), or says why it cannot.
@@ -44,13 +44,11 @@ impl Shared {
     ) -> Self {
         Self {
             snapshot,
-            hello: HelloResult {
-                api_version: API_VERSION,
-                server_version: env!("CARGO_PKG_VERSION").to_owned(),
-                host: "This Mac".to_owned(),
-                // Part 1 implements only what every server of this api_version has.
-                capabilities: Vec::new(),
-                office: Some(OfficeHello {
+            // Part 1 implements only what every server of this api_version has: no capabilities.
+            hello: HelloResult::office(
+                env!("CARGO_PKG_VERSION"),
+                "This Mac",
+                OfficeHello {
                     organization_name: organization_name.to_owned(),
                     office: OfficeInfo {
                         id: office_id.to_owned(),
@@ -63,8 +61,8 @@ impl Shared {
                         status_reason: None,
                         next_restart_at: None,
                     },
-                }),
-            },
+                },
+            ),
         }
     }
 }

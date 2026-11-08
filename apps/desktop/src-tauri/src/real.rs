@@ -592,17 +592,9 @@ mod tests {
                     return None;
                 }
                 Some(match r.method.as_str() {
-                    "hello" => Response::ok::<Hello>(
-                        r.id,
-                        &HelloResult {
-                            api_version: org_proto::API_VERSION,
-                            server_version: "test".into(),
-                            host: "This Mac".into(),
-                            office: None,
-                            capabilities: vec![],
-                        },
-                    )
-                    .unwrap(),
+                    "hello" => {
+                        Response::ok::<Hello>(r.id, &HelloResult::host("test", "This Mac")).unwrap()
+                    }
                     "organization.list" | "organization.create"
                         if host_not_ready
                             .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
@@ -635,17 +627,8 @@ mod tests {
             Arc::new(move |r| {
                 if r.method == "hello" {
                     return Some(
-                        Response::ok::<Hello>(
-                            r.id,
-                            &HelloResult {
-                                api_version: org_proto::API_VERSION,
-                                server_version: "test".into(),
-                                host: "This Mac".into(),
-                                office: None,
-                                capabilities: vec![],
-                            },
-                        )
-                        .unwrap(),
+                        Response::ok::<Hello>(r.id, &HelloResult::host("test", "This Mac"))
+                            .unwrap(),
                     );
                 }
                 log.lock().unwrap().push(r.method.clone());
@@ -1075,17 +1058,8 @@ mod tests {
                 listener,
                 Arc::new(|r| {
                     Some(
-                        Response::ok::<Hello>(
-                            r.id,
-                            &HelloResult {
-                                api_version: org_proto::API_VERSION,
-                                server_version: "test".into(),
-                                host: "This Mac".into(),
-                                office: None,
-                                capabilities: vec![],
-                            },
-                        )
-                        .unwrap(),
+                        Response::ok::<Hello>(r.id, &HelloResult::host("test", "This Mac"))
+                            .unwrap(),
                     )
                 }),
             );

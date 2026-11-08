@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, Weak};
 use org_proto::{
     ApiError, Call, Empty, ErrorCode, EventKind, Hello, HelloResult, ListOfficesResult,
     ListOrganizationsResult, OfficeList, OrganizationCreate, OrganizationCreated, OrganizationList,
-    Request, Response, Subscribe, API_VERSION,
+    Request, Response, Subscribe,
 };
 
 use crate::offices::{Offices, THIS_MAC};
@@ -121,13 +121,7 @@ impl Handler for Service {
 
 /// `hello` from this Mac's host: no office.
 fn hello() -> HelloResult {
-    HelloResult {
-        api_version: API_VERSION,
-        server_version: env!("CARGO_PKG_VERSION").to_owned(),
-        host: THIS_MAC.to_owned(),
-        office: None,
-        capabilities: vec![],
-    }
+    HelloResult::host(env!("CARGO_PKG_VERSION"), THIS_MAC)
 }
 
 /// Runs a typed handler: params that don't decode are `invalid_request`.

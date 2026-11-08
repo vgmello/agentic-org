@@ -81,13 +81,9 @@ impl Fake {
 }
 
 fn hello_result(api_version: u32) -> HelloResult {
-    HelloResult {
-        api_version,
-        server_version: "9.9.9".into(),
-        host: "This Mac".into(),
-        office: None,
-        capabilities: vec![],
-    }
+    let mut hello = HelloResult::host("9.9.9", "This Mac");
+    hello.api_version = api_version;
+    hello
 }
 
 fn office(id: &str, endpoint: Option<&str>) -> OfficeInfo {

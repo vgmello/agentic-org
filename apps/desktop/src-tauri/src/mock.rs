@@ -11,7 +11,7 @@ use crate::org_mock::Seed;
 use crate::work_engine::{self, WorkError, WorkState};
 use org_proto::{
     ApiError, CommandAccepted, ErrorCode, HelloResult, OfficeInfo, OfficeRole, OfficeStatus,
-    OrgSnapshot, Organization, OrganizationName, API_VERSION,
+    OrgSnapshot, Organization, OrganizationName,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -459,13 +459,9 @@ impl OfficeConnection for MockOffice {
                 SetupErrorCode::Unreachable,
                 "The office server started but isn't answering.",
             )),
-            Scenario::Healthy | Scenario::StorageError => Ok(HelloResult {
-                api_version: API_VERSION,
-                server_version: "0.0.0-mock".to_string(),
-                host: "This Mac".to_string(),
-                office: None,
-                capabilities: vec![],
-            }),
+            Scenario::Healthy | Scenario::StorageError => {
+                Ok(HelloResult::host("0.0.0-mock", "This Mac"))
+            }
         }
     }
 
