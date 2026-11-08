@@ -118,9 +118,12 @@ impl Spool {
             return Err(SpoolError::UnknownRecipient(orig.from.clone()));
         }
         let now_iso = format_iso8601_utc(SystemTime::now());
+        // Only when no priority was given at all (--priority or --meta priority=...).
         let priority = msg.priority.or_else(|| {
-            (orig.is_expired_request_at(&now_iso) && self.is_person(me))
-                .then_some(MessagePriority::High)
+            (!msg.meta.contains_key("priority")
+                && orig.is_expired_request_at(&now_iso)
+                && self.is_person(me))
+            .then_some(MessagePriority::High)
         });
         let reply = orig
             .new_reply(me, msg.subject, msg.body, msg.meta)

@@ -1767,6 +1767,17 @@ fn rule_a_persons_reply_to_an_expired_ask_defaults_to_high() {
         reply("pat", &ask_to("pat", true), Some(MessagePriority::Normal)),
         MessagePriority::Normal
     );
+    // --meta priority=normal counts as a given priority too.
+    let id = ask_to("pat", true);
+    let msg = org_spool::Outgoing {
+        body: "a".into(),
+        meta: [("priority".to_string(), serde_json::json!("normal"))].into(),
+        ..Default::default()
+    };
+    assert_eq!(
+        t.spool.reply("pat", &id, msg).unwrap().effective_priority(),
+        MessagePriority::Normal
+    );
     // Not expired, or an agent answering: normal, as before.
     assert_eq!(
         reply("pat", &ask_to("pat", false), None),
