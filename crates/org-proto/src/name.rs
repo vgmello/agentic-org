@@ -26,6 +26,17 @@ use crate::{ApiError, ErrorCode, ORGANIZATION_NAME_MAX_CHARS};
 ///
 /// It deliberately has no `PartialEq`, `Eq` or `Hash`: a derived comparison would be
 /// case-sensitive, which is the wrong test for duplicates. Compare [`OrganizationName::key`]s.
+///
+/// ```compile_fail,E0369
+/// let a = org_proto::OrganizationName::parse("Acme").unwrap();
+/// let b = org_proto::OrganizationName::parse("Acme").unwrap();
+/// let _same = a == b;
+/// ```
+///
+/// ```compile_fail,E0277
+/// fn needs_hash<T: std::hash::Hash>(_: &T) {}
+/// needs_hash(&org_proto::OrganizationName::parse("Acme").unwrap());
+/// ```
 #[derive(Debug, Clone)]
 pub struct OrganizationName {
     name: String,
@@ -397,7 +408,7 @@ mod tests {
         }
     }
 
-    /// The vectors the app's TypeScript pre-check is tested against too.
+    /// The canonical vectors; the app's pre-check moves to this file (follow-up).
     #[test]
     fn shared_vectors() {
         let file: serde_json::Value =
@@ -406,9 +417,26 @@ mod tests {
         assert_eq!(vectors.len(), 24);
         for v in vectors {
             let input = v["input"].as_str().unwrap();
+            let error = v.get("error").map(|e| e.as_str().expect(input));
             match v.get("name").and_then(|n| n.as_str()) {
-                Some(name) => assert_eq!(OrganizationName::parse(input).unwrap().as_str(), name),
-                None => assert!(OrganizationName::parse(input).is_err(), "{input:?}"),
+                Some(name) => {
+                    assert_eq!(error, None, "{input:?}: an accepted vector has no error");
+                    assert_eq!(OrganizationName::parse(input).unwrap().as_str(), name);
+                }
+                None => {
+                    let expected = match error {
+                        Some("empty") => NameError::Empty,
+                        Some("too_long") => NameError::TooLong,
+                        Some("control") => NameError::ControlChar,
+                        Some("invisible") => NameError::InvisibleChar,
+                        other => panic!("{input:?}: bad or missing error {other:?}"),
+                    };
+                    assert_eq!(
+                        OrganizationName::parse(input).unwrap_err(),
+                        expected,
+                        "{input:?}"
+                    );
+                }
             }
         }
     }
