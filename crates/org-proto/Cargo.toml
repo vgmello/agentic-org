@@ -1,6 +1,6 @@
 [package]
 name = "org-proto"
-description = "The contract between the agentic.org app, the agent CLI, the host and the office servers: request, response and event types."
+description = "The contract between the Agentic Org app, the agent CLI, the host and the office servers: request, response and event types."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

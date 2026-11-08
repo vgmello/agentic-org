@@ -134,7 +134,7 @@ Agents run on their office's machine and talk only to that office, through the l
 2. HQ adds a `pending` registry entry.
    - **Local** (a second office on this Mac, phase 2): the host creates the office directly. It starts a new office server and passes it its details through a pipe, never on the command line. No link, TLS, certificate or approval is involved: trust rests on both offices running as the same macOS user. Steps 3–4 don't apply, and the satellite goes straight to step 5.
    - **Remote** (phase 3): HQ makes a **one-time invitation link** (see "The invitation link" below).
-3. **Remote:** the owner copies the link to the other machine and pastes it into agentic.org at "Open organization" (recommended), or opens it, which pre-fills the same screen.
+3. **Remote:** the owner copies the link to the other machine and pastes it into Agentic Org at "Open organization" (recommended), or opens it, which pre-fills the same screen.
 4. **Remote: the satellite makes its own key pair** and keeps the private key in its Keychain. It sends HQ a certificate request together with its **proof of the invitation** (see "The invitation link"). The invitation secret itself never crosses the network.
    - HQ checks the proof, waits for the owner's approval, signs a client certificate with the organization's CA, and marks the invitation used.
    - **Certificates say who and what they are** (from phase 3): office id, role, and client or server use.
@@ -147,7 +147,7 @@ Agents run on their office's machine and talk only to that office, through the l
 ## The invitation link
 *(The user, 2026-11-08: a link that HQ generates, which the owner copies and opens on the other machine. This section's details are **proposed**, awaiting the user's confirmation.)*
 - **Shape:** `agenticorg://join#<token>`.
-  - agentic.org registers the `agenticorg` URL scheme. Opening the link opens agentic.org at **Open organization → Join with a link** (the other path there opens an organization this Mac already has), with the details **filled in, never joined automatically**. The owner sees the organization's name and HQ's address and must confirm, so a hostile link can't quietly enroll a Mac into someone else's organization.
+  - Agentic Org registers the `agenticorg` URL scheme. Opening the link opens Agentic Org at **Open organization → Join with a link** (the other path there opens an organization this Mac already has), with the details **filled in, never joined automatically**. The owner sees the organization's name and HQ's address and must confirm, so a hostile link can't quietly enroll a Mac into someone else's organization.
     - The confirmation says plainly that **joining lets that organization run its agents on this Mac**: until v2, agents run as you, so they can read and change your files, use your apps and network, and act on your behalf. Only join organizations you own.
     - It flags a name that matches an organization this Mac already knows under a different id.
   - The token is in the fragment (after `#`), so it isn't sent to a server if the link passes through a browser, and the app never logs it. A browser may still keep it in history, so **pasting it into the app is the recommended way**.

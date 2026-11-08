@@ -3,7 +3,7 @@
 Status: **draft**. ada writes it with the app agent and the server agent, and they refine it before building.
 
 ## Goal
-On a Mac with nothing set up, the owner opens agentic.org, creates an organization, and lands in the app shell connected to the organization's HQ office on this machine.
+On a Mac with nothing set up, the owner opens Agentic Org, creates an organization, and lands in the app shell connected to the organization's HQ office on this machine.
 
 ## The flow
 1. **First launch:** two choices, **Create organization** and **Open organization**. Open has two paths: open an organization this Mac already has (it lists them), or join an organization from another machine with an invitation link (offices design, phase 3).

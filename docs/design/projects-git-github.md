@@ -27,7 +27,7 @@ Each project is a **git repository on GitHub**. **One GitHub App, "Agentic Org"*
   - **Repository creation: write**: create project repositories (GitHub's narrow permission from 13 October 2026; no Administration)
   - **Workflows: no access** by default, so agents can't change CI files (open question 1)
 - **The private key** is the app's master credential: it can mint any token within those permissions, on any repository.
-  - You generate it on GitHub and **import it into agentic.org at HQ** (Settings → GitHub → Import key: the app's **Client ID** and the `.pem` file), then delete the downloaded file.
+  - You generate it on GitHub and **import it into Agentic Org at HQ** (Settings → GitHub → Import key: the app's **Client ID** and the `.pem` file), then delete the downloaded file.
   - Before storing anything, HQ checks them: it signs a JWT, calls `GET /app` and `GET /app/installations`, and finds the installation.
   - Then it stores the key in its Keychain, as HQ-only data, created and read by HQ's office server (ADR-0002's per-program rule), together with the Client ID and installation id.
   - No client secret is ever generated.
@@ -111,7 +111,7 @@ Each project is a **git repository on GitHub**. **One GitHub App, "Agentic Org"*
 
 ## Keeping offices in step
 - **After a push, the office emits a work change** (office-first): "project P, branch B is now at commit C". It reaches HQ and the offices that follow P. They fetch when they need it, or straight away if they follow the project.
-- **Changes made outside agentic.org** (you pushing from your laptop, a merged pull request) are picked up as a backstop: offices fetch every few minutes for projects they follow. Webhooks would need a public server, which we don't have.
+- **Changes made outside Agentic Org** (you pushing from your laptop, a merged pull request) are picked up as a backstop: offices fetch every few minutes for projects they follow. Webhooks would need a public server, which we don't have.
 
 ## Promotion (offices design, phase 4)
 A promoted satellite needs the app's private key.
