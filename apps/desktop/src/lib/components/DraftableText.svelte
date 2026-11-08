@@ -29,6 +29,9 @@
 		maxlength,
 		limit,
 		hint,
+		tag = false,
+		onrun,
+		resetKey,
 		placeholder,
 		disabled = false,
 		error,
@@ -46,6 +49,12 @@
 		limit?: number;
 		/** Small grey text after the label, e.g. "(optional)". */
 		hint?: string;
+		/** Show the "Drafted" tag: the parent says the field's text came from a draft (it clears the tag when the person edits). */
+		tag?: boolean;
+		/** The copilot panel of this field is about to run (so the screen can clear other errors it shows). */
+		onrun?: () => void;
+		/** When this changes, the panel closes (so only one panel on a screen shows an error at a time). */
+		resetKey?: unknown;
 		placeholder?: string;
 		disabled?: boolean;
 		error?: string;
@@ -65,7 +74,9 @@
 	let previous = $state<string | undefined>();
 	let clipped = $state<number | undefined>();
 	// The draft last put in the field: while the field still holds it, Undo goes back past it.
-	let lastApplied: string | undefined;
+	let lastApplied = $state<string | undefined>();
+	// "Drafted": the field holds a draft nobody has edited since (cleared by an edit, and by Undo).
+	const drafted = $derived(tag || (lastApplied !== undefined && value === lastApplied));
 	// `api` is chosen once, when the field is made (a test passes its own); it is not meant to change.
 	// svelte-ignore state_referenced_locally
 	const flow = createDraftFlow(api, 'text.improve', (next) => (phase = next));
@@ -73,6 +84,19 @@
 	const mode = $derived<'draft' | 'improve'>(value.trim() ? 'improve' : 'draft');
 	const drafting = $derived(isDrafting(phase));
 	const failure = $derived(phase.kind === 'failed' ? describeCopilotFailure(phase.error) : undefined);
+
+	let seenKey: unknown;
+	let firstKey = true;
+	$effect(() => {
+		const key = resetKey;
+		if (firstKey) {
+			firstKey = false;
+			seenKey = key;
+		} else if (key !== seenKey) {
+			seenKey = key;
+			if (open) close();
+		}
+	});
 
 	onMount(() => {
 		copilotFeatures(api).then((list) => (features = list));
@@ -94,7 +118,9 @@
 	function ask() {
 		const request = { mode, field: label.slice(0, COPILOT_LIMITS.fieldMaxChars), text: value, instruction: instruction.trim() || undefined };
 		requestError = checkTextRequest(request);
-		if (!requestError) flow.run(request);
+		if (requestError) return;
+		onrun?.();
+		flow.run(request);
 	}
 
 	// The smaller of the field's own `maxlength` and the office's cap.
@@ -129,7 +155,10 @@
 
 <div class="space-y-2" data-testid="draftable-{id}">
 	<div class="flex items-center justify-between gap-x-3">
-		<Label for={id}>{label}{#if hint}<span class="font-normal text-gray-400"> {hint}</span>{/if}</Label>
+		<div class="flex items-center gap-x-2">
+			<Label for={id}>{label}{#if hint}<span class="font-normal text-gray-400"> {hint}</span>{/if}</Label>
+			{#if drafted}<Badge variant="secondary" data-testid="drafted-tag-{id}">Drafted</Badge>{/if}
+		</div>
 		{#if available}
 			<Button
 				type="button"

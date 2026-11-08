@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyDraft, BUG_ENVIRONMENT_MAX_CHARS, clippedFields, prefillFromDraft, undoDraft, type BugFields } from './bug-prefill';
+import { applyDraft, BUG_ENVIRONMENT_MAX_CHARS, clippedFields, draftedFields, prefillFromDraft, undoDraft, type BugFields } from './bug-prefill';
 import { createMockCopilot } from './mock';
 import type { BugDraft } from './types';
 import { WORK_LIMITS } from '$lib/proto';
@@ -18,9 +18,21 @@ const mine: BugFields = {
 const draft = (extra: Partial<BugDraft> = {}): BugDraft => ({ title: 'Save fails', what_happened: 'Nothing happens.', severity: 'major', ...extra });
 
 describe('prefillFromDraft', () => {
-	it('always sets the title, what happened and the severity from the draft', () => {
+	it('always sets the title and what happened from the draft', () => {
 		const f = prefillFromDraft(mine, draft(), areas, limits);
-		expect([f.title, f.happened, f.severity]).toEqual(['Save fails', 'Nothing happens.', 'major']);
+		expect([f.title, f.happened]).toEqual(['Save fails', 'Nothing happens.']);
+	});
+
+	it('never sets the severity: a bug has no default, the person picks it', () => {
+		for (const severity of ['critical', 'major', 'minor', 'trivial'] as const) {
+			expect(prefillFromDraft(mine, draft({ severity }), areas, limits).severity).toBe('');
+		}
+		// A severity the person already chose stays theirs.
+		expect(prefillFromDraft({ ...mine, severity: 'minor' }, draft({ severity: 'critical' }), areas, limits).severity).toBe('minor');
+	});
+
+	it('hands the draft’s severity back as a suggestion only', () => {
+		expect(applyDraft(undefined, mine, draft({ severity: 'critical' }), areas, limits).suggestedSeverity).toBe('critical');
 	});
 
 	it('leaves what the draft does not say as the person (or the app) had it', () => {
@@ -51,7 +63,7 @@ describe('prefillFromDraft', () => {
 		];
 		const { draft: d } = await copilot.draft('bug.from_sentence', { sentence: "Saving in Files doesn't work" }, context);
 		const f = prefillFromDraft(mine, d, areas, limits);
-		expect(f).toMatchObject({ area: 'files', severity: 'major', title: "Saving in Files doesn't work" });
+		expect(f).toMatchObject({ area: 'files', severity: '', title: "Saving in Files doesn't work" });
 	});
 });
 
@@ -80,5 +92,17 @@ describe('clippedFields', () => {
 		const long = draft({ title: 'x'.repeat(WORK_LIMITS.title + 1), steps: 'y'.repeat(WORK_LIMITS.text + 1) });
 		expect(clippedFields(long, limits)).toEqual(['Title', 'Steps to reproduce']);
 		expect(applyDraft(undefined, mine, long, areas, limits).clipped).toEqual(['Title', 'Steps to reproduce']);
+	});
+});
+
+describe('draftedFields', () => {
+	it('names what the draft set, never the severity', () => {
+		expect(draftedFields(draft(), areas)).toEqual(['title', 'happened']);
+		expect(draftedFields(draft({ steps: 'a', expected: 'b', environment: 'c', area_id: 'files' }), areas)).toEqual(['title', 'happened', 'area', 'expected', 'steps', 'environment']);
+	});
+
+	it('leaves out blank parts and an area that is not the project’s', () => {
+		expect(draftedFields(draft({ steps: ' ', expected: '', area_id: 'invented' }), areas)).toEqual(['title', 'happened']);
+		expect(applyDraft(undefined, mine, draft({ steps: 'x' }), areas, limits).drafted).toEqual(['title', 'happened', 'steps']);
 	});
 });

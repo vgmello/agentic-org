@@ -34,16 +34,32 @@ test('report dialog: a sentence drafts the fields of the real form, and nothing 
 	await expect(dialog.getByTestId('drafted-banner')).toContainText('Drafted by the copilot. Nothing is reported yet.');
 	await expect(dialog.getByLabel('Title')).toHaveValue("The save button doesn't work after I rename a file");
 	await expect(dialog.getByLabel('What happened')).toHaveValue(/sits there/);
-	// The office's severities, from the real form: "major", not the old low/medium/high.
-	await expect(dialog.getByRole('radio', { name: /^Major/ })).toBeChecked();
+	// BUG-1: a bug has no default severity. The copilot's pick (the office's own scale) is a suggestion
+	// beside the options, never a selected one.
+	await expect(dialog.getByRole('radio', { checked: true })).toHaveCount(0);
+	await expect(dialog.getByTestId('severity-suggestion')).toHaveText('The copilot suggests Major. You choose.');
+	await expect(dialog.getByTestId('severity-suggested')).toHaveText('Suggested by the copilot');
+	// The drafted fields are tagged, so checking doesn't mean re-reading everything.
+	await expect(dialog.getByTestId('drafted-tag-bug-title')).toBeVisible();
+	await expect(dialog.getByTestId('drafted-tag-bug-happened')).toBeVisible();
+	await expect(dialog.getByTestId('drafted-tag-bug-steps')).toHaveCount(0);
 	await expect(dialog.getByLabel('Area')).toHaveValue('atlas-general');
 	// The app's own environment line is not overwritten by a draft that doesn't have one.
 	await expect(dialog.getByLabel('Environment')).toHaveValue(/^This Mac \(HQ\)/);
 	await expect(bugRows(page)).toHaveCount(0);
 	await shot(page, 'report-dialog-drafted');
 
-	// The person edits, then confirms: the normal Report bug.
+	// The person edits the title: its tag goes, the other field keeps its tag.
 	await dialog.getByLabel('Title').fill('Save does nothing after a rename');
+	await expect(dialog.getByTestId('drafted-tag-bug-title')).toHaveCount(0);
+	await expect(dialog.getByTestId('drafted-tag-bug-happened')).toBeVisible();
+
+	// Report bug still needs a severity the person picked.
+	await dialog.getByRole('button', { name: 'Report bug' }).click();
+	await expect(dialog.getByRole('alert')).toHaveText('Choose a severity.');
+	await expect(bugRows(page)).toHaveCount(0);
+	await dialog.getByRole('radio', { name: /^Major/ }).check();
+	await expect(dialog.getByTestId('severity-suggestion')).toHaveCount(0);
 	await dialog.getByRole('button', { name: 'Report bug' }).click();
 	await expect(page.getByText('Bug B-1 reported.')).toBeVisible();
 	await expect(bugRows(page)).toHaveCount(1);
@@ -57,20 +73,36 @@ test('report dialog: Undo draft brings back the person’s own text, not an earl
 	await dialog.getByLabel('What happened').fill('My own words');
 	await dialog.getByLabel('What went wrong?').fill('It crashed on start');
 	await dialog.getByRole('button', { name: 'Draft the report' }).click();
-	await expect(dialog.getByRole('radio', { name: /^Critical/ })).toBeChecked();
+	await expect(dialog.getByTestId('severity-suggestion')).toHaveText('The copilot suggests Critical. You choose.');
+	await expect(dialog.getByRole('radio', { checked: true })).toHaveCount(0);
 	await expect(dialog.getByLabel('Title')).toHaveValue('It crashed on start');
 
 	// A second draft replaces the first.
 	await dialog.getByLabel('What went wrong?').fill('A typo in the header');
 	await dialog.getByRole('button', { name: 'Draft the report' }).click();
-	await expect(dialog.getByRole('radio', { name: /^Trivial/ })).toBeChecked();
+	await expect(dialog.getByTestId('severity-suggestion')).toHaveText('The copilot suggests Trivial. You choose.');
 	await expect(dialog.getByLabel('Title')).toHaveValue('A typo in the header');
+	await expect(dialog.getByTestId('drafted-tag-bug-title')).toBeVisible();
 
 	await dialog.getByRole('button', { name: 'Undo draft' }).click();
 	await expect(dialog.getByLabel('Title')).toHaveValue('My own title');
 	await expect(dialog.getByLabel('What happened')).toHaveValue('My own words');
 	await expect(dialog.getByRole('radio', { checked: true })).toHaveCount(0);
 	await expect(dialog.getByTestId('drafted-banner')).toHaveCount(0);
+	// The person's own text is not "Drafted", and the suggestion goes with the draft.
+	await expect(dialog.getByTestId('drafted-tag-bug-title')).toHaveCount(0);
+	await expect(dialog.getByTestId('severity-suggestion')).toHaveCount(0);
+});
+
+test('report dialog: a severity the person chose is kept, and a later draft only suggests', async ({ page }) => {
+	const dialog = await openReportDialog(page);
+	await dialog.getByRole('radio', { name: /^Minor/ }).check();
+	await dialog.getByLabel('What went wrong?').fill('It crashed on start');
+	await dialog.getByRole('button', { name: 'Draft the report' }).click();
+	await expect(dialog.getByLabel('Title')).toHaveValue('It crashed on start');
+	await expect(dialog.getByRole('radio', { name: /^Minor/ })).toBeChecked();
+	// Nothing to suggest while the person has already chosen.
+	await expect(dialog.getByTestId('severity-suggestion')).toHaveCount(0);
 });
 
 test('report dialog: Undo cancels a draft that is still on its way', async ({ page }) => {
@@ -131,8 +163,13 @@ test('report dialog: Draft or improve is on the title, what happened, expected a
 	await panel.getByRole('button', { name: 'Use this draft' }).click();
 	await expect(field).toHaveValue('The save button does nothing.');
 	await expect(panel).toHaveCount(0);
+	// The field says it holds a draft, until the person edits it or takes it back.
+	await expect(dialog.getByTestId('drafted-tag-bug-happened')).toBeVisible();
+	await field.fill('The save button does nothing. I edited it.');
+	await expect(dialog.getByTestId('drafted-tag-bug-happened')).toHaveCount(0);
 	await dialog.getByRole('button', { name: 'Undo', exact: true }).click();
 	await expect(field).toHaveValue('  the save  button does nothing');
+	await expect(dialog.getByTestId('drafted-tag-bug-happened')).toHaveCount(0);
 });
 
 test('report dialog field: Undo after two drafts brings back the person’s own text, not the first draft', async ({ page }) => {
@@ -236,7 +273,28 @@ for (const [scenario, title] of [
 		await panel.getByRole('button', { name: 'Improve' }).click();
 		await expect(panel.getByRole('alert').filter({ hasText: title })).toBeVisible();
 		await expect(dialog.getByLabel('What happened')).toHaveValue('Some text');
+		// One error at a time: running the field's copilot cleared the sentence draft's error.
+		await expect(dialog.getByRole('alert')).toHaveCount(1);
 		await shot(page, `copilot-${scenario}`);
+
+		// Running it again clears the panel's own error while it works, and Dismiss clears it too.
+		await panel.getByRole('button', { name: 'Improve' }).click();
+		await expect(panel.getByRole('alert')).toHaveCount(0);
+		await expect(panel.getByRole('alert').filter({ hasText: title })).toBeVisible();
+		await panel.getByRole('button', { name: 'Cancel' }).click();
+		await expect(dialog.getByRole('alert')).toHaveCount(0);
+
+		// The sentence draft's error has a Dismiss of its own, and a new draft closes an open panel.
+		await dialog.getByRole('button', { name: 'Draft the report' }).click();
+		await expect(dialog.getByRole('alert').filter({ hasText: title })).toBeVisible();
+		await dialog.getByRole('button', { name: 'Dismiss' }).click();
+		await expect(dialog.getByRole('alert')).toHaveCount(0);
+		await dialog.getByRole('button', { name: 'Draft or improve What happened' }).click();
+		await panel.getByRole('button', { name: 'Improve' }).click();
+		await expect(panel.getByRole('alert').filter({ hasText: title })).toBeVisible();
+		await dialog.getByRole('button', { name: 'Draft the report' }).click();
+		await expect(panel).toHaveCount(0);
+		await expect(dialog.getByRole('alert').filter({ hasText: title })).toHaveCount(1);
 	});
 }
 

@@ -23,17 +23,19 @@ export interface BugFieldLimits {
 }
 
 /**
- * The dialog's fields with the copilot's draft filled in. The title, what happened and the severity
- * always come from the draft. The rest only when the draft has them: a field the draft leaves out
- * keeps what the person (or the app) put there. An `area_id` that isn't one of the project's areas
- * is ignored. Nothing is reported: the person still presses Report bug.
+ * The dialog's fields with the copilot's draft filled in. The title and what happened always come
+ * from the draft. The rest only when the draft has them: a field the draft leaves out keeps what
+ * the person (or the app) put there. An `area_id` that isn't one of the project's areas is ignored.
+ * **The severity is never filled in**: a bug has no default severity, so the person picks it (the
+ * draft's choice is only a suggestion, see `applyDraft`). Nothing is reported: the person still
+ * presses Report bug.
  */
 export function prefillFromDraft(current: BugFields, draft: BugDraft, areas: { id: string }[], limits: BugFieldLimits): BugFields {
 	const keep = (value: string | undefined, max: number, old: string) => (value?.trim() ? fitTo(value, max).text : old);
 	return {
 		title: fitTo(draft.title, limits.title).text,
 		happened: fitTo(draft.what_happened, limits.text).text,
-		severity: draft.severity,
+		severity: current.severity,
 		area: draft.area_id && areas.some((a) => a.id === draft.area_id) ? draft.area_id : current.area,
 		expected: keep(draft.expected, limits.text, current.expected),
 		steps: keep(draft.steps, limits.text, current.steps),
@@ -53,6 +55,17 @@ export function clippedFields(draft: BugDraft, limits: BugFieldLimits): string[]
 	].filter((x): x is string => typeof x === 'string');
 }
 
+/** The fields the draft really set (so the dialog can tag them "Drafted"). The severity is never one. */
+export function draftedFields(draft: BugDraft, areas: { id: string }[]): (keyof BugFields)[] {
+	const has = (v: string | undefined) => !!v?.trim();
+	const keys: (keyof BugFields)[] = ['title', 'happened'];
+	if (draft.area_id && areas.some((a) => a.id === draft.area_id)) keys.push('area');
+	if (has(draft.expected)) keys.push('expected');
+	if (has(draft.steps)) keys.push('steps');
+	if (has(draft.environment)) keys.push('environment');
+	return keys;
+}
+
 /**
  * Fill the fields from a draft. `before` is what the person had before the FIRST draft: a second
  * draft keeps it, so Undo always brings back the person's own text and never an earlier draft.
@@ -63,8 +76,14 @@ export function applyDraft(
 	draft: BugDraft,
 	areas: { id: string }[],
 	limits: BugFieldLimits
-): { fields: BugFields; before: BugFields; clipped: string[] } {
-	return { fields: prefillFromDraft(current, draft, areas, limits), before: before ?? { ...current }, clipped: clippedFields(draft, limits) };
+): { fields: BugFields; before: BugFields; clipped: string[]; drafted: (keyof BugFields)[]; suggestedSeverity: string } {
+	return {
+		fields: prefillFromDraft(current, draft, areas, limits),
+		before: before ?? { ...current },
+		clipped: clippedFields(draft, limits),
+		drafted: draftedFields(draft, areas),
+		suggestedSeverity: draft.severity
+	};
 }
 
 /** Undo: the person's own fields from before the first draft, or the fields as they are when there was no draft. */
