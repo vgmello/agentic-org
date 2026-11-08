@@ -140,6 +140,7 @@ The research behind it, with exact flags, protocols and what was verified, is in
    - Antigravity: ACP `session/request_permission`.
 
    The office answers from the agent's **permission policy** (what's allowed without asking), and asks the owner in **Needs you** for anything else. Each runtime's own allow rules and sandbox are set from the same policy as a first line of defence.
+   - **Escalating approvals (contract review of `org-runtime`, 2026-11-08):** every approval request carries a required `escalation`: `none`, `sandbox_bypass` (e.g. a Codex command asking to run unsandboxed), `permission_change` (Claude `ExitPlanMode`, an ACP mode switch) or `unknown`. The office ALWAYS DENIES `sandbox_bypass`: the fixed denies win, with no policy or owner override in phase 1. It NEVER answers `permission_change` or `unknown` from policy: they always go to the owner in Needs you with a clear warning. Adapters must set the field; an unrecognised approval kind is `unknown`.
    - **The office allows or denies the original call only. It never rewrites tool input.** Claude runs a rewritten input (`updatedInput`) without telling the model, so the port has no way to send one.
    - **A deny carries a message**, which Claude shows the model, and the turn goes on. Claude's `interrupt: true` hides the message, so the office uses it only when it also means to end the turn.
    - **The office owns expiry.** Claude didn't time out an approval within 150 s in the spike (longer is untested, an S0 open item), so the office answers an expired one with a deny.
