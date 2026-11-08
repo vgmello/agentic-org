@@ -863,8 +863,9 @@ command!(
 );
 command!(
     /// `member.remove`: anyone but the owner. Removes their memberships, clears them as lead, and
-    /// makes whoever reported to them report to the removed member's own manager, or to the owner
-    /// if they had none (the same as `member.offboard`). It frees the member's handle, so it is
+    /// makes whoever reported to them (offboarded agents included, since the record goes) report
+    /// to the removed member's own manager, or to the owner if they had none. Unlike
+    /// `member.offboard`, which leaves offboarded records as they are. It frees the member's handle, so it is
     /// for a member who has no history to keep: that is the CALLER'S duty (HQ sees the
     /// organization's structure, not messages or tasks, and cannot tell). What HQ does refuse is
     /// an offboarded agent, whose record and handle are kept for good (`invalid_request`);
