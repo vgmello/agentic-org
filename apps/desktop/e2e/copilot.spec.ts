@@ -112,6 +112,32 @@ test('Dismiss leaves the text alone, and an empty field gets a draft from an ins
 	await expect(panel).toHaveCount(0);
 });
 
+test('with nothing to go on, Draft asks for an instruction instead of running', async ({ page }) => {
+	await openReport(page);
+	await page.getByRole('button', { name: 'Draft or improve What you expected' }).click();
+	const panel = page.getByTestId('copilot-bug-expected');
+	await panel.getByRole('button', { name: 'Draft', exact: true }).click();
+	await expect(panel.getByRole('alert')).toHaveText('Say what it should be about, then ask for a draft.');
+	await expect(panel.getByTestId('copilot-proposal')).toHaveCount(0);
+	await panel.getByLabel('Instruction (optional)').fill('the file is saved');
+	await expect(panel.getByRole('alert')).toHaveCount(0);
+});
+
+test('reporting while a draft is on its way drops the draft', async ({ page }) => {
+	await openReport(page);
+	await page.getByLabel('Title', { exact: true }).fill('Typed title');
+	await page.getByLabel('What happens').fill('Typed text');
+	await page.getByLabel('What went wrong?').fill('It crashed on start');
+	await page.getByRole('button', { name: 'Draft the report' }).click();
+	await page.getByRole('button', { name: 'Report bug' }).click();
+	await expect(page.getByTestId('bug-sent')).toContainText('Typed title');
+	await page.getByRole('button', { name: 'Report another bug' }).click();
+	// Longer than the mock's draft takes: the late draft must not fill the new, empty form.
+	await page.waitForTimeout(1200);
+	await expect(page.getByLabel('Title', { exact: true })).toHaveValue('');
+	await expect(page.getByTestId('drafted-banner')).toHaveCount(0);
+});
+
 test('without a runtime the smart buttons are not there, and the form still works', async ({ page }) => {
 	await openReport(page, 'off');
 	await expect(page.getByLabel('Title', { exact: true })).toBeVisible();

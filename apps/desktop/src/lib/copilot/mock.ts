@@ -1,5 +1,6 @@
 import type { AppError } from '$lib/proto';
 import type { CopilotApi } from './api';
+import { checkTextRequest } from './check';
 import {
 	COPILOT_LIMITS as LIMITS,
 	type BugDraft,
@@ -60,15 +61,15 @@ export function tidy(text: string): string {
 function improveText(input: TextImproveInput): DraftResponse<TextDraft> {
 	const text = input.text.trim();
 	const instruction = input.instruction?.trim() ?? '';
+	const problem = checkTextRequest(input);
+	if (problem) fail('invalid_request', problem);
 	if (input.mode === 'improve') {
-		if (!text) fail('invalid_request', 'There is nothing to improve yet. Write something, or ask for a draft.');
 		const better = tidy(text);
 		return {
 			draft: { text: better },
 			notes: [better === text ? 'Nothing to fix: it already reads well.' : 'Kept your meaning. Fixed spacing, capital letters and the ending.']
 		};
 	}
-	if (!text && !instruction) fail('invalid_request', 'Say what it should be about, then ask for a draft.');
 	const basis = tidy(instruction || text);
 	const notes = ['Sample data: a rule-based stand-in, not a model’s answer.', 'Unknowns are marked [?].'];
 	return { draft: { text: `${basis} [?] Add the details the copilot can't know.` }, notes };

@@ -33,7 +33,7 @@ export function formFromDraft(draft: BugDraft): BugForm {
 		title: draft.title,
 		actual: draft.actual,
 		expected: draft.expected,
-		steps: draft.steps.join('\n'),
+		steps: draft.steps.map((s) => s.replace(/\s*\n\s*/g, ' ')).join('\n'),
 		severity: draft.severity
 	};
 }
@@ -48,7 +48,7 @@ const chars = (s: string) => [...s].length;
 
 export type FormErrors = Partial<Record<keyof BugForm, string>>;
 
-/** Check the form with the report's rules (the same caps as the copilot's draft, so a draft always passes). */
+/** Check the form with the report's rules (the copilot's draft has the same caps, and is made to fit the form). */
 export function validateForm(form: BugForm): { ok: true; report: BugReport } | { ok: false; errors: FormErrors } {
 	const errors: FormErrors = {};
 	const title = form.title.trim();

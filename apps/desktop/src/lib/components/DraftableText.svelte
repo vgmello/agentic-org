@@ -10,6 +10,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import { copilotApi, copilotFeatures, describeCopilotFailure, offers, type CopilotApi } from '$lib/copilot/api';
+	import { checkTextRequest } from '$lib/copilot/check';
 	import { createDraftFlow, isDrafting, type DraftPhase } from '$lib/copilot/draft-flow';
 	import { COPILOT_LIMITS, type CopilotFeature, type TextDraft } from '$lib/copilot/types';
 
@@ -48,13 +49,14 @@
 
 	let open = $state(false);
 	let instruction = $state('');
+	let requestError = $state<string | undefined>();
 	let phase = $state<DraftPhase<TextDraft>>({ kind: 'idle' });
 	let previous = $state<string | undefined>();
 	// `api` is chosen once, when the field is made (a test passes its own); it is not meant to change.
 	// svelte-ignore state_referenced_locally
 	const flow = createDraftFlow(api, 'text.improve', (next) => (phase = next));
 
-	const mode = $derived(value.trim() ? 'improve' : 'draft');
+	const mode = $derived<'draft' | 'improve'>(value.trim() ? 'improve' : 'draft');
 	const drafting = $derived(isDrafting(phase));
 	const failure = $derived(phase.kind === 'failed' ? describeCopilotFailure(phase.error) : undefined);
 
@@ -73,10 +75,13 @@
 		flow.cancel();
 		open = false;
 		instruction = '';
+		requestError = undefined;
 	}
 
 	function ask() {
-		flow.run({ mode, field: label.slice(0, COPILOT_LIMITS.fieldMaxChars), text: value, instruction: instruction.trim() || undefined });
+		const request = { mode, field: label.slice(0, COPILOT_LIMITS.fieldMaxChars), text: value, instruction: instruction.trim() || undefined };
+		requestError = checkTextRequest(request);
+		if (!requestError) flow.run(request);
 	}
 
 	function use() {
@@ -168,7 +173,13 @@
 						placeholder={mode === 'improve' ? 'Make it shorter' : 'What should it say?'}
 						disabled={drafting}
 						bind:value={instruction}
+						oninput={() => (requestError = undefined)}
+						aria-invalid={requestError ? true : undefined}
+						aria-describedby={requestError ? `${id}-request-error` : undefined}
 					/>
+					{#if requestError}
+						<p id="{id}-request-error" class="text-sm/6 text-red-400" role="alert">{requestError}</p>
+					{/if}
 				</div>
 			{/if}
 
@@ -182,7 +193,7 @@
 						<p class="whitespace-pre-wrap rounded-md bg-gray-900/60 px-3 py-2 text-sm/6 text-white" data-testid="copilot-proposal">{phase.response.draft.text}</p>
 						{#if phase.response.notes.length > 0}
 							<ul class="list-disc space-y-1 pl-5 text-xs/5 text-gray-400" data-testid="copilot-notes">
-								{#each phase.response.notes as note (note)}<li>{note}</li>{/each}
+								{#each phase.response.notes as note, i (i)}<li>{note}</li>{/each}
 							</ul>
 						{/if}
 					</div>

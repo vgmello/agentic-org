@@ -42,6 +42,14 @@ describe('the form', () => {
 	});
 });
 
+describe('a draft that does not fit the form as it is', () => {
+	it('keeps a step with a line break in it as one step', () => {
+		const form = formFromDraft({ title: 'T', actual: 'A', expected: '', steps: ['one\ntwo', 'three'], severity: 'low' });
+		expect(stepLines(form.steps)).toEqual(['one two', 'three']);
+		expect(validateForm(form).ok).toBe(true);
+	});
+});
+
 describe('validateForm', () => {
 	it('accepts a good form and trims it', () => {
 		const checked = validateForm(good({ title: '  Save fails  ' }));

@@ -69,6 +69,8 @@
 	async function report(e: SubmitEvent) {
 		e.preventDefault();
 		if (sending) return;
+		// A draft still on its way would land on the form being reported: drop it.
+		flow.cancel();
 		sending = true;
 		sendError = undefined;
 		try {
@@ -85,6 +87,7 @@
 	}
 
 	function another() {
+		flow.cancel();
 		form = emptyForm();
 		sentence = '';
 		errors = {};
@@ -160,7 +163,7 @@
 				<p>Check every field and change what is wrong, then press Report bug.</p>
 				{#if drafted.notes.length > 0}
 					<ul class="mt-1 list-disc pl-5 text-xs/5 text-indigo-200">
-						{#each drafted.notes as note (note)}<li>{note}</li>{/each}
+						{#each drafted.notes as note, i (i)}<li>{note}</li>{/each}
 					</ul>
 				{/if}
 			</div>
