@@ -76,7 +76,7 @@ pub use org::{
     OrgSnapshotCall, Position, ProjectSummary, ProjectTeam, Team, AGENT_HOME_MAX_BYTES,
     AGENT_MESSAGING_NAME_MAX_CHARS, AGENT_TEXT_MAX_CHARS, OWNER_HANDLE,
 };
-pub use token::AppToken;
+pub use token::{AppToken, APP_TOKEN_BYTES};
 pub use types::{OfficeInfo, OfficeRole, OfficeStatus, Organization, ORGANIZATION_NAME_MAX_CHARS};
 pub use wire::{
     salvage_id, Event, Outcome, Request, Response, ServerMessage, UNREADABLE_REQUEST_ID,
