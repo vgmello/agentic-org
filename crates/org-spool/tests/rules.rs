@@ -1580,6 +1580,19 @@ fn rule_an_ask_that_expired_before_delivery_still_reaches_a_person() {
     // An agent's still goes to dead/, as before.
     let reason = fs::read_to_string(t.dir.join(format!("spool/dead/{to_agent}.reason"))).unwrap();
     assert!(reason.starts_with("expired:"), "{reason}");
+    // The owner with no profile.json at all is a person too: delivered, urgent.
+    let owner = org_spool::OWNER_ID;
+    t.spool.register(owner).unwrap();
+    assert!(!t
+        .dir
+        .join(format!("spool/inbox/{owner}/profile.json"))
+        .exists());
+    let to_owner = expired_ask(owner);
+    assert_eq!(t.spool.deliver_all().unwrap().delivered, 1);
+    let report = t.spool.notify(owner, &opts(None, false, true)).unwrap();
+    assert_eq!(ids(&report), vec![to_owner]);
+    assert!(report.items[0].urgent && report.text.contains("(expired)"));
+
     // Only asks: an expired plain message (another writer may set expires_at) to a person
     // is still dead-lettered.
     let mut msg = Envelope::new_msg(PEER, "pat", None, "b", BTreeMap::new()).unwrap();
