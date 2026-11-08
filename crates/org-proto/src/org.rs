@@ -7,6 +7,16 @@
 //! HQ validates. A command carries a client-made `command_id` (a ULID), client-made ids for
 //! anything it creates, and the `expected_version` of what it edits.
 //!
+//! ## Who may send what
+//! Every command in this module is for the app. A command that arrives on an agent's connection
+//! is refused with `not_authorized` unless the agent-sessions design lists it as allowed for
+//! agents (none is today). In particular `member.add_agent`, `member.update_agent`,
+//! `member.set_agent_status`, `member.set_run_mode`, `member.offboard` and `member.remove` change
+//! who works for the organization and what it spends, and some cannot be undone. The wire
+//! carries no caller identity: the office that receives a command knows whose connection it came
+//! in on (the app's connection is bound with the app token, ADR-0003), enforces this before it
+//! queues or forwards the command, and HQ relies on that.
+//!
 //! ## When several errors apply
 //! A command can break more than one rule at once. HQ returns the first of: `not_authorized`,
 //! `not_found`, `invalid_request` (unreadable, outside a limit, the wrong kind of member or the
@@ -121,10 +131,10 @@ pub enum AgentStatus {
     Paused,
     /// Left the organization (`member.offboard`). A state, not a deletion: the record stays
     /// for history and its handle stays reserved. Only `member.offboard` sets it, and it is
-    /// final in this contract: no command brings an agent back. What an offboarded agent
-    /// still receives or may still be part of (messages, tasks, teams, leads, reporting
-    /// lines) is decided by ADR-0003, the work-items design and the teams design; this
-    /// contract only carries the state. A build older than this word reads it as `Unknown`, so
+    /// final in this contract: no command brings an agent back. It has no memberships, leads
+    /// no team and manages no one (`member.offboard` ends those), and the team and reporting
+    /// commands refuse it. What it still receives (messages, tasks) is decided by ADR-0003
+    /// and the work-items design. A build older than this word reads it as `Unknown`, so
     /// a client must not treat `Unknown` as "working".
     Offboarded,
     /// Missing or not known to this build.
@@ -233,7 +243,8 @@ pub struct AgentProfile {
     /// one. 1 to [`AGENT_TEXT_MAX_CHARS`] characters, trimmed, no control characters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    /// How the agent is run. Missing means not set. Changed only with `member.set_run_mode`.
+    /// How the agent is run. Missing means not office-run: a person starts it. Changed only
+    /// with `member.set_run_mode`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_mode: Option<RunMode>,
     /// When a scheduled agent runs. HQ keeps it present exactly when `run_mode` is `scheduled`;
@@ -432,7 +443,8 @@ command!(
 );
 command!(
     /// `team.set_lead`: a member of the team, or none. Errors: `not_a_member`,
-    /// `owner_protected`, `conflict`, `not_found`.
+    /// `owner_protected`, `conflict`, `not_found`, `invalid_request` (the member is an offboarded
+    /// agent).
     TeamSetLead, "team.set_lead", TeamSetLeadParams {
         team_id: String,
         expected_version: u64,
@@ -448,8 +460,8 @@ command!(
     }
 );
 command!(
-    /// `team.add_member`. `membership_id` is client-made. Errors: `already_exists`,
-    /// `owner_protected`, `not_found`.
+    /// `team.add_member`. `membership_id` is client-made. Errors: `owner_protected`,
+    /// `not_found`, `invalid_request` (the member is an offboarded agent), `already_exists`.
     TeamAddMember, "team.add_member", TeamAddMemberParams {
         membership_id: String,
         team_id: String,
@@ -521,7 +533,8 @@ command!(
 command!(
     /// `member.set_reports_to`: who a member reports to, or none (the owner). Errors:
     /// `cycle` (someone would report to themselves, directly or through others),
-    /// `owner_protected` (the owner reports to no one), `conflict`, `not_found`.
+    /// `owner_protected` (the owner reports to no one), `conflict`, `not_found`,
+    /// `invalid_request` (either member is an offboarded agent).
     MemberSetReportsTo, "member.set_reports_to", MemberSetReportsToParams {
         member_id: String,
         expected_version: u64,
@@ -602,14 +615,18 @@ command!(
     }
 );
 command!(
-    /// `member.offboard`: an agent leaves the organization. Offboarding is a STATE, not a
-    /// deletion: HQ sets the agent's `status` to `offboarded` and `offboarded_at` to its own
-    /// clock, in one `member_upserted` (the member's version goes up). The record and its handle
-    /// (`messaging_name`) stay, and the handle stays reserved PERMANENTLY: no command frees it,
-    /// so history addressed to it can never meet a different agent. Memberships, team leads and
-    /// reporting lines are not touched by this command, so a client treats an offboarded lead or
-    /// manager as vacant when it shows them. Reclaiming the agent's open tasks is part of the
-    /// work-items design. Errors: `not_found`, `invalid_request` (the member is not an agent, or
+    /// `member.offboard`: an agent leaves the organization. App-only (see "Who may send what").
+    /// Offboarding is a STATE, not a deletion: HQ sets the agent's `status` to `offboarded` and
+    /// `offboarded_at` to its own clock, and the record and its handle (`messaging_name`) stay.
+    /// The handle stays reserved PERMANENTLY: no command frees it, so history addressed to it can
+    /// never meet a different agent. Live relations end, as in `member.remove`, in the same
+    /// `org.changed`: the agent's memberships are removed, the teams it led lose their lead
+    /// (`team_upserted`), and whoever reported to it now reports to the agent's own manager, or
+    /// to the owner if it had none (`member_upserted`); each affected team and member gets a new
+    /// version. Existing historical references (authorship, activity) keep pointing at the agent.
+    /// Afterwards `team.add_member`, `team.set_lead` and `member.set_reports_to` that name it are
+    /// `invalid_request`. Reclaiming the agent's open tasks is part of the work-items design.
+    /// Errors: `not_authorized`, `not_found`, `invalid_request` (the member is not an agent, or
     /// is already offboarded), `conflict`.
     MemberOffboard, "member.offboard", MemberOffboardParams {
         member_id: String,
@@ -617,20 +634,19 @@ command!(
     }
 );
 command!(
-    /// `member.set_run_mode`: how an agent is run, and when if it is scheduled. App-only: the
-    /// office that receives it checks that the connection is the app's (bound with the app token,
-    /// ADR-0003) before it queues or forwards the command, and refuses it otherwise with
-    /// `not_authorized`. (The wire carries no caller identity, so this is enforced where the
-    /// connection is known, not by HQ alone.) `run_mode` must be `always_on`, `on_call` or
-    /// `scheduled` (`Unknown` is `invalid_request`), and there is no way back to "not set".
-    /// `schedule` is required for `scheduled` and must be absent otherwise (`invalid_request`);
-    /// its text follows the [`Schedule`] rules. Setting the mode an agent already has is
-    /// accepted. Errors: `not_authorized`, `not_found`, `invalid_request` (the member is not an
-    /// agent, is offboarded, or a value breaks the rules above), `conflict`.
+    /// `member.set_run_mode`: how an agent is run, and when if it is scheduled. App-only (see
+    /// "Who may send what"). `run_mode` is `always_on`, `on_call`, `scheduled`, or left out: left
+    /// out means "not office-run", the agent is started by a person (this is how an agent is
+    /// taken out of the office's control). `Unknown` is `invalid_request`. `schedule` is required
+    /// for `scheduled` and must be absent otherwise (`invalid_request`); its text follows the
+    /// [`Schedule`] rules. Setting the mode an agent already has is accepted. Errors:
+    /// `not_authorized`, `not_found`, `invalid_request` (the member is not an agent, is
+    /// offboarded, or a value breaks the rules above), `conflict`.
     MemberSetRunMode, "member.set_run_mode", MemberSetRunModeParams {
         member_id: String,
         expected_version: u64,
-        run_mode: RunMode,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        run_mode: Option<RunMode>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         schedule: Option<Schedule>,
     }

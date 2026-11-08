@@ -1437,7 +1437,7 @@ fn set_run_mode_and_the_new_update_fields_are_pinned() {
             command_id: "01C".into(),
             member_id: "a1".into(),
             expected_version: 3,
-            run_mode: RunMode::Scheduled,
+            run_mode: Some(RunMode::Scheduled),
             schedule: Some(Schedule {
                 spec: "daily at 6".into(),
                 time_zone: "UTC".into(),
@@ -1458,12 +1458,29 @@ fn set_run_mode_and_the_new_update_fields_are_pinned() {
             command_id: "01C".into(),
             member_id: "a1".into(),
             expected_version: 4,
-            run_mode: RunMode::AlwaysOn,
+            run_mode: Some(RunMode::AlwaysOn),
             schedule: None,
         },
     )
     .unwrap();
     assert!(always.params.get("schedule").is_none());
+    // Left out = "not office-run": a person starts the agent.
+    let cleared = Request::new::<MemberSetRunMode>(
+        3,
+        &MemberSetRunModeParams {
+            command_id: "01C".into(),
+            member_id: "a1".into(),
+            expected_version: 5,
+            run_mode: None,
+            schedule: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        cleared.params,
+        json!({"command_id": "01C", "member_id": "a1", "expected_version": 5})
+    );
+    assert_eq!(cleared.params::<MemberSetRunMode>().unwrap().run_mode, None);
 
     let update = Request::new::<MemberUpdateAgent>(
         3,
