@@ -27,7 +27,7 @@ The success test (`our-org-in-the-app.md`): in the real app on this Mac, with no
 
 ## 0. Before the run
 
-**Ready when** (ada's order, 8 Nov): the host gives the app its token and live office status (River, host contract); the office server's live events and agent commands are on `v1` (server-dev); the org screens use the real HQ, not the mock (app-frontend-dev); the import exists (codex-dev, W12); presence comes from `org-agent who` and status; and, for step 2's live messages, status and threads (2.2, 2.3, 2.6, 2.7), Remy's messaging Phase B, which brings agents' messages and presence into the office (ADR-0003). Without Phase B, steps 1 and 3 can run, and 2.2, 2.3, 2.6 and 2.7 are N/A until it lands.
+**Ready when** (ada's order, 8 Nov): the host gives the app its token and live office status (River, host contract); the office server's live events and agent commands are on `v1` (server-dev); the org screens use the real HQ, not the mock (app-frontend-dev); the import exists (codex-dev, W12); presence comes from `org-agent who` and status; and, for the steps that need agents' messages or presence in the office (2.2, 2.3, 2.6, 2.7, and the message part of 3.6), Remy's messaging Phase B, which brings agents' messages and presence into the office (ADR-0003). Without Phase B, steps 1 and 3 can run, and 2.2, 2.3, 2.6, 2.7 and the message part of 3.6 are N/A until it lands.
 
 **Setup:**
 - A clean build of `v1` on this Mac, with no sample data. The run fails at once if anything shows "Sample data".
@@ -76,14 +76,14 @@ Use throwaway hires for the destructive steps, with names that say so ("Dogfood 
 | 3.3 | First, as the owner, turn on **Can approve hires** for ada (her Settings; the import doesn't carry the flag, APPR-1). Then have an agent who reports to ada (codex-dev) request a second hire (`org-agent hire request "A QA engineer named Dogfood QA 2 for Office, for the dogfood run; home folder in a scratch folder outside the agents repo"`), and ada approve it (`org-agent hire approve <id> --reason "…"`). | The proposal shows "Waiting for ada"; no human step after her approval; Home shows "ada approved hiring …" (APPR-1, APPR-2, APPR-4, APPR-5). | As described. |
 | 3.4 | From the board, open a task and assign it to Dogfood QA 1. | The assignee picker shows status and runtime (MOVE-4); the task shows on the agent. | At once, and one Activity row. |
 | 3.5 | **Move to team…**: move Dogfood QA 1 from App to Office. | One action; never in "Not in a team"; the dialog says "Moves Dogfood QA 1 from App to Office. Dogfood QA 1 stops working on App's projects (Desktop app) and starts on Office's (Office server)." (both teams share Agentic Org, so it names the areas, §8); the toast offers Undo (MOVE-1, MOVE-2). | Card moves at once; Activity has one row. |
-| 3.6 | **Pause** Dogfood QA 1, send it a message while it's paused, then **Resume**. | Paused on the card, not woken, the message waits until Resume (DEAL-3); Resume in one click. | Each change on the card at once, and one Activity row each. |
+| 3.6 | **Pause** Dogfood QA 1. While it's paused, have an agent send it a message (`org-agent msg send --to <its messaging name> "…"`; N/A before Phase B). Then **Resume**. | Paused on the card and not woken; the message waits until Resume (DEAL-3); Resume in one click. | Each change on the card at once, and one Activity row each. |
 | 3.7 | **Offboard** both throwaway hires (Dogfood QA 1 and 2), then try **Add person** with Dogfood QA 1's messaging name. | Only the consequences that apply; Dogfood QA 1's task comes back unassigned; both show under Former members (DEAL-4); the name is refused as taken. | At once, one Activity row each, and the name stays reserved. |
 | 3.8 | Throughout 3.1–3.7, watch the other agents. | They keep working on their own runtimes; nothing stops or restarts them. | No agent interrupted. |
 | 3.9 | Words check across the run. | Never "deallocate"; status, runtime, Paused and Lead are words plus icons (DEAL-1, §10). | No exceptions seen. |
 
 ## 4. Result
 
-- **Pass:** 1.5 under 5 minutes (strict: 5:00 or more is a fail), and every step in 1–3 passes (2.5 may be N/A, and 2.2, 2.3, 2.6 and 2.7 before Phase B; the success test is met only once they pass too).
+- **Pass:** 1.5 under 5 minutes (strict: 5:00 or more is a fail), and every step in 1–3 passes (2.5 may be N/A, and 2.2, 2.3, 2.6, 2.7 and the message part of 3.6 before Phase B; the success test is met only once they pass too).
 - **Pass with notes:** every step passes, except that some 2-second live updates in step 2 took up to 4 s. This allowance never applies to 1.5. Each note becomes a bug in Agentic Org (`ac`), Major.
 - **Fail:** any other failed step. Each becomes a bug, Critical if it blocks the success test, Major otherwise, with the step number in the title.
 - The run's notes (times, screenshots, the snapshot diff) go in `docs/research/dogfood-run-<date>.md`, so the next run can compare.
