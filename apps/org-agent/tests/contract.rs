@@ -987,6 +987,51 @@ fn a_huge_timeout_is_a_usage_error_not_a_panic() {
 }
 
 #[test]
+fn org_relay_symlink_behaves_like_v1_old_org_relay() {
+    let env = TempOrgHome::new("org_relay");
+    let bin_dir = env.root.join("bin");
+    fs::create_dir_all(&bin_dir).unwrap();
+    let relay = bin_dir.join("org-relay");
+    std::os::unix::fs::symlink(common::org_agent_bin(), &relay).unwrap();
+    let run = |args: &[&str], with_home: bool| -> common::Run {
+        let mut cmd = std::process::Command::new(&relay);
+        cmd.args(args).env_remove("HOME").env_remove("ORG_HOME");
+        if with_home {
+            cmd.env("ORG_HOME", &env.root).env("HOME", &env.root);
+        }
+        cmd.output().unwrap().into()
+    };
+
+    // Help needs no spool (no HOME, no ORG_HOME).
+    for help in ["--help", "-h", "help"] {
+        let r = run(&[help], false);
+        assert_eq!(r.code, 0, "{help}: {}", r.stderr);
+        assert!(r.stderr.contains("org-relay run [--once]"), "{}", r.stderr);
+    }
+    let r = run(&[], false);
+    assert_eq!(r.code, 1, "{}", r.stderr);
+    // No spool: exit 4, as the old org-relay.
+    let r = run(&["status"], false);
+    assert_eq!(r.code, 4, "{}", r.stderr);
+    assert!(r.stderr.starts_with("org-relay: "), "{}", r.stderr);
+
+    for (args, needle) in [
+        (&["bogus"][..], "org-relay: unknown command 'bogus'"),
+        (&["run", "--bad"], "org-relay: unknown flag '--bad'"),
+        (&["status", "--once"], "org-relay: unknown flag '--once'"),
+    ] {
+        let r = run(args, true);
+        assert_eq!(r.code, 1, "{args:?}: {}", r.stderr);
+        assert!(r.stderr.starts_with(needle), "{args:?}: {}", r.stderr);
+    }
+    let once = run(&["run", "--once"], true);
+    assert_eq!((once.code, once.stdout.as_str()), (0, "delivered=0 dead=0"));
+    let status = run(&["status", "--json"], true);
+    assert_eq!(status.code, 0, "{}", status.stderr);
+    assert_eq!(json(&status.stdout)["running"], false);
+}
+
+#[test]
 fn read_text_output_sanitizes_the_subject_line() {
     let env = setup("read_subject");
     let id = env.send(

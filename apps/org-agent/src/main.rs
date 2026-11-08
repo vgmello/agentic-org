@@ -448,16 +448,57 @@ fn parse_profile_flags(args: &[String]) -> Result<ProfileUpdate, CliError> {
     Ok(update)
 }
 
-fn run(argv0: &str, args: Vec<String>) -> Result<u8, CliError> {
-    let bin_name = Path::new(argv0)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("org-agent");
-    if bin_name == "org-relay" {
-        let spool = Spool::open_from_env()?;
-        return run_relay_subcommand(&spool, &args, false);
-    }
+const ORG_RELAY_USAGE: &str = "Usage:\n  org-relay run [--once]\n  org-relay status [--json]";
 
+/// `org-relay ...` (this binary invoked through an `org-relay` symlink): v1-old's org-relay,
+/// exactly. Help works without a spool; errors are prefixed `org-relay:`; a usage error exits
+/// 1 and any spool error (including no HOME/ORG_HOME) exits 4.
+fn run_org_relay(args: &[String]) -> ExitCode {
+    let usage_error = |msg: String| {
+        eprintln!("org-relay: {msg}");
+        eprintln!("{ORG_RELAY_USAGE}");
+        ExitCode::from(EXIT_USAGE)
+    };
+    let Some(cmd) = args.first().map(String::as_str) else {
+        eprintln!("{ORG_RELAY_USAGE}");
+        return ExitCode::from(EXIT_USAGE);
+    };
+    if matches!(cmd, "-h" | "--help" | "help") {
+        eprintln!("{ORG_RELAY_USAGE}");
+        return ExitCode::from(EXIT_OK);
+    }
+    let spool = match Spool::open_from_env() {
+        Ok(spool) => spool,
+        Err(e) => {
+            eprintln!("org-relay: {e}");
+            return ExitCode::from(EXIT_IO);
+        }
+    };
+    let (flag, flags) = match cmd {
+        "run" => ("--once", &args[1..]),
+        "status" => ("--json", &args[1..]),
+        other => return usage_error(format!("unknown command '{other}'")),
+    };
+    if let Some(other) = flags.iter().find(|a| a.as_str() != flag) {
+        return usage_error(format!("unknown flag '{other}'"));
+    }
+    let set = !flags.is_empty();
+    let result = if cmd == "run" {
+        run_relay_loop(&spool, set)
+    } else {
+        run_relay_status(&spool, set)
+    };
+    match result {
+        Ok(code) => ExitCode::from(code),
+        Err(CliError::Usage(msg)) => usage_error(msg),
+        Err(CliError::Spool(e)) => {
+            eprintln!("org-relay: {e}");
+            ExitCode::from(EXIT_IO)
+        }
+    }
+}
+
+fn run(args: Vec<String>) -> Result<u8, CliError> {
     let mut as_agent: Option<String> = None;
     let mut json_flag = false;
     let mut filtered = Vec::with_capacity(args.len());
@@ -1235,7 +1276,10 @@ fn main() -> ExitCode {
     let mut argv = env::args();
     let argv0 = argv.next().unwrap_or_else(|| "org-agent".to_string());
     let args: Vec<String> = argv.collect();
-    match run(&argv0, args) {
+    if Path::new(&argv0).file_name().and_then(|n| n.to_str()) == Some("org-relay") {
+        return run_org_relay(&args);
+    }
+    match run(args) {
         Ok(code) => ExitCode::from(code),
         Err(CliError::Usage(msg)) => {
             eprintln!("org-agent: {msg}");

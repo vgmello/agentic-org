@@ -2,6 +2,18 @@
 
 Fast, zero-runtime CLI for agent-to-agent messaging, directory lookup (`who`), self-reported status (`status`), and message triage (`defer`, `done`, `notify`, `due`) over `crates/org-spool`.
 
+## Install
+
+One binary is both CLIs: install `org-agent` and create an `org-relay` symlink to it, which
+replaces v1-old's separate `org-relay` (same commands, output, `org-relay:` error prefix and
+exit codes: `--help` works without a spool, a usage error exits 1, any spool error exits 4):
+
+```bash
+cargo build --release -p org-agent
+install -m 0755 target/release/org-agent ~/.local/bin/org-agent
+ln -sf org-agent ~/.local/bin/org-relay
+```
+
 ## Commands
 
 ```bash
