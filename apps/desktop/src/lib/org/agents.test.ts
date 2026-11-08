@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agentLine, filterRoster, isPaused, messagingNameError, offboardSummary, roster, runModeLabel, runtimeLabel, scheduleLabel, agentStatus, suggestMessagingName } from './agents';
+import { agentLine, filterRoster, isPaused, messagingNameError, offboardSummary, roster, runLimitsText, runModeLabel, runtimeLabel, scheduleLabel, agentStatus, suggestMessagingName } from './agents';
 import { formerMembers, isFormer, withoutFormer } from './model';
 import { sampleOrg } from './sample';
 
@@ -124,5 +124,18 @@ describe('the Agents roster', () => {
 		expect(filterRoster(rows, 'paused').map((r) => r.member.id)).toEqual(['sam']);
 		expect(filterRoster(rows, 'left').map((r) => r.member.id)).toEqual(['kai']);
 		expect(filterRoster(rows, 'active').length).toBe(6);
+	});
+});
+
+describe('RUN-6 the limits that end a run', () => {
+	it('says when an on call or scheduled agent sleeps and when a run is stopped', () => {
+		for (const mode of ['on_call', 'scheduled']) {
+			expect(runLimitsText(mode)).toBe('It goes back to sleep after 5 minutes with nothing to do. A run stops after 30 minutes of work at home, or 2 hours on a task.');
+		}
+	});
+	it('gives an always on agent only the busy limits, and a hand-started or unknown mode none', () => {
+		expect(runLimitsText('always_on')).toBe('A run stops after 30 minutes of work at home, or 2 hours on a task.');
+		expect(runLimitsText('')).toBe('');
+		expect(runLimitsText('unknown')).toBe('');
 	});
 });
