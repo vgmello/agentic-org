@@ -137,8 +137,8 @@ with the same rule (one implementation, see 6). Later lines are reserved: the se
 - **Status per office** (`OfficeInfo.status`): `starting` (spawned, no `ready` yet) → `active`
   (`ready`, child alive) → `offline` (exited, restart pending) → `unavailable` (fatal code, or
   restarts given up). The `ready` wait is 30 s (Keychain and the first SQLCipher open can be slow), then kill + backoff.
-- **Restart:** backoff 1, 2, 4 … 60 s, reset after 60 s of uptime. Fatal codes never restart, until
-  the host restarts.
+- **Restart:** backoff 1, 2, 4 … 60 s, reset after 60 s of uptime. Fatal codes never restart on
+  their own: only `office.restart` or a host restart starts them again.
 - **Shutdown** (SIGTERM from launchd at logout, or the host exiting): close every child's stdin,
   wait up to 10 s, then SIGKILL what's left.
 - **Create:** under the catalog mutex, and only for this step: check the name and its uniqueness
