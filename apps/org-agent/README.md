@@ -95,9 +95,33 @@ All runtime hooks (Claude Code, Codex, Antigravity) wrap `org-agent msg notify`:
 - **Timeouts:** `ask` and `msg wait` take a `--timeout` of at most 24h; more is a usage error (exit 1), and an `ask` is then never queued.
 - **Sizes:** a body is at most 256 KB, a subject at most 1024 bytes, and the whole envelope at most 512 KB once serialized (JSON escaping can grow a body up to 6x); `send`, `ask` and `reply` refuse anything bigger (exit 1, nothing written), since every reader would dead-letter it.
 - **Snoozes:** `--until` takes a duration up to 365 days, `after-task`, or a UTC time (`YYYY-MM-DDTHH:MM:SS[.mmm]Z`) from 1970-01-01 to 365 days from now; anything else is a usage error (exit 1).
-- **`after-task` and breaks:** the hooks run `notify --after-task` at the Stop after a real task (the agent's natural break), and `notify` without `--after-task` (same `--session`) at a triage turn's Stop, at the next prompt (`--urgent-only` on antigravity) and from the watcher. A break starts with the first `--after-task` check after one that listed nothing new to the break, after any other check from the same session (no session at all counts as one session, so `msg due --after-task` at Stops plus `msg due` at prompts works the same way), or from another `--session` (a new run); it goes on while each `--after-task` check lists something not yet listed in this break (the agent is triaging). A message the agent leaves untriaged is listed again but doesn't extend the break. `triage.json` counts breaks (`break_seq`, plus `in_break` and `break_session`); `defer --until after-task` records the current count on the snooze, and an `--after-task` check releases only the after-task snoozes recorded before the current break. So a message deferred after-task while triaging stays snoozed for the rest of that break (a further `--after-task` Stop in it doesn't list it) and comes back once, as `after_task`, at the Stop after the next task; one deferred mid-task comes back at the very next Stop. Snoozes written before breaks were counted are released at the next break. This relies on the hooks never running `--after-task` at a triage turn's Stop.
+- **`after-task` and breaks:** the hooks run `notify --after-task` at the Stop after a real task (the agent's natural break), and `notify` without `--after-task` (same `--session`) at a triage turn's Stop, at the next prompt (`--urgent-only` on antigravity) and from the watcher. A break starts with the first `--after-task` check after one that listed nothing new to the break, after any other check from the same session, or from another `--session` (a new run); a check without `--session` (e.g. `msg due`) ends a break only while no `--session` check has ever run a break for this agent (then `msg due --after-task` at Stops plus `msg due` at prompts works like the hooks); once one has, only that session's checks end its breaks; it goes on while each `--after-task` check lists something not yet listed in this break (the agent is triaging). A message the agent leaves untriaged is listed again but doesn't extend the break. `triage.json` counts breaks (`break_seq`, plus `in_break` and `break_session`); `defer --until after-task` records the current count on the snooze, and an `--after-task` check releases only the after-task snoozes recorded before the current break. So a message deferred after-task while triaging stays snoozed for the rest of that break (a further `--after-task` Stop in it doesn't list it) and comes back once, as `after_task`, at the Stop after the next task; one deferred mid-task comes back at the very next Stop. Snoozes written before breaks were counted are released at the next break. This relies on the hooks never running `--after-task` at a triage turn's Stop.
 - **`msg due`** is the JSON alias of `msg notify --format json` without a session: same selection, no `--session` (no per-session dedup), always exits 0. Like `notify`, it releases due snoozes and, with `--after-task`, counts as a Stop for breaks.
+- **Reply marks read:** `msg reply <id>` marks the original read (moves it to `cur/`) once the reply is queued, a deliberate change from v1-old (ADR-0003 §2.3: answering is triaging).
 - **Read-then-defer:** If an agent runs `org-agent msg read <id>` during triage and then decides to snooze it (`org-agent msg defer <id> --until ...`), `defer` moves `<id>.json` from `cur/` back to `new/` so it remains unread until due.
+
+## Changes from v1-old (deliberate)
+
+Inputs now refused with a usage error (exit 1), nothing written:
+- a subject over 1024 bytes, or an envelope over 512 KB once serialized;
+- a `--meta priority=...` other than `normal`, `high` or `urgent` (use `--priority`);
+- a `--timeout` over 24h (`ask`, `msg wait`), and `--until` beyond 365 days or before 1970;
+- extra positional arguments (`read`, `defer`, `done`, `deregister`, `who`, `whoami`), and
+  `msg deregister` without `<agent>`.
+
+`msg inbox` text: the subject is sanitized so each message stays one row (control, format and
+invisible characters become spaces, `"` becomes `'`) and cut to 200 characters (`…`). Profile
+names refuse `( ) [ ] : "`. `msg reply` marks the original read (above).
+
+## Known limits
+
+- `msg notify --session` records the listed items as reported (under the lock) before the
+  caller has read the output: an adapter that kills `notify` after that save loses those
+  items for that session (they stay in the inbox, and other sessions, `msg inbox` and the
+  sweep still see them).
+- Corrupt files are not cleaned up: a corrupt message in `new/` is moved to `dead/` (with a
+  `.reason`), one in `cur/` is skipped and left there, a corrupt `triage.json` is set aside
+  as `triage.json.corrupt-<ulid>`, and nothing prunes `dead/` or those copies.
 
 ## Wake Socket Tags (`'U'` vs `'N'`)
 
