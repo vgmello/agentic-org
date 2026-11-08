@@ -11,7 +11,7 @@
 	<main class="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center px-6 pb-16">
 		<div class="mb-10 flex items-center gap-x-3">
 			<Logo class="h-9 w-auto" />
-			<span class="text-lg/7 font-semibold text-white">agentic.org</span>
+			<span class="text-lg/7 font-semibold text-white">Agentic Org</span>
 		</div>
 		{@render children()}
 	</main>

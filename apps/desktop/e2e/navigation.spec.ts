@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { shot } from './shot';
 
-const SECTIONS = ['Agents', 'Projects', 'Tasks', 'Sessions', 'Activity', 'Settings'];
+const SECTIONS = ['Agents', 'Projects', 'Tasks', 'Sessions', 'Activity', 'Offices', 'Settings'];
 
 test.beforeEach(async ({ page }) => {
 	await page.goto('/create');
