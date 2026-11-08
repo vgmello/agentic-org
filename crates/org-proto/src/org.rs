@@ -703,7 +703,9 @@ pub struct CommandAccepted {
     pub position: Option<Position>,
 }
 
-/// `org.snapshot`: the organization's structure from the local office's copy.
+/// `org.snapshot`: the organization's structure from the local office's copy. It needs a
+/// bound connection, agent-bound or app-bound, like `who` and `subscribe`: an unbound
+/// connection is refused with `not_authorized` (ADR-0003 §2.1.4).
 pub struct OrgSnapshotCall;
 
 impl Call for OrgSnapshotCall {
