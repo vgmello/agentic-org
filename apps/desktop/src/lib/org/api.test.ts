@@ -122,10 +122,10 @@ describe('the browser mock keeps its history bounded, like the Rust mock HQ', ()
 		const org = make(storage);
 		const first = { method: 'team.create', params: { command_id: 'F0', team_id: 't0', name: 'T0' } } as const;
 		await org.command('org-1', first);
-		for (let n = 1; n <= 500; n++) await org.command('org-1', { method: 'team.create', params: { command_id: `F${n}`, team_id: `t${n}`, name: `T${n}` } });
+		for (let n = 1; n <= 1000; n++) await org.command('org-1', { method: 'team.create', params: { command_id: `F${n}`, team_id: `t${n}`, name: `T${n}` } });
 		await expect(org.command('org-1', first)).rejects.toMatchObject({ code: 'already_exists' });
 		expect(storage.getItem('agentic-org.mock.org.org-1')!.length).toBeLessThan(2_000_000);
-	});
+	}, 60_000);
 
 	it('refuses a command too big to be a command, and an unreadable id, without keeping them', async () => {
 		const storage = memory();
@@ -176,5 +176,15 @@ describe('the browser mock agrees with the Rust mock on the edges', () => {
 		storage.setItem('agentic-org.mock.org.org-1', JSON.stringify({ snapshot, answers: { Z: { command: 'x', result: null } }, order: ['Z'] }));
 		await make(storage).command('org-1', { method: 'team.create', params: { command_id: 'Z', team_id: 'z', name: 'Z' } });
 		expect(JSON.parse(storage.getItem('agentic-org.mock.org.org-1')!).order).toEqual(['Z']);
+	});
+});
+
+describe('null means not given, as on the wire', () => {
+	it('clears a lead with null instead of throwing, and an owner of null is a top-level team', async () => {
+		const org = make();
+		await org.command('org-1', { method: 'team.set_lead', params: { team_id: 'web', expected_version: 1, lead_member_id: null as unknown as undefined } });
+		expect((await org.view('org-1')).snapshot.teams.find((t) => t.id === 'web')?.lead_member_id).toBeUndefined();
+		await org.command('org-1', { method: 'team.create', params: { team_id: 'top', name: 'Top', owner_team_id: null as unknown as undefined } });
+		expect((await org.view('org-1')).snapshot.teams.find((t) => t.id === 'top')?.owner_team_id).toBeUndefined();
 	});
 });

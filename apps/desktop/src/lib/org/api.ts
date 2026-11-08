@@ -48,7 +48,7 @@ const isAnswer = (x: unknown): x is Answer => {
 const refusal = (code: ApiErrorCode, message: string): AppError => ({ source: 'api', code, message });
 
 /** As in the Rust mock HQ: only recent answers are kept, and a command can't be bigger than a command. */
-const ANSWERS_KEPT = 500;
+const ANSWERS_KEPT = 1000;
 const COMMAND_MAX_BYTES = 16 * 1024;
 
 /** A small stable hash (cyrb53) of the command's JSON: enough to tell two commands with one id apart. */
