@@ -7,8 +7,15 @@
 //!   `office.list`, `office.app_token`, `office.restart` and `subscribe` (it emits
 //!   `organization.created` and `office.status_changed`).
 //! - **An office server** (`org-office-server`), one process per office. An organization's
-//!   first office is its HQ. It answers `hello` with its identity, and later the
-//!   organization's calls and agent messaging.
+//!   first office is its HQ. It answers `hello` with its identity, the organization's calls
+//!   ([`org`]: teams, members, projects and areas), the work calls ([`work`]: tasks and their
+//!   checklists, links, comments and activity), and later agent messaging.
+//!
+//! ## Who may call what
+//! The wire never carries the caller's identity: the office knows whose connection a call came
+//! in on. **App-only** calls are refused on any other connection with `not_authorized`: every
+//! organization command ([`org`]) and `work.delete` ([`work`]). Every work call needs a bound
+//! connection (`not_bound` otherwise), and acts as the member it is bound as.
 //!
 //! **The most depended-on crate: keep it small, stable, additive-only.** Every change needs
 //! ada's review (see AGENTS.md).
@@ -59,6 +66,7 @@ pub mod frame;
 pub mod location;
 pub mod msg;
 pub mod org;
+pub mod work;
 
 mod calls;
 mod error;
@@ -79,11 +87,13 @@ pub use events::{EventKind, OfficeStatusChanged, OfficeStatusChangedData, Organi
 pub use name::{NameError, OrganizationName};
 pub use org::{
     is_shaped_like_an_address, is_valid_id, is_valid_member_id, AgentProfile, AgentRuntime,
-    AgentStatus, CommandAccepted, CommandStatus, Member, MemberKind, Membership, OrgChange,
-    OrgChanged, OrgChangedData, OrgRejected, OrgRejectedData, OrgSnapshot, OrgSnapshotCall,
-    Position, ProjectSummary, ProjectTeam, RunMode, Schedule, Team, AGENT_HOME_MAX_BYTES,
-    AGENT_MESSAGING_NAME_MAX_CHARS, AGENT_TEXT_MAX_CHARS, AGENT_TIME_ZONE_MAX_CHARS, ID_MAX_CHARS,
-    MEMBER_ID_CHARS, OFFICE_HANDLE, OWNER_HANDLE, RUN_HANDLE_PREFIX,
+    AgentStatus, Area, CommandAccepted, CommandStatus, GithubRepo, Member, MemberKind, Membership,
+    OrgChange, OrgChanged, OrgChangedData, OrgRejected, OrgRejectedData, OrgSnapshot,
+    OrgSnapshotCall, Position, Project, ProjectCreateTeam, ProjectRepo, ProjectSummary,
+    ProjectTeam, RepoHost, RepoSpec, RunMode, Schedule, Team, AGENT_HOME_MAX_BYTES,
+    AGENT_MESSAGING_NAME_MAX_CHARS, AGENT_TEXT_MAX_CHARS, AGENT_TIME_ZONE_MAX_CHARS,
+    AREA_NAME_MAX_CHARS, ID_MAX_CHARS, MEMBER_ID_CHARS, OFFICE_HANDLE, OWNER_HANDLE,
+    PROJECT_DESCRIPTION_MAX_CHARS, PROJECT_KEY_MAX_CHARS, RESERVED_PROJECT_KEYS, RUN_HANDLE_PREFIX,
 };
 pub use token::{AppToken, APP_TOKEN_BYTES};
 pub use types::{
@@ -92,6 +102,21 @@ pub use types::{
 };
 pub use wire::{
     salvage_id, Event, Outcome, Request, Response, ServerMessage, UNREADABLE_REQUEST_ID,
+};
+pub use work::{
+    ChecklistCounts, ChecklistStep, CommentKind, DocRef, DocWritten, DoneAnyway, DraftTask,
+    Estimate, EventRef, Feature, FeatureOutcome, FeatureStatus, FieldChange, ItemKind, ItemStatus,
+    ItemTime, Link, LinkKind, LinkTarget, NewStep, Priority, RequestKind, RequestOutcome,
+    Resolution, RoutedBy, Severity, Shortcut, TimeFigures, WaitReason, WorkAccepted, WorkActivity,
+    WorkActivityParams, WorkActivityResult, WorkChange, WorkChanged, WorkChangedData, WorkEvent,
+    WorkEventKind, WorkGet, WorkGetParams, WorkGetResult, WorkItem, WorkItemSummary, WorkList,
+    WorkListParams, WorkListResult, WorkPosition, WorkSnapshot, WorkSnapshotParams,
+    WorkSnapshotResult, WorkStatus, WorkTimes, WorkTimesParams, WorkTimesResult,
+    WORK_BLOCKED_REASON_MAX_CHARS, WORK_CHANGED_MAX_BYTES, WORK_DESCRIPTION_MAX_CHARS,
+    WORK_DOD_MAX_CHARS, WORK_ENVIRONMENT_MAX_CHARS, WORK_GET_MAX_LISTED, WORK_MAX_DRAFT_TASKS,
+    WORK_MAX_LINKS, WORK_MAX_STEPS, WORK_PAGE_MAX, WORK_PARAMS_MAX_BYTES, WORK_REASON_MAX_CHARS,
+    WORK_REQUEST_TEXT_MAX_CHARS, WORK_RESPONSE_MAX_BYTES, WORK_STEP_TEXT_MAX_CHARS,
+    WORK_TEXT_MAX_CHARS, WORK_TITLE_MAX_CHARS,
 };
 
 /// The protocol version a server reports in `hello`. Bumped only for a breaking change.

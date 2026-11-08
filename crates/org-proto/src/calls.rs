@@ -93,10 +93,19 @@ pub struct Subscribe;
 /// can't resume from there (the log was trimmed, a promotion started a new epoch, or the
 /// position is beyond what this office has), it answers `snapshot_required`: take a fresh
 /// `org.snapshot` and subscribe from its position.
+///
+/// With `from_work_position` (an office only): likewise for the office's work feed. The office
+/// sends the `work.changed` events after that position (e.g. the first page of a
+/// `work.snapshot`), then live ones. It answers `snapshot_required` if it can't: another
+/// incarnation, a position beyond its feed, or one older than the feed's 30-day retention. The
+/// error doesn't say which stream: a client that gave both positions takes both snapshots
+/// again. See [`crate::work`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubscribeParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from_position: Option<crate::org::Position>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_work_position: Option<crate::work::WorkPosition>,
 }
 
 impl Call for Subscribe {

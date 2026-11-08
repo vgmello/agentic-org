@@ -1,5 +1,6 @@
 use std::io::Cursor;
 
+use serde::Serialize;
 use serde_json::json;
 
 use crate::frame::{read_line, read_message, write_message, FrameError};
@@ -796,16 +797,14 @@ fn snapshot_and_changes_round_trip_and_unknown_changes_are_tolerated() {
             title_in_team: None,
             version: 1,
         }],
-        projects: vec![ProjectSummary {
-            id: "p1".into(),
-            name: "Checkout".into(),
-        }],
+        projects: vec![ProjectSummary::new("p1", "Checkout")],
         project_teams: vec![ProjectTeam {
             id: "pt1".into(),
             project_id: "p1".into(),
             team_id: "t1".into(),
             version: 1,
         }],
+        areas: vec![],
     };
     let v = serde_json::to_value(Response::ok::<OrgSnapshotCall>(1, &snap).unwrap()).unwrap();
     assert_eq!(v["result"]["teams"][0]["name"], "Product");
@@ -1825,4 +1824,1672 @@ fn member_ids_are_26_letters_and_digits_and_no_handle_has_that_shape() {
     ] {
         assert!(!is_valid_member_id(bad), "{bad:?}");
     }
+}
+
+// ---- Work items (org_proto::work) and the project and area commands --------------------------
+
+/// Pins a call's params: built through `Request::new` they are exactly `want`, and the line
+/// reads back as the same params.
+fn pin_params<C: Call>(params: &C::Params, want: serde_json::Value)
+where
+    C::Params: PartialEq + std::fmt::Debug,
+{
+    let request = Request::new::<C>(1, params).unwrap();
+    assert_eq!(request.method, C::METHOD);
+    assert_eq!(request.params, want, "{}", C::METHOD);
+    let line = serde_json::to_string(&request).unwrap();
+    let back: Request = serde_json::from_str(&line).unwrap();
+    assert_eq!(&back.params::<C>().unwrap(), params, "{}", C::METHOD);
+}
+
+/// Every value has its wire name both ways, `Unknown` is written as "unknown", and anything
+/// else, in any shape, reads as `Unknown`.
+fn pin_enum<T>(pairs: &[(T, &str)], unknown: T)
+where
+    T: Serialize + serde::de::DeserializeOwned + PartialEq + std::fmt::Debug + Copy,
+{
+    for &(value, name) in pairs {
+        assert_eq!(serde_json::to_value(value).unwrap(), name);
+        assert_eq!(serde_json::from_value::<T>(name.into()).unwrap(), value);
+    }
+    assert_eq!(serde_json::to_value(unknown).unwrap(), "unknown");
+    for other in [
+        json!("from_a_newer_build"),
+        json!("TODO"),
+        json!(7),
+        json!(true),
+        json!({"todo": {}}),
+        json!(["todo"]),
+    ] {
+        assert_eq!(serde_json::from_value::<T>(other).unwrap(), unknown);
+    }
+}
+
+fn task_summary() -> WorkItemSummary {
+    WorkItemSummary {
+        id: "01JC0000000000000000Q3K9F2X".into(),
+        kind: ItemKind::Task,
+        project_id: Some("p1".into()),
+        number: Some(12),
+        short_id: "3k9f2x".into(),
+        title: "Add the checkout button".into(),
+        status: ItemStatus::InProgress,
+        priority: Some(Priority::High),
+        assignee_id: Some("a1".into()),
+        created_by: "owner1".into(),
+        created_at: "2026-11-08T02:10:00.000Z".into(),
+        updated_at: "2026-11-08T03:00:00.000Z".into(),
+        team_id: Some("t1".into()),
+        checklist: ChecklistCounts {
+            total: 2,
+            done: 1,
+            required_left: 1,
+        },
+        owner_office_id: "hq".into(),
+        generation: 1,
+        version: 4,
+        ..Default::default()
+    }
+}
+
+fn wpos(seq: u64) -> WorkPosition {
+    WorkPosition {
+        incarnation: 7,
+        seq,
+    }
+}
+
+#[test]
+fn work_wire_names_are_pinned() {
+    use crate::org::*;
+    use crate::work::*;
+    let names = [
+        (WorkSnapshot::METHOD, "work.snapshot"),
+        (WorkGet::METHOD, "work.get"),
+        (WorkList::METHOD, "work.list"),
+        (WorkTimes::METHOD, "work.times"),
+        (WorkActivity::METHOD, "work.activity"),
+        (TaskCreate::METHOD, "task.create"),
+        (TaskUpdate::METHOD, "task.update"),
+        (TaskAssign::METHOD, "task.assign"),
+        (TaskSetStatus::METHOD, "task.set_status"),
+        (WorkSetCurrent::METHOD, "work.set_current"),
+        (WorkComment::METHOD, "work.comment"),
+        (WorkWatch::METHOD, "work.watch"),
+        (WorkLink::METHOD, "work.link"),
+        (WorkUnlink::METHOD, "work.unlink"),
+        (WorkUndo::METHOD, "work.undo"),
+        (WorkDelete::METHOD, "work.delete"),
+        (ChecklistAdd::METHOD, "checklist.add"),
+        (ChecklistEdit::METHOD, "checklist.edit"),
+        (ChecklistCheck::METHOD, "checklist.check"),
+        (ChecklistMove::METHOD, "checklist.move"),
+        (ChecklistRemove::METHOD, "checklist.remove"),
+        (ChecklistMakeTask::METHOD, "checklist.make_task"),
+        (ChecklistUnlinkTask::METHOD, "checklist.unlink_task"),
+        (WorkChanged::NAME, "work.changed"),
+        (ProjectCreate::METHOD, "project.create"),
+        (ProjectUpdate::METHOD, "project.update"),
+        (ProjectArchive::METHOD, "project.archive"),
+        (AreaCreate::METHOD, "area.create"),
+        (AreaRename::METHOD, "area.rename"),
+        (AreaSetTeam::METHOD, "area.set_team"),
+        (AreaSetLead::METHOD, "area.set_lead"),
+        (AreaDelete::METHOD, "area.delete"),
+    ];
+    for (got, want) in names {
+        assert_eq!(got, want);
+    }
+    let limits = [
+        (WORK_TITLE_MAX_CHARS, 120),
+        (WORK_TEXT_MAX_CHARS, 10_000),
+        (WORK_DESCRIPTION_MAX_CHARS, 20_000),
+        (WORK_REQUEST_TEXT_MAX_CHARS, 20_000),
+        (WORK_REASON_MAX_CHARS, 1_000),
+        (WORK_BLOCKED_REASON_MAX_CHARS, 200),
+        (WORK_DOD_MAX_CHARS, 1_000),
+        (WORK_ENVIRONMENT_MAX_CHARS, 2_000),
+        (WORK_STEP_TEXT_MAX_CHARS, 200),
+        (WORK_MAX_STEPS, 100),
+        (WORK_MAX_LINKS, 100),
+        (WORK_MAX_DRAFT_TASKS, 50),
+        (WORK_PAGE_MAX as usize, 500),
+        (WORK_PARAMS_MAX_BYTES, 786_432),
+        (WORK_RESPONSE_MAX_BYTES, 786_432),
+        (WORK_CHANGED_MAX_BYTES, 524_288),
+        (WORK_GET_MAX_LISTED, 200),
+        (AREA_NAME_MAX_CHARS, 40),
+        (PROJECT_KEY_MAX_CHARS, 10),
+        (PROJECT_DESCRIPTION_MAX_CHARS, 1_000),
+    ];
+    for (got, want) in limits {
+        assert_eq!(got, want);
+    }
+    assert_eq!(
+        RESERVED_PROJECT_KEYS,
+        &["req", "feat", "adr", "eval", "debt", "lim", "exc"]
+    );
+    // A work write is too large well before it fills a frame.
+    const { assert!(WORK_PARAMS_MAX_BYTES < MAX_FRAME_BYTES) };
+}
+
+#[test]
+fn the_new_error_codes_round_trip_and_reach_the_caller() {
+    for (code, name) in [
+        (ErrorCode::NotBound, "not_bound"),
+        (ErrorCode::TooLarge, "too_large"),
+        (ErrorCode::ChecklistIncomplete, "checklist_incomplete"),
+    ] {
+        assert_eq!(serde_json::to_value(code).unwrap(), name);
+        assert_eq!(
+            serde_json::from_value::<ErrorCode>(name.into()).unwrap(),
+            code
+        );
+        let line = serde_json::to_string(&Response::error(3, ApiError::new(code, "x"))).unwrap();
+        match serde_json::from_str::<Response>(&line)
+            .unwrap()
+            .into_result::<crate::work::TaskSetStatus>()
+        {
+            Err(CallError::Api(e)) => assert_eq!(e.code, code),
+            other => panic!("expected an api error, got {other:?}"),
+        }
+    }
+    // A code from a later phase reads as Unknown, the way a build older than
+    // `checklist_incomplete` reads that one.
+    let later: Response =
+        serde_json::from_str(r#"{"id":3,"error":{"code":"not_owner","message":"x"}}"#).unwrap();
+    match later.into_result::<crate::work::TaskSetStatus>() {
+        Err(CallError::Api(e)) => assert_eq!(e.code, ErrorCode::Unknown),
+        other => panic!("expected an api error, got {other:?}"),
+    }
+}
+
+#[test]
+fn work_enums_have_their_wire_names_and_read_anything_else_as_unknown() {
+    pin_enum(
+        &[
+            (WorkStatus::Committed, "committed"),
+            (WorkStatus::Queued, "queued"),
+        ],
+        WorkStatus::Unknown,
+    );
+    pin_enum(
+        &[
+            (ItemKind::Task, "task"),
+            (ItemKind::Bug, "bug"),
+            (ItemKind::Request, "request"),
+        ],
+        ItemKind::Unknown,
+    );
+    pin_enum(
+        &[
+            (ItemStatus::Todo, "todo"),
+            (ItemStatus::InProgress, "in_progress"),
+            (ItemStatus::Blocked, "blocked"),
+            (ItemStatus::Done, "done"),
+            (ItemStatus::New, "new"),
+            (ItemStatus::Triaged, "triaged"),
+            (ItemStatus::Fixed, "fixed"),
+            (ItemStatus::Closed, "closed"),
+            (ItemStatus::Routed, "routed"),
+            (ItemStatus::Scoping, "scoping"),
+            (ItemStatus::Scoped, "scoped"),
+            (ItemStatus::Approved, "approved"),
+            (ItemStatus::Declined, "declined"),
+            (ItemStatus::Merged, "merged"),
+        ],
+        ItemStatus::Unknown,
+    );
+    pin_enum(
+        &[
+            (Resolution::Completed, "completed"),
+            (Resolution::Cancelled, "cancelled"),
+            (Resolution::Verified, "verified"),
+            (Resolution::Duplicate, "duplicate"),
+            (Resolution::WontFix, "wont_fix"),
+            (Resolution::CantReproduce, "cant_reproduce"),
+        ],
+        Resolution::Unknown,
+    );
+    pin_enum(
+        &[
+            (Priority::Urgent, "urgent"),
+            (Priority::High, "high"),
+            (Priority::Normal, "normal"),
+            (Priority::Low, "low"),
+        ],
+        Priority::Unknown,
+    );
+    pin_enum(
+        &[
+            (Severity::Critical, "critical"),
+            (Severity::Major, "major"),
+            (Severity::Minor, "minor"),
+            (Severity::Trivial, "trivial"),
+        ],
+        Severity::Unknown,
+    );
+    pin_enum(
+        &[
+            (RequestKind::Feature, "feature"),
+            (RequestKind::Change, "change"),
+            (RequestKind::Technical, "technical"),
+            (RequestKind::Question, "question"),
+        ],
+        RequestKind::Unknown,
+    );
+    pin_enum(
+        &[
+            (RoutedBy::Person, "person"),
+            (RoutedBy::Rule, "rule"),
+            (RoutedBy::Copilot, "copilot"),
+        ],
+        RoutedBy::Unknown,
+    );
+    pin_enum(
+        &[
+            (LinkKind::Fixes, "fixes"),
+            (LinkKind::PartOf, "part_of"),
+            (LinkKind::FromRequest, "from_request"),
+            (LinkKind::ReportedFrom, "reported_from"),
+            (LinkKind::RelatesTo, "relates_to"),
+            (LinkKind::PaysBack, "pays_back"),
+        ],
+        LinkKind::Unknown,
+    );
+    pin_enum(
+        &[
+            (FeatureStatus::Proposed, "proposed"),
+            (FeatureStatus::Planned, "planned"),
+            (FeatureStatus::InProgress, "in_progress"),
+            (FeatureStatus::Delivered, "delivered"),
+            (FeatureStatus::Retired, "retired"),
+        ],
+        FeatureStatus::Unknown,
+    );
+    pin_enum(
+        &[
+            (CommentKind::Note, "note"),
+            (CommentKind::Question, "question"),
+            (CommentKind::Answer, "answer"),
+        ],
+        CommentKind::Unknown,
+    );
+    pin_enum(
+        &[(RepoHost::Local, "local"), (RepoHost::Github, "github")],
+        RepoHost::Unknown,
+    );
+    // A write naming a status this server doesn't know still reads, as Unknown, so the server
+    // can answer `invalid_request` instead of failing to read the call.
+    let request: Request = serde_json::from_value(json!({
+        "id": 1, "method": "task.set_status",
+        "params": {"change_id": "c", "item_id": "i", "expected_version": 2, "status": "parked"}
+    }))
+    .unwrap();
+    assert_eq!(
+        request
+            .params::<crate::work::TaskSetStatus>()
+            .unwrap()
+            .status,
+        ItemStatus::Unknown
+    );
+}
+
+#[test]
+fn a_work_item_summary_has_this_wire_shape_and_leaves_out_what_is_empty() {
+    let summary = task_summary();
+    let want = json!({
+        "id": "01JC0000000000000000Q3K9F2X",
+        "kind": "task",
+        "project_id": "p1",
+        "number": 12,
+        "short_id": "3k9f2x",
+        "title": "Add the checkout button",
+        "status": "in_progress",
+        "priority": "high",
+        "assignee_id": "a1",
+        "created_by": "owner1",
+        "created_at": "2026-11-08T02:10:00.000Z",
+        "updated_at": "2026-11-08T03:00:00.000Z",
+        "team_id": "t1",
+        "checklist": {"total": 2, "done": 1, "required_left": 1},
+        "owner_office_id": "hq",
+        "generation": 1,
+        "version": 4
+    });
+    assert_eq!(serde_json::to_value(&summary).unwrap(), want);
+    assert_eq!(
+        serde_json::from_value::<WorkItemSummary>(want).unwrap(),
+        summary
+    );
+
+    // A bug from a later phase, with values and fields this build doesn't know: it still reads.
+    let bug: WorkItemSummary = serde_json::from_value(json!({
+        "id": "b1", "kind": "bug", "project_id": "p1", "number": 7, "short_id": "b1",
+        "title": "Crash", "status": "needs_info", "resolution": "obsolete",
+        "priority": "p0", "created_by": "a1",
+        "created_at": "2026-11-08T02:10:00.000Z", "updated_at": "2026-11-08T02:10:00.000Z",
+        "area_id": "ar1", "severity": "catastrophic", "severity_confirmed": true,
+        "reopen_count": 2, "duplicate_of": "b0", "fixed_by": ["t9"],
+        "owner_office_id": "hq", "generation": 1, "version": 3, "deleted": true,
+        "sla": {"due": "tomorrow"}
+    }))
+    .unwrap();
+    assert_eq!(bug.kind, ItemKind::Bug);
+    assert_eq!(bug.status, ItemStatus::Unknown);
+    assert_eq!(bug.resolution, Some(Resolution::Unknown));
+    assert_eq!(bug.priority, Some(Priority::Unknown));
+    assert_eq!(bug.severity, Some(Severity::Unknown));
+    assert!(bug.severity_confirmed && bug.deleted);
+    assert_eq!(bug.reopen_count, 2);
+    assert_eq!(bug.fixed_by, vec!["t9".to_string()]);
+    assert_eq!(bug.checklist, ChecklistCounts::default());
+    // A newer writer leaving out a count never breaks an older reader.
+    let counts: ChecklistCounts = serde_json::from_value(json!({"total": 3})).unwrap();
+    assert_eq!((counts.total, counts.done, counts.required_left), (3, 0, 0));
+
+    // An item HQ hasn't numbered yet (phase 2) has no number on the wire.
+    let pending = WorkItemSummary {
+        number: None,
+        ..task_summary()
+    };
+    assert!(serde_json::to_value(&pending)
+        .unwrap()
+        .get("number")
+        .is_none());
+}
+
+#[test]
+fn work_get_returns_the_whole_item_and_unknown_links_never_break_it() {
+    use crate::work::*;
+    let item = WorkItem {
+        summary: task_summary(),
+        description: Some("Put it **under** the cart.".into()),
+        definition_of_done: Some("The button pays.".into()),
+        checklist: vec![
+            ChecklistStep {
+                id: "s1".into(),
+                text: "Design".into(),
+                required: true,
+                done: true,
+                checked_by: Some("a1".into()),
+                checked_at: Some("2026-11-08T02:30:00.000Z".into()),
+                version: 2,
+                ..Default::default()
+            },
+            ChecklistStep {
+                id: "s2".into(),
+                text: "Tests".into(),
+                required: true,
+                task_id: Some("t13".into()),
+                version: 2,
+                ..Default::default()
+            },
+        ],
+        links: vec![Link {
+            id: "l1".into(),
+            from_item_id: task_summary().id,
+            kind: LinkKind::RelatesTo,
+            to: LinkTarget::Doc {
+                project_id: "p1".into(),
+                doc_key: "ADR-0004".into(),
+            },
+            created_by: "owner1".into(),
+            created_at: "2026-11-08T02:11:00.000Z".into(),
+            target_deleted: false,
+        }],
+        backlinks: vec![Link {
+            id: "l2".into(),
+            from_item_id: "t13".into(),
+            kind: LinkKind::PartOf,
+            to: LinkTarget::Item {
+                item_id: task_summary().id,
+            },
+            created_by: "a1".into(),
+            created_at: "2026-11-08T02:40:00.000Z".into(),
+            target_deleted: false,
+        }],
+        watchers: vec!["owner1".into(), "a1".into()],
+        time: TimeFigures {
+            lead_ms: 3_000_000,
+            cycle_ms: Some(1_200_000),
+            working_ms: None,
+            waiting_on_owner_ms: 0,
+            blocked_ms: 600_000,
+            idle_ms: None,
+            rest_ms: 2_400_000,
+            open: true,
+            rounds: 1,
+            as_of: "2026-11-08T03:00:00.000Z".into(),
+        },
+        ..Default::default()
+    };
+    let response = Response::ok::<WorkGet>(2, &WorkGetResult { item: item.clone() }).unwrap();
+    let v = serde_json::to_value(&response).unwrap();
+    let wire = &v["result"]["item"];
+    assert_eq!(wire["summary"]["number"], 12);
+    assert_eq!(
+        wire["links"][0]["to"],
+        json!({"type": "doc", "project_id": "p1", "doc_key": "ADR-0004"})
+    );
+    assert_eq!(wire["links"][0]["kind"], "relates_to");
+    assert!(wire["links"][0].get("target_deleted").is_none());
+    assert_eq!(
+        wire["backlinks"][0]["to"],
+        json!({"type": "item", "item_id": "01JC0000000000000000Q3K9F2X"})
+    );
+    assert_eq!(wire["checklist"][1]["task_id"], "t13");
+    assert_eq!(wire["checklist"][1]["done"], false);
+    assert!(wire["time"].get("working_ms").is_none(), "not tracked");
+    assert!(wire.get("outcome").is_none() && wire.get("shortcut").is_none());
+    let back: Response = serde_json::from_value(v).unwrap();
+    assert_eq!(back.into_result::<WorkGet>().unwrap().item, item);
+
+    // A link kind and a target kind from a newer build read as Unknown; the item still reads.
+    let newer: WorkGetResult = serde_json::from_value(json!({"item": {
+        "summary": serde_json::to_value(task_summary()).unwrap(),
+        "links": [{
+            "id": "l9", "from_item_id": "x", "kind": "blocks",
+            "to": {"type": "commit", "sha": "abc"},
+            "created_by": "a1", "created_at": "2026-11-08T02:40:00.000Z"
+        }],
+        "time": {"lead_ms": 5, "as_of": "2026-11-08T03:00:00.000Z"}
+    }}))
+    .unwrap();
+    assert_eq!(newer.item.links[0].kind, LinkKind::Unknown);
+    assert_eq!(newer.item.links[0].to, LinkTarget::Unknown);
+    assert!(newer.item.checklist.is_empty() && newer.item.watchers.is_empty());
+    assert_eq!(newer.item.time.rounds, 0);
+
+    // The later phases' detail reads now, so they add calls, not fields.
+    let request: WorkItem = serde_json::from_value(json!({
+        "summary": {
+            "id": "r1", "kind": "request", "short_id": "r1", "title": "Dark mode",
+            "status": "scoped", "created_by": "p2", "created_at": "2026-11-08T02:10:00.000Z",
+            "updated_at": "2026-11-08T02:10:00.000Z", "request_kind": "feature",
+            "owner_office_id": "hq", "generation": 1, "version": 5
+        },
+        "text": "Please add dark mode.", "routed_by": "copilot",
+        "outcome": {
+            "feature": {"type": "new", "feature_id": "f1"},
+            "docs": [{"project_id": "p1", "doc_key": "docs/designs/dark.md"}],
+            "draft_tasks": [{"draft_id": "d1", "title": "Theme tokens", "priority": "low"}],
+            "estimate": {"effort": "a week", "cost_usd_cents_max": 5000}
+        },
+        "shortcut": {"type": "debt", "ids": ["DEBT-0012"]},
+        "time": {"lead_ms": 0, "as_of": "2026-11-08T03:00:00.000Z"}
+    }))
+    .unwrap();
+    assert_eq!(request.summary.request_kind, Some(RequestKind::Feature));
+    assert_eq!(request.routed_by, Some(RoutedBy::Copilot));
+    let outcome = request.outcome.unwrap();
+    assert_eq!(
+        outcome.feature,
+        Some(FeatureOutcome::New {
+            feature_id: "f1".into()
+        })
+    );
+    assert_eq!(outcome.draft_tasks[0].priority, Some(Priority::Low));
+    assert_eq!(outcome.estimate.unwrap().cost_usd_cents_max, Some(5000));
+    assert_eq!(
+        request.shortcut,
+        Some(Shortcut::Debt {
+            ids: vec!["DEBT-0012".into()]
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(Shortcut::None).unwrap(),
+        json!({"type": "none"})
+    );
+    assert_eq!(
+        serde_json::from_value::<Shortcut>(json!({"type": "skipped_tests"})).unwrap(),
+        Shortcut::Unknown
+    );
+    assert_eq!(
+        serde_json::from_value::<FeatureOutcome>(json!({"type": "split", "into": []})).unwrap(),
+        FeatureOutcome::Unknown
+    );
+}
+
+#[test]
+fn work_events_round_trip_and_unknown_kinds_never_break_the_activity() {
+    use crate::work::*;
+    let step = ChecklistStep {
+        id: "s1".into(),
+        text: "Design".into(),
+        required: true,
+        version: 1,
+        ..Default::default()
+    };
+    let kinds = vec![
+        WorkEventKind::Created,
+        WorkEventKind::FieldsChanged {
+            fields: vec![FieldChange {
+                field: "title".into(),
+                from: Some(json!("Old")),
+                to: Some(json!("New")),
+            }],
+        },
+        WorkEventKind::StatusChanged {
+            from: ItemStatus::InProgress,
+            to: ItemStatus::Done,
+            resolution: Some(Resolution::Completed),
+            reason: None,
+            anyway: Some(DoneAnyway {
+                reason: "Shipped behind a flag".into(),
+                steps: vec!["s2".into()],
+            }),
+        },
+        WorkEventKind::Assigned {
+            from: None,
+            to: Some("a1".into()),
+        },
+        WorkEventKind::Linked {
+            link: Link {
+                id: "l1".into(),
+                from_item_id: "t1".into(),
+                kind: LinkKind::RelatesTo,
+                to: LinkTarget::Item {
+                    item_id: "t2".into(),
+                },
+                created_by: "a1".into(),
+                created_at: "2026-11-08T02:11:00.000Z".into(),
+                target_deleted: false,
+            },
+        },
+        WorkEventKind::Unlinked {
+            link_id: "l1".into(),
+        },
+        WorkEventKind::Comment {
+            comment_id: "c1".into(),
+            body: "Which colour?".into(),
+            comment_kind: CommentKind::Question,
+            asks: Some("owner1".into()),
+            answers: None,
+            watch: true,
+        },
+        WorkEventKind::StepsAdded {
+            steps: vec![step],
+            after_step_id: None,
+        },
+        WorkEventKind::StepEdited {
+            step_id: "s1".into(),
+            text: Some("Design it".into()),
+            required: None,
+        },
+        WorkEventKind::StepChecked {
+            step_id: "s1".into(),
+            done: true,
+        },
+        WorkEventKind::StepMoved {
+            step_id: "s1".into(),
+            after_step_id: Some("s2".into()),
+        },
+        WorkEventKind::StepRemoved {
+            step_id: "s1".into(),
+        },
+        WorkEventKind::StepMadeTask {
+            step_id: "s2".into(),
+            task_id: "t3".into(),
+        },
+        WorkEventKind::StepTaskUnlinked {
+            step_id: "s2".into(),
+            task_id: "t3".into(),
+        },
+        WorkEventKind::WaitingStarted {
+            on_member_id: "owner1".into(),
+            reason: WaitReason::Question {
+                comment_id: "c1".into(),
+            },
+        },
+        WorkEventKind::WaitingEnded {
+            on_member_id: "owner1".into(),
+            reason: WaitReason::Question {
+                comment_id: "c1".into(),
+            },
+        },
+        WorkEventKind::Watched {
+            member_id: "a1".into(),
+            watching: true,
+        },
+        WorkEventKind::Undone { event_version: 6 },
+        WorkEventKind::Deleted,
+    ];
+    let events: Vec<WorkEvent> = kinds
+        .into_iter()
+        .enumerate()
+        .map(|(i, change)| WorkEvent {
+            target_id: "t1".into(),
+            version: i as u64 + 1,
+            at: "2026-11-08T02:10:00.000Z".into(),
+            actor_id: Some("a1".into()),
+            auto: false,
+            cause: None,
+            org_position: Position { epoch: 1, seq: 40 },
+            change,
+        })
+        .collect();
+    let result = WorkActivityResult {
+        events: events.clone(),
+        next_after_version: Some(19),
+    };
+    let v = serde_json::to_value(Response::ok::<WorkActivity>(1, &result).unwrap()).unwrap();
+    let types: Vec<&str> = v["result"]["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["change"]["type"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        types,
+        [
+            "created",
+            "fields_changed",
+            "status_changed",
+            "assigned",
+            "linked",
+            "unlinked",
+            "comment",
+            "steps_added",
+            "step_edited",
+            "step_checked",
+            "step_moved",
+            "step_removed",
+            "step_made_task",
+            "step_task_unlinked",
+            "waiting_started",
+            "waiting_ended",
+            "watched",
+            "undone",
+            "deleted",
+        ]
+    );
+    assert_eq!(
+        v["result"]["events"][2]["change"],
+        json!({
+            "type": "status_changed", "from": "in_progress", "to": "done",
+            "resolution": "completed",
+            "anyway": {"reason": "Shipped behind a flag", "steps": ["s2"]}
+        })
+    );
+    assert_eq!(
+        v["result"]["events"][6]["change"],
+        json!({
+            "type": "comment", "comment_id": "c1", "body": "Which colour?",
+            "comment_kind": "question", "asks": "owner1", "watch": true
+        })
+    );
+    assert_eq!(
+        v["result"]["events"][14]["change"],
+        json!({
+            "type": "waiting_started", "on_member_id": "owner1",
+            "reason": {"type": "question", "comment_id": "c1"}
+        })
+    );
+    assert_eq!(
+        v["result"]["events"][15]["change"],
+        json!({
+            "type": "waiting_ended", "on_member_id": "owner1",
+            "reason": {"type": "question", "comment_id": "c1"}
+        })
+    );
+    assert!(v["result"]["events"][0].get("auto").is_none());
+    let back: Response = serde_json::from_value(v).unwrap();
+    assert_eq!(back.into_result::<WorkActivity>().unwrap(), result);
+
+    // An automatic change has no actor and names its cause.
+    let auto = WorkEvent {
+        target_id: "t1".into(),
+        version: 9,
+        at: "2026-11-08T02:10:00.000Z".into(),
+        actor_id: None,
+        auto: true,
+        cause: Some(EventRef {
+            target_id: "t3".into(),
+            version: 4,
+        }),
+        org_position: Position { epoch: 1, seq: 40 },
+        change: WorkEventKind::StepChecked {
+            step_id: "s2".into(),
+            done: true,
+        },
+    };
+    let v = serde_json::to_value(&auto).unwrap();
+    assert_eq!(v["auto"], true);
+    assert!(v.get("actor_id").is_none());
+    assert_eq!(v["cause"], json!({"target_id": "t3", "version": 4}));
+
+    // Kinds from later phases read as Unknown, and the rest of the page still reads.
+    let newer: WorkActivityResult = serde_json::from_value(json!({"events": [
+        {"target_id": "b1", "version": 2, "at": "2026-11-08T02:10:00.000Z", "actor_id": "a1",
+         "org_position": {"epoch": 1, "seq": 1},
+         "change": {"type": "triaged", "area_id": "ar1", "severity": "major", "priority": "high"}},
+        {"target_id": "b1", "version": 3, "at": "2026-11-08T02:10:00.000Z",
+         "org_position": {"epoch": 1, "seq": 1},
+         "change": {"type": "step_checked", "step_id": "s1", "done": false, "by_rule": "x"}}
+    ]}))
+    .unwrap();
+    assert_eq!(newer.events[0].change, WorkEventKind::Unknown);
+    assert_eq!(
+        newer.events[1].change,
+        WorkEventKind::StepChecked {
+            step_id: "s1".into(),
+            done: false
+        }
+    );
+    assert!(newer.next_after_version.is_none());
+}
+
+#[test]
+fn wait_reasons_have_their_wire_shapes_and_an_unknown_reason_never_breaks_the_event() {
+    use crate::work::*;
+    let reasons = [
+        (
+            WaitReason::Question {
+                comment_id: "c1".into(),
+            },
+            json!({"type": "question", "comment_id": "c1"}),
+        ),
+        (
+            WaitReason::Message {
+                message_id: "m1".into(),
+            },
+            json!({"type": "message", "message_id": "m1"}),
+        ),
+        (WaitReason::Triage, json!({"type": "triage"})),
+        (
+            WaitReason::Decision {
+                doc_key: "ADR-0004".into(),
+            },
+            json!({"type": "decision", "doc_key": "ADR-0004"}),
+        ),
+    ];
+    for (reason, wire) in reasons {
+        assert_eq!(serde_json::to_value(&reason).unwrap(), wire);
+        assert_eq!(serde_json::from_value::<WaitReason>(wire).unwrap(), reason);
+    }
+    // A reason from a later build reads as Unknown, in the event too.
+    assert_eq!(
+        serde_json::from_value::<WaitReason>(json!({"type": "review", "pr": 7})).unwrap(),
+        WaitReason::Unknown
+    );
+
+    // A bookkeeping event: no actor, not automatic, caused by the item event that opened it.
+    let event: WorkEvent = serde_json::from_value(json!({
+        "target_id": "t1", "version": 5, "at": "2026-11-08T02:10:00.000Z",
+        "cause": {"target_id": "t1", "version": 4},
+        "org_position": {"epoch": 1, "seq": 40},
+        "change": {"type": "waiting_started", "on_member_id": "owner1",
+                   "reason": {"type": "review", "pr": 7}}
+    }))
+    .unwrap();
+    assert_eq!(event.actor_id, None);
+    assert!(!event.auto);
+    assert_eq!(
+        event.cause,
+        Some(EventRef {
+            target_id: "t1".into(),
+            version: 4
+        })
+    );
+    assert_eq!(
+        event.change,
+        WorkEventKind::WaitingStarted {
+            on_member_id: "owner1".into(),
+            reason: WaitReason::Unknown,
+        }
+    );
+    let ended: WorkEventKind = serde_json::from_value(json!({
+        "type": "waiting_ended", "on_member_id": "owner1", "reason": {"type": "triage"}
+    }))
+    .unwrap();
+    assert_eq!(
+        ended,
+        WorkEventKind::WaitingEnded {
+            on_member_id: "owner1".into(),
+            reason: WaitReason::Triage,
+        }
+    );
+    // The reason is required: the pre-rev-2 shape (`reference`, no `reason`) doesn't decode
+    // as a waiting event.
+    assert!(serde_json::from_value::<WorkEventKind>(json!({
+        "type": "waiting_started", "on_member_id": "owner1", "reference": "c1"
+    }))
+    .is_err());
+}
+
+#[test]
+fn work_changed_carries_its_position_and_parts_and_tolerates_unknown_changes() {
+    let data = WorkChangedData {
+        position: wpos(42),
+        change_id: Some("01CHANGE".into()),
+        part: 1,
+        parts: 2,
+        changes: vec![
+            WorkChange::ItemUpserted {
+                item: task_summary(),
+            },
+            WorkChange::EventAdded {
+                event: WorkEvent {
+                    target_id: task_summary().id,
+                    version: 4,
+                    at: "2026-11-08T03:00:00.000Z".into(),
+                    actor_id: Some("a1".into()),
+                    auto: false,
+                    cause: None,
+                    org_position: Position { epoch: 1, seq: 40 },
+                    change: WorkEventKind::Created,
+                },
+            },
+            WorkChange::ItemNumbered {
+                item_id: "t9".into(),
+                number: 13,
+            },
+        ],
+    };
+    let ev = Event::new::<WorkChanged>(5, &data).unwrap();
+    let v = serde_json::to_value(&ev).unwrap();
+    assert_eq!(v["event"], "work.changed");
+    assert_eq!(v["data"]["position"], json!({"incarnation": 7, "seq": 42}));
+    assert_eq!(v["data"]["change_id"], "01CHANGE");
+    assert_eq!(
+        (v["data"]["part"].clone(), v["data"]["parts"].clone()),
+        (json!(1), json!(2))
+    );
+    assert_eq!(v["data"]["changes"][0]["type"], "item_upserted");
+    assert_eq!(v["data"]["changes"][0]["item"]["short_id"], "3k9f2x");
+    assert_eq!(v["data"]["changes"][1]["type"], "event_added");
+    assert_eq!(
+        v["data"]["changes"][2],
+        json!({"type": "item_numbered", "item_id": "t9", "number": 13})
+    );
+    let parsed: Event = serde_json::from_value(v).unwrap();
+    assert_eq!(parsed.data::<WorkChanged>().unwrap().unwrap(), data);
+
+    // A cascade has no change id; a change kind from a later phase reads as Unknown.
+    let newer: WorkChangedData = serde_json::from_value(json!({
+        "position": {"incarnation": 7, "seq": 43}, "part": 1, "parts": 1,
+        "changes": [
+            {"type": "feature_upserted", "feature": {"id": "f1"}},
+            {"type": "item_numbered", "item_id": "t9", "number": 14}
+        ]
+    }))
+    .unwrap();
+    assert!(newer.change_id.is_none());
+    assert_eq!(newer.changes[0], WorkChange::Unknown);
+    assert_eq!(
+        newer.changes[1],
+        WorkChange::ItemNumbered {
+            item_id: "t9".into(),
+            number: 14
+        }
+    );
+}
+
+#[test]
+fn every_work_write_starts_with_a_change_id_and_answers_work_accepted() {
+    use crate::work::*;
+    pin_params::<TaskCreate>(
+        &TaskCreateParams {
+            change_id: "01C".into(),
+            item_id: "t1".into(),
+            project_id: "p1".into(),
+            title: "Add the checkout button".into(),
+            description: None,
+            definition_of_done: Some("It pays.".into()),
+            assignee_id: Some("a1".into()),
+            team_id: None,
+            priority: Some(Priority::High),
+            feature_id: None,
+            fixes: vec![],
+            checklist: vec![NewStep {
+                step_id: "s1".into(),
+                text: "Design".into(),
+                required: true,
+            }],
+        },
+        json!({
+            "change_id": "01C", "item_id": "t1", "project_id": "p1",
+            "title": "Add the checkout button", "definition_of_done": "It pays.",
+            "assignee_id": "a1", "priority": "high",
+            "checklist": [{"step_id": "s1", "text": "Design", "required": true}]
+        }),
+    );
+    pin_params::<TaskCreate>(
+        &TaskCreateParams {
+            change_id: "01C".into(),
+            item_id: "t2".into(),
+            project_id: "p1".into(),
+            title: "Fix it".into(),
+            description: None,
+            definition_of_done: None,
+            assignee_id: None,
+            team_id: None,
+            priority: None,
+            feature_id: Some("f1".into()),
+            fixes: vec![NewFixLink {
+                link_id: "l1".into(),
+                bug_id: "b1".into(),
+            }],
+            checklist: vec![],
+        },
+        json!({
+            "change_id": "01C", "item_id": "t2", "project_id": "p1", "title": "Fix it",
+            "feature_id": "f1", "fixes": [{"link_id": "l1", "bug_id": "b1"}]
+        }),
+    );
+    pin_params::<TaskUpdate>(
+        &TaskUpdateParams {
+            change_id: "01C".into(),
+            item_id: "t1".into(),
+            expected_version: 3,
+            title: Some("New".into()),
+            description: None,
+            clear_description: true,
+            definition_of_done: None,
+            clear_definition_of_done: false,
+            priority: None,
+            team_id: None,
+            clear_team: true,
+            feature_id: None,
+            clear_feature: false,
+        },
+        json!({
+            "change_id": "01C", "item_id": "t1", "expected_version": 3, "title": "New",
+            "clear_description": true, "clear_team": true
+        }),
+    );
+    pin_params::<TaskAssign>(
+        &TaskAssignParams {
+            change_id: "01C".into(),
+            item_id: "t1".into(),
+            expected_version: 3,
+            assignee_id: None,
+        },
+        json!({"change_id": "01C", "item_id": "t1", "expected_version": 3}),
+    );
+    pin_params::<TaskSetStatus>(
+        &TaskSetStatusParams {
+            change_id: "01C".into(),
+            item_id: "t1".into(),
+            expected_version: 5,
+            status: ItemStatus::Done,
+            blocked_reason: None,
+            resolution: Some(Resolution::Completed),
+            anyway_reason: Some("Shipped behind a flag".into()),
+            shortcut: None,
+        },
+        json!({
+            "change_id": "01C", "item_id": "t1", "expected_version": 5, "status": "done",
+            "resolution": "completed", "anyway_reason": "Shipped behind a flag"
+        }),
+    );
+    pin_params::<TaskSetStatus>(
+        &TaskSetStatusParams {
+            change_id: "01C".into(),
+            item_id: "t1".into(),
+            expected_version: 5,
+            status: ItemStatus::Blocked,
+            blocked_reason: Some("Waiting for the API key".into()),
+            resolution: None,
+            anyway_reason: None,
+            shortcut: None,
+        },
+        json!({
+            "change_id": "01C", "item_id": "t1", "expected_version": 5, "status": "blocked",
+            "blocked_reason": "Waiting for the API key"
+        }),
+    );
+    pin_params::<WorkComment>(
+        &WorkCommentParams {
+            change_id: "01C".into(),
+            item_id: "t1".into(),
+            comment_id: "c1".into(),
+            body: "Which colour?".into(),
+            comment_kind: Some(CommentKind::Question),
+            asks: Some("owner1".into()),
+            answers: None,
+            watch: true,
+        },
+        json!({
+            "change_id": "01C", "item_id": "t1", "comment_id": "c1", "body": "Which colour?",
+            "comment_kind": "question", "asks": "owner1", "watch": true
+        }),
+    );
+    pin_params::<WorkWatch>(
+        &WorkWatchParams {
+            change_id: "01C".into(),
+            item_id: "t1".into(),
+            watching: false,
+        },
+        json!({"change_id": "01C", "item_id": "t1", "watching": false}),
+    );
+    pin_params::<WorkLink>(
+        &WorkLinkParams {
+            change_id: "01C".into(),
+            link_id: "l1".into(),
+            from_item_id: "t1".into(),
+            kind: LinkKind::RelatesTo,
+            to: LinkTarget::Doc {
+                project_id: "p1".into(),
+                doc_key: "ADR-0004".into(),
+            },
+        },
+        json!({
+            "change_id": "01C", "link_id": "l1", "from_item_id": "t1", "kind": "relates_to",
+            "to": {"type": "doc", "project_id": "p1", "doc_key": "ADR-0004"}
+        }),
+    );
+    pin_params::<WorkUnlink>(
+        &WorkUnlinkParams {
+            change_id: "01C".into(),
+            link_id: "l1".into(),
+        },
+        json!({"change_id": "01C", "link_id": "l1"}),
+    );
+    pin_params::<WorkUndo>(
+        &WorkUndoParams {
+            change_id: "01C".into(),
+            target_id: "b1".into(),
+            event_version: 6,
+        },
+        json!({"change_id": "01C", "target_id": "b1", "event_version": 6}),
+    );
+    pin_params::<WorkDelete>(
+        &WorkDeleteParams {
+            change_id: "01C".into(),
+            item_id: "t1".into(),
+            expected_version: 8,
+        },
+        json!({"change_id": "01C", "item_id": "t1", "expected_version": 8}),
+    );
+    pin_params::<ChecklistAdd>(
+        &ChecklistAddParams {
+            change_id: "01C".into(),
+            item_id: "t1".into(),
+            steps: vec![NewStep {
+                step_id: "s3".into(),
+                text: "Docs".into(),
+                required: false,
+            }],
+            after_step_id: Some("s1".into()),
+        },
+        json!({
+            "change_id": "01C", "item_id": "t1", "after_step_id": "s1",
+            "steps": [{"step_id": "s3", "text": "Docs", "required": false}]
+        }),
+    );
+    pin_params::<ChecklistEdit>(
+        &ChecklistEditParams {
+            change_id: "01C".into(),
+            step_id: "s1".into(),
+            expected_version: 2,
+            text: None,
+            required: Some(false),
+        },
+        json!({"change_id": "01C", "step_id": "s1", "expected_version": 2, "required": false}),
+    );
+    pin_params::<ChecklistCheck>(
+        &ChecklistCheckParams {
+            change_id: "01C".into(),
+            step_id: "s1".into(),
+            done: true,
+        },
+        json!({"change_id": "01C", "step_id": "s1", "done": true}),
+    );
+    pin_params::<ChecklistMove>(
+        &ChecklistMoveParams {
+            change_id: "01C".into(),
+            step_id: "s1".into(),
+            after_step_id: None,
+        },
+        json!({"change_id": "01C", "step_id": "s1"}),
+    );
+    pin_params::<ChecklistRemove>(
+        &ChecklistRemoveParams {
+            change_id: "01C".into(),
+            step_id: "s1".into(),
+            expected_version: 3,
+        },
+        json!({"change_id": "01C", "step_id": "s1", "expected_version": 3}),
+    );
+    pin_params::<ChecklistMakeTask>(
+        &ChecklistMakeTaskParams {
+            change_id: "01C".into(),
+            step_id: "s2".into(),
+            task_id: "t3".into(),
+            link_id: "l3".into(),
+            title: None,
+        },
+        json!({"change_id": "01C", "step_id": "s2", "task_id": "t3", "link_id": "l3"}),
+    );
+    pin_params::<ChecklistUnlinkTask>(
+        &ChecklistUnlinkTaskParams {
+            change_id: "01C".into(),
+            step_id: "s2".into(),
+        },
+        json!({"change_id": "01C", "step_id": "s2"}),
+    );
+
+    // The change id is required, and so is an expected_version where the call has one.
+    for (method, params) in [
+        (
+            "task.assign",
+            json!({"item_id": "t1", "expected_version": 1}),
+        ),
+        ("checklist.check", json!({"step_id": "s1", "done": true})),
+        (
+            "task.update",
+            json!({"change_id": "c", "item_id": "t1", "title": "x"}),
+        ),
+    ] {
+        let request: Request =
+            serde_json::from_value(json!({"id": 1, "method": method, "params": params})).unwrap();
+        let read = match method {
+            "task.assign" => request.params::<TaskAssign>().map(|_| ()),
+            "checklist.check" => request.params::<ChecklistCheck>().map(|_| ()),
+            _ => request.params::<TaskUpdate>().map(|_| ()),
+        };
+        assert!(read.is_err(), "{method}");
+    }
+
+    // The answer.
+    let accepted = WorkAccepted {
+        status: WorkStatus::Committed,
+        position: Some(wpos(42)),
+        items: vec![task_summary()],
+        features: vec![],
+        docs: vec![],
+    };
+    let v = serde_json::to_value(Response::ok::<TaskCreate>(1, &accepted).unwrap()).unwrap();
+    assert_eq!(v["result"]["status"], "committed");
+    assert_eq!(
+        v["result"]["position"],
+        json!({"incarnation": 7, "seq": 42})
+    );
+    assert_eq!(v["result"]["items"][0]["number"], 12);
+    assert!(v["result"].get("features").is_none() && v["result"].get("docs").is_none());
+    let back: Response = serde_json::from_value(v).unwrap();
+    assert_eq!(back.into_result::<TaskCreate>().unwrap(), accepted);
+
+    let queued: WorkAccepted = serde_json::from_value(json!({"status": "queued"})).unwrap();
+    assert_eq!(queued.status, WorkStatus::Queued);
+    assert!(queued.position.is_none() && queued.items.is_empty());
+    let newer: WorkAccepted = serde_json::from_value(json!({
+        "status": "forwarded", "items": [],
+        "docs": [{"project_id": "p1", "path": "docs/features/7-x.md", "branch": "docs/x", "commit": "abc"}]
+    }))
+    .unwrap();
+    assert_eq!(newer.status, WorkStatus::Unknown);
+    assert_eq!(newer.docs[0].branch, "docs/x");
+}
+
+#[test]
+fn work_reads_have_the_agreed_shapes() {
+    // Every filter is optional: `{}` (and no params at all) reads.
+    for method in ["work.snapshot", "work.list"] {
+        for request in [
+            json!({"id": 1, "method": method, "params": {}}),
+            json!({"id": 1, "method": method}),
+        ] {
+            let request: Request = serde_json::from_value(request).unwrap();
+            let ok = match method {
+                "work.snapshot" => request.params::<WorkSnapshot>().unwrap() == Default::default(),
+                _ => request.params::<WorkList>().unwrap() == Default::default(),
+            };
+            assert!(ok, "{method}");
+        }
+    }
+    pin_params::<WorkSnapshot>(
+        &WorkSnapshotParams {
+            project_id: Some("p1".into()),
+            closed_since: Some("2026-11-01T00:00:00.000Z".into()),
+            all_closed: false,
+            cursor: Some("k1".into()),
+            limit: Some(200),
+        },
+        json!({
+            "project_id": "p1", "closed_since": "2026-11-01T00:00:00.000Z", "cursor": "k1",
+            "limit": 200
+        }),
+    );
+    pin_params::<WorkGet>(
+        &WorkGetParams {
+            item: "chk-T-12".into(),
+        },
+        json!({"item": "chk-T-12"}),
+    );
+    pin_params::<WorkList>(
+        &WorkListParams {
+            project_id: Some("p1".into()),
+            kinds: vec![ItemKind::Bug],
+            statuses: vec![ItemStatus::New, ItemStatus::Triaged],
+            assignee: Some("none".into()),
+            linked_to: Some("b1".into()),
+            link_kind: Some(LinkKind::Fixes),
+            query: Some("checkout crash".into()),
+            include_closed: true,
+            ..Default::default()
+        },
+        json!({
+            "project_id": "p1", "kinds": ["bug"], "statuses": ["new", "triaged"],
+            "assignee": "none", "linked_to": "b1", "link_kind": "fixes",
+            "query": "checkout crash", "include_closed": true
+        }),
+    );
+    pin_params::<WorkTimes>(
+        &WorkTimesParams {
+            item_ids: vec!["t1".into(), "t2".into()],
+        },
+        json!({"item_ids": ["t1", "t2"]}),
+    );
+    pin_params::<WorkActivity>(
+        &WorkActivityParams {
+            target_id: "t1".into(),
+            after_version: Some(3),
+            limit: None,
+        },
+        json!({"target_id": "t1", "after_version": 3}),
+    );
+
+    let page = WorkSnapshotResult {
+        position: wpos(41),
+        items: vec![task_summary()],
+        features: vec![],
+        next_cursor: Some("k2".into()),
+    };
+    let v = serde_json::to_value(Response::ok::<WorkSnapshot>(1, &page).unwrap()).unwrap();
+    assert_eq!(v["result"]["position"]["seq"], 41);
+    assert_eq!(v["result"]["next_cursor"], "k2");
+    assert!(v["result"].get("features").is_none());
+    let back: Response = serde_json::from_value(v).unwrap();
+    assert_eq!(back.into_result::<WorkSnapshot>().unwrap(), page);
+
+    // Phase 3's features ride along in the same result.
+    let with_features: WorkSnapshotResult = serde_json::from_value(json!({
+        "position": {"incarnation": 7, "seq": 41}, "items": [],
+        "features": [{
+            "id": "f1", "project_id": "p1", "number": 7, "path": "docs/features/7-dark.md",
+            "title": "Dark mode", "status": "sunset", "version": 2
+        }]
+    }))
+    .unwrap();
+    assert_eq!(with_features.features[0].status, FeatureStatus::Unknown);
+    assert_eq!(with_features.features[0].tasks_total, 0);
+
+    let times = WorkTimesResult {
+        times: vec![ItemTime {
+            item_id: "t1".into(),
+            time: TimeFigures {
+                lead_ms: 10,
+                as_of: "2026-11-08T03:00:00.000Z".into(),
+                ..Default::default()
+            },
+        }],
+    };
+    let v = serde_json::to_value(&times).unwrap();
+    assert_eq!(
+        v,
+        json!({"times": [{"item_id": "t1", "time": {
+            "lead_ms": 10, "waiting_on_owner_ms": 0, "blocked_ms": 0, "rest_ms": 0,
+            "open": false, "rounds": 0, "as_of": "2026-11-08T03:00:00.000Z"
+        }}]})
+    );
+    assert_eq!(serde_json::from_value::<WorkTimesResult>(v).unwrap(), times);
+
+    let list: WorkListResult = serde_json::from_value(json!({"items": []})).unwrap();
+    assert!(list.items.is_empty() && list.next_cursor.is_none());
+}
+
+#[test]
+fn work_set_current_takes_no_change_id_and_answers_empty() {
+    use crate::work::*;
+    pin_params::<WorkSetCurrent>(
+        &WorkSetCurrentParams {
+            item: Some("chk-T-12".into()),
+        },
+        json!({"item": "chk-T-12"}),
+    );
+    pin_params::<WorkSetCurrent>(&WorkSetCurrentParams::default(), json!({}));
+    let v = serde_json::to_value(Response::ok::<WorkSetCurrent>(1, &Empty {}).unwrap()).unwrap();
+    assert_eq!(v["result"], json!({}));
+}
+
+#[test]
+fn subscribe_can_resume_the_work_feed_too() {
+    fn copy<T: Copy>() {}
+    copy::<SubscribeParams>();
+    copy::<WorkPosition>();
+
+    let request: Request = serde_json::from_str(
+        r#"{"id":1,"method":"subscribe","params":{"from_work_position":{"incarnation":7,"seq":41}}}"#,
+    )
+    .unwrap();
+    let params = request.params::<Subscribe>().unwrap();
+    assert_eq!(params.from_work_position, Some(wpos(41)));
+    assert!(params.from_position.is_none());
+
+    let both = SubscribeParams {
+        from_position: Some(Position { epoch: 1, seq: 42 }),
+        from_work_position: Some(wpos(41)),
+    };
+    pin_params::<Subscribe>(
+        &both,
+        json!({
+            "from_position": {"epoch": 1, "seq": 42},
+            "from_work_position": {"incarnation": 7, "seq": 41}
+        }),
+    );
+    // Live events only, as before.
+    pin_params::<Subscribe>(&SubscribeParams::default(), json!({}));
+}
+
+#[test]
+fn the_project_record_replaces_project_summary_and_old_records_still_read() {
+    // A record from before: `{ id, name }`.
+    let old: ProjectSummary =
+        serde_json::from_value(json!({"id": "p1", "name": "Checkout"})).unwrap();
+    assert_eq!(old, Project::new("p1", "Checkout"));
+    assert_eq!(old.key, "");
+    assert!(old.repo.is_none() && !old.archived && old.created_at.is_none());
+    assert_eq!(old.version, 0);
+
+    let mut project = Project::new("p1", "Checkout");
+    project.key = "chk".into();
+    project.description = Some("The checkout flow.".into());
+    project.repo = Some(ProjectRepo {
+        host: RepoHost::Local,
+        default_branch: "main".into(),
+        path: Some("/Users/me/Org/repos/p1.git".into()),
+        github: None,
+    });
+    project.integration_branch = Some("v1".into());
+    project.created_at = Some("2026-11-08T02:00:00.000Z".into());
+    project.version = 3;
+    let want = json!({
+        "id": "p1", "key": "chk", "name": "Checkout", "description": "The checkout flow.",
+        "repo": {"host": "local", "default_branch": "main", "path": "/Users/me/Org/repos/p1.git"},
+        "integration_branch": "v1", "created_at": "2026-11-08T02:00:00.000Z", "version": 3
+    });
+    assert_eq!(serde_json::to_value(&project).unwrap(), want);
+    assert_eq!(serde_json::from_value::<Project>(want).unwrap(), project);
+
+    // A GitHub repository, and a host this build doesn't know.
+    let github: ProjectRepo = serde_json::from_value(json!({
+        "host": "github", "default_branch": "main",
+        "github": {"owner": "acme", "name": "checkout", "repo_id": 123456789, "private": true}
+    }))
+    .unwrap();
+    assert_eq!(github.host, RepoHost::Github);
+    assert_eq!(github.github.as_ref().unwrap().repo_id, 123_456_789);
+    let gitlab: ProjectRepo =
+        serde_json::from_value(json!({"host": {"gitlab": "x"}, "default_branch": "main"})).unwrap();
+    assert_eq!(gitlab.host, RepoHost::Unknown);
+
+    let archived: Project =
+        serde_json::from_value(json!({"id": "p2", "name": "Old", "archived": true})).unwrap();
+    assert!(archived.archived);
+}
+
+#[test]
+fn an_org_snapshot_without_areas_still_reads_and_areas_round_trip() {
+    let old: OrgSnapshot = serde_json::from_value(json!({
+        "position": {"epoch": 1, "seq": 7}, "teams": [], "members": [], "memberships": [],
+        "projects": [{"id": "p1", "name": "Checkout"}],
+        "project_teams": []
+    }))
+    .unwrap();
+    assert!(old.areas.is_empty());
+    assert_eq!(old.projects, vec![Project::new("p1", "Checkout")]);
+
+    let general = Area {
+        id: "ar1".into(),
+        project_id: "p1".into(),
+        name: "General".into(),
+        team_id: Some("t1".into()),
+        lead_member_id: None,
+        general: true,
+        deleted: false,
+        replaced_by: None,
+        version: 1,
+    };
+    let tombstone = Area {
+        id: "ar2".into(),
+        project_id: "p1".into(),
+        name: "Payments".into(),
+        team_id: None,
+        lead_member_id: None,
+        general: false,
+        deleted: true,
+        replaced_by: Some("ar1".into()),
+        version: 4,
+    };
+    assert_eq!(
+        serde_json::to_value(&general).unwrap(),
+        json!({"id": "ar1", "project_id": "p1", "name": "General", "team_id": "t1",
+               "general": true, "version": 1})
+    );
+    let snapshot = OrgSnapshot {
+        areas: vec![general, tombstone],
+        ..old
+    };
+    let v = serde_json::to_value(&snapshot).unwrap();
+    assert_eq!(v["areas"][1]["deleted"], true);
+    assert_eq!(v["areas"][1]["replaced_by"], "ar1");
+    assert_eq!(serde_json::from_value::<OrgSnapshot>(v).unwrap(), snapshot);
+}
+
+#[test]
+fn project_and_area_changes_reach_the_client_in_org_changed() {
+    let mut project = Project::new("p1", "Checkout");
+    project.key = "chk".into();
+    project.version = 1;
+    let data = OrgChangedData {
+        position: Position { epoch: 1, seq: 9 },
+        command_id: "c1".into(),
+        changes: vec![
+            OrgChange::ProjectUpserted {
+                project: project.clone(),
+            },
+            OrgChange::AreaUpserted {
+                area: Area {
+                    id: "ar1".into(),
+                    project_id: "p1".into(),
+                    name: "General".into(),
+                    team_id: None,
+                    lead_member_id: None,
+                    general: true,
+                    deleted: false,
+                    replaced_by: None,
+                    version: 1,
+                },
+            },
+        ],
+    };
+    let ev = Event::new::<OrgChanged>(6, &data).unwrap();
+    let v = serde_json::to_value(&ev).unwrap();
+    assert_eq!(
+        v["data"]["changes"][0],
+        json!({"type": "project_upserted", "project": {
+            "id": "p1", "key": "chk", "name": "Checkout", "version": 1
+        }})
+    );
+    assert_eq!(v["data"]["changes"][1]["type"], "area_upserted");
+    let parsed: Event = serde_json::from_value(v).unwrap();
+    assert_eq!(parsed.data::<OrgChanged>().unwrap().unwrap(), data);
+}
+
+#[test]
+fn project_and_area_commands_are_pinned() {
+    use crate::org::*;
+    pin_params::<ProjectCreate>(
+        &ProjectCreateParams {
+            command_id: "01C".into(),
+            project_id: "p1".into(),
+            name: "Checkout".into(),
+            key: Some("chk".into()),
+            description: None,
+            teams: vec![ProjectCreateTeam {
+                project_team_id: "pt1".into(),
+                team_id: "t1".into(),
+            }],
+            general_area_id: "ar1".into(),
+            general_area_name: None,
+            repo: Some(RepoSpec::NewLocal {}),
+            integration_branch: None,
+        },
+        json!({
+            "command_id": "01C", "project_id": "p1", "name": "Checkout", "key": "chk",
+            "teams": [{"project_team_id": "pt1", "team_id": "t1"}],
+            "general_area_id": "ar1", "repo": {"new_local": {}}
+        }),
+    );
+    pin_params::<ProjectCreate>(
+        &ProjectCreateParams {
+            command_id: "01C".into(),
+            project_id: "p2".into(),
+            name: "Billing".into(),
+            key: None,
+            description: Some("Invoices.".into()),
+            teams: vec![],
+            general_area_id: "ar9".into(),
+            general_area_name: Some("Core".into()),
+            repo: Some(RepoSpec::ExistingLocal {
+                path: "/Users/me/src/billing".into(),
+            }),
+            integration_branch: Some("v1".into()),
+        },
+        json!({
+            "command_id": "01C", "project_id": "p2", "name": "Billing",
+            "description": "Invoices.", "general_area_id": "ar9", "general_area_name": "Core",
+            "repo": {"existing_local": {"path": "/Users/me/src/billing"}},
+            "integration_branch": "v1"
+        }),
+    );
+    // A repository kind this server doesn't know can't be read: the command is refused.
+    let request: Request = serde_json::from_value(json!({
+        "id": 1, "method": "project.create", "params": {
+            "command_id": "c", "project_id": "p", "name": "n", "general_area_id": "a",
+            "repo": {"new_github": {"owner": "acme"}}
+        }
+    }))
+    .unwrap();
+    assert!(request.params::<ProjectCreate>().is_err());
+
+    pin_params::<ProjectUpdate>(
+        &ProjectUpdateParams {
+            command_id: "01C".into(),
+            project_id: "p1".into(),
+            expected_version: 2,
+            name: None,
+            description: None,
+            clear_description: true,
+            integration_branch: Some("main".into()),
+            clear_integration_branch: false,
+        },
+        json!({
+            "command_id": "01C", "project_id": "p1", "expected_version": 2,
+            "clear_description": true, "integration_branch": "main"
+        }),
+    );
+    pin_params::<ProjectArchive>(
+        &ProjectArchiveParams {
+            command_id: "01C".into(),
+            project_id: "p1".into(),
+            expected_version: 3,
+            archived: true,
+        },
+        json!({"command_id": "01C", "project_id": "p1", "expected_version": 3, "archived": true}),
+    );
+    pin_params::<ProjectRemoveTeam>(
+        &ProjectRemoveTeamParams {
+            command_id: "01C".into(),
+            project_team_id: "pt1".into(),
+            expected_version: 1,
+            areas_to_team_id: Some("t2".into()),
+        },
+        json!({
+            "command_id": "01C", "project_team_id": "pt1", "expected_version": 1,
+            "areas_to_team_id": "t2"
+        }),
+    );
+    // The command as it was before still reads, and is written the same way.
+    pin_params::<ProjectRemoveTeam>(
+        &ProjectRemoveTeamParams {
+            command_id: "01C".into(),
+            project_team_id: "pt1".into(),
+            expected_version: 1,
+            areas_to_team_id: None,
+        },
+        json!({"command_id": "01C", "project_team_id": "pt1", "expected_version": 1}),
+    );
+    pin_params::<AreaCreate>(
+        &AreaCreateParams {
+            command_id: "01C".into(),
+            area_id: "ar2".into(),
+            project_id: "p1".into(),
+            name: "Payments".into(),
+            team_id: Some("t1".into()),
+            lead_member_id: Some("a1".into()),
+        },
+        json!({
+            "command_id": "01C", "area_id": "ar2", "project_id": "p1", "name": "Payments",
+            "team_id": "t1", "lead_member_id": "a1"
+        }),
+    );
+    pin_params::<AreaRename>(
+        &AreaRenameParams {
+            command_id: "01C".into(),
+            area_id: "ar1".into(),
+            expected_version: 1,
+            name: "Core".into(),
+        },
+        json!({"command_id": "01C", "area_id": "ar1", "expected_version": 1, "name": "Core"}),
+    );
+    pin_params::<AreaSetTeam>(
+        &AreaSetTeamParams {
+            command_id: "01C".into(),
+            area_id: "ar1".into(),
+            expected_version: 2,
+            team_id: None,
+        },
+        json!({"command_id": "01C", "area_id": "ar1", "expected_version": 2}),
+    );
+    pin_params::<AreaSetLead>(
+        &AreaSetLeadParams {
+            command_id: "01C".into(),
+            area_id: "ar1".into(),
+            expected_version: 2,
+            lead_member_id: Some("a2".into()),
+        },
+        json!({
+            "command_id": "01C", "area_id": "ar1", "expected_version": 2,
+            "lead_member_id": "a2"
+        }),
+    );
+    pin_params::<AreaDelete>(
+        &AreaDeleteParams {
+            command_id: "01C".into(),
+            area_id: "ar2".into(),
+            expected_version: 3,
+            move_open_to_area_id: "ar1".into(),
+        },
+        json!({
+            "command_id": "01C", "area_id": "ar2", "expected_version": 3,
+            "move_open_to_area_id": "ar1"
+        }),
+    );
+    // Every one answers CommandAccepted, as T1's commands do.
+    let ok = Response::ok::<AreaCreate>(
+        1,
+        &CommandAccepted {
+            status: CommandStatus::Committed,
+            position: Some(Position { epoch: 1, seq: 12 }),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(ok).unwrap()["result"]["status"],
+        "committed"
+    );
 }
