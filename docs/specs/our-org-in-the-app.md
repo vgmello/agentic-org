@@ -2,7 +2,7 @@
 kind: spec
 title: "Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)"
 status: for-review
-revision: 14
+revision: 15
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-08"
@@ -14,6 +14,8 @@ builds_on: [offices-and-teams-ux, work-items-ux]
 # Spec · Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)
 
 Builds on `offices-and-teams-ux.md` rev 4, `work-items-ux.md` rev 5 and `desktop-app-v1.md` (in Eden's notes, not in this repository) (hire §3.6, profile §3.5).
+
+**Revision 15 (2026-11-08): who agents report to by default (from the bring-in build review).** An agent with no `reports_to` in HR (every messaging-only agent) now defaults to the lead of its top-level team, unless it leads that team itself, and to the owner otherwise. HR's `reports_to` still wins. For our team this gives the §2 lines with no edits (§4). **Added:** IMP-11.
 
 **Revision 14 (2026-11-08): role and title, messaging names (app-frontend-dev's import work).** The agent record needs both a role and a title (org-proto `AgentProfile`), so a messaging-only row needs a role, a title and a runtime: the Role combobox sets the role and defaults the title to its words, and **Custom title…** adds a title beside the role, which stays visible and required (suggested from the title when empty, marked "Suggested"). A row whose messaging name the organization would refuse shows "Needs a messaging name" with the reason (§4). Add an existing agent also asks for both (§7, STAFF-4). **Criteria rewritten (same ID):** IMP-3, STAFF-4 *(rev 14)*.
 
@@ -158,7 +160,7 @@ Every organization has one built-in agent, **HR lead**, created with the organiz
                                                                          [Bring in ▾: Active · Paused · Skip]
  ─────────────────────────────────────────────────────────────────────────────────
  Teams: from teams.toml (6) · Engineering, App, Office, Agent tooling, Quality, Design   [Edit…]
- Reporting lines: from HR (ada → you; River, Remy, Riley → ada)           [Edit…]
+ Reporting lines: from HR and teams (ada, Eden → you; everyone else → ada)  [Edit…]
  Project: Agentic Org (ac), from HR · shared by Engineering, Design      [Edit…]
 ```
 
@@ -170,7 +172,7 @@ Every organization has one built-in agent, **HR lead**, created with the organiz
   - **Top-level teams come from departments** (Engineering, Design), and each review row has a **Team** picker that defaults to its department's team. An agent with no department (messaging-only) defaults to "Not in a team"; a team is optional, so it doesn't count toward "need details". The picker lists every team in the plan, plus **New team…**, which opens the tree editor.
   - **An optional team hints file**, chosen with the **Team hints** row's **Choose…** (a `teams.toml` from anywhere, never in `hr/`, which is HR's ground; the app never writes into `hr/`), prefills the rest: each team's name, parent, lead and members, by messaging name or HR id (for example `[teams.app] name = "App"`, `parent = "engineering"`, `lead = "app-frontend-dev"`, `members = ["app-frontend-dev", "ac-software-engineer-riley"]`). A `parent` names any team in the plan, including a team made from a department (its id is the department's name in lowercase, `engineering`). A table whose id matches a department team (`[teams.engineering]`) sets that team's name, lead and members instead of adding a second one. An unknown `parent` makes the team top-level, shown as "Parent not found: <id>"; a `lead` not found leaves the team without a lead, shown as "Lead not found: <name>". Neither blocks the import. When a file is chosen, the Teams line says "Teams: from <file name> (n)", where n counts every team in the plan. A member it names that isn't found shows as "Not found in this import: <name>" and blocks nothing. Rows it doesn't mention keep their department's team. A file that can't be read shows "Couldn't read <file name>: <reason>" and the import goes on without it.
   - The suggested teams (the shape in §2 for us) show in an editable preview. **Edit…** opens a small tree editor (rename, move, lead, members). **Skip teams** leaves everyone in "Not in a team".
-- **Reporting lines** come from HR's `reports_to`. Messaging-only agents default to the owner, editable per row.
+- **Reporting lines** come from HR's `reports_to`. *(rev 15)* An agent with none (every messaging-only agent) defaults to the lead of its top-level team (the team at the top of its team's chain: Engineering for App, Office, Agent tooling and Quality), unless it leads that team itself, and to the owner otherwise: no team, a top-level team with no lead, a lead whose row is set to Skip, or a default that would make a reporting loop (the lead reports, directly or through others, to this agent; org-proto refuses loops with `cycle`). The default follows the row's Team picker until the owner sets Reports to by hand; it's editable per row.
 - **What happens** (always visible, like Hire's dry run): "Creates 10 agents, 6 teams and 1 project in <org>. Nothing changes in your HR workspace or in messaging. Agents keep running where they are."
 - **Bring in** → progress in words (Adding agents… Creating teams… Linking messaging names…), then **Done**: the org chart opens with the new members highlighted, and a summary "10 agents, 6 teams, 1 project." (and "n agents paused." when any were brought in Paused) with **View Activity**.
 - **States:**
@@ -285,6 +287,7 @@ The owner can always approve or reject any proposal. Someone who requests a hire
 - IMP-8 · Running import again shows only new or changed agents, and an agent already in the organization offers Update from HR or Skip.
 - IMP-9 · An interrupted import leaves no half-created agent, and Try again continues where it stopped.
 - IMP-10 · *(new, rev 13)* Top-level teams are suggested from each agent's department, and every review row has a Team picker (default: the department's team, plus New team…). A team hints file the owner chooses (Team hints › Choose…), when given, prefills teams, parents, leads and members, and the review says it came from that file. A table matching a department team fills that team in instead of adding another. An agent with no department and no hint defaults to Not in a team, which doesn't count as needing details. Names it lists that aren't found, and a file that can't be read, are shown and don't block the import.
+- IMP-11 · *(new, rev 15)* A row with no `reports_to` from HR defaults Reports to to the lead of its top-level team, unless it leads that team, and to the owner otherwise, including when that lead's row is skipped or the default would make a reporting loop. The default follows the Team picker until Reports to is set by hand. HR's `reports_to` always wins.
 
 **Agent record (PROF)**
 - PROF-1 · Every agent's profile and quick view show its runtime, messaging name, office and status. A missing runtime reads "Runtime not set · Set runtime".
