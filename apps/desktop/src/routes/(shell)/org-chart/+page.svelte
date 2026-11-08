@@ -1,14 +1,21 @@
 <script lang="ts">
+	import { invalidate } from '$app/navigation';
 	import { SvelteSet } from 'svelte/reactivity';
+	import { toast } from 'svelte-sonner';
+	import Plus from '@lucide/svelte/icons/plus';
 	import LayoutList from '@lucide/svelte/icons/layout-list';
 	import Network from '@lucide/svelte/icons/network';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
+	import DeleteTeamDialog from '$lib/components/DeleteTeamDialog.svelte';
 	import MemberTile from '$lib/components/MemberTile.svelte';
+	import NewTeamSheet from '$lib/components/NewTeamSheet.svelte';
 	import OwnerBar from '$lib/components/OwnerBar.svelte';
 	import PeopleChart from '$lib/components/PeopleChart.svelte';
+	import RenameTeamDialog from '$lib/components/RenameTeamDialog.svelte';
 	import ReportingChart from '$lib/components/ReportingChart.svelte';
 	import SelectedMember from '$lib/components/SelectedMember.svelte';
+	import TeamMenu, { type TeamAction } from '$lib/components/TeamMenu.svelte';
 	import TeamsChart from '$lib/components/TeamsChart.svelte';
 	import TeamsList from '$lib/components/TeamsList.svelte';
 	import {
@@ -23,7 +30,10 @@
 		type OfficeFilter,
 		type TeamNode
 	} from '$lib/org/model';
+	import { orgApi } from '$lib/org/api';
 	import { reportingTree, type ReportNode } from '$lib/org/reporting';
+	import { sessionFor } from '$lib/org/session';
+	import type { Team } from '$lib/proto';
 
 	let { data } = $props();
 	const snapshot = $derived(data.snapshot);
@@ -70,9 +80,50 @@
 		document.getElementById(`tab-${tab}`)?.focus();
 	}
 	const select = (id: string) => (selected = selected === id ? undefined : id);
+
+	// ---- editing ----
+	const session = $derived(sessionFor(orgApi, data.connection.organization.id));
+	const reload = () => invalidate('app:org');
+	let newTeamOpen = $state(false);
+	let newTeamUnder = $state<string | undefined>();
+	let renaming = $state<Team | undefined>();
+	let renameOpen = $state(false);
+	let deleting = $state<Team | undefined>();
+	let deleteOpen = $state(false);
+	let justAdded = $state<string | undefined>();
+
+	function teamAction(action: TeamAction, team: Team) {
+		if (action === 'rename') ((renaming = team), (renameOpen = true));
+		else if (action === 'delete') ((deleting = team), (deleteOpen = true));
+		else ((newTeamUnder = team.id), (newTeamOpen = true));
+	}
+	function newTeam(under?: string) {
+		newTeamUnder = under;
+		newTeamOpen = true;
+	}
+	function flash(teamId: string) {
+		justAdded = teamId;
+		setTimeout(() => justAdded === teamId && (justAdded = undefined), 2000);
+	}
+	async function teamCreated(r: { teamId: string; name: string; problems: string[] }) {
+		await reload();
+		flash(r.teamId);
+		if (r.problems.length === 0) toast.success(`Created ${r.name}.`);
+		else toast.warning(`Created ${r.name}, but not everything went through.`, { description: r.problems.join(' ') });
+	}
+	async function teamRenamed(r: { name?: string; stale?: boolean }) {
+		await reload();
+		if (r.name) toast.success(`Renamed to ${r.name}.`);
+	}
+	async function teamDeleted(r: { name: string } | { stale: true }) {
+		await reload();
+		if ('name' in r) toast.success(`Deleted ${r.name}.`);
+	}
 </script>
 
 <svelte:head><title>Org chart · Agentic Org</title></svelte:head>
+
+{#snippet teamMenu(team: Team)}<TeamMenu {team} onaction={teamAction} />{/snippet}
 
 <div class="space-y-5 px-8 py-6">
 	<OwnerBar owner={owner(snapshot)} organization={data.sample ? 'Sample organization' : data.connection.organization.name} />
@@ -124,6 +175,7 @@
 					</select>
 				</label>
 				<div class="ml-auto flex items-center gap-x-2">
+					<Button size="sm" onclick={() => newTeam()}><Plus aria-hidden="true" /> New team</Button>
 					<Button variant="outline" size="sm" onclick={() => (asList = !asList)}>
 						{#if asList}<Network aria-hidden="true" /> Chart{:else}<LayoutList aria-hidden="true" /> List{/if}
 					</Button>
@@ -156,13 +208,14 @@
 			{#if tree.length === 0}
 				<div class="rounded-xl bg-white/5 px-6 py-10 text-center outline-1 -outline-offset-1 outline-white/10">
 					<p class="text-sm/6 font-semibold text-white">No teams yet</p>
-					<p class="mx-auto mt-1 max-w-sm text-sm/6 text-gray-400">Teams group agents and people, and can own other teams and projects.</p>
+					<p class="mx-auto mt-1 max-w-sm text-sm/6 text-gray-400">Teams group your agents and people. A team can be part of another team, so a whole division is just a team with teams under it.</p>
+					<Button class="mt-4" onclick={() => newTeam()}>Create your first team</Button>
 				</div>
 			{:else if asList}
-				<TeamsList {snapshot} {tree} {filter} {highlightLabel} {knownOffices} />
+				<TeamsList {snapshot} {tree} {filter} {highlightLabel} {knownOffices} actions={teamMenu} />
 			{:else}
 				<div class="overflow-x-auto pb-4">
-					<TeamsChart {snapshot} {tree} {collapsed} {filter} {selected} {fit} {highlightLabel} {knownOffices} onselect={select} />
+					<TeamsChart {snapshot} {tree} {collapsed} {filter} {selected} {fit} {highlightLabel} {knownOffices} {justAdded} actions={teamMenu} onselect={select} />
 				</div>
 			{/if}
 
@@ -246,3 +299,7 @@
 		</div>
 	{/if}
 </div>
+
+<NewTeamSheet bind:open={newTeamOpen} {snapshot} {session} ownerTeamId={newTeamUnder} ondone={teamCreated} />
+<RenameTeamDialog bind:open={renameOpen} team={renaming && snapshot.teams.find((x) => x.id === renaming?.id)} {snapshot} {session} ondone={teamRenamed} />
+<DeleteTeamDialog bind:open={deleteOpen} team={deleting && snapshot.teams.find((x) => x.id === deleting?.id)} {snapshot} {session} ondone={teamDeleted} />
