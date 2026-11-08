@@ -110,7 +110,7 @@ Extends `work-items-ux.md` (tasks, bugs), `our-org-in-the-app.md` (sessions, run
 | Claude Code, print mode (`claude -p`, copilot) | cost and usage per run | Reported |
 | Claude Code, interactive sessions | token usage per message in the transcript; no cost | ≈ (tokens × the price list) |
 | Codex (`codex exec`, sessions) | token usage | ≈ |
-| Antigravity | unknown | — (working time only) until it reports |
+| Antigravity | unknown | — (cost and tokens) until it reports |
 
 **Prices:** a dated price list per model, in Settings › Costs ("Prices from 2026-11-01 · **Update**"), editable for custom rates. Changing it re-estimates past months only on request ("Re-estimate past costs?").
 
