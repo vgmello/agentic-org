@@ -27,7 +27,8 @@
 //! `Errors:` list names the codes it can return, not the order they are checked in). The
 //! domain codes (`owner_protected`, `cycle`, `not_a_member`, `not_empty`) come after
 //! `invalid_name` and before `conflict`: a rule that would refuse the command at any version
-//! is not hidden by a stale one.
+//! is not hidden by a stale one. Among themselves `owner_protected` comes first, so a lead
+//! who is the owner is `owner_protected`, not `not_a_member`.
 //!
 //! ## Limits every command shares
 //! All are `invalid_request`, so a client can check them before sending:
@@ -39,6 +40,7 @@
 //! - **Member ids** (`member.add_person`'s and `member.add_agent`'s `member_id`): exactly
 //!   [`MEMBER_ID_CHARS`] ASCII letters and digits, the shape of a ULID ([`is_valid_member_id`]).
 //!   No handle has this shape, so an id and a handle never collide.
+//! - **Command ids** (`command_id`, on every command): the same, [`is_valid_id`].
 //! - **Free text** (`contact`, `title_in_team`): trimmed, then 1 to [`AGENT_TEXT_MAX_CHARS`]
 //!   characters with no control characters. To remove a contact use `clear_contact`, not an
 //!   empty string.
@@ -256,7 +258,8 @@ pub fn is_shaped_like_an_address(handle: &str) -> bool {
     let run = handle.len() >= prefix
         && handle.is_char_boundary(prefix)
         && handle[..prefix].eq_ignore_ascii_case(RUN_HANDLE_PREFIX);
-    run || is_valid_member_id(handle)
+    // Compared by their lower-cased key: U+212A (KELVIN SIGN) lower-cases to ASCII `k`.
+    run || is_valid_member_id(handle) || is_valid_member_id(&handle.to_lowercase())
 }
 
 /// The length of a member id.
@@ -287,8 +290,8 @@ pub fn is_valid_id(id: &str) -> bool {
 /// The longest `messaging_name`, in characters.
 pub const AGENT_MESSAGING_NAME_MAX_CHARS: usize = 64;
 
-/// The longest `role`, `title`, `focus`, `model`, `Other` runtime name and `schedule.spec`, in
-/// characters (after trimming).
+/// The longest `role`, `title`, `focus`, `model`, `Other` runtime name, `schedule.spec`, and
+/// `contact` and `title_in_team`, in characters (after trimming).
 pub const AGENT_TEXT_MAX_CHARS: usize = 200;
 
 /// The longest `schedule.time_zone`, in characters.
@@ -370,6 +373,8 @@ pub struct AgentProfile {
 /// `owner: true`: in no team, full rights everywhere, always reachable by agents.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Member {
+    /// The member's id, made by the client (or, for the owner, by the office): every one,
+    /// the owner's included, satisfies [`is_valid_member_id`].
     pub id: String,
     pub kind: MemberKind,
     pub name: String,
@@ -480,7 +485,8 @@ macro_rules! command {
         #[doc = concat!("Params of `", $method, "`.")]
         #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
         pub struct $params {
-            /// Client-made (a ULID); a retry with the same id gets the same answer.
+            /// Client-made (a ULID; [`is_valid_id`], `invalid_request` otherwise); a retry with the
+            /// same id gets the same answer.
             pub command_id: String,
             $($(#[$fattr])* pub $field: $ty,)*
         }
