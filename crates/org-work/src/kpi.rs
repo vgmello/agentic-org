@@ -223,7 +223,9 @@ impl TimeTally {
                     self.closed_as_duplicate = false;
                     self.status = ItemStatus::Closed;
                 }
-                _ => self.enter(ItemStatus::Triaged),
+                VerifyOutcome::StillHappens => self.enter(ItemStatus::Triaged),
+                // An outcome a newer build wrote: not guessed at.
+                _ => {}
             },
             WorkEventKind::Reopened { .. } if self.reopenable() => {
                 self.open_round();

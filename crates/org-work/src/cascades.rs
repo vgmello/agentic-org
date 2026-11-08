@@ -50,6 +50,8 @@ pub fn reconcile_bugs(
     clock: &dyn Clock,
     office_id: &str,
 ) -> Result<TxnOutput, StoreError> {
+    // No call, so no caller: the cascade's events have no actor (`Origin::Cascade`), and the
+    // context only needs something to hold.
     let caller = Caller::agent("");
     let org_position: Position = org.applied_position()?;
     let mut ctx = Ctx {

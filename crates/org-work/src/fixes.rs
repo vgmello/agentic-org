@@ -136,6 +136,9 @@ pub(crate) fn follow_task(
     edges: &[Edge],
     cause: &EventRef,
 ) -> Result<(), Fail> {
+    if edges.is_empty() {
+        return Ok(());
+    }
     for bug_id in task.fixes() {
         let existing = drafts.iter().position(|d| d.item.id == bug_id);
         let bug = match existing {

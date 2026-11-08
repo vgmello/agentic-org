@@ -777,3 +777,20 @@ fn a_rerun_batch_gives_the_same_bug_outcome_without_a_double_write() {
     assert_eq!(w.kinds_after(&bug, 2), ["auto:status_changed"]);
     assert_eq!(w.version(&task), 2);
 }
+
+#[test]
+fn a_task_cannot_be_created_with_more_fix_links_than_an_item_may_have() {
+    let w = World::new();
+    let bug = w.bug();
+    let mut p = w.create_params(PROJECT);
+    p.fixes = (0..=WORK_MAX_LINKS)
+        .map(|_| NewFixLink {
+            link_id: w.id(),
+            bug_id: bug.clone(),
+        })
+        .collect();
+    assert_eq!(
+        w.code(&app(), WorkCall::TaskCreate(p)),
+        ErrorCode::InvalidRequest
+    );
+}

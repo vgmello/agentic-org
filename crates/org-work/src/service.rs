@@ -58,10 +58,6 @@ impl<S: WorkStore> WorkService<S> {
     }
 }
 
-fn suggested_triager_of(org: &dyn OrgView, bug: &StoredItem) -> Result<String, StoreError> {
-    crate::bugs::suggested_triager(org, bug.bug.area_id.as_deref())
-}
-
 /// An item in full, for `work.get`: its checklist, links (targets that are deleted marked so),
 /// backlinks and time figures as of `as_of_ms`.
 pub fn read_item(
@@ -100,7 +96,10 @@ pub fn read_item(
             .filter(|t| !t.deleted)
             .map(|t| t.id)
             .collect();
-        suggested_triager = Some(suggested_triager_of(org, item)?);
+        suggested_triager = Some(crate::bugs::suggested_triager(
+            org,
+            item.bug.area_id.as_deref(),
+        )?);
         suggested_verifier = Some(crate::bugs::suggested_verifier(org, item)?);
     }
     Ok(work_item(

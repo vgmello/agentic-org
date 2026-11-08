@@ -254,7 +254,9 @@ impl StoredItem {
     }
 
     /// [`Self::summary`] for a bug with its fix tasks (`fixed_by`): the tasks that have a live
-    /// `fixes` link to it, which only the office's link index knows. The library fills it on
+    /// `fixes` link to it, which only the office's link index knows. Adding or removing a fix
+    /// link is a change to the task, not to the bug (the bug's version stays), so the bug is not
+    /// upserted by it: a client keeps the list from the tasks' `fixes`. The library fills it on
     /// the answers it builds ([`WorkReads::linked_to`](crate::WorkReads::linked_to) gives it
     /// for snapshot pages).
     pub fn summary_with_fixed_by(&self, fixed_by: Vec<String>) -> WorkItemSummary {

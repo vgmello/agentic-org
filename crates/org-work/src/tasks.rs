@@ -5,7 +5,7 @@ use org_proto::work::{
     DoneAnyway, EventRef, FieldChange, ItemKind, ItemStatus, LinkKind, LinkTarget, Priority,
     Resolution, TaskAssignParams, TaskCreateParams, TaskSetStatusParams, TaskUpdateParams,
     WorkEventKind, WORK_BLOCKED_REASON_MAX_CHARS, WORK_DESCRIPTION_MAX_CHARS, WORK_DOD_MAX_CHARS,
-    WORK_REASON_MAX_CHARS, WORK_TITLE_MAX_CHARS,
+    WORK_MAX_LINKS, WORK_REASON_MAX_CHARS, WORK_TITLE_MAX_CHARS,
 };
 use org_proto::ErrorCode;
 use serde_json::Value;
@@ -28,6 +28,11 @@ pub(crate) fn create(ctx: &mut Ctx, p: &TaskCreateParams) -> Result<Plan, Fail> 
         .org
         .project(&p.project_id)?
         .ok_or_else(|| not_found("no such project"))?;
+    if p.fixes.len() > WORK_MAX_LINKS {
+        return Err(invalid(format!(
+            "an item has at most {WORK_MAX_LINKS} links"
+        )));
+    }
     let mut fix_bugs = vec![];
     for fix in &p.fixes {
         fix_bugs.push(

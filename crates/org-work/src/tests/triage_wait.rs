@@ -348,6 +348,31 @@ fn undoing_an_automatic_fix_stops_the_verification_wait() {
 }
 
 #[test]
+fn a_verify_outcome_this_build_does_not_know_is_not_guessed_at() {
+    let w = World::new();
+    let id = w.bug_at(ItemStatus::Fixed);
+    w.clock.advance(HOUR);
+    let mut events = w.events(&id);
+    let mut verified = events.last().expect("event").clone();
+    verified.version += 1;
+    verified.change = WorkEventKind::Verified {
+        outcome: VerifyOutcome::Unknown,
+        by_reporter: true,
+        note: None,
+    };
+    events.push(verified);
+    let known = crate::time_figures(
+        ItemKind::Bug,
+        "pat",
+        OWNER,
+        &events[..events.len() - 1],
+        w.now(),
+    );
+    let with_unknown = crate::time_figures(ItemKind::Bug, "pat", OWNER, &events, w.now());
+    assert_eq!(with_unknown, known);
+}
+
+#[test]
 fn bug_figures_are_the_same_however_the_events_are_batched() {
     let w = World::new();
     let id = w.bug_in(None);
