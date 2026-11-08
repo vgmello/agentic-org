@@ -899,6 +899,8 @@ command!(
     /// is not [`is_valid_member_id`]), `already_exists` (the id is taken, or `messaging_name` is
     /// already another member's handle: an agent's `messaging_name`, a person's `name`,
     /// [`OWNER_HANDLE`] or [`OFFICE_HANDLE`], ignoring case), `not_found` (no such office).
+    /// An `office_id` that isn't a well-formed id (empty, or failing [`is_valid_id`]) is
+    /// `invalid_request`, checked before the office is looked up.
     MemberAddAgent, "member.add_agent", MemberAddAgentParams {
         member_id: String,
         name: String,
@@ -909,9 +911,9 @@ command!(
 command!(
     /// `member.update_agent`: only the fields given change; `clear_focus`, `clear_home` and
     /// `clear_model` remove those fields (giving a field and its `clear_` flag together is
-    /// `invalid_request`; so is a call that gives no field at all, though a value equal to the
-    /// current one is accepted, and so is a `runtime` that is `Unknown` or a non-canonical
-    /// `Other`). `role` and `title` cannot be cleared. `office_id` does not change here: moving
+    /// `invalid_request`, and so is a call that gives no field at all; a value equal to the
+    /// current one is accepted). A `runtime` that is `Unknown` or a non-canonical `Other` is
+    /// refused with `invalid_request`, as in `member.add_agent`. `role` and `title` cannot be cleared. `office_id` does not change here: moving
     /// an agent to another office needs its own command (a future `member.place_agent`; ADR-0003
     /// and the offices design rely on such a move). The run mode is changed with
     /// `member.set_run_mode`, the status with `member.set_agent_status` and `member.offboard`. An
@@ -970,7 +972,8 @@ command!(
     /// `org.changed`: the agent's memberships are removed, the teams it led lose their lead
     /// (`team_upserted`), and whoever reported to it now reports to the agent's own manager, or
     /// to the owner if it had none (`member_upserted`); each affected team and member gets a new
-    /// version. Existing historical references (authorship, activity) keep pointing at the agent.
+    /// version. Only members that aren't offboarded are re-pointed: an already offboarded
+    /// agent's record is history and keeps its `reports_to_member_id` and version. Existing historical references (authorship, activity) keep pointing at the agent.
     /// Afterwards `team.add_member`, `team.set_lead` and `member.set_reports_to` that name it are
     /// `invalid_request`. Reclaiming the agent's open tasks is part of the work-items design.
     /// Errors: `not_authorized`, `not_found`, `invalid_request` (the member is not an agent, or
