@@ -20,7 +20,7 @@ test('TEAM-5: New team takes a name, a Part of team, members and a lead chosen f
 	await expect(sheet).toBeVisible();
 	await shot(page, 'new-team');
 	// The owner is never offered as a member.
-	await expect(sheet.getByRole('checkbox', { name: /^You,/ })).toHaveCount(0);
+	await expect(sheet.getByRole('checkbox', { name: /^Alex Kim,/ })).toHaveCount(0);
 	// The lead can only be one of the chosen members.
 	await expect(sheet.getByLabel('Lead')).toBeDisabled();
 	await sheet.getByLabel('Name').fill('QA');
@@ -188,7 +188,7 @@ test('TEAM-6: Edit members adds and removes members in one go, and sets the lead
 	await page.getByRole('menuitem', { name: 'Edit members…' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Members of Web' });
 	await expect(dialog.getByRole('checkbox', { name: /^Noor Haddad/ })).toBeChecked();
-	await expect(dialog.getByRole('checkbox', { name: /^You,/ })).toHaveCount(0); // never the owner
+	await expect(dialog.getByRole('checkbox', { name: /^Alex Kim,/ })).toHaveCount(0); // never the owner
 	await dialog.getByRole('checkbox', { name: /^Quinn Adeyemi/ }).click();
 	await dialog.getByLabel('Lead').selectOption({ label: 'Quinn Adeyemi' });
 	await shot(page, 'edit-members');

@@ -175,7 +175,7 @@
 		}
 		await reload();
 	}
-	const organizationName = $derived(data.sample ? 'Sample organization' : data.connection.organization.name);
+	const organizationName = $derived(data.connection.organization.name);
 	async function personAdded(r: { memberId: string; name: string; problems: string[] }) {
 		await reload();
 		selected = r.memberId;
@@ -250,7 +250,7 @@
 {#snippet teamMenu(team: Team)}<TeamMenu {team} onaction={teamAction} />{/snippet}
 
 <div class="space-y-5 px-8 py-6">
-	<OwnerBar owner={owner(snapshot)} organization={data.sample ? 'Sample organization' : data.connection.organization.name} />
+	<OwnerBar owner={owner(snapshot)} organization={organizationName} sample={data.sample} />
 
 	<div class="flex flex-wrap items-center justify-between gap-3">
 		<div role="tablist" aria-label="Org chart views" class="inline-flex rounded-lg bg-white/5 p-1 outline-1 -outline-offset-1 outline-white/10">

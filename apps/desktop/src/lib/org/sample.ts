@@ -35,7 +35,7 @@ export function sampleOrg(officeId: string): OrgSnapshot {
 	const agent = (id: string, name: string, role: string, extra: Partial<Member> = {}) =>
 		member(id, 'agent', name, { office_id: officeId, agent: profile(id, role), ...extra });
 	const members: Member[] = [
-		member('you', 'person', 'You', { owner: true }),
+		member('you', 'person', 'Alex Kim', { owner: true }),
 		member('avery', 'person', 'Avery Stone', { contact: 'avery@example.com' }),
 		member('hana', 'person', 'Hana Weiss', { reports_to_member_id: 'avery' }),
 		member('leo', 'person', 'Leo Brandt', { reports_to_member_id: 'hana' }),
@@ -87,6 +87,6 @@ export function sampleOrg(officeId: string): OrgSnapshot {
 export const emptyOrg = (): OrgSnapshot => ({
 	position: { epoch: 1, seq: 1 },
 	teams: [],
-	members: [{ id: 'you', kind: 'person', name: 'You', owner: true, version: 1 }],
+	members: [{ id: 'you', kind: 'person', name: 'Alex Kim', owner: true, version: 1 }],
 	memberships: []
 });
