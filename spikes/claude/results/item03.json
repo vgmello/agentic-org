@@ -1,0 +1,83 @@
+{
+  "argv": [
+    "-p",
+    "--input-format",
+    "stream-json",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--model",
+    "haiku",
+    "--max-budget-usd",
+    "0.50",
+    "--strict-mcp-config",
+    "--mcp-config",
+    "{\"mcpServers\":{}}",
+    "--permission-mode",
+    "manual",
+    "--permission-prompt-tool",
+    "stdio",
+    "--allowedTools",
+    "Bash(sh wait47.sh)",
+    "--include-partial-messages"
+  ],
+  "A_approvals_asked": [],
+  "A_sleepers_before": [
+    "2649  2648  2647 sleep 47"
+  ],
+  "A_interrupt_ack_ms": 2,
+  "A_interrupt_response": {
+    "subtype": "success",
+    "request_id": "host-1",
+    "response": {
+      "still_queued": []
+    }
+  },
+  "A_result_ms_after_interrupt": 9,
+  "A_result": {
+    "subtype": "error_during_execution",
+    "is_error": true,
+    "result": null,
+    "terminal_reason": "aborted_tools",
+    "stop_reason": "tool_use"
+  },
+  "A_sleepers_after": [],
+  "B_interrupt_response": {
+    "subtype": "success",
+    "request_id": "host-2",
+    "response": {
+      "still_queued": []
+    }
+  },
+  "B_result_ms_after_interrupt": 9,
+  "B_result": {
+    "subtype": "error_during_execution",
+    "is_error": true,
+    "result": null,
+    "terminal_reason": "aborted_streaming",
+    "stop_reason": null
+  },
+  "B_assistant_events_after_interrupt": 2,
+  "C_next_turn": "AFTER",
+  "D_idle_interrupt_response": {
+    "subtype": "success",
+    "request_id": "host-3",
+    "response": {
+      "still_queued": []
+    }
+  },
+  "D_events_after_idle_interrupt": [
+    "stream_event",
+    "result success is_error=False terminal=completed result='AFTER' cost=0.00045814 queued=0",
+    "control_response {\"subtype\": \"success\", \"request_id\": \"host-3\", \"response\": {\"still_queued\": []}}"
+  ],
+  "stream_event_types": [
+    "content_block_delta",
+    "content_block_start",
+    "content_block_stop",
+    "message_delta",
+    "message_start",
+    "message_stop"
+  ],
+  "exit": 0
+}
