@@ -144,13 +144,12 @@ To keep `inbox`, `due`, `notify`, `wait`, `read --next`, and UI thread views sub
      - `updated_at TEXT NOT NULL`
      - `expires_at TEXT NOT NULL` (defaults to `updated_at + 8 hours`)
 
-7. **`work_origin_log` and `work_stream_cursors` (shared per-origin work stream in `office.db`, owned by `org-office` sync)**
-   - Per [`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md) (lines 74–79, 210–213), each office numbers every work change it originates (`msg_created`, `msg_state_changed`, `task_version`, `task_handover`) from one monotonic counter `origin_seq` in the **same transaction** as the change:
-     - `work_origin_log(origin_seq INTEGER PRIMARY KEY, kind TEXT NOT NULL, target_id TEXT NOT NULL, payload_json TEXT, created_at TEXT NOT NULL)`
-       - For `kind = 'msg_created'`, `payload_json` is `NULL` (the sync streamer reads the immutable header and compressed body blobs directly from `msg_headers` and `msg_bodies` by `target_id` to avoid duplicating message bodies in the log).
-       - For `kind = 'msg_state_changed'`, `payload_json` holds the compact `SyncedMessageState` JSON (`~120 B`) so intermediate state transitions (`read → snoozed → unread → done`) stream in exact `origin_seq` order even after later transitions overwrite `msg_state`.
-       - **Retention of `work_origin_log`:** Rows are pruned once acknowledged by HQ (`origin_seq <= acked_seq`) and older than the promotion-republish window specified by the office sync design.
-     - `work_stream_cursors(scope TEXT NOT NULL, origin_office_id TEXT NOT NULL, origin_incarnation TEXT NOT NULL, last_origin_seq INTEGER NOT NULL, PRIMARY KEY (scope, origin_office_id, origin_incarnation))`
+7. **Integration with the Per-Origin Work Stream (`crates/org-sync`, owned by `ac-software-engineer-river`)**
+   - Per [`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md) (lines 74–79, 210–213), each office numbers every work change it originates from one monotonic counter `origin_seq` in the **same transaction** as the change.
+   - The stream mechanics (the `work_origin_log` and `work_stream_cursors` tables, acks, backfill cursors, and promotion-republish retention) belong to **`crates/org-sync`** (`ac-software-engineer-river`).
+   - Messaging contributes two work-change kinds to that stream:
+     - `'msg_created'` (referencing `target_id = msg_headers.id` without duplicating the body in the log table — `org-sync` reads the immutable header and compressed body blobs from `msg_headers` / `msg_bodies` by `id`), and
+     - `'msg_state_changed'` (carrying the compact `SyncedMessageState` payload so intermediate state transitions stream in exact `origin_seq` order).
 
 #### 1.2 Body Compression Strategy and Decompression Safety
 
@@ -233,46 +232,48 @@ To prevent agents from being interrupted mid-task by routine messages while guar
      - Upserts `msg_state` (`state = 'done'`, `reason = note`) and removes `<id>` from `msg_unread` (or `new/`). Done messages never resurface.
 3. **Shared Triage Notification Command (`org-agent msg notify`) and `msg due`:**
    - All three runtime adapters (Claude Code, Codex, Antigravity) are thin wrappers (~30 lines) around a single command in `org-agent`:
-     `org-agent msg notify [--after-task] [--sweep-after 5m] [--session <runtime:session-id>] [--format text|json] [--as <member>]`
+     `org-agent msg notify [--session <id>] [--after-task] [--urgent-only] [--sweep-after 5m] [--format text|json] [--as <member>]`
    - **Selection rules:**
-     - **Default (mid-work / periodic check):** Releases any time-based snoozes with `snoozed_until <= now_utc` (incrementing `triage_gen`) and selects:
-       1. Unsnoozed urgent unread messages (`urgent == true`),
-       2. Newly released due snoozes (`due_reason = "snooze_due"`), and
-       3. Unsnoozed untriaged unread messages (`triaged_at IS NULL`) older than `--sweep-after` (default `5m`).
-     - **`--after-task` (at a natural break / `Stop`):** Also releases `snooze_after_task = 1` snoozes (incrementing `triage_gen`) and selects **all** currently unsnoozed unread messages (both urgent and normal) so nothing is left behind at the end of a turn.
-     - **`--session <runtime:session-id>` deduplication:** Atomically records `(session_id, msg_id, triage_gen)` when emitting notifications so a mid-turn watcher and a `Stop` hook in the same session never notify the agent twice for the same `(msg_id, triage_gen)`, while snoozing `<id>` increments `triage_gen` so `<id>` resurfaces once when its snooze becomes due.
+     - Considers this agent's unread messages that are not snoozed, plus time-based snoozes that are now due (`snoozed_until <= now_utc`, releasing them and incrementing `triage_gen`), plus (with `--after-task`) those snoozed with `after-task` (releasing them and incrementing `triage_gen`).
+     - **`--urgent-only`:** Filters to urgent items only (`kind == "request"` or `priority` in `("high", "urgent")`). This is the busy/idle watcher's mode.
+     - **`--sweep-after <dur>` (default `5m`):** A non-urgent, untriaged message (`triaged_at IS NULL`) counts only when it is older than `--sweep-after` (`reason = "sweep"`), or when `--after-task` is given (the natural break always shows everything new, `reason = "new"` or `"after_task"`).
+     - **`--session <id>` generation dedup:** Reports only `(msg_id, triage_gen)` pairs not yet reported to `<id>`, and atomically records them as reported under the per-agent metadata lock. Without `--session`, `notify` is stateless (no dedup).
    - **Sanitized output & exit codes for `msg notify`:**
-     - Sender names and subjects are sanitized to single-line printable text (control characters and newlines stripped, truncated to 120 chars; **message bodies are never included**).
-     - **Exit `0`:** Nothing to notify (`stdout` is empty in `text` mode).
-     - **Exit `10`:** Only normal (non-urgent) messages need triage.
-     - **Exit `11`:** At least one **urgent** message needs triage.
-4. **JSON Shapes for Hook & CLI:**
+     - Never prints bodies. Sender, subject, and kind are sanitized (control characters stripped, subject truncated to 80 chars; at most 10 lines, followed by `…and <k> more (org-agent msg inbox)` when `more > 0`).
+     - **Exit `0`:** Nothing to report (`stdout` is empty in `text` mode).
+     - **Exit `10`:** Normal (non-urgent) items need triage.
+     - **Exit `11`:** At least one **urgent** item needs triage.
+     - **Exit `1`:** Usage error; **Exit `4`:** I/O or storage error.
+4. **Text & JSON Shapes for `msg notify` and `msg inbox`:**
+   - **`org-agent msg notify --format text` (default):**
+     ```text
+     1 new message(s), 1 urgent:
+     - [URGENT] Ada (ac-staff-engineer-ada): Quick check [request]
+     Triage each: answer now, `org-agent msg defer <id> --until 30m|2h|after-task|<time>`, or `org-agent msg done <id>`.
+     ```
    - **`org-agent msg notify --format json`:**
      ```json
      {
-       "text": "1 unread message needs triage (1 urgent):\n- 01M6WRN71MBX8FHS08MB0Q9Z24 [request/urgent] from ac-staff-engineer-ada: Quick check\nTriage each new message: answer now (org-agent msg reply <id> \"<text>\"), snooze it (org-agent msg defer <id> --until 30m|2h|after-task), or mark it done (org-agent msg done <id>).",
+       "v": 1,
+       "agent": "agy-senior-dev",
        "urgent": true,
        "count": 1,
        "urgent_count": 1,
-       "messages": [
+       "items": [
          {
            "id": "01M6WRN71MBX8FHS08MB0Q9Z24",
            "from": "ac-staff-engineer-ada",
-           "to": "agy-senior-dev",
-           "kind": "request",
-           "priority": "urgent",
-           "urgent": true,
-           "triage_gen": 0,
+           "from_name": "Ada",
            "subject": "Quick check",
-           "reply_to": null,
+           "kind": "request",
+           "urgent": true,
+           "priority": "urgent",
            "created_at": "2026-11-08T05:03:51.348Z",
-           "expires_at": "2026-11-08T05:05:51.348Z",
-           "status": "unread",
-           "snoozed_until": null,
-           "snooze_note": null,
-           "due_reason": "urgent"
+           "reason": "new"
          }
-       ]
+       ],
+       "more": 0,
+       "text": "1 new message(s), 1 urgent:\n- [URGENT] Ada (ac-staff-engineer-ada): Quick check [request]\nTriage each: answer now, `org-agent msg defer <id> --until 30m|2h|after-task|<time>`, or `org-agent msg done <id>`."
      }
      ```
    - **`org-agent msg inbox [--all] [--summary] [--limit <n>] [--json]`** returns up to `limit` (default `50`, max `100`) header objects including `priority`, `urgent`, `triage_gen`, `status`, `snoozed_until`, and `snooze_note` (never bodies when `--summary` is passed or on Phase B `msg.inbox`).
@@ -346,7 +347,7 @@ org-agent msg reply  <id> [--subject <s>] [--priority normal|high|urgent] [--met
 org-agent msg defer  <id> --until <30m|2h|after-task|ISO> [--note <text>] [--office <id>] [--as <member>] [--json]
 org-agent msg done   <id> [--note <text>] [--office <id>] [--as <member>] [--json]
 org-agent msg due    [--after-task] [--sweep-after 5m] [--office <id>] [--as <member>] [--json]
-org-agent msg notify [--after-task] [--sweep-after 5m] [--session <id>] [--format text|json] [--office <id>] [--as <member>]
+org-agent msg notify [--session <id>] [--after-task] [--urgent-only] [--sweep-after 5m] [--format text|json] [--office <id>] [--as <member>]
 org-agent msg inbox  [--all] [--summary] [--from <member>] [--thread <id>] [--limit <n>] [--cursor <seq>] [--office <id>] [--as <member>] [--json]
 org-agent msg read   <id> | --next [--office <id>] [--as <member>] [--json]
 org-agent msg wait   [--timeout 60s] [--from <member>] [--urgent-only] [--office <id>] [--as <member>] [--json]
