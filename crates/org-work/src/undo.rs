@@ -1,7 +1,8 @@
 //! `work.undo` (§2.4): reverts an automatic event within an hour, if no later event changed what
-//! it changed. Phase 1's one automatic change is a made-task step ticking or unticking itself.
+//! it changed. The automatic changes are a made-task step ticking or unticking itself, and a bug
+//! following its fix tasks.
 
-use org_proto::work::{EventRef, WorkEventKind, WorkUndoParams};
+use org_proto::work::{EventRef, ItemKind, ItemStatus, WorkEventKind, WorkUndoParams};
 
 use crate::common::{load, not_deleted};
 use crate::engine::{Ctx, Origin, Plan};
@@ -59,29 +60,79 @@ pub(crate) fn undo(ctx: &mut Ctx, p: &WorkUndoParams) -> Result<Plan, Fail> {
     }
     not_deleted(&item)?;
 
-    let WorkEventKind::StepChecked { step_id, done } = &target.change else {
-        return Err(invalid("this build can't undo that kind of change"));
-    };
     let caller = ctx.caller_id().to_owned();
-    let mut draft = ctx.draft(item);
-    let at = draft.at_ms();
-    match draft.item.step_mut(step_id) {
-        Some(s) if !s.removed => {
-            s.done = !done;
-            s.version += 1;
-            s.checked_by = Some(caller);
-            s.checked_at_ms = Some(at);
+    let cause = EventRef {
+        target_id: p.target_id.clone(),
+        version: p.event_version,
+    };
+    match &target.change {
+        WorkEventKind::StepChecked { step_id, done } => {
+            let mut draft = ctx.draft(item);
+            let at = draft.at_ms();
+            match draft.item.step_mut(step_id) {
+                Some(s) if !s.removed => {
+                    s.done = !done;
+                    s.version += 1;
+                    s.checked_by = Some(caller);
+                    s.checked_at_ms = Some(at);
+                }
+                _ => return Err(conflict("the step is gone")),
+            }
+            draft.record(
+                WorkEventKind::Undone {
+                    event_version: p.event_version,
+                },
+                Origin::Undo(cause),
+            );
+            Ok(Plan::of(vec![draft]))
         }
-        _ => return Err(conflict("the step is gone")),
+        // A bug that followed its fix tasks (§2.4) goes back to where it was.
+        WorkEventKind::StatusChanged { from, to, .. } if item.kind == ItemKind::Bug => {
+            if from == to {
+                return Err(invalid(
+                    "this change only noted why the bug stayed as it was: nothing to undo",
+                ));
+            }
+            if item.status != *to {
+                return Err(conflict("the bug is no longer where this change put it"));
+            }
+            // Back in `fixed`, it gets what the move into it had set.
+            let fixed_with = if *from == ItemStatus::Fixed {
+                ctx.txn
+                    .events_since(&item.id, 0)?
+                    .into_iter()
+                    .rev()
+                    .filter(|e| e.version < p.event_version)
+                    .find_map(|e| match e.change {
+                        WorkEventKind::StatusChanged {
+                            to: ItemStatus::Fixed,
+                            reason,
+                            anyway,
+                            ..
+                        } => Some((reason, anyway)),
+                        _ => None,
+                    })
+            } else {
+                None
+            };
+            let mut draft = ctx.draft(item);
+            draft.item.status = *from;
+            if *to == ItemStatus::Fixed {
+                draft.item.bug.closed_reason = None;
+                draft.item.bug.done_anyway = None;
+            }
+            if let Some((reason, anyway)) = fixed_with {
+                draft.item.bug.closed_reason = reason;
+                draft.item.bug.done_anyway = anyway;
+            }
+            draft.record(
+                WorkEventKind::Undone {
+                    event_version: p.event_version,
+                },
+                Origin::Undo(cause),
+            );
+            Ok(Plan::of(vec![draft]))
+        }
+        _ => Err(invalid("this build can't undo that kind of change")),
     }
-    draft.record(
-        WorkEventKind::Undone {
-            event_version: p.event_version,
-        },
-        Origin::Undo(EventRef {
-            target_id: p.target_id.clone(),
-            version: p.event_version,
-        }),
-    );
-    Ok(Plan::of(vec![draft]))
 }

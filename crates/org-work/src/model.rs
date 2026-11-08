@@ -12,7 +12,7 @@
 
 use org_proto::work::{
     ChecklistCounts, ChecklistStep, CommentKind, DoneAnyway, ItemKind, ItemStatus, Link, LinkKind,
-    LinkTarget, Priority, Resolution, Shortcut, WaitReason, WorkAccepted, WorkItem,
+    LinkTarget, Priority, Resolution, Severity, Shortcut, WaitReason, WorkAccepted, WorkItem,
     WorkItemSummary,
 };
 use org_proto::ApiError;
@@ -47,6 +47,8 @@ pub struct StoredItem {
     pub deleted: bool,
     #[serde(default)]
     pub task: TaskFields,
+    #[serde(default)]
+    pub bug: BugFields,
     /// In order. Removed steps stay as tombstones (their ids are never reused).
     #[serde(default)]
     pub checklist: Vec<StoredStep>,
@@ -87,6 +89,32 @@ pub struct TaskFields {
     pub branch: Option<String>,
     /// Phase 4.
     pub shortcut: Option<Shortcut>,
+}
+
+/// The fields only a bug has (§1.4).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BugFields {
+    /// Always set on a bug: a live area of its project when it was set.
+    pub area_id: Option<String>,
+    /// Always set on a bug.
+    pub severity: Option<Severity>,
+    /// False until triage.
+    pub severity_confirmed: bool,
+    pub what_happened: String,
+    pub expected: Option<String>,
+    pub steps: Option<String>,
+    pub environment: Option<String>,
+    /// "What fixed it" (`bug.mark_fixed`) or the won't fix / can't reproduce reason; cleared
+    /// when the bug leaves `fixed` or `closed`.
+    pub closed_reason: Option<String>,
+    /// Set exactly when closed as a duplicate.
+    pub duplicate_of: Option<String>,
+    /// How many times it was reopened or sent back by "still happens".
+    pub reopen_count: u32,
+    /// Phase 3.
+    pub affects_feature_id: Option<String>,
+    /// Set when Fixed by hand with required steps unticked; cleared when it leaves `fixed`.
+    pub done_anyway: Option<DoneAnyway>,
 }
 
 /// One checklist step.
@@ -199,12 +227,40 @@ impl StoredItem {
                 done: count(live.iter().filter(|s| s.done).count()),
                 required_left: count(live.iter().filter(|s| s.required && !s.done).count()),
             },
-            done_anyway: self.task.done_anyway.is_some(),
+            done_anyway: self.task.done_anyway.is_some() || self.bug.done_anyway.is_some(),
+            fixes: self.fixes(),
             owner_office_id: self.owner_office_id.clone(),
             generation: self.generation,
             version: self.version,
             deleted: self.deleted,
+            area_id: self.bug.area_id.clone(),
+            severity: self.bug.severity,
+            severity_confirmed: self.bug.severity_confirmed,
+            reopen_count: self.bug.reopen_count,
+            duplicate_of: self.bug.duplicate_of.clone(),
             ..WorkItemSummary::default()
+        }
+    }
+
+    /// The bugs this task fixes: the targets of its live `fixes` links.
+    pub fn fixes(&self) -> Vec<String> {
+        self.live_links()
+            .filter(|l| l.kind == LinkKind::Fixes)
+            .filter_map(|l| match &l.to {
+                LinkTarget::Item { item_id } => Some(item_id.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// [`Self::summary`] for a bug with its fix tasks (`fixed_by`): the tasks that have a live
+    /// `fixes` link to it, which only the office's link index knows. The library fills it on
+    /// the answers it builds ([`WorkReads::linked_to`](crate::WorkReads::linked_to) gives it
+    /// for snapshot pages).
+    pub fn summary_with_fixed_by(&self, fixed_by: Vec<String>) -> WorkItemSummary {
+        WorkItemSummary {
+            fixed_by,
+            ..self.summary()
         }
     }
 
@@ -283,6 +339,11 @@ pub struct ItemReadParts {
     pub is_deleted: Box<dyn Fn(&str) -> bool>,
     /// The item's time figures (see [`crate::time_figures`]).
     pub time: org_proto::work::TimeFigures,
+    /// A bug's fix tasks (ids of the live tasks with a `fixes` link to it).
+    pub fixed_by: Vec<String>,
+    /// A bug's suggested triager and verifier (§1.4), derived.
+    pub suggested_triager: Option<String>,
+    pub suggested_verifier: Option<String>,
 }
 
 /// The item in full (`work.get`): its summary and long fields, its checklist, links and
@@ -293,19 +354,34 @@ pub fn work_item(item: &StoredItem, parts: ItemReadParts) -> WorkItem {
         mut backlinks,
         is_deleted,
         time,
+        fixed_by,
+        suggested_triager,
+        suggested_verifier,
     } = parts;
     let backlinks_more = backlinks.len() > MAX;
     backlinks.truncate(MAX);
     let watchers_more = item.watchers.len() > MAX;
     WorkItem {
-        summary: item.summary(),
+        summary: item.summary_with_fixed_by(fixed_by),
         backlinks_more,
         watchers_more,
         description: item.task.description.clone(),
         definition_of_done: item.task.definition_of_done.clone(),
         branch: item.task.branch.clone(),
-        done_anyway_detail: item.task.done_anyway.clone(),
+        done_anyway_detail: item
+            .task
+            .done_anyway
+            .clone()
+            .or(item.bug.done_anyway.clone()),
         shortcut: item.task.shortcut.clone(),
+        what_happened: (item.kind == ItemKind::Bug).then(|| item.bug.what_happened.clone()),
+        expected: item.bug.expected.clone(),
+        steps: item.bug.steps.clone(),
+        environment: item.bug.environment.clone(),
+        closed_reason: item.bug.closed_reason.clone(),
+        affects_feature_id: item.bug.affects_feature_id.clone(),
+        suggested_triager,
+        suggested_verifier,
         checklist: item.checklist_view(),
         links: item.links_view(is_deleted.as_ref()),
         backlinks,

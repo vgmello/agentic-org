@@ -2,9 +2,9 @@
 //! automatic change a task's status makes (its made-task step ticks or unticks, §2.4).
 
 use org_proto::work::{
-    DoneAnyway, EventRef, FieldChange, ItemKind, ItemStatus, LinkTarget, Priority, Resolution,
-    TaskAssignParams, TaskCreateParams, TaskSetStatusParams, TaskUpdateParams, WorkEventKind,
-    WORK_BLOCKED_REASON_MAX_CHARS, WORK_DESCRIPTION_MAX_CHARS, WORK_DOD_MAX_CHARS,
+    DoneAnyway, EventRef, FieldChange, ItemKind, ItemStatus, LinkKind, LinkTarget, Priority,
+    Resolution, TaskAssignParams, TaskCreateParams, TaskSetStatusParams, TaskUpdateParams,
+    WorkEventKind, WORK_BLOCKED_REASON_MAX_CHARS, WORK_DESCRIPTION_MAX_CHARS, WORK_DOD_MAX_CHARS,
     WORK_REASON_MAX_CHARS, WORK_TITLE_MAX_CHARS,
 };
 use org_proto::ErrorCode;
@@ -16,7 +16,8 @@ use crate::common::{
 };
 use crate::engine::{Ctx, Draft, Origin, Plan};
 use crate::fail::{invalid, not_found, refuse, Fail};
-use crate::model::{StoredItem, TaskFields};
+use crate::fixes::{self, Edge};
+use crate::model::{BugFields, StoredItem, StoredLink, TaskFields};
 use crate::states::{is_task_status, task_move_allowed};
 use crate::text::{multi_line, one_line};
 use crate::waiting;
@@ -27,6 +28,14 @@ pub(crate) fn create(ctx: &mut Ctx, p: &TaskCreateParams) -> Result<Plan, Fail> 
         .org
         .project(&p.project_id)?
         .ok_or_else(|| not_found("no such project"))?;
+    let mut fix_bugs = vec![];
+    for fix in &p.fixes {
+        fix_bugs.push(
+            ctx.txn
+                .get(&fix.bug_id)?
+                .ok_or_else(|| not_found("no such bug to fix"))?,
+        );
+    }
 
     require_ulid("item_id", &p.item_id)?;
     let title = one_line("title", &p.title, WORK_TITLE_MAX_CHARS)?;
@@ -40,11 +49,17 @@ pub(crate) fn create(ctx: &mut Ctx, p: &TaskCreateParams) -> Result<Plan, Fail> 
     if p.feature_id.is_some() {
         return Err(invalid("`feature_id` comes with features (a later phase)"));
     }
-    if !p.fixes.is_empty() {
-        return Err(invalid("`fixes` comes with bugs (a later phase)"));
-    }
     let checklist = new_steps(&p.checklist, 0)?;
-    distinct(std::iter::once(p.item_id.as_str()).chain(checklist.iter().map(|s| s.id.as_str())))?;
+    distinct(
+        std::iter::once(p.item_id.as_str())
+            .chain(checklist.iter().map(|s| s.id.as_str()))
+            .chain(p.fixes.iter().map(|f| f.link_id.as_str())),
+    )?;
+    distinct(p.fixes.iter().map(|f| f.bug_id.as_str()))?;
+    for (fix, bug) in p.fixes.iter().zip(&fix_bugs) {
+        require_ulid("link_id", &fix.link_id)?;
+        crate::bugs::check_fixable(&project.id, bug)?;
+    }
     if let Some(team) = &p.team_id {
         check_team(ctx, &project.id, team)?;
     }
@@ -56,10 +71,26 @@ pub(crate) fn create(ctx: &mut Ctx, p: &TaskCreateParams) -> Result<Plan, Fail> 
     }
     let mut ids = vec![p.item_id.as_str()];
     ids.extend(checklist.iter().map(|s| s.id.as_str()));
+    ids.extend(p.fixes.iter().map(|f| f.link_id.as_str()));
     unused(ctx, &ids)?;
 
     let item = new_task(ctx, &p.item_id, &project.id, title, priority);
+    let links = p
+        .fixes
+        .iter()
+        .map(|f| StoredLink {
+            id: f.link_id.clone(),
+            kind: LinkKind::Fixes,
+            to: LinkTarget::Item {
+                item_id: f.bug_id.clone(),
+            },
+            created_by: ctx.caller_id().to_owned(),
+            created_at_ms: 0,
+            removed: false,
+        })
+        .collect();
     let mut draft = ctx.draft_new(StoredItem {
+        links,
         assignee_id: p.assignee_id.clone(),
         task: TaskFields {
             description,
@@ -70,6 +101,10 @@ pub(crate) fn create(ctx: &mut Ctx, p: &TaskCreateParams) -> Result<Plan, Fail> 
         checklist,
         ..item
     });
+    let at = draft.at_ms();
+    for l in &mut draft.item.links {
+        l.created_at_ms = at;
+    }
     draft.record(WorkEventKind::Created, Origin::Caller);
     Ok(Plan::of(vec![draft]))
 }
@@ -101,6 +136,7 @@ pub(crate) fn new_task(
         version: 0,
         deleted: false,
         task: TaskFields::default(),
+        bug: BugFields::default(),
         checklist: vec![],
         links: vec![],
         watchers: vec![ctx.caller_id().to_owned()],
@@ -238,7 +274,7 @@ pub(crate) fn update(ctx: &mut Ctx, p: &TaskUpdateParams) -> Result<Plan, Fail> 
     Ok(Plan::of(vec![draft]))
 }
 
-fn priority_word(p: Priority) -> &'static str {
+pub(crate) fn priority_word(p: Priority) -> &'static str {
     match p {
         Priority::Urgent => "urgent",
         Priority::High => "high",
@@ -368,10 +404,21 @@ pub(crate) fn set_status(ctx: &mut Ctx, p: &TaskSetStatusParams) -> Result<Plan,
     let mut drafts = vec![];
     let completed = resolution == Some(Resolution::Completed);
     if completed || reopen {
-        if let Some(parent) = step_follows_task(ctx, &draft.item, completed, cause)? {
+        if let Some(parent) = step_follows_task(ctx, &draft.item, completed, cause.clone())? {
             drafts.push(parent);
         }
     }
+    // A bug follows the tasks that fix it (§2.4).
+    let mut edges = vec![];
+    if reopen {
+        edges.push(Edge::Reopened);
+    }
+    match to {
+        ItemStatus::InProgress => edges.push(Edge::Started),
+        ItemStatus::Done => edges.push(Edge::Done),
+        _ => {}
+    }
+    fixes::follow_task(ctx, &mut drafts, &draft.item, &edges, &cause)?;
     drafts.insert(0, draft);
     Ok(Plan::of(drafts))
 }
