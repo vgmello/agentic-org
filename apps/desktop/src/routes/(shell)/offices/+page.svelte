@@ -33,7 +33,7 @@
 	<div class="flex flex-wrap items-start justify-between gap-3">
 		<div class="max-w-xl space-y-2">
 			<p class="text-sm/6 text-gray-400">
-				Where {organization}'s agents run. HQ keeps the records and approves new offices; every other office keeps a copy.
+				Where {organization}'s agents run. HQ keeps the records and approves new offices; other offices keep a copy.
 			</p>
 			{#if data.sample}
 				<!-- TEMPORARY: agent counts and placement come from the invented organization until the real snapshot is wired in. -->
