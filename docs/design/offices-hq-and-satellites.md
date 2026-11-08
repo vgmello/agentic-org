@@ -147,7 +147,7 @@ Agents run on their office's machine and talk only to that office, through the l
 ## The invitation link
 *(The user, 2026-11-08: a link that HQ generates, which the owner copies and opens on the other machine. This section's details are **proposed**, awaiting the user's confirmation.)*
 - **Shape:** `agenticorg://join#<token>`.
-  - agentic.org registers the `agenticorg` URL scheme. Opening the link opens agentic.org at **Open organization**, with the details **filled in, never joined automatically**. The owner sees the organization's name and HQ's address and must confirm, so a hostile link can't quietly enroll a Mac into someone else's organization.
+  - agentic.org registers the `agenticorg` URL scheme. Opening the link opens agentic.org at **Open organization → Join with a link** (the other path there opens an organization this Mac already has), with the details **filled in, never joined automatically**. The owner sees the organization's name and HQ's address and must confirm, so a hostile link can't quietly enroll a Mac into someone else's organization.
     - The confirmation says plainly that **joining lets that organization run its agents on this Mac**: until v2, agents run as you, so they can read and change your files, use your apps and network, and act on your behalf. Only join organizations you own.
     - It flags a name that matches an organization this Mac already knows under a different id.
   - The token is in the fragment (after `#`), so it isn't sent to a server if the link passes through a browser, and the app never logs it. A browser may still keep it in history, so **pasting it into the app is the recommended way**.
