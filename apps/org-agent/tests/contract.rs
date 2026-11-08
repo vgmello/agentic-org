@@ -1006,7 +1006,7 @@ fn a_symlink_at_relay_lock_is_refused_and_its_target_kept() {
     std::os::unix::fs::symlink(&target, &lock).unwrap();
 
     let r = env.run(ME, &["relay", "run", "--once"]);
-    assert_ne!(r.code, 0, "{}", r.stdout);
+    assert_eq!(r.code, 4, "{}", r.stdout);
     assert!(
         r.stderr.contains("relay.lock") && r.stderr.contains("symlink"),
         "{}",
@@ -1023,6 +1023,14 @@ fn a_symlink_at_relay_lock_is_refused_and_its_target_kept() {
     let r = env.run(ME, &["relay", "run", "--once"]);
     assert_eq!(r.code, 0, "{}", r.stderr);
     assert!(fs::symlink_metadata(&lock).unwrap().is_file());
+
+    // A hard link there is refused too (O_NOFOLLOW can't see one).
+    fs::remove_file(&lock).unwrap();
+    fs::hard_link(&target, &lock).unwrap();
+    let r = env.run(ME, &["relay", "run", "--once"]);
+    assert_eq!(r.code, 4, "{}", r.stdout);
+    assert!(r.stderr.contains("hard links"), "{}", r.stderr);
+    assert_eq!(fs::read(&target).unwrap(), b"keep me");
 }
 
 #[test]

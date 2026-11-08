@@ -116,6 +116,8 @@ fn check_profile_text(field: &str, value: &str, allow_empty: bool) -> Result<(),
 
 impl MemberProfile {
     /// Validate a profile before it is written (`profile set`, `msg register --name ...`).
+    /// Variation selectors pass: [`Spool::set_profile`] drops them before validating and
+    /// writing, so write a profile only through it.
     pub fn validate(&self) -> Result<(), String> {
         validate_agent_id(&self.id, "id")?;
         check_profile_text("name", &self.name, false)?;

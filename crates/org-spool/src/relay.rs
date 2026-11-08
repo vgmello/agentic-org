@@ -3,7 +3,7 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::io::AsRawFd;
 use std::os::unix::net::UnixListener;
 use std::process;
@@ -48,6 +48,13 @@ impl RelayLockGuard {
                 .mode(0o600),
             &lock_path,
         )?;
+        // Nor a hard link to some other file (O_NOFOLLOW can't see one).
+        if file.metadata()?.nlink() > 1 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("{} has other hard links; remove it", lock_path.display()),
+            ));
+        }
         let rc = unsafe { flock(file.as_raw_fd(), LOCK_EX | LOCK_NB) };
         if rc != 0 {
             return Ok(None);
