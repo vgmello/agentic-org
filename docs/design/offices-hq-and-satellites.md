@@ -32,7 +32,7 @@ An organization has offices. **The first office is HQ**. It holds the organizati
 - **An office lock:** the server takes an exclusive `flock` on its folder at start. Two processes can never write one office.
 - **`org-office-host` is the one login service.** macOS lets an app register a fixed set of login programs, not a variable number, so one supervisor covers them all.
   - It starts one `org-office-server` per office folder on this Mac and restarts a crashed one with backoff.
-  - For "create organization", it starts a new office server with `--create --role hq`.
+  - For "create organization", it starts a new office server with `--create` and passes it the new office's details (including its role, `hq`) through its pipe, never on the command line. The pipe protocol and `office.json` are specified in `crates/org-office-launch`.
   - It tells the app and `org-agent` which offices run on this Mac and how to reach each one.
   - It holds no organization data.
 - **Local addresses:** a Unix socket at `<home>/run/<handle>.sock`. The handle is the last 12 characters of the office id (its random part), checked for uniqueness when the office is created. macOS caps a socket path at 103 bytes, so the host checks the length and fails with a clear message if it would be too long.
