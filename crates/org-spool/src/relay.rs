@@ -121,9 +121,9 @@ impl Spool {
         };
 
         let _ = self.prune_old_cur();
-        let initial = self.deliver_all()?;
+        let initial = self.deliver_all();
         if once {
-            return Ok(RelayOutcome::Once(initial));
+            return Ok(RelayOutcome::Once(initial?));
         }
 
         let sock_path = self.relay_socket_path();
@@ -139,11 +139,14 @@ impl Spool {
 
         let mut last_sweep = Instant::now();
         // Whether the last pass left a file it couldn't deliver (a transient error): then
-        // only a nudge or the poll interval triggers the next pass, not the pending file.
-        let mut stuck = false;
+        // only a nudge or the poll interval triggers the next pass, not the pending file. The
+        // first pass counts too: a stuck file must not stop the relay from starting.
+        let mut stuck = initial.is_err();
+        // A nudge the wait below already accepted (it drains the socket).
+        let mut woke = false;
 
         while !is_interrupted() {
-            let mut nudged = false;
+            let mut nudged = std::mem::take(&mut woke);
             if let Some(ref l) = listener {
                 while let Ok((mut stream, _)) = l.accept() {
                     let mut buf = [0u8; 16];
@@ -164,9 +167,11 @@ impl Spool {
                 remaining.min(RELAY_PENDING_CHECK)
             };
             if let Some(ref l) = listener {
-                let _ = poll_unix_listener(l, wait_slice);
+                woke = poll_unix_listener(l, wait_slice);
             } else {
-                thread::sleep(wait_slice.max(RELAY_PENDING_CHECK));
+                // Short slices, so a stop signal is seen at once (sleep resumes after EINTR);
+                // while stuck, these turns are cheap (no pending check).
+                thread::sleep(RELAY_PENDING_CHECK);
             }
         }
 

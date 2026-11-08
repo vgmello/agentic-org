@@ -194,6 +194,19 @@ mod tests {
     fn only_errors_about_the_file_itself_are_permanent() {
         const EPERM: i32 = 1;
         const EACCES: i32 = 13;
+        // The platform's real ELOOP: an O_NOFOLLOW open of a symlink.
+        let dir = std::env::temp_dir().join(format!("osr_eloop_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        std::os::unix::fs::symlink(dir.join("target"), dir.join("link")).unwrap();
+        let eloop = OpenOptions::new()
+            .read(true)
+            .custom_flags(flags::O_NOFOLLOW)
+            .open(dir.join("link"))
+            .unwrap_err();
+        fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(eloop.raw_os_error(), Some(flags::ELOOP));
+        assert!(is_permanent_file_error(&eloop));
         for code in [EPERM, EACCES, flags::ELOOP] {
             assert!(
                 is_permanent_file_error(&io::Error::from_raw_os_error(code)),

@@ -1004,6 +1004,43 @@ fn a_huge_timeout_is_a_usage_error_not_a_panic() {
 }
 
 #[test]
+fn a_stuck_outbox_file_neither_stops_the_relay_nor_delays_nudged_sends() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut env = setup("relay_stuck");
+    // A message PEER's read-only new/ can't take: it stays in the outbox (a pass error).
+    let stuck = env.run(ME, &["msg", "send", "--to", PEER, "stuck"]);
+    assert_eq!(stuck.code, 0, "{}", stuck.stderr);
+    let peer_new = env.root.join(format!("spool/inbox/{PEER}/new"));
+    fs::set_permissions(&peer_new, fs::Permissions::from_mode(0o500)).unwrap();
+
+    env.start_relay();
+    thread::sleep(Duration::from_millis(300));
+    // Still running despite the stuck file at startup.
+    let status = json(&env.run(ME, &["relay", "status", "--json"]).stdout);
+    assert_eq!(status["running"], true, "{status}");
+
+    // Each nudged send is delivered at once, not at the next 500 ms poll.
+    let mut slowest = Duration::ZERO;
+    for i in 0..5 {
+        let started = Instant::now();
+        let sent = env.run(PEER, &["msg", "send", "--to", ME, &format!("m{i}")]);
+        assert_eq!(sent.code, 0, "{}", sent.stderr);
+        let path = env.inbox_file(ME, "new", &sent.stdout);
+        while !path.exists() {
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "never delivered"
+            );
+            thread::sleep(Duration::from_millis(2));
+        }
+        slowest = slowest.max(started.elapsed());
+        thread::sleep(Duration::from_millis(37));
+    }
+    fs::set_permissions(&peer_new, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(slowest < Duration::from_millis(250), "slowest {slowest:?}");
+}
+
+#[test]
 fn org_relay_symlink_behaves_like_v1_old_org_relay() {
     let env = TempOrgHome::new("org_relay");
     let bin_dir = env.root.join("bin");
