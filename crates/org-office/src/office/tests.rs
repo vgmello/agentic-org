@@ -145,7 +145,7 @@ fn both_databases_are_encrypted_with_the_one_key() {
     // The same key opens both.
     let key = keys.load(ID).unwrap().unwrap();
     for file in ["org.db", "office.db"] {
-        Store::open(&folder.join(file), &key, Opening::Existing, &ORG_SCHEMA).unwrap();
+        Store::open(&folder.join(file), &key, Opening::Existing, &org_db::SCHEMA).unwrap();
     }
 }
 
@@ -469,7 +469,7 @@ fn discard_removes_an_unfinished_create_and_its_key() {
         let key = Key::generate().unwrap();
         keys.store(ID, &key).unwrap();
         if with_schema_only_database {
-            drop(Store::open(&folder.join("org.db"), &key, Opening::New, &ORG_SCHEMA).unwrap());
+            drop(Store::open(&folder.join("org.db"), &key, Opening::New, &org_db::SCHEMA).unwrap());
             drop(
                 Store::open(
                     &folder.join("office.db"),
@@ -558,7 +558,7 @@ fn discard_whose_keychain_refuses_fails_and_a_retry_finishes_the_job() {
     fs::create_dir_all(&folder).unwrap();
     let key = Key::generate().unwrap();
     inner.store(ID, &key).unwrap();
-    drop(Store::open(&folder.join("org.db"), &key, Opening::New, &ORG_SCHEMA).unwrap());
+    drop(Store::open(&folder.join("org.db"), &key, Opening::New, &org_db::SCHEMA).unwrap());
     let keys = CannotDelete(inner);
 
     assert!(matches!(
@@ -705,7 +705,8 @@ fn open_checks_that_each_database_belongs_to_the_office() {
         let folder = folder_of(&dir, ID);
         drop(office);
         let key = keys.load(ID).unwrap().unwrap();
-        let store = Store::open(&folder.join(file), &key, Opening::Existing, &ORG_SCHEMA).unwrap();
+        let store =
+            Store::open(&folder.join(file), &key, Opening::Existing, &org_db::SCHEMA).unwrap();
         store
             .write(|db| {
                 db.execute(
@@ -849,7 +850,7 @@ fn a_crashed_create_before_the_organization_commit_is_discardable() {
     fs::create_dir_all(&folder).unwrap();
     let key = Key::generate().unwrap();
     keys.store(ID, &key).unwrap();
-    let org = Store::open(&folder.join("org.db"), &key, Opening::New, &ORG_SCHEMA).unwrap();
+    let org = Store::open(&folder.join("org.db"), &key, Opening::New, &org_db::SCHEMA).unwrap();
     put_meta(&org, &[("office_id", ID)]).unwrap();
     drop(org);
 
@@ -1119,4 +1120,27 @@ fn a_cleanup_that_fails_part_way_stops_there_and_keeps_the_key() {
     );
     assert!(keys.load(ID).unwrap().is_some());
     Office::discard(&folder, ID, &keys).unwrap();
+}
+
+#[test]
+fn a_created_office_has_its_owner_in_the_first_log_entry_and_keeps_it_across_a_restart() {
+    let (dir, keys, office) = made();
+    let snapshot = office.org_snapshot().unwrap();
+    assert_eq!(
+        snapshot.position,
+        org_proto::org::Position { epoch: 1, seq: 1 }
+    );
+    let [owner] = &snapshot.members[..] else {
+        panic!("{:?}", snapshot.members)
+    };
+    assert!(owner.owner && owner.version == 1);
+    assert!(
+        org_proto::is_valid_member_id(&owner.id),
+        "the owner's id is a member id: {}",
+        owner.id
+    );
+    drop(office);
+
+    let again = Office::open(folder_of(&dir, ID), &keys).unwrap();
+    assert_eq!(again.org_snapshot().unwrap(), snapshot);
 }

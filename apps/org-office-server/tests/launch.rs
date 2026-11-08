@@ -548,3 +548,49 @@ fn a_dev_keys_build_without_a_key_folder_refuses_to_start_instead_of_using_the_k
     assert_eq!(failed_code(event), FailCode::StorageError);
     assert_eq!(child.wait().unwrap().code(), Some(1));
 }
+
+#[test]
+fn the_snapshot_has_the_owner_at_position_1_1_and_survives_a_restart() {
+    let world = World::new();
+    let mut first = create(&world);
+    let client = Client::connect(socket(&world)).unwrap();
+    let snapshot = client
+        .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
+        .unwrap();
+    assert_eq!(
+        snapshot.position,
+        org_proto::org::Position { epoch: 1, seq: 1 }
+    );
+    let [owner] = &snapshot.members[..] else {
+        panic!("{:?}", snapshot.members)
+    };
+    assert!(owner.owner && org_proto::is_valid_member_id(&owner.id));
+    assert!(snapshot.teams.is_empty() && snapshot.memberships.is_empty());
+    drop(client);
+    assert!(first.host_goes_away().success());
+
+    let mut again = world.spawn(&["--office", OFFICE]);
+    again.send(&start_message());
+    assert!(matches!(again.event(), ServerEvent::Ready { .. }));
+    let client = Client::connect(socket(&world)).unwrap();
+    let after = client
+        .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
+        .unwrap();
+    assert_eq!(after, snapshot, "the organization changed across a restart");
+    drop(client);
+    assert!(again.host_goes_away().success());
+}
+
+#[test]
+fn stopping_the_server_with_a_client_connected_closes_it_and_exits_clean() {
+    let world = World::new();
+    let mut run = create(&world);
+    // A client that stays connected and silent: shutdown must close it, not wait for it.
+    let idle = std::os::unix::net::UnixStream::connect(socket(&world)).unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    let started = std::time::Instant::now();
+    let status = run.host_goes_away();
+    assert!(status.success(), "{status:?}");
+    assert!(started.elapsed() < Duration::from_secs(10));
+    drop(idle);
+}

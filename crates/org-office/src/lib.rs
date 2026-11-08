@@ -16,6 +16,7 @@ mod key;
 mod model;
 mod office;
 mod office_file;
+mod org_db;
 mod private_fs;
 pub mod rules;
 mod store;

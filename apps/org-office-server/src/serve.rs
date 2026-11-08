@@ -1,20 +1,26 @@
-//! The office's socket: JSON lines (`org_proto::frame`), one thread per connection. Part 1 of
-//! the server core answers `hello`; every other method is `unknown_method` until the organization
-//! calls arrive.
+//! The office's socket: JSON lines (`org_proto::frame`), one thread per connection. It answers
+//! `hello` and `org.snapshot`; every other method is `unknown_method` until the organization
+//! commands arrive. When the server stops, every connection is closed and its thread joined
+//! BEFORE the office is, so no thread touches a database that is closing.
 
+use std::collections::HashMap;
 use std::io::BufReader;
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 use org_proto::frame;
 use org_proto::{
     ApiError, ErrorCode, Hello, HelloResult, OfficeHello, OfficeInfo, OfficeRole, OfficeStatus,
-    Request, Response, API_VERSION,
+    OrgSnapshot, OrgSnapshotCall, Request, Response, API_VERSION,
 };
+
+/// Reads the organization's snapshot (the office's `org_snapshot`), or says why it cannot.
+pub type SnapshotFn = Box<dyn Fn() -> Result<OrgSnapshot, String> + Send + Sync>;
 
 /// Most connections served at once; more are closed at once.
 pub(crate) const MAX_CONNECTIONS: usize = 64;
@@ -22,6 +28,7 @@ pub(crate) const MAX_CONNECTIONS: usize = 64;
 /// What every connection shares.
 pub struct Shared {
     pub hello: HelloResult,
+    snapshot: SnapshotFn,
 }
 
 impl Shared {
@@ -33,8 +40,10 @@ impl Shared {
         office_name: &str,
         role: OfficeRole,
         socket: &Path,
+        snapshot: SnapshotFn,
     ) -> Self {
         Self {
+            snapshot,
             hello: HelloResult {
                 api_version: API_VERSION,
                 server_version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -82,9 +91,14 @@ pub fn bind(path: &Path) -> std::io::Result<UnixListener> {
     Ok(listener)
 }
 
-/// Accepts connections until `stop` says to quit.
+/// Accepts connections until `stop` says to quit, then closes every connection and waits for
+/// its thread, so nothing is still reading the office when the caller closes it.
 pub fn run(listener: &UnixListener, shared: &Arc<Shared>, stop: &dyn Fn() -> bool) {
     let live = Arc::new(AtomicUsize::new(0));
+    // A handle on each connection, to close it at shutdown.
+    let open: Arc<Mutex<HashMap<u64, UnixStream>>> = Arc::default();
+    let mut threads: Vec<JoinHandle<()>> = Vec::new();
+    let mut next_id = 0u64;
     while !stop() {
         match listener.accept() {
             Ok((stream, _)) => {
@@ -92,17 +106,35 @@ pub fn run(listener: &UnixListener, shared: &Arc<Shared>, stop: &dyn Fn() -> boo
                     live.fetch_sub(1, Ordering::SeqCst);
                     continue; // dropped: closed at once
                 }
+                next_id += 1;
+                let id = next_id;
+                if let Ok(handle) = stream.try_clone() {
+                    open.lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .insert(id, handle);
+                }
                 let shared = Arc::clone(shared);
                 let slot = Slot(Arc::clone(&live));
+                let registry = Arc::clone(&open);
                 // If the thread cannot start, the closure (and its slot) is dropped with the
                 // error: the slot is given back and the connection closes.
-                let _ = std::thread::Builder::new()
+                if let Ok(thread) = std::thread::Builder::new()
                     .name("org-office-conn".into())
                     .spawn(move || {
                         let _slot = slot; // given back however the thread ends, panics included
                         let _ = stream.set_nonblocking(false);
                         serve_connection(stream, &shared);
-                    });
+                        registry
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .remove(&id);
+                    })
+                {
+                    threads.retain(|t| !t.is_finished());
+                    threads.push(thread);
+                } else {
+                    open.lock().unwrap_or_else(|p| p.into_inner()).remove(&id);
+                }
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 std::thread::sleep(Duration::from_millis(20));
@@ -111,6 +143,13 @@ pub fn run(listener: &UnixListener, shared: &Arc<Shared>, stop: &dyn Fn() -> boo
             // A connection that died before accept: carry on.
             Err(_) => std::thread::sleep(Duration::from_millis(20)),
         }
+    }
+    // Stop: close every connection (which ends its blocked read), then wait for the threads.
+    for stream in open.lock().unwrap_or_else(|p| p.into_inner()).values() {
+        let _ = stream.shutdown(std::net::Shutdown::Both);
+    }
+    for thread in threads {
+        let _ = thread.join();
     }
 }
 
@@ -139,6 +178,13 @@ fn serve_connection(stream: UnixStream, shared: &Shared) {
 }
 
 fn answer(request: &Request, shared: &Shared) -> Response {
+    if request.is::<OrgSnapshotCall>() {
+        return match (shared.snapshot)() {
+            Ok(snapshot) => Response::ok::<OrgSnapshotCall>(request.id, &snapshot)
+                .unwrap_or_else(|_| internal(request.id)),
+            Err(_) => internal(request.id),
+        };
+    }
     if request.is::<Hello>() {
         return Response::ok::<Hello>(request.id, &shared.hello)
             .unwrap_or_else(|_| internal(request.id));
@@ -173,6 +219,7 @@ mod tests {
             "HQ",
             OfficeRole::Hq,
             path,
+            Box::new(|| Err("none".to_owned())),
         ))
     }
 
@@ -226,6 +273,36 @@ mod tests {
         assert!(hello_ok(&mut again));
         stop.store(true, Ordering::SeqCst);
         server.join().unwrap();
+    }
+
+    #[test]
+    fn when_the_server_stops_every_connection_thread_is_gone_before_run_returns() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let listener = bind(&path).unwrap();
+        let shared = shared(&path);
+        let stop = Arc::new(AtomicBool::new(false));
+        let server = {
+            let (shared, stop) = (Arc::clone(&shared), Arc::clone(&stop));
+            std::thread::spawn(move || run(&listener, &shared, &|| stop.load(Ordering::SeqCst)))
+        };
+        // Idle clients, each served by a thread blocked reading.
+        let mut clients: Vec<UnixStream> = (0..8)
+            .map(|_| UnixStream::connect(&path).unwrap())
+            .collect();
+        for client in &mut clients {
+            assert!(hello_ok(client));
+        }
+        assert!(
+            Arc::strong_count(&shared) > 8,
+            "the threads hold the shared state"
+        );
+
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+
+        // `run` closed the clients and joined the threads: nothing but us holds the state.
+        assert_eq!(Arc::strong_count(&shared), 1);
     }
 
     #[test]

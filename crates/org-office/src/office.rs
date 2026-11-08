@@ -7,6 +7,9 @@ use crate::key::{Key, KeyProvider};
 use crate::model::{NewOffice, OfficeInfo};
 use crate::office_file::{self, is_plain_id};
 use crate::private_fs::{absolute, private_dir, private_file, tighten_dir};
+use org_proto::org::OrgSnapshot;
+
+use crate::org_db;
 use crate::store::{Opening, Schema, Store};
 use crate::time;
 use org_proto::OrganizationName;
@@ -38,14 +41,14 @@ const OFFICE_ENTRIES: [&str; 11] = [
     "office.db",
 ];
 
-const SCHEMA_VERSION: i64 = 1;
-const ORG_SCHEMA: Schema = Schema {
-    version: SCHEMA_VERSION,
+/// `office.db`: the office's own data. For now just its identity; work items, messages and
+/// sessions arrive with their slices.
+const OFFICE_SCHEMA: Schema = Schema {
+    version: 1,
     create: |tx| {
         tx.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;")
     },
 };
-const OFFICE_SCHEMA: Schema = ORG_SCHEMA;
 
 /// An office: ONE folder, `<home>/offices/<office-id>/`, served by one `org-office-server`.
 ///
@@ -65,7 +68,6 @@ pub struct Office {
     folder: PathBuf,
     info: OfficeInfo,
     // Databases close (and checkpoint) before the lock is released: fields drop in order.
-    #[allow(dead_code)] // the organization's data arrives with the HQ event log
     org: Store,
     #[allow(dead_code)] // the office's own data arrives with work items and messaging
     local: Store,
@@ -207,7 +209,12 @@ impl Office {
             .map_err(OfficeError::Storage)?
             .ok_or(OfficeError::KeyMissing)?;
 
-        let org = Store::open(&folder.join(ORG_DB), &key, Opening::Existing, &ORG_SCHEMA)?;
+        let org = Store::open(
+            &folder.join(ORG_DB),
+            &key,
+            Opening::Existing,
+            &org_db::SCHEMA,
+        )?;
         let local = Store::open(
             &folder.join(OFFICE_DB),
             &key,
@@ -299,28 +306,9 @@ impl Office {
                 )));
             }
             if holds_data(&org_db)? {
-                // "Committed" means org.db holds the organization row `create` writes last. When
-                // the HQ event log arrives this must become "holds any committed log entry",
-                // in the same change, or a real office that lost its office.json becomes
-                // deletable.
-                let committed = Store::inspect(&org_db, &key, |db| {
-                    let has_meta: bool = db
-                        .query_row(
-                            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE name = 'meta')",
-                            (),
-                            |row| row.get(0),
-                        )
-                        .map_err(OfficeError::storage)?;
-                    if !has_meta {
-                        return Ok(false);
-                    }
-                    db.query_row(
-                        "SELECT EXISTS (SELECT 1 FROM meta WHERE key = 'organization_id')",
-                        (),
-                        |row| row.get(0),
-                    )
-                    .map_err(OfficeError::storage)
-                })?;
+                // "Committed" means the log has an entry (the genesis): the organization is
+                // whole. Anything less is an unfinished create.
+                let committed = Store::inspect(&org_db, &key, org_db::is_committed)?;
                 if committed {
                     return Err(OfficeError::OfficeExists);
                 }
@@ -334,6 +322,11 @@ impl Office {
         empty_folder_but_the_lock(&folder, &mut |_| {})?;
         keys.delete(office_id).map_err(OfficeError::Storage)?;
         remove_the_empty_folder(&folder)
+    }
+
+    /// The organization's structure as of the last log entry, from one consistent read.
+    pub fn org_snapshot(&self) -> Result<OrgSnapshot, OfficeError> {
+        self.org.read(org_db::snapshot)
     }
 
     /// What `office.json` records about this office.
@@ -352,21 +345,21 @@ impl Office {
 /// the folder, so the window in which a crash leaves something it refuses is as small as it can
 /// be.
 fn build(folder: &Path, key: &Key, info: &OfficeInfo) -> Result<(Store, Store), OfficeError> {
-    let org = Store::open(&folder.join(ORG_DB), key, Opening::New, &ORG_SCHEMA)?;
+    let org = Store::open(&folder.join(ORG_DB), key, Opening::New, &org_db::SCHEMA)?;
     let local = Store::open(&folder.join(OFFICE_DB), key, Opening::New, &OFFICE_SCHEMA)?;
     failpoint(folder, "databases")?;
     put_meta(&org, &[("office_id", &info.office_id)])?;
     put_meta(&local, &[("office_id", &info.office_id)])?;
     private_dir(&folder.join(WORKSPACE)).map_err(OfficeError::storage)?;
     failpoint(folder, "workspace")?;
-    put_meta(
-        &org,
-        &[
-            ("organization_id", &info.org_id),
-            ("organization_name", &info.org_name),
-            ("created_at", &info.created_at),
-        ],
-    )?;
+    let owner_id = crate::ulid::generate().map_err(OfficeError::storage)?;
+    let genesis = org_db::Genesis {
+        org_id: info.org_id.clone(),
+        org_name: info.org_name.clone(),
+        created_at: info.created_at.clone(),
+        owner_id,
+    };
+    org.write(move |db| org_db::genesis(db, &genesis).map(|_| ((), None)))?;
     failpoint(folder, "organization")?;
     failpoint(folder, "office_json")?;
     office_file::write(folder, info)?;
