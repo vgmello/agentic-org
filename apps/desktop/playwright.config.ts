@@ -5,6 +5,10 @@ import { defineConfig } from '@playwright/test';
 export default defineConfig({
 	testDir: 'e2e',
 	fullyParallel: true,
+	// Generous timeouts: the suite also runs on busy machines (many builds at once), and the mock
+	// office takes ~1 s to "start" on purpose.
+	timeout: 60_000,
+	expect: { timeout: 15_000 },
 	forbidOnly: !!process.env.CI,
 	// Everything Playwright writes (including a screenshot after every test) goes to test-results/,
 	// which is in .gitignore.

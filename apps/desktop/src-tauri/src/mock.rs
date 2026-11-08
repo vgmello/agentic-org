@@ -7,7 +7,7 @@
 use crate::office::{OfficeConnection, SetupError, SetupErrorCode};
 use org_proto::{
     ApiError, ErrorCode, HelloResult, OfficeInfo, OfficeRole, OfficeStatus, Organization,
-    API_VERSION, ORGANIZATION_NAME_MAX_CHARS,
+    OrganizationName, API_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -258,28 +258,11 @@ fn api_error(code: ErrorCode, message: &str) -> ApiError {
     }
 }
 
-/// The name as the server would store it, or `invalid_name`.
+/// The name as the server would store it, or `invalid_name`: the contract's own rule.
 pub fn validate_name(name: &str) -> Result<String, ApiError> {
-    let name = name.trim();
-    if name.is_empty() {
-        return Err(api_error(
-            ErrorCode::InvalidName,
-            "Give the organization a name.",
-        ));
-    }
-    if name.chars().count() > ORGANIZATION_NAME_MAX_CHARS {
-        return Err(api_error(
-            ErrorCode::InvalidName,
-            &format!("Use {ORGANIZATION_NAME_MAX_CHARS} characters or fewer."),
-        ));
-    }
-    if name.chars().any(char::is_control) {
-        return Err(api_error(
-            ErrorCode::InvalidName,
-            "The name can't contain control characters.",
-        ));
-    }
-    Ok(name.to_string())
+    OrganizationName::parse(name)
+        .map(OrganizationName::into_string)
+        .map_err(ApiError::from)
 }
 
 impl OfficeConnection for MockOffice {
@@ -365,8 +348,7 @@ mod tests {
         assert_eq!(org.name, "Acme");
     }
 
-    /// The same vectors the TypeScript pre-check is tested against (`src/lib/name.test.ts`), so
-    /// the two copies of the rule can't drift apart unnoticed.
+    /// org-proto's own vectors, the ones the TypeScript pre-check is tested against too (`src/lib/name.test.ts`).
     #[test]
     fn name_rules_match_the_shared_vectors() {
         #[derive(serde::Deserialize)]
@@ -378,9 +360,10 @@ mod tests {
         struct Vectors {
             vectors: Vec<Vector>,
         }
-        let vectors: Vectors =
-            serde_json::from_str(include_str!("../../test-vectors/organization-names.json"))
-                .unwrap();
+        let vectors: Vectors = serde_json::from_str(include_str!(
+            "../../../../crates/org-proto/test-vectors/organization-names.json"
+        ))
+        .unwrap();
         for v in vectors.vectors {
             match (validate_name(&v.input), v.name) {
                 (Ok(got), Some(want)) => assert_eq!(got, want),

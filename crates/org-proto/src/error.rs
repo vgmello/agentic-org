@@ -7,16 +7,23 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ErrorCode {
-    /// The request couldn't be read: bad JSON, a bad envelope, or params of the wrong shape.
+    /// The request couldn't be read (bad JSON, a bad envelope, or params of the wrong shape), or
+    /// it can be read but makes no sense: a value outside its documented limits (e.g. an
+    /// agent's `title` or `home`), a call that gives nothing to change, `Unknown` or a
+    /// non-canonical value where a known one is required, an agent-only call on a person (or
+    /// the other way round), or a call on a member in the wrong state (e.g. editing or
+    /// offboarding an agent that is already offboarded).
     InvalidRequest,
     /// The server doesn't know the method.
     UnknownMethod,
-    /// A name breaks the name rules (an organization, team or person: trimmed, not empty, no
-    /// control characters).
+    /// A name breaks its rule. Each kind of name (an organization, a team, a person, an agent)
+    /// has its own rule; an organization's is [`crate::OrganizationName::parse`]. An agent's
+    /// `messaging_name` that breaks its format is also `invalid_name`.
     InvalidName,
     /// Something with that name or id already exists: an organization or a sibling team with
-    /// that name (names compare ignoring case), a membership or project-team link that already
-    /// exists, or a client-made id that's taken.
+    /// that name (names compare ignoring case), another agent with that `messaging_name`
+    /// (ignoring case), a membership or project-team link that already exists, or a
+    /// client-made id that's taken.
     AlreadyExists,
     /// The server couldn't read or write its storage. Partial state is cleaned up.
     StorageError,
@@ -45,6 +52,13 @@ pub enum ErrorCode {
     /// A message or task is addressed to someone who isn't an agent or person of the
     /// organization.
     UnknownRecipient,
+    /// The caller isn't allowed to make this call, e.g. the host's check of the peer's code
+    /// signature failed for `office.app_token`, or an app-only command (`member.set_run_mode`)
+    /// arrived on a connection that is not the app's.
+    NotAuthorized,
+    /// What was asked for exists but can't serve now, e.g. the office isn't running, so there's
+    /// no app token to hand out. Trying again later may work.
+    Unavailable,
     /// A code this build doesn't know (sent by a newer server).
     #[serde(other)]
     Unknown,

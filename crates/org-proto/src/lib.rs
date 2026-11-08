@@ -4,7 +4,7 @@
 //! through `org-client`, and the agent CLI `org-agent`). There are two kinds of server:
 //! - **The host** (`org-office-host`), the one login service on a machine. It supervises the
 //!   office servers and answers `hello`, `organization.create`, `organization.list`,
-//!   `office.list` and `subscribe` (it emits `organization.created`).
+//!   `office.list`, `office.app_token` and `subscribe` (it emits `organization.created`).
 //! - **An office server** (`org-office-server`), one process per office. An organization's
 //!   first office is its HQ. It answers `hello` with its identity, and later the
 //!   organization's calls and agent messaging.
@@ -46,6 +46,10 @@
 //! - Readers ignore unknown fields, ignore unknown events, decode unknown error codes as
 //!   [`ErrorCode::Unknown`], and answer unknown methods with [`ErrorCode::UnknownMethod`].
 
+// No unsafe code, except the one function that zeroes an `AppToken`'s bytes (see `token`).
+// One test there also allows it, to read a token's bytes after it's dropped.
+#![deny(unsafe_code)]
+
 pub mod frame;
 pub mod location;
 pub mod org;
@@ -53,21 +57,27 @@ pub mod org;
 mod calls;
 mod error;
 mod events;
+mod name;
+mod token;
 mod types;
 mod wire;
 
 pub use calls::{
-    Call, Empty, Hello, HelloResult, ListOfficesResult, ListOrganizationsResult, OfficeHello,
-    OfficeList, OrganizationCreate, OrganizationCreateParams, OrganizationList, Subscribe,
-    SubscribeParams,
+    Call, Empty, Hello, HelloResult, ListOfficesResult, ListOrganizationsResult, OfficeAppToken,
+    OfficeAppTokenParams, OfficeAppTokenResult, OfficeHello, OfficeList, OrganizationCreate,
+    OrganizationCreateParams, OrganizationList, Subscribe, SubscribeParams,
 };
 pub use error::{ApiError, CallError, ErrorCode};
 pub use events::{EventKind, OrganizationCreated};
+pub use name::{NameError, OrganizationName};
 pub use org::{
-    CommandAccepted, CommandStatus, Member, MemberKind, Membership, OrgChange, OrgChanged,
-    OrgChangedData, OrgRejected, OrgRejectedData, OrgSnapshot, OrgSnapshotCall, Position,
-    ProjectSummary, ProjectTeam, Team,
+    AgentProfile, AgentRuntime, AgentStatus, CommandAccepted, CommandStatus, Member, MemberKind,
+    Membership, OrgChange, OrgChanged, OrgChangedData, OrgRejected, OrgRejectedData, OrgSnapshot,
+    OrgSnapshotCall, Position, ProjectSummary, ProjectTeam, RunMode, Schedule, Team,
+    AGENT_HOME_MAX_BYTES, AGENT_MESSAGING_NAME_MAX_CHARS, AGENT_TEXT_MAX_CHARS,
+    AGENT_TIME_ZONE_MAX_CHARS, OWNER_HANDLE,
 };
+pub use token::{AppToken, APP_TOKEN_BYTES};
 pub use types::{OfficeInfo, OfficeRole, OfficeStatus, Organization, ORGANIZATION_NAME_MAX_CHARS};
 pub use wire::{
     salvage_id, Event, Outcome, Request, Response, ServerMessage, UNREADABLE_REQUEST_ID,
