@@ -816,19 +816,35 @@ mod tests {
                 std::thread::spawn(move || {
                     client.call_with_timeout::<OrganizationCreate>(
                         &OrganizationCreateParams { name },
-                        Duration::from_millis(1500),
+                        Duration::from_secs(60),
                     )
                 })
             })
             .collect();
+        // Watch the counter until the budget is reached (as long as a loaded machine needs),
+        // then cut the connection so the callers end at once.
         let mut most = 0;
-        let until = Instant::now() + Duration::from_millis(1000);
-        while Instant::now() < until {
+        let give_up = Instant::now() + Duration::from_secs(20);
+        while most + 2 * MAX_FRAME_BYTES < MAX_QUEUED_BYTES && Instant::now() < give_up {
             most = most.max(client.shared.queued_bytes.load(Ordering::SeqCst));
             std::thread::sleep(Duration::from_millis(1));
         }
+        // Keep watching a little longer: it must never go over, even once full.
+        let settle = Instant::now() + Duration::from_millis(300);
+        while Instant::now() < settle {
+            most = most.max(client.shared.queued_bytes.load(Ordering::SeqCst));
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        drop(server);
         for caller in callers {
-            assert!(matches!(caller.join().unwrap(), Err(ClientError::Timeout)));
+            let outcome = caller.join().unwrap();
+            assert!(
+                matches!(
+                    outcome,
+                    Err(ClientError::Timeout | ClientError::Disconnected)
+                ),
+                "{outcome:?}"
+            );
         }
         assert!(
             most <= MAX_QUEUED_BYTES,
