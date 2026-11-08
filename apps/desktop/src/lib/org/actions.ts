@@ -65,16 +65,23 @@ export async function createTeam(api: OrgSession, input: NewTeamInput, nameOf: (
  * Make a team's members exactly `desired`: add who is missing, remove who is no longer wanted. Each change
  * is its own command, so one failure doesn't lose the others (TEAM-6). Says whether a removal clears the lead.
  */
-export async function setTeamMembers(api: OrgSession, teamId: string, desired: string[]): Promise<{ steps: StepResult[] }> {
+export async function setTeamMembers(api: OrgSession, teamId: string, desired: string[], nameOf: (id: string) => string = (id) => id): Promise<{ steps: StepResult[] }> {
 	const s = await api.snapshot();
 	const have = new Map(s.memberships.filter((m) => m.team_id === teamId).map((m) => [m.member_id, m]));
 	const steps: StepResult[] = [];
 	for (const id of desired.filter((d) => !have.has(d)))
-		steps.push(await attempt(`Add ${id}`, () => api.command({ method: 'team.add_member', params: { membership_id: newId(), team_id: teamId, member_id: id } })));
+		steps.push(await attempt(`Add ${nameOf(id)}`, () => api.command({ method: 'team.add_member', params: { membership_id: newId(), team_id: teamId, member_id: id } })));
 	for (const [id, ms] of have)
 		if (!desired.includes(id))
-			steps.push(await attempt(`Remove ${id}`, () => api.command({ method: 'team.remove_member', params: { membership_id: ms.id, expected_version: ms.version } })));
+			steps.push(await attempt(`Remove ${nameOf(id)}`, () => api.command({ method: 'team.remove_member', params: { membership_id: ms.id, expected_version: ms.version } })));
 	return { steps };
+}
+
+/** Set a team's lead (or clear it) against the team's current version. */
+export async function setTeamLead(api: OrgSession, teamId: string, leadId: string | undefined): Promise<void> {
+	const team = (await api.snapshot()).teams.find((t) => t.id === teamId);
+	if (!team) throw { source: 'api', code: 'not_found', message: "That team isn't in the organization any more." } satisfies AppError;
+	await api.command({ method: 'team.set_lead', params: { team_id: teamId, expected_version: team.version, lead_member_id: leadId } });
 }
 
 /** Whether removing these members would clear the team's lead (to warn before doing it). */
@@ -116,4 +123,15 @@ export function moveTargets(s: OrgSnapshot, team: Team): Team[] {
 	const walk = (id: string) => s.teams.filter((t) => t.owner_team_id === id).forEach((t) => !below.has(t.id) && (below.add(t.id), walk(t.id)));
 	walk(team.id);
 	return s.teams.filter((t) => t.id !== team.id && !below.has(t.id) && t.id !== team.owner_team_id).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Give a project to a team (TEAM-8). HQ refuses a team that already works on it. */
+export const addProjectTeam = (api: OrgSession, projectId: string, teamId: string) =>
+	api.command({ method: 'project.add_team', params: { project_team_id: newId(), project_id: projectId, team_id: teamId } });
+
+/** Take a team off a project, against the link's current version. A project left with no team is unassigned. */
+export async function removeProjectTeam(api: OrgSession, projectId: string, teamId: string): Promise<void> {
+	const link = ((await api.snapshot()).project_teams ?? []).find((l) => l.project_id === projectId && l.team_id === teamId);
+	if (!link) throw { source: 'api', code: 'not_found', message: "That team isn't on the project any more." } satisfies AppError;
+	await api.command({ method: 'project.remove_team', params: { project_team_id: link.id, expected_version: link.version } });
 }

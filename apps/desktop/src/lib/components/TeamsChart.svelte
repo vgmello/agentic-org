@@ -31,7 +31,8 @@
 		highlightLabel = 'here',
 		knownOffices,
 		actions,
-		justAdded
+		justAdded,
+		onremoveproject
 	}: {
 		snapshot: OrgSnapshot;
 		tree: TeamNode[];
@@ -48,6 +49,8 @@
 		actions?: Snippet<[Team]>;
 		/** A team that was just created or changed: ringed for a moment. */
 		justAdded?: string;
+		/** Take a team off a project (the × on the project's row). */
+		onremoveproject?: (projectId: string, team: Team) => void;
 	} = $props();
 
 	// Below this the tiles would be too small to hit: scroll instead of shrinking further.
@@ -142,6 +145,9 @@
 						<li class="flex flex-wrap items-center gap-x-2">
 							<span class="font-medium break-words text-gray-200">{project.name}</span>
 							<span class="text-gray-400">· {lead ? `lead ${lead.name}` : 'No lead'}</span>
+							{#if onremoveproject}
+								<button type="button" aria-label="Remove {project.name} from {team.name}" onclick={() => onremoveproject(project.id, team)} class="ml-auto rounded px-1 text-gray-500 hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-indigo-400">×</button>
+							{/if}
 							{#if others.length > 0}
 								<button
 									type="button"

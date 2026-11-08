@@ -7,6 +7,9 @@
 	import Network from '@lucide/svelte/icons/network';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
+	import ProjectTeamDialog from '$lib/components/ProjectTeamDialog.svelte';
+	import RemoveProjectDialog from '$lib/components/RemoveProjectDialog.svelte';
+	import EditMembersDialog from '$lib/components/EditMembersDialog.svelte';
 	import DeleteTeamDialog from '$lib/components/DeleteTeamDialog.svelte';
 	import MemberTile from '$lib/components/MemberTile.svelte';
 	import MoveTeamDialog from '$lib/components/MoveTeamDialog.svelte';
@@ -35,6 +38,8 @@
 	import { orgApi } from '$lib/org/api';
 	import { reportingTree, type ReportNode } from '$lib/org/reporting';
 	import { sessionFor } from '$lib/org/session';
+	import { removeProjectTeam } from '$lib/org/actions';
+	import { isLastTeam } from '$lib/org/team-edit';
 	import type { Team } from '$lib/proto';
 
 	let { data } = $props();
@@ -92,6 +97,13 @@
 	let renameOpen = $state(false);
 	let deleting = $state<Team | undefined>();
 	let deleteOpen = $state(false);
+	let editingMembers = $state<Team | undefined>();
+	let membersOpen = $state(false);
+	let projectTeam = $state<Team | undefined>();
+	let assigning = $state<{ id: string; name: string } | undefined>();
+	let projectTeamOpen = $state(false);
+	let removeProject = $state<{ projectId: string; projectName: string; teamName: string; teamId: string } | undefined>();
+	let removeProjectOpen = $state(false);
 	let moving = $state<Team | undefined>();
 	let moveOpen = $state(false);
 	let justAdded = $state<string | undefined>();
@@ -100,6 +112,8 @@
 		if (action === 'rename') ((renaming = team), (renameOpen = true));
 		else if (action === 'delete') ((deleting = team), (deleteOpen = true));
 		else if (action === 'move') ((moving = team), (moveOpen = true));
+		else if (action === 'members') ((editingMembers = team), (membersOpen = true));
+		else if (action === 'add-project') ((projectTeam = team), (assigning = undefined), (projectTeamOpen = true));
 		else ((newTeamUnder = team.id), (newTeamOpen = true));
 	}
 	function newTeam(under?: string) {
@@ -119,6 +133,31 @@
 	async function teamRenamed(r: { name?: string; stale?: boolean }) {
 		await reload();
 		if (r.name) toast.success(`Renamed to ${r.name}.`);
+	}
+	async function membersEdited(r: { name: string; changed: boolean; problems: string[] }) {
+		await reload();
+		if (r.problems.length === 0 && r.changed) toast.success(`Updated the members of ${r.name}.`);
+	}
+	async function projectGiven(r: { message?: string }) {
+		await reload();
+		if (r.message) toast.success(r.message);
+	}
+	/** The × on a project's row: no confirmation while other teams remain; the last one asks first (TEAM-8). */
+	async function takeProjectOff(projectId: string, team: Team) {
+		const project = (snapshot.projects ?? []).find((p) => p.id === projectId);
+		if (!project) return;
+		if (isLastTeam(snapshot, projectId, team.id)) {
+			removeProject = { projectId, projectName: project.name, teamName: team.name, teamId: team.id };
+			removeProjectOpen = true;
+			return;
+		}
+		try {
+			await removeProjectTeam(session, projectId, team.id);
+			toast.success(`Removed ${project.name} from ${team.name}.`);
+		} catch (e) {
+			toast.error(`Couldn't remove ${project.name} from ${team.name}: ${toAppError(e).message} Nothing changed.`);
+		}
+		await reload();
 	}
 	async function teamMoved(r: { name: string; to: string; undo: () => Promise<void> } | { stale: true }) {
 		await reload();
@@ -241,7 +280,7 @@
 				<TeamsList {snapshot} {tree} {filter} {highlightLabel} {knownOffices} actions={teamMenu} />
 			{:else}
 				<div class="overflow-x-auto pb-4">
-					<TeamsChart {snapshot} {tree} {collapsed} {filter} {selected} {fit} {highlightLabel} {knownOffices} {justAdded} actions={teamMenu} onselect={select} />
+					<TeamsChart {snapshot} {tree} {collapsed} {filter} {selected} {fit} {highlightLabel} {knownOffices} {justAdded} actions={teamMenu} onremoveproject={takeProjectOff} onselect={select} />
 				</div>
 			{/if}
 
@@ -268,7 +307,12 @@
 				<section aria-labelledby="unassigned" class="rounded-xl bg-gray-800/50 p-3 outline-1 -outline-offset-1 outline-white/10" data-testid="unassigned-projects">
 					<h3 id="unassigned" class="text-sm/6 font-semibold text-white">Unassigned projects</h3>
 					<ul class="mt-2 space-y-1 text-sm/6 text-gray-300">
-						{#each unassigned as project (project.id)}<li>{project.name}</li>{/each}
+						{#each unassigned as project (project.id)}
+							<li class="flex items-center gap-x-3">
+								{project.name}
+								<Button variant="outline" size="xs" aria-label="Assign a team to {project.name}" onclick={() => ((assigning = project), (projectTeam = undefined), (projectTeamOpen = true))}>Assign team…</Button>
+							</li>
+						{/each}
 					</ul>
 				</section>
 			{/if}
@@ -330,3 +374,6 @@
 <RenameTeamDialog bind:open={renameOpen} team={renaming && snapshot.teams.find((x) => x.id === renaming?.id)} {snapshot} {session} ondone={teamRenamed} />
 <DeleteTeamDialog bind:open={deleteOpen} team={deleting && snapshot.teams.find((x) => x.id === deleting?.id)} {snapshot} {session} ondone={teamDeleted} />
 <MoveTeamDialog bind:open={moveOpen} team={moving && snapshot.teams.find((x) => x.id === moving?.id)} {snapshot} {session} ondone={teamMoved} />
+<EditMembersDialog bind:open={membersOpen} team={editingMembers && snapshot.teams.find((x) => x.id === editingMembers?.id)} {snapshot} {session} ondone={membersEdited} />
+<ProjectTeamDialog bind:open={projectTeamOpen} team={projectTeam && snapshot.teams.find((x) => x.id === projectTeam?.id)} project={assigning} {snapshot} {session} ondone={projectGiven} />
+<RemoveProjectDialog bind:open={removeProjectOpen} target={removeProject} {session} ondone={projectGiven} />

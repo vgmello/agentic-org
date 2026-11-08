@@ -129,3 +129,22 @@ export function movesAlong(s: OrgSnapshot, team: Team): string {
 	].filter(Boolean);
 	return parts.length > 0 ? ` (with ${parts.join(' and ')})` : '';
 }
+
+/** The projects a team could be given: every project it doesn't already work on, with the teams that do (TEAM-8). */
+export function projectsToAdd(s: OrgSnapshot, teamId: string): { id: string; name: string; teams: string[] }[] {
+	const links = s.project_teams ?? [];
+	return (s.projects ?? [])
+		.filter((p) => !links.some((l) => l.project_id === p.id && l.team_id === teamId))
+		.map((p) => ({ id: p.id, name: p.name, teams: links.filter((l) => l.project_id === p.id).map((l) => s.teams.find((t) => t.id === l.team_id)?.name ?? '').filter(Boolean) }))
+		.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Whether taking `teamId` off the project leaves it with no team (so the removal needs a confirmation). */
+export const isLastTeam = (s: OrgSnapshot, projectId: string, teamId: string): boolean => {
+	const teams = (s.project_teams ?? []).filter((l) => l.project_id === projectId).map((l) => l.team_id);
+	return teams.length === 1 && teams[0] === teamId;
+};
+
+/** "A", "A and B" for a toast: "checkout is now shared by Checkout and Platform." */
+export const sharedBy = (s: OrgSnapshot, projectId: string): string[] =>
+	(s.project_teams ?? []).filter((l) => l.project_id === projectId).map((l) => s.teams.find((t) => t.id === l.team_id)?.name ?? '').filter(Boolean);

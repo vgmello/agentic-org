@@ -135,9 +135,10 @@ test('the team menu works from the keyboard', async ({ page }) => {
 	await menu(page, 'Design').focus();
 	await page.keyboard.press('Enter');
 	await expect(page.getByRole('menuitem', { name: 'Rename…' })).toBeVisible();
-	await page.keyboard.press('ArrowDown');
-	await page.keyboard.press('ArrowDown');
-	await page.keyboard.press('Enter'); // Add team under Design…
+	// Arrow down to "Add team under Design…" (the menu has several items) and choose it with Enter.
+	const target = page.getByRole('menuitem', { name: /^Add team under Design/ });
+	for (let i = 0; i < 8 && !(await target.evaluate((el) => el === document.activeElement)); i++) await page.keyboard.press('ArrowDown');
+	await page.keyboard.press('Enter');
 	await expect(page.getByLabel('Part of')).toHaveValue('design');
 });
 
@@ -179,4 +180,94 @@ test('TEAM-7: a team can be moved to the top level', async ({ page }) => {
 	await dialog.getByRole('button', { name: 'Move Web' }).click();
 	await expect(page.getByText('Moved Web to the top level.')).toBeVisible();
 	await expect(card(page, 'eng').getByRole('button', { name: /^1 team: / })).toBeVisible();
+});
+
+test('TEAM-6: Edit members adds and removes members in one go, and sets the lead from them', async ({ page }) => {
+	await openChart(page);
+	await menu(page, 'Web').click();
+	await page.getByRole('menuitem', { name: 'Edit members…' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Members of Web' });
+	await expect(dialog.getByRole('checkbox', { name: /^Noor Haddad/ })).toBeChecked();
+	await expect(dialog.getByRole('checkbox', { name: /^You,/ })).toHaveCount(0); // never the owner
+	await dialog.getByRole('checkbox', { name: /^Quinn Adeyemi/ }).click();
+	await dialog.getByLabel('Lead').selectOption({ label: 'Quinn Adeyemi' });
+	await shot(page, 'edit-members');
+	await dialog.getByRole('button', { name: 'Save' }).click();
+	await expect(page.getByText('Updated the members of Web.')).toBeVisible();
+	const web = card(page, 'web');
+	await expect(web.getByRole('button', { name: /^Quinn Adeyemi/ })).toBeVisible();
+	await expect(web).toContainText('Lead: Quinn Adeyemi');
+});
+
+test('TEAM-6: unchecking the lead warns that the lead is cleared, and then clears it', async ({ page }) => {
+	await openChart(page);
+	await menu(page, 'Web').click();
+	await page.getByRole('menuitem', { name: 'Edit members…' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Members of Web' });
+	await expect(dialog.getByTestId('clears-lead')).toHaveCount(0);
+	await dialog.getByRole('checkbox', { name: /^Noor Haddad/ }).click(); // Noor leads Web
+	await expect(dialog.getByTestId('clears-lead')).toHaveText(/Noor Haddad leads Web. Removing Noor Haddad also clears Web's lead./);
+	await dialog.getByRole('button', { name: 'Remove and clear lead' }).click();
+	await expect(page.getByText('Updated the members of Web.')).toBeVisible();
+	await expect(card(page, 'web')).toContainText('No lead');
+	await expect(card(page, 'web').getByRole('button', { name: /^Noor Haddad/ })).toHaveCount(0);
+	// Noor is still in Design: removing her from one team doesn't remove her from the others.
+	await expect(card(page, 'design').getByRole('button', { name: /^Noor Haddad/ })).toBeVisible();
+});
+
+test('TEAM-6: someone in other teams shows where, and Cancel changes nothing', async ({ page }) => {
+	await openChart(page);
+	await menu(page, 'Web').click();
+	await page.getByRole('menuitem', { name: 'Edit members…' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Members of Web' });
+	await expect(dialog.getByText('Also in: Design', { exact: false }).first()).toBeVisible();
+	await dialog.getByRole('checkbox', { name: /^Quinn Adeyemi/ }).click();
+	await dialog.getByRole('button', { name: 'Cancel' }).click();
+	await expect(card(page, 'web').getByRole('button', { name: /^Quinn Adeyemi/ })).toHaveCount(0);
+});
+
+test('TEAM-8: Add project… from a team shows each project’s current teams; adding a second team shares it with no confirmation', async ({ page }) => {
+	await openChart(page);
+	await menu(page, 'Web').click();
+	await page.getByRole('menuitem', { name: 'Add project…' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Add a project to Web' });
+	await expect(dialog).toContainText('Teams: Platform'); // Atlas
+	await expect(dialog).toContainText('No team'); // Scratchpad
+	await expect(dialog.getByRole('radio', { name: /^Beacon/ })).toHaveCount(0); // Web already works on it
+	await dialog.getByRole('radio', { name: /^Atlas/ }).check();
+	await shot(page, 'add-project');
+	await dialog.getByRole('button', { name: 'Add project' }).click();
+	await expect(page.getByText('Atlas is now shared by Platform and Web.')).toBeVisible();
+	await expect(card(page, 'web').getByRole('list', { name: 'Projects of Web' })).toContainText('Atlas');
+	await expect(card(page, 'web').getByRole('button', { name: /Shared project Atlas/ })).toBeVisible();
+});
+
+test('TEAM-8: an unassigned project is given a team with Assign team…, and the note goes away', async ({ page }) => {
+	await openChart(page);
+	await expect(page.getByTestId('unassigned-projects')).toContainText('Scratchpad');
+	await page.getByRole('button', { name: 'Assign a team to Scratchpad' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Assign a team to Scratchpad' });
+	await expect(dialog.getByRole('button', { name: 'Assign team' })).toBeDisabled(); // nothing chosen yet
+	await dialog.getByRole('radio', { name: 'Design' }).check();
+	await dialog.getByRole('button', { name: 'Assign team' }).click();
+	await expect(page.getByText('Scratchpad now belongs to Design.')).toBeVisible();
+	await expect(page.getByTestId('unassigned-projects')).toHaveCount(0);
+	await expect(page.getByTestId('unassigned-note')).toHaveCount(0);
+});
+
+test('TEAM-8: removing a team from a shared project needs no confirmation; removing the last one asks first', async ({ page }) => {
+	await openChart(page);
+	// Beacon is shared by Web and Design: no confirmation.
+	await card(page, 'web').getByRole('button', { name: 'Remove Beacon from Web' }).click();
+	await expect(page.getByText('Removed Beacon from Web.')).toBeVisible();
+	await expect(card(page, 'web').getByRole('list', { name: 'Projects of Web' })).toHaveCount(0);
+	// Now Design is its only team: the removal asks.
+	await card(page, 'design').getByRole('button', { name: 'Remove Beacon from Design' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Remove Beacon from Design?' });
+	await expect(dialog).toContainText('It will have no team and show under Unassigned projects.');
+	await dialog.getByRole('button', { name: 'Cancel' }).click();
+	await expect(card(page, 'design')).toContainText('Beacon'); // nothing happened
+	await card(page, 'design').getByRole('button', { name: 'Remove Beacon from Design' }).click();
+	await page.getByRole('dialog').getByRole('button', { name: 'Remove' }).click();
+	await expect(page.getByTestId('unassigned-projects')).toContainText('Beacon');
 });

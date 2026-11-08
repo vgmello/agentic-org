@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { sampleOrg } from './sample';
-import { checkTeamName, deleteSummary, moveChoices, movesAlong, teamOptions, teamPath } from './team-edit';
+import { checkTeamName, deleteSummary, isLastTeam, moveChoices, movesAlong, projectsToAdd, sharedBy, teamOptions, teamPath } from './team-edit';
 
 const s = sampleOrg('office-1');
 
@@ -90,5 +90,25 @@ describe('TEAM-7 moving a team', () => {
 		expect(movesAlong(s, s.teams.find((t) => t.id === 'eng')!)).toBe(' (with 2 teams and 2 projects)');
 		expect(movesAlong(s, s.teams.find((t) => t.id === 'design')!)).toBe(' (with 1 project)');
 		expect(movesAlong({ ...s, project_teams: [] }, s.teams.find((t) => t.id === 'web')!)).toBe('');
+	});
+});
+
+describe('TEAM-8 projects and teams', () => {
+	it('offers the projects a team doesn’t work on, each with its current teams or none', () => {
+		expect(projectsToAdd(s, 'web')).toEqual([
+			{ id: 'atlas', name: 'Atlas', teams: ['Platform'] },
+			{ id: 'onboarding', name: 'Onboarding kit', teams: ['People'] },
+			{ id: 'scratch', name: 'Scratchpad', teams: [] }
+		]);
+	});
+
+	it('knows when a removal leaves a project with no team', () => {
+		expect(isLastTeam(s, 'atlas', 'platform')).toBe(true);
+		expect(isLastTeam(s, 'beacon', 'web')).toBe(false); // shared with Design
+		expect(isLastTeam(s, 'scratch', 'web')).toBe(false); // not linked at all
+	});
+
+	it('lists a project’s teams', () => {
+		expect(sharedBy(s, 'beacon').sort()).toEqual(['Design', 'Web']);
 	});
 });

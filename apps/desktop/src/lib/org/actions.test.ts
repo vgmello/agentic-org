@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { createMockOrg, type MockStorage } from './api';
 import { sessionFor } from './session';
-import { createTeam, deleteConsequences, deleteTeam, moveTargets, moveTeam, setTeamMembers, wouldClearLead } from './actions';
-import { membersOfTeam, teamTree } from './model';
+import { addProjectTeam, createTeam, deleteConsequences, deleteTeam, moveTargets, moveTeam, removeProjectTeam, setTeamLead, setTeamMembers, wouldClearLead } from './actions';
+import { membersOfTeam, teamTree, unassignedProjects } from './model';
+import { sharedBy } from './team-edit';
 
 const memory = (): MockStorage => {
 	const m = new Map<string, string>();
@@ -121,5 +122,48 @@ describe('TEAM-9 deleting a team', () => {
 		await deleteTeam(api, s.teams.find((t) => t.id === 'people')!);
 		expect((await api.snapshot()).teams.some((t) => t.id === 'people')).toBe(false);
 		await expect(deleteTeam(api, s.teams.find((t) => t.id === 'eng')!)).rejects.toMatchObject({ code: 'not_empty' });
+	});
+});
+
+describe('TEAM-6 and TEAM-15 the lead of an existing team', () => {
+	it('sets and clears a lead from the members, against the current version', async () => {
+		const api = make();
+		await setTeamLead(api, 'web', 'mira');
+		expect((await api.snapshot()).teams.find((t) => t.id === 'web')?.lead_member_id).toBe('mira');
+		await setTeamLead(api, 'web', undefined);
+		expect((await api.snapshot()).teams.find((t) => t.id === 'web')?.lead_member_id).toBeUndefined();
+	});
+
+	it('refuses someone who is not in the team, and a team that is gone', async () => {
+		const api = make();
+		await expect(setTeamLead(api, 'web', 'juno')).rejects.toMatchObject({ code: 'not_a_member' });
+		await expect(setTeamLead(api, 'ghost', undefined)).rejects.toMatchObject({ code: 'not_found' });
+	});
+
+	it('steps name the member, not the id', async () => {
+		const api = make();
+		const { steps } = await setTeamMembers(api, 'web', ['noor', 'quinn'], (id) => (id === 'quinn' ? 'Quinn' : id));
+		expect(steps.map((s) => s.what)).toEqual(['Add Quinn', 'Remove mira']);
+	});
+});
+
+describe('TEAM-8 giving a project to a team and taking it off', () => {
+	it('adds a team to an unassigned project, shares one, and refuses a duplicate', async () => {
+		const api = make();
+		await addProjectTeam(api, 'scratch', 'web');
+		expect(unassignedProjects(await api.snapshot()).map((p) => p.id)).not.toContain('scratch');
+		await addProjectTeam(api, 'scratch', 'design'); // shared now
+		expect(sharedBy(await api.snapshot(), 'scratch').sort()).toEqual(['Design', 'Web']);
+		await expect(addProjectTeam(api, 'scratch', 'web')).rejects.toMatchObject({ code: 'already_exists' });
+		await expect(addProjectTeam(api, 'ghost', 'web')).rejects.toMatchObject({ code: 'not_found' });
+	});
+
+	it('removes a team; the last removal leaves the project unassigned; a team not on it is not found', async () => {
+		const api = make();
+		await removeProjectTeam(api, 'beacon', 'web');
+		expect(sharedBy(await api.snapshot(), 'beacon')).toEqual(['Design']);
+		await removeProjectTeam(api, 'beacon', 'design');
+		expect(unassignedProjects(await api.snapshot()).map((p) => p.id)).toContain('beacon');
+		await expect(removeProjectTeam(api, 'beacon', 'design')).rejects.toMatchObject({ code: 'not_found' });
 	});
 });
