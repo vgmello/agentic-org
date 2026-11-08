@@ -19,6 +19,10 @@ impl std::error::Error for UnknownChange {}
 
 /// Applies one change. Mechanical and deterministic: it validates nothing and has no hidden
 /// inputs, so replaying a log on an empty state rebuilds exactly the state it produced.
+///
+/// A change list is applied one change at a time, in order. If one fails with
+/// [`UnknownChange`] the earlier ones are already written, so the caller applies a list inside
+/// a transaction and rolls it back on error.
 pub fn apply(state: &mut dyn OrgWrite, change: &OrgChange) -> Result<(), UnknownChange> {
     match change {
         OrgChange::TeamUpserted { team } => state.put_team(team),

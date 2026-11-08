@@ -34,6 +34,7 @@ impl Org {
             apply(&mut self.state, change).unwrap();
         }
         self.log.push(changes);
+        assert_consistent(&self.state);
     }
 
     fn run(&mut self, command: OrgCommand) -> Result<Vec<OrgChange>, ApiError> {
@@ -150,6 +151,63 @@ impl Org {
             },
         );
     }
+}
+
+/// Nothing refers to something that is gone, and the structure keeps its shape.
+fn assert_consistent(s: &MemState) {
+    for team in s.teams.values() {
+        if let Some(owner) = &team.owner_team_id {
+            assert!(
+                s.teams.contains_key(owner),
+                "team {} has no owner team",
+                team.id
+            );
+        }
+        if let Some(lead) = &team.lead_member_id {
+            assert!(
+                s.memberships
+                    .values()
+                    .any(|m| m.team_id == team.id && &m.member_id == lead),
+                "the lead of {} is not a member of it",
+                team.id
+            );
+            assert!(!s.members[lead].owner, "the owner leads {}", team.id);
+        }
+    }
+    for m in s.memberships.values() {
+        assert!(
+            s.teams.contains_key(&m.team_id),
+            "membership {} of no team",
+            m.id
+        );
+        assert!(
+            s.members.contains_key(&m.member_id),
+            "membership {} of no one",
+            m.id
+        );
+    }
+    for link in s.project_teams.values() {
+        assert!(
+            s.teams.contains_key(&link.team_id),
+            "link {} to no team",
+            link.id
+        );
+    }
+    for member in s.members.values() {
+        if let Some(boss) = &member.reports_to_member_id {
+            assert!(
+                s.members.contains_key(boss),
+                "{} reports to no one",
+                member.id
+            );
+            assert!(
+                !s.members[boss].owner,
+                "{} reports to the owner by id",
+                member.id
+            );
+        }
+    }
+    assert_eq!(s.members.values().filter(|m| m.owner).count(), 1);
 }
 
 fn code<T: std::fmt::Debug>(result: Result<T, ApiError>) -> ErrorCode {
@@ -1001,4 +1059,645 @@ fn ids_are_short_and_plain() {
     assert_eq!(code(org.team("a b", "Z", None)), ErrorCode::InvalidRequest);
     assert_eq!(code(org.team("é", "Z", None)), ErrorCode::InvalidRequest);
     org.team("01ARZ3NDEKTSV4RRFFQ69G5FAV", "Z", None).unwrap();
+}
+
+// ---- review follow-ups: stale versions, precedence, ids, agents ---------------------------
+
+/// A small organization: teams t1 (Product) > t2 (Design), people ann and bob in t2.
+fn staffed() -> Org {
+    let mut org = Org::new();
+    org.team("t1", "Product", None).unwrap();
+    org.team("t2", "Design", Some("t1")).unwrap();
+    org.person("ann", "Ann").unwrap();
+    org.person("bob", "Bob").unwrap();
+    org.join("ms-ann", "t2", "ann").unwrap();
+    org.join("ms-bob", "t2", "bob").unwrap();
+    org
+}
+
+fn message_of<T: std::fmt::Debug>(result: Result<T, ApiError>) -> String {
+    result.expect_err("expected an error").message
+}
+
+#[test]
+fn a_taken_id_is_told_apart_from_a_duplicate_relation() {
+    let mut org = staffed();
+    org.team("t3", "Other", None).unwrap();
+    // A fresh pair under a taken membership id: the id is the problem.
+    let taken = org.join("ms-ann", "t3", "bob");
+    assert_eq!(code(taken.clone()), ErrorCode::AlreadyExists);
+    assert!(message_of(taken).contains("id is taken"));
+    // A taken pair under a fresh id: the pair is.
+    let twice = org.join("ms-new", "t2", "ann");
+    assert_eq!(code(twice.clone()), ErrorCode::AlreadyExists);
+    assert!(message_of(twice).contains("already in that team"));
+
+    let link = |org: &mut Org, id: &str, team: &str| {
+        let command_id = org.id();
+        org.run(OrgCommand::ProjectAddTeam(ProjectAddTeamParams {
+            command_id,
+            project_team_id: id.into(),
+            project_id: "p1".into(),
+            team_id: team.into(),
+        }))
+    };
+    link(&mut org, "l1", "t2").unwrap();
+    let taken = link(&mut org, "l1", "t3");
+    assert_eq!(code(taken.clone()), ErrorCode::AlreadyExists);
+    assert!(message_of(taken).contains("id is taken"));
+    let twice = link(&mut org, "l2", "t2");
+    assert_eq!(code(twice.clone()), ErrorCode::AlreadyExists);
+    assert!(message_of(twice).contains("already works"));
+
+    let taken = org.person("ann", "Anna");
+    assert_eq!(code(taken.clone()), ErrorCode::AlreadyExists);
+    assert!(message_of(taken).contains("member id is taken"));
+    let taken = org.team("t2", "Elsewhere", None);
+    assert!(message_of(taken).contains("team id is taken"));
+}
+
+#[test]
+fn ids_made_by_the_client_are_checked_on_every_command_that_takes_one() {
+    let mut org = staffed();
+    assert_eq!(
+        code(org.join("bad id", "t1", "ann")),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(code(org.person("bad id", "Zed")), ErrorCode::InvalidRequest);
+    let command_id = org.id();
+    let linked = org.run(OrgCommand::ProjectAddTeam(ProjectAddTeamParams {
+        command_id,
+        project_team_id: "x".repeat(65),
+        project_id: "p1".into(),
+        team_id: "t1".into(),
+    }));
+    assert_eq!(code(linked), ErrorCode::InvalidRequest);
+    let command_id = org.id();
+    let moved = org.run(OrgCommand::MemberMove(MemberMoveParams {
+        command_id,
+        membership_id: "ms-ann".into(),
+        expected_version: 1,
+        new_membership_id: "".into(),
+        to_team_id: "t1".into(),
+        title_in_team: None,
+    }));
+    assert_eq!(code(moved), ErrorCode::InvalidRequest);
+    // Nothing of the above got in.
+    assert_eq!(org.state.memberships.len(), 2);
+    assert!(org.state.project_teams.is_empty());
+}
+
+#[test]
+fn moving_a_team_compares_its_stored_name_by_key() {
+    let mut org = Org::new();
+    org.team("t1", "Product", None).unwrap();
+    org.team("t2", "Platform", None).unwrap();
+    org.team("a", "design", Some("t1")).unwrap();
+    org.team("b", "  DESIGN ", Some("t2")).unwrap();
+    let command_id = org.id();
+    let moved = org.run(OrgCommand::TeamMove(TeamMoveParams {
+        command_id,
+        team_id: "b".into(),
+        expected_version: 1,
+        owner_team_id: Some("t1".into()),
+    }));
+    assert_eq!(code(moved), ErrorCode::AlreadyExists);
+    // Moving to where it already is clashes with nobody but itself.
+    let command_id = org.id();
+    org.run(OrgCommand::TeamMove(TeamMoveParams {
+        command_id,
+        team_id: "b".into(),
+        expected_version: 1,
+        owner_team_id: Some("t2".into()),
+    }))
+    .unwrap();
+}
+
+#[test]
+fn a_stale_version_is_a_conflict_on_every_command_that_checks_one() {
+    let mut org = staffed();
+    org.lead("t2", Some("ann")).unwrap();
+    let link_id = org.id();
+    org.run(OrgCommand::ProjectAddTeam(ProjectAddTeamParams {
+        command_id: link_id,
+        project_team_id: "l1".into(),
+        project_id: "p1".into(),
+        team_id: "t2".into(),
+    }))
+    .unwrap();
+    let before = org.state.clone();
+    let stale = 7;
+    let commands = vec![
+        OrgCommand::TeamSetLead(TeamSetLeadParams {
+            command_id: "c".into(),
+            team_id: "t2".into(),
+            expected_version: stale,
+            lead_member_id: Some("bob".into()),
+        }),
+        OrgCommand::TeamDelete(TeamDeleteParams {
+            command_id: "c".into(),
+            team_id: "t2".into(),
+            expected_version: stale,
+        }),
+        OrgCommand::TeamRemoveMember(TeamRemoveMemberParams {
+            command_id: "c".into(),
+            membership_id: "ms-bob".into(),
+            expected_version: stale,
+        }),
+        OrgCommand::TeamSetTitle(TeamSetTitleParams {
+            command_id: "c".into(),
+            membership_id: "ms-bob".into(),
+            expected_version: stale,
+            title_in_team: Some("Designer".into()),
+        }),
+        OrgCommand::MemberSetReportsTo(MemberSetReportsToParams {
+            command_id: "c".into(),
+            member_id: "bob".into(),
+            expected_version: stale,
+            reports_to_member_id: Some("ann".into()),
+        }),
+        OrgCommand::MemberUpdatePerson(MemberUpdatePersonParams {
+            command_id: "c".into(),
+            member_id: "bob".into(),
+            expected_version: stale,
+            name: Some("Robert".into()),
+            contact: None,
+            clear_contact: false,
+        }),
+        OrgCommand::MemberRemove(MemberRemoveParams {
+            command_id: "c".into(),
+            member_id: "bob".into(),
+            expected_version: stale,
+        }),
+        OrgCommand::MemberMove(MemberMoveParams {
+            command_id: "c".into(),
+            membership_id: "ms-bob".into(),
+            expected_version: stale,
+            new_membership_id: "ms-new".into(),
+            to_team_id: "t1".into(),
+            title_in_team: None,
+        }),
+        OrgCommand::ProjectRemoveTeam(ProjectRemoveTeamParams {
+            command_id: "c".into(),
+            project_team_id: "l1".into(),
+            expected_version: stale,
+        }),
+    ];
+    for command in commands {
+        let result = decide(&org.state, NOW, &command);
+        assert_eq!(
+            result.expect_err(&format!("{command:?}")).code,
+            ErrorCode::Conflict,
+            "{command:?}"
+        );
+    }
+    assert_eq!(org.state, before, "deciding changes nothing");
+}
+
+#[test]
+fn updating_a_person_raises_its_version_and_keeps_what_was_not_given() {
+    let mut org = staffed();
+    let command_id = org.id();
+    let changes = org
+        .run(OrgCommand::MemberUpdatePerson(MemberUpdatePersonParams {
+            command_id,
+            member_id: "ann".into(),
+            expected_version: 1,
+            name: None,
+            contact: Some(" ann@example.com ".into()),
+            clear_contact: false,
+        }))
+        .unwrap();
+    let ann = member_of(&changes, "ann");
+    assert_eq!(ann.version, 2);
+    assert_eq!(ann.name, "Ann");
+    assert_eq!(ann.contact.as_deref(), Some("ann@example.com"));
+}
+
+#[test]
+fn a_domain_rule_is_told_before_a_stale_version_and_after_a_bad_value() {
+    let mut org = staffed();
+    let stale = 9;
+    let team_set_lead = |org: &mut Org, lead: &str| {
+        let command_id = org.id();
+        org.run(OrgCommand::TeamSetLead(TeamSetLeadParams {
+            command_id,
+            team_id: "t2".into(),
+            expected_version: stale,
+            lead_member_id: Some(lead.into()),
+        }))
+    };
+    assert_eq!(
+        code(team_set_lead(&mut org, OWNER)),
+        ErrorCode::OwnerProtected
+    );
+    org.person("cat", "Cat").unwrap();
+    assert_eq!(code(team_set_lead(&mut org, "cat")), ErrorCode::NotAMember);
+    assert_eq!(code(team_set_lead(&mut org, "ann")), ErrorCode::Conflict);
+
+    let command_id = org.id();
+    let deleted = org.run(OrgCommand::TeamDelete(TeamDeleteParams {
+        command_id,
+        team_id: "t1".into(),
+        expected_version: stale,
+    }));
+    assert_eq!(code(deleted), ErrorCode::NotEmpty);
+
+    let command_id = org.id();
+    let moved = org.run(OrgCommand::TeamMove(TeamMoveParams {
+        command_id,
+        team_id: "t1".into(),
+        expected_version: stale,
+        owner_team_id: Some("t2".into()),
+    }));
+    assert_eq!(code(moved), ErrorCode::Cycle);
+
+    org.reports("bob", Some("ann")).unwrap();
+    let command_id = org.id();
+    let looped = org.run(OrgCommand::MemberSetReportsTo(MemberSetReportsToParams {
+        command_id,
+        member_id: "ann".into(),
+        expected_version: stale,
+        reports_to_member_id: Some("bob".into()),
+    }));
+    assert_eq!(code(looped), ErrorCode::Cycle);
+
+    let command_id = org.id();
+    let removed = org.run(OrgCommand::MemberRemove(MemberRemoveParams {
+        command_id,
+        member_id: OWNER.into(),
+        expected_version: stale,
+    }));
+    assert_eq!(code(removed), ErrorCode::OwnerProtected);
+
+    // ...and a bad value is told before a domain rule.
+    let command_id = org.id();
+    let bad = org.run(OrgCommand::TeamAddMember(TeamAddMemberParams {
+        command_id,
+        membership_id: "m9".into(),
+        team_id: "t1".into(),
+        member_id: OWNER.into(),
+        title_in_team: Some("  ".into()),
+    }));
+    assert_eq!(code(bad), ErrorCode::InvalidRequest);
+}
+
+#[test]
+fn active_agents_are_members_leads_and_managers_and_removing_one_frees_its_handle() {
+    let mut org = staffed();
+    org.agent("ag", "Pixel", AgentStatus::Active);
+    org.join("ms-ag", "t2", "ag").unwrap();
+    org.lead("t2", Some("ag")).unwrap();
+    org.reports("bob", Some("ag")).unwrap();
+    assert_eq!(org.state.teams["t2"].lead_member_id.as_deref(), Some("ag"));
+    // Its handle is taken while it is here, whatever its display name.
+    assert_eq!(code(org.person("p2", "pixel")), ErrorCode::AlreadyExists);
+
+    let changes = org.remove("ag").unwrap();
+    assert!(changes.contains(&OrgChange::MembershipRemoved {
+        membership_id: "ms-ag".into()
+    }));
+    assert_eq!(team_of(&changes).lead_member_id, None);
+    assert_eq!(team_of(&changes).version, 3);
+    assert_eq!(member_of(&changes, "bob").reports_to_member_id, None);
+    assert!(!org.state.members.contains_key("ag"));
+    // The handle is free again.
+    org.person("p2", "pixel").unwrap();
+}
+
+#[test]
+fn moving_a_member_ends_one_membership_and_starts_another_in_one_event() {
+    let mut org = staffed();
+    org.lead("t2", Some("ann")).unwrap();
+    let command_id = org.id();
+    let changes = org
+        .run(OrgCommand::MemberMove(MemberMoveParams {
+            command_id,
+            membership_id: "ms-ann".into(),
+            expected_version: 1,
+            new_membership_id: "ms-ann-2".into(),
+            to_team_id: "t1".into(),
+            title_in_team: Some(" Head ".into()),
+        }))
+        .unwrap();
+    assert_eq!(
+        changes[..2],
+        [
+            OrgChange::MembershipRemoved {
+                membership_id: "ms-ann".into()
+            },
+            OrgChange::MembershipUpserted {
+                membership: Membership {
+                    id: "ms-ann-2".into(),
+                    team_id: "t1".into(),
+                    member_id: "ann".into(),
+                    title_in_team: Some("Head".into()),
+                    version: 1,
+                }
+            }
+        ]
+    );
+    // Leaving the team she led ends the lead, in the same event.
+    let old = team_of(&changes);
+    assert_eq!(
+        (old.id.as_str(), old.lead_member_id, old.version),
+        ("t2", None, 3)
+    );
+    assert_eq!(changes.len(), 3);
+    assert!(org.state.memberships.contains_key("ms-ann-2"));
+    assert!(!org.state.memberships.contains_key("ms-ann"));
+}
+
+#[test]
+fn a_move_that_leads_nothing_changes_no_team_and_bad_moves_are_refused() {
+    let mut org = staffed();
+    let mv = |org: &mut Org, membership: &str, new: &str, to: &str| {
+        let command_id = org.id();
+        org.run(OrgCommand::MemberMove(MemberMoveParams {
+            command_id,
+            membership_id: membership.into(),
+            expected_version: 1,
+            new_membership_id: new.into(),
+            to_team_id: to.into(),
+            title_in_team: None,
+        }))
+    };
+    assert_eq!(code(mv(&mut org, "nope", "n", "t1")), ErrorCode::NotFound);
+    assert_eq!(
+        code(mv(&mut org, "ms-ann", "n", "nope")),
+        ErrorCode::NotFound
+    );
+    // To the team she is already in.
+    assert_eq!(
+        code(mv(&mut org, "ms-ann", "n", "t2")),
+        ErrorCode::AlreadyExists
+    );
+    // To a team another membership id is taken.
+    assert_eq!(
+        code(mv(&mut org, "ms-ann", "ms-bob", "t1")),
+        ErrorCode::AlreadyExists
+    );
+    // Already in the target through another membership.
+    org.join("ms-ann-t1", "t1", "ann").unwrap();
+    assert_eq!(
+        code(mv(&mut org, "ms-ann", "n", "t1")),
+        ErrorCode::AlreadyExists
+    );
+    let changes = mv(&mut org, "ms-bob", "ms-bob-2", "t1").unwrap();
+    assert!(!changes
+        .iter()
+        .any(|c| matches!(c, OrgChange::TeamUpserted { .. })));
+}
+
+#[test]
+fn the_owner_bootstrap_checks_its_inputs() {
+    assert_eq!(
+        code(owner_bootstrap("bad id", "Owner", NOW)),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        code(owner_bootstrap("o1", "  ", NOW)),
+        ErrorCode::InvalidName
+    );
+    assert_eq!(
+        code(owner_bootstrap("o1", "a\u{7}b", NOW)),
+        ErrorCode::InvalidName
+    );
+    let changes = owner_bootstrap("o1", " Vi ", NOW).unwrap();
+    assert_eq!(member_of(&changes, "o1").name, "Vi");
+}
+
+#[test]
+fn name_key_matches_the_key_of_a_parsed_name() {
+    assert_eq!(name_key("  Design "), "design");
+    assert_eq!(name_key("DESIGN"), name_key("design"));
+}
+
+// ---- second review: titles, created_at, loops in bad data, more precedence ------------------
+
+#[test]
+fn a_move_does_not_carry_the_old_title_over() {
+    let mut org = staffed();
+    let command_id = org.id();
+    org.run(OrgCommand::TeamSetTitle(TeamSetTitleParams {
+        command_id,
+        membership_id: "ms-ann".into(),
+        expected_version: 1,
+        title_in_team: Some("Head of design".into()),
+    }))
+    .unwrap();
+    let command_id = org.id();
+    org.run(OrgCommand::MemberMove(MemberMoveParams {
+        command_id,
+        membership_id: "ms-ann".into(),
+        expected_version: 2,
+        new_membership_id: "ms-ann-2".into(),
+        to_team_id: "t1".into(),
+        title_in_team: None,
+    }))
+    .unwrap();
+    assert_eq!(org.state.memberships["ms-ann-2"].title_in_team, None);
+}
+
+#[test]
+fn a_new_person_has_the_time_it_was_added_and_a_trimmed_contact() {
+    let mut org = Org::new();
+    let command_id = org.id();
+    let changes = org
+        .run(OrgCommand::MemberAddPerson(MemberAddPersonParams {
+            command_id,
+            member_id: "zed".into(),
+            name: " Zed ".into(),
+            contact: Some(" zed@example.com ".into()),
+        }))
+        .unwrap();
+    let zed = member_of(&changes, "zed");
+    assert_eq!(zed.created_at.as_deref(), Some(NOW));
+    assert_eq!(zed.contact.as_deref(), Some("zed@example.com"));
+    assert_eq!(
+        (zed.version, zed.owner, zed.name.as_str()),
+        (1, false, "Zed")
+    );
+}
+
+#[test]
+fn a_blank_name_is_not_told_to_be_an_organization_name() {
+    let mut org = Org::new();
+    let message = message_of(org.team("t1", "  ", None));
+    assert!(
+        !message.to_lowercase().contains("organization"),
+        "{message}"
+    );
+}
+
+#[test]
+fn walks_over_loops_already_in_bad_data_end() {
+    // Bad data (decide never makes it): t1 and t2 own each other, a and b report to each other.
+    let mut state = MemState::default();
+    let team = |id: &str, owner: &str| Team {
+        id: id.into(),
+        name: id.into(),
+        owner_team_id: Some(owner.into()),
+        lead_member_id: None,
+        version: 1,
+    };
+    state.teams.insert("t1".into(), team("t1", "t2"));
+    state.teams.insert("t2".into(), team("t2", "t1"));
+    state.teams.insert(
+        "t3".into(),
+        Team {
+            owner_team_id: None,
+            ..team("t3", "x")
+        },
+    );
+    let mut org = Org::new();
+    org.state = state;
+    let moved = decide(
+        &org.state,
+        NOW,
+        &OrgCommand::TeamMove(TeamMoveParams {
+            command_id: "c".into(),
+            team_id: "t3".into(),
+            expected_version: 1,
+            owner_team_id: Some("t1".into()),
+        }),
+    );
+    assert!(moved.is_ok(), "{moved:?}");
+
+    let mut org = Org::new();
+    org.person("a", "Ann").unwrap();
+    org.person("b", "Bob").unwrap();
+    org.person("c", "Cat").unwrap();
+    for (who, boss) in [("a", "b"), ("b", "a")] {
+        org.state.members.get_mut(who).unwrap().reports_to_member_id = Some(boss.into());
+    }
+    let reported = decide(
+        &org.state,
+        NOW,
+        &OrgCommand::MemberSetReportsTo(MemberSetReportsToParams {
+            command_id: "c".into(),
+            member_id: "c".into(),
+            expected_version: 1,
+            reports_to_member_id: Some("a".into()),
+        }),
+    );
+    assert!(reported.is_ok(), "{reported:?}");
+}
+
+#[test]
+fn a_stale_version_never_hides_a_missing_thing_or_a_bad_value() {
+    let mut org = staffed();
+    let stale = 9;
+    let mv = |to: &str, new: &str, title: Option<&str>| {
+        decide(
+            &org.state,
+            NOW,
+            &OrgCommand::MemberMove(MemberMoveParams {
+                command_id: "c".into(),
+                membership_id: "ms-ann".into(),
+                expected_version: stale,
+                new_membership_id: new.into(),
+                to_team_id: to.into(),
+                title_in_team: title.map(Into::into),
+            }),
+        )
+    };
+    assert_eq!(code(mv("nope", "n", None)), ErrorCode::NotFound);
+    assert_eq!(code(mv("t1", "bad id", None)), ErrorCode::InvalidRequest);
+    assert_eq!(code(mv("t1", "n", Some(" "))), ErrorCode::InvalidRequest);
+    assert_eq!(code(mv("t1", "n", None)), ErrorCode::Conflict);
+
+    let title = decide(
+        &org.state,
+        NOW,
+        &OrgCommand::TeamSetTitle(TeamSetTitleParams {
+            command_id: "c".into(),
+            membership_id: "ms-ann".into(),
+            expected_version: stale,
+            title_in_team: Some(" ".into()),
+        }),
+    );
+    assert_eq!(code(title), ErrorCode::InvalidRequest);
+
+    org.agent("ag", "Pixel", AgentStatus::Active);
+    let update = |member: &str, name: Option<&str>| {
+        decide(
+            &org.state,
+            NOW,
+            &OrgCommand::MemberUpdatePerson(MemberUpdatePersonParams {
+                command_id: "c".into(),
+                member_id: member.into(),
+                expected_version: stale,
+                name: name.map(Into::into),
+                contact: None,
+                clear_contact: false,
+            }),
+        )
+    };
+    assert_eq!(code(update("ann", Some("  "))), ErrorCode::InvalidName);
+    assert_eq!(code(update("ag", None)), ErrorCode::InvalidRequest);
+    assert_eq!(code(update("nope", None)), ErrorCode::NotFound);
+    assert_eq!(code(update("ann", Some("Anna"))), ErrorCode::Conflict);
+}
+
+#[test]
+fn a_missing_thing_is_told_before_a_bad_id_and_a_bad_value_before_a_bad_name() {
+    let mut org = staffed();
+    // not_found before invalid_request.
+    assert_eq!(code(org.join("bad id", "nope", "ann")), ErrorCode::NotFound);
+    assert_eq!(code(org.join("bad id", "t1", "nope")), ErrorCode::NotFound);
+    // invalid_request before invalid_name.
+    let command_id = org.id();
+    let added = org.run(OrgCommand::MemberAddPerson(MemberAddPersonParams {
+        command_id,
+        member_id: "bad id".into(),
+        name: "  ".into(),
+        contact: None,
+    }));
+    assert_eq!(code(added), ErrorCode::InvalidRequest);
+    let command_id = org.id();
+    let added = org.run(OrgCommand::MemberAddPerson(MemberAddPersonParams {
+        command_id,
+        member_id: "zed".into(),
+        name: "  ".into(),
+        contact: Some(" ".into()),
+    }));
+    assert_eq!(code(added), ErrorCode::InvalidRequest);
+}
+
+#[test]
+fn what_is_not_there_is_not_found_on_every_command_that_names_it() {
+    let org = staffed();
+    let lead = decide(
+        &org.state,
+        NOW,
+        &OrgCommand::TeamSetLead(TeamSetLeadParams {
+            command_id: "c".into(),
+            team_id: "nope".into(),
+            expected_version: 1,
+            lead_member_id: None,
+        }),
+    );
+    assert_eq!(code(lead), ErrorCode::NotFound);
+    let title = decide(
+        &org.state,
+        NOW,
+        &OrgCommand::TeamSetTitle(TeamSetTitleParams {
+            command_id: "c".into(),
+            membership_id: "nope".into(),
+            expected_version: 1,
+            title_in_team: None,
+        }),
+    );
+    assert_eq!(code(title), ErrorCode::NotFound);
+    let unlink = decide(
+        &org.state,
+        NOW,
+        &OrgCommand::ProjectRemoveTeam(ProjectRemoveTeamParams {
+            command_id: "c".into(),
+            project_team_id: "nope".into(),
+            expected_version: 1,
+        }),
+    );
+    assert_eq!(code(unlink), ErrorCode::NotFound);
 }

@@ -4,8 +4,10 @@
 //! the workspace files agents read and write. A library with no entry point:
 //! `apps/org-office-server` runs it.
 //!
-//! Knows nothing about sockets or the wire contract: callers hand it plain values and get
-//! plain values back. Phase 1 holds the organization registry (`Office`).
+//! Knows nothing about sockets: callers hand it plain values and get plain values back. The
+//! organization's rules (`rules`) speak the wire contract's types (`org_proto::org`), because
+//! a satellite replays the very changes HQ logged. Phase 1 holds the organization registry
+//! (`Office`).
 //!
 //! **Transitional:** this is the storage engine (encrypted SQLite, one batching writer, keys,
 //! owner-only files) with the first registry-style `Office` on top of it. The office model

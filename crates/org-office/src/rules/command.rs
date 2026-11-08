@@ -1,10 +1,11 @@
 use org_proto::org::{
-    MemberAddPerson, MemberAddPersonParams, MemberRemove, MemberRemoveParams, MemberSetReportsTo,
-    MemberSetReportsToParams, MemberUpdatePerson, MemberUpdatePersonParams, ProjectAddTeam,
-    ProjectAddTeamParams, ProjectRemoveTeam, ProjectRemoveTeamParams, TeamAddMember,
-    TeamAddMemberParams, TeamCreate, TeamCreateParams, TeamDelete, TeamDeleteParams, TeamMove,
-    TeamMoveParams, TeamRemoveMember, TeamRemoveMemberParams, TeamRename, TeamRenameParams,
-    TeamSetLead, TeamSetLeadParams, TeamSetTitle, TeamSetTitleParams,
+    MemberAddPerson, MemberAddPersonParams, MemberMove, MemberMoveParams, MemberRemove,
+    MemberRemoveParams, MemberSetReportsTo, MemberSetReportsToParams, MemberUpdatePerson,
+    MemberUpdatePersonParams, ProjectAddTeam, ProjectAddTeamParams, ProjectRemoveTeam,
+    ProjectRemoveTeamParams, TeamAddMember, TeamAddMemberParams, TeamCreate, TeamCreateParams,
+    TeamDelete, TeamDeleteParams, TeamMove, TeamMoveParams, TeamRemoveMember,
+    TeamRemoveMemberParams, TeamRename, TeamRenameParams, TeamSetLead, TeamSetLeadParams,
+    TeamSetTitle, TeamSetTitleParams,
 };
 use org_proto::{ApiError, ErrorCode, Request};
 
@@ -21,6 +22,7 @@ pub enum OrgCommand {
     TeamSetTitle(TeamSetTitleParams),
     MemberAddPerson(MemberAddPersonParams),
     MemberUpdatePerson(MemberUpdatePersonParams),
+    MemberMove(MemberMoveParams),
     MemberRemove(MemberRemoveParams),
     MemberSetReportsTo(MemberSetReportsToParams),
     ProjectAddTeam(ProjectAddTeamParams),
@@ -57,6 +59,7 @@ impl OrgCommand {
             TeamSetTitle => TeamSetTitle,
             MemberAddPerson => MemberAddPerson,
             MemberUpdatePerson => MemberUpdatePerson,
+            MemberMove => MemberMove,
             MemberRemove => MemberRemove,
             MemberSetReportsTo => MemberSetReportsTo,
             ProjectAddTeam => ProjectAddTeam,
@@ -78,6 +81,7 @@ impl OrgCommand {
             Self::TeamSetTitle(p) => &p.command_id,
             Self::MemberAddPerson(p) => &p.command_id,
             Self::MemberUpdatePerson(p) => &p.command_id,
+            Self::MemberMove(p) => &p.command_id,
             Self::MemberRemove(p) => &p.command_id,
             Self::MemberSetReportsTo(p) => &p.command_id,
             Self::ProjectAddTeam(p) => &p.command_id,

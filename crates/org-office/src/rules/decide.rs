@@ -1,13 +1,13 @@
 use std::collections::HashSet;
 
 use org_proto::org::{
-    AgentStatus, Member, MemberAddPersonParams, MemberKind, MemberRemoveParams,
+    AgentStatus, Member, MemberAddPersonParams, MemberKind, MemberMoveParams, MemberRemoveParams,
     MemberSetReportsToParams, MemberUpdatePersonParams, Membership, OrgChange,
     ProjectAddTeamParams, ProjectRemoveTeamParams, ProjectTeam, Team, TeamAddMemberParams,
     TeamCreateParams, TeamDeleteParams, TeamMoveParams, TeamRemoveMemberParams, TeamRenameParams,
     TeamSetLeadParams, TeamSetTitleParams, AGENT_TEXT_MAX_CHARS, OWNER_HANDLE,
 };
-use org_proto::{ApiError, ErrorCode, OrganizationName};
+use org_proto::{ApiError, ErrorCode, NameError, OrganizationName};
 
 use super::command::OrgCommand;
 use super::view::OrgView;
@@ -29,6 +29,7 @@ pub fn decide(view: &dyn OrgView, now: &str, command: &OrgCommand) -> Decision {
         OrgCommand::TeamSetTitle(p) => team_set_title(view, p),
         OrgCommand::MemberAddPerson(p) => member_add_person(view, now, p),
         OrgCommand::MemberUpdatePerson(p) => member_update_person(view, p),
+        OrgCommand::MemberMove(p) => member_move(view, p),
         OrgCommand::MemberRemove(p) => member_remove(view, p),
         OrgCommand::MemberSetReportsTo(p) => member_set_reports_to(view, p),
         OrgCommand::ProjectAddTeam(p) => project_add_team(view, p),
@@ -117,11 +118,8 @@ fn team_move(view: &dyn OrgView, p: &TeamMoveParams) -> Decision {
         }
     }
     check_version(team.version, p.expected_version)?;
-    let key = OrganizationName::parse(&team.name)
-        .map(|n| n.key().to_owned())
-        .unwrap_or_else(|_| team.name.to_lowercase());
     if view
-        .team_named(p.owner_team_id.as_deref(), &key)
+        .team_named(p.owner_team_id.as_deref(), &name_key(&team.name))
         .is_some_and(|other| other.id != team.id)
     {
         return Err(sibling_clash());
@@ -222,10 +220,14 @@ fn team_add_member(view: &dyn OrgView, p: &TeamAddMemberParams) -> Decision {
 fn team_remove_member(view: &dyn OrgView, p: &TeamRemoveMemberParams) -> Decision {
     let membership = found(view.membership(&p.membership_id), "no such membership")?;
     check_version(membership.version, p.expected_version)?;
+    Ok(leaving(view, &membership))
+}
+
+/// Ending `membership`; leaving a team ends leading it, in the same event.
+fn leaving(view: &dyn OrgView, membership: &Membership) -> Vec<OrgChange> {
     let mut changes = vec![OrgChange::MembershipRemoved {
         membership_id: membership.id.clone(),
     }];
-    // Leaving a team ends leading it, in the same event.
     if let Some(team) = view.team(&membership.team_id) {
         if team.lead_member_id.as_deref() == Some(membership.member_id.as_str()) {
             changes.push(OrgChange::TeamUpserted {
@@ -237,6 +239,44 @@ fn team_remove_member(view: &dyn OrgView, p: &TeamRemoveMemberParams) -> Decisio
             });
         }
     }
+    changes
+}
+
+fn member_move(view: &dyn OrgView, p: &MemberMoveParams) -> Decision {
+    let membership = found(view.membership(&p.membership_id), "no such membership")?;
+    found(view.team(&p.to_team_id), "no such team")?;
+    check_id(&p.new_membership_id)?;
+    let title = check_text(p.title_in_team.as_deref(), "title_in_team")?;
+    check_version(membership.version, p.expected_version)?;
+    if view.membership(&p.new_membership_id).is_some() {
+        return Err(fail(
+            ErrorCode::AlreadyExists,
+            "that membership id is taken",
+        ));
+    }
+    // This also refuses a move to the team the member is already in.
+    if view
+        .membership_of(&p.to_team_id, &membership.member_id)
+        .is_some()
+    {
+        return Err(fail(
+            ErrorCode::AlreadyExists,
+            "the member is already in that team",
+        ));
+    }
+    let mut changes = leaving(view, &membership);
+    changes.insert(
+        1,
+        OrgChange::MembershipUpserted {
+            membership: Membership {
+                id: p.new_membership_id.clone(),
+                team_id: p.to_team_id.clone(),
+                member_id: membership.member_id,
+                title_in_team: title,
+                version: 1,
+            },
+        },
+    );
     Ok(changes)
 }
 
@@ -329,7 +369,7 @@ fn member_set_reports_to(view: &dyn OrgView, p: &MemberSetReportsToParams) -> De
     // Reporting to the owner is stored as reporting to no one, so each line has one form.
     let manager = manager.filter(|m| !m.owner);
     if let Some(manager) = &manager {
-        if manager.id == member.id || reports_up_to(view, &manager.id, &member.id) {
+        if reports_up_to(view, &manager.id, &member.id) {
             return Err(fail(
                 ErrorCode::Cycle,
                 "someone would end up reporting to themselves",
@@ -446,9 +486,24 @@ fn check_version(current: u64, expected: u64) -> Result<(), ApiError> {
     }
 }
 
+/// The key sibling names are compared by (ignoring case and edges) for a name already stored.
+/// A stored name always parses; the fallback only keeps a damaged row from panicking.
+pub fn name_key(stored: &str) -> String {
+    OrganizationName::parse(stored)
+        .map(|n| n.key().to_owned())
+        .unwrap_or_else(|_| stored.trim().to_lowercase())
+}
+
+/// A team's or a person's name. `NameError::Empty` speaks of "the organization", so the empty
+/// case gets its own words here; the other messages are about "the name" in general.
 fn parse_name(raw: &str) -> Result<OrganizationName, ApiError> {
-    OrganizationName::parse(raw)
-        .map_err(|reason| ApiError::new(ErrorCode::InvalidName, reason.message()))
+    OrganizationName::parse(raw).map_err(|reason| {
+        let message = match reason {
+            NameError::Empty => "Give it a name.".to_owned(),
+            other => other.message(),
+        };
+        ApiError::new(ErrorCode::InvalidName, message)
+    })
 }
 
 fn sibling_clash() -> ApiError {

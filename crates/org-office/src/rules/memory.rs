@@ -3,7 +3,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use org_proto::org::{AgentProfile, Member, MemberKind, Membership, ProjectTeam, Team};
-use org_proto::OrganizationName;
 
 use super::view::{OrgView, OrgWrite};
 
@@ -16,11 +15,7 @@ pub struct MemState {
     pub projects: BTreeSet<String>,
 }
 
-fn key(name: &str) -> String {
-    OrganizationName::parse(name)
-        .map(|n| n.key().to_owned())
-        .unwrap_or_else(|_| name.to_lowercase())
-}
+use super::name_key as key;
 
 fn handle_of(member: &Member) -> String {
     match (&member.kind, &member.agent) {
