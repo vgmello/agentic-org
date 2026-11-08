@@ -10,7 +10,16 @@ use std::fmt;
 use crate::{ApiError, ErrorCode, ORGANIZATION_NAME_MAX_CHARS};
 
 /// A valid organization name: trimmed, 1..=[`ORGANIZATION_NAME_MAX_CHARS`] characters, no
-/// control characters.
+/// control characters, and no format characters (Cf) or default-ignorable code points, plus
+/// U+2028/U+2029, except U+200D, U+FE0E and U+FE0F. [`OrganizationName::parse`] has the details.
+///
+/// Refusing those characters stops invisible look-alikes made with them: "Acme" followed by a
+/// tag character can't become a second "Acme". It doesn't stop every pair of names that look
+/// the same: homoglyphs (a Latin "a" and a Cyrillic "а"), composed and decomposed spellings
+/// (there's no normalization), spaces other than U+0020 inside a name (U+00A0, the nearly
+/// invisible U+200A hair space), visible blanks such as U+2800 Braille pattern blank, and the
+/// three allowed characters, which are invisible outside emoji ("Acme" followed by U+FE0F),
+/// still make different names.
 ///
 /// Only [`OrganizationName::parse`] makes one, so holding one means the name passed the rule.
 ///
@@ -29,9 +38,25 @@ impl OrganizationName {
     /// - The result must have 1..=[`ORGANIZATION_NAME_MAX_CHARS`] Unicode scalar values.
     /// - It must have no control characters (`char::is_control`: U+0000–U+001F and
     ///   U+007F–U+009F).
-    /// - It must have no invisible or direction-changing characters (the list is on the private `is_invisible` below), so
-    ///   two names that look the same can't be two organizations, and a name can't reverse how
-    ///   the text around it displays. Names travel to other Macs (invitations), so this matters.
+    /// - It must have no format characters (Unicode General_Category Cf) or default-ignorable
+    ///   code points (`Default_Ignorable_Code_Point`), plus U+2028/U+2029 (line and paragraph
+    ///   separator), except U+200D (zero-width joiner), U+FE0E and U+FE0F (text and emoji
+    ///   presentation selectors), which emoji need. That covers zero-width spaces and joiners
+    ///   other than U+200D, direction marks, embeddings, overrides and isolates, the byte-order
+    ///   mark, tag characters (U+E0001 and U+E0020–U+E007F), Hangul fillers and the other
+    ///   variation selectors, and the code points Unicode reserves as default-ignorable but
+    ///   hasn't assigned yet. It also refuses a few visible format marks, such as the Arabic
+    ///   number signs (U+0600–U+0605) and end of ayah (U+06DD). The ranges come from Unicode
+    ///   17.0.
+    ///
+    /// The last rule stops invisible look-alikes made with these characters, and stops a name
+    /// from using direction controls to reorder the text around it. Right-to-left letters still
+    /// follow the normal bidirectional rules, so show names isolated (e.g. `<bdi>`, or U+2068
+    /// first strong isolate and U+2069 pop directional isolate). Names travel to other Macs
+    /// (invitations), so this matters. It doesn't make look-alike names impossible: homoglyphs,
+    /// composed and decomposed spellings (there's no normalization), spaces other than U+0020
+    /// (U+00A0, U+200A), visible blanks such as U+2800, and U+200D, U+FE0E and U+FE0F used
+    /// outside emoji still pass, and are different names.
     pub fn parse(raw: &str) -> Result<Self, NameError> {
         let name = raw.trim();
         if name.is_empty() {
@@ -58,9 +83,12 @@ impl OrganizationName {
     }
 
     /// The key two names are compared by for uniqueness, which ignores case: the Unicode
-    /// lowercase of the trimmed name (`str::to_lowercase`). It isn't full Unicode case folding
-    /// ("STRASSE" and "straße" differ), and there's no Unicode normalization, so a composed and a
-    /// decomposed spelling of the same accented name are different keys.
+    /// lowercase of the trimmed name (`str::to_lowercase`). It isn't full Unicode case folding:
+    /// "STRASSE" and "straße" differ, and so does a Greek word ending in final sigma ("ς") from
+    /// the same word typed with "σ" at the end. "İ" (dotted capital I) lowercases to "i̇" (i and
+    /// a combining dot), so it differs from "i" too, as it would under full case folding; only
+    /// Turkish and Azerbaijani rules match them. There's no Unicode normalization either, so a
+    /// composed and a decomposed spelling of the same accented name are different keys.
     ///
     /// Compare keys, never names. The key is only for comparing; store and show
     /// [`OrganizationName::as_str`].
@@ -91,12 +119,16 @@ pub enum NameError {
     TooLong,
     /// The name contains a control character.
     ControlChar,
-    /// The name contains an invisible or direction-changing character.
+    /// The name contains a format character (Cf) or a default-ignorable code point, or U+2028
+    /// or U+2029, other than U+200D, U+FE0E and U+FE0F. See [`OrganizationName::parse`].
     InvisibleChar,
 }
 
 impl NameError {
     /// The message for people, the same text the app's pre-check shows.
+    ///
+    /// [`NameError::InvisibleChar`] is new: the app's pre-check doesn't have it yet and will
+    /// follow, with the same text.
     pub fn message(&self) -> String {
         match self {
             Self::Empty => "Give the organization a name.".to_owned(),
@@ -109,29 +141,40 @@ impl NameError {
     }
 }
 
-/// Characters a name may not contain because they're invisible or change text direction: the
-/// Unicode format characters (category Cf) that matter here, and the line and paragraph
-/// separators. U+200D (zero-width joiner) is allowed, because emoji sequences need it.
-///
-/// - U+00AD soft hyphen, U+061C Arabic letter mark, U+180E Mongolian vowel separator
-/// - U+200B–U+200C and U+200E–U+200F: zero-width space and non-joiner, direction marks
-/// - U+2028–U+202E: line and paragraph separators, direction embeddings and overrides
-/// - U+2060–U+2064 and U+2066–U+206F: word joiner, invisible operators, direction isolates
-///   and deprecated format characters
-/// - U+FEFF zero-width no-break space (byte-order mark), U+FFF9–U+FFFB interlinear annotation
+/// Characters a name may not contain: the union of General_Category=Cf and
+/// `Default_Ignorable_Code_Point` (Unicode 17.0), plus U+2028 and U+2029, minus U+200D (zero-width
+/// joiner), U+FE0E and U+FE0F (text and emoji presentation selectors), which emoji need.
+/// Default-ignorable code points that aren't assigned yet (U+2065, U+FFF0–U+FFF8 and most of
+/// U+E0000–U+E0FFF) are included, so characters Unicode assigns there later are refused too.
 fn is_invisible(c: char) -> bool {
     matches!(
         c,
-        '\u{00AD}'
-            | '\u{061C}'
-            | '\u{180E}'
-            | '\u{200B}'..='\u{200C}'
-            | '\u{200E}'..='\u{200F}'
-            | '\u{2028}'..='\u{202E}'
-            | '\u{2060}'..='\u{2064}'
-            | '\u{2066}'..='\u{206F}'
-            | '\u{FEFF}'
-            | '\u{FFF9}'..='\u{FFFB}'
+        '\u{00AD}' // soft hyphen
+            | '\u{034F}' // combining grapheme joiner
+            | '\u{0600}'..='\u{0605}' // Arabic number signs and other prepended marks
+            | '\u{061C}' // Arabic letter mark
+            | '\u{06DD}' // Arabic end of ayah
+            | '\u{070F}' // Syriac abbreviation mark
+            | '\u{0890}'..='\u{0891}' // Arabic pound and piastre mark above
+            | '\u{08E2}' // Arabic disputed end of ayah
+            | '\u{115F}'..='\u{1160}' // Hangul choseong and jungseong fillers
+            | '\u{17B4}'..='\u{17B5}' // Khmer inherent vowels
+            | '\u{180B}'..='\u{180F}' // Mongolian free variation selectors, vowel separator
+            | '\u{200B}'..='\u{200C}' // zero-width space, zero-width non-joiner
+            | '\u{200E}'..='\u{200F}' // left-to-right and right-to-left marks
+            | '\u{2028}'..='\u{202E}' // line and paragraph separators, embeddings, overrides
+            | '\u{2060}'..='\u{206F}' // word joiner, invisible operators, isolates, deprecated
+            | '\u{3164}' // Hangul filler
+            | '\u{FE00}'..='\u{FE0D}' // variation selectors 1-14
+            | '\u{FEFF}' // zero-width no-break space (byte-order mark)
+            | '\u{FFA0}' // halfwidth Hangul filler
+            | '\u{FFF0}'..='\u{FFFB}' // reserved, interlinear annotation
+            | '\u{110BD}' // Kaithi number sign
+            | '\u{110CD}' // Kaithi number sign above
+            | '\u{13430}'..='\u{1343F}' // Egyptian hieroglyph format controls
+            | '\u{1BCA0}'..='\u{1BCA3}' // shorthand format controls
+            | '\u{1D173}'..='\u{1D17A}' // musical symbol beams, ties, slurs and phrases
+            | '\u{E0000}'..='\u{E0FFF}' // tags, variation selectors 17-256, reserved
     )
 }
 
@@ -208,34 +251,121 @@ mod tests {
         );
     }
 
+    /// The refused set, written out on its own (Unicode 17.0's Cf and
+    /// `Default_Ignorable_Code_Point` data, plus U+2028/U+2029, minus U+200D, U+FE0E and U+FE0F)
+    /// so a slip in `is_invisible` doesn't also slip here.
+    const REFUSED: &[(u32, u32)] = &[
+        (0x00AD, 0x00AD),
+        (0x034F, 0x034F),
+        (0x0600, 0x0605),
+        (0x061C, 0x061C),
+        (0x06DD, 0x06DD),
+        (0x070F, 0x070F),
+        (0x0890, 0x0891),
+        (0x08E2, 0x08E2),
+        (0x115F, 0x1160),
+        (0x17B4, 0x17B5),
+        (0x180B, 0x180F),
+        (0x200B, 0x200C),
+        (0x200E, 0x200F),
+        (0x2028, 0x202E),
+        (0x2060, 0x206F),
+        (0x3164, 0x3164),
+        (0xFE00, 0xFE0D),
+        (0xFEFF, 0xFEFF),
+        (0xFFA0, 0xFFA0),
+        (0xFFF0, 0xFFFB),
+        (0x110BD, 0x110BD),
+        (0x110CD, 0x110CD),
+        (0x13430, 0x1343F),
+        (0x1BCA0, 0x1BCA3),
+        (0x1D173, 0x1D17A),
+        (0xE0000, 0xE0FFF),
+    ];
+
     #[test]
-    fn invisible_and_direction_changing_characters_are_refused() {
-        for c in [
-            '\u{ad}', '\u{61c}', '\u{180e}', '\u{200b}', '\u{200c}', '\u{200e}', '\u{200f}',
-            '\u{2028}', '\u{2029}', '\u{202a}', '\u{202e}', '\u{2060}', '\u{2064}', '\u{2066}',
-            '\u{2069}', '\u{206f}', '\u{feff}', '\u{fff9}', '\u{fffb}',
-        ] {
-            let raw = format!("Ac{c}me");
-            assert_eq!(
-                OrganizationName::parse(&raw).unwrap_err(),
-                NameError::InvisibleChar,
-                "{c:?}"
-            );
+    fn every_refused_code_point_is_refused_inside_a_name() {
+        let mut checked = 0;
+        for &(first, last) in REFUSED {
+            for cp in first..=last {
+                let c = char::from_u32(cp).unwrap();
+                let raw = format!("Ac{c}me");
+                assert_eq!(
+                    OrganizationName::parse(&raw).unwrap_err(),
+                    NameError::InvisibleChar,
+                    "U+{cp:04X}"
+                );
+                checked += 1;
+            }
         }
-        // The neighbours of the refused ranges are fine, and so is an emoji sequence (U+200D).
-        for ok in [
-            "Ac\u{200d}me",
-            "👩\u{200d}💻 Labs",
-            "Ac\u{2027}me",
-            "Ac\u{205f}me",
-            "Ac\u{fffc}me",
-        ] {
-            assert!(OrganizationName::parse(ok).is_ok(), "{ok:?}");
-        }
+        assert_eq!(checked, 4205);
         assert_eq!(
             NameError::InvisibleChar.message(),
             "The name can't contain invisible or direction-changing characters."
         );
+    }
+
+    /// `is_invisible` matches the refused ranges exactly, across every Unicode scalar value.
+    #[test]
+    fn is_invisible_is_exactly_the_refused_ranges() {
+        for c in (0..=0x10FFFF).filter_map(char::from_u32) {
+            let cp = c as u32;
+            let refused = REFUSED.iter().any(|&(a, b)| (a..=b).contains(&cp));
+            assert_eq!(is_invisible(c), refused, "U+{cp:04X}");
+        }
+    }
+
+    #[test]
+    fn emoji_characters_and_the_neighbours_of_each_range_are_accepted() {
+        // The three exceptions, which emoji need.
+        let mut ok = vec![0x200D, 0xFE0E, 0xFE0F];
+        // The code point just before and after each refused range. Skipped because they're
+        // unassigned in Unicode 17.0 (U+DFFFF is a noncharacter): U+05FF, U+070E, U+0892,
+        // U+FEFE, U+FF00, U+FFEF, U+110CC, U+110CE, U+1BCA4, U+DFFFF and U+E1000. None is a
+        // control character.
+        ok.extend([
+            0x00AC, 0x00AE, // around U+00AD
+            0x034E, 0x0350, // around U+034F
+            0x0606, // after U+0600–U+0605
+            0x061B, 0x061D, // around U+061C
+            0x06DC, 0x06DE, // around U+06DD
+            0x0710, // after U+070F
+            0x088F, // before U+0890–U+0891
+            0x08E1, 0x08E3, // around U+08E2
+            0x115E, 0x1161, // around U+115F–U+1160
+            0x17B3, 0x17B6, // around U+17B4–U+17B5
+            0x180A, 0x1810, // around U+180B–U+180F
+            0x200A, // before U+200B–U+200C (U+200D, after it, is above)
+            0x2010, // after U+200E–U+200F
+            0x2027, 0x202F, // around U+2028–U+202E
+            0x205F, 0x2070, // around U+2060–U+206F
+            0x3163, 0x3165, // around U+3164
+            0xFDFF, // before U+FE00–U+FE0D (U+FE0E, after it, is above)
+            0xFF9F, 0xFFA1, // around U+FFA0
+            0xFFFC, // after U+FFF0–U+FFFB
+            0x110BC, 0x110BE, // around U+110BD
+            0x1342F, 0x13440, // around U+13430–U+1343F
+            0x1BC9F, // before U+1BCA0–U+1BCA3
+            0x1D172, 0x1D17B, // around U+1D173–U+1D17A
+        ]);
+        for cp in ok {
+            let c = char::from_u32(cp).unwrap();
+            assert!(!c.is_control(), "U+{cp:04X}");
+            let raw = format!("Ac{c}me");
+            assert_eq!(
+                OrganizationName::parse(&raw).unwrap().as_str(),
+                raw,
+                "U+{cp:04X}"
+            );
+        }
+        // Emoji: a zero-width joiner sequence, and a heart with the emoji presentation selector.
+        for name in [
+            "👩\u{200d}💻 Labs",
+            "\u{2764}\u{fe0f}",
+            "Acme \u{2764}\u{fe0f}",
+        ] {
+            assert_eq!(OrganizationName::parse(name).unwrap().as_str(), name);
+        }
     }
 
     #[test]
@@ -249,6 +379,15 @@ mod tests {
             OrganizationName::parse("école").unwrap().key()
         );
         assert_ne!(a.key(), OrganizationName::parse("Acme Lab").unwrap().key());
+        // Not full case folding: "STRASSE"/"straße" and "ΟΔΟΣ"/"οδοσ" fold together but have
+        // different keys. "İ" lowercases (and folds) to "i̇", so it differs from "i" too.
+        for (x, y) in [("STRASSE", "straße"), ("ΟΔΟΣ", "οδοσ"), ("İ", "i")] {
+            assert_ne!(
+                OrganizationName::parse(x).unwrap().key(),
+                OrganizationName::parse(y).unwrap().key(),
+                "{x} {y}"
+            );
+        }
     }
 
     /// The vectors the app's TypeScript pre-check is tested against too.
@@ -257,7 +396,7 @@ mod tests {
         let file: serde_json::Value =
             serde_json::from_str(include_str!("../test-vectors/organization-names.json")).unwrap();
         let vectors = file["vectors"].as_array().unwrap();
-        assert!(vectors.len() >= 14);
+        assert_eq!(vectors.len(), 23);
         for v in vectors {
             let input = v["input"].as_str().unwrap();
             match v.get("name").and_then(|n| n.as_str()) {
