@@ -9,16 +9,23 @@ Research for Agentic Org's office server (`org-office-server`, Rust). It answers
 - **[doc]**: official documentation (URLs under Sources).
 - **[3p]**: third-party write-up. Treat as a lead, not a fact.
 - **[unverified]**: not confirmed. Each one says why.
+- **[review]**: checked later by the independent reviewer of the agent-sessions design (rev 2) against the binary's `--help`. Not re-run on this Mac.
 
 ## Versions
 
 | Runtime | Version used | How |
 | --- | --- | --- |
 | Claude Code | **2.1.311** (`/opt/homebrew/bin/claude`) | Installed. `claude --help`, subcommand help and live `-p` runs **[ran]** |
-| OpenAI Codex CLI | **rust-v0.167.0** (latest release, 2026-11-06) | **Not installed** (`codex: command not found`). Flags come from the source at that tag **[src]** and from learn.chatgpt.com docs **[doc]** |
-| Google Antigravity CLI (`agy`) | **1.5.3** (latest release, 2026-11-07) | **Not installed** (`agy: command not found`). Facts come from antigravity.google docs **[doc]**, the official CHANGELOG **[doc]** and third-party probes **[3p]** |
+| OpenAI Codex CLI | **rust-v0.167.0** (latest release, 2026-11-06) | Not installed on this Mac when this was written. Flags come from the source at that tag **[src]** and from learn.chatgpt.com docs **[doc]**. Some were later checked against `codex --help` at 0.167.0 **[review]** (see "Later corrections" below). It's still not installed here; spike S0 will install it. |
+| Google Antigravity CLI (`agy`) | **1.5.3** (latest release, 2026-11-07) | Not installed on this Mac when this was written. Facts come from antigravity.google docs **[doc]**, the official CHANGELOG **[doc]** and third-party probes **[3p]**, plus one later **[review]** finding (below). It's still not installed here; spike S0 will install it. |
 
 I didn't install Codex or agy. Both need a sign-in, and installing them was outside a write-no-code research brief. Everything about them still needs a hands-on spike (see the last section).
+
+**Later corrections (2026-11-08, from the agent-sessions design review) [review]:**
+- Codex 0.167.0: `--ignore-user-config` and `--ignore-rules` exist only on `codex exec`, not on `codex app-server`.
+- Codex 0.167.0: `--yolo` isn't there. The bypass flags are `--dangerously-bypass-approvals-and-sandbox` and `--dangerously-bypass-hook-trust`.
+- Codex 0.167.0: `codex app-server --listen` defaults to stdio, and it has `--ws-auth`, `--ws-token-sha256` and `--remote-auth-token-env`. An app-server on a Unix socket has no authentication, so any same-user process (agents included) could drive its threads. `agent-sessions.md` therefore runs one app-server per session over stdio.
+- Antigravity 1.5.3: `--gemini-dir` exists only on `agy acp`, not on plain `agy`, so an interactive take-over can't use an office-owned Gemini dir.
 
 ---
 
@@ -35,7 +42,7 @@ I didn't install Codex or agy. Both need a sign-in, and installing them was outs
 3. **Resume by id works everywhere:** `claude --resume <uuid>`, `thread/resume {threadId}` or `codex exec resume <id>`, and `agy --conversation <id>` or ACP `session/resume`.
 4. **Only Claude reports money** (`total_cost_usd`, a client-side estimate). Codex and agy report tokens only, so the office prices tokens itself or shows quota percentages.
 5. **Human attach differs a lot:**
-   - **Codex:** best. The TUI can connect to a running app-server with `codex --remote unix://PATH` **[src]**.
+   - **Codex:** best. The TUI can connect to a running app-server with `codex --remote unix://PATH` **[src]**. That socket is unauthenticated, though (see "Later corrections").
    - **Claude:** a headless `-p` process can't be attached to. The `--bg` daemon + `claude attach` path (spike S2) can, but it has no programmatic prompt channel and no structured event stream.
    - **agy:** take-over only (stop headless, reopen interactively).
 6. **Main risks:**
@@ -276,7 +283,7 @@ codex exec review ...
 - **Safety:**
   - `-s/--sandbox read-only|workspace-write|danger-full-access`. `exec` defaults to **read-only**.
   - `--approve-for-me` (alias `--not-so-yolo`) routes approvals through automatic review with workspace-write.
-  - `--dangerously-bypass-approvals-and-sandbox` (alias `--yolo`).
+  - `--dangerously-bypass-approvals-and-sandbox` (alias `--yolo` in the source; not in 0.167.0's `--help` **[review]**).
   - **`--full-auto` is no longer supported** **[doc]**.
   - `exec` sets `approval_policy = never` by default ("Default to never ask for approvals in headless mode") **[src: exec/src/lib.rs]**.
 - **Context:** `-C/--cd DIR`, `--add-dir DIR`, `--worktree`, `--skip-git-repo-check`, `--ephemeral` (no rollout files), `--ignore-user-config`, `--ignore-rules`, `--strict-config`.
@@ -358,6 +365,7 @@ codex exec review ...
 
 - The TUI can **connect to a running app-server**: `codex --remote unix://PATH` (or `ws://…`, with `--remote-auth-token-env`) **[src: cli/src/main.rs `InteractiveRemoteOptions`]**.
   - If the office runs `codex app-server --listen unix://<office-dir>/codex.sock`, a human could open a TUI on the same server and its threads.
+  - **Superseded:** that socket is unauthenticated, so agents could reach it too. `agent-sessions.md` uses stdio and takes over by stop-and-resume until a spike proves `--ws-auth capability-token` **[review]**.
   - **[unverified]:** whether two clients can drive the same loaded thread concurrently. The docs say `thread/start` auto-subscribes the client; multi-client fan-out isn't confirmed.
 - Otherwise, take-over: `codex resume <id>` in a PTY after the headless run ends.
 
@@ -510,7 +518,7 @@ stream-json **[doc]**:
 | Resume | `--resume <uuid>`; re-pass config flags | `thread/resume` / `exec resume <id>` | `--conversation <id>` / ACP `session/resume` |
 | Storage | `~/.claude/projects/<cwd>/<uuid>.jsonl` | `~/.codex/sessions/…` | undocumented |
 | Stop | close stdin → exit 0; SIGTERM → 143 | close connection / `thread/unsubscribe`; kill | close stdin → finish turn → 0 |
-| Human attach | not for `-p`; `--bg` + `claude attach` only | `codex --remote unix://PATH` TUI **[src]** | take-over only |
+| Human attach | not for `-p`; `--bg` + `claude attach` only | `codex --remote unix://PATH` TUI **[src]** (superseded: that socket is unauthenticated; see "Later corrections") | take-over only |
 | Tokens | per message + per turn delta | `turn.completed.usage` / `thread/tokenUsage/updated` | cumulative `usage` |
 | Cost | `total_cost_usd` (estimate) | none | none |
 | Quota | `rate_limit_event` (5h/7d %) | `account/rateLimits/updated` | `-p "/usage"`, `"/credits"` |
@@ -559,7 +567,7 @@ SessionEvent: Started{runtime_session_id, model} | TurnStarted | TextDelta | Mes
 
 | Operation | Claude Code adapter | Codex adapter | Antigravity adapter |
 | --- | --- | --- | --- |
-| start | spawn `claude -p --input-format stream-json --output-format stream-json --verbose --session-id <uuid> --agent <id> --append-system-prompt … --permission-mode … --settings '{"env":{…}}' --strict-mcp-config --plugin-dir <presence> --plugin-dir <goals> …`, cwd = workspace, env from allowlist (strip `CLAUDE*`, `AI_AGENT`) | one `codex app-server --listen unix://<office>/codex.sock` per office (or stdio per office); `thread/start {cwd, developerInstructions, approvalPolicy, sandbox, model}` | spawn `agy --input-format stream-json --output-format stream-json --agent <id> --mode … [--dangerously-skip-permissions + PreToolUse gate]` in cwd; or `agy acp` + `session/new` |
+| start | spawn `claude -p --input-format stream-json --output-format stream-json --verbose --session-id <uuid> --agent <id> --append-system-prompt … --permission-mode … --settings '{"env":{…}}' --strict-mcp-config --plugin-dir <presence> --plugin-dir <goals> …` (superseded: `agent-sessions.md` decision 9 loads no mods or hooks in office-run sessions), cwd = workspace, env from allowlist (strip `CLAUDE*`, `AI_AGENT`) | one `codex app-server` over stdio **per session** (superseded: rev 1 said one per office on a Unix socket); `thread/start {cwd, developerInstructions, approvalPolicy, approvalsReviewer, sandbox, model}` | spawn `agy --input-format stream-json --output-format stream-json --agent <id> --mode … [--dangerously-skip-permissions + PreToolUse gate]` in cwd; or `agy acp` + `session/new` |
 | send | stdin `{"type":"user",…}` | `turn/start` (or `turn/steer`) | stdin `{"event":"user",…}` / ACP `session/prompt` |
 | events | parse stream-json; Started=`system/init`; TurnFinished=`result` | notifications | `init`/`step_update`/`result`; ACP `session/update` |
 | idle/busy | busy from send or `init` until `result` with `queued_turn_count==0`; presence-mod hooks as second signal | `thread/status/changed` | after `result`; `Stop` hook `fullyIdle` |
@@ -568,7 +576,7 @@ SessionEvent: Started{runtime_session_id, model} | TurnStarted | TextDelta | Mes
 | resume | `--resume <uuid>` + the **full spec again** (flags aren't restored); note the system-prompt snapshot | `thread/resume {threadId, cwd, developerInstructions}` | `--conversation <id>` / ACP `session/resume` |
 | stop | close stdin (graceful), then SIGINT, then SIGTERM after a timeout | `thread/unsubscribe`/close; stop daemon on office stop | close stdin; ACP close |
 | usage | `model_usage_since_last_result` + `total_cost_usd`; `rate_limit_event` | `thread/tokenUsage/updated.last`; `account/rateLimits/updated` | diff cumulative `usage` |
-| attach | TakeOver (stop headless → `claude --resume <uuid>` in pty-host → hand back), or keep S2's `--bg` path for agents the owner wants to "sit with" | Native: app TUI panel runs `codex --remote unix://…` (spike) | TakeOver: `agy --conversation <id>` in a PTY |
+| attach | TakeOver (stop headless → `claude --resume <uuid>` in pty-host → hand back), or keep S2's `--bg` path for agents the owner wants to "sit with" | TakeOver like the others (`agent-sessions.md`); native joining only if a spike proves `--ws-auth capability-token` | TakeOver: `agy --conversation <id>` in a PTY |
 
 ### 6.3 Decision needed: the Claude path versus ADR-0004
 
@@ -615,7 +623,8 @@ Whatever the choice, ADR-0004 should state how the office sends a prompt and rea
    - Inherited `CLAUDE_CODE_*` variables (transcripts silently off).
    - The user's global MCP connectors and plugins leak into every agent (seen here).
    - A GUI-launched office has a minimal `PATH` (S2/S3).
-   - Use an env **allowlist** and explicit config isolation (`--strict-mcp-config`, `--setting-sources`, `--ignore-user-config`, maybe per-agent `CLAUDE_CONFIG_DIR` + `CLAUDE_CODE_PROJECT_DIR_NAME`, and `CODEX_HOME`).
+   - Use an env **allowlist** and explicit config isolation (`--strict-mcp-config`, `--setting-sources`, maybe per-agent `CLAUDE_CONFIG_DIR` + `CLAUDE_CODE_PROJECT_DIR_NAME`).
+  - **Superseded for Codex:** a per-office `CODEX_HOME` would lose the user's sign-in, and `--ignore-user-config` is `exec`-only. `agent-sessions.md` (decision 6) keeps the user's Codex home and isolates with `-c` overrides and per-thread config instead.
 5. **Resume fidelity:**
    - Claude doesn't restore `--settings`, `--mcp-config`, `--plugin-dir` or `--add-dir`, and freezes the system prompt at the first request (`--system-prompt-snapshot`).
    - Codex filters by cwd.
@@ -638,9 +647,9 @@ Whatever the choice, ADR-0004 should state how the office sends a prompt and rea
   - Resume with the full spec replayed, and the system-prompt snapshot behavior.
   - RSS per idle process.
 - **S-codex** (install a pinned `@openai/codex@0.167.x`):
-  - App-server over `unix://`, two threads in two cwds, approvals, interrupt.
+  - App-server over stdio, one per session (superseded: rev 1 said `unix://` with two threads), approvals, interrupt.
   - `thread/tokenUsage/updated`.
-  - TUI `--remote` joining a thread the office already loaded.
+  - TUI `--remote` joining a thread the office already loaded, only over `--ws-auth capability-token` (optional).
   - Hook trust for the ADR-0003 Stop adapter.
 - **S-agy** (install 1.5.x, sign in once):
   - `agy acp` versus stream-json: interrupt, resume, `request_permission`, usage.

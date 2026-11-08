@@ -1,13 +1,22 @@
 # Design: agent sessions (the office runs the agents)
 
-Status: **proposed, rev 2** (ada, 2026-11-08), from the user's request:
+Status: **proposed, rev 3** (ada, 2026-11-08), from the user's request:
 - start Claude Code, Codex and Antigravity agents
 - pass them their instructions
 - send them work and get their responses
 - resume them in their previous workspace
 - manage their processes
 
-Rev 2 resolves the independent review of rev 1. It decides where sessions run (a home session plus one session per task), adds a supervisor crate, makes every new call app-bound, issues the session token ADR-0003 promised, defends against a hostile workspace and puts a lease on take-over.
+Rev 2 resolved the review of rev 1: a home session plus one session per task, a supervisor crate, app-bound calls, the session token, a hostile workspace and a lease on take-over.
+
+Rev 3 resolves the two reviews of rev 2. The main changes:
+- Each trigger goes to one session, and the office switches sessions at a turn boundary.
+- Git in worktrees: agents can't write `work.git`'s config or hooks, and the office sets their git config through the environment.
+- Hard denies on everything under the office home, and an agent's home must be outside it.
+- Codex runs one app-server per session over stdio. No shared socket.
+- Agent-session events reach only the app. Spooled sends from office-run agents are refused.
+- One-offs have no Member. Pause is the one "stopped" state (`AgentStatus::Paused`).
+- Orphans are found by a mark in their environment, and the session token is checked together with the caller's process ancestry.
 
 It builds on:
 - ADR-0001: each office owns its runtime side, meaning sessions, live status and local queues.
@@ -15,84 +24,109 @@ It builds on:
 - ADR-0003: messaging through the office. This design amends it (see "ADR-0003 amendments").
 - `offices-hq-and-satellites.md`
 - `projects-git-github.md`: a worktree per task.
-- Eden's run-modes spec: always on, on call, scheduled, one-off.
+- Eden's run-modes spec (`agent-run-modes-ux.md`, in Eden's `knowledge/specs/` in the agents repository): always on, on call, scheduled, one-off. Where this design differs, it says so.
+- `AgentProfile` and the handle namespace in `org-proto` (on `v1` since 86a6a9f).
 
 The research behind it, with exact flags, protocols and what was verified, is in `docs/research/agent-runtimes-control.md`.
 
 "Spike S1" and "spike S2" always mean the earlier v1 spikes. This design's own plan steps are S0 to S7.
 
+**Paths.** `<office home>` is the folder that holds every office on this Mac (ADR-0003's `<office_home>`, with `offices/` and `run/` in it). `<office dir>` is one office's folder, `<office home>/offices/<office id>/`.
+
 ## Decisions
 1. **Headless-first.** The office drives every agent as a child process over the runtime's structured JSON-lines protocol:
    - **Claude Code:** `claude -p --input-format stream-json --output-format stream-json --verbose`, one long-lived process per session.
-   - **Codex:** `codex app-server`, JSON-RPC with threads. One supervised app-server per office. Each Codex session is a thread on it.
+   - **Codex:** `codex app-server` over **stdio**, one process per session, with one thread in it. There's no socket. A shared app-server waits until a spike proves that its threads are isolated from each other and from agents.
    - **Antigravity:** `agy acp` (the Agent Client Protocol). `agy` stream-json is the fallback only if the spike shows ACP isn't ready, and then approvals follow decision 7's fallback.
 
-   **This replaces the `--bg` + `claude attach` choice** of the unmerged ADR-0004 draft (`0004-session-panel-embedded-terminal`), which spike S2 confirmed. `--bg` has no programmatic prompt channel, no structured events and no usage stream, and the office needs all three. A person can still work with an agent directly (see "Taking over"). ADR-0004 is rewritten to match before it merges.
+   **This replaces the `--bg` + `claude attach` choice** of the unmerged ADR-0004 draft (`0004-session-panel-embedded-terminal`), which spike S2 confirmed. `--bg` has no programmatic prompt channel, no structured events and no usage stream, and the office needs all three. A person can still work with an agent directly (see "Taking over"). ADR-0004 is rewritten to match before it merges, once the user agrees (U-S4).
 2. **One port, one adapter per runtime, one supervisor.**
-   - `org-runtime` is the **port**: `AgentRuntime`, `Session`, `SessionSpec`, `LaunchPlan`, the normalized `SessionEvent`, `Capabilities` and usage types. It's a contract, like `org-proto`. It does no I/O.
+   - `org-runtime` is the **port**: `AgentRuntime`, an optional `RuntimeHost`, `Session`, `SessionSpec`, `LaunchPlan`, the normalized `SessionEvent`, `Capabilities` and usage types. It's a contract, like `org-proto`. It does no I/O.
+     - `AgentRuntime` is a stateless factory per runtime: its capabilities, and the launch plan for a session.
+     - `RuntimeHost` is a shared host process that serves several sessions. It's optional, and nothing uses it while Codex runs one app-server per session.
+     - `Session` speaks the runtime's protocol over the child's pipes.
    - The port is **synchronous**: blocking calls plus `std::sync::mpsc` channels for events. No async runtime.
    - `org-runtime-claude`, `org-runtime-codex` and `org-runtime-agy` implement it. An adapter **builds a launch plan** (argv, env additions, files to write) and **speaks its protocol over the child's pipes**. It never spawns.
-   - `org-supervise` is the **one place** that spawns, owns process groups, applies the env allowlist, runs the stop sequence, reaps children and cleans up orphans.
-   - Adapters depend only on `org-runtime`: never on each other, on `org-supervise`, on `org-office` or on storage. `org-office-server` (the composition root) wires them together.
+   - `org-supervise` is the **one place that spawns agent runtimes** and their probes. It spawns piped children and, for take-over, PTYs. It owns process groups, the env allowlist, the stop sequence, reaping and orphan cleanup. (`org-git` and `org-office-host` spawn their own children.)
+   - **The lock** on an agent is released when its child is reaped, or, for a thread on a `RuntimeHost`, when the thread is unloaded.
+   - Adapters depend only on `org-runtime`: never on each other, on `org-supervise`, on `org-office` or on storage.
+   - **`org-office` depends on neither `org-runtime` nor `org-supervise`.** It holds the run rules as domain logic (the queues, routing, limits, the run record) and defines the small trait it needs to act on sessions, in its own terms (`SessionControl`: start, send, interrupt and stop a session by id). `org-office-server`, the composition root, implements it with `org-supervise` and the adapters, maps the office's session record to a `SessionSpec`, and runs the **per-session event loop**: it reads each adapter's events and feeds the facts (turn ended, approval requested, usage, exit) into `org-office`.
    - The volatile third-party CLIs sit behind a stable port, so a runtime's protocol change touches one adapter.
 3. **The office owns the run, the runtime owns the conversation.** The runtime keeps its transcript in its own store (e.g. `~/.claude/projects/…`). The office keeps, in `office.db`:
-   - the **session record**: agent, kind (home or task), runtime, runtime session id, workspace, the full launch spec, state, and the child's pid, process group id and start time
+   - the **session record**: agent, kind (home or task), runtime, runtime session id, workspace, the full launch spec, state, the session mark, and the child's pid, process group id and start time
    - the **runs**: each wake, with its triggers, start and end, outcome and usage
    - the **approvals**
    - a **bounded normalized event log** per run, for Activity and the session panel
 
    Prompt and response bodies stay in the runtime's store and in the office's encrypted `office.db`. They're never written to logs.
 
-   **Transcripts are plaintext.** Each runtime writes its transcript unencrypted in its own store, outside ADR-0002's encrypted `office.db`. That's accepted for phase 1 as a stated exception to ADR-0002's encryption at rest, and the user is told (U-S3). ADR-0002 gets a matching note.
+   **Transcripts are plaintext.** Each runtime writes its transcript unencrypted in its own store, outside ADR-0002's encrypted `office.db`. That's accepted for phase 1 as a stated exception to ADR-0002's encryption at rest, and the user is told (U-S3). ADR-0002 gets a matching note (plan step D1).
 4. **Sessions and workspaces.** An agent has:
-   - a **home session** for wakes that aren't about a task (messages, schedules, owner pings). Its cwd is the agent's home folder.
-   - **one task session per task.** Its cwd is that task's worktree (`projects-git-github.md`). The agent's home is added **read-only**, for its memory:
+   - a **home session** for triggers that aren't about a task (messages, schedules, owner pings). Its cwd is the agent's home, `profile.home`.
+     - **The home must be outside `<office home>`**, it can't be a git repository's root (see "Security", fixed denies), and it can't be the user's `$HOME` or contain any of the user-config paths under "Security" (fixed denies). HQ can't check that (it doesn't know the office's paths), so the agent's office refuses to run such an agent, and the agent shows as Needs you with the reason.
+   - **one task session per task.** Its cwd is that task's worktree (see "Git in worktrees"). The agent's home is added **read-only**, for its memory:
      - Claude: `--add-dir <home>`, with the permission policy denying writes there.
      - Codex: the home is readable but left out of the thread's writable roots (`thread/start`).
      - Antigravity: `--add-dir <home>`, with the policy denying writes there.
 
-   **At most one live process per agent.** Wakes for the same agent are serialized, and a task session and the home session never run at once.
+   **At most one live process per agent.** Each trigger goes to one session, and the office switches between them at a turn boundary (see "Sessions and triggers").
 
-   **If the workspace is gone** (the worktree was removed, the transcript was pruned, or the resume failed), the office starts a fresh session with a short summary of the last run's record, and the run records why.
+   **If something is gone:**
+   - The home is missing: preflight fails and the agent goes to Needs you.
+   - A task's worktree is missing: the office re-creates it from the pushed task branch (see "Git in worktrees").
+   - The transcript was pruned or the resume failed: the office starts a fresh session with a short summary of the last run's record, and the run records why.
 5. **The full launch spec is replayed on every start and resume.** Claude's `--resume` doesn't restore `--settings`, `--mcp-config`, `--plugin-dir` or `--add-dir`, a `-p` resume starts in Manual permission mode, Codex filters threads by cwd, and Antigravity's conversations are tied to the cwd. So the office stores the whole spec and always replays it, in the session's own workspace.
-   - The spec includes the permission mode and the sandbox mode. Claude always gets `--permission-mode`, and Codex gets `approvalPolicy` and `sandbox` on both `thread/start` and `thread/resume`.
+   - The spec includes the permission mode and the sandbox mode. Claude always gets `--permission-mode`. Codex gets `approvalPolicy`, `approvalsReviewer: "user"` and `sandbox` on every `thread/start` and `thread/resume`.
    - `spec_hash` covers the whole spec. Claude keeps the system prompt it recorded at the first request (`--system-prompt-snapshot`), so when a resume's `spec_hash` shows changed instructions, the office sends the change as a message ("Your instructions changed: …").
-   - Bypass modes are banned everywhere: Claude `bypassPermissions`, Codex `danger-full-access` and `--yolo`, Antigravity `--dangerously-skip-permissions`.
+   - **Bypass modes are banned everywhere**, headless and interactive:
+     - Claude: `bypassPermissions` and `--dangerously-skip-permissions`. The office's settings set `disableBypassPermissionsMode: "disable"`, so the take-over TUI can't switch to it either.
+     - Codex: `danger-full-access`, `--dangerously-bypass-approvals-and-sandbox` (and its `--yolo` alias in releases that have it), and `--dangerously-bypass-hook-trust`. The take-over TUI gets the same `-c` pins as the app-server, but a person can still change them from inside it (a known limit under "Security", unless S0 can lock them).
+     - Antigravity: `--dangerously-skip-permissions`.
 6. **Isolation by default.**
    - **Environment allowlist.** The child gets only:
-     - `PATH` (captured once from the user's login shell), `HOME`, `LANG`, `TMPDIR`, `USER`, `LOGNAME`, `SHELL`, and `TERM` for the take-over PTY
-     - `SSH_AUTH_SOCK`, only if the agent's policy allows git over ssh
+     - `PATH` (captured once from the user's login shell), `HOME` (the runtimes need it), `LANG`, `USER`, `LOGNAME`, `SHELL`, and `TERM` for the take-over PTY
+     - `TMPDIR`: the session's own directory, `<user temp>/agentic-org/<session id>/` (0700), outside `<office home>` so the agent can write it. It's removed when the session ends.
      - `ORG_AGENT=<agent>`, `ORG_OFFICE=<office id>`, `ORG_OFFICE_HOME`
-     - `ORG_SESSION_TOKEN`: a random token per start and resume, held only in office memory, required on `msg.bind` (see "Messaging"), never in argv or a settings file, never logged
+     - `ORG_SESSION_TOKEN`: a random token **per run**, held only in office memory, required on `msg.bind` (see "Messaging"), never in argv or a settings file, never logged. A run is one process's life (see "The model"), so every spawn (start, resume or take-over) gets a fresh token, and the token dies when the process exits.
+     - `ORG_SESSION_MARK`: a random value **per session**, recorded before the spawn, used to find orphans (see "Processes and safety"). It isn't a secret.
+     - git: `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=<an office-generated file>`, and `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` setting `core.hooksPath` to an empty office directory, `core.fsmonitor=false`, `gc.auto=0` and `maintenance.auto=false` (see "Git in worktrees")
+     - `GH_CONFIG_DIR=<an empty office directory>`, so `gh` sees no login of the user's. Agents get `gh` only through `org-agent gh-token` (`projects-git-github.md`).
+     - The git global file, the empty hooks directory and the empty `gh` directory all live in the agent's runtime dir (`<office dir>/agents/<agent id>/runtime/`), which agents can read but never write. So nobody can plant a hook or a setting there.
      - office-set runtime switches such as `DISABLE_AUTOUPDATER=1`
 
-     Everything else is dropped, including `CLAUDE_CODE_*`, `AI_AGENT` and any API key.
+     Everything else is dropped, including `SSH_AUTH_SOCK`, `CLAUDE_CODE_*`, `AI_AGENT`, `GH_TOKEN`, other `GIT_*` variables and any API key. There's no git over ssh: agents never push themselves (`org-agent push`), so they don't need an ssh agent.
    - **Runtime binaries** are run by their recorded absolute paths, never looked up on `PATH`.
-   - **No personal config reaches agents:**
-     - Claude: `--setting-sources` loads no user, project or local file. Settings come only from the office's `--settings <file>` (0600). `--strict-mcp-config` with the office's `--mcp-config <file>`. The spike confirms the exact `--setting-sources` value, and whether the user's `~/.claude/CLAUDE.md`, skills and agents still load. If they do, it tries `--bare` (if sign-in still works), else documents the limit.
-     - Codex: the user's normal Codex home, so the user's sign-in works (no `CODEX_HOME` override). Isolation comes from per-thread config (`thread/start` config overrides) and `-c` flags on the app-server, and from `--ignore-user-config` / `--ignore-rules` if they keep the sign-in. The Codex spike lists what still leaks (e.g. `~/.codex/AGENTS.md`, MCP servers).
-     - Antigravity: `--gemini-dir <office dir>` if sign-in still works there. **Known limit:** otherwise the user's `~/.gemini` rules, hooks, MCP servers and plugins load into every Antigravity agent. We document it and tell the user.
-   - **Generated runtime files** (settings, MCP config, instruction files, Antigravity's custom agent file) live **outside the workspace**, in `<office home>/agents/<agent id>/runtime/` (0700, files 0600), where `<office home>` is `<home>/offices/<office id>/`. If a runtime can only read them from the workspace, they're git-excluded through `.git/info/exclude`.
+   - **No personal config reaches agents.** HOME stays, but the user's git and `gh` config don't reach agents (above). For the runtimes:
+     - Claude: `--setting-sources` loads no user, project or local file. Settings come only from the office's `--settings <file>` (0600). `--strict-mcp-config` with the office's `--mcp-config <file>`. The spike confirms the exact `--setting-sources` value, whether the user's `~/.claude/CLAUDE.md`, skills and agents still load, and what `--restricted` (2.1.311) changes. If they still load, the limit is documented.
+     - Codex: the user's normal Codex home, so the user's sign-in works (no `CODEX_HOME` override). Isolation comes from `-c` overrides on the app-server and the thread's config: hooks off, the user's MCP servers off (`-c` / `--disable`), `approvalsReviewer: "user"`, the approval policy and the sandbox pinned. (`--ignore-user-config` and `--ignore-rules` exist only on `codex exec`, so they don't apply.) The Codex spike lists what still leaks from `~/.codex` (e.g. `AGENTS.md`, other `config.toml` keys).
+     - Antigravity: `agy acp --gemini-dir <runtime dir>/gemini` (each agent's own, under its runtime dir) if sign-in still works there. The spike also tries `--include-default-customizations=false` and `--app-data-dir`. **Known limits:** if neither works, the user's `~/.gemini` rules, hooks, MCP servers and plugins load into every Antigravity agent. Take-over (`agy --conversation`) has no `--gemini-dir` at all, so it loads them unless the spike finds a way. We document both and tell the owner when they enable an Antigravity agent.
+   - **Generated runtime files** (settings, MCP config, instruction files, Antigravity's custom agent file) live **outside the workspace**, in `<office dir>/agents/<agent id>/runtime/` (0700, files 0600). Agents can read them, never write them (the hard denies under "Security"). If a runtime can only read them from the workspace, the office writes them there itself before every start (so an agent's edits never survive), and git-excludes them through `work.git/info/exclude`, which every worktree shares and agents can't write.
    - **Runtime sandboxes are on by default:** Codex `workspace-write`, Claude's bash sandbox (in the office's settings), Antigravity `--sandbox`.
+     - Each sandbox's **writable roots** are set by the office: the workspace, the session's `TMPDIR`, and for a task session the parts of `work.git` that commits need (see "Git in worktrees").
+     - Each sandbox **explicitly allows the agent's office socket** (`<office home>/run/<handle>.sock`), so `org-agent` works: Claude `allowUnixSockets`, Codex and Antigravity as their spikes find (S0).
    - **Auth stays in each runtime's own store.** The office never puts API keys in an agent's environment. API-key support, when it's added, goes through each runtime's own credential mechanism.
 7. **Approvals go to the person, never silently lost.** In headless mode all three runtimes deny or soft-deny actions that need approval. The adapters bridge approval requests into the office:
    - Claude: `--permission-prompt-tool stdio` and `can_use_tool` control requests.
    - Codex: `item/*/requestApproval`.
    - Antigravity: ACP `session/request_permission`.
 
-   The office answers from the agent's **permission policy** (what's allowed without asking, by tool and path), and asks the owner in **Needs you** for anything else. Each runtime's own allow rules and sandbox are set from the same policy as a first line of defence.
+   The office answers from the agent's **permission policy** (what's allowed without asking), and asks the owner in **Needs you** for anything else. Each runtime's own allow rules and sandbox are set from the same policy as a first line of defence.
+   - **Policy scopes:** a rule is a tool plus one of: a path pattern, a command prefix (for shell tools), or an MCP server.
    - Needs you shows the **structured tool input**. The agent's own justification is shown too, labeled as untrusted.
    - An unanswered approval **expires after 30 minutes** (configurable) and counts as a deny. Waiting doesn't count toward the run's time limit.
-   - Approvals are office data in `office.db` and survive an office restart. If their session died, answering one returns `not_found`.
-   - `allow_always` is scoped to (agent, tool, path pattern) and stored in the agent's permission policy.
+   - Approvals are office data in `office.db`. At office startup, pending approvals whose session is dead are marked `expired`. Answering one returns `not_found`.
+   - `allow_always` adds a rule to the agent's permission policy. It's a **versioned policy change**, like `permission_policy.set`, and shows in the policy's history.
+   - **The fixed denies (under "Security") override every allow rule**, `allow_always` included.
 
    **Fallback:** if a runtime's approval bridge doesn't work, its actions that need approval are **denied**, the run ends as `blocked`, and a Needs-you item says what was denied. Skip-permissions modes are never used.
 8. **Instructions are composed by the office** from:
    - the agent's identity and memory: its home `CLAUDE.md` / `AGENTS.md` and its profile
-   - the project's instruction files in the workspace
-   - the **wake guidance** for the moment (`docs/.guidance/<moment>.md`, Eden's agent-guidance)
+   - the project's instruction files, **read from the project's default branch in `work.git`** (with the office's hardened git), never from the worktree
+   - the **wake guidance** for the moment: the agent's own guidance (org data, editable in How it runs, RUN-11), else the default for the moment (Eden's agent-guidance), with project guidance files (`docs/.guidance/<moment>.md`) also read from the default branch
 
-   Each runtime receives them its own way:
+   So what an agent writes in its worktree never changes what the office tells the next session. The runtimes themselves also read instruction files from the cwd (`CLAUDE.md`, `AGENTS.md`, `.agents/rules`). That's the task branch's own content, so it can steer only that task's sessions, and it's treated as untrusted (see "Security").
+
+   Each runtime receives the office's instructions its own way:
    - Claude: `--agents <json>` defines the agent inline (name, description, a one-line prompt) and `--agent <id>` selects it. The instructions go in `--append-system-prompt-file`, so they don't show in `ps`.
    - Codex: `developerInstructions` on `thread/start` / `thread/resume`.
    - Antigravity: a generated custom agent file `<runtime dir>/.agents/agents/<id>.md`, read through `--add-dir <runtime dir>`, selected with `--agent <id>`.
@@ -101,137 +135,239 @@ The research behind it, with exact flags, protocols and what was verified, is in
 9. **Office-run sessions load no mods and no inbox hooks.** Not presence, inbox or goals: the office does presence, the wake path and the run rules itself. The inbox hooks stay for sessions people start interactively.
 
 ## The model
-- **SessionSpec** `{ agent_id, kind (home | task), task_id?, runtime, runtime_path, model?, workspace (cwd), extra_dirs (read-only), instructions, permission_policy, permission_mode, sandbox, env_allowlist, mcp (office-provided only), runtime_files }`
-  - `workspace` is the agent's home folder for the home session, and the task's worktree for a task session.
-- **Session** (one conversation of one agent, at its office) `{ id, agent_id, kind, task_id?, runtime, runtime_session_id, workspace, spec_hash, state, pid?, pgid?, child_started_at?, started_at, last_turn_at }`
+- **SessionSpec** `{ agent_id?, one_off_run_id?, kind (home | task | one_off), task_id?, runtime, runtime_path, model?, workspace (cwd), extra_dirs (read-only), writable_roots, instructions, permission_policy, permission_mode, sandbox, env_allowlist, mcp (office-provided only), runtime_files }`
+  - `workspace` is the agent's home for the home session, and the task's worktree for a task session.
+- **Session** (one conversation of one agent or one-off, at its office) `{ id, agent_id?, one_off_run_id?, kind, task_id?, runtime, runtime_session_id, workspace, spec_hash, mark, state, pid?, pgid?, child_started_at?, started_at, last_turn_at }`
   - States: `starting` · `idle` · `busy` · `needs_approval` · `with_you` · `stopping` · `stopped` · `crashed`.
-  - **One live process per agent.** The office holds a lock per agent. It's released only after the child is reaped.
-- **Run** `{ id, agent_id, session_id?, triggers: [trigger], queued_at, started_at?, ended_at?, busy_ms, outcome?, fresh_start_reason?, usage }`
-  - A trigger is `message | ask | task | schedule | owner | one_off`, with its id. A run records a **list** of them, because triggers that arrive while it's live are merged into it.
-  - Outcomes: `done` · `idle_timeout` · `max_time` · `interrupted` · `blocked` · `quota` · `failed` · `crashed` · `interrupted_by_restart`.
-  - A run is one wake. Activity and Eden's Runs tab show runs.
-- **Approval** `{ id, agent_id, run_id, session_id, tool, input (structured), justification (the agent's own words, untrusted), requested_at, expires_at, state (pending | allowed | denied | expired), decided_by? }`
-  - Office data in `office.db`, so it survives an office restart.
-- **Permission policy** (per agent, office data) `{ allow: [(tool, path pattern)], deny: [(tool, path pattern)], git_over_ssh: bool }`, plus the fixed denies under "Security".
-- **Desired state** (per agent): `running` or `stopped`, set by `agent.wake` and `agent.stop`.
+  - **One live process per agent.** The office holds a lock per agent (see decision 2 for when it's released).
+- **Run** `{ id, short_no, agent_id?, one_off?, session_id?, triggers: [trigger], queued_at, started_at?, ended_at?, busy_ms, outcome?, fresh_start_reason?, usage }`
+  - A run is **one process's life for one session**: from its start or resume until the process stops. Triggers that reach a live session join its run. So an always-on agent's run lasts until its time limit, a switch, a take-over or a stop, and the next start is a new run. `short_no` is the office's run number, shown as "R-n".
+  - A trigger is `message | ask | task | schedule | owner | one_off | continue`, with its id and the session it's routed to. `continue` is the office's own trigger for a session that was switched out (see "Sessions and triggers"). A run records a **list** of them, because triggers for the same session that arrive while it's live are merged into it.
+  - Outcomes: `done` · `idle_timeout` · `max_time` · `switched` · `taken_over` · `paused` · `interrupted` · `blocked` · `quota` · `failed` · `crashed` · `interrupted_by_restart`.
+  - Activity and Eden's Runs tab show runs.
+- **Approval** `{ id, agent_id?, run_id, session_id, tool, input (structured), justification (the agent's own words, untrusted), requested_at, expires_at, state (pending | allowed | denied | expired), decided_by? }`
+  - Office data in `office.db`, so it survives an office restart (see decision 7 for what startup does with it).
+- **Permission policy** (per agent, office data) `{ version, allow: [rule], deny: [rule] }`, where a rule is `(tool, path pattern | command prefix | MCP server)`, plus the fixed denies under "Security".
+- **Run mode and Pause** are org data on the agent's profile (see "Run modes"). There's no separate desired state.
 - **Usage per turn:** tokens in, out and cached; `cost_usd`, always marked *estimated*; the model.
   - Per-turn fields where they exist: Claude `model_usage_since_last_result`, Codex `thread/tokenUsage/updated.last`.
   - Otherwise (Antigravity's cumulative `usage`): a baseline at the first report after any start or resume, then deltas.
-  - Claude's `total_cost_usd` is shown as "estimated (list price)", never as reported. Codex and Antigravity are priced by the office from a price table **at API prices in US dollars** (the user's rule).
+  - Claude's `total_cost_usd` is shown as "estimated (list price)", never as reported. Codex and Antigravity are priced by the office from a **price table** at API prices in US dollars (the user's rule). The price table is plan step S2e.
+
+## Sessions and triggers
+- **Each trigger is routed to one session:**
+  - task triggers (a task assigned or updated, a bug-fix task) go to **that task's session**
+  - **a reply** to a message the agent sent goes to the session that sent it. The office records each sent message's session (token → run → session), so the answer to an `ask` from a task session goes back to that task session. If that task session is gone (the task closed), the reply goes to the home session. That refines "messages go to the home session", so a reply lands where its context is.
+  - everything else (new messages and asks, schedules, the owner) goes to the **home session**
+- **Each session has its own queue.** Only triggers for the **same** session are merged into its next turn's wake prompt, and added to the live run's trigger list. That's when the session is `starting`, `busy`, `needs_approval` or `with_you`.
+- **A trigger for another session is queued.** When the live run reaches a turn boundary, the office sends a **checkpoint turn** ("Another piece of work is waiting. Record where you are, then stop."), with a 1-minute grace. The run ends `switched`, the process stops, and the office starts the other session. There's still one live process per agent.
+  - **The session whose trigger caused the switch runs next.** Otherwise the waiting session with the most urgent trigger goes next, then the oldest.
+  - **A switched-out session continues later.** A run that ends `switched` queues a `continue` trigger for its session, dated at the switch. So the session that pre-empted it runs first, then the queue's order brings the task back, and a stream of home messages can't starve a task.
+  - A run that never reaches a turn boundary is bounded by its time limit.
+  - **Divergence from Eden's spec:** "called while running → delivered to the running session" still holds within a session. A trigger for another session of the same agent waits for the switch.
+- **Always-on agents:** the home session is up whenever no task session is active. A task trigger pre-empts it at a turn boundary, as above. When the task session ends (idle, done or at its limit), the home session resumes.
+- **A trigger that arrives while the session is `stopping`** goes to the queue for a **new** run of that session. It's never merged into a run that's ending.
+- **A crashed run's triggers are re-queued**, like those of a run cut off by a restart (except one-offs; see "One-offs").
+- **After an interrupted turn** (a crash, a restart, a quota stop or `agent.interrupt`), the next wake prompt says that the last turn was interrupted, and asks the agent to check its state (its backlog, the worktree, its outbox) before acting, so it doesn't do something twice.
 
 ## How a run goes
 1. **Wake.** A trigger arrives:
    - a message, ask or task for the agent at its office
    - its schedule
-   - the owner pressing Wake
-   - a one-off job
-2. **Queue.** Each agent has **one wake queue**.
-   - Triggers that arrive while the agent is `starting`, `busy`, `stopping`, `needs_approval` or `with_you` are **merged** into the next turn's wake prompt, and added to the live run's trigger list.
-   - A schedule that fires during a live run is merged, not a new run.
+   - the owner pressing Wake or sending it a message
+   - a one-off job (see "One-offs")
+2. **Queue.** The trigger is routed to its session (see "Sessions and triggers").
+   - A schedule that fires while the agent has a live run is **skipped and noted** on the Runs tab ("Skipped 14:30: still running from 14:00", RUN-8). It's not merged.
+   - A paused agent's triggers wait and wake nothing (see "Run modes").
    - Over the office cap (4 live agents by default), wakes wait in order: urgent first, then oldest. Always-on agents may hold at most cap − 1 slots, so a wake can always get through.
-3. **Preflight** for the runtime: installed (the recorded path exists), its version (see "Processes and safety"), signed in (`claude auth status`, Codex `account/read`, the Antigravity equivalent or its first-request error). If the runtime is unavailable on a scheduled or triggered wake, it goes to **Needs you** at once.
-4. **Start or resume.** The session is the home session or the task's session (decision 4). If it has a `runtime_session_id` and the runtime can resume it (within the **resume window, 7 days by default**), the office **resumes it** with the replayed spec. Otherwise, or if the resume fails, it starts a **fresh session** with a summary of the last run's record, and records why.
+3. **Preflight** for the runtime: installed (the recorded path exists), its version (see "Processes and safety"), signed in (`claude auth status`, Codex `account/read`, the Antigravity equivalent or its first-request error). The workspace exists, or it's re-created. The home passes its checks (outside `<office home>`, not `$HOME`, not a repository's root). If the runtime is unavailable on a scheduled or triggered wake, it goes to **Needs you** at once. Probes run through `org-supervise` like any child.
+4. **Start or resume.** If the session has a `runtime_session_id` and the runtime can resume it (within the **resume window, 7 days by default**), the office **resumes it** with the replayed spec. Otherwise, or if the resume fails, it starts a **fresh session** with a summary of the last run's record, and records why.
    - Why 7 days: Claude prunes transcripts after 30 days (`cleanupPeriodDays`), the shortest documented retention of the three. 7 days leaves a wide margin, and past a week a fresh session with a summary costs less than a long, stale context.
-5. **Send.** The office sends the wake prompt: the guidance for this moment, plus what woke the agent (e.g. "2 new messages; task T-14 assigned"). Message bodies are fetched by the agent through `org-agent` (ADR-0003), not pasted into the prompt.
+   - Every run (every spawn) gets a fresh session token.
+5. **Send.** The office sends the wake prompt: the guidance for this moment, plus what woke the agent (e.g. "2 new messages; task T-14 assigned"), plus the interrupted-turn note when there is one. Message bodies are fetched by the agent through `org-agent` (ADR-0003), not pasted into the prompt.
 6. **Work.** Events stream into the office, which:
    - updates the agent's presence (see "Messaging")
    - records each turn's usage
    - routes approvals
    - stores **coarse** events in the run's log (turns, tool calls, approvals, errors). Text deltas are streamed live from memory (`run.event`) and never written one by one, which would cost a `fullfsync` batch each (ADR-0002).
-7. **More input.** A normal message for a **busy** agent waits for the turn's end and goes into the next turn. An **urgent** one is steered into the current turn where the runtime supports it (Codex `turn/steer`, Antigravity ACP's steering prompt). Elsewhere (Claude) the office interrupts, then sends. An **idle** agent gets it at once.
+7. **More input.** A normal message for a **busy** session waits for the turn's end and goes into the next turn. An **urgent** one is steered into the current turn where the runtime supports it (Codex `turn/steer`, Antigravity ACP's steering prompt). Elsewhere (Claude) the office interrupts, then sends. An **idle** session gets it at once.
 8. **Time limits count busy time.** Defaults: **30 minutes** per home-session run and **2 hours** per task-session run, configurable per agent. Time waiting for an approval doesn't count.
-   - At the limit, the office interrupts and sends a "checkpoint: summarize your state and stop" turn with a **2-minute grace**, then stops the session. The run ends `max_time`.
+   - At the limit, the office interrupts and sends a "checkpoint: record where you are and stop" turn with a **1-minute grace**, then stops the session. The run ends `max_time`.
+   - **A deliberate divergence from Eden's first spec**, which had one 30-minute cap: a task run needs longer (builds, tests), so task sessions get 2 hours. Eden's spec rev 2 now matches.
 9. **Sleep.**
    - An *on-call* or *scheduled* agent's run ends after it has been idle for **5 minutes** (default). The office closes the session gracefully and keeps the `runtime_session_id` for the next wake.
-   - An *always-on* agent stays up. If it crashes, the office restarts it with backoff. **Crash-looping is limited:** after 5 restarts in 10 minutes it stops and goes to Needs you.
-10. **Desired state.** `agent.stop` sets `stopped` and `agent.wake` sets `running`. An always-on agent that's been stopped stays stopped across office restarts.
-11. **Office restart.** At startup, before anything else:
-    1. The office kills surviving child groups from the session records (see "Processes and safety").
-    2. Runs still open are closed as `interrupted_by_restart`.
-    3. Their triggers are re-queued. Always-on agents (desired `running`) resume. On-call agents get their re-queued trigger as a fresh wake.
+   - An *always-on* agent stays up. If its session stops, the office restarts it after **10 s**, with backoff. **Crash-looping is limited:** after **3 restarts in 10 minutes** after runs that ended `crashed` or `failed` it stops and goes to Needs you ("ada keeps stopping", with the last error). Normal ends (`switched`, `max_time`, `taken_over`) don't count.
+10. **Office restart.** At startup, before anything else:
+    1. The office cleans up orphans (see "Processes and safety").
+    2. Runs still open are closed as `interrupted_by_restart`, and pending approvals of dead sessions as `expired`.
+    3. Their triggers are re-queued (except one-offs; see "One-offs"). Active always-on agents start their home session (or a queued task session). On-call agents get their re-queued triggers as fresh wakes.
 
 ## Quota
-- **A share of each runtime window is reserved for the user's own interactive use: 20% by default**, configurable. New wakes pause above 80% of a window and wait in the queue.
+- **A share of each runtime's 5-hour window is reserved for the user's own interactive use: 20% by default**, configurable. New wakes pause above 80% of the 5-hour window and wait in the queue. The reserve doesn't apply to the 7-day window: that one is shown, not enforced.
+- Live always-on runs aren't stopped above 80%. They get a **soft warning** in the app instead.
 - Sources: Claude's `rate_limit_event`, Codex's `account/rateLimits/updated`. Antigravity has no in-stream event, so the office polls its usage command (`agy -p "/usage" --output-format json`, supervised like any child) **at most every 10 minutes**.
-- A turn that hits the limit mid-turn ends the run as `quota`, and its triggers are re-queued for after the reset.
+- A turn that hits the limit mid-turn ends the run as `quota`, and its triggers are re-queued for after the reset (except one-offs; see "One-offs").
 - **Known limit:** each office sees only what its own sessions report, so between reports its view of the window is stale.
 
 ## Run modes (Eden's spec)
-- `run_mode` and `schedule` are org data on the agent's profile (HQ), changed with an org command (`member.set_run_mode`). The **agent's office** fires schedules. Offices run under the login service, so schedules work with the app closed.
+- **`run_mode` and `schedule` are org data on `AgentProfile`** (HQ). That's an additive `org-proto` change (plan step S2c, server-dev, as a follow-up to proto-agents). They're changed with an org command, **`member.set_run_mode`**, which is app-only.
+  - **`run_mode` is optional** (`Option<RunMode>`). None means the agent is **run by hand** (`bin/agent`, a terminal), as all of ours are today: the office doesn't run it, and ADR-0003's accepted risk applies. That differs from Eden's "every agent has a run mode" until every agent is office-run. The app shows such an agent as run by hand.
+  - **Setting a run mode** makes the agent office-run: from then on `msg.bind` as it needs a session token, so a hand-started session of it loses messaging and the person uses take-over. **Clearing it** makes the office stop the agent's sessions (a checkpoint turn, then stop), and binding goes back to the accepted risk.
+  - The **agent's office** fires schedules. Offices run under the login service, so schedules work with the app closed.
   - Schedules are in the **owner's time zone**, and the office stores each schedule's **last fired time**.
-  - A missed run runs once.
-  - Three failed wakes in a row go to the owner's Needs you.
-- **Asleep is derived, not stored:** an on-call or scheduled agent with no live run is asleep, and an always-on agent with no live session is offline.
-- **One-offs.** A one-off is a run of a **temporary agent identity**: an ephemeral Member with `kind: agent` and `profile.status: ephemeral`, created by the office for the job and removed after. `org-agent` can bind as it (with its session token), and it's hidden from the org chart. Its run record and outcome stay.
-  - Its workspace is a worktree from `org-git`, attached to its work item. The worktree is removed **only after its branch is pushed through the office** (`projects-git-github.md`). Otherwise it's kept and flagged in Needs you.
+  - A missed run runs once, and says so (RUN-8).
+  - Three failed wakes in a row go to the owner's Needs you (RUN-9).
+- **Pause is the one "stopped" state** (DEAL-3). It's `AgentProfile.status = paused`, the flag `org-proto` already has.
+  - The app's Pause calls `agent.stop` at the agent's office. The office at once stops the live run (a checkpoint turn, then stop; the run ends `paused`), stops the schedule and wakes, and submits `member.set_agent_status { paused }` to HQ on the owner's behalf, through its outbox. So Pause works with HQ unreachable, and it's org data once HQ applies it.
+    - If that command hits `conflict` (the member changed meanwhile), the office re-reads the member and submits again, unless it's already paused. A pause is never dropped.
+    - When the office applies a `paused` status that was set elsewhere (another app, another office), it does the same: it stops the live run, the schedule and wakes.
+  - While paused, messages and tasks still queue, **without waking** the agent. `agent.wake` is refused with `unavailable` (reason `paused`).
+  - Resume is `member.set_agent_status { active }` from the app. When the office applies it, it wakes the agent again by its run mode (the mode itself never changed).
+  - `agent.wake` never changes the run mode. Waking an on-call agent doesn't make it always on.
+- **Asleep is derived, not stored:** an on-call or scheduled agent with no live run is asleep, and an always-on agent with no live session is offline. A paused agent shows Paused.
+
+## One-offs
+A one-off is a **run with no Member** (decided with Eden, A28 and RUN-12). It's office data only: no org event, no handle, nothing in the org chart. It works at a satellite with HQ unreachable.
+- **Starting one:** the app calls `run.one_off { role, title?, runtime, model?, instruction, project_id?, work_item? }` at an office. Only the app can (app-bound).
+- **Identity:** the run's **run-scoped session token**. `org-agent` binds with it alone (`msg.bind { session_token }`, no `agent`), and the office maps the token to the run.
+  - The bind also needs **peer ancestry**, as for agents (see "Messaging").
+  - Its address is a **run address**, `run:<office id>/<run id>`, a reserved form that's never a member id or handle. It carries the office, so HQ routes replies there like a placed agent's. ADR-0003 is amended to accept it in `from`/`to`, in its authorization rows and in routing.
+  - Its messages show as "<role> (one-off R-n)". They're authorized by the token.
+  - Once the run has ended, a message to it is dead-lettered with `delivery_failed` (reason `run_ended`).
+  - It reads only its own messages, like an agent-bound connection. It can call `who`, but not `status.set`.
+- **Workspace:** with a project, a worktree from `org-git`, attached to its work item. Without one, a fresh empty folder in the user's temp directory, removed at the run's end. The worktree is removed **only after its branch is pushed through the office** (`projects-git-github.md`). Otherwise it's kept and flagged in Needs you.
+- **Never re-queued.** A one-off that ends by a crash, a restart or the quota isn't run again by itself, because its address and workspace belong to that run. It ends with its outcome, and Needs you offers **Run again**, which starts a new one-off.
+- **Cleanup:** at the run's end the token is void, the workspace goes as above, and the run record (outcome, cost, transcript link) stays, attached to the job.
+- **Permission policy:** the one given at start, from the role's default. An empty policy sends every approval to Needs you. The fixed denies apply as always.
+- **Limits:** a one-off counts toward the office cap of live agents. It has its own lock, and the task-session time limit (2 hours).
+- **Who it may message:** the people of its job only: whoever started it, the job's assignee and reviewers, and the owner. Anything else is refused with `not_authorized`. The messaging library asks the office through `SessionAuth` (ADR-0003 §2.1.4 and §4.3).
+- **Across offices:** a message to or from a one-off in another office crosses offices, so HQ must route run addresses (plan step S3e). An office that doesn't own the run accepts any well-formed `run:<office>/<run>` and forwards it. Only the owning office knows whether the run is live, and it dead-letters a late message with `run_ended`. HQ accepts run addresses in synced messages, and in `from` only from the office the address names.
+- **Owners:** server-dev (the run and `run.one_off`), Remy (binding as a run in the messaging library and `org-agent`).
 
 ## Taking over (a person works with the agent directly)
-- **The office spawns the interactive process itself**, through `org-supervise`, with the full replayed spec and the same environment allowlist (a fresh session token included):
-  1. The office interrupts and stops the headless process, keeping the agent's lock.
-  2. It starts the interactive CLI (`--resume <id>` / `--conversation <id>`) in the session's workspace, in a PTY it owns.
-  3. The app attaches to the office's PTY stream, using spike S2's pty-host frames.
+- **Every runtime takes over the same way: stop, then resume interactively.** The office spawns the interactive process itself, through `org-supervise`, with the full replayed spec and the same environment allowlist (a fresh session token included):
+  1. The office interrupts and stops the headless process, keeping the agent's lock. Its run ends `taken_over`. For Codex it unloads the thread (`thread/unsubscribe`) first, then stops the app-server.
+  2. It starts the interactive CLI in the session's workspace, in a PTY it owns, as a new run (trigger `owner`): `claude --resume <id>`, `codex resume <thread id>` with the same `-c` isolation pins, or `agy --conversation <id>`.
+  3. The app attaches to the office's PTY stream, using spike S2's pty-host frames. Each frame carries at most **64 KiB** of terminal data, well inside `MAX_FRAME_BYTES`.
+- **Codex joining a live thread** (`codex --remote`) isn't used. It would need a listener that agents can't reach: a spike can try `--listen ws://127.0.0.1:0 --ws-auth capability-token --ws-token-sha256 <hash>`, with the token kept in office memory and given only to the TUI through `--remote-auth-token-env`. Until that's proven, Codex takes over like the others.
+- **Antigravity's take-over** loads the user's `~/.gemini` (decision 6) unless the spike finds a way around it.
+- **Which session:** `session.take_over` names one (`session: "home" | { task_id }`). The default is the live session, or the home session when nothing is live. Taking over a session that isn't live while another one is stops the live one first, as a switch (at once, with no checkpoint turn, because the owner asked).
+- **Codex's TUI** can change its approval policy or sandbox from inside (`/approvals`). See the known limit under "Security".
 - **Lease.** The app sends a heartbeat every **10 s**. If none arrives for **30 s**, the office ends the interactive process and hands the agent back.
 - **Hand-back.** For an always-on agent the office resumes headless. For an on-call agent it just releases the lock.
-- **Codex:** joining the running thread with `codex --remote unix://<socket>` is a spike item. Until it's proven, Codex take-over works like the others. The app-server's socket lives in a 0700 directory, and its path is never given to agents.
 - The agent's presence shows **"With you"** meanwhile.
 - The session panel shows the normalized event stream (messages, tool calls, approvals) whether or not anyone has taken over.
+- **An office-run agent that a person starts by hand** (`bin/agent`, a terminal) has no session token, so it can't bind to messaging as that agent. To work with an office-run agent, a person uses take-over. That's documented for the owner.
 
 ## Messaging (ADR-0003) with office-run sessions
 - For a session the office runs, the office **is** the wake path. It sends "you have messages" as a turn, at a natural break, using the same urgent/normal triage rules. The inbox hooks (codex-dev's adapters) stay for sessions a person started interactively, such as ours today.
-- **Session token.** An agent with a `run_mode` is office-run, and `msg.bind` as it requires the live session's `ORG_SESSION_TOKEN` (ADR-0003 M-A, amended). `org-agent` reads it from its environment. Agents people start interactively keep ADR-0003's accepted risk.
-- **Don't block.** In office-run mode the wake guidance tells agents not to block in `msg wait` or `msg ask --timeout` for longer than **60 s**: the office wakes them.
+- **Session token.** An agent with a `run_mode` is office-run. `msg.bind` as it requires **both**:
+  - the live run's `ORG_SESSION_TOKEN` (ADR-0003 M-A, amended). `org-agent` reads it from its environment.
+  - **peer ancestry:** the office reads the caller's audit token (`LOCAL_PEERTOKEN`: the pid plus its pid version, so a reused pid doesn't match) and walks its parent chain. The chain must include the session's recorded child pid.
+
+  A missing or wrong token, or a failed ancestry check, is refused with `not_authorized`. Agents people start interactively keep ADR-0003's accepted risk.
+- **Where it's checked.** The messaging library (`org-mailbox`) owns a narrow port, `SessionAuth` (verify a token for a member or a one-off run, with the caller's audit token). `org-office-server` implements it from the office's live runs and the OS process table. Tokens are compared in constant time.
+  - When a run's process exits, its token dies and the office **closes every connection bound with that token**, so a leftover `msg wait` can't keep acting as the agent.
+- **Waits are capped.** On a token-bound connection the server caps `wait_ms` and `timeout_ms` at **60 s**. `org-agent` lowers its own defaults to match when `ORG_SESSION_TOKEN` is set.
+  - An `ask` keeps its full deadline (`ttl_ms`, up to 24 h for a person). After the 60-second hold, `org-agent msg ask` exits `2` with `"pending": true`, and the reply wakes the agent when it arrives.
+- **No spool for office-run agents.** They die with the office, so they never need it. `org-agent` with `ORG_SESSION_TOKEN` set exits `5` instead of spooling, and **spool ingest refuses** any spooled send whose `from` is an office-run agent or a run: it's dead-lettered with a log line (ids only, no body). **M-A is closed for office-run agents only together with this rule**, because the spool is the one path into messaging that skips `msg.bind`.
 - **Presence** (ADR-0003, amended): `busy`, `idle`, `needs_you`, `with_you`, `asleep` (derived) and `offline`. An agent whose connection holds an `org-agent` wait (`msg.wait` or `msg.ask`) counts as **idle**, though the time still counts toward the run's busy time.
 - `org-agent` works the same in both: agents read, answer and defer through it.
 
+## Git in worktrees
+This applies `projects-git-github.md` (a bare `work.git` and a worktree per task) to sessions the office runs.
+- **What agents can write.** A task session's writable roots include only:
+  - its worktree, `worktrees/<task id>/`
+  - `work.git/objects/` (except `objects/info/`), `work.git/refs/`, `work.git/logs/` and `work.git/worktrees/<id>/` (its own worktree's admin folder, except its `commondir` and `gitdir` files), which `git commit` needs
+
+  `work.git/config`, `work.git/hooks/`, `objects/info/` (alternates, commit-graph) and everything else in `work.git` are **read-only** to agents. The office's own git also runs with `core.commitGraph=false`, and refuses a `work.git` that has `objects/info/alternates`.
+- **Per-worktree config.** The office sets `extensions.worktreeConfig` in `work.git/config` when it makes the clone. Git's documentation says `core.bare` must then move to `work.git/config.worktree`, or every worktree may look bare; S3c confirms that and does it. An agent's `git config --worktree` writes to its own `work.git/worktrees/<id>/config.worktree`, which applies only in its own worktree. A plain `git config` (which would write `work.git/config`) fails.
+- **The office sets the config that matters through the environment** (decision 6): `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=<office file>` (the commit identity from `projects-git-github.md`, and no credential helper), and, through `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n` (which override every config file), `core.hooksPath=<an empty office directory>`, `core.fsmonitor=false`, `gc.auto=0` and `maintenance.auto=false`. Without the last two, an automatic gc would try to write outside the writable roots.
+  - So a hostile `config.worktree` or a planted hook in agent A's worktree never runs in agent B's sessions.
+- **The office's own git near a worktree.** In `work.git/worktrees/<id>/`, the `commondir` and `gitdir` files are read-only to agents (left out of the writable roots). Before any office git command touches a worktree (`worktree remove`, re-creating one, the check for uncommitted work), the office deletes that worktree's `config.worktree` and rewrites `commondir` and `gitdir` to their known values. Agents can't write the worktree's own `.git` file (a fixed deny), but as a second line of defence the office also deletes it (file, folder or symlink) and writes it again with its known value, and it never lets git discover the repository through it: it sets `GIT_DIR=work.git/worktrees/<id>` and `GIT_WORK_TREE=<the worktree>` explicitly. (`git worktree remove` checks that file, so rewriting it also keeps removal from getting stuck.) Then it runs with its hardening (`projects-git-github.md`): no global or system config and hooks off. So no filter driver, hook or redirected repository that an agent planted can run in the office's git.
+- **A task that changes hands.** When a task's worktree passes to another agent, the office deletes its `config.worktree` first, so agent A's settings (filters, `diff.external`, a pager) never run with agent B's token.
+- **A missing worktree** is re-created from the pushed task branch through `org-git` (one operation per repository at a time). If the branch was never pushed, the agent goes to Needs you, and the item flags the unpushed work that may be lost.
+- **Known limit:** objects and refs are shared in `work.git`, so a hostile agent could move another task's branch. The office's push check and review catch it, and real isolation is v2 (`projects-git-github.md`).
+- **Home sessions in a git repository.** An agent's home is often a folder inside a repository (ours are in the agents repository), and the agent commits its memory and journal there. It can't be the repository's root (see "Security"). Its writable roots then also include, in that repository's `.git/`, only what a commit needs: `objects/` (except `objects/info/`), `refs/` and `logs/`, plus these files by their literal paths (they may not exist yet): `index`, `index.lock`, `HEAD`, `HEAD.lock`, `ORIG_HEAD`, `COMMIT_EDITMSG`, `packed-refs` and `packed-refs.lock`. Everything else in `.git/` stays read-only, including `config`, `hooks/`, `info/`, `commondir`, `worktrees/` and `modules/`. With the fixed deny on writing any `.git` entry inside the workspace (under "Security"), an agent can't point git at a config it wrote. The same environment applies, so that repository's own hooks don't run in office-run sessions.
+  - S0 checks that each sandbox can allow a literal path that doesn't exist yet. If one can't, it keeps `config`, `hooks/`, `info/` and `objects/info/` denied and also denies `commondir`, `worktrees/`, `modules/`, `config.worktree`, `rebase-merge/`, `rebase-apply/` and `sequencer/`.
+  - **Known limit:** the agent can move any ref in that repository, including other agents' and the user's own branches. Real isolation is v2.
+- **Tests:** S0 checks that `git commit` works inside each runtime's sandbox with these roots, for a task worktree and for a home inside a repository, and notes any harmless lock errors (a commit can try `work.git/packed-refs.lock`). S6 checks that a hostile `work.git` config or hook planted by agent A doesn't run in agent B, and that a hostile `config.worktree` with a `.gitattributes` filter, or a worktree `.git` file pointed at a planted repository, doesn't run anything during the office's worktree removal or re-creation, and that removal and re-creation still succeed. And when a home session tries to write `.git/commondir`, `.git/worktrees/*/commondir` or a new `<home>/.git`, those writes are denied, and the user's `git status` runs nothing.
+
 ## Processes and safety
-- **`org-supervise`** (one per office server) is the only code that spawns. It owns:
-  - **Spawn:** argv only (no shell); the env allowlist; the cwd from the spec; the recorded absolute binary path; its own process group; stdin, stdout and stderr piped; every other file descriptor closed on exec.
-  - **The record:** the child's pid, process group id and start time go into the session record before the first byte is sent. It also writes a small 0600 children file (`<office home>/run/children`, process group ids and start times only).
+- **`org-supervise`** (one per office server) is the only code that spawns agent runtimes and their probes. It owns:
+  - **Spawn:** argv only (no shell); the env allowlist; the cwd from the spec; the recorded absolute binary path; its own process group; stdin, stdout and stderr piped (or a PTY for take-over); every other file descriptor closed on exec.
+  - **The record:** the session's mark is written into the session record **before** the spawn. The child's pid, process group id and start time go in before the first byte is sent.
+  - **The host watchdog:** `org-office-server` sends each child's process group, start time and mark to `org-office-host` over the **launch pipe** (an `org-office-launch` addition). The host keeps them in memory. When it sees the office server die, it runs the orphan cleanup below before restarting it. There's no children file on disk, so agents can't edit the list.
   - **Stop**, with a timeout at every step: close stdin, wait 30 s; SIGINT, wait 10 s; SIGTERM, wait 10 s; SIGKILL the group. Then reap.
   - **Reaping:** the agent's lock is released only after the child is reaped.
-  - **Orphans:** at office startup, before any resume, it kills each recorded group that's still alive (checking the leader's start time, so a reused pid is never hit). As a watchdog for a crashed office, `org-office-host` kills the groups in that office's children file when it sees the office server die, before restarting it.
-  - **The Codex app-server** is one supervised process per office, in its own group. Its socket lives in a 0700 directory, and a stale socket is removed at start. Codex sessions are threads on it: stopping one is `turn/interrupt` and closing the thread. If the app-server itself hangs, the stop sequence runs on its group and every Codex session ends `crashed`, which is the trade-off of sharing one process.
-  - **Codex per-agent identity.** The app-server's own environment holds no agent identity. `ORG_AGENT`, `ORG_OFFICE` and `ORG_SESSION_TOKEN` are set per thread (`shell_environment_policy` in the thread's config). The spike checks that this works and that the thread config isn't written to the rollout files. If either fails, Codex falls back to one app-server per session over stdio.
-- **The stdin protocol:** every line the office writes is built by `serde_json`, never by string formatting. Tests cover `\n`, U+2028 and U+2029 in user text.
-- **The stdout reader** splits on `\n` only and caps a line at **4 MiB**. A longer line ends the session as `failed`.
-- **stderr** is filtered line by line (control characters dropped, each line length-capped) before it goes to `<office home>/logs/agents/<agent>.log` (0600, capped and rotated, never bodies).
+- **Orphans.** After a session's process ends, at office startup (before any resume), and from the host watchdog:
+  1. If the recorded group leader is alive with the recorded start time, the group is killed. A reused pid never matches the start time, so it's never hit.
+  2. If the leader is gone, the office lists the group's members (`KERN_PROC_PGRP`) and kills only those whose environment carries the session's `ORG_SESSION_MARK`, or that descend from one that does. A reused process group id never matches, and this step is skipped when the Mac has rebooted since the record was written.
+  3. It scans the user's processes (`KERN_PROCARGS2`) for the session's `ORG_SESSION_MARK` in their environment. That finds tools that moved to their own process group or session. Before killing each match, it snapshots its descendants by parent pid, and kills them too.
+  - Startup cleanup sends SIGTERM, waits 5 s, then sends SIGKILL.
+  - **Order:** a session's cleanup finishes before the agent's lock is released and before any new spawn of that session (a take-over, a switch back, a restart). So the mark scan never hits the session's next live process.
+  - The mark is recorded before the spawn, so a crash between spawn and record still leaves the office able to find the child.
+  - **Known limit:** a process that clears its environment and double-forks out of the group escapes. S0 checks whether each runtime's tools detach (their own process group or session).
+- **The stdin protocol:** every line the office writes is built by `serde_json`, never by string formatting, and the office **escapes U+2028 and U+2029 explicitly** (`serde_json` leaves them raw). Tests cover `\n`, U+2028 and U+2029 in user text.
+- **The stdout reader** splits on `\n` only and caps a line at **4 MiB**. A longer line (for example a large image) is drained up to the next newline and replaced by a `truncated` event with its size. The session goes on.
+  - An event of a type the adapter doesn't know is kept as a coarse `unknown` event (its type name, no body). A line that isn't valid JSON is a `protocol_error` event. Neither ends the session; only the child's exit does.
+- **stderr** is filtered line by line (control characters dropped, each line length-capped) and goes through the same **redaction** as events, before it goes to `<office dir>/logs/agents/<agent>.log` (0600, capped and rotated, never bodies).
 - **Versions:**
   - The office records each runtime's version at every start, and **warns** when it's outside the tested range. It doesn't block.
   - Auto-update is off for office-run processes where possible (Claude `DISABLE_AUTOUPDATER=1`).
   - Each adapter has contract tests against **recorded fixtures** of its protocol.
+- **Placement change** (`member.place_agent`, offices design): the old office stops the agent's sessions (a checkpoint turn, then stop) and pushes its task branches before it hands over. The new office starts fresh sessions from the pushed branches.
 - **Auth:** each runtime uses the user's own login on this Mac, in the runtime's own store. Shipping to other users needs the vendors' terms checked (U-S1).
 
 ## Security
-- **The workspace is hostile.** An agent can write anything in its worktree, so nothing there may change how the next session runs:
-  - Settings come only from the office (decision 6).
-  - The permission policy always **denies writes** to `.claude/**`, `.agents/**`, `.codex/**`, `.gemini/**` and `.git/hooks/**` in the workspace. Repository hooks and settings aren't trusted.
-- **Secrets stay out of argv, settings files, logs and the event log.** The office redacts token patterns (GitHub, Anthropic, OpenAI, Google keys) in tool output before it stores an event or streams it. Tool output in the runtime's own transcript (for example `org-agent gh-token`) is covered by the plaintext-transcript decision (U-S3).
-- **What the session token stops:** casual and accidental impersonation between agents. It doesn't stop a hostile process running as the same user, which can read another process's environment on macOS. Real isolation (a separate user or an OS sandbox) is v2, as in ADR-0003 and `projects-git-github.md`. Same for the Codex socket: a 0700 directory keeps it from other users, not from same-user processes.
+- **The workspace is hostile.** An agent can write anything in its worktree, so nothing there may change a session's **settings, permissions, hooks, tools or MCP servers**:
+  - Settings come only from the office (decision 6), and the office's composed instructions come from the default branch (decision 8).
+  - Instruction files that a runtime reads from the cwd by itself (`CLAUDE.md`, `AGENTS.md`, `.agents/rules`) are the task branch's own content. They can steer only that task's sessions, never another agent's or the office's, and they reach the default branch only through review. We accept that.
+  - The Claude spike checks that workspace `.claude/skills` with `allowed-tools` don't pre-approve tools.
+- **Fixed denies**, for every runtime, through its permission policy and its sandbox. They override every allow rule:
+  - writes to `.claude/**`, `.agents/**`, `.codex/**` and `.gemini/**` in the workspace
+  - writes to any `.git` entry (file, folder or symlink, at any depth) inside the workspace, so an agent can't make a nested repository or redirect a worktree's `.git` file.
+    - Commits in a home need writes to its repository's `.git` (the commit paths under "Git in worktrees"). The deny above blocks those when `.git` is inside the home, so a home can't be a repository's root. Preflight refuses one, and the agent goes to Needs you.
+    - **Known limit:** `git submodule update --init` writes `<path>/.git` inside the worktree, so agents can't set up submodules. The office can do it for them later if a project needs it.
+  - writes to `work.git/config` and `work.git/hooks/**` (they're outside the writable roots)
+  - writes to anything under **`<office home>/**`**: runtime dirs, `run/`, logs, databases
+  - reads of `<office home>/offices/*/*.db` and of `<office home>/run/` (apart from connecting to the agent's own office socket). Codex's `workspace-write` sandbox may not be able to deny reads: S0 checks it for Codex and Antigravity. If it can't, that's a documented limit: the databases are encrypted (ADR-0002), and `run/` holds only sockets.
+  - writes to the **user's own config**, which runtimes and the user's tools load: `~/.claude/**`, `~/.codex/**`, `~/.gemini/**`, `~/.config/gh/**`, `~/.gitconfig`, `~/.config/git/**`, `~/.ssh/**`, the shell start-up files (`~/.zshenv`, `~/.zprofile`, `~/.zshrc`, `~/.bash_profile`, `~/.bashrc`, `~/.profile`; `PATH` is captured from them), and `~/Library/LaunchAgents/**`. The runtimes write their own stores there themselves; this denies it to the agent's tools. The sandboxes' writable roots leave them out too.
+- **Known limit, Codex take-over:** a person in Codex's TUI can switch its sandbox or approval policy from inside (`/approvals`), which also lifts the fixed denies for that take-over. A person is at the keyboard, so we accept it, the office pins both again when it resumes headless, and the app says so when a person takes over a Codex agent. S0 tries Codex's managed requirements (`allowed_sandbox_modes`, `allowed_approval_policies`) to lock `danger-full-access` out.
+- **Antigravity** is gated: S4 doesn't ship until the spike proves that agy's runtime dir and `.agents/` (the agent file, `hooks.json` and rules, including those that arrive through a git checkout) can't be written by the agent, or aren't loaded. Otherwise Antigravity ships with that as a documented, accepted limit, and the app tells the owner when they enable an Antigravity agent.
+- **Secrets stay out of argv, settings files, logs and the event log.** Before it stores or streams any event, and before it writes stderr to the log, the office redacts:
+  - the live session tokens and `app_token`s it knows (an `env` call would print them)
+  - token patterns (GitHub, Anthropic, OpenAI, Google keys)
+
+  Tool output in the runtime's own transcript (for example `org-agent gh-token`) is covered by the plaintext-transcript decision (U-S3).
+- **What the session token stops:** casual and accidental impersonation between agents, and, with the ancestry check, a token copied to another process. It doesn't stop a hostile process running as the same user, which can read another process's environment on macOS and could start a child of the agent's own process. Real isolation (a separate user or an OS sandbox) is v2, as in ADR-0003 and `projects-git-github.md`.
 
 ## Contract (org-proto, additive)
-**Authorization:** every new call below is **app-bound only** (`app_token`). An agent-bound connection is refused with `not_authorized`. They're added to ADR-0003 §2.1's authorization table, with a test that refuses each one on an agent-bound connection.
+**Authorization:** every new call below is **app-bound only** (`app_token`). An agent-bound connection is refused with `not_authorized`. They're added to ADR-0003 §2.1's authorization table, with a test that refuses each one on an agent-bound connection. **Org commands** (`member.*`, `team.*`, `project.*` and the rest) from an agent-bound connection are refused in general, unless a row in that table allows one.
+- **Sessions:** where a call takes `session`, it's `"home"` or `{ "task_id": "…" }`.
 - **Agents:**
-  - `agent.wake { member_id, prompt? }` → `{ run_id }` (the live run's id when the wake is merged)
-  - `agent.stop { member_id }` (desired state `stopped`)
+  - `agent.wake { member_id, session?, prompt? }` → `{ run_id }` (the live run's id when the wake is merged). `session` defaults to `home`.
+  - `agent.stop { member_id }`: Pause (see "Run modes")
   - `agent.interrupt { member_id }`
-  - `agent.send { member_id, text, urgent? }`: the owner talks to an agent directly
+  - `agent.send { member_id, session?, text, urgent? }`: the owner talks to an agent directly. `session` defaults to `home`.
   - `permission_policy.get { member_id }`, `permission_policy.set { member_id, policy, expected_version }`
-  - `member.set_run_mode { member_id, run_mode, schedule?, expected_version }`: an org command at HQ, like the other `member.*` commands
-- **Messaging:** `msg.bind` gains `session_token?`, required when binding as an office-run agent. Without a valid one it's refused with `not_authorized`. This is the one change open to agents.
+  - `member.set_run_mode { member_id, run_mode, schedule?, expected_version }`: an org command at HQ, like the other `member.*` commands. `AgentProfile` gains `run_mode` and `schedule`.
+- **One-offs:** `run.one_off { role, title?, runtime, model?, instruction, project_id?, work_item? }` → `{ run_id }`
+- **Messaging:** `msg.bind` gains `session_token?`. It's required when binding as an office-run agent, and on its own (with no `agent`) it binds a one-off run. Peer ancestry is checked in both cases. A missing or invalid token, or a failed ancestry check, is refused with `not_authorized`. This is the one change open to agents.
 - **Runtimes:**
   - `runtime.status { runtime? }` → per runtime: installed, path, version, in tested range, signed in, quota windows
 - **Runs:**
-  - `run.list { member_id?, since?, cursor?, limit? }` → `{ runs, next_cursor }`
+  - `run.list { member_id?, since?, cursor?, limit? }` → `{ runs, next_cursor }` (one-off runs included)
   - `run.get { run_id }`
   - `run.events { run_id, from_seq }`, then live as `run.event` through `subscribe`
 - **Approvals:**
   - `approval.list`
-  - `approval.answer { approval_id, decision: allow_once | allow_always | deny, path_pattern?, note? }`
-    - `allow_always` is scoped to (agent, tool, path pattern) and stored in the agent's permission policy.
+  - `approval.answer { approval_id, decision: allow_once | allow_always | deny, scope?, note? }`
+    - `scope` is the rule's path pattern, command prefix or MCP server. `allow_always` adds that rule to the agent's permission policy, as a versioned change. The fixed denies still win.
     - An unanswered approval expires after **30 minutes** (configurable) and counts as a deny.
     - If its session died, answering returns `not_found`.
 - **Take-over:**
-  - `session.take_over { member_id }` → `{ lease_id, stream }` (the office's PTY stream)
+  - `session.take_over { member_id, session? }` → `{ lease_id, stream }` (the office's PTY stream; frames carry at most 64 KiB of data). `session` defaults to the live session, or `home` when nothing is live.
   - `session.heartbeat { lease_id }`, every 10 s
   - `session.hand_back { lease_id }`
 - **Events:**
@@ -239,19 +375,23 @@ The research behind it, with exact flags, protocols and what was verified, is in
   - `run.started`, `run.finished`, `run.event`
   - `approval.requested` (with the structured input, and the justification labeled untrusted), `approval.answered`
   - `member.presence_changed` with the amended presence values
+  - **`run.*`, `approval.*` and `agent.state_changed` go only to app-bound subscribers.** `subscribe` on an agent-bound connection never receives them, and a test proves it (plan step S2d).
 - **Errors:**
-  - `unavailable` with a reason: `not_installed`, `signed_out`, `version` or `quota`
-  - `conflict` with the reason `session_held`
+  - `unavailable` with a reason: `not_installed`, `signed_out`, `version`, `quota` or `paused`
+  - a **new code, `held`**: the session is held by someone else (a take-over lease). `conflict` keeps its meaning, a stale `expected_version`.
   - `not_found`, `not_authorized`, plus the existing codes
-  - So `ApiError` gains an optional `reason` (additive), and `conflict`'s doc widens from "stale `expected_version`" to include "held by someone else".
-- New enums (session state, run outcome, presence, reasons) decode unknown values as `Unknown`.
+  - So `ApiError` gains an optional `reason` (additive), and `ErrorCode` gains `Held`.
+- New enums (session state, run outcome, presence, reasons, error codes) decode unknown values as `Unknown`.
 
 ## ADR-0003 amendments
-Made in ADR-0003, each marked "(amended 2026-11-08: agent sessions, ada)":
-- **M-A:** the session token is now issued for office-run agents and required on `msg.bind`.
-- **M-B:** the new calls are app-bound only.
-- **Presence** (§2.4, with the enums in §4.1 and §4.2): `busy`, `idle`, `needs_you`, `with_you`, `asleep` (derived) and `offline`; `online` stays for people; a held wait counts as idle; office-run agents don't block longer than 60 s.
-- **Contract** (§4.1): the agent-session calls are app-only, and `msg.bind` gains `session_token`.
+Made in ADR-0003, each marked "(amended 2026-11-08: agent sessions, ada)" or "(amended 2026-11-08: agent sessions rev 3, ada)":
+- **M-A:** the session token is issued per run (one process's life) for office-run agents and required on `msg.bind`, together with peer ancestry. A one-off binds with its run's token and the same ancestry check, and its run address (`run:<office id>/<run id>`) is accepted in `from`/`to`, the authorization rows and routing. HQ refuses a run address in `from` from any other office. A message to an ended run is dead-lettered with `run_ended`, which `msg.ask` reports as `unknown_recipient` (exit 3). Spool ingest refuses spooled sends from office-run agents, and M-A is closed for office-run agents only with that rule.
+- **M-B:** the new calls are app-bound only. Org commands from agent-bound connections are refused unless a row allows them, and `member.set_run_mode` is app-only. `subscribe` on an agent-bound connection never gets `run.*`, `approval.*` or `agent.state_changed`. The original `msg.bind` row says that a missing session token is `not_authorized`, and binding as a person without `app_token` is `not_authorized` too (it was `invalid_request`), so the two match.
+- **Presence** (§2.4, with the enums in §4.1 and §4.2): `busy`, `idle`, `needs_you`, `with_you`, `asleep` (derived) and `offline`; `online` stays for people; a held wait counts as idle; waits on token-bound connections are capped at 60 s by the server.
+- **Handles** (§2.4, §2.6, §4.1, §4.3): a handle names at most one member, display names aren't accepted as addresses, `AmbiguousName` is gone, directory cards carry `handle`, and parameters are `id_or_handle`. `messaging_name` is on `v1` (proto-agents, 86a6a9f).
+- **Exit codes** (§2.6): rows for `not_authorized`, `unavailable`, `conflict` and `held`.
+- **Contract** (§4.1): the agent-session calls are app-only, `msg.bind` gains `session_token`, the `SessionAuth` port.
+- **Owners** (§4.3): Remy (`ac-software-engineer-remy`) owns `org-mailbox`, `org-spool` and `org-agent`, in place of `agy-senior-dev`.
 
 ## Deferred to phase 2
 - Satellite relaying: waking, approving or taking over an agent placed in a satellite, from the app at HQ.
@@ -262,43 +402,66 @@ Both arrive alongside `org-sync-proto`.
 ## Where the code lives
 | Crate | What | Owner |
 | --- | --- | --- |
-| `crates/org-runtime` (new, contract) | the port: `AgentRuntime`, `Session`, `SessionSpec`, `LaunchPlan`, `SessionEvent`, `Capabilities`, usage types. Sync, no I/O. | ada owns the contract; River writes the first version |
-| `crates/org-supervise` (new) | spawning, process groups, the env allowlist, the stop sequence, reaping, orphan cleanup | River |
+| `crates/org-runtime` (new, contract) | the port: `AgentRuntime`, `RuntimeHost` (optional), `Session`, `SessionSpec`, `LaunchPlan`, `SessionEvent`, `Capabilities`, usage types. Sync, no I/O. | ada owns the contract; River writes the first version |
+| `crates/org-supervise` (new) | spawning (pipes and PTYs), process groups, the env allowlist, the stop sequence, reaping, orphan cleanup (groups and marks) | River |
 | `crates/org-runtime-claude` (new adapter) | the Claude driver, with fixture-based contract tests | River |
 | `crates/org-runtime-codex`, `crates/org-runtime-agy` (new adapters) | the Codex and Antigravity drivers, with fixture-based contract tests | codex-dev |
-| `org-office` | sessions, runs, approvals, policies and desired state as domain data; the wake queue and run rules; quota | server-dev |
-| `org-office-server` | the composition root: wires `org-supervise` and the adapters, the scheduler, the handlers | server-dev |
-| `org-office-host` | the watchdog: kills a dead office's child groups before restarting it | River |
-| the messaging library and `org-agent` | the session token on `msg.bind` | ac-software-engineer-remy (Remy, the messaging owner) |
-| `apps/desktop` | the session panel (events), take-over (attach to the office's PTY, the lease), Needs you approvals, the Runs tab | app-frontend-dev |
+| `org-office` | sessions, runs, one-offs, approvals and policies as domain data; trigger routing, the queues and run rules; quota; the `SessionControl` trait. No dependency on `org-runtime` or `org-supervise`. | server-dev |
+| `org-office-server` | the composition root: implements `SessionControl` with `org-supervise` and the adapters, runs the per-session event loop, the scheduler, the handlers, and `SessionAuth` | server-dev |
+| `org-office-host` | the watchdog: kills a dead office's children (from the launch pipe) before restarting it | River |
+| `crates/org-office-launch` | the launch-pipe lines that carry children to the host | ada owns the contract; River writes it |
+| `org-git` | `extensions.worktreeConfig`, re-creating a worktree from a pushed branch | River |
+| the messaging library (`org-mailbox`) and `org-agent` | the `SessionAuth` port (including a one-off's allowed recipients), the session token and one-off binding on `msg.bind`, capped waits, no spool for office-run agents | Remy (`ac-software-engineer-remy`, the messaging owner) |
+| `apps/desktop` | the session panel (events), take-over (attach to the office's PTY, the lease), Needs you approvals, the Runs tab, Pause and Resume, one-offs on a job | app-frontend-dev |
 | `org-proto` | the calls and events above | ada |
+
+**Architecture check.** `org-office-server` depends on `org-office`, `org-runtime`, `org-supervise`, three adapters, `org-git`, `org-github` and `org-proto`, so its Ce is above 8. That's expected of the composition root (I ≈ 1, nothing depends on it). If the session event loop grows, it moves into its own library crate, so the binary stays thin. Every other new dependency points from volatile to stable: adapters → `org-runtime`; `org-office-server` → everything; `org-office` → `org-proto` only. There's no cycle.
 
 ## Plan
 | Step | What | Who | Depends on |
 | --- | --- | --- | --- |
-| S0 | Spikes, one per runtime:<br>• **Claude:** the `can_use_tool` round trip; which `--setting-sources` value loads no file, and whether user `CLAUDE.md`, skills and agents still load; resume with the spec replayed; resume after the cwd is gone; memory per idle process.<br>• **Codex:** one app-server over a 0700 Unix socket with two threads in two cwds; per-thread env and whether the thread config is written to rollouts; what leaks from the user's Codex home; approvals; interrupt; `--remote` TUI joining.<br>• **Antigravity:** ACP versus stream-json; interrupt; resume; `request_permission`; a custom agent from `--add-dir`; sign-in with `--gemini-dir`. | River (Claude), codex-dev (Codex, Antigravity) | — |
+| S0 | Spikes, one per runtime:<br>• **Claude:** the `can_use_tool` round trip; which `--setting-sources` value loads no file, whether user `CLAUDE.md`, skills and agents still load, and what `--restricted` changes; workspace `.claude/skills` with `allowed-tools` don't pre-approve tools; resume with the spec replayed; resume after the cwd is gone; `allowUnixSockets` for the office socket; `git commit` in the sandbox with the `work.git` roots; whether its tools detach (own process group or session); memory per idle process.<br>• **Codex:** the app-server over stdio, one per session; what leaks from the user's Codex home and how `-c` / `--disable` turn hooks and MCP off; `approvalsReviewer`; approvals; interrupt; `thread/unsubscribe`; `codex resume` in a PTY with the same pins; the office socket and `git commit` in `workspace-write`; whether `workspace-write` can deny reads (`<office home>` databases, `run/`); whether managed requirements (`allowed_sandbox_modes`, `allowed_approval_policies`) lock `danger-full-access` out of the TUI; tool detaching; optionally `--ws-auth capability-token` for live joining.<br>• **Antigravity:** ACP versus stream-json; interrupt; resume; `request_permission`; a custom agent from `--add-dir`; sign-in with `--gemini-dir`, `--include-default-customizations=false` and `--app-data-dir`; whether its runtime dir and `.agents/` can be written or are loaded; take-over without `~/.gemini`; `--sandbox` scope, the office socket and `git commit`; tool detaching. | River (Claude), codex-dev (Codex, Antigravity) | — |
 | S1 | `org-runtime` (first version), `org-supervise` and the Claude adapter, with fixture tests and a fake runtime | River | S0 Claude |
-| S2 | Contract in org-proto, and the ADR-0003 amendments | ada | S0 |
-| S2b | The session token: `org-agent` sends `ORG_SESSION_TOKEN` on `msg.bind`, and the messaging library requires it for office-run agents | ac-software-engineer-remy (Remy, the messaging owner) | S2 |
-| S3a | Office: sessions and runs (the wake queue, preflight, start and resume, limits, desired state, restart, orphans), with `org-supervise` wired in | server-dev | S1, S2, the HQ office server (server-dev's phase 1 storage + server) |
-| S3b | Office: approvals, schedules and quota | server-dev | S3a |
-| S4 | The Codex and Antigravity adapters | codex-dev | S0, S1 |
-| S5 | App: the session panel, approvals in Needs you, Runs, take-over | app-frontend-dev | S2, S3a, S3b |
-| S6 | **Security tests** (below) | River + server-dev, codex-dev for its runtimes | S2b, S3a, S3b, S4 |
+| S2 | Contract in org-proto, and the ADR-0003 amendments | ada | S0 Claude |
+| S2b | The session token: `SessionAuth` in the messaging library, the token and ancestry on `msg.bind`, one-off binding and its allowed recipients, closing bound connections, capped waits, no spool for office-run agents and the spool-ingest refusal | Remy (the messaging owner) | S2 |
+| S2c | `AgentProfile` gains `run_mode` and `schedule`, and HQ handles `member.set_run_mode` (a proto-agents follow-up) | server-dev (ada reviews the contract) | S2 |
+| S2d | The `subscribe` filter: agent-session events only to app-bound subscribers, with its test | server-dev | S2 |
+| S2e | The price table for Codex and Antigravity (API prices in US dollars) | codex-dev, with W14 | S2 |
+| S3a | Office: sessions and runs (trigger routing, the queues and switching, preflight, start and resume, limits, Pause, restart, orphans), with `org-supervise` wired in | server-dev | S1, S2, the HQ office server (server-dev's phase 1 storage + server) |
+| S3b | Office: approvals, schedules, quota and one-offs | server-dev | S3a |
+| S3c | Task worktrees for sessions with `org-git`: `extensions.worktreeConfig`, the writable roots, re-creating a worktree from a pushed branch | River (`org-git`), server-dev (the office side) | G2c, S3a |
+| S3d | The host watchdog: children over the launch pipe, cleanup before a restart | River (ada reviews the `org-office-launch` change) | S1 |
+| S3e | Routing run addresses (`run:<office id>/<run id>`) through HQ: non-owning offices forward any well-formed one, HQ accepts them in synced messages, the owning office dead-letters late ones | River (`org-sync`), server-dev (HQ side) | S3b, `org-sync` |
+| S4 | The Codex and Antigravity adapters. Antigravity ships only with the S0 proof, or with the documented limit and the owner told (see "Security") | codex-dev | S0, S1 |
+| S5 | App: the session panel, approvals in Needs you, Runs, take-over, Pause and Resume, one-offs | app-frontend-dev | S2, S3a, S3b |
+| S6 | **Security tests** (below) | River + server-dev, codex-dev for its runtimes | S2b, S2d, S3a, S3b, S3c, S4 |
 | S7 | End to end: the office wakes an agent on a message, the agent answers through `org-agent`, the office restarts, and the agent resumes in its workspace (all three runtimes; manual checks, plus the opt-in CI smoke test) | River + server-dev | S6 |
+| D1 | ADR-0002 note: runtime transcripts are plaintext outside `office.db` (U-S3) | ada | U-S3 |
+| D2 | ADR-0004 rewritten to the headless-first decision | ada | U-S4 |
+| D3 | AGENTS.md rows for `org-office-launch`'s children lines and the guidance files | ada | — |
+| D4 | The guidance files: the default wake guidance per moment, and how the office loads them from the default branch | Eden (the text), server-dev (loading) | S3a |
 
 **Security tests (S6):**
-- A **hostile workspace**, like G2c's hostile git config: `.claude/settings.local.json` allowing everything, hooks, rules files, `.agents/hooks.json`, `.codex` config, `.git/hooks/*`. None of it may take effect, and writes to them are denied.
-- The child's environment and open file descriptors hold no `app_token`, database key or GitHub token. Argv holds no secrets.
-- Every new call is refused on an agent-bound connection. `msg.bind` as an office-run agent without a valid session token is refused.
-- Killing a session's group kills its grandchildren.
-- SIGKILL the office, restart it: no survivor, and a single writer per conversation.
-- stdin lines with `\n`, U+2028 and U+2029 in user text stay one line. A stdout line over 4 MiB ends the session.
-- Tool output with a token is redacted in the event log.
+- A **hostile workspace**, like G2c's hostile git config: `.claude/settings.local.json` allowing everything, `.claude/skills` with `allowed-tools`, hooks, rules files, `.agents/hooks.json`, `.codex` config, `.git/hooks/*`. None of it may take effect, and writes to them are denied.
+- A **hostile `work.git`**: agent A can't write `work.git/config` or `work.git/hooks/`, and a hook or `config.worktree` that A plants never runs in agent B's commits.
+- Writes under `<office home>`, and reads of its databases and `run/`, are denied for every runtime (or the S0 limit is documented).
+- Writes to the user's config (`~/.codex/config.toml`, `~/.gemini`, `~/.claude`, `~/.gitconfig`, a shell rc file, `~/Library/LaunchAgents`) are denied, even with an `allow_always` rule. An agent whose home is `$HOME` isn't run.
+- A reply to an `ask` sent from a task session wakes that task session (or the home session once the task is closed). A switched-out task session runs again after the home session's run.
+- The child's environment and open file descriptors hold no `app_token`, database key, GitHub token, `SSH_AUTH_SOCK` or user git and `gh` config. Argv holds no secrets.
+- Every new call is refused on an agent-bound connection. `subscribe` on an agent-bound connection gets no `run.*`, `approval.*` or `agent.state_changed`.
+- `msg.bind` as an office-run agent or a one-off is refused without a valid token, with another run's token, and from a process outside the session's tree. When a run's process exits, connections bound with its token are closed.
+- A spooled send from an office-run agent is dead-lettered.
+- Orphans: killing a session's group kills its grandchildren; a dead leader with a live grandchild is still cleaned up; a reused pid is never killed; a reused process group whose members don't carry the mark is never killed; a child that moved to its own session is found by its mark; cleanup never hits the session's next process.
+- A one-off can't message anyone outside its job, its approvals go to Needs you under an empty policy, and a crashed one-off isn't re-run by itself.
+- SIGKILL the office, restart it: no survivor, a single writer per conversation, and pending approvals expired.
+- The lease expires after 30 s without a heartbeat. An approval that expires counts as a deny.
+- stdin lines with `\n`, U+2028 and U+2029 in user text stay one line. A stdout line over 4 MiB becomes a `truncated` event and the session goes on.
+- Tool output with a token, a live session token or an `app_token` is redacted in the event log and the stderr log.
 
 Tests at every step use a **fake runtime** (a test binary that speaks each recorded protocol), so CI never calls a model. The one smoke test per runtime is **opt-in**: it needs a secret and is off by default.
 
 ## Open questions for the user
 - **U-S1:** We'd run your own Claude, Codex and Antigravity logins for our own team. Before Agentic Org goes to anyone else, the vendors' terms need checking (the research found that Anthropic doesn't allow third-party products to offer claude.ai login without approval), and an API-key path per runtime is required. OK to proceed on that basis?
-- **U-S2:** The defaults: up to **4** live agents per office at once; **30 minutes** of busy time per home-session run and **2 hours** per task-session run; **20%** of each quota window reserved for you; an approval expires after **30 minutes**. OK?
+- **U-S2:** The defaults: up to **4** live agents per office at once; **30 minutes** of busy time per home-session run and **2 hours** per task-session run, with a 1-minute grace; **20%** of each 5-hour quota window reserved for you; an approval expires after **30 minutes**; always-on agents restart after 10 s and stop after 3 restarts in 10 minutes. OK?
 - **U-S3:** Each runtime keeps its transcripts as **plaintext** on disk in its own store (`office.db` stays encrypted). OK for phase 1?
+- **U-S4:** The office drives every agent headless, and you work with one directly by taking it over (stop, then resume in a terminal the app shows). That replaces ADR-0004's plan (Claude's `--bg` with `claude attach`, from spike S2), and I'd rewrite ADR-0004 to match. OK?
