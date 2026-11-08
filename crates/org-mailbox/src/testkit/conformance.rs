@@ -14,7 +14,8 @@ use std::time::{Duration, Instant};
 use org_proto::msg::{
     is_urgent, json_string_len, HeaderPage, Message, MessageHeader, MessageLifecycleState as State,
     MessagePriority, Meta, MsgInboxParams, MsgReadParams, MsgSendParams, MsgWaitParams, SendResult,
-    KIND_MSG, KIND_REQUEST, MAX_WAIT_MS,
+    KIND_DELIVERY_FAILED, KIND_MSG, KIND_REQUEST, MAX_BODY_BYTES, MAX_HANDLE_BYTES, MAX_ID_BYTES,
+    MAX_META_BYTES, MAX_SUBJECT_BYTES, MAX_WAIT_MS, OFFICE_SENDER,
 };
 use org_proto::{Member, MemberKind, Position};
 
@@ -724,6 +725,106 @@ fn recipient(office: &Office<impl MessageStore>, n: u32, to: &str) -> Result<Str
         .to_member_id)
 }
 
+/// Send refuses what msg.rs refuses: an oversized id, kind, `to`, subject, body or meta is
+/// `too_large`; a non-ULID id, an empty, `request` or `delivery_failed` kind and an
+/// `Unknown` priority are `invalid_request`. Nothing refused is committed or published.
+pub fn mailbox_send_validation(backend: impl OpenBackend) {
+    let office = office(&backend);
+    let refused = |n: u32, error: MailboxError, change: &dyn Fn(&mut MsgSendParams)| {
+        let mut params = send_params(n, ADA_HANDLE);
+        change(&mut params);
+        let id = params.id.clone();
+        assert_eq!(office.mailbox.send(PAT_ID, params), Err(error), "case {n}");
+        assert_eq!(office.store.get_message(&id).unwrap(), None, "case {n}");
+    };
+    use MailboxError::{InvalidRequest, TooLarge};
+    // json_string_len counts the quotes: a string of len - 2 bytes fits exactly.
+    let over = |limit: usize| "x".repeat(limit - 1);
+    refused(1, TooLarge, &|p| p.id = over(MAX_ID_BYTES));
+    refused(2, InvalidRequest, &|p| p.id = "not-a-ulid".into());
+    refused(3, InvalidRequest, &|p| {
+        p.id = msg_id(3).to_ascii_lowercase()
+    });
+    refused(4, InvalidRequest, &|p| p.kind = String::new());
+    refused(5, InvalidRequest, &|p| p.kind = KIND_REQUEST.into());
+    refused(6, InvalidRequest, &|p| p.kind = KIND_DELIVERY_FAILED.into());
+    refused(7, TooLarge, &|p| p.kind = over(MAX_ID_BYTES));
+    refused(8, InvalidRequest, &|p| {
+        p.priority = Some(MessagePriority::Unknown)
+    });
+    refused(9, TooLarge, &|p| p.subject = Some(over(MAX_SUBJECT_BYTES)));
+    refused(10, TooLarge, &|p| p.body = over(MAX_BODY_BYTES));
+    refused(11, TooLarge, &|p| p.to = over(MAX_HANDLE_BYTES));
+    refused(12, TooLarge, &|p| p.reply_to = Some(over(MAX_ID_BYTES)));
+    refused(13, TooLarge, &|p| {
+        p.meta
+            .insert("k".into(), serde_json::Value::String(over(MAX_META_BYTES)));
+    });
+    assert!(office.events.received().is_empty());
+
+    // At the limits, and with each allowed priority, it commits.
+    let mut at_limit = send_params(20, ADA_HANDLE);
+    at_limit.body = "x".repeat(MAX_BODY_BYTES - 2);
+    at_limit.subject = Some("s".repeat(MAX_SUBJECT_BYTES - 2));
+    at_limit.priority = Some(MessagePriority::High);
+    office.mailbox.send(PAT_ID, at_limit).unwrap();
+    let header = office
+        .store
+        .get_message(&msg_id(20))
+        .unwrap()
+        .unwrap()
+        .message
+        .header;
+    assert!(header.urgent);
+    assert_eq!(header.priority, MessagePriority::High);
+    assert_eq!(office.events.received(), [msg_id(20)]);
+}
+
+/// With `reply_to`, the parent must be one the sender sent or received (else `not_found`)
+/// and not a `delivery_failed` notice (`invalid_request`); the reply joins its thread.
+pub fn mailbox_send_reply_to(backend: impl OpenBackend) {
+    let office = office(&backend);
+    let mailbox = &office.mailbox;
+    let reply = |from: &str, n: u32, to: &str, parent: u32| {
+        let mut params = send_params(n, to);
+        params.reply_to = Some(msg_id(parent));
+        mailbox.send(from, params)
+    };
+    send(mailbox, PAT_ID, 1, ADA_HANDLE).unwrap();
+    let answer = reply(ADA_ID, 2, PAT_HANDLE, 1).unwrap();
+    assert_eq!(answer.thread_id, msg_id(1));
+    let again = reply(PAT_ID, 3, ADA_HANDLE, 2).unwrap();
+    assert_eq!(
+        again.thread_id,
+        msg_id(1),
+        "a reply to a reply stays in the thread"
+    );
+    let stored = office.store.get_message(&msg_id(3)).unwrap().unwrap();
+    assert_eq!(stored.message.header.reply_to, Some(msg_id(2)));
+    assert_eq!(stored.message.header.thread_id, msg_id(1));
+
+    // Remy neither sent nor received message 1: it can't reply into that thread.
+    assert_eq!(
+        reply(REMY_ID, 4, ADA_HANDLE, 1),
+        Err(MailboxError::NotFound)
+    );
+    assert_eq!(
+        reply(ADA_ID, 5, PAT_HANDLE, 99),
+        Err(MailboxError::NotFound)
+    );
+
+    let mut notice = new_message(6, OFFICE_SENDER, ADA_ID, MessagePriority::Normal);
+    notice.message.header.kind = KIND_DELIVERY_FAILED.into();
+    commit(&*office.store, notice);
+    assert_eq!(
+        reply(ADA_ID, 7, PAT_HANDLE, 6),
+        Err(MailboxError::InvalidRequest)
+    );
+    for n in [4, 5, 7] {
+        assert_eq!(office.store.get_message(&msg_id(n)).unwrap(), None);
+    }
+}
+
 /// Addresses are trimmed of leading and trailing ASCII whitespace only; nothing left names
 /// no member; `office` is refused.
 pub fn mailbox_addressing_trims_ascii_whitespace(backend: impl OpenBackend) {
@@ -1320,6 +1421,8 @@ macro_rules! mailbox_conformance_tests {
             directory_returns_status_unfiltered,
             mailbox_send_commits_with_origin,
             mailbox_send_replay_and_conflict,
+            mailbox_send_validation,
+            mailbox_send_reply_to,
             mailbox_addressing_trims_ascii_whitespace,
             mailbox_addressing_owner_and_exact_id,
             mailbox_paused_receives_offboarded_refused,
