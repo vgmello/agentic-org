@@ -18,6 +18,9 @@ tauri-build = { version = "=2.7.4", features = [] }
 org-proto = { path = "../../../crates/org-proto" }
 org-client = { path = "../../../crates/org-client" }
 tauri = { version = "=2.12.5", features = ["tray-icon", "image-png"] }
+# Only its Rust side is used (the folder picker of "Bring in an existing team", called from our own command): no
+# dialog permission is granted to the webview.
+tauri-plugin-dialog = "=2.8.3"
 serde.workspace = true
 serde_json.workspace = true
 
