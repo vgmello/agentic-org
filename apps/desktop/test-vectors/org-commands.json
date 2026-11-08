@@ -3882,6 +3882,90 @@
      }
     }
    ]
+  },
+  {
+   "name": "project.create: the key from 'Billing' is bil",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "k1",
+     "name": "Billing",
+     "general_area_id": "k1-g"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "k1",
+     "has": {
+      "key": "bil"
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.create: the key from 'Q' is qx",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "k2",
+     "name": "Q",
+     "general_area_id": "k2-g"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "k2",
+     "has": {
+      "key": "qx"
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.create: the key from '9' is p9",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "k3",
+     "name": "9",
+     "general_area_id": "k3-g"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "k3",
+     "has": {
+      "key": "p9"
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.create: the key from 'Exc' is exc2",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "k4",
+     "name": "Exc",
+     "general_area_id": "k4-g"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "k4",
+     "has": {
+      "key": "exc2"
+     }
+    }
+   ]
   }
  ]
 }

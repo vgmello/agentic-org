@@ -2114,7 +2114,7 @@ mod tests {
         let cases = vectors["cases"].as_array().unwrap();
         assert_eq!(
             cases.len(),
-            239,
+            243,
             "a case was lost or added: update this count"
         );
         for case in cases {
