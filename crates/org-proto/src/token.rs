@@ -1,4 +1,5 @@
-//! The app token: the per-office secret that lets the desktop app act for people (ADR-0003 §2.1).
+//! The app token: the per-office secret that lets the desktop app act for people (ADR-0003 §2.1),
+//! and [`DbKey`], an office's database key.
 //!
 //! The host makes a fresh token for each office every time it starts and keeps it only in
 //! memory. It passes it to the office's server over the startup pipe and gives it to the app over
@@ -14,6 +15,11 @@
 //! Compare tokens with `==`, never through their strings: every token displays the same.
 //!
 //! It decodes from JSON only (it uses `deserialize_any`, which needs a self-describing format).
+//!
+//! [`DbKey`], an office's database key, gets the same treatment (see its docs). It travels only
+//! on the launch pipe from the host to the office's server (`org-office-launch`), never on a
+//! socket. It lives here, next to the app token, so the two share one implementation of their
+//! guards (`org-office-launch` re-exports it).
 //!
 //! Zeroing is defence in depth, not a guarantee that no copy of the token is left in memory. The
 //! typed envelopes ([`Request`](crate::Request), [`Response`](crate::Response) and
@@ -32,12 +38,19 @@
 //! and never use it as a map key or an enum tag (serde echoes those in errors).
 
 use std::fmt;
+use std::marker::PhantomData;
 
 use serde::de::{self, Deserializer, Visitor};
 use serde::{Deserialize, Serialize, Serializer};
 
+/// The length in bytes of every secret here: an [`AppToken`] or a [`DbKey`].
+const SECRET_BYTES: usize = 32;
+
 /// An app token's length in bytes (64 hex digits on the wire).
-pub const APP_TOKEN_BYTES: usize = 32;
+pub const APP_TOKEN_BYTES: usize = SECRET_BYTES;
+
+/// A database key's length in bytes (64 hex digits on the wire).
+pub const DB_KEY_BYTES: usize = SECRET_BYTES;
 
 /// A per-office app token. See the module docs.
 ///
@@ -70,12 +83,7 @@ impl AppToken {
 impl PartialEq for AppToken {
     /// Constant-time: how long a comparison takes doesn't depend on where the tokens differ.
     fn eq(&self, other: &Self) -> bool {
-        let mut diff = 0u8;
-        for (a, b) in self.0.iter().zip(other.0.iter()) {
-            diff |= a ^ b;
-        }
-        // Keep the compiler from short-circuiting the loop.
-        std::hint::black_box(diff) == 0
+        constant_time_eq(&self.0, &other.0)
     }
 }
 
@@ -99,21 +107,9 @@ impl fmt::Display for AppToken {
     }
 }
 
-const HEX: &[u8; 16] = b"0123456789abcdef";
-
 impl Serialize for AppToken {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        let mut buf = [0u8; APP_TOKEN_BYTES * 2];
-        for (i, byte) in self.0.iter().enumerate() {
-            buf[2 * i] = HEX[(byte >> 4) as usize];
-            buf[2 * i + 1] = HEX[(byte & 0x0f) as usize];
-        }
-        let result = match std::str::from_utf8(&buf) {
-            Ok(text) => s.serialize_str(text),
-            Err(_) => unreachable!("hex digits are ASCII"),
-        };
-        zero(&mut buf);
-        result
+        serialize_hex(&self.0, s)
     }
 }
 
@@ -123,36 +119,179 @@ impl<'de> Deserialize<'de> for AppToken {
         // BAD_TOKEN. `deserialize_str` would let serde_json build its own "invalid type" error,
         // which prints a number it parsed (e.g. an unquoted token's leading digits). This needs
         // a self-describing format, which JSON is.
-        d.deserialize_any(TokenVisitor)
+        d.deserialize_any(SecretVisitor::<AppToken>(PhantomData))
     }
 }
-
-struct TokenVisitor;
 
 /// The one decode error. It never contains the input.
 const BAD_TOKEN: &str = "an app token must be 64 lowercase hex digits";
 
-impl Visitor<'_> for TokenVisitor {
-    type Value = AppToken;
+impl Secret for AppToken {
+    const EXPECTING: &'static str = "an app token";
+    const BAD: &'static str = BAD_TOKEN;
 
-    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("an app token")
+    fn zeroed() -> Self {
+        AppToken([0u8; SECRET_BYTES])
+    }
+    fn bytes_mut(&mut self) -> &mut [u8; SECRET_BYTES] {
+        &mut self.0
+    }
+}
+
+/// An office's database key: the 32-byte raw key of its SQLCipher databases.
+///
+/// The host creates each office's key from a secure random source, stores it in its own key
+/// store, and sends it to the office's server on the launch pipe (`org-office-launch`) on every
+/// create, start and discard. The server never creates, stores or deletes one. It never reaches
+/// argv, the environment, a log or the office's folder.
+///
+/// It has the same guards as [`AppToken`]:
+/// - On the wire it is 64 lowercase hex digits; decode errors never echo the input, and it
+///   decodes from JSON only.
+/// - `Debug` prints `DbKey(<redacted>)`. There is no `Display`.
+/// - Equality is constant-time.
+/// - The bytes are zeroed when it's dropped. Share it by reference.
+///
+/// Zeroing is defence in depth: it covers this key's own bytes only. The copies listed in the
+/// module docs for the app token (the array passed to [`DbKey::from_bytes`], line, reader and
+/// writer buffers, serde's buffering) survive it, and so does any copy made from
+/// [`DbKey::expose_bytes`]. Serializing it zeroes its own hex buffer.
+///
+/// It isn't `Clone`:
+///
+/// ```compile_fail,E0599
+/// let key = org_proto::DbKey::from_bytes([0; org_proto::DB_KEY_BYTES]);
+/// let _copy = key.clone();
+/// ```
+pub struct DbKey([u8; DB_KEY_BYTES]);
+
+impl DbKey {
+    /// Wrap 32 random bytes. The caller makes them with a secure random source and zeroes its
+    /// own array afterwards: this only zeroes its own copy. This crate does no I/O.
+    pub fn from_bytes(bytes: [u8; DB_KEY_BYTES]) -> Self {
+        DbKey(bytes)
     }
 
-    fn visit_str<E: de::Error>(self, text: &str) -> Result<AppToken, E> {
+    /// The raw key, for the host's key store and the server's SQLCipher. Don't copy the bytes
+    /// beyond their immediate use: borrow them for the one call that needs them.
+    /// `*key.expose_bytes()` copies the array, and any copy (or a hex form made for SQLCipher's
+    /// `x'…'` key syntax) is the caller's to zero. Never log or format it.
+    pub fn expose_bytes(&self) -> &[u8; DB_KEY_BYTES] {
+        &self.0
+    }
+}
+
+impl PartialEq for DbKey {
+    /// Constant-time: how long a comparison takes doesn't depend on where the keys differ.
+    fn eq(&self, other: &Self) -> bool {
+        constant_time_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for DbKey {}
+
+impl Drop for DbKey {
+    fn drop(&mut self) {
+        zero(&mut self.0);
+    }
+}
+
+impl fmt::Debug for DbKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("DbKey(<redacted>)")
+    }
+}
+
+impl Serialize for DbKey {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        serialize_hex(&self.0, s)
+    }
+}
+
+impl<'de> Deserialize<'de> for DbKey {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        // `deserialize_any`, for the reason given on `AppToken`'s decoder.
+        d.deserialize_any(SecretVisitor::<DbKey>(PhantomData))
+    }
+}
+
+/// The one decode error. It never contains the input.
+const BAD_DB_KEY: &str = "a database key must be 64 lowercase hex digits";
+
+impl Secret for DbKey {
+    const EXPECTING: &'static str = "a database key";
+    const BAD: &'static str = BAD_DB_KEY;
+
+    fn zeroed() -> Self {
+        DbKey([0u8; SECRET_BYTES])
+    }
+    fn bytes_mut(&mut self) -> &mut [u8; SECRET_BYTES] {
+        &mut self.0
+    }
+}
+
+/// What [`AppToken`] and [`DbKey`] share, so they decode through one visitor. Each type zeroes
+/// itself on drop.
+trait Secret: Sized {
+    /// What the visitor expects, for serde's messages.
+    const EXPECTING: &'static str;
+    /// The one decode error. It never contains the input.
+    const BAD: &'static str;
+    /// All zeros, to decode into in place.
+    fn zeroed() -> Self;
+    fn bytes_mut(&mut self) -> &mut [u8; SECRET_BYTES];
+}
+
+/// Constant-time equality of two secrets.
+fn constant_time_eq(a: &[u8; SECRET_BYTES], b: &[u8; SECRET_BYTES]) -> bool {
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    // Keep the compiler from short-circuiting the loop.
+    std::hint::black_box(diff) == 0
+}
+
+const HEX: &[u8; 16] = b"0123456789abcdef";
+
+/// A secret as 64 lowercase hex digits, through a stack buffer that is zeroed afterwards.
+fn serialize_hex<S: Serializer>(bytes: &[u8; SECRET_BYTES], s: S) -> Result<S::Ok, S::Error> {
+    let mut buf = [0u8; SECRET_BYTES * 2];
+    for (i, byte) in bytes.iter().enumerate() {
+        buf[2 * i] = HEX[(byte >> 4) as usize];
+        buf[2 * i + 1] = HEX[(byte & 0x0f) as usize];
+    }
+    let result = match std::str::from_utf8(&buf) {
+        Ok(text) => s.serialize_str(text),
+        Err(_) => unreachable!("hex digits are ASCII"),
+    };
+    zero(&mut buf);
+    result
+}
+
+struct SecretVisitor<T>(PhantomData<T>);
+
+impl<T: Secret> Visitor<'_> for SecretVisitor<T> {
+    type Value = T;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(T::EXPECTING)
+    }
+
+    fn visit_str<E: de::Error>(self, text: &str) -> Result<T, E> {
         let text = text.as_bytes();
-        if text.len() != APP_TOKEN_BYTES * 2 {
-            return Err(E::custom(BAD_TOKEN));
+        if text.len() != SECRET_BYTES * 2 {
+            return Err(E::custom(T::BAD));
         }
         // Built in place, so an early return zeroes the partial bytes through `Drop`.
-        let mut token = AppToken([0u8; APP_TOKEN_BYTES]);
+        let mut secret = T::zeroed();
         for (i, pair) in text.as_chunks::<2>().0.iter().enumerate() {
             match (nibble(pair[0]), nibble(pair[1])) {
-                (Some(hi), Some(lo)) => token.0[i] = (hi << 4) | lo,
-                _ => return Err(E::custom(BAD_TOKEN)),
+                (Some(hi), Some(lo)) => secret.bytes_mut()[i] = (hi << 4) | lo,
+                _ => return Err(E::custom(T::BAD)),
             }
         }
-        Ok(token)
+        Ok(secret)
     }
 
     // Other scalars, 128-bit integers included (with serde_json's `arbitrary_precision` feature, a
@@ -161,23 +300,23 @@ impl Visitor<'_> for TokenVisitor {
     // and objects fall to serde's default "invalid type" error, which names only the type. One
     // path stays out of reach: with `arbitrary_precision`, a `Value` holding a huge number decoded
     // into an `#[serde(untagged)]` enum is echoed by serde's own visitor, before this one runs.
-    fn visit_bool<E: de::Error>(self, _: bool) -> Result<AppToken, E> {
-        Err(E::custom(BAD_TOKEN))
+    fn visit_bool<E: de::Error>(self, _: bool) -> Result<T, E> {
+        Err(E::custom(T::BAD))
     }
-    fn visit_i64<E: de::Error>(self, _: i64) -> Result<AppToken, E> {
-        Err(E::custom(BAD_TOKEN))
+    fn visit_i64<E: de::Error>(self, _: i64) -> Result<T, E> {
+        Err(E::custom(T::BAD))
     }
-    fn visit_u64<E: de::Error>(self, _: u64) -> Result<AppToken, E> {
-        Err(E::custom(BAD_TOKEN))
+    fn visit_u64<E: de::Error>(self, _: u64) -> Result<T, E> {
+        Err(E::custom(T::BAD))
     }
-    fn visit_f64<E: de::Error>(self, _: f64) -> Result<AppToken, E> {
-        Err(E::custom(BAD_TOKEN))
+    fn visit_f64<E: de::Error>(self, _: f64) -> Result<T, E> {
+        Err(E::custom(T::BAD))
     }
-    fn visit_i128<E: de::Error>(self, _: i128) -> Result<AppToken, E> {
-        Err(E::custom(BAD_TOKEN))
+    fn visit_i128<E: de::Error>(self, _: i128) -> Result<T, E> {
+        Err(E::custom(T::BAD))
     }
-    fn visit_u128<E: de::Error>(self, _: u128) -> Result<AppToken, E> {
-        Err(E::custom(BAD_TOKEN))
+    fn visit_u128<E: de::Error>(self, _: u128) -> Result<T, E> {
+        Err(E::custom(T::BAD))
     }
 }
 
@@ -189,7 +328,7 @@ fn nibble(c: u8) -> Option<u8> {
     }
 }
 
-/// Overwrite with zeros in a way the optimizer can't remove.
+/// Overwrite with zeros in a way the optimizer can't remove. Used for [`AppToken`] and [`DbKey`].
 // The crate denies unsafe code. This is the one exception: a plain write of zeros to bytes
 // that are about to be dropped is a dead store the optimizer may remove, and safe Rust has no
 // volatile write. `write_volatile` through an exclusive reference is sound.
@@ -433,6 +572,99 @@ mod tests {
         // SAFETY: dropped once and never used as a token again; only its bytes are read.
         unsafe { std::mem::ManuallyDrop::drop(&mut t) };
         assert_eq!(t.0, [0u8; APP_TOKEN_BYTES]);
+    }
+
+    fn db_key() -> DbKey {
+        let mut bytes = [0u8; DB_KEY_BYTES];
+        for (i, b) in bytes.iter_mut().enumerate() {
+            *b = (i as u8).wrapping_mul(53).wrapping_add(0x3c);
+        }
+        DbKey::from_bytes(bytes)
+    }
+
+    fn key_hex(k: &DbKey) -> String {
+        k.expose_bytes()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
+
+    #[test]
+    fn a_db_key_is_64_lowercase_hex_and_round_trips() {
+        let k = db_key();
+        let json = serde_json::to_string(&k).unwrap();
+        assert_eq!(json, format!("\"{}\"", key_hex(&k)));
+        assert_eq!(json.len(), 66);
+        assert!(json[1..65]
+            .bytes()
+            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)));
+        let back = serde_json::from_str::<DbKey>(&json).unwrap();
+        assert_eq!(back, k);
+        assert_eq!(back.expose_bytes(), k.expose_bytes());
+        assert_eq!(serde_json::from_str::<Option<DbKey>>("null").unwrap(), None);
+    }
+
+    #[test]
+    fn a_db_key_of_the_wrong_length_or_not_hex_is_refused_without_echoing() {
+        let secret = key_hex(&db_key());
+        let cases = [
+            secret.to_uppercase(),         // uppercase isn't accepted
+            format!("{}g", &secret[..63]), // a non-hex digit
+            secret[..62].to_string(),      // too short
+            format!("{secret}00"),         // too long
+            format!("{}é", &secret[..62]), // non-ASCII
+        ];
+        for bad in cases {
+            let err = serde_json::from_str::<DbKey>(&serde_json::to_string(&bad).unwrap())
+                .unwrap_err()
+                .to_string();
+            assert!(!err.contains(&bad[..20]), "echoed: {err}");
+            assert!(err.contains(BAD_DB_KEY), "{err}");
+        }
+        for other in ["5", "-5", "1.5", "true", "31415926535897932384"] {
+            let err = serde_json::from_str::<DbKey>(other)
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(BAD_DB_KEY), "{other}: {err}");
+        }
+        for other in ["null", "[1]", "{\"a\":1}", "\"\""] {
+            assert!(serde_json::from_str::<DbKey>(other).is_err(), "{other}");
+        }
+    }
+
+    #[test]
+    fn a_db_key_is_redacted_in_debug() {
+        let k = db_key();
+        let secret = key_hex(&k);
+        for shown in [
+            format!("{k:?}"),
+            format!("{:?}", Some(&k)),
+            format!("{k:#?}"),
+        ] {
+            assert!(!shown.contains(&secret[..8]), "{shown}");
+            assert!(shown.contains("DbKey(<redacted>)"), "{shown}");
+        }
+    }
+
+    #[test]
+    fn db_key_equality_compares_every_byte() {
+        let a = db_key();
+        assert_eq!(a, db_key());
+        for i in [0, 15, 31] {
+            let mut bytes = *a.expose_bytes();
+            bytes[i] ^= 1;
+            assert_ne!(a, DbKey::from_bytes(bytes), "byte {i}");
+        }
+    }
+
+    // Test-only, as for the app token.
+    #[test]
+    #[allow(unsafe_code)]
+    fn drop_zeroes_the_db_key() {
+        let mut k = std::mem::ManuallyDrop::new(DbKey::from_bytes([0x5a; DB_KEY_BYTES]));
+        // SAFETY: dropped once and never used as a key again; only its bytes are read.
+        unsafe { std::mem::ManuallyDrop::drop(&mut k) };
+        assert_eq!(k.0, [0u8; DB_KEY_BYTES]);
     }
 
     #[test]

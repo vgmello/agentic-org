@@ -66,8 +66,8 @@
 //! - Readers ignore unknown fields, ignore unknown events, decode unknown error codes as
 //!   [`ErrorCode::Unknown`], and answer unknown methods with [`ErrorCode::UnknownMethod`].
 
-// No unsafe code, except the one function that zeroes an `AppToken`'s bytes (see `token`).
-// One test there also allows it, to read a token's bytes after it's dropped.
+// No unsafe code, except the one function that zeroes an `AppToken`'s or a `DbKey`'s bytes (see
+// `token`). Two tests there also allow it, to read a token's or a key's bytes after it's dropped.
 #![deny(unsafe_code)]
 
 pub mod directory;
@@ -106,7 +106,7 @@ pub use org::{
     OWNER_HANDLE, PROJECT_DESCRIPTION_MAX_CHARS, PROJECT_KEY_MAX_CHARS, RESERVED_BRANCH_PREFIXES,
     RESERVED_PROJECT_KEYS, RUN_HANDLE_PREFIX,
 };
-pub use token::{AppToken, APP_TOKEN_BYTES};
+pub use token::{AppToken, DbKey, APP_TOKEN_BYTES, DB_KEY_BYTES};
 pub use types::{
     OfficeInfo, OfficeRole, OfficeStatus, OfficeStatusReason, Organization,
     ORGANIZATION_NAME_MAX_CHARS,
