@@ -536,11 +536,19 @@ impl Spool {
             .ok_or_else(|| SpoolError::InvalidInput("invalid outbox file name".into()))?;
         let id_stem = file_name.strip_suffix(".json").unwrap_or(file_name);
 
-        let Some(parsed) = read_envelope(outbox_file)? else {
-            return Err(SpoolError::NotFound(format!(
-                "outbox file {} already moved",
-                outbox_file.display()
-            )));
+        let parsed = match read_envelope(outbox_file) {
+            Ok(Some(parsed)) => parsed,
+            Ok(None) => {
+                return Err(SpoolError::NotFound(format!(
+                    "outbox file {} already moved",
+                    outbox_file.display()
+                )));
+            }
+            // A file we can't read (e.g. mode 000) would otherwise block every delivery
+            // behind it, for good.
+            Err(err) => {
+                return self.move_to_dead(outbox_file, id_stem, &format!("unreadable: {err}"));
+            }
         };
 
         let env = match parsed {
@@ -589,14 +597,19 @@ impl Spool {
         })
     }
 
-    /// Returns `true` if `outbox/new` contains at least one `.json` file.
+    /// Returns `true` if `outbox/new` contains at least one `.json` entry that isn't a
+    /// directory (the same entries [`Spool::deliver_all`] handles, so a `*.json` directory
+    /// can't keep the relay loop busy).
     pub fn has_pending_outbox(&self) -> bool {
         let Ok(entries) = fs::read_dir(self.outbox_new_dir()) else {
             return false;
         };
         for entry in entries.flatten() {
             if let Some(name) = entry.file_name().to_str() {
-                if !name.starts_with('.') && name.ends_with(".json") {
+                if !name.starts_with('.')
+                    && name.ends_with(".json")
+                    && !entry.file_type().is_ok_and(|t| t.is_dir())
+                {
                     return true;
                 }
             }
@@ -604,18 +617,26 @@ impl Spool {
         false
     }
 
-    /// Deliver all pending messages currently in `outbox/new/`.
+    /// Deliver all pending messages currently in `outbox/new/`. One file failing (e.g. an
+    /// inbox it can't be moved into) doesn't stop the others: every file is tried, then the
+    /// first error is returned.
     pub fn deliver_all(&self) -> Result<DeliverSummary, SpoolError> {
         let mut summary = DeliverSummary::default();
+        let mut first_error = None;
         for path in Self::sorted_json_entries(&self.outbox_new_dir())? {
             match self.deliver_one(&path) {
                 Ok(DeliverOutcome::Delivered { .. }) => summary.delivered += 1,
                 Ok(DeliverOutcome::Dead { .. }) => summary.dead += 1,
                 Err(SpoolError::NotFound(_)) => continue,
-                Err(e) => return Err(e),
+                Err(e) => {
+                    first_error.get_or_insert(e);
+                }
             }
         }
-        Ok(summary)
+        match first_error {
+            Some(e) => Err(e),
+            None => Ok(summary),
+        }
     }
 
     /// List unread messages in `inbox/<agent>/new/` (and `cur/` when `include_cur` is true)

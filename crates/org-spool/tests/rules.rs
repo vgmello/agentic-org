@@ -844,6 +844,35 @@ fn rule_special_and_oversized_spool_files_are_dead_lettered_not_read() {
 }
 
 #[test]
+fn rule_an_unreadable_outbox_file_is_dead_lettered_and_delivery_goes_on() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = TempSpool::new("unreadable");
+    let outbox = t.dir.join("spool/outbox/new");
+    // Sorts before any real ULID.
+    let locked = outbox.join("00000000000000000000000000.json");
+    fs::write(&locked, b"{}").unwrap();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    let env = Envelope::new_msg(PEER, ME, Some("after".into()), "b", BTreeMap::new()).unwrap();
+    let id = env.id.clone();
+    t.spool.enqueue(&env).unwrap();
+
+    let summary = t.spool.deliver_all().unwrap();
+    assert_eq!((summary.delivered, summary.dead), (1, 1));
+    assert!(t
+        .dir
+        .join(format!("spool/inbox/{ME}/new/{id}.json"))
+        .is_file());
+    let reason =
+        fs::read_to_string(t.dir.join("spool/dead/00000000000000000000000000.reason")).unwrap();
+    assert!(reason.starts_with("unreadable:"), "{reason}");
+    assert!(!t.spool.has_pending_outbox());
+
+    // A `*.json` directory isn't pending work (the relay loop would spin on it).
+    fs::create_dir(outbox.join("dir.json")).unwrap();
+    assert!(!t.spool.has_pending_outbox());
+}
+
+#[test]
 fn rule_a_corrupt_triage_file_is_set_aside_not_fatal() {
     let t = TempSpool::new("corrupt");
     let id = t.ask("q");
