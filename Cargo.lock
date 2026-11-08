@@ -2148,6 +2148,7 @@ name = "org-agent"
 version = "0.0.0"
 dependencies = [
  "org-spool",
+ "serde_json",
 ]
 
 [[package]]
@@ -2207,6 +2208,10 @@ dependencies = [
 [[package]]
 name = "org-spool"
 version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "org-work"
