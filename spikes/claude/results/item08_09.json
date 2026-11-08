@@ -1,0 +1,182 @@
+{
+  "setup": {
+    "t1_status_ok": true,
+    "work_git_is_bare": "true",
+    "t1_git_dir": "<s8>/work.git/worktrees/t1"
+  },
+  "runs": {
+    "A-design-roots": {
+      "settings": {
+        "sandbox": {
+          "enabled": true,
+          "autoAllowBashIfSandboxed": true,
+          "allowUnsandboxedCommands": false,
+          "filesystem": {
+            "allowWrite": [
+              "<s8>/work.git/objects",
+              "<s8>/work.git/refs",
+              "<s8>/work.git/logs",
+              "<s8>/work.git/worktrees/t1",
+              "<s8>/homerepo/agents/x",
+              "<s8>/homerepo/.git/objects",
+              "<s8>/homerepo/.git/refs",
+              "<s8>/homerepo/.git/logs",
+              "<s8>/homerepo/.git/index",
+              "<s8>/homerepo/.git/index.lock",
+              "<s8>/homerepo/.git/HEAD",
+              "<s8>/homerepo/.git/HEAD.lock",
+              "<s8>/homerepo/.git/ORIG_HEAD",
+              "<s8>/homerepo/.git/COMMIT_EDITMSG",
+              "<s8>/homerepo/.git/packed-refs",
+              "<s8>/homerepo/.git/packed-refs.lock"
+            ],
+            "denyWrite": [
+              "<s8>/work.git/objects/info",
+              "<s8>/work.git/worktrees/t1/commondir",
+              "<s8>/work.git/worktrees/t1/gitdir",
+              "<s8>/homerepo/.git/objects/info"
+            ]
+          },
+          "network": {
+            "allowUnixSockets": [
+              "<s8>/run/a.sock",
+              "<s8>/run/c.sock"
+            ]
+          }
+        },
+        "permissions": {
+          "allow": [
+            "Bash(sh <s8>/rt/probe.sh)"
+          ]
+        }
+      },
+      "approvals_asked": [],
+      "tool_result_meta": [
+        {
+          "id": "toolu_01D7YTMQoE49dk4jyRjuxnbK",
+          "permission_decision": {
+            "decision": "accept",
+            "source": "config",
+            "reason_type": "other"
+          }
+        }
+      ],
+      "probe_output": [
+        "== sockets",
+        "a.sock-listed CONNECTED PONG",
+        "b.sock-unlisted REFUSED PermissionError [Errno 1] Operation not permitted",
+        "c.sock-listed-created-late CONNECTED PONG",
+        "own-cc-messaging-socket REFUSED PermissionError [Errno 1] Operation not permitted",
+        "== git env",
+        "command line:\t<s8>/rt/hooks",
+        "file:<s8>/rt/gitconfig\t<email>",
+        "== task commit",
+        "TASK-COMMIT-OK",
+        "0fbb743 spike-task",
+        "error: could not lock config file <s8>/work.git/worktrees/t1/config.worktree: Operation not permitted",
+        "WT-CONFIG-FAIL",
+        "error: could not lock config file <s8>/work.git/config: Operation not permitted",
+        "SHARED-CONFIG-FAIL",
+        "== home commit",
+        "error: cannot lock ref 'AUTO_MERGE': Unable to create '<s8>/homerepo/.git/AUTO_MERGE.lock': Operation not permitted",
+        "HOME-COMMIT-OK",
+        "== writes (non-destructive: open for append, write nothing)",
+        "<s8>/rt/probe.sh: line 27: <s8>/outside.txt: Operation not permitted",
+        "OUTSIDE-WRITE-DENIED",
+        "<s8>/rt/probe.sh: line 28: <s8>/work.git/config: Operation not permitted",
+        "WORKGIT-CONFIG-WRITE-DENIED",
+        "<s8>/rt/probe.sh: line 29: <s8>/work.git/hooks/pre-commit: Operation not permitted",
+        "WORKGIT-HOOK-WRITE-DENIED",
+        "<s8>/rt/probe.sh: line 30: <s8>/work.git/objects/info/alternates: Operation not permitted",
+        "OBJECTS-INFO-WRITE-DENIED",
+        "<s8>/rt/probe.sh: line 31: <s8>/work.git/worktrees/t1/commondir: Operation not permitted",
+        "COMMONDIR-WRITE-DENIED",
+        "<s8>/rt/probe.sh: line 32: <s8>/homerepo/.git/config: Operation not permitted",
+        "HOME-GIT-CONFIG-WRITE-DENIED",
+        "<s8>/rt/probe.sh: line 33: <s8>/homerepo/.git/hooks/pre-commit: Operation not permitted",
+        "HOME-GIT-HOOK-WRITE-DENIED",
+        "<s8>/rt/probe.sh: line 34: <s8>/homerepo/.git/commondir: Operation not permitted",
+        "HOME-GIT-COMMONDIR-CREATE-DENIED",
+        "== end"
+      ],
+      "result": "DONE",
+      "exit": 0,
+      "stderr": []
+    },
+    "B-cwd-only": {
+      "settings": {
+        "sandbox": {
+          "enabled": true,
+          "autoAllowBashIfSandboxed": true,
+          "allowUnsandboxedCommands": false
+        },
+        "permissions": {
+          "allow": [
+            "Bash(sh <s8>/rt/probe.sh)"
+          ]
+        }
+      },
+      "approvals_asked": [],
+      "tool_result_meta": [
+        {
+          "id": "toolu_01HX5B7UT1Ud5NDD1e2TMg8B",
+          "permission_decision": {
+            "decision": "accept",
+            "source": "config",
+            "reason_type": "other"
+          }
+        }
+      ],
+      "probe_output": [
+        "== sockets",
+        "a.sock-listed REFUSED PermissionError [Errno 1] Operation not permitted",
+        "b.sock-unlisted REFUSED PermissionError [Errno 1] Operation not permitted",
+        "c.sock-listed-created-late REFUSED PermissionError [Errno 1] Operation not permitted",
+        "own-cc-messaging-socket REFUSED PermissionError [Errno 1] Operation not permitted",
+        "== git env",
+        "command line:\t<s8>/rt/hooks",
+        "file:<s8>/rt/gitconfig\t<email>",
+        "== task commit",
+        "TASK-COMMIT-OK",
+        "7638346 spike-task",
+        "error: could not lock config file <s8>/work.git/worktrees/t1/config.worktree: Operation not permitted",
+        "WT-CONFIG-FAIL",
+        "error: could not lock config file <s8>/work.git/config: Operation not permitted",
+        "SHARED-CONFIG-FAIL",
+        "== home commit",
+        "<s8>/rt/probe.sh: line 25: memory.md: Operation not permitted",
+        "HOME-COMMIT-FAIL",
+        "== writes (non-destructive: open for append, write nothing)",
+        "<s8>/rt/probe.sh: line 27: <s8>/outside.txt: Operation not permitted",
+        "OUTSIDE-WRITE-DENIED",
+        "<s8>/rt/probe.sh: line 28: <s8>/work.git/config: Operation not permitted",
+        "WORKGIT-CONFIG-WRITE-DENIED",
+        "<s8>/rt/probe.sh: line 29: <s8>/work.git/hooks/pre-commit: Operation not permitted",
+        "WORKGIT-HOOK-WRITE-DENIED",
+        "<s8>/rt/probe.sh: line 30: <s8>/work.git/objects/info/alternates: Operation not permitted",
+        "OBJECTS-INFO-WRITE-DENIED",
+        "<s8>/rt/probe.sh: line 31: <s8>/work.git/worktrees/t1/commondir: Operation not permitted",
+        "COMMONDIR-WRITE-DENIED",
+        "<s8>/rt/probe.sh: line 32: <s8>/homerepo/.git/config: Operation not permitted",
+        "HOME-GIT-CONFIG-WRITE-DENIED",
+        "<s8>/rt/probe.sh: line 33: <s8>/homerepo/.git/hooks/pre-commit: Operation not permitted",
+        "HOME-GIT-HOOK-WRITE-DENIED",
+        "<s8>/rt/probe.sh: line 34: <s8>/homerepo/.git/commondir: Operation not permitted",
+        "HOME-GIT-COMMONDIR-CREATE-DENIED",
+        "== end"
+      ],
+      "result": "DONE",
+      "exit": 0,
+      "stderr": []
+    }
+  },
+  "work_git_config_tail": [
+    "\turl = <s8>/origin",
+    "[extensions]",
+    "\tworktreeConfig = true"
+  ],
+  "worktree_config_files": [
+    "work.git/config.worktree",
+    "work.git/worktrees/t1/config.worktree"
+  ]
+}
