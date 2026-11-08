@@ -148,7 +148,8 @@ with the same rule (one implementation, see 6). Later lines are reserved: the se
   and emit nothing. On success, emit `organization.created` on `subscribe`. The reservation ends when
   the create fails, or once the new office is in the catalog.
 - **host.sock:** 0600 and `run/` 0700. On accept, the host also checks the peer's uid (`getpeereid`) is its own (defence in depth).
-- **Fatal status:** `unavailable` lasts until the host restarts (phase 1). A manual "retry" call can come later.
+- **Fatal status and restart:** `unavailable` (with `status_reason`) lasts until the owner calls `office.restart` from the app, or the host restarts. `office.restart` clears it and resets the backoff, and retries `key_missing` (it goes straight back if the key is still missing); it refuses `unsupported_version` and `invalid_request`. Every status change is pushed as `office.status_changed` on `subscribe`.
+- **Give-up rule:** 10 failed restarts within 30 minutes → `unavailable` with `restarts_exhausted` (no more automatic restarts until `office.restart`). While `offline` with a restart pending, `next_restart_at` says when.
 - **Socket length:** every office socket path in a home has the same length (12-character handles),
   so the host checks `host.sock` and a sample `run/XXXXXXXXXXXX.sock` against the 103-byte limit **at
   startup** and refuses to start with a clear message. No per-create error code is needed.
