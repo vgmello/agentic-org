@@ -898,6 +898,31 @@ fn rule_a_failing_delivery_does_not_stop_the_ones_after_it() {
 }
 
 #[test]
+fn rule_a_reserved_dead_reason_makes_the_message_take_another_stem() {
+    // The .reason reserves the stem: a message whose stem is taken by a .reason alone (another
+    // process mid-way) goes to a fresh stem instead of renaming over anything.
+    let t = TempSpool::new("dead_reserve");
+    let env = Envelope::new_msg(PEER, "nobody", None, "b", BTreeMap::new()).unwrap();
+    let id = env.id.clone();
+    let dead = t.dir.join("spool/dead");
+    fs::write(dead.join(format!("{id}.reason")), b"theirs\n").unwrap();
+    t.spool.enqueue(&env).unwrap();
+    assert_eq!(t.spool.deliver_all().unwrap().dead, 1);
+    assert_eq!(
+        fs::read(dead.join(format!("{id}.reason"))).unwrap(),
+        b"theirs\n"
+    );
+    assert!(!dead.join(format!("{id}.json")).exists());
+    let names: Vec<String> = fs::read_dir(&dead)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with(&format!("{id}-")))
+        .collect();
+    assert_eq!(names.len(), 2, "{names:?}");
+}
+
+#[test]
 fn rule_a_symlinked_dead_reason_is_never_written_through() {
     let t = TempSpool::new("dead_reason");
     let target = t.dir.join("precious.txt");

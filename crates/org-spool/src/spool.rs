@@ -528,11 +528,28 @@ impl Spool {
         id_stem: &str,
         reason: &str,
     ) -> Result<DeliverOutcome, SpoolError> {
-        let safe_stem = self.safe_dead_stem(id_stem);
+        // The `.reason` is created first (O_EXCL) to reserve the stem, so two processes
+        // dead-lettering the same id at once pick different stems instead of renaming over
+        // each other; only then is the message moved in.
+        let base = self.safe_dead_stem(id_stem);
+        let mut safe_stem = base.clone();
+        let mut attempts = 0;
+        let dead_reason = loop {
+            let path = self.dead_dir().join(format!("{safe_stem}.reason"));
+            match create_new_nofollow(&path, format!("{reason}\n").as_bytes()) {
+                Ok(()) => break path,
+                Err(e) if e.kind() == ErrorKind::AlreadyExists && attempts < 3 => {
+                    attempts += 1;
+                    safe_stem = format!("{base}-{}", generate_ulid());
+                }
+                Err(e) => return Err(SpoolError::Io(e)),
+            }
+        };
         let dead_json = self.dead_dir().join(format!("{safe_stem}.json"));
-        let dead_reason = self.dead_dir().join(format!("{safe_stem}.reason"));
-        fs::rename(source_file, &dead_json)?;
-        create_new_nofollow(&dead_reason, format!("{reason}\n").as_bytes())?;
+        if let Err(e) = fs::rename(source_file, &dead_json) {
+            let _ = fs::remove_file(&dead_reason);
+            return Err(SpoolError::Io(e));
+        }
         Ok(DeliverOutcome::Dead {
             id: safe_stem,
             reason: reason.to_string(),
