@@ -57,9 +57,9 @@ export function describeFailure(
 ): { title: string; hint: string } {
 	switch (error.code) {
 		case 'not_installed':
-			return { title: "The office isn't installed", hint: 'agentic.org needs to install its office server on this Mac.' };
+			return { title: "The office isn't installed", hint: 'Agentic Org needs to install its office server on this Mac.' };
 		case 'needs_approval':
-			return { title: 'Approval needed', hint: 'Open System Settings → General → Login Items, allow agentic.org, then try again.' };
+			return { title: 'Approval needed', hint: 'Open System Settings → General → Login Items, allow Agentic Org, then try again.' };
 		case 'unreachable':
 			return { title: "The office isn't answering", hint: 'It may still be starting. Try again in a moment.' };
 		case 'storage_error':

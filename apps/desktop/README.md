@@ -1,4 +1,4 @@
-# apps/desktop: agentic.org
+# apps/desktop: Agentic Org
 
 The desktop app: **Tauri 2 + SvelteKit 2 (static SPA) + Svelte 5 + Tailwind v4**, managed with **bun**. It is a *client*: it reaches an office server only through its Rust shell (`src-tauri`) and never reads an office's storage directly.
 

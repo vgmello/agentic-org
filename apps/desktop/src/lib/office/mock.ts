@@ -108,7 +108,7 @@ export function createMockOffice({
 				fail({
 					source: 'setup',
 					code: 'needs_approval',
-					message: 'Allow agentic.org to run in the background in System Settings, then try again.'
+					message: 'Allow Agentic Org to run in the background in System Settings, then try again.'
 				});
 			if (scenario === 'unreachable')
 				fail({ source: 'setup', code: 'unreachable', message: "The office server started but isn't answering." });

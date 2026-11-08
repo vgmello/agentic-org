@@ -292,7 +292,7 @@ impl OfficeConnection for MockOffice {
             )),
             Scenario::NeedsApproval => Err(setup_error(
                 SetupErrorCode::NeedsApproval,
-                "Allow agentic.org to run in the background in System Settings, then try again.",
+                "Allow Agentic Org to run in the background in System Settings, then try again.",
             )),
             Scenario::Unreachable => Err(setup_error(
                 SetupErrorCode::Unreachable,
