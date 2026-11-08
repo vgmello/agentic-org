@@ -8,11 +8,15 @@
 //! plain values back. Phase 1 holds the organization registry (`Office`).
 
 mod error;
+mod model;
 mod name;
 mod office;
+mod private_fs;
+mod store;
 mod time;
 mod ulid;
 
 pub use error::{NameError, OfficeError};
+pub use model::{OfficeInfo, Organization};
 pub use name::MAX_NAME_CHARS;
-pub use office::{Office, OfficeInfo, Organization};
+pub use office::Office;

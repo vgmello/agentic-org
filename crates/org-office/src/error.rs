@@ -9,7 +9,7 @@ pub enum OfficeError {
     AlreadyExists,
     /// Another process already runs this office from the same home directory.
     InUse,
-    /// Disk, SQLite or OS failure. The cause is kept for the server's log only; `Display`
+    /// Disk, database or OS failure. The cause is kept for the server's log only; `Display`
     /// never includes paths or SQL, so it is safe to show to a client.
     Storage(Box<dyn Error + Send + Sync>),
 }
