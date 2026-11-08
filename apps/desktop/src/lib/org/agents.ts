@@ -19,7 +19,7 @@ export const RUN_MODES = [
 	{ id: 'scheduled', label: 'Scheduled', help: "Wakes on a schedule, and when it's needed." }
 ] as const;
 
-/** What ends a run, as HQ applies it to every agent (U20). The profile has no fields for these, so they are shown, not edited. */
+/** What ends a run: a mirror of the defaults HQ applies to every agent (U20, ada's agent-sessions design). The profile has no fields for them, so they are shown, not edited; change them here if HQ's defaults change. */
 export const RUN_LIMITS = {
 	idleMinutes: 5,
 	busyMinutesAtHome: 30,

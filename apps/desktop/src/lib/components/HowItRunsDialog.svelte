@@ -114,7 +114,8 @@
 					</div>
 				</div>
 			{/if}
-			{#if runLimitsText(mode)}<p class="text-xs/5 text-gray-400" data-testid="run-limits">{runLimitsText(mode)}</p>{/if}
+			{@const limits = runLimitsText(mode)}
+			{#if limits}<p class="text-xs/5 text-gray-400" data-testid="run-limits">{limits}</p>{/if}
 			{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 			<DialogFooter>
 				<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}>Cancel</Button>
