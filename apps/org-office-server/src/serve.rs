@@ -406,13 +406,16 @@ mod tests {
         }
     }
 
+    /// Whether `stream` is served: it answers hello. The wait is generous because a loaded machine
+    /// (a full workspace run) can take seconds to schedule 64 connection threads; a connection
+    /// the server refuses is closed at once, so that case does not wait for it.
     fn hello_ok(stream: &mut UnixStream) -> bool {
         let request = Request::new::<Hello>(1, &org_proto::Empty {}).unwrap();
         if frame::write_message(&mut *stream, &request).is_err() {
             return false;
         }
         stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
+            .set_read_timeout(Some(Duration::from_secs(60)))
             .unwrap();
         matches!(
             frame::read_message::<Response>(&mut BufReader::new(&*stream)),
@@ -446,11 +449,16 @@ mod tests {
         );
         // A slot comes back when a client goes away.
         drop(held.pop());
+        let deadline = std::time::Instant::now() + Duration::from_secs(120);
         let mut again = loop {
             let mut stream = UnixStream::connect(&path).unwrap();
             if hello_ok(&mut stream) {
                 break stream;
             }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the slot of a closed connection never came back"
+            );
             std::thread::sleep(Duration::from_millis(20));
         };
         assert!(hello_ok(&mut again));
