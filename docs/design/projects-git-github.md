@@ -72,17 +72,17 @@ Each project is a **git repository on GitHub**. **One GitHub App, "Agentic Org"*
 - **Cloning:** an office clones a project (bare) the first time one of its agents needs it, or right away for projects it follows. It runs as a background job with progress (`cloning`, `ready`, `failed: reason`).
 
 ## Agents and git
-- **A worktree per task.** When an agent starts a task in a project, its office runs `git worktree add` from `work.git` on branch `task/<task-id>-<slug>`. The branch starts from the project's `integration_branch` (the default branch when that's empty), or from the branch the task names. (amended 2026-11-08: processes, A56; see `processes.md`)
+- **A worktree per task.** When an agent starts a task in a project, its office runs `git worktree add` from `work.git` on branch `task/<ref>-<slug>` (amended 2026-11-08: processes; the name W7 uses). The branch starts from the project's `integration_branch` (the default branch when that's empty), or from the branch the task names. (amended 2026-11-08: processes, A56 and decision 14) The office resolves that branch to a sha in `mirror.git` (agents can move refs in `work.git`), makes sure the object is in `work.git` through the fetch below, runs `git worktree add -b task/… -- <path> <sha>`, and records the sha as the branch's base. See `processes.md` §4.2.
   - Branch names are checked with `git check-ref-format`.
   - The office always passes `--` before any path or ref that came from an agent.
   - Agents never share a working copy.
 - **The office does all network git work.** Agents never hold a token that can push.
   - **Fetching:** the office fetches from GitHub into `mirror.git` with a `contents: read` token. Then it updates `work.git` from the mirror, **running in `work.git`** (so `work.git`'s own config applies, which is harmless: no token is ever present there), with the same hardening as every office git command: run with `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1`, from the mirror's explicit path (never a remote name or URL from `work.git`'s config, so an `insteadOf` rule or remote URL there can't redirect it), with explicit refspecs, `protocol.allow=never` except `file`, hooks off, and no token. Agents read everything locally.
   - **Pushing:** agents push with **`org-agent push`**.
-    - The office checks that the branch is the agent's own `task/…` branch, in a project of that office.
+    - The office checks that the branch is the agent's own `task/…` branch, in a project of that office. (amended 2026-11-08: processes) "Own" means the agent holds the branch's open task branch record; a branch it made by hand, or one already merged, is refused (`processes.md` §4.1).
     - It copies that one branch **into `mirror.git`, running in `mirror.git`**: a fetch from `work.git` by explicit path and refspec. So `work.git`'s config (which agents can edit) is never used and none of its hooks run. The copy uses the same `GIT_CONFIG_*` and hooks-off settings, and never gets the token's file descriptor.
     - It pushes from the mirror with a `contents: write` token for that repository: never to the default branch, never a force push.
-    - (amended 2026-11-08: A58) With the same token, it also pushes the `merged/<branch>` and `archive/<branch>` tags and deletes `task/*` branches it created, as "When a task is done" says. It never deletes the default or integration branch, or a tag.
+    - (amended 2026-11-08: A58) With the same token, it also pushes the `merged/<branch>` and `archive/<branch>` tags and deletes `task/*` branches it created, as "When a task is done" says. It never deletes the default or integration branch, or a tag. The delete is a compare-and-swap, `git push --force-with-lease=refs/heads/task/<b>:<head> <url> :refs/heads/task/<b>`: it removes the ref only if it's still at the checked head and never moves a ref to another commit, so it isn't a force push.
   - **Every network git command the office runs is hardened:**
     - an explicit `https://github.com/<owner>/<repo>.git` URL and a full refspec
     - `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1`
@@ -111,7 +111,7 @@ Each project is a **git repository on GitHub**. **One GitHub App, "Agentic Org"*
   - On a reclaim from an unreachable office, the new office continues from the branch as last pushed.
 - **When a task is done:**
   - Its branch has been pushed, and the office removes the worktree.
-  - (amended 2026-11-08: A58) After a merge, the office deletes the remote task branch only if its head is an ancestor of the project's `integration_branch`, checked in `mirror.git`. First it pushes a `merged/<branch>` tag at that head. A task closed without a merge gets an `archive/<branch>` tag pushed first, and then the branch is deleted. The office only deletes `task/*` branches it created, never with a force push, and removes the local worktree and branch too. See `processes.md` §4.5.
+  - (amended 2026-11-08: A58) After a merge, the office deletes the remote task branch only if its head is an ancestor of the project's `integration_branch`, checked in `mirror.git`. First it pushes a `merged/<branch>` tag at that head. A task closed without a merge gets an `archive/<branch>` tag pushed first, and then the branch is deleted. The office only deletes `task/*` branches it created, with the compare-and-swap delete above (never a force push), and removes the local worktree and branch too. See `processes.md` §4.5.
   - Merging into the default branch is a later decision (pull requests, review rules).
 
 ## Keeping offices in step

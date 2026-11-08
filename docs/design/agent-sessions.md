@@ -460,8 +460,8 @@ This applies `projects-git-github.md` (a bare `work.git` and a worktree per task
 
 ## Security
 - **The workspace is hostile.** An agent can write anything in its worktree, so nothing there may change a session's **settings, permissions, hooks, tools or MCP servers**:
-  - Settings come only from the office (decision 6), and the office's composed instructions come from the default branch (decision 8).
-  - Instruction files that a runtime reads from the cwd by itself (`AGENTS.md`, `.agents/rules`; Claude reads none under `--setting-sources ""`, decision 8) are the task branch's own content. They can steer only that task's sessions, never another agent's or the office's, and they reach the default branch only through review. We accept that.
+  - Settings come only from the office (decision 6), and the office's composed instructions come from the project's integration branch as fetched into `mirror.git` (decision 8; amended 2026-11-08: A57).
+  - Instruction files that a runtime reads from the cwd by itself (`AGENTS.md`, `.agents/rules`; Claude reads none under `--setting-sources ""`, decision 8) are the task branch's own content. They can steer only that task's sessions, never another agent's or the office's, and they reach the integration branch only through review (amended 2026-11-08: A57). We accept that.
   - **A workspace skill's `allowed-tools` does pre-approve tools** in Claude, whenever the project setting source is loaded (the spike ran one with no approval request). Under `--setting-sources ""` workspace skills don't load at all, so that source is never turned on.
 - **Fixed denies**, for every runtime, through its permission policy and its sandbox. They override every allow rule:
   - writes to `.claude/**`, `.agents/**`, `.codex/**` and `.gemini/**` in the workspace
@@ -633,7 +633,7 @@ Every other new dependency points from volatile to stable too: adapters → `org
 | D1 | ADR-0002 note: runtime transcripts are plaintext outside `office.db` (U-S3) | ada | U-S3 |
 | D2 | ADR-0004 rewritten to the headless-first decision | ada | U-S4 |
 | D3 | AGENTS.md rows for `org-office-launch`'s children lines and the guidance files | ada | — |
-| D4 | The guidance files: the default wake guidance per moment, and how the office loads them from the default branch | Eden (the text), server-dev (loading) | S3a |
+| D4 | The guidance files: the default wake guidance per moment, and how the office loads them from the integration branch in `mirror.git` (amended 2026-11-08: A57) | Eden (the text), server-dev (loading) | S3a |
 
 **Security tests (S6):**
 - A **hostile workspace**, like G2c's hostile git config: `.claude/settings.local.json` allowing everything, `.claude/skills` with `allowed-tools`, hooks, rules files, `.agents/hooks.json`, `.codex` config, `.git/hooks/*`. None of it may take effect, and writes to them are denied.
