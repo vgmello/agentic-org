@@ -1847,7 +1847,7 @@ fn the_owners_display_name_is_not_a_handle() {
 }
 
 #[test]
-fn an_offboarded_agents_handle_stays_taken_by_name_and_by_messaging_name() {
+fn an_offboarded_agents_messaging_name_stays_taken_for_a_new_person_and_a_rename() {
     let mut org = staffed();
     org.agent("old", "Pixel", AgentStatus::Offboarded);
     assert_eq!(code(org.person("p2", "pixel")), ErrorCode::AlreadyExists);
