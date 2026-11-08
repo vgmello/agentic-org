@@ -8,6 +8,8 @@ export interface NavItem {
 
 /** The main navigation, in order. Sections without a page of their own show a placeholder. */
 export const NAV: NavItem[] = [
+	// Chat is the second item after Home (chat-ux §0.1); Home isn't in the nav yet, so it leads.
+	{ name: 'Chat', href: '/chat', icon: 'chat' },
 	{ name: 'Agents', href: '/agents', icon: 'agents' },
 	{ name: 'Org chart', href: '/org-chart', icon: 'orgchart' },
 	{ name: 'Projects', href: '/projects', icon: 'projects' },
