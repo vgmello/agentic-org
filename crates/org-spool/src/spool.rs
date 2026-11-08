@@ -600,6 +600,16 @@ impl Spool {
             );
         }
 
+        // Registration first: a message to an unregistered member is `unknown_recipient`
+        // whether or not it has expired (and no profile is read for it).
+        if !self.is_registered(&env.to) {
+            return self.move_to_dead(
+                outbox_file,
+                &env.id,
+                &format!("unknown_recipient: {}", env.to),
+            );
+        }
+
         let now_iso = format_iso8601_utc(SystemTime::now());
         // An expired ask to a person or the owner is still delivered (it then shows as urgent,
         // "(expired)"): a human must see it even if it expired while the relay was down.
@@ -608,14 +618,6 @@ impl Spool {
         {
             let exp = env.expires_at.as_deref().unwrap_or("unknown");
             return self.move_to_dead(outbox_file, &env.id, &format!("expired: expires_at={exp}"));
-        }
-
-        if !self.is_registered(&env.to) {
-            return self.move_to_dead(
-                outbox_file,
-                &env.id,
-                &format!("unknown_recipient: {}", env.to),
-            );
         }
 
         let urgent = env.is_urgent();

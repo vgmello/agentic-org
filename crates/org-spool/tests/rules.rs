@@ -1593,6 +1593,25 @@ fn rule_an_ask_that_expired_before_delivery_still_reaches_a_person() {
 }
 
 #[test]
+fn rule_an_expired_message_to_an_unregistered_member_is_an_unknown_recipient() {
+    let t = TempSpool::new("expired_unknown");
+    let mut ask = Envelope::new_request(
+        PEER,
+        "ghost",
+        None,
+        "q",
+        BTreeMap::new(),
+        Duration::from_secs(60),
+    )
+    .unwrap();
+    ask.expires_at = Some("2000-01-01T00:00:00.000Z".into());
+    t.spool.enqueue(&ask).unwrap();
+    assert_eq!(t.spool.deliver_all().unwrap().dead, 1);
+    let reason = fs::read_to_string(t.dir.join(format!("spool/dead/{}.reason", ask.id))).unwrap();
+    assert!(reason.starts_with("unknown_recipient: ghost"), "{reason}");
+}
+
+#[test]
 fn rule_is_person_ignores_the_case_of_the_kind() {
     let t = TempSpool::new("person_case");
     // Written by hand or another tool: not lowercase.
