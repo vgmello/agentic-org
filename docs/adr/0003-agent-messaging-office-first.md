@@ -147,8 +147,8 @@ To keep `inbox`, `notify`, `wait`, `read --next`, and UI thread views sub-millis
 7. **Integration with the Per-Origin Work Stream (`crates/org-sync`, owned by `ac-software-engineer-river`)**
    - Per [`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md) (lines 74–79, 210–213), each office numbers every work change it originates from one monotonic counter `origin_seq` in the **same transaction** as the change.
    - The stream mechanics (the `work_origin_log` and `work_stream_cursors` tables, acks, backfill cursors, and promotion-republish retention) belong to **`crates/org-sync`** (`ac-software-engineer-river`).
-   - Messaging contributes two work-change kinds to that stream:
-     - `'msg_created'` (referencing `target_id = msg_headers.id` without duplicating the body in the log table — `org-sync` reads the immutable header and compressed body blobs from `msg_headers` / `msg_bodies` by `id`), and
+   - Messaging contributes two work-change kinds to that stream (read by `org-sync` through `org-sync`'s own storage trait implemented in `crates/org-office/src/store.rs`, so `org-sync` never knows messaging table names or SQL):
+     - `'msg_created'` (referencing `target_id = msg_headers.id` without duplicating the body in the log table — `store.rs` loads the immutable header and compressed body blobs from `msg_headers` / `msg_bodies` by `id`), and
      - `'msg_state_changed'` (carrying the compact `SyncedMessageState` payload so intermediate state transitions stream in exact `origin_seq` order).
 
 #### 1.2 Body Compression Strategy and Decompression Safety
@@ -166,7 +166,7 @@ To keep `inbox`, `notify`, `wait`, `read --next`, and UI thread views sub-millis
 - **Retention:**
   - `msg_headers` (including `content_hash`), `msg_threads`, and `msg_state` (~280 bytes/message) are kept as the organization's conversation index ($10^6$ headers $\approx 280\text{ MB}$). Because retry deduplication uses `msg_headers.content_hash`, pruning old `msg_bodies` never breaks deduplication.
   - Open messages in `msg_unread` and their `msg_bodies` are kept until resolved (`read`, `done`, `expired`, or `dead_letter`).
-  - Resolved `msg_bodies` are kept by default (encrypted at rest); a per-organization retention policy (e.g. 90 days for resolved bodies, configurable later) can prune old `msg_bodies` rows (`DELETE FROM msg_bodies WHERE ...`) without breaking thread history or deduplication.
+  - Resolved `msg_bodies` are kept by default (encrypted at rest); a per-organization retention policy (e.g. 90 days for resolved bodies, configurable later) can prune old `msg_bodies` rows (`DELETE FROM msg_bodies WHERE ...`) **only after HQ has acknowledged their `origin_seq` and after the `org-sync` promotion-republish window has elapsed** (so promotion republish and active stream catch-up always have the full body).
 - **Write batching (ADR-0002 decision 4):**
   - The office server's single writer thread drains all queued write requests (up to 64 per batch) into one SQLite transaction, wrapping each request in its own `SAVEPOINT` and executing a single `COMMIT` (`synchronous = FULL`, `fullfsync = ON`).
 - **Measurements to take in the implementation spike:**
@@ -253,9 +253,9 @@ To prevent agents from being interrupted mid-task by routine messages while guar
      `org-agent msg notify [--session <id>] [--after-task] [--urgent-only] [--sweep-after 5m] [--format text|json] [--as <member>]`
      (`org-agent msg due` is kept as a stateless CLI alias for `org-agent msg notify --format json` without `--session` so there is only one selection implementation in `org-spool`, `org-mailbox`, and `org-proto`).
    - **Selection rules:**
-     - Considers this agent's unread messages that are not snoozed, plus time-based snoozes that are now due (`snoozed_until <= now_utc`, releasing them and incrementing `triage_gen`), plus (with `--after-task`) those snoozed with `after-task` (releasing them and incrementing `triage_gen`).
+     - Considers this agent's unread messages that are not snoozed (`reason = "new"`), plus time-based snoozes that are now due (`snoozed_until <= now_utc`, releasing them, incrementing `triage_gen`, and reporting `reason = "due"`), plus (with `--after-task`) those snoozed with `after-task` (releasing them, incrementing `triage_gen`, and reporting `reason = "after_task"`).
      - **`--urgent-only`:** Filters to urgent items only (`kind == "request"` or `priority` in `("high", "urgent")`). This is the busy/idle watcher's mode.
-     - **`--sweep-after <dur>` (default `5m`):** A non-urgent, untriaged message (`triaged_at IS NULL`) counts only when it is older than `--sweep-after` (`reason = "sweep"`), or when `--after-task` is given (the natural break always shows everything new, `reason = "new"` or `"after_task"`).
+     - **`--sweep-after <dur>` (default `5m`):** A non-urgent, untriaged message (`triaged_at IS NULL`) counts only when it is older than `--sweep-after` (`reason = "sweep"`), or when `--after-task` is given (the natural break always shows everything new, `reason = "new"`, `"due"`, or `"after_task"`). Each item's `reason` in `NotifyResult` is one of `"new" | "due" | "after_task" | "sweep"` (matching Ada's locked contract).
    - **`--session <id>` deduplication storage and retention (`M-F`):**
      - When `--session <id>` is provided, `notify` reports only `(msg_id, triage_gen)` pairs not yet reported to `<id>`, and records them as reported. Without `--session`, `notify` is stateless.
      - **In Phase A (`org-spool`):** Stored inside `inbox/<agent>/triage.json` (under `.meta.lock`) as `reported_sessions: BTreeMap<String, u64>` on each message's triage entry (capped at 16 session IDs per message, automatically removed when the message is marked `done`/`read` or pruned after 24 hours).
