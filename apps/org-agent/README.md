@@ -133,7 +133,8 @@ Relay:
 
 - An expired `ask` to a person whose `profile.json` is malformed or can't be read is
   delivered but reads as an agent's (non-urgent, "(expired)") until the profile is fixed.
-
+  Likewise a transient error reading the profile when a check runs shows a person's expired
+  `ask` as non-urgent for that one check.
 - `msg notify --session` records the listed items as reported (under the lock) before the
   caller has read the output: an adapter that kills `notify` after that save loses those
   items for that session (they stay in the inbox, and other sessions, `msg inbox` and the

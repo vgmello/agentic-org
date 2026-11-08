@@ -1656,10 +1656,21 @@ fn rule_an_expired_ask_whose_recipient_is_unsure_is_delivered() {
         let owner_profile = t.dir.join(format!("spool/inbox/{owner}/profile.json"));
         fs::write(&owner_profile, b"{}").unwrap();
         fs::set_permissions(&owner_profile, fs::Permissions::from_mode(0o000)).unwrap();
-        expired_ask(owner);
-        let result = t.spool.deliver_all();
+        let owner_ask = expired_ask(owner);
+        let result = t
+            .spool
+            .deliver_one(&t.dir.join(format!("spool/outbox/new/{owner_ask}.json")));
+        let urgent_only = t.spool.notify(owner, &opts(None, false, true));
         fs::set_permissions(&owner_profile, fs::Permissions::from_mode(0o600)).unwrap();
-        assert_eq!(result.unwrap().delivered, 1);
+        // Delivered with an urgent wake, and urgent when read.
+        assert!(
+            matches!(
+                result,
+                Ok(org_spool::DeliverOutcome::Delivered { urgent: true, .. })
+            ),
+            "{result:?}"
+        );
+        assert_eq!(ids(&urgent_only.unwrap()), vec![owner_ask]);
     }
 
     // A malformed profile: delivered too, and it reads as an agent's (not urgent, expired).
