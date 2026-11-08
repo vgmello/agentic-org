@@ -43,8 +43,10 @@ org-agent msg send --to <agent> "…"               # fire-and-forget
 org-agent msg ask  --to <agent> --timeout 300s "…" # wait for the answer
 org-agent msg wait --timeout 600s                  # block until something arrives
 org-agent msg send --to owner "…"                 # reaches the user
-org-agent msg defer <id> --until 2h | done <id>    # park or close a message
-org-agent who | status "<what you're on>"          # the team, and your status line
+org-agent msg defer <id> --until 2h               # park a message
+org-agent msg done <id>                           # close it
+org-agent who                                     # the team
+org-agent status "<what you're on>"               # your status line
 ```
 Check your inbox at the start of every turn and after every step. ada is `ac-staff-engineer-ada`. Keep messages short, with the result or the question first.
 
