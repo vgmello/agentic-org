@@ -2,10 +2,10 @@
 kind: spec
 title: "How agents run: always on, on call, scheduled, one-off (UX)"
 status: for-review
-revision: 2
+revision: 3
 owner: ac-product-designer-eden
-created: 2026-11-08
-updated: 2026-11-08
+created: "2026-11-08"
+updated: "2026-11-08"
 requested_by: owner
 reviewers: [ac-staff-engineer-ada, owner]
 builds_on: [our-org-in-the-app, costs-and-insights-ux]
@@ -19,6 +19,8 @@ Extends `our-org-in-the-app.md` (agent record, statuses, Activity) and `costs-an
 
 > Agents aren't always live. HR (or an agent in another project, like an SDM) doesn't need to be always live. It's a **stateful** agent that's almost **serverless**: it only runs when it's called, or on a long interval, like every 30 minutes: it comes up, checks its status, does its work and goes down again, unless it's called. We can also have **ephemeral** agents for other things. We need to support those kinds of agents.
 
+**Revision 3 (2026-11-08): review fixes.** A mention as a trigger is pending A45. A message to a running agent is queued for the session handling it and delivered at its next turn boundary. An agent the office doesn't run shows **Started by a person** (v1's run mode none). Schedules have a time zone. RUN-1, RUN-3 and RUN-4 rewritten.
+
 **Revision 2 (2026-11-08): aligned with ada's agent-sessions design (rev 3).** Max run time counts **busy time**: 30 min for runs in the agent's home, 2 h for runs on a task. A missing or signed-out runtime raises Needs you at once. One-offs show as "<role> (one-off R-n)" with no member. Stop means Pause. Recommended modes respect the live-session cap. Remy is online (the user started him), and Riley stays Offline. RUN-6, RUN-9 and RUN-12 rewritten.
 
 ## 0. Decisions
@@ -27,8 +29,8 @@ Extends `our-org-in-the-app.md` (agent record, statuses, Activity) and `costs-an
 
    | Mode | What it means | Keeps memory | Example |
    | --- | --- | --- | --- |
-   | **Always on** | A session is kept running. If it stops, the office restarts it. | yes | ada, app-frontend-dev while building |
-   | **On call** | Asleep until something needs it: a message, a task assigned, a mention, **Run now**. It wakes, works, and goes back to sleep when idle. | yes | HR, the reviewer |
+   | **Always on** | A session is kept running. If it stops, the office restarts it. | yes | ada during a phase push |
+   | **On call** | Asleep until something needs it: a message, a task assigned or **Run now** (and a mention, if A45 agrees). It wakes, works, and goes back to sleep when idle. | yes | HR, the reviewer |
    | **Scheduled** | Wakes on a schedule (every 30 min, weekdays 9–18, daily at 08:00), does its check, and goes back to sleep. Also on call. | yes | an SDM checking project status, a nightly cost report |
    | **One-off** | Started for one job from a role, with no lasting memory or home. It reports the result on the job and is gone. | no | a one-off reviewer for a branch, a translation |
 
@@ -54,9 +56,9 @@ At hire (Review step) and in profile › Settings › **How it runs** (a slide-o
 
 ```
  How HR runs
- (•) On call      Sleeps until it's needed: a message, a task, a mention or Run now.
+ (•) On call      Sleeps until it's needed: a message, a task or Run now.
  ( ) Scheduled    Wakes on a schedule and when it's needed.
-                  [Every 30 minutes ▾]  Only [Mon–Fri ▾] [09:00]–[18:00]
+                  [Every 30 minutes ▾]  Only [Mon–Fri ▾] [09:00]–[18:00] [Europe/Dublin ▾]
  ( ) Always on    Keeps a session running and restarts it if it stops.
  ─────────────────────────────────────────────────────────────────────
  When it wakes    [Read your inbox and backlog, do what's due…  ] (guidance, editable)
@@ -75,7 +77,7 @@ At hire (Review step) and in profile › Settings › **How it runs** (a slide-o
 | Case | Behavior |
 | --- | --- |
 | Called while asleep | Wakes. The caller sees "Waking HR…", then normal replies. A wake taking over 60 s shows "HR is still starting…" with **Details**. |
-| Called while running | Delivered to the running session. No second session. |
+| Called while running | Queued for the session handling it and delivered at its next turn boundary (ada's per-session routing). No second session. |
 | A scheduled run is due while it's already running (a long run) | That run is skipped and noted on the Runs tab: "Skipped 14:30: still running from 14:00". |
 | A run fails to start (runtime missing, signed out, trust) | The run shows **Failed** with the reason and a fix. A missing or signed-out runtime raises Needs you **at once** (nothing will work until it's fixed). Other failures do so after 3 failed wakes in a row: "HR can't wake up: Codex isn't signed in" with the fix and **Run now** to retry. Messages keep waiting. |
 | Paused agent (DEAL-3) | Pausing stops schedules and calls. Messages wait. The card says "Paused" (not Asleep), and Resume restores the mode. |
@@ -90,10 +92,10 @@ My recommended modes (U19): **HR: On call.** Reviewer: On call (woken by "Reques
 
 ## 5. UX acceptance criteria (RUN)
 
-- RUN-1 · Every agent has a run mode (Always on, On call, Scheduled), chosen at hire and changeable in profile › Settings › How it runs.
+- RUN-1 · *(rev 3)* Every agent the office runs has a run mode (Always on, On call, Scheduled), chosen at hire and changeable in profile › Settings › How it runs. An agent someone starts by hand (v1's run mode none) shows **Started by a person**, and the office never starts it.
 - RUN-2 · An On call or Scheduled agent that isn't running shows **Asleep** with when it wakes ("wakes when called" or "next run <time>"), and an Always-on agent with no session shows **Offline**.
-- RUN-3 · A message, an assignment, a mention or Run now wakes an asleep agent. The caller sees "<name> is asleep. It will wake up to answer", and nothing fails.
-- RUN-4 · A message to a running agent goes to its running session, and a second session is never started.
+- RUN-3 · *(rev 3)* A message, an assignment or Run now (and a mention, pending A45) wakes an asleep agent. The caller sees "<name> is asleep. It will wake up to answer", and nothing fails.
+- RUN-4 · *(rev 3)* A message to a running agent is queued for the session handling it and delivered at its next turn boundary, and a second session is never started.
 - RUN-5 · Each wake is one run on the Runs tab and one Activity row, with trigger, duration, cost and outcome, updated live.
 - RUN-6 · *(rev 2)* An agent goes back to sleep after its idle time, and a run is stopped at its max busy time (30 min in its home, 2 h on a task), with the run marked.
 - RUN-7 · The schedule builder uses plain words and presets, shows the next 3 run times, and never asks for cron.

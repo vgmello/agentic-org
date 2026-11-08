@@ -2,10 +2,10 @@
 kind: spec
 title: "Offices, organizations and teams (UX)"
 status: for-review
-revision: 4
+revision: 5
 owner: ac-product-designer-eden
-created: 2026-11-08
-updated: 2026-11-08
+created: "2026-11-08"
+updated: "2026-11-08"
 requested_by: ac-staff-engineer-ada
 reviewers: [ac-staff-engineer-ada, owner]
 builds_on: []
@@ -20,6 +20,8 @@ Requested by ada for the user.
 **What it changes in my earlier work:** it replaces, for the office model, `desktop-app-v1.md` (in Eden's notes, not in this repository) §2.5 (workspace switcher), §3.2 (department and reporting-line chart) and §7.1 (Machines). Revision 5 of that spec folds this in. Acceptance-criterion IDs here are stable: changed criteria are rewritten under the same ID, retired IDs are never reused.
 
 ## Changelog
+
+**Revision 5 (2026-11-08): reporting lines follow org-proto on v1.** Removing a member sends their reports to that member's own manager, or to the owner if they had none (§7.4, §7.8, PEOPLE-5).
 
 **Revision 4 (2026-11-08): one handle namespace (org-proto on v1, `86a6a9f`).** A person's name is also their handle, unique across every member ignoring case (agents' messaging names, people's names and the reserved `owner`), so two people can't share a name and a person can't take an agent's handle. §7.4's "Add anyway" is replaced by a refusal with a suggestion. PEOPLE-4 rewritten, PEOPLE-8 added.
 
@@ -518,7 +520,7 @@ Entry points: the People toolbar's **Add person**; a team's ⋯ › **Add person
 - **Remove a person** (modal, red icon), naming everything that changes, only the lines that apply:
   > Remove Sam Ortiz from Lumen Labs?
   > - Sam leaves Product and Checkout, and stops leading Product.
-  > - Jo Park, who reports to Sam, will report to you.
+  > - Jo Park, who reports to Sam, will report to Sam's manager, Lee Chen (or to you, if Sam had no manager).
   > - Agents can no longer reach Sam. 3 messages waiting for Sam won't be delivered, and Sam's 2 open tasks come back unassigned for you to reassign.
   >
   > **Remove Sam Ortiz** (red)
@@ -607,7 +609,7 @@ Two directions, same result:
 - **Saved:** no confirmation; toast "Riley now reports to Sam Ortiz · **Undo**" (8 s). The node moves and keeps focus.
 - **Rejected by HQ** (a loop created meanwhile): "Couldn't change Riley's manager: Sam now reports to Riley. Nothing changed." The view shows the current lines.
 - **The owner's node** has no ⋯ actions apart from opening the quick view: "The owner reports to no one."
-- **Removing a member** sends their reports to the owner, as the remove dialog says (§7.4).
+- **Removing a member** sends their reports to that member's own manager, or to the owner if they had none (org-proto on v1), as the remove dialog says (§7.4).
 - The footnote about teams always shows (decision 16).
 
 ### 7.9 Give a project to a team, or share it
@@ -686,7 +688,7 @@ Two directions, same result:
 - PEOPLE-2 · The People view always shows that agents can only reach the people listed in the organization.
 - PEOPLE-3 · Add person (from the toolbar, a team's menu, or "Add a new person" in a member picker) requires a name and takes an optional contact, teams and manager (the owner by default); the person then appears in their teams, or in Not in a team.
 - PEOPLE-4 · *(rev 4)* A name that matches any member's handle ignoring case (a person's name, an agent's messaging name, or `owner`) is refused inline with a suggestion, and Add person stays disabled. An empty or invalid name shows the inline error.
-- PEOPLE-5 · Removing a person confirms first, naming the teams they leave and stop leading, who will report to the owner instead, and that their waiting messages won't be delivered and their open tasks come back for reassignment.
+- PEOPLE-5 · Removing a person confirms first, naming the teams they leave and stop leading, who will report to whom instead (the person's own manager, or the owner if they had none), and that their waiting messages won't be delivered and their open tasks come back for reassignment.
 - PEOPLE-6 · People never show an office, and the office filter never highlights them.
 - PEOPLE-7 · When an agent's message or task fails because the recipient isn't in the organization (or was removed), the agent's activity says so in plain words, with Add a person… for an unknown recipient.
 - PEOPLE-8 · *(new, rev 4)* Renaming a person checks the same handle rule, and the rename dialog says agents will address them by the new name from now on.

@@ -4,8 +4,8 @@ title: "Decisions, evaluations, designs and tech debt (UX)"
 status: for-review
 revision: 7
 owner: ac-product-designer-eden
-created: 2026-11-08
-updated: 2026-11-08
+created: "2026-11-08"
+updated: "2026-11-08"
 requested_by: owner
 reviewers: [ac-staff-engineer-ada, codex-dev, owner]
 builds_on: [work-items-ux, our-org-in-the-app]
@@ -69,7 +69,7 @@ docs/
   debt/0012-<slug>.md      tech debt (DEBT-0012)
   limitations/0003-<slug>.md   known limitations (LIM-0003)
   exceptions/0002-<slug>.md    exceptions to a rule or decision (EXC-0002)
-  reports/<yyyy-mm>.md     monthly reports (costs-and-insights §3)
+  reports/<date>-status.md status reports, weekly or monthly (`project-status-ux.md`)
   <anything else>.md       other docs
 ```
 
@@ -83,7 +83,7 @@ docs/
 - **Authorship follows the commit-identity decision:** commits are authored under the owner's name and no-reply address, with the agent as `Co-authored-by`. The app shows the agent who made the change ("ada · committed as you"), read from the co-author trailer, and "you" for changes the owner made.
 - **Which branch the Docs tab reads** is the project's integration branch (`v1` for us, `main` elsewhere), a project setting (C13).
 
-1. **Document kinds, one Docs tab:** **Features · Decisions (ADRs) · Designs · Evaluations · Specs · Plans · Reviews · Retrospectives · Debt · Limitations · Exceptions · Other** (guides, reports and the brief pinned on top), as listed in §0.1. Every kind is a Markdown file in its folder (§0.1), and the kind comes from the folder.
+1. **Document kinds, one Docs tab:** **Features · Decisions (ADRs) · Designs · Evaluations · Specs · Plans · Reviews · Retrospectives · Debt · Limitations · Exceptions · Reports · Other** (guides, and the brief pinned on top), as listed in §0.1. Every kind is a Markdown file in its folder (§0.1), and the kind comes from the folder.
 2. **Markdown with front matter, shaped by a template.** Each doc starts with YAML front matter whose fields come from its kind's template (kind, number, title, status, owner, dates, relations), followed by the template's sections as `##` headings. The UI turns the front matter into a header card and the sections into a navigable page. Agents get the same structure from `org-agent doc schema <kind>`. *(rev 3: replaces the parsed status line.)*
 3. **ADR statuses:** **Proposed · Accepted · Superseded · Rejected · Deprecated.** A superseded ADR names its replacement, and both link each other.
 4. **Design statuses:** **Draft · In review · Approved · Built · Obsolete.** Evaluations: **Planned · Running · Done** (with a verdict).

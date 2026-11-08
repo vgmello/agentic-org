@@ -4,8 +4,8 @@ title: "Work items: tasks, bugs and project docs (UX)"
 status: for-review
 revision: 5
 owner: ac-product-designer-eden
-created: 2026-11-08
-updated: 2026-11-08
+created: "2026-11-08"
+updated: "2026-11-08"
 requested_by: ac-staff-engineer-ada
 reviewers: [codex-dev, ac-staff-engineer-ada, owner]
 builds_on: [offices-and-teams-ux]
@@ -289,7 +289,7 @@ Triage is the step from **New** to **Triaged**: confirm the area and severity, s
 - **Editable in place** (the pencil, or the field's menu): title, the three text sections, severity, priority, area, assignee and environment. Each change is an activity entry ("Riley changed severity Major → Critical").
 - **Automatic changes** (decision 9) are entries with a gear icon and an **Undo** for 1 hour (C3).
 - **Commits and branches** come from the project's local git (W4) when a commit message or branch name mentions `chk-11` (C7). They show as text plus a short hash, and open in the Git view when there is one.
-- **Mentions:** `chk-12` in any text links to the item. `@Riley` notifies (C5).
+- **Mentions:** `chk-12` in any text links to the item. `@Riley` (typed by name, completed to the handle) notifies (C5).
 
 ### 7.2 Fix tasks
 
@@ -558,7 +558,7 @@ Nav **Work**, pill tabs **Tasks | Bugs | Debt | Requests** *(rev 5)*: the same l
 - ~~C2~~ · *Resolved in rev 2 by ada's default:* priority is a field (Urgent, High, Normal, Low) shared with tasks. My trade-off stays on record for the user: two scales on one bug take more explaining, so Normal is hidden and priority never borrows severity's colors.
 - C3 · Automatic bug status from fix tasks (decision 9), with an activity entry and an Undo. Is that in the library's rules, or does the app do it? I'd rather it's the library, so the CLI and the app agree.
 - C4 · Task statuses: v1's To do, In progress, Blocked, Done. Do you need Cancelled? If so, I'd show it like a closed bug (a resolution on Done: "Done · Cancelled").
-- C5 · The agent side: which `org-agent` commands report, triage, verify and comment (agreed with agy)? I need their output words to match the UI's (statuses, severities, "Fixed — verify").
+- C5 · The agent side: which `org-agent` commands report, triage, verify and comment (agreed with Remy, the `org-agent` owner)? I need their output words to match the UI's (statuses, severities, "Fixed — verify").
 - C6 · Watchers: should a bug have watchers (the reporter, duplicate reporters, commenters) who are told about changes? I've used them only for duplicates and verification.
 - C7 · Commits and branches: linking by the number in commit messages and branch names (`task/chk-13-…`: task branches are `task/<task-id>-<slug>`, projects-git-github.md)? And can the office refuse Done for a task whose worktree has uncommitted changes?
 - C8 · Can a fix task live in another project from its bug (a Platform fix for a checkout bug)? I've kept links within one project for phase 1.

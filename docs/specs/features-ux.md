@@ -4,8 +4,8 @@ title: "Features: a project's capabilities, defined in the repository (UX)"
 status: for-review
 revision: 1
 owner: ac-product-designer-eden
-created: 2026-11-08
-updated: 2026-11-08
+created: "2026-11-08"
+updated: "2026-11-08"
 requested_by: owner
 reviewers: [ac-staff-engineer-ada, owner]
 builds_on: [feature-requests-ux, work-items-ux, decisions-and-tech-debt-ux]
@@ -49,7 +49,7 @@ area: Desktop app
 requests: [REQ-14]
 specs: [feature-requests-ux]
 decisions: []
-tasks: [ac-88, ac-89, ac-90]     # generated from the database (feature_id on tasks); never edit by hand
+tasks: [ac-88, ac-89, ac-90, ac-91, ac-92, ac-93]   # generated from the database (feature_id on tasks); never edit by hand
 delivered: null                  # { on, by } when all tasks are done
 retired: null                    # { on, reason, replaced_by }
 ---

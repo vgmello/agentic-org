@@ -4,8 +4,8 @@ title: "Capture requests and route them to whoever should scope them (UX)"
 status: for-review
 revision: 1
 owner: ac-product-designer-eden
-created: 2026-11-08
-updated: 2026-11-08
+created: "2026-11-08"
+updated: "2026-11-08"
 requested_by: owner
 reviewers: [ac-staff-engineer-ada, owner]
 builds_on: [work-items-ux, decisions-and-tech-debt-ux, agent-run-modes-ux]

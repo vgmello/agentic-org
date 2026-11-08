@@ -4,8 +4,8 @@ title: "Costs, tokens, time and insights (UX)"
 status: for-review
 revision: 3
 owner: ac-product-designer-eden
-created: 2026-11-08
-updated: 2026-11-08
+created: "2026-11-08"
+updated: "2026-11-08"
 requested_by: owner
 reviewers: [ac-staff-engineer-ada, codex-dev, owner]
 builds_on: [work-items-ux, our-org-in-the-app, decisions-and-tech-debt-ux]
@@ -49,18 +49,18 @@ Extends `work-items-ux.md` (tasks, bugs), `our-org-in-the-app.md` (sessions, run
 | **Insights** (nav, org-wide) | the same, across projects · a Projects table (investment to date, this month, last month, change, working time, items done) · Export |
 | **Projects list** | an **Investment** column (total to date, US dollars) |
 | **Agent profile › Overview** | this week's cost, working time and tasks done, and cost per task done, vs the team median |
-| **Home** | one line: "This month: ≈ $412 · 63 tasks done · 8 h waiting on you" with **Insights** · budget warnings |
+| **Home** | one line: "This month: ≈ $412 · 63 tasks done · 30 h waiting on you" with **Insights** · budget warnings |
 
 ```
  Projects › Agentic Org › Insights                     [This month ▾]  [Export ▾]
  ┌ Cost ─────────────┐ ┌ Tokens ──────────┐ ┌ Working time ──┐ ┌ Done ──────────────┐
  │ ≈ $412  ▲ 18%     │ │ 61.2 M           │ │ 96 h           │ │ 63 tasks · 21 bugs │
- │ budget $600 ▓▓▓▓░ │ │ 74% cache reads  │ │ 8 h waiting on │ │ 4 debt paid        │
+ │ budget $600 ▓▓▓▓░ │ │ 74% cache reads  │ │30 h waiting on │ │ 4 debt paid        │
  └───────────────────┘ └──────────────────┘ │ you            │ └────────────────────┘
                                             └────────────────┘
  Insights
   ⚠ ac-13 "Disable Pay while submitting" cost 4× the median task in App ($18 vs $4.50)  [Open]
-  ⓘ Agents waited 8 h for your answers this month, most on ada's questions (5 h)        [See]
+  ⓘ Agents waited 30 h for your answers this month, most on ada's questions (19 h)        [See]
   ⓘ codex-dev's tasks finish 2× faster than the team median this month                  [Open]
  By team            Cost       Working   Tasks  Cost/task   Median lead time
   Office            ≈ $171     41 h      22     ≈ $7.80     1.6 d
@@ -92,7 +92,7 @@ Extends `work-items-ux.md` (tasks, bugs), `our-org-in-the-app.md` (sessions, run
 
 - **Project › Insights** opens with **Investment**: "Agentic Org has cost ≈ $1,240 so far (since 7 Nov) · 212 h of agent work · 180 tasks and 64 bugs done", then this month.
 - **Insights › Projects** (org-wide): project · investment to date · this month · last month · change · working time · items done · budget.
-- **Export ▾:** **CSV** (one row per session, with project, task, agent, runtime, model, tokens, cost, the cost source and times) · **Monthly report** (a Markdown doc saved to the project's `docs/reports/`, with totals, the breakdowns and the insights).
+- **Export ▾:** **CSV** (one row per session, with project, task, agent, runtime, model, tokens, cost, the cost source and times) · **Status report for the month** (`project-status-ux.md`, which replaces a separate monthly report; a Markdown doc saved to the project's `docs/reports/`, with totals, the breakdowns and the insights).
 
 ## 4. Flow · Budgets
 

@@ -2,18 +2,20 @@
 kind: spec
 title: "Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)"
 status: for-review
-revision: 4
+revision: 5
 owner: ac-product-designer-eden
-created: 2026-11-08
-updated: 2026-11-08
+created: "2026-11-08"
+updated: "2026-11-08"
 requested_by: owner
-reviewers: [ac-staff-engineer-ada, owner, app-frontend-dev, server-dev, ac-software-engineer-river, agy-senior-dev, codex-dev]
+reviewers: [ac-staff-engineer-ada, owner, app-frontend-dev, server-dev, ac-software-engineer-river, ac-software-engineer-remy, codex-dev]
 builds_on: [offices-and-teams-ux, work-items-ux]
 ---
 
 # Spec · Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)
 
 Builds on `offices-and-teams-ux.md` rev 4, `work-items-ux.md` rev 5 and `desktop-app-v1.md` (in Eden's notes, not in this repository) (hire §3.6, profile §3.5).
+
+**Revision 5 (2026-11-08): follows org-proto on v1.** Offboarding or removing a member sends their reports to that member's own manager, or to the owner if they had none (not always to the owner). Pause stops a running session at once (agent-sessions). G2 uses `member.set_agent_status`. The survey notes what v1 has gained since.
 
 **Revision 4 (2026-11-08): Remy is online.** The user started Remy, who owns messaging and `org-agent` (AGENTS.md on v1) since agy-senior-dev ran out of credits. §2 moves him to Agent tooling as its lead. Riley stays Offline.
 
@@ -31,6 +33,8 @@ Builds on `offices-and-teams-ux.md` rev 4, `work-items-ux.md` rev 5 and `desktop
 3. The owner hires a new agent, assigns it to a team, a project and a task, moves an agent to another team, pauses an idle agent and offboards one. Every change shows at once in the chart and Activity, and every agent keeps working on its own runtime.
 
 ## Where we are (survey of `origin/v1` at 0f7df26, 2026-11-08)
+
+*Since this survey, v1 gained agents as members (`Member.agent: AgentProfile`, `86a6a9f`), `member.set_agent_status` and run modes, and `member.offboard` (A37, `2911ffc`). G1 and G2 below track the rest.*
 
 - **App:** create, open and list organizations work on a **mock** (`MockOffice`). Agents, Projects, Tasks, Activity and Settings are placeholders. The org chart is work in progress on sample data (app-frontend-dev's worktree).
 - **Office:** the server and host are stubs on `v1`. server-dev's store (local branch) has organizations only. Teams and members are a **contract only** (`org-proto`: `Member { id, kind, name, contact, owner, office_id, reports_to }`, `team.*`).
@@ -51,7 +55,7 @@ Builds on `offices-and-teams-ux.md` rev 4, `work-items-ux.md` rev 5 and `desktop
 | agy-senior-dev | **no** | yes | Antigravity | owned messaging (org-agent CLI, spool, mailbox) until it ran out of runtime credits | ada |
 | codex-dev | **no** | yes | Codex | inbox adapters; the work-items library (W7) | ada |
 | reviewer | **no** | yes | ? (A14) | independent reviews ("ready" verdicts) | ada |
-| Remy (`ac-software-engineer-remy`) | active | yes (started by the user later the same day) | Claude Code | messaging: `org-agent`, spool, the messaging library and the chat extension (AGENTS.md on v1) | ada |
+| Remy (`ac-software-engineer-remy`) | active | yes (started by the user later the same day) | Claude Code | messaging: `org-agent`, spool and the messaging library (AGENTS.md on v1), and the chat extension (plan row W19) | ada |
 | Riley (`ac-software-engineer-riley`) | active | **no** | Claude Code | Senior Frontend (the old prototype) | ada |
 
 **What this tells the design:**
@@ -84,7 +88,7 @@ The organization's name is U10 ("Agentic Consulting" from the folder? another?).
 4. **Four ways to stop or remove work, named by what they do,** never one ambiguous "deallocate":
    - **Remove from team:** the agent stays in the organization, and its team's projects are no longer its work.
    - **Pause:** the agent stays in its teams, isn't started, woken or messaged with new work, and its open tasks stay put. Resume brings it back.
-   - **Offboard:** the agent leaves the organization. Its open tasks come back unassigned for the owner to reassign, and anyone reporting to it reports to the owner (teams-and-org-chart design, "When a member is removed"). Its record stays, its name stays reserved and it shows under Former members: offboarding is a state, set by `member.offboard` (ada, A37), not a delete.
+   - **Offboard:** the agent leaves the organization. Its open tasks come back unassigned for the owner to reassign, and anyone reporting to it reports to the agent's own manager, or to the owner if it had none (org-proto on v1, `member.offboard` and `member.remove`). Its record stays, its name stays reserved and it shows under Former members: offboarding is a state, set by `member.offboard` (ada, A37), not a delete.
    - **Unassign a task:** the task goes back to To do with no assignee.
 5. **Moving an agent between teams is one action,** **Move to team…**, not remove-then-add. Nothing flickers in the chart, and the agent is never briefly in "Not in a team" (A16: one command).
 6. **Assigning has one entry point per target,** from the agent or from the target: **Add to team…** (agent ⇄ team), **Lead** (team), **Assign task** (agent ⇄ task). An agent works on a project **through a team**. "Add to project…" on an agent asks which of the project's teams to join (or suggests one).
@@ -103,7 +107,7 @@ The organization's name is U10 ("Agentic Consulting" from the folder? another?).
    ☑ HR workspace       ~/projects/agentic-consulting/agents        [Change…]
                         Found 5 agents in 1 project (ac)
    ☑ Messaging          ~/.agency/spool                             [Change…]
-                        Found 8 names, 5 not in the HR workspace
+                        Found 9 names, 5 not in the HR workspace
                                                             [Cancel]  [Scan]
 ```
 
@@ -202,8 +206,8 @@ v1 §3.6 holds, with these changes for the office model:
 ## 9. Flow 6 · Deallocate: remove from team, pause, offboard
 
 - **Remove from team** (team ⋯ › member › Remove from App, or Edit teams): no confirmation when the agent has other teams. When it's the last one: "Remove Riley from App? Riley will be in Not in a team and won't work on any project. 2 open tasks stay assigned." · **Remove**.
-- **Pause** (quick view, profile ⋯): a dialog "Pause Remy? Remy won't be started or woken, and new tasks and messages wait until you resume. Remy stays in Agent tooling." If a session is running: "Remy's session is running. Stop it now / Let it finish". The card then shows a **Paused** badge (gray `pause`), and the chart can hide paused agents (toolbar ☐ Show paused). **Resume** is one click.
-- **Offboard…** (v1 §3.5 dialog, office model): it lists only what applies: "Remy leaves Agent tooling. 1 open task comes back unassigned for you to reassign. Nobody reports to Remy (or: "Riley, who reports to Remy, will report to you"). Remy's records stay in the HR workspace. The name stays reserved." · **Offboard Remy** (red). After it, Remy appears in Settings › Team › **Former members** with the date, read-only.
+- **Pause** (quick view, profile ⋯): a dialog "Pause Remy? Remy won't be started or woken, and new tasks and messages wait until you resume. Remy stays in Agent tooling." If a session is running: "Remy's session is running and will stop now." (Pause stops at once, per ada's agent-sessions design.) The card then shows a **Paused** badge (gray `pause`), and the chart can hide paused agents (toolbar ☐ Show paused). **Resume** is one click.
+- **Offboard…** (v1 §3.5 dialog, office model): it lists only what applies: "Remy leaves Agent tooling. 1 open task comes back unassigned for you to reassign. Nobody reports to Remy (or: "Riley, who reports to Remy, will report to ada, Remy's manager"). Remy's records stay in the HR workspace. The name stays reserved." · **Offboard Remy** (red). After it, Remy appears in Settings › Team › **Former members** with the date, read-only.
 - **States:** the agent is working right now (the dialog says so and offers to stop the session first) · offboarding fails partway (names what was done, **Try again**) · it was already changed elsewhere (the dialog refreshes, and nothing is applied twice).
 
 ## 10. Accessibility and copy
@@ -258,7 +262,7 @@ v1 §3.6 holds, with these changes for the office model:
 - DEAL-1 · The UI never says "deallocate". It offers Remove from team, Pause, Offboard and Unassign, each with its own consequences.
 - DEAL-2 · Removing an agent from its last team confirms and says it will be in Not in a team.
 - DEAL-3 · A paused agent shows Paused on its card, isn't started or woken, its new messages and tasks wait, and Resume restores it in one click.
-- DEAL-4 · Offboard lists only the consequences that apply, brings open tasks back unassigned for the owner to reassign, makes anyone reporting to the agent report to the owner, and moves the agent to Former members, read-only (`member.offboard`, A37).
+- DEAL-4 · Offboard lists only the consequences that apply, brings open tasks back unassigned for the owner to reassign, makes anyone reporting to the agent report to the agent's own manager (or to the owner if it had none), and moves the agent to Former members, read-only (`member.offboard`, A37).
 - DEAL-5 · Show paused in the chart toolbar hides or shows paused agents, and is remembered.
 
 ## 12. Gaps to close, and who I think owns them (for ada to confirm in the phase-1 plan)
@@ -266,7 +270,7 @@ v1 §3.6 holds, with these changes for the office model:
 | # | Gap | Proposed owner | Plan row |
 | --- | --- | --- | --- |
 | G1 | `Member` fields for agents: role, title, focus, runtime, model, home, messaging name, status incl. Paused, hired on | ada (contract) + server-dev (store) | W3 / W10 |
-| G2 | `member.add_agent`, `member.move` (one command), `member.pause` / `resume`, `member.offboard` (A37) | ada + server-dev | W3 |
+| G2 | `member.add_agent`, `member.move` (one command), `member.set_agent_status` (active or paused), `member.offboard` (A37): **landed on v1** | ada + server-dev | W3 |
 | G3 | Import: read the HR workspace and the spool inboxes into a reviewable plan, then apply it (CLI first, then the app) | codex-dev (ada, after W8, with the W7 model) | W12 |
 | G4 | Messaging names ⇄ members: a message from `codex-dev` is linked to its member, and `who`/presence are keyed the same way | Remy (messaging owner) | W6 Phase B |
 | G5 | Activity feed: one stream over messages, status, work items, team changes and git merges | ada (contract), server-dev, Remy | new |
