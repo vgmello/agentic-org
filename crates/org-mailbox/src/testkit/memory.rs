@@ -332,4 +332,44 @@ mod conformance {
     }
 
     crate::mailbox_conformance_tests!(open);
+
+    /// A retry by exact recipient id still returns the first result after the recipient
+    /// left the directory; by handle it must resolve again, so it is `unknown_recipient`.
+    #[test]
+    fn retry_by_exact_id_survives_recipient_removal() {
+        use crate::testkit::fixture::*;
+        use crate::{Mailbox, MailboxError, NoMessageEvents, OfficeIdentity};
+        use org_proto::msg::{Meta, MsgSendParams, KIND_MSG};
+        use std::sync::Arc;
+
+        let directory = InMemoryDirectory::new(members(), POSITION);
+        let mailbox = Mailbox::new(
+            Arc::new(InMemoryStore::new()),
+            Arc::new(directory.clone()),
+            OfficeIdentity {
+                office_id: OFFICE_ID.into(),
+                incarnation: INCARNATION.into(),
+                is_hq: true,
+            },
+            Arc::new(ManualClock::new(NOW_MS)),
+            Arc::new(NoMessageEvents),
+        );
+        let params = |to: &str| MsgSendParams {
+            id: msg_id(1),
+            to: to.into(),
+            kind: KIND_MSG.into(),
+            priority: None,
+            subject: None,
+            body: "hello".into(),
+            meta: Meta::new(),
+            reply_to: None,
+        };
+        let first = mailbox.send(ADA_ID, params(PAT_ID)).unwrap();
+        directory.remove(PAT_ID, POSITION);
+        assert_eq!(mailbox.send(ADA_ID, params(PAT_ID)), Ok(first));
+        assert_eq!(
+            mailbox.send(ADA_ID, params(PAT_HANDLE)),
+            Err(MailboxError::UnknownRecipient)
+        );
+    }
 }

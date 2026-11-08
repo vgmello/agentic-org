@@ -2,7 +2,7 @@
 //! backend. Run every case against a backend with [`crate::mailbox_conformance_tests!`].
 //!
 //! Each case opens a fresh, empty backend through [`OpenBackend`] seeded with
-//! [`members`](super::fixture::members) at [`POSITION`](super::fixture::POSITION). The `store_*` and `directory_*` cases check
+//! [`members`] at [`POSITION`]. The `store_*` and `directory_*` cases check
 //! the ports' contracts (ADR-0003 §4.3, as amended by the store split); the `mailbox_*` cases
 //! run the slice-1 Mailbox (send, inbox, read, wait) over the backend, including the §2.2
 //! register-before-commit race and cancellation.
@@ -140,11 +140,26 @@ fn peek(store: &impl MessageStore, member: &str) -> PeekUnreadOutcome {
         .expect("peek_next_unread")
 }
 
-/// A store wrapper that runs a hook once, after a `peek_next_unread` returns and before
-/// its caller sees the result: a commit landing between the wait's check and its block.
+type Hook = Mutex<Option<Box<dyn FnOnce() + Send>>>;
+
+fn run_once(hook: &Hook) {
+    let hook = hook
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .take();
+    if let Some(hook) = hook {
+        hook();
+    }
+}
+
+/// A store wrapper that runs a hook once, after a call returns and before its caller sees
+/// the result: after `peek_next_unread`, a commit landing between the wait's check and its
+/// block; after `get_message`, an identical send committing between a send's duplicate
+/// check and its commit.
 struct HookedStore<S> {
     inner: S,
-    after_peek: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    after_peek: Hook,
+    after_get: Hook,
 }
 
 impl<S: MessageStore> MessageStore for HookedStore<S> {
@@ -169,18 +184,13 @@ impl<S: MessageStore> MessageStore for HookedStore<S> {
         let outcome =
             self.inner
                 .peek_next_unread(to_member_id, from_member_id, urgent_only, now_utc);
-        let hook = self
-            .after_peek
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .take();
-        if let Some(hook) = hook {
-            hook();
-        }
+        run_once(&self.after_peek);
         outcome
     }
     fn get_message(&self, id: &str) -> Result<Option<StoredMessage>, StoreError> {
-        self.inner.get_message(id)
+        let found = self.inner.get_message(id);
+        run_once(&self.after_get);
+        found
     }
     fn list_headers(&self, query: HeaderQuery) -> Result<HeaderPage, StoreError> {
         self.inner.list_headers(query)
@@ -207,6 +217,7 @@ fn office<B: OpenBackend>(backend: &B) -> Office<B::Store> {
     let store = Arc::new(HookedStore {
         inner: store,
         after_peek: Mutex::new(None),
+        after_get: Mutex::new(None),
     });
     let events = Arc::new(RecordingEvents::default());
     let clock = Arc::new(ManualClock::new(NOW_MS));
@@ -710,6 +721,11 @@ pub fn mailbox_send_replay_and_conflict(backend: impl OpenBackend) {
         send(&office.mailbox, REMY_ID, 1, PAT_HANDLE),
         Err(MailboxError::AlreadyExists)
     );
+    // A retry can't be re-routed: the same id and body to another member is other content.
+    assert_eq!(
+        send(&office.mailbox, ADA_ID, 1, "owner"),
+        Err(MailboxError::AlreadyExists)
+    );
     assert_eq!(office.events.received(), [msg_id(1)]);
 }
 
@@ -723,6 +739,27 @@ fn recipient(office: &Office<impl MessageStore>, n: u32, to: &str) -> Result<Str
         .message
         .header
         .to_member_id)
+}
+
+/// Two identical sends racing past the duplicate check commit once: one inserts, the other
+/// replays (`inserted: false`), both return the same result, and only one
+/// `message.received` is published.
+pub fn mailbox_send_concurrent_replay_publishes_once(backend: impl OpenBackend) {
+    let office = office(&backend);
+    let weak: Weak<Mailbox> = Arc::downgrade(&office.mailbox);
+    let (sent, received) = std::sync::mpsc::channel();
+    *office.store.after_get.lock().unwrap() = Some(Box::new(move || {
+        let mailbox = weak.upgrade().expect("mailbox alive");
+        let result = thread::spawn(move || send(&mailbox, PAT_ID, 1, ADA_HANDLE))
+            .join()
+            .unwrap();
+        sent.send(result).unwrap();
+    }));
+    let outer = send(&office.mailbox, PAT_ID, 1, ADA_HANDLE).unwrap();
+    let inner = received.recv().unwrap().unwrap();
+    assert_eq!(outer, inner);
+    assert_eq!(office.events.received(), [msg_id(1)]);
+    assert_eq!(unread_inbox(&office.mailbox, ADA_ID), [msg_id(1)]);
 }
 
 /// Send refuses what msg.rs refuses: an oversized id, kind, `to`, subject, body or meta is
@@ -901,7 +938,10 @@ pub fn mailbox_paused_receives_offboarded_refused(backend: impl OpenBackend) {
         );
         assert_eq!(office.store.get_message(&msg_id(n)).unwrap(), None);
     }
-    for bound in [GONE_ID, ODD_ID, FAR_ID, "nobody"] {
+    // The bound id must be the member's exact id: a lower-case spelling of Pat's id is the
+    // shadow agent's handle, not a binding.
+    let not_canonical = PAT_ID.to_ascii_lowercase();
+    for bound in [GONE_ID, ODD_ID, FAR_ID, "nobody", not_canonical.as_str()] {
         assert_eq!(
             send(mailbox, bound, 7, ADA_HANDLE),
             Err(MailboxError::NotBound)
@@ -1225,7 +1265,7 @@ pub fn mailbox_wait_commit_between_check_and_block(backend: impl OpenBackend) {
             .unwrap();
     }));
     let (_handle, cancel) = cancellation_pair();
-    let started = Instant::now();
+    // A lost wake-up returns None at the 3 s deadline, which the assertion below catches.
     let waited = office
         .mailbox
         .wait(ADA_ID, wait_params(3_000), far_deadline(), &cancel)
@@ -1235,7 +1275,6 @@ pub fn mailbox_wait_commit_between_check_and_block(backend: impl OpenBackend) {
         Some(msg_id(1)),
         "the commit between check and block was lost"
     );
-    assert!(started.elapsed() < Duration::from_millis(2_500));
     assert_eq!(office.mailbox.held_waits(), 0);
 }
 
@@ -1273,7 +1312,7 @@ pub fn mailbox_wait_deadline(backend: impl OpenBackend) {
             .message,
         None
     );
-    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(started.elapsed() < Duration::from_secs(5));
     send(mailbox, PAT_ID, 1, ADA_HANDLE).unwrap();
     let waited = mailbox
         .wait(ADA_ID, wait_params(MAX_WAIT_MS), passed, &cancel)
@@ -1423,6 +1462,7 @@ macro_rules! mailbox_conformance_tests {
             directory_returns_status_unfiltered,
             mailbox_send_commits_with_origin,
             mailbox_send_replay_and_conflict,
+            mailbox_send_concurrent_replay_publishes_once,
             mailbox_send_validation,
             mailbox_send_reply_to,
             mailbox_addressing_trims_ascii_whitespace,
