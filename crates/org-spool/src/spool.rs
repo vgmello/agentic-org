@@ -17,7 +17,9 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::envelope::{validate_agent_id, Envelope, MessageKind, MAX_ENVELOPE_BYTES};
-use crate::member::{check_not_reserved, is_reserved_name, resolve_member};
+use crate::member::{
+    canonical_member_id, check_not_reserved, is_owner, is_reserved_name, resolve_member,
+};
 use crate::meta::RecipientKind;
 use crate::safe_read::{create_new_nofollow, is_permanent_file_error, read_spool_file, SpoolFile};
 use crate::time::{check_wait_timeout, format_iso8601_utc};
@@ -391,6 +393,17 @@ impl Spool {
             fs::remove_dir_all(&dir)?;
         }
         Ok(())
+    }
+
+    /// `msg deregister <agent>` by `caller`: only the member itself, or the owner, may remove an
+    /// inbox (v1-old didn't check). Phase A has no authentication, so this stops mistakes.
+    pub fn deregister_as(&self, caller: &str, agent: &str) -> Result<(), SpoolError> {
+        if canonical_member_id(caller) != canonical_member_id(agent) && !is_owner(caller) {
+            return Err(SpoolError::InvalidInput(format!(
+                "{caller} can't deregister {agent} (only itself; the owner can deregister any)"
+            )));
+        }
+        self.deregister(agent)
     }
 
     /// Check whether `<agent>` has a registered inbox.

@@ -135,7 +135,7 @@ fn unknown_recipient_exits_3_and_deregistered_or_expired_goes_to_dead() {
         ],
     );
     assert_eq!(sent.code, 0);
-    let dereg = env.run(AGY, &["msg", "deregister", "ephemeral-agent"]);
+    let dereg = env.run("ephemeral-agent", &["msg", "deregister", "ephemeral-agent"]);
     assert_eq!(dereg.stdout, "ephemeral-agent", "v1-old prints the bare id");
 
     let spool = Spool::open(&env.root).unwrap();

@@ -828,7 +828,8 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
                 ));
             };
             let id = &member_id_arg(id, "deregister")?;
-            spool.deregister(id)?;
+            let me = resolve_identity(as_agent.as_deref())?;
+            spool.deregister_as(&me, id)?;
             if json_flag {
                 println!("{{\"deregistered\":{}}}", json_quote(id));
             } else {

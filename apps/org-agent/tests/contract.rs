@@ -879,6 +879,33 @@ fn deregister_requires_an_agent_and_never_falls_back_to_the_caller() {
 }
 
 #[test]
+fn deregister_is_for_the_member_itself_or_the_owner() {
+    let env = setup("deregister_auth");
+    env.register(&["third"]);
+    let r = env.run(ME, &["msg", "deregister", PEER]);
+    assert_eq!(r.code, 1, "{}", r.stderr);
+    assert!(r.stderr.contains("can't deregister"), "{}", r.stderr);
+    assert!(
+        env.root.join(format!("spool/inbox/{PEER}")).is_dir(),
+        "untouched"
+    );
+
+    assert_eq!(
+        env.run(PEER, &["msg", "deregister", PEER]).code,
+        0,
+        "itself"
+    );
+    assert!(!env.root.join(format!("spool/inbox/{PEER}")).exists());
+    let owner = org_spool::OWNER_ID;
+    assert_eq!(
+        env.run(owner, &["msg", "deregister", "third"]).code,
+        0,
+        "the owner"
+    );
+    assert!(!env.root.join("spool/inbox/third").exists());
+}
+
+#[test]
 fn an_invalid_recipient_id_is_an_unknown_recipient_like_v1_old() {
     let env = setup("bad_to");
     for to in ["bad.name", "../etc", "has space"] {

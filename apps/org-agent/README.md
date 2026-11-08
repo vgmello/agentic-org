@@ -116,7 +116,8 @@ Inputs now refused with a usage error (exit 1), nothing written:
 - a `--meta priority=...` other than `normal`, `high` or `urgent` (use `--priority`);
 - a `--timeout` over 24h (`ask`, `msg wait`), and `--until` beyond 365 days or before 1970;
 - extra positional arguments (`read`, `defer`, `done`, `deregister`, `who`, `whoami`), and
-  `msg deregister` without `<agent>`.
+  `msg deregister` without `<agent>`;
+- `msg deregister <agent>` by anyone but that member or the owner (v1-old didn't check).
 
 `msg inbox` text: the subject is sanitized so each message stays one row (control, format and
 invisible characters become spaces, `"` becomes `'`) and cut to 200 characters (`…`). With
