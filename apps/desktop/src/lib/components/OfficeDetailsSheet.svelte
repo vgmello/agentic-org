@@ -3,19 +3,22 @@
 	import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '$lib/components/ui/sheet';
 	import OfficeStatusBadge from './OfficeStatusBadge.svelte';
 	import { Badge } from '$lib/components/ui/badge';
-	import { agentsIn, roleInfo, secondaryText } from '$lib/offices/model';
+	import { agentsIn, roleInfo, secondaryText, type DisplayStatus } from '$lib/offices/model';
 	import type { OfficeInfo, OrgSnapshot } from '$lib/proto';
 
 	let {
 		open = $bindable(false),
 		office,
 		snapshot,
+		status,
 		counting = false,
 		sample = false,
 		here = false
 	}: {
 		open: boolean;
 		office: OfficeInfo | undefined;
+		/** The status to show: what the app has verified, not what was saved. */
+		status: DisplayStatus;
 		/** Undefined while the agents are still being counted, or when they couldn't be. */
 		snapshot: OrgSnapshot | undefined;
 		counting?: boolean;
@@ -41,7 +44,7 @@
 				<dt class="text-gray-400">Where</dt>
 				<dd class="text-white">{secondaryText(office) + (here ? " (you're here)" : '')}</dd>
 				<dt class="text-gray-400">Status</dt>
-				<dd><OfficeStatusBadge status={office.status} /></dd>
+				<dd><OfficeStatusBadge {status} /></dd>
 				<dt class="text-gray-400">Agents here</dt>
 				<dd class="min-w-0 text-white [overflow-wrap:anywhere]">
 					{#if !snapshot}{counting ? 'Counting…' : "Couldn't be counted"}{:else}{agents.length === 0 ? 'None' : agents.map((a) => a.name).join(', ')}{/if}

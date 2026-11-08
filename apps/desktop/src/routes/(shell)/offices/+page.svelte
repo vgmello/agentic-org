@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { invalidate } from '$app/navigation';
 	import Plus from '@lucide/svelte/icons/plus';
 	import CircleAlert from '@lucide/svelte/icons/circle-alert';
@@ -6,7 +7,8 @@
 	import OfficeStatusBadge from '$lib/components/OfficeStatusBadge.svelte';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
-	import { agentsIn, isHq, orderOffices, rowLabel, secondaryText, unplacedAgents } from '$lib/offices/model';
+	import { officeApi } from '$lib/office/api';
+	import { agentsIn, displayStatus, isHq, orderOffices, rowLabel, secondaryText, unplacedAgents, type LiveCheck } from '$lib/offices/model';
 	import type { Counts } from './+page';
 
 	let { data } = $props();
@@ -15,16 +17,44 @@
 	const here = $derived(data.connection.office);
 	// The agent counts arrive after the list: `undefined` while they are being counted.
 	let counts = $state<Counts | undefined>();
+	let retrying = $state(false);
 	$effect(() => {
 		const pending = data.counts;
-		counts = undefined;
-		pending.then((r) => pending === data.counts && (counts = r));
+		// The last answer stays until the next arrives, so Retry (and its focus) isn't removed while it works.
+		pending.then((r) => {
+			if (pending !== data.counts) return;
+			counts = r;
+			retrying = false;
+		});
 	});
+	function retry() {
+		retrying = true;
+		invalidate('app:offices');
+	}
 	const snapshot = $derived(counts && 'snapshot' in counts ? counts.snapshot : undefined);
 	const sample = $derived(!!counts && 'snapshot' in counts && counts.sample);
 	const countError = $derived(counts && 'error' in counts ? counts.error : undefined);
 	const unplaced = $derived(snapshot ? unplacedAgents(snapshot, data.offices) : []);
 	const organization = $derived(data.connection.organization.name);
+
+	// The one live signal there is: whether the office this app is connected to answers. Checked now, every
+	// half minute and on Retry; a background check keeps the last answer instead of flashing "Checking…".
+	let check = $state<LiveCheck>('checking');
+	async function probe(quiet = false) {
+		if (!quiet) check = 'checking';
+		try {
+			await officeApi.ensureRunning();
+			check = 'up';
+		} catch {
+			check = 'down';
+		}
+	}
+	onMount(() => {
+		void probe();
+		const again = setInterval(() => void probe(true), 30_000);
+		return () => clearInterval(again);
+	});
+	const statusOf = (officeId: string) => displayStatus(officeId === here.id, check);
 
 	let detailsId = $state<string | undefined>();
 	// The open sheet shows the latest data for its office, not the copy captured when it was clicked.
@@ -66,24 +96,28 @@
 		{#each offices as office (office.id)}
 			{@const agents = snapshot ? agentsIn(snapshot, office.id).length : undefined}
 			<li data-testid="office-row" data-office={office.id} class="flex items-center gap-x-4 px-4 py-3">
-				<span class="flex h-6 w-10 shrink-0 items-center justify-center rounded text-xs font-semibold {isHq(office) ? 'bg-indigo-500/20 text-indigo-200' : 'text-transparent'}" aria-hidden={!isHq(office)}>
+				<span class="flex h-6 w-10 shrink-0 items-center justify-center rounded text-xs font-semibold {isHq(office) ? 'bg-indigo-500/20 text-indigo-200' : 'text-transparent'}" aria-hidden="true">
 					{isHq(office) ? 'HQ' : ''}
 				</span>
 				<button
 					type="button"
 					class="min-w-0 flex-1 text-left focus-visible:outline-2 focus-visible:outline-indigo-400"
-					aria-label={rowLabel(office, agents, here.id === office.id)}
+					aria-label={rowLabel(office, agents, here.id === office.id, statusOf(office.id))}
 					aria-haspopup="dialog"
 					onclick={() => open(office.id)}
 				>
 					<span class="block truncate text-sm/6 font-semibold text-white" title={office.name}>{office.name}</span>
-					<span class="block truncate text-xs/5 text-gray-400">{secondaryText(office) + (here.id === office.id ? " (you're here)" : '')}</span>
+					<span class="block truncate text-xs/5 text-gray-400">{statusOf(office.id) === 'unreachable' ? "Can't reach this office" : secondaryText(office) + (here.id === office.id ? " (you're here)" : '')}</span>
 				</button>
-				<OfficeStatusBadge status={office.status} />
-				<span class="w-20 text-right text-xs/5 text-gray-400" data-testid="agent-count">
+				<!-- The button's label already says the status and the count: not read twice. -->
+				<span aria-hidden="true"><OfficeStatusBadge status={statusOf(office.id)} /></span>
+				{#if statusOf(office.id) === 'unreachable'}
+					<Button variant="outline" size="xs" aria-label="Retry reaching {office.name}" onclick={() => probe()}>Retry</Button>
+				{/if}
+				<span class="w-20 text-right text-xs/5 text-gray-400" data-testid="agent-count" aria-hidden="true">
 					{#if agents !== undefined}{agents} {agents === 1 ? 'agent' : 'agents'}
-					{:else if countError}<span aria-hidden="true">—</span><span class="sr-only">Agents not counted</span>
-					{:else}<span class="inline-block h-4 w-14 animate-pulse rounded bg-white/10 align-middle" data-testid="count-skeleton"></span><span class="sr-only">Counting agents</span>{/if}
+					{:else if countError}—
+					{:else}<span class="inline-block h-4 w-14 animate-pulse rounded bg-white/10 align-middle motion-reduce:animate-none" data-testid="count-skeleton"></span>{/if}
 				</span>
 			</li>
 		{:else}
@@ -95,7 +129,7 @@
 		<p class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-red-500/10 px-4 py-3 text-sm/6 text-red-100 outline-1 -outline-offset-1 outline-red-400/20" role="alert" data-testid="count-error">
 			<CircleAlert class="size-4 shrink-0" aria-hidden="true" />
 			<span class="[overflow-wrap:anywhere]">Can't count agents right now: {countError}</span>
-			<Button variant="outline" size="xs" onclick={() => invalidate('app:offices')}>Retry</Button>
+			<Button variant="outline" size="xs" disabled={retrying} aria-busy={retrying} onclick={retry}>{retrying ? 'Retrying…' : 'Retry'}</Button>
 		</p>
 	{/if}
 
@@ -108,7 +142,7 @@
 					<li class="flex items-center justify-between gap-x-3 text-sm/6 text-amber-50">
 						<span class="min-w-0 [overflow-wrap:anywhere]">{agent.name}</span>
 						<!-- Placing an agent is its own flow, which comes later: shown, not hidden, so nobody looks for it. -->
-						<Button variant="outline" size="xs" disabled aria-describedby="place-reason">Place…</Button>
+						<Button variant="outline" size="xs" disabled aria-label="Place {agent.name}…" aria-describedby="place-reason">Place…</Button>
 					</li>
 				{/each}
 			</ul>
@@ -118,4 +152,4 @@
 	<p class="text-xs/5 text-gray-500">Shown from this Mac.</p>
 </div>
 
-<OfficeDetailsSheet bind:open={detailsOpen} office={detailsFor} {snapshot} counting={!snapshot && !countError} {sample} here={detailsFor?.id === here.id} />
+<OfficeDetailsSheet bind:open={detailsOpen} office={detailsFor} status={detailsFor ? statusOf(detailsFor.id) : 'status_unknown'} {snapshot} counting={!snapshot && !countError} {sample} here={detailsFor?.id === here.id} />

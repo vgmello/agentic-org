@@ -20,10 +20,29 @@ export function roleInfo(o: OfficeInfo): { label: string; description: string } 
 	}
 }
 
-/** The owner-facing word for an office's status, with its icon family and tone (spec §3.1). */
-export type StatusIcon = 'circle' | 'circle-outline' | 'loader' | 'circle-x' | 'circle-arrow-up' | 'mail' | 'circle-help';
+/** An icon name for a status (see `statusIcon`). */
+export type StatusIcon = 'circle' | 'circle-outline' | 'loader' | 'circle-x' | 'circle-arrow-up' | 'mail' | 'circle-help' | 'wifi-off';
 
-export function statusInfo(status: OfficeStatus | undefined): { label: string; tone: 'ok' | 'info' | 'muted' | 'warn' | 'bad' } {
+/**
+ * What the app has verified about the office it is connected to (OFC-12). Until the host reports status live
+ * (`office.status_changed`), this is the only live signal: the office answered `hello`, or it didn't.
+ */
+export type LiveCheck = 'checking' | 'up' | 'down';
+
+/** A status as shown: the saved ones, plus what the app itself knows (spec §3.1, OFC-12). */
+export type DisplayStatus = OfficeStatus | 'unreachable' | 'checking' | 'status_unknown';
+
+/**
+ * The status to show for an office. The saved status is never shown as if it were live: the office this app is
+ * connected to is Online only while the connection is verified, and any other office reads "Status unknown".
+ */
+export function displayStatus(connected: boolean, check: LiveCheck): DisplayStatus {
+	if (!connected) return 'status_unknown';
+	return check === 'up' ? 'active' : check === 'down' ? 'unreachable' : 'checking';
+}
+
+/** The owner-facing word for an office's status, with its icon family and tone (spec §3.1). */
+export function statusInfo(status: DisplayStatus | undefined): { label: string; tone: 'ok' | 'info' | 'muted' | 'warn' | 'bad' } {
 	switch (status) {
 		case 'active':
 			return { label: 'Online', tone: 'ok' };
@@ -37,8 +56,12 @@ export function statusInfo(status: OfficeStatus | undefined): { label: string; t
 			return { label: 'Stopped', tone: 'bad' };
 		case 'update_needed':
 			return { label: 'Update needed', tone: 'warn' };
+		case 'unreachable':
+			return { label: 'Unreachable', tone: 'bad' };
+		case 'checking':
+			return { label: 'Checking…', tone: 'info' };
 		default:
-			return { label: 'Unknown', tone: 'muted' };
+			return { label: 'Status unknown', tone: 'muted' };
 	}
 }
 
@@ -75,12 +98,15 @@ export function secondaryText(o: OfficeInfo): string {
 }
 
 /** The Lucide icon for each status (spec §3.1). The word always shows too: an icon alone never carries the status. */
-export function statusIcon(status: OfficeStatus | undefined): StatusIcon {
+export function statusIcon(status: DisplayStatus | undefined): StatusIcon {
 	switch (status) {
 		case 'active':
 			return 'circle';
 		case 'starting':
+		case 'checking':
 			return 'loader';
+		case 'unreachable':
+			return 'wifi-off';
 		case 'offline':
 			return 'circle-outline';
 		case 'unavailable':
@@ -98,11 +124,12 @@ export function statusIcon(status: OfficeStatus | undefined): StatusIcon {
  * What a screen reader hears for an office row (OFC-13): its name, HQ, where it runs, its status and how many
  * agents it has. `agents` is undefined while they are still being counted.
  */
-export function rowLabel(o: OfficeInfo, agents: number | undefined, here: boolean): string {
+export function rowLabel(o: OfficeInfo, agents: number | undefined, here: boolean, status: DisplayStatus | undefined = o.status): string {
 	const parts = [o.name];
 	if (isHq(o)) parts.push('HQ');
 	parts.push(secondaryText(o) + (here ? " (you're here)" : ''));
-	parts.push(statusInfo(o.status).label);
+	parts.push(statusInfo(status).label);
 	if (agents !== undefined) parts.push(`${agents} ${agents === 1 ? 'agent' : 'agents'}`);
+	parts.push('opens details');
 	return parts.join(', ');
 }
