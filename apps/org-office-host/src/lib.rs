@@ -158,44 +158,74 @@ impl Config {
     }
 }
 
-/// The office home a release host serves: today `org_proto::location`'s rule
-/// (`ORG_OFFICE_HOME`, else `$HOME/Library/Application Support/agentic.org`), the one the app
-/// and `org-agent` use to find `host.sock`.
-// TODO(trust inputs, pending a ruling): pin a release host to
-// `home::account_office_home()` (from the account's `pw_dir`, ignoring `ORG_OFFICE_HOME`). It
-// can't be done here alone: the app and `org-agent` find the host through the same
-// `org_proto::location` rule, so they would look elsewhere whenever the variable (or `HOME`)
-// differs. Until then the orphan-key sweep is off (`may_sweep_orphan_keys`).
+/// The office home a trusted (release) host serves: its account's own office home,
+/// `<pw_dir>/Library/Application Support/agentic.org`, and only when `org_proto::location`'s
+/// shared rule (`ORG_OFFICE_HOME`, else `$HOME/…`), the one the app and `org-agent` use to find
+/// `host.sock`, gives that same home in this environment ([`home::pinned_office_home`]).
+/// Otherwise the host doesn't start, saying why: its home can't be moved by its environment,
+/// and it never serves a home its clients don't look in.
 fn trusted_office_home() -> Result<PathBuf, String> {
-    org_proto::location::default_office_home().ok_or_else(|| {
-        "no office home: neither ORG_OFFICE_HOME nor HOME is an absolute path".into()
-    })
+    let home_env = std::env::var_os("HOME").map(PathBuf::from);
+    home::pinned_office_home(
+        org_proto::location::default_office_home().as_deref(),
+        home_env.as_deref(),
+        home::account_dir().as_deref(),
+        home::same_path,
+    )
 }
 
-/// Whether this host may delete the keys of offices with no folder at startup
-/// (`keys::sweep_orphans`). That is safe only when the key store belongs to this office home
-/// alone, and today no build can be sure of it:
-/// - a debug build's development key folder may be shared by several homes;
-/// - a release build's Keychain group is shared by every release host of this account, and a
-///   release host's home can still be moved by `ORG_OFFICE_HOME` or `HOME` (see
-///   [`trusted_office_home`]): a host on one home would take another home's keys for orphans.
+/// Whether this host may sweep the keys of offices with no folder at startup
+/// (`keys::sweep_orphans`, which deletes one only once it has stayed orphaned for 7 days). That
+/// is safe only when the key store belongs to this office home alone:
+/// - a release build: yes. Its Keychain group is shared by every release host of this account,
+///   but every release host serves the account's one office home ([`trusted_office_home`]), so
+///   no host can take another home's keys for orphans. Checked again here: a release host on
+///   any other home doesn't sweep;
+/// - a debug build: never, since its development key folder may be shared by several homes.
 ///
-/// So the sweep is off (logged) until a release host is pinned to its account's office home
-/// (`home::account_office_home`); then it turns on for a release host serving exactly that home.
+/// Logged either way.
 fn may_sweep_orphan_keys(home: &Path) -> bool {
-    // TODO(trust inputs, pending the office-home ruling): once `trusted_office_home` pins a
-    // release host to `home::account_office_home()`, return true for a release build whose
-    // `home` is that one.
-    host_log::log(&format!(
-        "no orphan-key sweep for {}: {}",
-        home.display(),
-        if cfg!(debug_assertions) {
-            "a debug build's development key folder may be shared by several homes"
-        } else {
-            "another release host on another office home may share this Keychain group"
+    let reason = sweep_refusal(
+        cfg!(debug_assertions),
+        home::account_office_home().as_deref(),
+        home,
+        home::same_path,
+    );
+    match reason {
+        Some(reason) => {
+            host_log::log(&format!(
+                "no orphan-key sweep for {}: {reason}",
+                home.display()
+            ));
+            false
         }
-    ));
-    false
+        None => {
+            host_log::log(&format!(
+                "orphan-key sweep on for {}: a key whose office has no folder is marked, and \
+                 deleted once it has stayed so for 7 days",
+                home.display()
+            ));
+            true
+        }
+    }
+}
+
+/// Why a host may not sweep orphan keys (see [`may_sweep_orphan_keys`]), or `None` if it may: a
+/// release build (`debug` false) serving its account's own office home `own`. Pure: `same`
+/// compares paths.
+fn sweep_refusal(
+    debug: bool,
+    own: Option<&Path>,
+    home: &Path,
+    same: impl Fn(&Path, &Path) -> bool,
+) -> Option<&'static str> {
+    if debug {
+        Some("a debug build's development key folder may be shared by several homes")
+    } else if own.is_some_and(|own| same(own, home)) {
+        None
+    } else {
+        Some("it isn't this account's office home")
+    }
 }
 
 /// `org-office-server` next to this executable (both live in the app bundle).
@@ -338,5 +368,20 @@ impl Host {
 impl Drop for Host {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_release_host_on_its_accounts_office_home_sweeps() {
+        let lexical = |a: &Path, b: &Path| a == b;
+        let own = Path::new("/Users/me/Library/Application Support/agentic.org");
+        assert_eq!(sweep_refusal(false, Some(own), own, lexical), None);
+        assert!(sweep_refusal(true, Some(own), own, lexical).is_some());
+        assert!(sweep_refusal(false, Some(own), Path::new("/tmp/h"), lexical).is_some());
+        assert!(sweep_refusal(false, None, own, lexical).is_some());
     }
 }

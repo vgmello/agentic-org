@@ -18,7 +18,9 @@
 //!   any other error it leaves no item behind.
 //! - `delete` of a missing item is `Ok`.
 //! - The host deletes an office's key **only** after that office's `--discard` reported
-//!   `discarded`: a database left without its key could never be checked or discarded.
+//!   `discarded`: a database left without its key could never be checked or discarded. The one
+//!   exception is the orphan-key sweep (`sweep`, release builds only): a key whose office has
+//!   left nothing in the home, still so at a start 7 days or more after it was first found so.
 //! - No error ever shows key bytes: [`KeyStoreError`] holds only codes and kinds.
 
 #[cfg(debug_assertions)]

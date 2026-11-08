@@ -217,12 +217,17 @@ impl Supervisor {
         let _ = self.observer.set(observer);
     }
 
-    /// Deletes the keys of offices with no folder (see `keys::sweep_orphans`), if this host may
+    /// Marks, and after 7 days deletes, the keys of offices with no folder (see
+    /// `keys::sweep_orphans`), if this host may
     /// (`SupervisorConfig::sweep_orphans`). Run once at startup, after the startup discards and
     /// before any create.
     pub(crate) fn sweep_orphan_keys(&self) {
         if self.config.sweep_orphans {
-            crate::keys::sweep_orphans(&*self.config.keys, &self.config.home);
+            crate::keys::sweep_orphans(
+                &*self.config.keys,
+                &self.config.home,
+                std::time::SystemTime::now(),
+            );
         }
     }
 

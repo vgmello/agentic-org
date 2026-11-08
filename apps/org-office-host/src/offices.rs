@@ -815,21 +815,27 @@ mod tests {
         )
     }
 
-    /// At startup, after the discards, the keys of offices with no folder are deleted, but only
-    /// when the host may (`sweep_orphans`); a key whose folder exists is always kept.
+    /// At startup, after the discards, the keys of offices with no folder are swept, but only
+    /// when the host may (`sweep_orphans`): one marked 7 days or more ago is deleted, a new one
+    /// is only marked, and a key whose folder exists is always kept.
     #[test]
     fn the_startup_sweeps_orphan_keys_only_when_allowed() {
         use crate::keys::KeyStore;
         use org_proto::DbKey;
         const ORPHAN: &str = "01ORPHANORPHANORPHANORPHAN";
+        const NEW_ORPHAN: &str = "01NEWORPHANNEWORPHANNEWORP";
         for sweep in [false, true] {
             let dir = tempfile::tempdir().unwrap();
             let home = dir.path();
             fs::create_dir_all(home.join("offices").join(OFFICE)).unwrap();
             let keys = Arc::new(MemoryKeys::default());
-            for id in [OFFICE, ORPHAN] {
+            for id in [OFFICE, ORPHAN, NEW_ORPHAN] {
                 keys.create(id, &DbKey::from_bytes([1; 32])).unwrap();
             }
+            // ORPHAN was marked long ago; NEW_ORPHAN never was.
+            let record = home.join("orphan-keys.json");
+            let marked = format!("{{\"v\":1,\"first_seen_ms\":{{\"{ORPHAN}\":1000}}}}");
+            fs::write(&record, &marked).unwrap();
             let supervisor = Supervisor::new(SupervisorConfig {
                 program: home.join("no-such-server"),
                 home: home.to_path_buf(),
@@ -851,7 +857,14 @@ mod tests {
                 .wait_for_startup(Instant::now() + Duration::from_secs(10))
                 .unwrap();
             assert_eq!(keys.has(ORPHAN), !sweep, "sweep {sweep}");
-            assert!(keys.has(OFFICE), "sweep {sweep}");
+            // Never deleted on first sight, only marked.
+            assert!(keys.has(NEW_ORPHAN) && keys.has(OFFICE), "sweep {sweep}");
+            let now_marked = fs::read_to_string(&record).unwrap();
+            if sweep {
+                assert!(now_marked.contains(NEW_ORPHAN) && !now_marked.contains(ORPHAN));
+            } else {
+                assert_eq!(now_marked, marked);
+            }
             offices.shutdown();
         }
     }

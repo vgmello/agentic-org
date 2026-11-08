@@ -222,9 +222,9 @@ first line is `invalid_request`.
     startup (release builds only; debug builds skip it and log that) finds the key items whose office
     has no folder under `offices/`, isn't under `offices/.refused/` and isn't named by any
     `office.json` there. It never deletes on first sight (ada): it marks an orphan in a host-side
-    record (office ids and first-seen times only, never key bytes) and deletes the item only if it's
+    record (`<home>/orphan-keys.json`, 0600, written atomically: `{"v":1,"first_seen_ms":{"<office id>": <unix ms>}}`, office ids and first-seen times only, never key bytes) and deletes the item only if it's
     still orphaned at a host start 7 or more days later. An item whose folder comes back is unmarked.
-    A record it can't read means no deletions that run. Both steps are logged, with ids only.
+    A record it can't read means no deletions that run (it starts over), and a clock before 2026 skips the sweep. Both steps are logged, with ids only.
   - **The release home is pinned:** a release host refuses to start unless the shared home rule
     (`ORG_OFFICE_HOME`, then `HOME`) resolves to the account's home,
     `<home dir>/Library/Application Support/agentic.org`, with the home dir taken from the user
