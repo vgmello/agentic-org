@@ -31,6 +31,10 @@ pub trait OrgView {
     fn memberships_of_team(&self, team_id: &str) -> Vec<Membership>;
     fn memberships_of_member(&self, member_id: &str) -> Vec<Membership>;
 
+    /// Whether `office_id` is an office of this organization. Phase 1 has one, HQ itself; offices
+    /// that enrol later are added by the sync work.
+    fn office_exists(&self, office_id: &str) -> bool;
+
     fn project_exists(&self, project_id: &str) -> bool;
     fn project_team(&self, id: &str) -> Option<ProjectTeam>;
     fn project_team_of(&self, project_id: &str, team_id: &str) -> Option<ProjectTeam>;
