@@ -14,6 +14,7 @@ mod org_command;
 mod org_engine;
 mod org_mock;
 mod real;
+pub mod stdio;
 mod tray;
 mod work_engine;
 
