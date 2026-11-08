@@ -81,7 +81,7 @@ impl Office {
     /// `OfficeExists`; a key already saved for the id is `KeyExists`; nothing is ever reused
     /// or replaced); make the key; make both databases; make `workspace/`; commit the
     /// organization; write `office.json` last. A create that fails removes what it made and
-    /// the key it saved, so the id can be created again. A crash part-way leaves a folder
+    /// the key it saved (once saved), so the id can be created again. A crash part-way leaves a folder
     /// without `office.json`, an unfinished create for `discard`.
     pub fn create(
         folder: impl Into<PathBuf>,
@@ -115,7 +115,7 @@ impl Office {
                 "ids are 1 to 64 letters and digits, and names must be valid",
             ));
         }
-        let folder = absolute(folder.into()).map_err(OfficeError::storage)?;
+        let folder = plain_folder(folder.into())?;
         check_named_by(&folder, &info.office_id)?;
         check_not_a_link(&folder)?;
         private_dir(&folder).map_err(OfficeError::storage)?;
@@ -179,7 +179,7 @@ impl Office {
         keys: &dyn KeyProvider,
         lock_wait: Duration,
     ) -> Result<Self, OfficeError> {
-        let folder = absolute(folder.into()).map_err(OfficeError::storage)?;
+        let folder = plain_folder(folder.into())?;
         check_not_a_link(&folder)?;
         match fs::metadata(&folder) {
             Ok(metadata) if metadata.is_dir() => {}
@@ -230,8 +230,8 @@ impl Office {
     /// - databases it cannot check (the key is missing, the keychain refuses, SQLCipher
     ///   fails) are an error (`Storage`), and nothing is deleted.
     ///
-    /// A refused discard removes nothing (checking a database may leave an empty log and index file
-    /// beside it, which SQLite ignores). A folder that is not there is fine (its orphan key is
+    /// A refused discard removes nothing an office made (it may leave `office.lock`, and checking a
+    /// database may leave an empty log and index file beside it, which SQLite ignores). A folder that is not there is fine (its orphan key is
     /// still removed); one that is a link, or holds anything an office does not make, is `Invalid`.
     pub fn discard(
         folder: impl Into<PathBuf>,
@@ -253,7 +253,7 @@ impl Office {
                 "an office id is 1 to 64 letters and digits",
             ));
         }
-        let folder = absolute(folder.into()).map_err(OfficeError::storage)?;
+        let folder = plain_folder(folder.into())?;
         check_named_by(&folder, office_id)?;
         // Lock first, even when there is no folder yet: a create of this id that starts now
         // must not have its key deleted under it. (An empty folder is left behind only if the
@@ -508,6 +508,13 @@ fn empty_folder_but_the_lock(
     Ok(())
 }
 
+/// The folder as an absolute path with no trailing separator or `.` components, so the link
+/// check looks at the folder itself: `link/` would resolve the link and look like a folder.
+fn plain_folder(folder: PathBuf) -> Result<PathBuf, OfficeError> {
+    let absolute = absolute(folder).map_err(OfficeError::storage)?;
+    Ok(absolute.components().collect())
+}
+
 /// Refuses a folder path that is a link (or anything but a directory): an office folder is
 /// never reached through one, so nothing is created, locked or removed through a planted link.
 fn check_not_a_link(folder: &Path) -> Result<(), OfficeError> {
@@ -542,6 +549,10 @@ fn remove_entries(folder: &Path) -> std::io::Result<()> {
     // In order, stopping at the first failure: a database's main file never goes before its
     // log, so what is left can still be discarded.
     for entry in OFFICE_ENTRIES {
+        #[cfg(test)]
+        if FAIL_REMOVING.with(std::cell::Cell::get) == Some(entry) {
+            return Err(std::io::Error::other("injected removal failure"));
+        }
         let path = folder.join(entry);
         match fs::symlink_metadata(&path) {
             Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(&path)?,
@@ -579,6 +590,8 @@ type StepHook = Box<dyn Fn(&Path, &str)>;
 thread_local! {
     /// Makes `build` fail at the named step, to test what a half-done create leaves behind.
     static FAIL_AT: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+    /// Makes `remove_entries` fail when it reaches the named entry.
+    static FAIL_REMOVING: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
     /// Makes `remove_entries` fail without removing anything.
     static FAIL_CLEANUP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Called at every step `build` reaches.

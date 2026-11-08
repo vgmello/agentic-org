@@ -107,7 +107,11 @@ mod in_memory {
         }
 
         fn store(&self, office_id: &str, key: &Key) -> Result<(), KeyError> {
-            self.saved().insert(office_id.to_owned(), key.clone());
+            let mut saved = self.saved();
+            if saved.contains_key(office_id) {
+                return Err("a key for this office already exists".into());
+            }
+            saved.insert(office_id.to_owned(), key.clone());
             Ok(())
         }
 
@@ -141,6 +145,9 @@ mod tests {
         assert_eq!(keys.load("a").unwrap(), Some(Key::from_bytes([1; 32])));
         assert!(keys.load("b").unwrap().is_none());
 
+        // Never replaces: a second store for the same id fails and the first key stays.
+        assert!(keys.store("a", &Key::from_bytes([2; 32])).is_err());
+        assert_eq!(keys.load("a").unwrap(), Some(Key::from_bytes([1; 32])));
         keys.delete("a").unwrap();
         assert!(keys.load("a").unwrap().is_none());
         keys.delete("a").unwrap(); // having none is fine

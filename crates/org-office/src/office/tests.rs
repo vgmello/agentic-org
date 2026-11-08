@@ -390,6 +390,7 @@ fn open_with_the_wrong_key_is_an_error_that_leaves_the_files_alone() {
     let (dir, keys, office) = made();
     let folder = folder_of(&dir, ID);
     drop(office);
+    keys.delete(ID).unwrap();
     keys.store(ID, &Key::from_bytes([1; 32])).unwrap();
     let before = fs::read(folder.join("org.db")).unwrap();
 
@@ -534,6 +535,7 @@ fn discard_refuses_databases_it_cannot_check() {
         Err(OfficeError::Storage(_))
     ));
     assert!(folder.join("org.db").exists());
+    keys.delete(ID).unwrap();
     keys.store(ID, &kept).unwrap();
 }
 
@@ -1026,4 +1028,90 @@ fn the_last_step_never_removes_a_folder_a_create_has_started_filling() {
     remove_the_empty_folder(&folder).unwrap();
 
     assert_eq!(fs::read(folder.join("org.db")).unwrap(), b"a new create's");
+}
+
+#[test]
+fn a_trailing_slash_does_not_hide_a_link() {
+    let dir = TempDir::new().unwrap();
+    let keys = InMemoryKeys::new();
+    let target = dir.path().join("elsewhere");
+    fs::create_dir_all(&target).unwrap();
+    let folder = folder_of(&dir, ID);
+    fs::create_dir_all(folder.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&target, &folder).unwrap();
+    let slashed = PathBuf::from(format!("{}/", folder.display()));
+
+    assert!(matches!(
+        Office::create(&slashed, &new_office(ID), &keys),
+        Err(OfficeError::Invalid(_))
+    ));
+    assert!(matches!(
+        Office::open(&slashed, &keys),
+        Err(OfficeError::Invalid(_))
+    ));
+    assert!(matches!(
+        Office::discard(&slashed, ID, &keys),
+        Err(OfficeError::Invalid(_))
+    ));
+    assert!(
+        names_in(&target).is_empty(),
+        "something was made through the link"
+    );
+
+    // A real folder with a trailing slash works as without.
+    let real = folder_of(&dir, "OFFICE2");
+    let slashed = PathBuf::from(format!("{}/", real.display()));
+    Office::create(&slashed, &new_office("OFFICE2"), &keys).unwrap();
+}
+
+#[test]
+fn a_failed_key_store_deletes_nothing() {
+    // The keychain says "exists" for a key some other office made under this id: it must stay.
+    struct Refuses {
+        deleted: std::sync::atomic::AtomicBool,
+    }
+    impl KeyProvider for Refuses {
+        fn load(&self, _id: &str) -> Result<Option<Key>, KeyError> {
+            Ok(None)
+        }
+        fn store(&self, _id: &str, _key: &Key) -> Result<(), KeyError> {
+            Err("exists".into())
+        }
+        fn delete(&self, _id: &str) -> Result<(), KeyError> {
+            self.deleted
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+    }
+    let dir = TempDir::new().unwrap();
+    let keys = Refuses {
+        deleted: false.into(),
+    };
+
+    assert!(Office::create(folder_of(&dir, ID), &new_office(ID), &keys).is_err());
+
+    assert!(!keys.deleted.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[test]
+fn a_cleanup_that_fails_part_way_stops_there_and_keeps_the_key() {
+    let dir = TempDir::new().unwrap();
+    let keys = InMemoryKeys::new();
+    let folder = folder_of(&dir, ID);
+
+    FAIL_AT.with(|f| f.set(Some("workspace")));
+    FAIL_REMOVING.with(|f| f.set(Some("org.db-wal")));
+    let failed = Office::create(&folder, &new_office(ID), &keys);
+    FAIL_AT.with(|f| f.set(None));
+    FAIL_REMOVING.with(|f| f.set(None));
+
+    assert!(failed.is_err());
+    // Everything before the failing entry went; nothing after it, the main file included.
+    assert!(!folder.join("workspace").exists());
+    assert!(
+        folder.join("org.db").exists(),
+        "the main file went before its log"
+    );
+    assert!(keys.load(ID).unwrap().is_some());
+    Office::discard(&folder, ID, &keys).unwrap();
 }
