@@ -17,6 +17,9 @@ const ORGANIZATIONS_KEY = 'agentic-org.mock.organizations';
  * The HQ office every organization starts with, on this Mac. `?office=crashed|restarting|key_missing|unknown` makes it a
  * stopped office with a reason, so the Offices screen's reason lines can be seen and tested (spec §3.3).
  */
+/** A current host's `hello`: it lists the optional calls and events the app uses (`office.status_changed`, `office.restart`). */
+const HELLO: HelloResult = { api_version: 1, server_version: '0.0.0-mock', host: 'This Mac', capabilities: ['office.status_changed', 'office.restart'] };
+
 const hqOffice = (organizationId: string): OfficeInfo => {
 	const base: OfficeInfo = { id: `office-${organizationId}`, organization_id: organizationId, name: 'HQ', role: 'hq', host: 'This Mac', status: 'active' };
 	const stopped = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('office');
@@ -133,13 +136,28 @@ export function createMockOffice({
 			if (scenario === 'unreachable')
 				fail({ source: 'setup', code: 'unreachable', message: "The office server started but isn't answering." });
 			connected = true;
-			return { api_version: 1, server_version: '0.0.0-mock', host: 'This Mac' };
+			return HELLO;
 		},
-		async ping(): Promise<void> {
+		async restartOffice(officeId): Promise<void> {
+			if (!connected) fail({ source: 'app', code: 'not_connected', message: "The office isn't running yet." });
+			await wait(delayMs / 3);
+			const list = hosted();
+			if (!list.some((o) => o.offices.some((f) => f.id === officeId))) fail({ source: 'api', code: 'not_found', message: "That office isn't here." });
+			// It comes back: running, with no reason and no restart pending.
+			const running = (o: OfficeInfo): OfficeInfo => {
+				if (o.id !== officeId) return o;
+				const { status_reason: _r, next_restart_at: _n, ...rest } = o;
+				return { ...rest, status: 'active' };
+			};
+			saveHosted(list.map((org) => ({ ...org, offices: org.offices.map(running) })));
+			save(load().map((c) => ({ ...c, office: running(c.office), organization: { ...c.organization, offices: c.organization.offices.map(running) } })));
+		},
+		async ping(): Promise<HelloResult> {
 			await wait(delayMs / 3);
 			if (!connected) fail({ source: 'app', code: 'not_connected', message: "The office isn't running yet." });
 			if (scenario === 'not_installed' || scenario === 'needs_approval' || scenario === 'unreachable' || (scenario === 'turned_off' && login === 'not_registered'))
 				fail({ source: 'setup', code: 'unreachable', message: "The office isn't answering." });
+			return HELLO;
 		},
 		async createOrganization(rawName): Promise<Connection> {
 			if (!connected) fail({ source: 'app', code: 'not_connected', message: "The office isn't running yet." });

@@ -44,7 +44,18 @@ pub trait OfficeConnection: Send + Sync {
     /// starts anything, so it is safe to call often (the Offices screen checks every half minute). Every failure is
     /// reported as `setup/unreachable`. This says the host (or the mock) answers, not that the connected office is up:
     /// the screen shows Online only when the office's reported status is also `active` (OFC-12).
-    fn ping(&self) -> Result<(), SetupError>;
+    fn ping(&self) -> Result<HelloResult, SetupError>;
+
+    /// `office.restart` (app-only): ask the host to start an office that is `offline` or `unavailable` again. Refused as the
+    /// contract says: `unknown_method` from a host that doesn't list the `office.restart` capability, `not_found`,
+    /// `not_authorized`, `unavailable` (only for reasons a restart can't fix) and `not_ready` after the wait. `conflict`
+    /// (already starting or running) is not an error to the caller: it comes back as `Ok`. A mock with nothing to restart says Ok.
+    fn restart_office(&self, _office_id: &str) -> Result<(), ApiError> {
+        Err(ApiError::new(
+            org_proto::ErrorCode::UnknownMethod,
+            "This office can't be restarted from here.",
+        ))
+    }
 
     fn create_organization(&self, name: &str) -> Result<Organization, ApiError>;
 

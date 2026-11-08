@@ -4,7 +4,7 @@ import type { LiveCheck } from './model';
 
 export interface Office {
 	/** Read-only: does the running office answer? Rejects with an `AppError`-shaped error when it doesn't. */
-	ping(): Promise<void>;
+	ping(): Promise<{ capabilities?: string[] } | void>;
 	/** Install, register and start the office if needed. Only an explicit Retry may do this. */
 	ensureRunning(): Promise<unknown>;
 }
@@ -16,6 +16,7 @@ export interface ProbeOptions {
 	explicitMs?: number;
 }
 
+const capabilitiesOf = (hello: { capabilities?: string[] } | void): string[] => (hello && Array.isArray(hello.capabilities) ? hello.capabilities : []);
 const codeOf = (e: unknown) => (e && typeof e === 'object' && 'code' in e ? String((e as { code: unknown }).code) : '');
 
 /**
@@ -24,18 +25,18 @@ const codeOf = (e: unknown) => (e && typeof e === 'object' && 'code' in e ? Stri
  * "Checking…", may start the office when it isn't running, and replaces any check still in flight. The newest
  * check wins: an older, slower one never overwrites it. Silence past the timeout is "down", never "up".
  */
-export function createProbe(office: Office, onChange: (check: LiveCheck) => void, { backgroundMs = 5000, explicitMs = 20_000 }: ProbeOptions = {}) {
+export function createProbe(office: Office, onChange: (check: LiveCheck, capabilities?: string[]) => void, { backgroundMs = 5000, explicitMs = 20_000 }: ProbeOptions = {}) {
 	let newest = 0;
 	let running = false;
 
-	async function ask(explicit: boolean): Promise<void> {
+	async function ask(explicit: boolean): Promise<string[] | undefined> {
 		try {
-			await office.ping();
+			return capabilitiesOf(await office.ping());
 		} catch (e) {
 			// Nothing started the office yet (the app just opened here), or the user asked to bring it back: start it.
 			if (codeOf(e) === 'not_connected' || (explicit && codeOf(e) === 'unreachable')) {
 				await office.ensureRunning();
-				await office.ping();
+				return capabilitiesOf(await office.ping());
 			} else throw e;
 		}
 	}
@@ -49,8 +50,9 @@ export function createProbe(office: Office, onChange: (check: LiveCheck) => void
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const silence = new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error('no answer')), explicit ? explicitMs : backgroundMs)));
 		let result: LiveCheck;
+		let capabilities: string[] | undefined;
 		try {
-			await Promise.race([ask(explicit), silence]);
+			capabilities = await Promise.race([ask(explicit), silence]);
 			result = 'up';
 		} catch {
 			result = 'down';
@@ -59,7 +61,7 @@ export function createProbe(office: Office, onChange: (check: LiveCheck) => void
 		}
 		if (mine === newest) {
 			running = false;
-			onChange(result);
+			onChange(result, capabilities);
 		}
 	}
 

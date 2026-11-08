@@ -5,7 +5,8 @@
 	import { Badge } from '$lib/components/ui/badge';
 	import { toast } from 'svelte-sonner';
 	import pkg from '../../../package.json';
-	import { agentsIn, copyDetails, roleInfo, secondaryText, statusInfo, type DisplayStatus } from '$lib/offices/model';
+	import { officeApi, toAppError } from '$lib/office/api';
+	import { agentsIn, copyDetails, restartAction, restartOutcome, roleInfo, secondaryText, statusInfo, type DisplayStatus } from '$lib/offices/model';
 	import type { OfficeInfo, OrgSnapshot } from '$lib/proto';
 
 	let {
@@ -16,7 +17,9 @@
 		counting = false,
 		sample = false,
 		here = false,
-		why
+		why,
+		capabilities,
+		onrestarted
 	}: {
 		open: boolean;
 		office: OfficeInfo | undefined;
@@ -31,9 +34,51 @@
 		here?: boolean;
 		/** Why the office is stopped, when the host says it is (spec §3.3). */
 		why?: string;
+		/** What the host's last hello listed; absent when not known yet. */
+		capabilities?: string[];
+		/** The host accepted a restart: reload the offices' statuses. */
+		onrestarted?: () => Promise<void> | void;
 	} = $props();
 
 	const agents = $derived(office && snapshot ? agentsIn(snapshot, office.id) : []);
+
+	// Restarting (spec §3.3): the spinner stays until the office is no longer stopped, or half a minute has passed.
+	let restarting = $state(false);
+	let restartNote = $state<string | undefined>();
+	let unsupported = $state(false);
+	const action = $derived(office ? restartAction(office, capabilities) : {});
+	$effect(() => {
+		// A different office, or a closed sheet, starts clean.
+		void office?.id;
+		restarting = false;
+		restartNote = undefined;
+	});
+	async function restart() {
+		if (!office || restarting) return;
+		restarting = true;
+		restartNote = undefined;
+		const id = office.id;
+		try {
+			await officeApi.restartOffice(id);
+		} catch (e) {
+			const err = toAppError(e);
+			const outcome = restartOutcome(err.source === 'api' ? err.code : 'unknown');
+			if (outcome.kind === 'unsupported') unsupported = true;
+			if (outcome.kind === 'refresh') await onrestarted?.();
+			if (outcome.kind !== 'wait') {
+				restartNote = outcome.message;
+				restarting = false;
+				return;
+			}
+		}
+		// Keep the spinner until the host says it is no longer stopped (the live status), for up to 30 s.
+		for (let i = 0; i < 15 && restarting; i++) {
+			await onrestarted?.();
+			if (office?.id !== id || (office.status !== 'offline' && office.status !== 'unavailable')) break;
+			await new Promise((r) => setTimeout(r, 2000));
+		}
+		restarting = false;
+	}
 
 	async function copy() {
 		if (!office) return;
@@ -70,7 +115,14 @@
 					{#if sample && agents.length > 0}<Badge variant="secondary" data-testid="sample-data-note-sheet">Sample data</Badge>{/if}
 				</dd>
 			</dl>
+			{#if why && (action.note || unsupported)}
+				<p class="px-4 text-sm/6 text-gray-300" data-testid="restart-note">{action.note ?? 'Update Agentic Org to restart offices from here'}</p>
+			{/if}
+			{#if restartNote}<p class="px-4 text-sm/6 text-red-300" role="alert" data-testid="restart-error">{restartNote}</p>{/if}
 			<SheetFooter class="mt-auto">
+				{#if why && action.label && !unsupported}
+					<Button disabled={restarting} onclick={restart} data-testid="restart-office">{restarting ? 'Restarting…' : action.label}</Button>
+				{/if}
 				{#if why}<Button variant="outline" onclick={copy}>Copy details</Button>{/if}
 				<Button variant="outline" onclick={() => (open = false)}>Close</Button>
 			</SheetFooter>

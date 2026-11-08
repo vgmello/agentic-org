@@ -401,8 +401,33 @@ impl OfficeConnection for RealOffice {
         }
     }
 
-    fn ping(&self) -> Result<(), SetupError> {
-        self.hello().map(|_| ()).map_err(|e| setup_error(&e))
+    fn ping(&self) -> Result<HelloResult, SetupError> {
+        self.hello().map_err(|e| setup_error(&e))
+    }
+
+    fn restart_office(&self, office_id: &str) -> Result<(), ApiError> {
+        // The host answers `hello` on this connection before any app-only call is sent (`host()` waits for it when it
+        // connects, and calls here are one at a time): it refuses an app-only call sent before it accepted the connection.
+        let hello = self.hello().map_err(api_error)?;
+        if !hello.supports(org_proto::capability::OFFICE_RESTART) {
+            return Err(ApiError::new(
+                ErrorCode::UnknownMethod,
+                "This host can't restart offices from here.",
+            ));
+        }
+        let params = org_proto::OfficeRestartParams {
+            office_id: office_id.to_string(),
+        };
+        let result = self.with_host(false, |c| {
+            // The host may hold the call up to 30 s while it starts: wait longer than that.
+            c.call_with_timeout::<org_proto::OfficeRestart>(&params, Duration::from_secs(45))
+        });
+        match result {
+            Ok(_) => Ok(()),
+            // Already starting or running: it is on its way; the live status says the rest.
+            Err(ClientError::Api(api)) if api.code == ErrorCode::Conflict => Ok(()),
+            Err(e) => Err(api_error(e)),
+        }
     }
 
     fn create_organization(&self, name: &str) -> Result<Organization, ApiError> {
@@ -560,6 +585,9 @@ mod tests {
         host_requests: Arc<AtomicUsize>,
         /// How many more times the host answers `organization.list` / `organization.create` with `not_ready`.
         not_ready: Arc<AtomicUsize>,
+        /// What the host's `hello` lists, and every `office.restart` it was asked for (by office id).
+        capabilities: Arc<Mutex<Vec<String>>>,
+        restarts: Arc<Mutex<Vec<String>>>,
     }
 
     /// `host_hangs_up_on_request`: the host closes the connection on its Nth request (0: never).
@@ -575,6 +603,10 @@ mod tests {
         let host_requests = Arc::new(AtomicUsize::new(0));
         let not_ready = Arc::new(AtomicUsize::new(0));
         let host_not_ready = Arc::clone(&not_ready);
+        let capabilities = Arc::new(Mutex::new(Vec::<String>::new()));
+        let host_capabilities = Arc::clone(&capabilities);
+        let restarts = Arc::new(Mutex::new(Vec::<String>::new()));
+        let host_restarts = Arc::clone(&restarts);
         let organization = Organization {
             id: "org1".into(),
             name: "Acme".into(),
@@ -599,10 +631,25 @@ mod tests {
                             server_version: "test".into(),
                             host: "This Mac".into(),
                             office: None,
-                            capabilities: vec![],
+                            capabilities: host_capabilities.lock().unwrap().clone(),
                         },
                     )
                     .unwrap(),
+                    "office.restart" => {
+                        let id = r.params["office_id"].as_str().unwrap_or("").to_string();
+                        host_restarts.lock().unwrap().push(id.clone());
+                        match id.as_str() {
+                            "busy" => Response::error(
+                                r.id,
+                                ApiError::new(ErrorCode::Conflict, "already starting"),
+                            ),
+                            "gone" => Response::error(
+                                r.id,
+                                ApiError::new(ErrorCode::NotFound, "no such office"),
+                            ),
+                            _ => Response::ok::<org_proto::OfficeRestart>(r.id, &Empty {}).unwrap(),
+                        }
+                    }
                     "organization.list" | "organization.create"
                         if host_not_ready
                             .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
@@ -670,6 +717,8 @@ mod tests {
             asked,
             host_requests,
             not_ready,
+            capabilities,
+            restarts,
         }
     }
 
@@ -1246,5 +1295,34 @@ mod tests {
         );
         // hello (connect), hello (check), one create.
         assert_eq!(f.host_requests.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn a_restart_is_asked_only_of_a_host_that_lists_the_capability() {
+        let f = fake(OfficeStatus::Active, 0);
+        let err = real(&f).restart_office("hq1").unwrap_err();
+        assert_eq!(err.code, ErrorCode::UnknownMethod);
+        assert!(f.restarts.lock().unwrap().is_empty(), "nothing was sent");
+        f.capabilities
+            .lock()
+            .unwrap()
+            .push(org_proto::capability::OFFICE_RESTART.to_string());
+        real(&f).restart_office("hq1").unwrap();
+        assert_eq!(f.restarts.lock().unwrap().as_slice(), ["hq1"]);
+    }
+
+    #[test]
+    fn an_office_that_is_already_starting_is_not_an_error_but_a_missing_one_is() {
+        let f = fake(OfficeStatus::Active, 0);
+        f.capabilities
+            .lock()
+            .unwrap()
+            .push(org_proto::capability::OFFICE_RESTART.to_string());
+        let office = real(&f);
+        office.restart_office("busy").unwrap();
+        assert_eq!(
+            office.restart_office("gone").unwrap_err().code,
+            ErrorCode::NotFound
+        );
     }
 }

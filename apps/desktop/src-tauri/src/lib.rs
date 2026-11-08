@@ -114,9 +114,16 @@ impl AppState {
 
     /// Whether the connected office answers. Read-only: no start lock, no epoch, no restart, so a status
     /// check can't pile up behind (or cause) a start. Before the office has been started there is nothing to ask.
-    fn ping(&self) -> Result<(), CommandError> {
+    fn ping(&self) -> Result<HelloResult, CommandError> {
         self.ensure_connected()?;
         Ok(self.office.ping()?)
+    }
+
+    /// Ask the host to start an office again (`office.restart`). Not run through `with_restart`: restarting the host
+    /// over a refused restart would answer nothing.
+    fn restart_office(&self, office_id: &str) -> Result<(), CommandError> {
+        self.ensure_connected()?;
+        Ok(self.office.restart_office(office_id)?)
     }
 
     fn start_locked(&self) -> Result<HelloResult, CommandError> {
@@ -334,9 +341,18 @@ async fn office_ensure_running(
 }
 
 #[tauri::command]
-async fn office_ping(state: State<'_, Arc<AppState>>) -> Result<(), CommandError> {
+async fn office_ping(state: State<'_, Arc<AppState>>) -> Result<HelloResult, CommandError> {
     let state = Arc::clone(&state);
     blocking(move || state.ping()).await
+}
+
+#[tauri::command]
+async fn office_restart(
+    state: State<'_, Arc<AppState>>,
+    office_id: String,
+) -> Result<(), CommandError> {
+    let state = Arc::clone(&state);
+    blocking(move || state.restart_office(&office_id)).await
 }
 
 /// Whether the office host's login service is on, waiting for the owner's approval, or missing.
@@ -549,6 +565,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             office_ensure_running,
             office_ping,
+            office_restart,
             organization_create,
             organizations_list,
             organization_open,
@@ -757,9 +774,10 @@ mod tests {
         assert_eq!(off.unregister_calls.load(Ordering::SeqCst), 1);
     }
 
-    const COMMANDS: [&str; 14] = [
+    const COMMANDS: [&str; 15] = [
         "office_ensure_running",
         "office_ping",
+        "office_restart",
         "organization_create",
         "organizations_list",
         "organization_open",
@@ -968,8 +986,8 @@ mod tests {
                 capabilities: vec![],
             })
         }
-        fn ping(&self) -> Result<(), office::SetupError> {
-            Ok(())
+        fn ping(&self) -> Result<HelloResult, office::SetupError> {
+            self.ensure_running()
         }
         fn create_organization(&self, _: &str) -> Result<Organization, ApiError> {
             unreachable!()

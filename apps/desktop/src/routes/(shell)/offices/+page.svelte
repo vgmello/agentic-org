@@ -53,8 +53,23 @@
 	// The one live signal there is: whether the office this app is connected to answers. Checked now, every
 	// half minute and on Retry; a background check keeps the last answer instead of flashing "Checking…".
 	let check = $state<LiveCheck>('checking');
-	const probe = createProbe(officeApi, (next) => {
+	// What the host said it can do in its last hello (`office.status_changed`, `office.restart`).
+	let capabilities = $state<string[] | undefined>();
+	/** The statuses the host reports come from the connection saved when the organization was opened: ask the host again. */
+	async function refreshOffices() {
+		try {
+			await officeApi.openOrganization(data.connection.organization.id);
+			await invalidate('app:connections');
+		} catch {
+			// The next tick tries again; the probe already says whether the host answers.
+		}
+	}
+	const probe = createProbe(officeApi, (next, caps) => {
 		check = next;
+		if (next === 'up') {
+			capabilities = caps;
+			void refreshOffices();
+		}
 		// A Retry that worked removes the button the keyboard was on: move focus to the row instead of dropping it.
 		if (next === 'up' && document.activeElement?.matches('[data-testid=retry-office]')) rowButton(here.id)?.focus();
 	});
@@ -91,7 +106,7 @@
 		}
 		lastOffice = id;
 	});
-	const statusOf = (officeId: string) => displayStatusFor(officeId, here.id, check, data.offices.find((o) => o.id === officeId)?.status);
+	const statusOf = (officeId: string) => displayStatusFor(officeId, here.id, check, data.offices.find((o) => o.id === officeId)?.status, capabilities);
 
 	let detailsId = $state<string | undefined>();
 	// The open sheet shows the latest data for its office, not the copy captured when it was clicked.
@@ -201,4 +216,4 @@
 	<p class="text-xs/5 text-gray-500">Shown from this Mac.</p>
 </div>
 
-<OfficeDetailsSheet bind:open={detailsOpen} office={detailsFor} status={detailsFor ? statusOf(detailsFor.id) : 'status_unknown'} why={detailsFor ? whyOf(detailsFor.id) : undefined} {snapshot} counting={!snapshot && !countError} {sample} here={detailsFor?.id === here.id} />
+<OfficeDetailsSheet bind:open={detailsOpen} office={detailsFor} status={detailsFor ? statusOf(detailsFor.id) : 'status_unknown'} why={detailsFor ? whyOf(detailsFor.id) : undefined} {capabilities} onrestarted={refreshOffices} {snapshot} counting={!snapshot && !countError} {sample} here={detailsFor?.id === here.id} />

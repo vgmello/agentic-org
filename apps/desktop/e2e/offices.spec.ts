@@ -219,3 +219,22 @@ test('OFC-11: a restart that is pending counts down, and the office reads Stoppe
 	expect(label).toMatch(/Stopped: it stopped unexpectedly, restarting at \d\d:\d\d/);
 	expect(label).not.toMatch(/\d+ s\b/);
 });
+
+test('OFC-11: Restart office brings a crashed office back, and the row reads Online', async ({ page }) => {
+	await openOffices(page, 'crashed');
+	const hq = rows(page).first();
+	await expect(hq).toContainText('Stopped');
+	await hq.getByRole('button').first().click();
+	const sheet = page.getByRole('dialog');
+	await expect(sheet.getByTestId('restart-office')).toHaveText('Restart office');
+	await sheet.getByTestId('restart-office').click();
+	await expect(hq).toContainText('Online', { timeout: 30_000 });
+	await expect(hq).not.toContainText('It stopped unexpectedly');
+	await expect(sheet.getByTestId('restart-office')).toHaveCount(0);
+});
+
+test('OFC-11: a missing key says Try again, and an unsupported version has no button', async ({ page }) => {
+	await openOffices(page, 'key_missing');
+	await rows(page).first().getByRole('button').first().click();
+	await expect(page.getByRole('dialog').getByTestId('restart-office')).toHaveText('Try again');
+});

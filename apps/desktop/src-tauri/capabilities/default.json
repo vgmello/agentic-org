@@ -10,6 +10,7 @@
     "core:window:allow-internal-toggle-maximize",
     "allow-office-ensure-running",
     "allow-office-ping",
+    "allow-office-restart",
     "allow-organization-create",
     "allow-connections-list",
     "allow-organizations-list",

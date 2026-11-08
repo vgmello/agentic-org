@@ -6,7 +6,8 @@ import type { OfficeApi } from './api';
 export const tauriOffice: OfficeApi = {
 	connections: () => invoke<Connection[]>('connections_list'),
 	ensureRunning: () => invoke<HelloResult>('office_ensure_running'),
-	ping: () => invoke<void>('office_ping'),
+	ping: () => invoke<HelloResult>('office_ping'),
+	restartOffice: (officeId) => invoke<void>('office_restart', { officeId }),
 	createOrganization: (name) => invoke<Connection>('organization_create', { name }),
 	listOrganizations: () => invoke<Organization[]>('organizations_list'),
 	openOrganization: (id) => invoke<Connection>('organization_open', { id }),
