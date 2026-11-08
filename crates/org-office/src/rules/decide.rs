@@ -570,9 +570,11 @@ fn refuse_offboarded(member: &Member) -> Result<(), ApiError> {
 /// `name` and the reserved word `owner`; the owner's display name is not a handle. `except` is
 /// the member being renamed, which may keep or recapitalize its own.
 fn check_handle_free(view: &dyn OrgView, key: &str, except: Option<&str>) -> Result<(), ApiError> {
+    // The view never returns the owner (its display name is not a handle); the filter keeps a
+    // view that forgets that from refusing names the owner merely displays.
     let taken_by_other = view
         .member_with_handle(key)
-        .is_some_and(|holder| Some(holder.id.as_str()) != except);
+        .is_some_and(|holder| !holder.owner && Some(holder.id.as_str()) != except);
     if taken_by_other || key == OWNER_HANDLE {
         Err(fail(
             ErrorCode::AlreadyExists,
