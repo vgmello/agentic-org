@@ -639,6 +639,12 @@ fn mark_fixed_records_what_fixed_it() {
     );
 
     let mut p = w.fixed_params(&w.triaged());
+    p.note = "two\nlines".into();
+    assert_eq!(
+        w.code(&app(), WorkCall::BugMarkFixed(p)),
+        ErrorCode::InvalidRequest
+    );
+    let mut p = w.fixed_params(&w.triaged());
     p.note = " ".into();
     assert_eq!(
         w.code(&app(), WorkCall::BugMarkFixed(p)),
@@ -997,13 +1003,19 @@ fn reopening_a_closed_bug_goes_back_to_triaged() {
 fn reopening_a_duplicate_goes_to_new_and_clears_the_original() {
     let w = World::new();
     let original = w.bug();
-    let dup = w.bug();
+    let dup = w.triaged();
+    assert!(w.item(&dup).bug.severity_confirmed);
     let p = w.duplicate_params(&dup, &original);
     w.ok(&app(), WorkCall::BugClose(p));
     let p = w.reopen_params(&dup);
     let accepted = w.ok(&app(), WorkCall::BugReopen(p));
     let bug = w.item(&dup);
     assert_eq!(bug.status, ItemStatus::New, "triage looks again");
+    assert!(
+        !bug.bug.severity_confirmed,
+        "and confirms the severity again"
+    );
+    assert!(!accepted.items[0].severity_confirmed);
     assert_eq!(bug.bug.duplicate_of, None);
     assert_eq!(bug.resolution, None);
     assert_eq!(accepted.items[0].duplicate_of, None);

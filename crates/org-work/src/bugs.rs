@@ -547,7 +547,8 @@ pub(crate) fn assign(ctx: &mut Ctx, p: &BugAssignParams) -> Result<Plan, Fail> {
 /// step guard of Done.
 pub(crate) fn mark_fixed(ctx: &mut Ctx, p: &BugMarkFixedParams) -> Result<Plan, Fail> {
     let item = load_bug(ctx, &p.item_id)?;
-    let note = multi_line("note", &p.note, WORK_REASON_MAX_CHARS)?;
+    // "What fixed it" is kept as the bug's `closed_reason`, a one-line reason like the others.
+    let note = one_line("note", &p.note, WORK_REASON_MAX_CHARS)?;
     let anyway_reason = optional(p.anyway_reason.as_deref(), |r| {
         one_line("anyway_reason", r, WORK_REASON_MAX_CHARS)
     })?;
@@ -776,6 +777,10 @@ pub(crate) fn reopen(ctx: &mut Ctx, p: &BugReopenParams) -> Result<Plan, Fail> {
         it.bug.duplicate_of = None;
         it.bug.done_anyway = None;
         it.bug.reopen_count += 1;
+        if was_duplicate {
+            // Back to `new`: triage confirms the severity again.
+            it.bug.severity_confirmed = false;
+        }
     }
     let cause = draft.record(WorkEventKind::Reopened { note: Some(note) }, Origin::Caller);
     waiting::round_reopened(&mut draft, &owner_id, &cause);
