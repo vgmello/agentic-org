@@ -106,9 +106,9 @@ fn check_profile_text(field: &str, value: &str, allow_empty: bool) -> Result<(),
             "profile {field} exceeds {MAX_PROFILE_FIELD_CHARS} characters"
         ));
     }
-    if value.chars().any(is_unsafe_inline_char) {
+    if value.chars().any(is_unsafe_input_char) {
         return Err(format!(
-            "profile {field} must not contain control, format (zero-width, bidi, tag), variation-selector (as in emoji like ⚠️) or invisible characters"
+            "profile {field} must not contain control, format (zero-width, bidi, tag) or invisible characters"
         ));
     }
     Ok(())
@@ -142,6 +142,33 @@ impl MemberProfile {
             }
         }
         Ok(())
+    }
+
+    /// The same profile with variation selectors dropped from every text field.
+    fn without_variation_selectors(&self) -> Self {
+        let clean = |s: &String| drop_variation_selectors(s);
+        let clean_ref = |r: &RefEntry| RefEntry {
+            id: clean(&r.id),
+            name: clean(&r.name),
+        };
+        Self {
+            id: self.id.clone(),
+            name: clean(&self.name),
+            kind: self.kind.clone(),
+            owner: self.owner,
+            role_title: self.role_title.as_ref().map(clean),
+            teams: self
+                .teams
+                .iter()
+                .map(|t| TeamEntry {
+                    id: clean(&t.id),
+                    name: clean(&t.name),
+                    title_in_team: t.title_in_team.as_ref().map(clean),
+                })
+                .collect(),
+            reports_to: self.reports_to.as_ref().map(clean_ref),
+            office: self.office.as_ref().map(clean_ref),
+        }
     }
 
     pub fn default_for(id: &str) -> Self {
@@ -441,6 +468,19 @@ fn is_unsafe_inline_char(ch: char) -> bool {
         || is_variation_selector(ch)
 }
 
+/// What text an agent sets (status, profile) must not contain: like [`is_unsafe_inline_char`],
+/// except variation selectors, which are dropped before storing instead
+/// ([`drop_variation_selectors`]).
+fn is_unsafe_input_char(ch: char) -> bool {
+    is_unsafe_inline_char(ch) && !is_variation_selector(ch)
+}
+
+fn drop_variation_selectors(text: &str) -> String {
+    text.chars()
+        .filter(|&ch| !is_variation_selector(ch))
+        .collect()
+}
+
 /// Variation selectors (incl. Mongolian free variation selectors): invisible, they pick a glyph
 /// variant of the character before them (e.g. the emoji form in "⚠️"), so output drops them
 /// rather than turning them into a space.
@@ -689,14 +729,16 @@ impl Spool {
     }
 
     /// Update or create `inbox/<agent>/profile.json` under the per-agent `flock`.
+    /// Variation selectors are dropped from its text, as in output.
     pub fn set_profile(&self, profile: &MemberProfile) -> Result<MemberProfile, SpoolError> {
+        let profile = profile.without_variation_selectors();
         profile.validate().map_err(SpoolError::InvalidInput)?;
         self.register(&profile.id)?;
         self.with_agent_meta_lock(&profile.id, || {
             self.write_agent_json_unlocked(
                 &profile.id,
                 &self.agent_profile_path(&profile.id),
-                profile,
+                &profile,
             )?;
             Ok(profile.clone())
         })
@@ -722,10 +764,18 @@ impl Spool {
                 "status text cannot be empty (use --clear to clear status)".into(),
             ));
         }
-        if trimmed.chars().any(is_unsafe_inline_char) {
+        if trimmed.chars().any(is_unsafe_input_char) {
             return Err(SpoolError::InvalidInput(
-                "status text cannot contain control, format (zero-width, bidi, tag), variation-selector (as in emoji like ⚠️) or invisible characters, or newlines"
+                "status text cannot contain control, format (zero-width, bidi, tag) or invisible characters, or newlines"
                     .into(),
+            ));
+        }
+        // Variation selectors (e.g. the emoji form in "⚠️") are dropped, as in output.
+        let cleaned = drop_variation_selectors(trimmed);
+        let trimmed = cleaned.trim();
+        if trimmed.is_empty() {
+            return Err(SpoolError::InvalidInput(
+                "status text cannot be empty (use --clear to clear status)".into(),
             ));
         }
         if trimmed.chars().count() > MAX_STATUS_CHARS || trimmed.len() > MAX_STATUS_BYTES {

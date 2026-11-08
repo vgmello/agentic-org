@@ -739,10 +739,17 @@ fn rule_format_and_invisible_characters_are_stripped_from_output_and_refused_in_
         (0xFFF9, 0xFFFB),   // interlinear annotation
         (0xFE00, 0xFE0F),   // variation selectors
         (0xE0100, 0xE01EF), // variation selectors supplement
+        (0x180B, 0x180D),   // Mongolian free variation selectors
+        (0x180F, 0x180F),   // Mongolian free variation selector 4
         (0x2028, 0x2029),   // line / paragraph separators
     ];
     let t = TempSpool::new("invisible");
-    let variation_selectors = [(0xFE00, 0xFE0F), (0xE0100, 0xE01EF)];
+    let variation_selectors = [
+        (0xFE00, 0xFE0F),
+        (0xE0100, 0xE01EF),
+        (0x180B, 0x180D),
+        (0x180F, 0x180F),
+    ];
     for &(lo, hi) in ranges {
         // Variation selectors are dropped (they modify the previous glyph); the rest become a
         // space.
@@ -758,19 +765,23 @@ fn rule_format_and_invisible_characters_are_stripped_from_output_and_refused_in_
                 expected,
                 "U+{cp:04X} stripped from output"
             );
-            assert!(
-                matches!(
-                    t.spool.set_status(ME, &format!("busy{ch}now"), None),
-                    Err(SpoolError::InvalidInput(_))
-                ),
-                "U+{cp:04X} refused in a status line"
-            );
+            let status = t.spool.set_status(ME, &format!("busy{ch}now"), None);
             let mut profile = MemberProfile::default_for(ME);
             profile.name = format!("Agy{ch}");
-            assert!(
-                profile.validate().is_err(),
-                "U+{cp:04X} refused in a profile"
-            );
+            if expected == "ab" {
+                // Input drops variation selectors too.
+                assert_eq!(status.unwrap().status, "busynow", "U+{cp:04X} dropped");
+                assert_eq!(t.spool.set_profile(&profile).unwrap().name, "Agy");
+            } else {
+                assert!(
+                    matches!(status, Err(SpoolError::InvalidInput(_))),
+                    "U+{cp:04X} refused in a status line"
+                );
+                assert!(
+                    t.spool.set_profile(&profile).is_err(),
+                    "U+{cp:04X} refused in a profile"
+                );
+            }
         }
     }
     assert_eq!(

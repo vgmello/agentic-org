@@ -970,6 +970,33 @@ fn a_huge_timeout_is_a_usage_error_not_a_panic() {
 }
 
 #[test]
+fn status_and_profile_drop_variation_selectors_and_refuse_other_invisibles() {
+    let env = setup("status_vs");
+    let set = env.run(ME, &["status", "\u{26A0}\u{FE0F} blocked", "--json"]);
+    assert_eq!(set.code, 0, "{}", set.stderr);
+    assert_eq!(json(&set.stdout)["status"], "\u{26A0} blocked");
+    let shown = json(&env.run(ME, &["status", "--json"]).stdout);
+    assert_eq!(shown["status"], "\u{26A0} blocked");
+
+    // A tag character is still refused, and the status is unchanged.
+    let tagged = env.run(ME, &["status", "ok\u{E0041}", "--json"]);
+    assert_eq!(tagged.code, 1, "{}", tagged.stdout);
+    assert_eq!(
+        json(&env.run(ME, &["status", "--json"]).stdout)["status"],
+        "\u{26A0} blocked"
+    );
+
+    let named = env.run(
+        ME,
+        &["profile", "set", "--name", "Agy \u{2764}\u{FE0F}", "--json"],
+    );
+    assert_eq!(named.code, 0, "{}", named.stderr);
+    assert_eq!(json(&named.stdout)["name"], "Agy \u{2764}");
+    let tagged = env.run(ME, &["profile", "set", "--name", "Agy\u{E0041}"]);
+    assert_eq!(tagged.code, 1, "{}", tagged.stdout);
+}
+
+#[test]
 fn any_msg_command_marks_the_caller_online_in_who() {
     let env = setup("presence_cli");
     // Registered on its behalf by someone else: never seen yet.
