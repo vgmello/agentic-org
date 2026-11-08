@@ -329,7 +329,7 @@ test('LIVE: a change that lands while the user is navigating does not cancel the
 	await expect(page).toHaveURL(/\/agents/);
 });
 
-test('LIVE-FEED: when live updates stop the shell says so with the time shown, and Retry brings them back', async ({ page }) => {
+test('LIVE-8: when live updates stop the shell says so with the time shown, and Retry brings them back', async ({ page }) => {
 	await openChart(page);
 	const organizationId = await page.evaluate(() => {
 		const saved = JSON.parse(localStorage.getItem('agentic-org.mock.connections') ?? '[]') as { organization: { id: string } }[];
