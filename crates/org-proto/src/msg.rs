@@ -24,9 +24,11 @@
 //!   member was since moved out of this office or removed (ADR-0003 §3.1); it must bind again.
 //! - A member-bound connection acts as its member. An agent sees only the messages it sent or
 //!   received; an app-bound connection sees every message in the office.
-//! - An app-wide binding may call only `who`, `msg.list`, `msg.get`, `msg.threads` and
-//!   `msg.human_needs_you`. Calls that act as a member (`msg.send`, `msg.inbox`,
-//!   `status.set`, ...) fail on it with `not_bound`.
+//! - Of the messaging calls here and the directory calls ([`crate::directory`]), an app-wide
+//!   binding may call only `who`, `msg.list`, `msg.get`, `msg.threads` and
+//!   `msg.human_needs_you`. Those that act as a member (`msg.send`, `msg.inbox`,
+//!   `status.set`, ...) fail on it with `not_bound`. Calls of other modules follow their own
+//!   rules: the organization commands ([`crate::org`]) need the app-wide binding.
 //!
 //! ## Events
 //! Message events ([`MessageReceived`], [`MessageStateChanged`], [`MessageDeliveryFailed`])
@@ -408,8 +410,9 @@ impl fmt::Debug for MetaSize<'_> {
 ///
 /// Any local client may call it. An agent binds without a token (an accepted risk until the
 /// office runner spawns every agent, ADR-0003 M-A). A person or the owner needs `app_token`.
-/// The desktop app may bind app-wide, with `app_token` and no `member`; that binding may call
-/// only `who`, `msg.list`, `msg.get`, `msg.threads` and `msg.human_needs_you`.
+/// The desktop app may bind app-wide, with `app_token` and no `member`. Of the messaging and
+/// directory calls, that binding may call only `who`, `msg.list`, `msg.get`, `msg.threads` and
+/// `msg.human_needs_you`; the organization commands ([`crate::org`]) need it.
 ///
 /// It fails closed, checking in this order:
 /// 1. The input alone: params that don't decode (including a malformed `app_token`, or both
