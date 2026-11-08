@@ -554,20 +554,7 @@ impl OfficeConnection for RealOffice {
     }
 
     fn follow_org(self: Arc<Self>, organization_id: &str) {
-        let Some(sink) = lock(&self.org_sink).clone() else {
-            return;
-        };
-        // Once per organization: a second call (every screen load) finds it followed. A feed lives as long as the app:
-        // Phase 1 has the organizations of this Mac, and a feed for one that went away only retries, slowly and quietly.
-        if !lock(&self.followed).insert(organization_id.to_string()) {
-            return;
-        }
-        let organization_id = organization_id.to_string();
-        std::thread::spawn(move || {
-            // The app never stops following: the thread ends with the process.
-            let never = AtomicBool::new(false);
-            org_feed::follow(&*self, &organization_id, &never, &*sink);
-        });
+        self.start_feed(organization_id);
     }
 
     fn follow_status(&self, sink: StatusSink) {
@@ -577,6 +564,28 @@ impl OfficeConnection for RealOffice {
             let never = AtomicBool::new(false);
             status_feed::follow(&home, &never, &*sink);
         });
+    }
+}
+
+impl RealOffice {
+    /// Start following one organization, once: a second call (every screen load) finds it followed. Says whether it
+    /// started a feed. A feed lives as long as the app: Phase 1 has the organizations of this Mac, and a feed for one
+    /// that went away only retries, slowly and quietly. Nowhere to report to (no sink yet) starts nothing.
+    fn start_feed(self: &Arc<Self>, organization_id: &str) -> bool {
+        let Some(sink) = lock(&self.org_sink).clone() else {
+            return false;
+        };
+        if !lock(&self.followed).insert(organization_id.to_string()) {
+            return false;
+        }
+        let office = Arc::clone(self);
+        let organization_id = organization_id.to_string();
+        std::thread::spawn(move || {
+            // The app never stops following: the thread ends with the process.
+            let never = AtomicBool::new(false);
+            org_feed::follow(&*office, &organization_id, &never, &*sink);
+        });
+        true
     }
 }
 
@@ -1563,12 +1572,15 @@ mod tests {
             "every connection to the office binds itself"
         );
         // Without a sink there is nowhere to report, so nothing starts; with one, the organization is followed once.
-        Arc::clone(&office).follow_org("org1");
+        assert!(!office.start_feed("org1"));
         assert!(office.followed.lock().unwrap().is_empty());
         office.set_org_sink(Arc::new(|_| {}));
-        Arc::clone(&office).follow_org("org1");
-        Arc::clone(&office).follow_org("org1");
-        assert_eq!(office.followed.lock().unwrap().len(), 1);
+        assert!(office.start_feed("org1"), "the first call starts a feed");
+        assert!(!office.start_feed("org1"), "the second finds it followed");
+        assert!(
+            office.start_feed("org2"),
+            "another organization has its own"
+        );
     }
 
     #[test]

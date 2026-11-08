@@ -308,3 +308,23 @@ test('LIVE: a change someone else makes shows on the open org chart without a re
 	await expect(card(page, 'qa-live')).toBeVisible();
 	await expect(card(page, 'qa-live')).toContainText('Live QA');
 });
+
+test('LIVE: a change that lands while the user is navigating does not cancel the navigation', async ({ page }) => {
+	await visit(page, '/create');
+	await page.getByLabel('Organization name').fill('Acme');
+	await page.getByRole('button', { name: 'Create organization' }).click();
+	await expect(page).toHaveURL(/\/agents/);
+	await visit(page, '/org-chart?org=slow'); // loads of the org take a moment (the mock's `org=slow`)
+	await expect(page.getByRole('tablist', { name: 'Org chart views' })).toBeVisible();
+	const organizationId = await page.evaluate(() => {
+		const saved = JSON.parse(localStorage.getItem('agentic-org.mock.connections') ?? '[]') as { organization: { id: string } }[];
+		return saved[saved.length - 1].organization.id;
+	});
+	await page.getByRole('link', { name: 'Agents' }).first().click();
+	await page.waitForTimeout(500); // the destination's load is still running
+	await page.evaluate(
+		([id]) => (window as unknown as { __mockOrgChange: (o: string, c: object) => Promise<unknown> }).__mockOrgChange(id, { method: 'team.create', params: { team_id: 'qa-nav', name: 'Nav QA' } }),
+		[organizationId]
+	);
+	await expect(page).toHaveURL(/\/agents/);
+});
