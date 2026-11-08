@@ -7,7 +7,9 @@ use crate::key::{Key, KeyProvider};
 use crate::model::{NewOffice, OfficeInfo};
 use crate::office_file::{self, is_plain_id};
 use crate::private_fs::{absolute, private_dir, private_file, tighten_dir};
-use org_proto::org::OrgSnapshot;
+use crate::rules::OrgCommand;
+use org_proto::org::{CommandAccepted, OrgSnapshot};
+use org_proto::ApiError;
 
 use crate::store::org as org_db;
 use crate::store::{Opening, Schema, Store};
@@ -329,6 +331,19 @@ impl Office {
         self.org.read(org_db::snapshot)
     }
 
+    /// Runs one organization command on this office (HQ): the rules decide, and the changes
+    /// are logged and applied in one transaction. A retry with the same `command_id` gets the
+    /// same answer. `Err(ApiError)` inside the `Ok` is the rules' refusal; the outer error is
+    /// the storage's.
+    pub fn submit_org(
+        &self,
+        command: OrgCommand,
+    ) -> Result<Result<CommandAccepted, ApiError>, OfficeError> {
+        // The clock is read in the writer, so the log's times follow its order.
+        self.org
+            .write(move |db| Ok((org_db::submit(db, time::now_ms(), &command)?, None)))
+    }
+
     /// What `office.json` records about this office.
     pub fn info(&self) -> &OfficeInfo {
         &self.info
@@ -384,15 +399,7 @@ fn put_meta(store: &Store, rows: &[(&str, &str)]) -> Result<(), OfficeError> {
 }
 
 fn meta(store: &Store, key: &'static str) -> Result<Option<String>, OfficeError> {
-    store.read(|db| {
-        match db.query_row("SELECT value FROM meta WHERE key = ?1", [key], |row| {
-            row.get::<_, String>(0)
-        }) {
-            Ok(value) => Ok(Some(value)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(OfficeError::storage(e)),
-        }
-    })
+    store.meta(key)
 }
 
 /// The office folder must be named by the office id, so an id never points outside `offices/`.
