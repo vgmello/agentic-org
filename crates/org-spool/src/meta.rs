@@ -230,10 +230,11 @@ pub struct TriageState {
     pub v: u32,
     #[serde(default)]
     pub messages: BTreeMap<String, MessageTriageEntry>,
-    /// Counts the agent's natural breaks (`--after-task` checks, i.e. Stops). A break starts
-    /// at the first check after one that listed nothing new, or the first check from another
-    /// `--session`; it lasts while each check lists something not yet listed in this break
-    /// (the agent is triaging). Missing in older files: 0.
+    /// Counts the agent's natural breaks (`--after-task` checks, i.e. the Stop after a task).
+    /// A break starts at the first such check after one that listed nothing new, after a plain
+    /// check from the same session (a triage turn's Stop or the next prompt), or from another
+    /// `--session`; it lasts while each `--after-task` check lists something not yet listed in
+    /// this break (the agent is triaging). Missing in older files: 0.
     #[serde(default)]
     pub break_seq: u64,
     /// Whether the last `--after-task` check listed something new to this break, i.e. a break
@@ -275,6 +276,18 @@ impl TriageState {
             changed = true;
         }
         changed
+    }
+
+    /// A plain (not `--after-task`, not `--urgent-only`) check from the break's own session:
+    /// the runtime hooks run one at the Stop of a triage turn and at the next prompt, so the
+    /// break is over. Returns whether the state changed.
+    fn end_break_from_session(&mut self, session: Option<&str>) -> bool {
+        let same_session = session.is_some() && self.break_session.as_deref() == session;
+        if !(self.in_break && same_session) {
+            return false;
+        }
+        self.in_break = false;
+        true
     }
 
     /// An `--after-task` check ended: the break goes on while it listed something new to this
@@ -1228,7 +1241,13 @@ impl Spool {
 
         let (count, urgent_count, items) = self.with_agent_meta_lock(agent, || {
             let mut state = self.load_triage_unlocked(agent)?;
-            let mut dirty = opts.after_task && state.begin_after_task_check(session);
+            let mut dirty = if opts.after_task {
+                state.begin_after_task_check(session)
+            } else if !opts.urgent_only {
+                state.end_break_from_session(session)
+            } else {
+                false
+            };
             dirty |= Self::release_due_in_state(&mut state, &now_iso, opts.after_task);
 
             let mut candidates: Vec<(Envelope, bool, String)> = Vec::new();

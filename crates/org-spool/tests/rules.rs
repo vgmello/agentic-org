@@ -383,6 +383,35 @@ fn rule_a_message_left_untriaged_does_not_hold_back_after_task_snoozes() {
 }
 
 #[test]
+fn rule_a_triage_turn_stop_ends_the_break_as_the_hooks_run_it() {
+    // The inbox adapter runs `notify --after-task` only at the Stop after a real task; a
+    // triage turn's Stop (and the next prompt) runs a plain `notify` in the same session.
+    let t = TempSpool::new("break_hook");
+    let session = Some("claude:s1");
+    let m = t.send("m", None);
+    let a = t.spool.notify(ME, &opts(session, true, false)).unwrap(); // Stop A (real task)
+    assert_eq!(ids(&a), vec![m.clone()]);
+    t.spool.defer_message(ME, &m, "after-task", None).unwrap();
+    let b = t.spool.notify(ME, &opts(session, false, false)).unwrap(); // Stop B (triage turn)
+    assert_eq!(b.count, 0);
+    // The urgent-only watcher in the same session doesn't end or start anything.
+    t.spool.notify(ME, &opts(session, false, true)).unwrap();
+    let p = t.send("p", None);
+    let c = t.spool.notify(ME, &opts(session, true, false)).unwrap(); // Stop C (real task)
+    assert_eq!(ids(&c), vec![m.clone(), p]);
+    assert_eq!(c.items[0].reason, "after_task");
+
+    // A plain check from another session (or none) doesn't end this session's break.
+    let q = t.send("q", None);
+    t.spool.defer_message(ME, &q, "after-task", None).unwrap();
+    t.spool
+        .notify(ME, &opts(Some("other"), false, false))
+        .unwrap();
+    t.spool.notify(ME, &opts(None, false, false)).unwrap();
+    assert_eq!(t.triage_json()["in_break"], true);
+}
+
+#[test]
 fn rule_a_new_session_starts_a_new_break() {
     // A session that ended mid-break (the agent deferred, then the run was quit) must not
     // carry the break into the next run.
