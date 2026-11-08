@@ -6,7 +6,7 @@ use super::memory::MemState;
 use super::*;
 
 const NOW: &str = "2026-11-08T07:00:00.000Z";
-const OWNER: &str = "owner-1";
+const OWNER: &str = "OWNER100000000000000000000";
 
 /// An organization being driven command by command: every decision is applied to the state and
 /// kept in a log, as HQ does.
@@ -428,13 +428,16 @@ fn moving_a_team_onto_a_sibling_with_the_same_name_is_refused() {
 fn a_teams_lead_must_be_a_member_and_never_the_owner() {
     let mut org = Org::new();
     org.team("t1", "Product", None).unwrap();
-    org.person("ana", "Ana").unwrap();
-    assert_eq!(code(org.lead("t1", Some("ana"))), ErrorCode::NotAMember);
-    org.join("m1", "t1", "ana").unwrap();
-    let led = team_of(&org.lead("t1", Some("ana")).unwrap());
+    org.person("ANA00000000000000000000000", "Ana").unwrap();
+    assert_eq!(
+        code(org.lead("t1", Some("ANA00000000000000000000000"))),
+        ErrorCode::NotAMember
+    );
+    org.join("m1", "t1", "ANA00000000000000000000000").unwrap();
+    let led = team_of(&org.lead("t1", Some("ANA00000000000000000000000")).unwrap());
     assert_eq!(
         (led.lead_member_id.as_deref(), led.version),
-        (Some("ana"), 2)
+        (Some("ANA00000000000000000000000"), 2)
     );
     assert_eq!(code(org.lead("t1", Some(OWNER))), ErrorCode::OwnerProtected);
     assert_eq!(code(org.lead("t1", Some("nobody"))), ErrorCode::NotFound);
@@ -447,14 +450,28 @@ fn a_member_can_be_in_many_teams_and_duplicates_are_refused() {
     let mut org = Org::new();
     org.team("t1", "Product", None).unwrap();
     org.team("t2", "Platform", None).unwrap();
-    org.person("ana", "Ana").unwrap();
-    org.join("m1", "t1", "ana").unwrap();
-    org.join("m2", "t2", "ana").unwrap();
-    assert_eq!(org.state.memberships_of_member("ana").len(), 2);
-    assert_eq!(code(org.join("m3", "t1", "ana")), ErrorCode::AlreadyExists);
-    assert_eq!(code(org.join("m1", "t2", "ana")), ErrorCode::AlreadyExists);
+    org.person("ANA00000000000000000000000", "Ana").unwrap();
+    org.join("m1", "t1", "ANA00000000000000000000000").unwrap();
+    org.join("m2", "t2", "ANA00000000000000000000000").unwrap();
+    assert_eq!(
+        org.state
+            .memberships_of_member("ANA00000000000000000000000")
+            .len(),
+        2
+    );
+    assert_eq!(
+        code(org.join("m3", "t1", "ANA00000000000000000000000")),
+        ErrorCode::AlreadyExists
+    );
+    assert_eq!(
+        code(org.join("m1", "t2", "ANA00000000000000000000000")),
+        ErrorCode::AlreadyExists
+    );
     assert_eq!(code(org.join("m9", "t1", OWNER)), ErrorCode::OwnerProtected);
-    assert_eq!(code(org.join("m9", "nope", "ana")), ErrorCode::NotFound);
+    assert_eq!(
+        code(org.join("m9", "nope", "ANA00000000000000000000000")),
+        ErrorCode::NotFound
+    );
     assert_eq!(code(org.join("m9", "t1", "nobody")), ErrorCode::NotFound);
     // Adding and removing members does not change the team's version.
     assert_eq!(org.state.teams["t1"].version, 1);
@@ -464,14 +481,14 @@ fn a_member_can_be_in_many_teams_and_duplicates_are_refused() {
 fn a_title_in_a_team_is_trimmed_and_limited() {
     let mut org = Org::new();
     org.team("t1", "Product", None).unwrap();
-    org.person("ana", "Ana").unwrap();
+    org.person("ANA00000000000000000000000", "Ana").unwrap();
     let command_id = org.id();
     let added = org
         .run(OrgCommand::TeamAddMember(TeamAddMemberParams {
             command_id,
             membership_id: "m1".into(),
             team_id: "t1".into(),
-            member_id: "ana".into(),
+            member_id: "ANA00000000000000000000000".into(),
             title_in_team: Some("  frontend lead ".into()),
         }))
         .unwrap();
@@ -508,11 +525,11 @@ fn a_title_in_a_team_is_trimmed_and_limited() {
 fn leaving_a_team_ends_leading_it_in_the_same_event() {
     let mut org = Org::new();
     org.team("t1", "Product", None).unwrap();
-    org.person("ana", "Ana").unwrap();
-    org.person("bo", "Bo").unwrap();
-    org.join("m1", "t1", "ana").unwrap();
-    org.join("m2", "t1", "bo").unwrap();
-    org.lead("t1", Some("ana")).unwrap();
+    org.person("ANA00000000000000000000000", "Ana").unwrap();
+    org.person("BO000000000000000000000000", "Bo").unwrap();
+    org.join("m1", "t1", "ANA00000000000000000000000").unwrap();
+    org.join("m2", "t1", "BO000000000000000000000000").unwrap();
+    org.lead("t1", Some("ANA00000000000000000000000")).unwrap();
     let leave = |org: &mut Org, membership: &str| {
         let command_id = org.id();
         let expected_version = org
@@ -548,8 +565,8 @@ fn deleting_a_team_needs_it_empty_of_teams_and_takes_its_memberships_and_links()
     let mut org = Org::new();
     org.team("a", "A", None).unwrap();
     org.team("b", "B", Some("a")).unwrap();
-    org.person("ana", "Ana").unwrap();
-    org.join("m1", "b", "ana").unwrap();
+    org.person("ANA00000000000000000000000", "Ana").unwrap();
+    org.join("m1", "b", "ANA00000000000000000000000").unwrap();
     let link = |org: &mut Org, id: &str, team: &str| {
         let command_id = org.id();
         org.run(OrgCommand::ProjectAddTeam(ProjectAddTeamParams {
@@ -587,7 +604,10 @@ fn deleting_a_team_needs_it_empty_of_teams_and_takes_its_memberships_and_links()
         ]
     );
     // The project and the person survive; the project simply has one team fewer.
-    assert!(org.state.project_exists("p1") && org.state.members.contains_key("ana"));
+    assert!(
+        org.state.project_exists("p1")
+            && org.state.members.contains_key("ANA00000000000000000000000")
+    );
     assert!(org.state.project_team("l2").is_some());
     delete(&mut org, "a").unwrap();
     assert!(
@@ -602,21 +622,27 @@ fn deleting_a_team_needs_it_empty_of_teams_and_takes_its_memberships_and_links()
 #[test]
 fn people_share_one_handle_namespace_ignoring_case() {
     let mut org = Org::new();
-    org.person("ana", "Ana").unwrap();
-    assert_eq!(code(org.person("ana2", "ANA")), ErrorCode::AlreadyExists);
+    org.person("ANA00000000000000000000000", "Ana").unwrap();
     assert_eq!(
-        code(org.person("ana", "Somebody")),
+        code(org.person("ANA20000000000000000000000", "ANA")),
         ErrorCode::AlreadyExists
     );
-    // "owner" is reserved for the owner, in any capitalization.
-    for reserved in ["owner", "Owner", "OWNER"] {
+    assert_eq!(
+        code(org.person("ANA00000000000000000000000", "Somebody")),
+        ErrorCode::AlreadyExists
+    );
+    // "owner" is reserved for the owner, and "office" for the office, in any capitalization.
+    for reserved in ["owner", "Owner", "OWNER", "office", "Office", "OFFICE"] {
         assert_eq!(
-            code(org.person("x", reserved)),
+            code(org.person("X0000000000000000000000000", reserved)),
             ErrorCode::AlreadyExists,
             "{reserved}"
         );
     }
-    assert_eq!(code(org.person("x", "  ")), ErrorCode::InvalidName);
+    assert_eq!(
+        code(org.person("X0000000000000000000000000", "  ")),
+        ErrorCode::InvalidName
+    );
 }
 
 #[test]
@@ -634,19 +660,19 @@ fn the_word_owner_stays_reserved_even_after_the_owner_is_renamed() {
         clear_contact: false,
     }))
     .unwrap();
-    for word in ["owner", "Owner", "OWNER"] {
+    for word in ["owner", "Owner", "OWNER", "office", "Office", "OFFICE"] {
         assert_eq!(
-            code(org.person("x", word)),
+            code(org.person("X0000000000000000000000000", word)),
             ErrorCode::AlreadyExists,
             "{word}"
         );
     }
     // Another person cannot be renamed to it either.
-    org.person("ana", "Ana").unwrap();
+    org.person("ANA00000000000000000000000", "Ana").unwrap();
     let command_id = org.id();
     let rename = org.run(OrgCommand::MemberUpdatePerson(MemberUpdatePersonParams {
         command_id,
-        member_id: "ana".into(),
+        member_id: "ANA00000000000000000000000".into(),
         expected_version: 1,
         name: Some("owner".into()),
         contact: None,
@@ -661,18 +687,18 @@ fn a_persons_name_cannot_take_an_agents_handle_in_either_direction() {
     org.agent("a1", "server-dev", AgentStatus::Active);
     for clash in ["server-dev", "Server-Dev", "SERVER-DEV"] {
         assert_eq!(
-            code(org.person("p", clash)),
+            code(org.person("P0000000000000000000000000", clash)),
             ErrorCode::AlreadyExists,
             "{clash}"
         );
     }
-    org.person("ana", "Ana").unwrap();
+    org.person("ANA00000000000000000000000", "Ana").unwrap();
     let rename = |org: &mut Org, to: &str| {
         let command_id = org.id();
         org.run(OrgCommand::MemberUpdatePerson(MemberUpdatePersonParams {
             command_id,
-            member_id: "ana".into(),
-            expected_version: org.state.members["ana"].version,
+            member_id: "ANA00000000000000000000000".into(),
+            expected_version: org.state.members["ANA00000000000000000000000"].version,
             name: Some(to.into()),
             contact: None,
             clear_contact: false,
@@ -684,14 +710,15 @@ fn a_persons_name_cannot_take_an_agents_handle_in_either_direction() {
     );
     assert_eq!(code(rename(&mut org, "owner")), ErrorCode::AlreadyExists);
     // An agent's display name is not a handle.
-    org.person("p2", "Agent a1").unwrap();
+    org.person("P2000000000000000000000000", "Agent a1")
+        .unwrap();
 }
 
 #[test]
 fn updating_a_person_keeps_ones_own_name_and_the_owner_may_rename_itself() {
     let mut org = Org::new();
-    org.person("ana", "Ana").unwrap();
-    org.person("bo", "Bo").unwrap();
+    org.person("ANA00000000000000000000000", "Ana").unwrap();
+    org.person("BO000000000000000000000000", "Bo").unwrap();
     let update =
         |org: &mut Org, id: &str, name: Option<&str>, contact: Option<&str>, clear: bool| {
             let command_id = org.id();
@@ -708,40 +735,83 @@ fn updating_a_person_keeps_ones_own_name_and_the_owner_may_rename_itself() {
     // Recapitalizing its own name is fine; another person's name is not.
     assert_eq!(
         member_of(
-            &update(&mut org, "ana", Some("ANA"), None, false).unwrap(),
-            "ana"
+            &update(
+                &mut org,
+                "ANA00000000000000000000000",
+                Some("ANA"),
+                None,
+                false
+            )
+            .unwrap(),
+            "ANA00000000000000000000000"
         )
         .name,
         "ANA"
     );
     assert_eq!(
-        code(update(&mut org, "ana", Some("bo"), None, false)),
+        code(update(
+            &mut org,
+            "ANA00000000000000000000000",
+            Some("bo"),
+            None,
+            false
+        )),
         ErrorCode::AlreadyExists
     );
     // Contact: set, kept when not given, cleared.
     let m = member_of(
-        &update(&mut org, "bo", None, Some(" bo@example.com "), false).unwrap(),
-        "bo",
+        &update(
+            &mut org,
+            "BO000000000000000000000000",
+            None,
+            Some(" bo@example.com "),
+            false,
+        )
+        .unwrap(),
+        "BO000000000000000000000000",
     );
     assert_eq!(m.contact.as_deref(), Some("bo@example.com"));
     let m = member_of(
-        &update(&mut org, "bo", Some("Bo B"), None, false).unwrap(),
-        "bo",
+        &update(
+            &mut org,
+            "BO000000000000000000000000",
+            Some("Bo B"),
+            None,
+            false,
+        )
+        .unwrap(),
+        "BO000000000000000000000000",
     );
     assert_eq!(
         (m.name.as_str(), m.contact.as_deref()),
         ("Bo B", Some("bo@example.com"))
     );
     assert_eq!(
-        member_of(&update(&mut org, "bo", None, None, true).unwrap(), "bo").contact,
+        member_of(
+            &update(&mut org, "BO000000000000000000000000", None, None, true).unwrap(),
+            "BO000000000000000000000000"
+        )
+        .contact,
         None
     );
     assert_eq!(
-        code(update(&mut org, "bo", None, Some("x"), true)),
+        code(update(
+            &mut org,
+            "BO000000000000000000000000",
+            None,
+            Some("x"),
+            true
+        )),
         ErrorCode::InvalidRequest
     );
     assert_eq!(
-        code(update(&mut org, "bo", None, Some("   "), false)),
+        code(update(
+            &mut org,
+            "BO000000000000000000000000",
+            None,
+            Some("   "),
+            false
+        )),
         ErrorCode::InvalidRequest
     );
     // The owner edits its own record and keeps the reserved word as its handle.
@@ -760,7 +830,7 @@ fn updating_a_person_keeps_ones_own_name_and_the_owner_may_rename_itself() {
     let command_id = org.id();
     let stale = org.run(OrgCommand::MemberUpdatePerson(MemberUpdatePersonParams {
         command_id,
-        member_id: "ana".into(),
+        member_id: "ANA00000000000000000000000".into(),
         expected_version: 99,
         name: None,
         contact: None,
@@ -774,27 +844,65 @@ fn updating_a_person_keeps_ones_own_name_and_the_owner_may_rename_itself() {
 #[test]
 fn reporting_lines_have_no_loops_and_the_owner_reports_to_no_one() {
     let mut org = Org::new();
-    for (id, name) in [("a", "A"), ("b", "B"), ("c", "C")] {
+    for (id, name) in [
+        ("A0000000000000000000000000", "A"),
+        ("B0000000000000000000000000", "B"),
+        ("C0000000000000000000000000", "C"),
+    ] {
         org.person(id, name).unwrap();
     }
-    org.reports("b", Some("a")).unwrap();
-    org.reports("c", Some("b")).unwrap();
-    assert_eq!(code(org.reports("a", Some("a"))), ErrorCode::Cycle);
-    assert_eq!(code(org.reports("a", Some("c"))), ErrorCode::Cycle);
-    assert_eq!(code(org.reports("a", Some("nobody"))), ErrorCode::NotFound);
+    org.reports(
+        "B0000000000000000000000000",
+        Some("A0000000000000000000000000"),
+    )
+    .unwrap();
+    org.reports(
+        "C0000000000000000000000000",
+        Some("B0000000000000000000000000"),
+    )
+    .unwrap();
     assert_eq!(
-        code(org.reports(OWNER, Some("a"))),
+        code(org.reports(
+            "A0000000000000000000000000",
+            Some("A0000000000000000000000000")
+        )),
+        ErrorCode::Cycle
+    );
+    assert_eq!(
+        code(org.reports(
+            "A0000000000000000000000000",
+            Some("C0000000000000000000000000")
+        )),
+        ErrorCode::Cycle
+    );
+    assert_eq!(
+        code(org.reports("A0000000000000000000000000", Some("nobody"))),
+        ErrorCode::NotFound
+    );
+    assert_eq!(
+        code(org.reports(OWNER, Some("A0000000000000000000000000"))),
         ErrorCode::OwnerProtected
     );
     assert_eq!(code(org.reports(OWNER, None)), ErrorCode::OwnerProtected);
     // Reporting to the owner is stored as reporting to no one: one form for each line.
-    let m = member_of(&org.reports("c", Some(OWNER)).unwrap(), "c");
+    let m = member_of(
+        &org.reports("C0000000000000000000000000", Some(OWNER))
+            .unwrap(),
+        "C0000000000000000000000000",
+    );
     assert_eq!(m.reports_to_member_id, None);
     assert_eq!(
-        member_of(&org.reports("c", Some("a")).unwrap(), "c")
-            .reports_to_member_id
-            .as_deref(),
-        Some("a")
+        member_of(
+            &org.reports(
+                "C0000000000000000000000000",
+                Some("A0000000000000000000000000")
+            )
+            .unwrap(),
+            "C0000000000000000000000000"
+        )
+        .reports_to_member_id
+        .as_deref(),
+        Some("A0000000000000000000000000")
     );
     assert_eq!(code(org.reports("nobody", None)), ErrorCode::NotFound);
 }
@@ -802,14 +910,14 @@ fn reporting_lines_have_no_loops_and_the_owner_reports_to_no_one() {
 #[test]
 fn nobody_reports_to_or_from_an_offboarded_agent() {
     let mut org = Org::new();
-    org.person("ana", "Ana").unwrap();
+    org.person("ANA00000000000000000000000", "Ana").unwrap();
     org.agent("gone", "gone", AgentStatus::Offboarded);
     assert_eq!(
-        code(org.reports("ana", Some("gone"))),
+        code(org.reports("ANA00000000000000000000000", Some("gone"))),
         ErrorCode::InvalidRequest
     );
     assert_eq!(
-        code(org.reports("gone", Some("ana"))),
+        code(org.reports("gone", Some("ANA00000000000000000000000"))),
         ErrorCode::InvalidRequest
     );
 }
@@ -821,24 +929,36 @@ fn removing_a_member_ends_its_relations_and_reports_go_to_its_manager() {
     let mut org = Org::new();
     org.team("t1", "Product", None).unwrap();
     org.team("t2", "Platform", None).unwrap();
-    for (id, name) in [("boss", "Boss"), ("mid", "Mid"), ("low", "Low")] {
+    for (id, name) in [
+        ("BOSS0000000000000000000000", "Boss"),
+        ("MID00000000000000000000000", "Mid"),
+        ("LOW00000000000000000000000", "Low"),
+    ] {
         org.person(id, name).unwrap();
     }
-    org.reports("mid", Some("boss")).unwrap();
-    org.reports("low", Some("mid")).unwrap();
-    org.join("m1", "t1", "mid").unwrap();
-    org.join("m2", "t2", "mid").unwrap();
-    org.lead("t1", Some("mid")).unwrap();
+    org.reports(
+        "MID00000000000000000000000",
+        Some("BOSS0000000000000000000000"),
+    )
+    .unwrap();
+    org.reports(
+        "LOW00000000000000000000000",
+        Some("MID00000000000000000000000"),
+    )
+    .unwrap();
+    org.join("m1", "t1", "MID00000000000000000000000").unwrap();
+    org.join("m2", "t2", "MID00000000000000000000000").unwrap();
+    org.lead("t1", Some("MID00000000000000000000000")).unwrap();
 
     let before_team = org.state.teams["t1"].version;
-    let before_low = org.state.members["low"].version;
-    let changes = org.remove("mid").unwrap();
+    let before_low = org.state.members["LOW00000000000000000000000"].version;
+    let changes = org.remove("MID00000000000000000000000").unwrap();
 
     // With a manager: the report now reports to the removed member's own manager.
-    let low = member_of(&changes, "low");
+    let low = member_of(&changes, "LOW00000000000000000000000");
     assert_eq!(
         (low.reports_to_member_id.as_deref(), low.version),
-        (Some("boss"), before_low + 1)
+        (Some("BOSS0000000000000000000000"), before_low + 1)
     );
     // The led team lost its lead, with a new version; the other team is untouched.
     let t1 = team_of(&changes);
@@ -846,27 +966,34 @@ fn removing_a_member_ends_its_relations_and_reports_go_to_its_manager() {
     assert_eq!(org.state.teams["t2"].version, 1);
     assert!(org.state.memberships.is_empty());
     assert!(
-        matches!(changes.last(), Some(OrgChange::MemberRemoved { member_id }) if member_id == "mid")
+        matches!(changes.last(), Some(OrgChange::MemberRemoved { member_id }) if member_id == "MID00000000000000000000000")
     );
-    assert!(!org.state.members.contains_key("mid"));
+    assert!(!org.state.members.contains_key("MID00000000000000000000000"));
     // Its handle is free again.
-    org.person("mid2", "Mid").unwrap();
+    org.person("MID20000000000000000000000", "Mid").unwrap();
 }
 
 #[test]
 fn removing_a_member_with_no_manager_sends_its_reports_to_the_owner() {
     let mut org = Org::new();
-    org.person("mid", "Mid").unwrap();
-    org.person("low", "Low").unwrap();
-    org.reports("low", Some("mid")).unwrap();
-    let changes = org.remove("mid").unwrap();
-    assert_eq!(member_of(&changes, "low").reports_to_member_id, None);
+    org.person("MID00000000000000000000000", "Mid").unwrap();
+    org.person("LOW00000000000000000000000", "Low").unwrap();
+    org.reports(
+        "LOW00000000000000000000000",
+        Some("MID00000000000000000000000"),
+    )
+    .unwrap();
+    let changes = org.remove("MID00000000000000000000000").unwrap();
+    assert_eq!(
+        member_of(&changes, "LOW00000000000000000000000").reports_to_member_id,
+        None
+    );
 }
 
 #[test]
 fn the_owner_cannot_be_removed_and_other_removals_are_checked() {
     let mut org = Org::new();
-    org.person("ana", "Ana").unwrap();
+    org.person("ANA00000000000000000000000", "Ana").unwrap();
     org.agent("gone", "gone", AgentStatus::Offboarded);
     assert_eq!(code(org.remove(OWNER)), ErrorCode::OwnerProtected);
     assert_eq!(code(org.remove("nobody")), ErrorCode::NotFound);
@@ -875,11 +1002,11 @@ fn the_owner_cannot_be_removed_and_other_removals_are_checked() {
     let command_id = org.id();
     let stale = org.run(OrgCommand::MemberRemove(MemberRemoveParams {
         command_id,
-        member_id: "ana".into(),
+        member_id: "ANA00000000000000000000000".into(),
         expected_version: 9,
     }));
     assert_eq!(code(stale), ErrorCode::Conflict);
-    assert!(org.state.members.contains_key("ana"));
+    assert!(org.state.members.contains_key("ANA00000000000000000000000"));
 }
 
 #[test]
@@ -966,14 +1093,18 @@ fn replaying_the_log_on_an_empty_state_rebuilds_exactly_the_same_state() {
     let mut org = Org::new();
     org.team("a", "A", None).unwrap();
     org.team("b", "B", Some("a")).unwrap();
-    org.person("ana", "Ana").unwrap();
-    org.person("bo", "Bo").unwrap();
-    org.join("m1", "b", "ana").unwrap();
-    org.join("m2", "b", "bo").unwrap();
-    org.lead("b", Some("ana")).unwrap();
-    org.reports("bo", Some("ana")).unwrap();
-    org.remove("ana").unwrap();
-    org.person("cy", "Cy").unwrap();
+    org.person("ANA00000000000000000000000", "Ana").unwrap();
+    org.person("BO000000000000000000000000", "Bo").unwrap();
+    org.join("m1", "b", "ANA00000000000000000000000").unwrap();
+    org.join("m2", "b", "BO000000000000000000000000").unwrap();
+    org.lead("b", Some("ANA00000000000000000000000")).unwrap();
+    org.reports(
+        "BO000000000000000000000000",
+        Some("ANA00000000000000000000000"),
+    )
+    .unwrap();
+    org.remove("ANA00000000000000000000000").unwrap();
+    org.person("CY000000000000000000000000", "Cy").unwrap();
     let projects = org.state.projects.clone();
 
     let mut rebuilt = MemState::default();
@@ -988,28 +1119,35 @@ fn replaying_the_log_on_an_empty_state_rebuilds_exactly_the_same_state() {
 fn every_upsert_raises_the_version_by_exactly_one_and_failures_change_nothing() {
     let mut org = Org::new();
     org.team("t1", "Product", None).unwrap();
-    org.person("ana", "Ana").unwrap();
-    org.join("m1", "t1", "ana").unwrap();
-    org.lead("t1", Some("ana")).unwrap();
+    org.person("ANA00000000000000000000000", "Ana").unwrap();
+    org.join("m1", "t1", "ANA00000000000000000000000").unwrap();
+    org.lead("t1", Some("ANA00000000000000000000000")).unwrap();
     let snapshot = org.state.clone();
 
     // A batch of failing commands leaves the state exactly as it was.
     assert!(org.team("t1", "Dup", None).is_err());
-    assert!(org.person("ana", "Ana").is_err());
+    assert!(org.person("ANA00000000000000000000000", "Ana").is_err());
     assert!(org.lead("t1", Some(OWNER)).is_err());
     assert!(org.remove(OWNER).is_err());
     assert_eq!(org.state, snapshot);
 
     // A cascade bumps each touched entity once, and only those.
-    org.person("bo", "Bo").unwrap();
-    org.reports("bo", Some("ana")).unwrap();
+    org.person("BO000000000000000000000000", "Bo").unwrap();
+    org.reports(
+        "BO000000000000000000000000",
+        Some("ANA00000000000000000000000"),
+    )
+    .unwrap();
     let (team, bo) = (
         org.state.teams["t1"].version,
-        org.state.members["bo"].version,
+        org.state.members["BO000000000000000000000000"].version,
     );
-    let changes = org.remove("ana").unwrap();
+    let changes = org.remove("ANA00000000000000000000000").unwrap();
     assert_eq!(team_of(&changes).version, team + 1);
-    assert_eq!(member_of(&changes, "bo").version, bo + 1);
+    assert_eq!(
+        member_of(&changes, "BO000000000000000000000000").version,
+        bo + 1
+    );
     assert_eq!(org.state.members[OWNER].version, 1);
 }
 
@@ -1070,10 +1208,12 @@ fn staffed() -> Org {
     let mut org = Org::new();
     org.team("t1", "Product", None).unwrap();
     org.team("t2", "Design", Some("t1")).unwrap();
-    org.person("ann", "Ann").unwrap();
-    org.person("bob", "Bob").unwrap();
-    org.join("ms-ann", "t2", "ann").unwrap();
-    org.join("ms-bob", "t2", "bob").unwrap();
+    org.person("ANN00000000000000000000000", "Ann").unwrap();
+    org.person("BOB00000000000000000000000", "Bob").unwrap();
+    org.join("ms-ann", "t2", "ANN00000000000000000000000")
+        .unwrap();
+    org.join("ms-bob", "t2", "BOB00000000000000000000000")
+        .unwrap();
     org
 }
 
@@ -1086,11 +1226,11 @@ fn a_taken_id_is_told_apart_from_a_duplicate_relation() {
     let mut org = staffed();
     org.team("t3", "Other", None).unwrap();
     // A fresh pair under a taken membership id: the id is the problem.
-    let taken = org.join("ms-ann", "t3", "bob");
+    let taken = org.join("ms-ann", "t3", "BOB00000000000000000000000");
     assert_eq!(code(taken.clone()), ErrorCode::AlreadyExists);
     assert!(message_of(taken).contains("id is taken"));
     // A taken pair under a fresh id: the pair is.
-    let twice = org.join("ms-new", "t2", "ann");
+    let twice = org.join("ms-new", "t2", "ANN00000000000000000000000");
     assert_eq!(code(twice.clone()), ErrorCode::AlreadyExists);
     assert!(message_of(twice).contains("already in that team"));
 
@@ -1111,7 +1251,7 @@ fn a_taken_id_is_told_apart_from_a_duplicate_relation() {
     assert_eq!(code(twice.clone()), ErrorCode::AlreadyExists);
     assert!(message_of(twice).contains("already works"));
 
-    let taken = org.person("ann", "Anna");
+    let taken = org.person("ANN00000000000000000000000", "Anna");
     assert_eq!(code(taken.clone()), ErrorCode::AlreadyExists);
     assert!(message_of(taken).contains("member id is taken"));
     let taken = org.team("t2", "Elsewhere", None);
@@ -1122,7 +1262,7 @@ fn a_taken_id_is_told_apart_from_a_duplicate_relation() {
 fn ids_made_by_the_client_are_checked_on_every_command_that_takes_one() {
     let mut org = staffed();
     assert_eq!(
-        code(org.join("bad id", "t1", "ann")),
+        code(org.join("bad id", "t1", "ANN00000000000000000000000")),
         ErrorCode::InvalidRequest
     );
     assert_eq!(code(org.person("bad id", "Zed")), ErrorCode::InvalidRequest);
@@ -1178,7 +1318,7 @@ fn moving_a_team_compares_its_stored_name_by_key() {
 #[test]
 fn a_stale_version_is_a_conflict_on_every_command_that_checks_one() {
     let mut org = staffed();
-    org.lead("t2", Some("ann")).unwrap();
+    org.lead("t2", Some("ANN00000000000000000000000")).unwrap();
     let link_id = org.id();
     org.run(OrgCommand::ProjectAddTeam(ProjectAddTeamParams {
         command_id: link_id,
@@ -1194,7 +1334,7 @@ fn a_stale_version_is_a_conflict_on_every_command_that_checks_one() {
             command_id: "c".into(),
             team_id: "t2".into(),
             expected_version: stale,
-            lead_member_id: Some("bob".into()),
+            lead_member_id: Some("BOB00000000000000000000000".into()),
         }),
         OrgCommand::TeamDelete(TeamDeleteParams {
             command_id: "c".into(),
@@ -1214,13 +1354,13 @@ fn a_stale_version_is_a_conflict_on_every_command_that_checks_one() {
         }),
         OrgCommand::MemberSetReportsTo(MemberSetReportsToParams {
             command_id: "c".into(),
-            member_id: "bob".into(),
+            member_id: "BOB00000000000000000000000".into(),
             expected_version: stale,
-            reports_to_member_id: Some("ann".into()),
+            reports_to_member_id: Some("ANN00000000000000000000000".into()),
         }),
         OrgCommand::MemberUpdatePerson(MemberUpdatePersonParams {
             command_id: "c".into(),
-            member_id: "bob".into(),
+            member_id: "BOB00000000000000000000000".into(),
             expected_version: stale,
             name: Some("Robert".into()),
             contact: None,
@@ -1228,7 +1368,7 @@ fn a_stale_version_is_a_conflict_on_every_command_that_checks_one() {
         }),
         OrgCommand::MemberRemove(MemberRemoveParams {
             command_id: "c".into(),
-            member_id: "bob".into(),
+            member_id: "BOB00000000000000000000000".into(),
             expected_version: stale,
         }),
         OrgCommand::MemberMove(MemberMoveParams {
@@ -1264,14 +1404,14 @@ fn updating_a_person_raises_its_version_and_keeps_what_was_not_given() {
     let changes = org
         .run(OrgCommand::MemberUpdatePerson(MemberUpdatePersonParams {
             command_id,
-            member_id: "ann".into(),
+            member_id: "ANN00000000000000000000000".into(),
             expected_version: 1,
             name: None,
             contact: Some(" ann@example.com ".into()),
             clear_contact: false,
         }))
         .unwrap();
-    let ann = member_of(&changes, "ann");
+    let ann = member_of(&changes, "ANN00000000000000000000000");
     assert_eq!(ann.version, 2);
     assert_eq!(ann.name, "Ann");
     assert_eq!(ann.contact.as_deref(), Some("ann@example.com"));
@@ -1294,9 +1434,15 @@ fn a_domain_rule_is_told_before_a_stale_version_and_after_a_bad_value() {
         code(team_set_lead(&mut org, OWNER)),
         ErrorCode::OwnerProtected
     );
-    org.person("cat", "Cat").unwrap();
-    assert_eq!(code(team_set_lead(&mut org, "cat")), ErrorCode::NotAMember);
-    assert_eq!(code(team_set_lead(&mut org, "ann")), ErrorCode::Conflict);
+    org.person("CAT00000000000000000000000", "Cat").unwrap();
+    assert_eq!(
+        code(team_set_lead(&mut org, "CAT00000000000000000000000")),
+        ErrorCode::NotAMember
+    );
+    assert_eq!(
+        code(team_set_lead(&mut org, "ANN00000000000000000000000")),
+        ErrorCode::Conflict
+    );
 
     let command_id = org.id();
     let deleted = org.run(OrgCommand::TeamDelete(TeamDeleteParams {
@@ -1315,13 +1461,17 @@ fn a_domain_rule_is_told_before_a_stale_version_and_after_a_bad_value() {
     }));
     assert_eq!(code(moved), ErrorCode::Cycle);
 
-    org.reports("bob", Some("ann")).unwrap();
+    org.reports(
+        "BOB00000000000000000000000",
+        Some("ANN00000000000000000000000"),
+    )
+    .unwrap();
     let command_id = org.id();
     let looped = org.run(OrgCommand::MemberSetReportsTo(MemberSetReportsToParams {
         command_id,
-        member_id: "ann".into(),
+        member_id: "ANN00000000000000000000000".into(),
         expected_version: stale,
-        reports_to_member_id: Some("bob".into()),
+        reports_to_member_id: Some("BOB00000000000000000000000".into()),
     }));
     assert_eq!(code(looped), ErrorCode::Cycle);
 
@@ -1351,10 +1501,14 @@ fn active_agents_are_members_leads_and_managers_and_removing_one_frees_its_handl
     org.agent("ag", "Pixel", AgentStatus::Active);
     org.join("ms-ag", "t2", "ag").unwrap();
     org.lead("t2", Some("ag")).unwrap();
-    org.reports("bob", Some("ag")).unwrap();
+    org.reports("BOB00000000000000000000000", Some("ag"))
+        .unwrap();
     assert_eq!(org.state.teams["t2"].lead_member_id.as_deref(), Some("ag"));
     // Its handle is taken while it is here, whatever its display name.
-    assert_eq!(code(org.person("p2", "pixel")), ErrorCode::AlreadyExists);
+    assert_eq!(
+        code(org.person("P2000000000000000000000000", "pixel")),
+        ErrorCode::AlreadyExists
+    );
 
     let changes = org.remove("ag").unwrap();
     assert!(changes.contains(&OrgChange::MembershipRemoved {
@@ -1362,16 +1516,19 @@ fn active_agents_are_members_leads_and_managers_and_removing_one_frees_its_handl
     }));
     assert_eq!(team_of(&changes).lead_member_id, None);
     assert_eq!(team_of(&changes).version, 3);
-    assert_eq!(member_of(&changes, "bob").reports_to_member_id, None);
+    assert_eq!(
+        member_of(&changes, "BOB00000000000000000000000").reports_to_member_id,
+        None
+    );
     assert!(!org.state.members.contains_key("ag"));
     // The handle is free again.
-    org.person("p2", "pixel").unwrap();
+    org.person("P2000000000000000000000000", "pixel").unwrap();
 }
 
 #[test]
 fn moving_a_member_ends_one_membership_and_starts_another_in_one_event() {
     let mut org = staffed();
-    org.lead("t2", Some("ann")).unwrap();
+    org.lead("t2", Some("ANN00000000000000000000000")).unwrap();
     let command_id = org.id();
     let changes = org
         .run(OrgCommand::MemberMove(MemberMoveParams {
@@ -1393,7 +1550,7 @@ fn moving_a_member_ends_one_membership_and_starts_another_in_one_event() {
                 membership: Membership {
                     id: "ms-ann-2".into(),
                     team_id: "t1".into(),
-                    member_id: "ann".into(),
+                    member_id: "ANN00000000000000000000000".into(),
                     title_in_team: Some("Head".into()),
                     version: 1,
                 }
@@ -1441,7 +1598,8 @@ fn a_move_that_leads_nothing_changes_no_team_and_bad_moves_are_refused() {
         ErrorCode::AlreadyExists
     );
     // Already in the target through another membership.
-    org.join("ms-ann-t1", "t1", "ann").unwrap();
+    org.join("ms-ann-t1", "t1", "ANN00000000000000000000000")
+        .unwrap();
     assert_eq!(
         code(mv(&mut org, "ms-ann", "n", "t1")),
         ErrorCode::AlreadyExists
@@ -1454,20 +1612,32 @@ fn a_move_that_leads_nothing_changes_no_team_and_bad_moves_are_refused() {
 
 #[test]
 fn the_owner_bootstrap_checks_its_inputs() {
+    const OWNER_ID: &str = "O1000000000000000000000000";
+    // A member id is exactly 26 letters and digits: 25 and 27 are refused, and so is `is_valid_id`'s
+    // wider alphabet.
+    for bad in [
+        "bad id",
+        "o1",
+        &OWNER_ID[1..],
+        &format!("{OWNER_ID}0"),
+        "O1-00000000000000000000000",
+    ] {
+        assert_eq!(
+            code(owner_bootstrap(bad, "Owner", NOW)),
+            ErrorCode::InvalidRequest,
+            "{bad}"
+        );
+    }
     assert_eq!(
-        code(owner_bootstrap("bad id", "Owner", NOW)),
-        ErrorCode::InvalidRequest
-    );
-    assert_eq!(
-        code(owner_bootstrap("o1", "  ", NOW)),
+        code(owner_bootstrap(OWNER_ID, "  ", NOW)),
         ErrorCode::InvalidName
     );
     assert_eq!(
-        code(owner_bootstrap("o1", "a\u{7}b", NOW)),
+        code(owner_bootstrap(OWNER_ID, "a\u{7}b", NOW)),
         ErrorCode::InvalidName
     );
-    let changes = owner_bootstrap("o1", " Vi ", NOW).unwrap();
-    assert_eq!(member_of(&changes, "o1").name, "Vi");
+    let changes = owner_bootstrap(OWNER_ID, " Vi ", NOW).unwrap();
+    assert_eq!(member_of(&changes, OWNER_ID).name, "Vi");
 }
 
 #[test]
@@ -1509,12 +1679,12 @@ fn a_new_person_has_the_time_it_was_added_and_a_trimmed_contact() {
     let changes = org
         .run(OrgCommand::MemberAddPerson(MemberAddPersonParams {
             command_id,
-            member_id: "zed".into(),
+            member_id: "ZED00000000000000000000000".into(),
             name: " Zed ".into(),
             contact: Some(" zed@example.com ".into()),
         }))
         .unwrap();
-    let zed = member_of(&changes, "zed");
+    let zed = member_of(&changes, "ZED00000000000000000000000");
     assert_eq!(zed.created_at.as_deref(), Some(NOW));
     assert_eq!(zed.contact.as_deref(), Some("zed@example.com"));
     assert_eq!(
@@ -1568,10 +1738,13 @@ fn walks_over_loops_already_in_bad_data_end() {
     assert!(moved.is_ok(), "{moved:?}");
 
     let mut org = Org::new();
-    org.person("a", "Ann").unwrap();
-    org.person("b", "Bob").unwrap();
-    org.person("c", "Cat").unwrap();
-    for (who, boss) in [("a", "b"), ("b", "a")] {
+    org.person("A0000000000000000000000000", "Ann").unwrap();
+    org.person("B0000000000000000000000000", "Bob").unwrap();
+    org.person("C0000000000000000000000000", "Cat").unwrap();
+    for (who, boss) in [
+        ("A0000000000000000000000000", "B0000000000000000000000000"),
+        ("B0000000000000000000000000", "A0000000000000000000000000"),
+    ] {
         org.state.members.get_mut(who).unwrap().reports_to_member_id = Some(boss.into());
     }
     let reported = decide(
@@ -1579,9 +1752,9 @@ fn walks_over_loops_already_in_bad_data_end() {
         NOW,
         &OrgCommand::MemberSetReportsTo(MemberSetReportsToParams {
             command_id: "c".into(),
-            member_id: "c".into(),
+            member_id: "C0000000000000000000000000".into(),
             expected_version: 1,
-            reports_to_member_id: Some("a".into()),
+            reports_to_member_id: Some("A0000000000000000000000000".into()),
         }),
     );
     assert!(reported.is_ok(), "{reported:?}");
@@ -1637,17 +1810,26 @@ fn a_stale_version_never_hides_a_missing_thing_or_a_bad_value() {
             }),
         )
     };
-    assert_eq!(code(update("ann", Some("  "))), ErrorCode::InvalidName);
+    assert_eq!(
+        code(update("ANN00000000000000000000000", Some("  "))),
+        ErrorCode::InvalidName
+    );
     assert_eq!(code(update("ag", None)), ErrorCode::InvalidRequest);
     assert_eq!(code(update("nope", None)), ErrorCode::NotFound);
-    assert_eq!(code(update("ann", Some("Anna"))), ErrorCode::Conflict);
+    assert_eq!(
+        code(update("ANN00000000000000000000000", Some("Anna"))),
+        ErrorCode::Conflict
+    );
 }
 
 #[test]
 fn a_missing_thing_is_told_before_a_bad_id_and_a_bad_value_before_a_bad_name() {
     let mut org = staffed();
     // not_found before invalid_request.
-    assert_eq!(code(org.join("bad id", "nope", "ann")), ErrorCode::NotFound);
+    assert_eq!(
+        code(org.join("bad id", "nope", "ANN00000000000000000000000")),
+        ErrorCode::NotFound
+    );
     assert_eq!(code(org.join("bad id", "t1", "nope")), ErrorCode::NotFound);
     // invalid_request before invalid_name.
     let command_id = org.id();
@@ -1661,7 +1843,7 @@ fn a_missing_thing_is_told_before_a_bad_id_and_a_bad_value_before_a_bad_name() {
     let command_id = org.id();
     let added = org.run(OrgCommand::MemberAddPerson(MemberAddPersonParams {
         command_id,
-        member_id: "zed".into(),
+        member_id: "ZED00000000000000000000000".into(),
         name: "  ".into(),
         contact: Some(" ".into()),
     }));
@@ -1754,7 +1936,7 @@ fn a_stale_version_is_told_before_a_name_or_id_that_is_taken() {
         NOW,
         &OrgCommand::MemberUpdatePerson(MemberUpdatePersonParams {
             command_id: "c".into(),
-            member_id: "ann".into(),
+            member_id: "ANN00000000000000000000000".into(),
             expected_version: stale,
             name: Some("Bob".into()),
             contact: None,
@@ -1780,22 +1962,27 @@ fn a_stale_version_is_told_before_a_name_or_id_that_is_taken() {
 #[test]
 fn a_new_reporting_line_raises_the_version_by_one() {
     let mut org = staffed();
-    let changes = org.reports("bob", Some("ann")).unwrap();
-    let bob = member_of(&changes, "bob");
+    let changes = org
+        .reports(
+            "BOB00000000000000000000000",
+            Some("ANN00000000000000000000000"),
+        )
+        .unwrap();
+    let bob = member_of(&changes, "BOB00000000000000000000000");
     assert_eq!(
         (bob.version, bob.reports_to_member_id.as_deref()),
-        (2, Some("ann"))
+        (2, Some("ANN00000000000000000000000"))
     );
 }
 
 #[test]
 fn a_reporting_line_to_someone_missing_is_not_found_before_anything_else() {
     let mut org = staffed();
-    org.agent("old", "Old", AgentStatus::Offboarded);
+    org.agent("OLD00000000000000000000000", "Old", AgentStatus::Offboarded);
     let command_id = org.id();
     let result = org.run(OrgCommand::MemberSetReportsTo(MemberSetReportsToParams {
         command_id,
-        member_id: "old".into(),
+        member_id: "OLD00000000000000000000000".into(),
         expected_version: 1,
         reports_to_member_id: Some("nope".into()),
     }));
@@ -1810,7 +1997,7 @@ fn a_bad_contact_is_told_before_a_bad_name_in_a_person_update() {
         NOW,
         &OrgCommand::MemberUpdatePerson(MemberUpdatePersonParams {
             command_id: "c".into(),
-            member_id: "ann".into(),
+            member_id: "ANN00000000000000000000000".into(),
             expected_version: 1,
             name: Some("  ".into()),
             contact: Some(" ".into()),
@@ -1839,28 +2026,41 @@ fn the_owners_display_name_is_not_a_handle() {
     rename(&mut org, OWNER, "Ann").unwrap();
     rename(&mut org, OWNER, "Vi").unwrap();
     // ...and a new person may reuse the owner's display name.
-    org.person("vi2", "Vi").unwrap();
+    org.person("VI200000000000000000000000", "Vi").unwrap();
     // But the word `owner` is still nobody else's.
     assert_eq!(
-        code(rename(&mut org, "bob", "Owner")),
+        code(rename(&mut org, "BOB00000000000000000000000", "Owner")),
         ErrorCode::AlreadyExists
     );
-    assert_eq!(code(org.person("p9", "owner")), ErrorCode::AlreadyExists);
+    assert_eq!(
+        code(org.person("P9000000000000000000000000", "owner")),
+        ErrorCode::AlreadyExists
+    );
     // And people still clash with each other.
-    assert_eq!(code(org.person("p10", "vi")), ErrorCode::AlreadyExists);
+    assert_eq!(
+        code(org.person("P1000000000000000000000000", "vi")),
+        ErrorCode::AlreadyExists
+    );
 }
 
 #[test]
 fn an_offboarded_agents_messaging_name_stays_taken_for_a_new_person_and_a_rename() {
     let mut org = staffed();
-    org.agent("old", "Pixel", AgentStatus::Offboarded);
-    assert_eq!(code(org.person("p2", "pixel")), ErrorCode::AlreadyExists);
+    org.agent(
+        "OLD00000000000000000000000",
+        "Pixel",
+        AgentStatus::Offboarded,
+    );
+    assert_eq!(
+        code(org.person("P2000000000000000000000000", "pixel")),
+        ErrorCode::AlreadyExists
+    );
     // A person cannot be renamed onto it either.
     let command_id = org.id();
-    let expected_version = org.state.members["ann"].version;
+    let expected_version = org.state.members["ANN00000000000000000000000"].version;
     let renamed = org.run(OrgCommand::MemberUpdatePerson(MemberUpdatePersonParams {
         command_id,
-        member_id: "ann".into(),
+        member_id: "ANN00000000000000000000000".into(),
         expected_version,
         name: Some("PIXEL".into()),
         contact: None,
@@ -1886,5 +2086,86 @@ fn a_view_that_returns_the_owner_for_a_handle_still_does_not_block_its_display_n
     }))
     .unwrap();
     org.state.leaky_handles = true;
-    org.person("vi2", "Vi").unwrap();
+    org.person("VI200000000000000000000000", "Vi").unwrap();
+}
+
+#[test]
+fn a_member_id_is_exactly_26_letters_and_digits() {
+    let good = "ANA00000000000000000000000";
+    let mut org = Org::new();
+    for bad in [
+        &good[1..],
+        &format!("{good}0"),
+        "ana",
+        "ANA-0000000000000000000000",
+        "",
+    ] {
+        assert_eq!(
+            code(org.person(bad, "Ana")),
+            ErrorCode::InvalidRequest,
+            "{bad:?}"
+        );
+    }
+    assert!(org.person(good, "Ana").is_ok());
+}
+
+#[test]
+fn a_person_cannot_be_named_like_a_member_id_or_a_run() {
+    let mut org = Org::new();
+    let looks_like_an_id = "BOB00000000000000000000000";
+    for bad in [
+        looks_like_an_id,
+        &looks_like_an_id.to_lowercase(),
+        " BOB00000000000000000000000 ",
+        "run:1",
+        "RUN: later",
+        "\u{212A}0000000000000000000000000", // Kelvin sign lower-cases to `k`: 26 alphanumerics
+    ] {
+        assert_eq!(
+            code(org.person("ANA00000000000000000000000", bad)),
+            ErrorCode::InvalidName,
+            "{bad:?}"
+        );
+    }
+    // Close, but not the shape: 25 and 27 characters, or `run` without the colon.
+    assert!(org
+        .person("ANA00000000000000000000000", "BOB0000000000000000000000")
+        .is_ok());
+    assert!(org
+        .person("ANB00000000000000000000000", "BOB000000000000000000000000")
+        .is_ok());
+    assert!(org.person("ANC00000000000000000000000", "runner").is_ok());
+}
+
+#[test]
+fn renaming_a_person_to_an_address_shape_is_refused_but_the_owner_may_display_anything() {
+    let mut org = Org::new();
+    org.person("ANA00000000000000000000000", "Ana").unwrap();
+    let rename = |org: &mut Org, id: &str, name: &str| {
+        let command_id = org.id();
+        let expected_version = org.state.members[id].version;
+        org.run(OrgCommand::MemberUpdatePerson(MemberUpdatePersonParams {
+            command_id,
+            member_id: id.into(),
+            expected_version,
+            name: Some(name.into()),
+            contact: None,
+            clear_contact: false,
+        }))
+    };
+
+    assert_eq!(
+        code(rename(
+            &mut org,
+            "ANA00000000000000000000000",
+            "BOB00000000000000000000000"
+        )),
+        ErrorCode::InvalidName
+    );
+    assert_eq!(
+        code(rename(&mut org, "ANA00000000000000000000000", "run:7")),
+        ErrorCode::InvalidName
+    );
+    // The owner's display name is not a handle.
+    assert!(rename(&mut org, OWNER, "BOB00000000000000000000000").is_ok());
 }

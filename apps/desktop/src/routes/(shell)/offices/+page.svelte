@@ -9,7 +9,7 @@
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
 	import { officeApi } from '$lib/office/api';
-	import { agentsIn, displayStatusFor, isHq, orderOffices, rowLabel, secondaryText, statusInfo, unplacedAgents, type LiveCheck } from '$lib/offices/model';
+	import { agentsIn, displayStatusFor, isHq, orderOffices, rowLabel, secondaryText, statusInfo, unplacedAgents, whyForLabel, whyStopped, type LiveCheck } from '$lib/offices/model';
 	import type { Counts } from './+page';
 
 	let { data } = $props();
@@ -59,11 +59,28 @@
 		if (next === 'up' && document.activeElement?.matches('[data-testid=retry-office]')) rowButton(here.id)?.focus();
 	});
 	const rowButton = (officeId: string) => document.querySelector<HTMLElement>(`[data-office="${officeId}"] button[aria-haspopup]`);
+	// The countdown in a stopped office's line moves no more often than every 10 s.
+	let now = $state(new Date());
 	onMount(() => {
 		void probe.run('explicit');
 		const again = setInterval(() => void probe.run('background'), 30_000);
-		return () => clearInterval(again);
+		const tick = setInterval(() => (now = new Date()), 10_000);
+		return () => (clearInterval(again), clearInterval(tick));
 	});
+	// TODO (OFC-11/12, with the Restart branch): the reported status, reason and countdown are those saved when the page loaded
+	// (nothing subscribes to office.status_changed yet), and a host whose hello lacks that capability should read "Status unknown".
+	// Restart office / Try again / Start office / Check for updates are not built: OFC-11 is partial.
+	// Why a stopped office stopped: only for an office whose status is shown as reported by the host.
+	const labelWhyOf = (officeId: string) => {
+		const shown = statusOf(officeId);
+		const office = data.offices.find((o) => o.id === officeId);
+		return office && (shown === 'offline' || shown === 'unavailable') ? whyForLabel(office, new Date()) : undefined;
+	};
+	const whyOf = (officeId: string) => {
+		const shown = statusOf(officeId);
+		const office = data.offices.find((o) => o.id === officeId);
+		return office && (shown === 'offline' || shown === 'unavailable') ? whyStopped(office, now) : undefined;
+	};
 	// Another organization's office is another thing to verify: don't carry the last answer over.
 	let lastOffice: string | undefined;
 	$effect(() => {
@@ -113,7 +130,7 @@
 	</div>
 
 	<!-- Said once when the answer changes: the badge and count are hidden from screen readers, the row's label has them. -->
-	<p class="sr-only" role="status" data-testid="live-status">{offices.find((o) => o.id === here.id)?.name ?? 'Office'}: {statusInfo(statusOf(here.id)).label}</p>
+	<p class="sr-only" role="status" data-testid="live-status">{offices.find((o) => o.id === here.id)?.name ?? 'Office'}: {statusInfo(statusOf(here.id)).label}{labelWhyOf(here.id) ? `: ${labelWhyOf(here.id)}` : ''}</p>
 
 	<ul class="divide-y divide-white/5 overflow-hidden rounded-xl bg-white/5 outline-1 -outline-offset-1 outline-white/10" aria-label="Offices">
 		{#each offices as office (office.id)}
@@ -125,12 +142,12 @@
 				<button
 					type="button"
 					class="min-w-0 flex-1 text-left focus-visible:outline-2 focus-visible:outline-indigo-400"
-					aria-label={rowLabel(office, agents, here.id === office.id, statusOf(office.id))}
+					aria-label={rowLabel(office, agents, here.id === office.id, statusOf(office.id), labelWhyOf(office.id))}
 					aria-haspopup="dialog"
 					onclick={() => open(office.id)}
 				>
 					<span class="block truncate text-sm/6 font-semibold text-white" title={office.name}>{office.name}</span>
-					<span class="block truncate text-xs/5 text-gray-400">{statusOf(office.id) === 'unreachable' ? "Can't reach this office" : secondaryText(office) + (here.id === office.id ? " (you're here)" : '')}</span>
+					<span class="block truncate text-xs/5 text-gray-400" title={whyOf(office.id)}>{statusOf(office.id) === 'unreachable' ? "Can't reach this office" : (whyOf(office.id) ?? secondaryText(office) + (here.id === office.id ? " (you're here)" : ''))}</span>
 				</button>
 				<!-- The button's label already says the status and the count: not read twice. -->
 				<span aria-hidden="true"><OfficeStatusBadge status={statusOf(office.id)} /></span>
@@ -184,4 +201,4 @@
 	<p class="text-xs/5 text-gray-500">Shown from this Mac.</p>
 </div>
 
-<OfficeDetailsSheet bind:open={detailsOpen} office={detailsFor} status={detailsFor ? statusOf(detailsFor.id) : 'status_unknown'} {snapshot} counting={!snapshot && !countError} {sample} here={detailsFor?.id === here.id} />
+<OfficeDetailsSheet bind:open={detailsOpen} office={detailsFor} status={detailsFor ? statusOf(detailsFor.id) : 'status_unknown'} why={detailsFor ? whyOf(detailsFor.id) : undefined} {snapshot} counting={!snapshot && !countError} {sample} here={detailsFor?.id === here.id} />

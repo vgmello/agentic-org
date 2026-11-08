@@ -1,7 +1,7 @@
 // The Offices screen's rules as pure functions (UX spec §3.1). Phase 1 shows HQ only and changes nothing:
 // adding and removing offices come with the local satellite in phase 2.
 import { isFormer } from '$lib/org/model';
-import type { Member, OfficeInfo, OfficeStatus, OrgSnapshot } from '$lib/proto';
+import type { Member, OfficeInfo, OfficeStatus, OfficeStatusReason, OrgSnapshot } from '$lib/proto';
 
 const THIS_MAC = 'This Mac';
 
@@ -41,7 +41,8 @@ export type DisplayStatus = OfficeStatus | 'unreachable' | 'checking' | 'status_
  */
 export function displayStatus(connected: boolean, check: LiveCheck, reported?: OfficeStatus): DisplayStatus {
 	if (!connected) return 'status_unknown';
-	if (check === 'up') return reported && reported !== 'active' ? reported : 'active';
+	// An office on this Mac never reads Offline, only Stopped (spec §3.1); the connected office is always on this Mac.
+	if (check === 'up') return reported === 'offline' ? 'unavailable' : reported && reported !== 'active' ? reported : 'active';
 	return check === 'down' ? 'unreachable' : 'checking';
 }
 
@@ -132,13 +133,79 @@ export function statusIcon(status: DisplayStatus | undefined): StatusIcon {
  * What a screen reader hears for an office row (OFC-13): its name, HQ, where it runs, its status and how many
  * agents it has. `agents` is undefined while they are still being counted.
  */
-export function rowLabel(o: OfficeInfo, agents: number | undefined, here: boolean, status: DisplayStatus | undefined): string {
+export function rowLabel(o: OfficeInfo, agents: number | undefined, here: boolean, status: DisplayStatus | undefined, why?: string): string {
 	const parts = [o.name];
 	if (isHq(o)) parts.push('HQ');
 	// An office that can't be reached shows "Can't reach this office" where its location was: the label says the same.
+	// Where it runs always stays; a stopped office's reason follows its status (spec §6.1).
 	parts.push(status === 'unreachable' ? "Can't reach this office" : secondaryText(o) + (here ? " (you're here)" : ''));
-	parts.push(statusInfo(status).label);
+	parts.push(statusInfo(status).label + (why ? `: ${why}` : ''));
 	if (agents !== undefined) parts.push(`${agents} ${agents === 1 ? 'agent' : 'agents'}`);
 	parts.push('opens details');
 	return parts.join(', ');
+}
+
+// ---- why an office stopped (spec §3.3, OFC-11..13) ----------------------------------------------------------------
+
+/** The line under a stopped office's name, from the host's `status_reason`. */
+const REASON_COPY: Record<OfficeStatusReason, string> = {
+	crashed: 'It stopped unexpectedly',
+	start_timeout: "It didn't start in time",
+	restarts_exhausted: "It kept stopping, so it won't restart on its own",
+	storage_error: "It can't read or write its data on this Mac",
+	in_use: 'Its data is still in use by another Agentic Org process',
+	key_missing: "Its data key is missing from this Mac's Keychain, so its data can't be opened",
+	stopped_by_owner: 'You stopped it',
+	unsupported_version: "Parts of Agentic Org on this Mac don't match. Update or reinstall Agentic Org, then log out and back in.",
+	invalid_request: "It couldn't start because of an internal error",
+	unknown: "It stopped for a reason this version doesn't know"
+};
+
+/** The reason line for the screen-reader label: it never ticks, so a pending restart reads "restarting shortly" (spec §3.3). */
+export function whyForLabel(o: Pick<OfficeInfo, 'status' | 'status_reason' | 'next_restart_at'>, now: Date): string | undefined {
+	const text = whyStopped({ ...o, next_restart_at: undefined }, now);
+	if (text === undefined) return undefined;
+	const lower = text.charAt(0).toLowerCase() + text.slice(1);
+	const n = secondsUntil(o.next_restart_at, now);
+	if (n === undefined || n === 0) return lower;
+	// A restart a minute or more away is read as a clock time, which does not tick; a nearer one as "shortly".
+	if (n < 60) return `${lower}, restarting shortly`;
+	const at = new Date(Date.parse(o.next_restart_at!)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+	return `${lower}, restarting at ${at}`;
+}
+
+/** Seconds from `now` until `next_restart_at`, rounded up; never negative. Nothing when it is absent or unreadable. */
+export function secondsUntil(nextRestartAt: string | undefined, now: Date): number | undefined {
+	if (!nextRestartAt) return undefined;
+	// RFC 3339 with a time zone only: Date.parse alone accepts junk like "5".
+	if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.test(nextRestartAt)) return undefined;
+	const t = Date.parse(nextRestartAt);
+	return Number.isNaN(t) ? undefined : Math.max(0, Math.ceil((t - now.getTime()) / 1000));
+}
+
+/**
+ * Why a stopped office stopped, in words, with the countdown while a restart is pending ("Restarting in 20 s"; for
+ * `in_use` "Trying again in 20 s"). Only an office the host reports `offline` or `unavailable` has a reason line; a
+ * missing reason reads "It isn't running". The line comes from the host's status, never from the app's own check.
+ */
+export function whyStopped(o: Pick<OfficeInfo, 'status' | 'status_reason' | 'next_restart_at'>, now: Date): string | undefined {
+	if (o.status !== 'offline' && o.status !== 'unavailable') return undefined;
+	const base = o.status_reason ? (Object.hasOwn(REASON_COPY, o.status_reason) ? REASON_COPY[o.status_reason] : REASON_COPY.unknown) : "It isn't running";
+	const n = secondsUntil(o.next_restart_at, now);
+	// A restart whose time has come is not announced as "in 0 s": the next status will say what happened.
+	if (n === undefined || n === 0) return base;
+	return o.status_reason === 'in_use' ? `${base}. Trying again in ${n} s` : `${base}. Restarting in ${n} s`;
+}
+
+/** What "Copy details" puts on the clipboard (spec §3.3): the office, its status and reason, the time and the app version. Never keys or tokens. */
+export function copyDetails(o: OfficeInfo, statusLabel: string, now: Date, appVersion: string): string {
+	return [
+		`Office: ${o.name}`,
+		`Id: ${o.id}`,
+		`Status: ${statusLabel}`,
+		`Reason: ${o.status_reason ?? 'not reported'}`,
+		...(o.next_restart_at ? [`Next restart: ${o.next_restart_at}`] : []),
+		`Time: ${now.toISOString()}`,
+		`Agentic Org: ${appVersion}`
+	].join('\n');
 }
