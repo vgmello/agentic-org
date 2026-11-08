@@ -1,6 +1,7 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+use crate::token::AppToken;
 use crate::types::{OfficeInfo, Organization};
 
 /// The identity an office server reports in `hello`.
@@ -115,4 +116,41 @@ impl Call for OfficeList {
     const METHOD: &'static str = "office.list";
     type Params = Empty;
     type Result = ListOfficesResult;
+}
+
+/// `office.app_token` (host, on `host.sock` only): the office's [`AppToken`], which lets the
+/// desktop app bind to that office as a human.
+///
+/// Before answering, the host verifies the caller's code signature against the app's
+/// designated requirement (ADR-0003 §2.1); only the desktop app gets a token.
+/// Errors: `not_authorized` (the signature check failed), `not_found` (no such office here),
+/// `unavailable` (the office isn't running, so it has no token).
+///
+/// The result is a secret: never log it, or the response line that carries it.
+pub struct OfficeAppToken;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OfficeAppTokenParams {
+    pub office_id: String,
+}
+
+/// `office.app_token`'s result. Its `Debug` shows no token, and it isn't `Clone`, like the
+/// token.
+///
+/// ```compile_fail,E0599
+/// use org_proto::{AppToken, OfficeAppTokenResult, APP_TOKEN_BYTES};
+/// let result = OfficeAppTokenResult {
+///     app_token: AppToken::from_bytes([0; APP_TOKEN_BYTES]),
+/// };
+/// let _copy = result.clone();
+/// ```
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OfficeAppTokenResult {
+    pub app_token: AppToken,
+}
+
+impl Call for OfficeAppToken {
+    const METHOD: &'static str = "office.app_token";
+    type Params = OfficeAppTokenParams;
+    type Result = OfficeAppTokenResult;
 }

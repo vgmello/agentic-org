@@ -506,6 +506,12 @@ fn org_wire_names_are_pinned() {
         (TeamRemoveMember::METHOD, "team.remove_member"),
         (TeamSetTitle::METHOD, "team.set_title"),
         (MemberAddPerson::METHOD, "member.add_person"),
+        (MemberAddAgent::METHOD, "member.add_agent"),
+        (MemberUpdateAgent::METHOD, "member.update_agent"),
+        (MemberSetAgentStatus::METHOD, "member.set_agent_status"),
+        (MemberMove::METHOD, "member.move"),
+        (MemberOffboard::METHOD, "member.offboard"),
+        (MemberSetRunMode::METHOD, "member.set_run_mode"),
         (MemberUpdatePerson::METHOD, "member.update_person"),
         (MemberRemove::METHOD, "member.remove"),
         (MemberSetReportsTo::METHOD, "member.set_reports_to"),
@@ -572,10 +578,13 @@ fn member_owner_flag_and_kind_round_trip() {
         contact: None,
         owner: true,
         office_id: None,
+        agent: None,
         reports_to_member_id: None,
+        created_at: None,
         version: 1,
     };
     let v = serde_json::to_value(&owner).unwrap();
+    assert!(v.get("agent").is_none(), "a person has no agent profile");
     assert!(v.get("reports_to_member_id").is_none());
     assert_eq!(v["owner"], true);
     assert_eq!(v["kind"], "person");
@@ -726,4 +735,829 @@ fn rejections_reach_the_client_by_command_id() {
     let parsed: Event = serde_json::from_value(v).unwrap();
     let back = parsed.data::<OrgRejected>().unwrap().unwrap();
     assert_eq!(back.error.code, ErrorCode::Cycle);
+}
+
+#[test]
+fn office_app_token_wire_shapes() {
+    assert_eq!(OfficeAppToken::METHOD, "office.app_token");
+    let req = Request::new::<OfficeAppToken>(
+        4,
+        &OfficeAppTokenParams {
+            office_id: "01M6WGY1WJCC503RXF2NS0SH83".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(&req).unwrap(),
+        json!({"id": 4, "method": "office.app_token",
+            "params": {"office_id": "01M6WGY1WJCC503RXF2NS0SH83"}})
+    );
+    assert_eq!(
+        req.params::<OfficeAppToken>().unwrap().office_id,
+        "01M6WGY1WJCC503RXF2NS0SH83"
+    );
+    let missing: Request =
+        serde_json::from_str(r#"{"id":4,"method":"office.app_token","params":{}}"#).unwrap();
+    assert!(missing.params::<OfficeAppToken>().is_err());
+
+    let hex = "ab".repeat(32);
+    let result = OfficeAppTokenResult {
+        app_token: AppToken::from_bytes([0xab; 32]),
+    };
+    let v = serde_json::to_value(Response::ok::<OfficeAppToken>(4, &result).unwrap()).unwrap();
+    assert_eq!(v, json!({"id": 4, "result": {"app_token": hex}}));
+    let back: Response = serde_json::from_value(v).unwrap();
+    let back = back.into_result::<OfficeAppToken>().unwrap();
+    assert_eq!(back, result);
+    // Debug of the result, as a log line would show it, has no token.
+    let debug = format!("{back:?}");
+    assert!(!debug.contains("abab"), "{debug}");
+    assert!(debug.contains("AppToken(<redacted>)"), "{debug}");
+
+    // A full-length token in uppercase is refused, and the error doesn't repeat it.
+    let upper = "AB".repeat(32);
+    let bad: Response =
+        serde_json::from_value(json!({"id": 4, "result": {"app_token": upper}})).unwrap();
+    match bad.into_result::<OfficeAppToken>() {
+        Err(CallError::Decode(e)) => assert!(!e.to_string().contains(&upper[..8]), "{e}"),
+        other => panic!("expected a decode error, got {other:?}"),
+    }
+}
+
+#[test]
+fn not_authorized_and_unavailable_codes_round_trip() {
+    for (code, name) in [
+        (ErrorCode::NotAuthorized, "not_authorized"),
+        (ErrorCode::Unavailable, "unavailable"),
+    ] {
+        assert_eq!(serde_json::to_value(code).unwrap(), name);
+        assert_eq!(
+            serde_json::from_value::<ErrorCode>(name.into()).unwrap(),
+            code
+        );
+        let line = serde_json::to_string(&Response::error(9, ApiError::new(code, "x"))).unwrap();
+        assert_eq!(
+            line,
+            format!(r#"{{"id":9,"error":{{"code":"{name}","message":"x"}}}}"#)
+        );
+        match serde_json::from_str::<Response>(&line)
+            .unwrap()
+            .into_result::<OfficeAppToken>()
+        {
+            Err(CallError::Api(e)) => assert_eq!(e.code, code),
+            other => panic!("expected an api error, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn envelope_debug_elides_payloads_that_may_hold_secrets() {
+    let hex = "c0ffee".repeat(10) + "abcd";
+    assert_eq!(hex.len(), 64);
+    let params = json!({"app_token": hex});
+    let size = serde_json::to_string(&params).unwrap().len();
+
+    let req: Request =
+        serde_json::from_value(json!({"id": 7, "method": "office.app_token", "params": params}))
+            .unwrap();
+    let debug = format!("{req:?}");
+    assert!(!debug.contains(&hex[..8]), "{debug}");
+    assert_eq!(
+        debug,
+        format!(
+            r#"Request {{ id: 7, method: "office.app_token", params: <elided {size} bytes> }}"#
+        )
+    );
+    assert!(!format!("{req:#?}").contains(&hex[..8]));
+
+    let resp = Response {
+        id: 7,
+        outcome: Outcome::Result(params.clone()),
+    };
+    let debug = format!("{resp:?}");
+    assert!(!debug.contains(&hex[..8]), "{debug}");
+    assert!(debug.contains("id: 7"), "{debug}");
+    let msg = ServerMessage::Response(resp);
+    assert!(!format!("{msg:?}").contains(&hex[..8]));
+
+    // An error is shown: its message is for people and holds no secrets.
+    let err = Response::error(8, ApiError::new(ErrorCode::NotAuthorized, "not the app"));
+    assert!(format!("{err:?}").contains("not the app"));
+
+    let ev = Event {
+        event: "office.token_rotated".into(),
+        seq: 2,
+        data: params.clone(),
+    };
+    let debug = format!("{:?}", ServerMessage::Event(ev));
+    assert!(!debug.contains(&hex[..8]), "{debug}");
+    assert!(debug.contains("office.token_rotated") && debug.contains("seq: 2"));
+
+    let unknown = ServerMessage::Unknown(json!({"id": 9, "secret": hex}));
+    let debug = format!("{unknown:?}");
+    assert!(!debug.contains(&hex[..8]), "{debug}");
+    assert!(debug.starts_with("Unknown(<elided "), "{debug}");
+}
+
+fn profile() -> AgentProfile {
+    AgentProfile {
+        role: "software engineer".into(),
+        title: "Senior Backend Engineer".into(),
+        focus: Some("storage".into()),
+        runtime: AgentRuntime::ClaudeCode,
+        model: None,
+        run_mode: None,
+        schedule: None,
+        home: Some("/Users/me/agents/river".into()),
+        messaging_name: "river".into(),
+        status: AgentStatus::Active,
+        offboarded_at: None,
+    }
+}
+
+#[test]
+fn agent_profile_wire_shape_is_pinned() {
+    assert_eq!(
+        serde_json::to_value(profile()).unwrap(),
+        json!({
+            "role": "software engineer",
+            "title": "Senior Backend Engineer",
+            "focus": "storage",
+            "runtime": "claude_code",
+            "home": "/Users/me/agents/river",
+            "messaging_name": "river",
+            "status": "active",
+        })
+    );
+    // Optional fields are left out when empty, and read back as None.
+    let bare = AgentProfile {
+        focus: None,
+        home: None,
+        ..profile()
+    };
+    let v = serde_json::to_value(&bare).unwrap();
+    assert!(v.get("focus").is_none() && v.get("home").is_none());
+    assert_eq!(serde_json::from_value::<AgentProfile>(v).unwrap(), bare);
+}
+
+#[test]
+fn agent_runtime_and_status_tolerate_values_from_a_newer_build() {
+    for (wire, want) in [
+        (json!("claude_code"), AgentRuntime::ClaudeCode),
+        (json!("codex"), AgentRuntime::Codex),
+        (json!("antigravity"), AgentRuntime::Antigravity),
+        (json!({"other": "zed"}), AgentRuntime::Other("zed".into())),
+        (json!("some_future_runtime"), AgentRuntime::Unknown),
+    ] {
+        assert_eq!(
+            serde_json::from_value::<AgentRuntime>(wire.clone()).unwrap(),
+            want,
+            "{wire}"
+        );
+        if want != AgentRuntime::Unknown {
+            assert_eq!(serde_json::to_value(&want).unwrap(), wire);
+        }
+    }
+    assert_eq!(
+        serde_json::from_value::<AgentStatus>(json!("paused")).unwrap(),
+        AgentStatus::Paused
+    );
+    assert_eq!(
+        serde_json::from_value::<AgentStatus>(json!("retired")).unwrap(),
+        AgentStatus::Unknown
+    );
+}
+
+#[test]
+fn a_member_carries_its_agent_profile_in_one_record() {
+    let agent = Member {
+        id: "a1".into(),
+        kind: MemberKind::Agent,
+        name: "River".into(),
+        contact: None,
+        owner: false,
+        office_id: Some("o1".into()),
+        agent: Some(profile()),
+        reports_to_member_id: None,
+        created_at: None,
+        version: 4,
+    };
+    let v = serde_json::to_value(&agent).unwrap();
+    assert_eq!(v["agent"]["messaging_name"], "river");
+    assert_eq!(serde_json::from_value::<Member>(v).unwrap(), agent);
+
+    // An older record without a profile still reads.
+    let old: Member = serde_json::from_value(
+        json!({"id": "a2", "kind": "agent", "name": "x", "office_id": "o1", "version": 1}),
+    )
+    .unwrap();
+    assert!(old.agent.is_none());
+
+    // One entity, one version: the change carries the profile.
+    let change = OrgChange::MemberUpserted {
+        member: agent.clone(),
+    };
+    let back: OrgChange = serde_json::from_value(serde_json::to_value(&change).unwrap()).unwrap();
+    assert_eq!(back, change);
+}
+
+#[test]
+fn agent_commands_have_the_agreed_shapes() {
+    use crate::org::*;
+    let add = Request::new::<MemberAddAgent>(
+        1,
+        &MemberAddAgentParams {
+            command_id: "01C".into(),
+            member_id: "a1".into(),
+            name: "River".into(),
+            office_id: "o1".into(),
+            profile: profile(),
+        },
+    )
+    .unwrap();
+    assert_eq!(add.method, "member.add_agent");
+    assert_eq!(add.params["profile"]["runtime"], "claude_code");
+    assert_eq!(add.params::<MemberAddAgent>().unwrap().office_id, "o1");
+
+    // Update: only what is given is sent, so only that changes.
+    let update = Request::new::<MemberUpdateAgent>(
+        2,
+        &MemberUpdateAgentParams {
+            command_id: "01C".into(),
+            member_id: "a1".into(),
+            expected_version: 4,
+            name: None,
+            role: None,
+            title: Some("Staff Engineer".into()),
+            focus: None,
+            clear_focus: true,
+            runtime: Some(AgentRuntime::Other("zed".into())),
+            model: None,
+            clear_model: false,
+            home: None,
+            clear_home: false,
+            messaging_name: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        update.params,
+        json!({
+            "command_id": "01C", "member_id": "a1", "expected_version": 4,
+            "title": "Staff Engineer", "clear_focus": true, "runtime": {"other": "zed"},
+        })
+    );
+
+    let status = Request::new::<MemberSetAgentStatus>(
+        3,
+        &MemberSetAgentStatusParams {
+            command_id: "01C".into(),
+            member_id: "a1".into(),
+            expected_version: 5,
+            status: AgentStatus::Paused,
+        },
+    )
+    .unwrap();
+    assert_eq!(status.params["status"], "paused");
+
+    let moved = Request::new::<MemberMove>(
+        4,
+        &MemberMoveParams {
+            command_id: "01C".into(),
+            membership_id: "ms1".into(),
+            expected_version: 2,
+            new_membership_id: "ms2".into(),
+            to_team_id: "t2".into(),
+            title_in_team: None,
+        },
+    )
+    .unwrap();
+    assert!(moved.params.get("title_in_team").is_none());
+    assert_eq!(
+        moved.params::<MemberMove>().unwrap().new_membership_id,
+        "ms2"
+    );
+}
+
+#[test]
+fn agent_command_params_are_pinned_field_by_field() {
+    use crate::org::*;
+    let add = Request::new::<MemberAddAgent>(
+        1,
+        &MemberAddAgentParams {
+            command_id: "01C".into(),
+            member_id: "a1".into(),
+            name: "River".into(),
+            office_id: "o1".into(),
+            profile: profile(),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        add.params,
+        json!({
+            "command_id": "01C", "member_id": "a1", "name": "River", "office_id": "o1",
+            "profile": {
+                "role": "software engineer", "title": "Senior Backend Engineer",
+                "focus": "storage", "runtime": "claude_code",
+                "home": "/Users/me/agents/river", "messaging_name": "river",
+                "status": "active",
+            },
+        })
+    );
+    let status = Request::new::<MemberSetAgentStatus>(
+        2,
+        &MemberSetAgentStatusParams {
+            command_id: "01C".into(),
+            member_id: "a1".into(),
+            expected_version: 5,
+            status: AgentStatus::Paused,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        status.params,
+        json!({"command_id": "01C", "member_id": "a1", "expected_version": 5, "status": "paused"})
+    );
+    let moved = Request::new::<MemberMove>(
+        3,
+        &MemberMoveParams {
+            command_id: "01C".into(),
+            membership_id: "ms1".into(),
+            expected_version: 2,
+            new_membership_id: "ms2".into(),
+            to_team_id: "t2".into(),
+            title_in_team: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        moved.params,
+        json!({
+            "command_id": "01C", "membership_id": "ms1", "expected_version": 2,
+            "new_membership_id": "ms2", "to_team_id": "t2",
+        })
+    );
+    // Nothing given but the ids: no nulls, no clear flags.
+    let bare = Request::new::<MemberUpdateAgent>(
+        4,
+        &MemberUpdateAgentParams {
+            command_id: "01C".into(),
+            member_id: "a1".into(),
+            expected_version: 4,
+            name: None,
+            role: None,
+            title: None,
+            focus: None,
+            clear_focus: false,
+            runtime: None,
+            model: None,
+            clear_model: false,
+            home: None,
+            clear_home: false,
+            messaging_name: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        bare.params,
+        json!({"command_id": "01C", "member_id": "a1", "expected_version": 4})
+    );
+}
+
+#[test]
+fn a_runtime_from_a_newer_build_never_stops_a_member_a_change_or_a_snapshot_decoding() {
+    // Shapes an older build has never seen, in string and object form.
+    for runtime in [
+        json!("some_future_runtime"),
+        json!({"future": "x"}),
+        json!({"future": {"host": "h", "port": 1}}),
+        json!({"claude_code": "x"}),
+        json!({"other": 5}),
+        json!({}),
+        json!(null),
+        json!([1, 2]),
+        json!(7),
+    ] {
+        let member = json!({
+            "id": "a1", "kind": "agent", "name": "x", "office_id": "o1", "version": 1,
+            "agent": {
+                "role": "r", "title": "t", "runtime": runtime,
+                "messaging_name": "x", "status": "active",
+            },
+        });
+        let decoded: Member = serde_json::from_value(member.clone())
+            .unwrap_or_else(|e| panic!("runtime {runtime} broke the member: {e}"));
+        assert_eq!(
+            decoded.agent.as_ref().unwrap().runtime,
+            AgentRuntime::Unknown,
+            "{runtime}"
+        );
+
+        let change: OrgChange =
+            serde_json::from_value(json!({"type": "member_upserted", "member": member}))
+                .unwrap_or_else(|e| panic!("runtime {runtime} broke the change: {e}"));
+        assert!(matches!(change, OrgChange::MemberUpserted { .. }));
+
+        let snapshot: OrgSnapshot = serde_json::from_value(json!({
+            "position": {"epoch": 1, "seq": 1},
+            "teams": [], "members": [member], "memberships": [],
+        }))
+        .unwrap_or_else(|e| panic!("runtime {runtime} broke the snapshot: {e}"));
+        assert_eq!(snapshot.members.len(), 1);
+    }
+    // Extra keys beside a named `other` do not hide it.
+    assert_eq!(
+        serde_json::from_value::<AgentRuntime>(json!({"other": "zed", "x": 1})).unwrap(),
+        AgentRuntime::Other("zed".into())
+    );
+}
+
+#[test]
+fn a_missing_runtime_or_status_reads_as_unknown_not_as_an_error() {
+    let profile: AgentProfile = serde_json::from_value(json!({
+        "role": "r", "title": "t", "messaging_name": "x",
+    }))
+    .unwrap();
+    assert_eq!(profile.runtime, AgentRuntime::Unknown);
+    assert_eq!(profile.status, AgentStatus::Unknown);
+}
+
+#[test]
+fn agent_limits_are_pinned() {
+    assert_eq!(OWNER_HANDLE, "owner");
+    assert_eq!(AGENT_MESSAGING_NAME_MAX_CHARS, 64);
+    assert_eq!(AGENT_TEXT_MAX_CHARS, 200);
+    assert_eq!(AGENT_HOME_MAX_BYTES, 1024);
+}
+
+#[test]
+fn the_three_changes_of_a_member_move_that_leaves_a_led_team_have_these_wire_shapes() {
+    // What the contract says HQ emits when the member led the team it leaves: three changes in
+    // one event. This pins the shapes of those changes only; the move itself is HQ's, and is
+    // tested where it is implemented.
+    let changed = OrgChangedData {
+        position: Position { epoch: 1, seq: 9 },
+        command_id: "01C".into(),
+        changes: vec![
+            OrgChange::MembershipRemoved {
+                membership_id: "ms1".into(),
+            },
+            OrgChange::MembershipUpserted {
+                membership: Membership {
+                    id: "ms2".into(),
+                    team_id: "t2".into(),
+                    member_id: "a1".into(),
+                    title_in_team: None,
+                    version: 1,
+                },
+            },
+            OrgChange::TeamUpserted {
+                team: Team {
+                    id: "t1".into(),
+                    name: "Platform".into(),
+                    owner_team_id: None,
+                    lead_member_id: None,
+                    version: 3,
+                },
+            },
+        ],
+    };
+    assert_eq!(
+        serde_json::to_value(&changed).unwrap(),
+        json!({
+            "position": {"epoch": 1, "seq": 9},
+            "command_id": "01C",
+            "changes": [
+                {"type": "membership_removed", "membership_id": "ms1"},
+                {"type": "membership_upserted", "membership": {
+                    "id": "ms2", "team_id": "t2", "member_id": "a1", "version": 1}},
+                {"type": "team_upserted", "team": {
+                    "id": "t1", "name": "Platform", "version": 3}},
+            ],
+        })
+    );
+    let event = Event::new::<OrgChanged>(1, &changed).unwrap();
+    assert_eq!(event.data::<OrgChanged>().unwrap().unwrap(), changed);
+}
+
+#[test]
+fn unknown_serializes_as_unknown_and_odd_runtimes_round_trip() {
+    assert_eq!(
+        serde_json::to_value(AgentRuntime::Unknown).unwrap(),
+        json!("unknown")
+    );
+    assert_eq!(
+        serde_json::to_value(AgentStatus::Unknown).unwrap(),
+        json!("unknown")
+    );
+    // A decoded Unknown sent back stays Unknown (HQ refuses it; the client never invents one).
+    let back: AgentRuntime =
+        serde_json::from_value(serde_json::to_value(AgentRuntime::Unknown).unwrap()).unwrap();
+    assert_eq!(back, AgentRuntime::Unknown);
+    for name in ["", "zed", "a\"b\n\0\u{1F600}", "Codex"] {
+        let runtime = AgentRuntime::Other(name.into());
+        let back: AgentRuntime =
+            serde_json::from_value(serde_json::to_value(&runtime).unwrap()).unwrap();
+        assert_eq!(back, runtime, "{name:?}");
+    }
+}
+
+#[test]
+fn an_agent_status_in_any_unknown_shape_decodes_as_unknown() {
+    for status in [
+        json!(null),
+        json!(5),
+        json!([1]),
+        json!({"future": 1}),
+        json!({"paused": {"until": "x"}}),
+        json!("retired"),
+    ] {
+        let profile: AgentProfile = serde_json::from_value(json!({
+            "role": "r", "title": "t", "runtime": "codex", "messaging_name": "x",
+            "status": status,
+        }))
+        .unwrap_or_else(|e| panic!("status {status} broke the profile: {e}"));
+        assert_eq!(profile.status, AgentStatus::Unknown, "{status}");
+    }
+    let known: AgentStatus = serde_json::from_value(json!("paused")).unwrap();
+    assert_eq!(known, AgentStatus::Paused);
+}
+
+#[test]
+fn an_offboarded_agent_is_a_status_and_a_timestamp_on_the_same_member_record() {
+    use crate::org::*;
+    // The wire form of an offboarded agent.
+    let offboarded = AgentProfile {
+        status: AgentStatus::Offboarded,
+        offboarded_at: Some("2026-11-08T07:00:00.000Z".into()),
+        ..profile()
+    };
+    let v = serde_json::to_value(&offboarded).unwrap();
+    assert_eq!(v["status"], "offboarded");
+    assert_eq!(v["offboarded_at"], "2026-11-08T07:00:00.000Z");
+    assert_eq!(
+        serde_json::from_value::<AgentProfile>(v).unwrap(),
+        offboarded
+    );
+    // A working agent has no offboarded_at on the wire, and an older record without one reads.
+    assert!(serde_json::to_value(profile())
+        .unwrap()
+        .get("offboarded_at")
+        .is_none());
+    let old: AgentProfile = serde_json::from_value(json!({
+        "role": "r", "title": "t", "runtime": "codex", "messaging_name": "x", "status": "active",
+    }))
+    .unwrap();
+    assert_eq!(old.offboarded_at, None);
+
+    // The member keeps its id, name and handle: offboarding changes the status, so it travels
+    // as an ordinary member_upserted.
+    let member = Member {
+        id: "a1".into(),
+        kind: MemberKind::Agent,
+        name: "River".into(),
+        contact: None,
+        owner: false,
+        office_id: Some("o1".into()),
+        agent: Some(offboarded),
+        reports_to_member_id: None,
+        created_at: None,
+        version: 6,
+    };
+    let change = OrgChange::MemberUpserted { member };
+    let back: OrgChange = serde_json::from_value(serde_json::to_value(&change).unwrap()).unwrap();
+    assert_eq!(back, change);
+
+    // This build reads the word. (How an older build reads a word it does not know is the
+    // general mechanism tested by `an_agent_status_in_any_unknown_shape_decodes_as_unknown`.)
+    assert_eq!(
+        serde_json::from_value::<AgentStatus>(json!("offboarded")).unwrap(),
+        AgentStatus::Offboarded
+    );
+}
+
+#[test]
+fn member_offboard_params_are_pinned() {
+    use crate::org::*;
+    let request = Request::new::<MemberOffboard>(
+        1,
+        &MemberOffboardParams {
+            command_id: "01C".into(),
+            member_id: "a1".into(),
+            expected_version: 5,
+        },
+    )
+    .unwrap();
+    assert_eq!(request.method, "member.offboard");
+    assert_eq!(
+        request.params,
+        json!({"command_id": "01C", "member_id": "a1", "expected_version": 5})
+    );
+    assert_eq!(
+        request.params::<MemberOffboard>().unwrap().expected_version,
+        5
+    );
+}
+
+#[test]
+fn run_mode_and_schedule_wire_shapes_are_pinned() {
+    let scheduled = AgentProfile {
+        model: Some("claude-sonnet-5-5".into()),
+        run_mode: Some(RunMode::Scheduled),
+        schedule: Some(Schedule {
+            spec: "weekdays at 9".into(),
+            time_zone: "Europe/Lisbon".into(),
+        }),
+        ..profile()
+    };
+    let v = serde_json::to_value(&scheduled).unwrap();
+    assert_eq!(v["model"], "claude-sonnet-5-5");
+    assert_eq!(v["run_mode"], "scheduled");
+    assert_eq!(
+        v["schedule"],
+        json!({"spec": "weekdays at 9", "time_zone": "Europe/Lisbon"})
+    );
+    assert_eq!(
+        serde_json::from_value::<AgentProfile>(v).unwrap(),
+        scheduled
+    );
+    // Not set: nothing on the wire, and an older record reads as None.
+    let v = serde_json::to_value(profile()).unwrap();
+    for key in ["model", "run_mode", "schedule", "offboarded_at"] {
+        assert!(v.get(key).is_none(), "{key} was sent for a plain agent");
+    }
+    for (wire, want) in [
+        ("always_on", RunMode::AlwaysOn),
+        ("on_call", RunMode::OnCall),
+        ("scheduled", RunMode::Scheduled),
+    ] {
+        assert_eq!(serde_json::to_value(want).unwrap(), json!(wire));
+        assert_eq!(
+            serde_json::from_value::<RunMode>(json!(wire)).unwrap(),
+            want
+        );
+    }
+    assert_eq!(
+        serde_json::to_value(RunMode::Unknown).unwrap(),
+        json!("unknown")
+    );
+}
+
+#[test]
+fn a_run_mode_in_any_unknown_shape_decodes_as_unknown_and_never_breaks_the_profile() {
+    for run_mode in [
+        json!(null),
+        json!(5),
+        json!([1]),
+        json!({"future": 1}),
+        json!("on_demand"),
+    ] {
+        let profile: AgentProfile = serde_json::from_value(json!({
+            "role": "r", "title": "t", "runtime": "codex", "messaging_name": "x",
+            "status": "active", "run_mode": run_mode,
+        }))
+        .unwrap_or_else(|e| panic!("run_mode {run_mode} broke the profile: {e}"));
+        // `null` reads as "not set"; everything else we cannot read is Unknown.
+        let want = if run_mode.is_null() {
+            None
+        } else {
+            Some(RunMode::Unknown)
+        };
+        assert_eq!(profile.run_mode, want, "{run_mode}");
+    }
+}
+
+#[test]
+fn set_run_mode_and_the_new_update_fields_are_pinned() {
+    use crate::org::*;
+    let set = Request::new::<MemberSetRunMode>(
+        1,
+        &MemberSetRunModeParams {
+            command_id: "01C".into(),
+            member_id: "a1".into(),
+            expected_version: 3,
+            run_mode: Some(RunMode::Scheduled),
+            schedule: Some(Schedule {
+                spec: "daily at 6".into(),
+                time_zone: "UTC".into(),
+            }),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        set.params,
+        json!({
+            "command_id": "01C", "member_id": "a1", "expected_version": 3,
+            "run_mode": "scheduled", "schedule": {"spec": "daily at 6", "time_zone": "UTC"},
+        })
+    );
+    let always = Request::new::<MemberSetRunMode>(
+        2,
+        &MemberSetRunModeParams {
+            command_id: "01C".into(),
+            member_id: "a1".into(),
+            expected_version: 4,
+            run_mode: Some(RunMode::AlwaysOn),
+            schedule: None,
+        },
+    )
+    .unwrap();
+    assert!(always.params.get("schedule").is_none());
+    // Left out = "not office-run": a person starts the agent.
+    let cleared = Request::new::<MemberSetRunMode>(
+        3,
+        &MemberSetRunModeParams {
+            command_id: "01C".into(),
+            member_id: "a1".into(),
+            expected_version: 5,
+            run_mode: None,
+            schedule: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        cleared.params,
+        json!({"command_id": "01C", "member_id": "a1", "expected_version": 5})
+    );
+    assert_eq!(cleared.params::<MemberSetRunMode>().unwrap().run_mode, None);
+
+    let update = Request::new::<MemberUpdateAgent>(
+        3,
+        &MemberUpdateAgentParams {
+            command_id: "01C".into(),
+            member_id: "a1".into(),
+            expected_version: 4,
+            name: None,
+            role: None,
+            title: None,
+            focus: None,
+            clear_focus: false,
+            runtime: None,
+            model: Some("claude-opus-5-5".into()),
+            clear_model: false,
+            home: None,
+            clear_home: false,
+            messaging_name: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        update.params,
+        json!({"command_id": "01C", "member_id": "a1", "expected_version": 4,
+               "model": "claude-opus-5-5"})
+    );
+}
+
+#[test]
+fn a_member_carries_when_hq_created_it_and_older_records_without_it_still_read() {
+    let member = Member {
+        id: "a1".into(),
+        kind: MemberKind::Agent,
+        name: "River".into(),
+        contact: None,
+        owner: false,
+        office_id: Some("o1".into()),
+        agent: Some(profile()),
+        reports_to_member_id: None,
+        created_at: Some("2026-11-08T06:00:00.000Z".into()),
+        version: 1,
+    };
+    let v = serde_json::to_value(&member).unwrap();
+    assert_eq!(v["created_at"], "2026-11-08T06:00:00.000Z");
+    assert_eq!(serde_json::from_value::<Member>(v).unwrap(), member);
+    let old: Member =
+        serde_json::from_value(json!({"id": "a2", "kind": "agent", "name": "x", "version": 1}))
+            .unwrap();
+    assert_eq!(old.created_at, None);
+    assert!(serde_json::to_value(&old)
+        .unwrap()
+        .get("created_at")
+        .is_none());
+}
+
+#[test]
+fn schedule_limits_are_pinned() {
+    assert_eq!(AGENT_TIME_ZONE_MAX_CHARS, 64);
+}
+
+#[test]
+fn a_schedule_missing_a_field_still_reads_so_a_newer_writer_cannot_break_older_readers() {
+    let schedule: Schedule = serde_json::from_value(json!({"time_zone": "UTC"})).unwrap();
+    assert_eq!(schedule.spec, "");
+    let schedule: Schedule = serde_json::from_value(json!({"spec": "daily", "future": 1})).unwrap();
+    assert_eq!(schedule.time_zone, "");
+    // Inside a whole member too.
+    let profile: AgentProfile = serde_json::from_value(json!({
+        "role": "r", "title": "t", "runtime": "codex", "messaging_name": "x",
+        "status": "active", "run_mode": "scheduled", "schedule": {},
+    }))
+    .unwrap();
+    assert_eq!(
+        profile.schedule,
+        Some(Schedule {
+            spec: String::new(),
+            time_zone: String::new()
+        })
+    );
 }
