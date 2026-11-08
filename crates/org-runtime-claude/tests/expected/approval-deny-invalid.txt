@@ -17,8 +17,8 @@ event {"type":"approval_requested","data":{"id":"00000000-0000-4000-8000-0000000
 # line 7: to claude: control_response
 # not expressible through Decision: not sent
 # line 8: from claude: rate_limit_event
-event {"type":"rate_limit","data":{"window":{"type":"five_hour"},"used_fraction":null,"resets_at":null,"status":"unknown"}}
-event {"type":"rate_limit","data":{"window":{"type":"seven_day"},"used_fraction":null,"resets_at":null,"status":"unknown"}}
+event rate_limit {"type":"five_hour"}
+event rate_limit {"type":"seven_day"}
 # line 9: from claude: user
 event {"type":"tool_finished","data":{"tool_use_id":"toolu_016ZTQCKepEg7dpX9Msm37bh","is_error":true}}
 # line 10: from claude: assistant

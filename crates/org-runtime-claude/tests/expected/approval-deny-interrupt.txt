@@ -16,8 +16,8 @@ event {"type":"approval_requested","data":{"id":"00000000-0000-4000-8000-0000000
 # control Answer { request_id: ApprovalId("00000000-0000-4000-8000-000000000004"), decision: Deny { message: Some("Stopped by the owner"), stop_turn: true } }
 write {"response":{"request_id":"00000000-0000-4000-8000-000000000004","response":{"behavior":"deny","interrupt":true,"message":"Stopped by the owner"},"subtype":"success"},"type":"control_response"}
 # line 6: from claude: rate_limit_event
-event {"type":"rate_limit","data":{"window":{"type":"five_hour"},"used_fraction":null,"resets_at":null,"status":"unknown"}}
-event {"type":"rate_limit","data":{"window":{"type":"seven_day"},"used_fraction":null,"resets_at":null,"status":"unknown"}}
+event rate_limit {"type":"five_hour"}
+event rate_limit {"type":"seven_day"}
 # line 7: from claude: user
 event {"type":"tool_finished","data":{"tool_use_id":"toolu_01TNj4oFtEuaBpXkFfAFU6WP","is_error":true}}
 # line 8: from claude: user

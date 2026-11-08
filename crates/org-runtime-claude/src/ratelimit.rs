@@ -151,5 +151,18 @@ mod tests {
             }]
         );
         assert_eq!(from_event(&json!({"type": "rate_limit_event"})), None);
+        assert_eq!(from_event(&json!({"rate_limit_info": "<scrubbed>"})), None);
+        // Wrong types anywhere read as unknown, never a panic.
+        let wrong = json!({"rate_limit_info": {"status": 3, "unifiedWindows": {
+            "five_hour": "<scrubbed>", "seven_day": {"utilization": true, "resetsAt": 1.5,
+            "status": ["allowed"]}}}});
+        let limits = from_event(&wrong).unwrap();
+        assert_eq!(limits.len(), 2);
+        for l in limits {
+            assert_eq!(
+                (l.used_fraction, l.resets_at, l.status),
+                (None, None, LimitStatus::Unknown)
+            );
+        }
     }
 }

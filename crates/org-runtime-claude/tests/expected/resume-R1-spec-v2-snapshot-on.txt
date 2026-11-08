@@ -17,8 +17,8 @@ event {"type":"assistant_text","data":{"message_id":"msg_011Cgq5P6ewBcHjh5x42zB8
 # line 7: from claude: assistant
 event {"type":"tool_started","data":{"tool_use_id":"toolu_01Jk8b3qvRXyKyPxwza1H1d5","name":"Bash","input":{"command":"touch ok-r1.txt","description":"Create empty file ok-r1.txt"}}}
 # line 8: from claude: rate_limit_event
-event {"type":"rate_limit","data":{"window":{"type":"five_hour"},"used_fraction":null,"resets_at":null,"status":"unknown"}}
-event {"type":"rate_limit","data":{"window":{"type":"seven_day"},"used_fraction":null,"resets_at":null,"status":"unknown"}}
+event rate_limit {"type":"five_hour"}
+event rate_limit {"type":"seven_day"}
 # line 9: from claude: user
 event {"type":"tool_finished","data":{"tool_use_id":"toolu_01Jk8b3qvRXyKyPxwza1H1d5","is_error":false}}
 # line 10: from claude: assistant

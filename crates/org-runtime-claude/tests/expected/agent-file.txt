@@ -15,8 +15,8 @@ event {"type":"thinking"}
 # line 8: from claude: assistant
 event {"type":"assistant_text","data":{"message_id":"msg_011Cgq5L66rsSPJEcmSJoE92","text":"ZEPHYR: Name: Zephyr; office handle: NONE (none was assigned in my instructions)."}}
 # line 9: from claude: rate_limit_event
-event {"type":"rate_limit","data":{"window":{"type":"five_hour"},"used_fraction":null,"resets_at":null,"status":"unknown"}}
-event {"type":"rate_limit","data":{"window":{"type":"seven_day"},"used_fraction":null,"resets_at":null,"status":"unknown"}}
+event rate_limit {"type":"five_hour"}
+event rate_limit {"type":"seven_day"}
 # line 10: from claude: result/success
 event {"type":"usage","data":{"model":"claude-haiku-5-5","input":2,"output":6,"cache_read":0,"cache_write":3253,"reasoning":0,"cost_usd":0.0007388,"cost_basis":"list_price_estimate","scope":"turn_delta"}}
 event {"type":"turn_ended","data":{"outcome":{"type":"completed"},"errors":[]}}

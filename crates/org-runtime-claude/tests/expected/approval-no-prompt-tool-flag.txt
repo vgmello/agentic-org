@@ -15,8 +15,8 @@ event {"type":"action_denied","data":{"tool":"Bash","tool_use_id":"toolu_01YafNx
 # line 5: from claude: user
 event {"type":"tool_finished","data":{"tool_use_id":"toolu_01YafNxDn11VeV76KnMbyCpY","is_error":true}}
 # line 6: from claude: rate_limit_event
-event {"type":"rate_limit","data":{"window":{"type":"five_hour"},"used_fraction":null,"resets_at":null,"status":"unknown"}}
-event {"type":"rate_limit","data":{"window":{"type":"seven_day"},"used_fraction":null,"resets_at":null,"status":"unknown"}}
+event rate_limit {"type":"five_hour"}
+event rate_limit {"type":"seven_day"}
 # line 7: from claude: system/thinking_tokens
 # line 8: from claude: system/thinking_tokens
 # line 9: from claude: assistant
