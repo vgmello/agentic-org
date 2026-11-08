@@ -2,10 +2,36 @@
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { Toaster } from '$lib/components/ui/sonner';
 
+	import { onMount } from 'svelte';
+	import { invalidate } from '$app/navigation';
 	import { page } from '$app/state';
+	import { orgApi } from '$lib/org/api';
+	import { shouldReload } from '$lib/org/live';
 	import { navFor } from '$lib/nav';
 
 	let { data, children } = $props();
+
+	// The office says when the organization changes (someone else's command, or ours): the screens load it again,
+	// unless they already show it.
+	onMount(() => {
+		let stop: (() => void) | undefined;
+		let leaving = false;
+		orgApi
+			.onChanged((notice) => {
+				if (notice.organization_id === data.connection.organization.id && shouldReload(notice)) void invalidate('app:org');
+			})
+			.then((unlisten) => {
+				if (leaving) unlisten();
+				else stop = unlisten;
+			})
+			.catch(() => {
+				// No live changes then: a screen still loads the latest each time it opens.
+			});
+		return () => {
+			leaving = true;
+			stop?.();
+		};
+	});
 </script>
 
 <!-- The app fills the window edge to edge. -->

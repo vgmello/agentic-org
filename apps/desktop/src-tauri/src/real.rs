@@ -7,8 +7,9 @@
 //! picks the invented one instead.
 
 use crate::login_item::{LoginService, LoginState};
-use crate::office::{OfficeConnection, SetupError, SetupErrorCode, StatusSink};
+use crate::office::{OfficeConnection, OrgSink, SetupError, SetupErrorCode, StatusSink};
 use crate::org_command::OrgCommand;
+use crate::org_feed::{self, OrgSource};
 use crate::status_feed;
 use org_client::{Client, ClientError};
 use org_proto::org::{
@@ -22,7 +23,7 @@ use org_proto::{
     ApiError, CommandAccepted, Empty, ErrorCode, HelloResult, OfficeInfo, OfficeRole, OfficeStatus,
     OrgSnapshot, OrgSnapshotCall, Organization,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
@@ -51,6 +52,9 @@ pub struct RealOffice {
     /// The HQ office the host listed for each organization, so a call doesn't list organizations first; forgotten
     /// when a connection to it fails, and asked for again.
     hq: Mutex<HashMap<String, OfficeInfo>>,
+    /// Where the organization feeds report to (set once at startup), and the organizations already being followed.
+    org_sink: Mutex<Option<OrgSink>>,
+    followed: Mutex<HashSet<String>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -164,6 +168,8 @@ impl RealOffice {
             host: Mutex::new(None),
             offices: Mutex::new(HashMap::new()),
             hq: Mutex::new(HashMap::new()),
+            org_sink: Mutex::new(None),
+            followed: Mutex::new(HashSet::new()),
         }
     }
 
@@ -341,11 +347,18 @@ impl RealOffice {
         if let Some(client) = cached {
             return Ok(client);
         }
-        let client = Arc::new(Client::connect_office(office, &self.home)?);
-        client.hello()?; // a version this app can't speak is noticed here
-        self.bind_as_app(&client, &office.id)?;
+        let client = Arc::new(self.open_office(office)?);
         let replaced = lock(&self.offices).insert(office.id.clone(), Arc::clone(&client));
         drop(replaced);
+        Ok(client)
+    }
+
+    /// A new connection to `office`: said `hello` on (a version this app can't speak is noticed here) and bound as
+    /// the app. Every connection binds itself; none is shared by this call.
+    fn open_office(&self, office: &OfficeInfo) -> Result<Client, ClientError> {
+        let client = Client::connect_office(office, &self.home)?;
+        client.hello()?;
+        self.bind_as_app(&client, &office.id)?;
         Ok(client)
     }
 
@@ -536,6 +549,27 @@ impl OfficeConnection for RealOffice {
         false
     }
 
+    fn set_org_sink(&self, sink: OrgSink) {
+        *lock(&self.org_sink) = Some(sink);
+    }
+
+    fn follow_org(self: Arc<Self>, organization_id: &str) {
+        let Some(sink) = lock(&self.org_sink).clone() else {
+            return;
+        };
+        // Once per organization: a second call (every screen load) finds it followed. A feed lives as long as the app:
+        // Phase 1 has the organizations of this Mac, and a feed for one that went away only retries, slowly and quietly.
+        if !lock(&self.followed).insert(organization_id.to_string()) {
+            return;
+        }
+        let organization_id = organization_id.to_string();
+        std::thread::spawn(move || {
+            // The app never stops following: the thread ends with the process.
+            let never = AtomicBool::new(false);
+            org_feed::follow(&*self, &organization_id, &never, &*sink);
+        });
+    }
+
     fn follow_status(&self, sink: StatusSink) {
         let home = self.home.clone();
         std::thread::spawn(move || {
@@ -543,6 +577,39 @@ impl OfficeConnection for RealOffice {
             let never = AtomicBool::new(false);
             status_feed::follow(&home, &never, &*sink);
         });
+    }
+}
+
+impl OrgSource for RealOffice {
+    fn open_hq(&self, organization_id: &str) -> Result<Client, ClientError> {
+        // Where the host last said HQ is; if that office is not connectable, ask the host again.
+        let remembered = lock(&self.hq).contains_key(organization_id);
+        let mut office = self
+            .hq_of(organization_id, false)
+            .map_err(ClientError::Api)?;
+        // What the host said just now is not asked twice.
+        if remembered && not_connectable(office.status).is_some() {
+            office = self
+                .hq_of(organization_id, true)
+                .map_err(ClientError::Api)?;
+        }
+        if let Some(refusal) = not_connectable(office.status) {
+            return Err(ClientError::Api(refusal));
+        }
+        match self.open_office(&office) {
+            // The host's record may be old (the office moved or restarted): forget it, ask again, try once more.
+            Err(e) if dead(&e) || matches!(e, ClientError::OfficeNotReachable) => {
+                lock(&self.hq).remove(organization_id);
+                let latest = self
+                    .hq_of(organization_id, true)
+                    .map_err(ClientError::Api)?;
+                if let Some(refusal) = not_connectable(latest.status) {
+                    return Err(ClientError::Api(refusal));
+                }
+                self.open_office(&latest)
+            }
+            other => other,
+        }
     }
 }
 
@@ -1435,6 +1502,73 @@ mod tests {
             office.restart_office("gone").unwrap_err().code,
             ErrorCode::NotFound
         );
+    }
+
+    #[test]
+    fn the_feed_does_not_connect_to_an_hq_the_host_says_is_unavailable_and_asks_the_host_once() {
+        let f = fake(OfficeStatus::Unavailable, 0);
+        let office = real(&f);
+        let refused = match office.open_hq("org1") {
+            Err(ClientError::Api(a)) => a,
+            Err(other) => panic!("{other:?}"),
+            Ok(_) => panic!("connected to an unavailable office"),
+        };
+        assert_eq!(refused.code, ErrorCode::Unavailable);
+        assert_eq!(
+            f.host_log
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|m| *m == "organization.list")
+                .count(),
+            1,
+            "what the host said just now is not asked twice"
+        );
+        // The next attempt remembers the answer was old and asks again, once.
+        let _ = office.open_hq("org1");
+        assert_eq!(
+            f.host_log
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|m| *m == "organization.list")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn the_feed_gets_its_own_bound_connection_to_hq_and_following_twice_starts_one_feed() {
+        let f = fake(OfficeStatus::Active, 0);
+        f.require_bind.store(true, Ordering::SeqCst);
+        f.capabilities
+            .lock()
+            .unwrap()
+            .push(org_proto::capability::OFFICE_APP_TOKEN.to_string());
+        let office = Arc::new(real(&f));
+        // A connection the feed can use for as long as it likes: bound, and not the one reads and commands share.
+        let feeds = office.open_hq("org1").unwrap();
+        feeds.call::<OrgSnapshotCall>(&Empty {}).unwrap();
+        office.org_snapshot("org1").unwrap();
+        let another = office.open_hq("org1").unwrap();
+        another.call::<OrgSnapshotCall>(&Empty {}).unwrap();
+        assert_eq!(
+            f.host_log
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|m| *m == "office.app_token")
+                .count(),
+            3,
+            "every connection to the office binds itself"
+        );
+        // Without a sink there is nowhere to report, so nothing starts; with one, the organization is followed once.
+        Arc::clone(&office).follow_org("org1");
+        assert!(office.followed.lock().unwrap().is_empty());
+        office.set_org_sink(Arc::new(|_| {}));
+        Arc::clone(&office).follow_org("org1");
+        Arc::clone(&office).follow_org("org1");
+        assert_eq!(office.followed.lock().unwrap().len(), 1);
     }
 
     #[test]

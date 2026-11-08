@@ -292,3 +292,19 @@ test('TEAM-10: arrow keys move between the member tiles, Home and End go to the 
 	await page.keyboard.press('Enter'); // a tile is a button: Enter selects it
 	await expect(page.getByTestId('selected-member')).toBeVisible();
 });
+
+test('LIVE: a change someone else makes shows on the open org chart without a reload', async ({ page }) => {
+	await openChart(page);
+	await expect(card(page, 'qa-live')).toHaveCount(0);
+	const organizationId = await page.evaluate(() => {
+		const saved = JSON.parse(localStorage.getItem('agentic-org.mock.connections') ?? '[]') as { organization: { id: string } }[];
+		return saved[saved.length - 1].organization.id;
+	});
+	// As if another person (or an agent) had created a team, through the office.
+	await page.evaluate(
+		([id]) => (window as unknown as { __mockOrgChange: (o: string, c: object) => Promise<unknown> }).__mockOrgChange(id, { method: 'team.create', params: { team_id: 'qa-live', name: 'Live QA' } }),
+		[organizationId]
+	);
+	await expect(card(page, 'qa-live')).toBeVisible();
+	await expect(card(page, 'qa-live')).toContainText('Live QA');
+});
