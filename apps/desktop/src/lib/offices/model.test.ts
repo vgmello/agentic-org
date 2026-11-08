@@ -108,6 +108,11 @@ describe('OFC-13 each status has its icon, and a row says everything to a screen
 describe('OFC-12 status is never shown stale', () => {
 	it('the connected office is Online only while it is verified, Unreachable when it does not answer, Checking meanwhile', () => {
 		expect(displayStatus(true, 'up')).toBe('active');
+		// The host answering is not the office being up: another reported status wins over Online.
+		expect(displayStatus(true, 'up', 'active')).toBe('active');
+		expect(displayStatus(true, 'up', 'unavailable')).toBe('unavailable');
+		expect(displayStatus(true, 'up', 'starting')).toBe('starting');
+		expect(displayStatus(true, 'down', 'active')).toBe('unreachable');
 		expect(displayStatus(true, 'down')).toBe('unreachable');
 		expect(displayStatus(true, 'checking')).toBe('checking');
 	});
