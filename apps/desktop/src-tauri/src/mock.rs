@@ -5,11 +5,13 @@
 //! like the server will: 1 to 64 characters after trimming, no control characters.
 
 use crate::office::{OfficeConnection, SetupError, SetupErrorCode};
+use crate::org_mock::Seed;
 use org_proto::{
-    ApiError, ErrorCode, HelloResult, OfficeInfo, OfficeRole, OfficeStatus, Organization,
-    OrganizationName, API_VERSION,
+    ApiError, ErrorCode, HelloResult, OfficeInfo, OfficeRole, OfficeStatus, OrgSnapshot,
+    Organization, OrganizationName, API_VERSION,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
@@ -42,6 +44,9 @@ pub struct MockOffice {
     /// How long `ensure_running` pretends to take, so the progress state is visible.
     startup_delay: Duration,
     organizations: Mutex<Vec<Organization>>,
+    /// What a new organization's structure starts as, and the structure of each one opened so far.
+    seed: Seed,
+    structures: Mutex<HashMap<String, OrgSnapshot>>,
     /// Where the organizations are kept between launches, like the real office's storage. `None`
     /// keeps them in memory only (tests).
     store: Option<PathBuf>,
@@ -56,6 +61,8 @@ impl MockOffice {
             scenario,
             startup_delay,
             organizations: Mutex::new(Vec::new()),
+            seed: Seed::Sample,
+            structures: Mutex::new(HashMap::new()),
             store: None,
             unreadable: Mutex::new(false),
         }
@@ -81,6 +88,7 @@ impl MockOffice {
         };
         Self {
             organizations: Mutex::new(organizations),
+            seed: Seed::parse(std::env::var("AGENTIC_ORG_MOCK_ORG").ok().as_deref()),
             store: Some(file),
             unreadable: Mutex::new(unreadable),
             ..Self::new(scenario, Duration::from_millis(900))
@@ -332,6 +340,34 @@ impl OfficeConnection for MockOffice {
             .unwrap_or_else(|e| e.into_inner())
             .clone())
     }
+
+    fn org_snapshot(&self, organization_id: &str) -> Result<OrgSnapshot, ApiError> {
+        self.check_readable()?;
+        let hq = {
+            let organizations = self.organizations.lock().unwrap_or_else(|e| e.into_inner());
+            let organization = organizations
+                .iter()
+                .find(|o| o.id == organization_id)
+                .ok_or_else(|| api_error(ErrorCode::NotFound, "That organization isn't here."))?;
+            organization
+                .offices
+                .iter()
+                .find(|o| o.role == OfficeRole::Hq)
+                .map(|o| o.id.clone())
+                .ok_or_else(|| {
+                    api_error(ErrorCode::NotFound, "That organization has no HQ office.")
+                })?
+        };
+        let mut structures = self.structures.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(structures
+            .entry(organization_id.to_string())
+            .or_insert_with(|| self.seed.snapshot(&hq))
+            .clone())
+    }
+
+    fn serves_sample_data(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]
@@ -340,6 +376,49 @@ mod tests {
 
     fn healthy() -> MockOffice {
         MockOffice::new(Scenario::Healthy, Duration::ZERO)
+    }
+
+    #[test]
+    fn org_snapshot_seeds_each_organization_once_with_agents_placed_in_its_hq() {
+        let office = healthy();
+        let a = office.create_organization("Alpha").unwrap();
+        let b = office.create_organization("Beta").unwrap();
+        let hq = |o: &Organization| o.offices[0].id.clone();
+        let sa = office.org_snapshot(&a.id).unwrap();
+        assert!(sa
+            .members
+            .iter()
+            .any(|m| m.office_id.as_deref() == Some(hq(&a).as_str())));
+        assert!(!sa
+            .members
+            .iter()
+            .any(|m| m.office_id.as_deref() == Some(hq(&b).as_str())));
+        assert_eq!(
+            office.org_snapshot(&a.id).unwrap(),
+            sa,
+            "the same structure on every call"
+        );
+        assert!(office
+            .org_snapshot(&b.id)
+            .unwrap()
+            .members
+            .iter()
+            .any(|m| m.office_id.as_deref() == Some(hq(&b).as_str())));
+        assert_eq!(
+            office.org_snapshot("missing").unwrap_err().code,
+            ErrorCode::NotFound
+        );
+        assert!(office.serves_sample_data());
+    }
+
+    #[test]
+    fn an_empty_seed_starts_an_organization_with_only_its_owner() {
+        let mut office = healthy();
+        office.seed = Seed::Empty;
+        let a = office.create_organization("Alpha").unwrap();
+        let s = office.org_snapshot(&a.id).unwrap();
+        assert_eq!(s.members.len(), 1);
+        assert!(s.members[0].owner);
     }
 
     #[test]

@@ -8,11 +8,12 @@ mod connections;
 mod menu_model;
 mod mock;
 mod office;
+mod org_mock;
 mod tray;
 
 use connections::{local_office, Connection, ConnectionStore};
 use office::{OfficeConnection, SetupError};
-use org_proto::{ApiError, HelloResult, OfficeStatus, Organization};
+use org_proto::{ApiError, HelloResult, OfficeStatus, OrgSnapshot, Organization};
 use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -29,6 +30,15 @@ struct AppState {
     /// Counts successful starts, so a caller can tell whether someone else already restarted the
     /// office since it saw a failure.
     epoch: AtomicU64,
+}
+
+/// An organization's structure as the UI reads it. `sample` is app-local, not part of `org-proto`.
+#[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(serde::Deserialize))]
+struct OrgView {
+    snapshot: OrgSnapshot,
+    /// True while the snapshot is invented (the mock office), not the organization's own.
+    sample: bool,
 }
 
 /// An error the UI can tell apart: `source` says which layer failed and `code` is its code.
@@ -221,6 +231,15 @@ impl AppState {
         self.remember(organization)
     }
 
+    /// The structure of an organization this machine hosts, and whether it is invented.
+    fn org_snapshot(&self, organization_id: &str) -> Result<OrgView, CommandError> {
+        self.ensure_connected()?;
+        Ok(OrgView {
+            snapshot: self.office.org_snapshot(organization_id)?,
+            sample: self.office.serves_sample_data(),
+        })
+    }
+
     fn connections(&self) -> Result<Vec<Connection>, CommandError> {
         self.store
             .list()
@@ -278,6 +297,15 @@ async fn organization_open(
     Ok(connection)
 }
 
+#[tauri::command]
+async fn org_snapshot(
+    state: State<'_, Arc<AppState>>,
+    organization_id: String,
+) -> Result<OrgView, CommandError> {
+    let state = Arc::clone(&state);
+    blocking(move || state.with_restart(|s| s.org_snapshot(&organization_id))).await
+}
+
 /// Remembered connections, oldest first (the most recent is last).
 #[tauri::command]
 async fn connections_list(
@@ -320,6 +348,7 @@ pub fn run() {
             organization_create,
             organizations_list,
             organization_open,
+            org_snapshot,
             connections_list
         ])
         .build(tauri::generate_context!())
@@ -363,6 +392,20 @@ mod tests {
     }
 
     #[test]
+    fn an_organizations_structure_needs_a_running_office_and_says_it_is_sample_data() {
+        let (state, dir) = state_with(vec![hosted("a", "Alpha")]);
+        let err = state.org_snapshot("a").unwrap_err();
+        assert_eq!((err.source, err.code.as_str()), ("app", "not_connected"));
+        state.ensure_running().unwrap();
+        let view = state.org_snapshot("a").unwrap();
+        assert!(view.sample, "the mock office's data is invented");
+        assert_eq!(view.snapshot.members.iter().filter(|m| m.owner).count(), 1);
+        let err = state.org_snapshot("nope").unwrap_err();
+        assert_eq!((err.source, err.code.as_str()), ("api", "not_found"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn creating_before_the_office_is_running_is_refused() {
         let (state, dir) = make_state(Scenario::Healthy);
         let err = state.create_organization("Acme").unwrap_err();
@@ -396,11 +439,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir2);
     }
 
-    const COMMANDS: [&str; 5] = [
+    const COMMANDS: [&str; 6] = [
         "office_ensure_running",
         "organization_create",
         "organizations_list",
         "organization_open",
+        "org_snapshot",
         "connections_list",
     ];
 
@@ -421,6 +465,7 @@ mod tests {
                 .collect()
         };
         let mut from_ui = quoted(include_str!("../../src/lib/office/tauri.ts"));
+        from_ui.extend(quoted(include_str!("../../src/lib/org/tauri.ts")));
         let mut from_build = quoted(include_str!("../build.rs"));
         let mut declared: Vec<String> = COMMANDS.iter().map(|c| c.to_string()).collect();
         from_ui.sort();
@@ -607,6 +652,9 @@ mod tests {
             }
             Ok(vec![hosted("a", "Alpha")])
         }
+        fn org_snapshot(&self, _: &str) -> Result<OrgSnapshot, ApiError> {
+            unreachable!()
+        }
     }
 
     fn flaky_state(failures: usize) -> (AppState, Arc<Flaky>) {
@@ -789,5 +837,7 @@ mod tests {
             serde_json::to_value(connection).unwrap(),
             fixture["connection"]
         );
+        let view: OrgView = serde_json::from_value(fixture["org_view"].clone()).unwrap();
+        assert_eq!(serde_json::to_value(view).unwrap(), fixture["org_view"]);
     }
 }

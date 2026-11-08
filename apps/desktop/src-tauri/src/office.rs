@@ -4,7 +4,7 @@
 //! implements it. The real implementation will sit on `org-client` and the office-setup layer
 //! (install, login-service registration, start), neither of which exists yet.
 
-use org_proto::{ApiError, HelloResult, Organization};
+use org_proto::{ApiError, HelloResult, OrgSnapshot, Organization};
 use serde::Serialize;
 
 /// Why the office could not be made ready. These belong to the app's setup layer, not to
@@ -32,4 +32,12 @@ pub trait OfficeConnection: Send + Sync {
 
     /// Every organization this office hosts (`organization.list`).
     fn list_organizations(&self) -> Result<Vec<Organization>, ApiError>;
+
+    /// `org.snapshot`: the structure of an organization, from this machine's office.
+    fn org_snapshot(&self, organization_id: &str) -> Result<OrgSnapshot, ApiError>;
+
+    /// True while the data this connection serves is invented (the mock office), so the UI says so.
+    fn serves_sample_data(&self) -> bool {
+        false
+    }
 }

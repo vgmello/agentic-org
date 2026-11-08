@@ -1,6 +1,7 @@
 import { orgApi } from '$lib/org/api';
 
-export async function load({ depends }) {
+export async function load({ depends, parent }) {
 	depends('app:org');
-	return { snapshot: await orgApi.snapshot(), sample: orgApi.sample };
+	const { connection } = await parent();
+	return await orgApi.view(connection.organization.id);
 }

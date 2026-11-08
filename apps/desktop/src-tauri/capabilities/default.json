@@ -13,6 +13,7 @@
     "allow-connections-list",
     "allow-organizations-list",
     "allow-organization-open",
+    "allow-org-snapshot",
     "core:event:allow-listen",
     "core:event:allow-unlisten"
   ]

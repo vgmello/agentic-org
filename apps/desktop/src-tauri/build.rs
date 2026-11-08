@@ -7,6 +7,7 @@ fn main() {
             "organization_create",
             "organizations_list",
             "organization_open",
+            "org_snapshot",
             "connections_list",
         ]),
     ))
