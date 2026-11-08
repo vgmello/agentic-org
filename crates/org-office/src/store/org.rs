@@ -26,11 +26,12 @@ use org_proto::org::{
     Area, CommandAccepted, CommandStatus, Member, MemberKind, Membership, OrgChange, OrgSnapshot,
     Position, Project, ProjectTeam, Team,
 };
-use org_proto::ApiError;
+use org_proto::{ApiError, ErrorCode};
 
 use super::Schema;
 use crate::error::OfficeError;
 use crate::rules::{self, OrgCommand, OrgView, OrgWrite};
+use crate::{time, ulid};
 
 /// The epoch of every entry until promotion exists (phase 4).
 const EPOCH: u64 = 1;
@@ -353,60 +354,181 @@ pub(crate) fn append_event(
     Ok(next)
 }
 
-/// Runs one command: a retry of a committed `command_id` gets that commit's answer without
-/// deciding again; otherwise the rules decide, and the resolved changes are applied and logged
-/// in the caller's savepoint, together with the `command_id`. A command the rules refuse writes
-/// nothing, so it is not remembered: a retry decides again, against the state then.
+const DAY_MS: u64 = 86_400_000;
+/// A command whose id is dated further back than this is `expired` (offices design, dedup window).
+const MAX_AGE_MS: u64 = 29 * DAY_MS;
+/// A command whose id is dated further ahead of HQ's clock than this is `clock_skew`.
+const MAX_AHEAD_MS: u64 = 5 * 60_000;
+/// How long an answer is kept: from the id's own time, so no clock can reopen the window.
+const KEEP_MS: u64 = 30 * DAY_MS;
+/// `meta` row: the highest clock reading HQ has used, so a clock that steps back cannot reopen
+/// the window.
+const CLOCK_HIGH_KEY: &str = "clock_high_ms";
+
+/// What `commands.result` holds: a fingerprint of the command, and the refusal if HQ refused it
+/// (a committed command's answer is its `(epoch, seq)` columns).
+#[derive(Serialize, serde::Deserialize)]
+struct Answer {
+    params_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    refusal: Option<ApiError>,
+}
+
+fn fingerprint(command: &OrgCommand) -> String {
+    use sha2::{Digest, Sha256};
+    let (method, params) = command.method_and_params();
+    let mut hasher = Sha256::new();
+    hasher.update(method.as_bytes());
+    hasher.update([0]);
+    hasher.update(params.as_bytes());
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// Runs one command at HQ (the offices design's step 3), in the caller's savepoint.
 ///
-/// The retry is matched on the `command_id` alone: the same id with other params gets the first
-/// command's answer (the contract: a retry with the same id gets the same answer).
+/// 1. **Lookup first.** A `command_id` HQ already answered gets that answer without deciding
+///    again: the commit's position, or the same refusal (**rejections are remembered too**; to
+///    retry a refused command the client uses a new id). The same id with other params is
+///    `invalid_request`.
+/// 2. The id must be a ULID (`invalid_request`), dated no more than 29 days back (`expired`) and
+///    no more than 5 minutes ahead (`clock_skew`) of HQ's clock, which never goes back
+///    (`clock_ms` is the clock's reading; the highest one used is kept). These are not stored.
+/// 3. The rules decide. A refusal is stored under the id (position `(0, 0)`: log positions start
+///    at `(1, 1)`); a decision is applied, logged and stored.
 ///
-/// `expires_at` is when the `command_id` may be forgotten (nothing purges yet).
+/// An answer is kept until its id's time + 30 days (`expires_at`); nothing purges them yet.
+///
+/// The fingerprint is a hash of the method and the params' JSON as the contract's types write
+/// it, so a later contract change to a params type's serialization would change the hash of
+/// stored answers; such a change must come with a migration of `commands`.
+///
+/// Every refusal the rules give is stored. The rules give only domain refusals (never a storage
+/// or availability code, which `org-work` leaves unstored); a rule that ever does must be
+/// excluded here.
 pub(crate) fn submit(
     db: &Connection,
-    now: &str,
-    expires_at: &str,
+    clock_ms: u64,
     command: &OrgCommand,
 ) -> Result<Result<CommandAccepted, ApiError>, OfficeError> {
-    let committed = |position| {
-        Ok(CommandAccepted {
-            status: CommandStatus::Committed,
-            position: Some(position),
-        })
-    };
+    let command_id = command.command_id();
+    let params_hash = fingerprint(command);
     let seen = db
         .query_row(
-            "SELECT epoch, seq FROM commands WHERE command_id = ?1",
-            [command.command_id()],
+            "SELECT epoch, seq, result FROM commands WHERE command_id = ?1",
+            [command_id],
             |row| {
-                Ok(Position {
-                    epoch: row.get::<_, i64>(0)? as u64,
-                    seq: row.get::<_, i64>(1)? as u64,
-                })
+                Ok((
+                    Position {
+                        epoch: row.get::<_, i64>(0)? as u64,
+                        seq: row.get::<_, i64>(1)? as u64,
+                    },
+                    row.get::<_, Option<String>>(2)?,
+                ))
             },
         )
         .optional()
         .map_err(OfficeError::storage)?;
-    if let Some(position) = seen {
-        return Ok(committed(position));
+    if let Some((position, answer)) = seen {
+        let answer: Answer = answer
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .ok_or(OfficeError::Invalid(
+                "a stored command answer is not readable",
+            ))?;
+        return Ok(if answer.params_hash != params_hash {
+            Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "command id reused with different params",
+            ))
+        } else if let Some(refusal) = answer.refusal {
+            Err(refusal)
+        } else {
+            Ok(committed(position))
+        });
     }
-    let changes = match rules::decide(&OrgSql(db), now, command) {
+
+    let Some(made_ms) = ulid::time_ms(command_id) else {
+        return Ok(Err(ApiError::new(
+            ErrorCode::InvalidRequest,
+            "`command_id` must be a ULID",
+        )));
+    };
+    // Absent until the first command; an unreadable mark is an error, not "no mark".
+    let high = match db
+        .query_row(
+            "SELECT value FROM meta WHERE key = ?1",
+            [CLOCK_HIGH_KEY],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(OfficeError::storage)?
+    {
+        None => 0,
+        Some(value) => value
+            .parse::<u64>()
+            .map_err(|_| OfficeError::Invalid("the clock high-water mark is not readable"))?,
+    };
+    let now_ms = clock_ms.max(high);
+    if now_ms > high {
+        db.execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (CLOCK_HIGH_KEY, now_ms.to_string()),
+        )
+        .map_err(OfficeError::storage)?;
+    }
+    if now_ms.saturating_sub(made_ms) > MAX_AGE_MS {
+        return Ok(Err(ApiError::new(
+            ErrorCode::Expired,
+            "the command id is too old",
+        )));
+    }
+    if made_ms > now_ms.saturating_add(MAX_AHEAD_MS) {
+        return Ok(Err(ApiError::new(
+            ErrorCode::ClockSkew,
+            "the command id is dated ahead of HQ's clock",
+        )));
+    }
+
+    let remember = |position: Position, refusal: Option<ApiError>| {
+        db.execute(
+            "INSERT INTO commands (command_id, epoch, seq, expires_at, result)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            (
+                command_id,
+                position.epoch as i64,
+                position.seq as i64,
+                time::format_epoch_ms(made_ms.saturating_add(KEEP_MS)),
+                json(&Answer {
+                    params_hash: params_hash.clone(),
+                    refusal,
+                }),
+            ),
+        )
+        .map_err(OfficeError::storage)
+    };
+    let now = time::format_epoch_ms(now_ms);
+    let changes = match rules::decide(&OrgSql(db), &now, command) {
         Ok(changes) => changes,
-        Err(refusal) => return Ok(Err(refusal)),
+        Err(refusal) => {
+            remember(Position { epoch: 0, seq: 0 }, Some(refusal.clone()))?;
+            return Ok(Err(refusal));
+        }
     };
     apply_changes(db, &changes)?;
-    let position = append_event(db, command.command_id(), now, &changes)?;
-    db.execute(
-        "INSERT INTO commands (command_id, epoch, seq, expires_at) VALUES (?1, ?2, ?3, ?4)",
-        (
-            command.command_id(),
-            position.epoch as i64,
-            position.seq as i64,
-            expires_at,
-        ),
-    )
-    .map_err(OfficeError::storage)?;
-    Ok(committed(position))
+    let position = append_event(db, command_id, &now, &changes)?;
+    remember(position, None)?;
+    Ok(Ok(committed(position)))
+}
+
+fn committed(position: Position) -> CommandAccepted {
+    CommandAccepted {
+        status: CommandStatus::Committed,
+        position: Some(position),
+    }
 }
 
 /// Whether the organization is committed: the log has an entry, or (an `org.db` from before the
@@ -1000,5 +1122,137 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(store.read(snapshot), Err(OfficeError::NotFound)));
+    }
+
+    #[test]
+    fn an_answer_is_kept_until_its_ids_time_plus_30_days_whatever_the_clock_says() {
+        let (_dir, store) = store();
+        let clock = 1_800_000_000_000u64;
+        let made = clock - 86_400_000; // a day ago
+        let id = crate::ulid::from_ms(made, 7);
+        let command = OrgCommand::TeamCreate(TeamCreateParams {
+            command_id: id.clone(),
+            team_id: "T1".into(),
+            name: "Platform".into(),
+            owner_team_id: None,
+        });
+
+        store
+            .write(move |db| Ok((submit(db, clock, &command).unwrap().unwrap(), None)))
+            .unwrap();
+
+        let (expires_at, epoch, seq): (String, i64, i64) = store
+            .read(|db| {
+                db.query_row(
+                    "SELECT expires_at, epoch, seq FROM commands WHERE command_id = ?1",
+                    [&id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .map_err(OfficeError::storage)
+            })
+            .unwrap();
+        assert_eq!(
+            expires_at,
+            crate::time::format_epoch_ms(made + 30 * 86_400_000)
+        );
+        assert_eq!((epoch, seq), (1, 2));
+    }
+
+    fn create_team(id: &str) -> OrgCommand {
+        OrgCommand::TeamCreate(TeamCreateParams {
+            command_id: id.into(),
+            team_id: "T1".into(),
+            name: "Platform".into(),
+            owner_team_id: None,
+        })
+    }
+
+    fn run(store: &Store, clock: u64, command: OrgCommand) -> Result<CommandAccepted, ApiError> {
+        store
+            .write(move |db| Ok((submit(db, clock, &command).unwrap(), None)))
+            .unwrap()
+    }
+
+    fn stored_commands(store: &Store) -> i64 {
+        store
+            .read(|db| {
+                db.query_row("SELECT COUNT(*) FROM commands", (), |row| row.get(0))
+                    .map_err(OfficeError::storage)
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn the_window_edges_are_exactly_29_days_back_and_5_minutes_ahead() {
+        let clock = 1_800_000_000_000u64;
+        let ulid = |ms, n| crate::ulid::from_ms(ms, n);
+        let day = 86_400_000;
+        let code = |result: Result<CommandAccepted, ApiError>| result.unwrap_err().code;
+        let (_dir, store) = store();
+
+        // 29 days back to the millisecond is still inside; one more is `expired`.
+        assert_eq!(
+            code(run(
+                &store,
+                clock,
+                create_team(&ulid(clock - 29 * day - 1, 1))
+            )),
+            ErrorCode::Expired
+        );
+        assert!(run(&store, clock, create_team(&ulid(clock - 29 * day, 2))).is_ok());
+        // 5 minutes ahead exactly is inside; one more is `clock_skew`.
+        let other = |id: &str| {
+            OrgCommand::TeamCreate(TeamCreateParams {
+                command_id: id.into(),
+                team_id: "T2".into(),
+                name: "Design".into(),
+                owner_team_id: None,
+            })
+        };
+        assert_eq!(
+            code(run(&store, clock, other(&ulid(clock + 300_000 + 1, 3)))),
+            ErrorCode::ClockSkew
+        );
+        assert!(run(&store, clock, other(&ulid(clock + 300_000, 4))).is_ok());
+    }
+
+    #[test]
+    fn what_is_not_an_answer_is_never_stored() {
+        let clock = 1_800_000_000_000u64;
+        let (_dir, store) = store();
+        for bad in [
+            "not a ulid".to_owned(),
+            crate::ulid::from_ms(clock - 40 * 86_400_000, 1),
+            crate::ulid::from_ms(clock + 3_600_000, 2),
+        ] {
+            assert!(run(&store, clock, create_team(&bad)).is_err());
+        }
+        assert_eq!(stored_commands(&store), 0);
+
+        // A refusal by the rules is an answer, and a commit is one.
+        let refused = OrgCommand::TeamCreate(TeamCreateParams {
+            command_id: crate::ulid::from_ms(clock, 3),
+            team_id: "T1".into(),
+            name: " ".into(),
+            owner_team_id: None,
+        });
+        assert!(run(&store, clock, refused).is_err());
+        assert!(run(&store, clock, create_team(&crate::ulid::from_ms(clock, 4))).is_ok());
+        assert_eq!(stored_commands(&store), 2);
+    }
+
+    #[test]
+    fn an_unreadable_clock_mark_is_an_error_not_no_mark() {
+        let clock = 1_800_000_000_000u64;
+        let (_dir, store) = store();
+        store.run_sql_for_test("INSERT INTO meta (key, value) VALUES ('clock_high_ms', 'garbage')");
+
+        let outcome = store.write(move |db| {
+            let id = crate::ulid::from_ms(clock, 1);
+            Ok((submit(db, clock, &create_team(&id)).is_err(), None))
+        });
+
+        assert!(outcome.unwrap());
+        assert_eq!(stored_commands(&store), 0);
     }
 }

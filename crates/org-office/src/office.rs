@@ -20,8 +20,6 @@ use org_proto::OrganizationName;
 /// server and its replacement never overlap.
 pub const LOCK_WAIT: Duration = Duration::from_secs(10);
 
-/// How long a committed `command_id` is remembered, so a retry gets the same answer.
-const COMMAND_ID_DAYS: u64 = 30;
 const LOCK_FILE: &str = "office.lock";
 const ORG_DB: &str = "org.db";
 const OFFICE_DB: &str = "office.db";
@@ -342,11 +340,8 @@ impl Office {
         command: OrgCommand,
     ) -> Result<Result<CommandAccepted, ApiError>, OfficeError> {
         // The clock is read in the writer, so the log's times follow its order.
-        self.org.write(move |db| {
-            let now = time::now_rfc3339();
-            let expires_at = time::days_from_now(COMMAND_ID_DAYS);
-            Ok((org_db::submit(db, &now, &expires_at, &command)?, None))
-        })
+        self.org
+            .write(move |db| Ok((org_db::submit(db, time::now_ms(), &command)?, None)))
     }
 
     /// What `office.json` records about this office.

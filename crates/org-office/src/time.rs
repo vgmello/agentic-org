@@ -3,20 +3,15 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(crate) fn now_rfc3339() -> String {
-    let ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
-    format_epoch_ms(ms)
+    format_epoch_ms(now_ms())
 }
 
-/// The time `days` days from now, in the same format.
-pub(crate) fn days_from_now(days: u64) -> String {
-    let ms = SystemTime::now()
+/// Unix milliseconds now.
+pub(crate) fn now_ms() -> u64 {
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_millis() as u64;
-    format_epoch_ms(ms + days * 86_400_000)
+        .as_millis() as u64
 }
 
 /// Howard Hinnant's civil-from-days algorithm. The output format matches the agent message
