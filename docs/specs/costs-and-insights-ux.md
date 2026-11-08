@@ -140,7 +140,7 @@ Extends `work-items-ux.md` (tasks, bugs), `our-org-in-the-app.md` (sessions, run
 - TIME-7 · *(new, rev 4)* Waiting on you counts questions to the owner, Fixed bugs the owner reported (waiting for the owner's check), scoped requests waiting for approval, triage suggested to the owner, and tasks Blocked waiting for the owner's decision on a proposed ADR (only while that decision is the task's blocker, ada Q11).
 
 **Insights (INS)**
-- INS-1 · *(rev 5)* The project's Insights tab shows cost, tokens, working time and items done for the period, with the change from the previous period. Until session tracking exists, working time shows "—" with "not tracked yet" (tile, investment line, breakdowns, Insights › Projects and the agent profile), never a number.
+- INS-1 · *(rev 5)* The project's Insights tab shows cost, tokens, working time and items done for the period, with the change from the previous period. Until session tracking exists, working time shows "—" with "not tracked yet" (tile, investment line, speed figures, breakdowns, Insights › Projects and the agent profile), never a number.
 - INS-2 · Breakdowns by team, area, agent, model and kind are available, each with a table view for screen readers.
 - INS-3 · Insights are sentences with a link to the items behind them. At least these exist: an outlier task or bug (≥ 3× its team's median), waiting on you this period, and a cost concentration (one area or team ≥ 40%).
 - INS-4 · A runtime with no usage data is marked in every total it affects, never counted as zero.

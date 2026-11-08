@@ -94,7 +94,7 @@ Every organization has one built-in agent, **HR lead**, created with the organiz
 
 - **Always there, never removable:** it can't be offboarded, deleted, moved into a team or given reports, and nobody reports to it. Its name is fixed ("HR lead"), and its handle `hr` is reserved like `owner`. The owner can change only its runtime, model and how it runs.
 - **On call by default** (`agent-run-modes-ux.md`): asleep until a Hire, an Add agent or a provisioning request wakes it. Its runs and cost show under "HR lead" in Insights.
-- **Where it shows:** beside the owner bar in the org chart as a compact chip, "HR lead · built-in · Asleep · wakes when called", which opens its quick view. It never appears on a team card, in Teams, People or Reporting lines, or in member and lead pickers. In the Agents roster it sits in its own **Built-in** group at the top.
+- **Where it shows:** beside the owner bar in the org chart as a compact chip, "HR lead · built-in · Asleep · wakes when called", which opens its quick view; in the Agents roster's own **Built-in** group at the top; and in Chat, in Direct messages and in @ completion, as "HR lead" (it can be messaged). It never appears on a team card, in Teams, People or Reporting lines, or in member, lead and manager pickers.
 - **Someone always approves** *(rev 8)*: anything the HR lead provisions needs an approved Hire review, either by the owner or by a manager with **Can approve hires** (§7.1). Agents ask it (`@hr` in Chat, or `org-agent hire request "…"`), and the request is routed to its approver. Hiring is never automatic.
 - **Import:** the HR toolkit's own agent (`.claude/agents/hr.md` in the agents repo) maps onto the built-in HR lead. It isn't brought in as a member.
 
@@ -207,7 +207,7 @@ Every organization has one built-in agent, **HR lead**, created with the organiz
 v1 §3.6 holds, with these changes for the office model:
 
 - **Describe:** "What do you need?" plus **Team** (optional, prefilled from where Hire was opened) instead of Project. Projects come with the team.
-- **Suggestion (HR's proposal):** role, title (with level), name, focus, **team**, **reports to** (the team's lead by default), and **runtime** (the organization's default, or what the role suggests).
+- **Suggestion (the HR lead's proposal):** role, title (with level), name, focus, **team**, **reports to** (the team's lead by default), and **runtime** (the organization's default, or what the role suggests).
 - **Review:** what will be created, as a dry run: the member (name, messaging name `ac-qa-engineer-cameron`), team, reports to, runtime and model, office ("This Mac"), home folder, the role file if it's new, and "Cameron can be reached by everyone in <org>".
 - **Hiring:** in words (Creating Cameron's record… Setting up the home folder… Registering with messaging…). **Done:** "Cameron is hired and in App." **Open in Claude Code** / **Open session** (primary), Assign a task, View profile.
 - **Runtime not installed or signed out** (chosen in Suggestion): the Review warns "Codex isn't signed in on This Mac. Cameron is hired, but can't start until it is." **Hire anyway** works.
@@ -330,7 +330,7 @@ The owner can always approve or reject any proposal. Someone who requests a hire
 | G3 | Import: read the HR workspace and the spool inboxes into a reviewable plan, then apply it (CLI first, then the app) | codex-dev (ada, after W8, with the W7 model) | W12 |
 | G4 | Messaging names ⇄ members: a message from `codex-dev` is linked to its member, and `who`/presence are keyed the same way | Remy (messaging owner) | W6 Phase B |
 | G5 | Activity feed: one stream over messages, status, work items, team changes and git merges | ada (contract), server-dev, Remy | new |
-| G6 | Hire on the office: HR's proposal and provisioning as an office call (the `hr.py` logic ported) | codex-dev (ada) | W12 |
+| G6 | Hire on the office: the HR lead's proposal and provisioning as an office call (the HR toolkit's `hr.py` logic ported) | codex-dev (ada) | W12 |
 | G7 | App screens: Import, the agent record, Activity, Home, Hire and Add agent, Move, Pause and Offboard | app-frontend-dev (ada; Riley stays offline) | W9 / W12 |
 | G8 | Runtime hand-off: "Open in Codex/Antigravity" and session launch per runtime | codex-dev (adapters, W8) + app-frontend-dev | W8 / W9 |
 
