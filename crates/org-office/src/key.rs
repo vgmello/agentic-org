@@ -56,6 +56,10 @@ pub trait KeyProvider {
     /// Saves `key` for `office_id`. Must not return `Ok` until the key is durable: the
     /// office creates its database only after this succeeds.
     fn store(&self, office_id: &str, key: &Key) -> Result<(), KeyError>;
+
+    /// Removes the key saved for `office_id`; having none is not an error. Only a failed
+    /// `Office::create` and `Office::discard` call it, for a key no database holds data under.
+    fn delete(&self, office_id: &str) -> Result<(), KeyError>;
 }
 
 #[cfg(any(test, feature = "dev-keys"))]
@@ -105,6 +109,11 @@ mod in_memory {
             self.saved().insert(office_id.to_owned(), key.clone());
             Ok(())
         }
+
+        fn delete(&self, office_id: &str) -> Result<(), KeyError> {
+            self.saved().remove(office_id);
+            Ok(())
+        }
     }
 }
 
@@ -130,6 +139,10 @@ mod tests {
         keys.store("a", &Key::from_bytes([1; 32])).unwrap();
         assert_eq!(keys.load("a").unwrap(), Some(Key::from_bytes([1; 32])));
         assert!(keys.load("b").unwrap().is_none());
+
+        keys.delete("a").unwrap();
+        assert!(keys.load("a").unwrap().is_none());
+        keys.delete("a").unwrap(); // having none is fine
 
         let fixed = InMemoryKeys::fixed(Key::from_bytes([7; 32]));
         assert_eq!(

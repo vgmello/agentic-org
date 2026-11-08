@@ -51,6 +51,7 @@ impl OrganizationName {
     /// decomposed "É" differ), and only control characters (category Cc) are rejected, so
     /// zero-width and bidi characters are allowed. The key is stored, so a change here
     /// needs a migration.
+    #[allow(dead_code)] // the HQ rules compare names by this key
     pub(crate) fn uniqueness_key(&self) -> String {
         self.0.to_lowercase()
     }

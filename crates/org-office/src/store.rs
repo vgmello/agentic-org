@@ -17,17 +17,13 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
+use rusqlite::config::DbConfig;
 use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 
 use crate::error::OfficeError;
 use crate::key::Key;
-use crate::model::{OfficeInfo, Organization};
-use crate::name::OrganizationName;
 use crate::private_fs::{private_file, tighten_file_if_present};
-use crate::{time, ulid};
 
-const SCHEMA_VERSION: i64 = 1;
-const DEFAULT_OFFICE_NAME: &str = "This Mac";
 /// Idle reader connections kept for reuse.
 const MAX_IDLE_READERS: usize = 4;
 /// Most requests committed together.
@@ -47,6 +43,14 @@ struct WriteJob {
 
 /// One go at a request, inside its savepoint.
 type Attempt = dyn FnMut(&Connection) -> Result<Option<Undo>, OfficeError> + Send;
+
+/// What a database holds. `create` makes the tables of a new database, inside the transaction
+/// that sets `user_version` to `version`; an existing database is only checked against
+/// `version` (a newer one is refused).
+pub(crate) struct Schema {
+    pub(crate) version: i64,
+    pub(crate) create: fn(&rusqlite::Transaction<'_>) -> rusqlite::Result<()>,
+}
 
 /// Whether `Store::open` may make the database, or must find one already there.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -68,17 +72,17 @@ pub(crate) struct Store {
 }
 
 impl Store {
-    /// Opens the encrypted registry at `db_path`, which must be absolute, with `key`, and
-    /// returns it with this office's identity. `Opening::New` creates the file and schema;
-    /// `Opening::Existing` never does. `office_id` is the id the office already holds; a
-    /// database that belongs to another office is refused. The caller must hold the office
-    /// lock: the store assumes it is the only process touching the database.
+    /// Opens the encrypted database at `db_path`, which must be absolute, with `key`.
+    /// `Opening::New` creates the file and `schema`; `Opening::Existing` never does. What the
+    /// database says about whose it is (its `meta` rows) is for the caller to check. The caller
+    /// must hold the office lock: the store assumes it is the only process touching the
+    /// database.
     pub(crate) fn open(
         db_path: &Path,
         key: &Key,
-        office_id: &str,
         opening: Opening,
-    ) -> Result<(Self, OfficeInfo), OfficeError> {
+        schema: &Schema,
+    ) -> Result<Self, OfficeError> {
         if !db_path.is_absolute() {
             return Err(failure("the database path must be absolute"));
         }
@@ -102,7 +106,7 @@ impl Store {
             tighten_file_if_present(Path::new(&sidecar)).map_err(OfficeError::storage)?;
         }
 
-        let mut writer = connect(db_path, key, opening == Opening::New)?;
+        let mut writer = connect(db_path, key, opening == Opening::New, true)?;
         if opening == Opening::Existing {
             // Before anything writes (switching to WAL would write a header): a file without
             // our schema is not an office, and must not silently become a new, empty one.
@@ -121,7 +125,7 @@ impl Store {
                 "SQLite refused WAL mode (stayed in {journal_mode})"
             )));
         }
-        let info = migrate(&mut writer, office_id)?;
+        migrate(&mut writer, schema)?;
 
         let (jobs, queue) = mpsc::channel::<WriteJob>();
         let thread = std::thread::Builder::new()
@@ -136,92 +140,13 @@ impl Store {
             db_path: db_path.to_owned(),
             key: key.clone(),
         };
-        Ok((store, info))
-    }
-
-    /// Registers an organization, or fails with `AlreadyExists`.
-    ///
-    /// `before_commit` runs after the row is inserted and before the batch commits (the
-    /// office makes the workspace folder there). If it fails, nothing is registered, and it
-    /// must have cleaned up after itself. If it succeeds and the batch is then not
-    /// committed, the `Undo` it returned is run. It may run more than once, for a request
-    /// that is re-run, so it must be repeatable.
-    pub(crate) fn create_organization(
-        &self,
-        name: &OrganizationName,
-        before_commit: impl Fn(&Organization) -> std::io::Result<Undo> + Send + 'static,
-    ) -> Result<Organization, OfficeError> {
-        let display_name = name.as_str().to_owned();
-        let name_key = name.uniqueness_key();
-        self.write(move |db| {
-            // Stamped on the writer, so `created_at` never runs against insertion order
-            // (barring a backwards clock step). Ids are random within a millisecond: don't
-            // sort by id.
-            let organization = Organization {
-                id: ulid::generate().map_err(OfficeError::storage)?,
-                name: display_name.clone(),
-                created_at: time::now_rfc3339(),
-            };
-            // Only the writer inserts, so this check can't race. The UNIQUE constraint stays
-            // as a backstop, but the answer doesn't depend on SQLite's error wording.
-            let taken = db
-                .query_row(
-                    "SELECT EXISTS (SELECT 1 FROM organizations WHERE name_key = ?1)",
-                    [&name_key],
-                    |row| row.get::<_, bool>(0),
-                )
-                .map_err(OfficeError::storage)?;
-            if taken {
-                return Err(OfficeError::AlreadyExists);
-            }
-            db.execute(
-                "INSERT INTO organizations (id, name, name_key, created_at)
-                 VALUES (?1, ?2, ?3, ?4)",
-                (
-                    &organization.id,
-                    &organization.name,
-                    &name_key,
-                    &organization.created_at,
-                ),
-            )
-            .map_err(|e| {
-                if is_unique_violation(&e, "name_key") {
-                    OfficeError::AlreadyExists
-                } else {
-                    OfficeError::storage(e)
-                }
-            })?;
-
-            // A failure here rolls the request's savepoint back.
-            let undo = before_commit(&organization).map_err(OfficeError::storage)?;
-            Ok((organization, Some(undo)))
-        })
-    }
-
-    /// All organizations in creation order. Ordered by insertion (`rowid`), not by timestamp
-    /// or id: two creates inside one millisecond have equal timestamps and random-suffixed ids.
-    pub(crate) fn list_organizations(&self) -> Result<Vec<Organization>, OfficeError> {
-        self.read(|db| {
-            let mut statement = db
-                .prepare("SELECT id, name, created_at FROM organizations ORDER BY rowid")
-                .map_err(OfficeError::storage)?;
-            let rows = statement
-                .query_map((), |row| {
-                    Ok(Organization {
-                        id: row.get(0)?,
-                        name: row.get(1)?,
-                        created_at: row.get(2)?,
-                    })
-                })
-                .map_err(OfficeError::storage)?;
-            rows.collect::<Result<_, _>>().map_err(OfficeError::storage)
-        })
+        Ok(store)
     }
 
     /// Queues `work` for the writer and waits for it to be committed. `work` runs inside a
     /// savepoint and returns its value plus an optional `Undo` for effects outside the
     /// database. It may be run again (see [`WriteJob`]).
-    fn write<R: Send + 'static>(
+    pub(crate) fn write<R: Send + 'static>(
         &self,
         mut work: impl FnMut(&Connection) -> Result<(R, Option<Undo>), OfficeError> + Send + 'static,
     ) -> Result<R, OfficeError> {
@@ -256,7 +181,7 @@ impl Store {
     }
 
     /// Runs `work` on a reader connection: an idle one if there is one, else a new one.
-    fn read<R>(
+    pub(crate) fn read<R>(
         &self,
         work: impl FnOnce(&Connection) -> Result<R, OfficeError>,
     ) -> Result<R, OfficeError> {
@@ -264,7 +189,7 @@ impl Store {
         let db = match idle {
             Some(db) => db,
             None => {
-                let db = connect(&self.db_path, &self.key, false)?;
+                let db = connect(&self.db_path, &self.key, false, true)?;
                 db.pragma_update(None, "query_only", true)
                     .map_err(OfficeError::storage)?;
                 db
@@ -279,6 +204,22 @@ impl Store {
             }
         }
         result
+    }
+
+    /// Looks into an existing database without changing anything: opens it read-only-ish
+    /// (never creates it, never checkpoints on close) and runs `look`. Used by `--discard`.
+    pub(crate) fn inspect<R>(
+        db_path: &Path,
+        key: &Key,
+        look: impl FnOnce(&Connection) -> Result<R, OfficeError>,
+    ) -> Result<R, OfficeError> {
+        if !db_path.is_absolute() {
+            return Err(failure("the database path must be absolute"));
+        }
+        let db = connect(db_path, key, false, false)?;
+        db.pragma_update(None, "query_only", true)
+            .map_err(OfficeError::storage)?;
+        look(&db)
     }
 
     /// Test seam: runs raw SQL on the writer, to inject failures the engine can't otherwise
@@ -521,14 +462,23 @@ fn wipe(text: &mut String) {
 }
 
 /// Opens a connection to the encrypted database and proves the key works. Only with
-/// `create` may SQLite make the file if it is missing.
-fn connect(db_path: &Path, key: &Key, create: bool) -> Result<Connection, OfficeError> {
+/// `create` may SQLite make the file if it is missing. Until the key is proved, closing the
+/// connection must not checkpoint (that would write the log into a file this key can't
+/// read); with `checkpoint_on_close` false it never does, for a connection that only looks.
+fn connect(
+    db_path: &Path,
+    key: &Key,
+    create: bool,
+    checkpoint_on_close: bool,
+) -> Result<Connection, OfficeError> {
     let mut flags = OpenFlags::default();
     if !create {
         flags.remove(OpenFlags::SQLITE_OPEN_CREATE);
     }
     // `db_path` is absolute, so SQLite can't read it as a `file:` URI.
     let db = Connection::open_with_flags(db_path, flags).map_err(OfficeError::storage)?;
+    db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)
+        .map_err(OfficeError::storage)?;
     // A raw key skips the passphrase KDF, so opening a connection is cheap. If this fails,
     // say nothing about why: the statement holds the key and rusqlite's errors quote SQL.
     let pragma = KeyPragma::new(key);
@@ -552,6 +502,11 @@ fn connect(db_path: &Path, key: &Key, create: bool) -> Result<Connection, Office
         row.get::<_, i64>(0)
     })
     .map_err(OfficeError::storage)?;
+    if checkpoint_on_close {
+        // The key works: the last connection to close may checkpoint, as it should.
+        db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, false)
+            .map_err(OfficeError::storage)?;
+    }
     // A commit is on the drive before it is acknowledged. Plain fsync on macOS doesn't flush
     // the drive's cache; `fullfsync` does, and `checkpoint_fullfsync` does the same for the
     // checkpoints that copy the WAL into the database file. Set on every connection, readers
@@ -566,68 +521,26 @@ fn connect(db_path: &Path, key: &Key, create: bool) -> Result<Connection, Office
     Ok(db)
 }
 
-fn is_unique_violation(error: &rusqlite::Error, column: &str) -> bool {
-    matches!(
-        error,
-        rusqlite::Error::SqliteFailure(failure, Some(message))
-            if failure.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
-                && message.contains(column)
-    )
-}
-
-/// Brings the database to `SCHEMA_VERSION` and returns this office's identity. A new
-/// database records `office_id`; an existing one must agree with it.
-fn migrate(db: &mut Connection, office_id: &str) -> Result<OfficeInfo, OfficeError> {
+/// Brings the database to `schema.version`: a new one gets its tables, a newer one is refused.
+fn migrate(db: &mut Connection, schema: &Schema) -> Result<(), OfficeError> {
     let tx = db
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(OfficeError::storage)?;
     let version: i64 = tx
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(OfficeError::storage)?;
-    if version > SCHEMA_VERSION {
+    if version > schema.version {
         return Err(failure(format!(
-            "database schema {version} is newer than this server supports ({SCHEMA_VERSION})"
+            "database schema {version} is newer than this server supports ({})",
+            schema.version
         )));
     }
     if version < 1 {
-        tx.execute_batch(
-            "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
-             CREATE TABLE organizations (
-                 id TEXT PRIMARY KEY,
-                 name TEXT NOT NULL,
-                 name_key TEXT NOT NULL UNIQUE,
-                 created_at TEXT NOT NULL
-             ) STRICT;",
-        )
-        .map_err(OfficeError::storage)?;
-        for (key, value) in [
-            ("office_id", office_id),
-            ("office_name", DEFAULT_OFFICE_NAME),
-        ] {
-            tx.execute(
-                "INSERT INTO meta (key, value) VALUES (?1, ?2)",
-                (key, value),
-            )
-            .map_err(OfficeError::storage)?;
-        }
-        tx.pragma_update(None, "user_version", SCHEMA_VERSION)
+        (schema.create)(&tx).map_err(OfficeError::storage)?;
+        tx.pragma_update(None, "user_version", schema.version)
             .map_err(OfficeError::storage)?;
     }
-    let meta = |key: &str| -> Result<String, OfficeError> {
-        tx.query_row("SELECT value FROM meta WHERE key = ?1", [key], |row| {
-            row.get(0)
-        })
-        .map_err(OfficeError::storage)
-    };
-    let info = OfficeInfo {
-        id: meta("office_id")?,
-        name: meta("office_name")?,
-    };
-    if info.id != office_id {
-        return Err(failure("the database belongs to a different office"));
-    }
-    tx.commit().map_err(OfficeError::storage)?;
-    Ok(info)
+    tx.commit().map_err(OfficeError::storage)
 }
 
 #[cfg(test)]
@@ -638,16 +551,136 @@ mod tests {
 
     use super::*;
 
-    const ID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    use crate::name::OrganizationName;
+    use crate::{time, ulid};
+
+    const SCHEMA_VERSION: i64 = 1;
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub(crate) struct Organization {
+        pub(crate) id: String,
+        pub(crate) name: String,
+        pub(crate) created_at: String,
+    }
+
+    /// A small registry schema: the engine's tests need some table to write to.
+    const REGISTRY: Schema = Schema {
+        version: SCHEMA_VERSION,
+        create: |tx| {
+            tx.execute_batch(
+                "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
+                 CREATE TABLE organizations (
+                     id TEXT PRIMARY KEY,
+                     name TEXT NOT NULL,
+                     name_key TEXT NOT NULL UNIQUE,
+                     created_at TEXT NOT NULL
+                 ) STRICT;",
+            )
+        },
+    };
+
+    fn open_store(path: &Path, key: &Key, opening: Opening) -> Result<Store, OfficeError> {
+        Store::open(path, key, opening, &REGISTRY)
+    }
 
     fn key() -> Key {
         Key::from_bytes([7; 32])
     }
 
     fn open_in(dir: &TempDir) -> Store {
-        Store::open(&dir.path().join("office.db"), &key(), ID, Opening::New)
-            .unwrap()
-            .0
+        open_store(&dir.path().join("office.db"), &key(), Opening::New).unwrap()
+    }
+
+    // The registry operations the engine's tests drive the writer with. (The engine itself
+    // knows no tables; the office's own tables live with the office.)
+    impl Store {
+        /// Registers an organization, or fails with `AlreadyExists`.
+        ///
+        /// `before_commit` runs after the row is inserted and before the batch commits (the
+        /// office makes the workspace folder there). If it fails, nothing is registered, and it
+        /// must have cleaned up after itself. If it succeeds and the batch is then not
+        /// committed, the `Undo` it returned is run. It may run more than once, for a request
+        /// that is re-run, so it must be repeatable.
+        pub(crate) fn create_organization(
+            &self,
+            name: &OrganizationName,
+            before_commit: impl Fn(&Organization) -> std::io::Result<Undo> + Send + 'static,
+        ) -> Result<Organization, OfficeError> {
+            let display_name = name.as_str().to_owned();
+            let name_key = name.uniqueness_key();
+            self.write(move |db| {
+                // Stamped on the writer, so `created_at` never runs against insertion order
+                // (barring a backwards clock step). Ids are random within a millisecond: don't
+                // sort by id.
+                let organization = Organization {
+                    id: ulid::generate().map_err(OfficeError::storage)?,
+                    name: display_name.clone(),
+                    created_at: time::now_rfc3339(),
+                };
+                // Only the writer inserts, so this check can't race. The UNIQUE constraint stays
+                // as a backstop, but the answer doesn't depend on SQLite's error wording.
+                let taken = db
+                    .query_row(
+                        "SELECT EXISTS (SELECT 1 FROM organizations WHERE name_key = ?1)",
+                        [&name_key],
+                        |row| row.get::<_, bool>(0),
+                    )
+                    .map_err(OfficeError::storage)?;
+                if taken {
+                    return Err(OfficeError::AlreadyExists);
+                }
+                db.execute(
+                    "INSERT INTO organizations (id, name, name_key, created_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                    (
+                        &organization.id,
+                        &organization.name,
+                        &name_key,
+                        &organization.created_at,
+                    ),
+                )
+                .map_err(|e| {
+                    if is_unique_violation(&e, "name_key") {
+                        OfficeError::AlreadyExists
+                    } else {
+                        OfficeError::storage(e)
+                    }
+                })?;
+
+                // A failure here rolls the request's savepoint back.
+                let undo = before_commit(&organization).map_err(OfficeError::storage)?;
+                Ok((organization, Some(undo)))
+            })
+        }
+
+        /// All organizations in creation order. Ordered by insertion (`rowid`), not by timestamp
+        /// or id: two creates inside one millisecond have equal timestamps and random-suffixed ids.
+        pub(crate) fn list_organizations(&self) -> Result<Vec<Organization>, OfficeError> {
+            self.read(|db| {
+                let mut statement = db
+                    .prepare("SELECT id, name, created_at FROM organizations ORDER BY rowid")
+                    .map_err(OfficeError::storage)?;
+                let rows = statement
+                    .query_map((), |row| {
+                        Ok(Organization {
+                            id: row.get(0)?,
+                            name: row.get(1)?,
+                            created_at: row.get(2)?,
+                        })
+                    })
+                    .map_err(OfficeError::storage)?;
+                rows.collect::<Result<_, _>>().map_err(OfficeError::storage)
+            })
+        }
+    }
+
+    fn is_unique_violation(error: &rusqlite::Error, column: &str) -> bool {
+        matches!(
+            error,
+            rusqlite::Error::SqliteFailure(failure, Some(message))
+                if failure.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
+                    && message.contains(column)
+        )
     }
 
     fn no_undo() -> Undo {
@@ -665,7 +698,7 @@ mod tests {
             .unwrap();
         drop(raw);
         assert!(matches!(
-            Store::open(&path, &key(), ID, Opening::New),
+            open_store(&path, &key(), Opening::New),
             Err(OfficeError::Storage(_))
         ));
     }
@@ -676,7 +709,7 @@ mod tests {
         let path = dir.path().join("office.db");
 
         // No file: refused, and none is made.
-        assert!(Store::open(&path, &key(), ID, Opening::Existing).is_err());
+        assert!(open_store(&path, &key(), Opening::Existing).is_err());
         assert!(!path.exists(), "a database file was created");
 
         // An empty file with a WAL beside it: refused, and neither file is touched.
@@ -684,7 +717,7 @@ mod tests {
         let wal = dir.path().join("office.db-wal");
         std::fs::write(&wal, b"whatever the log holds").unwrap();
         assert!(matches!(
-            Store::open(&path, &key(), ID, Opening::Existing),
+            open_store(&path, &key(), Opening::Existing),
             Err(OfficeError::Storage(_))
         ));
         assert_eq!(
@@ -712,7 +745,7 @@ mod tests {
         assert!(!before.is_empty());
 
         assert!(matches!(
-            Store::open(&path, &key(), ID, Opening::Existing),
+            open_store(&path, &key(), Opening::Existing),
             Err(OfficeError::Storage(_))
         ));
         assert_eq!(std::fs::read(&path).unwrap(), before, "it was changed");
@@ -726,19 +759,16 @@ mod tests {
         store.create_organization(&name, |_| Ok(no_undo())).unwrap();
         drop(store);
 
-        let (store, info) =
-            Store::open(&dir.path().join("office.db"), &key(), ID, Opening::Existing).unwrap();
-        assert_eq!(info.id, ID);
+        let store = open_store(&dir.path().join("office.db"), &key(), Opening::Existing).unwrap();
         assert_eq!(store.list_organizations().unwrap().len(), 1);
     }
 
     #[test]
     fn refuses_a_relative_database_path() {
         // A relative path starting with `file:` would be read by SQLite as a URI.
-        let error = Store::open(
+        let error = open_store(
             Path::new("file:office.db?cache=shared"),
             &key(),
-            ID,
             Opening::New,
         );
         assert!(matches!(error, Err(OfficeError::Storage(_))));
@@ -784,7 +814,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("notadb");
         std::fs::write(&path, vec![0x55u8; 8192]).unwrap();
-        let error = Store::open(&path, &key(), ID, Opening::New).err().unwrap();
+        let error = open_store(&path, &key(), Opening::New).err().unwrap();
         let text = format!("{error:?} {error} {:?}", std::error::Error::source(&error));
         assert!(
             !text.contains(&"07".repeat(32)),
@@ -823,12 +853,51 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_open_never_writes_the_log_into_a_file_it_cannot_read() {
+        // A database whose log still holds committed pages, as a crash leaves it: copy the
+        // files while the store is open. Opening the copy with the wrong key must fail and
+        // leave both files byte for byte as they were (closing a connection must not
+        // checkpoint into a file this key cannot read).
+        let dir = TempDir::new().unwrap();
+        let store = open_in(&dir);
+        let name = OrganizationName::parse("Acme").unwrap();
+        store.create_organization(&name, |_| Ok(no_undo())).unwrap();
+        let copy = TempDir::new().unwrap();
+        for file in ["office.db", "office.db-wal"] {
+            std::fs::copy(dir.path().join(file), copy.path().join(file)).unwrap();
+        }
+        let wal = copy.path().join("office.db-wal");
+        assert!(
+            std::fs::metadata(&wal).unwrap().len() > 0,
+            "no log to protect"
+        );
+        let (db_before, wal_before) = (
+            std::fs::read(copy.path().join("office.db")).unwrap(),
+            std::fs::read(&wal).unwrap(),
+        );
+
+        let wrong = open_store(
+            &copy.path().join("office.db"),
+            &Key::from_bytes([8; 32]),
+            Opening::Existing,
+        );
+
+        assert!(wrong.is_err());
+        assert_eq!(
+            std::fs::read(copy.path().join("office.db")).unwrap(),
+            db_before
+        );
+        assert_eq!(std::fs::read(&wal).unwrap(), wal_before);
+        drop(store);
+    }
+
+    #[test]
     fn refuses_the_wrong_key_and_a_plain_database() {
         let dir = TempDir::new().unwrap();
         drop(open_in(&dir));
         let path = dir.path().join("office.db");
         assert!(matches!(
-            Store::open(&path, &Key::from_bytes([8; 32]), ID, Opening::New),
+            open_store(&path, &Key::from_bytes([8; 32]), Opening::New),
             Err(OfficeError::Storage(_))
         ));
 
@@ -838,22 +907,9 @@ mod tests {
             .execute_batch("CREATE TABLE t (x)")
             .unwrap();
         assert!(matches!(
-            Store::open(&plain, &key(), ID, Opening::New),
+            open_store(&plain, &key(), Opening::New),
             Err(OfficeError::Storage(_))
         ));
-    }
-
-    #[test]
-    fn refuses_a_database_that_belongs_to_another_office() {
-        let dir = TempDir::new().unwrap();
-        drop(open_in(&dir));
-        let other = Store::open(
-            &dir.path().join("office.db"),
-            &key(),
-            "SOMEONEELSESOFFICE000000",
-            Opening::New,
-        );
-        assert!(matches!(other, Err(OfficeError::Storage(_))));
     }
 
     #[test]

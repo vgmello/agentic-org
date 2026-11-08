@@ -11,10 +11,16 @@ publish.workspace = true
 # in release builds: an office's key belongs in the Keychain (ADR-0002). Enforced: with it,
 # a build without debug assertions fails (`compile_error!` in key.rs), so
 # `--release --all-features` fails too.
+#
+# Release and CI jobs name their feature sets explicitly (`--no-default-features` plus what the
+# job needs, never `--all-features`): `--all-features` enables `dev-keys`, and a release build
+# with it fails to compile on purpose.
 dev-keys = []
 
 [dependencies]
 rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

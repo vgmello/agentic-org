@@ -1,223 +1,528 @@
-use std::fs::{self, File, OpenOptions, TryLockError};
-use std::io::Write;
-use std::os::unix::fs::OpenOptionsExt;
+use std::fs::{self, File, TryLockError};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use crate::error::OfficeError;
 use crate::key::{Key, KeyProvider};
-use crate::model::{OfficeInfo, Organization};
+use crate::model::{NewOffice, OfficeInfo};
 use crate::name::OrganizationName;
-use crate::private_fs::{
-    absolute, private_dir, private_file, tighten_dir, tighten_file_if_present,
-};
-use crate::store::{Opening, Store, Undo};
-use crate::ulid;
+use crate::office_file::{self, is_plain_id};
+use crate::private_fs::{absolute, private_dir, private_file, tighten_dir};
+use crate::store::{Opening, Schema, Store};
+use crate::time;
 
-/// An office rooted at a home directory:
+/// How long `create`, `open` and `discard` wait for the folder's lock: a slow-exiting old
+/// server and its replacement never overlap.
+pub const LOCK_WAIT: Duration = Duration::from_secs(10);
+
+const LOCK_FILE: &str = "office.lock";
+const ORG_DB: &str = "org.db";
+const OFFICE_DB: &str = "office.db";
+const WORKSPACE: &str = "workspace";
+
+/// Everything an office folder can hold besides its lock; `create` refuses a folder with any
+/// of it, and a failed `create` removes what it made.
+const OFFICE_ENTRIES: [&str; 11] = [
+    office_file::FILE_NAME,
+    "office.json.tmp",
+    WORKSPACE,
+    // A database's log and index go before its main file: a main file that is gone while a
+    // non-empty log remains is a state nothing may look into (see `discard`).
+    "org.db-wal",
+    "org.db-shm",
+    "org.db-journal",
+    "org.db",
+    "office.db-wal",
+    "office.db-shm",
+    "office.db-journal",
+    "office.db",
+];
+
+const SCHEMA_VERSION: i64 = 1;
+const ORG_SCHEMA: Schema = Schema {
+    version: SCHEMA_VERSION,
+    create: |tx| {
+        tx.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;")
+    },
+};
+const OFFICE_SCHEMA: Schema = ORG_SCHEMA;
+
+/// An office: ONE folder, `<home>/offices/<office-id>/`, served by one `org-office-server`.
 ///
 /// ```text
-/// <home>/office.lock                      held while the office is open (single owner)
-/// <home>/office.id                        the office's id, in the clear: the key is filed under it
-/// <home>/office.db                        the encrypted registry of organizations (see `store`)
-/// <home>/organizations/<id>/workspace/    an organization's workspace files
+/// office.lock    exclusive flock, taken before anything else is looked at (single owner)
+/// org.db         SQLCipher: the organization's data (HQ's original, or a satellite's copy)
+/// office.db      SQLCipher, the same key: the office's own data
+/// workspace/     the office's files
+/// office.json    plaintext, no secrets, written LAST by `create`: its presence is the
+///                "this office is finished" marker the host reads
 /// ```
 ///
-/// One `Office` per home at a time: the lock makes the server the only writer of the
-/// database, as ADR-0001 requires. Safe to share across threads. The office owns the rules
-/// (names, the lock, workspace folders); `Store` owns the database engine.
+/// The key is made by `create` and kept by the [`KeyProvider`] under the office id. Safe to
+/// share across threads. The office owns the rules (the lock, the folder, the order things
+/// are made in); `Store` owns the database engine.
 pub struct Office {
-    home: PathBuf,
+    folder: PathBuf,
     info: OfficeInfo,
-    store: Store,
+    // Databases close (and checkpoint) before the lock is released: fields drop in order.
+    #[allow(dead_code)] // the organization's data arrives with the HQ event log
+    org: Store,
+    #[allow(dead_code)] // the office's own data arrives with work items and messaging
+    local: Store,
     _lock: File,
 }
 
 impl Office {
-    /// Creates a new office at `home` (made if missing) and opens it. **The only path that
-    /// makes a key** (ADR-0002, as amended: `org-office-server --create`): a new id is minted,
-    /// a new key is made and saved with `keys` *before* the database exists, so a crash can't
-    /// leave data without its key.
+    /// Creates a new office in `folder` (`<home>/offices/<office-id>`, whose name must be the
+    /// office id) and opens it. **The only path that makes a key** (ADR-0002): the key is saved
+    /// with `keys` before any database exists, so a crash can't leave data without its key.
     ///
-    /// Refuses with `OfficeExists` if `home` already holds an office id, any database file
-    /// or an `organizations` folder, and with `KeyExists` if `keys` already holds a key for the
-    /// new id. It never reuses or replaces anything. A create that fails once it has started
-    /// writing removes its id and database files, so the home can be created again; a key it
-    /// saved stays behind (`KeyProvider` can't delete one yet). A crash part-way leaves an
-    /// unfinished home that `create` refuses (`OfficeExists`) and `open` can't use
-    /// (`NotFound`, or a storage error if the database was half-made), for the caller to remove.
-    pub fn create(home: impl Into<PathBuf>, keys: &dyn KeyProvider) -> Result<Self, OfficeError> {
-        let home = absolute(home.into()).map_err(OfficeError::storage)?;
-        private_dir(&home).map_err(OfficeError::storage)?;
-        // The home may already exist (e.g. an override): make it owner-only regardless.
-        tighten_dir(&home).map_err(OfficeError::storage)?;
-        let lock = lock_home(&home)?;
+    /// The order is: lock the folder; look at it once (anything of an office already there is
+    /// `OfficeExists`; a key already saved for the id is `KeyExists`; nothing is ever reused
+    /// or replaced); make the key; make both databases; make `workspace/`; commit the
+    /// organization; write `office.json` last. A create that fails removes what it made and
+    /// the key it saved, so the id can be created again. A crash part-way leaves a folder
+    /// without `office.json`, an unfinished create for `discard`.
+    pub fn create(
+        folder: impl Into<PathBuf>,
+        new: &NewOffice,
+        keys: &dyn KeyProvider,
+    ) -> Result<Self, OfficeError> {
+        Self::create_waiting(folder, new, keys, LOCK_WAIT)
+    }
 
-        for entry in OFFICE_FILES.iter().chain(&["organizations"]) {
-            if exists(&home.join(entry))? {
+    /// [`Office::create`] with a chosen lock wait.
+    pub fn create_waiting(
+        folder: impl Into<PathBuf>,
+        new: &NewOffice,
+        keys: &dyn KeyProvider,
+        lock_wait: Duration,
+    ) -> Result<Self, OfficeError> {
+        let info = OfficeInfo {
+            office_id: new.office_id.clone(),
+            office_name: new.office_name.trim().to_owned(),
+            role: new.role,
+            org_id: new.org_id.clone(),
+            org_name: new.org_name.trim().to_owned(),
+            created_at: time::now_rfc3339(),
+        };
+        // The same checks `office.json` will make, before anything is touched.
+        let names_valid = [&info.office_name, &info.org_name]
+            .iter()
+            .all(|name| OrganizationName::parse(name).is_ok());
+        if !is_plain_id(&info.office_id) || !is_plain_id(&info.org_id) || !names_valid {
+            return Err(OfficeError::Invalid(
+                "ids are 1 to 64 letters and digits, and names must be valid",
+            ));
+        }
+        let folder = absolute(folder.into()).map_err(OfficeError::storage)?;
+        check_named_by(&folder, &info.office_id)?;
+        private_dir(&folder).map_err(OfficeError::storage)?;
+        // The folder may already exist (e.g. the host made it): owner-only regardless.
+        tighten_dir(&folder).map_err(OfficeError::storage)?;
+        let lock = lock_folder(&folder, lock_wait)?;
+
+        // Under the lock, look once.
+        for entry in OFFICE_ENTRIES {
+            if exists(&folder.join(entry))? {
                 return Err(OfficeError::OfficeExists);
             }
         }
-        let id = ulid::generate().map_err(OfficeError::storage)?;
-        if keys.load(&id).map_err(storage_from_key)?.is_some() {
+        if keys
+            .load(&info.office_id)
+            .map_err(OfficeError::Storage)?
+            .is_some()
+        {
             return Err(OfficeError::KeyExists);
         }
-        let started = write_id_atomically(&home, &home.join("office.id"), &id)
-            .and_then(|()| Key::generate())
-            .map_err(OfficeError::storage)
-            .and_then(|key| {
-                keys.store(&id, &key).map_err(storage_from_key)?;
-                Ok(key)
-            })
-            .and_then(|key| Store::open(&home.join("office.db"), &key, &id, Opening::New));
-        match started {
-            Ok((store, info)) => Ok(Self::new(home, info, store, lock)),
+        let key = Key::generate().map_err(OfficeError::storage)?;
+        if let Err(error) = keys.store(&info.office_id, &key) {
+            // It may have saved the key before failing; no database exists yet to need it.
+            let _ = keys.delete(&info.office_id);
+            return Err(OfficeError::Storage(error));
+        }
+
+        match build(&folder, &key, &info) {
+            Ok((org, local)) => Ok(Self {
+                folder,
+                info,
+                org,
+                local,
+                _lock: lock,
+            }),
             Err(error) => {
-                // Still under the lock, and none of these files existed before this create
-                // (checked above), so everything removed is its own.
-                discard_unfinished_office(&home);
+                // Still under the lock. The databases closed when `build` failed. Every entry
+                // removed is one this create made (none existed before, checked above); the
+                // lock FILE stays, since another process may be waiting on it.
+                // The key goes only once its databases are gone: a database whose key is gone
+                // can never be checked or discarded again.
+                if remove_entries(&folder).is_ok() {
+                    let _ = keys.delete(&info.office_id);
+                }
                 drop(lock);
                 Err(error)
             }
         }
     }
 
-    /// Opens the existing office at `home` with the key `keys` holds for it. **Never makes a
-    /// key, an id or a database**: no office at `home` (no database) is `NotFound`, and a
-    /// database whose key is missing is `KeyMissing` (fatal), never replaced.
-    pub fn open(home: impl Into<PathBuf>, keys: &dyn KeyProvider) -> Result<Self, OfficeError> {
-        let home = absolute(home.into()).map_err(OfficeError::storage)?;
-        // Look before touching anything, so a path that holds no office is left as it was.
-        match fs::metadata(&home) {
+    /// Opens the finished office in `folder` with the key `keys` holds for it. **Never makes
+    /// a key or a database** (it takes the folder's lock, which makes `office.lock` if there is
+    /// none, and nothing else): no `office.json` is `NotFound`; one that names another
+    /// office is `Invalid`; a missing key is `KeyMissing` (fatal), never replaced.
+    pub fn open(folder: impl Into<PathBuf>, keys: &dyn KeyProvider) -> Result<Self, OfficeError> {
+        Self::open_waiting(folder, keys, LOCK_WAIT)
+    }
+
+    /// [`Office::open`] with a chosen lock wait.
+    pub fn open_waiting(
+        folder: impl Into<PathBuf>,
+        keys: &dyn KeyProvider,
+        lock_wait: Duration,
+    ) -> Result<Self, OfficeError> {
+        let folder = absolute(folder.into()).map_err(OfficeError::storage)?;
+        match fs::metadata(&folder) {
             Ok(metadata) if metadata.is_dir() => {}
-            Ok(_) => return Err(OfficeError::NotFound),
+            Ok(_) => return Err(OfficeError::Invalid("the office folder is not a folder")),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 return Err(OfficeError::NotFound)
             }
             Err(e) => return Err(OfficeError::storage(e)),
         }
-        let (found_id, found_key) = find_office(&home, keys)?;
-        tighten_dir(&home).map_err(OfficeError::storage)?;
-        let lock = lock_home(&home)?;
-        // Again under the lock: another process may have changed the home in between. The
-        // key is looked up again only if the id changed (each lookup may be a Keychain prompt).
-        if !database_exists(&home)? {
-            return Err(OfficeError::NotFound);
+        // Lock first, then read what the folder says, once.
+        let lock = lock_folder(&folder, lock_wait)?;
+        let info = office_file::read(&folder)?.ok_or(OfficeError::NotFound)?;
+        check_named_by(&folder, &info.office_id)?;
+        let key = keys
+            .load(&info.office_id)
+            .map_err(OfficeError::Storage)?
+            .ok_or(OfficeError::KeyMissing)?;
+
+        let org = Store::open(&folder.join(ORG_DB), &key, Opening::Existing, &ORG_SCHEMA)?;
+        let local = Store::open(
+            &folder.join(OFFICE_DB),
+            &key,
+            Opening::Existing,
+            &OFFICE_SCHEMA,
+        )?;
+        let same = meta(&org, "office_id")? == Some(info.office_id.clone())
+            && meta(&org, "organization_id")? == Some(info.org_id.clone())
+            && meta(&local, "office_id")? == Some(info.office_id.clone());
+        if !same {
+            return Err(OfficeError::Invalid(
+                "the databases belong to another office",
+            ));
         }
-        let id = read_office_id(&home)?;
-        let key = if id == found_id {
-            found_key
-        } else {
-            find_office(&home, keys)?.1
-        };
-        tighten_file_if_present(&home.join("office.id")).map_err(OfficeError::storage)?;
-
-        let (store, info) = Store::open(&home.join("office.db"), &key, &id, Opening::Existing)?;
-        Ok(Self::new(home, info, store, lock))
-    }
-
-    fn new(home: PathBuf, info: OfficeInfo, store: Store, lock: File) -> Self {
-        Self {
-            home,
+        Ok(Self {
+            folder,
             info,
-            store,
+            org,
+            local,
             _lock: lock,
-        }
+        })
     }
 
+    /// Removes an UNFINISHED create (`org-office-server --discard`): the folder and the key
+    /// the failed create may have left. It takes the folder's lock, and **refuses** anything
+    /// that could be a real office, so one is never destroyed automatically:
+    /// - a folder with `office.json`, or whose `org.db` holds a committed organization, is
+    ///   `OfficeExists`;
+    /// - databases it cannot check (the key is missing, the keychain refuses, SQLCipher
+    ///   fails) are an error (`Storage`), and nothing is deleted.
+    ///
+    /// A folder that is not there is fine (its orphan key is still removed).
+    pub fn discard(
+        folder: impl Into<PathBuf>,
+        office_id: &str,
+        keys: &dyn KeyProvider,
+    ) -> Result<(), OfficeError> {
+        Self::discard_waiting(folder, office_id, keys, LOCK_WAIT)
+    }
+
+    /// [`Office::discard`] with a chosen lock wait.
+    pub fn discard_waiting(
+        folder: impl Into<PathBuf>,
+        office_id: &str,
+        keys: &dyn KeyProvider,
+        lock_wait: Duration,
+    ) -> Result<(), OfficeError> {
+        if !is_plain_id(office_id) {
+            return Err(OfficeError::Invalid(
+                "an office id is 1 to 64 letters and digits",
+            ));
+        }
+        let folder = absolute(folder.into()).map_err(OfficeError::storage)?;
+        check_named_by(&folder, office_id)?;
+        // Lock first, even when there is no folder yet: a create of this id that starts now
+        // must not have its key deleted under it. (An empty folder is left behind only if the
+        // delete below fails; the next discard or create finds it empty.)
+        private_dir(&folder).map_err(OfficeError::storage)?;
+        let _lock = lock_folder(&folder, lock_wait)?;
+
+        if exists(&folder.join(office_file::FILE_NAME))? {
+            return Err(OfficeError::OfficeExists);
+        }
+        let org_db = folder.join(ORG_DB);
+        let mut any_database = false;
+        for name in [ORG_DB, "org.db-wal", OFFICE_DB, "office.db-wal"] {
+            any_database |= holds_data(&folder.join(name))?;
+        }
+        if any_database {
+            // Anything we cannot check is refused: a real office must never be destroyed.
+            let key = keys
+                .load(office_id)
+                .map_err(OfficeError::Storage)?
+                .ok_or_else(|| {
+                    OfficeError::storage(std::io::Error::other(
+                        "cannot check the databases: their key is missing",
+                    ))
+                })?;
+            if !holds_data(&org_db)? && holds_data(&folder.join("org.db-wal"))? {
+                // SQLite deletes a log that sits beside an empty main file on the first read.
+                return Err(OfficeError::storage(std::io::Error::other(
+                    "org.db is empty but its log is not: not looking",
+                )));
+            }
+            if holds_data(&org_db)? {
+                let committed = Store::inspect(&org_db, &key, |db| {
+                    let has_meta: bool = db
+                        .query_row(
+                            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE name = 'meta')",
+                            (),
+                            |row| row.get(0),
+                        )
+                        .map_err(OfficeError::storage)?;
+                    if !has_meta {
+                        return Ok(false);
+                    }
+                    db.query_row(
+                        "SELECT EXISTS (SELECT 1 FROM meta WHERE key = 'organization_id')",
+                        (),
+                        |row| row.get(0),
+                    )
+                    .map_err(OfficeError::storage)
+                })?;
+                if committed {
+                    return Err(OfficeError::OfficeExists);
+                }
+            }
+        }
+        // Nothing here is a finished office. Empty the folder (all but the lock file), then
+        // delete the key, then remove the lock file and the folder, so the lock is held until
+        // the end. If the key cannot be deleted (or we crash before), the folder holds nothing
+        // the key was for and a retry finishes; databases whose key is gone, which a retry
+        // would have to refuse, are never left.
+        empty_folder_but_the_lock(&folder)?;
+        keys.delete(office_id).map_err(OfficeError::Storage)?;
+        remove_the_empty_folder(&folder)
+    }
+
+    /// What `office.json` records about this office.
     pub fn info(&self) -> &OfficeInfo {
         &self.info
     }
 
-    /// Creates an organization: a registry row and its workspace folder, or neither.
-    pub fn create_organization(&self, name: &str) -> Result<Organization, OfficeError> {
-        let name = OrganizationName::parse(name).map_err(OfficeError::InvalidName)?;
+    /// The office folder.
+    pub fn folder(&self) -> &Path {
+        &self.folder
+    }
+}
 
-        // The folder is made before the commit, so a failure to make it registers nothing.
-        // A crash between folder and commit leaves an unreferenced folder, which is harmless.
-        let home = self.home.clone();
-        self.store.create_organization(&name, move |organization| {
-            let workspace = workspace_dir(&home, &organization.id);
-            if let Err(cause) = private_dir(&workspace) {
-                discard_organization_dir(&workspace);
-                return Err(cause);
+/// Makes the two databases, the workspace and `office.json` in `folder`, in that order, with the
+/// organization's own commit last before `office.json`: from that commit on, `discard` refuses
+/// the folder, so the window in which a crash leaves something it refuses is as small as it can
+/// be.
+fn build(folder: &Path, key: &Key, info: &OfficeInfo) -> Result<(Store, Store), OfficeError> {
+    let org = Store::open(&folder.join(ORG_DB), key, Opening::New, &ORG_SCHEMA)?;
+    let local = Store::open(&folder.join(OFFICE_DB), key, Opening::New, &OFFICE_SCHEMA)?;
+    failpoint(folder, "databases")?;
+    put_meta(&org, &[("office_id", &info.office_id)])?;
+    put_meta(&local, &[("office_id", &info.office_id)])?;
+    private_dir(&folder.join(WORKSPACE)).map_err(OfficeError::storage)?;
+    failpoint(folder, "workspace")?;
+    put_meta(
+        &org,
+        &[
+            ("organization_id", &info.org_id),
+            ("organization_name", &info.org_name),
+            ("created_at", &info.created_at),
+        ],
+    )?;
+    failpoint(folder, "organization")?;
+    failpoint(folder, "office_json")?;
+    office_file::write(folder, info)?;
+    Ok((org, local))
+}
+
+fn put_meta(store: &Store, rows: &[(&str, &str)]) -> Result<(), OfficeError> {
+    let rows: Vec<(String, String)> = rows
+        .iter()
+        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+        .collect();
+    store.write(move |db| {
+        for (key, value) in &rows {
+            db.execute(
+                "INSERT INTO meta (key, value) VALUES (?1, ?2)",
+                (key, value),
+            )
+            .map_err(OfficeError::storage)?;
+        }
+        Ok(((), None))
+    })
+}
+
+fn meta(store: &Store, key: &'static str) -> Result<Option<String>, OfficeError> {
+    store.read(|db| {
+        match db.query_row("SELECT value FROM meta WHERE key = ?1", [key], |row| {
+            row.get::<_, String>(0)
+        }) {
+            Ok(value) => Ok(Some(value)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(OfficeError::storage(e)),
+        }
+    })
+}
+
+/// The office folder must be named by the office id, so an id never points outside `offices/`.
+fn check_named_by(folder: &Path, office_id: &str) -> Result<(), OfficeError> {
+    if folder.file_name().and_then(|name| name.to_str()) == Some(office_id) {
+        Ok(())
+    } else {
+        Err(OfficeError::Invalid(
+            "the folder is not named by the office id",
+        ))
+    }
+}
+
+/// Takes the folder's exclusive lock, waiting up to `wait` for another process to let go.
+/// The lock file is close-on-exec (Rust opens every file that way), so a child never keeps
+/// the lock after the server dies.
+fn lock_folder(folder: &Path, wait: Duration) -> Result<File, OfficeError> {
+    lock_folder_with(folder, wait, &|| {})
+}
+
+/// [`lock_folder`], calling `between` after the lock file is opened and before it is locked
+/// (a test seam for the window in which another process can unlink the file).
+fn lock_folder_with(
+    folder: &Path,
+    wait: Duration,
+    between: &dyn Fn(),
+) -> Result<File, OfficeError> {
+    let path = folder.join(LOCK_FILE);
+    let give_up_at = Instant::now() + wait;
+    loop {
+        let lock = match private_file(&path) {
+            Ok(lock) => lock,
+            // The folder was removed under us (a discard): there is nothing to lock.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(OfficeError::NotFound)
             }
-            let undo: Undo = Box::new(move || discard_organization_dir(&workspace));
-            Ok(undo)
-        })
-    }
-
-    /// All organizations in creation order.
-    pub fn list_organizations(&self) -> Result<Vec<Organization>, OfficeError> {
-        self.store.list_organizations()
-    }
-}
-
-fn workspace_dir(home: &Path, organization_id: &str) -> PathBuf {
-    home.join("organizations")
-        .join(organization_id)
-        .join("workspace")
-}
-
-/// The id and key of the office at `home`, found without changing anything: `NotFound`
-/// without a database, `KeyMissing` without its key.
-fn find_office(home: &Path, keys: &dyn KeyProvider) -> Result<(String, Key), OfficeError> {
-    if !database_exists(home)? {
-        return Err(OfficeError::NotFound);
-    }
-    let id = read_office_id(home)?;
-    let key = keys
-        .load(&id)
-        .map_err(storage_from_key)?
-        .ok_or(OfficeError::KeyMissing)?;
-    Ok((id, key))
-}
-
-/// Whether the office at `home` has a database: a non-empty `office.db` or WAL. An
-/// unreadable one is an error, not "no database".
-fn database_exists(home: &Path) -> Result<bool, OfficeError> {
-    Ok(holds_data(&home.join("office.db"))? || holds_data(&home.join("office.db-wal"))?)
-}
-
-/// Best-effort removal of what a failed `create` wrote: its id and database files.
-fn discard_unfinished_office(home: &Path) {
-    for file in OFFICE_FILES {
-        let _ = fs::remove_file(home.join(file));
+            Err(e) => return Err(OfficeError::storage(e)),
+        };
+        between();
+        match lock.try_lock() {
+            // A lock on a file that was unlinked while we waited (a discard removed the
+            // folder) locks nothing: only a lock on the file that is still there counts.
+            Ok(()) if is_the_file_at(&lock, &path) => return Ok(lock),
+            Ok(()) => {}
+            Err(TryLockError::WouldBlock) if Instant::now() < give_up_at => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(TryLockError::WouldBlock) => return Err(OfficeError::InUse),
+            Err(TryLockError::Error(e)) => return Err(OfficeError::storage(e)),
+        }
+        if Instant::now() >= give_up_at {
+            return Err(OfficeError::InUse);
+        }
     }
 }
 
-/// Whether `path` exists and is not empty. Anything but "not found" is an error: an
-/// unreadable database must never be mistaken for no database (`NotFound`).
-fn holds_data(path: &Path) -> Result<bool, OfficeError> {
-    match fs::metadata(path) {
-        Ok(metadata) => Ok(metadata.len() > 0),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+/// Whether `file` is the file now at `path` (same device and inode).
+fn is_the_file_at(file: &File, path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (file.metadata(), fs::metadata(path)) {
+        (Ok(open), Ok(named)) => open.dev() == named.dev() && open.ino() == named.ino(),
+        _ => false,
+    }
+}
+
+/// Removes the lock file and then the folder, which must be empty by now. Not recursive: if a
+/// create of the same id slipped in while the lock file was unlinked, the folder is no longer
+/// empty and is left to it.
+fn remove_the_empty_folder(folder: &Path) -> Result<(), OfficeError> {
+    match fs::remove_file(folder.join(LOCK_FILE)) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(OfficeError::storage(e)),
+    }
+    match fs::remove_dir(folder) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        // Something started a create here; it is not ours to remove.
+        Err(e) if e.kind() == std::io::ErrorKind::DirectoryNotEmpty => Ok(()),
         Err(e) => Err(OfficeError::storage(e)),
     }
 }
 
-/// The files an office (or a create in progress) keeps in its home. `create` refuses if any
-/// exists, and removes them again if it fails.
-const OFFICE_FILES: [&str; 6] = [
-    "office.id",
-    "office.id.tmp",
-    "office.db",
-    "office.db-wal",
-    "office.db-shm",
-    "office.db-journal",
-];
+/// Removes everything in `folder` except the lock file.
+fn empty_folder_but_the_lock(folder: &Path) -> Result<(), OfficeError> {
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(folder).map_err(OfficeError::storage)? {
+        let entry = entry.map_err(OfficeError::storage)?;
+        if entry.file_name() != LOCK_FILE {
+            entries.push(entry);
+        }
+    }
+    // A failure or a crash part-way must leave a state a retry can finish: a database's main
+    // file never goes before its log.
+    entries.sort_by_key(|entry| removal_rank(&entry.file_name().to_string_lossy()));
+    for entry in entries {
+        let path = entry.path();
+        let removed = if entry.file_type().map_err(OfficeError::storage)?.is_dir() {
+            fs::remove_dir_all(&path)
+        } else {
+            fs::remove_file(&path)
+        };
+        removed.map_err(OfficeError::storage)?;
+    }
+    Ok(())
+}
 
-/// Takes the home's lock, which makes this process the office's only owner.
-fn lock_home(home: &Path) -> Result<File, OfficeError> {
-    let lock = private_file(&home.join("office.lock")).map_err(OfficeError::storage)?;
-    match lock.try_lock() {
-        Ok(()) => Ok(lock),
-        Err(TryLockError::WouldBlock) => Err(OfficeError::InUse),
-        Err(TryLockError::Error(e)) => Err(OfficeError::storage(e)),
+/// The order entries are removed in: everything else, then a database's log and index files,
+/// then the main database files.
+fn removal_rank(name: &str) -> u8 {
+    if name == ORG_DB || name == OFFICE_DB {
+        2
+    } else if name.starts_with("org.db-") || name.starts_with("office.db-") {
+        1
+    } else {
+        0
     }
 }
 
-/// Whether anything is at `path` (a dangling symlink counts). Anything but "not found" is an
-/// error, so `create` never mistakes an unreadable file for a missing one.
+/// Removal of what a failed `create` made (never the lock file). It tries every entry and
+/// reports whether all are gone.
+fn remove_entries(folder: &Path) -> std::io::Result<()> {
+    #[cfg(test)]
+    if FAIL_CLEANUP.with(std::cell::Cell::get) {
+        return Err(std::io::Error::other("injected cleanup failure"));
+    }
+    let mut result = Ok(());
+    for entry in OFFICE_ENTRIES {
+        let path = folder.join(entry);
+        let removed = match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(&path),
+            Ok(_) => fs::remove_file(&path),
+            Err(_) => Ok(()),
+        };
+        if let Err(error) = removed {
+            result = Err(error);
+        }
+    }
+    result
+}
+
+/// Whether anything is at `path` (a dangling link counts). Anything but "not found" is an
+/// error, so a create never mistakes an unreadable entry for a missing one.
 fn exists(path: &Path) -> Result<bool, OfficeError> {
     match fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
@@ -226,707 +531,42 @@ fn exists(path: &Path) -> Result<bool, OfficeError> {
     }
 }
 
-/// The id of the existing office at `home`, from `office.id`, read without changing
-/// anything. The id has to be readable before the database is, because the database key is
-/// filed under it, so a database without a valid id is refused rather than guessed at.
-fn read_office_id(home: &Path) -> Result<String, OfficeError> {
-    let path = home.join("office.id");
-    let saved = match fs::read_to_string(&path) {
-        Ok(text) => Some(text.trim().to_owned()).filter(|id| is_valid_id(id)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => return Err(OfficeError::storage(e)),
-    };
-    saved.ok_or_else(|| {
-        OfficeError::storage(std::io::Error::other(
-            "office.id is missing or invalid but office.db exists",
-        ))
-    })
-}
-
-fn is_valid_id(id: &str) -> bool {
-    id.len() == 26 && id.bytes().all(|b| b.is_ascii_alphanumeric())
-}
-
-/// Writes `id` to `path` so that a crash leaves either no file or the whole file. The
-/// temporary file must not exist yet (`create` checked): it is made fresh, never followed
-/// through a link.
-fn write_id_atomically(home: &Path, path: &Path, id: &str) -> std::io::Result<()> {
-    let temp = home.join("office.id.tmp");
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&temp)?;
-    file.write_all(id.as_bytes())?;
-    file.sync_all()?;
-    fs::rename(&temp, path)?;
-    // Make the rename itself durable.
-    File::open(home)?.sync_all()
-}
-
-fn storage_from_key(cause: crate::key::KeyError) -> OfficeError {
-    OfficeError::Storage(cause)
-}
-
-/// Best-effort removal of `organizations/<id>/` after a failed create; `workspace` is its child.
-fn discard_organization_dir(workspace: &Path) {
-    if let Some(organization_dir) = workspace.parent() {
-        let _ = fs::remove_dir_all(organization_dir);
+/// Whether `path` exists and is not empty. Anything but "not found" is an error: an
+/// unreadable database must never be mistaken for no database.
+fn holds_data(path: &Path) -> Result<bool, OfficeError> {
+    match fs::metadata(path) {
+        Ok(metadata) => Ok(metadata.len() > 0),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(OfficeError::storage(e)),
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use std::os::unix::fs::PermissionsExt;
-    use std::sync::Arc;
-
-    use tempfile::TempDir;
-
-    use super::*;
-    use crate::key::InMemoryKeys;
-    use crate::name::NameError;
-
-    /// A fresh office in a temporary home.
-    fn open() -> (TempDir, Office) {
-        let home = TempDir::new().unwrap();
-        let office = Office::create(home.path().join("office"), &InMemoryKeys::new()).unwrap();
-        (home, office)
-    }
-
-    /// The id `create` wrote, which the key is filed under.
-    fn saved_id(path: &Path) -> String {
-        fs::read_to_string(path.join("office.id"))
-            .unwrap()
-            .trim()
-            .to_owned()
-    }
-
-    #[test]
-    fn creates_and_lists_in_order() {
-        let (_home, office) = open();
-        assert!(office.list_organizations().unwrap().is_empty());
-
-        let acme = office.create_organization("  Acme  ").unwrap();
-        let globex = office.create_organization("Globex").unwrap();
-
-        assert_eq!(acme.name, "Acme");
-        assert_eq!(acme.id.len(), 26);
-        assert_eq!(acme.created_at.len(), 24);
-        assert_eq!(office.list_organizations().unwrap(), vec![acme, globex]);
-    }
-
-    #[test]
-    fn creates_a_private_workspace_folder_keyed_by_id() {
-        let (home, office) = open();
-        let org = office.create_organization("Acme").unwrap();
-
-        let workspace = home
-            .path()
-            .join("office/organizations")
-            .join(&org.id)
-            .join("workspace");
-        assert!(workspace.is_dir());
-        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode(&workspace), 0o700);
-        assert_eq!(mode(&home.path().join("office")), 0o700);
-    }
-
-    #[test]
-    fn lists_in_creation_order_even_within_one_millisecond() {
-        let (_home, office) = open();
-        let created: Vec<_> = (0..50)
-            .map(|n| office.create_organization(&format!("Org {n}")).unwrap())
-            .collect();
-        assert_eq!(office.list_organizations().unwrap(), created);
-    }
-
-    #[test]
-    fn tightens_a_pre_existing_home_to_owner_only() {
-        let parent = TempDir::new().unwrap();
-        let path = parent.path().join("office");
-        fs::create_dir(&path).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-
-        let office = Office::create(&path, &InMemoryKeys::new()).unwrap();
-        office.create_organization("Acme").unwrap();
-
-        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode(&path), 0o700);
-        for file in ["office.lock", "office.db", "office.db-wal"] {
-            assert_eq!(mode(&path.join(file)), 0o600, "{file}");
-        }
-    }
-
-    #[test]
-    fn tightens_database_files_left_loose_by_an_earlier_run() {
-        let parent = TempDir::new().unwrap();
-        let path = parent.path().join("office");
-        let keys = InMemoryKeys::new();
-        drop(Office::create(&path, &keys).unwrap());
-        for file in ["office.lock", "office.db", "office.db-wal", "office.db-shm"] {
-            let file = path.join(file);
-            if !file.exists() {
-                fs::write(&file, b"").unwrap();
-            }
-            fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
-        }
-
-        // Assert while open: SQLite deletes -wal and -shm on a clean close.
-        let office = Office::open(&path, &keys).unwrap();
-        office.create_organization("Acme").unwrap();
-
-        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
-        for file in ["office.lock", "office.db", "office.db-wal", "office.db-shm"] {
-            assert_eq!(mode(&path.join(file)), 0o600, "{file}");
-        }
-    }
-
-    #[test]
-    fn a_relative_home_that_looks_like_a_sqlite_uri_becomes_a_plain_absolute_path() {
-        // Checked on the helper: opening a relative home would write into the test's cwd.
-        let path = absolute(PathBuf::from("file:office?cache=shared")).unwrap();
-        assert!(path.is_absolute());
-        assert!(!path.to_str().unwrap().starts_with("file:"));
-        assert!(path.join("office.db").to_str().unwrap().starts_with('/'));
-    }
-
-    #[test]
-    fn created_at_follows_insertion_order_under_concurrency() {
-        let (_home, office) = open();
-        let office = Arc::new(office);
-        let threads: Vec<_> = (0..8)
-            .map(|t| {
-                let office = Arc::clone(&office);
-                std::thread::spawn(move || {
-                    for n in 0..30 {
-                        office.create_organization(&format!("Org {t}-{n}")).unwrap();
-                    }
-                })
-            })
-            .collect();
-        for thread in threads {
-            thread.join().unwrap();
-        }
-        let listed = office.list_organizations().unwrap();
-        assert_eq!(listed.len(), 240);
-        assert!(listed
-            .windows(2)
-            .all(|w| w[0].created_at <= w[1].created_at));
-    }
-
-    #[test]
-    fn rejects_invalid_names_without_side_effects() {
-        let (home, office) = open();
-        for (raw, reason) in [
-            ("", NameError::Empty),
-            ("   ", NameError::Empty),
-            ("a\nb", NameError::ControlCharacter),
-            (&"x".repeat(65), NameError::TooLong),
-        ] {
-            assert!(matches!(
-                office.create_organization(raw),
-                Err(OfficeError::InvalidName(r)) if r == reason
-            ));
-        }
-        assert!(office.list_organizations().unwrap().is_empty());
-        assert!(!home.path().join("office/organizations").exists());
-    }
-
-    #[test]
-    fn names_are_unique_ignoring_case_and_outer_space() {
-        let (_home, office) = open();
-        office.create_organization("Acme").unwrap();
-        assert!(matches!(
-            office.create_organization("  aCME "),
-            Err(OfficeError::AlreadyExists)
-        ));
-        assert_eq!(office.list_organizations().unwrap().len(), 1);
-    }
-
-    #[test]
-    fn concurrent_creates_of_one_name_have_one_winner() {
-        let (_home, office) = open();
-        let office = Arc::new(office);
-        let results: Vec<_> = (0..8)
-            .map(|_| {
-                let office = Arc::clone(&office);
-                std::thread::spawn(move || office.create_organization("Acme"))
-            })
-            .collect::<Vec<_>>()
-            .into_iter()
-            .map(|t| t.join().unwrap())
-            .collect();
-        assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
-        assert!(results
-            .iter()
-            .filter_map(|r| r.as_ref().err())
-            .all(|e| matches!(e, OfficeError::AlreadyExists)));
-    }
-
-    #[test]
-    fn storage_failure_leaves_no_row_and_hides_paths() {
-        let (home, office) = open();
-        // A file where the `organizations` folder should be makes folder creation fail.
-        fs::write(home.path().join("office/organizations"), b"in the way").unwrap();
-
-        let error = office.create_organization("Acme").unwrap_err();
-        assert!(matches!(error, OfficeError::Storage(_)));
-        // Exact text: the cause is only reachable through `source()`, never `Display`.
-        assert_eq!(
-            error.to_string(),
-            "the office could not read or write its storage"
-        );
-        assert!(std::error::Error::source(&error).is_some());
-        assert!(office.list_organizations().unwrap().is_empty());
-
-        // The name was not consumed by the failed attempt.
-        fs::remove_file(home.path().join("office/organizations")).unwrap();
-        office.create_organization("Acme").unwrap();
-    }
-
-    #[test]
-    fn a_commit_failure_leaves_no_row_and_no_folder() {
-        let (home, office) = open();
-        // A deferred foreign key that every new organization violates: the INSERT and the
-        // folder both succeed, and only COMMIT fails.
-        office.store.run_sql_for_test(
-            "PRAGMA foreign_keys = ON;
-             CREATE TABLE parent (id INTEGER PRIMARY KEY);
-             CREATE TABLE child (
-                 parent_id INTEGER REFERENCES parent (id) DEFERRABLE INITIALLY DEFERRED
-             );
-             CREATE TRIGGER violate AFTER INSERT ON organizations
-             BEGIN INSERT INTO child VALUES (999); END;",
-        );
-
-        let error = office.create_organization("Acme").unwrap_err();
-
-        assert!(matches!(error, OfficeError::Storage(_)));
-        assert!(office.list_organizations().unwrap().is_empty());
-        let organizations = home.path().join("office/organizations");
-        assert_eq!(
-            fs::read_dir(organizations).unwrap().count(),
-            0,
-            "the failed create left a folder behind"
-        );
-    }
-
-    #[test]
-    fn the_key_is_saved_before_the_database_is_used_and_reused_after() {
-        let home = TempDir::new().unwrap();
-        let path = home.path().join("office");
-        let provider = InMemoryKeys::new();
-
-        let office = Office::create(&path, &provider).unwrap();
-        let id = office.info().id.clone();
-        let created = office.create_organization("Acme").unwrap();
-        drop(office);
-
-        assert!(provider.load(&id).unwrap().is_some(), "no key was saved");
-        let reopened = Office::open(&path, &provider).unwrap();
-        assert_eq!(reopened.list_organizations().unwrap(), vec![created]);
-    }
-
-    #[test]
-    fn open_with_the_key_missing_is_key_missing_and_mints_nothing() {
-        let home = TempDir::new().unwrap();
-        let path = home.path().join("office");
-        drop(Office::create(&path, &InMemoryKeys::new()).unwrap());
-        let db_before = fs::read(path.join("office.db")).unwrap();
-
-        fs::remove_file(path.join("office.lock")).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-
-        // A fresh provider has no key for this office.
-        let fresh = InMemoryKeys::new();
-        let error = Office::open(&path, &fresh)
-            .err()
-            .expect("opened without a key");
-
-        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o755, "the home was changed");
-        assert!(!path.join("office.lock").exists(), "a lock file was left");
-        assert!(matches!(error, OfficeError::KeyMissing), "{error:?}");
-        assert_eq!(error.to_string(), "the office's database key is missing");
-        assert!(
-            fresh.load(&saved_id(&path)).unwrap().is_none(),
-            "a new key was minted"
-        );
-        assert_eq!(fs::read(path.join("office.db")).unwrap(), db_before);
-    }
-
-    #[test]
-    fn a_database_without_its_office_id_is_refused() {
-        let home = TempDir::new().unwrap();
-        let path = home.path().join("office");
-        let keys = InMemoryKeys::new();
-        drop(Office::create(&path, &keys).unwrap());
-        fs::remove_file(path.join("office.id")).unwrap();
-
-        assert!(matches!(
-            Office::open(&path, &keys),
-            Err(OfficeError::Storage(_))
-        ));
-        assert!(!path.join("office.id").exists(), "a new id was minted");
-    }
-
-    #[test]
-    fn a_wal_without_a_database_file_still_counts_as_data() {
-        let home = TempDir::new().unwrap();
-        let path = home.path().join("office");
-        let provider = InMemoryKeys::new();
-        drop(Office::create(&path, &provider).unwrap());
-        // The main file lost its contents, but a write-ahead log survives.
-        fs::write(path.join("office.db"), b"").unwrap();
-        fs::write(path.join("office.db-wal"), b"not empty").unwrap();
-
-        // Data exists, so a missing key is `KeyMissing`, not `NotFound`.
-        let fresh = InMemoryKeys::new();
-        let result = Office::open(&path, &fresh);
-
-        assert!(matches!(result, Err(OfficeError::KeyMissing)));
-        assert!(
-            fresh.load(&saved_id(&path)).unwrap().is_none(),
-            "a new key was minted"
-        );
-    }
-
-    #[test]
-    fn a_database_that_cannot_be_inspected_is_an_error_not_no_database() {
-        let home = TempDir::new().unwrap();
-        let path = home.path().join("office");
-        let provider = InMemoryKeys::new();
-        drop(Office::create(&path, &provider).unwrap());
-        // `office.db` becomes a symlink to itself: looking at it fails with something other
-        // than "not found".
-        fs::remove_file(path.join("office.db")).unwrap();
-        std::os::unix::fs::symlink(path.join("office.db"), path.join("office.db")).unwrap();
-
-        let fresh = InMemoryKeys::new();
-        let result = Office::open(&path, &fresh);
-
-        assert!(matches!(result, Err(OfficeError::Storage(_))));
-        assert!(
-            fresh.load(&saved_id(&path)).unwrap().is_none(),
-            "a new key was minted"
-        );
-    }
-
-    #[test]
-    fn data_and_identity_survive_reopening() {
-        let home = TempDir::new().unwrap();
-        let path = home.path().join("office");
-        let keys = InMemoryKeys::new();
-        let (info, created) = {
-            let office = Office::create(&path, &keys).unwrap();
-            (
-                office.info().clone(),
-                office.create_organization("Acme").unwrap(),
-            )
-        };
-        let office = Office::open(&path, &keys).unwrap();
-        assert_eq!(office.info(), &info);
-        assert_eq!(info.name, "This Mac");
-        assert_eq!(office.list_organizations().unwrap(), vec![created]);
-    }
-
-    #[test]
-    fn only_one_office_may_own_a_home() {
-        let home = TempDir::new().unwrap();
-        let path = home.path().join("office");
-        let keys = InMemoryKeys::new();
-        let first = Office::create(&path, &keys).unwrap();
-        assert!(matches!(
-            Office::open(&path, &keys),
-            Err(OfficeError::InUse)
-        ));
-        assert!(matches!(
-            Office::create(&path, &keys),
-            Err(OfficeError::InUse)
-        ));
-        drop(first);
-        Office::open(&path, &keys).unwrap();
-    }
-
-    #[test]
-    fn create_makes_a_fresh_office_with_a_new_id_and_a_saved_key() {
-        let home = TempDir::new().unwrap();
-        let path = home.path().join("office");
-        let keys = InMemoryKeys::new();
-
-        let office = Office::create(&path, &keys).unwrap();
-
-        let id = saved_id(&path);
-        assert!(is_valid_id(&id));
-        assert_eq!(office.info().id, id);
-        assert!(keys.load(&id).unwrap().is_some(), "no key was saved");
-        assert!(path.join("office.db").is_file());
-        assert!(office.list_organizations().unwrap().is_empty());
-    }
-
-    #[test]
-    fn create_refuses_an_existing_office_and_changes_nothing() {
-        let home = TempDir::new().unwrap();
-        let path = home.path().join("office");
-        let keys = InMemoryKeys::new();
-        drop(Office::create(&path, &keys).unwrap());
-        let id = saved_id(&path);
-        let key_before = keys.load(&id).unwrap();
-        let db_before = fs::read(path.join("office.db")).unwrap();
-
-        assert!(matches!(
-            Office::create(&path, &keys),
-            Err(OfficeError::OfficeExists)
-        ));
-
-        assert_eq!(saved_id(&path), id, "the office id was replaced");
-        assert_eq!(keys.load(&id).unwrap(), key_before, "the key was replaced");
-        assert_eq!(fs::read(path.join("office.db")).unwrap(), db_before);
-    }
-
-    #[test]
-    fn create_refuses_any_existing_database_file_even_without_an_id() {
-        for file in OFFICE_FILES.iter().chain(&["organizations"]) {
-            let home = TempDir::new().unwrap();
-            let path = home.path().join("office");
-            fs::create_dir(&path).unwrap();
-            // Even an empty file: `create` starts only from a clean home.
-            fs::write(path.join(file), b"").unwrap();
-
-            assert!(
-                matches!(
-                    Office::create(&path, &InMemoryKeys::new()),
-                    Err(OfficeError::OfficeExists)
-                ),
-                "{file}"
-            );
-            if *file != "office.id" {
-                assert!(
-                    !path.join("office.id").exists(),
-                    "an id was minted ({file})"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn create_refuses_when_a_key_already_exists_for_the_office() {
-        let home = TempDir::new().unwrap();
-        let path = home.path().join("office");
-        // A provider that already holds a key for every office id.
-        let keys = InMemoryKeys::fixed(Key::from_bytes([9; 32]));
-
-        assert!(matches!(
-            Office::create(&path, &keys),
-            Err(OfficeError::KeyExists)
-        ));
-
-        for file in ["office.id", "office.db"] {
-            assert!(!path.join(file).exists(), "{file} was written");
-        }
-    }
-
-    #[test]
-    fn open_reopens_a_created_office_with_its_saved_key() {
-        let home = TempDir::new().unwrap();
-        let path = home.path().join("office");
-        let keys = InMemoryKeys::new();
-        let created = {
-            let office = Office::create(&path, &keys).unwrap();
-            office.create_organization("Acme").unwrap()
-        };
-
-        let office = Office::open(&path, &keys).unwrap();
-
-        assert_eq!(office.info().id, saved_id(&path));
-        assert_eq!(office.list_organizations().unwrap(), vec![created]);
-    }
-
-    #[test]
-    fn open_with_no_office_is_not_found_and_creates_nothing() {
-        let home = TempDir::new().unwrap();
-
-        // No home at all: nothing is made.
-        let missing = home.path().join("missing");
-        assert!(matches!(
-            Office::open(&missing, &InMemoryKeys::new()),
-            Err(OfficeError::NotFound)
-        ));
-        assert!(!missing.exists());
-
-        // An empty home, even with a key on offer for every id: nothing is written or changed.
-        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
-        let empty = home.path().join("empty");
-        fs::create_dir(&empty).unwrap();
-        fs::set_permissions(&empty, fs::Permissions::from_mode(0o755)).unwrap();
-        let keys = InMemoryKeys::fixed(Key::from_bytes([9; 32]));
-        assert!(matches!(
-            Office::open(&empty, &keys),
-            Err(OfficeError::NotFound)
-        ));
-        assert_eq!(
-            fs::read_dir(&empty).unwrap().count(),
-            0,
-            "a file was written"
-        );
-        assert_eq!(mode(&empty), 0o755, "the folder's mode was changed");
-
-        // A file where the home should be: not an office, and left as it was.
-        let file = home.path().join("file");
-        fs::write(&file, b"not an office").unwrap();
-        fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
-        assert!(matches!(
-            Office::open(&file, &keys),
-            Err(OfficeError::NotFound)
-        ));
-        assert_eq!(mode(&file), 0o644, "the file's mode was changed");
-    }
-
-    #[test]
-    fn open_never_replaces_a_lost_database_with_a_new_one() {
-        // The key and id are there, and a WAL with no valid frames survives, but the
-        // database itself is empty or gone: refused, not re-created empty.
-        for emptied in [true, false] {
-            let home = TempDir::new().unwrap();
-            let path = home.path().join("office");
-            let keys = InMemoryKeys::new();
-            drop(Office::create(&path, &keys).unwrap());
-            if emptied {
-                fs::write(path.join("office.db"), b"").unwrap();
-            } else {
-                fs::remove_file(path.join("office.db")).unwrap();
-            }
-            fs::write(path.join("office.db-wal"), b"what survives of the log").unwrap();
-
-            assert!(
-                matches!(Office::open(&path, &keys), Err(OfficeError::Storage(_))),
-                "emptied: {emptied}"
-            );
-            assert_eq!(
-                fs::read(path.join("office.db-wal")).unwrap(),
-                b"what survives of the log",
-                "the surviving log was changed (emptied: {emptied})"
-            );
-            if emptied {
-                assert_eq!(fs::metadata(path.join("office.db")).unwrap().len(), 0);
-            } else {
-                assert!(!path.join("office.db").exists(), "a database was created");
-            }
-        }
-    }
-
-    #[test]
-    fn open_leaves_a_folder_with_a_database_but_no_office_id_as_it_was() {
-        let home = TempDir::new().unwrap();
-        let path = home.path().join("office");
-        fs::create_dir(&path).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-        fs::write(path.join("office.db"), b"someone else's file").unwrap();
-
-        assert!(matches!(
-            Office::open(&path, &InMemoryKeys::new()),
-            Err(OfficeError::Storage(_))
-        ));
-        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o755, "the folder's mode was changed");
-        assert!(!path.join("office.lock").exists(), "a lock file was left");
-    }
-
-    #[test]
-    fn create_never_writes_through_a_planted_temporary_id_file() {
-        let home = TempDir::new().unwrap();
-        let path = home.path().join("office");
-        fs::create_dir(&path).unwrap();
-        let victim = home.path().join("victim");
-        fs::write(&victim, b"precious").unwrap();
-        std::os::unix::fs::symlink(&victim, path.join("office.id.tmp")).unwrap();
-
-        assert!(matches!(
-            Office::create(&path, &InMemoryKeys::new()),
-            Err(OfficeError::OfficeExists)
-        ));
-        assert_eq!(fs::read(&victim).unwrap(), b"precious");
-        assert!(
-            path.join("office.id.tmp").is_symlink(),
-            "a file it didn't make was removed"
-        );
-    }
-
-    /// Saves keys, but puts something that isn't a database where the office's goes first,
-    /// so `create` fails only once it opens the store.
-    struct SpoilingKeys(PathBuf, InMemoryKeys);
-
-    impl KeyProvider for SpoilingKeys {
-        fn load(&self, office_id: &str) -> Result<Option<Key>, crate::key::KeyError> {
-            self.1.load(office_id)
-        }
-
-        fn store(&self, office_id: &str, key: &Key) -> Result<(), crate::key::KeyError> {
-            fs::write(self.0.join("office.db"), vec![0x55u8; 8192])?;
-            self.1.store(office_id, key)
-        }
-    }
-
-    #[test]
-    fn a_create_whose_store_fails_to_open_cleans_up_its_files() {
-        let home = TempDir::new().unwrap();
-        let path = home.path().join("office");
-
-        assert!(matches!(
-            Office::create(&path, &SpoilingKeys(path.clone(), InMemoryKeys::new())),
-            Err(OfficeError::Storage(_))
-        ));
-        for file in OFFICE_FILES {
-            assert!(!path.join(file).exists(), "{file} was left behind");
-        }
-
-        Office::create(&path, &InMemoryKeys::new()).unwrap();
-    }
-
-    /// Holds no keys and fails to save any.
-    struct FailingKeys;
-
-    impl KeyProvider for FailingKeys {
-        fn load(&self, _office_id: &str) -> Result<Option<Key>, crate::key::KeyError> {
-            Ok(None)
-        }
-
-        fn store(&self, _office_id: &str, _key: &Key) -> Result<(), crate::key::KeyError> {
-            Err("the keychain refused".into())
-        }
-    }
-
-    #[test]
-    fn a_failed_create_cleans_up_so_the_home_can_be_created_again() {
-        let home = TempDir::new().unwrap();
-        let path = home.path().join("office");
-
-        assert!(matches!(
-            Office::create(&path, &FailingKeys),
-            Err(OfficeError::Storage(_))
-        ));
-        for file in ["office.id", "office.id.tmp", "office.db", "office.db-wal"] {
-            assert!(!path.join(file).exists(), "{file} was left behind");
-        }
-
-        Office::create(&path, &InMemoryKeys::new()).unwrap();
-    }
-
-    #[test]
-    fn open_after_a_create_that_stopped_before_the_database_is_not_found() {
-        // `office.id` and the key were saved, but no database was made.
-        let home = TempDir::new().unwrap();
-        let path = home.path().join("office");
-        let keys = InMemoryKeys::new();
-        drop(Office::create(&path, &keys).unwrap());
-        for file in ["office.db", "office.db-wal", "office.db-shm"] {
-            let _ = fs::remove_file(path.join(file));
-        }
-
-        assert!(matches!(
-            Office::open(&path, &keys),
-            Err(OfficeError::NotFound)
-        ));
-        assert!(!path.join("office.db").exists(), "a database was created");
-    }
+thread_local! {
+    /// Makes `build` fail at the named step, to test what a half-done create leaves behind.
+    static FAIL_AT: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+    /// Makes `remove_entries` fail without removing anything.
+    static FAIL_CLEANUP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Each step `build` reached, and whether `office.json` existed by then.
+    static REACHED: std::cell::RefCell<Vec<(&'static str, bool)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
+
+#[cfg(test)]
+fn failpoint(folder: &Path, step: &'static str) -> Result<(), OfficeError> {
+    let finished = folder.join(office_file::FILE_NAME).exists();
+    REACHED.with(|reached| reached.borrow_mut().push((step, finished)));
+    if FAIL_AT.with(std::cell::Cell::get) == Some(step) {
+        return Err(OfficeError::storage(std::io::Error::other(
+            "injected failure",
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(not(test))]
+fn failpoint(_folder: &Path, _step: &'static str) -> Result<(), OfficeError> {
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests;
