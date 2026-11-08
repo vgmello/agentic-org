@@ -1113,6 +1113,20 @@ fn org_relay_symlink_behaves_like_v1_old_org_relay() {
 }
 
 #[test]
+fn office_is_accepted_and_ignored_by_read_and_whoami() {
+    let env = setup("office");
+    let r = env.run(ME, &["whoami", "--office", "hq"]);
+    assert_eq!((r.code, r.stdout.as_str()), (0, ME), "{}", r.stderr);
+    assert_eq!(env.run(ME, &["whoami", "--office"]).code, 1);
+    assert_eq!(env.run(ME, &["whoami", "extra"]).code, 1);
+    let id = env.send(PEER, ME, &["hello"]);
+    let r = env.run(ME, &["msg", "read", &id, "--office", "hq"]);
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    assert!(r.stdout.contains("hello"));
+    assert_eq!(env.run(ME, &["msg", "read", "--next", "--office"]).code, 1);
+}
+
+#[test]
 fn inbox_all_text_adds_status_and_due_columns() {
     let env = setup("inbox_all");
     let unread = env.send(PEER, ME, &["--subject", "u", "b"]);

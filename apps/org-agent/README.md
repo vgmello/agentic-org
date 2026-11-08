@@ -62,7 +62,7 @@ into `outbox/new/`, as the v1-old CLI does. That is not the `F_FULLFSYNC` + dire
 of ADR-0003 §3.5, which applies to the Phase B offline fallback spool: on macOS a power loss
 right after a send can still lose it.
 
-`--office` is accepted everywhere and ignored: Phase A has one spool. `msg inbox --cursor` is a usage error (the spool has no sequence numbers; use `--limit`).
+`--office <id>` is accepted and ignored (Phase A has one spool) by `whoami`, `who`, `status`, and `msg send`, `ask`, `reply`, `read`, `inbox`, `defer`, `done`, `notify`, `due` and `wait`; `profile set` and `msg register` take it as the profile's office (`--office <id[:name]>`), and `msg deregister` and `relay` don't accept it. `msg inbox --cursor` is a usage error (the spool has no sequence numbers; use `--limit`).
 
 ## Directory and presence
 

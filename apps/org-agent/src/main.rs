@@ -554,10 +554,18 @@ fn run(args: Vec<String>) -> Result<u8, CliError> {
             Ok(EXIT_OK)
         }
         "whoami" => {
-            if filtered.len() > 1 {
-                return Err(CliError::Usage(
-                    "whoami takes no positional arguments".into(),
-                ));
+            // `--office <id>` is accepted and ignored (one spool in Phase A), as elsewhere.
+            match &filtered[1..] {
+                [] => {}
+                [flag, _] if flag == "--office" => {}
+                [flag] if flag == "--office" => {
+                    return Err(CliError::Usage("missing value for --office".into()));
+                }
+                _ => {
+                    return Err(CliError::Usage(
+                        "whoami takes no positional arguments".into(),
+                    ));
+                }
             }
             let id = resolve_identity(as_agent.as_deref())?;
             if json_flag {
@@ -975,9 +983,14 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
             let mut next = false;
             let mut id: Option<String> = None;
 
-            for arg in sub_args {
+            let mut args = sub_args.iter();
+            while let Some(arg) = args.next() {
                 match arg.as_str() {
                     "--next" => next = true,
+                    "--office" => {
+                        args.next()
+                            .ok_or_else(|| CliError::Usage("missing value for --office".into()))?;
+                    }
                     other if other.starts_with('-') => {
                         return Err(CliError::Usage(format!("unknown flag '{other}'")));
                     }
