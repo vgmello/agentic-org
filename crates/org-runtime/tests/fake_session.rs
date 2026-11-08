@@ -6,16 +6,16 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use org_runtime::testkit::{self, Script};
+use org_runtime::testkit::{self, Script, ScriptApproval};
 use org_runtime::{
     encode_line, Activity, AgentIdentity, AgentName, AgentRuntime, ApprovalId, ApprovalKind,
     ApprovalRequest, Capabilities, CommandPrefix, Control, ControlError, CostBasis, Decision,
-    EnvName, ExitInfo, FileLocation, Frame, LaunchContext, LaunchPlan, LineFramer, Output,
-    PathPattern, PermissionMode, PermissionPolicy, PlanError, PlannedDir, PlannedFile, Probe,
-    ProbeContext, ProbeOutput, ProbePlan, ProbeResult, RelPath, Rule, RuleScope, RuleTool,
-    RuntimeId, SandboxSpec, Session, SessionEvent, SessionId, SessionKind, SessionSpec,
-    SignalTarget, SpecPath, StartFailure, Stdio, StopPlan, StopSignal, StopStep, TurnOutcome,
-    Unavailable, UsageScope, VersionRange,
+    EnvName, Escalation, ExitInfo, FileLocation, Frame, LaunchContext, LaunchPlan, LimitStatus,
+    LineFramer, Output, PathPattern, PermissionMode, PermissionPolicy, PlanError, PlannedDir,
+    PlannedFile, Probe, ProbeContext, ProbeOutput, ProbePlan, ProbeResult, ProbeRun, ProbeSession,
+    ProbeStep, RateLimit, RelPath, Rule, RuleScope, RuleTool, RuntimeId, SandboxSpec, Session,
+    SessionEvent, SessionId, SessionKind, SessionSpec, SignalTarget, SpecPath, StartFailure, Stdio,
+    StopPlan, StopSignal, StopStep, TurnOutcome, Unavailable, UsageScope, VersionRange, Window,
 };
 use serde_json::{json, Value};
 
@@ -75,6 +75,22 @@ enum Bug {
     RefusedControlMovesDeadline,
     /// Rule 2: a refused control arms a deadline that only shows after the turn ends.
     RefusedControlArmsLaterDeadline,
+    /// Rule 1: a normal Send while an approval is pending is accepted.
+    BusyIgnoredWhileApproval,
+    /// Rule 2: a refused Answer drops the pending approval.
+    RefusedAnswerDropsPending,
+    /// Rule 3: with an approval pending at exit, Ended isn't last.
+    EndedNotLastWithApproval,
+    /// Approvals: an Answer after the runtime cancelled the approval is accepted.
+    AnswerAfterCancelAccepted,
+    /// Steering: an urgent Send steers although this runtime can't.
+    UrgentSendSteers,
+    /// Bypass: the opening sets a bypass permission mode in-band.
+    BypassInOpening,
+    /// Escalation: a permissions request carries no escalation.
+    PermissionsAsNone,
+    /// Usage: a turn's usage comes after its TurnEnded.
+    UsageAfterTurnEnded,
 }
 
 #[derive(PartialEq)]
@@ -120,6 +136,11 @@ impl EchoSession {
 impl Session for EchoSession {
     fn start(&mut self, now: Instant) -> Vec<Output> {
         self.opened_at = Some(now);
+        if self.bug == Some(Bug::BypassInOpening) {
+            return vec![Self::write(
+                json!({"type": "hello", "mode": "bypassPermissions"}),
+            )];
+        }
         vec![Self::write(json!({"type": "hello"}))]
     }
 
@@ -160,16 +181,31 @@ impl Session for EchoSession {
             "approve?" => {
                 let id = ApprovalId::new(msg["id"].as_str().unwrap_or_default());
                 self.pending.push(id.clone());
-                SessionEvent::ApprovalRequested(ApprovalRequest {
+                // This protocol says whether the command would leave the sandbox; the adapter
+                // must carry that as the escalation.
+                let escalation = if msg["unsandboxed"].as_bool() == Some(true) {
+                    Escalation::SandboxBypass
+                } else {
+                    Escalation::None
+                };
+                SessionEvent::ApprovalRequested(ApprovalRequest::new(
                     id,
-                    kind: ApprovalKind::Command,
-                    tool: "Bash".into(),
-                    display_name: None,
-                    input: msg["input"].clone(),
-                    justification_untrusted: None,
-                    blocked_path: None,
-                    tool_use_id: None,
-                })
+                    if self.bug == Some(Bug::PermissionsAsNone) {
+                        ApprovalKind::Permissions
+                    } else {
+                        ApprovalKind::Command
+                    },
+                    escalation,
+                    "Bash",
+                    msg["input"].clone(),
+                ))
+            }
+            "cancel" => {
+                let id = ApprovalId::new(msg["id"].as_str().unwrap_or_default());
+                if self.bug != Some(Bug::AnswerAfterCancelAccepted) {
+                    self.pending.retain(|p| *p != id);
+                }
+                SessionEvent::ApprovalCancelled { id }
             }
             "done" => {
                 if self.state == State::Busy {
@@ -188,6 +224,15 @@ impl Session for EchoSession {
                     return vec![
                         Output::Event(ended),
                         Self::write(json!({"type": "user", "text": text})),
+                    ];
+                }
+                if self.bug == Some(Bug::UsageAfterTurnEnded) {
+                    return vec![
+                        Output::Event(ended),
+                        Output::Event(SessionEvent::Usage(org_runtime::Usage::new(
+                            UsageScope::TurnDelta,
+                            UsageScope::TurnDelta,
+                        ))),
                     ];
                 }
                 ended
@@ -250,7 +295,18 @@ impl Session for EchoSession {
                 signal: None,
             });
         }
-        let mut out = self.ended(exit);
+        // Approvals still pending die with the process: withdraw them, then end.
+        let cancelled: Vec<Output> = std::mem::take(&mut self.pending)
+            .into_iter()
+            .map(|id| Output::Event(SessionEvent::ApprovalCancelled { id }))
+            .collect();
+        if self.bug == Some(Bug::EndedNotLastWithApproval) && !cancelled.is_empty() {
+            let mut out = self.ended(exit);
+            out.extend(cancelled);
+            return out;
+        }
+        let mut out = cancelled;
+        out.extend(self.ended(exit));
         if self.bug == Some(Bug::EndedNotLast) {
             out.push(Output::Event(SessionEvent::Unknown {
                 type_name: "after".into(),
@@ -308,8 +364,20 @@ impl Session for EchoSession {
             State::Idle | State::Busy => {}
         }
         match control {
+            Control::Send { urgent: true, .. }
+                if self.state == State::Busy && self.bug == Some(Bug::UrgentSendSteers) =>
+            {
+                Ok(vec![])
+            }
             Control::Send { urgent: true, .. } if self.state == State::Busy => {
                 Err(ControlError::NeedsInterrupt)
+            }
+            Control::Send { .. }
+                if self.state == State::Busy
+                    && !self.pending.is_empty()
+                    && self.bug == Some(Bug::BusyIgnoredWhileApproval) =>
+            {
+                Ok(vec![])
             }
             Control::Send { .. } if self.state == State::Busy && self.bug == Some(Bug::NoBusy) => {
                 Ok(vec![])
@@ -347,6 +415,9 @@ impl Session for EchoSession {
                 let Some(at) = self.pending.iter().position(|p| *p == request_id) else {
                     if self.bug == Some(Bug::RefusedAnswerEndsTurn) {
                         self.state = State::Idle;
+                    }
+                    if self.bug == Some(Bug::RefusedAnswerDropsPending) {
+                        self.pending.clear();
                     }
                     return Err(ControlError::UnknownApproval);
                 };
@@ -386,6 +457,72 @@ impl Session for EchoSession {
     }
 }
 
+/// The fake's quota exchange: ask with `quota?`, read `{"type":"quota","used":...}`.
+#[derive(Default)]
+struct EchoQuota {
+    deadline: Option<Instant>,
+    done: bool,
+}
+
+impl EchoQuota {
+    fn finish(&mut self, result: ProbeResult) -> Vec<ProbeStep> {
+        self.done = true;
+        self.deadline = None;
+        vec![ProbeStep::Done(result)]
+    }
+}
+
+fn unavailable(detail: &str) -> ProbeResult {
+    ProbeResult::Unavailable {
+        reason: Unavailable::Other {
+            detail: detail.into(),
+        },
+    }
+}
+
+impl ProbeSession for EchoQuota {
+    fn start(&mut self, now: Instant) -> Vec<ProbeStep> {
+        self.deadline = Some(now + OPEN_TIMEOUT);
+        vec![ProbeStep::Write(
+            encode_line(&json!({"type": "quota?"})).unwrap(),
+        )]
+    }
+
+    fn on_line(&mut self, line: &[u8], _now: Instant) -> Vec<ProbeStep> {
+        if self.done {
+            return vec![];
+        }
+        let Ok(msg) = serde_json::from_slice::<Value>(line) else {
+            return vec![];
+        };
+        if msg["type"] != "quota" {
+            return vec![];
+        }
+        let mut limit = RateLimit::new(Window::FiveHour, LimitStatus::Ok);
+        limit.used_fraction = msg["used"].as_f64();
+        self.finish(ProbeResult::Quota {
+            limits: vec![limit],
+        })
+    }
+
+    fn on_tick(&mut self, now: Instant) -> Vec<ProbeStep> {
+        match self.deadline {
+            Some(deadline) if !self.done && now >= deadline => {
+                self.finish(unavailable("no quota answer"))
+            }
+            _ => vec![],
+        }
+    }
+
+    fn on_stdout_closed(&mut self, _now: Instant) -> ProbeResult {
+        unavailable("closed before answering")
+    }
+
+    fn next_deadline(&self) -> Option<Instant> {
+        self.deadline
+    }
+}
+
 struct EchoRuntime;
 
 impl EchoRuntime {
@@ -395,6 +532,13 @@ impl EchoRuntime {
         ctx: &LaunchContext,
         stdio: Stdio,
     ) -> Result<LaunchPlan, PlanError> {
+        // `/` can't be the workspace or a writable root (a decoded spec can't hold it; one
+        // built in code can).
+        if spec.workspace.is_root() || spec.sandbox.writable_roots.iter().any(|r| r.is_root()) {
+            return Err(PlanError::InvalidSpec(
+                "`/` can't be the workspace or a writable root".into(),
+            ));
+        }
         let caps = self.capabilities();
         // Accepting edits narrows to asking when a deny was dropped (deny wins over allow).
         let mode = match spec.effective_permission_mode(&caps) {
@@ -452,11 +596,14 @@ impl EchoRuntime {
             stdio,
             runtime_session_id: ctx.resume.clone().or_else(|| ctx.new_session_id.clone()),
             stop: StopPlan {
+                // Graceful first, with its full grace (the runtime finishes its work on end
+                // of input); then signals: the supervisor's first is always SIGTERM to the
+                // leader, then this one, to the group.
                 steps: vec![
                     StopStep::CloseStdin { grace_ms: 30_000 },
                     StopStep::Signal {
                         signal: StopSignal::Terminate,
-                        target: SignalTarget::Leader,
+                        target: SignalTarget::Group,
                         grace_ms: 5_000,
                     },
                 ],
@@ -553,27 +700,22 @@ impl AgentRuntime for EchoRuntime {
         self.plan(spec, ctx, Stdio::Pty { cols, rows })
     }
 
-    fn plan_probe(&self, probe: Probe, ctx: &ProbeContext) -> Option<ProbePlan> {
+    fn plan_probe(&self, probe: Probe, ctx: &ProbeContext) -> Option<ProbeRun> {
+        let plan = |args: &[&str]| ProbePlan {
+            program: ctx.runtime_path.clone(),
+            args: args.iter().map(|a| a.to_string()).collect(),
+            env_add: vec![],
+            stdin_lines: vec![],
+            timeout_ms: 10_000,
+        };
         match probe {
-            Probe::Version => Some(ProbePlan {
-                program: ctx.runtime_path.clone(),
-                args: vec!["--version".into()],
-                env_add: vec![],
-                stdin_lines: vec![],
-                keep_stdin_open_until_exit: false,
-                timeout_ms: 10_000,
+            Probe::Version => Some(ProbeRun::OneShot(plan(&["--version"]))),
+            Probe::Auth => Some(ProbeRun::OneShot(plan(&["auth", "status"]))),
+            // Quota needs an exchange: ask, then read the answer.
+            Probe::Quota => Some(ProbeRun::Conversation {
+                plan: plan(&["serve"]),
+                session: Box::new(EchoQuota::default()),
             }),
-            Probe::Auth => Some(ProbePlan {
-                program: ctx.runtime_path.clone(),
-                args: vec!["auth".into(), "status".into()],
-                env_add: vec![],
-                stdin_lines: vec![],
-                keep_stdin_open_until_exit: false,
-                timeout_ms: 10_000,
-            }),
-            // This runtime documents its quota probe as optional (quota comes in-stream),
-            // which is the only reason to return None for a probe it knows.
-            Probe::Quota => None,
             // A probe this adapter doesn't know: no plan. The office treats None for a probe it
             // requires as the runtime being unusable, so this fails closed.
             _ => None,
@@ -678,6 +820,20 @@ fn a_session_runs_a_turn_through_the_port() {
     let runtime: Box<dyn AgentRuntime> = Box::new(EchoRuntime);
     let (plan, mut session) = runtime.plan_session(&spec(), &ctx()).unwrap();
     assert_eq!(plan.program, PathBuf::from("/opt/echo/bin/echo-agent"));
+    // The stop plan lists its graceful step first, with its full grace, before any signal.
+    assert_eq!(
+        plan.stop.steps.first(),
+        Some(&StopStep::CloseStdin { grace_ms: 30_000 })
+    );
+    let first_signal = plan
+        .stop
+        .steps
+        .iter()
+        .position(|step| matches!(step, StopStep::Signal { .. }))
+        .unwrap();
+    assert!(plan.stop.steps[..first_signal]
+        .iter()
+        .all(|step| matches!(step, StopStep::CloseStdin { .. })));
     assert_eq!(plan.stdio, Stdio::Piped);
     assert_eq!(
         plan.runtime_session_id.as_ref().map(SessionId::as_str),
@@ -906,20 +1062,13 @@ fn plans_refuse_what_they_cant_honour() {
 #[test]
 fn probes_are_planned_and_parsed_purely() {
     let runtime = EchoRuntime;
-    let probe_ctx = ProbeContext {
-        runtime_path: PathBuf::from("/opt/echo/bin/echo-agent"),
-        runtime_version: None,
+    let probe_ctx = ProbeContext::new(PathBuf::from("/opt/echo/bin/echo-agent"));
+    let Some(ProbeRun::OneShot(plan)) = runtime.plan_probe(Probe::Version, &probe_ctx) else {
+        panic!("the version probe is one-shot")
     };
-    assert!(runtime.plan_probe(Probe::Quota, &probe_ctx).is_none());
-    let plan = runtime.plan_probe(Probe::Version, &probe_ctx).unwrap();
     assert_eq!(plan.args, vec!["--version".to_owned()]);
-    assert!(!plan.keep_stdin_open_until_exit);
-    let out = ProbeOutput {
-        stdout: b"1.2.3\n".to_vec(),
-        stderr: vec![],
-        exit_code: Some(0),
-        timed_out: false,
-    };
+    let out = ProbeOutput::new(b"1.2.3\n".to_vec(), vec![], Some(0));
+    assert!(!out.timed_out);
     assert_eq!(
         runtime.parse_probe(Probe::Version, &out),
         ProbeResult::Version {
@@ -968,6 +1117,11 @@ fn echo_script() -> Script {
         turn: vec![],
         turn_end: vec![br#"{"type":"done"}"#.to_vec()],
         stderr: vec![b"echo: warning: low disk".to_vec()],
+        approval: Some(ScriptApproval {
+            request: br#"{"type":"approve?","id":"req-9","input":{"command":"ls"}}"#.to_vec(),
+            id: ApprovalId::new("req-9"),
+            cancel: Some(br#"{"type":"cancel","id":"req-9"}"#.to_vec()),
+        }),
     }
 }
 
@@ -993,7 +1147,8 @@ fn rule_3_ended_comes_exactly_once_and_last() {
 
 #[test]
 fn the_fake_passes_every_check() {
-    testkit::check_all(&mut make_echo, &echo_script(), Instant::now());
+    let caps = EchoRuntime.capabilities();
+    testkit::check_all(&mut make_echo, &echo_script(), &caps, Instant::now());
 }
 
 /// The testkit fails every planted bug, with a broken-rule message (not a script error).
@@ -1004,6 +1159,14 @@ fn the_testkit_catches_every_planted_bug() {
     let rule_1: Check = testkit::check_busy_during_turn;
     let rule_2: Check = testkit::check_error_changes_nothing;
     let rule_3: Check = testkit::check_ended_once_and_last;
+    let rule_1_approval: Check = testkit::check_busy_while_approval_pending;
+    let cancel: Check = testkit::check_answer_after_cancel;
+    let urgent: Check = |make, script, now| {
+        testkit::check_urgent_send(make, script, &EchoRuntime.capabilities(), now)
+    };
+    let usage: Check = testkit::check_usage_before_turn_end;
+    let all: Check =
+        |make, script, now| testkit::check_all(make, script, &EchoRuntime.capabilities(), now);
     let bugs = [
         (Bug::NoBusy, "rule 1", rule_1),
         (Bug::QueuesRefusedSend, "rule 2", rule_2),
@@ -1023,6 +1186,14 @@ fn the_testkit_catches_every_planted_bug() {
         (Bug::EndedEarlyAndAgain, "rule 3", rule_3),
         (Bug::RefusedControlMovesDeadline, "rule 2", rule_2),
         (Bug::RefusedControlArmsLaterDeadline, "rule 2", rule_2),
+        (Bug::BusyIgnoredWhileApproval, "rule 1", rule_1_approval),
+        (Bug::RefusedAnswerDropsPending, "rule 2", rule_2),
+        (Bug::EndedNotLastWithApproval, "rule 3", rule_3),
+        (Bug::AnswerAfterCancelAccepted, "approval rule", cancel),
+        (Bug::UrgentSendSteers, "steering rule", urgent),
+        (Bug::BypassInOpening, "bypass rule", rule_1),
+        (Bug::PermissionsAsNone, "escalation rule", rule_1_approval),
+        (Bug::UsageAfterTurnEnded, "usage rule", usage),
     ];
     let fails = |bug: Bug, check: Check| -> Option<String> {
         let mut make = || Box::new(EchoSession::with_bug(bug)) as Box<dyn Session>;
@@ -1047,7 +1218,7 @@ fn the_testkit_catches_every_planted_bug() {
         );
         // And check_all fails it too.
         assert!(
-            fails(bug, testkit::check_all).is_some(),
+            fails(bug, all).is_some(),
             "check_all passed a session with {bug:?}"
         );
     }
@@ -1150,4 +1321,149 @@ fn a_dropped_deny_list_drops_the_allow_rules() {
 
     // Every adapter always adds its TMPDIR as a writable root.
     assert!(args.contains(&"/private/tmp/agentic-org/s1".to_owned()));
+}
+
+#[test]
+fn a_conversation_probe_finishes_with_its_answer() {
+    let probe_ctx = ProbeContext::new(PathBuf::from("/opt/echo/bin/echo-agent"));
+    let Some(ProbeRun::Conversation { plan, mut session }) =
+        EchoRuntime.plan_probe(Probe::Quota, &probe_ctx)
+    else {
+        panic!("the quota probe is a conversation")
+    };
+    assert!(plan.stdin_lines.is_empty());
+    let t0 = Instant::now();
+    let opening = session.start(t0);
+    let [ProbeStep::Write(ask)] = &opening[..] else {
+        panic!("expected the question, got {opening:?}")
+    };
+    assert_eq!(ask.as_bytes(), b"{\"type\":\"quota?\"}\n");
+    assert!(session.on_line(b"noise", t0).is_empty());
+    let steps = session.on_line(br#"{"type":"quota","used":0.25}"#, t0);
+    let [ProbeStep::Done(ProbeResult::Quota { limits })] = &steps[..] else {
+        panic!("expected a quota result, got {steps:?}")
+    };
+    assert_eq!(limits[0].used_fraction, Some(0.25));
+    // Done is final: the deadline is gone, so the probe can't end as a timeout after it.
+    assert_eq!(session.next_deadline(), None);
+    assert!(session.on_tick(t0 + OPEN_TIMEOUT * 10).is_empty());
+
+    // No answer in time: it concludes, as unavailable.
+    let Some(ProbeRun::Conversation { mut session, .. }) =
+        EchoRuntime.plan_probe(Probe::Quota, &probe_ctx)
+    else {
+        unreachable!()
+    };
+    session.start(t0);
+    let deadline = session.next_deadline().unwrap();
+    assert!(matches!(
+        &session.on_tick(deadline)[..],
+        [ProbeStep::Done(ProbeResult::Unavailable { .. })]
+    ));
+}
+
+#[test]
+fn the_plan_passes_the_plan_check_and_a_doctored_one_fails() {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    let (plan, _) = EchoRuntime.plan_session(&spec(), &ctx()).unwrap();
+    let caps = EchoRuntime.capabilities();
+    testkit::check_plan(&plan, &spec(), &ctx(), &caps);
+    let fails = |plan: &LaunchPlan| {
+        catch_unwind(AssertUnwindSafe(|| {
+            testkit::check_plan(plan, &spec(), &ctx(), &caps)
+        }))
+        .is_err()
+    };
+    for banned in [
+        &["--dangerously-skip-permissions"][..],
+        &["--permission-mode=bypassPermissions"],
+        &["--permission-mode", "bypassPermissions"],
+        &["--dangerously-bypass-approvals-and-sandbox"],
+        &["--yolo"],
+        &["-y"],
+        &["--approval-mode", "yolo"],
+        &["--approval-mode=YOLO"],
+        &["-s", "danger-full-access"],
+        &["-c", "sandbox_mode=\"danger-full-access\""],
+    ] {
+        let mut doctored = plan.clone();
+        doctored
+            .args
+            .extend(banned.iter().map(|arg| arg.to_string()));
+        assert!(fails(&doctored), "{banned:?} passed");
+    }
+    // Hardening and deny rules that merely name a switch are fine.
+    let mut hardened = plan.clone();
+    hardened
+        .args
+        .push("--deny=Bash(claude --dangerously-skip-permissions:*)".into());
+    hardened.files.push(PlannedFile {
+        location: FileLocation::RuntimeDir,
+        rel_path: RelPath::try_from("settings.json").unwrap(),
+        contents: br#"{"disableBypassPermissionsMode":"disable"}"#.to_vec(),
+        git_exclude: false,
+    });
+    assert!(!fails(&hardened), "a hardening setting was refused");
+    // A bypass in a generated settings file is caught too.
+    let mut doctored = plan.clone();
+    doctored.files.push(PlannedFile {
+        location: FileLocation::RuntimeDir,
+        rel_path: RelPath::try_from("settings.json").unwrap(),
+        contents: br#"{"permissions":{"defaultMode":"bypassPermissions"}}"#.to_vec(),
+        git_exclude: false,
+    });
+    assert!(fails(&doctored));
+    // Without the run's TMPDIR as a writable root, it fails.
+    let mut doctored = plan.clone();
+    doctored
+        .args
+        .retain(|a| !a.contains("/private/tmp/agentic-org/s1"));
+    assert!(fails(&doctored));
+    // And with another cwd.
+    let mut doctored = plan;
+    doctored.cwd = SpecPath::try_from("/elsewhere").unwrap();
+    assert!(fails(&doctored));
+}
+
+// A deny beats a matching allow whatever the rules' order: this fake writes every deny first.
+#[test]
+fn denies_come_before_allows_whatever_the_order() {
+    let push = Rule {
+        tool: RuleTool::try_from("Bash").unwrap(),
+        scope: RuleScope::CommandPrefix(CommandPrefix::try_from("git push").unwrap()),
+    };
+    let git = Rule {
+        tool: RuleTool::try_from("Bash").unwrap(),
+        scope: RuleScope::CommandPrefix(CommandPrefix::try_from("git ").unwrap()),
+    };
+    let mut spec = spec();
+    spec.policy.allow = vec![git.clone()];
+    spec.policy.deny = vec![push.clone()];
+    let args = planned_args(&spec);
+    let first = |flag: &str| args.iter().position(|a| a == flag).unwrap();
+    assert!(first("--deny") < first("--allow"), "{args:?}");
+    // Whatever order the denies come in, they all come before any allow.
+    spec.policy.deny = vec![git.clone(), push];
+    spec.policy.allow = vec![git];
+    let args = planned_args(&spec);
+    let last_deny = args.iter().rposition(|a| a == "--deny").unwrap();
+    let first_allow = args.iter().position(|a| a == "--allow").unwrap();
+    assert!(last_deny < first_allow, "{args:?}");
+}
+
+#[test]
+fn root_is_never_the_workspace_or_a_writable_root() {
+    let root = SpecPath::try_from("/").unwrap();
+    let mut spec = spec();
+    spec.workspace = root.clone();
+    assert!(matches!(
+        EchoRuntime.plan_session(&spec, &ctx()),
+        Err(PlanError::InvalidSpec(_))
+    ));
+    let mut spec = self::spec();
+    spec.sandbox.writable_roots.push(root);
+    assert!(matches!(
+        EchoRuntime.plan_session(&spec, &ctx()),
+        Err(PlanError::InvalidSpec(_))
+    ));
 }

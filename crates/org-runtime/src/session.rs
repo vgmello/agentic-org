@@ -17,12 +17,19 @@ use crate::{ApprovalId, ExitInfo, Line, SessionEvent};
 ///    [`on_stderr_line`](Self::on_stderr_line) (it drops over-long stderr lines).
 /// 4. When stdout ends, it calls [`on_stdout_closed`](Self::on_stdout_closed) once (after
 ///    feeding [`crate::LineFramer::finish`]'s frame, if any).
-/// 5. After it reaps the process, it calls [`on_exit`](Self::on_exit) once, last. That can
-///    come without step 4: a tool that left the process group can hold stdout open after the
-///    runtime is gone.
+/// 5. After it reaps the process, it calls [`on_exit`](Self::on_exit) once, last. Before
+///    that, it **drains stdout**: it keeps reading until EOF or a short bound (a second or
+///    so) after the exit, so the session sees the runtime's last lines (a turn's usage and
+///    result) before the exit. `on_exit` can come without step 4: a tool that left the
+///    process group can hold stdout open after the runtime is gone.
 /// 6. It calls [`control`](Self::control) for each office command.
 /// 7. It calls [`on_tick`](Self::on_tick) once `now` reaches
 ///    [`next_deadline`](Self::next_deadline), re-reading the deadline after every call.
+///
+/// When the office closes the session, the supervisor's [`crate::StopPlan`] starts only
+/// after the session's [`Output::CloseStdin`] (or a timeout waiting for it). Its graceful
+/// steps keep their full grace, and the first signal the supervisor sends is always `SIGTERM`
+/// to the runtime's own process.
 ///
 /// Every call returns [`Output`]s, which the pump applies **in order** before the next call:
 /// it writes each [`Output::Write`] to stdin in full, forwards each [`Output::Event`], and
