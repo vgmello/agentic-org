@@ -9,3 +9,8 @@ publish.workspace = true
 [dependencies]
 org-proto = { path = "../../crates/org-proto" }
 org-office = { path = "../../crates/org-office" }
+serde_json.workspace = true
+signal-hook = "=0.4.6"
+
+[dev-dependencies]
+tempfile.workspace = true
