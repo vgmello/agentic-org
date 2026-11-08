@@ -35,15 +35,24 @@ pub(crate) const THIS_MAC: &str = "This Mac";
 const STARTUP_DISCARDS_AT_ONCE: usize = 4;
 
 /// The answer to a create that came before the startup discards finished, after waiting
-/// [`Timings::startup_wait`].
+/// [`Timings::create_wait`].
 const HOST_STARTING: &str = "host starting";
+
+/// How many creates may run at once; more wait for a slot (within [`Timings::create_wait`]).
+const MAX_CREATES_IN_FLIGHT: usize = 4;
+
+/// The answer to a create that found no free slot within [`Timings::create_wait`].
+const TOO_MANY_CREATES: &str = "too many creates in progress";
 
 pub(crate) struct Offices {
     home: PathBuf,
     catalog: Mutex<Catalog>,
     supervisor: Supervisor,
     create_timeout: Duration,
-    startup_wait: Duration,
+    create_wait: Duration,
+    /// Creates running now (at most [`MAX_CREATES_IN_FLIGHT`]).
+    creates: Mutex<usize>,
+    create_slot_freed: Condvar,
     /// Whether the startup discards are done.
     started: Mutex<bool>,
     started_changed: Condvar,
@@ -77,7 +86,9 @@ impl Offices {
             catalog: Mutex::new(catalog),
             supervisor,
             create_timeout: timings.create_timeout,
-            startup_wait: timings.startup_wait,
+            create_wait: timings.create_wait,
+            creates: Mutex::new(0),
+            create_slot_freed: Condvar::new(),
             started: Mutex::new(false),
             started_changed: Condvar::new(),
             startup: Mutex::new(None),
@@ -125,10 +136,9 @@ impl Offices {
         self.started_changed.notify_all();
     }
 
-    /// Waits up to [`Timings::startup_wait`] for the startup discards to finish, so a create
-    /// never races the discard of an unfinished folder; then `unavailable` ("host starting").
-    fn wait_for_startup(&self) -> Result<(), ApiError> {
-        let deadline = Instant::now() + self.startup_wait;
+    /// Waits until `deadline` for the startup discards to finish, so a create never races the
+    /// discard of an unfinished folder; then `unavailable` ("host starting").
+    fn wait_for_startup(&self, deadline: Instant) -> Result<(), ApiError> {
         let mut started = lock(&self.started);
         while !*started {
             let left = deadline.saturating_duration_since(Instant::now());
@@ -142,6 +152,25 @@ impl Offices {
                 .0;
         }
         Ok(())
+    }
+
+    /// Takes one of the [`MAX_CREATES_IN_FLIGHT`] create slots, waiting until `deadline` for
+    /// one to be freed; then `unavailable` ("too many creates in progress").
+    fn create_slot(&self, deadline: Instant) -> Result<CreateSlot<'_>, ApiError> {
+        let mut creates = lock(&self.creates);
+        while *creates >= MAX_CREATES_IN_FLIGHT {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(ApiError::new(ErrorCode::Unavailable, TOO_MANY_CREATES));
+            }
+            creates = self
+                .create_slot_freed
+                .wait_timeout(creates, left)
+                .unwrap_or_else(|p| p.into_inner())
+                .0;
+        }
+        *creates += 1;
+        Ok(CreateSlot(self))
     }
 
     /// Every organization with an office on this Mac (see [`Catalog::organizations`]).
@@ -169,7 +198,10 @@ impl Offices {
     pub(crate) fn create_organization(&self, raw_name: &str) -> Result<Organization, ApiError> {
         let name = OrganizationName::parse(raw_name)
             .map_err(|e| ApiError::new(ErrorCode::InvalidName, e.message()))?;
-        self.wait_for_startup()?;
+        // One budget for both waits.
+        let deadline = Instant::now() + self.create_wait;
+        self.wait_for_startup(deadline)?;
+        let _slot = self.create_slot(deadline)?;
         // The catalog mutex is held only for this statement.
         let plan = lock(&self.catalog)
             .plan_create(&name, ids::generate)
@@ -216,6 +248,11 @@ impl Offices {
             }
             // The folder existed before this create, so it isn't ours to discard.
             CreateOutcome::Failed(FailCode::AlreadyExists) => Err(already_exists()),
+            // A server that failed after storing the office still made it: the same as one that
+            // ended without reporting.
+            CreateOutcome::Failed(_) if catalog::is_stored(&self.home, &plan.office_id) => {
+                self.finish_unreported(&plan)
+            }
             CreateOutcome::Failed(code) => {
                 self.clean_up(&plan.office_id);
                 Err(match code {
@@ -237,8 +274,8 @@ impl Offices {
         }
     }
 
-    /// A create whose server ended (crashed, or was killed when it timed out) without `created`
-    /// or `failed`. `office.json` is written last, so if the server stored it, the create
+    /// A create whose server ended (crashed, was killed when it timed out, or reported `failed`
+    /// after storing the office) without `created`. `office.json` is written last, so if the server stored it, the create
     /// happened: when the stored office is the one asked for, the create succeeds after all (its
     /// server is started with `--office`, status `starting`); another office is a refused create
     /// (moved to `.refused/`). With no `office.json` the create is unfinished and is discarded;
@@ -413,6 +450,16 @@ fn create_message(plan: &CreatePlan) -> io::Result<CreateOffice> {
     })
 }
 
+/// A create slot, freed when dropped.
+struct CreateSlot<'a>(&'a Offices);
+
+impl Drop for CreateSlot<'_> {
+    fn drop(&mut self) {
+        *lock(&self.0.creates) -= 1;
+        self.0.create_slot_freed.notify_one();
+    }
+}
+
 /// A create's reservation of its name and handle in the catalog. Dropping it ends the
 /// reservation after a failed create (once its cleanup is done), unless the failed create left
 /// a stored office outside the catalog (an `office.json` that couldn't be read, or a create
@@ -466,4 +513,44 @@ fn storage_error() -> ApiError {
         ErrorCode::StorageError,
         "the organization couldn't be created; try again",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::supervisor::SupervisorConfig;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn a_stored_folder_is_never_handed_to_discard() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        // A server that never refuses: it records each run and exits. Only the host's own check
+        // can keep a stored folder from it.
+        let script = home.join("server");
+        fs::write(
+            &script,
+            "#!/bin/sh\necho \"$@\" >> \"$ORG_OFFICE_HOME/ran\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+        let supervisor = Supervisor::new(SupervisorConfig {
+            program: script,
+            home: home.to_path_buf(),
+            logs_dir: home.join("logs"),
+            log_max_bytes: 1024,
+            timings: Timings::default(),
+        });
+        for (id, stored) in [("STORED", true), ("UNFINISHED", false)] {
+            let folder = home.join("offices").join(id);
+            fs::create_dir_all(&folder).unwrap();
+            if stored {
+                fs::write(folder.join(OFFICE_FILE_NAME), b"{}").unwrap();
+            }
+            discard_unfinished(home, &supervisor, id);
+        }
+        let ran = fs::read_to_string(home.join("ran")).unwrap_or_default();
+        assert_eq!(ran, "--discard UNFINISHED\n");
+    }
 }

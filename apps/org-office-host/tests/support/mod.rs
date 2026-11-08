@@ -32,7 +32,7 @@ pub fn fast_timings() -> Timings {
         backoff_reset_after: Duration::from_secs(60),
         shutdown_grace: Duration::from_secs(5),
         discard_timeout: Duration::from_secs(10),
-        startup_wait: Duration::from_secs(10),
+        create_wait: Duration::from_secs(10),
         exit_poll: Duration::from_millis(100),
     }
 }

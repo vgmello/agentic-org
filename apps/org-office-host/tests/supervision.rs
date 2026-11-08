@@ -494,7 +494,7 @@ fn a_create_during_a_too_slow_startup_gets_unavailable() {
     fs::create_dir_all(home.office_dir("01UNFINISHEDUNFINISHEDUNFI")).unwrap();
     home.script(json!({"discard": {"do": "ready", "delay_ms": 2000}}));
     let mut config = home.config();
-    config.timings.startup_wait = Duration::from_millis(500);
+    config.timings.create_wait = Duration::from_millis(500);
     let host = Host::start(config).unwrap();
     let started = Instant::now();
     let err = Client::connect(host.socket_path())

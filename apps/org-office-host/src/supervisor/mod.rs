@@ -479,6 +479,73 @@ impl<'a> PendingCreate<'a> {
 mod tests {
     use super::*;
 
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    use org_office_launch::write_server_event;
+    use org_proto::{AppToken, OfficeRole};
+
+    #[test]
+    fn a_create_reported_after_shutdown_began_is_stopped_not_adopted() {
+        let dir = tempfile::tempdir().unwrap();
+        let office_id = "01AAAAAAAAAAAAAAAAAAAAAAAA";
+        let office = OfficeFile::new(
+            office_id,
+            "HQ",
+            OfficeRole::Hq,
+            "01ORG",
+            "Acme",
+            "2026-11-08T00:00:00.000Z",
+        );
+        let mut created = Vec::new();
+        write_server_event(&mut created, &ServerEvent::Created { office }).unwrap();
+        // A server that reports `created` at once, then keeps running.
+        let script = dir.path().join("server");
+        fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s' '{}'\nexec /bin/sleep 30\n",
+                String::from_utf8(created).unwrap()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+        let timings = Timings {
+            shutdown_grace: Duration::from_millis(200),
+            ..Timings::default()
+        };
+        let supervisor = Supervisor::new(SupervisorConfig {
+            program: script,
+            home: dir.path().to_path_buf(),
+            logs_dir: dir.path().join("logs"),
+            log_max_bytes: 1024,
+            timings,
+        });
+        let pending = supervisor
+            .begin_create(CreateOffice {
+                org_id: "01ORG".into(),
+                org_name: "Acme".into(),
+                office_id: office_id.into(),
+                office_name: "HQ".into(),
+                role: OfficeRole::Hq,
+                app_token: AppToken::from_bytes([1; 32]),
+            })
+            .unwrap();
+        let pid = pending.child.pid();
+        let CreateOutcome::Created(adoptable) = pending.wait(Duration::from_secs(10)) else {
+            panic!("the server didn't report created");
+        };
+        // The shutdown begins between `created` and the adoption.
+        supervisor.shutdown();
+        assert_eq!(supervisor.adopt(*adoptable), OfficeStatus::Offline);
+        assert_eq!(supervisor.status(office_id), None, "adopted after shutdown");
+        // SAFETY: signal 0 only checks the pid.
+        assert!(
+            unsafe { libc::kill(pid as libc::pid_t, 0) } != 0,
+            "the server outlived the shutdown"
+        );
+    }
+
     #[test]
     fn no_office_is_started_once_shutdown_began() {
         let dir = tempfile::tempdir().unwrap();

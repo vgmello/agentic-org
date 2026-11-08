@@ -5,7 +5,7 @@ mod support;
 use std::fs;
 use std::sync::{Arc, Barrier};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use org_office_host::Host;
 use org_office_launch::OfficeFile;
@@ -234,9 +234,11 @@ fn a_crash_before_created_is_a_storage_error_and_cleans_up() {
 
 #[test]
 fn a_create_that_stored_its_office_but_never_reported_succeeds() {
-    // The server writes office.json, then crashes, or hangs until the create times out.
+    // The server writes office.json, then crashes, reports a failure, or hangs until the create
+    // times out.
     for step in [
         json!({"do": "crash", "at": "stored"}),
+        json!({"do": "fail", "at": "stored", "code": "storage_error"}),
         json!({"do": "hang", "at": "stored", "ignore_eof": true}),
     ] {
         let home = TestHome::new();
@@ -272,24 +274,60 @@ fn a_create_that_stored_its_office_but_never_reported_succeeds() {
 
 #[test]
 fn a_create_that_stored_another_office_but_never_reported_is_refused() {
+    for action in ["crash", "fail"] {
+        let home = TestHome::new();
+        home.script(json!({"create": {
+            "do": action, "at": "stored", "code": "storage_error",
+            "report": {"org_name": "Other"}
+        }}));
+        let host = Host::start(home.config()).unwrap();
+        let mut events = subscriber(&host);
+        let mut client = Client::connect(host.socket_path());
+        let err = create(&mut client, "Acme").unwrap_err();
+        assert_eq!(err.code, ErrorCode::StorageError, "{action}");
+        assert_eq!(home.office_folders(), [".refused"], "{action}");
+        assert_eq!(home.refused_folders().len(), 1, "{action}");
+        assert_eq!(home.runs("discard"), 0, "{action}");
+        assert!(client
+            .call::<OrganizationList>(&Empty {})
+            .unwrap()
+            .organizations
+            .is_empty());
+        assert!(events.next_event(Duration::from_millis(200)).is_none());
+        host.shutdown();
+    }
+}
+
+#[test]
+fn a_create_that_stored_an_unreadable_office_keeps_it_and_its_name() {
     let home = TestHome::new();
-    home.script(
-        json!({"create": {"do": "crash", "at": "stored", "report": {"org_name": "Other"}}}),
-    );
+    // The server writes an office.json that isn't valid, then fails.
+    home.script(json!({"create": {
+        "do": "fail", "at": "stored", "code": "storage_error", "corrupt_office_file": true
+    }}));
     let host = Host::start(home.config()).unwrap();
-    let mut events = subscriber(&host);
     let mut client = Client::connect(host.socket_path());
     let err = create(&mut client, "Acme").unwrap_err();
     assert_eq!(err.code, ErrorCode::StorageError);
-    assert_eq!(home.office_folders(), [".refused"]);
-    assert_eq!(home.refused_folders().len(), 1);
+    // Left alone for a person: neither discarded nor moved aside, and its name stays taken.
+    let folders = home.office_folders();
+    assert_eq!(folders.len(), 1);
+    assert!(home.office_dir(&folders[0]).join("office.json").exists());
     assert_eq!(home.runs("discard"), 0);
-    assert!(client
+    let err = create(&mut client, " aCME ").unwrap_err();
+    assert_eq!(err.code, ErrorCode::AlreadyExists);
+    assert_eq!(home.runs("create"), 1);
+    host.shutdown();
+    // The next start lists it nowhere and leaves it alone too.
+    let host = restart_host(&home.config());
+    thread::sleep(Duration::from_millis(300));
+    assert!(Client::connect(host.socket_path())
         .call::<OrganizationList>(&Empty {})
         .unwrap()
         .organizations
         .is_empty());
-    assert!(events.next_event(Duration::from_millis(200)).is_none());
+    assert_eq!(home.runs("discard"), 0);
+    assert!(home.office_dir(&folders[0]).join("office.json").exists());
     host.shutdown();
 }
 
@@ -561,5 +599,58 @@ fn an_adopted_server_gets_its_full_ready_wait_from_adoption() {
     thread::sleep(Duration::from_millis(500));
     assert_eq!(home.runs(&office_id), 0, "the adopted server was restarted");
     assert!(alive(home.pids("create")[0]));
+    host.shutdown();
+}
+
+#[test]
+fn subscribing_twice_on_one_connection_sends_each_event_once() {
+    let home = TestHome::new();
+    let host = Host::start(home.config()).unwrap();
+    let mut events = subscriber(&host);
+    events
+        .call::<Subscribe>(&SubscribeParams::default())
+        .unwrap();
+    let org = create(&mut Client::connect(host.socket_path()), "Acme").unwrap();
+    let event = events.next_event(WAIT).expect("organization.created");
+    assert_eq!(
+        event.data::<OrganizationCreated>().unwrap().unwrap().id,
+        org.id
+    );
+    assert!(
+        events.next_event(Duration::from_millis(300)).is_none(),
+        "the event came twice"
+    );
+    host.shutdown();
+}
+
+#[test]
+fn at_most_four_creates_run_at_once_and_a_fifth_waits_then_gets_unavailable() {
+    let home = TestHome::new();
+    // Every create's server takes 2 s to report.
+    home.script(json!({"create": {"do": "ready", "delay_ms": 2000}}));
+    let mut config = home.config();
+    config.timings.create_wait = Duration::from_millis(500);
+    let host = Host::start(config).unwrap();
+    let creates: Vec<_> = (0..4)
+        .map(|i| {
+            let path = host.socket_path().to_path_buf();
+            thread::spawn(move || create(&mut Client::connect(&path), &format!("Org {i}")))
+        })
+        .collect();
+    eventually(WAIT, "four creates to run", || home.runs("create") == 4);
+
+    let mut client = Client::connect(host.socket_path());
+    let started = Instant::now();
+    let err = create(&mut client, "Fifth").unwrap_err();
+    assert_eq!(err.code, ErrorCode::Unavailable);
+    assert_eq!(err.message, "too many creates in progress");
+    assert!(started.elapsed() >= Duration::from_millis(500));
+    assert_eq!(home.runs("create"), 4, "a fifth server started");
+
+    for create in creates {
+        create.join().unwrap().unwrap();
+    }
+    // The slots are free again.
+    create(&mut client, "Sixth").unwrap();
     host.shutdown();
 }

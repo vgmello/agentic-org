@@ -50,7 +50,12 @@ impl Service {
         let ok = matches!(response.outcome, org_proto::Outcome::Result(_));
         connection.send_response(response);
         if ok {
-            lock(&self.subscribers).push(Arc::downgrade(connection));
+            // One subscription per connection: subscribing again changes nothing.
+            let this = Arc::downgrade(connection);
+            let mut subscribers = lock(&self.subscribers);
+            if !subscribers.iter().any(|s| Weak::ptr_eq(s, &this)) {
+                subscribers.push(this);
+            }
         }
     }
 

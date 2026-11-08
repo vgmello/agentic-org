@@ -17,7 +17,9 @@
 //! - `linger` (with `fail`): after the `failed` line, keep running (until SIGKILLed).
 //! - `orphan_stdout_ms`: first start a `sleep` of this long that holds the fake's stdout, so the
 //!   control pipe stays open after the fake exits (recorded as `orphan <key> <pid> <sleep pid>`).
-//! - `hang` also works `at` `stored` (`--create`: after writing `office.json`, before `created`).
+//! - `hang` and `fail` also work `at` `stored` (`--create`: after writing `office.json`, before
+//!   `created`).
+//! - `corrupt_office_file` (`--create`): write an `office.json` that isn't valid.
 //! - `stderr_bytes`: write this many bytes (`z`s) to stderr first, and nothing else to stderr.
 //! - `delay_ms`: wait this long before `created` / `ready`.
 //! - `ready_delay_ms`: wait this long more just before `ready` (after `created`).
@@ -79,6 +81,7 @@ struct Step {
     delay: Duration,
     report: Value,
     linger: bool,
+    corrupt_office_file: bool,
     orphan_stdout_ms: Option<u64>,
     ready_delay: Duration,
 }
@@ -182,10 +185,17 @@ fn main() {
                 now_rfc3339(),
             );
             act_before(&step, &home, &key, &mut stdin);
-            write_office_file(&dir, &office);
+            if step.corrupt_office_file {
+                if fs::write(dir.join(OFFICE_FILE_NAME), b"{not an office").is_err() {
+                    fail(FailCode::StorageError);
+                }
+            } else {
+                write_office_file(&dir, &office);
+            }
             if step.at == "stored" {
                 match step.action.as_str() {
                     "crash" => exit(CRASH),
+                    "fail" => fail(step_code(&step)),
                     "hang" => {
                         wait_for_eof(&step, &home, &key, &mut stdin);
                         exit(0);
@@ -382,9 +392,8 @@ fn discard_office(home: &Path, id: &str, step: &Step, key: &str, stdin: &mut imp
 /// What happens before `created` (create) or `ready` (office): fail, crash, hang or delay.
 fn act_before(step: &Step, home: &Path, key: &str, stdin: &mut impl BufRead) {
     match step.action.as_str() {
-        "fail" => {
-            let code: FailCode = serde_json::from_value(Value::String(step.code.clone()))
-                .unwrap_or(FailCode::StorageError);
+        "fail" if step.at != "stored" => {
+            let code = step_code(step);
             if step.linger {
                 emit(&ServerEvent::Failed {
                     code,
@@ -450,6 +459,11 @@ fn take_lock(dir: &Path) -> File {
         thread::sleep(Duration::from_millis(20));
     }
     file
+}
+
+/// The step's `code` (an unknown one is `storage_error`).
+fn step_code(step: &Step) -> FailCode {
+    serde_json::from_value(Value::String(step.code.clone())).unwrap_or(FailCode::StorageError)
 }
 
 fn write_office_file(dir: &Path, office: &OfficeFile) {
@@ -570,6 +584,10 @@ fn step(home: &Path, key: &str, run: u64) -> Step {
         report: entry.get("report").cloned().unwrap_or(Value::Null),
         linger: entry
             .get("linger")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        corrupt_office_file: entry
+            .get("corrupt_office_file")
             .and_then(Value::as_bool)
             .unwrap_or(false),
         orphan_stdout_ms: entry.get("orphan_stdout_ms").and_then(Value::as_u64),

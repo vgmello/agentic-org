@@ -555,6 +555,34 @@ mod tests {
     }
 
     #[test]
+    fn an_office_json_that_isnt_a_regular_file_is_refused_and_left_alone() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let offices = home.join("offices");
+        // A directory named office.json, and a FIFO.
+        let as_dir = "01DIRAAAAAAAAAAAAAAAAAAAAA";
+        fs::create_dir_all(offices.join(as_dir).join(OFFICE_FILE_NAME)).unwrap();
+        let as_fifo = "01FIFOBBBBBBBBBBBBBBBBBBBB";
+        fs::create_dir_all(offices.join(as_fifo)).unwrap();
+        let fifo = offices.join(as_fifo).join(OFFICE_FILE_NAME);
+        let fifo_c = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        // SAFETY: a valid NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(fifo_c.as_ptr(), 0o600) }, 0);
+
+        for id in [as_dir, as_fifo] {
+            let err = read_office_file(&offices.join(id).join(OFFICE_FILE_NAME)).unwrap_err();
+            assert!(err.contains("isn't a regular file"), "{id}: {err}");
+            assert!(is_stored(home, id), "{id}");
+        }
+        // Never listed, never moved aside, never discarded.
+        let catalog = Catalog::scan(home).unwrap();
+        assert!(catalog.offices().is_empty());
+        assert!(catalog.misplaced().is_empty());
+        assert!(unfinished_folders(home).unwrap().is_empty());
+    }
+
+    #[test]
     fn unfinished_folders_are_those_without_office_json() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();

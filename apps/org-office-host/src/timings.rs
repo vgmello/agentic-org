@@ -19,9 +19,10 @@ pub struct Timings {
     pub shutdown_grace: Duration,
     /// How long `--discard` of an unfinished office may take (it waits for the office lock).
     pub discard_timeout: Duration,
-    /// How long `organization.create` waits for the startup discards before answering
-    /// `unavailable` ("host starting").
-    pub startup_wait: Duration,
+    /// How long `organization.create` waits to begin, before answering `unavailable`: first
+    /// for the startup discards ("host starting"), then for a free create slot ("too many
+    /// creates in progress"). One budget for both.
+    pub create_wait: Duration,
     /// How often a server's exit is checked directly, besides its control pipe closing (which a
     /// descendant holding its stdout would delay).
     pub exit_poll: Duration,
@@ -37,7 +38,7 @@ impl Default for Timings {
             backoff_reset_after: Duration::from_secs(60),
             shutdown_grace: Duration::from_secs(10),
             discard_timeout: Duration::from_secs(30),
-            startup_wait: Duration::from_secs(30),
+            create_wait: Duration::from_secs(30),
             exit_poll: Duration::from_secs(1),
         }
     }

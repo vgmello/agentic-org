@@ -190,6 +190,11 @@ impl RunningChild {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
     /// Whether the process has exited (it is reaped if so). Doesn't wait.
     pub(crate) fn has_exited(&mut self) -> bool {
         if !self.reaped && matches!(self.child.try_wait(), Ok(Some(_))) {
