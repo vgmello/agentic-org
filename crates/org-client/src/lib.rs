@@ -50,8 +50,9 @@ use std::time::{Duration, Instant};
 
 use org_proto::frame;
 use org_proto::location::{self, check_socket_path};
+use org_proto::msg::{MsgBind, MsgBindParams, MsgBindResult};
 use org_proto::{
-    salvage_id, Call, CallError, Empty, Event, Hello, HelloResult, ListOfficesResult,
+    salvage_id, AppToken, Call, CallError, Empty, Event, Hello, HelloResult, ListOfficesResult,
     ListOrganizationsResult, OfficeInfo, OfficeList, Organization, OrganizationCreate,
     OrganizationCreateParams, OrganizationList, Position, Request, Response, ServerMessage,
     Subscribe, SubscribeParams, API_VERSION, MAX_FRAME_BYTES,
@@ -540,6 +541,17 @@ impl Client {
             });
         }
         Ok(hello)
+    }
+
+    /// `msg.bind` as the app (an office): binds THIS connection with the office's `app_token`
+    /// and no member. The office answers organization commands and `org.snapshot` only to a
+    /// bound connection, so call this right after `connect` (a binding belongs to the connection,
+    /// and a failed bind leaves it unbound). A wrong token is `not_authorized`.
+    pub fn bind_app(&self, app_token: AppToken) -> Result<MsgBindResult, ClientError> {
+        self.call::<MsgBind>(&MsgBindParams {
+            member: None,
+            app_token: Some(app_token),
+        })
     }
 
     /// `organization.create` (host): creates an organization and starts its HQ office, waiting

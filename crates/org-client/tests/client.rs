@@ -11,11 +11,12 @@ use std::time::{Duration, Instant};
 
 use org_client::{Client, ClientError};
 use org_proto::frame;
+use org_proto::msg::{MsgBind, MsgBindResult};
 use org_proto::{
-    ApiError, Call, Empty, ErrorCode, Event, Hello, HelloResult, ListOfficesResult,
+    ApiError, AppToken, Call, Empty, ErrorCode, Event, Hello, HelloResult, ListOfficesResult,
     ListOrganizationsResult, OfficeInfo, OfficeList, OfficeRole, OfficeStatus, Organization,
     OrganizationCreate, OrganizationCreateParams, OrganizationCreated, OrganizationList, Outcome,
-    Position, Request, Response, API_VERSION, MAX_FRAME_BYTES,
+    Position, Request, Response, API_VERSION, APP_TOKEN_BYTES, MAX_FRAME_BYTES,
 };
 use serde_json::{json, Value};
 use tempfile::TempDir;
@@ -452,6 +453,42 @@ fn a_result_of_the_wrong_shape_is_a_protocol_error() {
     let shown = result.unwrap_err().to_string();
     assert!(!shown.contains("not a number"), "{shown}");
     assert!(shown.contains("hello"), "it names the call: {shown}");
+    drop(client);
+    server.finish();
+}
+
+#[test]
+fn bind_app_sends_the_token_and_no_member_and_a_refusal_is_the_servers_code() {
+    let server = fake(|mut peer| {
+        let bind = peer.next_request().unwrap();
+        assert_eq!(bind.method, "msg.bind");
+        assert!(bind.params.get("member").is_none(), "{}", bind.params);
+        assert_eq!(bind.params["app_token"], "03".repeat(32));
+        peer.reply::<MsgBind>(
+            bind.id,
+            &MsgBindResult {
+                member_id: None,
+                office_id: "OFFICE1".into(),
+            },
+        );
+        let wrong = peer.next_request().unwrap();
+        assert_eq!(wrong.params["app_token"], "04".repeat(32));
+        peer.fail(wrong.id, ErrorCode::NotAuthorized);
+    });
+    let client = server.client();
+
+    let bound = client
+        .bind_app(AppToken::from_bytes([3; APP_TOKEN_BYTES]))
+        .unwrap();
+    assert_eq!(bound.office_id, "OFFICE1");
+    assert_eq!(bound.member_id, None);
+    let refused = client
+        .bind_app(AppToken::from_bytes([4; APP_TOKEN_BYTES]))
+        .unwrap_err();
+    assert!(
+        matches!(&refused, ClientError::Api(e) if e.code == ErrorCode::NotAuthorized),
+        "{refused:?}"
+    );
     drop(client);
     server.finish();
 }
