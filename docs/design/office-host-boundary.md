@@ -225,11 +225,39 @@ first line is `invalid_request`.
     record (`<home>/orphan-keys.json`, 0600, written atomically: `{"v":1,"first_seen_ms":{"<office id>": <unix ms>}}`, office ids and first-seen times only, never key bytes) and deletes the item only if it's
     still orphaned at a host start 7 or more days later. An item whose folder comes back is unmarked.
     A record it can't read means no deletions that run (it starts over), and a clock before 2026 skips the sweep. Both steps are logged, with ids only.
+    If anything it must look at can't be read (`offices/`, `offices/.refused/`, any `office.json`
+    there, or the key store's list), it doesn't sweep at all, and logs a WARNING at every start until
+    that's fixed: one unreadable `office.json` stops all orphan deletion.
   - **The release home is pinned:** a release host refuses to start unless the shared home rule
     (`ORG_OFFICE_HOME`, then `HOME`) resolves to the account's home,
     `<home dir>/Library/Application Support/agentic.org`, with the home dir taken from the user
     database, not the environment. So one host can never take another home's offices for orphans
     (every release host of the account shares the Keychain group).
+  - **Only the signed server gets a key** (amended 2026-11-08: whole-branch review H1): before it
+    writes a server's first line (create, start or discard), a release host checks the child it just
+    spawned, before the child has run a single instruction: every server is spawned **suspended**
+    (`POSIX_SPAWN_START_SUSPENDED`, and with only its three pipes, `POSIX_SPAWN_CLOEXEC_DEFAULT`),
+    because an unvetted image's first code could start a helper that inherits stdin, then `exec` the
+    genuine server and pass a later check. The host takes the suspended child's audit token
+    (`task_name_for_pid`, then `TASK_AUDIT_TOKEN`; it names the image the exec loaded), gets its code
+    object through it (`SecCodeCopyGuestWithAttributes`), and requires `identifier
+    "com.ellosoft.agentic-org.org-office-server" and anchor apple generic` with the Developer ID
+    markers and `certificate leaf[subject.OU] = "<team id>"`, the hardened runtime and none of the
+    rejected entitlements (the same checks as the app's, ADR-0003 §2.1). Only then does it resume the
+    child (`SIGCONT`); a child that fails is killed while still suspended, so it never ran. Right
+    before the line, it takes the token again and refuses a child that changed (an `exec` after the
+    check). A child that fails, or whose token can't be taken, is killed and reaped and gets
+    nothing; the start counts as `storage_error`. A release host with no team id compiled in starts no server at all (logged as a
+    WARNING). This stops a same-user process that runs the signed host from a copy, a symlink or a
+    hard link next to its own `org-office-server` from receiving the keys, with one **residual
+    risk (open)**: any same-user process can resume a suspended child (`SIGCONT`). An attacker that
+    resumes the child before the host takes its token (stopping or starving the host, e.g. a copy
+    of the host it launched itself, makes that easy), lets it fork a helper that
+    keeps stdin and turn itself into the genuine server (`POSIX_SPAWN_SETEXEC` with
+    `START_SUSPENDED`), passes the check and the helper reads the key.
+    Closing that needs the key handed only to an authenticated reader (e.g. a per-spawn socket
+    whose peer audit token must equal the admitted one): a launch-contract and server change.
+    Debug builds don't check (their servers are unsigned; logged at startup).
   - **No migration:** no real office existed before this; development offices are re-created by hand.
   - **This Mac only** (the user's decision): keys never leave it. A "move this office" export, protected
     by the owner's recovery code, comes later as a feature.

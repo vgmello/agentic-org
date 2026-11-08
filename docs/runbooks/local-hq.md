@@ -6,7 +6,7 @@ not checked against a run is marked "(unverified: …)".
 
 ## 0. Before you start: the tree must hold both halves of key custody
 
-The host side (`river/host-keys`, tip `9a9f590`) and the server side (`server-dev/server-key-custody`, `da54892`) are
+The host side (the tip of `river/host-keys`) and the server side (`server-dev/server-key-custody`, `da54892`) are
 **not in `origin/v1` yet** (2026-11-08). They merge cleanly (`git merge-tree`), but that merge hasn't been built.
 With the host side alone, `org-office-server` still has its own key store: a default build reads and writes the
 **login Keychain** (service `org.agentic.office`) and ignores the key on the launch pipe, and a `--features dev-keys`
@@ -15,7 +15,7 @@ build refuses to start, because the host passes no `ORG_OFFICE_DEV_KEY_DIR` to i
 ```sh
 export REPO=/path/to/checkout   # holds both branches, e.g. v1 after both merges
 cd "$REPO"
-git merge-base --is-ancestor 9a9f590 HEAD && git merge-base --is-ancestor da54892 HEAD && echo "both halves: ok"
+git merge-base --is-ancestor origin/river/host-keys HEAD && git merge-base --is-ancestor da54892 HEAD && echo "both halves: ok"
 test ! -e apps/org-office-server/src/keys.rs && echo "server: keys only from the launch pipe"
 ```
 
@@ -42,7 +42,10 @@ mkdir -p -m 700 "$DEV" "$DEV/bin" "$DEV/logs" "$DEV/keys"
   the host's working directory); **not inside the office home** (checked lexically and canonically). Keys are
   `<dir>/<office id>.key`, 64 hex digits, mode 0600, and the folder is made 0700. Don't share one key folder between
   two homes. Release builds ignore it.
-- Socket paths must fit 103 bytes: `$ORG_OFFICE_HOME/run/<12 chars>.sock`. The host checks this at startup.
+- Socket paths must fit 103 bytes: `$ORG_OFFICE_HOME/run/<12 chars>.sock`. The host checks this at startup and
+  refuses to start, so a deep home path (e.g. one under a long project folder) fails: keep `$DEV` short.
+- The home must be a real folder owned by you, **not a symlink** (the host refuses to start on one, as on any home
+  it can't make owner-only).
 - Shared with a future real install: the app's data folder for `com.ellosoft.agentic-org` (remembered
   connections under `real/`, the login-item "off" marker) (unverified: Tauri's `app_data_dir`,
   `~/Library/Application Support/com.ellosoft.agentic-org`).
@@ -136,8 +139,9 @@ running for …`.
 
 The wire format is one compact JSON object per line (`crates/org-proto/src/frame.rs`): request `{"id","method","params"}`,
 response `{"id","result"}` or `{"id","error"}`. No CLI in the repo sends host calls: `org-agent` only uses the local
-spool, and `org-client` is a library. The host answers every request on the connection, then closes it after
-the client half-closes, so this script is enough:
+spool, and `org-client` is a library. The host answers every request on the connection. This script reads one response line
+for its one request, so it doesn't depend on the host closing the connection after a half-close (hosts before the
+fix of 2026-11-08 never did, so a read-to-EOF client hung):
 
 ```sh
 cat > "$DEV/hostcall.py" <<'EOF'
@@ -146,10 +150,10 @@ path, method = sys.argv[1], sys.argv[2]
 params = json.loads(sys.argv[3]) if len(sys.argv) > 3 else {}
 s = socket.socket(socket.AF_UNIX); s.settimeout(45); s.connect(path)
 s.sendall((json.dumps({"id": 1, "method": method, "params": params}, separators=(",", ":")) + "\n").encode())
-s.shutdown(socket.SHUT_WR)
-data = b""
-while chunk := s.recv(65536): data += chunk
-for line in data.splitlines(): print(json.dumps(json.loads(line), indent=2))
+f = s.makefile("rb")
+for line in f:  # events may come first (after `subscribe`): print up to the answer
+    message = json.loads(line); print(json.dumps(message, indent=2))
+    if message.get("id") == 1: break
 EOF
 python3 "$DEV/hostcall.py" "$ORG_OFFICE_HOME/host.sock" hello
 ```
@@ -201,7 +205,7 @@ ps -axo pid,comm | grep -E "org-office|agentic-org"   # the app's path must equa
 | What | Where |
 | --- | --- |
 | Host | its stderr, lines starting `org-office-host:`: the terminal (A) or `$DEV/logs/host.log` (A with `tee`, B) |
-| Each office server | `$ORG_OFFICE_HOME/logs/<handle>.log` (the last 12 characters of the office id), rotated at 10 MiB to `.log.1` |
+| Each office server | `$ORG_OFFICE_HOME/logs/<handle>.log` (the last 12 characters of the office id), rotated at 10 MiB to `.log.1`. The file appears only once that server first writes to its stderr |
 | App (Rust shell) | stderr of the `bun run tauri dev` terminal (no log plugin) |
 | App (UI) | the WebView's console (unverified: right-click → Inspect in a debug build) |
 
@@ -235,14 +239,23 @@ security delete-generic-password -s org.agentic.office -a <office id>
 2. **No signing:** no Developer ID, no `ORG_APP_TEAM_ID`, no `keychain-access-groups` entitlement. A **release** host
    refuses to start without `ORG_HOST_KEYCHAIN_GROUP` and the matching entitlement, so `bun run install:dev`
    (release host, ad-hoc signed, registered through `SMAppService`) builds a login service that can't start today.
-   `stage-office.sh` and `INSTALLING-THE-OFFICE.md` still mention `river/office-host`.
+   `stage-office.sh` and `INSTALLING-THE-OFFICE.md` still mention `river/office-host`. A release host also gives an
+   office's key only to a server signed as `com.ellosoft.agentic-org.org-office-server` with the team's Developer
+   ID and the hardened runtime (the host itself is `com.ellosoft.agentic-org.org-office-host`), and with no
+   `ORG_APP_TEAM_ID` compiled in it starts no server at all; the bundle's signing doesn't set those identifiers
+   yet. **On the first signed bundle, check** that the release host admits its own hardened Developer ID server
+   (the host's log says nothing like `refused office server`, and the office becomes active): the check takes
+   the suspended child's audit token through `task_name_for_pid`, which the tests could exercise only on Apple's
+   own binaries from an unsandboxed test process. If it's refused, every office stays offline.
 3. **The app can't start a dev host:** the registration (`SMAppService.agent`) works only from a bundle and runs the
    bundled release host. A dev run relies on the host from section 3 (unverified: what `SMAppService` reports
    to an unbundled `tauri dev` binary; expect "The office isn't installed" if the host is down).
 4. **Dev-only fallback:** the app-only calls trust an unsigned app by its exact path, a debug-build-only check fixed
    at compile time. Every change of the path, or of the target folder, needs a host rebuild and restart.
 5. **Orphan-key sweep is off in debug builds** (logged at startup): removing an office folder by hand leaves its
-   `<id>.key` in `$DEV/keys`. (Release builds: off at `9a9f590`; uncommitted host work turns it on.)
+   `<id>.key` in `$DEV/keys`. Release builds sweep at startup, on the account's own office home only: an orphaned
+   key is marked first (`<home>/orphan-keys.json`) and deleted only if it's still orphaned at a start 7 or more
+   days later.
 6. **The host's own log is stderr only.** The bundled plist has no `StandardErrorPath`, so under launchd it is
    lost (unverified: launchd discards it). The draft in River's notes says the host logs under `<home>/logs/`, but
    only the office servers do.
