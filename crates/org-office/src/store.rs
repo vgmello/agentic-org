@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use rusqlite::config::DbConfig;
-use rusqlite::{Connection, OpenFlags, TransactionBehavior};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 
 use crate::error::OfficeError;
 use crate::key::Key;
@@ -207,6 +207,17 @@ impl Store {
             }
         }
         result
+    }
+
+    /// One row of the database's `meta` table, if it has it.
+    pub(crate) fn meta(&self, key: &'static str) -> Result<Option<String>, OfficeError> {
+        self.read(|db| {
+            db.query_row("SELECT value FROM meta WHERE key = ?1", [key], |row| {
+                row.get::<_, String>(0)
+            })
+            .optional()
+            .map_err(OfficeError::storage)
+        })
     }
 
     /// Looks into an existing database without changing anything: opens it read-only-ish

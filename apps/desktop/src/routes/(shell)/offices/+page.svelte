@@ -9,12 +9,23 @@
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
 	import { officeApi } from '$lib/office/api';
-	import { agentsIn, displayStatusFor, isHq, orderOffices, rowLabel, secondaryText, statusInfo, unplacedAgents, type LiveCheck } from '$lib/offices/model';
+	import { agentsIn, displayStatusFor, isHq, orderOffices, rowLabel, secondaryText, statusInfo, unplacedAgents, whyForLabel, whyStopped, type LiveCheck } from '$lib/offices/model';
+	import type { OfficeInfo } from '$lib/proto';
 	import type { Counts } from './+page';
 
 	let { data } = $props();
 
-	const offices = $derived(orderOffices(data.offices));
+	// The offices as the host last listed them; until it has, the ones saved with the connection.
+	let reported = $state<OfficeInfo[] | undefined>();
+	let reportedFor = '';
+	$effect(() => {
+		if (reportedFor !== data.connection.organization.id) {
+			reportedFor = data.connection.organization.id;
+			reported = undefined;
+		}
+	});
+	const current = $derived(reported ?? data.offices);
+	const offices = $derived(orderOffices(current));
 	const here = $derived(data.connection.office);
 	// The agent counts arrive after the list: `undefined` while they are being counted.
 	let counts = $state<Counts | undefined>();
@@ -47,23 +58,58 @@
 	const snapshot = $derived(counts && 'snapshot' in counts ? counts.snapshot : undefined);
 	const sample = $derived(!!counts && 'snapshot' in counts && counts.sample);
 	const countError = $derived(counts && 'error' in counts ? counts.error : undefined);
-	const unplaced = $derived(snapshot ? unplacedAgents(snapshot, data.offices) : []);
+	const unplaced = $derived(snapshot ? unplacedAgents(snapshot, current) : []);
 	const organization = $derived(data.connection.organization.name);
 
 	// The one live signal there is: whether the office this app is connected to answers. Checked now, every
 	// half minute and on Retry; a background check keeps the last answer instead of flashing "Checking…".
 	let check = $state<LiveCheck>('checking');
-	const probe = createProbe(officeApi, (next) => {
+	// What the host said it can do in its last hello (`office.status_changed`, `office.restart`).
+	let capabilities = $state<string[] | undefined>();
+	/**
+	 * The statuses the host reports are not the ones saved when the organization was opened: list them again. Read-only: it
+	 * remembers nothing and does not change which organization is open (an unavailable HQ is listed too).
+	 */
+	async function refreshOffices() {
+		const id = data.connection.organization.id;
+		try {
+			const found = (await officeApi.peekOrganizations()).find((o) => o.id === id);
+			if (found && id === data.connection.organization.id) reported = found.offices;
+		} catch {
+			// The next tick tries again; the probe already says whether the host answers.
+		}
+	}
+	const probe = createProbe(officeApi, (next, caps) => {
 		check = next;
+		if (next === 'up') {
+			capabilities = caps;
+			void refreshOffices();
+		}
 		// A Retry that worked removes the button the keyboard was on: move focus to the row instead of dropping it.
 		if (next === 'up' && document.activeElement?.matches('[data-testid=retry-office]')) rowButton(here.id)?.focus();
 	});
 	const rowButton = (officeId: string) => document.querySelector<HTMLElement>(`[data-office="${officeId}"] button[aria-haspopup]`);
+	// The countdown in a stopped office's line moves no more often than every 10 s.
+	let now = $state(new Date());
 	onMount(() => {
 		void probe.run('explicit');
 		const again = setInterval(() => void probe.run('background'), 30_000);
-		return () => clearInterval(again);
+		const tick = setInterval(() => (now = new Date()), 10_000);
+		return () => (clearInterval(again), clearInterval(tick));
 	});
+	// TODO (OFC-11): the statuses are re-listed on each check, not pushed (nothing subscribes to office.status_changed yet), and
+	// Check for updates (for unsupported_version) is not built.
+	// Why a stopped office stopped: only for an office whose status is shown as reported by the host.
+	const labelWhyOf = (officeId: string) => {
+		const shown = statusOf(officeId);
+		const office = current.find((o) => o.id === officeId);
+		return office && (shown === 'offline' || shown === 'unavailable') ? whyForLabel(office, new Date()) : undefined;
+	};
+	const whyOf = (officeId: string) => {
+		const shown = statusOf(officeId);
+		const office = current.find((o) => o.id === officeId);
+		return office && (shown === 'offline' || shown === 'unavailable') ? whyStopped(office, now) : undefined;
+	};
 	// Another organization's office is another thing to verify: don't carry the last answer over.
 	let lastOffice: string | undefined;
 	$effect(() => {
@@ -74,11 +120,11 @@
 		}
 		lastOffice = id;
 	});
-	const statusOf = (officeId: string) => displayStatusFor(officeId, here.id, check, data.offices.find((o) => o.id === officeId)?.status);
+	const statusOf = (officeId: string) => displayStatusFor(officeId, here.id, check, current.find((o) => o.id === officeId)?.status, capabilities);
 
 	let detailsId = $state<string | undefined>();
 	// The open sheet shows the latest data for its office, not the copy captured when it was clicked.
-	const detailsFor = $derived(data.offices.find((o) => o.id === detailsId));
+	const detailsFor = $derived(current.find((o) => o.id === detailsId));
 	let detailsOpen = $state(false);
 	$effect(() => {
 		if (detailsOpen && !detailsFor) detailsOpen = false; // the office went away: close its sheet
@@ -113,7 +159,7 @@
 	</div>
 
 	<!-- Said once when the answer changes: the badge and count are hidden from screen readers, the row's label has them. -->
-	<p class="sr-only" role="status" data-testid="live-status">{offices.find((o) => o.id === here.id)?.name ?? 'Office'}: {statusInfo(statusOf(here.id)).label}</p>
+	<p class="sr-only" role="status" data-testid="live-status">{offices.find((o) => o.id === here.id)?.name ?? 'Office'}: {statusInfo(statusOf(here.id)).label}{labelWhyOf(here.id) ? `: ${labelWhyOf(here.id)}` : ''}</p>
 
 	<ul class="divide-y divide-white/5 overflow-hidden rounded-xl bg-white/5 outline-1 -outline-offset-1 outline-white/10" aria-label="Offices">
 		{#each offices as office (office.id)}
@@ -125,12 +171,12 @@
 				<button
 					type="button"
 					class="min-w-0 flex-1 text-left focus-visible:outline-2 focus-visible:outline-indigo-400"
-					aria-label={rowLabel(office, agents, here.id === office.id, statusOf(office.id))}
+					aria-label={rowLabel(office, agents, here.id === office.id, statusOf(office.id), labelWhyOf(office.id))}
 					aria-haspopup="dialog"
 					onclick={() => open(office.id)}
 				>
 					<span class="block truncate text-sm/6 font-semibold text-white" title={office.name}>{office.name}</span>
-					<span class="block truncate text-xs/5 text-gray-400">{statusOf(office.id) === 'unreachable' ? "Can't reach this office" : secondaryText(office) + (here.id === office.id ? " (you're here)" : '')}</span>
+					<span class="block truncate text-xs/5 text-gray-400" title={whyOf(office.id)}>{statusOf(office.id) === 'unreachable' ? "Can't reach this office" : (whyOf(office.id) ?? secondaryText(office) + (here.id === office.id ? " (you're here)" : ''))}</span>
 				</button>
 				<!-- The button's label already says the status and the count: not read twice. -->
 				<span aria-hidden="true"><OfficeStatusBadge status={statusOf(office.id)} /></span>
@@ -184,4 +230,4 @@
 	<p class="text-xs/5 text-gray-500">Shown from this Mac.</p>
 </div>
 
-<OfficeDetailsSheet bind:open={detailsOpen} office={detailsFor} status={detailsFor ? statusOf(detailsFor.id) : 'status_unknown'} {snapshot} counting={!snapshot && !countError} {sample} here={detailsFor?.id === here.id} />
+<OfficeDetailsSheet bind:open={detailsOpen} office={detailsFor} status={detailsFor ? statusOf(detailsFor.id) : 'status_unknown'} why={detailsFor ? whyOf(detailsFor.id) : undefined} {capabilities} onrestarted={refreshOffices} {snapshot} counting={!snapshot && !countError} {sample} here={detailsFor?.id === here.id} />

@@ -26,6 +26,16 @@ pub(crate) fn random_bytes<const N: usize>() -> std::io::Result<[u8; N]> {
     Ok(bytes)
 }
 
+/// The Unix milliseconds a ULID was made at, or `None` if `id` is not a ULID in its canonical
+/// form: `org-proto`'s shared rule, so a command id and a change id are judged alike.
+pub(crate) use org_proto::ulid_time_ms as time_ms;
+
+/// A ULID made at `ms` whose random part is `n` repeated (for tests).
+#[cfg(test)]
+pub(crate) fn from_ms(ms: u64, n: u8) -> String {
+    encode(ms, [n; 10])
+}
+
 fn encode(ms: u64, random: [u8; 10]) -> String {
     let mut value = (u128::from(ms & 0xFFFF_FFFF_FFFF) << 80) | {
         let mut tail = [0u8; 16];
@@ -51,6 +61,29 @@ mod tests {
             encode(0xFFFF_FFFF_FFFF, [0xFF; 10]),
             "7ZZZZZZZZZZZZZZZZZZZZZZZZZ"
         );
+    }
+
+    #[test]
+    fn reads_the_time_of_a_canonical_ulid_only() {
+        assert_eq!(
+            time_ms("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            Some(1_469_922_850_259)
+        );
+        assert_eq!(time_ms(&encode(42, [7; 10])), Some(42));
+        assert_eq!(
+            time_ms(&encode(0xFFFF_FFFF_FFFF, [0xFF; 10])),
+            Some(0xFFFF_FFFF_FFFF)
+        );
+        for bad in [
+            "01arz3ndektsv4rrffq69g5fav", // lower case
+            "01ARZ3NDEKTSV4RRFFQ69G5FAU", // U is not in the alphabet
+            "01ARZ3NDEKTSV4RRFFQ69G5FA",  // short
+            "81ARZ3NDEKTSV4RRFFQ69G5FAV", // too big
+            "",
+            "has space",
+        ] {
+            assert_eq!(time_ms(bad), None, "{bad}");
+        }
     }
 
     #[test]

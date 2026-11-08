@@ -12,7 +12,7 @@ use std::sync::{Arc, Weak};
 use org_proto::{
     capability, ApiError, AppToken, Call, Empty, ErrorCode, Hello, HelloResult, ListOfficesResult,
     ListOrganizationsResult, OfficeAppToken, OfficeList, OfficeRestart, Organization,
-    OrganizationCreate, OrganizationList, Request, Response, Subscribe, API_VERSION,
+    OrganizationCreate, OrganizationList, Request, Response, Subscribe,
 };
 use serde::Serialize;
 
@@ -217,12 +217,8 @@ fn params_dont_fit(id: u64) -> Response {
 
 /// `hello` from this Mac's host: no office, and the optional calls and events it implements.
 fn hello() -> HelloResult {
-    HelloResult {
-        api_version: API_VERSION,
-        server_version: env!("CARGO_PKG_VERSION").to_owned(),
-        host: THIS_MAC.to_owned(),
-        office: None,
-        capabilities: [
+    HelloResult::host(env!("CARGO_PKG_VERSION"), THIS_MAC).with_capabilities(
+        [
             capability::OFFICE_APP_TOKEN,
             capability::OFFICE_RESTART,
             // The event, and `status_reason` / `next_restart_at` on it and in `office.list`.
@@ -230,7 +226,7 @@ fn hello() -> HelloResult {
         ]
         .map(str::to_owned)
         .to_vec(),
-    }
+    )
 }
 
 /// Runs a typed handler: params that don't decode are `invalid_request`.

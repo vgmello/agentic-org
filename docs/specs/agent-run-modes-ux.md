@@ -2,7 +2,7 @@
 kind: spec
 title: "How agents run: always on, on call, scheduled, one-off (UX)"
 status: for-review
-revision: 5
+revision: 6
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-08"
@@ -18,6 +18,8 @@ Extends `our-org-in-the-app.md` (agent record, statuses, Activity) and `costs-an
 ## The request (the user, 2026-11-08)
 
 > Agents aren't always live. HR (or an agent in another project, like an SDM) doesn't need to be always live. It's a **stateful** agent that's almost **serverless**: it only runs when it's called, or on a long interval, like every 30 minutes: it comes up, checks its status, does its work and goes down again, unless it's called. We can also have **ephemeral** agents for other things. We need to support those kinds of agents.
+
+**Revision 6 (2026-11-08): limits are organization defaults (ada, from the How it runs build).** The idle and busy limits are the organization's defaults (U20: 5 min idle, 30 min busy in the agent's home, 2 h on a task), and the contract has no per-agent fields today, so How it runs shows them read-only as "Defaults for all agents" (decision 7, §2). `agent-sessions.md` decision 8 allows per-agent limits later; if they arrive, they become editable here. **Criteria rewritten (same ID):** RUN-6 *(rev 6)*.
 
 **Revision 5 (2026-11-08): review fixes.** The built-in hiring agent is always called "HR lead" (`our-org-in-the-app.md` §2a, HRL-1): the mode table's example, How HR lead runs, the wake and failure messages, the screen-reader label, the Run now note and U19 say "HR lead". A45's mention example uses the handle, `@hr`. The user's request is quoted as said. No criteria changed.
 
@@ -43,7 +45,7 @@ Extends `our-org-in-the-app.md` (agent record, statuses, Activity) and `costs-an
 4. **Waking is visible.** Every wake is a **run** with its trigger, start, duration, cost and a one-line outcome, listed on the agent's **Runs** tab and in Activity: "HR lead woke up (you asked it to hire a QA engineer) · ran 4 min · ≈ $0.31 · went back to sleep".
 5. **Calling an asleep agent just works.** Messages, assignments and Run now wake it. The caller sees "HR lead is asleep. It will wake up to answer (usually under a minute)", never a delivery failure. If it's already running, the message goes to the running session.
 6. **Each wake starts from guidance** (`decisions-and-tech-debt-ux.md` §6.2, moment **Waking up**): by default "Read your inbox and backlog, do what's due, record what you did, then stop." Owners can customize it per agent (for example the SDM's "Check every open project's blocked tasks and report to ada").
-7. **Sleep is decided by idleness, with a cap.** An On call or Scheduled agent goes back to sleep after **Idle for** (default 5 min with no work and no new messages). A run is stopped at its **max run time**, which counts only busy time: **30 min** for a run in the agent's home and **2 h** for a run on a task (ada's agent-sessions design). The run is then marked "Stopped at the time limit". *(rev 2)*
+7. **Sleep is decided by idleness, with a cap.** An On call or Scheduled agent goes back to sleep after it's been idle for **5 min** (no work and no new messages). A run is stopped at its **max run time**, which counts only busy time: **30 min** for a run in the agent's home and **2 h** for a run on a task (ada's agent-sessions design). The run is then marked "Stopped at the time limit". *(rev 2)* *(rev 6)* These limits are the organization's defaults (U20). The contract has no per-agent limit fields today, so every agent uses them and How it runs shows them read-only. `agent-sessions.md` decision 8 allows per-agent limits later; if they're added, How it runs offers them as editable fields under the defaults.
 8. **One-off agents don't join the org chart.** They're runs of a role, shown on the job (task, review, doc) and in Activity as "Reviewer (one-off R-12)", with their cost on the job. The org chart only shows members.
 
 ## 1. Where it shows
@@ -66,7 +68,7 @@ At hire (Review step) and in profile › Settings › **How it runs** (a slide-o
  ( ) Always on    Keeps a session running and restarts it if it stops.
  ─────────────────────────────────────────────────────────────────────
  When it wakes    [Read your inbox and backlog, do what's due…  ] (guidance, editable)
- Go to sleep after [5] min idle · stop after [30] min busy (home) · [2] h busy (on a task)
+ Defaults for all agents: sleeps after 5 min idle · stops after 30 min busy in its home, 2 h on a task
  About cost: on call and scheduled agents only cost while they run.
  Last 7 days as on call: 23 runs · 1 h 40 min · ≈ $4.10
                                                   [Cancel]  [Save]
@@ -101,7 +103,7 @@ My recommended modes (U19, approved): **HR lead (built-in, `our-org-in-the-app.m
 - RUN-3 · *(rev 3)* A message, an assignment or Run now (and a mention, pending A45) wakes an asleep agent. The caller sees "<name> is asleep. It will wake up to answer", and nothing fails.
 - RUN-4 · *(rev 3)* A message to a running agent is queued for the session handling it and delivered at its next turn boundary, and a second session is never started.
 - RUN-5 · Each wake is one run on the Runs tab and one Activity row, with trigger, duration, cost and outcome, updated live.
-- RUN-6 · *(rev 2)* An agent goes back to sleep after its idle time, and a run is stopped at its max busy time (30 min in its home, 2 h on a task), with the run marked.
+- RUN-6 · *(rev 6)* An agent goes back to sleep after 5 min idle, and a run is stopped at the max busy time (30 min in its home, 2 h on a task), with the run marked. These are organization defaults, shown read-only in How it runs as "Defaults for all agents" while the contract has no per-agent limit fields.
 - RUN-7 · The schedule builder uses plain words and presets, shows the next 3 run times, and never asks for cron.
 - RUN-8 · Missed scheduled runs (Mac asleep, office stopped) run once when the office is back and say so. A run due while the previous one is running is skipped and noted.
 - RUN-9 · *(rev 2)* A missing or signed-out runtime raises a Needs you item at once with the fix. Other failures do so after three failed wakes in a row. Waiting messages are kept.

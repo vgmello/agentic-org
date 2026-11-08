@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { OfficeInfo } from '$lib/proto';
+import type { OfficeInfo, OfficeStatusReason } from '$lib/proto';
 import { sampleOrg } from '$lib/org/sample';
-import { agentsIn, displayStatus, displayStatusFor, isHere, orderOffices, roleInfo, rowLabel, secondaryText, statusIcon, statusInfo, unplacedAgents } from './model';
+import { agentsIn, copyDetails, displayStatus, displayStatusFor, isHere, orderOffices, roleInfo, rowLabel, secondaryText, statusIcon, statusInfo, unplacedAgents, restartAction, restartOutcome, whyForLabel, whyStopped } from './model';
 
 const office = (id: string, name: string, over: Partial<OfficeInfo> = {}): OfficeInfo => ({
 	id,
@@ -137,5 +137,112 @@ describe('OFC-12 which office is verified', () => {
 		expect(displayStatusFor('hq', 'hq', 'up')).toBe('active');
 		expect(displayStatusFor('office-2', 'hq', 'up')).toBe('status_unknown');
 		expect(displayStatusFor('office-2', 'hq', 'down')).toBe('status_unknown');
+	});
+});
+
+describe('OFC-11..13 why an office stopped', () => {
+	const NOW = new Date('2026-11-08T12:00:00.000Z');
+	const stopped = (status_reason?: OfficeStatusReason, next_restart_at?: string, status: OfficeInfo['status'] = 'offline') => ({ status, status_reason, next_restart_at });
+
+	it('gives each reason its words, and "It isn’t running" when the host does not know why', () => {
+		expect(whyStopped(stopped('crashed'), NOW)).toBe('It stopped unexpectedly');
+		expect(whyStopped(stopped('start_timeout', undefined, 'unavailable'), NOW)).toBe("It didn't start in time");
+		expect(whyStopped(stopped('key_missing', undefined, 'unavailable'), NOW)).toContain('data key is missing');
+		expect(whyStopped(stopped('stopped_by_owner', undefined, 'unavailable'), NOW)).toBe('You stopped it');
+		expect(whyStopped(stopped(undefined, undefined, 'unavailable'), NOW)).toBe("It isn't running");
+	});
+
+	it('ends with the countdown while a restart is pending, and "Trying again" for in_use', () => {
+		expect(whyStopped(stopped('crashed', '2026-11-08T12:00:20.000Z'), NOW)).toBe('It stopped unexpectedly. Restarting in 20 s');
+		expect(whyStopped(stopped('in_use', '2026-11-08T12:00:07.200Z'), NOW)).toBe('Its data is still in use by another Agentic Org process. Trying again in 8 s');
+		expect(whyStopped(stopped(undefined, '2026-11-08T12:00:05.000Z'), NOW)).toBe("It isn't running. Restarting in 5 s");
+		// A time in the past counts down to 0, never negative; junk is ignored.
+		expect(whyStopped(stopped('crashed', '2026-11-08T11:59:00.000Z'), NOW)).toBe('It stopped unexpectedly');
+		expect(whyStopped(stopped('crashed', 'soon'), NOW)).toBe('It stopped unexpectedly');
+	});
+
+	it('has words for every reason, and a reason it does not know reads as unknown', () => {
+		const text = (r: string) => whyStopped(stopped(r as OfficeStatusReason, undefined, 'unavailable'), NOW);
+		expect(text('restarts_exhausted')).toBe("It kept stopping, so it won't restart on its own");
+		expect(text('storage_error')).toBe("It can't read or write its data on this Mac");
+		expect(text('unsupported_version')).toContain('Update or reinstall Agentic Org');
+		expect(text('invalid_request')).toBe("It couldn't start because of an internal error");
+		expect(text('in_use')).toContain('still in use');
+		for (const r of ['unknown', 'from_the_future', 'constructor', 'toString']) expect(text(r)).toBe("It stopped for a reason this version doesn't know");
+	});
+
+	it('a restart that is due is not announced in 0 s, and a time that is not RFC 3339 is ignored', () => {
+		expect(whyStopped(stopped('crashed', '2026-11-08T12:00:00.000Z'), NOW)).toBe('It stopped unexpectedly');
+		for (const junk of ['5', '1', 'soon', '2026-11-08', '']) expect(whyStopped(stopped('crashed', junk), NOW)).toBe('It stopped unexpectedly');
+		expect(whyStopped(stopped('crashed', '2026-11-08T14:00:20+02:00'), NOW)).toBe('It stopped unexpectedly. Restarting in 20 s');
+	});
+
+	it('the screen-reader line never ticks: a near restart reads "shortly", a later one a clock time', () => {
+		expect(whyForLabel(stopped('crashed', '2026-11-08T12:00:20.000Z'), NOW)).toBe('it stopped unexpectedly, restarting shortly');
+		expect(whyForLabel(stopped('crashed', '2026-11-08T12:00:20.000Z'), new Date('2026-11-08T12:00:09.000Z'))).toBe('it stopped unexpectedly, restarting shortly');
+		expect(whyForLabel(stopped('crashed', '2026-11-08T12:10:00.000Z'), NOW)).toMatch(/^it stopped unexpectedly, restarting at \d\d:\d\d$/);
+		expect(whyForLabel(stopped('crashed'), NOW)).toBe('it stopped unexpectedly');
+		expect(whyForLabel(stopped('crashed', '2026-11-08T11:00:00.000Z'), NOW)).toBe('it stopped unexpectedly');
+	});
+
+	it('a stopped row’s label keeps where it runs and puts the reason after the status', () => {
+		const o = office('hq', 'HQ', { role: 'hq', status: 'unavailable' });
+		expect(rowLabel(o, 7, true, 'unavailable', 'it stopped unexpectedly, restarting shortly')).toBe("HQ, HQ, This Mac (you're here), Stopped: it stopped unexpectedly, restarting shortly, 7 agents, opens details");
+	});
+
+	it('an office on this Mac never reads Offline: the connected office that the host reports offline is Stopped', () => {
+		expect(displayStatus(true, 'up', 'offline')).toBe('unavailable');
+		expect(statusInfo(displayStatus(true, 'up', 'offline')).label).toBe('Stopped');
+	});
+
+	it('only an office the host reports offline or unavailable has a reason line', () => {
+		for (const status of ['active', 'starting', 'pending', 'update_needed'] as const) expect(whyStopped(stopped('crashed', undefined, status), NOW)).toBeUndefined();
+		expect(whyStopped({ status: undefined, status_reason: 'crashed' }, NOW)).toBeUndefined();
+	});
+
+	it('copies the office, status, reason, time and app version, never a key', () => {
+		const o = { id: 'o1', organization_id: 'org', name: 'HQ', host: 'This Mac', status: 'unavailable', status_reason: 'key_missing' } as OfficeInfo;
+		const text = copyDetails(o, 'Stopped', NOW, '0.1.0');
+		expect(text).toBe(['Office: HQ', 'Id: o1', 'Status: Stopped', 'Reason: key_missing', 'Time: 2026-11-08T12:00:00.000Z', 'Agentic Org: 0.1.0'].join('\n'));
+		expect(text).not.toMatch(/endpoint|key=|secret/i);
+	});
+});
+
+describe('OFC-11 what can be done about a stopped office', () => {
+	const stoppedFor = (status_reason?: OfficeStatusReason, status: OfficeInfo['status'] = 'unavailable') => ({ status, status_reason });
+	it('names the button by reason: Restart office, Try again for a missing key, Start office after the owner stopped it', () => {
+		expect(restartAction(stoppedFor('crashed'))).toEqual({ label: 'Restart office' });
+		expect(restartAction(stoppedFor(undefined, 'offline'))).toEqual({ label: 'Restart office' });
+		expect(restartAction(stoppedFor('in_use'))).toEqual({ label: 'Restart office' });
+		expect(restartAction(stoppedFor('key_missing'))).toEqual({ label: 'Try again' });
+		expect(restartAction(stoppedFor('stopped_by_owner'))).toEqual({ label: 'Start office' });
+		expect(restartAction(stoppedFor('unknown'))).toEqual({ label: 'Restart office' });
+	});
+	it('offers none where the contract refuses a restart, or the office is not stopped', () => {
+		expect(restartAction(stoppedFor('unsupported_version'))).toEqual({});
+		expect(restartAction(stoppedFor('invalid_request'))).toEqual({});
+		expect(restartAction({ status: 'active', status_reason: 'crashed' })).toEqual({});
+	});
+	it('a host that does not list office.restart gets a line instead of a button', () => {
+		expect(restartAction(stoppedFor('crashed'), ['office.status_changed'])).toEqual({ note: 'Update Agentic Org to restart offices from here' });
+		expect(restartAction(stoppedFor('crashed'), ['office.restart'])).toEqual({ label: 'Restart office' });
+		// A reason that can't be restarted still has no button, whatever the host lists.
+		expect(restartAction(stoppedFor('unsupported_version'), [])).toEqual({});
+	});
+	it('reads what office.restart answered', () => {
+		expect(restartOutcome('conflict').kind).toBe('wait');
+		expect(restartOutcome('unknown_method').kind).toBe('unsupported');
+		expect(restartOutcome('not_found').kind).toBe('refresh');
+		expect(restartOutcome('unavailable').kind).toBe('refresh');
+		expect(restartOutcome('not_authorized').message).toBe("You can't restart this office from here.");
+		expect(restartOutcome('not_ready').message).toBe('The office host is still starting. Try again in a moment.');
+		expect(restartOutcome('weird').kind).toBe('error');
+	});
+	it('a host that does not list office.status_changed is not live: its connected office reads Status unknown', () => {
+		expect(displayStatus(true, 'up', 'active', ['office.status_changed'])).toBe('active');
+		expect(displayStatus(true, 'up', 'active', [])).toBe('status_unknown');
+		expect(displayStatus(true, 'up', 'unavailable', ['office.restart'])).toBe('status_unknown');
+		expect(displayStatus(true, 'up', 'active')).toBe('active'); // capabilities not known yet
+		expect(displayStatus(true, 'down', 'active', [])).toBe('unreachable');
 	});
 });

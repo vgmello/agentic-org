@@ -5,8 +5,9 @@
 //! Organization data is owned by HQ and copied to every office (offices design). Clients read
 //! it from their local office with [`OrgSnapshotCall`], then follow changes with
 //! `subscribe { from_position }` and the [`OrgChanged`] event (see [`crate::SubscribeParams`]). Every change is a command that
-//! HQ validates. A command carries a client-made `command_id` (a ULID), client-made ids for
-//! anything it creates, and the `expected_version` of what it edits.
+//! HQ validates. A command carries a client-made `command_id` (an uppercase Crockford ULID, see
+//! "Command ids and retries"), client-made ids for anything it creates, and the
+//! `expected_version` of what it edits.
 //!
 //! ## Who may send what
 //! Every command in this module is for the app. A command that arrives on a connection that
@@ -20,16 +21,43 @@
 //! in on (the app's connection is bound with the app token, ADR-0003), enforces this before it
 //! queues or forwards the command, and HQ relies on that.
 //!
+//! ## Command ids and retries
+//! `command_id` is a ULID in its canonical form: exactly 26 **uppercase** Crockford base32
+//! characters (`0-9`, `A-Z` without `I`, `L`, `O`, `U`), the first `0` to `7`. Its time part
+//! dates the command. Work writes' `change_id` ([`crate::work`]) has the same form.
+//!
+//! HQ keeps each command's answer, refusals included, until the id's time plus 30 days (offices
+//! design, "Dedup window"). A retry with the same `command_id` and the same params gets the
+//! stored answer again, without being validated again, even after the state changed. The same
+//! `command_id` with different params is refused with `invalid_request` ("command id reused
+//! with different params"). Never kept, so a later retry may succeed: the refusals that come
+//! before HQ looks at the command itself (`not_authorized`, params that don't decode, the id's
+//! format, `expired`, `clock_skew`; see below), `storage_error` and `unavailable`. To try again
+//! after any other refusal, use a new `command_id`.
+//!
 //! ## When several errors apply
-//! A command can break more than one rule at once. HQ returns the first of: `not_authorized`,
-//! `not_found`, `invalid_request` (unreadable, outside a limit, the wrong kind of member or the
-//! wrong state, a value that makes no sense), `invalid_name`, `conflict` (a stale
-//! `expected_version`), `already_exists`. Every command below checks in this one order (its
-//! `Errors:` list names the codes it can return, not the order they are checked in). The
-//! domain codes (`owner_protected`, `cycle`, `not_a_member`, `not_empty`) come after
-//! `invalid_name` and before `conflict`: a rule that would refuse the command at any version
-//! is not hidden by a stale one. Among themselves `owner_protected` comes first, so a lead
-//! who is the owner is `owner_protected`, not `not_a_member`.
+//! A command can break more than one rule at once. The answer is the first that applies, in
+//! this order:
+//! 1. **The receiving office**, before it queues or forwards the command: `not_authorized`
+//!    (its check of the connection, "Who may send what"), then `invalid_request` for params
+//!    that don't decode into the command.
+//! 2. **The stored answer.** HQ looks `command_id` up first: a command it has answered gets
+//!    that answer again (or `invalid_request` for different params, above), even when a check
+//!    below would now refuse it (a stored command's retry 29.5 days on is still answered).
+//! 3. **The `command_id` format**: not a canonical ULID (above) is `invalid_request`.
+//! 4. **Age and skew**, by HQ's clock (it keeps a monotonic high-water mark of it, so a clock
+//!    that steps back can't reopen the window): `expired` when the id is dated more than 29
+//!    days ago, `clock_skew` when it's more than 5 minutes ahead.
+//! 5. **The rules**: `not_found`, `invalid_request` (outside a limit, the wrong kind of member
+//!    or the wrong state, a value that makes no sense), `invalid_name`, `conflict` (a stale
+//!    `expected_version`), `already_exists`.
+//!
+//! Every command below checks in this one order (its `Errors:` list names the codes it can return,
+//! not the order they are checked in). Within step 5, the domain codes (`owner_protected`, `cycle`,
+//! `not_a_member`, `not_empty`) come after `invalid_name` and before `conflict`: a rule that would
+//! refuse the command at any version is not hidden by a stale one. Among themselves
+//! `owner_protected` comes first, so a lead who is the owner is `owner_protected`, not
+//! `not_a_member`.
 //!
 //! ## Limits every command shares
 //! All are `invalid_request`, so a client can check them before sending:
@@ -41,7 +69,9 @@
 //! - **Member ids** (`member.add_person`'s and `member.add_agent`'s `member_id`): exactly
 //!   [`MEMBER_ID_CHARS`] ASCII letters and digits, the shape of a ULID ([`is_valid_member_id`]).
 //!   No handle has this shape, so an id and a handle never collide.
-//! - **Command ids** (`command_id`, on every command): the same, [`is_valid_id`].
+//! - **Command ids** (`command_id`, on every command): an uppercase Crockford ULID, 26
+//!   characters ("Command ids and retries"); its format is checked after the stored-answer
+//!   lookup ("When several errors apply").
 //! - **Free text** (`contact`, `title_in_team`): trimmed, then 1 to [`AGENT_TEXT_MAX_CHARS`]
 //!   characters with no control characters. To remove a contact use `clear_contact`, not an
 //!   empty string.
@@ -455,6 +485,39 @@ pub const PROJECT_DESCRIPTION_MAX_CHARS: usize = 1_000;
 /// The longest area name, in characters (after trimming).
 pub const AREA_NAME_MAX_CHARS: usize = 40;
 
+/// The branch-name prefixes the office makes and owns: task branches (`task/…`), docs
+/// branches (`docs/…`) and the tags it leaves after a merge or an archive (`merged/…`,
+/// `archive/…`). A project's `integration_branch` may not start with one
+/// ([`has_reserved_branch_prefix`]).
+pub const RESERVED_BRANCH_PREFIXES: &[&str] = &["task/", "docs/", "merged/", "archive/"];
+
+/// Whether `name` starts with one of [`RESERVED_BRANCH_PREFIXES`], so it can't be a project's
+/// `integration_branch`: `project.create` and `project.update` refuse it with
+/// `invalid_request` (docs/design/processes.md, "Project rule"), the one rule the office and
+/// the app's mocks are to share.
+///
+/// The office reads the integration branch as the branch `refs/heads/<name>`, never through
+/// git's short-name lookup, so `name` can't reach a tag or another ref. As defence in depth,
+/// this is stricter than a plain prefix test: everything is compared ignoring ASCII case (refs
+/// can live on a case-insensitive file system), and one leading `refs/heads/` or `heads/` is
+/// looked through.
+pub fn has_reserved_branch_prefix(name: &str) -> bool {
+    let name = ["refs/heads/", "heads/"]
+        .iter()
+        .find_map(|lead| strip_prefix_ignoring_ascii_case(name, lead))
+        .unwrap_or(name);
+    RESERVED_BRANCH_PREFIXES
+        .iter()
+        .any(|prefix| strip_prefix_ignoring_ascii_case(name, prefix).is_some())
+}
+
+/// `name` after `prefix`, when it starts with it ignoring ASCII case.
+fn strip_prefix_ignoring_ascii_case<'a>(name: &'a str, prefix: &str) -> Option<&'a str> {
+    let n = prefix.len();
+    (name.len() >= n && name.is_char_boundary(n) && name[..n].eq_ignore_ascii_case(prefix))
+        .then(|| &name[n..])
+}
+
 /// A project: the full record. It replaced `ProjectSummary` (`{ id, name }`) additively: every
 /// other field has a default, so a record from before reads with an empty `key`, no repository,
 /// not archived and `version` 0. [`ProjectSummary`] is kept as another name for it.
@@ -481,7 +544,12 @@ pub struct Project {
     /// don't).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<ProjectRepo>,
-    /// The branch the Docs tab reads. Absent: the repository's default branch.
+    /// The project's integration branch: task branches start from it, the office reads the
+    /// project's instruction files, guidance files and processes from it (and the Docs tab its
+    /// docs), and a task branch counts as merged once its work is reachable from it
+    /// (docs/design/processes.md, A56 to A58). Absent: the repository's default branch.
+    /// Never starts with a reserved prefix ([`has_reserved_branch_prefix`]): `project.create`
+    /// and `project.update` refuse one with `invalid_request`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub integration_branch: Option<String>,
     /// No new work items in it; everything else still works.
@@ -647,7 +715,9 @@ pub struct CommandAccepted {
     pub position: Option<Position>,
 }
 
-/// `org.snapshot`: the organization's structure from the local office's copy.
+/// `org.snapshot`: the organization's structure from the local office's copy. It needs a
+/// bound connection, agent-bound or app-bound, like `who` and `subscribe`: an unbound
+/// connection is refused with `not_authorized` (ADR-0003 §2.1.4).
 pub struct OrgSnapshotCall;
 
 impl Call for OrgSnapshotCall {
@@ -664,8 +734,10 @@ macro_rules! command {
         #[doc = concat!("Params of `", $method, "`.")]
         #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
         pub struct $params {
-            /// Client-made (a ULID; [`is_valid_id`], `invalid_request` otherwise); a retry with the
-            /// same id gets the same answer.
+            /// Client-made: an uppercase Crockford ULID, 26 characters (`invalid_request`
+            /// otherwise). A retry with the same id and params gets the stored answer, refusals
+            /// included; the same id with different params is `invalid_request`. See the module
+            /// docs, "Command ids and retries".
             pub command_id: String,
             $($(#[$fattr])* pub $field: $ty,)*
         }
@@ -984,14 +1056,20 @@ command!(
     /// project-team links, in one `org.changed` (`project_upserted`, `area_upserted`,
     /// `project_team_added`). `project_id` and the link ids are client-made.
     ///
-    /// `key` absent: HQ derives one from the name (its ASCII letters and digits, lowercased,
-    /// first 3; prefixed with `p` if that doesn't start with a letter and padded with `x` to 2;
-    /// if taken or reserved, a digit 2, 3, … is appended). The event carries the key.
+    /// `key` absent: HQ derives one from the name. Take its ASCII letters and digits,
+    /// lowercased, and keep the first 3; then prefix `p` if that doesn't start with a letter
+    /// (the prefix doesn't count toward the 3); then pad with `x` to 2 characters; if the key is
+    /// taken or reserved, append a digit 2, 3, …. Examples: "Billing" → `bil`, "123 Project" →
+    /// `p123`, "Q" → `qx`, "9" → `p9`, "Exc" → `exc2` (`exc` is reserved). The event carries
+    /// the key.
     ///
-    /// `repo` absent: the project has no repository. App-only, like every command here. Errors:
-    /// `not_found` (a team), `invalid_request` (key format or reserved; limits; a repeated team;
-    /// the repo spec), `invalid_name` (the name or the area name), `already_exists` (an id, the
-    /// key, or the name ignoring case).
+    /// `repo` absent: the project has no repository. `integration_branch` may not start with a
+    /// reserved prefix (`task/`, `docs/`, `merged/`, `archive/`, ignoring ASCII case;
+    /// [`has_reserved_branch_prefix`]).
+    /// App-only, like every command here. Errors: `not_found` (a team), `invalid_request` (key
+    /// format or reserved; limits; a repeated team; the repo spec; an `integration_branch` with
+    /// a reserved prefix), `invalid_name` (the name or the area name), `already_exists` (an id,
+    /// the key, or the name ignoring case).
     ProjectCreate, "project.create", ProjectCreateParams {
         project_id: String,
         name: String,
@@ -1013,7 +1091,9 @@ command!(
 command!(
     /// `project.update`: only the fields given change; a field and its `clear_` flag together,
     /// or nothing to change, is `invalid_request`. The key never changes, and the repository
-    /// isn't changed here. Errors: `not_found`, `invalid_request`, `invalid_name`, `conflict`,
+    /// isn't changed here. `integration_branch` may not start with a reserved prefix (ignoring
+    /// ASCII case; [`has_reserved_branch_prefix`]). Errors: `not_found`, `invalid_request` (also an
+    /// `integration_branch` with a reserved prefix), `invalid_name`, `conflict`,
     /// `already_exists` (the name, ignoring case).
     ProjectUpdate, "project.update", ProjectUpdateParams {
         project_id: String,
