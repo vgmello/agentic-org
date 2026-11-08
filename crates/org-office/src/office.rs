@@ -72,6 +72,16 @@ pub struct Office {
     _lock: File,
 }
 
+impl std::fmt::Debug for Office {
+    /// What `office.json` records; never a key or a database.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Office")
+            .field("folder", &self.folder)
+            .field("info", &self.info)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Office {
     /// Creates a new office in `folder` (`<home>/offices/<office-id>`, whose name must be the
     /// office id) and opens it. **The only path that makes a key** (ADR-0002): the key is saved
@@ -222,7 +232,8 @@ impl Office {
     }
 
     /// Removes an UNFINISHED create (`org-office-server --discard`): the folder and the key
-    /// the failed create may have left. It takes the folder's lock, and **refuses** anything
+    /// the failed create may have left. When the folder exists it takes its lock (a missing folder
+    /// takes none and makes none), and **refuses** anything
     /// that could be a real office, so one is never destroyed automatically:
     /// - a folder with `office.json`, or whose `org.db` holds a committed organization, is
     ///   `OfficeExists`;

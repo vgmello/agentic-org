@@ -268,18 +268,28 @@ fn create_checks_its_arguments_before_touching_anything() {
         change(&mut new);
         Office::create(folder_of(&dir, ID), &new, &keys)
     };
+    // A bad id is `Invalid`.
     for result in [
         make(&|n| n.office_id = "has-dash".into()),
         make(&|n| n.office_id = String::new()),
         make(&|n| n.office_id = "x".repeat(65)),
         make(&|n| n.org_id = "../up".into()),
-        make(&|n| n.org_name = "   ".into()),
-        make(&|n| n.office_name = "bad\u{7}name".into()),
     ] {
-        assert!(matches!(
-            result,
-            Err(OfficeError::Invalid(_)) | Err(OfficeError::InvalidName(_))
-        ));
+        assert!(matches!(result, Err(OfficeError::Invalid(_))), "{result:?}");
+    }
+    // A bad name is `InvalidName` (the host answers `invalid_name`), by the contract's rule: a
+    // format character such as U+200B is refused too, which a control-character check misses.
+    for name in ["   ", "bad\u{7}name", "zero\u{200B}width"] {
+        let result = make(&|n| n.org_name = name.into());
+        assert!(
+            matches!(result, Err(OfficeError::InvalidName(_))),
+            "{name:?}: {result:?}"
+        );
+        let result = make(&|n| n.office_name = name.into());
+        assert!(
+            matches!(result, Err(OfficeError::InvalidName(_))),
+            "{name:?}: {result:?}"
+        );
     }
     // A folder that is not named by the office id.
     let wrong = Office::create(
@@ -602,7 +612,7 @@ fn discard_without_a_folder_removes_the_key_and_with_a_held_lock_gives_up() {
     let folder = folder_of(&dir, ID);
     keys.store(ID, &Key::from_bytes([6; 32])).unwrap();
 
-    // With the folder absent the discard takes its own lock and removes the orphan key.
+    // With the folder absent the discard takes no lock and removes the orphan key.
     Office::discard(&folder, ID, &keys).unwrap();
     assert!(keys.load(ID).unwrap().is_none());
 
