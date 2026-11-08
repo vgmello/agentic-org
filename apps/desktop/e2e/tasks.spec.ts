@@ -12,6 +12,11 @@ async function open(page: Page) {
 }
 const column = (page: Page, status: string) => page.locator(`[data-testid=task-column][data-status=${status}]`);
 const card = (page: Page, title: string) => page.getByTestId('task-card').filter({ hasText: title });
+/** Move a card with its ⋯ menu (TSK-2). */
+async function move(page: Page, cardLocator: ReturnType<Page['locator']>, to: string) {
+	await cardLocator.getByRole('button', { name: /^Actions for/ }).click();
+	await page.getByRole('menuitem', { name: to, exact: true }).click();
+}
 async function newTask(page: Page, title: string, priority?: string) {
 	await page.getByRole('button', { name: 'New task' }).click();
 	const dialog = page.getByRole('dialog', { name: 'New task' });
@@ -54,10 +59,10 @@ test('TSK-5 and TSK-10: New task needs only a title, starts in To do with Normal
 test('TSK-2 and TSK-3: a card moves with Move to…, announced; Blocked asks for a reason and the card shows it', async ({ page }) => {
 	await open(page);
 	await newTask(page, 'Write docs');
-	await card(page, 'Write docs').getByLabel(/^Move T-1 to/).selectOption('in_progress');
+	await move(page, card(page, 'Write docs'), 'In progress');
 	await expect(column(page, 'in_progress').getByTestId('task-card')).toHaveCount(1);
 	await expect(page.getByRole('status').filter({ hasText: 'T-1 moved to In progress.' })).toHaveCount(1);
-	await card(page, 'Write docs').getByLabel(/^Move T-1 to/).selectOption('blocked');
+	await move(page, card(page, 'Write docs'), 'Blocked');
 	const dialog = page.getByRole('dialog', { name: 'Block T-1' });
 	await expect(dialog.getByRole('button', { name: 'Block task' })).toBeDisabled();
 	await dialog.getByLabel('Blocked on').fill('Waiting on design');
@@ -116,7 +121,7 @@ test('CHK-5: moving a card to Done with required steps left opens the task with 
 	await sheet.getByRole('button', { name: 'Add step' }).click();
 	await expect(sheet.getByTestId('checklist')).toContainText('Sign off');
 	await page.keyboard.press('Escape');
-	await card(page, 'Guarded').getByLabel(/^Move T-1 to/).selectOption('done');
+	await move(page, card(page, 'Guarded'), 'Done');
 	sheet = page.getByRole('dialog');
 	await expect(sheet.getByRole('alert')).toContainText('Required steps are not done: Sign off');
 	await expect(sheet.getByLabel('Why is it done with required steps left?')).toBeVisible();

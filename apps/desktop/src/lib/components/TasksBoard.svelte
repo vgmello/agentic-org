@@ -1,10 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import Ellipsis from '@lucide/svelte/icons/ellipsis';
 	import Plus from '@lucide/svelte/icons/plus';
 	import { toast } from 'svelte-sonner';
 	import NewTaskDialog from '$lib/components/NewTaskDialog.svelte';
 	import TaskSheet from '$lib/components/TaskSheet.svelte';
 	import { Button } from '$lib/components/ui/button';
+	import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from '$lib/components/ui/dropdown-menu';
 	import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
@@ -108,7 +110,6 @@
 		await load();
 	}
 
-	const select = 'mt-2 w-full rounded-md bg-gray-800 px-1.5 py-1 text-xs/5 text-gray-200 outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400';
 </script>
 
 <div class="space-y-4">
@@ -176,11 +177,19 @@
 									{#if checklistWords(task)}<span>{checklistWords(task)}</span>{/if}
 								</p>
 								{#if task.status === 'blocked' && task.blocked_reason}<p class="mt-1 text-xs/5 text-amber-200" data-testid="card-blocked">Blocked: {task.blocked_reason}</p>{/if}
-								<label class="sr-only" for={`move-${task.id}`}>Move {taskRef(task)} to</label>
-								<select id={`move-${task.id}`} class={select} value="" onchange={(e) => { const to = e.currentTarget.value as TaskStatus; e.currentTarget.value = ''; if (to) void move(task, to); }}>
-									<option value="">Move to…</option>
-									{#each movesFrom(task.status) as m (m)}<option value={m}>{STATUS_LABEL[m]}</option>{/each}
-								</select>
+								<div class="mt-1 flex justify-end">
+									<DropdownMenu>
+										<DropdownMenuTrigger class="rounded p-1 text-gray-400 hover:text-white focus-visible:outline-2 focus-visible:outline-indigo-400" aria-label={`Actions for ${taskRef(task)}`}><Ellipsis class="size-4" aria-hidden="true" /></DropdownMenuTrigger>
+										<DropdownMenuContent align="end">
+											<DropdownMenuGroup>
+												<DropdownMenuLabel>Move {taskRef(task)} to</DropdownMenuLabel>
+												{#each movesFrom(task.status) as m (m)}
+													<DropdownMenuItem onSelect={() => void move(task, m)}>{STATUS_LABEL[m]}</DropdownMenuItem>
+												{/each}
+											</DropdownMenuGroup>
+										</DropdownMenuContent>
+									</DropdownMenu>
+								</div>
 							</li>
 						{:else}
 							<li class="px-1 py-2 text-xs/5 text-gray-500">No tasks.</li>
