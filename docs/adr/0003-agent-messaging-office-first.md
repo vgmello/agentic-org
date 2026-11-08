@@ -217,6 +217,7 @@ To keep `inbox`, `notify`, `wait`, `read --next`, and UI thread views sub-millis
          - Routing: the office in the address owns the run's inbox, so HQ routes a message to a run address to that office, as it does for a placed agent (§3). Only the owning office knows the run's job and whether it's live: other offices and HQ forward it, and the owning office dead-letters a message to an ended run with `delivery_failed` (reason `run_ended`).
          - (amended 2026-11-08: agent sessions rev 3.1, ada) **Who may message it:** only the people of its job and the office's own notices (`from: office`). Teams-and-org-chart limits agents to the agents and people of the organization, and a run is neither. A message to it from anyone else is `unknown_recipient`, as if the run didn't exist: synchronously when the sender is in the owning office, and as a dead-letter with `unknown_recipient` when it came from another office.
          - (amended 2026-11-08: agent sessions rev 3.1, ada) **`run:` is reserved.** HQ refuses a person name that parses as a run address (it starts with `run:`, in any case) with `invalid_name`, on add and rename. Agents' `messaging_name`s can't contain `:`. An address is checked for the run form before any handle lookup.
+         - (amended 2026-11-08: agent sessions rev 3.2, ada) The rule covers every handle: HQ refuses a person's name or an agent's `messaging_name` that starts with `run:` (any case) or is ULID-shaped with `invalid_name` (the owner's display name apart: it isn't a handle), so a handle never looks like a run address or a ULID id (and an exact id beats a handle, §2.6, "Addressing").
          - (amended 2026-11-08: agent sessions rev 3.1, ada) The app controls a one-off with `run.stop`, `run.interrupt` and `run.send` (by `run_id`). A one-off can't be taken over.
        - (amended 2026-11-08: agent sessions rev 3, ada) **No spool.** Office-run agents never use the spool (they die with the office): `org-agent` with `ORG_SESSION_TOKEN` set exits `5` instead of spooling.
        - (amended 2026-11-08: agent sessions rev 3.1, ada) **Spool ingest accepts only active agents run by hand** (§3.5). The spool is the one path that skips `msg.bind`, and any process of the user's can write into it. So a spooled send is ingested only when its `from` resolves to a member of kind agent with status `active` and no `run_mode`. Persons, `owner`, `office`, run addresses, office-run agents, offboarded, paused or `Unknown`-status agents, and unknown ids or handles go to `spool/dead/`.
@@ -372,6 +373,7 @@ Agents must be able to discover everyone in the organization (agents, people, an
      }
      ```
    - (amended 2026-11-08: agent sessions rev 3, ada) Every card carries **`handle`**: an agent's `messaging_name`, a person's `name`, or `owner` for the owner. It's what `--to` takes. An agent's `name` is its display name, which isn't an address.
+   - (amended 2026-11-08: agent sessions rev 3.2, ada) The owner's card carries `owner` as its handle. **The owner's display name isn't a handle**, so `--to` never resolves it (§2.6).
 2. **Presence (`online | busy | idle | offline`):**
    - Derived from each office's runtime state (`busy` while executing a turn, `idle` while holding `msg.wait` or between turns, `offline` when no session is active).
    - (amended 2026-11-08: agent sessions, ada) **Agent presence is now `busy | idle | needs_you | with_you | asleep | offline`** ([`agent-sessions.md`](../design/agent-sessions.md)). `online` stays for people only. Unknown values decode as `Unknown`.
@@ -434,6 +436,17 @@ org-agent msg wait   [--timeout 60s] [--from <member>] [--urgent-only] [--office
 ```
 
 - **Addressing (`--to`, `--from`, `--as`):** Accepts a member's ULID `id`, their **handle** (case-insensitive; an agent's `messaging_name` or a person's `name`, which share ONE namespace with the reserved `owner`, so a handle names at most one member; amended 2026-11-08: one handle namespace, ada), or `"owner"` (which resolves to the organization's `owner: true` member). (amended 2026-11-08: agent sessions rev 3, ada) HQ keeps handles unique, so a handle never matches two members. An agent's display name (`Member.name`) isn't a handle and isn't accepted: an address that's neither an id, a handle nor a well-formed one-off run address (`run:<office id>/<run id>`, §2.1.4) is `unknown_recipient`. (amended 2026-11-08: agent sessions rev 3.1, ada) A run address is checked first, and a message to one is delivered only from the people of its job (else `unknown_recipient`, §3.2 item 4).
+  - (amended 2026-11-08: agent sessions rev 3.2, ada) **How an address resolves**, in order:
+    1. A well-formed run address (`run:<office id>/<run id>`).
+    2. The reserved `owner` (ignoring case), which is the owner. It comes before ids, so a member whose id is `owner` can't capture it.
+    3. An **exact member id** (case-sensitive). It beats a handle: if one member's id equals another member's handle, the id wins.
+    4. A **handle**, ignoring case: an agent's `messaging_name` or a person's `name`.
+    5. Anything else is `unknown_recipient`. **Display names never resolve**: not an agent's `Member.name`, and not the owner's.
+
+    As a recipient (`--to`) or a bind target, `office` (ignoring case) is refused before any of this (`invalid_request`, see "Reserved names & kinds" below).
+  - (amended 2026-11-08: agent sessions rev 3.2, ada) **Reserved and refused handles.** `owner` and `office` are reserved: no member may take either (`already_exists`), and `office` is the server's own sender id. A handle that starts with `run:` (any case) or is **ULID-shaped** (26 Crockford base32 characters, any case) is refused with `invalid_name`, for people and agents alike, on add and on rename. I, L, O and U count too (a lenient decoder maps them), as `teams-and-org-chart.md` says.
+  - (amended 2026-11-08: agent sessions rev 3.2, ada) **The owner's display name isn't a handle.** It's exempt from the namespace and from the shape check, so a person may share it, and it never resolves. The owner is addressed only as `owner`.
+  - (amended 2026-11-08: agent sessions rev 3.2, ada) These rules follow `teams-and-org-chart.md` (as amended on `ada/docs-followups-3`). Server-dev's `proto-wording` has them (`OWNER_HANDLE`, `OFFICE_HANDLE`, `is_shaped_like_an_address`), except that its ULID shape leaves out I, L, O and U. `proto-wording` is to be changed to count I, L, O and U too (a follow-up for server-dev).
 - **Reserved names & kinds:** `"office"` is reserved for the server (`msg.bind { agent: "office" }`, `to: "office"`, or a client sending `kind: "delivery_failed"` fails with `ErrorCode::InvalidRequest`).
 - **Exit codes:**
 
@@ -498,6 +511,7 @@ Per [`teams-and-org-chart.md`](../design/teams-and-org-chart.md) ("Who agents ma
    - A well-formed run address (`run:<office id>/<run id>`) skips the member checks in stages 1 and 2. It isn't in `org.db`, so it never gets `FLAG_UNRESOLVED_REF`.
    - (amended 2026-11-08: agent sessions rev 3.1, ada) **Who may message a run.** The owning office delivers a message to a run only from the people of its job (whoever started it, the job's assignee and reviewers, and the owner) or from `office`. Anything else is `unknown_recipient`: refused at once in stage 1 when the sender is in the owning office, and dead-lettered with `unknown_recipient` (with the usual `delivery_failed` to the sender) when it came from another office. Offices that don't own the run, and HQ, forward it without this check, because only the owning office knows the job.
    - (amended 2026-11-08: agent sessions rev 3.1, ada) HQ refuses a person name that parses as a run address (`invalid_name`), so `run:` never names a member.
+   - (amended 2026-11-08: agent sessions rev 3.2, ada) That covers agents' `messaging_name`s and ULID-shaped handles too (§2.6, "Addressing").
    - The office named in the address owns it, so HQ routes the message there.
    - **No spoofed runs.** HQ accepts a run address in `from` only when the message's `origin_office_id` is the office named in the address. Otherwise HQ rejects the work change. It isn't applied or forwarded, and it's logged with its ids and the reason `spoofed_sender`. HQ still acknowledges it (`WorkAck`), and a redelivery is rejected, logged and acknowledged the same way, so the origin's stream doesn't stall. No `delivery_failed` is sent, because it would go to the spoofed run. This isn't a dead-letter under item 3: the message never enters any inbox.
    - A message to an ended run is dead-lettered with `run_ended`. One to a run id the owning office never had gets `unknown_recipient`. HQ dead-letters one whose office id isn't an office of the organization with `unknown_recipient`.
@@ -573,7 +587,7 @@ Per [`teams-and-org-chart.md`](../design/teams-and-org-chart.md) ("Who agents ma
   - `status.set { text?: String, ttl_ms?: u64 } → { status: Option<String>, expires_at: Option<String> }` (`text: None` clears the caller's status line).
 - **Agent & Shared Messaging Calls (handled by `org-mailbox`):**
   - `msg.bind { agent?: String, app_token?: String, session_token?: String } → { member_id?: String, run_id?: String, office_id: String }`
-    - Resolves `agent` (member ID, handle, or `"owner"`; `"office"` is rejected) against `org.db`, requires a valid `app_token` when binding as a `Person`/`owner` (or for app-wide queries), and binds the connection's acting member.
+    - Resolves `agent` (member ID, handle, or `"owner"`; `"office"` is rejected; (amended 2026-11-08: agent sessions rev 3.2, ada) in §2.6's order, an exact id before a handle, and never a display name) against `org.db`, requires a valid `app_token` when binding as a `Person`/`owner` (or for app-wide queries), and binds the connection's acting member.
     - (amended 2026-11-08: agent sessions rev 3, ada) `session_token` is required when binding as an office-run agent, with the peer-ancestry check. With no `agent`, it binds a one-off run (`run_id` in the result). Every missing or invalid credential is `not_authorized`. (amended 2026-11-08: agent sessions rev 3.1, ada) Binding as an offboarded or `Unknown`-status agent, or when the lookup fails, is `not_authorized` too.
   - `msg.send { id: String, to: String, kind: String, priority?: MessagePriority, subject?: String, body: String, meta?: BTreeMap<String, Value>, reply_to?: String, expires_at?: String, ttl_ms?: u64 } → { id: String, thread_id: String, local_seq: u64, origin_seq: u64 }`
   - `msg.reply { id: String, to_id: String, priority?: MessagePriority, subject?: String, body: String, meta?: BTreeMap<String, Value> } → { id: String, thread_id: String, local_seq: u64, origin_seq: u64 }`
@@ -649,6 +663,8 @@ pub trait MemberDirectory {
     /// Resolve an active member by ULID, case-insensitive handle (an agent's messaging_name or a person's name), or "owner" at the office's applied Position.
     /// (amended 2026-11-08: agent sessions rev 3, ada) HQ keeps handles unique, so a handle names at most one member.
     /// Display names aren't accepted. There's no `AmbiguousName`: two members with one handle is a storage error.
+    /// (amended 2026-11-08: agent sessions rev 3.2, ada) "owner" is checked before ids, and an exact id match beats a handle. The owner resolves only as "owner":
+    /// its display name isn't a handle. "office" is reserved and never resolves to a member.
     fn resolve_member(&self, id_or_handle: &str) -> Result<Option<(Member, Position)>, StoreError>;
 }
 
