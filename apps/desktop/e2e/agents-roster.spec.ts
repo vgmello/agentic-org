@@ -20,7 +20,9 @@ test('AGENT-3: the Agents screen lists every agent A–Z with what it runs on, h
 	await expect(noor).toContainText('web engineer');
 	await expect(noor).toContainText('Claude Code');
 	await expect(noor).toContainText('On call');
-	await expect(noor).toContainText('Active');
+	await expect(noor.getByTestId('agent-status')).toHaveText(/Asleep · wakes when called/);
+	await expect(noor.getByTestId('agent-now')).toHaveText('—');
+	await expect(noor).not.toContainText('Active');
 	await expect(noor).toContainText('Design, Web');
 	await expect(noor).toContainText('HQ');
 	await expect(noor).toContainText('Sam Okafor'); // reports to
@@ -28,7 +30,7 @@ test('AGENT-3: the Agents screen lists every agent A–Z with what it runs on, h
 	await shot(page, 'agents-roster');
 });
 
-test('AGENT-3: filters by status, and an agent who left is listed only under Left', async ({ page }) => {
+test('AGENT-3: filters by status, and an agent who left is listed only under Former', async ({ page }) => {
 	await createOrg(page);
 	await visit(page, '/org-chart');
 	await page.locator('[data-testid=team-card][data-team=web]').getByRole('button', { name: /^Noor Haddad/ }).click();
@@ -46,10 +48,10 @@ test('AGENT-3: filters by status, and an agent who left is listed only under Lef
 	await expect(rows(page)).toHaveCount(1);
 	await expect(rows(page).first()).toContainText('Noor Haddad');
 	await expect(rows(page).first()).toContainText('Paused');
-	await page.getByRole('button', { name: /^Left/ }).click();
+	await page.getByRole('button', { name: /^Former/ }).click();
 	await expect(rows(page)).toHaveCount(1);
 	await expect(rows(page).first()).toContainText('Sam Okafor');
-	await expect(rows(page).first()).toContainText('Left');
+	await expect(rows(page).first()).toContainText('Former');
 	await page.getByRole('button', { name: /^Active/ }).click();
 	await expect(rows(page)).toHaveCount(6);
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agentLine, filterRoster, isPaused, messagingNameError, offboardSummary, roster, runModeLabel, runtimeLabel, scheduleLabel, statusWord, suggestMessagingName } from './agents';
+import { agentLine, filterRoster, isPaused, messagingNameError, offboardSummary, roster, runModeLabel, runtimeLabel, scheduleLabel, agentStatus, suggestMessagingName } from './agents';
 import { formerMembers, isFormer, withoutFormer } from './model';
 import { sampleOrg } from './sample';
 
@@ -30,10 +30,17 @@ describe('the words of an agent’s profile', () => {
 	});
 
 	it('the status word never reads unknown as working', () => {
-		expect(statusWord(member('sam').agent)).toBe('Active');
-		expect(statusWord({ ...member('sam').agent!, status: 'paused' })).toBe('Paused');
-		expect(statusWord({ ...member('sam').agent!, status: 'unknown' })).toBe('Status unknown');
-		expect(statusWord(undefined)).toBe('Status unknown');
+		const sam = member('sam').agent!;
+		// "Active" is the admin flag, never shown as a status: an on-call agent with no live run is asleep.
+		expect(agentStatus({ ...sam, run_mode: 'on_call' })).toEqual({ id: 'asleep', word: 'Asleep', detail: 'wakes when called' });
+		expect(agentStatus({ ...sam, run_mode: undefined })).toMatchObject({ id: 'by_person', word: 'Started by a person' });
+		expect(agentStatus({ ...sam, run_mode: 'always_on' })).toMatchObject({ id: 'unknown', word: 'Status unknown' });
+		expect(agentStatus({ ...sam, status: 'paused' })).toMatchObject({ id: 'paused', word: 'Paused' });
+		expect(agentStatus({ ...sam, status: 'offboarded' })).toMatchObject({ word: 'Former' });
+		expect(agentStatus({ ...sam, status: 'unknown' }).word).toBe('Status unknown');
+		expect(agentStatus(undefined).word).toBe('Status unknown');
+		for (const mode of [undefined, 'on_call', 'always_on', 'scheduled'] as const)
+			expect(agentStatus({ ...sam, run_mode: mode }).word).not.toBe('Active');
 		expect(isPaused({ ...member('sam'), agent: { ...member('sam').agent!, status: 'paused' } })).toBe(true);
 	});
 

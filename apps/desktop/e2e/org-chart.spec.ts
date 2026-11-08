@@ -59,7 +59,7 @@ test('TEAM-2: a member in several teams appears in each, with a "+N teams" badge
 	const inPlatform = card(page, 'platform').getByRole('button', { name: /^Mira Castillo, agent, also in Web/ });
 	await expect(inWeb).toBeVisible();
 	await expect(inPlatform).toBeVisible();
-	await expect(inWeb).toContainText('+1');
+	await expect(inWeb.locator('xpath=..')).toContainText('+1');
 });
 
 test('TEAM-3: agents and people in no team are listed under "Not in a team"', async ({ page }) => {
@@ -207,7 +207,7 @@ test('the page says it shows sample data until the real organization is wired in
 test('TEAM-2: the "+N teams" badge says so, and selecting the member lists the other teams in words', async ({ page }) => {
 	await openChart(page);
 	const mira = card(page, 'web').getByRole('button', { name: /^Mira Castillo, agent/ });
-	await expect(mira).toContainText('+1 team');
+	await expect(mira.locator('xpath=..')).toContainText('+1 team'); // beside the tile, not over it
 	await mira.click();
 	await expect(page.getByTestId('selected-member')).toContainText('Mira Castillo');
 	await expect(page.getByTestId('selected-member')).toContainText('In Platform, Web');
