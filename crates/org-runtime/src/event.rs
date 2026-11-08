@@ -69,6 +69,12 @@ pub enum SessionEvent {
     /// The agent is thinking (reasoning). Coarse on purpose: no text and no token counts,
     /// only that it happened, for a live status.
     Thinking,
+    /// The runtime reports its permission mode changed (e.g. after a permission-change
+    /// approval), in its own words. `None` if it says the mode changed without naming it.
+    ModeChanged {
+        /// The new mode, in the runtime's words.
+        mode: Option<String>,
+    },
     /// The agent began a tool call.
     ToolStarted {
         /// The runtime's id for the call.
@@ -164,6 +170,7 @@ const KNOWN_EVENT_TYPES: &[&str] = &[
     "text_delta",
     "assistant_text",
     "thinking",
+    "mode_changed",
     "tool_started",
     "tool_finished",
     "approval_requested",
@@ -215,6 +222,9 @@ enum KnownSessionEvent {
         text: String,
     },
     Thinking,
+    ModeChanged {
+        mode: Option<String>,
+    },
     ToolStarted {
         tool_use_id: String,
         name: String,
@@ -313,6 +323,7 @@ impl SessionEvent {
                 text,
             } => f(text),
             SessionEvent::Thinking => {}
+            SessionEvent::ModeChanged { mode } => redact_opt(mode, f),
             SessionEvent::ToolStarted {
                 tool_use_id: _,
                 name,
@@ -462,12 +473,31 @@ pub enum Activity {
 /// Only yes-or-no requests become approvals. A runtime request that needs **content** back
 /// (Codex `tool/requestUserInput`, `mcpServer/elicitation/request`) has no answer in
 /// [`crate::Decision`], so adapters **decline it themselves** in v1 and never raise it here.
+///
+/// **Escalations are never answered from policy.** [`escalation`](Self::escalation) says
+/// whether allowing the request would widen the session beyond its spec:
+/// - [`Escalation::SandboxBypass`]: the office **always denies** it. The fixed denies win,
+///   with no policy rule and no owner override in phase 1.
+/// - [`Escalation::PermissionChange`] and [`Escalation::Unknown`]: the office never answers
+///   them from the policy, `allow_always` rules included. They always go to the owner in
+///   Needs you, with a clear warning that allowing changes what the agent may do.
+/// - [`Escalation::None`]: the office answers from the policy, or asks the owner.
+///
+/// The office acts on [`ApprovalRequest::effective_escalation`], never on the field alone, so
+/// an adapter that leaves a permissions or unknown request at `None` still fails closed.
+///
+/// It's `#[non_exhaustive]` so it can grow: build one with [`ApprovalRequest::new`], then
+/// set the optional fields.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ApprovalRequest {
     /// The request's id. Pass it back unchanged in [`crate::Control::Answer`].
     pub id: ApprovalId,
     /// What kind of action it is.
     pub kind: ApprovalKind,
+    /// Whether allowing it would widen the session beyond its spec. **Required**: the adapter
+    /// always sets it (see [`Escalation`]).
+    pub escalation: Escalation,
     /// The tool.
     pub tool: String,
     /// The tool's name for people, where the runtime gives one.
@@ -484,10 +514,44 @@ pub struct ApprovalRequest {
 }
 
 impl ApprovalRequest {
+    /// A request with its required fields; the optional ones start as `None`.
+    pub fn new(
+        id: ApprovalId,
+        kind: ApprovalKind,
+        escalation: Escalation,
+        tool: impl Into<String>,
+        input: Value,
+    ) -> Self {
+        ApprovalRequest {
+            id,
+            kind,
+            escalation,
+            tool: tool.into(),
+            display_name: None,
+            input,
+            justification_untrusted: None,
+            blocked_path: None,
+            tool_use_id: None,
+        }
+    }
+
+    /// The escalation the office acts on: the adapter's, raised to what the request's kind
+    /// implies, so a wrong `None` fails closed. A [`ApprovalKind::Permissions`] request is
+    /// at least a [`Escalation::PermissionChange`], and an [`ApprovalKind::Unknown`] one at
+    /// least [`Escalation::Unknown`]; [`Escalation::SandboxBypass`] always stays.
+    pub fn effective_escalation(&self) -> Escalation {
+        match (self.escalation, self.kind) {
+            (Escalation::None, ApprovalKind::Permissions) => Escalation::PermissionChange,
+            (Escalation::None, ApprovalKind::Unknown) => Escalation::Unknown,
+            (escalation, _) => escalation,
+        }
+    }
+
     fn redact(&mut self, f: &mut dyn FnMut(&mut String)) {
         let ApprovalRequest {
             id: _,
             kind: _,
+            escalation: _,
             tool,
             display_name,
             input,
@@ -517,6 +581,31 @@ pub enum ApprovalKind {
     /// Any other tool call (e.g. an MCP tool).
     Other,
     /// Not known to this build.
+    #[serde(other)]
+    Unknown,
+}
+
+/// Whether allowing an [`ApprovalRequest`] would widen the session beyond its spec. Unknown
+/// values decode as [`Escalation::Unknown`], which the office treats like a permission change.
+///
+/// The adapter **must** set it from what its runtime asks:
+/// - a command the runtime wants to run **outside its sandbox** (Codex's escalated or
+///   unsandboxed commands): [`Escalation::SandboxBypass`];
+/// - a request to change the session's own permissions or mode (Claude's `ExitPlanMode`, an
+///   ACP mode switch, Codex's permissions requests): [`Escalation::PermissionChange`];
+/// - a request it can't classify (an [`ApprovalKind::Unknown`]): [`Escalation::Unknown`];
+/// - an ordinary tool call within the spec: [`Escalation::None`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum Escalation {
+    /// An ordinary tool call within the session's spec.
+    None,
+    /// Running outside the sandbox. Always denied.
+    SandboxBypass,
+    /// Changing the session's permissions or mode. Always asks the owner.
+    PermissionChange,
+    /// Not known to this build, or not classifiable. Always asks the owner.
     #[serde(other)]
     Unknown,
 }
@@ -679,6 +768,9 @@ pub(crate) mod tests {
                 text: "s:text".into(),
             },
             SessionEvent::Thinking,
+            SessionEvent::ModeChanged {
+                mode: Some("s:new_mode".into()),
+            },
             SessionEvent::ToolStarted {
                 tool_use_id: "id:tool_use".into(),
                 name: "s:tool".into(),
@@ -694,6 +786,7 @@ pub(crate) mod tests {
             SessionEvent::ApprovalRequested(ApprovalRequest {
                 id: ApprovalId::new("id:approval"),
                 kind: ApprovalKind::Command,
+                escalation: Escalation::SandboxBypass,
                 tool: "s:tool".into(),
                 display_name: Some("s:display".into()),
                 input: json!({"command": "s:command", "s:k": {"s:k2": ["s:v"]}}),
@@ -718,7 +811,8 @@ pub(crate) mod tests {
                 reasoning: 5,
                 cost_usd: Some(0.25),
                 cost_basis: CostBasis::ListPriceEstimate,
-                scope: UsageScope::TurnDelta,
+                token_scope: UsageScope::TurnDelta,
+                cost_scope: UsageScope::Cumulative,
             }),
             SessionEvent::RateLimit(RateLimit {
                 window: Window::Other {
@@ -774,6 +868,7 @@ pub(crate) mod tests {
                 | SessionEvent::TextDelta { .. }
                 | SessionEvent::AssistantText { .. }
                 | SessionEvent::Thinking
+                | SessionEvent::ModeChanged { .. }
                 | SessionEvent::ToolStarted { .. }
                 | SessionEvent::ToolFinished { .. }
                 | SessionEvent::ApprovalRequested(_)
@@ -831,6 +926,7 @@ pub(crate) mod tests {
                 SessionEvent::ApprovalRequested(ApprovalRequest {
                     id: ApprovalId::new("7"),
                     kind: ApprovalKind::FileChange,
+                    escalation: Escalation::None,
                     tool: "Edit".into(),
                     display_name: None,
                     input: json!({}),
@@ -839,7 +935,8 @@ pub(crate) mod tests {
                     tool_use_id: None,
                 }),
                 json!({"type": "approval_requested", "data": {
-                    "id": "7", "kind": "file_change", "tool": "Edit", "display_name": null,
+                    "id": "7", "kind": "file_change", "escalation": "none", "tool": "Edit",
+                    "display_name": null,
                     "input": {}, "justification_untrusted": null, "blocked_path": null,
                     "tool_use_id": null}}),
             ),
@@ -909,6 +1006,8 @@ pub(crate) mod tests {
         assert_eq!(n, NoticeKind::Unknown);
         let k: ApprovalKind = serde_json::from_str(r#""network""#).unwrap();
         assert_eq!(k, ApprovalKind::Unknown);
+        let e: Escalation = serde_json::from_str(r#""root""#).unwrap();
+        assert_eq!(e, Escalation::Unknown);
         let o: TurnOutcome = serde_json::from_value(json!({"type": "paused", "why": "x"})).unwrap();
         assert_eq!(o, TurnOutcome::Unknown);
         let o: TurnOutcome =
@@ -1000,5 +1099,69 @@ pub(crate) mod tests {
         // Compared by value only; a numeric wire id is the adapter's to stringify.
         assert_ne!(ApprovalId::new("1"), ApprovalId::new("01"));
         assert!(serde_json::from_value::<ApprovalId>(json!(1)).is_err());
+    }
+}
+
+#[cfg(test)]
+mod approval_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn effective_escalation_fails_closed() {
+        let request = |kind, escalation| {
+            ApprovalRequest::new(ApprovalId::new("1"), kind, escalation, "x", json!({}))
+                .effective_escalation()
+        };
+        use ApprovalKind as K;
+        use Escalation as E;
+        assert_eq!(request(K::Permissions, E::None), E::PermissionChange);
+        assert_eq!(request(K::Unknown, E::None), E::Unknown);
+        assert_eq!(request(K::Command, E::None), E::None);
+        assert_eq!(request(K::Command, E::SandboxBypass), E::SandboxBypass);
+        assert_eq!(request(K::Permissions, E::SandboxBypass), E::SandboxBypass);
+        assert_eq!(
+            request(K::FileChange, E::PermissionChange),
+            E::PermissionChange
+        );
+        assert_eq!(request(K::Other, E::Unknown), E::Unknown);
+    }
+
+    #[test]
+    fn escalation_is_required_and_round_trips() {
+        for escalation in [
+            Escalation::None,
+            Escalation::SandboxBypass,
+            Escalation::PermissionChange,
+            Escalation::Unknown,
+        ] {
+            let request = ApprovalRequest::new(
+                ApprovalId::new("1"),
+                ApprovalKind::Command,
+                escalation,
+                "Bash",
+                json!({"command": "ls"}),
+            );
+            let json = serde_json::to_value(&request).unwrap();
+            assert_eq!(
+                serde_json::from_value::<ApprovalRequest>(json).unwrap(),
+                request
+            );
+        }
+        assert_eq!(
+            serde_json::to_value(Escalation::SandboxBypass).unwrap(),
+            json!("sandbox_bypass")
+        );
+        // A request without the key doesn't decode: it can't silently mean "no escalation".
+        let mut json = serde_json::to_value(ApprovalRequest::new(
+            ApprovalId::new("1"),
+            ApprovalKind::Command,
+            Escalation::None,
+            "Bash",
+            json!({}),
+        ))
+        .unwrap();
+        json.as_object_mut().unwrap().remove("escalation");
+        assert!(serde_json::from_value::<ApprovalRequest>(json).is_err());
     }
 }

@@ -15,7 +15,7 @@ use crate::InvalidValue;
 /// - controls (general category Cc: NUL, line breaks, tabs, escapes, DEL, C1);
 /// - the line and paragraph separators U+2028 and U+2029 (some JSON-lines readers split on
 ///   them);
-/// - every **format character** (general category Cf, as of Unicode 15.1): invisible
+/// - every **format character** (general category Cf, as of Unicode 17.0): invisible
 ///   characters that change how text displays or compares, so a value could look like a
 ///   different one (e.g. in Needs you). They are the bidirectional controls (U+061C,
 ///   U+200E-U+200F, U+202A-U+202E, U+2066-U+2069), the zero-width and joiner characters
@@ -26,13 +26,13 @@ use crate::InvalidValue;
 ///   (U+13430-U+1343F, U+1BCA0-U+1BCA3), the musical symbol format controls
 ///   (U+1D173-U+1D17A), and the tag characters (U+E0001, U+E0020-U+E007F).
 ///
-/// The table is written out (no Unicode dependency): 170 code points in 21 ranges, unchanged
-/// through Unicode 17.0. A newer Unicode's new Cf characters get added here.
+/// The table is written out (no Unicode dependency): 170 code points in 21 ranges, as of
+/// Unicode 17.0. A newer Unicode's new Cf characters get added here.
 pub(crate) fn is_unsafe_char(c: char) -> bool {
     c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') || is_format_char(c)
 }
 
-/// Unicode general category Cf (format), as of Unicode 15.1.
+/// Unicode general category Cf (format), as of Unicode 17.0.
 fn is_format_char(c: char) -> bool {
     matches!(
         c,
@@ -181,6 +181,12 @@ impl SpecPath {
         PathBuf::from(&self.0)
     }
 
+    /// Whether it's `/` itself: valid as a path, but never a workspace, a writable root or a
+    /// cleanup root.
+    pub fn is_root(&self) -> bool {
+        self.0 == "/"
+    }
+
     fn parse(path: &str) -> Result<Self, SpecPathError> {
         check_absolute(path)?;
         Ok(SpecPath(path.to_owned()))
@@ -259,7 +265,8 @@ impl std::error::Error for SpecPathError {}
 /// don't.
 ///
 /// So `/office/offices/*/*.db` is refused (`*.db` isn't a whole segment), while
-/// `/office/offices/*/office.db` and `/work/.git/hooks/**` are fine.
+/// `/office/offices/*/**` (every office's whole folder: deny that, not only its databases) and
+/// `/work/.git/hooks/**` are fine.
 ///
 /// It also holds none of `( ) ? [ ] { } \`, no `~`, and no segment that ends in whitespace.
 /// Runtimes write path rules as `Tool(pattern)` and read the rest as glob syntax (some, like
@@ -553,7 +560,7 @@ pub(crate) mod tests {
     fn path_pattern_accepts_whole_segment_wildcards() {
         for ok in [
             "/",
-            "/office/offices/*/office.db",
+            "/office/offices/*/**",
             "/work/.git/hooks/**",
             "/**",
             "/*",
