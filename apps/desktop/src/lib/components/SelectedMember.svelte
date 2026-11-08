@@ -1,9 +1,10 @@
 <script lang="ts">
 	import Pause from '@lucide/svelte/icons/pause';
 	import X from '@lucide/svelte/icons/x';
+	import AgentStatusIcon from '$lib/components/AgentStatusIcon.svelte';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
-	import { agentLine, isPaused } from '$lib/org/agents';
+	import { agentLine, agentStatus, isPaused } from '$lib/org/agents';
 	import { kindWord, teamsOfMember } from '$lib/org/model';
 	import type { Member, OfficeInfo, OrgSnapshot } from '$lib/proto';
 
@@ -68,6 +69,10 @@
 		{#if member.kind === 'agent' && member.agent}
 			{#if isPaused(member)}<Badge variant="secondary" data-testid="paused-badge"><Pause class="size-3" aria-hidden="true" /> Paused</Badge>{/if}
 			<span class="basis-full text-xs/5 text-gray-300" data-testid="agent-line">{agentLine(member)}</span>
+			{@const live = agentStatus(member.agent)}
+			<span class="inline-flex basis-full items-center gap-x-1.5 text-xs/5 text-gray-300" data-testid="agent-status"><AgentStatusIcon status={live.id} />{live.word}{live.detail ? ` · ${live.detail}` : ''}</span>
+			<!-- What it is doing now arrives with the Activity feed. -->
+			<span class="basis-full text-xs/5 text-gray-400" data-testid="agent-now">Now: —</span>
 			<span class="basis-full text-xs/5 text-gray-400">Messaging name <code class="font-mono text-gray-200" data-testid="messaging-name">{member.agent.messaging_name}</code></span>
 			{#if isPaused(member)}
 				{#if onresume}<Button variant="outline" size="xs" onclick={() => onresume(member)}>Resume</Button>{/if}

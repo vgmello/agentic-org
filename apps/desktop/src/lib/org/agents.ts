@@ -31,18 +31,26 @@ export const scheduleLabel = (s: Schedule | undefined): string => (s && s.spec ?
 /** Whether the agent is paused: it won't be started or woken, and messages and tasks wait (DEAL-3). */
 export const isPaused = (m: Member): boolean => m.agent?.status === 'paused';
 
-/** The words of an agent's status. Unknown is never read as working. */
-export function statusWord(p: AgentProfile | undefined): string {
-	switch (p?.status) {
-		case 'active':
-			return 'Active';
-		case 'paused':
-			return 'Paused';
-		case 'offboarded':
-			return 'Left';
-		default:
-			return 'Status unknown';
+/** What the owner sees about an agent's state: a word, a few more words, and which icon goes with it. */
+export interface AgentStatus {
+	id: 'paused' | 'former' | 'by_person' | 'asleep' | 'unknown';
+	word: string;
+	detail?: string;
+}
+
+/**
+ * The agent's status in words (PROF-1, RUN-2). Paused and Former come from the record. Until the office reports
+ * who is working, waiting or needs the owner, an on-call agent with no live run is Asleep, one a person starts is
+ * "Started by a person", and everything else says "Status unknown": "Active" is the admin flag, never a status.
+ */
+export function agentStatus(p: AgentProfile | undefined): AgentStatus {
+	if (p?.status === 'paused') return { id: 'paused', word: 'Paused' };
+	if (p?.status === 'offboarded') return { id: 'former', word: 'Former' };
+	if (p?.status === 'active') {
+		if (p.run_mode === undefined) return { id: 'by_person', word: 'Started by a person' };
+		if (p.run_mode === 'on_call') return { id: 'asleep', word: 'Asleep', detail: 'wakes when called' };
 	}
+	return { id: 'unknown', word: 'Status unknown' };
 }
 
 /** One line for a quick view: "software engineer · Runs on Codex · On call". */
@@ -106,7 +114,10 @@ export interface RosterRow {
 	office: string;
 	/** Who it reports to ("You" for the owner is the owner's own name). */
 	manager: string;
+	/** The administrative state, for the filters. */
 	status: 'active' | 'paused' | 'left' | 'unknown';
+	/** What the Status column says. */
+	live: AgentStatus;
 }
 
 export type RosterFilter = 'all' | 'active' | 'paused' | 'left';
@@ -124,7 +135,8 @@ export function roster(s: OrgSnapshot, offices: { id: string; name: string }[]):
 				teams: teamsOfMember(s, m.id).map((t) => t.name),
 				office: offices.find((o) => o.id === m.office_id)?.name ?? 'Unplaced',
 				manager: boss?.name ?? s.members.find((x) => x.owner)?.name ?? '',
-				status: status === 'active' ? 'active' : status === 'paused' ? 'paused' : status === 'offboarded' ? 'left' : 'unknown'
+				status: status === 'active' ? 'active' : status === 'paused' ? 'paused' : status === 'offboarded' ? 'left' : 'unknown',
+				live: agentStatus(m.agent)
 			};
 		});
 }

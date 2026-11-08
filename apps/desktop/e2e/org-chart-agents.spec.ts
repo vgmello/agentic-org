@@ -21,6 +21,9 @@ test('AGENT-1: an agent’s quick view says its role, runtime, how it runs and i
 	await select(page, 'eng', /^Sam Okafor/);
 	await expect(strip(page).getByTestId('agent-line')).toHaveText('software engineer · Runs on Claude Code · On call');
 	await expect(strip(page).getByTestId('messaging-name')).toHaveText('sam');
+	// The live status, never the admin flag "Active"; what it is doing now has nothing to say yet.
+	await expect(strip(page).getByTestId('agent-status')).toHaveText('Asleep · wakes when called');
+	await expect(strip(page).getByTestId('agent-now')).toHaveText('Now: —');
 	await shot(page, 'agent-quick-view');
 });
 
@@ -31,6 +34,7 @@ test('DEAL-3: Pause confirms, then the agent shows Paused and Resume restores it
 	const dialog = page.getByRole('dialog', { name: 'Pause Noor Haddad?' });
 	await expect(dialog).toContainText("Noor Haddad won't be started or woken, and new tasks and messages wait until you resume.");
 	await expect(dialog).toContainText('Noor Haddad stays in Design, Web.');
+	await shot(page, 'pause-agent');
 	await dialog.getByRole('button', { name: 'Cancel' }).click();
 	await expect(strip(page).getByTestId('paused-badge')).toHaveCount(0); // nothing happened
 	await strip(page).getByRole('button', { name: 'Pause…' }).click();
@@ -39,6 +43,7 @@ test('DEAL-3: Pause confirms, then the agent shows Paused and Resume restores it
 	await expect(strip(page).getByTestId('paused-badge')).toBeVisible();
 	await expect(card(page, 'web').getByRole('button', { name: /^Noor Haddad, agent, paused/ })).toBeVisible();
 	await expect(card(page, 'web').getByTestId('paused-mark')).toHaveCount(1);
+	await shot(page, 'agent-paused');
 	await strip(page).getByRole('button', { name: 'Resume' }).click();
 	await expect(page.getByText('Resumed Noor Haddad.')).toBeVisible();
 	await expect(strip(page).getByTestId('paused-badge')).toHaveCount(0);
@@ -94,6 +99,7 @@ test('AGENT-2: Edit changes the record and refuses a messaging name that is take
 	await expect(dialog.getByRole('alert')).toHaveText("noor is already Noor Haddad's messaging name. Choose another.");
 	await expect(dialog.getByRole('button', { name: 'Save' })).toBeDisabled();
 	await dialog.getByLabel('Messaging name').fill('sam-principal');
+	await expect(dialog.getByTestId('handle-change-warning')).toContainText('Others reach Sam Okafor as sam today. After saving they must use sam-principal, and sam stays reserved.');
 	await shot(page, 'edit-agent');
 	await dialog.getByRole('button', { name: 'Save' }).click();
 	await expect(page.getByText('Saved Sam Okafor.')).toBeVisible();
@@ -109,6 +115,7 @@ test('RUN-1: How it runs changes the mode; a scheduled agent needs a schedule; n
 	await expect(dialog.getByRole('radio', { name: /^On call/ })).toBeChecked();
 	await dialog.getByRole('radio', { name: /^Scheduled/ }).check();
 	await expect(dialog.getByRole('button', { name: 'Save' })).toBeDisabled(); // a schedule is needed
+	await shot(page, 'how-it-runs');
 	await dialog.getByLabel('When', { exact: true }).fill('weekdays at 9');
 	await dialog.getByLabel('Time zone', { exact: true }).fill('Europe/Lisbon');
 	await dialog.getByRole('button', { name: 'Save' }).click();
@@ -129,7 +136,10 @@ test('HIRE: Add agent adds an existing agent with a suggested messaging name, a 
 	await expect(sheet.getByLabel('Messaging name')).toHaveValue('cameron-diaz'); // follows the name
 	await sheet.getByLabel('Role').fill('QA engineer');
 	await sheet.getByLabel('Runs on').selectOption('codex');
+	await sheet.getByLabel('Model').fill('gpt-5');
+	await expect(sheet.getByLabel('Reports to')).toHaveValue(''); // the owner, until a team is chosen
 	await sheet.getByRole('checkbox', { name: 'Engineering › Web' }).click();
+	await expect(sheet.getByLabel('Reports to')).toHaveValue('noor'); // then the team's lead
 	await sheet.getByLabel('Reports to').selectOption({ label: 'Sam Okafor' });
 	await shot(page, 'add-agent');
 	await sheet.getByRole('button', { name: 'Add agent' }).click();
@@ -189,6 +199,7 @@ test('TEAM-11: Search members rings the matches and dims the rest, and the searc
 	await expect(page.getByLabel('Search members')).toHaveValue('designer'); // kept
 	await expect(page.getByTestId('search-status')).toContainText('2 matches');
 	await expect(page.getByRole('button', { name: /^Pax Moreau, agent, matches the search/ })).toBeVisible();
+	await shot(page, 'member-search');
 	await page.getByRole('button', { name: 'Clear' }).click();
 	await expect(page.getByLabel('Search members')).toHaveValue('');
 	await expect(page.getByTestId('search-status')).toHaveText('');
@@ -209,6 +220,7 @@ test('DEAL-5: Show paused hides paused agents from the chart and counts, and bri
 	await expect(page.getByText('Paused Noor Haddad.')).toBeVisible();
 	const toggle = page.getByLabel('Show paused');
 	await expect(toggle).toBeChecked();
+	await shot(page, 'show-paused-on');
 	await toggle.uncheck();
 	await expect(card(page, 'web').getByRole('button', { name: /^Noor Haddad/ })).toHaveCount(0);
 	await expect(page.getByText(/\b7\b.*agents/)).toBeVisible(); // 8 agents, one hidden
@@ -265,6 +277,7 @@ test('TEAM-10: arrow keys move between the member tiles, Home and End go to the 
 	await expect(tiles.nth(2)).toBeFocused();
 	await page.keyboard.press('ArrowLeft');
 	await expect(tiles.nth(1)).toBeFocused();
+	await shot(page, 'tile-keyboard-focus');
 	await page.keyboard.press('End');
 	await expect(tiles.nth(count - 1)).toBeFocused();
 	await page.keyboard.press('ArrowRight'); // the end stays the end

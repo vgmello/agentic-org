@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { invalidate } from '$app/navigation';
-	import Pause from '@lucide/svelte/icons/pause';
+	import AgentStatusIcon from '$lib/components/AgentStatusIcon.svelte';
 	import Plus from '@lucide/svelte/icons/plus';
 	import UserPlus from '@lucide/svelte/icons/user-plus';
 	import { toast } from 'svelte-sonner';
@@ -29,7 +29,7 @@
 		{ id: 'all', label: 'All' },
 		{ id: 'active', label: 'Active' },
 		{ id: 'paused', label: 'Paused' },
-		{ id: 'left', label: 'Left' }
+		{ id: 'left', label: 'Former' }
 	];
 
 	const session = $derived(sessionFor(orgApi, connection.organization.id));
@@ -87,6 +87,7 @@
 							<th scope="col" class="px-4 py-2 font-medium">Runs on</th>
 							<th scope="col" class="px-4 py-2 font-medium">How it runs</th>
 							<th scope="col" class="px-4 py-2 font-medium">Status</th>
+							<th scope="col" class="px-4 py-2 font-medium">Now</th>
 							<th scope="col" class="px-4 py-2 font-medium">Teams</th>
 							<th scope="col" class="px-4 py-2 font-medium">Office</th>
 							<th scope="col" class="px-4 py-2 font-medium">Reports to</th>
@@ -102,11 +103,13 @@
 								<td class="px-4 py-2">{runtimeLabel(row.member.agent?.runtime)}</td>
 								<td class="px-4 py-2">{runModeLabel(row.member.agent?.run_mode)}</td>
 								<td class="px-4 py-2">
-									{#if row.status === 'paused'}<span class="inline-flex items-center gap-x-1 text-amber-200"><Pause class="size-3.5" aria-hidden="true" /> Paused</span>
-									{:else if row.status === 'left'}Left
-									{:else if row.status === 'active'}Active
-									{:else}Status unknown{/if}
+									<span class="inline-flex items-center gap-x-1.5 {row.live.id === 'paused' ? 'text-amber-200' : ''}" data-testid="agent-status">
+										<AgentStatusIcon status={row.live.id} />
+										{row.live.word}{row.live.detail ? ` · ${row.live.detail}` : ''}
+									</span>
 								</td>
+								<!-- What it is doing now comes with the Activity feed; until then there is nothing to say. -->
+								<td class="px-4 py-2 text-gray-400" data-testid="agent-now" aria-label="Nothing reported">—</td>
 								<td class="px-4 py-2 [overflow-wrap:anywhere]">{row.teams.length > 0 ? row.teams.join(', ') : '—'}</td>
 								<td class="px-4 py-2">{row.office}</td>
 								<td class="px-4 py-2 [overflow-wrap:anywhere]">{row.manager}</td>

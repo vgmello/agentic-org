@@ -44,6 +44,7 @@
 	const box = $derived(size === 'sm' ? 'size-8' : 'size-10');
 </script>
 
+<span class="inline-flex shrink-0 items-center gap-1">
 <button
 	type="button"
 	data-member-tile
@@ -58,12 +59,7 @@
 	<span aria-hidden="true">{initialsOf(member.name)}</span>
 	{#if agent}
 		<!-- A square tile with a small robot: told apart from a person by shape and glyph, not color or initials alone. -->
-		<Bot class="absolute -top-1 -left-1 size-3.5 rounded-sm bg-gray-800 p-px text-indigo-200" aria-hidden="true" />
-	{/if}
-	{#if alsoIn.length > 0}
-		<span class="absolute -top-1.5 -right-1.5 rounded-sm bg-gray-700 px-1 text-[0.6rem] leading-4 font-semibold whitespace-nowrap text-white outline-1 outline-white/20" aria-hidden="true">
-			+{alsoIn.length} {alsoIn.length === 1 ? 'team' : 'teams'}
-		</span>
+		<Bot class="absolute top-0 left-0.5 size-2.5 text-indigo-200" aria-hidden="true" />
 	{/if}
 	{#if member.agent?.status === 'paused'}
 		<Pause class="absolute -right-1 -bottom-1 size-3.5 rounded-full bg-gray-700 p-0.5 text-amber-200" aria-hidden="true" data-testid="paused-mark" />
@@ -72,3 +68,10 @@
 		<span class="absolute -bottom-2 left-1/2 max-w-16 -translate-x-1/2 truncate rounded bg-amber-300 px-1 text-[0.55rem] leading-3 font-bold text-gray-900" aria-hidden="true">{highlightLabel}</span>
 	{/if}
 </button>
+	<!-- Beside the tile, in the flow: it never covers the next tile. The tile's label already says "also in …". -->
+	{#if alsoIn.length > 0}
+		<span class="rounded-sm bg-gray-700 px-1 text-[0.6rem] leading-4 font-semibold whitespace-nowrap text-white outline-1 outline-white/20" aria-hidden="true">
+			+{alsoIn.length} {alsoIn.length === 1 ? 'team' : 'teams'}
+		</span>
+	{/if}
+</span>
