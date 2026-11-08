@@ -95,10 +95,15 @@
 		// The host says when an office's status changes: show it now instead of at the next check.
 		let stopListening: (() => void) | undefined;
 		let leaving = false;
-		void officeApi.onOfficeStatus((update) => (reported = applyStatusUpdate(reported ?? data.offices, data.connection.organization.id, update))).then((stop) => {
-			if (leaving) stop();
-			else stopListening = stop;
-		});
+		void officeApi
+			.onOfficeStatus((update) => (reported = applyStatusUpdate(reported ?? data.offices, data.connection.organization.id, update)))
+			.then((stop) => {
+				if (leaving) stop();
+				else stopListening = stop;
+			})
+			.catch(() => {
+				// No live updates then: the check every half minute still lists the statuses.
+			});
 		void probe.run('explicit');
 		const again = setInterval(() => void probe.run('background'), 30_000);
 		const tick = setInterval(() => (now = new Date()), 10_000);

@@ -36,13 +36,19 @@ const LOOK: Duration = Duration::from_millis(250);
 pub fn follow(home: &Path, stop: &AtomicBool, emit: &dyn Fn(StatusUpdate)) {
     let mut pause = FIRST_PAUSE;
     while !stop.load(Ordering::SeqCst) {
-        match follow_once(home, stop, emit) {
-            // It was up and then went away: try again soon.
-            Ok(()) => pause = FIRST_PAUSE,
-            // Never got going (no host, not ready, another version): ask less and less often.
-            Err(_) => pause = (pause * 2).min(LONGEST_PAUSE),
-        }
+        let delivered = follow_once(home, stop, emit).is_ok();
         wait(pause, stop);
+        pause = next_pause(pause, delivered);
+    }
+}
+
+/// How long to wait before the connection after this one. It was up and then went away: soon. It never got going
+/// (no host, not ready, another version): ask less and less often.
+fn next_pause(pause: Duration, delivered: bool) -> Duration {
+    if delivered {
+        FIRST_PAUSE
+    } else {
+        (pause * 2).min(LONGEST_PAUSE)
     }
 }
 
@@ -288,6 +294,18 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn the_pause_grows_while_nothing_connects_and_starts_over_after_a_good_connection() {
+        let mut pause = FIRST_PAUSE;
+        let mut seen = Vec::new();
+        for _ in 0..7 {
+            seen.push(pause.as_secs());
+            pause = next_pause(pause, false);
+        }
+        assert_eq!(seen, [1, 2, 4, 8, 16, 30, 30]);
+        assert_eq!(next_pause(pause, true), FIRST_PAUSE);
     }
 
     #[test]
