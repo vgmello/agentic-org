@@ -58,4 +58,19 @@ describe('IMP-6 what happens, in words', () => {
 		);
 		expect(whatHappens([], [], undefined, 'Acme')).toBe('Creates 0 agents and 0 teams in Acme. Nothing changes in your HR workspace or in messaging. Agents keep running where they are.');
 	});
+
+	it('says "1 agent" and "1 team" in the singular and leaves the project out when nobody is brought in', () => {
+		const one = rows().filter((r) => r.name === 'Eden');
+		const drafts = suggestTeams(one);
+		expect(whatHappens(one, drafts, undefined, 'Acme')).toBe('Creates 1 agent and 1 team in Acme. Nothing changes in your HR workspace or in messaging. Agents keep running where they are.');
+		expect(whatHappens([], [], { key: 'ac', name: 'ac', teamKeys: [] }, 'Acme')).toBe('Creates 0 agents and 0 teams in Acme. Nothing changes in your HR workspace or in messaging. Agents keep running where they are.');
+	});
+
+	it('does not make a team of a blank department, and does not let a skipped row lead', () => {
+		const all = rows();
+		all.find((r) => r.name === 'Eden')!.teamKey = '   ';
+		expect(suggestTeams(all).map((t) => t.key)).toEqual(['engineering']);
+		all.find((r) => r.name === 'ada')!.choice = 'skip';
+		expect(suggestTeams(all).find((t) => t.key === 'engineering')?.leadKey).toBeUndefined();
+	});
 });

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Member } from '$lib/proto';
 import { SAMPLE_SCAN } from './mock';
 import { buildRows, counts, hasNoMessages, isReady, missingOf, OWNER, roleWords } from './rows';
-import type { Scan } from './types';
+import type { HrAgent, Scan } from './types';
 
 const rowsOf = (scan: Scan = SAMPLE_SCAN, exclude = ['sample']) => buildRows(scan, { exclude });
 const byName = (name: string) => rowsOf().rows.find((r) => r.name === name)!;
@@ -97,5 +97,48 @@ describe('IMP-4 an HR agent with no messaging inbox', () => {
 		expect(hasNoMessages(riley, SAMPLE_SCAN)).toBe(true);
 		expect(hasNoMessages(byName('ada'), SAMPLE_SCAN)).toBe(false);
 		expect(hasNoMessages(riley, { hr: SAMPLE_SCAN.hr })).toBe(false);
+	});
+});
+
+describe('records that need care', () => {
+	const hr = (agents: HrAgent[]): Scan => ({ hr: { path: '/h', agents, roles: [], skipped: [] } });
+
+	it('does not bring in an agent offboarded in HR even when its inbox is still there', () => {
+		const scan: Scan = { ...hr([{ id: 'ac-gone', status: 'offboarded' }]), messaging: { path: '/s', names: ['ac-gone', 'ac-here'] } };
+		expect(buildRows(scan).rows.map((r) => r.messagingName)).toEqual(['ac-here']);
+		expect(buildRows(scan).offboarded).toHaveLength(1);
+	});
+
+	it('merges the same HR id in other capitals or in two projects into one agent, the first record winning', () => {
+		const { rows } = buildRows(hr([{ id: 'Ada', title: 'First' }, { id: 'ada', title: 'Second' }]));
+		expect(rows).toHaveLength(1);
+		expect(rows[0].title).toBe('First');
+	});
+
+	it('merges an HR record with an inbox whose name differs only in capitals', () => {
+		const scan: Scan = { ...hr([{ id: 'Foo', title: 'T' }]), messaging: { path: '/s', names: ['foo'] } };
+		const { rows } = buildRows(scan);
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toMatchObject({ source: 'both', messagingName: 'foo' });
+	});
+
+	it('does not make a row of an HR record whose id is a reserved handle or the owner’s', () => {
+		const { rows } = buildRows(hr([{ id: 'owner' }, { id: 'HR' }, { id: 'vgmello' }, { id: 'ac-ok' }]), { exclude: ['vgmello'] });
+		expect(rows.map((r) => r.key)).toEqual(['ac-ok']);
+	});
+
+	it('breaks a reporting cycle: the row that closes it reports to the owner', () => {
+		const { rows } = buildRows(hr([{ id: 'a', reports_to: 'b' }, { id: 'b', reports_to: 'a' }, { id: 'c', reports_to: 'a' }]));
+		const manager = (key: string) => rows.find((r) => r.key === key)!.managerKey;
+		// Whatever row was chosen to close it, nobody is left reporting in a circle.
+		for (const row of rows) {
+			const seen = new Set<string>();
+			for (let r: typeof row | undefined = row; r; r = rows.find((x) => x.key === r!.managerKey)) {
+				expect(seen.has(r.key)).toBe(false);
+				seen.add(r.key);
+			}
+		}
+		expect([manager('a'), manager('b')]).toContain(OWNER);
+		expect(manager('c')).toBe('a');
 	});
 });

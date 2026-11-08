@@ -29,11 +29,12 @@ const key = (name: string) => name.trim().toLowerCase();
  */
 export function suggestTeams(rows: Row[]): TeamDraft[] {
 	const named = new Map<string, string>();
-	for (const row of rows) if (row.teamKey && !named.has(key(row.teamKey))) named.set(key(row.teamKey), row.teamKey.trim());
+	for (const row of rows) if (row.teamKey?.trim() && !named.has(key(row.teamKey))) named.set(key(row.teamKey), row.teamKey.trim());
 	return [...named.entries()]
 		.sort(([a], [b]) => a.localeCompare(b))
 		.map(([k, name]) => {
-			const members = rows.filter((r) => r.teamKey && key(r.teamKey) === k);
+			// Only a row that will be brought in can lead.
+			const members = rows.filter((r) => isReady(r) && r.teamKey && key(r.teamKey) === k);
 			const reportsIn = (candidate: Row) => members.filter((m) => m.managerKey === candidate.key).length;
 			const lead = [...members].sort((a, b) => reportsIn(b) - reportsIn(a) || a.key.localeCompare(b.key))[0];
 			return { key: k, name, ...(lead && (reportsIn(lead) > 0 || members.length === 1) ? { leadKey: lead.key } : {}) };
@@ -72,7 +73,7 @@ export function whatHappens(rows: Row[], drafts: TeamDraft[], project: ProjectDr
 	const agents = rows.filter(isReady).length;
 	const teams = teamsToCreate(rows, drafts).length;
 	const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-	const made = [plural(agents, 'agent'), plural(teams, 'team'), ...(project ? [plural(1, 'project')] : [])];
+	const made = [plural(agents, 'agent'), plural(teams, 'team'), ...(project && agents > 0 ? [plural(1, 'project')] : [])];
 	const list = made.length > 1 ? `${made.slice(0, -1).join(', ')} and ${made.at(-1)}` : made[0];
 	return `Creates ${list} in ${organizationName}. Nothing changes in your HR workspace or in messaging. Agents keep running where they are.`;
 }

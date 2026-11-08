@@ -345,23 +345,50 @@ where
         .map_err(|e| CommandError::local("internal", e.to_string()))?
 }
 
-/// The usual places an existing team lives in, found or not (prefills "Bring in an existing team").
+/// The usual places an existing team lives in, found or not (prefills "Bring in an existing team"). A folder found
+/// here may then be scanned.
 #[tauri::command]
-async fn import_defaults(app: tauri::AppHandle) -> Result<import_scan::Defaults, CommandError> {
+async fn import_defaults(
+    app: tauri::AppHandle,
+    granted: State<'_, Arc<import_scan::Granted>>,
+) -> Result<import_scan::Defaults, CommandError> {
     let home = app
         .path()
         .home_dir()
         .map_err(|e| CommandError::local("internal", e.to_string()))?;
-    let user = std::env::var("USER").ok().filter(|u| !u.is_empty());
-    blocking(move || Ok(import_scan::defaults(&home, user))).await
+    // `USER` is not set for an app started outside a shell: the home folder's name is the next best.
+    let user = std::env::var("USER")
+        .ok()
+        .filter(|u| !u.is_empty())
+        .or_else(|| home.file_name().map(|n| n.to_string_lossy().into_owned()));
+    let granted = Arc::clone(&granted);
+    blocking(move || {
+        let found = import_scan::defaults(&home, user);
+        for path in found.hr.iter().chain(found.messaging.iter()) {
+            granted.grant(path);
+        }
+        Ok(found)
+    })
+    .await
 }
 
-/// Read the HR workspace and the messaging spool the owner chose. Read-only; a source that can't be read says why.
+/// Read the HR workspace and the messaging spool the owner chose (or the app found). Read-only; a source that can't be
+/// read says why. Only a folder the app handed out (`import_defaults`, `import_pick_folder`) is read: the webview can't
+/// use this to look anywhere else.
 #[tauri::command]
 async fn import_scan(
+    granted: State<'_, Arc<import_scan::Granted>>,
     hr_dir: Option<String>,
     spool_dir: Option<String>,
 ) -> Result<import_scan::Scan, CommandError> {
+    for dir in hr_dir.iter().chain(spool_dir.iter()) {
+        if !granted.allows(dir) {
+            return Err(CommandError::local(
+                "invalid_request",
+                "That folder wasn't chosen here: pick it again.",
+            ));
+        }
+    }
     blocking(move || {
         Ok(import_scan::scan(
             hr_dir.as_deref().map(std::path::Path::new),
@@ -371,21 +398,27 @@ async fn import_scan(
     .await
 }
 
-/// Ask the owner for a folder with the system's folder picker. `None`: they cancelled.
+/// Ask the owner for a folder with the system's folder picker. `None`: they cancelled. The folder picked may be scanned.
 #[tauri::command]
 async fn import_pick_folder(
     app: tauri::AppHandle,
+    granted: State<'_, Arc<import_scan::Granted>>,
     title: String,
 ) -> Result<Option<String>, CommandError> {
     use tauri_plugin_dialog::DialogExt;
+    let granted = Arc::clone(&granted);
     blocking(move || {
-        Ok(app
+        let picked = app
             .dialog()
             .file()
             .set_title(title)
             .blocking_pick_folder()
             .and_then(|picked| picked.into_path().ok())
-            .map(|path| path.to_string_lossy().into_owned()))
+            .map(|path| path.to_string_lossy().into_owned());
+        if let Some(path) = &picked {
+            granted.grant(path);
+        }
+        Ok(picked)
     })
     .await
 }
@@ -704,6 +737,7 @@ pub fn run() {
             let dock = tray::DockPreference::load(data);
             tray::apply_dock(app.handle(), dock.shown());
             app.manage(dock);
+            app.manage(Arc::new(import_scan::Granted::default()));
             app.manage::<Arc<dyn LoginService>>(Arc::from(login_item::system_in(&data_for_login)));
             tray::create(app.handle())?;
             Ok(())

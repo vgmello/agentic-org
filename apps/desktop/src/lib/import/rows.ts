@@ -58,10 +58,15 @@ export function buildRows(scan: Scan, { exclude = [], members = [] }: { exclude?
 	const hr = scan.hr?.error ? [] : (scan.hr?.agents ?? []);
 	const names = scan.messaging?.error ? [] : (scan.messaging?.names ?? []);
 	const offboarded = hr.filter((a) => lower(a.status ?? '') === 'offboarded');
-	const records = new Map(hr.filter((a) => !offboarded.includes(a)).map((a) => [lower(a.id), a]));
+	// The same id in other capitals (or in two projects) is the same agent: the first record is kept. A record whose id is a
+	// reserved handle or the owner's is not an agent either.
+	const records = new Map<string, HrAgent>();
+	for (const a of hr) if (!offboarded.includes(a) && !skip.has(lower(a.id)) && !records.has(lower(a.id))) records.set(lower(a.id), a);
+	// An agent offboarded in HR stays out even when its inbox is still there.
+	const gone = new Set(offboarded.map((a) => lower(a.id)));
 	// The same name in other capitals is the same handle (HQ compares them ignoring case): the first one is kept.
 	const handles = new Map<string, string>();
-	for (const name of names) if (!skip.has(lower(name)) && !handles.has(lower(name))) handles.set(lower(name), name);
+	for (const name of names) if (!skip.has(lower(name)) && !gone.has(lower(name)) && !handles.has(lower(name))) handles.set(lower(name), name);
 	const existing = new Map(
 		members.filter((m) => m.kind === 'agent' && m.agent).map((m) => [lower(m.agent!.messaging_name), m.id])
 	);
@@ -90,7 +95,23 @@ export function buildRows(scan: Scan, { exclude = [], members = [] }: { exclude?
 		const bossKey = boss ? byHrId.get(lower(boss)) : undefined;
 		if (bossKey && bossKey !== row.key) row.managerKey = bossKey;
 	}
+	breakCycles(rows);
 	return { rows, offboarded };
+}
+
+/** HR can say A reports to B and B to A; HQ refuses a cycle. The row that closes it reports to the owner instead. */
+function breakCycles(rows: Row[]): void {
+	const byKey = new Map(rows.map((r) => [r.key, r]));
+	for (const row of rows) {
+		const seen = new Set<string>([row.key]);
+		for (let boss = byKey.get(row.managerKey); boss; boss = byKey.get(boss.managerKey)) {
+			if (seen.has(boss.key)) {
+				row.managerKey = OWNER;
+				break;
+			}
+			seen.add(boss.key);
+		}
+	}
 }
 
 /** What an HR record says about the agent. HR agents are Claude Code subagents (the toolkit registers them as such). */

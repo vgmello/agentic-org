@@ -5,8 +5,9 @@
 //! - the messaging spool: the directory names under `inbox/`, one per registered name.
 //!
 //! The folders are the owner's choice (they are never fixed in the app); `defaults` only looks in the usual places so the
-//! first screen can be prefilled. Files are read by fixed names and size-limited, directories are not followed through
-//! symbolic links, and a record that can't be read is reported on its own without hiding the others.
+//! first screen can be prefilled. Files are read by fixed names and size-limited, folders inside the chosen one are not
+//! followed through symbolic links (the chosen folder itself may be one), and a record or folder that can't be read is
+//! reported on its own without hiding the others.
 
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -14,7 +15,30 @@ use std::path::{Component, Path, PathBuf};
 
 /// The most agents and names one scan returns, and the largest file it reads.
 const MAX_ENTRIES: usize = 1_000;
+/// The most notes about what was skipped one scan carries.
+const MAX_NOTES: usize = 50;
 const MAX_FILE_BYTES: u64 = 64 * 1024;
+
+/// The folders the owner can have scanned: the usual places the app found and the ones the owner picked. The webview
+/// names a folder to scan only by one of these, so it can't use the scan to look anywhere else on the disk.
+#[derive(Default)]
+pub struct Granted(std::sync::Mutex<std::collections::HashSet<String>>);
+
+impl Granted {
+    pub fn grant(&self, path: &str) {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(path.to_string());
+    }
+
+    pub fn allows(&self, path: &str) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(path)
+    }
+}
 
 /// The usual places, found or not.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -76,7 +100,7 @@ pub struct Scan {
 /// `projects/*/agents` (or `agents`) under the user's projects folder; the spool is `.agency/spool`.
 pub fn defaults(home: &Path, user: Option<String>) -> Defaults {
     let spool = home.join(".agency").join("spool");
-    let messaging = spool.join("inbox").is_dir().then(|| path_text(&spool));
+    let messaging = plain_dir(&spool.join("inbox")).then(|| path_text(&spool));
     let mut hr = None;
     if let Ok(projects) = fs::read_dir(home.join("projects")) {
         let mut found: Vec<PathBuf> = projects
@@ -94,8 +118,13 @@ pub fn defaults(home: &Path, user: Option<String>) -> Defaults {
     }
 }
 
+/// A real directory: a symbolic link to one is not (inside the chosen folder, nothing is followed out of it).
+fn plain_dir(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|m| m.is_dir())
+}
+
 fn is_hr_workspace(dir: &Path) -> bool {
-    dir.join("hr").join("roles").is_dir() && dir.join("projects").is_dir()
+    plain_dir(&dir.join("hr").join("roles")) && plain_dir(&dir.join("projects"))
 }
 
 /// Read what is there. A source the owner did not give is `None`; one that can't be read says why.
@@ -120,33 +149,53 @@ fn scan_hr(root: &Path) -> HrScan {
             Some("That folder has no hr/roles and projects: it isn't an HR workspace.".into());
         return out;
     }
-    out.roles = names_in(&root.join("hr").join("roles"), |name| {
-        name.strip_suffix(".toml")
-            .filter(|stem| !stem.starts_with('_'))
-            .map(str::to_string)
-    });
-    for project in sorted_dirs(&root.join("projects")) {
-        for agent_dir in sorted_dirs(&project.join("agents")) {
-            if out.agents.len() >= MAX_ENTRIES {
-                out.skipped.push("More agents than this scan reads.".into());
-                return out;
-            }
+    let roles = root.join("hr").join("roles");
+    match fs::read_dir(&roles) {
+        Ok(entries) => {
+            out.roles = entries
+                .flatten()
+                .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+                .filter_map(|e| {
+                    let name = e.file_name().to_string_lossy().into_owned();
+                    name.strip_suffix(".toml")
+                        .filter(|stem| !stem.starts_with('_'))
+                        .map(str::to_string)
+                })
+                .collect();
+            out.roles.sort();
+        }
+        Err(e) => note(&mut out.skipped, format!("hr/roles can't be read ({e})")),
+    }
+    'projects: for project in dirs_in(&root.join("projects"), root, &mut out.skipped) {
+        for agent_dir in dirs_in(&project.join("agents"), root, &mut out.skipped) {
             let record = agent_dir.join("agent.json");
+            if matches!(fs::symlink_metadata(&record), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
+            {
+                continue; // not an agent's home
+            }
+            if out.agents.len() >= MAX_ENTRIES {
+                note(&mut out.skipped, "More agents than this scan reads.".into());
+                break 'projects;
+            }
             match read_agent(&record, root) {
-                Ok(Some(agent)) => out.agents.push(agent),
-                Ok(None) => {}
-                Err(why) => out.skipped.push(format!("{}: {why}", short(root, &record))),
+                Ok(agent) => out.agents.push(agent),
+                Err(why) => note(&mut out.skipped, format!("{}: {why}", short(root, &record))),
             }
         }
     }
     out
 }
 
-/// `None`: no record in this folder (not an agent's home).
-fn read_agent(record: &Path, root: &Path) -> Result<Option<HrAgent>, String> {
-    let Ok(meta) = fs::symlink_metadata(record) else {
-        return Ok(None);
-    };
+/// Remember something that was skipped, up to a limit (the rest are not listed, so a flood of them can't grow the answer).
+fn note(notes: &mut Vec<String>, text: String) {
+    if notes.len() < MAX_NOTES {
+        notes.push(text);
+    }
+}
+
+/// The agent record at `record`, or why it can't be read.
+fn read_agent(record: &Path, root: &Path) -> Result<HrAgent, String> {
+    let meta = fs::symlink_metadata(record).map_err(|e| format!("can't be read ({e})"))?;
     if !meta.is_file() {
         return Err("not a plain file".into());
     }
@@ -160,7 +209,7 @@ fn read_agent(record: &Path, root: &Path) -> Result<Option<HrAgent>, String> {
         return Err("has no id".into());
     }
     agent.home_path = agent.home.as_deref().and_then(|home| resolve(root, home));
-    Ok(Some(agent))
+    Ok(agent)
 }
 
 /// Where a relative home is on this Mac, or `None` for anything that could leave the workspace.
@@ -179,23 +228,45 @@ fn scan_messaging(spool: &Path) -> MessagingScan {
         ..MessagingScan::default()
     };
     let inbox = spool.join("inbox");
-    if !inbox.is_dir() {
+    if !plain_dir(&inbox) {
         out.error = Some("That folder has no inbox: it isn't a messaging spool.".into());
         return out;
     }
-    out.names = sorted_dirs(&inbox)
+    let mut unread = Vec::new();
+    let mut names: Vec<String> = dirs_in(&inbox, spool, &mut unread)
         .into_iter()
         .filter_map(|dir| dir.file_name().map(|n| n.to_string_lossy().into_owned()))
         .filter(|name| !name.starts_with('.'))
-        .take(MAX_ENTRIES)
         .collect();
+    if let Some(why) = unread.first() {
+        out.error = Some(format!("The inbox can't be read ({why})."));
+        return out;
+    }
+    if names.len() > MAX_ENTRIES {
+        names.truncate(MAX_ENTRIES);
+        out.error = Some("More names than this scan reads: the first ones are listed.".into());
+    }
+    out.names = names;
     out
 }
 
-/// The sub-directories of `dir` that are real directories (a symbolic link is not followed), by name.
-fn sorted_dirs(dir: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = fs::read_dir(dir) else {
+/// The sub-directories of `dir` that are real directories (a symbolic link is not followed), by name. A folder that
+/// can't be read is noted in `skipped` (a missing one is just empty).
+fn dirs_in(dir: &Path, root: &Path, skipped: &mut Vec<String>) -> Vec<PathBuf> {
+    if fs::symlink_metadata(dir).is_ok_and(|m| m.file_type().is_symlink()) {
+        note(
+            skipped,
+            format!("{} is a link, which is not followed", short(root, dir)),
+        );
         return Vec::new();
+    }
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(e) => {
+            note(skipped, format!("{} can't be read ({e})", short(root, dir)));
+            return Vec::new();
+        }
     };
     let mut dirs: Vec<PathBuf> = entries
         .flatten()
@@ -204,18 +275,6 @@ fn sorted_dirs(dir: &Path) -> Vec<PathBuf> {
         .collect();
     dirs.sort();
     dirs
-}
-
-fn names_in(dir: &Path, pick: impl Fn(&str) -> Option<String>) -> Vec<String> {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut names: Vec<String> = entries
-        .flatten()
-        .filter_map(|entry| pick(&entry.file_name().to_string_lossy()))
-        .collect();
-    names.sort();
-    names
 }
 
 fn path_text(path: &Path) -> String {
@@ -378,5 +437,98 @@ mod tests {
             Some(&*path_text(&home.path().join(".agency/spool")))
         );
         assert_eq!(found.user.as_deref(), Some("vgmello"));
+    }
+
+    #[test]
+    fn a_folder_symlinked_inside_the_workspace_is_not_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        workspace(dir.path());
+        write(
+            &outside.path().join("p/agents/x/agent.json"),
+            r#"{"id":"stolen"}"#,
+        );
+        // A whole projects/<p>/agents folder, and the inbox, are links to somewhere else.
+        fs::create_dir_all(dir.path().join("projects/linked")).unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("p/agents"),
+            dir.path().join("projects/linked/agents"),
+        )
+        .unwrap();
+        let hr = scan(Some(dir.path()), None).hr.unwrap();
+        assert!(!hr.agents.iter().any(|a| a.id == "stolen"));
+        let spool = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), spool.path().join("inbox")).unwrap();
+        assert!(scan(None, Some(spool.path()))
+            .messaging
+            .unwrap()
+            .error
+            .unwrap()
+            .contains("no inbox"));
+    }
+
+    #[test]
+    fn a_folder_that_cannot_be_read_is_said_not_shown_empty() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("inbox/ada")).unwrap();
+        fs::set_permissions(dir.path().join("inbox"), fs::Permissions::from_mode(0o000)).unwrap();
+        let spool = scan(None, Some(dir.path())).messaging.unwrap();
+        fs::set_permissions(dir.path().join("inbox"), fs::Permissions::from_mode(0o755)).unwrap();
+        if spool.error.is_some() || !spool.names.is_empty() {
+            // (Skipped when the tests run as a user that ignores permissions.)
+            assert!(spool.error.unwrap().contains("can't be read"));
+            assert!(spool.names.is_empty());
+        }
+    }
+
+    #[test]
+    fn more_than_the_limit_is_said_and_the_notes_are_limited_too() {
+        let spool = tempfile::tempdir().unwrap();
+        for n in 0..(MAX_ENTRIES + 5) {
+            fs::create_dir_all(spool.path().join(format!("inbox/a{n:05}"))).unwrap();
+        }
+        let messaging = scan(None, Some(spool.path())).messaging.unwrap();
+        assert_eq!(messaging.names.len(), MAX_ENTRIES);
+        assert!(messaging.error.unwrap().contains("More names"));
+        let dir = tempfile::tempdir().unwrap();
+        write(&dir.path().join("hr/roles/r.toml"), "");
+        for n in 0..(MAX_NOTES + 20) {
+            write(
+                &dir.path()
+                    .join(format!("projects/p/agents/a{n}/agent.json")),
+                "{ nope",
+            );
+        }
+        let hr = scan(Some(dir.path()), None).hr.unwrap();
+        assert_eq!(hr.skipped.len(), MAX_NOTES);
+    }
+
+    #[test]
+    fn a_home_that_is_absolute_or_empty_is_not_resolved_and_a_role_directory_is_not_a_role() {
+        let dir = tempfile::tempdir().unwrap();
+        write(&dir.path().join("hr/roles/real.toml"), "");
+        fs::create_dir_all(dir.path().join("hr/roles/fake.toml")).unwrap();
+        write(
+            &dir.path().join("projects/p/agents/a/agent.json"),
+            r#"{"id":"a","home":"/etc"}"#,
+        );
+        write(
+            &dir.path().join("projects/p/agents/b/agent.json"),
+            r#"{"id":"b","home":""}"#,
+        );
+        let hr = scan(Some(dir.path()), None).hr.unwrap();
+        assert_eq!(hr.roles, ["real"]);
+        assert!(hr.agents.iter().all(|a| a.home_path.is_none()));
+    }
+
+    #[test]
+    fn only_folders_the_app_handed_out_may_be_scanned() {
+        let granted = Granted::default();
+        granted.grant("/Users/me/agents");
+        assert!(granted.allows("/Users/me/agents"));
+        assert!(!granted.allows("/Users/me"));
+        assert!(!granted.allows("."));
+        assert!(!granted.allows("/Users/me/agents/../.ssh"));
     }
 }
