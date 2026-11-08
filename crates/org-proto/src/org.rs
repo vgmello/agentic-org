@@ -308,8 +308,11 @@ pub struct AgentProfile {
     /// either direction (an agent whose `messaging_name` equals a person's `name`, or a person
     /// whose `name` equals an agent's `messaging_name`), so `--to <handle>` never names two
     /// members. `Member.name` stays the agent's display name and is not a handle. Two reserved
-    /// words, [`OWNER_HANDLE`] and [`OFFICE_HANDLE`], clash with everyone (but the owner may
-    /// use `owner`), and a handle that [`is_shaped_like_an_address`] is `invalid_name`.
+    /// words, [`OWNER_HANDLE`] and [`OFFICE_HANDLE`], clash with everyone, and a handle that
+    /// [`is_shaped_like_an_address`] is `invalid_name`. **The owner's handle is only `owner`:
+    /// its display name is exempt from the namespace** (no clash and no address-shape check).
+    /// `member.update_person` on the owner never clashes, and `member.add_person` may reuse the
+    /// owner's display name.
     pub messaging_name: String,
     /// Whether the agent takes work. Required when adding an agent (`Unknown` and
     /// `Offboarded` are refused: an agent is offboarded with `member.offboard`).
@@ -530,7 +533,7 @@ command!(
     /// Errors: `invalid_name` (also a name that [`is_shaped_like_an_address`]), `already_exists`
     /// (the id is taken, or the name is already another member's handle: an agent's
     /// `messaging_name`, [`OWNER_HANDLE`] or [`OFFICE_HANDLE`], ignoring case; people's names
-    /// also clash with each other).
+    /// also clash with each other, but not with the owner's display name).
     MemberAddPerson, "member.add_person", MemberAddPersonParams {
         member_id: String,
         name: String,
@@ -540,7 +543,8 @@ command!(
 );
 command!(
     /// `member.update_person`: only the fields given change; `clear_contact` removes the
-    /// contact. The owner can edit its own record. Errors: `invalid_name` (as for
+    /// contact. The owner can edit its own record, and its display name is not a handle, so
+    /// renaming the owner never clashes. Errors: `invalid_name` (as for
     /// `member.add_person`), `already_exists`
     /// (the new name is already another member's handle, as for `member.add_person`),
     /// `conflict`, `not_found`, and `invalid_request` if the member is an agent (agents are
