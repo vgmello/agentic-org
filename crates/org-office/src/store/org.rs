@@ -23,8 +23,8 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use org_proto::org::{
-    Area, CommandAccepted, CommandStatus, Member, MemberKind, Membership, OrgChange, OrgSnapshot,
-    Position, Project, ProjectTeam, Team,
+    Area, CommandAccepted, CommandStatus, Member, MemberKind, Membership, OrgChange,
+    OrgChangedData, OrgSnapshot, Position, Project, ProjectTeam, Team,
 };
 use org_proto::{ApiError, ErrorCode};
 
@@ -529,6 +529,64 @@ fn committed(position: Position) -> CommandAccepted {
         status: CommandStatus::Committed,
         position: Some(position),
     }
+}
+
+/// Whether a subscriber that holds the organization as of `after` can be sent the changes
+/// that follow: `after` is a position this log has (same epoch, at least the genesis, no later
+/// than the head). Nothing is trimmed yet, so every earlier position of the epoch qualifies.
+pub(crate) fn can_resume_from(db: &Connection, after: Position) -> Result<bool, OfficeError> {
+    Ok(match last_position(db)? {
+        Some(head) => after.epoch == head.epoch && (1..=head.seq).contains(&after.seq),
+        None => false,
+    })
+}
+
+/// Up to `limit` committed commands after `after`, oldest first, as the `org.changed` events'
+/// data. The log stores each command's changes verbatim, so this is a read, not a rebuild.
+pub(crate) fn changes_after(
+    db: &Connection,
+    after: Position,
+    limit: usize,
+) -> Result<Vec<OrgChangedData>, OfficeError> {
+    let mut statement = db
+        .prepare(
+            "SELECT epoch, seq, command_id, body FROM events
+             WHERE kind = 'org.changed' AND (epoch, seq) > (?1, ?2)
+             ORDER BY epoch, seq LIMIT ?3",
+        )
+        .map_err(OfficeError::storage)?;
+    let rows = statement
+        .query_map(
+            (after.epoch as i64, after.seq as i64, limit as i64),
+            |row| {
+                Ok((
+                    Position {
+                        epoch: row.get::<_, i64>(0)? as u64,
+                        seq: row.get::<_, i64>(1)? as u64,
+                    },
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
+        )
+        .map_err(OfficeError::storage)?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (position, command_id, body) = row.map_err(OfficeError::storage)?;
+        let changes = serde_json::from_str(&body)
+            .map_err(|_| OfficeError::Invalid("a logged entry is not readable"))?;
+        out.push(OrgChangedData {
+            position,
+            command_id,
+            changes,
+        });
+    }
+    Ok(out)
+}
+
+/// The position of the last log entry; `NotFound` for an empty log (an unfinished create).
+pub(crate) fn head(db: &Connection) -> Result<Position, OfficeError> {
+    last_position(db)?.ok_or(OfficeError::NotFound)
 }
 
 /// Whether the organization is committed: the log has an entry, or (an `org.db` from before the

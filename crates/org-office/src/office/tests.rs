@@ -1418,3 +1418,101 @@ fn the_high_water_mark_follows_the_clock_forward() {
         .unwrap();
     assert!(mark(&office) >= first);
 }
+
+#[test]
+fn the_log_after_a_position_is_what_the_commands_made_oldest_first() {
+    let (_dir, _keys, office) = made();
+    let (c1, c2, c3) = (cmd(1, 0), cmd(2, 0), cmd(3, 0));
+    for (id, team, name) in [(&c1, "T1", "A"), (&c2, "T2", "B"), (&c3, "T3", "C")] {
+        office
+            .submit_org(team_create(id, team, name))
+            .unwrap()
+            .unwrap();
+    }
+    // A refusal is not in the log.
+    assert!(office
+        .submit_org(team_create(&cmd(4, 0), "T4", " "))
+        .unwrap()
+        .is_err());
+
+    let after_genesis = office.org_changes_after(at(1), 100).unwrap();
+    let seen: Vec<_> = after_genesis
+        .iter()
+        .map(|data| (data.position, data.command_id.as_str()))
+        .collect();
+    assert_eq!(
+        seen,
+        vec![
+            (at(2), c1.as_str()),
+            (at(3), c2.as_str()),
+            (at(4), c3.as_str())
+        ]
+    );
+    assert!(matches!(
+        &after_genesis[0].changes[..],
+        [org_proto::org::OrgChange::TeamUpserted { team }] if team.name == "A"
+    ));
+    // A page, the rest, and nothing past the head.
+    assert_eq!(office.org_changes_after(at(1), 2).unwrap().len(), 2);
+    assert_eq!(office.org_changes_after(at(3), 100).unwrap().len(), 1);
+    assert!(office.org_changes_after(at(4), 100).unwrap().is_empty());
+    assert_eq!(office.org_head().unwrap(), at(4));
+}
+
+#[test]
+fn a_subscriber_can_resume_only_from_a_position_this_log_has() {
+    let (_dir, _keys, office) = made();
+    office
+        .submit_org(team_create(&cmd(1, 0), "T1", "A"))
+        .unwrap()
+        .unwrap();
+    let position = |epoch, seq| org_proto::org::Position { epoch, seq };
+
+    for (after, resumable) in [
+        (position(1, 1), true),  // the genesis: a snapshot taken right after create
+        (position(1, 2), true),  // the head
+        (position(1, 3), false), // beyond what this office has
+        (position(1, 0), false),
+        (position(0, 0), false),
+        (position(2, 1), false), // another epoch (a promotion started one)
+    ] {
+        assert_eq!(
+            office.org_can_resume_from(after).unwrap(),
+            resumable,
+            "{after:?}"
+        );
+    }
+}
+
+#[test]
+fn followers_are_woken_by_a_commit_and_a_wait_that_sees_a_newer_token_returns_at_once() {
+    let (_dir, _keys, office) = made();
+    let before = office.org_change_token();
+
+    // Nothing committed: the wait runs out its time and the token is the same.
+    let started = Instant::now();
+    assert_eq!(
+        office.wait_for_org_change(before, Duration::from_millis(100)),
+        before
+    );
+    assert!(started.elapsed() >= Duration::from_millis(90));
+
+    // A commit from another thread wakes a waiter long before its timeout.
+    let woken = std::thread::scope(|scope| {
+        let waiter = scope.spawn(|| office.wait_for_org_change(before, Duration::from_secs(30)));
+        std::thread::sleep(Duration::from_millis(50));
+        office
+            .submit_org(team_create(&cmd(1, 0), "T1", "A"))
+            .unwrap()
+            .unwrap();
+        waiter.join().unwrap()
+    });
+    assert_ne!(woken, before);
+    // A token read before a commit returns at once: the commit is never missed.
+    let started = Instant::now();
+    assert_ne!(
+        office.wait_for_org_change(before, Duration::from_secs(30)),
+        before
+    );
+    assert!(started.elapsed() < Duration::from_secs(5));
+}
