@@ -424,7 +424,8 @@ pub struct NotifyItem {
     pub triage_gen: u64,
     pub created_at: String,
     pub reason: String,
-    /// An `ask` past its `expires_at` (then not urgent): marked "(expired)" in the text line.
+    /// An `ask` past its `expires_at` (not urgent for an agent; a person's or the owner's stays
+    /// urgent): marked "(expired)" in the text line.
     /// Not in the JSON, which keeps its locked shape.
     #[serde(skip)]
     pub expired: bool,
