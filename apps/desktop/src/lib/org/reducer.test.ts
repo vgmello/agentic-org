@@ -190,12 +190,12 @@ describe('REPORT-3 and REPORT-4 changing a manager', () => {
 });
 
 describe('PEOPLE-4 and PEOPLE-8 one handle namespace', () => {
-	it('a person can’t take another member’s name, an agent’s name or "owner", ignoring case', () => {
-		for (const name of ['avery stone', 'Sam Okafor', 'OWNER']) {
+	it('a person can’t take another member’s name, an agent’s handle or "owner", ignoring case', () => {
+		for (const name of ['avery stone', 'SAM', 'OWNER']) {
 			expect(err(() => run(s0, { method: 'member.add_person', params: { member_id: 'p-new', name } })).code).toBe('already_exists');
 		}
-		const added = run(s0, { method: 'member.add_person', params: { member_id: 'p-new', name: 'Sam Ortiz' } });
-		expect(member(added, 'p-new').name).toBe('Sam Ortiz');
+		const added = run(s0, { method: 'member.add_person', params: { member_id: 'p-new', name: 'Sam Okafor' } });
+		expect(member(added, 'p-new').name).toBe('Sam Okafor'); // an agent's display name is not a handle
 	});
 
 	it('renaming to your own name in another case is fine; to someone else’s is refused', () => {

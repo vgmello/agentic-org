@@ -41,3 +41,44 @@ describe('the mock office’s organization', () => {
 		expect((await b.view('b')).snapshot.teams.map((t) => t.name)).not.toContain('Only in A');
 	});
 });
+
+describe('the mock office’s command handling, like HQ’s', () => {
+	it('remembers a refusal: a retry gets the same refusal, and the position never moved', async () => {
+		const org = make();
+		const bad = { method: 'team.create', params: { command_id: 'R1', team_id: 'x', name: 'design' } } as const;
+		const first = await org.command('org-1', bad).catch((e) => e);
+		const again = await org.command('org-1', bad).catch((e) => e);
+		expect(again).toEqual(first);
+		expect(first).toMatchObject({ code: 'already_exists' });
+		expect((await org.view('org-1')).snapshot.position.seq).toBe(1);
+	});
+
+	it('refuses a command id reused for a different command', async () => {
+		const org = make();
+		await org.command('org-1', { method: 'team.create', params: { command_id: 'S1', team_id: 'a', name: 'A' } });
+		await expect(org.command('org-1', { method: 'team.create', params: { command_id: 'S1', team_id: 'b', name: 'B' } })).rejects.toMatchObject({ code: 'invalid_request' });
+		expect((await org.view('org-1')).snapshot.teams.some((t) => t.id === 'b')).toBe(false);
+	});
+
+	it('answers commands sent together one at a time, so none is lost', async () => {
+		const storage = memory();
+		const org = make(storage);
+		await Promise.all(['a', 'b', 'c'].map((id) => org.command('org-1', { method: 'team.create', params: { team_id: id, name: id.toUpperCase() } })));
+		const teams = (await make(storage).view('org-1')).snapshot.teams.map((t) => t.id);
+		expect(teams).toEqual(expect.arrayContaining(['a', 'b', 'c']));
+		expect((await org.view('org-1')).snapshot.position.seq).toBe(4);
+	});
+
+	it('ignores stored data that is not an organization, and a command id like "constructor" is just an id', async () => {
+		const storage = memory();
+		storage.setItem('agentic-org.mock.org.org-1', '{}');
+		const org = make(storage);
+		expect((await org.view('org-1')).snapshot.teams.length).toBeGreaterThan(0);
+		await expect(org.command('org-1', { method: 'team.create', params: { command_id: 'constructor', team_id: 'z', name: 'Z' } })).resolves.toMatchObject({ status: 'committed' });
+	});
+
+	it('says so when the change can’t be saved', async () => {
+		const full: MockStorage = { getItem: () => null, setItem: () => { throw new Error('quota'); } };
+		await expect(make(full).command('org-1', { method: 'team.create', params: { team_id: 'a', name: 'A' } })).rejects.toMatchObject({ source: 'app', code: 'internal' });
+	});
+});

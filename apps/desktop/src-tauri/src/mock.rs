@@ -594,6 +594,43 @@ mod tests {
     }
 
     #[test]
+    fn a_refusal_is_remembered_between_launches_and_a_failed_write_can_be_retried() {
+        let dir = temp_dir("refusal");
+        let first = MockOffice::from_env(dir.clone());
+        let org = first.list_organizations().unwrap().remove(0);
+        let bad = create_team("eng", "R1"); // Engineering exists in the sample
+        assert_eq!(
+            first.org_command(&org.id, &bad).unwrap_err().code,
+            ErrorCode::AlreadyExists
+        );
+        drop(first);
+        let second = MockOffice::from_env(dir.clone());
+        assert_eq!(
+            second.org_command(&org.id, &bad).unwrap_err().code,
+            ErrorCode::AlreadyExists
+        );
+        // A write that fails is not remembered, so the same command can be sent again.
+        let good = create_team("ops", "R2");
+        let saved = fs::read(dir.join("structures.json")).unwrap();
+        fs::remove_file(dir.join("structures.json")).unwrap();
+        fs::create_dir(dir.join("structures.json")).unwrap(); // a folder where the file goes: the rename fails
+        assert_eq!(
+            second.org_command(&org.id, &good).unwrap_err().code,
+            ErrorCode::StorageError
+        );
+        assert!(!second
+            .org_snapshot(&org.id)
+            .unwrap()
+            .teams
+            .iter()
+            .any(|t| t.id == "ops"));
+        fs::remove_dir(dir.join("structures.json")).unwrap();
+        fs::write(dir.join("structures.json"), saved).unwrap();
+        assert!(second.org_command(&org.id, &good).is_ok());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn a_refused_command_is_an_api_error_and_changes_nothing() {
         let office = healthy();
         let org = office.create_organization("Alpha").unwrap();
