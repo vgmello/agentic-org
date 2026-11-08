@@ -206,6 +206,11 @@ pub struct MessageTriageEntry {
     pub last_due_reason: Option<String>,
     #[serde(default)]
     pub reported_sessions: BTreeMap<String, u64>,
+    /// For an `after-task` snooze: the agent's [`TriageState::break_seq`] when it was deferred.
+    /// It is released at the first break that starts later (`break_seq` greater than this).
+    /// Absent on snoozes written before breaks were counted: those go at the next break.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_task_break: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -214,6 +219,14 @@ pub struct TriageState {
     pub v: u32,
     #[serde(default)]
     pub messages: BTreeMap<String, MessageTriageEntry>,
+    /// Counts the agent's natural breaks (`notify --after-task` runs). A break starts at the
+    /// first `--after-task` check after one that had nothing to report, and lasts while each
+    /// check reports something (the agent is triaging). Missing in older files: 0.
+    #[serde(default)]
+    pub break_seq: u64,
+    /// Whether the last `--after-task` check reported something, i.e. a break is under way.
+    #[serde(default)]
+    pub in_break: bool,
 }
 
 fn default_triage_version() -> u32 {
@@ -225,7 +238,27 @@ impl TriageState {
         Self {
             v: default_triage_version(),
             messages: BTreeMap::new(),
+            break_seq: 0,
+            in_break: false,
         }
+    }
+
+    /// An `--after-task` check begins: unless a break is already under way, a new one starts.
+    /// Returns whether the state changed.
+    fn begin_after_task_check(&mut self) -> bool {
+        if self.in_break {
+            return false;
+        }
+        self.break_seq = self.break_seq.saturating_add(1);
+        true
+    }
+
+    /// An `--after-task` check ended: the break goes on while it had something to report and
+    /// ends with the first check that has nothing. Returns whether the state changed.
+    fn end_after_task_check(&mut self, reported: bool) -> bool {
+        let changed = self.in_break != reported;
+        self.in_break = reported;
+        changed
     }
 }
 
@@ -808,6 +841,9 @@ impl Spool {
             entry.done_note = None;
             entry.last_due_reason = None;
             entry.reported_sessions.clear();
+            // An after-task snooze made during a break must wait for the next one, not come
+            // back at this break's next check (it would loop: report, defer, report...).
+            entry.after_task_break = (snoozed_until == "after-task").then_some(state.break_seq);
             let gen = entry.triage_gen;
 
             self.save_triage_unlocked(agent, &state)?;
@@ -864,6 +900,7 @@ impl Spool {
             let mut state = self.load_triage_unlocked(agent)?;
             let entry = state.messages.entry(id.to_string()).or_default();
             entry.snoozed_until = None;
+            entry.after_task_break = None;
             entry.last_due_reason = None;
             entry.done_at = Some(now_iso.clone());
             entry.done_note = note.clone();
@@ -880,15 +917,19 @@ impl Spool {
         })
     }
 
+    /// Release time-based snoozes now due and, with `after_task`, the after-task snoozes made
+    /// before the current break (see [`TriageState::break_seq`]).
     fn release_due_in_state(state: &mut TriageState, now_iso: &str, after_task: bool) -> bool {
         let mut modified = false;
+        let break_seq = state.break_seq;
         for entry in state.messages.values_mut() {
             let Some(ref until) = entry.snoozed_until else {
                 continue;
             };
             if until == "after-task" {
-                if after_task {
+                if after_task && entry.after_task_break.is_none_or(|at| at < break_seq) {
                     entry.snoozed_until = None;
+                    entry.after_task_break = None;
                     entry.triage_gen = entry.triage_gen.saturating_add(1);
                     entry.triaged_at = Some(now_iso.to_string());
                     entry.last_due_reason = Some("after_task".to_string());
@@ -960,6 +1001,7 @@ impl Spool {
                     || !entry.reported_sessions.is_empty()
                 {
                     entry.snoozed_until = None;
+                    entry.after_task_break = None;
                     entry.last_due_reason = None;
                     entry.reported_sessions.clear();
                     entry.triaged_at = Some(now_iso);
@@ -1097,7 +1139,8 @@ impl Spool {
 
         let (count, urgent_count, items) = self.with_agent_meta_lock(agent, || {
             let mut state = self.load_triage_unlocked(agent)?;
-            let mut dirty = Self::release_due_in_state(&mut state, &now_iso, opts.after_task);
+            let mut dirty = opts.after_task && state.begin_after_task_check();
+            dirty |= Self::release_due_in_state(&mut state, &now_iso, opts.after_task);
 
             let mut candidates: Vec<(Envelope, bool, String)> = Vec::new();
             for env in self.list_inbox(agent, false)? {
@@ -1152,6 +1195,9 @@ impl Spool {
                 items.push(self.notify_item(env, urgent, triage_gen, reason));
             }
 
+            if opts.after_task {
+                dirty |= state.end_after_task_check(count > 0);
+            }
             if dirty {
                 self.prune_triage_entries(agent, &mut state)?;
                 self.save_triage_unlocked(agent, &state)?;

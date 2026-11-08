@@ -297,6 +297,63 @@ fn adapter_invocations_behave_as_the_adapters_expect() {
 }
 
 #[test]
+fn after_task_deferred_during_a_break_does_not_loop() {
+    // Regression: Stop#1 reports M; the agent defers M after-task; Stop#2 reported M again
+    // (after_task, exit 10), and so on forever.
+    let env = setup("break_loop");
+    let stop = || {
+        env.run(
+            ME,
+            &[
+                "msg",
+                "notify",
+                "--session",
+                "claude:s1",
+                "--after-task",
+                "--format",
+                "json",
+            ],
+        )
+    };
+    let m = env.send(PEER, ME, &["--subject", "later", "b"]);
+
+    let stop1 = stop();
+    assert_eq!(stop1.code, 10, "{}", stop1.stderr);
+    assert_eq!(json(&stop1.stdout)["items"][0]["reason"], "new");
+    let d = env.run(ME, &["msg", "defer", &m, "--until", "after-task"]);
+    assert_eq!(d.code, 0, "{}", d.stderr);
+
+    // The next Stop of the same break: nothing to report.
+    let stop2 = stop();
+    assert_eq!(stop2.code, 0, "{}", stop2.stdout);
+    assert_eq!(json(&stop2.stdout)["count"], 0);
+
+    // The Stop after a later task: re-surfaced, as after_task, exactly once.
+    let stop3 = stop();
+    assert_eq!(stop3.code, 10, "{}", stop3.stdout);
+    let report = json(&stop3.stdout);
+    assert_eq!(report["count"], 1);
+    assert_eq!(report["items"][0]["id"], m.as_str());
+    assert_eq!(report["items"][0]["reason"], "after_task");
+    assert_eq!(stop().code, 0, "reported once");
+
+    // `msg due --after-task` (the stateless alias) follows the same rule.
+    let due = || json(&env.run(ME, &["msg", "due", "--after-task"]).stdout);
+    let n = env.send(PEER, ME, &["--subject", "another", "b"]);
+    env.run(ME, &["msg", "done", &m]);
+    assert_eq!(due()["items"][0]["id"], n.as_str());
+    assert_eq!(
+        env.run(ME, &["msg", "defer", &n, "--until", "after-task"])
+            .code,
+        0
+    );
+    assert_eq!(due()["count"], 0, "same break");
+    let later = due();
+    assert_eq!(later["items"][0]["id"], n.as_str(), "{later}");
+    assert_eq!(later["items"][0]["reason"], "after_task");
+}
+
+#[test]
 fn defer_done_due_and_snooze_aware_inbox() {
     let env = setup("triage_cli");
     let a = env.send(PEER, ME, &["--subject", "a", "body a"]);

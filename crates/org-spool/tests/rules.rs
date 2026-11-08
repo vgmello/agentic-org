@@ -320,6 +320,83 @@ fn rule_after_task_is_due_only_at_the_next_break() {
 }
 
 #[test]
+fn rule_after_task_deferred_during_a_break_waits_for_the_next_break() {
+    // Regression: every `--after-task` check released every after-task snooze, so a message
+    // deferred after-task during a break came back at the next Stop of that same break.
+    let t = TempSpool::new("break_loop");
+    let session = Some("stop-hook");
+    let id = t.send("not now", None);
+
+    let stop1 = t.spool.notify(ME, &opts(session, true, false)).unwrap();
+    assert_eq!(
+        (ids(&stop1), stop1.items[0].reason.as_str()),
+        (vec![id.clone()], "new")
+    );
+    t.spool.defer_message(ME, &id, "after-task", None).unwrap();
+
+    // Same break: nothing to report (the break ends here).
+    let stop2 = t.spool.notify(ME, &opts(session, true, false)).unwrap();
+    assert_eq!(stop2.count, 0, "deferred until the NEXT break");
+    assert_eq!(t.triage_json()["in_break"], false);
+
+    // The Stop after a later task: back once, as after_task.
+    let stop3 = t.spool.notify(ME, &opts(session, true, false)).unwrap();
+    assert_eq!(ids(&stop3), vec![id.clone()]);
+    assert_eq!(stop3.items[0].reason, "after_task");
+    assert_eq!(
+        t.spool
+            .notify(ME, &opts(session, true, false))
+            .unwrap()
+            .count,
+        0,
+        "reported once"
+    );
+
+    // Deferred mid-task (between breaks): due at the very next break.
+    let mid = t.send("mid-task", None);
+    t.spool.defer_message(ME, &mid, "after-task", None).unwrap();
+    let next = t.spool.notify(ME, &opts(session, true, false)).unwrap();
+    assert!(ids(&next).contains(&mid), "{next:?}");
+    let item = next.items.iter().find(|i| i.id == mid).unwrap();
+    assert_eq!(item.reason, "after_task");
+}
+
+#[test]
+fn rule_a_triage_file_without_break_fields_still_loads() {
+    let t = TempSpool::new("old_triage");
+    let snoozed = t.send("old after-task snooze", None);
+    let later = t.send("old timed snooze", None);
+    // A triage.json written before breaks were counted (no break_seq, in_break or
+    // after_task_break).
+    let old = serde_json::json!({
+        "v": 1,
+        "messages": {
+            snoozed.clone(): { "triage_gen": 1, "snoozed_until": "after-task",
+                               "triaged_at": "2026-11-01T00:00:00.000Z" },
+            later.clone(): { "triage_gen": 1, "snoozed_until": "2999-01-01T00:00:00.000Z",
+                             "triaged_at": "2026-11-01T00:00:00.000Z" }
+        }
+    });
+    fs::write(
+        t.dir.join(format!("spool/inbox/{ME}/triage.json")),
+        serde_json::to_vec(&old).unwrap(),
+    )
+    .unwrap();
+
+    // Loaded (not set aside as corrupt), and the old after-task snooze goes at the next break.
+    assert!(t.spool.notify(ME, &opts(None, false, false)).unwrap().count == 0);
+    let at_break = t.spool.notify(ME, &opts(None, true, false)).unwrap();
+    assert_eq!(ids(&at_break), vec![snoozed]);
+    assert_eq!(at_break.items[0].reason, "after_task");
+    let state = t.triage_json();
+    assert_eq!(state["break_seq"], 1);
+    assert_eq!(
+        state["messages"][&later]["snoozed_until"],
+        "2999-01-01T00:00:00.000Z"
+    );
+}
+
+#[test]
 fn rule_done_and_read_never_resurface() {
     let t = TempSpool::new("done_read");
     let done = t.send("done one", Some(MessagePriority::High));
