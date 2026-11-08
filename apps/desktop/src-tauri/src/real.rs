@@ -368,11 +368,7 @@ impl RealOffice {
             })
         })?;
         drop(host);
-        let params = org_proto::msg::MsgBindParams {
-            member: None,
-            app_token: Some(token.app_token),
-        };
-        match office.call::<org_proto::msg::MsgBind>(&params) {
+        match office.bind_app(token.app_token) {
             Ok(_) => Ok(()),
             Err(ClientError::Api(api)) if api.code == ErrorCode::UnknownMethod => Ok(()),
             Err(e) => Err(e),
