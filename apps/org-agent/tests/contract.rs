@@ -878,6 +878,40 @@ fn a_symlink_in_new_is_not_followed() {
 }
 
 #[test]
+fn send_refuses_an_envelope_too_large_to_deliver_and_long_subjects() {
+    let env = setup("send_size");
+    let spool_files = |env: &TempOrgHome| -> usize {
+        ["outbox/new", "outbox/tmp", &format!("inbox/{ME}/new")]
+            .iter()
+            .map(|d| {
+                fs::read_dir(env.root.join("spool").join(d))
+                    .unwrap()
+                    .count()
+            })
+            .sum()
+    };
+    // 100 KB of \x01 is within the 256 KB body limit but serializes as \u0001 (600 KB), over
+    // the 512 KB envelope limit every reader enforces: it used to be dead-lettered on arrival.
+    let body = "\u{1}".repeat(100 * 1024);
+    let r = env.run_stdin(PEER, &["msg", "send", "--to", ME, "-"], &body);
+    assert_eq!(r.code, 1, "{}", r.stderr);
+    assert!(r.stderr.contains("exceeds limit"), "{}", r.stderr);
+    assert!(r.stdout.is_empty());
+    assert_eq!(spool_files(&env), 0, "nothing written");
+
+    let long = "s".repeat(org_spool::MAX_SUBJECT_BYTES + 1);
+    let r = env.run(PEER, &["msg", "send", "--to", ME, "--subject", &long, "b"]);
+    assert_eq!(r.code, 1, "{}", r.stderr);
+    assert_eq!(spool_files(&env), 0, "nothing written");
+
+    // At the cap: accepted, and a reply's derived "Re: ..." subject is cut to fit.
+    let max = "s".repeat(org_spool::MAX_SUBJECT_BYTES);
+    let id = env.send(PEER, ME, &["--subject", &max, "b"]);
+    let reply = env.run(ME, &["msg", "reply", &id, "ok"]);
+    assert_eq!(reply.code, 0, "{}", reply.stderr);
+}
+
+#[test]
 fn any_msg_command_marks_the_caller_online_in_who() {
     let env = setup("presence_cli");
     // Registered on its behalf by someone else: never seen yet.

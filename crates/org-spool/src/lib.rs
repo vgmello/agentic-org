@@ -14,7 +14,7 @@ pub mod ulid;
 
 pub use envelope::{
     json_quote, validate_agent_id, Envelope, MessageKind, MessagePriority, MetaValue,
-    ENVELOPE_VERSION, MAX_BODY_BYTES, MAX_ENVELOPE_BYTES,
+    ENVELOPE_VERSION, MAX_BODY_BYTES, MAX_ENVELOPE_BYTES, MAX_SUBJECT_BYTES,
 };
 pub use meta::{
     parse_snooze_until, sanitize_inline_text, DeferOutcome, DirectoryCard, DoneOutcome, InboxItem,

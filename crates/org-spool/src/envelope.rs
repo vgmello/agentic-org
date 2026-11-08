@@ -12,6 +12,8 @@ use crate::ulid::{generate_ulid, is_valid_ulid};
 pub const ENVELOPE_VERSION: u32 = 1;
 pub const MAX_BODY_BYTES: usize = 256 * 1024;
 pub const MAX_ENVELOPE_BYTES: usize = 512 * 1024;
+/// Subjects this CLI sends are at most this many bytes (`msg notify` shows 80 characters).
+pub const MAX_SUBJECT_BYTES: usize = 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -189,11 +191,13 @@ impl Envelope {
     ) -> Result<Self, String> {
         let reply_subject = subject.or_else(|| {
             self.subject.as_ref().map(|s| {
-                if s.starts_with("Re: ") {
+                let derived = if s.starts_with("Re: ") {
                     s.clone()
                 } else {
                     format!("Re: {s}")
-                }
+                };
+                // The original (maybe from a v1-old sender) may be at or over the cap.
+                truncate_at_char_boundary(derived, MAX_SUBJECT_BYTES)
             })
         });
         let env = Self {
@@ -262,12 +266,21 @@ impl Envelope {
         Ok(())
     }
 
-    /// Stricter checks for envelopes this CLI creates: on top of [`Envelope::validate`],
-    /// `meta.priority` must be `normal`, `high` or `urgent`. Envelopes read from the spool are
-    /// NOT held to this (a v1-old sender may have put anything in `meta`), so an unknown
-    /// priority there is treated as `normal` instead of dead-lettering the message.
+    /// Stricter checks for envelopes this CLI creates: on top of [`Envelope::validate`], the
+    /// subject is at most [`MAX_SUBJECT_BYTES`] and `meta.priority` must be `normal`, `high` or
+    /// `urgent`. Envelopes read from the spool are NOT held to this (a v1-old sender may have
+    /// put anything in `meta`), so an unknown priority there is treated as `normal` instead of
+    /// dead-lettering the message. (The serialized size is checked by [`Envelope::to_json_bytes`].)
     pub fn validate_outgoing(&self) -> Result<(), String> {
         self.validate()?;
+        if let Some(subject) = &self.subject {
+            if subject.len() > MAX_SUBJECT_BYTES {
+                return Err(format!(
+                    "subject size {} bytes exceeds maximum {MAX_SUBJECT_BYTES} bytes",
+                    subject.len()
+                ));
+            }
+        }
         if let Some(p_val) = self.meta.get("priority") {
             let Some(p_str) = p_val.as_str() else {
                 return Err("meta.priority must be a string (normal, high, or urgent)".into());
@@ -284,9 +297,19 @@ impl Envelope {
         }
     }
 
+    /// Serialize for the spool. Refuses an envelope larger than [`MAX_ENVELOPE_BYTES`] once
+    /// serialized (escaping can make a body under [`MAX_BODY_BYTES`] up to 6x larger), which
+    /// every reader would dead-letter.
     pub fn to_json_bytes(&self) -> Result<Vec<u8>, String> {
         self.validate()?;
-        serde_json::to_vec(self).map_err(|e| format!("serialize envelope: {e}"))
+        let bytes = serde_json::to_vec(self).map_err(|e| format!("serialize envelope: {e}"))?;
+        if bytes.len() > MAX_ENVELOPE_BYTES {
+            return Err(format!(
+                "envelope size {} bytes exceeds limit {MAX_ENVELOPE_BYTES} bytes (512 KB) once serialized",
+                bytes.len()
+            ));
+        }
+        Ok(bytes)
     }
 
     pub fn from_json_bytes(bytes: &[u8]) -> Result<Self, String> {
@@ -302,6 +325,18 @@ impl Envelope {
         env.validate()?;
         Ok(env)
     }
+}
+
+/// Cut `s` to at most `max` bytes without splitting a character.
+fn truncate_at_char_boundary(mut s: String, max: usize) -> String {
+    if s.len() > max {
+        let mut end = max;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        s.truncate(end);
+    }
+    s
 }
 
 pub fn validate_agent_id(id: &str, field: &str) -> Result<(), String> {
