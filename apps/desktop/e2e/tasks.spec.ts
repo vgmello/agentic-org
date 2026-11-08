@@ -38,7 +38,9 @@ test('TSK-5 and TSK-10: New task needs only a title, starts in To do with Normal
 	expect(options[0]).toBe('Unassigned');
 	expect(options[1]).toBe('Alex Kim (you)');
 	await dialog.getByLabel('Title').fill('Draft the launch plan');
+	await dialog.getByLabel('Definition of done').fill('A plan the owner approved');
 	await dialog.getByRole('button', { name: 'Create task' }).click();
+	await expect(page.getByText('Task T-1 created.')).toBeVisible();
 	await expect(column(page, 'todo').getByTestId('task-card')).toHaveCount(1);
 	await expect(card(page, 'Draft the launch plan')).toContainText('T-1');
 	await expect(card(page, 'Draft the launch plan').getByTestId('priority')).toHaveCount(0);
@@ -149,4 +151,16 @@ test('TSK-9: Board or List is remembered per project', async ({ page }) => {
 	await expect(page.getByTestId('task-list')).toBeVisible(); // remembered
 	await page.getByRole('button', { name: 'Board', exact: true }).click();
 	await expect(page.getByTestId('task-board')).toBeVisible();
+});
+
+test('the definition of done is kept with the task and can be changed on the task page', async ({ page }) => {
+	await open(page);
+	await newTask(page, 'Goal task');
+	await card(page, 'Goal task').getByRole('button', { name: /Goal task/ }).click();
+	const sheet = page.getByRole('dialog');
+	await sheet.getByLabel('Definition of done').fill('Every test passes');
+	await sheet.getByRole('button', { name: 'Save definition of done' }).click();
+	await expect(sheet.getByRole('button', { name: 'Save definition of done' })).toBeDisabled(); // saved: nothing left to save
+	await sheet.getByLabel('Status').selectOption('done');
+	await expect(sheet.getByLabel('Status').locator('option').first()).toHaveText('Done · Completed');
 });

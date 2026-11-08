@@ -200,7 +200,7 @@
 	<p class="sr-only" role="status" aria-live="polite">{announcement}</p>
 </div>
 
-<NewTaskDialog bind:open={adding} {projectId} {projectName} {snapshot} {send} ondone={(title) => { toast.success(`Created “${title}”.`); void load(); }} />
+<NewTaskDialog bind:open={adding} {projectId} {projectName} {snapshot} {send} ondone={(created) => { toast.success(`Task ${created.ref} created${created.assigneeId ? ` (and given to ${nameOf(snapshot, created.assigneeId)})` : ''}.`); void load(); }} />
 <TaskSheet bind:open={sheetOpen} {organizationId} taskId={openId} {snapshot} {send} start={startSheet} onchanged={(message) => { if (message) announce(message); void load(); }} />
 
 <Dialog open={!!blocking} onOpenChange={(next) => !next && (blocking = undefined)}>

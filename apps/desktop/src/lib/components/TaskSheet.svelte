@@ -42,6 +42,7 @@
 	let busy = $state(false);
 	let title = $state('');
 	let description = $state('');
+	let definitionOfDone = $state('');
 	let newStep = $state('');
 	let newRequired = $state(false);
 	let blockedReason = $state('');
@@ -59,6 +60,7 @@
 			if (reset) {
 				title = got.summary.title;
 				description = got.description ?? '';
+				definitionOfDone = got.definition_of_done ?? '';
 			}
 		} catch (e) {
 			error = toAppError(e).message;
@@ -171,7 +173,7 @@
 					<div class="space-y-2">
 						<Label for="task-status">Status</Label>
 						<select id="task-status" bind:this={statusSelect} disabled={busy} value={s.status} onchange={(e) => setStatus(e.currentTarget.value as TaskStatus)} class={field}>
-							<option value={s.status}>{STATUS_LABEL[s.status as TaskStatus]}{s.status === 'done' && s.resolution === 'cancelled' ? ' · Cancelled' : ''}</option>
+							<option value={s.status}>{STATUS_LABEL[s.status as TaskStatus]}{s.status === 'done' ? (s.resolution === 'cancelled' ? ' · Cancelled' : ' · Completed') : ''}</option>
 							{#each movesFrom(s.status) as m (m)}<option value={m}>{STATUS_LABEL[m]}</option>{/each}
 						</select>
 					</div>
@@ -222,6 +224,12 @@
 					<Label for="task-description">Description</Label>
 					<textarea id="task-description" bind:value={description} rows="4" disabled={busy} class={field}></textarea>
 					<Button variant="outline" size="sm" disabled={busy || description === (item.description ?? '')} onclick={() => change({ method: 'task.update', item_id: s.id, expected_version: version, ...(description.trim() === '' ? { clear_description: true } : { description }) })}>Save description</Button>
+				</div>
+
+				<div class="space-y-2">
+					<Label for="task-dod">Definition of done</Label>
+					<textarea id="task-dod" bind:value={definitionOfDone} rows="2" maxlength={WORK_LIMITS.definitionOfDone * 2} disabled={busy} placeholder="The goal the agent works to" class={field}></textarea>
+					<Button variant="outline" size="sm" disabled={busy || definitionOfDone === (item.definition_of_done ?? '')} onclick={() => change({ method: 'task.update', item_id: s.id, expected_version: version, ...(definitionOfDone.trim() === '' ? { clear_definition_of_done: true } : { definition_of_done: definitionOfDone }) })}>Save definition of done</Button>
 				</div>
 
 				<section class="space-y-2" aria-labelledby="task-checklist">

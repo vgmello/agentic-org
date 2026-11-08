@@ -6,11 +6,11 @@
 	import { Label } from '$lib/components/ui/label';
 	import { toAppError } from '$lib/office/api';
 	import { newId } from '$lib/org/commands';
-	import type { Member, OrgSnapshot, Priority } from '$lib/proto';
+	import type { Member, OrgSnapshot, Priority, WorkAccepted } from '$lib/proto';
 	import { WORK_LIMITS } from '$lib/proto';
 	import type { WorkDraft } from '$lib/work';
 	import { assigneeOptions } from '$lib/work/people';
-	import { PRIORITIES } from '$lib/work/tasks';
+	import { PRIORITIES, taskRef } from '$lib/work/tasks';
 
 	/** New task (TSK-5): a title is enough; the priority is Normal unless changed. */
 	let {
@@ -25,12 +25,14 @@
 		projectId: string;
 		projectName: string;
 		snapshot: OrgSnapshot;
-		send: (draft: WorkDraft) => Promise<unknown>;
-		ondone: (title: string) => void;
+		send: (draft: WorkDraft) => Promise<WorkAccepted>;
+		/** Created: the task as the office numbered it. */
+		ondone: (created: { ref: string; assigneeId: string | undefined }) => void;
 	} = $props();
 
 	let title = $state('');
 	let description = $state('');
+	let definitionOfDone = $state('');
 	let priority = $state<Priority>('normal');
 	let assignee = $state('');
 	let error = $state<string | undefined>();
@@ -42,6 +44,7 @@
 			untrack(() => {
 				title = '';
 				description = '';
+				definitionOfDone = '';
 				priority = 'normal';
 				assignee = '';
 				error = undefined;
@@ -61,17 +64,18 @@
 		busy = true;
 		error = undefined;
 		try {
-			await send({
+			const accepted = await send({
 				method: 'task.create',
 				item_id: newId(),
 				project_id: projectId,
 				title: title.trim(),
 				description: description.trim() || undefined,
+				definition_of_done: definitionOfDone.trim() || undefined,
 				priority,
 				assignee_id: assignee || undefined
 			});
 			open = false;
-			ondone(title.trim());
+			ondone({ ref: taskRef(accepted.items[0]), assigneeId: assignee || undefined });
 		} catch (e) {
 			error = toAppError(e).message;
 		} finally {
@@ -95,6 +99,10 @@
 			<div class="space-y-2">
 				<Label for="new-task-description">Description <span class="font-normal text-gray-400">(optional)</span></Label>
 				<textarea id="new-task-description" bind:value={description} rows="3" disabled={busy} class="w-full rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400"></textarea>
+			</div>
+			<div class="space-y-2">
+				<Label for="new-task-dod">Definition of done <span class="font-normal text-gray-400">(optional)</span></Label>
+				<textarea id="new-task-dod" bind:value={definitionOfDone} rows="2" maxlength={WORK_LIMITS.definitionOfDone * 2} disabled={busy} placeholder="The goal the agent works to" class="w-full rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400"></textarea>
 			</div>
 			<div class="grid gap-4 sm:grid-cols-2">
 				<div class="space-y-2">
