@@ -1111,15 +1111,21 @@ impl EventKind for MessageDeliveryFailed {
 /// fire-and-forget sends are spooled, never asks, so it has no deadline.
 ///
 /// `from` is unauthenticated (whoever wrote the file), so ingest applies every `msg.send`
-/// rule as if `from` had bound as an agent without a token: `from` must resolve to an agent
-/// (never a person, the owner or `office`), the limits apply, kinds `request` and
-/// `delivery_failed` and an `office` recipient are refused, and `reply_to` must be visible to
-/// `from`.
+/// rule as if `from` had bound as an agent without a token: the limits apply, kinds `request`
+/// and `delivery_failed` and an `office` recipient are refused, and `reply_to` must be visible
+/// to `from`. On top of that, `from` must resolve to an **active agent that the office doesn't
+/// run** (one with no run mode, per the agent-sessions design): agents the office runs will
+/// bind with a session token (see [`MsgBindParams`]), which a file can't carry. A `from` that
+/// is a person, the owner, `office`, a `run:` address (agent-sessions design), an office-run
+/// agent, an agent whose status isn't [`AgentStatus::Active`](crate::org::AgentStatus::Active)
+/// (paused or unknown), or a handle or id that names no member (an offboarded agent's
+/// included) is refused.
 ///
 /// A `created_at` in the future is clamped to the ingest time. A backdated `created_at` is
 /// accepted: like `from`, it's the writer's word (the agent-identity risk, ADR-0003 M-A). A
 /// file whose `office_id` isn't this office, with an unknown `v`, or that fails a rule, is
-/// moved to `spool/dead/` and never delivered.
+/// moved to `spool/dead/` and never delivered. The office logs the file's id and the reason,
+/// never its body or meta.
 ///
 /// Its `Debug` prints only the sizes of `body` and `meta`.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
