@@ -21,3 +21,10 @@ export const NAV: NavItem[] = [
 /** The nav item whose section contains `pathname`. */
 export const navFor = (pathname: string): NavItem | undefined =>
 	NAV.find((item) => pathname === item.href || pathname.startsWith(item.href + '/'));
+
+/** Pages that are not in the sidebar but have a title in the header. */
+const EXTRA_PAGES = [{ name: 'Report a bug', href: '/report-bug' }];
+
+/** The header title for `pathname`: its section name, or the name of a page outside the sidebar. */
+export const titleFor = (pathname: string): string | undefined =>
+	navFor(pathname)?.name ?? EXTRA_PAGES.find((p) => pathname === p.href)?.name;
