@@ -1,4 +1,4 @@
-// The chat rules the office enforces (ADR-0003 section 6, amended : chat, proposed), as pure functions over a `ChatState`.
+// The chat rules the office enforces (ADR-0003 section 6, amended 2026-11-08: chat, proposed), as pure functions over a `ChatState`.
 // The mock office runs them; the real one will serve the same calls. Nothing here touches the clock, the network or storage.
 import {
 	AGENT_KINDS,
@@ -6,7 +6,7 @@ import {
 	CHAT_LIMITS,
 	REACTIONS,
 	type AskOption,
-	type Bridge,
+	type BridgeBinding,
 	type ChatAccepted,
 	type ChatCall,
 	type ChatErrorCode,
@@ -35,8 +35,8 @@ export interface ChatContext {
 	/** The bound member making the call. */
 	actor: string;
 	/**
-	 * `app`: bound with the app token. `agent`: an agent's own connection. `bridge`: a person reached through
-	 * Slack, Teams or Discord, which never holds the app token (decision 11).
+	 * `app`: bound with the app token. `agent`: an agent's own connection. `bridge`: a bridge binding (`bridge:<id>`, with a
+	 * bridge token), acting as a mapped person in the channels chosen for it; it never holds the app token (decision 11).
 	 */
 	surface: 'app' | 'agent' | 'bridge';
 	owner: string;
@@ -45,8 +45,8 @@ export interface ChatContext {
 	projects: { id: string; key?: string; name: string; team_ids: string[] }[];
 	/** How long an agent shows as typing after it was woken. */
 	typing_ms?: number;
-	/** The platform a `bridge` call came from. */
-	bridge?: Bridge;
+	/** What a `bridge` call is bound as. */
+	bridge?: BridgeBinding;
 	newId?: (prefix: string) => string;
 }
 
@@ -130,7 +130,11 @@ export function syncAuto(state: ChatState, ctx: ChatContext): ChatState {
 		// A name another channel already holds gets the kind of channel as a suffix, so names stay unique.
 		const taken = (n: string) => s.conversations.some((x) => x !== c && x.kind === 'channel' && x.name === n);
 		let name = w.name || 'channel';
-		if (taken(name)) name = `${name}-${w.auto.type}`;
+		if (taken(name)) {
+			const base = `${name}-${w.auto.type}`;
+			name = base;
+			for (let n = 2; taken(name); n++) name = `${base}-${n}`;
+		}
 		c.name = name;
 	}
 	for (const c of s.conversations) {
@@ -150,13 +154,19 @@ export const isMember = (c: Conversation, id: string) => c.members.includes(id);
  * Whether `viewer` may read a conversation (CHAT-12, CHAT-16): the owner reads every one; anyone else only while a member.
  * A thread is never a conversation of its own: it is read through its parent, so the same check covers it.
  */
-export const canRead = (ctx: ChatContext, viewer: string, c: Conversation): boolean => (viewer === ctx.owner && ctx.surface === 'app') || isMember(c, viewer);
+/** A bridge reaches only the channels chosen for it: never a DM or a group DM (ADR-0003 6.6). */
+export const bridgeReaches = (ctx: ChatContext, c: Conversation): boolean => c.kind === 'channel' && !!ctx.bridge?.channels.includes(c.id);
+
+export const canRead = (ctx: ChatContext, viewer: string, c: Conversation): boolean => {
+	if (ctx.surface === 'bridge') return viewer !== ctx.owner && bridgeReaches(ctx, c);
+	return (viewer === ctx.owner && ctx.surface === 'app') || isMember(c, viewer);
+};
 
 /** The messages of a conversation, or of one thread of it, for `viewer`. Refuses when they may not read it. */
 export function messagesIn(state: ChatState, ctx: ChatContext, viewer: string, conversationId: string, threadRootId?: string): ChatMessage[] {
 	const c = state.conversations.find((x) => x.id === conversationId);
 	if (!c) return refuse('not_found', 'There is no such conversation.');
-	if (!canRead(ctx, viewer, c)) return refuse('not_a_member', `You can read ${label(c)} only while you are a member of it.`);
+	if (!canRead(ctx, viewer, c)) return refuse('not_in_conversation', `You can read ${label(c)} only while you are a member of it.`);
 	const all = state.messages.filter((m) => m.conversation_id === conversationId);
 	if (threadRootId !== undefined) {
 		const root = all.find((m) => m.id === threadRootId);
@@ -194,8 +204,12 @@ export function applyChat(state: ChatState, call: ChatCall, ctx: ChatContext): {
 	if (done) return { state, accepted: done };
 	const actor = memberOf(ctx, ctx.actor);
 	if (!actor || actor.former) return refuse('not_authorized', 'Only a current member can use chat.');
-	// A bridge connects without the app token: it can post as a bridged person, never as the owner (decision 11).
-	if (ctx.surface === 'bridge' && ctx.actor === ctx.owner) return refuse('not_authorized', 'A bridge never acts as the owner.');
+	// A bridge has its own binding, not the app token: it can post as a mapped person, never as the owner (decision 11), and it
+	// does three things only: post, react and answer, in the channels chosen for it.
+	if (ctx.surface === 'bridge') {
+		if (ctx.actor === ctx.owner) return refuse('not_authorized', 'A bridge never acts as the owner.');
+		if (!['msg.send', 'chat.react', 'chat.answer'].includes(call.method)) return refuse('not_authorized', 'A bridge cannot do this.');
+	}
 	const s = structuredClone(state);
 	let accepted: ChatAccepted = {};
 	switch (call.method) {
@@ -210,7 +224,9 @@ export function applyChat(state: ChatState, call: ChatCall, ctx: ChatContext): {
 			if (!m) return refuse('not_found', 'There is no such hand-off.');
 			if (m.accepted_by) return refuse('already_exists', `Already accepted by ${memberOf(ctx, m.accepted_by)?.name ?? 'someone'}.`);
 			if (ctx.actor !== ctx.owner && ctx.actor !== m.addressed_to) return refuse('not_authorized', 'Only the person it is handed to can accept it.');
+			const home = s.conversations.find((x) => x.id === m.conversation_id)!;
 			if (m.addressed_to === ctx.owner && !(ctx.actor === ctx.owner && ctx.surface === 'app')) return refuse('not_authorized', 'Open Agentic Org to accept a hand-off addressed to the owner.');
+			mustBeIn(ctx, home);
 			m.accepted_by = ctx.actor;
 			accepted = { id: m.id };
 			break;
@@ -219,7 +235,7 @@ export function applyChat(state: ChatState, call: ChatCall, ctx: ChatContext): {
 			const m = s.messages.find((x) => x.id === call.message_id);
 			const c = m && s.conversations.find((x) => x.id === m.conversation_id);
 			if (!m || !c) return refuse('not_found', 'There is no such message.');
-			if (!canRead(ctx, ctx.actor, c)) return refuse('not_a_member', `You can react in ${label(c)} only while you are a member of it.`);
+			if (!canRead(ctx, ctx.actor, c)) return refuse('not_in_conversation', `You can react in ${label(c)} only while you are a member of it.`);
 			if (!REACTIONS.some((r) => r.id === call.reaction)) return refuse('invalid_request', 'Unknown reaction.');
 			const who = new Set(m.reactions?.[call.reaction] ?? []);
 			if (who.has(ctx.actor)) who.delete(ctx.actor);
@@ -232,7 +248,7 @@ export function applyChat(state: ChatState, call: ChatCall, ctx: ChatContext): {
 			ownerOnly(ctx);
 			const c = s.conversations.find((x) => x.id === call.conversation_id);
 			if (!c) return refuse('not_found', 'There is no such conversation.');
-			if (!isAgent(ctx, call.member_id) || !isMember(c, call.member_id)) return refuse('not_a_member', 'Only an agent that is a member can be muted here.');
+			if (!isAgent(ctx, call.member_id) || !isMember(c, call.member_id)) return refuse('not_in_conversation', 'Only an agent that is a member can be muted here.');
 			if (!(['none', 'muted', 'digest'] as MuteMode[]).includes(call.mode)) return refuse('invalid_request', 'Unknown mute setting.');
 			s.mutes = s.mutes.filter((x) => !(x.conversation_id === call.conversation_id && x.member_id === call.member_id));
 			if (call.mode !== 'none') s.mutes.push({ conversation_id: call.conversation_id, member_id: call.member_id, mode: call.mode });
@@ -248,7 +264,7 @@ export function applyChat(state: ChatState, call: ChatCall, ctx: ChatContext): {
 			const m = s.messages.find((x) => x.id === call.message_id);
 			const c = m && s.conversations.find((x) => x.id === m.conversation_id);
 			if (!m || !c) return refuse('not_found', 'There is no such message.');
-			if (!canRead(ctx, ctx.actor, c)) return refuse('not_a_member', 'Pin only in a conversation you are in.');
+			if (!canRead(ctx, ctx.actor, c)) return refuse('not_in_conversation', 'Pin only in a conversation you are in.');
 			m.pinned = m.pinned ? undefined : true;
 			break;
 		}
@@ -264,6 +280,13 @@ export function applyChat(state: ChatState, call: ChatCall, ctx: ChatContext): {
 	return { state: s, accepted };
 }
 
+/** Answering or accepting happens where you are: a member (the owner in the app excepted), and a bridge only in its channels. */
+function mustBeIn(ctx: ChatContext, c: Conversation) {
+	if (ctx.actor === ctx.owner && ctx.surface === 'app') return;
+	if (ctx.surface === 'bridge' && !bridgeReaches(ctx, c)) refuse('not_authorized', 'A bridge reaches only the channels chosen for it.');
+	if (!isMember(c, ctx.actor)) refuse('not_in_conversation', `You can answer in ${label(c)} only while you are a member of it.`);
+}
+
 /** Calls only the owner makes, in the app. */
 function ownerOnly(ctx: ChatContext) {
 	if (ctx.actor !== ctx.owner || ctx.surface !== 'app') refuse('not_authorized', 'This is done in the app, by the owner.');
@@ -273,11 +296,18 @@ function send(s: ChatState, call: Extract<ChatCall, { method: 'msg.send' }>, ctx
 	const c = s.conversations.find((x) => x.id === call.conversation_id);
 	if (!c) return refuse('not_found', 'There is no such conversation.');
 	if (c.archived) return refuse('conversation_archived', `${label(c)} is archived.`);
-	if (!canRead(ctx, ctx.actor, c)) return refuse('not_a_member', `You can post in ${label(c)} only while you are a member of it.`);
+	if (ctx.surface === 'bridge' && !bridgeReaches(ctx, c)) return refuse('not_authorized', 'A bridge reaches only the channels chosen for it.');
+	if (!canRead(ctx, ctx.actor, c)) return refuse('not_in_conversation', `You can post in ${label(c)} only while you are a member of it.`);
+	// A bridge posts as a mapped person, and only where that person is a member.
+	if (ctx.surface === 'bridge' && !isMember(c, ctx.actor)) return refuse('not_in_conversation', `${memberOf(ctx, ctx.actor)?.name ?? 'They'} is not a member of ${label(c)}.`);
 	if (c.kind === 'dm' && c.members.some((id) => memberOf(ctx, id)?.former)) return refuse('unavailable', `${memberOf(ctx, c.members.find((id) => memberOf(ctx, id)?.former)!)?.name} was offboarded.`);
-	if (call.kind === 'unknown' || !['msg', 'request', 'handoff', 'announcement', 'reply'].includes(call.kind)) return refuse('invalid_request', 'Unknown message kind.');
-	// The office enforces the kinds, not only the guidance (CHAT-4): an agent posts asks, hand-offs, replies and announcements.
-	if (actor.kind === 'agent' && !(AGENT_KINDS as readonly string[]).includes(call.kind)) return refuse('kind_not_allowed', 'An agent posts only an ask, a hand-off, a reply or an announcement.');
+	// A DM keeps every kind ADR-0003 has, custom tags included, so agents' `org-agent msg send` keeps working (section 6 is
+	// additive). Channels and group DMs take the chat kinds only.
+	const known = ['msg', 'request', 'handoff', 'announcement', 'reply'].includes(call.kind);
+	const customTag = c.kind === 'dm' && /^[a-z][a-z0-9_.-]{0,63}$/.test(call.kind) && (call.kind as string) !== 'delivery_failed' && (call.kind as string) !== 'unknown';
+	if (!known && !customTag) return refuse('invalid_request', 'Unknown message kind.');
+	// The office enforces the kinds, not only the guidance (CHAT-4): in a channel or group DM an agent posts asks, hand-offs, replies and announcements.
+	if (actor.kind === 'agent' && c.kind !== 'dm' && !(AGENT_KINDS as readonly string[]).includes(call.kind)) return refuse('kind_not_allowed', 'An agent posts only an ask, a hand-off, a reply or an announcement.');
 	const body = call.body.trim();
 	if (body === '') return refuse('invalid_request', 'Write something first.');
 	if (bytes(body) > CHAT_LIMITS.bodyMax) return refuse('invalid_request', 'That message is too long.');
@@ -304,7 +334,7 @@ function send(s: ChatState, call: Extract<ChatCall, { method: 'msg.send' }>, ctx
 	if (call.attachments?.length) m.attachments = call.attachments.slice(0, 10);
 	if (call.linked_ref) m.linked_ref = call.linked_ref;
 	// A bridged message is posted as the bridged person (their own handle, a person's rights), never as the owner (decision 11).
-	if (ctx.surface === 'bridge' && ctx.bridge) m.bridge = ctx.bridge;
+	if (ctx.surface === 'bridge' && ctx.bridge) m.bridge = ctx.bridge.platform;
 
 	let folded_into: string | undefined;
 	if (call.kind === 'request' || call.kind === 'handoff') {
@@ -379,6 +409,7 @@ function answer(s: ChatState, call: Extract<ChatCall, { method: 'chat.answer' }>
 	// Asks addressed to the owner, and every approval, are answered only in the app, never through a bridge (CHAT-17, decision 11).
 	if ((ask.addressed_to === ctx.owner || ask.approval) && !(ctx.actor === ctx.owner && ctx.surface === 'app')) return refuse('not_authorized', 'Open Agentic Org to answer this: asks to the owner and approvals are answered only in the app.');
 	if (ctx.actor !== ctx.owner && ctx.actor !== ask.addressed_to) return refuse('not_authorized', 'Only the person it is asked of can answer it.');
+	mustBeIn(ctx, c);
 	const text = call.text?.trim() || undefined;
 	if (text && bytes(text) > CHAT_LIMITS.bodyMax) return refuse('invalid_request', 'That reply is too long.');
 	const option = call.option_id === undefined ? undefined : ask.options?.find((o) => o.id === call.option_id);
@@ -439,7 +470,7 @@ function channelCall(s: ChatState, call: Extract<ChatCall, { method: `channel.${
 			if (!c.members.includes(call.member_id)) c.members.push(call.member_id);
 			break;
 		case 'channel.remove_member':
-			if (!c.members.includes(call.member_id)) return refuse('not_a_member', 'They are not in this channel.');
+			if (!c.members.includes(call.member_id)) return refuse('not_in_conversation', 'They are not in this channel.');
 			c.members = c.members.filter((id) => id !== call.member_id);
 			break;
 	}

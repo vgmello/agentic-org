@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applyChat, canRead, emptyChat, feedFor, messagesIn, syncAuto, tick } from './engine';
-import { byId, call, channelNamed, conv, ctxAs, fresh, kaiAsk, miraApproval, minutesAfter, NOW, refusal, run } from './testkit';
+import { bridgeAs, byId, call, channelNamed, conv, ctxAs, fresh, kaiAsk, miraApproval, minutesAfter, NOW, refusal, run } from './testkit';
 
 describe('CHAT-2 · automatic channels and channels people add', () => {
 	it('CHAT-2 · #general, one channel per project and one per team exist, with the owner in each', () => {
@@ -88,7 +88,7 @@ describe('CHAT-4 · agents post only questions, hand-offs, replies and announcem
 		const s = fresh();
 		const r = run(s, { method: 'msg.send', conversation_id: 'c-dm-sam', kind: 'request', body: 'Ship it?', addressed_to: 'you' }, sam);
 		expect(byId(r.state, r.accepted.id!).kind).toBe('request');
-		expect(refusal(s, { method: 'msg.send', conversation_id: 'c-dm-sam', kind: 'feature_request' as never, body: 'x' }, sam)?.code).toBe('invalid_request');
+		expect(refusal(s, { method: 'msg.send', conversation_id: 'c-release-v1', kind: 'feature_request' as never, body: 'x' }, sam)?.code).toBe('invalid_request');
 	});
 	it('CHAT-4 · an agent post longer than 15 lines is cut, pointing at the session log', () => {
 		const s = fresh();
@@ -264,8 +264,8 @@ describe('CHAT-11 · mute and digest', () => {
 	it('CHAT-11 · only the owner, in the app, mutes an agent that is a member', () => {
 		const s = fresh();
 		expect(refusal(s, { method: 'chat.mute', conversation_id: 'c-general', member_id: 'sam', mode: 'muted' }, ctxAs('avery', 'bridge'))?.code).toBe('not_authorized');
-		expect(refusal(s, { method: 'chat.mute', conversation_id: 'c-general', member_id: 'avery', mode: 'muted' })?.code).toBe('not_a_member');
-		expect(refusal(s, { method: 'chat.mute', conversation_id: 'c-design-crit', member_id: 'sam', mode: 'muted' })?.code).toBe('not_a_member');
+		expect(refusal(s, { method: 'chat.mute', conversation_id: 'c-general', member_id: 'avery', mode: 'muted' })?.code).toBe('not_in_conversation');
+		expect(refusal(s, { method: 'chat.mute', conversation_id: 'c-design-crit', member_id: 'sam', mode: 'muted' })?.code).toBe('not_in_conversation');
 		const m = run(s, { method: 'chat.mute', conversation_id: 'c-general', member_id: 'sam', mode: 'digest' }).state;
 		expect(m.mutes).toEqual([{ conversation_id: 'c-general', member_id: 'sam', mode: 'digest' }]);
 		expect(run(m, { method: 'chat.mute', conversation_id: 'c-general', member_id: 'sam', mode: 'none' }).state.mutes).toEqual([]);
@@ -282,7 +282,7 @@ describe('CHAT-12 · the owner reads any conversation', () => {
 	});
 	it('CHAT-12 · no one else reads or posts in a conversation they are not in', () => {
 		const s = fresh();
-		expect(refusal(s, { method: 'msg.send', conversation_id: 'c-dm-sam-noor', kind: 'msg', body: 'hi' }, ctxAs('kai', 'agent'))?.code).toBe('not_a_member');
+		expect(refusal(s, { method: 'msg.send', conversation_id: 'c-dm-sam-noor', kind: 'msg', body: 'hi' }, ctxAs('kai', 'agent'))?.code).toBe('not_in_conversation');
 		expect(() => messagesIn(s, ctxAs('kai', 'agent'), 'kai', 'c-dm-sam-noor')).toThrow();
 	});
 });
@@ -292,24 +292,24 @@ describe('CHAT-16 · what an agent can read', () => {
 	it('CHAT-16 · an agent reads a channel only while it is a member', () => {
 		const s = fresh();
 		expect(messagesIn(s, kai, 'kai', 'c-release-v1').length).toBeGreaterThan(0);
-		expect(() => messagesIn(s, kai, 'noor', 'c-release-v1')).toThrow(expect.objectContaining({ code: 'not_a_member' }));
+		expect(() => messagesIn(s, kai, 'noor', 'c-release-v1')).toThrow(expect.objectContaining({ code: 'not_in_conversation' }));
 	});
 	it('CHAT-16 · a thread is read only through its parent conversation', () => {
 		const s = fresh();
 		const root = s.messages.find((m) => m.body.startsWith('@sam your part'))!;
 		expect(messagesIn(s, kai, 'kai', root.conversation_id, root.id).map((m) => m.id)).toContain(root.id);
 		// Noor is not in #atlas: the thread is closed to them too.
-		expect(() => messagesIn(s, ctxAs('noor', 'agent'), 'noor', root.conversation_id, root.id)).toThrow(expect.objectContaining({ code: 'not_a_member' }));
+		expect(() => messagesIn(s, ctxAs('noor', 'agent'), 'noor', root.conversation_id, root.id)).toThrow(expect.objectContaining({ code: 'not_in_conversation' }));
 		expect(() => messagesIn(s, kai, 'kai', root.conversation_id, 'missing')).toThrow(expect.objectContaining({ code: 'not_found' }));
 	});
 	it('CHAT-16 · after it leaves, an agent stops seeing the channel, including new messages', () => {
 		let s = fresh();
 		s = run(s, { method: 'channel.remove_member', id: 'c-release-v1', member_id: 'kai' }).state;
 		s = run(s, { method: 'msg.send', conversation_id: 'c-release-v1', kind: 'msg', body: 'After kai left.' }).state;
-		expect(() => messagesIn(s, kai, 'kai', 'c-release-v1')).toThrow(expect.objectContaining({ code: 'not_a_member' }));
+		expect(() => messagesIn(s, kai, 'kai', 'c-release-v1')).toThrow(expect.objectContaining({ code: 'not_in_conversation' }));
 		expect(feedFor(s, kai, 'kai').some((m) => m.conversation_id === 'c-release-v1')).toBe(false);
-		expect(refusal(s, { method: 'msg.send', conversation_id: 'c-release-v1', kind: 'reply', body: 'x', reply_to: s.messages.at(-1)!.id }, kai)?.code).toBe('not_a_member');
-		expect(refusal(s, { method: 'channel.remove_member', id: 'c-release-v1', member_id: 'kai' })?.code).toBe('not_a_member');
+		expect(refusal(s, { method: 'msg.send', conversation_id: 'c-release-v1', kind: 'reply', body: 'x', reply_to: s.messages.at(-1)!.id }, kai)?.code).toBe('not_in_conversation');
+		expect(refusal(s, { method: 'channel.remove_member', id: 'c-release-v1', member_id: 'kai' })?.code).toBe('not_in_conversation');
 	});
 	it('CHAT-16 · a DM is read only by its two members', () => {
 		const s = fresh();
@@ -319,10 +319,27 @@ describe('CHAT-16 · what an agent can read', () => {
 });
 
 describe('CHAT-17 · bridges never act as the owner', () => {
-	const bridge = (actor = 'avery') => ctxAs(actor, 'bridge', NOW, { bridge: 'slack' });
-	it('CHAT-17 · a bridged message is posted as the bridged person, marked with its platform', () => {
-		const r = run(fresh(), { method: 'msg.send', conversation_id: 'c-general', kind: 'msg', body: 'From Slack' }, bridge());
+	const bridge = (actor = 'avery', channels?: string[]) => bridgeAs(actor, channels);
+	const askAvery = (state = fresh()) => run(state, { method: 'msg.send', conversation_id: 'c-release-v1', kind: 'request', body: 'Thursday ok?', addressed_to: 'avery', options: [{ id: 'y', label: 'Yes' }] }, ctxAs('sam', 'agent'));
+	it('CHAT-17 · a bridged message is posted as the mapped person, marked with its platform', () => {
+		const r = run(fresh(), { method: 'msg.send', conversation_id: 'c-release-v1', kind: 'msg', body: 'From Slack' }, bridge());
 		expect(byId(r.state, r.accepted.id!)).toMatchObject({ from: 'avery', bridge: 'slack' });
+	});
+	it('CHAT-17 · a bridge reaches only the channels chosen for it: not another channel, never a DM or a group DM', () => {
+		const s = fresh();
+		const post = (conversation_id: string, ctx: ReturnType<typeof bridge>) => refusal(s, { method: 'msg.send', conversation_id, kind: 'msg', body: 'hi' }, ctx);
+		expect(post('c-release-v1', bridge('avery', ['c-general']))?.code).toBe('not_authorized');
+		expect(post('c-dm-avery', bridge('avery', ['c-dm-avery']))?.code).toBe('not_authorized');
+		expect(post('c-group', bridge('sam', ['c-group']))?.code).toBe('not_authorized');
+		expect(canRead(bridge('avery', ['c-dm-avery']), 'avery', conv(s, 'c-dm-avery'))).toBe(false);
+		expect(canRead(bridge('avery', ['c-general']), 'avery', conv(s, 'c-release-v1'))).toBe(false);
+		expect(canRead(bridge('avery', ['c-general']), 'avery', conv(s, 'c-general'))).toBe(true);
+	});
+	it('CHAT-17 · it posts only as a mapped person who is a member of the channel', () => {
+		const s = fresh();
+		expect(conv(s, 'c-release-v1').members).not.toContain('leo');
+		expect(refusal(s, { method: 'msg.send', conversation_id: 'c-release-v1', kind: 'msg', body: 'hi' }, bridge('leo'))?.code).toBe('not_in_conversation');
+		expect(refusal(s, { method: 'msg.send', conversation_id: 'c-general', kind: 'msg', body: 'hi' }, bridge('leo'))).toBeUndefined();
 	});
 	it('CHAT-17 · an ask to the owner cannot be answered from a bridge, even by the owner\'s own identity', () => {
 		const s = fresh();
@@ -334,27 +351,31 @@ describe('CHAT-17 · bridges never act as the owner', () => {
 		const s = fresh();
 		for (const ctx of [bridge(), bridge('you'), ctxAs('avery', 'app')]) expect(refusal(s, { method: 'chat.answer', ask_id: miraApproval(s).id, option_id: 'approve' }, ctx)?.code).toBe('not_authorized');
 	});
-	it('CHAT-17 · an ask addressed to a bridged person can be answered from the bridge', () => {
-		let s = fresh();
-		const dm = run(s, { method: 'dm.open', members: ['avery'] }, ctxAs('sam', 'agent'));
-		s = dm.state;
-		const asked = run(s, { method: 'msg.send', conversation_id: dm.accepted.conversation_id!, kind: 'request', body: 'Thursday ok?', addressed_to: 'avery', options: [{ id: 'y', label: 'Yes' }] }, ctxAs('sam', 'agent'));
-		s = asked.state;
-		const r = run(s, { method: 'chat.answer', ask_id: asked.accepted.id!, option_id: 'y' }, bridge());
+	it('CHAT-17 · an ask addressed to a mapped person, in a bridged channel, can be answered from the bridge', () => {
+		const asked = askAvery();
+		const r = run(asked.state, { method: 'chat.answer', ask_id: asked.accepted.id!, option_id: 'y' }, bridge());
 		expect(byId(r.state, asked.accepted.id!).answer?.by).toBe('avery');
-		expect(refusal(s, { method: 'chat.answer', ask_id: asked.accepted.id!, option_id: 'y' }, bridge('hana'))?.code).toBe('not_authorized');
+		expect(refusal(asked.state, { method: 'chat.answer', ask_id: asked.accepted.id!, option_id: 'y' }, bridge('hana'))?.code).toBe('not_authorized');
+		expect(refusal(asked.state, { method: 'chat.answer', ask_id: asked.accepted.id!, option_id: 'y' }, bridge('avery', ['c-general']))?.code).toBe('not_authorized');
 	});
-	it('CHAT-17 · a bridge cannot accept a hand-off to the owner either', () => {
-		let s = fresh();
-		const h = run(s, { method: 'msg.send', conversation_id: 'c-dm-sam', kind: 'handoff', body: 'Yours now.', addressed_to: 'you' }, ctxAs('sam', 'agent'));
-		s = h.state;
-		expect(refusal(s, { method: 'chat.accept_handoff', message_id: h.accepted.id! }, bridge('you'))?.code).toBe('not_authorized');
-		expect(refusal(s, { method: 'chat.accept_handoff', message_id: h.accepted.id! })).toBeUndefined();
+	it('CHAT-17 · a bridge posts, reacts and answers, and does nothing else', () => {
+		const s = fresh();
+		const ann = s.messages.find((m) => m.kind === 'announcement')!.id;
+		for (const draft of [
+			{ method: 'chat.accept_handoff', message_id: ann },
+			{ method: 'chat.pin', message_id: ann },
+			{ method: 'chat.mark_read', conversation_id: 'c-general' },
+			{ method: 'chat.mute', conversation_id: 'c-general', member_id: 'sam', mode: 'muted' },
+			{ method: 'dm.open', members: ['sam'] },
+			{ method: 'channel.create', name: 'x', members: [] },
+			{ method: 'channel.add_member', id: 'c-release-v1', member_id: 'leo' }
+		] as unknown as Parameters<typeof refusal>[1][]) expect(refusal(s, draft, bridge())?.code).toBe('not_authorized');
+		expect(refusal(s, { method: 'chat.react', message_id: ann, reaction: 'seen' }, bridge('avery', ['c-general']))).toBeUndefined();
 	});
 });
 
 describe('review fixes', () => {
-	const bridgeOwner = ctxAs('you', 'bridge', NOW, { bridge: 'slack' });
+	const bridgeOwner = bridgeAs('you');
 	it('CHAT-17 · a bridge cannot act as the owner at all: not post, react, pin or read', () => {
 		const s = fresh();
 		for (const draft of [
@@ -400,6 +421,38 @@ describe('review fixes', () => {
 		expect(emoji.length).toBeLessThan(256 * 1024);
 		expect(refusal(s, { method: 'msg.send', conversation_id: 'c-general', kind: 'msg', body: emoji })?.code).toBe('invalid_request');
 		expect(refusal(s, { method: 'chat.answer', ask_id: kaiAsk(s).id, text: emoji })?.code).toBe('invalid_request');
+	});
+	it('CHAT-4 · a DM keeps every ADR-0003 kind: agent to agent `msg` and custom tags work, reserved ones do not', () => {
+		const s = fresh();
+		const dm = (kind: string) => refusal(s, { method: 'msg.send', conversation_id: 'c-dm-sam-noor', kind: kind as never, body: 'ping' }, ctxAs('sam', 'agent'));
+		expect(dm('msg')).toBeUndefined();
+		expect(dm('status_note')).toBeUndefined();
+		expect(dm('delivery_failed')?.code).toBe('invalid_request');
+		expect(dm('unknown')?.code).toBe('invalid_request');
+		expect(dm('Not A Tag')?.code).toBe('invalid_request');
+		// Channels and group DMs still take the chat kinds only.
+		expect(refusal(s, { method: 'msg.send', conversation_id: 'c-release-v1', kind: 'msg', body: 'x' }, ctxAs('sam', 'agent'))?.code).toBe('kind_not_allowed');
+		expect(refusal(s, { method: 'msg.send', conversation_id: 'c-group', kind: 'msg', body: 'x' }, ctxAs('sam', 'agent'))?.code).toBe('kind_not_allowed');
+		expect(refusal(s, { method: 'msg.send', conversation_id: 'c-release-v1', kind: 'status_note' as never, body: 'x' }, ctxAs('sam', 'agent'))?.code).toBe('invalid_request');
+	});
+	it('CHAT-16 · an agent that left cannot answer an ask or accept a hand-off there', () => {
+		let s = fresh();
+		const ask = run(s, { method: 'msg.send', conversation_id: 'c-release-v1', kind: 'request', body: 'Ship it?', addressed_to: 'kai', options: [{ id: 'y', label: 'Yes' }] }, ctxAs('sam', 'agent'));
+		const hand = run(ask.state, { method: 'msg.send', conversation_id: 'c-release-v1', kind: 'handoff', body: 'Yours', addressed_to: 'kai' }, ctxAs('sam', 'agent'));
+		s = run(hand.state, { method: 'channel.remove_member', id: 'c-release-v1', member_id: 'kai' }).state;
+		expect(refusal(s, { method: 'chat.answer', ask_id: ask.accepted.id!, option_id: 'y' }, ctxAs('kai', 'agent'))?.code).toBe('not_in_conversation');
+		expect(refusal(s, { method: 'chat.accept_handoff', message_id: hand.accepted.id! }, ctxAs('kai', 'agent'))?.code).toBe('not_in_conversation');
+		// The owner, in the app, still can.
+		expect(refusal(s, { method: 'chat.answer', ask_id: ask.accepted.id!, option_id: 'y' })).toBeUndefined();
+	});
+	it('CHAT-2 · an automatic channel whose suffixed name is taken too gets a name that is free', () => {
+		const ctx = ctxAs();
+		const c = { id: 'c-custom', kind: 'channel' as const, name: 'ops-team', members: ['you'], created_at: NOW };
+		const s = syncAuto({ ...emptyChat(), conversations: [c] }, { ...ctx, projects: [], teams: [{ id: 't1', name: 'Ops', member_ids: [] }, { id: 't2', name: 'ops', member_ids: [] }] });
+		const names = s.conversations.filter((x) => x.kind === 'channel').map((x) => x.name);
+		expect(new Set(names).size).toBe(names.length);
+		expect(names).toContain('ops-team');
+		expect(names.filter((n) => n?.startsWith('ops'))).toHaveLength(3);
 	});
 	it('CHAT-10 · every folded message in the sample is within the window after its root', () => {
 		const s = fresh();

@@ -5,7 +5,7 @@ import { sampleChat } from './sample';
 import type { ChatAccepted, ChatCall, ChatMessage, ChatRefusal, ChatSnapshot, ChatState } from './types';
 
 /**
- * What the Chat screen needs from an office: a snapshot, the calls of ADR-0003 section 6 (amended : chat, proposed), and a
+ * What the Chat screen needs from an office: a snapshot, the calls of ADR-0003 section 6 (amended 2026-11-08: chat, proposed), and a
  * signal when something changed (the office pushes `message.received`, `conversation.changed` and `chat.typing`). Until the
  * office serves them, this is a mock that keeps the conversations in memory, like the first org and work mocks did.
  * Always sample data.

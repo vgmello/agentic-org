@@ -1,4 +1,4 @@
-// Chat as ADR-0003 section 6 sketches it (amended : chat, proposed) and docs/specs/chat-ux.md specifies it. A mirror
+// Chat as ADR-0003 section 6 sketches it (amended 2026-11-08: chat, proposed) and docs/specs/chat-ux.md specifies it. A mirror
 // to build against until the Rust types land in crates/org-proto; replace it with the real shapes then.
 // Unknown enum values from a newer office decode as 'unknown' and are never written.
 
@@ -49,6 +49,17 @@ export const REACTIONS: { id: Reaction; emoji: string; label: string }[] = [
 ];
 
 export type Bridge = 'slack' | 'teams' | 'discord';
+
+/**
+ * What a bridge connection is bound as (ADR-0003 6.6): its own binding, `bridge:<id>`, made with a bridge token the app issues.
+ * It reaches only the channels chosen for it, never a DM or group DM, and posts as a mapped person who is a member.
+ */
+export interface BridgeBinding {
+	id: string;
+	platform: Bridge;
+	/** Conversation ids of the channels chosen for this bridge. */
+	channels: string[];
+}
 
 export interface Answer {
 	/** A member id, or `default` when the ask's default was applied at its deadline. */
@@ -179,7 +190,7 @@ export type ChatErrorCode =
 	| 'reason_required'
 	| 'conversation_archived'
 	| 'too_many_members'
-	| 'not_a_member'
+	| 'not_in_conversation'
 	| 'not_authorized'
 	| 'not_found'
 	| 'invalid_request'
