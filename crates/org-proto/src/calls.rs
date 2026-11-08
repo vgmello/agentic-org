@@ -36,6 +36,31 @@ pub struct HelloResult {
     /// Set when an office server answers; absent when this machine's host answers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub office: Option<OfficeHello>,
+    /// The optional calls and events this server implements beyond what every server of
+    /// `api_version` has, by wire name (see [`capability`]). A client checks for one before
+    /// calling it or waiting for it, and ignores names it doesn't know. Empty (and absent on
+    /// the wire) for a server that implements none, including servers older than this field.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<String>,
+}
+
+/// Capability names a server may list in [`HelloResult::capabilities`]. Each one is the wire
+/// name of the call or event it stands for.
+pub mod capability {
+    /// The host serves `office.app_token`.
+    pub const OFFICE_APP_TOKEN: &str = "office.app_token";
+    /// The host serves `office.restart`.
+    pub const OFFICE_RESTART: &str = "office.restart";
+    /// The host publishes `office.status_changed` to subscribers, with `status_reason` and
+    /// `next_restart_at` set.
+    pub const OFFICE_STATUS_CHANGED: &str = "office.status_changed";
+}
+
+impl HelloResult {
+    /// Whether the server listed `name` in its capabilities.
+    pub fn supports(&self, name: &str) -> bool {
+        self.capabilities.iter().any(|c| c == name)
+    }
 }
 
 impl Call for Hello {

@@ -156,6 +156,7 @@ fn hello_and_list_wire_shapes() {
         server_version: "0.0.0".into(),
         host: "This Mac".into(),
         office: None,
+        capabilities: vec![],
     };
     let v = serde_json::to_value(Response::ok::<Hello>(1, &hello).unwrap()).unwrap();
     assert_eq!(v["result"]["api_version"], 1);
@@ -432,6 +433,7 @@ fn office_server_hello_carries_its_identity() {
             organization_name: "Acme".into(),
             office: hq(),
         }),
+        capabilities: vec![],
     };
     let v = serde_json::to_value(&hello).unwrap();
     assert_eq!(v["office"]["office"]["role"], "hq");
@@ -3494,4 +3496,44 @@ fn project_and_area_commands_are_pinned() {
         serde_json::to_value(ok).unwrap()["result"]["status"],
         "committed"
     );
+}
+
+#[test]
+fn hello_capabilities_are_additive_and_checked_by_name() {
+    // Empty: absent on the wire, so older clients see exactly the old shape.
+    let plain = HelloResult {
+        api_version: API_VERSION,
+        server_version: "0.0.0".into(),
+        host: "This Mac".into(),
+        office: None,
+        capabilities: vec![],
+    };
+    let v = serde_json::to_value(&plain).unwrap();
+    assert!(v.get("capabilities").is_none());
+
+    // A server older than the field: it parses, with no capabilities.
+    let old: HelloResult = serde_json::from_value(json!({
+        "api_version": 1, "server_version": "0.0.0", "host": "This Mac"
+    }))
+    .unwrap();
+    assert!(old.capabilities.is_empty());
+    assert!(!old.supports(capability::OFFICE_RESTART));
+
+    // Listed names round-trip; unknown names are kept and simply never asked for.
+    let host = HelloResult {
+        capabilities: vec![
+            capability::OFFICE_APP_TOKEN.into(),
+            capability::OFFICE_RESTART.into(),
+            capability::OFFICE_STATUS_CHANGED.into(),
+            "some.future_call".into(),
+        ],
+        ..plain
+    };
+    let v = serde_json::to_value(&host).unwrap();
+    assert_eq!(v["capabilities"][1], "office.restart");
+    let back: HelloResult = serde_json::from_value(v).unwrap();
+    assert_eq!(back, host);
+    assert!(back.supports("office.app_token"));
+    assert!(back.supports("office.status_changed"));
+    assert!(!back.supports("office.restar"));
 }
