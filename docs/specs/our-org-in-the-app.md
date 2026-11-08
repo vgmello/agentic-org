@@ -2,7 +2,7 @@
 kind: spec
 title: "Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)"
 status: for-review
-revision: 10
+revision: 11
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-08"
@@ -14,6 +14,8 @@ builds_on: [offices-and-teams-ux, work-items-ux]
 # Spec · Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)
 
 Builds on `offices-and-teams-ux.md` rev 4, `work-items-ux.md` rev 5 and `desktop-app-v1.md` (in Eden's notes, not in this repository) (hire §3.6, profile §3.5).
+
+**Revision 11 (2026-11-08): import counts.** The import's examples now match our team today: 10 agents (Remy is working, and Riley comes in Active and shows Offline, U13), so "Bring in 10 agents" once every row is complete, and a summary with none paused (decision 1, §4). No criteria changed.
 
 **Revision 10 (2026-11-08): small fixes.** HRL-2 lists member, lead and manager pickers, matching §2a. The profile tabs include **Processes** (`processes-ux.md` §2).
 
@@ -102,7 +104,7 @@ Every organization has one built-in agent, **HR lead**, created with the organiz
 
 ## 3. Decisions
 
-1. **Bring in, don't rebuild.** Our team enters the app through an **import** that reads what already exists (HR's folders and the messaging inboxes), shows a review of every agent with what was found and what's unclear, and writes nothing until **Bring in 9 agents**. After that, the app is the place to manage the team (U12).
+1. **Bring in, don't rebuild.** Our team enters the app through an **import** that reads what already exists (HR's folders and the messaging inboxes), shows a review of every agent with what was found and what's unclear, and writes nothing until **Bring in 10 agents**. After that, the app is the place to manage the team (U12).
 2. **The agent record grows** to describe how an agent works, shown on every profile and card: role, title, focus, **runtime** (Claude Code · Codex · Antigravity), model, **home folder**, **messaging name** (`codex-dev`), office, hired on, and status. Those are UX requirements for the `Member` contract (A15).
 3. **Runtime is visible but quiet:** a small runtime mark on the profile and in the quick view ("Runs on Codex"), not on chart cards. Actions adapt to it: **Open session** opens the agent's runtime (Claude Code in the session panel; others say "Open in Codex" and hand off), and nothing offers a Claude-only action to a Codex agent.
 4. **Four ways to stop or remove work, named by what they do,** never one ambiguous "deallocate":
@@ -135,7 +137,7 @@ Every organization has one built-in agent, **HR lead**, created with the organiz
 - **Review** (one row per agent, merged across sources by name):
 
 ```
- Review 10 agents                         Filter: [All ▾]   [Bring in 9 agents]
+ Review 10 agents                         Filter: [All ▾]   [Bring in 8 agents · 2 need details]
  ─────────────────────────────────────────────────────────────────────────────────
  [A] ada            Staff Engineer        HR + messaging   Claude Code   Engineering ▾
  [E] Eden           Product Designer      HR + messaging   Claude Code   Design ▾
@@ -153,13 +155,13 @@ Every organization has one built-in agent, **HR lead**, created with the organiz
 ```
 
 - **Merged rows:** an agent in both sources shows "HR + messaging" and links its messaging name automatically when the HR id matches the inbox name.
-- **Messaging-only agents** need a **role** (a catalog combobox, or "Custom title…") and a **runtime**. The row says "2 to fill", and **Bring in** counts only complete rows ("Bring in 7 agents · 2 need details").
+- **Messaging-only agents** need a **role** (a catalog combobox, or "Custom title…") and a **runtime**. The row says "2 to fill", and **Bring in** counts only complete rows ("Bring in 8 agents · 2 need details").
 - **HR-only agents with no messaging inbox** get an info note, "No messages from Riley yet", and a per-row choice **Active · Paused · Skip**, defaulting to Active. The note explains: "Riley is active in HR but hasn't joined messaging. Bring in as Paused if Riley isn't working now."
 - **Offboarded HR agents** are listed collapsed under "Offboarded in HR (2)", unchecked, as a record.
 - **Teams:** HR has no teams, so the app suggests them from roles and AGENTS.md ownership (the shape in §2) in an editable preview. **Edit…** opens a small tree editor (rename, move, lead, members). **Skip teams** leaves everyone in "Not in a team".
 - **Reporting lines** come from HR's `reports_to`. Messaging-only agents default to the owner, editable per row.
-- **What happens** (always visible, like Hire's dry run): "Creates 9 agents, 6 teams and 1 project in <org>. Nothing changes in your HR workspace or in messaging. Agents keep running where they are."
-- **Bring in** → progress in words (Adding agents… Creating teams… Linking messaging names…), then **Done**: the org chart opens with the new members highlighted, and a summary "9 agents, 6 teams, 1 project. 2 agents paused." with **View Activity**.
+- **What happens** (always visible, like Hire's dry run): "Creates 10 agents, 6 teams and 1 project in <org>. Nothing changes in your HR workspace or in messaging. Agents keep running where they are."
+- **Bring in** → progress in words (Adding agents… Creating teams… Linking messaging names…), then **Done**: the org chart opens with the new members highlighted, and a summary "10 agents, 6 teams, 1 project." (and "n agents paused." when any were brought in Paused) with **View Activity**.
 - **States:**
   - No sources found: "No HR workspace or messaging found here. **Choose folder…** or start empty."
   - A source unreadable: the row error, and the other source still works.
