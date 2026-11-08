@@ -43,7 +43,7 @@
 //!
 //! It records what it does in `<home>/fake.log`, one line each:
 //! `start <key> <pid> <run> <unix ms>`, `token <key> <pid> <fingerprint>`,
-//! `fds <key> <pid> <inherited fds above 2, or ->`, `first-line-refused <key> <pid>`, `eof-before-first-line <key> <pid>`, `eof-exit <key> <pid>`,
+//! `env <key> <pid> <its environment variables' names>`, `fds <key> <pid> <inherited fds above 2, or ->`, `first-line-refused <key> <pid>`, `eof-before-first-line <key> <pid>`, `eof-exit <key> <pid>`,
 //! `eof-ignored <key> <pid>`, and `leak <key> <pid> <where>` if something that looks like a token
 //! (64 lowercase hex digits) reached it where none may: its `argv`, an `env:<NAME>` variable, or a
 //! `--discard`'s `stdin`.
@@ -112,6 +112,7 @@ fn main() {
         &format!("fds {key} {} {inherited}", std::process::id()),
     );
     check_no_token_in_argv_or_env(&home, &key);
+    record_env_names(&home, &key);
     let step = step(&home, &key, run);
     if let Some(ms) = step.orphan_stdout_ms {
         orphan_stdout(&home, &key, ms);
@@ -244,6 +245,18 @@ fn main() {
     let _ = fs::remove_file(&socket);
     drop(lock);
     exit(0);
+}
+
+/// Records the names of the environment variables it got: `env <key> <pid> <names,sorted>`.
+fn record_env_names(home: &Path, key: &str) {
+    let mut names: Vec<String> = std::env::vars_os()
+        .map(|(name, _)| name.to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    record(
+        home,
+        &format!("env {key} {} {}", std::process::id(), names.join(",")),
+    );
 }
 
 /// Records a leak if a value looks like a token (64 lowercase hex digits in a row): `argv` for

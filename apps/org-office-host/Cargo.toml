@@ -26,8 +26,13 @@ doc = false
 [dependencies]
 org-proto = { path = "../../crates/org-proto" }
 org-office-launch = { path = "../../crates/org-office-launch" }
+serde.workspace = true
 serde_json.workspace = true
 libc.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework.workspace = true
+core-foundation.workspace = true
 
 [dev-dependencies]
 # Turns on `test-support` for test builds only, so `CARGO_BIN_EXE_fake-office-server` exists.

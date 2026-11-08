@@ -1,18 +1,21 @@
-//! One office's supervision: keep its server running, track its status, restart it with
-//! backoff after a crash, and give up (status `unavailable`) on a fatal failure.
+//! One office's supervision: keep its server running, track its status (with why it's
+//! `offline` or `unavailable`, and when it restarts next), restart it with backoff, and stop
+//! restarting on a fatal failure or when it keeps failing (the give-up rule), until
+//! `office.restart` or the next host run.
 
+use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use org_office_launch::{FailCode, ServerEvent};
-use org_proto::OfficeStatus;
+use org_proto::OfficeStatusReason;
 
 use super::child::{Mode, RunningChild, Signal, Spawner, StartLine};
+use super::state::{OfficeState, SharedState};
 use crate::host_log;
 use crate::logs::RotatingLog;
-use crate::sync::lock;
 use crate::timings::Timings;
 
 /// A server that's already running when supervision starts (the one that just created the
@@ -32,10 +35,11 @@ const EXIT_LINES_WAIT: Duration = Duration::from_millis(200);
 pub(crate) struct OfficeRunner {
     pub(crate) office_id: String,
     /// The office's start line, with its app token for this host run: every start gets it.
-    pub(crate) start: StartLine,
+    /// Shared with the supervisor, which hands the token to the app (`office.app_token`).
+    pub(crate) start: Arc<StartLine>,
     pub(crate) spawner: Spawner,
     pub(crate) timings: Timings,
-    pub(crate) status: Arc<Mutex<OfficeStatus>>,
+    pub(crate) state: Arc<SharedState>,
     pub(crate) signals: Receiver<Signal>,
     pub(crate) sender: Sender<Signal>,
     pub(crate) log: Arc<Mutex<RotatingLog>>,
@@ -46,61 +50,134 @@ pub(crate) struct OfficeRunner {
 enum Ending {
     /// The host is shutting down; the server was stopped.
     Stopped,
-    /// A failure that a restart can't fix.
-    Fatal,
-    /// Anything else: restart with backoff.
-    Crashed { ran: Duration, was_ready: bool },
+    /// It ended for `reason`. `fatal`: a restart can't fix it, so none is attempted on its own.
+    /// `uptime`: how long it ran after `ready` (`None` if it never was).
+    Ended {
+        reason: OfficeStatusReason,
+        fatal: bool,
+        uptime: Option<Duration>,
+    },
+}
+
+/// What [`OfficeRunner::take_restart_requests`] found.
+enum Taken {
+    Nothing,
+    Restart,
+    Stop,
+}
+
+/// What ended a wait between runs.
+enum Wake {
+    /// Time to start again.
+    Due,
+    /// `office.restart`: start again now, with the backoff and the give-up count reset.
+    Restart,
+    /// The host is shutting down.
+    Stop,
 }
 
 impl OfficeRunner {
     /// Runs until the host shuts down.
     pub(crate) fn run(self, adopted: Option<Adopted>) {
         let mut backoff = Backoff::new(&self.timings);
+        let mut give_up = GiveUp::new(&self.timings);
         let mut generation = adopted.as_ref().map_or(0, |a| a.child.generation + 1);
         let mut next = adopted;
         loop {
             let ending = match next.take() {
                 Some(adopted) => self.watch(adopted),
                 None => {
-                    self.set(OfficeStatus::Starting);
-                    let mode = Mode::Office(&self.office_id, &self.start);
-                    let spawned =
-                        self.spawner
-                            .spawn(mode, generation, self.sender.clone(), self.log.clone());
-                    generation += 1;
-                    match spawned {
-                        Ok(child) => self.watch(Adopted {
-                            ready_from: child.started,
-                            child,
-                            backlog: Vec::new(),
-                            ready: false,
-                        }),
-                        Err(e) => {
-                            host_log::log(&format!(
-                                "couldn't start the server of office {}: {e}",
-                                self.office_id
-                            ));
-                            Ending::Crashed {
-                                ran: Duration::ZERO,
-                                was_ready: false,
-                            }
+                    // `starting` first, then the restart requests sent while it was down: see
+                    // `SharedState::request_restart`.
+                    self.state.set(OfficeState::starting());
+                    match self.take_restart_requests() {
+                        Taken::Stop => return,
+                        Taken::Restart => {
+                            backoff.reset();
+                            give_up.reset();
                         }
+                        Taken::Nothing => {}
+                    }
+                    self.start(&mut generation)
+                }
+            };
+            let wake = match ending {
+                Ending::Stopped => return,
+                Ending::Ended {
+                    reason,
+                    fatal: true,
+                    ..
+                } => {
+                    self.state.set(OfficeState::unavailable(reason));
+                    self.wait_for_restart()
+                }
+                Ending::Ended { reason, uptime, .. } => {
+                    if give_up.after_exit(uptime) {
+                        host_log::log(&format!(
+                            "office {} kept failing; it won't be restarted on its own",
+                            self.office_id
+                        ));
+                        self.state.set(OfficeState::unavailable(
+                            OfficeStatusReason::RestartsExhausted,
+                        ));
+                        self.wait_for_restart()
+                    } else {
+                        let delay = backoff.after_exit(uptime);
+                        self.state
+                            .set(OfficeState::offline(reason, SystemTime::now() + delay));
+                        self.wait_out(delay)
                     }
                 }
             };
-            match ending {
-                Ending::Stopped => return,
-                Ending::Fatal => {
-                    self.set(OfficeStatus::Unavailable);
-                    self.wait_for_stop();
-                    return;
+            match wake {
+                Wake::Stop => return,
+                Wake::Restart => {
+                    backoff.reset();
+                    give_up.reset();
                 }
-                Ending::Crashed { ran, was_ready } => {
-                    self.set(OfficeStatus::Offline);
-                    let delay = backoff.after_crash(ran, was_ready);
-                    if self.sleep_unless_stopped(delay) {
-                        return;
-                    }
+                Wake::Due => {}
+            }
+        }
+    }
+
+    /// Takes the signals queued while the office was down: restart requests (an `office.restart`
+    /// that came as a backoff ended still resets the counts), and a stop.
+    fn take_restart_requests(&self) -> Taken {
+        let mut taken = Taken::Nothing;
+        while let Ok(signal) = self.signals.try_recv() {
+            match signal {
+                Signal::Stop { .. } => return Taken::Stop,
+                Signal::Restart => taken = Taken::Restart,
+                // A late line from a server that already exited.
+                _ => {}
+            }
+        }
+        taken
+    }
+
+    /// Starts the office's server (already marked `starting`) and watches it.
+    fn start(&self, generation: &mut u64) -> Ending {
+        let mode = Mode::Office(&self.office_id, &self.start);
+        let spawned = self
+            .spawner
+            .spawn(mode, *generation, self.sender.clone(), self.log.clone());
+        *generation += 1;
+        match spawned {
+            Ok(child) => self.watch(Adopted {
+                ready_from: child.started,
+                child,
+                backlog: Vec::new(),
+                ready: false,
+            }),
+            Err(e) => {
+                host_log::log(&format!(
+                    "couldn't start the server of office {}: {e}",
+                    self.office_id
+                ));
+                Ending::Ended {
+                    reason: OfficeStatusReason::Crashed,
+                    fatal: false,
+                    uptime: None,
                 }
             }
         }
@@ -111,11 +188,13 @@ impl OfficeRunner {
         let Adopted {
             mut child,
             backlog,
-            mut ready,
+            ready,
             ready_from,
         } = adopted;
+        // When it became ready: its uptime counts from then, not from its spawn.
+        let mut ready_at = ready.then(Instant::now);
         if ready {
-            self.set(OfficeStatus::Active);
+            self.state.set(OfficeState::active());
         }
         let ready_deadline = ready_from + self.timings.ready_timeout;
         let mut failure: Option<FailCode> = None;
@@ -127,7 +206,7 @@ impl OfficeRunner {
                     // Wake at least every `exit_poll`: a server whose stdout a descendant still
                     // holds exits without its pipe closing, so its exit is watched for directly.
                     let mut wait = self.timings.exit_poll;
-                    if !ready {
+                    if ready_at.is_none() {
                         wait = wait.min(ready_deadline.saturating_duration_since(Instant::now()));
                     }
                     match self.signals.recv_timeout(wait) {
@@ -143,21 +222,27 @@ impl OfficeRunner {
                                 else {
                                     return Ending::Stopped;
                                 };
-                                return after_exit(failure, child.started.elapsed(), ready);
+                                return after_exit(failure, ready_at);
                             }
-                            if !ready && Instant::now() >= ready_deadline {
+                            if ready_at.is_none() && Instant::now() >= ready_deadline {
                                 child.kill();
-                                // A fatal `failed` already said a restart can't help.
-                                if failure.is_some_and(is_fatal) {
-                                    return Ending::Fatal;
+                                // A `failed` line already said why: its reason (and whether a
+                                // restart can help) stands.
+                                if let Some((reason, fatal)) = failure.map(reason_for) {
+                                    return Ending::Ended {
+                                        reason,
+                                        fatal,
+                                        uptime: None,
+                                    };
                                 }
                                 host_log::log(&format!(
                                     "the server of office {} wasn't ready in time; restarting it",
                                     self.office_id
                                 ));
-                                return Ending::Crashed {
-                                    ran: child.started.elapsed(),
-                                    was_ready: false,
+                                return Ending::Ended {
+                                    reason: OfficeStatusReason::StartTimeout,
+                                    fatal: false,
+                                    uptime: None,
                                 };
                             }
                             continue;
@@ -170,6 +255,8 @@ impl OfficeRunner {
                     child.stop(deadline);
                     return Ending::Stopped;
                 }
+                // It's already running: nothing to restart.
+                Signal::Restart => {}
                 Signal::Event { generation, .. } | Signal::Closed { generation }
                     if generation != child.generation => {}
                 Signal::Event { event, .. } => match event {
@@ -180,8 +267,8 @@ impl OfficeRunner {
                                 self.office_id
                             ));
                         }
-                        ready = true;
-                        self.set(OfficeStatus::Active);
+                        ready_at.get_or_insert_with(Instant::now);
+                        self.state.set(OfficeState::active());
                     }
                     ServerEvent::Failed { code, message } => {
                         host_log::log(&format!(
@@ -195,7 +282,7 @@ impl OfficeRunner {
                 },
                 Signal::Closed { .. } => {
                     child.stop(Instant::now() + self.timings.shutdown_grace);
-                    return after_exit(failure, child.started.elapsed(), ready);
+                    return after_exit(failure, ready_at);
                 }
             }
         }
@@ -244,58 +331,63 @@ impl OfficeRunner {
             .unwrap_or_default()
     }
 
-    /// Waits out a backoff delay. Returns true if the host stopped meanwhile.
-    fn sleep_unless_stopped(&self, delay: Duration) -> bool {
+    /// Waits out a backoff delay.
+    fn wait_out(&self, delay: Duration) -> Wake {
         let until = Instant::now() + delay;
         loop {
             match self
                 .signals
                 .recv_timeout(until.saturating_duration_since(Instant::now()))
             {
-                Ok(Signal::Stop { .. }) | Err(RecvTimeoutError::Disconnected) => return true,
+                Ok(Signal::Stop { .. }) | Err(RecvTimeoutError::Disconnected) => return Wake::Stop,
+                Ok(Signal::Restart) => return Wake::Restart,
                 Ok(_) => {} // a late line from the server that just exited
-                Err(RecvTimeoutError::Timeout) => return false,
+                Err(RecvTimeoutError::Timeout) => return Wake::Due,
             }
         }
     }
 
-    fn wait_for_stop(&self) {
-        while let Ok(signal) = self.signals.recv() {
-            if matches!(signal, Signal::Stop { .. }) {
-                return;
+    /// Waits, `unavailable`, for `office.restart` (or the host stopping).
+    fn wait_for_restart(&self) -> Wake {
+        loop {
+            match self.signals.recv() {
+                Ok(Signal::Stop { .. }) | Err(_) => return Wake::Stop,
+                Ok(Signal::Restart) => return Wake::Restart,
+                Ok(_) => {}
             }
         }
     }
+}
 
-    fn set(&self, status: OfficeStatus) {
-        *lock(&self.status) = status;
+/// How a server that exited ended: the reason its `failed` line gave (fatal or not), else a
+/// crash; `ready_at` gives its uptime.
+fn after_exit(failure: Option<FailCode>, ready_at: Option<Instant>) -> Ending {
+    let (reason, fatal) = failure.map_or((OfficeStatusReason::Crashed, false), reason_for);
+    Ending::Ended {
+        reason,
+        fatal,
+        uptime: ready_at.map(|at| at.elapsed()),
     }
 }
 
-/// How a server that exited (after `ran`) ended: fatal if it reported a fatal failure, else a
-/// crash to restart.
-fn after_exit(failure: Option<FailCode>, ran: Duration, was_ready: bool) -> Ending {
-    match failure {
-        Some(code) if is_fatal(code) => Ending::Fatal,
-        _ => Ending::Crashed { ran, was_ready },
+/// The status reason for a `failed` code, and whether it's fatal (no restart on its own).
+/// `invalid_name` and `already_exists` end only a create; from an `--office` run they mean the
+/// server misunderstood the host, like `invalid_request`. Unknown codes (decoded as
+/// `storage_error`) are retried.
+pub(crate) fn reason_for(code: FailCode) -> (OfficeStatusReason, bool) {
+    match code {
+        FailCode::InUse => (OfficeStatusReason::InUse, false),
+        FailCode::KeyMissing => (OfficeStatusReason::KeyMissing, true),
+        FailCode::UnsupportedVersion => (OfficeStatusReason::UnsupportedVersion, true),
+        FailCode::InvalidRequest | FailCode::InvalidName | FailCode::AlreadyExists => {
+            (OfficeStatusReason::InvalidRequest, true)
+        }
+        _ => (OfficeStatusReason::StorageError, false),
     }
-}
-
-/// Failures a restart can't fix: the office stays `unavailable` until the host restarts.
-/// Unknown codes (decoded as `storage_error`) and `in_use` are retried.
-pub(crate) fn is_fatal(code: FailCode) -> bool {
-    matches!(
-        code,
-        FailCode::InvalidRequest
-            | FailCode::UnsupportedVersion
-            | FailCode::InvalidName
-            | FailCode::AlreadyExists
-            | FailCode::KeyMissing
-    )
 }
 
 /// Restart delays: `initial`, doubling up to `max`, back to `initial` once a server stayed up
-/// (ready) for `reset_after`.
+/// for `reset_after` after getting ready.
 #[derive(Debug)]
 pub(crate) struct Backoff {
     initial: Duration,
@@ -314,14 +406,63 @@ impl Backoff {
         }
     }
 
-    /// The delay before restarting a server that ran for `ran`.
-    pub(crate) fn after_crash(&mut self, ran: Duration, was_ready: bool) -> Duration {
-        if was_ready && ran >= self.reset_after {
+    /// The delay before restarting a server that was up for `uptime` after `ready` (`None`:
+    /// it never got ready).
+    pub(crate) fn after_exit(&mut self, uptime: Option<Duration>) -> Duration {
+        if uptime.is_some_and(|up| up >= self.reset_after) {
             self.next = self.initial;
         }
         let delay = self.next.min(self.max);
         self.next = (self.next * 2).min(self.max);
         delay
+    }
+
+    pub(crate) fn reset(&mut self) {
+        self.next = self.initial;
+    }
+}
+
+/// The give-up rule: `limit` failed restarts within `window` and the host stops restarting. A
+/// failed restart is an exit before `fresh_after` of uptime after `ready` (or with no `ready`);
+/// a longer run counts as a fresh start and clears the count.
+#[derive(Debug)]
+pub(crate) struct GiveUp {
+    limit: usize,
+    window: Duration,
+    fresh_after: Duration,
+    failures: VecDeque<Instant>,
+}
+
+impl GiveUp {
+    pub(crate) fn new(timings: &Timings) -> Self {
+        Self {
+            limit: timings.give_up_after as usize,
+            window: timings.give_up_window,
+            fresh_after: timings.backoff_reset_after,
+            failures: VecDeque::new(),
+        }
+    }
+
+    /// Counts an exit after `uptime`. Returns whether the office has now failed too often.
+    pub(crate) fn after_exit(&mut self, uptime: Option<Duration>) -> bool {
+        if uptime.is_some_and(|up| up >= self.fresh_after) {
+            self.failures.clear();
+            return false;
+        }
+        let now = Instant::now();
+        self.failures.push_back(now);
+        while self
+            .failures
+            .front()
+            .is_some_and(|&at| now.duration_since(at) > self.window)
+        {
+            self.failures.pop_front();
+        }
+        self.failures.len() >= self.limit
+    }
+
+    pub(crate) fn reset(&mut self) {
+        self.failures.clear();
     }
 }
 
@@ -330,29 +471,51 @@ mod tests {
     use super::*;
 
     #[test]
-    fn backoff_doubles_to_the_cap_and_resets_after_uptime() {
+    fn backoff_doubles_to_the_cap_and_resets_after_uptime_from_ready() {
         let mut b = Backoff::new(&Timings::default());
         let s = Duration::from_secs;
-        let delays: Vec<_> = (0..8).map(|_| b.after_crash(s(1), true)).collect();
+        let delays: Vec<_> = (0..8).map(|_| b.after_exit(Some(s(1)))).collect();
         assert_eq!(delays, [s(1), s(2), s(4), s(8), s(16), s(32), s(60), s(60)]);
-        // A long run that never got ready doesn't reset; a ready one does.
-        assert_eq!(b.after_crash(s(120), false), s(60));
-        assert_eq!(b.after_crash(s(60), true), s(1));
-        assert_eq!(b.after_crash(s(1), true), s(2));
+        // A server that never got ready doesn't reset it; a long one after ready does.
+        assert_eq!(b.after_exit(None), s(60));
+        assert_eq!(b.after_exit(Some(s(60))), s(1));
+        assert_eq!(b.after_exit(Some(s(1))), s(2));
+        b.reset();
+        assert_eq!(b.after_exit(None), s(1));
     }
 
     #[test]
-    fn fatal_codes_are_the_agreed_ones() {
-        for code in [
-            FailCode::InvalidRequest,
-            FailCode::UnsupportedVersion,
-            FailCode::InvalidName,
-            FailCode::AlreadyExists,
-            FailCode::KeyMissing,
+    fn reasons_follow_the_failed_codes() {
+        use OfficeStatusReason as R;
+        for (code, reason, fatal) in [
+            (FailCode::InUse, R::InUse, false),
+            (FailCode::StorageError, R::StorageError, false),
+            (FailCode::KeyMissing, R::KeyMissing, true),
+            (FailCode::UnsupportedVersion, R::UnsupportedVersion, true),
+            (FailCode::InvalidRequest, R::InvalidRequest, true),
+            (FailCode::InvalidName, R::InvalidRequest, true),
+            (FailCode::AlreadyExists, R::InvalidRequest, true),
         ] {
-            assert!(is_fatal(code), "{code:?}");
+            assert_eq!(reason_for(code), (reason, fatal), "{code:?}");
         }
-        assert!(!is_fatal(FailCode::InUse));
-        assert!(!is_fatal(FailCode::StorageError));
+    }
+
+    #[test]
+    fn the_give_up_rule_counts_short_runs_and_clears_on_a_long_one() {
+        let timings = Timings {
+            give_up_after: 3,
+            ..Timings::default()
+        };
+        let mut g = GiveUp::new(&timings);
+        let s = Duration::from_secs;
+        assert!(!g.after_exit(None));
+        assert!(!g.after_exit(Some(s(5))));
+        // A run of 60 s after ready is a fresh start.
+        assert!(!g.after_exit(Some(s(60))));
+        assert!(!g.after_exit(None));
+        assert!(!g.after_exit(None));
+        assert!(g.after_exit(None));
+        g.reset();
+        assert!(!g.after_exit(None));
     }
 }

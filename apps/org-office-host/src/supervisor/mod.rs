@@ -7,24 +7,27 @@
 //! the run gets the same token in its first line (`child::StartLine`). The next host run makes
 //! new ones.
 //!
-//! Status per office ([`OfficeStatus`]): `starting` (spawned, no `ready` yet) → `active`
-//! (`ready`, child alive) → `offline` (exited, restart pending) → `unavailable` (a fatal
-//! failure; until the host restarts). Shutdown closes every child's stdin, waits up to the
-//! grace period, then SIGKILLs what's left.
+//! Status per office ([`OfficeState`]): `starting` (spawned, no `ready` yet) → `active`
+//! (`ready`, child alive) → `offline` (exited, a restart pending at `next_restart_at`) →
+//! `unavailable` (a fatal failure, or the give-up rule; until `office.restart` or the next host
+//! run), each `offline` or `unavailable` with its reason. Every change is announced to the
+//! [`StatusObserver`]. Shutdown closes every child's stdin, waits up to the grace period, then
+//! SIGKILLs what's left.
 
 mod child;
 mod office;
+mod state;
 
 use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use org_office_launch::{CreateOffice, FailCode, OfficeFile, ServerEvent};
-use org_proto::OfficeStatus;
+use org_proto::{AppToken, OfficeStatus, OfficeStatusReason};
 
 use crate::app_token;
 use crate::host_log;
@@ -34,6 +37,8 @@ use crate::sync::lock;
 use crate::timings::Timings;
 use child::{CreateLine, Mode, RunningChild, Signal, Spawner, StartLine};
 use office::{Adopted, OfficeRunner};
+use state::{Observer, RestartRequest, SharedState};
+pub(crate) use state::{OfficeState, StatusObserver};
 
 /// What the supervisor needs to start servers.
 #[derive(Debug, Clone)]
@@ -53,6 +58,7 @@ pub(crate) struct Supervisor {
     /// `--discard`) while any of them still writes it, so two writers never rotate the same
     /// file apart. Held weakly: a log (and its open file) goes once nothing writes it.
     logs: Mutex<HashMap<String, Weak<Mutex<RotatingLog>>>>,
+    observer: Observer,
 }
 
 #[derive(Default)]
@@ -66,9 +72,24 @@ struct State {
 
 /// What the supervisor keeps per office for this host run (in memory only).
 struct Slot {
-    status: Arc<Mutex<OfficeStatus>>,
+    state: Arc<SharedState>,
+    /// The office's start line, holding its app token: shared with its supervision thread.
+    start: Arc<StartLine>,
     signals: Sender<Signal>,
     thread: Option<JoinHandle<()>>,
+}
+
+/// What `office.restart` did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RestartOutcome {
+    /// The office is being started again.
+    Restarting,
+    /// It isn't `offline` or `unavailable` (e.g. it's `starting` or `active`).
+    Conflict,
+    /// It's `unavailable` for a reason a restart can't fix.
+    CantFix(OfficeStatusReason),
+    /// It isn't supervised.
+    NotSupervised,
 }
 
 /// How a `--create` run ended.
@@ -102,7 +123,7 @@ pub(crate) struct Adoptable<'a> {
     pub(crate) office: OfficeFile,
     registration: Registration<'a>,
     /// The office's start line, with the token it was created with.
-    start: StartLine,
+    start: Arc<StartLine>,
     child: RunningChild,
     signals: Receiver<Signal>,
     sender: Sender<Signal>,
@@ -151,7 +172,13 @@ impl Supervisor {
             spawner,
             state: Mutex::new(State::default()),
             logs: Mutex::new(HashMap::new()),
+            observer: Arc::new(OnceLock::new()),
         }
+    }
+
+    /// Where every office's state changes are announced from now on (set once).
+    pub(crate) fn observe(&self, observer: Weak<dyn StatusObserver>) {
+        let _ = self.observer.set(observer);
     }
 
     /// Starts supervising an existing office (`--office <id>`), with a fresh app token.
@@ -163,7 +190,7 @@ impl Supervisor {
         if state.offices.contains_key(office_id) {
             return Ok(());
         }
-        let start = StartLine::new(app_token::generate()?);
+        let start = Arc::new(StartLine::new(app_token::generate()?));
         let (sender, signals) = mpsc::channel();
         let log = self.log_for(office_id);
         let slot = self.spawn_runner(office_id, start, sender, signals, log, None)?;
@@ -171,10 +198,41 @@ impl Supervisor {
         Ok(())
     }
 
-    /// The status of a supervised office, or `None` if it isn't supervised.
-    pub(crate) fn status(&self, office_id: &str) -> Option<OfficeStatus> {
+    /// The state of a supervised office, or `None` if it isn't supervised.
+    pub(crate) fn state(&self, office_id: &str) -> Option<OfficeState> {
         let state = lock(&self.state);
-        state.offices.get(office_id).map(|slot| *lock(&slot.status))
+        state.offices.get(office_id).map(|slot| slot.state.get())
+    }
+
+    /// Runs `f` with a supervised office's app token, without copying it. `None` if the office
+    /// isn't supervised.
+    pub(crate) fn with_app_token<R>(
+        &self,
+        office_id: &str,
+        f: impl FnOnce(&AppToken) -> R,
+    ) -> Option<R> {
+        let start = lock(&self.state)
+            .offices
+            .get(office_id)
+            .map(|slot| Arc::clone(&slot.start))?;
+        Some(f(start.app_token()))
+    }
+
+    /// `office.restart`: starts an `offline` or `unavailable` office again now, with its
+    /// backoff and give-up count reset. Refuses an office that's starting or active, and one
+    /// `unavailable` for a reason a restart can't fix.
+    pub(crate) fn restart(&self, office_id: &str) -> RestartOutcome {
+        let state = lock(&self.state);
+        let Some(slot) = state.offices.get(office_id) else {
+            return RestartOutcome::NotSupervised;
+        };
+        match slot.state.request_restart(|| {
+            let _ = slot.signals.send(Signal::Restart);
+        }) {
+            RestartRequest::Sent => RestartOutcome::Restarting,
+            RestartRequest::Running => RestartOutcome::Conflict,
+            RestartRequest::CantFix(reason) => RestartOutcome::CantFix(reason),
+        }
     }
 
     /// Starts `org-office-server --create` and sends it `create`. Its app token becomes the
@@ -215,6 +273,8 @@ impl Supervisor {
                     child.stop(deadline);
                     return Ok(DiscardOutcome::Stopped);
                 }
+                // Restarts are for an office's own supervision thread only.
+                Ok(Signal::Restart) => continue,
                 Ok(Signal::Event { event, .. }) => match event {
                     ServerEvent::Discarded => DiscardOutcome::Discarded,
                     ServerEvent::Failed { code, message } => {
@@ -241,9 +301,9 @@ impl Supervisor {
     }
 
     /// Hands a server that created its office over to supervision, which keeps it running as
-    /// that office's server. Returns the office's status: `active` if `ready` already arrived,
+    /// that office's server. Returns the office's state: `active` if `ready` already arrived,
     /// otherwise `starting`.
-    pub(crate) fn adopt(&self, adoptable: Adoptable<'_>) -> OfficeStatus {
+    pub(crate) fn adopt(&self, adoptable: Adoptable<'_>) -> OfficeState {
         let Adoptable {
             office,
             mut registration,
@@ -262,7 +322,11 @@ impl Supervisor {
         if state.stopping {
             drop(state);
             child.stop(Instant::now() + self.config.timings.shutdown_grace);
-            return OfficeStatus::Offline;
+            return OfficeState {
+                status: OfficeStatus::Offline,
+                reason: None,
+                next_restart_at: None,
+            };
         }
         let adopted = Adopted {
             child,
@@ -273,9 +337,9 @@ impl Supervisor {
         };
         // Decided here, not read back: the new thread may already be moving it on.
         let status = if ready {
-            OfficeStatus::Active
+            OfficeState::active()
         } else {
-            OfficeStatus::Starting
+            OfficeState::starting()
         };
         match self.spawn_runner(
             &office.office_id,
@@ -294,7 +358,11 @@ impl Supervisor {
                     "couldn't supervise office {}: {e}",
                     office.office_id
                 ));
-                OfficeStatus::Unavailable
+                OfficeState {
+                    status: OfficeStatus::Unavailable,
+                    reason: None,
+                    next_restart_at: None,
+                }
             }
         }
     }
@@ -360,23 +428,27 @@ impl Supervisor {
     fn spawn_runner(
         &self,
         office_id: &str,
-        start: StartLine,
+        start: Arc<StartLine>,
         sender: Sender<Signal>,
         signals: Receiver<Signal>,
         log: Arc<Mutex<RotatingLog>>,
         adopted: Option<Adopted>,
     ) -> io::Result<Slot> {
         let initial = match &adopted {
-            Some(adopted) if adopted.ready => OfficeStatus::Active,
-            _ => OfficeStatus::Starting,
+            Some(adopted) if adopted.ready => OfficeState::active(),
+            _ => OfficeState::starting(),
         };
-        let status = Arc::new(Mutex::new(initial));
+        let state = Arc::new(SharedState::new(
+            office_id,
+            initial,
+            Arc::clone(&self.observer),
+        ));
         let runner = OfficeRunner {
             office_id: office_id.to_owned(),
-            start,
+            start: Arc::clone(&start),
             spawner: self.spawner.clone(),
             timings: self.config.timings.clone(),
-            status: Arc::clone(&status),
+            state: Arc::clone(&state),
             signals,
             sender: sender.clone(),
             log,
@@ -385,7 +457,8 @@ impl Supervisor {
             .name(format!("office-{}", handle_of(office_id)))
             .spawn(move || runner.run(adopted))?;
         Ok(Slot {
-            status,
+            state,
+            start,
             signals: sender,
             thread: Some(thread),
         })
@@ -424,6 +497,7 @@ impl<'a> PendingCreate<'a> {
                     self.child.stop(deadline);
                     return CreateOutcome::Stopped;
                 }
+                Signal::Restart => {}
                 Signal::Event {
                     event: ServerEvent::Created { office },
                     ..
@@ -537,8 +611,8 @@ mod tests {
         };
         // The shutdown begins between `created` and the adoption.
         supervisor.shutdown();
-        assert_eq!(supervisor.adopt(*adoptable), OfficeStatus::Offline);
-        assert_eq!(supervisor.status(office_id), None, "adopted after shutdown");
+        assert_eq!(supervisor.adopt(*adoptable).status, OfficeStatus::Offline);
+        assert_eq!(supervisor.state(office_id), None, "adopted after shutdown");
         // SAFETY: signal 0 only checks the pid.
         assert!(
             unsafe { libc::kill(pid as libc::pid_t, 0) } != 0,
@@ -560,6 +634,6 @@ mod tests {
         assert!(supervisor
             .start_office("01AAAAAAAAAAAAAAAAAAAAAAAA")
             .is_err());
-        assert_eq!(supervisor.status("01AAAAAAAAAAAAAAAAAAAAAAAA"), None);
+        assert_eq!(supervisor.state("01AAAAAAAAAAAAAAAAAAAAAAAA"), None);
     }
 }
