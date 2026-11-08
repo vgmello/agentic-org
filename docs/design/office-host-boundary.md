@@ -1,6 +1,6 @@
 # org-office-host ↔ org-office-server: the boundary (phase 1, HQ only)
 
-Status: **approved by ada** 2026-11-08, and **agreed by River** (the host) **and server-dev** (the server), `--discard` included. Updated for ADR-0003 §2.1 (the app token on every start) and the code review of `org-office-launch` (rev 2, 2026-11-08). It implements
+Status: **approved by ada** 2026-11-08, and **agreed by River** (the host) **and server-dev** (the server), `--discard` included. Updated for ADR-0003 §2.1 (the app token on every start) and the code review of `org-office-launch` (rev 2, 2026-11-08). Amended by ada 2026-11-08 for the boundary review (adopt vs discard, `not_ready` at startup, the give-up count, the status-reason mapping, the stdin and `--discard` wording, `org-supervise`). It implements
 `docs/design/offices-hq-and-satellites.md` ("Processes on one Mac") and the `org-proto` host calls.
 The contract crate `crates/org-office-launch` holds the exact shapes. **This design is the reference:**
 where this design and `crates/org-office-launch` differ, this design wins until River's next commit
@@ -24,8 +24,9 @@ updates the crate.
 The host looks only at folders named by a plain id; any other folder (such as `.refused`) is never
 started or discarded.
 - **No `office.json`:** an unfinished create. The host never starts it. At startup, or after that create
-  failed, it runs `org-office-server --discard <id>`. The server takes the lock (same wait), and removes
-  the folder and its Keychain key only if the office never finished:
+  failed before `office.json` was in place, it runs `org-office-server --discard <id>`. The server takes
+  the lock (same wait), and removes the folder and its Keychain key only if the office never finished
+  (with no folder, it takes no lock and only removes a leftover key, see 3):
   - it refuses (`already_exists`) a folder with `office.json`, or with databases that hold a committed
     organization;
   - it deletes only when no database file exists, or when it opens them and they hold no committed
@@ -77,11 +78,13 @@ org-office-server --discard <id>    # remove an unfinished office and its key, t
   process group.
 - **stdout carries the server's control lines to the host, and nothing else.** Logs go to stderr,
   which the host sends to `<home>/logs/<handle>.log` (`logs/` 0700, files 0600; rotate at 10 MiB, keep one old file, so a crash loop can't fill the disk).
-- **No child can read the host's lines or write a control line.** The guarantee is the fd swap: first
-  thing at startup, before any thread or child starts, the server dups fds 0 and 1 to new close-on-exec
-  fds, which carry the pipe, and reopens 0 and 1 on `/dev/null`. One spawn helper (`org-supervise`) is
-  a convention on top. Every other fd the server opens is close-on-exec too, the `office.lock` fd above
-  all. The host opens its own fds close-on-exec too, so no child holds `host.lock`.
+- **No child can read the host's lines or write a control line.** The structural guarantee is the fd
+  swap, which the server does itself, first thing at startup, before any thread or child starts: it dups
+  fds 0 and 1 to new close-on-exec fds, which carry the pipe, and reopens 0 and 1 on `/dev/null`.
+  `org-supervise` is the single spawn path (see 4): `posix_spawn` with `POSIX_SPAWN_CLOEXEC_DEFAULT`,
+  so a child inherits only the fds it's given. It doesn't do the swap. Every other fd the server opens
+  is close-on-exec too, the `office.lock` fd above all. The host opens its own fds close-on-exec too, so
+  no child holds `host.lock`.
 - Framing: JSON, one object per line, at most 1 MiB per line (`org_proto::frame`). Every message has `"v":1`.
 
 ## 3. The pipe protocol (v1)
@@ -102,7 +105,8 @@ org-office-server --discard <id>    # remove an unfinished office and its key, t
 - v1 creates only HQ offices; any other role is refused.
 The host has already checked the name, its uniqueness (ignoring case) among this Mac's organizations,
 and that the office id's 12-character handle is unique (ignoring case). The server checks the name again
-with the same rule (one implementation, see 6). Later lines are reserved: the server ignores unknown `op`s.
+with the same rule (one implementation, see 6). Lines after the first are ignored; an unknown op on the
+first line is `invalid_request`.
 
 **Server → host** (stdout):
 ```json
@@ -110,19 +114,21 @@ with the same rule (one implementation, see 6). Later lines are reserved: the se
                                                         // office.json are durable
 {"v":1,"event":"ready","socket":"/…/run/3RXF2NS0SH83.sock","pid":4242}  // listening, hello works
 {"v":1,"event":"discarded"}                                            // --discard only, then exit 0;
-                                                                       // also when there's no folder and no key (idempotent)
+                                                                       // also with no folder (idempotent): see below
 {"v":1,"event":"failed","code":"key_missing","message":"…"}             // then exits non-zero
 ```
 - `created` comes before `ready`. `organization.create` answers the client as soon as `created`
   arrives (the contract's "succeeds once stored"), with the HQ status `starting`, or `active` if
   `ready` came too.
 - `ready` means the socket is bound and accepting: `hello` answers.
+- `--discard` with no folder takes no lock and creates nothing: it only checks for the office's
+  Keychain key, removes it if present, and reports `discarded`.
 - `failed` codes, and what the host does with each:
 
 | code | meaning | host |
 | --- | --- | --- |
-| `invalid_request` | a bad first line or bad args | fatal: `unavailable` |
-| `unsupported_version` | `v` unknown | fatal: `unavailable` |
+| `invalid_request` | a bad first line or bad args | fatal: `unavailable`; starts again only with a host restart and a fixed binary |
+| `unsupported_version` | `v` unknown | fatal: `unavailable`; starts again only with a host restart and a fixed binary |
 | `invalid_name` | name breaks the rule | create fails: `invalid_name` |
 | `already_exists` | `--create` but the folder or office.json exists; `--discard` of an office with office.json or a committed organization | create fails: `already_exists`; discard: log, leave it |
 | `key_missing` | databases exist, key doesn't (ADR-0002); `--discard` says `storage_error` instead | fatal: `unavailable` (`key_missing`); no automatic restart, but `office.restart` retries it |
@@ -130,29 +136,53 @@ with the same rule (one implementation, see 6). Later lines are reserved: the se
 | `storage_error` | anything else (I/O, Keychain, SQLCipher); `--discard` of a folder whose databases it can't open or check | restart with backoff (create: fails with `storage_error`; discard: log, leave it) |
 
 - A message is for people: never the key, paths or SQL. Unknown codes count as `storage_error`.
-- **On a failed `--create`, the server deletes the Keychain key it made before it exits** (the host can't: the item's ACL is tied to the server). A crash part-way through can still leave an orphan item; the host's `--discard` then removes it with the folder (rule in 1).
+- **On a failed `--create`, the server deletes the Keychain key it made before it exits, but only before
+  `office.json` is in place** (the host can't: the item's ACL is tied to the server). Once `office.json`
+  is renamed into place, the server never deletes its key, even if it then fails: the office is stored,
+  and the host adopts it (see 4). A crash before that point can still leave an orphan item; the host's
+  `--discard` then removes it with the folder (rule in 1).
 - EOF on stdout with no `failed` line, or exit before `ready`, means a crash: restart with backoff.
 
 ## 4. What the host does
-- **Status per office** (`OfficeInfo.status`): `starting` (spawned, no `ready` yet) → `active`
-  (`ready`, child alive) → `offline` (exited, restart pending) → `unavailable` (fatal code, or
-  restarts given up). The `ready` wait is 30 s (Keychain and the first SQLCipher open can be slow), then kill + backoff.
+- **Status per office** (`OfficeInfo.status`): `starting` (spawned, no `ready` yet; at host startup,
+  also every catalog office not spawned yet, see Startup: this widens `starting`) → `active` (`ready`,
+  child alive) → `offline` (exited; a restart is pending, with `next_restart_at`, unless the reason is
+  `stopped_by_owner`) → `unavailable` (fatal code, or restarts given up). The `ready` wait is 30 s
+  (Keychain and the first SQLCipher open can be slow), then kill + backoff.
+- **Status reasons** (`OfficeInfo.status_reason`, set with `offline` and `unavailable`), one for every
+  way a start or a running server ends:
+
+  | what happened | `status_reason` | status |
+  | --- | --- | --- |
+  | EOF on stdout without a `failed` line (a crash, before or after `ready`) | `crashed` | `offline` |
+  | no `ready` within 30 s (the host kills it) | `start_timeout` | `offline` |
+  | `failed: in_use` | `in_use` | `offline` |
+  | `failed: storage_error`, or an unknown code | `storage_error` | `offline` |
+  | `failed: key_missing` | `key_missing` | `unavailable` |
+  | `failed: unsupported_version` | `unsupported_version` | `unavailable` |
+  | `failed: invalid_request` | `invalid_request` | `unavailable` |
+  | the give-up rule (below) | `restarts_exhausted` | `unavailable` |
+  | the owner stopped it (no call does yet) | `stopped_by_owner` | `offline`, no restart pending |
+
+  `invalid_name` and `already_exists` end a create only; that office never enters the catalog.
 - **Restart:** backoff 1, 2, 4 … 60 s, reset after 60 s of uptime. Fatal codes never restart on
-  their own: only `office.restart` or a host restart starts them again.
+  their own. A `key_missing` office starts again only with `office.restart` or a host restart.
+  `unsupported_version` and `invalid_request` start again only with a host restart and a fixed binary
+  (`office.restart` refuses them).
 - **Shutdown** (SIGTERM from launchd at logout, or the host exiting): close every child's stdin,
   wait up to 10 s, then SIGKILL what's left.
 - **Create:** under the catalog mutex, and only for this step: check the name and its uniqueness
   (counting names reserved by creates in flight), make the org and office ids (re-roll on a handle
   clash), reserve the name and handle, then release the mutex. Outside it: spawn `--create` and wait for
   `created` (or `failed`) for at most 30 s. On failure, run `--discard` (rule in 1), return the error
-  and emit nothing. On success, emit `organization.created` on `subscribe`. The reservation ends when
+  and emit nothing, unless `office.json` is present (adopt, below). On success, emit `organization.created` on `subscribe`. The reservation ends when
   the create fails, or once the new office is in the catalog.
 - **host.sock:** 0600 and `run/` 0700. On accept, the host also checks the peer's uid (`getpeereid`) is its own (defence in depth).
-- **Fatal status and restart:** `unavailable` (with `status_reason`) lasts until the owner calls `office.restart` from the app, or the host restarts. `office.restart` clears it and resets the backoff, and retries `key_missing` (it goes straight back if the key is still missing); it refuses `unsupported_version` and `invalid_request`. Every status change is pushed as `office.status_changed` on `subscribe`.
-- **Startup:** the host binds `host.sock` before it spawns anything. It answers `hello`, `office.list` (offices show `starting`) and `subscribe` at once. Calls that need a settled catalog (`organization.create`, `office.restart`, and `office.app_token` for an office still being discarded) wait for the startup discards, at most 30 s, then return `unavailable` ("host starting").
-- **A create that stored its office but died before `created`:** if `office.json` matches the plan (id, org_id, org_name, office_name, role), the host adopts it: the create succeeds (status `starting`), it starts `--office`, and it emits `organization.created`. A mismatch is a refused create.
-- **Spawning:** every process the host or a server starts goes through `org-supervise` (`posix_spawn` with `POSIX_SPAWN_CLOEXEC_DEFAULT` and explicit file actions for fds 0/1/2), so a child inherits only the fds it's given.
-- **Give-up rule:** 10 failed restarts within 30 minutes → `unavailable` with `restarts_exhausted` (no more automatic restarts until `office.restart`). While `offline` with a restart pending, `next_restart_at` says when.
+- **Fatal status and restart:** `unavailable` (with `status_reason`) lasts until the owner calls `office.restart` from the app, or the host restarts (for `unsupported_version` and `invalid_request`, a host restart with a fixed binary only). `office.restart` starts an `offline` or `unavailable` office now; for any other status it returns `conflict`. It's app-only: the host checks the caller's code signature, as for `office.app_token` (`not_authorized` otherwise). It clears `unavailable`, resets the backoff and the give-up count (the failure count goes to 0), and retries `key_missing` (it goes straight back if the key is still missing); it refuses `unsupported_version` and `invalid_request` (`unavailable`). Every status change is pushed as `office.status_changed` on `subscribe`.
+- **Startup:** the host binds `host.sock` before it spawns anything. It answers `hello`, `office.list` and `subscribe` at once. `office.list` shows every catalog office as `starting` from the start, before the host has spawned it (this widens `starting`, see Status per office). Calls that need a settled catalog (`organization.create`, `office.restart`, and `office.app_token` for an office still being discarded) wait for the startup discards, at most 30 s, then return `not_ready` ("host starting"; temporary, retry shortly).
+- **A create that stored its office but didn't report `created`** (it died, or sent a `failed` line after `office.json` was in place): if `office.json` matches the plan (id, org_id, org_name, office_name, role), the host adopts it: the create succeeds (status `starting`), it starts `--office`, and it emits `organization.created`. It never runs `--discard` once `office.json` is present. A mismatch is a refused create.
+- **Spawning:** `org-supervise` is the single spawn path: every process the host or a server starts goes through it (`posix_spawn` with `POSIX_SPAWN_CLOEXEC_DEFAULT` and explicit file actions for fds 0/1/2), so a child inherits only the fds it's given. That needs libc FFI; the `unsafe` is confined to `org-supervise`. It complements the server's fd swap (see 2), which is the structural guarantee and doesn't depend on it.
+- **Give-up rule:** 10 failed restarts within 30 minutes → `unavailable` with `restarts_exhausted` (no more automatic restarts until `office.restart`, which resets the count). A **failed restart** is an exit before 60 s of uptime: a crash, EOF without `ready`, a `failed` line, or the ready timeout. A crash after 60 s of uptime counts as a fresh start, not a failure. While `offline` with a restart pending, `next_restart_at` says when.
 - **Socket length:** every office socket path in a home has the same length (12-character handles),
   so the host checks `host.sock` and a sample `run/XXXXXXXXXXXX.sock` against the 103-byte limit **at
   startup** and refuses to start with a clear message. No per-create error code is needed.
@@ -161,7 +191,8 @@ with the same rule (one implementation, see 6). Later lines are reserved: the se
 - `apps/org-office-host/`: `src/main.rs` (thin: args, location, signals, `Host::run`) and
   `src/lib.rs` with modules `catalog` (scan, office.json, name uniqueness, create), `supervisor`
   (spawn, the pipe protocol, status, backoff, shutdown), and `service` (org-proto handlers: `hello`,
-  `organization.create`, `organization.list`, `office.list`, `subscribe`).
+  `organization.create`, `organization.list`, `office.list`, `office.restart`, `office.app_token`,
+  `subscribe`).
 - The supervisor takes the server program's path as config (default: the `org-office-server` next to
   the host binary in the app bundle). The host's tests use a **fake office server** (a test helper binary
   that follows section 3), so the host is tested without SQLCipher or the Keychain, and doesn't wait for
@@ -170,7 +201,7 @@ with the same rule (one implementation, see 6). Later lines are reserved: the se
   `org-office-server`'s library (an app doesn't depend on an app).
 
 ## 6. Decisions (ada, 2026-11-08)
-1. **The pipe protocol and `office.json` types live in a new contract crate, `crates/org-office-launch`**, not `org-proto` (the client contract stays small). It depends only on `org-proto`, `serde` and `serde_json`. ada owns it as a contract. River writes the first version, and ada reviews every commit that touches it. It's additive and versioned (`"v":1`; unknown ops, events and fields are ignored; unknown failed codes count as `storage_error`).
+1. **The pipe protocol and `office.json` types live in a new contract crate, `crates/org-office-launch`**, not `org-proto` (the client contract stays small). It depends only on `org-proto`, `serde` and `serde_json`. ada owns it as a contract. River writes the first version, and ada reviews every commit that touches it. It's additive and versioned (`"v":1`; lines after the first are ignored, and an unknown op on the first line is `invalid_request`; unknown events and fields are ignored; unknown failed codes count as `storage_error`).
 2. **The name rule is `org_proto::OrganizationName`** (ada, branch `ada/proto-org-name`): `parse(&str) -> Result<_, NameError>`, `.as_str()` (trimmed), `.key()` (Unicode lowercase of the trimmed name, no normalization). `NameError` is `Empty | TooLong | ControlChar` with `.message()`, mapping to `invalid_name`.
 3. **The minimal listener** lives in one module (`service/listener.rs`), uses only `org_proto::frame` and the typed `Call`/`EventKind`, and grows no router. It's swapped for server-dev's shared crate once that's extracted.
 4. The design's "`--create --role hq`" (line 35) is wrong. Only `--create` goes on the command line. ada fixes the wording.
