@@ -3,8 +3,8 @@
 //!
 //! Setup: `ensure_running` says `hello` to the host; when nothing is listening it turns the host's login service
 //! on (see `login_item`) and waits for it to come up, or says what the owner has to do (allow it in System
-//! Settings). `ping` never does any of that. The mock office stays the default until the host is bundled
-//! (`AGENTIC_ORG_OFFICE=real` picks this one).
+//! Settings). `ping` never does any of that. This is the app's default office; `AGENTIC_ORG_OFFICE=mock`
+//! picks the invented one instead.
 
 use crate::login_item::{LoginService, LoginState};
 use crate::office::{OfficeConnection, SetupError, SetupErrorCode};

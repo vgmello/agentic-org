@@ -1,8 +1,7 @@
 //! The app's view of an office server.
 //!
-//! `OfficeConnection` is the seam between the Tauri shell and an office. Today only `MockOffice`
-//! implements it. The real implementation will sit on `org-client` and the office-setup layer
-//! (install, login-service registration, start), neither of which exists yet.
+//! `OfficeConnection` is the seam between the Tauri shell and an office. `RealOffice` (on `org-client` and the
+//! login-service setup) is the app's default; `MockOffice` stands in for development and when there is no office home.
 
 use crate::org_command::OrgCommand;
 use crate::work_engine::WorkError;
