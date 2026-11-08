@@ -1,0 +1,12 @@
+[package]
+name = "org-agent"
+version = "0.1.0"
+edition = "2021"
+description = "Fast CLI for agent-to-agent messaging over the local spool"
+
+[[bin]]
+name = "org-agent"
+path = "src/main.rs"
+
+[dependencies]
+org-msg = { path = "../org-msg" }

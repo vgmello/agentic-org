@@ -1,0 +1,799 @@
+//! Maildir-style spool operations encapsulated behind `Spool`.
+//!
+//! All filesystem paths (`outbox/{tmp,new}`, `inbox/<agent>/{tmp,new,cur,wake}`, `dead/`,
+//! `relay.sock`, `relay.lock`) are private to this module.
+
+use std::env;
+use std::fmt;
+use std::fs::{self, DirBuilder, OpenOptions};
+use std::io::{self, ErrorKind, Read, Write};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::io::AsRawFd;
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::{Path, PathBuf};
+use std::process;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime};
+
+use crate::envelope::{validate_agent_id, Envelope};
+use crate::time::format_iso8601_utc;
+use crate::ulid::{generate_ulid, is_valid_ulid};
+
+const RETENTION_SECS: u64 = 30 * 24 * 60 * 60;
+const ASK_WAIT_BACKSTOP: Duration = Duration::from_millis(2);
+
+static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+
+/// Async-signal-safe interrupt flag setter so `wait_for_reply` / `wait_for_inbox` unwind
+/// cleanly and run `WakeListener::drop` on the main thread.
+pub fn request_interrupt() {
+    INTERRUPTED.store(true, Ordering::SeqCst);
+}
+
+pub fn is_interrupted() -> bool {
+    INTERRUPTED.load(Ordering::SeqCst)
+}
+
+#[repr(C)]
+struct PollFd {
+    fd: i32,
+    events: i16,
+    revents: i16,
+}
+
+const POLLIN: i16 = 0x0001;
+
+extern "C" {
+    fn kill(pid: i32, sig: i32) -> i32;
+    fn fsync(fd: i32) -> i32;
+    fn poll(fds: *mut PollFd, nfds: u32, timeout: i32) -> i32;
+}
+
+/// Wait on a `UnixListener` for up to `timeout` using POSIX `poll(2)` (0% CPU while idle).
+pub fn poll_unix_listener(listener: &UnixListener, timeout: Duration) -> bool {
+    let ms = timeout.as_millis().min(i32::MAX as u128) as i32;
+    let mut pfd = PollFd {
+        fd: listener.as_raw_fd(),
+        events: POLLIN,
+        revents: 0,
+    };
+    let rc = unsafe { poll(&mut pfd as *mut PollFd, 1, ms) };
+    if rc > 0 {
+        let mut drained = false;
+        while let Ok((mut stream, _)) = listener.accept() {
+            let mut buf = [0u8; 16];
+            let _ = stream.read(&mut buf);
+            drained = true;
+        }
+        drained
+    } else {
+        false
+    }
+}
+
+fn is_pid_dead(pid: u32) -> bool {
+    if pid == 0 || pid > i32::MAX as u32 {
+        return true;
+    }
+    let rc = unsafe { kill(pid as i32, 0) };
+    if rc == 0 {
+        return false;
+    }
+    io::Error::last_os_error().raw_os_error() == Some(3)
+}
+
+fn socket_owner_pid_is_dead(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    let Some((pid_str, _)) = name.split_once('-') else {
+        return false;
+    };
+    let Ok(pid) = pid_str.parse::<u32>() else {
+        return false;
+    };
+    is_pid_dead(pid)
+}
+
+#[derive(Debug)]
+pub enum SpoolError {
+    InvalidInput(String),
+    UnknownRecipient(String),
+    NotFound(String),
+    Timeout(String),
+    Interrupted,
+    Io(io::Error),
+}
+
+impl fmt::Display for SpoolError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidInput(msg) => write!(f, "{msg}"),
+            Self::UnknownRecipient(agent) => write!(
+                f,
+                "unknown recipient {agent} (register it with: org-agent msg register {agent})"
+            ),
+            Self::NotFound(msg) => write!(f, "{msg}"),
+            Self::Timeout(msg) => write!(f, "{msg}"),
+            Self::Interrupted => write!(f, "interrupted by signal"),
+            Self::Io(err) => write!(f, "I/O error: {err}"),
+        }
+    }
+}
+
+impl From<io::Error> for SpoolError {
+    fn from(value: io::Error) -> Self {
+        Self::Io(value)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeliverOutcome {
+    Delivered { id: String, to: String },
+    Dead { id: String, reason: String },
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DeliverSummary {
+    pub delivered: usize,
+    pub dead: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpoolStatus {
+    pub root: PathBuf,
+    pub outbox_new: usize,
+    pub dead: usize,
+    pub registered_agents: Vec<String>,
+}
+
+/// Listener bound to `inbox/<agent>/wake/<pid>-<ulid>.sock` that unlinks on `Drop`.
+pub struct WakeListener {
+    listener: Option<UnixListener>,
+    sock_path: PathBuf,
+}
+
+impl WakeListener {
+    pub fn socket_path(&self) -> &Path {
+        &self.sock_path
+    }
+
+    pub fn wait_slice(&self, max_wait: Duration) -> bool {
+        let slice = max_wait.min(ASK_WAIT_BACKSTOP);
+        if let Some(listener) = &self.listener {
+            poll_unix_listener(listener, slice)
+        } else {
+            thread::sleep(slice);
+            false
+        }
+    }
+}
+
+impl Drop for WakeListener {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.sock_path);
+    }
+}
+
+/// Encapsulates the `$ORG_HOME/spool` layout and all atomic file operations.
+#[derive(Debug, Clone)]
+pub struct Spool {
+    root: PathBuf,
+}
+
+impl Spool {
+    /// Resolve `$ORG_HOME` or default to `$HOME/.agency`.
+    pub fn resolve_default_root() -> Result<PathBuf, SpoolError> {
+        if let Ok(val) = env::var("ORG_HOME") {
+            let trimmed = val.trim();
+            if !trimmed.is_empty() {
+                return Ok(PathBuf::from(trimmed));
+            }
+        }
+        let home = env::var("HOME")
+            .map_err(|_| SpoolError::InvalidInput("neither ORG_HOME nor HOME is set".into()))?;
+        Ok(PathBuf::from(home).join(".agency"))
+    }
+
+    pub fn open_from_env() -> Result<Self, SpoolError> {
+        Self::open(Self::resolve_default_root()?)
+    }
+
+    pub fn open(root: impl Into<PathBuf>) -> Result<Self, SpoolError> {
+        let root = root.into();
+        let spool = Self { root };
+        spool.ensure_dir(&spool.outbox_tmp_dir())?;
+        spool.ensure_dir(&spool.outbox_new_dir())?;
+        spool.ensure_dir(&spool.inbox_root_dir())?;
+        spool.ensure_dir(&spool.dead_dir())?;
+        Ok(spool)
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    pub fn relay_socket_path(&self) -> PathBuf {
+        self.spool_dir().join("relay.sock")
+    }
+
+    pub fn relay_lock_path(&self) -> PathBuf {
+        self.root.join("relay.lock")
+    }
+
+    fn spool_dir(&self) -> PathBuf {
+        self.root.join("spool")
+    }
+
+    fn outbox_tmp_dir(&self) -> PathBuf {
+        self.spool_dir().join("outbox").join("tmp")
+    }
+
+    fn outbox_new_dir(&self) -> PathBuf {
+        self.spool_dir().join("outbox").join("new")
+    }
+
+    fn inbox_root_dir(&self) -> PathBuf {
+        self.spool_dir().join("inbox")
+    }
+
+    fn agent_inbox_dir(&self, agent: &str) -> PathBuf {
+        self.inbox_root_dir().join(agent)
+    }
+
+    fn agent_tmp_dir(&self, agent: &str) -> PathBuf {
+        self.agent_inbox_dir(agent).join("tmp")
+    }
+
+    fn agent_new_dir(&self, agent: &str) -> PathBuf {
+        self.agent_inbox_dir(agent).join("new")
+    }
+
+    fn agent_cur_dir(&self, agent: &str) -> PathBuf {
+        self.agent_inbox_dir(agent).join("cur")
+    }
+
+    fn agent_wake_dir(&self, agent: &str) -> PathBuf {
+        self.agent_inbox_dir(agent).join("wake")
+    }
+
+    fn dead_dir(&self) -> PathBuf {
+        self.spool_dir().join("dead")
+    }
+
+    fn ensure_dir(&self, path: &Path) -> Result<(), SpoolError> {
+        let mut builder = DirBuilder::new();
+        builder.recursive(true).mode(0o700);
+        builder.create(path)?;
+        Ok(())
+    }
+
+    fn write_file_0600(path: &Path, bytes: &[u8], sync: bool) -> Result<(), SpoolError> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(bytes)?;
+        if sync {
+            let rc = unsafe { fsync(file.as_raw_fd()) };
+            if rc != 0 {
+                return Err(SpoolError::Io(io::Error::last_os_error()));
+            }
+        }
+        Ok(())
+    }
+
+    fn sorted_json_entries(dir: &Path) -> Result<Vec<PathBuf>, SpoolError> {
+        if !dir.is_dir() {
+            return Ok(Vec::new());
+        }
+        let mut files = Vec::new();
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if !name.starts_with('.') && name.ends_with(".json") && path.is_file() {
+                    files.push(path);
+                }
+            }
+        }
+        files.sort();
+        Ok(files)
+    }
+
+    /// Register an agent's inbox (`inbox/<agent>/{tmp,new,cur,wake}`).
+    pub fn register(&self, agent: &str) -> Result<(), SpoolError> {
+        validate_agent_id(agent, "register").map_err(SpoolError::InvalidInput)?;
+        self.ensure_dir(&self.agent_tmp_dir(agent))?;
+        self.ensure_dir(&self.agent_new_dir(agent))?;
+        self.ensure_dir(&self.agent_cur_dir(agent))?;
+        self.ensure_dir(&self.agent_wake_dir(agent))?;
+        Ok(())
+    }
+
+    /// Remove an agent's inbox registration.
+    pub fn deregister(&self, agent: &str) -> Result<(), SpoolError> {
+        validate_agent_id(agent, "deregister").map_err(SpoolError::InvalidInput)?;
+        let dir = self.agent_inbox_dir(agent);
+        if dir.exists() {
+            fs::remove_dir_all(&dir)?;
+        }
+        Ok(())
+    }
+
+    /// Check whether `<agent>` has a registered inbox.
+    pub fn is_registered(&self, agent: &str) -> bool {
+        if validate_agent_id(agent, "to").is_err() {
+            return false;
+        }
+        self.agent_new_dir(agent).is_dir() && self.agent_cur_dir(agent).is_dir()
+    }
+
+    /// Atomically write an envelope into `outbox/tmp/<id>.json`, `fsync` it,
+    /// and rename it into `outbox/new/<id>.json`.
+    pub fn enqueue(&self, env: &Envelope) -> Result<PathBuf, SpoolError> {
+        let bytes = env.to_json_bytes().map_err(SpoolError::InvalidInput)?;
+        let filename = format!("{}.json", env.id);
+        let tmp_path = self.outbox_tmp_dir().join(&filename);
+        let new_path = self.outbox_new_dir().join(&filename);
+
+        Self::write_file_0600(&tmp_path, &bytes, true)?;
+        fs::rename(&tmp_path, &new_path)?;
+        Ok(new_path)
+    }
+
+    /// Non-blocking 1-byte nudge to `spool/relay.sock` (ignored if relay is down).
+    pub fn nudge_relay(&self) {
+        let sock = self.relay_socket_path();
+        if let Ok(stream) = UnixStream::connect(&sock) {
+            let _ = stream.set_nonblocking(true);
+            let _ = (&stream).write_all(b"1");
+        }
+    }
+
+    /// Bind a per-listener wake socket at `inbox/<agent>/wake/<pid>-<ulid>.sock`.
+    pub fn bind_wake_listener(&self, agent: &str) -> Result<WakeListener, SpoolError> {
+        validate_agent_id(agent, "agent").map_err(SpoolError::InvalidInput)?;
+        let wake_dir = self.agent_wake_dir(agent);
+        self.ensure_dir(&wake_dir)?;
+        let sock_name = format!("{}-{}.sock", process::id(), generate_ulid());
+        let sock_path = wake_dir.join(sock_name);
+        let _ = fs::remove_file(&sock_path);
+
+        let listener = match UnixListener::bind(&sock_path) {
+            Ok(l) => {
+                let _ = fs::set_permissions(&sock_path, fs::Permissions::from_mode(0o600));
+                let _ = l.set_nonblocking(true);
+                Some(l)
+            }
+            Err(_) => None,
+        };
+
+        Ok(WakeListener {
+            listener,
+            sock_path,
+        })
+    }
+
+    fn notify_agent_wake_sockets(&self, agent: &str) {
+        let wake_dir = self.agent_wake_dir(agent);
+        let Ok(entries) = fs::read_dir(&wake_dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("sock") {
+                continue;
+            }
+            match UnixStream::connect(&path) {
+                Ok(stream) => {
+                    let _ = stream.set_nonblocking(true);
+                    let _ = (&stream).write_all(b"1");
+                }
+                Err(e) => {
+                    // Stale socket rule (0004 §2): ECONNREFUSED or ENOENT (or dead owner PID) means listener is dead.
+                    if matches!(
+                        e.kind(),
+                        ErrorKind::ConnectionRefused | ErrorKind::NotFound
+                    ) || socket_owner_pid_is_dead(&path)
+                    {
+                        let _ = fs::remove_file(&path);
+                    }
+                }
+            }
+        }
+    }
+
+    fn safe_dead_stem(&self, candidate: &str) -> String {
+        let valid_chars = !candidate.is_empty()
+            && candidate.len() <= 64
+            && !candidate.starts_with('.')
+            && candidate
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'));
+        let base = if valid_chars {
+            candidate.to_string()
+        } else {
+            generate_ulid()
+        };
+        if !self.dead_dir().join(format!("{base}.json")).exists() {
+            base
+        } else {
+            format!("{base}-{}", generate_ulid())
+        }
+    }
+
+    fn move_to_dead(
+        &self,
+        source_file: &Path,
+        id_stem: &str,
+        reason: &str,
+    ) -> Result<DeliverOutcome, SpoolError> {
+        let safe_stem = self.safe_dead_stem(id_stem);
+        let dead_json = self.dead_dir().join(format!("{safe_stem}.json"));
+        let dead_reason = self.dead_dir().join(format!("{safe_stem}.reason"));
+        fs::rename(source_file, &dead_json)?;
+        Self::write_file_0600(&dead_reason, format!("{reason}\n").as_bytes(), false)?;
+        Ok(DeliverOutcome::Dead {
+            id: safe_stem,
+            reason: reason.to_string(),
+        })
+    }
+
+    /// Route and deliver a single file from `outbox/new/<id>.json` into `inbox/<to>/new/<id>.json`
+    /// or `dead/<id>.json` + `dead/<id>.reason`.
+    pub fn deliver_one(&self, outbox_file: &Path) -> Result<DeliverOutcome, SpoolError> {
+        let file_name = outbox_file
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| SpoolError::InvalidInput("invalid outbox file name".into()))?;
+        let id_stem = file_name.strip_suffix(".json").unwrap_or(file_name);
+
+        let bytes = match fs::read(outbox_file) {
+            Ok(b) => b,
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                return Err(SpoolError::NotFound(format!(
+                    "outbox file {} already moved",
+                    outbox_file.display()
+                )));
+            }
+            Err(e) => return Err(SpoolError::Io(e)),
+        };
+
+        let env = match Envelope::from_json_bytes(&bytes) {
+            Ok(env) => env,
+            Err(err) => {
+                return self.move_to_dead(outbox_file, id_stem, &format!("invalid_envelope: {err}"));
+            }
+        };
+
+        if env.id != id_stem {
+            return self.move_to_dead(
+                outbox_file,
+                id_stem,
+                &format!("id_filename_mismatch: file={id_stem} env.id={}", env.id),
+            );
+        }
+
+        let now_iso = format_iso8601_utc(SystemTime::now());
+        if env.is_expired_at(&now_iso) {
+            let exp = env.expires_at.as_deref().unwrap_or("unknown");
+            return self.move_to_dead(outbox_file, &env.id, &format!("expired: expires_at={exp}"));
+        }
+
+        if !self.is_registered(&env.to) {
+            return self.move_to_dead(
+                outbox_file,
+                &env.id,
+                &format!("unknown_recipient: {}", env.to),
+            );
+        }
+
+        let dest_path = self.agent_new_dir(&env.to).join(format!("{}.json", env.id));
+        fs::rename(outbox_file, &dest_path)?;
+        self.notify_agent_wake_sockets(&env.to);
+
+        Ok(DeliverOutcome::Delivered {
+            id: env.id,
+            to: env.to,
+        })
+    }
+
+    /// Returns `true` if `outbox/new` contains at least one `.json` file.
+    pub fn has_pending_outbox(&self) -> bool {
+        let Ok(entries) = fs::read_dir(self.outbox_new_dir()) else {
+            return false;
+        };
+        for entry in entries.flatten() {
+            if let Some(name) = entry.file_name().to_str() {
+                if !name.starts_with('.') && name.ends_with(".json") {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Deliver all pending messages currently in `outbox/new/`.
+    pub fn deliver_all(&self) -> Result<DeliverSummary, SpoolError> {
+        let mut summary = DeliverSummary::default();
+        for path in Self::sorted_json_entries(&self.outbox_new_dir())? {
+            match self.deliver_one(&path) {
+                Ok(DeliverOutcome::Delivered { .. }) => summary.delivered += 1,
+                Ok(DeliverOutcome::Dead { .. }) => summary.dead += 1,
+                Err(SpoolError::NotFound(_)) => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(summary)
+    }
+
+    /// List unread messages in `inbox/<agent>/new/` (and `cur/` when `include_cur` is true)
+    /// without claiming them. Corrupt files in `new/` are quarantined to `dead/`.
+    pub fn list_inbox(&self, agent: &str, include_cur: bool) -> Result<Vec<Envelope>, SpoolError> {
+        validate_agent_id(agent, "agent").map_err(SpoolError::InvalidInput)?;
+        let mut out = Vec::new();
+        for path in Self::sorted_json_entries(&self.agent_new_dir(agent))? {
+            let Ok(bytes) = fs::read(&path) else {
+                continue;
+            };
+            match Envelope::from_json_bytes(&bytes) {
+                Ok(env) => out.push(env),
+                Err(err) => {
+                    let stem = path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("corrupt");
+                    let _ = self.move_to_dead(&path, stem, &format!("corrupt_inbox_file: {err}"));
+                }
+            }
+        }
+        if include_cur {
+            for path in Self::sorted_json_entries(&self.agent_cur_dir(agent))? {
+                if let Ok(bytes) = fs::read(&path) {
+                    if let Ok(env) = Envelope::from_json_bytes(&bytes) {
+                        out.push(env);
+                    }
+                }
+            }
+            out.sort_by(|a, b| a.id.cmp(&b.id));
+        }
+        Ok(out)
+    }
+
+    /// Claim a specific message by ULID (`inbox/<agent>/new/<id>.json` -> `cur/<id>.json`).
+    pub fn claim(&self, agent: &str, id: &str) -> Result<Envelope, SpoolError> {
+        validate_agent_id(agent, "agent").map_err(SpoolError::InvalidInput)?;
+        if !is_valid_ulid(id) {
+            return Err(SpoolError::InvalidInput(format!("invalid message id '{id}'")));
+        }
+        let fname = format!("{id}.json");
+        let new_path = self.agent_new_dir(agent).join(&fname);
+        let cur_path = self.agent_cur_dir(agent).join(&fname);
+
+        if new_path.is_file() {
+            let bytes = fs::read(&new_path)?;
+            let env = match Envelope::from_json_bytes(&bytes) {
+                Ok(e) => e,
+                Err(err) => {
+                    let _ = self.move_to_dead(&new_path, id, &format!("corrupt_inbox_file: {err}"));
+                    return Err(SpoolError::InvalidInput(format!(
+                        "corrupt message '{id}' moved to dead/: {err}"
+                    )));
+                }
+            };
+            self.ensure_dir(&self.agent_cur_dir(agent))?;
+            match fs::rename(&new_path, &cur_path) {
+                Ok(()) => return Ok(env),
+                Err(e) if e.kind() == ErrorKind::NotFound => {}
+                Err(e) => return Err(SpoolError::Io(e)),
+            }
+        }
+
+        if cur_path.is_file() {
+            let bytes = fs::read(&cur_path)?;
+            return Envelope::from_json_bytes(&bytes).map_err(SpoolError::InvalidInput);
+        }
+
+        Err(SpoolError::NotFound(format!(
+            "message '{id}' not found in inbox for '{agent}'"
+        )))
+    }
+
+    /// Claim the oldest unread message in `inbox/<agent>/new/` (`new` -> `cur`), skipping
+    /// and dead-lettering any corrupted file so `read --next` never wedges.
+    pub fn claim_next(&self, agent: &str) -> Result<Option<Envelope>, SpoolError> {
+        validate_agent_id(agent, "agent").map_err(SpoolError::InvalidInput)?;
+        for path in Self::sorted_json_entries(&self.agent_new_dir(agent))? {
+            let Some(stem) = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.strip_suffix(".json"))
+            else {
+                continue;
+            };
+            if !is_valid_ulid(stem) {
+                let _ = self.move_to_dead(&path, stem, "invalid_inbox_filename");
+                continue;
+            }
+            match self.claim(agent, stem) {
+                Ok(env) => return Ok(Some(env)),
+                Err(SpoolError::NotFound(_)) | Err(SpoolError::InvalidInput(_)) => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(None)
+    }
+
+    /// Find a message in `inbox/<agent>/new/` or `cur/` without changing its read state
+    /// (used by `org-agent msg reply <id>`).
+    pub fn find_for_reply(&self, agent: &str, id: &str) -> Result<Envelope, SpoolError> {
+        validate_agent_id(agent, "agent").map_err(SpoolError::InvalidInput)?;
+        if !is_valid_ulid(id) {
+            return Err(SpoolError::InvalidInput(format!("invalid message id '{id}'")));
+        }
+        let fname = format!("{id}.json");
+        for dir in [self.agent_new_dir(agent), self.agent_cur_dir(agent)] {
+            let path = dir.join(&fname);
+            if path.is_file() {
+                let bytes = fs::read(&path)?;
+                return Envelope::from_json_bytes(&bytes).map_err(SpoolError::InvalidInput);
+            }
+        }
+        Err(SpoolError::NotFound(format!(
+            "message '{id}' not found in inbox for '{agent}'"
+        )))
+    }
+
+    /// Scan `inbox/<agent>/new/` for a reply with `reply_to == Some(req_id)` and claim ONLY
+    /// that message, leaving all other unread messages in `new/`.
+    pub fn claim_reply_to(
+        &self,
+        agent: &str,
+        req_id: &str,
+    ) -> Result<Option<Envelope>, SpoolError> {
+        validate_agent_id(agent, "agent").map_err(SpoolError::InvalidInput)?;
+        for path in Self::sorted_json_entries(&self.agent_new_dir(agent))? {
+            let Ok(bytes) = fs::read(&path) else {
+                continue;
+            };
+            let env = match Envelope::from_json_bytes(&bytes) {
+                Ok(env) => env,
+                Err(err) => {
+                    let stem = path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("corrupt");
+                    let _ = self.move_to_dead(&path, stem, &format!("corrupt_inbox_file: {err}"));
+                    continue;
+                }
+            };
+            if env.reply_to.as_deref() == Some(req_id) {
+                let cur_path = self.agent_cur_dir(agent).join(format!("{}.json", env.id));
+                if fs::rename(&path, &cur_path).is_ok() {
+                    return Ok(Some(env));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Wait using a pre-bound `WakeListener` until a reply with `reply_to == req_id` arrives
+    /// in `inbox/<agent>/new/`, claiming only that reply and leaving other messages unread.
+    pub fn wait_for_reply_with_listener(
+        &self,
+        agent: &str,
+        req_id: &str,
+        listener: &WakeListener,
+        timeout: Duration,
+    ) -> Result<Envelope, SpoolError> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if is_interrupted() {
+                return Err(SpoolError::Interrupted);
+            }
+            if let Some(reply) = self.claim_reply_to(agent, req_id)? {
+                return Ok(reply);
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                return Err(SpoolError::Timeout(format!(
+                    "timed out after {}ms waiting for reply to {req_id}",
+                    timeout.as_millis()
+                )));
+            }
+            let remaining = deadline.saturating_duration_since(now);
+            listener.wait_slice(remaining);
+        }
+    }
+
+    /// Wait until an unread message (optionally matching `from_filter`) is present in
+    /// `inbox/<agent>/new/` and return it.
+    pub fn wait_for_inbox(
+        &self,
+        agent: &str,
+        from_filter: Option<&str>,
+        timeout: Duration,
+    ) -> Result<Envelope, SpoolError> {
+        validate_agent_id(agent, "agent").map_err(SpoolError::InvalidInput)?;
+        if let Some(f) = from_filter {
+            validate_agent_id(f, "from").map_err(SpoolError::InvalidInput)?;
+        }
+        self.register(agent)?;
+        let listener = self.bind_wake_listener(agent)?;
+        let deadline = Instant::now() + timeout;
+
+        loop {
+            if is_interrupted() {
+                return Err(SpoolError::Interrupted);
+            }
+            for env in self.list_inbox(agent, false)? {
+                if from_filter.map(|f| env.from == f).unwrap_or(true) {
+                    return Ok(env);
+                }
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                return Err(SpoolError::Timeout(format!(
+                    "timed out after {}ms waiting for message in {agent}'s inbox",
+                    timeout.as_millis()
+                )));
+            }
+            let remaining = deadline.saturating_duration_since(now);
+            listener.wait_slice(remaining);
+        }
+    }
+
+    /// Prune messages in `inbox/*/cur/` older than 30 days.
+    pub fn prune_old_cur(&self) -> Result<usize, SpoolError> {
+        let inbox_root = self.inbox_root_dir();
+        if !inbox_root.is_dir() {
+            return Ok(0);
+        }
+        let cutoff = SystemTime::now()
+            .checked_sub(Duration::from_secs(RETENTION_SECS))
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        let mut pruned = 0usize;
+
+        for agent_entry in fs::read_dir(&inbox_root)? {
+            let agent_entry = agent_entry?;
+            let cur_dir = agent_entry.path().join("cur");
+            for file_path in Self::sorted_json_entries(&cur_dir)? {
+                if let Ok(meta) = fs::metadata(&file_path) {
+                    if let Ok(modified) = meta.modified() {
+                        if modified < cutoff && fs::remove_file(&file_path).is_ok() {
+                            pruned += 1;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(pruned)
+    }
+
+    /// Return current spool statistics (`outbox_new`, `dead`, `registered_agents`).
+    pub fn status(&self) -> Result<SpoolStatus, SpoolError> {
+        let outbox_new = Self::sorted_json_entries(&self.outbox_new_dir())?.len();
+        let dead = Self::sorted_json_entries(&self.dead_dir())?.len();
+        let mut registered_agents = Vec::new();
+        if let Ok(entries) = fs::read_dir(self.inbox_root_dir()) {
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    if !name.starts_with('.') && self.is_registered(name) {
+                        registered_agents.push(name.to_string());
+                    }
+                }
+            }
+        }
+        registered_agents.sort();
+        Ok(SpoolStatus {
+            root: self.root.clone(),
+            outbox_new,
+            dead,
+            registered_agents,
+        })
+    }
+}

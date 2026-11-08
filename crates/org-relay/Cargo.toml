@@ -1,0 +1,12 @@
+[package]
+name = "org-relay"
+version = "0.1.0"
+edition = "2021"
+description = "Local spool relay moving agent messages from outboxes to inboxes"
+
+[[bin]]
+name = "org-relay"
+path = "src/main.rs"
+
+[dependencies]
+org-msg = { path = "../org-msg" }
