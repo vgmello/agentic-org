@@ -1991,7 +1991,8 @@ fn work_get_returns_the_whole_item_and_unknown_links_never_break_it() {
             working_ms: None,
             waiting_on_owner_ms: 0,
             blocked_ms: 600_000,
-            idle_ms: 2_400_000,
+            idle_ms: None,
+            rest_ms: 2_400_000,
             open: true,
             rounds: 1,
             as_of: "2026-11-08T03:00:00.000Z".into(),
@@ -2768,7 +2769,7 @@ fn work_reads_have_the_agreed_shapes() {
     assert_eq!(
         v,
         json!({"times": [{"item_id": "t1", "time": {
-            "lead_ms": 10, "waiting_on_owner_ms": 0, "blocked_ms": 0, "idle_ms": 0,
+            "lead_ms": 10, "waiting_on_owner_ms": 0, "blocked_ms": 0, "rest_ms": 0,
             "open": false, "rounds": 0, "as_of": "2026-11-08T03:00:00.000Z"
         }}]})
     );

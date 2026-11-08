@@ -689,8 +689,10 @@ pub struct Feature {
 }
 
 /// An item's time figures, derived only from its events (§6). Durations in milliseconds.
-/// `working_ms + waiting_on_owner_ms + blocked_ms + idle_ms = lead_ms`, with an untracked
-/// working time counted as idle.
+/// `waiting_on_owner_ms + blocked_ms + rest_ms = lead_ms`. While sessions don't report working
+/// time, `working_ms` and `idle_ms` are absent and `rest_ms` holds working and idle together:
+/// show it as "the rest", never as idle (idle means nobody worked on it). When working time is
+/// tracked, `working_ms + idle_ms = rest_ms`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TimeFigures {
     /// The sum of each round's length; an open round runs to `as_of`.
@@ -705,8 +707,12 @@ pub struct TimeFigures {
     pub waiting_on_owner_ms: u64,
     #[serde(default)]
     pub blocked_ms: u64,
+    /// Present only with `working_ms`: time nobody worked on it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_ms: Option<u64>,
+    /// `lead_ms - waiting_on_owner_ms - blocked_ms`: working and idle together.
     #[serde(default)]
-    pub idle_ms: u64,
+    pub rest_ms: u64,
     /// The last round is still open: the figures are "so far".
     #[serde(default)]
     pub open: bool,
