@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { sampleOrg } from './sample';
-import { checkTeamName, deleteSummary, isLastTeam, moveChoices, movesAlong, projectsToAdd, sharedBy, teamOptions, teamPath } from './team-edit';
+import { checkTeamName, deleteSummary, isLastTeam, moveChoices, moveMemberSummary, movesAlong, projectsToAdd, sharedBy, teamOptions, teamPath } from './team-edit';
 
 const s = sampleOrg('office-1');
 
@@ -110,5 +110,23 @@ describe('TEAM-8 projects and teams', () => {
 
 	it('lists a project’s teams', () => {
 		expect(sharedBy(s, 'beacon').sort()).toEqual(['Design', 'Web']);
+	});
+});
+
+describe('MOVE moving a member to another team', () => {
+	const noor = { id: 'noor', name: 'Noor Haddad' };
+	it('names the move, the projects they stop and start on, and the lead they leave behind', () => {
+		expect(moveMemberSummary(s, noor, 'web', 'platform')).toEqual([
+			'Moves Noor Haddad from Web to Platform.',
+			"Noor Haddad stops working on Web's projects (Beacon) and starts on Platform's (Atlas).",
+			'Noor Haddad leads Web. Web will have no lead.'
+		]);
+	});
+
+	it('says nothing about projects the two teams share, or about a lead when they do not lead', () => {
+		const lines = moveMemberSummary(s, { id: 'mira', name: 'Mira Castillo' }, 'web', 'design'); // both work on Beacon
+		expect(lines[0]).toBe('Moves Mira Castillo from Web to Design.');
+		expect(lines.some((l) => l.includes('Beacon'))).toBe(false);
+		expect(lines.some((l) => l.includes('leads'))).toBe(false);
 	});
 });

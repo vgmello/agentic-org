@@ -148,3 +148,25 @@ export const isLastTeam = (s: OrgSnapshot, projectId: string, teamId: string): b
 /** "A", "A and B" for a toast: "checkout is now shared by Checkout and Platform." */
 export const sharedBy = (s: OrgSnapshot, projectId: string): string[] =>
 	(s.project_teams ?? []).filter((l) => l.project_id === projectId).map((l) => s.teams.find((t) => t.id === l.team_id)?.name ?? '').filter(Boolean);
+
+/**
+ * What moving a member from one team to another says (our-org-in-the-app §8): the move, the projects they stop and
+ * start working on, and that they lose the lead of the team they leave.
+ */
+export function moveMemberSummary(s: OrgSnapshot, member: { id: string; name: string }, fromId: string, toId: string): string[] {
+	const name = (id: string) => s.teams.find((t) => t.id === id)?.name ?? id;
+	const projectsOf = (teamId: string) =>
+		(s.project_teams ?? [])
+			.filter((l) => l.team_id === teamId)
+			.map((l) => (s.projects ?? []).find((p) => p.id === l.project_id)?.name)
+			.filter((n): n is string => !!n);
+	const stops = projectsOf(fromId).filter((p) => !projectsOf(toId).includes(p));
+	const starts = projectsOf(toId).filter((p) => !projectsOf(fromId).includes(p));
+	const lines = [`Moves ${member.name} from ${name(fromId)} to ${name(toId)}.`];
+	if (stops.length > 0 || starts.length > 0) {
+		const parts = [stops.length > 0 ? `stops working on ${name(fromId)}'s projects (${stops.join(', ')})` : '', starts.length > 0 ? `starts on ${name(toId)}'s (${starts.join(', ')})` : ''].filter(Boolean);
+		lines.push(`${member.name} ${parts.join(' and ')}.`);
+	}
+	if (s.teams.find((t) => t.id === fromId)?.lead_member_id === member.id) lines.push(`${member.name} leads ${name(fromId)}. ${name(fromId)} will have no lead.`);
+	return lines;
+}

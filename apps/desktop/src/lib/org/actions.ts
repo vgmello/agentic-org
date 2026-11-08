@@ -350,3 +350,21 @@ export async function setRunMode(api: OrgSession, memberId: string, mode: RunMod
 	const m = await currentMember(api, memberId);
 	await api.command({ method: 'member.set_run_mode', params: { member_id: memberId, expected_version: m.version, ...(mode ? { run_mode: mode } : {}), ...(mode === 'scheduled' && schedule ? { schedule } : {}) } });
 }
+
+/**
+ * Move a member from one team to another in one step (`member.move`): the old membership ends and a new one starts,
+ * and a lead who leaves the old team clears its lead. Returns how to undo it (the reverse move). The old title isn't
+ * carried over.
+ */
+export async function moveMemberToTeam(api: OrgSession, memberId: string, fromTeamId: string, toTeamId: string): Promise<{ undo: () => Promise<void> }> {
+	const old = (await api.snapshot()).memberships.find((m) => m.member_id === memberId && m.team_id === fromTeamId);
+	if (!old) throw { source: 'api', code: 'not_found', message: "They aren't in that team any more." } satisfies AppError;
+	await api.command({ method: 'member.move', params: { membership_id: old.id, expected_version: old.version, new_membership_id: newId(), to_team_id: toTeamId } });
+	return {
+		undo: async () => {
+			const now = (await api.snapshot()).memberships.find((m) => m.member_id === memberId && m.team_id === toTeamId);
+			if (!now) return;
+			await api.command({ method: 'member.move', params: { membership_id: now.id, expected_version: now.version, new_membership_id: newId(), to_team_id: fromTeamId } });
+		}
+	};
+}

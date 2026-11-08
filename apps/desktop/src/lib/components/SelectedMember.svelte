@@ -21,7 +21,8 @@
 		onpause,
 		onresume,
 		onhowitruns,
-		onoffboard
+		onoffboard,
+		onmove
 	}: {
 		snapshot: OrgSnapshot;
 		member: Member | undefined;
@@ -44,6 +45,8 @@
 		onhowitruns?: (member: Member) => void;
 		/** Offboard an agent: a state, not a deletion. */
 		onoffboard?: (member: Member) => void;
+		/** Move them from one team to another in one step (with Undo). */
+		onmove?: (member: Member) => void;
 	} = $props();
 
 	const teams = $derived(member ? teamsOfMember(snapshot, member.id) : []);
@@ -59,6 +62,7 @@
 		{#if office}<span class="text-gray-400">· {office}</span>{/if}
 		{#if !member.owner}
 			{#if onteams}<Button variant="outline" size="xs" onclick={() => onteams(member)}>Edit teams…</Button>{/if}
+			{#if onmove && teams.length > 0}<Button variant="outline" size="xs" onclick={() => onmove(member)}>Move to team…</Button>{/if}
 			{#if onmanager}<Button variant="outline" size="xs" onclick={() => onmanager(member)}>Change manager…</Button>{/if}
 		{/if}
 		{#if member.kind === 'agent' && member.agent}

@@ -9,6 +9,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import ProjectTeamDialog from '$lib/components/ProjectTeamDialog.svelte';
 	import RemoveProjectDialog from '$lib/components/RemoveProjectDialog.svelte';
+	import MoveMemberDialog from '$lib/components/MoveMemberDialog.svelte';
 	import AddAgentSheet from '$lib/components/AddAgentSheet.svelte';
 	import EditAgentDialog from '$lib/components/EditAgentDialog.svelte';
 	import HowItRunsDialog from '$lib/components/HowItRunsDialog.svelte';
@@ -129,6 +130,8 @@
 	let managerOpen = $state(false);
 	let memberTeams = $state<Member | undefined>();
 	let memberTeamsOpen = $state(false);
+	let movingMember = $state<Member | undefined>();
+	let moveMemberOpen = $state(false);
 	let addAgentOpen = $state(false);
 	let pausing = $state<Member | undefined>();
 	let pauseOpen = $state(false);
@@ -237,6 +240,25 @@
 		await reload();
 		if (r.problems.length === 0 && r.changed) toast.success(`Updated the teams of ${r.name}.`);
 	}
+	async function memberMoved(r: { name: string; to: string; undo: () => Promise<void> } | { stale: true }) {
+		await reload();
+		if ('stale' in r) return;
+		toast.success(`${r.name} moved to ${r.to}.`, {
+			duration: 8000,
+			action: {
+				label: 'Undo',
+				onClick: async () => {
+					try {
+						await r.undo();
+						toast.success(`${r.name} is back.`);
+					} catch (e) {
+						toast.error(`Couldn't undo: ${toAppError(e).message} Nothing changed.`);
+					}
+					await reload();
+				}
+			}
+		});
+	}
 	async function agentAdded(r: { memberId: string; name: string; problems: string[] }) {
 		await reload();
 		selected = r.memberId;
@@ -333,7 +355,7 @@
 		</p>
 	</div>
 
-	<SelectedMember {snapshot} member={selectedMember} offices={offices} organization={organizationName} onclear={() => (selected = undefined)} onedit={(m) => ((editingPerson = m), (editPersonOpen = true))} onremove={(m) => ((removingPerson = m), (removePersonOpen = true))} onmanager={(m) => ((managing = m), (managerOpen = true))} onteams={(m) => ((memberTeams = m), (memberTeamsOpen = true))} oneditagent={(m) => ((editingAgent = m), (editAgentOpen = true))} onpause={(m) => ((pausing = m), (pauseOpen = true))} onresume={resumeAgent} onhowitruns={(m) => ((howRuns = m), (howRunsOpen = true))} onoffboard={(m) => ((offboarding = m), (offboardOpen = true))} />
+	<SelectedMember {snapshot} member={selectedMember} offices={offices} organization={organizationName} onclear={() => (selected = undefined)} onedit={(m) => ((editingPerson = m), (editPersonOpen = true))} onremove={(m) => ((removingPerson = m), (removePersonOpen = true))} onmanager={(m) => ((managing = m), (managerOpen = true))} onteams={(m) => ((memberTeams = m), (memberTeamsOpen = true))} oneditagent={(m) => ((editingAgent = m), (editAgentOpen = true))} onpause={(m) => ((pausing = m), (pauseOpen = true))} onresume={resumeAgent} onhowitruns={(m) => ((howRuns = m), (howRunsOpen = true))} onoffboard={(m) => ((offboarding = m), (offboardOpen = true))} onmove={(m) => ((movingMember = m), (moveMemberOpen = true))} />
 
 	{#if tab === 'teams'}
 		<div id="panel-teams" role="tabpanel" aria-labelledby="tab-teams" class="space-y-5">
@@ -517,3 +539,4 @@
 <OffboardAgentDialog bind:open={offboardOpen} agent={offboarding && snapshot.members.find((x) => x.id === offboarding?.id)} {snapshot} {session} ondone={agentOffboarded} />
 <EditAgentDialog bind:open={editAgentOpen} agent={editingAgent && snapshot.members.find((x) => x.id === editingAgent?.id)} snapshot={full} {session} ondone={agentEdited} />
 <HowItRunsDialog bind:open={howRunsOpen} agent={howRuns && snapshot.members.find((x) => x.id === howRuns?.id)} {session} ondone={agentEdited} />
+<MoveMemberDialog bind:open={moveMemberOpen} member={movingMember && snapshot.members.find((x) => x.id === movingMember?.id)} {snapshot} {session} ondone={memberMoved} />

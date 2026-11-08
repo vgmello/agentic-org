@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createMockOrg, type MockStorage } from './api';
 import { sessionFor } from './session';
-import { addAgent, addPerson, addProjectTeam, changeManager, createTeam, deleteConsequences, deleteTeam, ledTeamsLeft, moveTargets, moveTeam, removePerson, removeProjectTeam, setTeamLead, offboardAgent, setAgentStatus, setMemberTeams, setRunMode, setTeamMembers, teamTitlesOf, updateAgent, updatePerson, wouldClearLead } from './actions';
+import { addAgent, addPerson, addProjectTeam, changeManager, createTeam, deleteConsequences, deleteTeam, ledTeamsLeft, moveMemberToTeam, moveTargets, moveTeam, removePerson, removeProjectTeam, setTeamLead, offboardAgent, setAgentStatus, setMemberTeams, setRunMode, setTeamMembers, teamTitlesOf, updateAgent, updatePerson, wouldClearLead } from './actions';
 import { membersOfTeam, teamTree, unassignedProjects } from './model';
 import { sharedBy } from './team-edit';
 
@@ -327,5 +327,26 @@ describe('the agent actions', () => {
 		await setRunMode(api, 'sam', undefined);
 		expect((await api.snapshot()).members.find((m) => m.id === 'sam')?.agent?.run_mode).toBeUndefined();
 		await expect(setRunMode(api, 'sam', 'scheduled')).rejects.toMatchObject({ code: 'invalid_request' });
+	});
+});
+
+describe('MOVE a member to another team in one step, with Undo', () => {
+	it('moves them, clears a lead they leave, and Undo moves them back', async () => {
+		const api = make();
+		const { undo } = await moveMemberToTeam(api, 'noor', 'web', 'platform');
+		let s = await api.snapshot();
+		expect(names(membersOfTeam(s, 'platform'))).toContain('Noor Haddad');
+		expect(names(membersOfTeam(s, 'web'))).not.toContain('Noor Haddad');
+		expect(s.teams.find((t) => t.id === 'web')?.lead_member_id).toBeUndefined(); // Noor led Web
+		await undo();
+		s = await api.snapshot();
+		expect(names(membersOfTeam(s, 'web'))).toContain('Noor Haddad');
+		expect(names(membersOfTeam(s, 'platform'))).not.toContain('Noor Haddad');
+	});
+
+	it('refuses a team they are already in, and one they are not leaving', async () => {
+		const api = make();
+		await expect(moveMemberToTeam(api, 'mira', 'web', 'platform')).rejects.toMatchObject({ code: 'already_exists' }); // Mira is in both
+		await expect(moveMemberToTeam(api, 'quinn', 'web', 'platform')).rejects.toMatchObject({ code: 'not_found' }); // Quinn isn't in Web
 	});
 });

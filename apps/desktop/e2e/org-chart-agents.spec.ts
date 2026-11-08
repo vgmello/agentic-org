@@ -153,3 +153,27 @@ test('HIRE: a messaging name that is taken is refused inline and Add stays disab
 	await expect(sheet.getByRole('alert')).toHaveCount(0);
 	await expect(sheet.getByRole('button', { name: 'Add agent' })).toBeEnabled();
 });
+
+test('MOVE: Move to team moves an agent in one step, says what changes, and Undo puts it back', async ({ page }) => {
+	await openChart(page);
+	await select(page, 'web', /^Noor Haddad/);
+	await strip(page).getByRole('button', { name: 'Move to team…' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Move Noor Haddad to a team' });
+	await dialog.getByLabel('From').selectOption({ label: 'Web' });
+	await expect(dialog.getByRole('radio', { name: /^Design/ })).toBeDisabled(); // Noor is already in Design
+	await expect(dialog).toContainText('Noor Haddad is already in Design');
+	await dialog.getByRole('radio', { name: /^Platform/ }).check();
+	const summary = dialog.getByTestId('move-member-summary');
+	await expect(summary).toContainText('Moves Noor Haddad from Web to Platform.');
+	await expect(summary).toContainText("stops working on Web's projects (Beacon) and starts on Platform's (Atlas)");
+	await expect(summary).toContainText('Noor Haddad leads Web. Web will have no lead.');
+	await shot(page, 'move-member');
+	await dialog.getByRole('button', { name: 'Move Noor Haddad' }).click();
+	await expect(page.getByText('Noor Haddad moved to Platform.')).toBeVisible();
+	await expect(card(page, 'platform').getByRole('button', { name: /^Noor Haddad/ })).toBeVisible();
+	await expect(card(page, 'web').getByRole('button', { name: /^Noor Haddad/ })).toHaveCount(0);
+	await expect(card(page, 'web')).toContainText('No lead');
+	await page.getByRole('button', { name: 'Undo' }).click();
+	await expect(page.getByText('Noor Haddad is back.')).toBeVisible();
+	await expect(card(page, 'web').getByRole('button', { name: /^Noor Haddad/ })).toBeVisible();
+});
