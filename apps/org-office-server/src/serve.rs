@@ -435,7 +435,7 @@ fn bind_connection(request: &Request, shared: &Shared, binding: &mut Binding) ->
         if member.len() > MAX_HANDLE_BYTES {
             return bind_error(request.id, ErrorCode::TooLarge, "the member is too long");
         }
-        if member.eq_ignore_ascii_case(OFFICE_SENDER) {
+        if member.trim().eq_ignore_ascii_case(OFFICE_SENDER) {
             return bind_error(
                 request.id,
                 ErrorCode::InvalidRequest,
@@ -1084,7 +1084,7 @@ mod tests {
         );
         // The input-only checks come first: the office is never a member, and a member over
         // the limit is too large, whatever else the call sends.
-        for office in ["office", "OFFICE", "Office"] {
+        for office in ["office", "OFFICE", "Office", " office ", "\toffice\n"] {
             client.bind(None, Some(token()));
             assert_eq!(
                 code_of(client.bind(Some(office), Some(token()))),
