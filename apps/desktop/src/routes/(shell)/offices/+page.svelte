@@ -73,7 +73,7 @@
 	async function refreshOffices() {
 		const id = data.connection.organization.id;
 		try {
-			const found = (await officeApi.listOrganizations()).find((o) => o.id === id);
+			const found = (await officeApi.peekOrganizations()).find((o) => o.id === id);
 			if (found && id === data.connection.organization.id) reported = found.offices;
 		} catch {
 			// The next tick tries again; the probe already says whether the host answers.
@@ -97,9 +97,8 @@
 		const tick = setInterval(() => (now = new Date()), 10_000);
 		return () => (clearInterval(again), clearInterval(tick));
 	});
-	// TODO (OFC-11/12, with the Restart branch): the reported status, reason and countdown are those saved when the page loaded
-	// (nothing subscribes to office.status_changed yet), and a host whose hello lacks that capability should read "Status unknown".
-	// Restart office / Try again / Start office / Check for updates are not built: OFC-11 is partial.
+	// TODO (OFC-11): the statuses are re-listed on each check, not pushed (nothing subscribes to office.status_changed yet), and
+	// Check for updates (for unsupported_version) is not built.
 	// Why a stopped office stopped: only for an office whose status is shown as reported by the host.
 	const labelWhyOf = (officeId: string) => {
 		const shown = statusOf(officeId);

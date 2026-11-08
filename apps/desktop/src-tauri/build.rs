@@ -6,6 +6,7 @@ fn main() {
             "office_ensure_running",
             "office_ping",
             "office_restart",
+            "organizations_peek",
             "organization_create",
             "organizations_list",
             "organization_open",

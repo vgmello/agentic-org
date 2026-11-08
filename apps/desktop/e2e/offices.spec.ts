@@ -238,3 +238,26 @@ test('OFC-11: a missing key says Try again, and an unsupported version has no bu
 	await rows(page).first().getByRole('button').first().click();
 	await expect(page.getByRole('dialog').getByTestId('restart-office')).toHaveText('Try again');
 });
+
+test('OFC-11: a host that is still starting says so and the button comes back', async ({ page }) => {
+	await openOffices(page, 'crashed');
+	await visit(page, '/offices?restart=not_ready');
+	await rows(page).first().getByRole('button').first().click();
+	const sheet = page.getByRole('dialog');
+	await sheet.getByTestId('restart-office').click();
+	await expect(sheet.getByTestId('restart-error')).toHaveText('The office host is still starting. Try again in a moment.');
+	await expect(sheet.getByTestId('restart-office')).toHaveText('Restart office');
+	await expect(sheet.getByTestId('restart-office')).toBeEnabled();
+});
+
+test('OFC-11: an accepted restart keeps the spinner while the office is still stopped', async ({ page }) => {
+	await openOffices(page, 'crashed');
+	await visit(page, '/offices?restart=stuck');
+	await rows(page).first().getByRole('button').first().click();
+	const sheet = page.getByRole('dialog');
+	await sheet.getByTestId('restart-office').click();
+	await expect(sheet.getByTestId('restart-office')).toHaveText('Restarting…');
+	await page.waitForTimeout(5000); // several status re-reads later
+	await expect(sheet.getByTestId('restart-office')).toHaveText('Restarting…');
+	await expect(rows(page).first()).toContainText('Stopped');
+});

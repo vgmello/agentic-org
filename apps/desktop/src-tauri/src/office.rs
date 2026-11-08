@@ -62,6 +62,11 @@ pub trait OfficeConnection: Send + Sync {
     /// Every organization this office hosts (`organization.list`).
     fn list_organizations(&self) -> Result<Vec<Organization>, ApiError>;
 
+    /// Every organization this office hosts, read-only: never starts or restarts anything (the status checks use it).
+    fn peek_organizations(&self) -> Result<Vec<Organization>, ApiError> {
+        self.list_organizations()
+    }
+
     /// `org.snapshot`: the structure of an organization, from this machine's office. The call has no
     /// parameters on the wire: `organization_id` picks which organization's office the shell asks (the real
     /// implementation looks up that connection, and refuses an id it has none for with `not_found`).

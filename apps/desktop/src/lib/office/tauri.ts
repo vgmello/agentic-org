@@ -7,6 +7,7 @@ export const tauriOffice: OfficeApi = {
 	connections: () => invoke<Connection[]>('connections_list'),
 	ensureRunning: () => invoke<HelloResult>('office_ensure_running'),
 	ping: () => invoke<HelloResult>('office_ping'),
+	peekOrganizations: () => invoke<Organization[]>('organizations_peek'),
 	restartOffice: (officeId) => invoke<void>('office_restart', { officeId }),
 	createOrganization: (name) => invoke<Connection>('organization_create', { name }),
 	listOrganizations: () => invoke<Organization[]>('organizations_list'),

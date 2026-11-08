@@ -11,6 +11,7 @@
     "allow-office-ensure-running",
     "allow-office-ping",
     "allow-office-restart",
+    "allow-organizations-peek",
     "allow-organization-create",
     "allow-connections-list",
     "allow-organizations-list",

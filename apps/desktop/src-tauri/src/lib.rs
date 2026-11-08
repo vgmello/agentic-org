@@ -119,6 +119,12 @@ impl AppState {
         Ok(self.office.ping()?)
     }
 
+    /// The listing for the status checks: needs a connected office, and never starts or restarts it.
+    fn peek_organizations(&self) -> Result<Vec<Organization>, CommandError> {
+        self.ensure_connected()?;
+        Ok(self.office.peek_organizations()?)
+    }
+
     /// Ask the host to start an office again (`office.restart`). Not run through `with_restart`: restarting the host
     /// over a refused restart would answer nothing.
     fn restart_office(&self, office_id: &str) -> Result<(), CommandError> {
@@ -347,6 +353,14 @@ async fn office_ping(state: State<'_, Arc<AppState>>) -> Result<HelloResult, Com
 }
 
 #[tauri::command]
+async fn organizations_peek(
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<Organization>, CommandError> {
+    let state = Arc::clone(&state);
+    blocking(move || state.peek_organizations()).await
+}
+
+#[tauri::command]
 async fn office_restart(
     state: State<'_, Arc<AppState>>,
     office_id: String,
@@ -566,6 +580,7 @@ pub fn run() {
             office_ensure_running,
             office_ping,
             office_restart,
+            organizations_peek,
             organization_create,
             organizations_list,
             organization_open,
@@ -774,10 +789,11 @@ mod tests {
         assert_eq!(off.unregister_calls.load(Ordering::SeqCst), 1);
     }
 
-    const COMMANDS: [&str; 15] = [
+    const COMMANDS: [&str; 16] = [
         "office_ensure_running",
         "office_ping",
         "office_restart",
+        "organizations_peek",
         "organization_create",
         "organizations_list",
         "organization_open",

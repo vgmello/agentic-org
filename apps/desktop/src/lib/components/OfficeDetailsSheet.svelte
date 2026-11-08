@@ -50,16 +50,20 @@
 	// Each restart run has a number; a run that is no longer the newest stops and leaves the state to the newer one.
 	let run = 0;
 	const action = $derived(office ? restartAction(office, capabilities) : {});
+	// Keyed on the id and on a boolean, not on the objects: the page re-lists the offices every check, and a new object for the
+	// same office must not cancel the run that is waiting for it.
+	const officeId = $derived(office?.id);
+	const canRestart = $derived(capabilities?.includes('office.restart'));
 	$effect(() => {
 		// Another office starts clean (the run for the old one stops).
-		void office?.id;
+		void officeId;
 		run++;
 		restarting = false;
 		restartNote = undefined;
 	});
 	$effect(() => {
 		// A new hello may say the host can restart now (it was updated).
-		void capabilities;
+		void canRestart;
 		unsupported = false;
 	});
 	$effect(() => () => void run++); // the page is leaving: stop any loop

@@ -138,9 +138,18 @@ export function createMockOffice({
 			connected = true;
 			return HELLO;
 		},
+		async peekOrganizations() {
+			await wait(delayMs / 3);
+			if (!connected) fail({ source: 'app', code: 'not_connected', message: "The office isn't running yet." });
+			return hosted();
+		},
 		async restartOffice(officeId): Promise<void> {
 			if (!connected) fail({ source: 'app', code: 'not_connected', message: "The office isn't running yet." });
 			await wait(delayMs / 3);
+			// `?restart=` makes the host's answer something the screen must cope with (spec §3.3).
+			const mode = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('restart');
+			if (mode === 'not_ready') fail({ source: 'api', code: 'not_ready', message: 'The office host is still starting. Try again in a moment.' });
+			if (mode === 'stuck') return; // accepted, but the office stays stopped
 			const list = hosted();
 			if (!list.some((o) => o.offices.some((f) => f.id === officeId))) fail({ source: 'api', code: 'not_found', message: "That office isn't here." });
 			// It comes back: running, with no reason and no restart pending.
