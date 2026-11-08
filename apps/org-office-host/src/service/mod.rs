@@ -126,6 +126,7 @@ fn hello() -> HelloResult {
         server_version: env!("CARGO_PKG_VERSION").to_owned(),
         host: THIS_MAC.to_owned(),
         office: None,
+        capabilities: vec![],
     }
 }
 

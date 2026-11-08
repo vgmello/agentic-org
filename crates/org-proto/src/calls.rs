@@ -36,6 +36,56 @@ pub struct HelloResult {
     /// Set when an office server answers; absent when this machine's host answers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub office: Option<OfficeHello>,
+    /// The optional calls and events this server implements beyond what every server of
+    /// `api_version` has, by wire name (see [`capability`]). A client checks for one before
+    /// calling it or waiting for it, and ignores names it doesn't know. Empty (and absent on
+    /// the wire) for a server that implements none, including servers older than this field.
+    /// Servers always send a JSON array of strings. Reading is tolerant, because `hello` must
+    /// always decode: `null` reads as empty and an item that isn't a string is skipped.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "lenient_names"
+    )]
+    pub capabilities: Vec<String>,
+}
+
+/// Reads an advisory list of names: `null` is empty, and non-string items are dropped.
+fn lenient_names<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(match value {
+        Some(serde_json::Value::Array(items)) => items
+            .into_iter()
+            .filter_map(|item| match item {
+                serde_json::Value::String(name) => Some(name),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    })
+}
+
+/// Capability names a server may list in [`HelloResult::capabilities`]. Each one is the wire
+/// name of the call or event it stands for. The three below are host calls and events: only
+/// this machine's host lists them, never an office server.
+pub mod capability {
+    /// The host serves `office.app_token`.
+    pub const OFFICE_APP_TOKEN: &str = "office.app_token";
+    /// The host serves `office.restart`.
+    pub const OFFICE_RESTART: &str = "office.restart";
+    /// The host publishes `office.status_changed` to subscribers **and** sets `status_reason`
+    /// and `next_restart_at` (on the event and in `office.list`). Listing it means both.
+    pub const OFFICE_STATUS_CHANGED: &str = "office.status_changed";
+}
+
+impl HelloResult {
+    /// Whether the server listed `name` in its capabilities.
+    pub fn supports(&self, name: &str) -> bool {
+        self.capabilities.iter().any(|c| c == name)
+    }
 }
 
 impl Call for Hello {
