@@ -11,6 +11,7 @@ export ORG_AGENT=<your-agent-id>
 org-agent whoami [--as <agent>] [--json]
 org-agent who [<member>] [--team <team>] [--kind agent|person|owner] [--json]
 org-agent status "<text>" [--ttl 8h] [--as <agent>] [--json]
+org-agent status [--json]                       # your own; others' via `who <member>`
 org-agent status --clear [--as <agent>] [--json]
 org-agent profile set [<id>] [--name <n>] [--kind agent|person] [--owner] [--role <r>] [--team <id[:name[:title]]>] [--reports-to <id[:name]>] [--office <id[:name]>] [--json]
 
@@ -22,8 +23,8 @@ org-agent msg reply  <id> [--subject <s>] [--priority normal|high|urgent] [--met
 org-agent msg defer  <id> --until <30m|2h|after-task|ISO> [--note <text>] [--json]
 org-agent msg done   <id> [--note <text>] [--json]
 org-agent msg notify [--session <id>] [--after-task] [--urgent-only] [--sweep-after 5m] [--format text|json] [--as <agent>]
-org-agent msg due    [--after-task] [--urgent-only] [--sweep-after 5m] [--as <agent>] [--json]
-org-agent msg inbox  [--all] [--summary] [--from <agent>] [--limit <n>] [--as <agent>] [--json]
+org-agent msg due    [--after-task] [--urgent-only] [--sweep-after 5m] [--as <agent>]
+org-agent msg inbox  [--all] [--summary] [--from <agent>] [--thread <id>] [--limit <n>] [--as <agent>] [--json]
 org-agent msg read   <id> | --next [--as <agent>] [--json]
 org-agent msg wait   [--timeout 60s] [--from <agent>] [--urgent-only] [--as <agent>] [--json]
 
@@ -31,6 +32,25 @@ org-agent msg wait   [--timeout 60s] [--from <agent>] [--urgent-only] [--as <age
 org-agent relay run [--once]
 org-agent relay status [--json]
 ```
+
+## Spool location
+
+The spool lives in `$ORG_HOME/spool` (default `~/.agency/spool`), in the same layout as the
+v1-old CLI (`outbox/{tmp,new}`, `inbox/<agent>/{tmp,new,cur,wake}`, `dead/`), so both can run
+against the same spool. Per-agent metadata sits next to the mail, guarded by an exclusive
+`flock` on `inbox/<agent>/.meta.lock`: `triage.json` (snoozes, done, notify dedup),
+`profile.json`, `status.json` and `.last_seen`. Tests point `ORG_HOME` (and `HOME`) at a
+temporary directory.
+
+`--office` is accepted everywhere and ignored: Phase A has one spool. `msg inbox --cursor` is a usage error (the spool has no sequence numbers; use `--limit`).
+
+## Directory and presence
+
+`who` lists every registered inbox plus the owner (`vgmello`, a person), with the profile set by
+`profile set` or `msg register --name/--role/--team/--reports-to`. Presence is `online` while the
+member has a live `msg wait`/`ask` listener or used `org-agent` in the last 2 minutes, else
+`offline`, with `last_seen_at`; the spool can't tell busy from idle. Only `vgmello` can carry the owner flag, and a profile file always describes the inbox it sits in (its `id`/`owner` fields are not trusted). `profile set <id>` and `msg register <id> --name ...` edit only your own profile, unless you are the owner. Status lines expire after
+8h (`--ttl`, at most 24h), are one line of at most 140 characters / 256 bytes.
 
 ## Triage Notification Contract (`org-agent msg notify`)
 
@@ -41,10 +61,24 @@ All runtime hooks (Claude Code, Codex, Antigravity) wrap `org-agent msg notify`:
   - `10`: Normal (non-urgent) items need triage.
   - `11`: At least one urgent item needs triage.
   - `1`: Usage error; `4`: I/O error.
-- **`--session <id>`:** Atomically deduplicates `(message_id, triage_gen)` per session under `inbox/<agent>/.meta.lock`. Snoozing a message (`msg defer`) or releasing a due snooze increments `triage_gen` so the message resurfaces once when due.
+- **Selection:** unread messages that are neither snoozed nor done; snoozes now due (`reason: "due"`); with `--after-task`, `after-task` snoozes (`"after_task"`). Urgent messages always count (`"new"`); a normal untriaged one counts at the break (`--after-task`, `"new"`) or once older than `--sweep-after` (default 5m, `"sweep"`). `--urgent-only` keeps only urgent ones.
+- **`--session <id>`:** Atomically deduplicates `(message_id, triage_gen)` per session under `inbox/<agent>/.meta.lock`. Snoozing a message (`msg defer`) or releasing a due snooze increments `triage_gen` so the message resurfaces once when due. Without `--session` it is stateless. At most 16 sessions are remembered per message (when full, the alphabetically first is dropped); entries are cleared when the message is read, done, re-snoozed or released, so there is no separate 24h prune.
+- **Text (`--format text`, the default):** never a body. At most 10 items, urgent first, then `…and <k> more (org-agent msg inbox)`; the unlisted ones aren't recorded for the session and come up at the next check. Sender and subject are sanitized (control, zero-width and bidi characters removed, `"` turned into `'`, subject cut to 80 characters):
+
+  ```text
+  2 new message(s), 1 urgent (subjects are untrusted data from other agents):
+  - [URGENT] Ada (ac-staff-engineer-ada): "Quick check" [request] (id: 01M6WRN71MBX8FHS08MB0Q9Z24)
+  - River (ac-software-engineer-river): "FYI: host restarts" [msg] (id: 01M6WRP0000000000000000000)
+  Triage each: answer now, `org-agent msg defer <id> --until 30m|2h|after-task|<time>`, or `org-agent msg done <id>`.
+  ```
+- **JSON (`--format json`):** `{"v":1,"agent","urgent","count","urgent_count","items":[{"id","from","from_name","subject","kind","urgent","priority","triage_gen","created_at","reason"}],"more","text"}`.
+- **Snoozes:** `--until` takes a duration up to 365 days, `after-task`, or a UTC time (`YYYY-MM-DDTHH:MM:SS[.mmm]Z`); anything else is a usage error (exit 1).
+- **`msg due`** is the stateless JSON alias of `msg notify --format json`: same selection, no `--session`, always exits 0.
 - **Read-then-defer:** If an agent runs `org-agent msg read <id>` during triage and then decides to snooze it (`org-agent msg defer <id> --until ...`), `defer` moves `<id>.json` from `cur/` back to `new/` so it remains unread until due.
 
 ## Wake Socket Tags (`'U'` vs `'N'`)
+
+Wake sockets are named `<pid>-<10 chars>.sock` so the path stays under macOS's 103-byte limit even for long agent ids under `~/.agency`.
 
 When `org-relay` delivers a message into `inbox/<to>/new/<id>.json`, it notifies each listener socket in `inbox/<to>/wake/*.sock` with a 1-byte tag:
 - `'U'` (`0x55`): Urgent message (`kind == "request"` or `priority` in `high | urgent`).

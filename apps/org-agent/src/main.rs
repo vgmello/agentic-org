@@ -13,12 +13,13 @@ use std::os::unix::net::UnixListener;
 use std::path::Path;
 use std::process::{self, ExitCode};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use org_spool::{
-    is_interrupted, json_quote, parse_duration_arg, poll_unix_listener, request_interrupt,
-    validate_agent_id, Envelope, MemberProfile, MessagePriority, MetaValue, NotifyOptions,
-    RefEntry, Spool, SpoolError, TeamEntry,
+    format_iso8601_utc, is_interrupted, json_quote, parse_duration_arg, poll_unix_listener,
+    request_interrupt, sanitize_inline_text, validate_agent_id, DirectoryCard, Envelope,
+    MemberProfile, MessagePriority, MetaValue, NotifyOptions, RefEntry, Spool, SpoolError,
+    TeamEntry, OWNER_ID,
 };
 
 const EXIT_OK: u8 = 0;
@@ -366,6 +367,113 @@ fn print_envelope(env: &Envelope, json: bool) -> Result<(), CliError> {
     Ok(())
 }
 
+/// A member edits its own profile; only the owner may edit someone else's (Phase A has no
+/// authentication, so this guards against mistakes, not against an agent passing `--as`).
+fn ensure_may_edit_profile(as_flag: Option<&str>, target: &str) -> Result<(), CliError> {
+    let me = resolve_identity(as_flag)?;
+    if me == target || me == OWNER_ID {
+        Ok(())
+    } else {
+        Err(CliError::Usage(format!(
+            "{me} can't edit {target}'s profile (only its own; the owner can edit any)"
+        )))
+    }
+}
+
+fn now_iso() -> String {
+    format_iso8601_utc(SystemTime::now())
+}
+
+fn print_status(id: &str, status: Option<&str>, expires_at: Option<&str>, json: bool) {
+    let quote_or_null = |v: Option<&str>| v.map(json_quote).unwrap_or_else(|| "null".into());
+    if json {
+        println!(
+            "{{\"id\":{},\"status\":{},\"expires_at\":{}}}",
+            json_quote(id),
+            quote_or_null(status),
+            quote_or_null(expires_at)
+        );
+    } else {
+        match status {
+            Some(st) => println!("{id}: {}", sanitize_inline_text(st, 140)),
+            None => println!("{id}: (no status)"),
+        }
+    }
+}
+
+/// One member's card for `who <member>` (text). Profile text is member-supplied, so sanitized.
+fn print_card(card: &DirectoryCard) {
+    let clean = |s: &str| sanitize_inline_text(s, 140);
+    let teams: Vec<String> = card
+        .teams
+        .iter()
+        .map(|t| match &t.title_in_team {
+            Some(title) => format!("{} ({})", clean(&t.name), clean(title)),
+            None => clean(&t.name),
+        })
+        .collect();
+    let kind = if card.owner {
+        format!("{} (owner)", card.kind)
+    } else {
+        card.kind.clone()
+    };
+    println!("id:          {}", card.id);
+    println!("name:        {}", clean(&card.name));
+    println!("kind:        {}", clean(&kind));
+    println!(
+        "role:        {}",
+        card.role_title.as_deref().map(clean).unwrap_or("-".into())
+    );
+    println!(
+        "teams:       {}",
+        if teams.is_empty() {
+            "-".to_string()
+        } else {
+            teams.join(", ")
+        }
+    );
+    println!(
+        "reports to:  {}",
+        card.reports_to
+            .as_ref()
+            .map(|r| format!("{} ({})", clean(&r.name), clean(&r.id)))
+            .unwrap_or("-".into())
+    );
+    println!(
+        "office:      {}",
+        card.office
+            .as_ref()
+            .map(|o| clean(&o.name))
+            .unwrap_or("-".into())
+    );
+    println!(
+        "presence:    {}{}",
+        card.presence,
+        card.last_seen_at
+            .as_deref()
+            .map(|t| format!(" (last seen {t})"))
+            .unwrap_or_default()
+    );
+    println!(
+        "status:      {}",
+        card.status.as_deref().map(clean).unwrap_or("-".into())
+    );
+}
+
+/// A tab-separated `who` row: id, name, kind, presence, role, status.
+fn print_card_row(card: &DirectoryCard) {
+    let clean = |s: &str| sanitize_inline_text(s, 140);
+    println!(
+        "{}\t{}\t{}\t{}\t{}\t{}",
+        card.id,
+        clean(&card.name),
+        clean(&card.kind),
+        card.presence,
+        card.role_title.as_deref().map(clean).unwrap_or("-".into()),
+        card.status.as_deref().map(clean).unwrap_or("-".into())
+    );
+}
+
 fn print_usage() {
     eprintln!(
         "\
@@ -381,8 +489,8 @@ Usage:
   org-agent msg defer  <id> --until <30m|2h|after-task|ISO> [--note <text>] [--as <agent>] [--json]
   org-agent msg done   <id> [--note <text>] [--as <agent>] [--json]
   org-agent msg notify [--session <id>] [--after-task] [--urgent-only] [--sweep-after 5m] [--format text|json] [--as <agent>]
-  org-agent msg due    [--after-task] [--urgent-only] [--sweep-after 5m] [--as <agent>] [--json]
-  org-agent msg inbox  [--all] [--summary] [--from <agent>] [--limit <n>] [--as <agent>] [--json]
+  org-agent msg due    [--after-task] [--urgent-only] [--sweep-after 5m] [--as <agent>]   (JSON, exit 0)
+  org-agent msg inbox  [--all] [--summary] [--from <agent>] [--thread <id>] [--limit <n>] [--as <agent>] [--json]
   org-agent msg read   <id> | --next [--as <agent>] [--json]
   org-agent msg wait   [--timeout 60s] [--from <agent>] [--urgent-only] [--as <agent>] [--json]
   org-agent relay <run [--once] | status [--json]>"
@@ -540,7 +648,8 @@ fn run(argv0: &str, args: Vec<String>) -> Result<u8, CliError> {
             }
             let id = resolve_identity(as_agent.as_deref())?;
             if json_flag {
-                println!("{{\"id\":{}}}", json_quote(&id));
+                // Same shape as v1-old's `whoami --json`.
+                println!("{{\"agent\":{}}}", json_quote(&id));
             } else {
                 println!("{id}");
             }
@@ -602,12 +711,7 @@ fn run(argv0: &str, args: Vec<String>) -> Result<u8, CliError> {
                         serde_json::to_string(&card).map_err(|e| CliError::Usage(e.to_string()))?
                     );
                 } else {
-                    let role = card.role_title.as_deref().unwrap_or("-");
-                    let status = card.status.as_deref().unwrap_or("-");
-                    println!(
-                        "{}\t{}\t{}\t{}\t{}\t{}",
-                        card.id, card.name, card.kind, card.presence, role, status
-                    );
+                    print_card(&card);
                 }
             } else {
                 let cards = spool.list_directory(team_filter.as_deref(), kind_filter.as_deref())?;
@@ -618,13 +722,8 @@ fn run(argv0: &str, args: Vec<String>) -> Result<u8, CliError> {
                             .map_err(|e| CliError::Usage(e.to_string()))?
                     );
                 } else {
-                    for card in cards {
-                        let role = card.role_title.as_deref().unwrap_or("-");
-                        let status = card.status.as_deref().unwrap_or("-");
-                        println!(
-                            "{}\t{}\t{}\t{}\t{}\t{}",
-                            card.id, card.name, card.kind, card.presence, role, status
-                        );
+                    for card in &cards {
+                        print_card_row(card);
                     }
                 }
             }
@@ -653,7 +752,11 @@ fn run(argv0: &str, args: Vec<String>) -> Result<u8, CliError> {
             } else {
                 (resolve_identity(as_agent.as_deref())?, rest)
             };
+            ensure_may_edit_profile(as_agent.as_deref(), &target_id)?;
             let updated = apply_profile_flags(&spool, target_id, flag_slice)?;
+            if let Ok(me) = resolve_identity(as_agent.as_deref()) {
+                spool.touch_last_seen(&me);
+            }
             if json_flag {
                 println!(
                     "{}",
@@ -667,6 +770,7 @@ fn run(argv0: &str, args: Vec<String>) -> Result<u8, CliError> {
         "status" => {
             let spool = Spool::open_from_env()?;
             let me = resolve_identity(as_agent.as_deref())?;
+            spool.touch_last_seen(&me);
             let mut clear = false;
             let mut ttl: Option<Duration> = None;
             let mut text_parts: Vec<String> = Vec::new();
@@ -710,25 +814,13 @@ fn run(argv0: &str, args: Vec<String>) -> Result<u8, CliError> {
             }
 
             if text_parts.is_empty() {
-                let card = spool.resolve_directory_member(&me)?;
-                if json_flag {
-                    println!(
-                        "{{\"id\":{},\"status\":{},\"expires_at\":{}}}",
-                        json_quote(&me),
-                        card.status
-                            .as_deref()
-                            .map(json_quote)
-                            .unwrap_or_else(|| "null".into()),
-                        card.status_expires_at
-                            .as_deref()
-                            .map(json_quote)
-                            .unwrap_or_else(|| "null".into())
-                    );
-                } else if let Some(st) = card.status {
-                    println!("{me}: {st}");
-                } else {
-                    println!("{me}: (no status)");
-                }
+                let status = spool.get_active_status(&me, &now_iso());
+                print_status(
+                    &me,
+                    status.as_ref().map(|s| s.status.as_str()),
+                    status.as_ref().map(|s| s.expires_at.as_str()),
+                    json_flag,
+                );
                 return Ok(EXIT_OK);
             }
 
@@ -768,6 +860,9 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
 
     let spool = Spool::open_from_env()?;
     let sub_args = &args[1..];
+    if let Ok(me) = resolve_identity(as_agent.as_deref()) {
+        spool.touch_last_seen(&me);
+    }
 
     match sub {
         "register" => {
@@ -781,14 +876,20 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
             } else {
                 (resolve_identity(as_agent.as_deref())?, sub_args)
             };
+            if !flag_slice.is_empty() {
+                ensure_may_edit_profile(as_agent.as_deref(), &id)?;
+            }
             spool.register(&id)?;
             if !flag_slice.is_empty() {
                 let _ = apply_profile_flags(&spool, id.clone(), flag_slice)?;
             }
+            if let Ok(me) = resolve_identity(as_agent.as_deref()) {
+                spool.touch_last_seen(&me);
+            }
             if json_flag {
                 println!("{{\"registered\":{}}}", json_quote(&id));
             } else {
-                println!("registered {id}");
+                println!("{id}");
             }
             Ok(EXIT_OK)
         }
@@ -809,7 +910,7 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
             if json_flag {
                 println!("{{\"deregistered\":{}}}", json_quote(&id));
             } else {
-                println!("deregistered {id}");
+                println!("{id}");
             }
             Ok(EXIT_OK)
         }
@@ -892,7 +993,6 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
             }
 
             let to = to.ok_or_else(|| CliError::Usage("send requires --to <agent>".into()))?;
-            validate_agent_id(&to, "to").map_err(CliError::Usage)?;
             let body = read_body_arg(body_flag, &pos)?;
 
             if !spool.is_registered(&to) {
@@ -1001,7 +1101,6 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
             }
 
             let to = to.ok_or_else(|| CliError::Usage("ask requires --to <agent>".into()))?;
-            validate_agent_id(&to, "to").map_err(CliError::Usage)?;
             let body = read_body_arg(body_flag, &pos)?;
 
             if !spool.is_registered(&to) {
@@ -1020,7 +1119,12 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
             spool.nudge_relay();
 
             let reply = spool.wait_for_reply_with_listener(&from, &req.id, &listener, timeout)?;
-            print_envelope(&reply, json_flag)?;
+            if json_flag {
+                print_envelope(&reply, true)?;
+            } else {
+                // v1-old prints only the answer's body for a plain `ask`.
+                println!("{}", reply.body);
+            }
             Ok(EXIT_OK)
         }
 
@@ -1029,6 +1133,7 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
             let mut include_all = false;
             let mut summary_only = false;
             let mut from_filter: Option<String> = None;
+            let mut thread_filter: Option<String> = None;
             let mut limit: Option<usize> = None;
 
             let mut j = 0usize;
@@ -1060,11 +1165,27 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
                         }
                         limit = Some(parsed);
                     }
-                    "--office" | "--thread" | "--cursor" => {
+                    "--thread" => {
+                        j += 1;
+                        thread_filter = Some(
+                            sub_args
+                                .get(j)
+                                .ok_or_else(|| {
+                                    CliError::Usage("missing value for --thread".into())
+                                })?
+                                .clone(),
+                        );
+                    }
+                    "--office" => {
                         j += 1;
                         let _ = sub_args
                             .get(j)
-                            .ok_or_else(|| CliError::Usage("missing value for option".into()))?;
+                            .ok_or_else(|| CliError::Usage("missing value for --office".into()))?;
+                    }
+                    "--cursor" => {
+                        return Err(CliError::Usage(
+                            "--cursor is not supported by the spool (Phase A); use --limit".into(),
+                        ));
                     }
                     other => {
                         return Err(CliError::Usage(format!("unknown flag '{other}'")));
@@ -1078,6 +1199,10 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
             if let Some(ref f) = from_filter {
                 items.retain(|i| i.from.eq_ignore_ascii_case(f));
             }
+            if let Some(ref t) = thread_filter {
+                // Phase A threads: the message itself and direct replies to it.
+                items.retain(|i| &i.id == t || i.reply_to.as_deref() == Some(t.as_str()));
+            }
             if let Some(lim) = effective_limit {
                 items.truncate(lim);
             }
@@ -1088,7 +1213,8 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
                 println!("{s}");
             } else {
                 for item in items {
-                    let subj = item.subject.as_deref().unwrap_or("(no subject)");
+                    // Keep the TSV one row per message for the scripts that parse it.
+                    let subj = sanitize_inline_text(item.subject.as_deref().unwrap_or("-"), 200);
                     println!(
                         "{}\t{}\t{}\t{}\t{}",
                         item.id, item.kind, item.from, item.created_at, subj
@@ -1219,17 +1345,16 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
                 )));
             }
 
-            // Answering a message marks it read if it was still in new/
-            let _ = spool.claim(&me, &orig_id);
-
             let mut reply = orig
-                .new_reply(me, subject, body, meta)
+                .new_reply(&me, subject, body, meta)
                 .map_err(CliError::Usage)?;
             if let Some(p) = priority {
                 reply.set_priority(p);
             }
             spool.enqueue(&reply)?;
             spool.nudge_relay();
+            // Answering a message marks it read (only once the reply is safely queued).
+            let _ = spool.claim(&me, &orig_id);
 
             if json_flag {
                 println!("{{\"id\":{}}}", json_quote(&reply.id));
@@ -1361,6 +1486,8 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
         }
 
         "notify" | "due" => {
+            // `due` is the stateless JSON alias of `notify` (ADR-0003 §2.3): no --session, no
+            // --format, and it exits 0 whatever it finds.
             let is_notify = sub == "notify";
             let me = resolve_identity(as_agent.as_deref())?;
             let mut opts = NotifyOptions::default();
@@ -1371,6 +1498,16 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
                 match sub_args[j].as_str() {
                     "--after-task" => opts.after_task = true,
                     "--urgent-only" | "--urgent" => opts.urgent_only = true,
+                    "--session" if !is_notify => {
+                        return Err(CliError::Usage(
+                            "msg due is stateless; use msg notify --session <id>".into(),
+                        ));
+                    }
+                    "--format" if !is_notify => {
+                        return Err(CliError::Usage(
+                            "msg due always prints JSON; use msg notify --format text".into(),
+                        ));
+                    }
                     "--session" => {
                         j += 1;
                         opts.session = Some(
@@ -1420,7 +1557,7 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
             }
 
             let report = spool.notify(&me, &opts)?;
-            if format_json || json_flag {
+            if format_json {
                 println!(
                     "{}",
                     serde_json::to_string(&report).map_err(|e| CliError::Usage(e.to_string()))?
