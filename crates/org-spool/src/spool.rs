@@ -560,6 +560,16 @@ impl Spool {
     /// Route and deliver a single file from `outbox/new/<id>.json` into `inbox/<to>/new/<id>.json`
     /// or `dead/<id>.json` + `dead/<id>.reason`.
     pub fn deliver_one(&self, outbox_file: &Path) -> Result<DeliverOutcome, SpoolError> {
+        self.deliver_one_with(outbox_file, |to| self.recipient_kind(to))
+    }
+
+    /// [`Spool::deliver_one`] with the recipient-kind lookup (used only for an ask that
+    /// expired before delivery) passed in, so tests can inject its I/O errors.
+    pub(crate) fn deliver_one_with(
+        &self,
+        outbox_file: &Path,
+        recipient_kind: impl FnOnce(&str) -> io::Result<RecipientKind>,
+    ) -> Result<DeliverOutcome, SpoolError> {
         let file_name = outbox_file
             .file_name()
             .and_then(|n| n.to_str())
@@ -620,7 +630,7 @@ impl Spool {
         let mut urgent = env.is_urgent();
         if env.is_expired_at(&now_iso) {
             let kind = if env.kind == MessageKind::Request {
-                self.recipient_kind(&env.to)?
+                recipient_kind(&env.to)?
             } else {
                 RecipientKind::Agent
             };
@@ -992,5 +1002,48 @@ impl Spool {
             dead,
             registered_agents,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn a_transient_profile_error_leaves_an_expired_ask_in_the_outbox() {
+        let dir =
+            PathBuf::from("/tmp").join(format!("osd_{}_{}", process::id(), &generate_ulid()[20..]));
+        let spool = Spool::open(&dir).unwrap();
+        spool.register("pat").unwrap();
+        let mut ask = Envelope::new_request(
+            "ada",
+            "pat",
+            None,
+            "q",
+            BTreeMap::new(),
+            Duration::from_secs(60),
+        )
+        .unwrap();
+        ask.expires_at = Some("2000-01-01T00:00:00.000Z".into());
+        let queued = spool.enqueue(&ask).unwrap();
+
+        let eio = || Err(io::Error::from_raw_os_error(5));
+        let result = spool.deliver_one_with(&queued, |_| eio());
+        assert!(matches!(result, Err(SpoolError::Io(_))), "{result:?}");
+        assert!(queued.is_file(), "still in outbox/new");
+        assert_eq!(
+            fs::read_dir(spool.dead_dir()).unwrap().count(),
+            0,
+            "nothing in dead/"
+        );
+
+        // Once the lookup works, it goes through.
+        let result = spool.deliver_one_with(&queued, |_| Ok(RecipientKind::Person));
+        assert!(matches!(
+            result,
+            Ok(DeliverOutcome::Delivered { urgent: true, .. })
+        ));
+        let _ = fs::remove_dir_all(&dir);
     }
 }
