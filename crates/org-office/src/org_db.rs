@@ -77,7 +77,10 @@ pub(crate) const SCHEMA: Schema = Schema {
 };
 
 /// The rules' view of the organization and their way to write it, over the writer's connection
-/// (or a reader's, for reads). The traits have no error channel: a failing query panics with a
+/// (or a reader's, for reads). A write is an upsert by id that NEVER replaces another row: a
+/// clash on a sibling name, a handle or a (team, member) pair is a constraint error (a panic
+/// here, so the request's savepoint rolls back), not a quiet deletion. The traits have no error
+/// channel: a failing query panics with a
 /// fixed text, which the writer reports as a storage failure of that one request and a reader
 /// surfaces as an error.
 pub(crate) struct OrgSql<'a>(pub(crate) &'a Connection);
@@ -209,8 +212,11 @@ impl OrgView for OrgSql<'_> {
 impl OrgWrite for OrgSql<'_> {
     fn put_team(&mut self, team: &Team) {
         sql(self.0.execute(
-            "INSERT OR REPLACE INTO teams (id, owner_team_id, name_key, lead_member_id, body)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO teams (id, owner_team_id, name_key, lead_member_id, body)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT (id) DO UPDATE SET owner_team_id = excluded.owner_team_id,
+                 name_key = excluded.name_key, lead_member_id = excluded.lead_member_id,
+                 body = excluded.body",
             (
                 &team.id,
                 &team.owner_team_id,
@@ -225,8 +231,10 @@ impl OrgWrite for OrgSql<'_> {
     }
     fn put_member(&mut self, member: &Member) {
         sql(self.0.execute(
-            "INSERT OR REPLACE INTO members (id, handle_key, reports_to_member_id, body)
-             VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO members (id, handle_key, reports_to_member_id, body)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (id) DO UPDATE SET handle_key = excluded.handle_key,
+                 reports_to_member_id = excluded.reports_to_member_id, body = excluded.body",
             (
                 &member.id,
                 handle_key(member),
@@ -240,8 +248,10 @@ impl OrgWrite for OrgSql<'_> {
     }
     fn put_membership(&mut self, membership: &Membership) {
         sql(self.0.execute(
-            "INSERT OR REPLACE INTO memberships (id, team_id, member_id, body)
-             VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO memberships (id, team_id, member_id, body)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (id) DO UPDATE SET team_id = excluded.team_id,
+                 member_id = excluded.member_id, body = excluded.body",
             (
                 &membership.id,
                 &membership.team_id,
@@ -257,8 +267,10 @@ impl OrgWrite for OrgSql<'_> {
     }
     fn put_project_team(&mut self, project_team: &ProjectTeam) {
         sql(self.0.execute(
-            "INSERT OR REPLACE INTO project_teams (id, project_id, team_id, body)
-             VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO project_teams (id, project_id, team_id, body)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (id) DO UPDATE SET project_id = excluded.project_id,
+                 team_id = excluded.team_id, body = excluded.body",
             (
                 &project_team.id,
                 &project_team.project_id,
@@ -404,7 +416,9 @@ mod tests {
     use org_proto::org::{
         AgentProfile, AgentRuntime, AgentStatus, MemberAddPersonParams, MemberKind,
         MemberRemoveParams, MemberSetReportsToParams, MemberUpdatePersonParams,
-        TeamAddMemberParams, TeamCreateParams, TeamMoveParams, TeamRenameParams, TeamSetLeadParams,
+        ProjectAddTeamParams, ProjectRemoveTeamParams, TeamAddMemberParams, TeamCreateParams,
+        TeamDeleteParams, TeamMoveParams, TeamRemoveMemberParams, TeamRenameParams,
+        TeamSetLeadParams,
     };
     use tempfile::TempDir;
 
@@ -578,6 +592,45 @@ mod tests {
                 expected_version: 1,
                 name: "Platform team".into(),
             }),
+            OrgCommand::ProjectAddTeam(ProjectAddTeamParams {
+                command_id: c(60),
+                project_team_id: "pt1".into(),
+                project_id: "p1".into(),
+                team_id: "t4".into(),
+            }),
+            OrgCommand::ProjectAddTeam(ProjectAddTeamParams {
+                command_id: c(61),
+                project_team_id: "pt2".into(),
+                project_id: "p1".into(),
+                team_id: "t2".into(),
+            }),
+            OrgCommand::ProjectAddTeam(ProjectAddTeamParams {
+                command_id: c(62),
+                project_team_id: "pt3".into(),
+                project_id: "p1".into(),
+                team_id: "t4".into(), // the pair is taken
+            }),
+            OrgCommand::ProjectRemoveTeam(ProjectRemoveTeamParams {
+                command_id: c(63),
+                project_team_id: "pt2".into(),
+                expected_version: 1,
+                areas_to_team_id: None,
+            }),
+            OrgCommand::TeamRemoveMember(TeamRemoveMemberParams {
+                command_id: c(64),
+                membership_id: "m2".into(),
+                expected_version: 1,
+            }),
+            OrgCommand::TeamDelete(TeamDeleteParams {
+                command_id: c(65),
+                team_id: "t1".into(),
+                expected_version: 1, // t1 owns t2: not empty
+            }),
+            OrgCommand::TeamDelete(TeamDeleteParams {
+                command_id: c(66),
+                team_id: "t4".into(), // takes its project link with it
+                expected_version: 2,
+            }),
             OrgCommand::MemberRemove(MemberRemoveParams {
                 command_id: c(16),
                 member_id: id(1),
@@ -636,6 +689,18 @@ mod tests {
                 .map(|()| ((), None))
             })
             .unwrap();
+        mem.projects.insert("p1".to_owned());
+        store
+            .write(|db| {
+                db.execute(
+                    r#"INSERT INTO projects (id, body)
+                       VALUES ('p1', '{"id":"p1","name":"Project","version":1}')"#,
+                    (),
+                )
+                .map_err(OfficeError::storage)?;
+                Ok(((), None))
+            })
+            .unwrap();
         for command in commands() {
             let expected = decide(&mem, NOW, &command);
             let actual = store
@@ -677,38 +742,134 @@ mod tests {
             snapshot.memberships,
             mem.memberships.values().cloned().collect::<Vec<_>>()
         );
+        assert_eq!(
+            snapshot.project_teams,
+            mem.project_teams.values().cloned().collect::<Vec<_>>()
+        );
         assert!(!snapshot.teams.is_empty() && snapshot.members.len() >= 2);
+        // The sequence really did add, remove and cascade-delete project links and memberships.
+        assert!(snapshot.project_teams.is_empty());
+        assert!(snapshot.memberships.iter().all(|m| m.id != "m2"));
+    }
+
+    fn put_fails(store: &Store, put: impl FnOnce(&mut OrgSql<'_>) + Send + 'static) -> bool {
+        let mut put = Some(put);
+        store
+            .write(move |db| {
+                let put = put.take().expect("runs once");
+                put(&mut OrgSql(db));
+                Ok(((), None))
+            })
+            .is_err()
+    }
+
+    fn team(id: &str, name: &str, owner: Option<&str>) -> Team {
+        Team {
+            id: id.into(),
+            name: name.into(),
+            owner_team_id: owner.map(Into::into),
+            lead_member_id: None,
+            version: 1,
+        }
     }
 
     #[test]
-    fn the_database_backs_up_the_sibling_name_and_handle_rules() {
+    fn the_database_backs_up_the_sibling_name_and_handle_rules_and_never_deletes_to_do_it() {
         let (_dir, store) = store();
-        let outcome = store.write(|db| {
-            db.execute_batch(
-                "INSERT INTO teams (id, name_key, body) VALUES ('a', 'x', '{}');
-                 INSERT INTO members (id, handle_key, body) VALUES ('m1', 'h', '{}');",
-            )
-            .map_err(OfficeError::storage)?;
-            Ok(((), None))
-        });
-        outcome.unwrap();
-        let team_clash = store.write(|db| {
-            db.execute(
-                "INSERT INTO teams (id, name_key, body) VALUES ('b', 'x', '{}')",
-                (),
-            )
-            .map_err(OfficeError::storage)?;
-            Ok(((), None))
-        });
-        assert!(team_clash.is_err(), "two top-level teams with one name");
-        let handle_clash = store.write(|db| {
-            db.execute(
-                "INSERT INTO members (id, handle_key, body) VALUES ('m2', 'h', '{}')",
-                (),
-            )
-            .map_err(OfficeError::storage)?;
-            Ok(((), None))
-        });
-        assert!(handle_clash.is_err(), "two members with one handle");
+        store
+            .write(|db| {
+                let mut state = OrgSql(db);
+                state.put_team(&team("a", "X", None));
+                Ok(((), None))
+            })
+            .unwrap();
+        // The same name (any case) among the top-level teams: a constraint error, and `a` stays.
+        assert!(put_fails(&store, |s| s.put_team(&team("b", "x", None))));
+        let after = store.read(snapshot).unwrap();
+        assert_eq!(
+            after
+                .teams
+                .iter()
+                .map(|t| t.id.as_str())
+                .collect::<Vec<_>>(),
+            ["a"]
+        );
+        // Updating a team in place is fine.
+        store
+            .write(|db| {
+                OrgSql(db).put_team(&team("a", "X", None));
+                Ok(((), None))
+            })
+            .unwrap();
+        // Two members with one handle: the second write fails and the first member stays.
+        let person = |id: &str, name: &str| Member {
+            id: id.into(),
+            kind: MemberKind::Person,
+            name: name.into(),
+            contact: None,
+            owner: false,
+            office_id: None,
+            agent: None,
+            reports_to_member_id: None,
+            created_at: None,
+            version: 1,
+        };
+        store
+            .write({
+                let first = person("m1", "Ann");
+                move |db| {
+                    OrgSql(db).put_member(&first);
+                    Ok(((), None))
+                }
+            })
+            .unwrap();
+        let second = person("m2", "ANN");
+        assert!(put_fails(&store, move |s| s.put_member(&second)));
+        let ids: Vec<String> = store
+            .read(snapshot)
+            .unwrap()
+            .members
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        assert!(
+            ids.contains(&"m1".to_owned()) && !ids.contains(&"m2".to_owned()),
+            "{ids:?}"
+        );
+        // A second membership of the same member in the same team.
+        let membership = |id: &str| Membership {
+            id: id.into(),
+            team_id: "a".into(),
+            member_id: "m1".into(),
+            title_in_team: None,
+            version: 1,
+        };
+        store
+            .write(move |db| {
+                OrgSql(db).put_membership(&membership("ms1"));
+                Ok(((), None))
+            })
+            .unwrap();
+        assert!(put_fails(&store, move |s| s.put_membership(&Membership {
+            id: "ms2".into(),
+            team_id: "a".into(),
+            member_id: "m1".into(),
+            title_in_team: None,
+            version: 1,
+        })));
+        assert_eq!(store.read(snapshot).unwrap().memberships.len(), 1);
+    }
+
+    #[test]
+    fn a_snapshot_of_an_empty_log_is_not_found() {
+        let dir = TempDir::new().unwrap();
+        let store = Store::open(
+            &dir.path().join("org.db"),
+            &Key::from_bytes([5; 32]),
+            Opening::New,
+            &SCHEMA,
+        )
+        .unwrap();
+        assert!(matches!(store.read(snapshot), Err(OfficeError::NotFound)));
     }
 }
