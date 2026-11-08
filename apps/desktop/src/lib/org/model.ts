@@ -13,8 +13,28 @@ export const nonOwners = (s: OrgSnapshot): Member[] => s.members.filter((m) => !
 /** An agent that has left the organization: its record and handle stay, but it takes no part in the chart. */
 export const isFormer = (m: Member): boolean => m.kind === 'agent' && m.agent?.status === 'offboarded';
 
+/**
+ * The members a search matches (TEAM-11): by name, and for an agent by messaging name, role and title, ignoring case
+ * and accents. `undefined` when nothing is typed (so nothing is dimmed).
+ */
+export function searchMembers(s: OrgSnapshot, query: string): Set<string> | undefined {
+	const fold = (x: string) => x.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+	const q = fold(query.trim());
+	if (q === '') return undefined;
+	const hits = new Set<string>();
+	for (const m of nonOwners(s)) {
+		const fields = [m.name, m.contact ?? '', m.agent?.messaging_name ?? '', m.agent?.role ?? '', m.agent?.title ?? ''];
+		if (fields.some((f) => fold(f).includes(q))) hits.add(m.id);
+	}
+	return hits;
+}
+
 /** The organization as the chart shows it: without the agents who have left (they are listed apart). */
 export const withoutFormer = (s: OrgSnapshot): OrgSnapshot => (s.members.some(isFormer) ? { ...s, members: s.members.filter((m) => !isFormer(m)) } : s);
+
+/** The organization without its paused agents (DEAL-5, "Show paused" off): they stay members, just not drawn. */
+export const withoutPaused = (s: OrgSnapshot): OrgSnapshot =>
+	s.members.some((m) => m.agent?.status === 'paused') ? { ...s, members: s.members.filter((m) => m.agent?.status !== 'paused') } : s;
 
 /** The agents who have left, most recent first (HQ stamps when). */
 export const formerMembers = (s: OrgSnapshot): Member[] =>

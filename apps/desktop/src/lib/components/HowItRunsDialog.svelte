@@ -31,26 +31,30 @@
 	let shown = $state<Member | undefined>();
 
 	$effect(() => {
-		if (open && agent?.agent) {
-			const a = agent.agent;
+		// Only opening re-initialises the form: a reload behind the dialog (a stale edit) must keep what was typed.
+		if (open) {
 			untrack(() => {
-				shown = agent;
-				mode = a.run_mode && a.run_mode !== 'unknown' ? a.run_mode : a.run_mode === undefined ? '' : 'on_call';
-				spec = a.schedule?.spec ?? '';
-				zone = a.schedule?.time_zone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? '';
-				error = undefined;
+				if (!(agent?.agent)) return;
+				const a = agent.agent;
+				untrack(() => {
+					shown = agent;
+					mode = a.run_mode === undefined ? '' : (RUN_MODES.some((m) => m.id === a.run_mode) ? a.run_mode : 'unknown'); // a mode this app can't read stays unset until one is picked
+					spec = a.schedule?.spec ?? '';
+					zone = a.schedule?.time_zone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? '';
+					error = undefined;
+				});
 			});
 		}
 	});
 
-	const scheduleMissing = $derived(mode === 'scheduled' && (spec.trim() === '' || zone.trim() === ''));
+	const scheduleMissing = $derived((mode === 'scheduled' && (spec.trim() === '' || zone.trim() === '')) || mode === 'unknown');
 
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
 		if (!shown || busy || scheduleMissing) return;
 		busy = true;
 		try {
-			await setRunMode(session, shown.id, mode === '' ? undefined : (mode as RunMode), mode === 'scheduled' ? { spec: spec.trim(), time_zone: zone.trim() } : undefined);
+			await setRunMode(session, shown.id, mode === '' ? undefined : (mode as RunMode), mode === 'scheduled' ? { spec: spec.trim(), time_zone: zone.trim() } : undefined, shown.version);
 			open = false;
 			ondone({ name: shown.name });
 		} catch (e) {
@@ -74,6 +78,12 @@
 			</DialogHeader>
 			<fieldset class="space-y-1" disabled={busy}>
 				<legend class="sr-only">Run mode</legend>
+				{#if mode === 'unknown'}
+					<label class="flex items-start gap-x-3 rounded-md px-2 py-1.5 text-sm/6">
+						<input type="radio" name="run-mode" value="unknown" class="mt-1" checked disabled />
+						<span><span class="block text-white">Not recognised</span><span class="block text-xs/5 text-gray-400">This app can't read how it runs. Choose one.</span></span>
+					</label>
+				{/if}
 				{#each RUN_MODES as m (m.id)}
 					<label class="flex items-start gap-x-3 rounded-md px-2 py-1.5 text-sm/6 hover:bg-white/5">
 						<input type="radio" name="run-mode" value={m.id} class="mt-1" bind:group={mode} />

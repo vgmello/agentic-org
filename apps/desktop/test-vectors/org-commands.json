@@ -1942,6 +1942,105 @@
      }
     }
    ]
+  },
+  {
+   "name": "add agent: a person's real name is a handle too",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "already_exists",
+   "setup": [
+    {
+     "method": "member.add_person",
+     "params": {
+      "member_id": "p1",
+      "name": "cam"
+     }
+    }
+   ]
+  },
+  {
+   "name": "add person: an agent's messaging name from add_agent is a handle",
+   "command": {
+    "method": "member.add_person",
+    "params": {
+     "member_id": "p1",
+     "name": "CAM"
+    }
+   },
+   "expect": "already_exists",
+   "setup": [
+    {
+     "method": "member.add_agent",
+     "params": {
+      "member_id": "cam",
+      "name": "Cameron",
+      "office_id": "office-1",
+      "profile": {
+       "role": "QA engineer",
+       "title": "QA engineer",
+       "runtime": "codex",
+       "messaging_name": "cam",
+       "status": "active"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "add agent: an empty office id",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": "Cameron",
+     "office_id": "",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "run mode: a string no build knows",
+   "command": {
+    "method": "member.set_run_mode",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "run_mode": "weekly"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "run mode: the right words in the wrong case",
+   "command": {
+    "method": "member.set_run_mode",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "run_mode": "ALWAYS_ON"
+    }
+   },
+   "expect": "invalid_request"
   }
  ]
 }

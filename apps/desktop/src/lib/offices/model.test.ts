@@ -74,3 +74,14 @@ describe('OFC-1 the list order and what each row says', () => {
 		expect(unplacedAgents(s, []).length).toBe(8);
 	});
 });
+
+describe('agents who have left are not in an office', () => {
+	it('are not counted in an office nor listed as unplaced', () => {
+		const s = sampleOrg('office-1');
+		const left = { ...s, members: s.members.map((m) => (m.id === 'sam' ? { ...m, agent: { ...m.agent!, status: 'offboarded' as const } } : m)) };
+		expect(agentsIn(s, 'office-1').length).toBe(7);
+		expect(agentsIn(left, 'office-1').map((m) => m.id)).not.toContain('sam');
+		expect(agentsIn(left, 'office-1').length).toBe(6);
+		expect(unplacedAgents(left, []).map((m) => m.id)).not.toContain('sam'); // the office is gone, he is not "unplaced" either
+	});
+});

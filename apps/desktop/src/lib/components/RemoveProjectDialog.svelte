@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '$lib/components/ui/dialog';
 	import { toAppError } from '$lib/office/api';
@@ -22,9 +23,13 @@
 	let error = $state<string | undefined>();
 	let shown = $state<typeof target>();
 	$effect(() => {
-		if (open && target) {
-			shown = target;
-			error = undefined;
+		// Only opening re-initialises the form: a reload behind the dialog (a stale edit) must keep what was typed.
+		if (open) {
+			untrack(() => {
+				if (!(target)) return;
+				shown = target;
+				error = undefined;
+			});
 		}
 	});
 

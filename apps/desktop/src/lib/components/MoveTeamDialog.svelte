@@ -31,11 +31,15 @@
 	let shown = $state<Team | undefined>();
 
 	$effect(() => {
-		if (open && team) {
+		// Only opening re-initialises the form: a reload behind the dialog (a stale edit) must keep what was typed.
+		if (open) {
 			untrack(() => {
-				shown = team;
-				target = undefined;
-				error = undefined;
+				if (!(team)) return;
+				untrack(() => {
+					shown = team;
+					target = undefined;
+					error = undefined;
+				});
 			});
 		}
 	});

@@ -48,6 +48,7 @@
 	let role = $state('');
 	let title = $state('');
 	let home = $state('');
+	let runMode = $state<string>('on_call');
 	let manager = $state('');
 	const teamIds = new SvelteSet<string>();
 	let failure = $state<AppError | undefined>();
@@ -65,6 +66,7 @@
 				role = '';
 				title = '';
 				home = '';
+				runMode = 'on_call';
 				manager = '';
 				teamIds.clear();
 				failure = undefined;
@@ -107,7 +109,8 @@
 					title: title.trim() || role.trim(),
 					officeId,
 					home: home.trim() || undefined,
-					runMode: 'on_call',
+					// An agent someone starts by hand has no run mode: the office never starts it.
+					runMode: runMode === '' ? undefined : (runMode as 'always_on' | 'on_call'),
 					teamIds: [...teamIds],
 					managerId: manager || undefined
 				},
@@ -182,6 +185,14 @@
 					{/each}
 				</ul>
 			</fieldset>
+			<div class="space-y-2">
+				<Label for="new-agent-run">How it runs</Label>
+				<select id="new-agent-run" bind:value={runMode} disabled={busy} class="w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
+					<option value="on_call">On call: wakes when it's needed</option>
+					<option value="always_on">Always on: keeps a session running</option>
+					<option value="">Started by a person: the office never starts it</option>
+				</select>
+			</div>
 			<div class="space-y-2">
 				<Label for="new-agent-manager">Reports to</Label>
 				<select id="new-agent-manager" bind:value={manager} disabled={busy} class="w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">

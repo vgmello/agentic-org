@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import { Button } from '$lib/components/ui/button';
 	import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '$lib/components/ui/dialog';
@@ -28,9 +29,13 @@
 	let error = $state<string | undefined>();
 	let shown = $state<Member | undefined>();
 	$effect(() => {
-		if (open && person) {
-			shown = person;
-			error = undefined;
+		// Only opening re-initialises the form: a reload behind the dialog (a stale edit) must keep what was typed.
+		if (open) {
+			untrack(() => {
+				if (!(person)) return;
+				shown = person;
+				error = undefined;
+			});
 		}
 	});
 	const lines = $derived(shown ? removePersonSummary(snapshot, shown, organization) : []);

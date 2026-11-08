@@ -31,11 +31,15 @@
 	let title = $state('');
 
 	$effect(() => {
-		if (open && team) {
+		// Only opening re-initialises the form: a reload behind the dialog (a stale edit) must keep what was typed.
+		if (open) {
 			untrack(() => {
-				name = team.name;
-				title = team.name;
-				error = undefined;
+				if (!(team)) return;
+				untrack(() => {
+					name = team.name;
+					title = team.name;
+					error = undefined;
+				});
 			});
 		}
 	});

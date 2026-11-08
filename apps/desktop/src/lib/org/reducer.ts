@@ -65,7 +65,7 @@ const badText = (t: string | undefined) => t !== undefined && (trimWhiteSpace(t)
 /** An id that is not an id can never name anything, so it is refused before the organization is looked at. */
 export function wellFormed(c: OrgCommand) {
 	const p = c.params as Record<string, unknown>;
-	const idKeys = ['command_id', 'team_id', 'owner_team_id', 'lead_member_id', 'membership_id', 'new_membership_id', 'to_team_id', 'member_id', 'reports_to_member_id', 'project_team_id', 'project_id'];
+	const idKeys = ['command_id', 'team_id', 'owner_team_id', 'lead_member_id', 'membership_id', 'new_membership_id', 'to_team_id', 'member_id', 'reports_to_member_id', 'project_team_id', 'project_id', 'office_id'];
 	if (idKeys.some((k) => badId(p[k] as string | undefined))) fail('invalid_request', "An id in that request isn't valid.");
 }
 
@@ -150,7 +150,7 @@ function agentSchedule(sc: Schedule): Schedule {
 
 /** A run mode with its schedule: scheduled needs one, any other mode must have none, unknown is refused. */
 function agentRunMode(mode: RunMode | undefined, schedule: Schedule | undefined): { run_mode?: RunMode; schedule?: Schedule } {
-	if (mode === 'unknown') fail('invalid_request', 'Choose how the agent is run.');
+	if (mode !== undefined && !['always_on', 'on_call', 'scheduled'].includes(mode)) fail('invalid_request', 'Choose how the agent is run.');
 	if (mode === 'scheduled') {
 		if (!schedule) fail('invalid_request', 'A scheduled agent needs a schedule.');
 		return { run_mode: mode, schedule: agentSchedule(schedule!) };

@@ -290,21 +290,25 @@ export async function addAgent(api: OrgSession, input: NewAgentInput, teamName: 
 	return { memberId, created, steps };
 }
 
-async function currentMember(api: OrgSession, memberId: string) {
+/**
+ * The member as HQ has it now, or, when the caller saw a particular version (a dialog showed what it would do), that
+ * version: HQ then refuses with `conflict` if the agent changed since, instead of acting on what the owner didn't see.
+ */
+async function currentMember(api: OrgSession, memberId: string, seenVersion?: number) {
 	const m = (await api.snapshot()).members.find((x) => x.id === memberId);
 	if (!m) throw { source: 'api', code: 'not_found', message: "That agent isn't in the organization any more." } satisfies AppError;
-	return m;
+	return seenVersion === undefined ? m : { ...m, version: seenVersion };
 }
 
 /** Pause or resume an agent, against its current version (DEAL-3). A paused agent isn't started or woken. */
-export async function setAgentStatus(api: OrgSession, memberId: string, status: 'active' | 'paused'): Promise<void> {
-	const m = await currentMember(api, memberId);
+export async function setAgentStatus(api: OrgSession, memberId: string, status: 'active' | 'paused', seenVersion?: number): Promise<void> {
+	const m = await currentMember(api, memberId, seenVersion);
 	await api.command({ method: 'member.set_agent_status', params: { member_id: memberId, expected_version: m.version, status } });
 }
 
 /** Offboard an agent: a state, not a deletion (its record and name stay). */
-export async function offboardAgent(api: OrgSession, memberId: string): Promise<void> {
-	const m = await currentMember(api, memberId);
+export async function offboardAgent(api: OrgSession, memberId: string, seenVersion?: number): Promise<void> {
+	const m = await currentMember(api, memberId, seenVersion);
 	await api.command({ method: 'member.offboard', params: { member_id: memberId, expected_version: m.version } });
 }
 
@@ -321,8 +325,8 @@ export interface AgentChange {
 }
 
 /** Edit an agent's record: only what is given changes, and an empty focus, model or home clears it. */
-export async function updateAgent(api: OrgSession, memberId: string, change: AgentChange): Promise<void> {
-	const m = await currentMember(api, memberId);
+export async function updateAgent(api: OrgSession, memberId: string, change: AgentChange, seenVersion?: number): Promise<void> {
+	const m = await currentMember(api, memberId, seenVersion);
 	const clear = (v: string | undefined) => v !== undefined && v.trim() === '';
 	const given = (v: string | undefined) => (v !== undefined && v.trim() !== '' ? v : undefined);
 	await api.command({
@@ -346,8 +350,8 @@ export async function updateAgent(api: OrgSession, memberId: string, change: Age
 }
 
 /** Change how an agent runs (RUN-1): a mode, with a schedule for a scheduled one; none means a person starts it. */
-export async function setRunMode(api: OrgSession, memberId: string, mode: RunMode | undefined, schedule?: Schedule): Promise<void> {
-	const m = await currentMember(api, memberId);
+export async function setRunMode(api: OrgSession, memberId: string, mode: RunMode | undefined, schedule?: Schedule, seenVersion?: number): Promise<void> {
+	const m = await currentMember(api, memberId, seenVersion);
 	await api.command({ method: 'member.set_run_mode', params: { member_id: memberId, expected_version: m.version, ...(mode ? { run_mode: mode } : {}), ...(mode === 'scheduled' && schedule ? { schedule } : {}) } });
 }
 

@@ -177,3 +177,51 @@ test('MOVE: Move to team moves an agent in one step, says what changes, and Undo
 	await expect(page.getByText('Noor Haddad is back.')).toBeVisible();
 	await expect(card(page, 'web').getByRole('button', { name: /^Noor Haddad/ })).toBeVisible();
 });
+
+test('TEAM-11: Search members rings the matches and dims the rest, and the search stays when the tab changes', async ({ page }) => {
+	await openChart(page);
+	await page.getByLabel('Search members').fill('designer');
+	await expect(page.getByTestId('search-status')).toContainText('2 matches');
+	await expect(card(page, 'design').getByRole('button', { name: /^Juno Park, agent, matches the search/ })).toBeVisible();
+	await expect(card(page, 'web').getByRole('button', { name: /^Noor Haddad, agent/ })).not.toHaveAttribute('aria-label', /matches/);
+	await expect(card(page, 'web').getByRole('button', { name: /^Noor Haddad/ })).toHaveClass(/opacity-40/); // not a match: dimmed
+	await page.getByRole('tab', { name: 'Reporting lines' }).click();
+	await expect(page.getByLabel('Search members')).toHaveValue('designer'); // kept
+	await expect(page.getByTestId('search-status')).toContainText('2 matches');
+	await expect(page.getByRole('button', { name: /^Pax Moreau, agent, matches the search/ })).toBeVisible();
+	await page.getByRole('button', { name: 'Clear' }).click();
+	await expect(page.getByLabel('Search members')).toHaveValue('');
+	await expect(page.getByTestId('search-status')).toHaveText('');
+});
+
+test('TEAM-11: a search with no match says so', async ({ page }) => {
+	await openChart(page);
+	await page.getByLabel('Search members').fill('zzzz');
+	await expect(page.getByTestId('search-status')).toContainText('No one matches.');
+});
+
+test('DEAL-5: Show paused hides paused agents from the chart and counts, and brings them back', async ({ page }) => {
+	await openChart(page);
+	await expect(page.getByLabel('Show paused')).toHaveCount(0); // nobody is paused yet
+	await select(page, 'web', /^Noor Haddad/);
+	await strip(page).getByRole('button', { name: 'Pause…' }).click();
+	await page.getByRole('dialog').getByRole('button', { name: 'Pause Noor Haddad' }).click();
+	await expect(page.getByText('Paused Noor Haddad.')).toBeVisible();
+	const toggle = page.getByLabel('Show paused');
+	await expect(toggle).toBeChecked();
+	await toggle.uncheck();
+	await expect(card(page, 'web').getByRole('button', { name: /^Noor Haddad/ })).toHaveCount(0);
+	await expect(page.getByText(/\b7\b.*agents/)).toBeVisible(); // 8 agents, one hidden
+	await toggle.check();
+	await expect(card(page, 'web').getByRole('button', { name: /^Noor Haddad/ })).toBeVisible();
+});
+
+test('an offboarded agent is no longer counted on the Offices screen', async ({ page }) => {
+	await openChart(page);
+	await select(page, 'eng', /^Sam Okafor/);
+	await strip(page).getByRole('button', { name: 'Offboard…' }).click();
+	await page.getByRole('dialog').getByRole('button', { name: 'Offboard Sam Okafor' }).click();
+	await expect(page.getByText('Offboarded Sam Okafor.')).toBeVisible();
+	await visit(page, '/offices'); // the mock office keeps the change in the browser's storage
+	await expect(page.getByTestId('office-row').first()).toContainText('6 agents');
+});

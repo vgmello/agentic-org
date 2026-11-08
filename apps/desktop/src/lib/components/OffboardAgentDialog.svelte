@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import LogOut from '@lucide/svelte/icons/log-out';
 	import { Button } from '$lib/components/ui/button';
 	import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '$lib/components/ui/dialog';
@@ -26,9 +27,13 @@
 	let error = $state<string | undefined>();
 	let shown = $state<Member | undefined>();
 	$effect(() => {
-		if (open && agent) {
-			shown = agent;
-			error = undefined;
+		// Only opening re-initialises the form: a reload behind the dialog (a stale edit) must keep what was typed.
+		if (open) {
+			untrack(() => {
+				if (!(agent)) return;
+				shown = agent;
+				error = undefined;
+			});
 		}
 	});
 	const lines = $derived(shown ? offboardSummary(snapshot, shown) : []);
@@ -37,7 +42,7 @@
 		if (!shown || busy) return;
 		busy = true;
 		try {
-			await offboardAgent(session, shown.id);
+			await offboardAgent(session, shown.id, shown.version);
 			open = false;
 			ondone({ name: shown.name });
 		} catch (e) {

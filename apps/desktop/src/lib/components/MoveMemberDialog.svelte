@@ -32,12 +32,16 @@
 	let shown = $state<Member | undefined>();
 
 	$effect(() => {
-		if (open && member) {
+		// Only opening re-initialises the form: a reload behind the dialog (a stale edit) must keep what was typed.
+		if (open) {
 			untrack(() => {
-				shown = member;
-				from = teamsOfMember(snapshot, member.id)[0]?.id ?? '';
-				target = undefined;
-				error = undefined;
+				if (!(member)) return;
+				untrack(() => {
+					shown = member;
+					from = teamsOfMember(snapshot, member.id)[0]?.id ?? '';
+					target = undefined;
+					error = undefined;
+				});
 			});
 		}
 	});

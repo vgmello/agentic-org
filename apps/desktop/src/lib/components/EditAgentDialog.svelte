@@ -40,20 +40,24 @@
 	let shown = $state<Member | undefined>();
 
 	$effect(() => {
-		if (open && agent?.agent) {
-			const a = agent.agent;
+		// Only opening re-initialises the form: a reload behind the dialog (a stale edit) must keep what was typed.
+		if (open) {
 			untrack(() => {
-				shown = agent;
-				name = agent.name;
-				role = a.role;
-				title = a.title;
-				focus = a.focus ?? '';
-				runtime = typeof a.runtime === 'object' ? 'other' : (RUNTIMES as readonly string[]).includes(a.runtime) ? a.runtime : 'claude_code';
-				otherRuntime = typeof a.runtime === 'object' ? a.runtime.other : '';
-				model = a.model ?? '';
-				home = a.home ?? '';
-				handle = a.messaging_name;
-				error = undefined;
+				if (!(agent?.agent)) return;
+				const a = agent.agent;
+				untrack(() => {
+					shown = agent;
+					name = agent.name;
+					role = a.role;
+					title = a.title;
+					focus = a.focus ?? '';
+					runtime = typeof a.runtime === 'object' ? 'other' : (RUNTIMES as readonly string[]).includes(a.runtime) ? a.runtime : 'unknown'; // an unreadable runtime stays unset until the owner picks one
+					otherRuntime = typeof a.runtime === 'object' ? a.runtime.other : '';
+					model = a.model ?? '';
+					home = a.home ?? '';
+					handle = a.messaging_name;
+					error = undefined;
+				});
 			});
 		}
 	});
@@ -71,7 +75,7 @@
 		if (role.trim() !== a.role) change.role = role;
 		if (title.trim() !== a.title) change.title = title;
 		if (focus.trim() !== (a.focus ?? '')) change.focus = focus;
-		if (JSON.stringify(runtimeValue) !== JSON.stringify(a.runtime)) change.runtime = runtimeValue;
+		if (runtime !== 'unknown' && JSON.stringify(runtimeValue) !== JSON.stringify(a.runtime)) change.runtime = runtimeValue;
 		if (model.trim() !== (a.model ?? '')) change.model = model;
 		if (home.trim() !== (a.home ?? '')) change.home = home.trim();
 		if (handle !== a.messaging_name) change.messagingName = handle;
@@ -81,7 +85,7 @@
 		}
 		busy = true;
 		try {
-			await updateAgent(session, shown.id, change);
+			await updateAgent(session, shown.id, change, shown.version);
 			open = false;
 			ondone({ name: change.name?.trim() ?? shown.name });
 		} catch (e) {
@@ -125,6 +129,7 @@
 				<div class="space-y-2">
 					<Label for="agent-runtime">Runs on</Label>
 					<select id="agent-runtime" bind:value={runtime} disabled={busy} class="w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
+						{#if runtime === 'unknown'}<option value="unknown">Runtime not set: choose one</option>{/if}
 						{#each RUNTIMES as r (r)}<option value={r}>{runtimeLabel(r)}</option>{/each}
 						<option value="other">Another runtime…</option>
 					</select>

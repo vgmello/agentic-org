@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { invalidate } from '$app/navigation';
+	import { setContext } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { toast } from 'svelte-sonner';
 	import Plus from '@lucide/svelte/icons/plus';
@@ -41,9 +42,11 @@
 		notInATeam,
 		organizationCounts,
 		owner,
+		searchMembers,
 		teamTree,
 		unassignedProjects,
 		withoutFormer,
+		withoutPaused,
 		type OfficeFilter,
 		type TeamNode
 	} from '$lib/org/model';
@@ -58,7 +61,11 @@
 	let { data } = $props();
 	// Everyone, including agents who have left (their names stay reserved), and the organization as the chart shows it.
 	const full = $derived(data.snapshot);
-	const snapshot = $derived(withoutFormer(full));
+	const live = $derived(withoutFormer(full));
+	// What the charts draw: everyone who is here, except paused agents while "Show paused" is off (DEAL-5).
+	let showPaused = $state(true);
+	const snapshot = $derived(showPaused ? live : withoutPaused(live));
+	const anyPaused = $derived(live.members.some((m) => m.agent?.status === 'paused'));
 	const former = $derived(formerMembers(full));
 
 	const TABS = [
@@ -73,6 +80,14 @@
 	const collapsedReports = new SvelteSet<string>();
 	const reporting = $derived(reportingTree(snapshot));
 	let selected = $state<string | undefined>();
+	// The search is kept when the tab changes (TEAM-11), and read by every tile through a context.
+	let query = $state('');
+	const matches = $derived(searchMembers(snapshot, query));
+	setContext('member-search', {
+		get matches() {
+			return matches;
+		}
+	});
 	let filterValue = $state('all');
 
 	const tree = $derived(teamTree(snapshot));
@@ -323,6 +338,19 @@
 <div class="space-y-5 px-8 py-6">
 	<OwnerBar owner={owner(snapshot)} organization={organizationName} sample={data.sample} />
 
+	<div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+		<label class="flex items-center gap-x-2 text-sm/6 text-gray-300">
+			Search
+			<input type="search" bind:value={query} placeholder="Search members…" aria-label="Search members" autocomplete="off" class="w-64 rounded-md bg-gray-800 px-2 py-1 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:outline-indigo-400" />
+		</label>
+		{#if anyPaused}
+			<label class="flex items-center gap-x-2 text-sm/6 text-gray-300"><input type="checkbox" bind:checked={showPaused} /> Show paused</label>
+		{/if}
+		<p class="text-sm/6 text-sky-200" role="status" data-testid="search-status">
+			{#if matches}{matches.size === 0 ? 'No one matches.' : `${matches.size} ${matches.size === 1 ? 'match' : 'matches'}`} · <button type="button" class="font-semibold underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-indigo-400" onclick={() => (query = '')}>Clear</button>{/if}
+		</p>
+	</div>
+
 	<div class="flex flex-wrap items-center justify-between gap-3">
 		<div role="tablist" aria-label="Org chart views" class="inline-flex rounded-lg bg-white/5 p-1 outline-1 -outline-offset-1 outline-white/10">
 			{#each TABS as t (t.id)}
@@ -355,7 +383,7 @@
 		</p>
 	</div>
 
-	<SelectedMember {snapshot} member={selectedMember} offices={offices} organization={organizationName} onclear={() => (selected = undefined)} onedit={(m) => ((editingPerson = m), (editPersonOpen = true))} onremove={(m) => ((removingPerson = m), (removePersonOpen = true))} onmanager={(m) => ((managing = m), (managerOpen = true))} onteams={(m) => ((memberTeams = m), (memberTeamsOpen = true))} oneditagent={(m) => ((editingAgent = m), (editAgentOpen = true))} onpause={(m) => ((pausing = m), (pauseOpen = true))} onresume={resumeAgent} onhowitruns={(m) => ((howRuns = m), (howRunsOpen = true))} onoffboard={(m) => ((offboarding = m), (offboardOpen = true))} onmove={(m) => ((movingMember = m), (moveMemberOpen = true))} />
+	<SelectedMember snapshot={live} member={selectedMember} offices={offices} organization={organizationName} onclear={() => (selected = undefined)} onedit={(m) => ((editingPerson = m), (editPersonOpen = true))} onremove={(m) => ((removingPerson = m), (removePersonOpen = true))} onmanager={(m) => ((managing = m), (managerOpen = true))} onteams={(m) => ((memberTeams = m), (memberTeamsOpen = true))} oneditagent={(m) => ((editingAgent = m), (editAgentOpen = true))} onpause={(m) => ((pausing = m), (pauseOpen = true))} onresume={resumeAgent} onhowitruns={(m) => ((howRuns = m), (howRunsOpen = true))} onoffboard={(m) => ((offboarding = m), (offboardOpen = true))} onmove={(m) => ((movingMember = m), (moveMemberOpen = true))} />
 
 	{#if tab === 'teams'}
 		<div id="panel-teams" role="tabpanel" aria-labelledby="tab-teams" class="space-y-5">
@@ -522,21 +550,21 @@
 	</div>
 {/if}
 
-<NewTeamSheet bind:open={newTeamOpen} {snapshot} {session} ownerTeamId={newTeamUnder} ondone={teamCreated} />
-<RenameTeamDialog bind:open={renameOpen} team={renaming && snapshot.teams.find((x) => x.id === renaming?.id)} {snapshot} {session} ondone={teamRenamed} />
-<DeleteTeamDialog bind:open={deleteOpen} team={deleting && snapshot.teams.find((x) => x.id === deleting?.id)} {snapshot} {session} ondone={teamDeleted} />
-<MoveTeamDialog bind:open={moveOpen} team={moving && snapshot.teams.find((x) => x.id === moving?.id)} {snapshot} {session} ondone={teamMoved} />
-<EditMembersDialog bind:open={membersOpen} team={editingMembers && snapshot.teams.find((x) => x.id === editingMembers?.id)} {snapshot} {session} ondone={membersEdited} />
-<ProjectTeamDialog bind:open={projectTeamOpen} team={projectTeam && snapshot.teams.find((x) => x.id === projectTeam?.id)} project={assigning} {snapshot} {session} ondone={projectGiven} />
+<NewTeamSheet bind:open={newTeamOpen} snapshot={live} {session} ownerTeamId={newTeamUnder} ondone={teamCreated} />
+<RenameTeamDialog bind:open={renameOpen} team={renaming && snapshot.teams.find((x) => x.id === renaming?.id)} snapshot={live} {session} ondone={teamRenamed} />
+<DeleteTeamDialog bind:open={deleteOpen} team={deleting && snapshot.teams.find((x) => x.id === deleting?.id)} snapshot={live} {session} ondone={teamDeleted} />
+<MoveTeamDialog bind:open={moveOpen} team={moving && snapshot.teams.find((x) => x.id === moving?.id)} snapshot={live} {session} ondone={teamMoved} />
+<EditMembersDialog bind:open={membersOpen} team={editingMembers && snapshot.teams.find((x) => x.id === editingMembers?.id)} snapshot={live} {session} ondone={membersEdited} />
+<ProjectTeamDialog bind:open={projectTeamOpen} team={projectTeam && snapshot.teams.find((x) => x.id === projectTeam?.id)} project={assigning} snapshot={live} {session} ondone={projectGiven} />
 <RemoveProjectDialog bind:open={removeProjectOpen} target={removeProject} {session} ondone={projectGiven} />
 <AddPersonSheet bind:open={addPersonOpen} snapshot={full} {session} organization={organizationName} presetTeamId={addPersonTeam} ondone={personAdded} />
 <EditPersonDialog bind:open={editPersonOpen} person={editingPerson && snapshot.members.find((x) => x.id === editingPerson?.id)} snapshot={full} {session} organization={organizationName} ondone={personEdited} />
-<RemovePersonDialog bind:open={removePersonOpen} person={removingPerson && snapshot.members.find((x) => x.id === removingPerson?.id)} {snapshot} {session} organization={organizationName} ondone={personRemoved} />
-<ChangeManagerDialog bind:open={managerOpen} member={managing && snapshot.members.find((x) => x.id === managing?.id)} {snapshot} {session} ondone={managerChanged} />
-<EditMemberTeamsDialog bind:open={memberTeamsOpen} member={memberTeams && snapshot.members.find((x) => x.id === memberTeams?.id)} {snapshot} {session} ondone={memberTeamsEdited} />
-<AddAgentSheet bind:open={addAgentOpen} {snapshot} fullSnapshot={full} {session} officeId={data.connection.office.id} officeName={data.connection.office.name} organization={organizationName} ondone={agentAdded} />
-<PauseAgentDialog bind:open={pauseOpen} agent={pausing && snapshot.members.find((x) => x.id === pausing?.id)} {snapshot} {session} ondone={agentPaused} />
-<OffboardAgentDialog bind:open={offboardOpen} agent={offboarding && snapshot.members.find((x) => x.id === offboarding?.id)} {snapshot} {session} ondone={agentOffboarded} />
+<RemovePersonDialog bind:open={removePersonOpen} person={removingPerson && snapshot.members.find((x) => x.id === removingPerson?.id)} snapshot={live} {session} organization={organizationName} ondone={personRemoved} />
+<ChangeManagerDialog bind:open={managerOpen} member={managing && snapshot.members.find((x) => x.id === managing?.id)} snapshot={live} {session} ondone={managerChanged} />
+<EditMemberTeamsDialog bind:open={memberTeamsOpen} member={memberTeams && snapshot.members.find((x) => x.id === memberTeams?.id)} snapshot={live} {session} ondone={memberTeamsEdited} />
+<AddAgentSheet bind:open={addAgentOpen} snapshot={live} fullSnapshot={full} {session} officeId={data.connection.office.id} officeName={data.connection.office.name} organization={organizationName} ondone={agentAdded} />
+<PauseAgentDialog bind:open={pauseOpen} agent={pausing && snapshot.members.find((x) => x.id === pausing?.id)} snapshot={live} {session} ondone={agentPaused} />
+<OffboardAgentDialog bind:open={offboardOpen} agent={offboarding && snapshot.members.find((x) => x.id === offboarding?.id)} snapshot={live} {session} ondone={agentOffboarded} />
 <EditAgentDialog bind:open={editAgentOpen} agent={editingAgent && snapshot.members.find((x) => x.id === editingAgent?.id)} snapshot={full} {session} ondone={agentEdited} />
 <HowItRunsDialog bind:open={howRunsOpen} agent={howRuns && snapshot.members.find((x) => x.id === howRuns?.id)} {session} ondone={agentEdited} />
-<MoveMemberDialog bind:open={moveMemberOpen} member={movingMember && snapshot.members.find((x) => x.id === movingMember?.id)} {snapshot} {session} ondone={memberMoved} />
+<MoveMemberDialog bind:open={moveMemberOpen} member={movingMember && snapshot.members.find((x) => x.id === movingMember?.id)} snapshot={live} {session} ondone={memberMoved} />

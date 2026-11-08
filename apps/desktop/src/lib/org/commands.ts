@@ -67,7 +67,10 @@ export type OrgCommandInput = { [M in OrgMethod]: { method: M; params: Without<E
 
 /** `null` means "not given", as it does on the wire (an Option): drop it so `{ lead_member_id: null }` clears a lead. */
 export function withoutNulls<T extends OrgCommand | OrgCommandInput>(command: T): T {
-	const params = Object.fromEntries(Object.entries(command.params).filter(([, v]) => v !== null));
+	const clean = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null));
+	const params = clean(command.params as Record<string, unknown>);
+	// An agent's profile (member.add_agent) and a schedule are nested: their nulls mean "not given" too.
+	for (const key of ['profile', 'schedule']) if (params[key] && typeof params[key] === 'object') params[key] = clean(params[key] as Record<string, unknown>);
 	return { ...command, params } as T;
 }
 

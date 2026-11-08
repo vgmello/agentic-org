@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '$lib/components/ui/dialog';
 	import { toAppError } from '$lib/office/api';
@@ -25,9 +26,13 @@
 	let error = $state<string | undefined>();
 	let shown = $state<Member | undefined>();
 	$effect(() => {
-		if (open && agent) {
-			shown = agent;
-			error = undefined;
+		// Only opening re-initialises the form: a reload behind the dialog (a stale edit) must keep what was typed.
+		if (open) {
+			untrack(() => {
+				if (!(agent)) return;
+				shown = agent;
+				error = undefined;
+			});
 		}
 	});
 	const teams = $derived(shown ? teamsOfMember(snapshot, shown.id).map((t) => t.name) : []);
@@ -36,7 +41,7 @@
 		if (!shown || busy) return;
 		busy = true;
 		try {
-			await setAgentStatus(session, shown.id, 'paused');
+			await setAgentStatus(session, shown.id, 'paused', shown.version);
 			open = false;
 			ondone({ name: shown.name });
 		} catch (e) {

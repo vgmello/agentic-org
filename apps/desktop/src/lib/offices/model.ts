@@ -1,5 +1,6 @@
 // The Offices screen's rules as pure functions (UX spec §3.1). Phase 1 shows HQ only and changes nothing:
 // adding and removing offices come with the local satellite in phase 2.
+import { isFormer } from '$lib/org/model';
 import type { Member, OfficeInfo, OfficeStatus, OrgSnapshot } from '$lib/proto';
 
 const THIS_MAC = 'This Mac';
@@ -57,12 +58,12 @@ export function orderOffices(offices: OfficeInfo[]): OfficeInfo[] {
 
 /** The agents placed in an office (people aren't placed in offices). */
 export const agentsIn = (s: OrgSnapshot, officeId: string): Member[] =>
-	s.members.filter((m) => m.kind === 'agent' && m.office_id === officeId);
+	s.members.filter((m) => m.kind === 'agent' && !isFormer(m) && m.office_id === officeId);
 
 /** Agents placed in an office that isn't in the list: they are "unplaced" (spec §6.4). */
 export function unplacedAgents(s: OrgSnapshot, offices: OfficeInfo[]): Member[] {
 	const ids = new Set(offices.map((o) => o.id));
-	return s.members.filter((m) => m.kind === 'agent' && (!m.office_id || !ids.has(m.office_id)));
+	return s.members.filter((m) => m.kind === 'agent' && !isFormer(m) && (!m.office_id || !ids.has(m.office_id)));
 }
 
 /** "This Mac", "invitation" or where it runs: the line under an office's name (OFC-1). */

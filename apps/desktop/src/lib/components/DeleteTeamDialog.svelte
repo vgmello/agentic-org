@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import { Button } from '$lib/components/ui/button';
 	import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '$lib/components/ui/dialog';
@@ -27,9 +28,13 @@
 	// Kept while the dialog closes, so its text doesn't flash empty.
 	let shownTeam = $state<Team | undefined>();
 	$effect(() => {
-		if (open && team) {
-			shownTeam = team;
-			error = undefined;
+		// Only opening re-initialises the form: a reload behind the dialog (a stale edit) must keep what was typed.
+		if (open) {
+			untrack(() => {
+				if (!(team)) return;
+				shownTeam = team;
+				error = undefined;
+			});
 		}
 	});
 	const summary = $derived(shownTeam ? deleteSummary(snapshot, shownTeam) : { refused: undefined, lines: [] });
