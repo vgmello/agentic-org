@@ -510,6 +510,8 @@ fn org_wire_names_are_pinned() {
         (MemberUpdateAgent::METHOD, "member.update_agent"),
         (MemberSetAgentStatus::METHOD, "member.set_agent_status"),
         (MemberMove::METHOD, "member.move"),
+        (MemberOffboard::METHOD, "member.offboard"),
+        (MemberSetRunMode::METHOD, "member.set_run_mode"),
         (MemberUpdatePerson::METHOD, "member.update_person"),
         (MemberRemove::METHOD, "member.remove"),
         (MemberSetReportsTo::METHOD, "member.set_reports_to"),
@@ -578,6 +580,7 @@ fn member_owner_flag_and_kind_round_trip() {
         office_id: None,
         agent: None,
         reports_to_member_id: None,
+        created_at: None,
         version: 1,
     };
     let v = serde_json::to_value(&owner).unwrap();
@@ -862,9 +865,13 @@ fn profile() -> AgentProfile {
         title: "Senior Backend Engineer".into(),
         focus: Some("storage".into()),
         runtime: AgentRuntime::ClaudeCode,
+        model: None,
+        run_mode: None,
+        schedule: None,
         home: Some("/Users/me/agents/river".into()),
         messaging_name: "river".into(),
         status: AgentStatus::Active,
+        offboarded_at: None,
     }
 }
 
@@ -932,6 +939,7 @@ fn a_member_carries_its_agent_profile_in_one_record() {
         office_id: Some("o1".into()),
         agent: Some(profile()),
         reports_to_member_id: None,
+        created_at: None,
         version: 4,
     };
     let v = serde_json::to_value(&agent).unwrap();
@@ -984,6 +992,8 @@ fn agent_commands_have_the_agreed_shapes() {
             focus: None,
             clear_focus: true,
             runtime: Some(AgentRuntime::Other("zed".into())),
+            model: None,
+            clear_model: false,
             home: None,
             clear_home: false,
             messaging_name: None,
@@ -1101,6 +1111,8 @@ fn agent_command_params_are_pinned_field_by_field() {
             focus: None,
             clear_focus: false,
             runtime: None,
+            model: None,
+            clear_model: false,
             home: None,
             clear_home: false,
             messaging_name: None,
@@ -1270,4 +1282,282 @@ fn an_agent_status_in_any_unknown_shape_decodes_as_unknown() {
     }
     let known: AgentStatus = serde_json::from_value(json!("paused")).unwrap();
     assert_eq!(known, AgentStatus::Paused);
+}
+
+#[test]
+fn an_offboarded_agent_is_a_status_and_a_timestamp_on_the_same_member_record() {
+    use crate::org::*;
+    // The wire form of an offboarded agent.
+    let offboarded = AgentProfile {
+        status: AgentStatus::Offboarded,
+        offboarded_at: Some("2026-11-08T07:00:00.000Z".into()),
+        ..profile()
+    };
+    let v = serde_json::to_value(&offboarded).unwrap();
+    assert_eq!(v["status"], "offboarded");
+    assert_eq!(v["offboarded_at"], "2026-11-08T07:00:00.000Z");
+    assert_eq!(
+        serde_json::from_value::<AgentProfile>(v).unwrap(),
+        offboarded
+    );
+    // A working agent has no offboarded_at on the wire, and an older record without one reads.
+    assert!(serde_json::to_value(profile())
+        .unwrap()
+        .get("offboarded_at")
+        .is_none());
+    let old: AgentProfile = serde_json::from_value(json!({
+        "role": "r", "title": "t", "runtime": "codex", "messaging_name": "x", "status": "active",
+    }))
+    .unwrap();
+    assert_eq!(old.offboarded_at, None);
+
+    // The member keeps its id, name and handle: offboarding changes the status, so it travels
+    // as an ordinary member_upserted.
+    let member = Member {
+        id: "a1".into(),
+        kind: MemberKind::Agent,
+        name: "River".into(),
+        contact: None,
+        owner: false,
+        office_id: Some("o1".into()),
+        agent: Some(offboarded),
+        reports_to_member_id: None,
+        created_at: None,
+        version: 6,
+    };
+    let change = OrgChange::MemberUpserted { member };
+    let back: OrgChange = serde_json::from_value(serde_json::to_value(&change).unwrap()).unwrap();
+    assert_eq!(back, change);
+
+    // This build reads the word. (How an older build reads a word it does not know is the
+    // general mechanism tested by `an_agent_status_in_any_unknown_shape_decodes_as_unknown`.)
+    assert_eq!(
+        serde_json::from_value::<AgentStatus>(json!("offboarded")).unwrap(),
+        AgentStatus::Offboarded
+    );
+}
+
+#[test]
+fn member_offboard_params_are_pinned() {
+    use crate::org::*;
+    let request = Request::new::<MemberOffboard>(
+        1,
+        &MemberOffboardParams {
+            command_id: "01C".into(),
+            member_id: "a1".into(),
+            expected_version: 5,
+        },
+    )
+    .unwrap();
+    assert_eq!(request.method, "member.offboard");
+    assert_eq!(
+        request.params,
+        json!({"command_id": "01C", "member_id": "a1", "expected_version": 5})
+    );
+    assert_eq!(
+        request.params::<MemberOffboard>().unwrap().expected_version,
+        5
+    );
+}
+
+#[test]
+fn run_mode_and_schedule_wire_shapes_are_pinned() {
+    let scheduled = AgentProfile {
+        model: Some("claude-sonnet-5-5".into()),
+        run_mode: Some(RunMode::Scheduled),
+        schedule: Some(Schedule {
+            spec: "weekdays at 9".into(),
+            time_zone: "Europe/Lisbon".into(),
+        }),
+        ..profile()
+    };
+    let v = serde_json::to_value(&scheduled).unwrap();
+    assert_eq!(v["model"], "claude-sonnet-5-5");
+    assert_eq!(v["run_mode"], "scheduled");
+    assert_eq!(
+        v["schedule"],
+        json!({"spec": "weekdays at 9", "time_zone": "Europe/Lisbon"})
+    );
+    assert_eq!(
+        serde_json::from_value::<AgentProfile>(v).unwrap(),
+        scheduled
+    );
+    // Not set: nothing on the wire, and an older record reads as None.
+    let v = serde_json::to_value(profile()).unwrap();
+    for key in ["model", "run_mode", "schedule", "offboarded_at"] {
+        assert!(v.get(key).is_none(), "{key} was sent for a plain agent");
+    }
+    for (wire, want) in [
+        ("always_on", RunMode::AlwaysOn),
+        ("on_call", RunMode::OnCall),
+        ("scheduled", RunMode::Scheduled),
+    ] {
+        assert_eq!(serde_json::to_value(want).unwrap(), json!(wire));
+        assert_eq!(
+            serde_json::from_value::<RunMode>(json!(wire)).unwrap(),
+            want
+        );
+    }
+    assert_eq!(
+        serde_json::to_value(RunMode::Unknown).unwrap(),
+        json!("unknown")
+    );
+}
+
+#[test]
+fn a_run_mode_in_any_unknown_shape_decodes_as_unknown_and_never_breaks_the_profile() {
+    for run_mode in [
+        json!(null),
+        json!(5),
+        json!([1]),
+        json!({"future": 1}),
+        json!("on_demand"),
+    ] {
+        let profile: AgentProfile = serde_json::from_value(json!({
+            "role": "r", "title": "t", "runtime": "codex", "messaging_name": "x",
+            "status": "active", "run_mode": run_mode,
+        }))
+        .unwrap_or_else(|e| panic!("run_mode {run_mode} broke the profile: {e}"));
+        // `null` reads as "not set"; everything else we cannot read is Unknown.
+        let want = if run_mode.is_null() {
+            None
+        } else {
+            Some(RunMode::Unknown)
+        };
+        assert_eq!(profile.run_mode, want, "{run_mode}");
+    }
+}
+
+#[test]
+fn set_run_mode_and_the_new_update_fields_are_pinned() {
+    use crate::org::*;
+    let set = Request::new::<MemberSetRunMode>(
+        1,
+        &MemberSetRunModeParams {
+            command_id: "01C".into(),
+            member_id: "a1".into(),
+            expected_version: 3,
+            run_mode: Some(RunMode::Scheduled),
+            schedule: Some(Schedule {
+                spec: "daily at 6".into(),
+                time_zone: "UTC".into(),
+            }),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        set.params,
+        json!({
+            "command_id": "01C", "member_id": "a1", "expected_version": 3,
+            "run_mode": "scheduled", "schedule": {"spec": "daily at 6", "time_zone": "UTC"},
+        })
+    );
+    let always = Request::new::<MemberSetRunMode>(
+        2,
+        &MemberSetRunModeParams {
+            command_id: "01C".into(),
+            member_id: "a1".into(),
+            expected_version: 4,
+            run_mode: Some(RunMode::AlwaysOn),
+            schedule: None,
+        },
+    )
+    .unwrap();
+    assert!(always.params.get("schedule").is_none());
+    // Left out = "not office-run": a person starts the agent.
+    let cleared = Request::new::<MemberSetRunMode>(
+        3,
+        &MemberSetRunModeParams {
+            command_id: "01C".into(),
+            member_id: "a1".into(),
+            expected_version: 5,
+            run_mode: None,
+            schedule: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        cleared.params,
+        json!({"command_id": "01C", "member_id": "a1", "expected_version": 5})
+    );
+    assert_eq!(cleared.params::<MemberSetRunMode>().unwrap().run_mode, None);
+
+    let update = Request::new::<MemberUpdateAgent>(
+        3,
+        &MemberUpdateAgentParams {
+            command_id: "01C".into(),
+            member_id: "a1".into(),
+            expected_version: 4,
+            name: None,
+            role: None,
+            title: None,
+            focus: None,
+            clear_focus: false,
+            runtime: None,
+            model: Some("claude-opus-5-5".into()),
+            clear_model: false,
+            home: None,
+            clear_home: false,
+            messaging_name: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        update.params,
+        json!({"command_id": "01C", "member_id": "a1", "expected_version": 4,
+               "model": "claude-opus-5-5"})
+    );
+}
+
+#[test]
+fn a_member_carries_when_hq_created_it_and_older_records_without_it_still_read() {
+    let member = Member {
+        id: "a1".into(),
+        kind: MemberKind::Agent,
+        name: "River".into(),
+        contact: None,
+        owner: false,
+        office_id: Some("o1".into()),
+        agent: Some(profile()),
+        reports_to_member_id: None,
+        created_at: Some("2026-11-08T06:00:00.000Z".into()),
+        version: 1,
+    };
+    let v = serde_json::to_value(&member).unwrap();
+    assert_eq!(v["created_at"], "2026-11-08T06:00:00.000Z");
+    assert_eq!(serde_json::from_value::<Member>(v).unwrap(), member);
+    let old: Member =
+        serde_json::from_value(json!({"id": "a2", "kind": "agent", "name": "x", "version": 1}))
+            .unwrap();
+    assert_eq!(old.created_at, None);
+    assert!(serde_json::to_value(&old)
+        .unwrap()
+        .get("created_at")
+        .is_none());
+}
+
+#[test]
+fn schedule_limits_are_pinned() {
+    assert_eq!(AGENT_TIME_ZONE_MAX_CHARS, 64);
+}
+
+#[test]
+fn a_schedule_missing_a_field_still_reads_so_a_newer_writer_cannot_break_older_readers() {
+    let schedule: Schedule = serde_json::from_value(json!({"time_zone": "UTC"})).unwrap();
+    assert_eq!(schedule.spec, "");
+    let schedule: Schedule = serde_json::from_value(json!({"spec": "daily", "future": 1})).unwrap();
+    assert_eq!(schedule.time_zone, "");
+    // Inside a whole member too.
+    let profile: AgentProfile = serde_json::from_value(json!({
+        "role": "r", "title": "t", "runtime": "codex", "messaging_name": "x",
+        "status": "active", "run_mode": "scheduled", "schedule": {},
+    }))
+    .unwrap();
+    assert_eq!(
+        profile.schedule,
+        Some(Schedule {
+            spec: String::new(),
+            time_zone: String::new()
+        })
+    );
 }
