@@ -58,7 +58,7 @@ right after a send can still lose it.
 `profile set` or `msg register --name/--role/--team/--reports-to`. Presence is `online` while the
 member has a live `msg wait`/`ask` listener or used `org-agent` in the last 2 minutes, else
 `offline`, with `last_seen_at`; the spool can't tell busy from idle. Only `vgmello` can carry the owner flag, and a profile file always describes the inbox it sits in (its `id`/`owner` fields are not trusted). `profile set <id>` and `msg register <id> --name ...` edit only your own profile, unless you are the owner. Status lines expire after
-8h (`--ttl`, at most 24h), are one line of at most 140 characters / 256 bytes. Status and profile text may not contain control, format (zero-width, bidi, tag) or other invisible characters (usage error), except variation selectors, which are dropped (`status "⚠️ blocked"` stores `⚠ blocked`).
+8h (`--ttl`, at most 24h), are one line of at most 140 characters / 256 bytes. Status and profile text may not contain control, format (zero-width, bidi, tag) or other invisible characters (usage error), except variation selectors, which are dropped (`status "⚠️ blocked"` stores `⚠ blocked`). A profile name may not contain `(`, `)`, `[`, `]`, `:` or `"` (they could forge a `msg notify` line); in notify output, names written before this rule have those characters turned into spaces (the line format is unchanged).
 
 ## Triage Notification Contract (`org-agent msg notify`)
 

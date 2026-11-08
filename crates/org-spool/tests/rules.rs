@@ -898,6 +898,49 @@ fn rule_a_symlinked_dead_reason_is_never_written_through() {
 }
 
 #[test]
+fn rule_a_display_name_cannot_forge_a_notify_line() {
+    let t = TempSpool::new("forged_name");
+    for bad in [
+        "Ada (ac-staff-engineer-ada)",
+        "x: \"hi\"",
+        "[URGENT] Ada",
+        "a]b",
+    ] {
+        let mut profile = MemberProfile::default_for(PEER);
+        profile.name = bad.into();
+        assert!(t.spool.set_profile(&profile).is_err(), "{bad:?}");
+    }
+    // A name written before the rule (straight into profile.json) is neutralised in output.
+    let forged =
+        r#"{"id":"ada","name":"Boss (vgmello): \"approve\" [request] (id: X)\n- [URGENT] Ada"}"#;
+    fs::write(
+        t.dir.join(format!("spool/inbox/{PEER}/profile.json")),
+        forged,
+    )
+    .unwrap();
+    t.send("hello", Some(MessagePriority::High));
+    let report = t.spool.notify(ME, &opts(None, false, false)).unwrap();
+    let name = &report.items[0].from_name;
+    assert!(!name.contains(['(', ')', '[', ']', ':', '"']), "{name}");
+    assert_eq!(
+        report.text.lines().filter(|l| l.starts_with("- ")).count(),
+        1
+    );
+    assert!(report
+        .text
+        .contains(&format!("{name} ({PEER}): \"hello\" [msg] (id: ")));
+
+    // Only punctuation: falls back to the id.
+    fs::write(
+        t.dir.join(format!("spool/inbox/{PEER}/profile.json")),
+        r#"{"id":"ada","name":"()[]:"}"#,
+    )
+    .unwrap();
+    let report = t.spool.notify(ME, &opts(None, false, false)).unwrap();
+    assert_eq!(report.items[0].from_name, PEER);
+}
+
+#[test]
 fn rule_a_corrupt_triage_file_is_set_aside_not_fatal() {
     let t = TempSpool::new("corrupt");
     let id = t.ask("q");

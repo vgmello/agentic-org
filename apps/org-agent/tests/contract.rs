@@ -994,6 +994,12 @@ fn status_and_profile_drop_variation_selectors_and_refuse_other_invisibles() {
     assert_eq!(json(&named.stdout)["name"], "Agy \u{2764}");
     let tagged = env.run(ME, &["profile", "set", "--name", "Agy\u{E0041}"]);
     assert_eq!(tagged.code, 1, "{}", tagged.stdout);
+    // Names can't carry a notify line's structure.
+    let forged = env.run(
+        ME,
+        &["profile", "set", "--name", "Ada (ac-staff-engineer-ada)"],
+    );
+    assert_eq!(forged.code, 1, "{}", forged.stdout);
 }
 
 #[test]

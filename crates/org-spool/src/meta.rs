@@ -97,6 +97,32 @@ pub struct MemberProfile {
     pub office: Option<RefEntry>,
 }
 
+/// Characters a display name can't contain: the structure of a `msg notify` line
+/// (`Name (id): "subject" [kind] (id: ...)`), so a name can't pass for another sender.
+const NAME_FORBIDDEN_CHARS: [char; 6] = ['(', ')', '[', ']', ':', '"'];
+
+/// A sender's display name for a `msg notify` line: sanitized like any untrusted text, with
+/// the line's structural characters (names written before they were refused) turned into
+/// spaces. Falls back to `fallback` (the sender's id) if nothing is left.
+fn notify_display_name(name: &str, fallback: &str) -> String {
+    let neutral: String = name
+        .chars()
+        .map(|c| {
+            if NAME_FORBIDDEN_CHARS.contains(&c) {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect();
+    let clean = sanitize_inline_text(&neutral, 48);
+    if clean.is_empty() {
+        sanitize_inline_text(fallback, 48)
+    } else {
+        clean
+    }
+}
+
 fn check_profile_text(field: &str, value: &str, allow_empty: bool) -> Result<(), String> {
     if !allow_empty && value.trim().is_empty() {
         return Err(format!("profile {field} must not be empty"));
@@ -121,6 +147,12 @@ impl MemberProfile {
     pub fn validate(&self) -> Result<(), String> {
         validate_agent_id(&self.id, "id")?;
         check_profile_text("name", &self.name, false)?;
+        if self.name.contains(NAME_FORBIDDEN_CHARS) {
+            return Err(
+                "profile name must not contain ( ) [ ] : or \" (they could forge a notify line)"
+                    .into(),
+            );
+        }
         if self.kind != "agent" && self.kind != "person" {
             return Err("profile kind must be agent or person".into());
         }
@@ -1416,7 +1448,7 @@ impl Spool {
         let from_profile = self.load_profile_unlocked(&env.from);
         let subject = sanitize_inline_text(env.subject.as_deref().unwrap_or(""), 80);
         NotifyItem {
-            from_name: sanitize_inline_text(&from_profile.name, 48),
+            from_name: notify_display_name(&from_profile.name, &env.from),
             from: sanitize_inline_text(&env.from, 128),
             subject: if subject.is_empty() {
                 "(no subject)".to_string()
