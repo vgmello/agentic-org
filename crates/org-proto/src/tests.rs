@@ -151,13 +151,7 @@ fn unknown_error_code_and_unknown_fields_are_tolerated() {
 
 #[test]
 fn hello_and_list_wire_shapes() {
-    let hello = HelloResult {
-        api_version: API_VERSION,
-        server_version: "0.0.0".into(),
-        host: "This Mac".into(),
-        office: None,
-        capabilities: vec![],
-    };
+    let hello = HelloResult::host("0.0.0", "This Mac");
     let v = serde_json::to_value(Response::ok::<Hello>(1, &hello).unwrap()).unwrap();
     assert_eq!(v["result"]["api_version"], 1);
     assert_eq!(v["result"]["host"], "This Mac");
@@ -424,17 +418,44 @@ fn wire_names_are_pinned() {
 }
 
 #[test]
+fn hello_constructors_fill_every_field() {
+    let identity = OfficeHello {
+        organization_name: "Acme".into(),
+        office: hq(),
+    };
+    assert_eq!(
+        HelloResult::host("1.2.3", "This Mac"),
+        HelloResult {
+            api_version: API_VERSION,
+            server_version: "1.2.3".into(),
+            host: "This Mac".into(),
+            office: None,
+            capabilities: vec![],
+        }
+    );
+    assert_eq!(
+        HelloResult::office("1.2.3", "This Mac", identity.clone())
+            .with_capabilities(vec!["x.y".into()]),
+        HelloResult {
+            api_version: API_VERSION,
+            server_version: "1.2.3".into(),
+            host: "This Mac".into(),
+            office: Some(identity),
+            capabilities: vec!["x.y".into()],
+        }
+    );
+}
+
+#[test]
 fn office_server_hello_carries_its_identity() {
-    let hello = HelloResult {
-        api_version: API_VERSION,
-        server_version: "0.0.0".into(),
-        host: "This Mac".into(),
-        office: Some(OfficeHello {
+    let hello = HelloResult::office(
+        "0.0.0",
+        "This Mac",
+        OfficeHello {
             organization_name: "Acme".into(),
             office: hq(),
-        }),
-        capabilities: vec![],
-    };
+        },
+    );
     let v = serde_json::to_value(&hello).unwrap();
     assert_eq!(v["office"]["office"]["role"], "hq");
     assert_eq!(v["office"]["organization_name"], "Acme");
@@ -3789,13 +3810,7 @@ fn project_and_area_commands_are_pinned() {
 #[test]
 fn hello_capabilities_are_additive_and_checked_by_name() {
     // Empty: absent on the wire, so older clients see exactly the old shape.
-    let plain = HelloResult {
-        api_version: API_VERSION,
-        server_version: "0.0.0".into(),
-        host: "This Mac".into(),
-        office: None,
-        capabilities: vec![],
-    };
+    let plain = HelloResult::host("0.0.0", "This Mac");
     let v = serde_json::to_value(&plain).unwrap();
     assert!(v.get("capabilities").is_none());
 
@@ -3808,15 +3823,12 @@ fn hello_capabilities_are_additive_and_checked_by_name() {
     assert!(!old.supports(capability::OFFICE_RESTART));
 
     // Listed names round-trip; unknown names are kept and simply never asked for.
-    let host = HelloResult {
-        capabilities: vec![
-            capability::OFFICE_APP_TOKEN.into(),
-            capability::OFFICE_RESTART.into(),
-            capability::OFFICE_STATUS_CHANGED.into(),
-            "some.future_call".into(),
-        ],
-        ..plain
-    };
+    let host = plain.with_capabilities(vec![
+        capability::OFFICE_APP_TOKEN.into(),
+        capability::OFFICE_RESTART.into(),
+        capability::OFFICE_STATUS_CHANGED.into(),
+        "some.future_call".into(),
+    ]);
     let v = serde_json::to_value(&host).unwrap();
     assert_eq!(v["capabilities"][1], "office.restart");
     let back: HelloResult = serde_json::from_value(v).unwrap();

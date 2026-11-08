@@ -27,6 +27,9 @@ pub struct Empty {}
 /// `hello`: the first call on a connection. The client checks `api_version`.
 pub struct Hello;
 
+/// The answer to `hello`. Build one with [`HelloResult::host`] or [`HelloResult::office`]
+/// (and [`HelloResult::with_capabilities`]) rather than a struct literal, so a new field never
+/// breaks the caller.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HelloResult {
     pub api_version: u32,
@@ -82,6 +85,35 @@ pub mod capability {
 }
 
 impl HelloResult {
+    /// The host's answer: [`crate::API_VERSION`], no office and no capabilities.
+    pub fn host(server_version: impl Into<String>, host: impl Into<String>) -> Self {
+        Self {
+            api_version: crate::API_VERSION,
+            server_version: server_version.into(),
+            host: host.into(),
+            office: None,
+            capabilities: Vec::new(),
+        }
+    }
+
+    /// An office server's answer: [`crate::API_VERSION`], its identity and no capabilities.
+    pub fn office(
+        server_version: impl Into<String>,
+        host: impl Into<String>,
+        office: OfficeHello,
+    ) -> Self {
+        Self {
+            office: Some(office),
+            ..Self::host(server_version, host)
+        }
+    }
+
+    /// The same answer, listing `capabilities` (see [`capability`]).
+    pub fn with_capabilities(mut self, capabilities: Vec<String>) -> Self {
+        self.capabilities = capabilities;
+        self
+    }
+
     /// Whether the server listed `name` in its capabilities.
     pub fn supports(&self, name: &str) -> bool {
         self.capabilities.iter().any(|c| c == name)
