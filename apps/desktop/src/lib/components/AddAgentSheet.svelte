@@ -47,9 +47,12 @@
 	let otherRuntime = $state('');
 	let role = $state('');
 	let title = $state('');
+	let model = $state('');
 	let home = $state('');
 	let runMode = $state<string>('on_call');
 	let manager = $state('');
+	// Reports to follows the first team chosen (its lead) until the owner picks someone.
+	let managerEdited = $state(false);
 	const teamIds = new SvelteSet<string>();
 	let failure = $state<AppError | undefined>();
 	let busy = $state(false);
@@ -65,9 +68,11 @@
 				otherRuntime = '';
 				role = '';
 				title = '';
+				model = '';
 				home = '';
 				runMode = 'on_call';
 				manager = '';
+				managerEdited = false;
 				teamIds.clear();
 				failure = undefined;
 				busy = false;
@@ -88,6 +93,14 @@
 	const nameError = $derived(touched && name.trim() === '' ? 'Enter a name.' : undefined);
 	const missing = $derived(name.trim() === '' || handle === '' || role.trim() === '' || (runtime === 'other' && otherRuntime.trim() === ''));
 	const teams = $derived(teamOptions(snapshot));
+	// The default manager: the lead of the first team chosen, else the owner (empty).
+	$effect(() => {
+		const first = [...teamIds][0];
+		const lead = first ? snapshot.teams.find((t) => t.id === first)?.lead_member_id : undefined;
+		untrack(() => {
+			if (!managerEdited) manager = lead && managers.some((m) => m.id === lead) ? lead : '';
+		});
+	});
 	const managers = $derived(snapshot.members.filter((m) => !m.owner).toSorted(byName));
 	const ownerName = $derived(owner(snapshot)?.name ?? 'you');
 	const teamName = (id: string) => snapshot.teams.find((t) => t.id === id)?.name ?? id;
@@ -108,6 +121,7 @@
 					role: role.trim(),
 					title: title.trim() || role.trim(),
 					officeId,
+					model: model.trim() || undefined,
 					home: home.trim() || undefined,
 					// An agent someone starts by hand has no run mode: the office never starts it.
 					runMode: runMode === '' ? undefined : (runMode as 'always_on' | 'on_call'),
@@ -149,7 +163,7 @@
 				{#if handleError}
 					<p id="new-agent-handle-error" class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{handleError}</p>
 				{:else}
-					<p id="new-agent-handle-help" class="text-xs/5 text-gray-400">What others write to reach it (--to {handle || 'name'}). Unique, and kept for good.</p>
+					<p id="new-agent-handle-help" class="text-xs/5 text-gray-400">What others write to reach it (--to {handle || 'name'}). Unique, and stays reserved even after the agent is offboarded.</p>
 				{/if}
 			</div>
 			<div class="space-y-2">
@@ -159,6 +173,10 @@
 					<option value="other">Another runtime…</option>
 				</select>
 				{#if runtime === 'other'}<Input aria-label="Runtime name" bind:value={otherRuntime} disabled={busy} autocomplete="off" placeholder="Its name" />{/if}
+			</div>
+			<div class="space-y-2">
+				<Label for="new-agent-model">Model <span class="font-normal text-gray-400">(optional)</span></Label>
+				<Input id="new-agent-model" bind:value={model} disabled={busy} autocomplete="off" />
 			</div>
 			<div class="grid gap-4 sm:grid-cols-2">
 				<div class="space-y-2">
@@ -195,7 +213,7 @@
 			</div>
 			<div class="space-y-2">
 				<Label for="new-agent-manager">Reports to</Label>
-				<select id="new-agent-manager" bind:value={manager} disabled={busy} class="w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
+				<select id="new-agent-manager" bind:value={manager} onchange={() => (managerEdited = true)} disabled={busy} class="w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
 					<option value="">{ownerName} (you)</option>
 					{#each managers as m (m.id)}<option value={m.id}>{m.name}</option>{/each}
 				</select>

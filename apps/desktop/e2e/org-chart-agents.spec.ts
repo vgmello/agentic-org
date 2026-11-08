@@ -21,6 +21,9 @@ test('AGENT-1: an agent’s quick view says its role, runtime, how it runs and i
 	await select(page, 'eng', /^Sam Okafor/);
 	await expect(strip(page).getByTestId('agent-line')).toHaveText('software engineer · Runs on Claude Code · On call');
 	await expect(strip(page).getByTestId('messaging-name')).toHaveText('sam');
+	// The live status, never the admin flag "Active"; what it is doing now has nothing to say yet.
+	await expect(strip(page).getByTestId('agent-status')).toHaveText('Asleep · wakes when called');
+	await expect(strip(page).getByTestId('agent-now')).toHaveText('Now: —');
 	await shot(page, 'agent-quick-view');
 });
 
@@ -94,6 +97,7 @@ test('AGENT-2: Edit changes the record and refuses a messaging name that is take
 	await expect(dialog.getByRole('alert')).toHaveText("noor is already Noor Haddad's messaging name. Choose another.");
 	await expect(dialog.getByRole('button', { name: 'Save' })).toBeDisabled();
 	await dialog.getByLabel('Messaging name').fill('sam-principal');
+	await expect(dialog.getByTestId('handle-change-warning')).toContainText('Others reach Sam Okafor as sam today. After saving they must use sam-principal, and sam stays reserved.');
 	await shot(page, 'edit-agent');
 	await dialog.getByRole('button', { name: 'Save' }).click();
 	await expect(page.getByText('Saved Sam Okafor.')).toBeVisible();
@@ -129,7 +133,10 @@ test('HIRE: Add agent adds an existing agent with a suggested messaging name, a 
 	await expect(sheet.getByLabel('Messaging name')).toHaveValue('cameron-diaz'); // follows the name
 	await sheet.getByLabel('Role').fill('QA engineer');
 	await sheet.getByLabel('Runs on').selectOption('codex');
+	await sheet.getByLabel('Model').fill('gpt-5');
+	await expect(sheet.getByLabel('Reports to')).toHaveValue(''); // the owner, until a team is chosen
 	await sheet.getByRole('checkbox', { name: 'Engineering › Web' }).click();
+	await expect(sheet.getByLabel('Reports to')).toHaveValue('noor'); // then the team's lead
 	await sheet.getByLabel('Reports to').selectOption({ label: 'Sam Okafor' });
 	await shot(page, 'add-agent');
 	await sheet.getByRole('button', { name: 'Add agent' }).click();
