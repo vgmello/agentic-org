@@ -54,3 +54,31 @@ describe('tauriOrg.command', () => {
 		await expect(tauriOrg.command('org-1', { method: 'team.create', params: { team_id: 't', name: 'Ops' } })).rejects.toMatchObject({ code: 'already_exists' });
 	});
 });
+
+describe('tauriOrg.command keeps the order commands were sent in', () => {
+	beforeEach(() => invoke.mockReset());
+
+	it('starts the next command only after the previous one is answered', async () => {
+		const order: string[] = [];
+		let release!: () => void;
+		invoke.mockImplementationOnce(() => new Promise((resolve) => (release = () => (order.push('first answered'), resolve({ status: 'committed' })))));
+		invoke.mockImplementationOnce(async () => (order.push('second sent'), { status: 'committed' }));
+		const a = tauriOrg.command('o', { method: 'team.create', params: { team_id: 'a', name: 'A' } });
+		const b = tauriOrg.command('o', { method: 'team.delete', params: { team_id: 'a', expected_version: 1 } });
+		await Promise.resolve();
+		expect(invoke).toHaveBeenCalledTimes(1); // the second waits
+		release();
+		await Promise.all([a, b]);
+		expect(order).toEqual(['first answered', 'second sent']);
+	});
+
+	it('a refused command doesn’t stop the ones after it, and null means not given', async () => {
+		invoke.mockRejectedValueOnce({ source: 'api', code: 'not_found', message: 'gone' });
+		invoke.mockResolvedValueOnce({ status: 'committed' });
+		const a = tauriOrg.command('o', { method: 'team.set_lead', params: { team_id: 'x', expected_version: 1, lead_member_id: null as unknown as undefined } });
+		await expect(a).rejects.toMatchObject({ code: 'not_found' });
+		await tauriOrg.command('o', { method: 'team.set_lead', params: { team_id: 'y', expected_version: 1, lead_member_id: null as unknown as undefined } });
+		const sent = invoke.mock.calls[1][1].command.params;
+		expect(sent).not.toHaveProperty('lead_member_id');
+	});
+});

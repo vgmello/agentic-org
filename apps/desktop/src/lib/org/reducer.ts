@@ -6,7 +6,7 @@
 // command's own rule (owner_protected, cycle, not_a_member, not_empty), then already_exists.
 import type { ApiErrorCode, AppError, Member, Membership, OrgSnapshot, ProjectTeam, Team } from '$lib/proto';
 import { trimWhiteSpace, validateName } from '$lib/name';
-import type { OrgCommand } from './commands';
+import { withoutNulls, type OrgCommand } from './commands';
 
 const fail = (code: ApiErrorCode, message: string): never => {
 	throw { source: 'api', code, message } satisfies AppError;
@@ -103,7 +103,8 @@ const clearLead = (teams: Team[], teamId: string, memberId: string): Team[] =>
 const isOffboarded = (m: Member) => (m as Member & { agent?: { status?: string } }).agent?.status === 'offboarded';
 
 /** Apply a command. Returns the next snapshot with its position advanced by one. */
-export function applyCommand(s: OrgSnapshot, command: OrgCommand): OrgSnapshot {
+export function applyCommand(s: OrgSnapshot, given: OrgCommand): OrgSnapshot {
+	const command = withoutNulls(given);
 	wellFormed(command);
 	const next = apply(s, command);
 	return { ...next, position: { epoch: s.position.epoch, seq: s.position.seq + 1 } };

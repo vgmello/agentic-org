@@ -41,9 +41,16 @@ type Without<T, K extends string> = T extends unknown ? Omit<T, K> : never;
 /** A command without its `command_id`: callers say what they want; the API adds the id. */
 export type OrgCommandInput = { [M in OrgMethod]: { method: M; params: Without<Extract<OrgCommand, { method: M }>['params'], 'command_id'> } }[OrgMethod];
 
-/** A command ready to send: with the `command_id` it already has, or a new one. */
+/** `null` means "not given", as it does on the wire (an Option): drop it so `{ lead_member_id: null }` clears a lead. */
+export function withoutNulls<T extends OrgCommand | OrgCommandInput>(command: T): T {
+	const params = Object.fromEntries(Object.entries(command.params).filter(([, v]) => v !== null));
+	return { ...command, params } as T;
+}
+
+/** A command ready to send: with the `command_id` it already has, or a new one, and no nulls. */
 export function ready(input: OrgCommandInput | OrgCommand): OrgCommand {
-	return 'command_id' in input.params ? (input as OrgCommand) : withId(input as OrgCommandInput);
+	const clean = withoutNulls(input);
+	return 'command_id' in clean.params ? (clean as OrgCommand) : withId(clean as OrgCommandInput);
 }
 
 /** Give a command its client-made id. */

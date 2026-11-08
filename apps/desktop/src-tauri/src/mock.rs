@@ -163,7 +163,7 @@ impl MockOffice {
         if self.structures_unreadable {
             return Err(api_error(
                 ErrorCode::StorageError,
-                "The office couldn't read the stored organization structures: the file is from a newer version.",
+                "The office couldn't read the stored organization structures: the file is unreadable or from a newer version.",
             ));
         }
         let organizations = self.organizations.lock().unwrap_or_else(|e| e.into_inner());

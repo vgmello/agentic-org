@@ -1,16 +1,23 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { OrgView } from '$lib/proto';
+import type { CommandAccepted, OrgView } from '$lib/proto';
 import type { OrgApi } from './api';
 import { ready } from './commands';
 import { normalizeKinds } from './model';
 
 /** The structure comes from the Rust shell, which asks the office: the WebView has no network access. */
+let queue: Promise<unknown> = Promise.resolve();
+
 export const tauriOrg: OrgApi = {
 	async view(organizationId) {
 		const view = await invoke<OrgView>('org_snapshot', { organizationId });
 		return { ...view, snapshot: normalizeKinds(view.snapshot) };
 	},
 	command(organizationId, input) {
-		return invoke('org_command', { organizationId, command: ready(input) });
+		// One at a time, in the order sent (the shell runs each call on its own thread, which doesn't keep order),
+		// so a command that depends on the one before it never overtakes it.
+		const command = ready(input);
+		const answer = queue.then(() => invoke<CommandAccepted>('org_command', { organizationId, command }));
+		queue = answer.catch(() => undefined);
+		return answer;
 	}
 };
