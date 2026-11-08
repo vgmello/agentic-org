@@ -20,22 +20,6 @@ export type Block = { t: 'p'; inline: Inline[] } | { t: 'quote'; inline: Inline[
 const UNSAFE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f​-‏‪-‮⁠-⁤⁦-⁩﻿]/g;
 export const clean = (text: string): string => text.replace(/\r\n?/g, '\n').replace(UNSAFE, '');
 
-// Bounded quantifiers keep the scan of one line linear: an unclosed `[` or `**` costs at most a few hundred characters.
-const CHIP = '(?:[a-z]{2,4}-[TB]-\\d{1,6}|(?:REQ|AREA)-\\d{1,6}|(?:ADR|FEAT|DEBT)-\\d{4}|[TB]-\\d{1,6})';
-const TOKEN = new RegExp(
-	[
-		'`([^`\\n]{1,500})`', // 1 code
-		'\\*\\*([^*\\n]{1,500})\\*\\*', // 2 bold
-		'(?<![\\w*])\\*([^*\\n]{1,500})\\*(?![\\w*])', // 3 italic
-		'(?<![\\w])_([^_\\n]{1,500})_(?![\\w])', // 4 italic
-		'\\[([^\\]\\n]{1,200})\\]\\(([^)\\s]{1,2000})\\)', // 5 text, 6 href
-		'(https?://[^\\s<>()]{1,2000}[^\\s<>().,;:!?\'"])', // 7 bare url
-		`(?<![\\w-])(${CHIP})(?![\\w-])`, // 8 chip
-		'(?<![\\w@])@([a-zA-Z0-9][\\w-]{0,63})' // 9 mention
-	].join('|'),
-	'g'
-);
-
 /** Only http and https are links; anything else (javascript:, data:, file:) stays text. */
 export function safeHref(href: string): string | undefined {
 	try {
@@ -55,38 +39,146 @@ function misleading(text: string, href: string): { host: string } | Record<strin
 	return shown === host || shown === host.replace(/^www\./, '') || host === shown.replace(/^www\./, '') ? {} : { host };
 }
 
-/** A very long line is read in pieces, so no single line can make the scan slow. */
-const PIECE = 4000;
-export function inline(text: string, depth = 0): Inline[] {
-	if (text.length > PIECE && depth === 0) return Array.from({ length: Math.ceil(text.length / PIECE) }, (_, i) => inlinePiece(text.slice(i * PIECE, (i + 1) * PIECE), 0)).flat();
-	return inlinePiece(text, depth);
+// ---- the inline scanner ------------------------------------------------------------------------------------------------
+// One pass over a line, no backtracking. Every "find the closing mark" question is answered by a finder that remembers its
+// last answer, so a run of openers with no closer (`[[[[…`, `**a**a…`) costs one scan in all, not one scan each. That makes
+// the work linear in the line, whatever it holds. A line over MAX_LINE is not parsed at all.
+
+/** A line longer than this is shown as plain text: no formatting is worth a slow scan. */
+export const MAX_LINE = 8192;
+const MAX_SPAN = 500;
+const MAX_LINK_TEXT = 200;
+const MAX_HREF = 2000;
+const MAX_MENTION = 64;
+
+const CHIP = /(?:[a-z]{2,4}-[TB]-\d{1,6}|(?:REQ|AREA)-\d{1,6}|(?:ADR|FEAT|DEBT)-\d{4}|[TB]-\d{1,6})(?![\w-])/y;
+const MENTION = /[a-zA-Z0-9][\w-]{0,63}/y;
+const isWord = (ch: string | undefined) => ch !== undefined && /\w/.test(ch);
+const isWordOrDash = (ch: string | undefined) => ch !== undefined && /[\w-]/.test(ch);
+
+/** The next index of `find` at or after `from`, or -1. Remembers the last answer: asked again from a later start, it reuses it. */
+function finder(find: (from: number) => number): (from: number) => number {
+	let lastFrom = -1;
+	let lastAt = -1;
+	return (from) => {
+		if (lastFrom !== -1 && from >= lastFrom && (lastAt === -1 || lastAt >= from)) return lastAt;
+		lastFrom = from;
+		lastAt = find(from);
+		return lastAt;
+	};
 }
 
-function inlinePiece(text: string, depth: number): Inline[] {
+const WHITESPACE = /\s/g;
+
+function scan(text: string, depth: number): Inline[] {
 	const out: Inline[] = [];
-	let at = 0;
-	const push = (t: string) => t && out.push({ t: 'text', text: t });
-	for (const m of text.matchAll(TOKEN)) {
-		const i = m.index ?? 0;
-		push(text.slice(at, i));
-		at = i + m[0].length;
-		if (m[1] !== undefined) out.push({ t: 'code', text: m[1] });
-		else if (m[2] !== undefined) out.push({ t: 'bold', children: depth < 3 ? inline(m[2], depth + 1) : [{ t: 'text', text: m[2] }] });
-		else if (m[3] !== undefined || m[4] !== undefined) {
-			const body = (m[3] ?? m[4])!;
-			out.push({ t: 'italic', children: depth < 3 ? inline(body, depth + 1) : [{ t: 'text', text: body }] });
-		} else if (m[5] !== undefined) {
-			const href = safeHref(m[6]);
-			if (href) out.push({ t: 'link', href, text: m[5], ...misleading(m[5], href) });
-			else push(m[0]);
-		} else if (m[7] !== undefined) {
-			const href = safeHref(m[7]);
-			if (href) out.push({ t: 'link', href, text: m[7] });
-			else push(m[0]);
-		} else if (m[8] !== undefined) out.push({ t: 'chip', ref: m[8] });
-		else if (m[9] !== undefined) out.push({ t: 'mention', handle: m[9] });
+	let at = 0; // where the pending plain text starts
+	let i = 0;
+	const nextTick = finder((f) => text.indexOf('`', f));
+	const nextStar = finder((f) => text.indexOf('*', f));
+	const nextUnder = finder((f) => text.indexOf('_', f));
+	const nextBracket = finder((f) => text.indexOf(']', f));
+	const nextParen = finder((f) => text.indexOf(')', f));
+	const nextSpace = finder((f) => {
+		WHITESPACE.lastIndex = f;
+		return WHITESPACE.exec(text)?.index ?? -1;
+	});
+	const emit = (end: number, token: Inline) => {
+		if (i > at) out.push({ t: 'text', text: text.slice(at, i) });
+		out.push(token);
+		i = end;
+		at = end;
+	};
+	const children = (inner: string): Inline[] => (depth < 3 ? scan(inner, depth + 1) : [{ t: 'text', text: inner }]);
+	while (i < text.length) {
+		const ch = text[i];
+		const prev = i > 0 ? text[i - 1] : undefined;
+		if (ch === '`') {
+			const j = nextTick(i + 1);
+			if (j > i + 1 && j - i - 1 <= MAX_SPAN) {
+				emit(j + 1, { t: 'code', text: text.slice(i + 1, j) });
+				continue;
+			}
+		} else if (ch === '*') {
+			if (text[i + 1] === '*') {
+				const j = nextStar(i + 2);
+				if (j > i + 2 && j - i - 2 <= MAX_SPAN && text[j + 1] === '*') {
+					emit(j + 2, { t: 'bold', children: children(text.slice(i + 2, j)) });
+					continue;
+				}
+			} else if (!isWord(prev) && prev !== '*') {
+				const j = nextStar(i + 1);
+				if (j > i + 1 && j - i - 1 <= MAX_SPAN && !isWord(text[j + 1]) && text[j + 1] !== '*') {
+					emit(j + 1, { t: 'italic', children: children(text.slice(i + 1, j)) });
+					continue;
+				}
+			}
+		} else if (ch === '_') {
+			if (!isWord(prev)) {
+				const j = nextUnder(i + 1);
+				if (j > i + 1 && j - i - 1 <= MAX_SPAN && !isWord(text[j + 1])) {
+					emit(j + 1, { t: 'italic', children: children(text.slice(i + 1, j)) });
+					continue;
+				}
+			}
+		} else if (ch === '[') {
+			const j = nextBracket(i + 1);
+			if (j > i + 1 && j - i - 1 <= MAX_LINK_TEXT && text[j + 1] === '(') {
+				const paren = nextParen(j + 2);
+				const space = nextSpace(j + 2);
+				const end = paren !== -1 && (space === -1 || paren < space) ? paren : -1;
+				if (end > j + 2 && end - j - 2 <= MAX_HREF) {
+					const label = text.slice(i + 1, j);
+					const href = safeHref(text.slice(j + 2, end));
+					if (href) emit(end + 1, { t: 'link', href, text: label, ...misleading(label, href) });
+					else i = end + 1; // not a link we draw: it stays text, brackets and all
+					continue;
+				}
+			}
+		} else if (ch === 'h' && (text.startsWith('http://', i) || text.startsWith('https://', i))) {
+			const start = i + (text[i + 4] === 's' ? 8 : 7);
+			let k = start;
+			while (k < text.length && k - start <= MAX_HREF && !/[\s<>()]/.test(text[k])) k++;
+			let end = k;
+			while (end > start && /[.,;:!?'"]/.test(text[end - 1])) end--;
+			if (end - start >= 2) {
+				const raw = text.slice(i, end);
+				const href = safeHref(raw);
+				if (href) emit(end, { t: 'link', href, text: raw });
+				else i = end;
+				continue;
+			}
+		} else if (ch === '@') {
+			if (!isWord(prev) && prev !== '@') {
+				MENTION.lastIndex = i + 1;
+				const m = MENTION.exec(text);
+				if (m && m[0].length <= MAX_MENTION) {
+					emit(i + 1 + m[0].length, { t: 'mention', handle: m[0] });
+					continue;
+				}
+			}
+		} else if (/[A-Za-z]/.test(ch) && !isWordOrDash(prev)) {
+			CHIP.lastIndex = i;
+			const m = CHIP.exec(text);
+			if (m) {
+				emit(i + m[0].length, { t: 'chip', ref: m[0] });
+				continue;
+			}
+		}
+		i++;
 	}
-	push(text.slice(at));
+	if (at < text.length) out.push({ t: 'text', text: text.slice(at) });
+	return out;
+}
+
+/** The inline parts of some text. A line break stays a line break, and nothing spans one. */
+export function inline(text: string): Inline[] {
+	const out: Inline[] = [];
+	text.split('\n').forEach((line, n) => {
+		if (n > 0) out.push({ t: 'text', text: '\n' });
+		if (line.length > MAX_LINE) out.push({ t: 'text', text: line });
+		else out.push(...scan(line, 0));
+	});
 	return out;
 }
 
@@ -125,12 +217,23 @@ export function markdown(source: string): Block[] {
 	return blocks;
 }
 
-/** The text of a message without markup, for previews and search. */
+const PLAIN_KEPT = 2000;
+const PLAIN_MAX_CHARS = 4000;
+const plainCache = new Map<string, string>();
+
+/** The text of a message without markup, for previews and search. Short messages are remembered: search asks for every one on each keystroke. */
 export function plain(source: string): string {
-	const text = (xs: Inline[]): string => xs.map((x) => (x.t === 'bold' || x.t === 'italic' ? text(x.children) : x.t === 'chip' ? x.ref : x.t === 'mention' ? `@${x.handle}` : x.t === 'link' ? x.text : x.text)).join('');
-	return markdown(source)
+	const cached = plainCache.get(source);
+	if (cached !== undefined) return cached;
+	const text = (xs: Inline[]): string => xs.map((x) => (x.t === 'bold' || x.t === 'italic' ? text(x.children) : x.t === 'chip' ? x.ref : x.t === 'mention' ? `@${x.handle}` : x.text)).join('');
+	const result = markdown(source)
 		.map((b) => (b.t === 'ul' ? b.items.map(text).join(' ') : b.t === 'code' ? b.text : text(b.inline)))
 		.join(' ')
 		.replace(/\s+/g, ' ')
 		.trim();
+	if (source.length <= PLAIN_MAX_CHARS) {
+		plainCache.set(source, result);
+		if (plainCache.size > PLAIN_KEPT) plainCache.delete(plainCache.keys().next().value as string);
+	}
+	return result;
 }

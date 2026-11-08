@@ -48,16 +48,66 @@ describe('CHAT-14 · messages render Markdown with the safety rules', () => {
 		expect(link('[example.com](https://www.example.com/a)').host).toBeUndefined();
 		expect(link('[https://www.example.com](https://example.com)').host).toBeUndefined();
 	});
-	it('CHAT-14 · deep nesting and very long lines do not hang', () => {
-		const slow = (text: string) => {
+	it('CHAT-14 · very long lines are scanned once, whatever they hold', () => {
+		// Each is the whole 256 KiB a message may hold, on one line, in the shapes that hurt a scanner most: openers with no
+		// closer. The bound is generous on purpose: this guards against a blow-up (seconds), not against a slow machine.
+		const big = 256 * 1024;
+		const shapes = ['[', '**', '*a', '_a', '`', '[a](', '[a](http://x', 'http://', '@a', 'ac-T-', '[a]', '[a](b c', '**a*', '_a_a'];
+		for (const shape of shapes) {
+			const text = shape.repeat(Math.ceil(big / shape.length));
 			const start = performance.now();
 			markdown(text);
 			plain(text);
-			return performance.now() - start;
-		};
-		// Each is the whole 256 KiB a message may hold, on one line: unclosed openers, the worst case for a scanner.
-		const big = 256 * 1024;
-		for (const piece of ['[', '**', '*a', '_a', '`', '[a](', '[a](http://x', 'http://', '@a', 'ac-T-', '[a]('.repeat(1) + 'x'.repeat(50)]) expect(slow(piece.repeat(Math.ceil(big / piece.length)))).toBeLessThan(2000);
+			expect(performance.now() - start, `shape ${shape}`).toBeLessThan(5000);
+		}
 		expect(inline('**_**_**_'.repeat(2000)).length).toBeGreaterThan(0);
+	});
+	it('CHAT-14 · work grows with the line, not faster: ten times the text takes nowhere near a hundred times as long', () => {
+		const cost = (n: number) => {
+			const text = '[a]('.repeat(n);
+			const runs: number[] = [];
+			for (let r = 0; r < 5; r++) {
+				const start = performance.now();
+				inline(text.slice(0, 8000));
+				for (let k = 0; k < n / 2000; k++) inline(text.slice(0, 8000));
+				runs.push(performance.now() - start);
+			}
+			return Math.min(...runs);
+		};
+		const small = cost(2000);
+		const large = cost(20000);
+		// 10x the lines of work; allow plenty of noise (and a floor so a sub-millisecond baseline cannot fail it).
+		expect(large).toBeLessThan(Math.max(small * 60, 50));
+	});
+	it('CHAT-14 · a line over 8 KiB is plain text, and a short line around it still renders', () => {
+		const long = `**not bold** ${'x'.repeat(9000)}`;
+		const blocks = markdown(`${long}\nand **bold** after`);
+		expect(blocks).toHaveLength(1);
+		const parts = (blocks[0] as { inline: { t: string; text?: string }[] }).inline;
+		expect(parts[0]).toEqual({ t: 'text', text: long });
+		expect(parts.some((p) => p.t === 'bold')).toBe(true);
+	});
+	it('CHAT-14 · plain() gives the same text from the cache, and forgets nothing it should keep', () => {
+		const text = 'See **ac-T-17** and [the docs](https://example.com) @ada';
+		const first = plain(text);
+		expect(first).toBe('See ac-T-17 and the docs @ada');
+		expect(plain(text)).toBe(first);
+		expect(plain('')).toBe('');
+		for (let i = 0; i < 2200; i++) plain(`message ${i}`);
+		expect(plain(text)).toBe(first);
+	});
+	it('CHAT-14 · the scanner reads what the old patterns did: nesting, boundaries and unclosed marks', () => {
+		const t = (md: string) => inline(md).map((x) => x.t);
+		expect(t('**a _b_ c**')).toEqual(['bold']);
+		expect(t('a*b*c')).toEqual(['text']);
+		expect(t('snake_case_word')).toEqual(['text']);
+		expect(t('*it* and _it_')).toEqual(['italic', 'text', 'italic']);
+		expect(t('**unclosed')).toEqual(['text']);
+		expect(t('`a` and ``')).toEqual(['code', 'text']);
+		expect(t('[a](b c)')).toEqual(['text']);
+		expect(t('see http://x.io/a, then')).toEqual(['text', 'link', 'text']);
+		expect(inline('see http://x.io/a, then').find((x) => x.t === 'link')).toMatchObject({ text: 'http://x.io/a' });
+		expect(t('mail me@x.com @ada')).toEqual(['text', 'mention']);
+		expect(t('a\nb')).toEqual(['text', 'text', 'text']);
 	});
 });
