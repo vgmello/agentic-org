@@ -47,7 +47,9 @@ describe('createOrganization', () => {
 		const api: OfficeApi = {
 			...mock(),
 			connections: async () => [],
-			ping: async () => {},
+			ping: async () => ({ api_version: 1, server_version: 't', host: 'This Mac' }),
+			restartOffice: async () => {},
+			peekOrganizations: async () => [],
 			listOrganizations: async () => [],
 			openOrganization: async () => Promise.reject(new Error('unused')),
 			ensureRunning: async () => ((called = true), Promise.reject(new Error('unreachable'))),
@@ -75,7 +77,9 @@ describe('createOrganization', () => {
 		const api: OfficeApi = {
 			...mock(),
 			connections: async () => [],
-			ping: async () => {},
+			ping: async () => ({ api_version: 1, server_version: 't', host: 'This Mac' }),
+			restartOffice: async () => {},
+			peekOrganizations: async () => [],
 			listOrganizations: async () => [],
 			openOrganization: async () => Promise.reject(new Error('unused')),
 			ensureRunning: async () => ({
@@ -94,7 +98,9 @@ describe('createOrganization', () => {
 		const api: OfficeApi = {
 			...mock(),
 			connections: async () => [],
-			ping: async () => {},
+			ping: async () => ({ api_version: 1, server_version: 't', host: 'This Mac' }),
+			restartOffice: async () => {},
+			peekOrganizations: async () => [],
 			listOrganizations: async () => [],
 			openOrganization: async () => Promise.reject(new Error('unused')),
 			ensureRunning: async () => Promise.reject(new Error('boom')),

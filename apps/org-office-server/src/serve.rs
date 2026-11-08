@@ -22,7 +22,7 @@ use org_proto::msg::{MsgBind, MsgBindParams, MsgBindResult, MAX_HANDLE_BYTES, OF
 use org_proto::org::{CommandAccepted, TeamCreate};
 use org_proto::{
     ApiError, AppToken, ErrorCode, Hello, HelloResult, OfficeHello, OfficeInfo, OfficeRole,
-    OfficeStatus, OrgSnapshot, OrgSnapshotCall, Request, Response, API_VERSION,
+    OfficeStatus, OrgSnapshot, OrgSnapshotCall, Request, Response,
 };
 
 /// Reads the organization's snapshot (the office's `org_snapshot`), or says why it cannot.
@@ -95,13 +95,11 @@ impl Shared {
             ports,
             app_token,
             timing: Timing::default(),
-            hello: HelloResult {
-                api_version: API_VERSION,
-                server_version: env!("CARGO_PKG_VERSION").to_owned(),
-                host: "This Mac".to_owned(),
-                // Part 1 implements only what every server of this api_version has.
-                capabilities: Vec::new(),
-                office: Some(OfficeHello {
+            // Part 1 implements only what every server of this api_version has: no capabilities.
+            hello: HelloResult::office(
+                env!("CARGO_PKG_VERSION"),
+                "This Mac",
+                OfficeHello {
                     organization_name: info.org_name.clone(),
                     office: OfficeInfo {
                         id: info.office_id.clone(),
@@ -116,8 +114,8 @@ impl Shared {
                         status_reason: None,
                         next_restart_at: None,
                     },
-                }),
-            },
+                },
+            ),
         }
     }
 }

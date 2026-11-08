@@ -9,27 +9,10 @@ pub const ULID_LEN: usize = 26;
 /// The length of a short id (§1.1).
 pub const SHORT_ID_LEN: usize = 6;
 
-fn digit(c: u8) -> Option<u64> {
-    CROCKFORD.iter().position(|&d| d == c).map(|p| p as u64)
-}
-
 /// The Unix milliseconds a ULID was made at, or `None` if `id` isn't a ULID in its canonical
-/// form: 26 characters of upper-case Crockford Base32 whose value fits 128 bits (the first
-/// character is `0` to `7`). Lower case is refused so one ULID has one spelling: client-made ids
-/// are keys, compared as strings.
-pub fn ulid_time_ms(id: &str) -> Option<u64> {
-    let bytes = id.as_bytes();
-    if bytes.len() != ULID_LEN || !bytes.iter().all(|&b| digit(b).is_some()) {
-        return None;
-    }
-    if digit(bytes[0])? > 7 {
-        return None;
-    }
-    // The first 10 characters are 50 bits; with the first at most 7, the time is 48 bits.
-    bytes[..10]
-        .iter()
-        .try_fold(0u64, |acc, &b| Some((acc << 5) | digit(b)?))
-}
+/// form (upper case, 26 characters, the first `0` to `7`): the shared rule of `org-proto`, so
+/// a `change_id` and a `command_id` are judged alike.
+pub use org_proto::ulid_time_ms;
 
 /// Whether `id` is a ULID in its canonical form (see [`ulid_time_ms`]).
 pub fn is_ulid(id: &str) -> bool {

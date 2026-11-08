@@ -66,7 +66,7 @@ use org_proto::frame;
 use org_proto::location::{office_socket_path, OFFICE_HOME_ENV};
 use org_proto::{
     ApiError, AppToken, ErrorCode, Hello, HelloResult, OfficeHello, OfficeInfo, OfficeStatus,
-    Request, Response, API_VERSION,
+    Request, Response,
 };
 use serde_json::Value;
 
@@ -501,11 +501,10 @@ fn serve_connection(stream: UnixStream, office: &OfficeFile) {
     let mut reader = BufReader::new(stream);
     while let Ok(Some(request)) = frame::read_message::<Request>(&mut reader) {
         let response = if request.is::<Hello>() {
-            let result = HelloResult {
-                api_version: API_VERSION,
-                server_version: "fake".into(),
-                host: "This Mac".into(),
-                office: Some(OfficeHello {
+            let result = HelloResult::office(
+                "fake",
+                "This Mac",
+                OfficeHello {
                     organization_name: office.org_name.clone(),
                     office: OfficeInfo {
                         id: office.office_id.clone(),
@@ -518,9 +517,8 @@ fn serve_connection(stream: UnixStream, office: &OfficeFile) {
                         status_reason: None,
                         next_restart_at: None,
                     },
-                }),
-                capabilities: vec![],
-            };
+                },
+            );
             Response::ok::<Hello>(request.id, &result).expect("serializes")
         } else {
             Response::error(

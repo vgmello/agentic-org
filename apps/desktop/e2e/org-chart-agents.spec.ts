@@ -113,7 +113,11 @@ test('RUN-1: How it runs changes the mode; a scheduled agent needs a schedule; n
 	await strip(page).getByRole('button', { name: 'How it runs…' }).click();
 	const dialog = page.getByRole('dialog', { name: 'How Sam Okafor runs' });
 	await expect(dialog.getByRole('radio', { name: /^On call/ })).toBeChecked();
+	await expect(dialog.getByTestId('run-limits')).toContainText('back to sleep after 5 minutes');
+	await dialog.getByRole('radio', { name: /^Always on/ }).check();
+	await expect(dialog.getByTestId('run-limits')).toHaveText('A run stops after 30 minutes of work at home, or 2 hours on a task.');
 	await dialog.getByRole('radio', { name: /^Scheduled/ }).check();
+	await expect(dialog.getByTestId('run-limits')).toContainText('back to sleep after 5 minutes');
 	await expect(dialog.getByRole('button', { name: 'Save' })).toBeDisabled(); // a schedule is needed
 	await shot(page, 'how-it-runs');
 	await dialog.getByLabel('When', { exact: true }).fill('weekdays at 9');
@@ -123,6 +127,7 @@ test('RUN-1: How it runs changes the mode; a scheduled agent needs a schedule; n
 	await expect(strip(page).getByTestId('agent-line')).toHaveText('software engineer · Runs on Claude Code · Scheduled');
 	await strip(page).getByRole('button', { name: 'How it runs…' }).click();
 	await page.getByRole('dialog').getByRole('radio', { name: /^Started by a person/ }).check();
+	await expect(page.getByTestId('run-limits')).toHaveCount(0);
 	await page.getByRole('dialog').getByRole('button', { name: 'Save' }).click();
 	await expect(strip(page).getByTestId('agent-line')).toHaveText('software engineer · Runs on Claude Code · Started by a person');
 });
