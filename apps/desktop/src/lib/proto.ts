@@ -175,28 +175,6 @@ export interface OrgSnapshot {
 	project_teams?: ProjectTeam[];
 }
 
-// ---- PROVISIONAL, offices design (not in org-proto yet; ada publishes the real calls) -------------
-// What the Offices screen needs beyond `OfficeInfo`, and the two calls that change the office list.
-// Mocked in src/lib/offices/api.ts. Replace with org-proto types once they exist.
-
-export interface OfficeExtras {
-	/** RFC 3339: when another computer's office was last connected. */
-	last_seen?: string;
-	/** "Up to date", or how many changes it is behind. */
-	sync_behind?: number;
-	app_version?: string;
-	/** Why an office on this Mac is stopped, in plain words. */
-	stopped_reason?: string;
-}
-
-export type OfficeWithExtras = OfficeInfo & OfficeExtras;
-
-/** `office.add { name, where: 'this_mac' }` (phase 1: offices on this Mac only). */
-export interface OfficeAddParams {
-	name: string;
-	where: 'this_mac';
-}
-
 // ---- office.app_token (crates/org-proto/src/calls.rs) -------------------------------------------
 
 export interface OfficeAppTokenParams {
