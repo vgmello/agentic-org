@@ -195,7 +195,7 @@ export async function changeManager(api: OrgSession, memberId: string, managerId
 	return {
 		undo: async () => {
 			const now = (await api.snapshot()).members.find((m) => m.id === memberId);
-			if (!now) return;
+			if (!now) throw { source: 'api', code: 'not_found', message: "They aren't in the organization any more." } satisfies AppError;
 			await api.command({ method: 'member.set_reports_to', params: { member_id: memberId, expected_version: now.version, reports_to_member_id: before.reports_to_member_id } });
 		}
 	};
@@ -360,14 +360,18 @@ export async function setRunMode(api: OrgSession, memberId: string, mode: RunMod
  * and a lead who leaves the old team clears its lead. Returns how to undo it (the reverse move). The old title isn't
  * carried over.
  */
-export async function moveMemberToTeam(api: OrgSession, memberId: string, fromTeamId: string, toTeamId: string): Promise<{ undo: () => Promise<void> }> {
-	const old = (await api.snapshot()).memberships.find((m) => m.member_id === memberId && m.team_id === fromTeamId);
+export async function moveMemberToTeam(api: OrgSession, memberId: string, fromTeamId: string, toTeamId: string): Promise<{ undo: () => Promise<void>; lostLead: boolean }> {
+	const before = await api.snapshot();
+	const old = before.memberships.find((m) => m.member_id === memberId && m.team_id === fromTeamId);
+	const lostLead = before.teams.find((t) => t.id === fromTeamId)?.lead_member_id === memberId;
 	if (!old) throw { source: 'api', code: 'not_found', message: "They aren't in that team any more." } satisfies AppError;
 	await api.command({ method: 'member.move', params: { membership_id: old.id, expected_version: old.version, new_membership_id: newId(), to_team_id: toTeamId } });
 	return {
+		lostLead,
 		undo: async () => {
 			const now = (await api.snapshot()).memberships.find((m) => m.member_id === memberId && m.team_id === toTeamId);
-			if (!now) return;
+			// Moved again, removed or offboarded since: say so instead of reporting a success that didn't happen.
+			if (!now) throw { source: 'api', code: 'not_found', message: "They aren't in that team any more." } satisfies AppError;
 			await api.command({ method: 'member.move', params: { membership_id: now.id, expected_version: now.version, new_membership_id: newId(), to_team_id: fromTeamId } });
 		}
 	};

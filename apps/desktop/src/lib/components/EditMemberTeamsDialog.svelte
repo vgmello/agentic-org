@@ -37,13 +37,11 @@
 		// Only opening re-initialises the form: a reload behind the dialog (a stale edit) must keep what was typed.
 		if (open) {
 			untrack(() => {
-				if (!(member)) return;
-				untrack(() => {
-					shown = member;
-					wanted.clear();
-					teamTitlesOf(snapshot, member.id).forEach((v, teamId) => wanted.set(teamId, v.title ?? ''));
-					problems = [];
-				});
+				if (!member) return;
+				shown = member;
+				wanted.clear();
+				teamTitlesOf(snapshot, member.id).forEach((v, teamId) => wanted.set(teamId, v.title ?? ''));
+				problems = [];
 			});
 		}
 	});

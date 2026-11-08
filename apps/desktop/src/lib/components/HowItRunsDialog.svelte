@@ -34,20 +34,27 @@
 		// Only opening re-initialises the form: a reload behind the dialog (a stale edit) must keep what was typed.
 		if (open) {
 			untrack(() => {
-				if (!(agent?.agent)) return;
+				if (!agent?.agent) return;
 				const a = agent.agent;
-				untrack(() => {
-					shown = agent;
-					mode = a.run_mode === undefined ? '' : (RUN_MODES.some((m) => m.id === a.run_mode) ? a.run_mode : 'unknown'); // a mode this app can't read stays unset until one is picked
-					spec = a.schedule?.spec ?? '';
-					zone = a.schedule?.time_zone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? '';
-					error = undefined;
-				});
+				shown = agent;
+				mode = a.run_mode === undefined ? '' : (RUN_MODES.some((m) => m.id === a.run_mode) ? a.run_mode : 'unknown'); // a mode this app can't read stays unset until one is picked
+				spec = a.schedule?.spec ?? '';
+				zone = a.schedule?.time_zone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? '';
+				error = undefined;
 			});
 		}
 	});
 
 	const scheduleMissing = $derived((mode === 'scheduled' && (spec.trim() === '' || zone.trim() === '')) || mode === 'unknown');
+
+	// After a stale edit (HQ changed the agent meanwhile) the page reloads: take the latest as the baseline and the
+	// version to send, but leave anything the owner typed alone, so "Here's the latest" is true and a retry can work.
+	$effect(() => {
+		const latest = agent;
+		untrack(() => {
+			if (open && shown && latest && latest.id === shown.id && latest.version !== shown.version) shown = latest;
+		});
+	});
 
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();

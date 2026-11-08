@@ -22,7 +22,7 @@
 		snapshot: OrgSnapshot;
 		session: OrgSession;
 		/** Moved (with a way to undo it), or HQ refused / things changed meanwhile (`stale`): reload either way. */
-		ondone: (result: { name: string; to: string; undo: () => Promise<void> } | { stale: true }) => void;
+		ondone: (result: { name: string; from: string; to: string; lostLead: boolean; undo: () => Promise<void> } | { stale: true }) => void;
 	} = $props();
 
 	let from = $state('');
@@ -35,13 +35,11 @@
 		// Only opening re-initialises the form: a reload behind the dialog (a stale edit) must keep what was typed.
 		if (open) {
 			untrack(() => {
-				if (!(member)) return;
-				untrack(() => {
-					shown = member;
-					from = teamsOfMember(snapshot, member.id)[0]?.id ?? '';
-					target = undefined;
-					error = undefined;
-				});
+				if (!member) return;
+				shown = member;
+				from = teamsOfMember(snapshot, member.id)[0]?.id ?? '';
+				target = undefined;
+				error = undefined;
 			});
 		}
 	});
@@ -56,9 +54,10 @@
 		busy = true;
 		const name = shown.name;
 		try {
-			const { undo } = await moveMemberToTeam(session, shown.id, from, target);
+			const fromName = snapshot.teams.find((t) => t.id === from)?.name ?? '';
+			const { undo, lostLead } = await moveMemberToTeam(session, shown.id, from, target);
 			open = false;
-			ondone({ name, to: toName, undo });
+			ondone({ name, from: fromName, to: toName, lostLead, undo });
 		} catch (e) {
 			error = `Couldn't move ${name}: ${toAppError(e).message} Nothing changed.`;
 			ondone({ stale: true });

@@ -225,3 +225,31 @@ test('an offboarded agent is no longer counted on the Offices screen', async ({ 
 	await visit(page, '/offices'); // the mock office keeps the change in the browser's storage
 	await expect(page.getByTestId('office-row').first()).toContainText('6 agents');
 });
+
+test('a stale edit: after HQ changed the agent, the dialog says so and a retry works, with what was typed kept', async ({ page }) => {
+	await openChart(page);
+	await select(page, 'eng', /^Sam Okafor/);
+	// A first change, so the mock office has stored the organization (the browser mock keeps it in storage).
+	await strip(page).getByRole('button', { name: 'Pause…' }).click();
+	await page.getByRole('dialog').getByRole('button', { name: 'Pause Sam Okafor' }).click();
+	await strip(page).getByRole('button', { name: 'Resume' }).click();
+	await expect(page.getByText('Resumed Sam Okafor.')).toBeVisible();
+	await strip(page).getByRole('button', { name: 'Edit…' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Edit Sam Okafor' });
+	await dialog.getByLabel('Title').fill('Principal engineer');
+	// Someone else changes Sam meanwhile: the browser mock keeps the structure in storage, so change it there.
+	await page.evaluate(() => {
+		const key = Object.keys(localStorage).find((k) => k.startsWith('agentic-org.mock.org.'))!;
+		const state = JSON.parse(localStorage.getItem(key)!);
+		const sam = state.snapshot.members.find((m: { id: string }) => m.id === 'sam');
+		sam.version += 1;
+		localStorage.setItem(key, JSON.stringify(state));
+	});
+	// This one still reads the version it was opened with, so HQ refuses it.
+	await dialog.getByRole('button', { name: 'Save' }).click();
+	await expect(dialog.getByRole('alert')).toContainText("changed at HQ while you were editing. Here's the latest.");
+	await expect(dialog.getByLabel('Title')).toHaveValue('Principal engineer'); // what was typed is kept
+	await dialog.getByRole('button', { name: 'Save' }).click(); // and the retry works
+	await expect(page.getByText('Saved Sam Okafor.')).toBeVisible();
+	await expect(strip(page).getByTestId('agent-line')).toContainText('Principal engineer');
+});

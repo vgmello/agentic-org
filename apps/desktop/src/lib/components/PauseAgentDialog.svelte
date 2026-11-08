@@ -29,13 +29,22 @@
 		// Only opening re-initialises the form: a reload behind the dialog (a stale edit) must keep what was typed.
 		if (open) {
 			untrack(() => {
-				if (!(agent)) return;
+				if (!agent) return;
 				shown = agent;
 				error = undefined;
 			});
 		}
 	});
 	const teams = $derived(shown ? teamsOfMember(snapshot, shown.id).map((t) => t.name) : []);
+
+	// After a stale edit (HQ changed the agent meanwhile) the page reloads: take the latest as the baseline and the
+	// version to send, but leave anything the owner typed alone, so "Here's the latest" is true and a retry can work.
+	$effect(() => {
+		const latest = agent;
+		untrack(() => {
+			if (open && shown && latest && latest.id === shown.id && latest.version !== shown.version) shown = latest;
+		});
+	});
 
 	async function confirm() {
 		if (!shown || busy) return;

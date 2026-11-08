@@ -66,6 +66,10 @@
 	let showPaused = $state(true);
 	const snapshot = $derived(showPaused ? live : withoutPaused(live));
 	const anyPaused = $derived(live.members.some((m) => m.agent?.status === 'paused'));
+	// With nothing paused the toggle is hidden: it must not stay off, or the next agent paused would vanish at once.
+	$effect(() => {
+		if (!anyPaused) showPaused = true;
+	});
 	const former = $derived(formerMembers(full));
 
 	const TABS = [
@@ -82,6 +86,7 @@
 	let selected = $state<string | undefined>();
 	// The search is kept when the tab changes (TEAM-11), and read by every tile through a context.
 	let query = $state('');
+	let searchInput = $state<HTMLInputElement>();
 	const matches = $derived(searchMembers(snapshot, query));
 	setContext('member-search', {
 		get matches() {
@@ -255,7 +260,7 @@
 		await reload();
 		if (r.problems.length === 0 && r.changed) toast.success(`Updated the teams of ${r.name}.`);
 	}
-	async function memberMoved(r: { name: string; to: string; undo: () => Promise<void> } | { stale: true }) {
+	async function memberMoved(r: { name: string; from: string; to: string; lostLead: boolean; undo: () => Promise<void> } | { stale: true }) {
 		await reload();
 		if ('stale' in r) return;
 		toast.success(`${r.name} moved to ${r.to}.`, {
@@ -265,7 +270,7 @@
 				onClick: async () => {
 					try {
 						await r.undo();
-						toast.success(`${r.name} is back.`);
+						toast.success(`${r.name} is back in ${r.from}.${r.lostLead ? ` ${r.name} doesn't lead it again: set the lead if you want that.` : ''}`);
 					} catch (e) {
 						toast.error(`Couldn't undo: ${toAppError(e).message} Nothing changed.`);
 					}
@@ -341,13 +346,13 @@
 	<div class="flex flex-wrap items-center gap-x-3 gap-y-1">
 		<label class="flex items-center gap-x-2 text-sm/6 text-gray-300">
 			Search
-			<input type="search" bind:value={query} placeholder="Search members…" aria-label="Search members" autocomplete="off" class="w-64 rounded-md bg-gray-800 px-2 py-1 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:outline-indigo-400" />
+			<input bind:this={searchInput} type="search" bind:value={query} onkeydown={(e) => e.key === 'Escape' && query !== '' && ((query = ''), e.preventDefault())} placeholder="Search members…" aria-label="Search members" autocomplete="off" class="w-64 rounded-md bg-gray-800 px-2 py-1 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:outline-indigo-400" />
 		</label>
 		{#if anyPaused}
 			<label class="flex items-center gap-x-2 text-sm/6 text-gray-300"><input type="checkbox" bind:checked={showPaused} /> Show paused</label>
 		{/if}
 		<p class="text-sm/6 text-sky-200" role="status" data-testid="search-status">
-			{#if matches}{matches.size === 0 ? 'No one matches.' : `${matches.size} ${matches.size === 1 ? 'match' : 'matches'}`} · <button type="button" class="font-semibold underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-indigo-400" onclick={() => (query = '')}>Clear</button>{/if}
+			{#if matches}{matches.size === 0 ? 'No one matches.' : `${matches.size} ${matches.size === 1 ? 'match' : 'matches'}`} · <button type="button" class="font-semibold underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-indigo-400" onclick={() => ((query = ''), searchInput?.focus())}>Clear</button>{/if}
 		</p>
 	</div>
 

@@ -14,7 +14,7 @@ export const nonOwners = (s: OrgSnapshot): Member[] => s.members.filter((m) => !
 export const isFormer = (m: Member): boolean => m.kind === 'agent' && m.agent?.status === 'offboarded';
 
 /**
- * The members a search matches (TEAM-11): by name, and for an agent by messaging name, role and title, ignoring case
+ * The members a search matches (TEAM-11): by name or contact, and for an agent by messaging name, role and title, ignoring case
  * and accents. `undefined` when nothing is typed (so nothing is dimmed).
  */
 export function searchMembers(s: OrgSnapshot, query: string): Set<string> | undefined {

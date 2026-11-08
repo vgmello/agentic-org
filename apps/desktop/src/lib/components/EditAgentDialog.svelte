@@ -43,21 +43,19 @@
 		// Only opening re-initialises the form: a reload behind the dialog (a stale edit) must keep what was typed.
 		if (open) {
 			untrack(() => {
-				if (!(agent?.agent)) return;
+				if (!agent?.agent) return;
 				const a = agent.agent;
-				untrack(() => {
-					shown = agent;
-					name = agent.name;
-					role = a.role;
-					title = a.title;
-					focus = a.focus ?? '';
-					runtime = typeof a.runtime === 'object' ? 'other' : (RUNTIMES as readonly string[]).includes(a.runtime) ? a.runtime : 'unknown'; // an unreadable runtime stays unset until the owner picks one
-					otherRuntime = typeof a.runtime === 'object' ? a.runtime.other : '';
-					model = a.model ?? '';
-					home = a.home ?? '';
-					handle = a.messaging_name;
-					error = undefined;
-				});
+				shown = agent;
+				name = agent.name;
+				role = a.role;
+				title = a.title;
+				focus = a.focus ?? '';
+				runtime = typeof a.runtime === 'object' ? 'other' : (RUNTIMES as readonly string[]).includes(a.runtime) ? a.runtime : 'unknown'; // an unreadable runtime stays unset until the owner picks one
+				otherRuntime = typeof a.runtime === 'object' ? a.runtime.other : '';
+				model = a.model ?? '';
+				home = a.home ?? '';
+				handle = a.messaging_name;
+				error = undefined;
 			});
 		}
 	});
@@ -65,6 +63,15 @@
 	const handleError = $derived(shown && handle !== shown.agent?.messaging_name ? messagingNameError(snapshot, handle, shown.id) : undefined);
 	const runtimeValue = $derived<AgentRuntime>(runtime === 'other' ? { other: otherRuntime.trim() } : (runtime as AgentRuntime));
 	const missing = $derived(name.trim() === '' || role.trim() === '' || title.trim() === '' || (runtime === 'other' && otherRuntime.trim() === ''));
+
+	// After a stale edit (HQ changed the agent meanwhile) the page reloads: take the latest as the baseline and the
+	// version to send, but leave anything the owner typed alone, so "Here's the latest" is true and a retry can work.
+	$effect(() => {
+		const latest = agent;
+		untrack(() => {
+			if (open && shown && latest && latest.id === shown.id && latest.version !== shown.version) shown = latest;
+		});
+	});
 
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
