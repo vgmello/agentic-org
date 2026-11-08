@@ -174,7 +174,7 @@ test('MOVE: Move to team moves an agent in one step, says what changes, and Undo
 	await expect(card(page, 'web').getByRole('button', { name: /^Noor Haddad/ })).toHaveCount(0);
 	await expect(card(page, 'web')).toContainText('No lead');
 	await page.getByRole('button', { name: 'Undo' }).click();
-	await expect(page.getByText('Noor Haddad is back.')).toBeVisible();
+	await expect(page.getByText("Noor Haddad is back in Web. Noor Haddad doesn't lead it again: set the lead if you want that.")).toBeVisible(); // the lead isn't restored, and it says so
 	await expect(card(page, 'web').getByRole('button', { name: /^Noor Haddad/ })).toBeVisible();
 });
 
