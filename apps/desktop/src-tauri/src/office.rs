@@ -122,6 +122,11 @@ pub trait OfficeConnection: Send + Sync {
     /// with no live changes (the mock) does nothing.
     fn follow_org(self: Arc<Self>, _organization_id: &str) {}
 
+    /// Whether the organization's feed is subscribed right now (`None`: it has not said yet, or there is no feed).
+    fn org_live(&self, _organization_id: &str) -> Option<bool> {
+        None
+    }
+
     /// The owner pressed Retry on "live updates paused": connect the organization's feed now, not at its next try.
     fn retry_org_feed(&self, _organization_id: &str) {}
 }

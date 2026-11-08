@@ -22,5 +22,6 @@ export const tauriOrg: OrgApi = {
 		return answer;
 	},
 	onFeed: (listener) => listen<OrgFeedNotice>('org-feed', (event) => listener(event.payload)),
-	retryFeed: (organizationId) => invoke<void>('org_live_retry', { organizationId })
+	retryFeed: (organizationId) => invoke<void>('org_live_retry', { organizationId }),
+	feedLive: async (organizationId) => (await invoke<boolean | null>('org_live', { organizationId })) ?? undefined
 };

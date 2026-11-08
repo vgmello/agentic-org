@@ -7,7 +7,8 @@
 	import { invalidate } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import { orgApi } from '$lib/org/api';
-	import { lastLoadedAt, noteChanged } from '$lib/org/live';
+	import { noteChanged } from '$lib/org/live';
+	import { liveState } from '$lib/org/live-state.svelte';
 	import { navFor } from '$lib/nav';
 
 	let { data, children } = $props();
@@ -25,12 +26,12 @@
 		await invalidate('app:org');
 	}
 
-	// Whether the live feed is off, by organization: the screens then show what they last loaded, and say so.
-	let paused = $state<Record<string, boolean>>({});
+	// Whether the live feed is off, by organization (`liveState`): the screens then show what they last loaded, and say so.
 	// Listening itself failed (not the office): Retry listens again.
 	let cannotListen = $state(false);
 	let retrying = $state(false);
-	const showPaused = $derived(paused[organizationId] === true || cannotListen);
+	let retryTimer: ReturnType<typeof setTimeout> | undefined;
+	const showPaused = $derived(liveState.paused[organizationId] === true || cannotListen);
 	$effect(() => {
 		if (!showPaused) retrying = false;
 	});
@@ -42,7 +43,7 @@
 	function listen() {
 		orgApi
 			.onFeed((notice) => {
-				if (notice.kind === 'live') paused[notice.organization_id] = !notice.live;
+				if (notice.kind === 'live') liveState.paused[notice.organization_id] = !notice.live;
 				else if (notice.organization_id === organizationId) noteChanged(notice, reload);
 			})
 			.then((unlisten) => {
@@ -50,6 +51,10 @@
 				else {
 					stop = unlisten;
 					cannotListen = false;
+					// What it said before this was listening (a feed that went down while the shell was away or starting).
+					void orgApi.feedLive(organizationId).then((live) => {
+						if (live !== undefined) liveState.paused[organizationId] = !live;
+					}).catch(() => undefined);
 				}
 			})
 			.catch(() => {
@@ -59,7 +64,8 @@
 	function retry() {
 		retrying = true;
 		// The feed answers by saying it is live; if it is not back, the button comes back after a moment.
-		setTimeout(() => (retrying = false), 3000);
+		clearTimeout(retryTimer);
+		retryTimer = setTimeout(() => (retrying = false), 3000);
 		if (cannotListen) listen();
 		void orgApi.retryFeed(organizationId).catch(() => undefined);
 	}
@@ -68,6 +74,7 @@
 		return () => {
 			leaving = true;
 			stop?.();
+			clearTimeout(retryTimer);
 		};
 	});
 </script>
@@ -82,7 +89,7 @@
 		<div data-tauri-drag-region class="sticky top-0 z-40 flex h-16 shrink-0 items-center border-b border-white/5 bg-gray-800 px-8">
 			<h1 data-tauri-drag-region class="text-base/7 font-semibold text-white">{navFor(page.url.pathname)?.name}</h1>
 		</div>
-		{#if showPaused}<LiveBanner loadedAt={lastLoadedAt(organizationId)} {retrying} onretry={retry} />{/if}
+		{#if showPaused}<LiveBanner loadedAt={liveState.loadedAt[organizationId]} {retrying} onretry={retry} />{/if}
 		{@render children()}
 	</div>
 </div>

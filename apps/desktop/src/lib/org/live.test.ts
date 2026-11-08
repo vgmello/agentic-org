@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { isAfter, lastLoadedAt, noteChanged, noteShown } from './live';
+import { isAfter, noteChanged, noteShown } from './live';
+import { liveState } from './live-state.svelte';
 
 const at = (epoch: number, seq: number) => ({ epoch, seq });
 let n = 0;
@@ -133,9 +134,9 @@ describe('LIVE when the screens are behind the office', () => {
 
 	it('remembers when the structure was last loaded, for "showing what was loaded at"', () => {
 		const id = fresh();
-		expect(lastLoadedAt(id)).toBeUndefined();
+		expect(liveState.loadedAt[id]).toBeUndefined();
 		const before = Date.now();
 		noteShown(id, at(1, 1));
-		expect(lastLoadedAt(id)!.getTime()).toBeGreaterThanOrEqual(before);
+		expect(liveState.loadedAt[id].getTime()).toBeGreaterThanOrEqual(before);
 	});
 });

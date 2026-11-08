@@ -51,7 +51,7 @@ pub fn follow(
     let mut pacer = Pacer::new();
     let mut lost_told = false;
     while !stop.load(Ordering::SeqCst) {
-        let up_for = follow_once(source, organization_id, stop, &mut lost_told, emit).ok();
+        let up_for = follow_once(source, organization_id, stop, retry, &mut lost_told, emit).ok();
         if !lost_told && !stop.load(Ordering::SeqCst) {
             emit(OrgUpdate::Live {
                 organization_id,
@@ -69,6 +69,7 @@ fn follow_once(
     source: &dyn OrgSource,
     organization_id: &str,
     stop: &AtomicBool,
+    retry: &AtomicBool,
     lost_told: &mut bool,
     emit: &dyn Fn(OrgUpdate),
 ) -> Result<Duration, ClientError> {
@@ -81,6 +82,8 @@ fn follow_once(
         live: true,
     });
     *lost_told = false;
+    // A Retry pressed while this was connecting is answered by it: it must not cut the next wait short.
+    retry.store(false, Ordering::SeqCst);
     // The snapshot is the baseline: the UI may have missed changes while the feed was away.
     emit(OrgUpdate::Changed {
         organization_id,
@@ -239,6 +242,17 @@ mod tests {
 
     /// Runs the feed until `want` positions arrived (or `within` passed).
     fn collect_within(source: &Office, want: usize, within: Duration) -> Heard {
+        collect_until(source, within, |heard| heard.positions.len() >= want)
+    }
+
+    /// Runs the feed until it has announced `want` livenesses.
+    fn collect_live(source: &Office, want: usize) -> Heard {
+        collect_until(source, Duration::from_secs(10), |heard| {
+            heard.live.len() >= want
+        })
+    }
+
+    fn collect_until(source: &Office, within: Duration, done: impl Fn(&Heard) -> bool) -> Heard {
         let stop = Arc::new(AtomicBool::new(false));
         let got = Arc::new(Mutex::new(Heard::default()));
         let seen = Arc::clone(&got);
@@ -259,7 +273,7 @@ mod tests {
                     }
                 })
             });
-            while got.lock().unwrap().positions.len() < want && Instant::now() < until {
+            while !done(&got.lock().unwrap()) && Instant::now() < until {
                 std::thread::sleep(Duration::from_millis(20));
             }
             stop.store(true, Ordering::SeqCst);
@@ -342,7 +356,7 @@ mod tests {
     fn it_tells_when_it_is_live_and_when_it_is_not_once_each() {
         // Connected, then hung up on, then connected again: live, not live, live, not live...
         let source = office(vec![vec![changed(2)], vec![changed(3)]], true);
-        let heard = collect_within(&source, 4, Duration::from_secs(10));
+        let heard = collect_live(&source, 4);
         assert_eq!(
             &heard.live[..4],
             [true, false, true, false],

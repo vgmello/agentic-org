@@ -19,6 +19,8 @@ export interface OrgApi {
 	onFeed(listener: (notice: OrgFeedNotice) => void): Promise<() => void>;
 	/** "Live updates paused" has a Retry: connect the live feed now. Resolves when asked, not when it is back (a `live` notice says that). */
 	retryFeed(organizationId: string): Promise<void>;
+	/** Whether the feed is live now (`undefined`: it has not said). For a screen that was not listening when that changed. */
+	feedLive(organizationId: string): Promise<boolean | undefined>;
 }
 
 export interface MockStorage {
@@ -119,6 +121,7 @@ export function createMockOrg(
 	// Commands are answered one at a time, as HQ does, so two sent together can't overwrite each other.
 	let queue: Promise<unknown> = Promise.resolve();
 	const listeners = new Set<(notice: OrgFeedNotice) => void>();
+	const liveNow = new Map<string, boolean>();
 
 	async function run(organizationId: string, input: OrgCommandInput | OrgCommand): Promise<CommandAccepted> {
 		const command = ready(input);
@@ -174,16 +177,25 @@ export function createMockOrg(
 			listeners.add(listener);
 			return () => void listeners.delete(listener);
 		},
+		async feedLive(organizationId) {
+			return liveNow.get(organizationId);
+		},
 		async retryFeed(organizationId) {
 			// The mock feed is always reachable again when asked.
-			setTimeout(() => listeners.forEach((l) => l({ kind: 'live', organization_id: organizationId, live: true })), 300);
+			setTimeout(() => {
+				liveNow.set(organizationId, true);
+				listeners.forEach((l) => l({ kind: 'live', organization_id: organizationId, live: true }));
+			}, 300);
 		}
 	};
 	if (typeof window !== 'undefined') {
 		const hooks = window as unknown as { __mockOrgChange: OrgApi['command']; __mockOrgLive: (organizationId: string, live: boolean) => void };
 		hooks.__mockOrgChange = api.command;
 		// A test makes the live feed drop (or come back): `window.__mockOrgLive(organizationId, false)`.
-		hooks.__mockOrgLive = (organization_id, live) => listeners.forEach((l) => l({ kind: 'live', organization_id, live }));
+		hooks.__mockOrgLive = (organization_id, live) => {
+			liveNow.set(organization_id, live);
+			listeners.forEach((l) => l({ kind: 'live', organization_id, live }));
+		};
 	}
 	return api;
 }
