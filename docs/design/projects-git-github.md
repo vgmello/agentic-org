@@ -17,7 +17,7 @@ Each project is a **git repository on GitHub**. Every office that works on a pro
 - **Encryption:** these are ordinary files. FileVault protects them, not our database (ADR-0002, "Not covered here").
 
 ## Connecting GitHub (the first feature)
-**One GitHub App, "agentic.org"** *(decided by the user, 2026-11-08)*, registered once by you, the project's owner, with the device flow and token expiry enabled (registration steps below). Its **client id is public** and ships in the open-source app. Neither the device flow nor token refresh needs the client secret (GitHub's docs: the secret is required "unless the user access token was generated using the device flow"), so no secret is ever generated or shipped.
+**One GitHub App, "Agentic Org"** *(decided by the user, 2026-11-08)*, registered once by you, the project's owner, with the device flow and token expiry enabled (registration steps below). Its **client id is public** and ships in the open-source app. Neither the device flow nor token refresh needs the client secret (GitHub's docs: the secret is required "unless the user access token was generated using the device flow"), so no secret is ever generated or shipped.
 - **Permissions:** **Contents: read and write** and **Metadata: read**. It can clone, fetch and push to the repositories it's installed on, and that's all. It **can't create or delete repositories**, and no office ever holds a token that can.
 - **Installed on selected repositories** (decision 4), so a leaked token reaches only project repositories.
 - **Creating repositories from the app** (a second app with Administration permission, held only at HQ) can be added later, if it turns out to matter.
@@ -33,7 +33,7 @@ Each project is a **git repository on GitHub**. Every office that works on a pro
    - Revoking there cancels **every office's** authorization for that app, because they share your GitHub account. So **removing an office** means revoking at GitHub, then reconnecting the other offices: the app walks the owner through it. Until the revoke, a removed office's token keeps working, for up to 6 months.
 
 ## Projects
-- **You create the repository on GitHub** (under your account, private), then add it to the app's installation: GitHub Settings → Applications → **Installed GitHub Apps** → agentic.org → **Configure** → add the repository. The app links straight to that page.
+- **You create the repository on GitHub** (under your account, private), then add it to the app's installation: GitHub Settings → Applications → **Installed GitHub Apps** → Agentic Org → **Configure** → add the repository. The app links straight to that page.
 - **Create project** (in the app, so at HQ): a name, a team (later), and **an existing repository**, picked from the repositories the installation can see (`github.repos.list`). If the one you want isn't there, the app says to add it to the installation and offers the link.
 - **HQ looks the repository up before it submits the command** (in the installation's repository list, by its numeric id). That confirms the installation can reach it and gets its owner, name, default branch and visibility. The "create project" command and the `project.created` event carry those details, so GitHub calls never happen inside a command and events stay deterministic (offices design).
 - HQ records the project, with its repository (including GitHub's numeric repository id, which survives renames), as an organization event, so every office learns of it.
@@ -119,7 +119,7 @@ Each step: its own branch, an independent review, my go, then a merge into `v1`.
 
 ## Registering the GitHub App (for you, once)
 1. On GitHub: your profile picture → **Settings** → **Developer settings** → **GitHub Apps** → **New GitHub App**.
-2. **GitHub App name:** `agentic.org`. Names are unique across GitHub, so if it's taken, use e.g. `agentic-org-vgmello`.
+2. **GitHub App name:** `Agentic Org` *(the user's choice)*. Names are unique across GitHub, so if it's taken, add a suffix, e.g. `Agentic Org (vgmello)`.
 3. **Homepage URL:** `https://github.com/vgmello/agentic-org`.
 4. **Identifying and authorizing users:**
    - Leave **Callback URL** empty. The device flow doesn't use it.
