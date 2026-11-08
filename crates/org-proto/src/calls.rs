@@ -50,7 +50,8 @@ impl Call for Hello {
 /// It succeeds once the organization and its HQ office are stored. Whether the HQ's server
 /// process started is reported in that office's `status` (`starting`, `active`, or
 /// `unavailable`), not as an error, so a client never retries into `already_exists`.
-/// Errors: `invalid_name`, `already_exists`, `storage_error`.
+/// Errors: `invalid_name`, `already_exists`, `storage_error`, `not_ready` (the host is still
+/// starting: its startup discards are running; retry shortly).
 pub struct OrganizationCreate;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,6 +106,11 @@ impl Call for Subscribe {
 }
 
 /// `office.list` (host): every office on this machine, with how to reach each one.
+///
+/// To follow office status live, subscribe first, then call `office.list` on the same
+/// connection; `office.status_changed` events after its response are newer than it. Host
+/// requirement: on one connection, the host writes responses and events in the order the
+/// state changed, so an event is never older than a response written before it.
 pub struct OfficeList;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,7 +130,8 @@ impl Call for OfficeList {
 /// Before answering, the host verifies the caller's code signature against the app's
 /// designated requirement (ADR-0003 §2.1); only the desktop app gets a token.
 /// Errors: `not_authorized` (the signature check failed), `not_found` (no such office here),
-/// `unavailable` (the office isn't running, so it has no token).
+/// `unavailable` (the office isn't running, so it has no token), `not_ready` (the host is
+/// still starting: its startup discards are running; retry shortly).
 ///
 /// The result is a secret: never log it, or the response line that carries it.
 pub struct OfficeAppToken;
@@ -153,4 +160,40 @@ impl Call for OfficeAppToken {
     const METHOD: &'static str = "office.app_token";
     type Params = OfficeAppTokenParams;
     type Result = OfficeAppTokenResult;
+}
+
+/// `office.restart` (host, on `host.sock` only): the desktop app asks the host to start an
+/// office that is `offline` or `unavailable` now, without waiting for the next backoff step.
+/// It clears an `unavailable` status and resets the restart backoff and the give-up window
+/// (the failure count goes to 0), so the office gets its full set of retries again. It
+/// answers once the start is under way; the office's new status arrives as
+/// `office.status_changed` events.
+///
+/// It refuses the two reasons a restart can't fix: `unsupported_version` and
+/// `invalid_request`. Any other reason, or none, is restarted (e.g. `key_missing`,
+/// `restarts_exhausted`, `stopped_by_owner`, or an `offline` office waiting for its next
+/// backoff step). `key_missing` is restarted so an owner who restores the Keychain item
+/// needn't restart the host; if the key is still missing, the office goes back to
+/// `unavailable` with `key_missing`, with no backoff retries (seen as `office.status_changed`
+/// events), not as an error from this call.
+///
+/// App-only: the host verifies the caller's code signature as for [`OfficeAppToken`].
+/// Errors: `not_authorized` (the signature check failed), `not_found` (no such office here),
+/// `conflict` (the office isn't `offline` or `unavailable`, e.g. it's already `starting` or
+/// `active`), `unavailable` (only for the two reasons a restart can't fix,
+/// `unsupported_version` and `invalid_request`; the message says why), `not_ready` (the host
+/// is still starting: its startup discards are running; retry shortly). A host older than
+/// this call answers `unknown_method`. Show the office's `status_reason`, not this call's
+/// error code: the code says only why the call failed.
+pub struct OfficeRestart;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OfficeRestartParams {
+    pub office_id: String,
+}
+
+impl Call for OfficeRestart {
+    const METHOD: &'static str = "office.restart";
+    type Params = OfficeRestartParams;
+    type Result = Empty;
 }
