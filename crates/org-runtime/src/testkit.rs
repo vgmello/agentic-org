@@ -11,7 +11,7 @@
 //!     opening: vec![...],
 //!     turn: vec![...],
 //!     turn_end: vec![...],
-//!     approval: Some(ScriptApproval { request: ..., id: ..., cancel: Some(...) }),
+//!     approval: Some(ScriptApproval::new(request_line, id)),
 //!     ..Default::default()
 //! };
 //! let caps = my_runtime.capabilities();
@@ -51,8 +51,10 @@ pub struct Script {
     pub approval: Option<ScriptApproval>,
 }
 
-/// The approval part of a [`Script`].
+/// The approval part of a [`Script`]. `#[non_exhaustive]` so it can grow: build it with
+/// [`ScriptApproval::new`], then set `cancel`.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ScriptApproval {
     /// Fed during the turn: the session emits [`SessionEvent::ApprovalRequested`] with `id`.
     pub request: Vec<u8>,
@@ -62,6 +64,17 @@ pub struct ScriptApproval {
     /// [`SessionEvent::ApprovalCancelled`]. `None` for a runtime that never withdraws one
     /// ([`Capabilities::runtime_cancels_approvals`] false): that check is then skipped.
     pub cancel: Option<Vec<u8>>,
+}
+
+impl ScriptApproval {
+    /// The line that raises the approval, and the id it carries; no cancel line yet.
+    pub fn new(request: Vec<u8>, id: ApprovalId) -> Self {
+        ScriptApproval {
+            request,
+            id,
+            cancel: None,
+        }
+    }
 }
 
 /// Runs every session check.
@@ -171,9 +184,13 @@ const BANNED_VALUES: &[&str] = &["bypasspermissions", "danger-full-access", "yol
 const BANNED_FLAGS: &[&str] = &["-y", "--yolo"];
 const BANNED_FLAG_PREFIX: &str = "--dangerously-";
 
-/// The banned switch one argv token (or env value) carries, if any: a banned flag, or a
-/// banned value on its own or after `=` (`--permission-mode=bypassPermissions`,
-/// `sandbox_mode="danger-full-access"`).
+/// The banned switch one argv token (or env value) carries, if any:
+/// - a banned flag (`-y`, `--yolo`, `--dangerously-*`);
+/// - a banned value on its own or after the last `=`, with whitespace and quotes trimmed
+///   (`bypassPermissions`, `--permission-mode=bypassPermissions`,
+///   `sandbox_mode = "danger-full-access"`, `sandbox_mode = danger-full-access`);
+/// - a structured value setting one (`{"permissions":{"defaultMode":"bypassPermissions"}}`,
+///   as its own token or after `--settings=`), by [`banned_quoted`].
 fn banned_token(token: &str) -> Option<String> {
     let lower = token.to_lowercase();
     if lower.starts_with(BANNED_FLAG_PREFIX) || BANNED_FLAGS.contains(&lower.as_str()) {
@@ -182,21 +199,33 @@ fn banned_token(token: &str) -> Option<String> {
     let value = lower
         .rsplit_once('=')
         .map_or(lower.as_str(), |(_, value)| value);
-    let value = value.trim_matches(|c| c == '"' || c == '\'');
-    BANNED_VALUES.contains(&value).then(|| value.to_owned())
+    let value = value.trim_matches(|c: char| c == '"' || c == '\'' || c.is_whitespace());
+    if BANNED_VALUES.contains(&value) {
+        return Some(value.to_owned());
+    }
+    banned_quoted(token).map(str::to_owned)
 }
 
-/// The banned value a config text or protocol line sets, if any: one as a whole quoted
-/// string (`"bypassPermissions"`, `'yolo'`). A key that merely contains one
-/// (`"disableBypassPermissionsMode"`) or a rule that names a flag isn't a match.
+/// The banned value a config text, protocol line or structured argument sets, if any: one as
+/// a whole quoted string **in a key's value position**, right after a `:` or `=` (spaces
+/// allowed): `"defaultMode":"bypassPermissions"`, `sandbox_mode = 'danger-full-access'`.
+///
+/// Not a match: a key that merely contains one (`"disableBypassPermissionsMode"`), a rule
+/// that names a flag, or one **inside a list** (`{"disallowedModes":["bypassPermissions"]}`,
+/// a hardening list that forbids it). The limit: a list that *allows* one isn't caught either;
+/// an adapter that writes mode or sandbox lists checks them in its own tests.
 fn banned_quoted(text: &str) -> Option<&'static str> {
     let lower = text.to_lowercase();
-    BANNED_VALUES
-        .iter()
-        .find(|value| {
-            lower.contains(&format!("\"{value}\"")) || lower.contains(&format!("'{value}'"))
-        })
-        .copied()
+    BANNED_VALUES.iter().copied().find(|value| {
+        [format!("\"{value}\""), format!("'{value}'")]
+            .iter()
+            .any(|quoted| {
+                lower.match_indices(quoted.as_str()).any(|(at, _)| {
+                    let before = lower[..at].trim_end();
+                    before.ends_with(':') || before.ends_with('=')
+                })
+            })
+    })
 }
 
 /// Checks a session's [`LaunchPlan`] against the contract:
@@ -210,10 +239,15 @@ fn banned_quoted(text: &str) -> Option<&'static str> {
 ///   their mode in-band.)
 /// - its `cwd` is the spec's workspace, and neither the run's `TMPDIR` nor its runtime dir is
 ///   `/`;
-/// - where the runtime enforces writable roots and the sandbox is on, the run's `TMPDIR`
-///   ([`LaunchContext::tmpdir`]) is one: it appears as a whole argv token, after `=` in one,
-///   or as a quoted string in a generated file. (A substring check can't tell a writable root
-///   from a read-only one; an adapter's own tests check which flag carries it.)
+/// - where the runtime enforces writable roots, the sandbox is on, and the plan carries the
+///   writable roots at all, the run's `TMPDIR` ([`LaunchContext::tmpdir`]) is one of them:
+///   it appears as a whole argv token, after `=` in one, or quoted (`"<tmpdir>"`) in an
+///   argument (e.g. a list, `writable_roots=["…"]`) or a generated file. "Carries the
+///   writable roots" means some writable root of the spec appears the same way. A runtime
+///   that gets them **in-band** instead (Codex's `thread/start`) has a plan with none, so this
+///   part is skipped, and the adapter checks `TMPDIR` in its own tests. (No check here can
+///   tell a writable root from a read-only one naming the same path; the adapter's own tests
+///   check which flag carries it.)
 pub fn check_plan(plan: &LaunchPlan, spec: &SessionSpec, ctx: &LaunchContext, caps: &Capabilities) {
     for arg in &plan.args {
         if arg == spec.agent.name.as_str() {
@@ -256,19 +290,26 @@ pub fn check_plan(plan: &LaunchPlan, spec: &SessionSpec, ctx: &LaunchContext, ca
         !ctx.tmpdir.is_root() && !ctx.runtime_dir.is_root(),
         "plan rule broken: the run's TMPDIR or runtime dir is `/`"
     );
-    if spec.sandbox.enabled && caps.enforces_writable_roots {
+    // Whether the plan names `path` the way a root list would.
+    let mentions = |path: &str| {
+        let quoted = format!("\"{path}\"");
+        plan.args.iter().any(|arg| {
+            arg == path
+                || arg.contains(&quoted)
+                || arg.rsplit_once('=').is_some_and(|(_, value)| {
+                    value.trim_matches(|c: char| c == '"' || c == '\'' || c.is_whitespace()) == path
+                })
+        }) || files.iter().any(|(_, text)| text.contains(&quoted))
+    };
+    let carries_roots = spec
+        .sandbox
+        .writable_roots
+        .iter()
+        .any(|root| mentions(root.as_str()));
+    if spec.sandbox.enabled && caps.enforces_writable_roots && carries_roots {
         let tmpdir = ctx.tmpdir.as_str();
-        let in_args = plan.args.iter().any(|arg| {
-            arg == tmpdir
-                || arg
-                    .rsplit_once('=')
-                    .is_some_and(|(_, value)| value.trim_matches('"') == tmpdir)
-        });
-        let in_files = files
-            .iter()
-            .any(|(_, text)| text.contains(&format!("\"{tmpdir}\"")));
         assert!(
-            in_args || in_files,
+            mentions(tmpdir),
             "plan rule broken: the run's TMPDIR ({tmpdir}) isn't a writable root in the plan"
         );
     }
@@ -425,8 +466,8 @@ pub fn check_error_changes_nothing(
 /// It checks exits at every stage: right after the start, while idle, during a turn, after
 /// [`Control::Close`], each with stdout closed first and (where it matters) still open, and
 /// each after a tick far past every deadline, the script's stderr lines and a truncated line,
-/// and (once stdout closed) another tick far past that, none of which may end the session. Each exit carries a different [`ExitInfo`], which
-/// `Ended` must carry back.
+/// and (once stdout closed) another tick far past that, none of which may end the session.
+/// Each exit carries a different [`ExitInfo`], which `Ended` must carry back.
 pub fn check_ended_once_and_last(
     make: &mut dyn FnMut() -> Box<dyn Session>,
     script: &Script,

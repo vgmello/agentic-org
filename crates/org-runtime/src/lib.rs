@@ -70,7 +70,8 @@
 //!   runtime's own process, before the plan's signal steps.
 //! - Refuse a spec whose `workspace` or a writable root is `/` (a stored spec with one
 //!   doesn't decode; one built in code reaches the adapter, which checks
-//!   [`SpecPath::is_root`] and returns [`PlanError::InvalidSpec`]).
+//!   [`SpecPath::is_root`] and returns [`PlanError::InvalidSpec`]), and a
+//!   [`LaunchContext::tmpdir`] of `/` the same way.
 //! - Set every [`ApprovalRequest::escalation`] from what the runtime asks (see
 //!   [`Escalation`]).
 //! - Write every deny rule so it beats a matching allow, whatever the rules' order.
@@ -115,6 +116,9 @@
 //!     [`Probe::Quota`] only for a runtime whose quota the office polls;
 //!   - on the office's side, an unknown [`PlanError`], [`ControlError`], [`ProbeResult`] or
 //!     [`Unavailable`]: a failure, or the runtime unusable, never a success;
+//!   - an [`Escalation`]: **only [`Escalation::None`] may be answered from policy**; an
+//!     unknown escalation (from a newer adapter) is treated as [`Escalation::Unknown`],
+//!     which always goes to the owner, never to policy;
 //!   - a runtime-side value that decoded as `Unknown` (an event, outcome, status, ...):
 //!     treat it as unknown, never as some known value.
 //! - Structs that may grow are `#[non_exhaustive]`, with a constructor: [`ApprovalRequest`]
@@ -135,8 +139,9 @@
 //!   - [`ExitInfo`]: it mirrors the OS's exit status, which won't grow.
 //! - The enums that instruct the pump or the supervisor are **exhaustive** on purpose:
 //!   [`Output`], [`Frame`], [`FileLocation`], [`Stdio`], [`StopStep`], [`StopSignal`],
-//!   [`SignalTarget`], [`ProbeRun`] and [`ProbeStep`]. Their reader can't safely skip a variant it doesn't know, so a new one
-//!   is a breaking change, and the reader's build fails until it handles it.
+//!   [`SignalTarget`], [`ProbeRun`] and [`ProbeStep`]. Their reader can't safely skip a
+//!   variant it doesn't know, so a new one is a breaking change, and the reader's build fails
+//!   until it handles it.
 //! - Values that originate in a runtime (events, usage, rate limits) decode unknown enum
 //!   values as `Unknown`, and an unknown event type as [`SessionEvent::Unknown`], so a newer
 //!   writer never breaks an older reader. Values the office writes ([`SessionSpec`] and its

@@ -415,9 +415,11 @@ pub struct LaunchContext {
     /// it, never write it. A **real path**: the office resolves every symlink in it first
     /// (e.g. `/var` to `/private/var` on macOS), so it matches what sandboxes see.
     pub runtime_dir: SpecPath,
-    /// The session's own `TMPDIR`. The office sets the variable; **every adapter adds it as a
-    /// writable root** (it isn't in [`SandboxSpec::writable_roots`], being per run). A **real
-    /// path**, like `runtime_dir` (the user's temp folder is under a symlink on macOS).
+    /// The session's own `TMPDIR`. Never `/`: an adapter refuses one
+    /// ([`crate::PlanError::InvalidSpec`]). The office sets the variable; **every adapter adds
+    /// it as a writable root** (it isn't in [`SandboxSpec::writable_roots`], being per run).
+    /// A **real path**, like `runtime_dir` (the user's temp folder is under a symlink on
+    /// macOS).
     pub tmpdir: SpecPath,
     /// The **names** of the variables the office puts in the child's environment
     /// (`ORG_SESSION_TOKEN`, `ORG_AGENT`, ...), for runtimes that must pass them on to their

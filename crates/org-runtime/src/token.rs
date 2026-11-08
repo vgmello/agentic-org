@@ -172,7 +172,9 @@ validated_string! {
     check: |v| {
         !v.starts_with('-')
             && !v.chars().all(|c| c == '.')
-            && chars_within(v, 128, |c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '-'))
+            && chars_within(v, 128, |c| {
+                c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '-')
+            })
     }
 }
 

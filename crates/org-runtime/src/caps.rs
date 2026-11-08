@@ -86,10 +86,14 @@ pub struct Capabilities {
     pub take_over: bool,
     /// [`crate::SandboxSpec::writable_roots`] (and the session's `TMPDIR`) are the only
     /// places the agent can write **by any path**: the runtime's own file tools (edit,
-    /// write, patch) included, not only commands in its shell sandbox. An adapter whose
-    /// runtime sandboxes only its shell sets this `true` only if it also confines the file
-    /// tools (e.g. with deny rules for everything else, like Claude's `Edit`/`Write` denies
-    /// for each read-only dir). Otherwise the list is dropped.
+    /// write, patch) included, not only commands in its shell sandbox.
+    ///
+    /// The requirement: every write outside the writable roots is **impossible** for the
+    /// file tools, or **reaches the approval bridge**, where the office denies it. An adapter
+    /// whose runtime sandboxes only its shell sets this `true` only if it confines the file
+    /// tools that way for every path outside the roots. Denying writes to the read-only dirs
+    /// (like Claude's `Edit`/`Write` denies for each one) is only part of that: the rest of the
+    /// file system needs it too. Otherwise the list is dropped.
     pub enforces_writable_roots: bool,
     /// [`crate::SandboxSpec::deny_write`] is enforced. Otherwise it's dropped, and with it
     /// every allow rule if it wasn't empty (see [`crate::SessionSpec::keeps_allow_rules`]).

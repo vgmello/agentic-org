@@ -534,7 +534,10 @@ impl EchoRuntime {
     ) -> Result<LaunchPlan, PlanError> {
         // `/` can't be the workspace or a writable root (a decoded spec can't hold it; one
         // built in code can).
-        if spec.workspace.is_root() || spec.sandbox.writable_roots.iter().any(|r| r.is_root()) {
+        if spec.workspace.is_root()
+            || spec.sandbox.writable_roots.iter().any(|r| r.is_root())
+            || ctx.tmpdir.is_root()
+        {
             return Err(PlanError::InvalidSpec(
                 "`/` can't be the workspace or a writable root".into(),
             ));
@@ -1117,10 +1120,13 @@ fn echo_script() -> Script {
         turn: vec![],
         turn_end: vec![br#"{"type":"done"}"#.to_vec()],
         stderr: vec![b"echo: warning: low disk".to_vec()],
-        approval: Some(ScriptApproval {
-            request: br#"{"type":"approve?","id":"req-9","input":{"command":"ls"}}"#.to_vec(),
-            id: ApprovalId::new("req-9"),
-            cancel: Some(br#"{"type":"cancel","id":"req-9"}"#.to_vec()),
+        approval: Some({
+            let mut approval = ScriptApproval::new(
+                br#"{"type":"approve?","id":"req-9","input":{"command":"ls"}}"#.to_vec(),
+                ApprovalId::new("req-9"),
+            );
+            approval.cancel = Some(br#"{"type":"cancel","id":"req-9"}"#.to_vec());
+            approval
         }),
     }
 }
@@ -1226,7 +1232,8 @@ fn the_testkit_catches_every_planted_bug() {
 
 #[test]
 fn an_answer_error_keeps_the_pending_approval() {
-    // Rule 2 with an approval pending, which the generic script doesn't raise.
+    // Rule 2 with an approval pending, checked by hand: the forged answer is refused, and the
+    // real one still works, once.
     let t0 = Instant::now();
     let (mut session, mut framer) = ready_session(t0);
     session.control(send("go", false), t0).unwrap();
@@ -1385,6 +1392,13 @@ fn the_plan_passes_the_plan_check_and_a_doctored_one_fails() {
         &["--approval-mode=YOLO"],
         &["-s", "danger-full-access"],
         &["-c", "sandbox_mode=\"danger-full-access\""],
+        &["-c", "sandbox_mode = \"danger-full-access\""],
+        &["-c", "sandbox_mode = danger-full-access"],
+        &[
+            "--settings",
+            r#"{"permissions":{"defaultMode":"bypassPermissions"}}"#,
+        ],
+        &[r#"--settings={"permissions":{"defaultMode":"bypassPermissions"}}"#],
     ] {
         let mut doctored = plan.clone();
         doctored
@@ -1392,7 +1406,52 @@ fn the_plan_passes_the_plan_check_and_a_doctored_one_fails() {
             .extend(banned.iter().map(|arg| arg.to_string()));
         assert!(fails(&doctored), "{banned:?} passed");
     }
-    // Hardening and deny rules that merely name a switch are fine.
+    // A bypass in an env_add value is caught too.
+    let mut doctored = plan.clone();
+    doctored.env_add.push((
+        EnvName::try_from("ECHO_MODE").unwrap(),
+        "bypassPermissions".into(),
+    ));
+    assert!(fails(&doctored));
+    let mut doctored = plan.clone();
+    doctored.env_add.push((
+        EnvName::try_from("ECHO_SETTINGS").unwrap(),
+        r#"{"sandbox_mode": "danger-full-access"}"#.into(),
+    ));
+    assert!(fails(&doctored));
+    // TMPDIR inside a quoted root list (Codex's `writable_roots=[...]`) counts.
+    let mut listed = plan.clone();
+    listed
+        .args
+        .retain(|a| a != "--write" && !a.starts_with('/'));
+    listed.args.push("-c".into());
+    listed.args.push(
+        r#"sandbox_workspace_write.writable_roots=["/homes/echo","/private/tmp/agentic-org/s1"]"#
+            .into(),
+    );
+    assert!(!fails(&listed), "a quoted root list wasn't accepted");
+    let mut no_tmpdir = listed.clone();
+    no_tmpdir.args.pop();
+    no_tmpdir
+        .args
+        .push(r#"sandbox_workspace_write.writable_roots=["/homes/echo"]"#.into());
+    assert!(fails(&no_tmpdir), "a root list without TMPDIR passed");
+    // A plan that carries no writable root at all sets them in-band: TMPDIR isn't checked.
+    let mut in_band = plan.clone();
+    in_band
+        .args
+        .retain(|a| a != "--write" && !a.starts_with('/'));
+    assert!(!fails(&in_band), "an in-band plan was refused");
+    // Hardening and deny rules that merely name a switch are fine, and so is a hardening list
+    // that forbids a banned mode.
+    let mut forbids = plan.clone();
+    forbids.files.push(PlannedFile {
+        location: FileLocation::RuntimeDir,
+        rel_path: RelPath::try_from("hardening.json").unwrap(),
+        contents: br#"{"disallowedModes":["bypassPermissions"]}"#.to_vec(),
+        git_exclude: false,
+    });
+    assert!(!fails(&forbids), "a hardening list was refused");
     let mut hardened = plan.clone();
     hardened
         .args
@@ -1413,7 +1472,7 @@ fn the_plan_passes_the_plan_check_and_a_doctored_one_fails() {
         git_exclude: false,
     });
     assert!(fails(&doctored));
-    // Without the run's TMPDIR as a writable root, it fails.
+    // Without the run's TMPDIR among the writable roots it carries, it fails.
     let mut doctored = plan.clone();
     doctored
         .args
@@ -1461,9 +1520,15 @@ fn root_is_never_the_workspace_or_a_writable_root() {
         Err(PlanError::InvalidSpec(_))
     ));
     let mut spec = self::spec();
-    spec.sandbox.writable_roots.push(root);
+    spec.sandbox.writable_roots.push(root.clone());
     assert!(matches!(
         EchoRuntime.plan_session(&spec, &ctx()),
+        Err(PlanError::InvalidSpec(_))
+    ));
+    let mut ctx = ctx();
+    ctx.tmpdir = root;
+    assert!(matches!(
+        EchoRuntime.plan_session(&self::spec(), &ctx),
         Err(PlanError::InvalidSpec(_))
     ));
 }
