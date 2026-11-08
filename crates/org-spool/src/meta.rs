@@ -279,10 +279,6 @@ pub struct MessageTriageEntry {
     /// Absent on snoozes written before breaks were counted: those go at the next break.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after_task_break: Option<u64>,
-    /// The break in which an `--after-task` check last listed this message, so a message the
-    /// agent leaves untriaged doesn't keep a break going (see [`TriageState::in_break`]).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reported_break: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -291,20 +287,18 @@ pub struct TriageState {
     pub v: u32,
     #[serde(default)]
     pub messages: BTreeMap<String, MessageTriageEntry>,
-    /// Counts the agent's natural breaks (`--after-task` checks, i.e. the Stop after a task).
-    /// A break starts at the first such check after one that listed nothing new, after any
-    /// other check from the same session (a triage turn's Stop, the next prompt, the watcher;
-    /// "no session" counts as one), or from another `--session`; it lasts while each
-    /// `--after-task` check lists something not yet listed in this break (the agent is
-    /// triaging). Missing in older files: 0.
+    /// Counts the agent's natural breaks (the Stop after a task, i.e. an `--after-task`
+    /// check). An `--after-task` check starts a new break unless one is under way in the same
+    /// session; however many `--after-task` checks follow (empty or not), the break lasts
+    /// until a check WITHOUT `--after-task` from the same session (a triage turn's Stop, the
+    /// next prompt, the watcher) ends it. "No session" counts as one session. Missing in
+    /// older files: 0.
     #[serde(default)]
     pub break_seq: u64,
-    /// Whether the last `--after-task` check listed something new to this break, i.e. a break
-    /// is under way.
+    /// Whether a break is under way.
     #[serde(default)]
     pub in_break: bool,
-    /// The `--session` of the last `--after-task` check that had one: a check from another
-    /// session (a new run) always starts a new break.
+    /// The session (`None`: none) whose `--after-task` check started the current break.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub break_session: Option<String>,
 }
@@ -324,46 +318,31 @@ impl TriageState {
         }
     }
 
-    /// An `--after-task` check begins: a new break starts unless one is under way in the same
-    /// session. Returns whether the state changed.
+    /// An `--after-task` check (a Stop after a task) begins: a new break starts unless one is
+    /// under way in the same session. Returns whether the state changed.
     fn begin_after_task_check(&mut self, session: Option<&str>) -> bool {
-        let mut changed = false;
-        let other_session = session.is_some_and(|s| self.break_session.as_deref() != Some(s));
-        if other_session {
-            self.break_session = session.map(str::to_string);
-            changed = true;
+        if self.in_break && self.break_session.as_deref() == session {
+            return false;
         }
-        if !self.in_break || other_session {
-            self.break_seq = self.break_seq.saturating_add(1);
-            changed = true;
-        }
-        changed
+        self.break_seq = self.break_seq.saturating_add(1);
+        self.in_break = true;
+        self.break_session = session.map(str::to_string);
+        true
     }
 
-    /// Any check without `--after-task` from the break's own session: the runtime hooks run
-    /// one at a triage turn's Stop and at the next prompt (plain, or `--urgent-only` on
-    /// antigravity), and the watcher runs `--urgent-only` ones, so the agent is past this
-    /// break's Stop and the next `--after-task` check starts a new break. (The hooks never run
-    /// `--after-task` at a triage turn's Stop, so this can't re-release a deferral made while
-    /// triaging.) Returns whether the state changed.
+    /// Any check without `--after-task` from the break's own session ends the break: the
+    /// runtime hooks run one at a triage turn's Stop and at the next prompt (plain, or
+    /// `--urgent-only` on antigravity), and the watcher runs them too, so the agent is past
+    /// this break's Stop and the next `--after-task` check starts a new one. An `--after-task`
+    /// check never ends a break, so the adapter's re-check after its grace wait, or a triage
+    /// turn's Stop that runs `--after-task`, can't re-release a deferral made while triaging.
+    /// Returns whether the state changed.
     fn end_break_from_session(&mut self, session: Option<&str>) -> bool {
-        // Session-less callers (`msg due`) are one "session" too, while no session has run a
-        // break check.
-        let same_session = self.break_session.as_deref() == session;
-        if !(self.in_break && same_session) {
+        if !(self.in_break && self.break_session.as_deref() == session) {
             return false;
         }
         self.in_break = false;
         true
-    }
-
-    /// An `--after-task` check ended: the break goes on while it listed something new to this
-    /// break and ends with the first check that didn't (nothing, or only messages the agent
-    /// left untriaged). Returns whether the state changed.
-    fn end_after_task_check(&mut self, listed_new: bool) -> bool {
-        let changed = self.in_break != listed_new;
-        self.in_break = listed_new;
-        changed
     }
 }
 
@@ -1398,17 +1377,8 @@ impl Spool {
             candidates.truncate(NOTIFY_MAX_ITEMS);
 
             let mut items = Vec::with_capacity(candidates.len());
-            let mut listed_new = false;
             for (env, _, reason) in candidates {
                 let triage_gen = state.messages.get(&env.id).map_or(0, |e| e.triage_gen);
-                if opts.after_task {
-                    let entry = state.messages.entry(env.id.clone()).or_default();
-                    if entry.reported_break != Some(state.break_seq) {
-                        entry.reported_break = Some(state.break_seq);
-                        listed_new = true;
-                        dirty = true;
-                    }
-                }
                 if let Some(sess) = session {
                     let entry = state.messages.entry(env.id.clone()).or_default();
                     if !entry.reported_sessions.contains_key(sess)
@@ -1426,9 +1396,6 @@ impl Spool {
                 items.push(self.notify_item(env, &now_iso, triage_gen, reason));
             }
 
-            if opts.after_task {
-                dirty |= state.end_after_task_check(listed_new);
-            }
             if dirty {
                 self.prune_triage_entries(agent, &mut state)?;
                 self.save_triage_unlocked(agent, &state)?;

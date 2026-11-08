@@ -298,57 +298,78 @@ fn adapter_invocations_behave_as_the_adapters_expect() {
 
 #[test]
 fn after_task_deferred_during_a_break_does_not_loop() {
-    // Regression: Stop#1 reports M; the agent defers M after-task; Stop#2 reported M again
-    // (after_task, exit 10), and so on forever.
+    // Regression: the adapter's Stop (agents mods/inbox/bridge/adapter.mjs stop()) runs
+    // `notify --after-task`, then `msg wait --timeout 500ms`, then `notify --after-task` again.
+    // An empty first check ended the break, so the second started a new one and released
+    // the after-task deferrals made while triaging: a loop every ~500 ms.
     let env = setup("break_loop");
+    let session = "claude:s1";
+    let check = |after_task: bool| {
+        let mut args = vec!["msg", "notify", "--session", session, "--format", "json"];
+        if after_task {
+            args.push("--after-task");
+        }
+        let r = env.run(ME, &args);
+        assert!([0, 10, 11].contains(&r.code), "{}", r.stderr);
+        (r.code, json(&r.stdout))
+    };
+    // The adapter's Stop: a check, and when it reports nothing, the grace wait and a re-check.
     let stop = || {
-        env.run(
-            ME,
-            &[
-                "msg",
-                "notify",
-                "--session",
-                "claude:s1",
-                "--after-task",
-                "--format",
-                "json",
-            ],
-        )
+        let first = check(true);
+        if first.0 != 0 {
+            return first;
+        }
+        let _ = env.run(ME, &["msg", "wait", "--timeout", "500ms"]);
+        check(true)
     };
     let m = env.send(PEER, ME, &["--subject", "later", "b"]);
 
-    let stop1 = stop();
-    assert_eq!(stop1.code, 10, "{}", stop1.stderr);
-    assert_eq!(json(&stop1.stdout)["items"][0]["reason"], "new");
+    // Task 1's Stop lists M; the agent defers it during the triage turn.
+    let (code, report) = stop();
+    assert_eq!(code, 10, "{report}");
+    assert_eq!(report["items"][0]["reason"], "new");
     let d = env.run(ME, &["msg", "defer", &m, "--until", "after-task"]);
     assert_eq!(d.code, 0, "{}", d.stderr);
 
-    // The next Stop of the same break: nothing to report.
-    let stop2 = stop();
-    assert_eq!(stop2.code, 0, "{}", stop2.stdout);
-    assert_eq!(json(&stop2.stdout)["count"], 0);
+    // Even if the triage turn's Stop ran `--after-task` (check, wait, re-check), M stays put.
+    for _ in 0..2 {
+        let (code, report) = stop();
+        assert_eq!((code, report["count"].clone()), (0, 0.into()), "{report}");
+    }
 
-    // The Stop after a later task: re-surfaced, as after_task, exactly once.
-    let stop3 = stop();
-    assert_eq!(stop3.code, 10, "{}", stop3.stdout);
-    let report = json(&stop3.stdout);
+    // The next prompt's check (no --after-task) ends the break.
+    assert_eq!(check(false).0, 0);
+
+    // Task 2's Stop: M is back, as after_task, exactly once.
+    let (code, report) = stop();
+    assert_eq!(code, 10, "{report}");
     assert_eq!(report["count"], 1);
     assert_eq!(report["items"][0]["id"], m.as_str());
     assert_eq!(report["items"][0]["reason"], "after_task");
-    assert_eq!(stop().code, 0, "reported once");
+    assert_eq!(check(false).0, 0);
+    assert_eq!(stop().0, 0, "reported once");
 
-    // `msg due --after-task` (the session-less alias) follows the same rule.
-    let due = || json(&env.run(ME, &["msg", "due", "--after-task"]).stdout);
+    // `msg due` (no session) works the same way on its own: `due --after-task` at Stops,
+    // plain `due` at prompts.
+    let due = |after_task: bool| {
+        let mut args = vec!["msg", "due"];
+        if after_task {
+            args.push("--after-task");
+        }
+        json(&env.run(ME, &args).stdout)
+    };
+    assert_eq!(check(false).0, 0, "end the session's break first");
     let n = env.send(PEER, ME, &["--subject", "another", "b"]);
     env.run(ME, &["msg", "done", &m]);
-    assert_eq!(due()["items"][0]["id"], n.as_str());
+    assert_eq!(due(true)["items"][0]["id"], n.as_str());
     assert_eq!(
         env.run(ME, &["msg", "defer", &n, "--until", "after-task"])
             .code,
         0
     );
-    assert_eq!(due()["count"], 0, "same break");
-    let later = due();
+    assert_eq!(due(true)["count"], 0, "same break");
+    due(false);
+    let later = due(true);
     assert_eq!(later["items"][0]["id"], n.as_str(), "{later}");
     assert_eq!(later["items"][0]["reason"], "after_task");
 }

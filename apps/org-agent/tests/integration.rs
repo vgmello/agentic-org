@@ -237,6 +237,12 @@ fn triage_defer_done_notify_exit_codes_0_10_11_and_session_dedup() {
         ],
     );
     assert_eq!(deferred.code, 0, "{}", deferred.stderr);
+    // The next prompt's check (no --after-task) ends the break; the next Stop starts another.
+    assert_eq!(
+        env.run(AGY, &["msg", "notify", "--session", "codex:s1"])
+            .code,
+        0
+    );
 
     let resurfaced = env.run(
         AGY,

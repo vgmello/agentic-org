@@ -321,51 +321,51 @@ fn rule_after_task_is_due_only_at_the_next_break() {
 
 #[test]
 fn rule_after_task_deferred_during_a_break_waits_for_the_next_break() {
-    // Regression: every `--after-task` check released every after-task snooze, so a message
-    // deferred after-task during a break came back at the next Stop of that same break.
+    // Regression: every `--after-task` check released every after-task snooze, and later an
+    // empty `--after-task` check ended the break, so a deferral made while triaging came back
+    // at the next `--after-task` check of the same break.
     let t = TempSpool::new("break_loop");
     let session = Some("stop-hook");
+    let stop = || t.spool.notify(ME, &opts(session, true, false)).unwrap();
+    let plain = || t.spool.notify(ME, &opts(session, false, false)).unwrap();
     let id = t.send("not now", None);
 
-    let stop1 = t.spool.notify(ME, &opts(session, true, false)).unwrap();
+    let stop1 = stop();
     assert_eq!(
         (ids(&stop1), stop1.items[0].reason.as_str()),
         (vec![id.clone()], "new")
     );
     t.spool.defer_message(ME, &id, "after-task", None).unwrap();
 
-    // Same break: nothing to report (the break ends here).
-    let stop2 = t.spool.notify(ME, &opts(session, true, false)).unwrap();
-    assert_eq!(stop2.count, 0, "deferred until the NEXT break");
-    assert_eq!(t.triage_json()["in_break"], false);
+    // More `--after-task` checks in the same break, empty ones included, never end it.
+    for _ in 0..3 {
+        assert_eq!(stop().count, 0, "deferred until the NEXT break");
+    }
+    assert_eq!(t.triage_json()["in_break"], true);
 
-    // The Stop after a later task: back once, as after_task.
-    let stop3 = t.spool.notify(ME, &opts(session, true, false)).unwrap();
+    // A check without --after-task (the next prompt) ends it; the next Stop releases once.
+    plain();
+    assert_eq!(t.triage_json()["in_break"], false);
+    let stop3 = stop();
     assert_eq!(ids(&stop3), vec![id.clone()]);
     assert_eq!(stop3.items[0].reason, "after_task");
-    assert_eq!(
-        t.spool
-            .notify(ME, &opts(session, true, false))
-            .unwrap()
-            .count,
-        0,
-        "reported once"
-    );
+    plain();
+    assert_eq!(stop().count, 0, "reported once");
 
-    // Deferred mid-task (between breaks): due at the very next break.
+    // Deferred mid-task (after the prompt's check): due at the very next Stop.
+    plain();
     let mid = t.send("mid-task", None);
     t.spool.defer_message(ME, &mid, "after-task", None).unwrap();
-    let next = t.spool.notify(ME, &opts(session, true, false)).unwrap();
+    let next = stop();
     assert!(ids(&next).contains(&mid), "{next:?}");
     let item = next.items.iter().find(|i| i.id == mid).unwrap();
     assert_eq!(item.reason, "after_task");
 }
 
 #[test]
-fn rule_a_message_left_untriaged_does_not_hold_back_after_task_snoozes() {
-    // Without a session (or with a new session per Stop) a message the agent leaves unread is
-    // listed at every check; it must not keep one break going forever.
-    let t = TempSpool::new("break_starve");
+fn rule_a_sessionless_break_ends_only_with_a_sessionless_plain_check() {
+    // Without a session: `due --after-task` at Stops, `due` at prompts.
+    let t = TempSpool::new("break_nosess_loop");
     let left = t.send("left unread", None);
     let deferred = t.send("deferred", None);
     let stop = || t.spool.notify(ME, &opts(None, true, false)).unwrap();
@@ -374,9 +374,11 @@ fn rule_a_message_left_untriaged_does_not_hold_back_after_task_snoozes() {
     t.spool
         .defer_message(ME, &deferred, "after-task", None)
         .unwrap();
-    // Same break: only the untriaged one, listed again (nothing new: the break ends).
+    // Same break: only the untriaged one, however often it is checked.
     assert_eq!(ids(&stop()), vec![left.clone()]);
-    // The next break: the deferral is back.
+    assert_eq!(ids(&stop()), vec![left.clone()]);
+    // The prompt's check ends it; the next Stop releases the deferral.
+    t.spool.notify(ME, &opts(None, false, false)).unwrap();
     let next = stop();
     assert_eq!(ids(&next), vec![left, deferred.clone()]);
     assert_eq!(next.items[1].reason, "after_task");
