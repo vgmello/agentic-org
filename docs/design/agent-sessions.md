@@ -188,8 +188,10 @@ The research behind it, with exact flags, protocols and what was verified, is in
    **Fallback:** if a runtime's approval bridge doesn't work, its actions that need approval are **denied**, the run ends as `blocked`, and a Needs-you item says what was denied. Skip-permissions modes are never used.
 8. **Instructions are composed by the office** from:
    - the agent's identity and memory: its home `CLAUDE.md` / `AGENTS.md` and its profile
-   - the project's instruction files, **read from the project's default branch in `work.git`** (with the office's hardened git), never from the worktree
-   - the **wake guidance** for the moment: the agent's own guidance (org data, editable in How it runs, RUN-11), else the default for the moment (Eden's agent-guidance), with project guidance files (`docs/.guidance/<moment>.md`) also read from the default branch
+   - the project's instruction files, **read from the project's `integration_branch` (the default branch when that's empty) in `mirror.git`** (with the office's hardened git), never from the worktree or `work.git`, whose refs agents can move
+   - the **wake guidance** for the moment: the agent's own guidance (org data, editable in How it runs, RUN-11), else the default for the moment (Eden's agent-guidance), with project guidance files (`docs/.guidance/<moment>.md`) also read from the integration branch
+
+   (amended 2026-11-08: A57) Instruction files, guidance files and project processes ([`processes.md`](processes.md)) are all read from the integration branch as fetched into `mirror.git`, so all three follow merged work. Reading in `mirror.git` instead of `work.git` follows `tasks-projects-docs.md` §4.9 ("reads only in mirror.git"): agents can move refs in `work.git`, and once processes gate enforcement, a moved integration ref there would let one agent change what every session reads.
 
    So what an agent writes in its worktree never changes what the office tells the next session. Codex and Antigravity also read instruction files from the cwd by themselves (`AGENTS.md`, `.agents/rules`). That's the task branch's own content, so it can steer only that task's sessions, and it's treated as untrusted (see "Security"). **Claude doesn't:** under `--setting-sources ""` it read none of them in the spike, and auto-memory is off (decision 6). A nested `CLAUDE.md` that Claude might load lazily, when the agent reads files in a subfolder, wasn't tested, so it's still treated as untrusted.
 
