@@ -14,7 +14,9 @@ publish.workspace = true
 dev-keys = []
 
 [dependencies]
+org-proto = { path = "../org-proto" }
 rusqlite.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
 tempfile.workspace = true
