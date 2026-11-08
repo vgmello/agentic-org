@@ -583,10 +583,12 @@ impl OfficeConnection for RealOffice {
 impl OrgSource for RealOffice {
     fn open_hq(&self, organization_id: &str) -> Result<Client, ClientError> {
         // Where the host last said HQ is; if that office is not connectable, ask the host again.
+        let remembered = lock(&self.hq).contains_key(organization_id);
         let mut office = self
             .hq_of(organization_id, false)
             .map_err(ClientError::Api)?;
-        if not_connectable(office.status).is_some() {
+        // What the host said just now is not asked twice.
+        if remembered && not_connectable(office.status).is_some() {
             office = self
                 .hq_of(organization_id, true)
                 .map_err(ClientError::Api)?;
@@ -1503,6 +1505,39 @@ mod tests {
     }
 
     #[test]
+    fn the_feed_does_not_connect_to_an_hq_the_host_says_is_unavailable_and_asks_the_host_once() {
+        let f = fake(OfficeStatus::Unavailable, 0);
+        let office = real(&f);
+        let refused = match office.open_hq("org1") {
+            Err(ClientError::Api(a)) => a,
+            Err(other) => panic!("{other:?}"),
+            Ok(_) => panic!("connected to an unavailable office"),
+        };
+        assert_eq!(refused.code, ErrorCode::Unavailable);
+        assert_eq!(
+            f.host_log
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|m| *m == "organization.list")
+                .count(),
+            1,
+            "what the host said just now is not asked twice"
+        );
+        // The next attempt remembers the answer was old and asks again, once.
+        let _ = office.open_hq("org1");
+        assert_eq!(
+            f.host_log
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|m| *m == "organization.list")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
     fn the_feed_gets_its_own_bound_connection_to_hq_and_following_twice_starts_one_feed() {
         let f = fake(OfficeStatus::Active, 0);
         f.require_bind.store(true, Ordering::SeqCst);
@@ -1515,8 +1550,8 @@ mod tests {
         let feeds = office.open_hq("org1").unwrap();
         feeds.call::<OrgSnapshotCall>(&Empty {}).unwrap();
         office.org_snapshot("org1").unwrap();
-        let shared = office.open_hq("org1").unwrap();
-        shared.call::<OrgSnapshotCall>(&Empty {}).unwrap();
+        let another = office.open_hq("org1").unwrap();
+        another.call::<OrgSnapshotCall>(&Empty {}).unwrap();
         assert_eq!(
             f.host_log
                 .lock()
