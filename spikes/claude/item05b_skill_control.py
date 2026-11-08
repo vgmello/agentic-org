@@ -12,7 +12,8 @@ import lib
 b = lib.make_tmp("s5b")
 ws = b / "ws"
 item05_setup.plant(b / "cfg", ws)
-s = lib.Session(lib.stream_args("--permission-mode", "manual", "--permission-prompt-tool", "stdio"),
+s = lib.Session(lib.stream_args("--permission-mode", "manual", "--permission-prompt-tool", "stdio",
+                                sources=None, tools=None),  # same flags as item05's skill-default-sources
                 lib.clean_env(b / "cfg", b / "tmp"), ws, "item05b-control")
 asked = []
 

@@ -33,7 +33,7 @@ sid = lib.new_session_id()
 instr = rt / "instructions.md"
 instr.write_text("Office instructions: you are an office-run agent. Keep replies to one line.\n")
 AGENTS = json.dumps({"zephyr": {"description": "Office-run agent Zephyr", "prompt": "You are Zephyr."}})
-SPEC = ["--setting-sources", "", "--strict-mcp-config", "--mcp-config", lib.EMPTY_MCP, "--model", "haiku",
+SPEC = ["--setting-sources", "", "--tools", "Bash,Read", "--strict-mcp-config", "--mcp-config", lib.EMPTY_MCP, "--model", "haiku",
         "--agents", AGENTS, "--agent", "zephyr", "--append-system-prompt-file", str(instr),
         "--permission-mode", "manual"]
 out = {}

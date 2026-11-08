@@ -40,9 +40,8 @@ EMPTY_MCP = '{"mcpServers":{}}'
 
 KEEP_TMP = "--keep" in sys.argv or os.environ.get("CLAUDE_SPIKE_KEEP") == "1"
 TURNS: list[str] = []  # model turns sent by this process (printed at exit)
-# Account-synced skills bundle seen in this spike; plugins whose source ends in "@synced" are added
-# per corpus. Their names, commands and skills are personal to the account, so the scrubber drops them.
-SYNCED_NS_SEED = {"anthropic-skills"}
+# Account-synced plugins are detected only by their `source: "<name>@synced"` entry (see synced_names);
+# their names, commands and skills are personal to the account, so the scrubber drops them.
 # Built-in commands whose descriptions hint at the account's plan or org: descriptions are blanked.
 PLAN_HINT_COMMANDS = {"usage-credits", "extra-usage", "upgrade", "usage"}
 
@@ -105,13 +104,20 @@ def clean_env(cfg: str | os.PathLike, tmpdir: str | os.PathLike | None = None,
     return env
 
 
-def stream_args(*extra: str, model: str = "haiku", budget: str = "0.50",
-                verbose: bool = True) -> list[str]:
+def stream_args(*extra: str, model: str = "haiku", budget: str = "0.50", verbose: bool = True,
+                sources: str | None = "", tools: str | None = "Bash,Read") -> list[str]:
+    """Base argv. By default no settings file loads (--setting-sources "") and only Bash and Read
+    exist (--tools Bash,Read). Pass sources=None / tools=None to leave a flag out (item 5 measures
+    exactly those), or give the flag in `extra` to override it. The recorded runs predate both defaults."""
     a = ["-p", "--input-format", "stream-json", "--output-format", "stream-json"]
     if verbose:
         a.append("--verbose")
     a += ["--model", model, "--max-budget-usd", budget,
           "--strict-mcp-config", "--mcp-config", EMPTY_MCP]
+    if sources is not None and "--setting-sources" not in extra:
+        a += ["--setting-sources", sources]
+    if tools is not None and "--tools" not in extra and "--restricted" not in extra:
+        a += ["--tools", tools]
     return a + list(extra)
 
 
@@ -394,20 +400,46 @@ PERSONAL_KEYS = {"subscriptionType", "email", "accountUuid", "organizationUuid",
 BLOB_KEYS = {"signature"}  # opaque thinking-block signatures: no value for the adapter, so blanked
 RATE_KEYS = {"rate_limit_info", "overageStatus", "overageDisabledReason", "isUsingOverage", "utilization",
              "resetsAt"}
+# Synthetic, type-preserving values for the account's rate-limit data (README "Synthetic values").
+SYNTH_RATE = {"status": "allowed", "rateLimitType": "five_hour", "resetsAt": 1800000000,
+              "overageStatus": "allowed", "overageDisabledReason": "synthetic_reason", "isUsingOverage": False,
+              "utilization": 0.42}
+SYNTH_WINDOW = {"five_hour": {"utilization": 0.42, "resetsAt": 1800000000, "status": "allowed"},
+                "seven_day": {"utilization": 0.17, "resetsAt": 1800500000, "status": "allowed"}}
 
 
-def _placeholders(o):
-    """Same keys and shape, every leaf value replaced."""
+def _synth_leaf(key, value, window=None):
+    if window in SYNTH_WINDOW and key in SYNTH_WINDOW[window]:
+        return SYNTH_WINDOW[window][key]
+    if key in SYNTH_RATE:
+        return SYNTH_RATE[key]
+    # an unknown field: keep its JSON type with a neutral value
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return 0
+    if value is None:
+        return None
+    return "synthetic"
+
+
+def _synth_rate(o, key=None, window=None):
+    """Same keys and shape; every leaf replaced by a synthetic value of the same JSON type."""
     if isinstance(o, dict):
-        return {k: _placeholders(v) for k, v in o.items()}
+        return {k: _synth_rate(v, k, k if key == "unifiedWindows" else window) for k, v in o.items()}
     if isinstance(o, list):
-        return [_placeholders(v) for v in o]
-    return "<scrubbed>"
+        return [_synth_rate(v, key, window) for v in o]
+    return _synth_leaf(key, o, window)
+
+
+def _is_used_model(m) -> bool:
+    """initialize's models list: only the spike's model (the `haiku` alias) is kept."""
+    return isinstance(m, dict) and m.get("value") == "haiku"
 
 
 def synced_names(corpus) -> tuple[set[str], set[str]]:
     """(namespaces, plain names) of account-synced plugins/skills found anywhere in corpus."""
-    ns, plain = set(SYNCED_NS_SEED), set()
+    ns, plain = set(), set()
 
     def find_ns(o):
         if isinstance(o, dict):
@@ -429,8 +461,6 @@ def synced_names(corpus) -> tuple[set[str], set[str]]:
         elif isinstance(o, list):
             for v in o:
                 find_plain(v)
-        elif isinstance(o, str) and ":" in o and o.split(":", 1)[0] in SYNCED_NS_SEED:
-            plain.add(o.split(":", 1)[1])  # e.g. "anthropic-skills:docx" is also listed as plain "docx"
 
     find_ns(corpus)
     find_plain(corpus)
@@ -438,8 +468,9 @@ def synced_names(corpus) -> tuple[set[str], set[str]]:
 
 
 class Scrubber:
-    """Replace temp paths, the home path, uuids, emails and tokens with stable placeholders; blank the
-    account's rate-limit and overage values (keys kept); drop account-synced plugins, commands and skills.
+    """Replace temp paths, the home path, uuids, emails and tokens with stable placeholders; replace the
+    account's rate-limit and overage values with synthetic, type-preserving ones (keys kept); drop
+    account-synced plugins (source "…@synced") and their commands and skills; keep only haiku in models.
     corpus: everything that will be scrubbed with this instance, used to find the synced names."""
 
     def __init__(self, paths: list[str], corpus=None):
@@ -447,7 +478,7 @@ class Scrubber:
         self.paths = sorted({p for p in paths if p} | {os.path.realpath(p) for p in paths if p} | roots
                             | {"/private/tmp/claude-spike-", "/tmp/claude-spike-"}, key=len, reverse=True)
         self.ids: dict[str, str] = {}
-        self.ns, self.plain = synced_names(corpus) if corpus is not None else (set(SYNCED_NS_SEED), set())
+        self.ns, self.plain = synced_names(corpus) if corpus is not None else (set(), set())
 
     def synced(self, x) -> bool:
         if isinstance(x, dict):
@@ -474,13 +505,15 @@ class Scrubber:
                 elif k == "account" and isinstance(v, dict):
                     out[k] = {kk: ("<scrubbed>" if vv not in (None, "", [], {}) else vv)
                               for kk, vv in v.items() if kk != "organization"}
-                elif k == "models" and isinstance(v, list):  # initialize's model list: names hint at the plan
+                elif k == "models" and isinstance(v, list):  # initialize's model list hints at the plan:
                     out[k] = [{kk: ("<scrubbed>" if kk in ("description", "displayName") else self.scrub(vv))
-                               for kk, vv in m.items()} if isinstance(m, dict) else self.scrub(m) for m in v]
+                               for kk, vv in m.items()} for m in v if _is_used_model(m)]  # keep only haiku
                 elif k in BLOB_KEYS and isinstance(v, str) and v:
                     out[k] = "<scrubbed>"
+                elif k == "rate_limit_info":
+                    out[k] = _synth_rate(v)
                 elif k in RATE_KEYS:
-                    out[k] = _placeholders(v)
+                    out[k] = _synth_leaf(k, v)
                 elif k in PERSONAL_KEYS and v:
                     out[k] = "<scrubbed>"
                 else:
