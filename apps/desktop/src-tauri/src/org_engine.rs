@@ -3,9 +3,9 @@
 //!
 //! TEMPORARY: the real HQ is the authority and will replace this; the app only sends commands and
 //! shows what comes back. Pure: no files, no clock. When several errors apply, the first of
-//! `not_found`, `invalid_request`, `invalid_name`, `conflict`, then the command's own rule
-//! (`owner_protected`, `cycle`, `not_a_member`, `not_empty`), `already_exists` is returned, as the
-//! contract says.
+//! `not_found`, `invalid_request`, `invalid_name`, then the command's own rule (`owner_protected`, `cycle`,
+//! `not_a_member`, `not_empty`), `conflict`, `already_exists` is returned: the domain codes come before a stale
+//! version, so a permanent refusal is never hidden behind a refresh (org.rs and the real rules).
 
 use crate::org_command::OrgCommand;
 use org_proto::org::{
@@ -295,12 +295,6 @@ fn apply_to(s: &mut OrgSnapshot, command: &OrgCommand) -> Outcome {
             if let Some(owner) = &p.owner_team_id {
                 team_ix(s, owner)?;
             }
-            if s.teams[i].version != p.expected_version {
-                return err(
-                    ErrorCode::Conflict,
-                    format!("{} changed since you looked.", s.teams[i].name),
-                );
-            }
             if let Some(owner) = &p.owner_team_id {
                 if *owner == p.team_id || teams_below(s, &p.team_id).contains(owner) {
                     return err(
@@ -311,6 +305,12 @@ fn apply_to(s: &mut OrgSnapshot, command: &OrgCommand) -> Outcome {
                         ),
                     );
                 }
+            }
+            if s.teams[i].version != p.expected_version {
+                return err(
+                    ErrorCode::Conflict,
+                    format!("{} changed since you looked.", s.teams[i].name),
+                );
             }
             if sibling_taken(
                 s,
@@ -344,12 +344,6 @@ fn apply_to(s: &mut OrgSnapshot, command: &OrgCommand) -> Outcome {
                 }
                 None => None,
             };
-            if s.teams[i].version != p.expected_version {
-                return err(
-                    ErrorCode::Conflict,
-                    format!("{} changed since you looked.", s.teams[i].name),
-                );
-            }
             if let Some(m) = &lead {
                 if m.owner {
                     return err(ErrorCode::OwnerProtected, "The owner can't lead a team.");
@@ -365,6 +359,12 @@ fn apply_to(s: &mut OrgSnapshot, command: &OrgCommand) -> Outcome {
                     );
                 }
             }
+            if s.teams[i].version != p.expected_version {
+                return err(
+                    ErrorCode::Conflict,
+                    format!("{} changed since you looked.", s.teams[i].name),
+                );
+            }
             s.teams[i].lead_member_id = p.lead_member_id.clone();
             s.teams[i].version += 1;
             Ok(vec![OrgChange::TeamUpserted {
@@ -373,12 +373,6 @@ fn apply_to(s: &mut OrgSnapshot, command: &OrgCommand) -> Outcome {
         }
         OrgCommand::TeamDelete(p) => {
             let i = team_ix(s, &p.team_id)?;
-            if s.teams[i].version != p.expected_version {
-                return err(
-                    ErrorCode::Conflict,
-                    format!("{} changed since you looked.", s.teams[i].name),
-                );
-            }
             if s.teams
                 .iter()
                 .any(|t| t.owner_team_id.as_deref() == Some(p.team_id.as_str()))
@@ -386,6 +380,12 @@ fn apply_to(s: &mut OrgSnapshot, command: &OrgCommand) -> Outcome {
                 return err(
                     ErrorCode::NotEmpty,
                     format!("{} still has teams under it.", s.teams[i].name),
+                );
+            }
+            if s.teams[i].version != p.expected_version {
+                return err(
+                    ErrorCode::Conflict,
+                    format!("{} changed since you looked.", s.teams[i].name),
                 );
             }
             let mut changes = vec![OrgChange::TeamDeleted {
@@ -541,14 +541,14 @@ fn apply_to(s: &mut OrgSnapshot, command: &OrgCommand) -> Outcome {
                     "An agent who has left stays on record.",
                 );
             }
+            if s.members[i].owner {
+                return err(ErrorCode::OwnerProtected, "The owner can't be removed.");
+            }
             if s.members[i].version != p.expected_version {
                 return err(
                     ErrorCode::Conflict,
                     format!("{} changed since you looked.", s.members[i].name),
                 );
-            }
-            if s.members[i].owner {
-                return err(ErrorCode::OwnerProtected, "The owner can't be removed.");
             }
             let gone = s.members.remove(i);
             let mut changes = vec![OrgChange::MemberRemoved {
@@ -593,12 +593,6 @@ fn apply_to(s: &mut OrgSnapshot, command: &OrgCommand) -> Outcome {
                     "Someone who has left can't be given a manager or be one.",
                 );
             }
-            if s.members[i].version != p.expected_version {
-                return err(
-                    ErrorCode::Conflict,
-                    format!("{} changed since you looked.", s.members[i].name),
-                );
-            }
             if s.members[i].owner {
                 return err(ErrorCode::OwnerProtected, "The owner reports to no one.");
             }
@@ -612,6 +606,12 @@ fn apply_to(s: &mut OrgSnapshot, command: &OrgCommand) -> Outcome {
                         ),
                     );
                 }
+            }
+            if s.members[i].version != p.expected_version {
+                return err(
+                    ErrorCode::Conflict,
+                    format!("{} changed since you looked.", s.members[i].name),
+                );
             }
             // Reporting to the owner is stored as empty, so each line has one form.
             s.members[i].reports_to_member_id = boss.filter(|b| !b.owner).map(|b| b.id);
