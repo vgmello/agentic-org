@@ -21,9 +21,9 @@ The product is named **Agentic Org**. The designs that are the reference for cur
 3. **Before asking for the go:**
    - `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` pass
    - for the app, the type check, its tests and a build pass
-   - an **independent review** of your whole diff (a fresh reviewer with no context: valid, reliable, secure, meets the brief), with every confirmed finding fixed
-4. **Send it to the reviewer agent** (`reviewer`, on `org-agent`) with: repo, branch, base, commit, and the design or brief it implements (and screenshots for UI work). It reports a verdict and findings to you and ada. Fix and ask it to re-review until it says ready.
-5. **Ask ada for the go** with: branch, commit, the final lines of every check, your own review's findings and fixes, **the reviewer's final verdict**, and a screenshot for UI work. After the go: `git merge --no-ff` into `v1`, then push `v1` and your branch.
+   - **your own independent review** of your whole diff (a fresh subagent you start, with no context: valid, reliable, secure, meets the brief), with every confirmed finding fixed. This is separate from step 4, and step 4 doesn't replace it.
+4. **Send it to the reviewer agent** (`reviewer`, on `org-agent`) with: repo, branch, base, commit, and the design or brief it implements (and screenshots for UI work). It reports a verdict and findings to you and ada. Fix, re-run step 3's checks on the fixed commit, and ask it to re-review, until it says **ready** for your final commit.
+5. **Ask ada for the go** with: branch, commit, the final lines of every check, your own review's findings and fixes, **the reviewer's ready verdict for that exact commit** (any later commit needs a re-review), and a screenshot for UI work. After the go: `git merge --no-ff` into `v1`, then push `v1` and your branch.
 6. **Never write to a user's organization workspace from tests.** Use temporary directories.
 
 ## Talking to other agents
