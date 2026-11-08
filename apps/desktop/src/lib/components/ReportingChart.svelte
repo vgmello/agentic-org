@@ -4,7 +4,7 @@
 	import Crown from '@lucide/svelte/icons/crown';
 	import { SvelteSet } from 'svelte/reactivity';
 	import MemberTile from './MemberTile.svelte';
-	import { teamsOfMember } from '$lib/org/model';
+	import { kindWord, teamsOfMember } from '$lib/org/model';
 	import { directReports, type ReportNode } from '$lib/org/reporting';
 	import type { OrgSnapshot } from '$lib/proto';
 
@@ -68,7 +68,7 @@
 			<div class="min-w-0">
 				<p class="truncate text-sm/5 font-semibold text-white">{member.name}</p>
 				<p class="text-xs/5 text-gray-400">
-					{member.owner ? 'Owner (you)' : member.kind === 'agent' ? 'Agent' : 'Person'}
+					{member.owner ? 'Owner (you)' : kindWord(member.kind)}
 				</p>
 				{#if !member.owner}
 					<p class="truncate text-xs/5 text-gray-400" title={teams.map((t) => t.name).join(', ')}>

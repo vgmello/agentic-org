@@ -52,6 +52,9 @@ export function membersOfTeam(s: OrgSnapshot, teamId: string): Member[] {
 	return nonOwners(s).filter((m) => ids.has(m.id)).sort(byName);
 }
 
+/** How a member's kind reads in words, for screens and screen readers. */
+export const kindWord = (kind: Member['kind']): 'Agent' | 'Person' | 'Member' => (kind === 'agent' ? 'Agent' : kind === 'person' ? 'Person' : 'Member');
+
 export const agentsOf = (members: Member[]) => members.filter((m) => m.kind === 'agent');
 export const peopleOf = (members: Member[]) => members.filter((m) => m.kind === 'person');
 /** Members of a kind this build doesn't know (the contract may grow one): shown, never dropped. */
