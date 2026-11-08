@@ -553,6 +553,7 @@ mod tests {
                             server_version: "test".into(),
                             host: "This Mac".into(),
                             office: None,
+                            capabilities: vec![],
                         },
                     )
                     .unwrap(),
@@ -588,6 +589,7 @@ mod tests {
                                 server_version: "test".into(),
                                 host: "This Mac".into(),
                                 office: None,
+                                capabilities: vec![],
                             },
                         )
                         .unwrap(),
@@ -998,6 +1000,7 @@ mod tests {
                                 server_version: "test".into(),
                                 host: "This Mac".into(),
                                 office: None,
+                                capabilities: vec![],
                             },
                         )
                         .unwrap(),
