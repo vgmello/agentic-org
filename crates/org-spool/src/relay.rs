@@ -30,6 +30,9 @@ const RELAY_POLL_INTERVAL: Duration = Duration::from_millis(500);
 /// Between passes it checks `outbox/new` this often (for writers that didn't nudge it).
 const RELAY_PENDING_CHECK: Duration = Duration::from_millis(2);
 
+/// While stuck, the relay waits for a nudge in slices this long.
+const RELAY_STUCK_WAIT: Duration = Duration::from_millis(50);
+
 /// Whether the relay loop runs a delivery pass now: on a nudge, once the poll interval has
 /// passed, or when something is pending, unless the last pass left a file it couldn't
 /// deliver (a transient error), which would otherwise be retried every few milliseconds.
@@ -162,7 +165,9 @@ impl Spool {
             }
             let remaining = RELAY_POLL_INTERVAL.saturating_sub(last_sweep.elapsed());
             let wait_slice = if stuck {
-                remaining
+                // Long enough not to spin, short enough that a stop signal landing just
+                // before the wait is seen quickly.
+                remaining.min(RELAY_STUCK_WAIT)
             } else {
                 remaining.min(RELAY_PENDING_CHECK)
             };

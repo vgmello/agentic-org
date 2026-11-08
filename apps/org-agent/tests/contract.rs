@@ -1022,9 +1022,10 @@ fn a_stuck_outbox_file_neither_stops_the_relay_nor_delays_nudged_sends() {
     // Each nudged send is delivered at once, not at the next 500 ms poll.
     let mut slowest = Duration::ZERO;
     for i in 0..5 {
-        let started = Instant::now();
         let sent = env.run(PEER, &["msg", "send", "--to", ME, &format!("m{i}")]);
         assert_eq!(sent.code, 0, "{}", sent.stderr);
+        // Timed from the nudge (sent as `msg send` exits), not the process start-up.
+        let started = Instant::now();
         let path = env.inbox_file(ME, "new", &sent.stdout);
         while !path.exists() {
             assert!(
@@ -1036,7 +1037,12 @@ fn a_stuck_outbox_file_neither_stops_the_relay_nor_delays_nudged_sends() {
         slowest = slowest.max(started.elapsed());
         thread::sleep(Duration::from_millis(37));
     }
+    // The relay really was stuck all along (not so when running as root).
+    let still_queued = fs::read_dir(env.root.join("spool/outbox/new"))
+        .unwrap()
+        .count();
     fs::set_permissions(&peer_new, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(still_queued, 1, "the stuck message stays queued");
     assert!(slowest < Duration::from_millis(250), "slowest {slowest:?}");
 }
 
