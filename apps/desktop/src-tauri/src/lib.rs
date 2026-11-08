@@ -5,6 +5,7 @@
 //! every build, so the shell can be run and shown end to end. It is wired in one place (`run`).
 
 mod connections;
+mod import_scan;
 mod login_item;
 mod menu_model;
 mod mock;
@@ -344,6 +345,51 @@ where
         .map_err(|e| CommandError::local("internal", e.to_string()))?
 }
 
+/// The usual places an existing team lives in, found or not (prefills "Bring in an existing team").
+#[tauri::command]
+async fn import_defaults(app: tauri::AppHandle) -> Result<import_scan::Defaults, CommandError> {
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|e| CommandError::local("internal", e.to_string()))?;
+    let user = std::env::var("USER").ok().filter(|u| !u.is_empty());
+    blocking(move || Ok(import_scan::defaults(&home, user))).await
+}
+
+/// Read the HR workspace and the messaging spool the owner chose. Read-only; a source that can't be read says why.
+#[tauri::command]
+async fn import_scan(
+    hr_dir: Option<String>,
+    spool_dir: Option<String>,
+) -> Result<import_scan::Scan, CommandError> {
+    blocking(move || {
+        Ok(import_scan::scan(
+            hr_dir.as_deref().map(std::path::Path::new),
+            spool_dir.as_deref().map(std::path::Path::new),
+        ))
+    })
+    .await
+}
+
+/// Ask the owner for a folder with the system's folder picker. `None`: they cancelled.
+#[tauri::command]
+async fn import_pick_folder(
+    app: tauri::AppHandle,
+    title: String,
+) -> Result<Option<String>, CommandError> {
+    use tauri_plugin_dialog::DialogExt;
+    blocking(move || {
+        Ok(app
+            .dialog()
+            .file()
+            .set_title(title)
+            .blocking_pick_folder()
+            .and_then(|picked| picked.into_path().ok())
+            .map(|path| path.to_string_lossy().into_owned()))
+    })
+    .await
+}
+
 #[tauri::command]
 async fn office_ensure_running(
     state: State<'_, Arc<AppState>>,
@@ -628,6 +674,7 @@ fn mock_office(data: &std::path::Path) -> (Arc<dyn OfficeConnection>, std::path:
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // The mock's connections live apart from anything the real office remembers, so choosing the real
             // office never opens a fake organization (and the other way round).
@@ -680,6 +727,9 @@ pub fn run() {
             org_command,
             org_live_retry,
             org_live,
+            import_defaults,
+            import_scan,
+            import_pick_folder,
             connections_list,
             work_snapshot,
             work_get,
@@ -884,7 +934,7 @@ mod tests {
         assert_eq!(off.unregister_calls.load(Ordering::SeqCst), 1);
     }
 
-    const COMMANDS: [&str; 19] = [
+    const COMMANDS: [&str; 22] = [
         "office_ensure_running",
         "office_ping",
         "office_restart",
@@ -896,6 +946,9 @@ mod tests {
         "org_command",
         "org_live_retry",
         "org_live",
+        "import_defaults",
+        "import_scan",
+        "import_pick_folder",
         "connections_list",
         "work_snapshot",
         "work_get",
@@ -926,6 +979,7 @@ mod tests {
         from_ui.extend(quoted(include_str!("../../src/lib/org/tauri.ts")));
         from_ui.extend(quoted(include_str!("../../src/lib/work/tauri.ts")));
         from_ui.extend(quoted(include_str!("../../src/lib/open-external.ts")));
+        from_ui.extend(quoted(include_str!("../../src/lib/import/tauri.ts")));
         let mut from_build = quoted(include_str!("../build.rs"));
         let mut declared: Vec<String> = COMMANDS.iter().map(|c| c.to_string()).collect();
         from_ui.sort();
