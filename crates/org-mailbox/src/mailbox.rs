@@ -306,6 +306,9 @@ impl Mailbox {
             if cancellation.is_cancelled() {
                 return Err(MailboxError::NotBound);
             }
+            // peek.expired_ids is ignored in slice 1: send can't create expiring messages,
+            // so none can expire. Acting on them (update_state_local(Expired) through
+            // TriageStore) is a follow-up; peek itself never deletes or changes anything.
             if let Some(message) = peek.message {
                 return Ok(MsgWaitResult {
                     message: Some(message.message),

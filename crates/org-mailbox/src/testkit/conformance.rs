@@ -1339,7 +1339,7 @@ pub fn mailbox_wait_registered_before_commit_delivers_once(backend: impl OpenBac
     let (_handle, cancel) = cancellation_pair();
     let started = Instant::now();
     let waiter =
-        thread::spawn(move || mailbox.wait(ADA_ID, wait_params(30_000), far_deadline(), &cancel));
+        thread::spawn(move || mailbox.wait(ADA_ID, wait_params(5_000), far_deadline(), &cancel));
     eventually("the waiter to register", || {
         office.mailbox.held_waits() == 1
     });
@@ -1409,30 +1409,42 @@ pub fn mailbox_wait_deadline(backend: impl OpenBackend) {
     assert!(elapsed >= Duration::from_millis(50), "{elapsed:?}");
     assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
 
+    // The caller's deadline beats a longer timeout_ms. A wait that ignored it would block
+    // the full FALLBACK_MS and fail the bound below, so a broken backend fails in seconds.
+    const FALLBACK_MS: u64 = 8_000;
+    let bound = Duration::from_millis(FALLBACK_MS / 2);
     let started = Instant::now();
     let deadline = Instant::now() + Duration::from_millis(50);
     let waited = mailbox
-        .wait(ADA_ID, wait_params(MAX_WAIT_MS), deadline, &cancel)
+        .wait(ADA_ID, wait_params(FALLBACK_MS), deadline, &cancel)
         .unwrap();
     assert_eq!(waited.message, None);
     assert!(started.elapsed() >= Duration::from_millis(50));
-    assert!(started.elapsed() < Duration::from_secs(5));
+    assert!(
+        started.elapsed() < bound,
+        "the caller's deadline was ignored"
+    );
 
     let passed = Instant::now();
     let started = Instant::now();
     assert_eq!(
         mailbox
-            .wait(ADA_ID, wait_params(MAX_WAIT_MS), passed, &cancel)
+            .wait(ADA_ID, wait_params(FALLBACK_MS), passed, &cancel)
             .unwrap()
             .message,
         None
     );
-    assert!(started.elapsed() < Duration::from_secs(5));
+    assert!(
+        started.elapsed() < bound,
+        "a passed deadline must not block"
+    );
     send(mailbox, PAT_ID, 1, ADA_HANDLE).unwrap();
+    let started = Instant::now();
     let waited = mailbox
-        .wait(ADA_ID, wait_params(MAX_WAIT_MS), passed, &cancel)
+        .wait(ADA_ID, wait_params(FALLBACK_MS), passed, &cancel)
         .unwrap();
     assert_eq!(waited.message.unwrap().header.id, msg_id(1));
+    assert!(started.elapsed() < bound);
 
     assert_eq!(
         mailbox.wait(
@@ -1506,7 +1518,7 @@ pub fn mailbox_wait_commit_racing_cancel(backend: impl OpenBackend) {
         let (handle, cancel) = cancellation_pair();
         let mailbox = office.mailbox.clone();
         let waiter = thread::spawn(move || {
-            mailbox.wait(ADA_ID, wait_params(10_000), far_deadline(), &cancel)
+            mailbox.wait(ADA_ID, wait_params(5_000), far_deadline(), &cancel)
         });
         let mailbox = office.mailbox.clone();
         let sender = thread::spawn(move || send(&mailbox, PAT_ID, n, ADA_HANDLE));
