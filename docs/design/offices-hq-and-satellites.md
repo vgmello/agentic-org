@@ -1,6 +1,6 @@
 # Design: offices, HQ and satellites
 
-Status: **draft for the user**, 2026-11-08. It settles the model, the rules and the phases. Wire formats and byte-level protocol details are written in each phase's own design before it's built. Owner: ada. Once agreed, its decisions become an ADR, which amends ADR-0001 and ADR-0002, and the messaging ADR (0003, still a proposal).
+Status: **approved by the user** 2026-11-08 (decisions at the end). To be recorded as an ADR. It settles the model, the rules and the phases. Wire formats and byte-level protocol details are written in each phase's own design before it's built. Owner: ada. Its decisions become an ADR, which amends ADR-0001 and ADR-0002, and the messaging ADR (0003, still a proposal).
 
 ## In one paragraph
 An organization has offices. **The first office is HQ**. It holds the organization's authoritative data (members, agents, teams, projects, roles, org chart) and the **registry of the organization's offices**, with each one's address. Every other office is a **satellite**, on this Mac or another machine. A satellite keeps a **full copy** of the organization's data, so it reads locally and has a copy if HQ is lost. A satellite never changes that data itself. It **sends each change to HQ**, and HQ checks it, commits it and records the **result** as an event in its log. HQ then **propagates the event to every satellite**, the sender included. **Work data is different:** tasks and agent messages are **office-first**. An agent runs on its office's machine and talks to that office. The office saves the work locally and answers in milliseconds, then syncs it to HQ in the background, and HQ passes it on to the offices that need it. **Each office is its own `org-office-server` process**, with its own folder, encrypted databases and key.
@@ -24,7 +24,7 @@ An organization has offices. **The first office is HQ**. It holds the organizati
     - On a satellite it also holds the last applied position, committed in the same transaction as each apply.
     - On HQ it also holds the event log.
   - `office.db`: SQLCipher, the same key. It holds the office's own data: the work data it owns or received (tasks, messages), its outboxes, sessions and work queue.
-    - On HQ it also holds **HQ-only secrets**, which are never copied: the organization CA's private key and pending invitation secrets.
+    - On HQ it also holds **HQ-only secrets**, which are never copied: the organization CA's private key and the public keys of pending invitations.
   - `workspace/`: the office's files.
 
   Keeping them apart means replacing the copy (a snapshot) never touches the office's own data.
@@ -85,9 +85,9 @@ Agents run on their office's machine and talk only to that office, through the l
   - A receiving office checks the references only after it has applied that position itself, so a message never arrives "before" its agent exists.
   - If the structure has since moved on (e.g. the project was deleted), the record is kept and flagged, not lost. Flags are checked again on later applies, so a reference that becomes valid clears.
   - A work change may refer only to structure the origin has already applied, not to its own still-queued organization commands. The origin rejects such references at once.
-- **Across offices:** a message or task change takes two network hops (office → HQ → office) over connections that are already open, with no polling. An `ask` to an agent in another office waits at the asking agent's own office, and the reply arrives the same way. The ask carries its deadline, so a request delivered after it expired is marked expired, not acted on. Direct office-to-office connections (open question 7) would cut it to one hop.
+- **Across offices:** a message or task change takes two network hops (office → HQ → office) over connections that are already open, with no polling (HQ relays; satellites don't connect to each other, decision 7). An `ask` to an agent in another office waits at the asking agent's own office, and the reply arrives the same way. The ask carries its deadline, so a request delivered after it expired is marked expired, not acted on.
 - **Storage:** messages are stored for heavy traffic: written once, grouped by conversation thread, bodies compressed and kept apart from small headers, unread messages kept in a small list, writes batched. The messaging ADR (0003) defines the exact structure.
-- **HQ keeps all work data**, and each satellite keeps what concerns its agents and projects (open question 3). That isn't quite "copied everywhere". If you want every office to hold everything, the cost is storage and traffic, not design.
+- **HQ keeps all work data**, and each satellite keeps what concerns its agents and projects (decision 3).
 
 ## How organization changes flow
 1. A client (the app or an agent) asks its local office for an organization change: a **command**, e.g. "create project X in team Y". The command carries:
@@ -110,14 +110,14 @@ Agents run on their office's machine and talk only to that office, through the l
 4. **Propagation:** every satellite keeps one connection open **to HQ**, asking for "events after position P". HQ sends each event in order, and the satellite applies it with deterministic code. **Satellites never re-validate events.** HQ updates its own current state with the **same apply code, in the same transaction** as the event, so copies can't drift. The sender sees its own change arrive the same way.
 5. **Reads** at any office come from its copy, tagged with the position it reflects. A client that just wrote can ask its office to wait until it has applied that position: read-your-writes.
 6. **Snapshots:** a satellite that's new, or too far behind (HQ trims old events), gets a snapshot.
-   - HQ exports the **copied tables** of its `org.db` into a temporary **SQLCipher database, encrypted with a one-time key** (never plaintext on disk, as ADR-0002 requires), in one short read transaction (so checkpoints aren't held up while a slow satellite downloads), tagged with its position and schema version. The export is a storage operation in `store.rs`. It includes the command-result and revocation tables, and never HQ-only secrets, which live in HQ's `office.db`.
+   - HQ exports the **copied tables** of its `org.db` into a temporary **SQLCipher database, encrypted with a one-time key** (never plaintext on disk, as ADR-0002 requires), in one short read transaction (so checkpoints aren't held up while a slow satellite downloads), tagged with its position and schema version. The export is a storage operation in `store.rs`. It includes the command-result and revocation tables, and never HQ-only data, which lives in HQ's `office.db`.
    - HQ streams the file in chunks over the authenticated connection, since a frame is 1 MiB, together with the one-time key. The satellite re-encrypts the copy with its own key.
    - The satellite builds a new `org.db` from it and swaps it in only when complete. Its `office.db` is untouched. Then the stream resumes.
 7. **Deletions** are events too. Every copy that applies a delete event removes the thing. Trimming the log later doesn't bring it back.
 
 **Connections:** each satellite keeps one outbound connection to HQ, and everything between them travels over it, in both directions. So a satellite behind a home router or on a sleeping laptop needs no open port.
-- HQ records each satellite's reported address and port, as the owner asked. HQ can also relay requests to a satellite's office data (e.g. its live sessions) over that same connection.
-- Whether satellites should also listen for direct connections is open question 7.
+- HQ records where each satellite last connected from (for display; satellites don't listen, decision 7), and **HQ's own addresses**, as the owner asked. HQ can relay requests to a satellite's office data (e.g. its live sessions) over that same connection.
+- Satellites never listen for connections, and HQ relays everything between them (decision 7).
 
 ## Versions
 - Events, commands and snapshots carry a **schema version**.
@@ -131,20 +131,49 @@ Agents run on their office's machine and talk only to that office, through the l
 
 ## Provisioning a satellite
 1. In the app, the owner adds an office: a name, plus local or remote.
-2. HQ adds a `pending` registry entry and makes a **one-time invitation**. It contains:
-   - HQ's address
-   - the organization and office ids
-   - a random secret of at least 128 bits, valid for 24 hours
-   - the fingerprint of the organization's certificate authority (CA)
-3. **Local:** the host starts a new office server and passes it the invitation through a pipe, never on the command line. HQ stores invitation secrets only as hashes. **Remote:** the owner installs agentic.org on the other machine, chooses "Open organization", and pastes the invitation or scans its QR code.
-4. **The satellite makes its own key pair** and keeps the private key in its Keychain. It sends HQ a certificate request together with the secret.
-   - HQ checks the secret (one use only, with a cap on wrong attempts), signs a client certificate with the organization's CA, and marks the invitation used.
+2. HQ adds a `pending` registry entry and makes a **one-time invitation link** (see "The invitation link" below).
+3. **Local:** the host starts a new office server and passes it the invitation through a pipe, never on the command line. **Remote:** the owner copies the link to the other machine and pastes it into agentic.org at "Open organization" (recommended), or opens it, which pre-fills the same screen.
+4. **The satellite makes its own key pair** and keeps the private key in its Keychain. It sends HQ a certificate request together with its **proof of the invitation** (see "The invitation link"). The invitation secret itself never crosses the network.
+   - HQ checks the proof, waits for the owner's approval, signs a client certificate with the organization's CA, and marks the invitation used.
    - **Certificates say who and what they are** (from phase 3): office id, role, and client or server use.
      - A satellite's certificate is client-only.
      - The satellite pins HQ's office id and accepts only a server certificate with role HQ for that id. So no satellite can pose as HQ.
    - Certificates last one year and renew automatically over the authenticated connection.
 5. HQ sends a snapshot, the stream starts, and the entry becomes `active`.
 6. **Removing an office** revokes its certificate (the revocation list is copied data), so it can't sync again. An offline machine keeps whatever copy it already had until it next connects, when it's told to delete it. HQ can't force that.
+
+## The invitation link
+*(The user, 2026-11-08: a link that HQ generates, which the owner copies and opens on the other machine. This section's details are **proposed**, awaiting the user's confirmation.)*
+- **Shape:** `agenticorg://join#<token>`.
+  - agentic.org registers the `agenticorg` URL scheme. Opening the link opens agentic.org at **Open organization**, with the details **filled in, never joined automatically**. The owner sees the organization's name and HQ's address and must confirm, so a hostile link can't quietly enroll a Mac into someone else's organization.
+    - The confirmation says plainly that **joining lets that organization run its agents on this Mac**.
+    - It flags a name that matches an organization this Mac already knows under a different id.
+  - The token is in the fragment (after `#`), so it isn't sent to a server if the link passes through a browser, and the app never logs it. A browser may still keep it in history, so **pasting it into the app is the recommended way**.
+  - The same token can be pasted into the app as text.
+- **The token** is versioned and base64url-encoded. It holds:
+  - the organization's name and id
+  - the new office's id and name
+  - HQ's office id
+  - HQ's current addresses, e.g. `hq-mac.local:7443` and its LAN IP (decision 6: direct network access only)
+  - the fingerprint of the organization's CA
+  - the expiry: 24 hours by default, shorter if the owner chooses
+  - a **one-time invitation key**: the private half of an Ed25519 key pair made for this invitation alone
+
+  Anyone who sees the link can read these, including the organization's name and HQ's network address. Treat the link like a password.
+- **How it's protected.** This follows the standard for invite links: the link is the key until it's used, cancelled or expired, so the protection comes from limiting what it can do and checking who uses it.
+  - **HQ keeps only the public half** of the invitation key, in its encrypted `office.db`. A leaked HQ database can't be used to join.
+  - **The secret never crosses the network.** The joining office connects with TLS, pins HQ by **HQ's office id and the CA fingerprint** from the link, and signs the TLS session's exporter value (channel binding, RFC 9266) with the invitation key. Someone watching the network learns nothing, and a fake HQ can't reuse the proof.
+  - **The owner approves every join at HQ, by typing a check code.**
+    - The joining machine shows a short code, derived from the TLS session and its public key.
+    - HQ shows the joining machine's name and IP, and the owner **types that code** at HQ to approve, rather than just clicking. A thief holding a stolen link can't produce a code the owner sees on their own machine.
+    - Rejecting a join cancels the invitation.
+  - **Single use, short expiry, cancellable:** the owner can cancel a pending invitation in the app. Failed attempts are rate-limited per source address, without using up the invitation.
+  - **The joining office makes its own key pair first.** Its certificate request travels in the same TLS session as the proof, and the check code covers that request's public key. So what the owner approves is exactly the key that gets certified (Provisioning step 4).
+- **"Internally encrypted", honestly:** everything the joiner needs travels in the link, so encrypting the token with a key in that same link would add nothing, and signing it wouldn't help either, because the joiner gets the checking key from the same link. The link's integrity rests on how the owner sends it: a private message, not a public channel. The real protections are the one-time key that never crosses the wire, the pinned HQ identity, and the owner's check-code approval.
+- **Local joins** (a second office on the same Mac, phase 2) don't use the link or TLS. The host creates the office directly, and trust rests on both running as the same macOS user (socket permissions).
+- **When HQ's address changes** (a laptop on another network): HQ records its current addresses as a registry event, so every satellite learns them.
+  - A satellite that can't reach HQ tries every address it knows, then looks for HQ on the local network (Bonjour) by HQ's office id.
+  - Failing that, the owner types the new address on that machine. That's safe, because HQ is pinned by identity, not by address.
 
 ## When things are unreachable
 - **A satellite can't reach HQ:**
@@ -165,8 +194,8 @@ If HQ is gone for good, the owner can **promote** a satellite to HQ. It's a deli
 - **A signed epoch record.** Promotion starts a new epoch. The owner authorizes it, and it produces a record naming the new HQ's **office id** and address, and the last position it holds. Satellites re-pin to that office id.
   - Promotion issues the new HQ a **server certificate** (role HQ, its office id, the new epoch).
   - A satellite accepts it in place of its pinned HQ only when it's presented together with the CA-signed epoch record naming that office id.
-  - **The new HQ must be reachable by the other offices.** Satellites only dial out (open question 7), so this depends on how offices reach each other (open question 6).
-  - An office learns of the new epoch when it connects to the new HQ, at an address it is given. The owner gives it in the app on that machine, or a relay delivers it, if open question 6 provides one.
+  - **The new HQ must be reachable by the other offices.** Satellites only dial out (decision 7), and there's no relay service (decision 6), so the new HQ needs a direct network address the others can reach.
+  - An office learns of the new epoch when it connects to the new HQ, at an address it is given. The owner gives it in the app on that machine.
   - An office that applied events beyond that position takes a fresh snapshot. Those events, which only the old HQ had, may be lost, and the app warns before promoting.
   - **An office the record can't reach**, including the old HQ while it's asleep or offline, has to be told on its own machine. Until then it can keep following the old HQ, so the design must say plainly that a split is possible until every office has heard.
 - **Certificates also carry the epoch** (role and office id are there from phase 3). An office rejects any HQ below the highest epoch it knows. A former HQ that learns of a higher epoch becomes read-only and re-joins as a satellite with a fresh snapshot.
@@ -201,7 +230,7 @@ If HQ is gone for good, the owner can **promote** a satellite to HQ. It's a deli
    - HQ stores organization data as events + log + current state from the start. Commands and results are versioned and the log has positions, so later phases add satellites on top. Schema changes will still need migrations, as always.
    - Introduce `org-office-host` with one office.
 2. **A local satellite** on the same Mac: provisioning, the stream, snapshots, versions and the outbox, without networking. Authentication between two local offices rests on both running as the same macOS user (socket permissions). Certificates come in phase 3.
-3. **Remote satellites:** TCP + TLS, the organization's CA and its escrow with the owner's recovery code, invitations, reaching HQ across networks (open question 6).
+3. **Remote satellites:** TCP + TLS, the organization's CA and its escrow with the owner's recovery code, invitation links, direct network access to HQ (decision 6).
 4. **Promotion:** epochs, re-joining a former HQ, and CA escrow in use.
 
 ## What this changes in earlier decisions
@@ -222,15 +251,15 @@ If HQ is gone for good, the owner can **promote** a satellite to HQ. It's a deli
   - Organizations list their offices from the registry.
   - The exact shapes are drafted after this design is agreed.
 
-## Open questions for the user
-1. **Promotion:** is a manual "make this office HQ" enough? (Proposal: yes. Automatic failover only if ever needed.)
-2. **While HQ is unreachable,** should satellites queue organization changes as above, or refuse them? Refusing is simpler, but satellites become read-only for organization data.
-3. **Work-data copies:** HQ keeps every task and message, and each satellite keeps what concerns its own agents and projects (proposed)? Or every office keeps everything, closer to "copied everywhere" but more storage and traffic? With the proposal, work data that only HQ held is lost if HQ is lost before a promotion.
-4. **Project files:** how should a project's files travel between offices? Proposal: each project is a git repository, with HQ holding the main copy. That's real scope: a git service at HQ with its own access control, satellites fetching when HQ announces a push, and files that are **not encrypted** by our database (ADR-0002).
-5. **Remote setup:** is "paste an invitation code or scan a QR code on the other machine" the experience you want?
-6. **How remote offices reach HQ:** same network only, a private network such as Tailscale, or a relay service we run? A laptop HQ sleeps and changes address, so a stored address and port alone won't always work.
-7. **Should satellites also listen for direct connections** (with mutual TLS), or is everything relayed through HQ over the satellite's own connection, as proposed? Direct connections are faster when on the same network, but every satellite then needs an open port.
-8. **Are all offices your own machines,** or could an office belong to someone else (a contractor, a client)? That decides how much each office may see, and whether every office should hold a full copy.
-9. **Must every Mac that opens an organization become a full satellite,** or should the app also be able to connect to another machine's office without keeping a copy (lighter, but nothing works offline)?
-10. ~~Who owns a task.~~ **Decided:** the assignee's office. A task can be created anywhere (in the app, at HQ; by an agent, at its office) and is handed to the assignee's office.
-11. ~~The recovery code.~~ **Decided:** yes, one recovery code per organization, kept by the owner.
+## Decisions (the user, 2026-11-08)
+1. **Promotion** is manual, by the owner, with the recovery code.
+2. **While HQ is unreachable,** satellites queue organization changes, as designed.
+3. **Work-data copies:** HQ keeps every task and message, and each satellite keeps what concerns its own agents and projects.
+4. **Project files are git repositories, connected to GitHub first.** See `projects-git-github.md`. The earlier "git service at HQ" idea is replaced: GitHub hosts the repositories, and each office clones from it.
+5. **Remote setup:** an invitation link that HQ generates, copied and opened on the other machine (see "The invitation link").
+6. **Reaching HQ:** direct network access only. There's no relay service for now. HQ's addresses travel in the link and the registry.
+7. **Satellites don't listen.** They connect out to HQ and keep a full-duplex connection open. **HQ is the relay:** anything between satellites goes through HQ.
+8. **All offices are the owner's.** There are no permissions between offices for now. Permissions between employees of different offices may come later and stay an open topic.
+9. *(Assumption, not a decision yet)* Every Mac that opens an organization is a full satellite. A lighter "connect without a copy" mode can come later.
+10. **Task ownership:** the assignee's office. A task can be created anywhere (in the app, at HQ; by an agent, at its office) and is handed to the assignee's office.
+11. **One recovery code per organization**, kept by the owner.
