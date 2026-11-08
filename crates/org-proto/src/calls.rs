@@ -101,7 +101,8 @@ impl Call for Hello {
 /// process started is reported in that office's `status` (`starting`, `active`, or
 /// `unavailable`), not as an error, so a client never retries into `already_exists`.
 /// Errors: `invalid_name`, `already_exists`, `storage_error`, `not_ready` (the host is still
-/// starting: its startup discards are running; retry shortly).
+/// starting: its startup discards are running; retry shortly), `unavailable` (too many creates
+/// in progress; retry).
 pub struct OrganizationCreate;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -193,6 +194,10 @@ impl Call for OfficeList {
 /// still starting: its startup discards are running; retry shortly).
 ///
 /// The result is a secret: never log it, or the response line that carries it.
+///
+/// An app-only call is accepted only on a connection whose client sent it after reading `hello`'s
+/// answer. Bytes already buffered when the host accepted the connection are refused with
+/// `not_authorized`, so never pipeline an app-only call before `hello`'s answer.
 pub struct OfficeAppToken;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -240,10 +245,15 @@ impl Call for OfficeAppToken {
 /// Errors: `not_authorized` (the signature check failed), `not_found` (no such office here),
 /// `conflict` (the office isn't `offline` or `unavailable`, e.g. it's already `starting` or
 /// `active`), `unavailable` (only for the two reasons a restart can't fix,
-/// `unsupported_version` and `invalid_request`; the message says why), `not_ready` (the host
+/// `unsupported_version` and `invalid_request`, or an office the host couldn't start; the
+/// message says why), `not_ready` (the host
 /// is still starting: its startup discards are running; retry shortly). A host older than
 /// this call answers `unknown_method`. Show the office's `status_reason`, not this call's
 /// error code: the code says only why the call failed.
+///
+/// An app-only call is accepted only on a connection whose client sent it after reading `hello`'s
+/// answer. Bytes already buffered when the host accepted the connection are refused with
+/// `not_authorized`, so never pipeline an app-only call before `hello`'s answer.
 pub struct OfficeRestart;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

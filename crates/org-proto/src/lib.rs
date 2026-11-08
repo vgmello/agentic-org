@@ -6,6 +6,8 @@
 //!   office servers and answers `hello`, `organization.create`, `organization.list`,
 //!   `office.list`, `office.app_token`, `office.restart` and `subscribe` (it emits
 //!   `organization.created` and `office.status_changed`).
+//!   Its `hello` lists in `capabilities` the optional calls and events it implements
+//!   ([`capability`]), so a client checks before relying on one.
 //! - **An office server** (`org-office-server`), one process per office. An organization's
 //!   first office is its HQ. It answers `hello` with its identity, the organization's calls
 //!   ([`org`]: teams, members, projects and areas), the work calls ([`work`]: tasks and their
@@ -16,6 +18,10 @@
 //! in on. **App-only** calls are refused on any other connection with `not_authorized`: every
 //! organization command ([`org`]) and `work.delete` ([`work`]). Every work call needs a bound
 //! connection (`not_bound` otherwise), and acts as the member it is bound as.
+//! On the host, an app-only call (`office.app_token`, `office.restart`) is accepted only on a
+//! connection whose client sent it after reading `hello`'s answer. Bytes already buffered when
+//! the host accepted the connection are refused with `not_authorized`, so never pipeline an
+//! app-only call before `hello`'s answer.
 //!
 //! **The most depended-on crate: keep it small, stable, additive-only.** Every change needs
 //! ada's review (see AGENTS.md).
