@@ -1,6 +1,6 @@
 //! # org-office: the office's domain and storage
 //!
-//! Organizations, teams, agents, projects and tasks; SQLite (single writer: the server);
+//! Organizations, teams, agents, projects and tasks; encrypted SQLite (single writer: the server);
 //! the workspace files agents read and write. A library with no entry point:
 //! `apps/org-office-server` runs it.
 //!
@@ -8,6 +8,7 @@
 //! plain values back. Phase 1 holds the organization registry (`Office`).
 
 mod error;
+mod key;
 mod model;
 mod name;
 mod office;
@@ -17,6 +18,7 @@ mod time;
 mod ulid;
 
 pub use error::{NameError, OfficeError};
+pub use key::{InMemoryKeys, Key, KeyError, KeyProvider};
 pub use model::{OfficeInfo, Organization};
 pub use name::MAX_NAME_CHARS;
 pub use office::Office;

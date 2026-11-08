@@ -1,17 +1,23 @@
 use std::fs::{self, File, TryLockError};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::error::OfficeError;
+use crate::key::{Key, KeyProvider};
 use crate::model::{OfficeInfo, Organization};
 use crate::name::OrganizationName;
-use crate::private_fs::{absolute, private_dir, private_file, tighten_dir};
-use crate::store::Store;
+use crate::private_fs::{
+    absolute, private_dir, private_file, tighten_dir, tighten_file_if_present,
+};
+use crate::store::{Store, Undo};
+use crate::ulid;
 
 /// An office rooted at a home directory:
 ///
 /// ```text
 /// <home>/office.lock                      held while the office is open (single owner)
-/// <home>/office.db                        the registry of organizations (see `store`)
+/// <home>/office.id                        the office's id, in the clear: the key is filed under it
+/// <home>/office.db                        the encrypted registry of organizations (see `store`)
 /// <home>/organizations/<id>/workspace/    an organization's workspace files
 /// ```
 ///
@@ -26,8 +32,11 @@ pub struct Office {
 }
 
 impl Office {
-    /// Opens (creating on first use) the office at `home`.
-    pub fn open(home: impl Into<PathBuf>) -> Result<Self, OfficeError> {
+    /// Opens (creating on first use) the office at `home`, encrypting its database with the
+    /// key `keys` holds for this office. On first use a new key is made and saved with
+    /// `keys` *before* the database exists, so a crash can't leave data without its key.
+    /// A database whose key is missing is refused, never replaced.
+    pub fn open(home: impl Into<PathBuf>, keys: &dyn KeyProvider) -> Result<Self, OfficeError> {
         let home = absolute(home.into()).map_err(OfficeError::storage)?;
         private_dir(&home).map_err(OfficeError::storage)?;
         // The home may already exist (e.g. an override): make it owner-only regardless.
@@ -40,7 +49,13 @@ impl Office {
             Err(TryLockError::Error(e)) => return Err(OfficeError::storage(e)),
         }
 
-        let (store, info) = Store::open(&home.join("office.db"))?;
+        let db_path = home.join("office.db");
+        // An unreadable database is an error, not "no database": that would mint a key for it.
+        let database_exists = holds_data(&db_path)? || holds_data(&home.join("office.db-wal"))?;
+        let id = office_id(&home, database_exists)?;
+        let key = office_key(keys, &id, database_exists)?;
+
+        let (store, info) = Store::open(&db_path, &key, &id)?;
         Ok(Self {
             home,
             info,
@@ -59,31 +74,101 @@ impl Office {
 
         // The folder is made before the commit, so a failure to make it registers nothing.
         // A crash between folder and commit leaves an unreferenced folder, which is harmless.
-        let mut made = None;
-        let created = self.store.create_organization(&name, |organization| {
-            let workspace = self.workspace_dir(&organization.id);
-            made = Some(workspace.clone());
-            private_dir(&workspace)
-        });
-        if created.is_err() {
-            if let Some(workspace) = made {
+        let home = self.home.clone();
+        self.store.create_organization(&name, move |organization| {
+            let workspace = workspace_dir(&home, &organization.id);
+            if let Err(cause) = private_dir(&workspace) {
                 discard_organization_dir(&workspace);
+                return Err(cause);
             }
-        }
-        created
+            let undo: Undo = Box::new(move || discard_organization_dir(&workspace));
+            Ok(undo)
+        })
     }
 
     /// All organizations in creation order.
     pub fn list_organizations(&self) -> Result<Vec<Organization>, OfficeError> {
         self.store.list_organizations()
     }
+}
 
-    fn workspace_dir(&self, organization_id: &str) -> PathBuf {
-        self.home
-            .join("organizations")
-            .join(organization_id)
-            .join("workspace")
+fn workspace_dir(home: &Path, organization_id: &str) -> PathBuf {
+    home.join("organizations")
+        .join(organization_id)
+        .join("workspace")
+}
+
+/// Whether `path` exists and is not empty. Anything but "not found" is an error: an
+/// unreadable database must never be mistaken for no database, or a new key would be minted.
+fn holds_data(path: &Path) -> Result<bool, OfficeError> {
+    match fs::metadata(path) {
+        Ok(metadata) => Ok(metadata.len() > 0),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(OfficeError::storage(e)),
     }
+}
+
+/// This office's id: read from `office.id`, or minted on first use. The id has to be
+/// readable before the database is, because the database key is filed under it.
+fn office_id(home: &Path, database_exists: bool) -> Result<String, OfficeError> {
+    let path = home.join("office.id");
+    let saved = match fs::read_to_string(&path) {
+        Ok(text) => Some(text.trim().to_owned()).filter(|id| is_valid_id(id)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(OfficeError::storage(e)),
+    };
+    if let Some(id) = saved {
+        tighten_file_if_present(&path).map_err(OfficeError::storage)?;
+        return Ok(id);
+    }
+    if database_exists {
+        // A database without its id can't be matched to a key: don't guess.
+        return Err(OfficeError::storage(std::io::Error::other(
+            "office.id is missing or invalid but office.db exists",
+        )));
+    }
+    // No database yet, so there is nothing a new id could orphan (a leftover empty or
+    // half-written id file from a crashed first run is simply replaced).
+    let id = ulid::generate().map_err(OfficeError::storage)?;
+    write_id_atomically(home, &path, &id).map_err(OfficeError::storage)?;
+    Ok(id)
+}
+
+fn is_valid_id(id: &str) -> bool {
+    id.len() == 26 && id.bytes().all(|b| b.is_ascii_alphanumeric())
+}
+
+/// Writes `id` to `path` so that a crash leaves either no file or the whole file.
+fn write_id_atomically(home: &Path, path: &Path, id: &str) -> std::io::Result<()> {
+    let temp = home.join("office.id.tmp");
+    let mut file = private_file(&temp)?;
+    file.set_len(0)?;
+    file.write_all(id.as_bytes())?;
+    file.sync_all()?;
+    fs::rename(&temp, path)?;
+    // Make the rename itself durable.
+    File::open(home)?.sync_all()
+}
+
+/// The database key for `id`. A new database gets a key that is saved before use; an
+/// existing one must find its key, or the office refuses to open.
+fn office_key(keys: &dyn KeyProvider, id: &str, database_exists: bool) -> Result<Key, OfficeError> {
+    let saved = keys.load(id).map_err(storage_from_key)?;
+    match (saved, database_exists) {
+        (Some(key), _) => Ok(key),
+        (None, false) => {
+            let key = Key::generate().map_err(OfficeError::storage)?;
+            keys.store(id, &key).map_err(storage_from_key)?;
+            Ok(key)
+        }
+        (None, true) => Err(OfficeError::storage(std::io::Error::other(
+            "the database key is missing",
+        ))),
+    }
+}
+
+fn storage_from_key(cause: crate::key::KeyError) -> OfficeError {
+    OfficeError::Storage(cause)
 }
 
 /// Best-effort removal of `organizations/<id>/` after a failed create; `workspace` is its child.
@@ -101,11 +186,17 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+    use crate::key::InMemoryKeys;
     use crate::name::NameError;
+
+    /// The same keys every time, so a test can reopen what it created.
+    fn keys() -> InMemoryKeys {
+        InMemoryKeys::fixed(Key::from_bytes([9; 32]))
+    }
 
     fn open() -> (TempDir, Office) {
         let home = TempDir::new().unwrap();
-        let office = Office::open(home.path().join("office")).unwrap();
+        let office = Office::open(home.path().join("office"), &keys()).unwrap();
         (home, office)
     }
 
@@ -155,7 +246,7 @@ mod tests {
         fs::create_dir(&path).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
 
-        let office = Office::open(&path).unwrap();
+        let office = Office::open(&path, &keys()).unwrap();
         office.create_organization("Acme").unwrap();
 
         let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
@@ -169,7 +260,7 @@ mod tests {
     fn tightens_database_files_left_loose_by_an_earlier_run() {
         let parent = TempDir::new().unwrap();
         let path = parent.path().join("office");
-        drop(Office::open(&path).unwrap());
+        drop(Office::open(&path, &keys()).unwrap());
         for file in ["office.lock", "office.db", "office.db-wal", "office.db-shm"] {
             let file = path.join(file);
             if !file.exists() {
@@ -179,7 +270,7 @@ mod tests {
         }
 
         // Assert while open: SQLite deletes -wal and -shm on a clean close.
-        let office = Office::open(&path).unwrap();
+        let office = Office::open(&path, &keys()).unwrap();
         office.create_organization("Acme").unwrap();
 
         let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
@@ -319,17 +410,114 @@ mod tests {
     }
 
     #[test]
+    fn the_key_is_saved_before_the_database_is_used_and_reused_after() {
+        let home = TempDir::new().unwrap();
+        let path = home.path().join("office");
+        let provider = InMemoryKeys::new();
+
+        let office = Office::open(&path, &provider).unwrap();
+        let id = office.info().id.clone();
+        let created = office.create_organization("Acme").unwrap();
+        drop(office);
+
+        assert!(provider.load(&id).unwrap().is_some(), "no key was saved");
+        let reopened = Office::open(&path, &provider).unwrap();
+        assert_eq!(reopened.list_organizations().unwrap(), vec![created]);
+    }
+
+    #[test]
+    fn a_database_whose_key_is_gone_is_refused_not_replaced() {
+        let home = TempDir::new().unwrap();
+        let path = home.path().join("office");
+        drop(Office::open(&path, &InMemoryKeys::new()).unwrap());
+        let db_before = fs::read(path.join("office.db")).unwrap();
+
+        // A fresh provider has no key for this office.
+        let fresh = InMemoryKeys::new();
+        let result = Office::open(&path, &fresh);
+
+        let error = result.err().expect("opened without a key");
+        assert_eq!(
+            std::error::Error::source(&error).unwrap().to_string(),
+            "the database key is missing"
+        );
+        let id = fs::read_to_string(path.join("office.id")).unwrap();
+        assert!(
+            fresh.load(id.trim()).unwrap().is_none(),
+            "a new key was minted"
+        );
+        assert_eq!(fs::read(path.join("office.db")).unwrap(), db_before);
+    }
+
+    #[test]
+    fn a_database_without_its_office_id_is_refused() {
+        let home = TempDir::new().unwrap();
+        let path = home.path().join("office");
+        drop(Office::open(&path, &keys()).unwrap());
+        fs::remove_file(path.join("office.id")).unwrap();
+
+        assert!(matches!(
+            Office::open(&path, &keys()),
+            Err(OfficeError::Storage(_))
+        ));
+        assert!(!path.join("office.id").exists(), "a new id was minted");
+    }
+
+    #[test]
+    fn a_wal_without_a_database_file_still_counts_as_data() {
+        let home = TempDir::new().unwrap();
+        let path = home.path().join("office");
+        let provider = InMemoryKeys::new();
+        drop(Office::open(&path, &provider).unwrap());
+        // The main file lost its contents, but a write-ahead log survives.
+        fs::write(path.join("office.db"), b"").unwrap();
+        fs::write(path.join("office.db-wal"), b"not empty").unwrap();
+
+        let fresh = InMemoryKeys::new();
+        let result = Office::open(&path, &fresh);
+
+        assert!(matches!(result, Err(OfficeError::Storage(_))));
+        let id = fs::read_to_string(path.join("office.id")).unwrap();
+        assert!(
+            fresh.load(id.trim()).unwrap().is_none(),
+            "a new key was minted"
+        );
+    }
+
+    #[test]
+    fn a_database_that_cannot_be_inspected_is_an_error_not_no_database() {
+        let home = TempDir::new().unwrap();
+        let path = home.path().join("office");
+        let provider = InMemoryKeys::new();
+        drop(Office::open(&path, &provider).unwrap());
+        // `office.db` becomes a symlink to itself: looking at it fails with something other
+        // than "not found".
+        fs::remove_file(path.join("office.db")).unwrap();
+        std::os::unix::fs::symlink(path.join("office.db"), path.join("office.db")).unwrap();
+
+        let fresh = InMemoryKeys::new();
+        let result = Office::open(&path, &fresh);
+
+        assert!(matches!(result, Err(OfficeError::Storage(_))));
+        let id = fs::read_to_string(path.join("office.id")).unwrap();
+        assert!(
+            fresh.load(id.trim()).unwrap().is_none(),
+            "a new key was minted"
+        );
+    }
+
+    #[test]
     fn data_and_identity_survive_reopening() {
         let home = TempDir::new().unwrap();
         let path = home.path().join("office");
         let (info, created) = {
-            let office = Office::open(&path).unwrap();
+            let office = Office::open(&path, &keys()).unwrap();
             (
                 office.info().clone(),
                 office.create_organization("Acme").unwrap(),
             )
         };
-        let office = Office::open(&path).unwrap();
+        let office = Office::open(&path, &keys()).unwrap();
         assert_eq!(office.info(), &info);
         assert_eq!(info.name, "This Mac");
         assert_eq!(office.list_organizations().unwrap(), vec![created]);
@@ -339,9 +527,12 @@ mod tests {
     fn only_one_office_may_own_a_home() {
         let home = TempDir::new().unwrap();
         let path = home.path().join("office");
-        let first = Office::open(&path).unwrap();
-        assert!(matches!(Office::open(&path), Err(OfficeError::InUse)));
+        let first = Office::open(&path, &keys()).unwrap();
+        assert!(matches!(
+            Office::open(&path, &keys()),
+            Err(OfficeError::InUse)
+        ));
         drop(first);
-        Office::open(&path).unwrap();
+        Office::open(&path, &keys()).unwrap();
     }
 }

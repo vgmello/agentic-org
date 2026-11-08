@@ -16,9 +16,14 @@ pub(crate) fn generate() -> std::io::Result<String> {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64;
-    let mut random = [0u8; 10];
-    File::open("/dev/urandom")?.read_exact(&mut random)?;
-    Ok(encode(now_ms, random))
+    Ok(encode(now_ms, random_bytes()?))
+}
+
+/// `N` bytes from the operating system's random source.
+pub(crate) fn random_bytes<const N: usize>() -> std::io::Result<[u8; N]> {
+    let mut bytes = [0u8; N];
+    File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    Ok(bytes)
 }
 
 fn encode(ms: u64, random: [u8; 10]) -> String {
