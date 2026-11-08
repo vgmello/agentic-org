@@ -158,11 +158,11 @@ fn unknown_ops_events_codes_and_fields_are_tolerated() {
 #[test]
 fn a_create_with_a_role_this_version_cant_create_is_refused() {
     for line in [
-        &br#"{"v":1,"op":"create","org_id":"A1","org_name":"Acme","office_id":"B2","office_name":"HQ","role":"satellite","hq_address":"x"}
+        &br#"{"v":1,"op":"create","org_id":"A1","org_name":"Acme","office_id":"B2","office_name":"HQ","role":"satellite","hq_address":"x","app_token":"abababababababababababababababababababababababababababababababab"}
 "#[..],
-        &br#"{"v":1,"op":"create","org_id":"A1","org_name":"Acme","office_id":"B2","office_name":"HQ","role":"moon"}
+        &br#"{"v":1,"op":"create","org_id":"A1","org_name":"Acme","office_id":"B2","office_name":"HQ","role":"moon","app_token":"abababababababababababababababababababababababababababababababab"}
 "#[..],
-        &br#"{"v":1,"op":"create","org_id":"A1","org_name":"Acme","office_id":"B2","office_name":"HQ"}
+        &br#"{"v":1,"op":"create","org_id":"A1","org_name":"Acme","office_id":"B2","office_name":"HQ","app_token":"abababababababababababababababababababababababababababababababab"}
 "#[..],
     ] {
         let err = read_host_message(&mut Cursor::new(line)).unwrap_err();
@@ -641,7 +641,14 @@ fn a_newer_office_file_reports_its_version_even_with_another_shape() {
 
 #[test]
 fn an_office_file_made_without_a_role_cant_be_written() {
-    let file = OfficeFile::new("A1", "HQ", OfficeRole::Unknown, "B2", "Acme", "t");
+    let file = OfficeFile::new(
+        "A1",
+        "HQ",
+        OfficeRole::Unknown,
+        "B2",
+        "Acme",
+        "2026-11-08T02:10:00.000Z",
+    );
     assert!(matches!(file.to_vec(), Err(LaunchError::Invalid(_))));
     assert!(serde_json::to_string(&file).is_err());
 }
@@ -743,11 +750,224 @@ fn an_oversized_host_line_is_too_large_and_closes_the_pipe() {
 
 #[test]
 fn a_created_office_without_a_known_role_is_not_sent() {
-    let office = OfficeFile::new("A1", "HQ", OfficeRole::Unknown, "B2", "Acme", "t");
+    let office = OfficeFile::new(
+        "A1",
+        "HQ",
+        OfficeRole::Unknown,
+        "B2",
+        "Acme",
+        "2026-11-08T02:10:00.000Z",
+    );
     let mut out = Vec::new();
     assert!(matches!(
         write_server_event(&mut out, &ServerEvent::Created { office }),
         Err(LaunchError::Invalid(_))
     ));
     assert!(out.is_empty());
+}
+
+#[test]
+fn the_role_rule_is_what_refuses_a_non_hq_create() {
+    // These lines are complete apart from their role, so only the HQ rule can refuse them.
+    for role in ["\"satellite\"", "\"moon\""] {
+        let line = format!(
+            "{{\"v\":1,\"op\":\"create\",\"org_id\":\"A1\",\"org_name\":\"Acme\",\
+             \"office_id\":\"B2\",\"office_name\":\"HQ\",\"role\":{role},\
+             \"app_token\":\"{TOKEN_HEX}\"}}\n"
+        );
+        let err = read_host_message(&mut Cursor::new(line))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("only HQ"), "{role}: {err}");
+    }
+}
+
+#[test]
+fn office_files_are_capped() {
+    // Valid in every other way: only the size can refuse it.
+    let mut big = office_file();
+    big.extra
+        .insert("pad".into(), "x".repeat(MAX_OFFICE_FILE_BYTES).into());
+    assert!(matches!(
+        big.to_vec(),
+        Err(LaunchError::Invalid("office.json would be too large"))
+    ));
+    let mut bytes = office_file().to_vec().unwrap();
+    bytes.extend(std::iter::repeat_n(b' ', MAX_OFFICE_FILE_BYTES));
+    assert!(matches!(
+        OfficeFile::from_slice(&bytes),
+        Err(LaunchError::Invalid(_))
+    ));
+    assert!(office_file().to_vec().unwrap().len() < MAX_OFFICE_FILE_BYTES);
+}
+
+#[test]
+fn a_broken_host_line_is_zeroed() {
+    let line = encode_host_line(&HostMessage::Start(StartOffice { app_token: token() })).unwrap();
+    let mut buf = Vec::with_capacity(org_proto::MAX_FRAME_BYTES + 1);
+    // Truncated: the host died mid-line, after part of the token.
+    let cut = &line[..line.len() - 10];
+    assert!(matches!(
+        read_secret_line_into(&mut Cursor::new(cut), &mut buf),
+        Err(LaunchError::Frame(FrameError::Truncated))
+    ));
+    assert!(!buf.is_empty() && buf.iter().all(|&b| b == 0));
+    // Too large: a token followed by more than a line's worth.
+    let mut huge = line[..line.len() - 1].to_vec();
+    huge.extend(std::iter::repeat_n(b'x', org_proto::MAX_FRAME_BYTES));
+    assert!(matches!(
+        read_secret_line_into(&mut Cursor::new(huge), &mut buf),
+        Err(LaunchError::Frame(FrameError::TooLarge))
+    ));
+    assert!(!buf.is_empty() && buf.iter().all(|&b| b == 0));
+}
+
+#[test]
+fn the_office_file_cap_is_exact_and_holds_for_created_events() {
+    // A file of exactly the cap is read (it fails on its content, not its size); one more
+    // byte is too large.
+    let mut bytes = office_file().to_vec().unwrap();
+    let pad = MAX_OFFICE_FILE_BYTES - bytes.len();
+    bytes.extend(std::iter::repeat_n(b' ', pad));
+    assert_eq!(bytes.len(), MAX_OFFICE_FILE_BYTES);
+    assert!(OfficeFile::from_slice(&bytes).is_ok());
+    bytes.push(b' ');
+    assert!(matches!(
+        OfficeFile::from_slice(&bytes),
+        Err(LaunchError::Invalid("office.json is too large"))
+    ));
+
+    // A created office too big for office.json isn't sent either.
+    let mut big = office_file();
+    big.extra
+        .insert("pad".into(), "x".repeat(MAX_OFFICE_FILE_BYTES).into());
+    let mut out = Vec::new();
+    assert!(matches!(
+        write_server_event(&mut out, &ServerEvent::Created { office: big }),
+        Err(LaunchError::Invalid(_))
+    ));
+    assert!(out.is_empty());
+}
+
+#[test]
+fn office_files_need_valid_names_and_timestamps() {
+    for (field, value) in [
+        ("org_name", ""),
+        ("org_name", " Acme"),
+        ("org_name", "Ac\u{7}me"),
+        ("office_name", ""),
+        ("created_at", "not a date"),
+        ("created_at", "2026-13-08T02:10:00.000Z"),
+        ("created_at", "2026-11-08T24:10:00.000Z"),
+        ("created_at", "2026-11-08T02:10:00Z"),
+        ("created_at", "2026-11-08 02:10:00.000Z"),
+        ("created_at", "2026-00-08T02:10:00.000Z"),
+        ("created_at", "2026-11-00T02:10:00.000Z"),
+        ("created_at", "2026-11-32T02:10:00.000Z"),
+        ("created_at", "2026-11-08T02:60:00.000Z"),
+        ("created_at", "2026-11-08T02:10:60.000Z"),
+    ] {
+        let mut value_json = serde_json::to_value(office_file()).unwrap();
+        value_json[field] = value.into();
+        assert!(
+            matches!(
+                OfficeFile::from_slice(&serde_json::to_vec(&value_json).unwrap()),
+                Err(LaunchError::Invalid(_))
+            ),
+            "read {field}={value:?}"
+        );
+        let mut file = office_file();
+        match field {
+            "org_name" => file.org_name = value.into(),
+            "office_name" => file.office_name = value.into(),
+            _ => file.created_at = value.into(),
+        }
+        assert!(file.to_vec().is_err(), "wrote {field}={value:?}");
+    }
+    assert!(is_timestamp("2026-11-08T02:10:00.000Z"));
+    assert!(is_timestamp("1999-12-31T23:59:59.999Z"));
+    assert!(is_timestamp("2026-01-01T00:00:00.000Z"));
+}
+
+/// An office file padded so `to_vec` is exactly `len` bytes.
+fn office_file_of_len(len: usize) -> OfficeFile {
+    let mut file = office_file();
+    file.extra.insert("pad".into(), "".into());
+    let base = file.to_vec().unwrap().len();
+    file.extra
+        .insert("pad".into(), "x".repeat(len - base).into());
+    file
+}
+
+#[test]
+fn the_office_file_write_cap_is_exact() {
+    let fits = office_file_of_len(MAX_OFFICE_FILE_BYTES);
+    assert_eq!(fits.to_vec().unwrap().len(), MAX_OFFICE_FILE_BYTES);
+    let mut out = Vec::new();
+    write_server_event(
+        &mut out,
+        &ServerEvent::Created {
+            office: fits.clone(),
+        },
+    )
+    .unwrap();
+    // And it is accepted when read back.
+    assert!(matches!(
+        read_server_event(&mut Cursor::new(out)).unwrap(),
+        Some(ServerEvent::Created { .. })
+    ));
+
+    let over = office_file_of_len(MAX_OFFICE_FILE_BYTES + 1);
+    assert!(over.to_vec().is_err());
+    let mut out = Vec::new();
+    assert!(write_server_event(&mut out, &ServerEvent::Created { office: over }).is_err());
+    assert!(out.is_empty());
+}
+
+#[test]
+fn a_created_event_over_the_office_file_cap_is_refused_when_read() {
+    let over = office_file_of_len(MAX_OFFICE_FILE_BYTES + 1);
+    // Built by hand, as a buggy server might, since write_server_event won't send it.
+    let mut value = serde_json::json!({"v":1,"event":"created"});
+    let mut office = serde_json::to_value(&over).unwrap();
+    office["v"] = 1.into();
+    value["office"] = office;
+    let line = value.to_string() + "\n";
+    assert!(matches!(
+        read_server_event(&mut Cursor::new(line)),
+        Err(LaunchError::Invalid(_))
+    ));
+}
+
+#[test]
+fn a_sent_host_line_is_zeroed_whether_or_not_the_write_works() {
+    struct Broken;
+    impl Write for Broken {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("closed"))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let message = HostMessage::Start(StartOffice { app_token: token() });
+    let mut line = encode_host_line(&message).unwrap();
+    let mut out = Vec::new();
+    send_and_zero(&mut out, &mut line).unwrap();
+    assert!(out.ends_with(b"\n") && out.len() == line.len());
+    assert!(line.iter().all(|&b| b == 0));
+
+    let mut line = encode_host_line(&message).unwrap();
+    assert!(send_and_zero(&mut Broken, &mut line).is_err());
+    assert!(!line.is_empty() && line.iter().all(|&b| b == 0));
+}
+
+#[test]
+fn a_host_that_dies_mid_line_is_gone_not_a_failure() {
+    let line = encode_host_line(&HostMessage::Start(StartOffice { app_token: token() })).unwrap();
+    let err = read_host_message(&mut Cursor::new(&line[..20])).unwrap_err();
+    assert!(err.is_host_gone());
+    let bad = read_host_message(&mut Cursor::new(&b"{]\n"[..])).unwrap_err();
+    assert!(!bad.is_host_gone());
+    assert!(!LaunchError::UnsupportedVersion(2).is_host_gone());
 }
