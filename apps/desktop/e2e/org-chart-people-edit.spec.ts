@@ -102,3 +102,78 @@ test('PEOPLE-3: the People tab has Add person too', async ({ page }) => {
 	await page.getByRole('button', { name: 'Add person' }).click();
 	await expect(page.getByRole('dialog', { name: 'Add person' })).toBeVisible();
 });
+
+test('REPORT-3: Change manager lists the owner first, never the member, and disables everyone who reports to them with the reason', async ({ page }) => {
+	await openChart(page);
+	await card(page, 'people').getByRole('button', { name: /^Hana Weiss/ }).click();
+	await page.getByTestId('selected-member').getByRole('button', { name: 'Change manager…' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Change manager of Hana Weiss' });
+	await expect(dialog).toContainText('Hana Weiss reports to Avery Stone now.');
+	const radios = dialog.getByRole('radio');
+	await expect(radios.first()).toHaveAccessibleName(/^You \(you\)/); // the owner first
+	await expect(dialog.getByRole('radio', { name: /^Hana Weiss/ })).toHaveCount(0); // never themselves
+	// Leo (and anyone below) can't be chosen: it would make a loop.
+	const leo = dialog.getByRole('radio', { name: /^Leo Brandt/ });
+	await expect(leo).toBeDisabled();
+	await expect(dialog).toContainText('Leo Brandt reports to Hana Weiss, directly or through others');
+	await expect(dialog.getByRole('radio', { name: /^Avery Stone/ })).toBeDisabled(); // already the current manager
+	await expect(dialog.getByRole('button', { name: 'Change manager' })).toBeDisabled();
+	await shot(page, 'change-manager');
+});
+
+test('REPORT-4: a changed manager shows a toast with Undo, and Undo puts it back', async ({ page }) => {
+	await openChart(page);
+	await card(page, 'people').getByRole('button', { name: /^Leo Brandt/ }).click();
+	await page.getByTestId('selected-member').getByRole('button', { name: 'Change manager…' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Change manager of Leo Brandt' });
+	await dialog.getByRole('radio', { name: /^Juno Park/ }).check();
+	await dialog.getByRole('button', { name: 'Change manager' }).click();
+	await expect(page.getByText('Leo Brandt now reports to Juno Park.')).toBeVisible();
+	await page.getByRole('tab', { name: 'Reporting lines' }).click();
+	await expect(page.getByTestId('reporting-note')).toBeVisible(); // the Reporting lines view shows the change too
+	await page.getByRole('button', { name: 'Undo' }).click();
+	await expect(page.getByText("Leo Brandt's manager is back as it was.")).toBeVisible();
+	// Back under Hana: opening the dialog again says so.
+	await page.getByTestId('selected-member').getByRole('button', { name: 'Change manager…' }).click();
+	await expect(page.getByRole('dialog', { name: 'Change manager of Leo Brandt' })).toContainText('Leo Brandt reports to Hana Weiss now.');
+});
+
+test('REPORT-3: the owner can be chosen as the manager', async ({ page }) => {
+	await openChart(page);
+	await card(page, 'people').getByRole('button', { name: /^Leo Brandt/ }).click();
+	await page.getByTestId('selected-member').getByRole('button', { name: 'Change manager…' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Change manager of Leo Brandt' });
+	await dialog.getByRole('radio', { name: /^You \(you\)/ }).check();
+	await dialog.getByRole('button', { name: 'Change manager' }).click();
+	await expect(page.getByText('Leo Brandt now reports to You (you).')).toBeVisible();
+});
+
+test('TEAM-6: Edit teams for a member checks teams with a title each, and warns before clearing a lead', async ({ page }) => {
+	await openChart(page);
+	await card(page, 'platform').getByRole('button', { name: /^Mira Castillo/ }).first().click();
+	await page.getByTestId('selected-member').getByRole('button', { name: 'Edit teams…' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Teams for Mira Castillo' });
+	await expect(dialog.getByRole('checkbox', { name: 'Engineering › Web' })).toBeChecked();
+	await expect(dialog.getByRole('checkbox', { name: 'Engineering › Platform' })).toBeChecked();
+	await expect(dialog.getByRole('checkbox', { name: 'Design' })).not.toBeChecked();
+	await dialog.getByRole('checkbox', { name: 'Design' }).click();
+	await dialog.getByLabel('Title in Design').fill('Visual design');
+	await dialog.getByRole('checkbox', { name: 'Engineering › Web' }).click();
+	await shot(page, 'edit-member-teams');
+	await dialog.getByRole('button', { name: 'Save' }).click();
+	await expect(page.getByText('Updated the teams of Mira Castillo.')).toBeVisible();
+	await expect(card(page, 'design').getByRole('button', { name: /^Mira Castillo/ })).toBeVisible();
+	await expect(card(page, 'web').getByRole('button', { name: /^Mira Castillo/ })).toHaveCount(0);
+});
+
+test('TEAM-6: unchecking the team a member leads warns, names the team, and clears the lead', async ({ page }) => {
+	await openChart(page);
+	await card(page, 'web').getByRole('button', { name: /^Noor Haddad/ }).click();
+	await page.getByTestId('selected-member').getByRole('button', { name: 'Edit teams…' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Teams for Noor Haddad' });
+	await dialog.getByRole('checkbox', { name: 'Engineering › Web' }).click();
+	await expect(dialog.getByTestId('clears-lead')).toContainText("Noor Haddad leads Web. Removing Noor Haddad also clears Web's lead.");
+	await dialog.getByRole('button', { name: 'Remove and clear lead' }).click();
+	await expect(page.getByText('Updated the teams of Noor Haddad.')).toBeVisible();
+	await expect(card(page, 'web')).toContainText('No lead');
+});

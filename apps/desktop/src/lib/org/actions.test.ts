@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createMockOrg, type MockStorage } from './api';
 import { sessionFor } from './session';
-import { addPerson, addProjectTeam, createTeam, deleteConsequences, deleteTeam, moveTargets, moveTeam, removePerson, removeProjectTeam, setTeamLead, setTeamMembers, updatePerson, wouldClearLead } from './actions';
+import { addPerson, addProjectTeam, changeManager, createTeam, deleteConsequences, deleteTeam, ledTeamsLeft, moveTargets, moveTeam, removePerson, removeProjectTeam, setTeamLead, setMemberTeams, setTeamMembers, teamTitlesOf, updatePerson, wouldClearLead } from './actions';
 import { membersOfTeam, teamTree, unassignedProjects } from './model';
 import { sharedBy } from './team-edit';
 
@@ -214,5 +214,45 @@ describe('PEOPLE-3, 5 and 8 adding, editing and removing a person', () => {
 		expect(s.members.find((m) => m.id === 'leo')?.reports_to_member_id).toBe('avery');
 		expect(s.teams.find((t) => t.id === 'people')?.lead_member_id).toBeUndefined();
 		await expect(removePerson(api, 'you')).rejects.toMatchObject({ code: 'owner_protected' });
+	});
+});
+
+describe('REPORT-3/4 changing a manager, and TEAM-6 a member’s own teams', () => {
+	it('changes the manager, can send them to the owner, and undoes it', async () => {
+		const api = make();
+		const { undo } = await changeManager(api, 'leo', 'juno');
+		expect((await api.snapshot()).members.find((m) => m.id === 'leo')?.reports_to_member_id).toBe('juno');
+		await undo();
+		expect((await api.snapshot()).members.find((m) => m.id === 'leo')?.reports_to_member_id).toBe('hana');
+		await changeManager(api, 'leo', undefined);
+		expect((await api.snapshot()).members.find((m) => m.id === 'leo')?.reports_to_member_id).toBeUndefined();
+	});
+
+	it('refuses a loop and the owner, and says so', async () => {
+		const api = make();
+		await expect(changeManager(api, 'avery', 'leo')).rejects.toMatchObject({ code: 'cycle' });
+		await expect(changeManager(api, 'you', 'avery')).rejects.toMatchObject({ code: 'owner_protected' });
+		await expect(changeManager(api, 'ghost', undefined)).rejects.toMatchObject({ code: 'not_found' });
+	});
+
+	it('makes a member’s teams exactly what is asked: adds, removes and retitles', async () => {
+		const api = make();
+		// Mira is in Web and Platform. Ask for Platform (titled), Design: Web goes, Design comes.
+		const { steps } = await setMemberTeams(api, 'mira', new Map([['platform', 'Engineer'], ['design', undefined]]), (id) => id);
+		expect(steps.map((s) => s.what).sort()).toEqual(['Add to design', 'Change the title in platform', 'Remove from web']);
+		expect(steps.every((s) => !s.error)).toBe(true);
+		const s = await api.snapshot();
+		expect(teamTitlesOf(s, 'mira').get('platform')?.title).toBe('Engineer');
+		expect([...teamTitlesOf(s, 'mira').keys()].sort()).toEqual(['design', 'platform']);
+	});
+
+	it('warns about the teams whose lead would go, and reports a single failure without losing the rest', async () => {
+		const api = make();
+		const s = await api.snapshot();
+		expect(ledTeamsLeft(s, 'noor', new Set(['design'])).map((t) => t.id)).toEqual(['web']);
+		expect(ledTeamsLeft(s, 'noor', new Set(['web', 'design']))).toEqual([]);
+		const { steps } = await setMemberTeams(api, 'quinn', new Map([['ghost', undefined], ['web', undefined]]), (id) => id);
+		expect(steps[0]).toMatchObject({ what: 'Add to ghost', error: { code: 'not_found' } });
+		expect(steps[1].error).toBeUndefined();
 	});
 });

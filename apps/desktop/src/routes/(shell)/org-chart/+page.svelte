@@ -12,6 +12,8 @@
 	import AddPersonSheet from '$lib/components/AddPersonSheet.svelte';
 	import EditPersonDialog from '$lib/components/EditPersonDialog.svelte';
 	import RemovePersonDialog from '$lib/components/RemovePersonDialog.svelte';
+	import ChangeManagerDialog from '$lib/components/ChangeManagerDialog.svelte';
+	import EditMemberTeamsDialog from '$lib/components/EditMemberTeamsDialog.svelte';
 	import EditMembersDialog from '$lib/components/EditMembersDialog.svelte';
 	import DeleteTeamDialog from '$lib/components/DeleteTeamDialog.svelte';
 	import MemberTile from '$lib/components/MemberTile.svelte';
@@ -113,6 +115,10 @@
 	let editPersonOpen = $state(false);
 	let removingPerson = $state<Member | undefined>();
 	let removePersonOpen = $state(false);
+	let managing = $state<Member | undefined>();
+	let managerOpen = $state(false);
+	let memberTeams = $state<Member | undefined>();
+	let memberTeamsOpen = $state(false);
 	let moving = $state<Team | undefined>();
 	let moveOpen = $state(false);
 	let justAdded = $state<string | undefined>();
@@ -187,6 +193,31 @@
 			toast.success(`Removed ${r.name}.`);
 		}
 	}
+	async function managerChanged(r: { name: string; to: string; undo: () => Promise<void> } | { stale: true }) {
+		await reload();
+		if ('stale' in r) return;
+		// Undo is the reverse change, offered for 8 seconds (REPORT-4).
+		toast.success(`${r.name} now reports to ${r.to}.`, {
+			duration: 8000,
+			action: {
+				label: 'Undo',
+				onClick: async () => {
+					try {
+						await r.undo();
+						await reload();
+						toast.success(`${r.name}'s manager is back as it was.`);
+					} catch (e) {
+						await reload();
+						toast.error(`Couldn't undo: ${toAppError(e).message} Nothing changed.`);
+					}
+				}
+			}
+		});
+	}
+	async function memberTeamsEdited(r: { name: string; changed: boolean; problems: string[] }) {
+		await reload();
+		if (r.problems.length === 0 && r.changed) toast.success(`Updated the teams of ${r.name}.`);
+	}
 	async function teamMoved(r: { name: string; to: string; undo: () => Promise<void> } | { stale: true }) {
 		await reload();
 		if ('stale' in r) return;
@@ -253,7 +284,7 @@
 		</p>
 	</div>
 
-	<SelectedMember {snapshot} member={selectedMember} offices={offices} organization={organizationName} onclear={() => (selected = undefined)} onedit={(m) => ((editingPerson = m), (editPersonOpen = true))} onremove={(m) => ((removingPerson = m), (removePersonOpen = true))} />
+	<SelectedMember {snapshot} member={selectedMember} offices={offices} organization={organizationName} onclear={() => (selected = undefined)} onedit={(m) => ((editingPerson = m), (editPersonOpen = true))} onremove={(m) => ((removingPerson = m), (removePersonOpen = true))} onmanager={(m) => ((managing = m), (managerOpen = true))} onteams={(m) => ((memberTeams = m), (memberTeamsOpen = true))} />
 
 	{#if tab === 'teams'}
 		<div id="panel-teams" role="tabpanel" aria-labelledby="tab-teams" class="space-y-5">
@@ -412,3 +443,5 @@
 <AddPersonSheet bind:open={addPersonOpen} {snapshot} {session} organization={organizationName} presetTeamId={addPersonTeam} ondone={personAdded} />
 <EditPersonDialog bind:open={editPersonOpen} person={editingPerson && snapshot.members.find((x) => x.id === editingPerson?.id)} {snapshot} {session} organization={organizationName} ondone={personEdited} />
 <RemovePersonDialog bind:open={removePersonOpen} person={removingPerson && snapshot.members.find((x) => x.id === removingPerson?.id)} {snapshot} {session} organization={organizationName} ondone={personRemoved} />
+<ChangeManagerDialog bind:open={managerOpen} member={managing && snapshot.members.find((x) => x.id === managing?.id)} {snapshot} {session} ondone={managerChanged} />
+<EditMemberTeamsDialog bind:open={memberTeamsOpen} member={memberTeams && snapshot.members.find((x) => x.id === memberTeams?.id)} {snapshot} {session} ondone={memberTeamsEdited} />

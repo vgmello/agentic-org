@@ -186,3 +186,48 @@ export async function removePerson(api: OrgSession, memberId: string): Promise<v
 	if (!m) throw { source: 'api', code: 'not_found', message: "That person isn't in the organization any more." } satisfies AppError;
 	await api.command({ method: 'member.remove', params: { member_id: memberId, expected_version: m.version } });
 }
+
+/** Change who a member reports to (REPORT-3/4): none means the owner. Returns how to undo it (8 s). */
+export async function changeManager(api: OrgSession, memberId: string, managerId: string | undefined): Promise<{ undo: () => Promise<void> }> {
+	const before = (await api.snapshot()).members.find((m) => m.id === memberId);
+	if (!before) throw { source: 'api', code: 'not_found', message: "That person isn't in the organization any more." } satisfies AppError;
+	await api.command({ method: 'member.set_reports_to', params: { member_id: memberId, expected_version: before.version, reports_to_member_id: managerId } });
+	return {
+		undo: async () => {
+			const now = (await api.snapshot()).members.find((m) => m.id === memberId);
+			if (!now) return;
+			await api.command({ method: 'member.set_reports_to', params: { member_id: memberId, expected_version: now.version, reports_to_member_id: before.reports_to_member_id } });
+		}
+	};
+}
+
+/** The teams a member is in with their titles, to compare with what the dialog asks for. */
+export function teamTitlesOf(s: OrgSnapshot, memberId: string): Map<string, { membershipId: string; version: number; title?: string }> {
+	return new Map(s.memberships.filter((m) => m.member_id === memberId).map((m) => [m.team_id, { membershipId: m.id, version: m.version, title: m.title_in_team }]));
+}
+
+/** Teams whose lead is this member and would lose them if they left `desired` (TEAM-6): to warn first. */
+export function ledTeamsLeft(s: OrgSnapshot, memberId: string, desired: ReadonlySet<string>): Team[] {
+	return s.teams.filter((t) => t.lead_member_id === memberId && !desired.has(t.id));
+}
+
+/**
+ * Make a member's teams exactly `desired` (team id → title): add where missing, remove where unchecked, change a
+ * title. One command per change, so one failure doesn't lose the rest (TEAM-6). `teamName` words each step.
+ */
+export async function setMemberTeams(api: OrgSession, memberId: string, desired: Map<string, string | undefined>, teamName: (id: string) => string = (id) => id): Promise<{ steps: StepResult[] }> {
+	const have = teamTitlesOf(await api.snapshot(), memberId);
+	const steps: StepResult[] = [];
+	for (const [teamId, title] of desired) {
+		const mine = have.get(teamId);
+		const wanted = title?.trim() || undefined;
+		if (!mine)
+			steps.push(await attempt(`Add to ${teamName(teamId)}`, () => api.command({ method: 'team.add_member', params: { membership_id: newId(), team_id: teamId, member_id: memberId, title_in_team: wanted } })));
+		else if ((mine.title ?? undefined) !== wanted)
+			steps.push(await attempt(`Change the title in ${teamName(teamId)}`, () => api.command({ method: 'team.set_title', params: { membership_id: mine.membershipId, expected_version: mine.version, title_in_team: wanted } })));
+	}
+	for (const [teamId, mine] of have)
+		if (!desired.has(teamId))
+			steps.push(await attempt(`Remove from ${teamName(teamId)}`, () => api.command({ method: 'team.remove_member', params: { membership_id: mine.membershipId, expected_version: mine.version } })));
+	return { steps };
+}

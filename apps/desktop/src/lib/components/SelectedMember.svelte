@@ -11,7 +11,9 @@
 		onclear,
 		organization = 'the organization',
 		onedit,
-		onremove
+		onremove,
+		onmanager,
+		onteams
 	}: {
 		snapshot: OrgSnapshot;
 		member: Member | undefined;
@@ -22,6 +24,10 @@
 		onedit?: (member: Member) => void;
 		/** Remove a person (an agent leaves through offboarding, not here). */
 		onremove?: (member: Member) => void;
+		/** Change who they report to (agents and people). */
+		onmanager?: (member: Member) => void;
+		/** Edit the teams they are in, with a title in each. */
+		onteams?: (member: Member) => void;
 	} = $props();
 
 	const teams = $derived(member ? teamsOfMember(snapshot, member.id) : []);
@@ -35,6 +41,10 @@
 		<span class="text-gray-400">{kindWord(member.kind)}</span>
 		<span>{teams.length > 0 ? `In ${teams.map((t) => t.name).join(', ')}` : 'Not in a team'}</span>
 		{#if office}<span class="text-gray-400">· {office}</span>{/if}
+		{#if !member.owner}
+			{#if onteams}<Button variant="outline" size="xs" onclick={() => onteams(member)}>Edit teams…</Button>{/if}
+			{#if onmanager}<Button variant="outline" size="xs" onclick={() => onmanager(member)}>Change manager…</Button>{/if}
+		{/if}
 		{#if member.kind === 'person' && !member.owner}
 			{#if onedit}<Button variant="outline" size="xs" onclick={() => onedit(member)}>Edit…</Button>{/if}
 			{#if onremove}<Button variant="outline" size="xs" onclick={() => onremove(member)}>Remove from {organization}…</Button>{/if}
