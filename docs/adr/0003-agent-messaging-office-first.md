@@ -57,7 +57,8 @@ To keep `inbox`, `wait`, `read --next`, and UI thread views sub-millisecond even
      - `local_seq INTEGER NOT NULL UNIQUE` (monotonic commit sequence at *this* office, used for local waiter watermarks and pagination cursors)
      - `org_epoch INTEGER NOT NULL`, `org_seq INTEGER NOT NULL` (the `Position` the sender office had applied in `org.db` when accepting the message)
      - `from_member_id TEXT NOT NULL` (member ID, or reserved `'office'` for `delivery_failed` notices)
-     - `to_member_id TEXT NOT NULL` (member ID)
+     - `to_member_id TEXT NOT NULL` (member ID, or raw addressed recipient if dead-lettered from offline spool)
+     - `to_display_name TEXT NOT NULL` (the recipient's display name at send time, or the raw `--to` string as addressed by the sender, preserved so `delivery_failed` notices and the UI can show the exact name even after the member is removed)
      - `kind TEXT NOT NULL` (`msg`, `request`, `reply`, `delivery_failed`, or custom tag)
      - `subject TEXT`
      - `created_at TEXT NOT NULL`
@@ -242,6 +243,7 @@ Per [`teams-and-org-chart.md`](../design/teams-and-org-chart.md) ("Who agents ma
    - When the owning office (or HQ on `member.remove`) dead-letters an unread message:
      - It records `resolution = 'dead_letter'`, `reason = 'unknown_recipient'` in `msg_state`, sets `flags |= FLAG_DEAD_LETTER` in `msg_headers`, and removes the row from `msg_unread`.
      - If `original.kind != "delivery_failed"` and `original.from_member_id != "office"` and `original.from_member_id` is still an active member in `org.db`, it emits a single `delivery_failed` message (`from_member_id = "office"`, `to_member_id = original.from_member_id`, `kind = "delivery_failed"`, `reply_to = original.id`), guarded by `idx_msg_delivery_failed_once`.
+     - **`delivery_failed` payload (for agents and Eden's UX):** The `delivery_failed` message carries structured `meta` (and human-readable `body`) with the **recipient as addressed at send time** (`recipient_id`: `original.to_member_id`, `recipient_name`: `original.to_display_name`) and the **reason code** (`reason`: `"unknown_recipient"` | `"expired"`), so both the sending agent and the desktop UI can display who the message was addressed to even after that member has been removed.
 
 #### 3.3 Cross-Office `ask` with Deadlines, Clock-Skew Guard, and Idempotent Re-Ask
 
@@ -315,6 +317,7 @@ Per [`teams-and-org-chart.md`](../design/teams-and-org-chart.md) ("Who agents ma
 - **Events (`impl EventKind`, pushed to `subscribe` clients):**
   - `message.received { header: MessageHeader }` (no body in events so frames stay small)
   - `message.resolved { id: String, thread_id: String, to_member_id: String, resolution: MessageResolution, resolved_at: String }`
+  - `message.delivery_failed { id: String, original_id: String, thread_id: String, from_member_id: String, recipient_id: String, recipient_name: String, reason: String }` (includes both the recipient's `id` and `display_name` at send time plus the `reason` code such as `unknown_recipient` or `expired`)
 - **Error codes added to `org_proto::ErrorCode`:**
   - `Timeout`, `TooLarge`, `DuplicateId`, `NotBound` (`UnknownRecipient`, `NotFound`, `InvalidRequest`, `StorageError` already exist in `org-proto`).
 - **Limits (measured on JSON-encoded wire bytes, fitting inside `MAX_FRAME_BYTES = 1 MiB`):**
