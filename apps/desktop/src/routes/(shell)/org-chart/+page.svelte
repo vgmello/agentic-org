@@ -6,6 +6,8 @@
 	import { Button } from '$lib/components/ui/button';
 	import MemberTile from '$lib/components/MemberTile.svelte';
 	import OwnerBar from '$lib/components/OwnerBar.svelte';
+	import PeopleChart from '$lib/components/PeopleChart.svelte';
+	import ReportingChart from '$lib/components/ReportingChart.svelte';
 	import SelectedMember from '$lib/components/SelectedMember.svelte';
 	import TeamsChart from '$lib/components/TeamsChart.svelte';
 	import TeamsList from '$lib/components/TeamsList.svelte';
@@ -21,6 +23,7 @@
 		type OfficeFilter,
 		type TeamNode
 	} from '$lib/org/model';
+	import { reportingTree, type ReportNode } from '$lib/org/reporting';
 
 	let { data } = $props();
 	const snapshot = $derived(data.snapshot);
@@ -34,6 +37,8 @@
 	let asList = $state(false);
 	let fit = $state(true);
 	const collapsed = new SvelteSet<string>();
+	const collapsedReports = new SvelteSet<string>();
+	const reporting = $derived(reportingTree(snapshot));
 	let selected = $state<string | undefined>();
 	let filterValue = $state('all');
 
@@ -50,6 +55,7 @@
 	const highlightLabel = $derived(filter.kind === 'office' ? (offices.find((o) => o.id === filter.id)?.name ?? 'office') : filter.kind === 'unplaced' ? 'Unplaced' : '');
 	const highlightedCount = $derived(nonOwners(snapshot).filter((m) => highlightedByOffice(m, filter, knownOffices) === true).length);
 
+	const reportParents = (n: ReportNode): string[] => (n.children.length ? [n.member.id, ...n.children.flatMap(reportParents)] : []).filter((id) => id !== n.member.id || !n.member.owner);
 	const knownOffices = $derived(new Set(offices.map((o) => o.id)));
 	const selectedMember = $derived(memberById(snapshot, selected));
 	const parents = (nodes: TeamNode[]): string[] => nodes.flatMap((n) => (n.children.length ? [n.team.id, ...parents(n.children)] : []));
@@ -188,10 +194,55 @@
 				</section>
 			{/if}
 		</div>
+	{:else if tab === 'people'}
+		<div id="panel-people" role="tabpanel" aria-labelledby="tab-people" class="space-y-5">
+			<h2 class="sr-only">People</h2>
+			<!-- PEOPLE-2: always said, so nobody expects an agent to reach someone who isn't listed. -->
+			<p class="rounded-lg bg-sky-500/10 px-4 py-3 text-sm/6 text-sky-100 outline-1 -outline-offset-1 outline-sky-400/20" data-testid="people-note">
+				Agents can only reach the people listed in your organization.
+			</p>
+			{#if tree.length === 0}
+				<div class="rounded-xl bg-white/5 px-6 py-10 text-center outline-1 -outline-offset-1 outline-white/10">
+					<p class="text-sm/6 font-semibold text-white">No teams yet</p>
+				</div>
+			{:else}
+				<div class="flex justify-end gap-x-2">
+					<Button variant="outline" size="sm" onclick={() => (fit = !fit)}>{fit ? 'Actual size' : 'Fit to width'}</Button>
+					<Button variant="outline" size="sm" onclick={() => collapsed.clear()}>Expand all</Button>
+					<Button variant="outline" size="sm" onclick={() => parents(tree).forEach((id) => collapsed.add(id))}>Collapse all</Button>
+				</div>
+				<div class="overflow-x-auto pb-4">
+					<PeopleChart {snapshot} {tree} {collapsed} {selected} {fit} onselect={select} />
+				</div>
+			{/if}
+			{#if lone.some((m) => m.kind === 'person')}
+				<section aria-labelledby="people-no-team" class="rounded-xl bg-gray-800/50 p-3 outline-1 -outline-offset-1 outline-white/10" data-testid="people-not-in-a-team">
+					<h3 id="people-no-team" class="text-sm/6 font-semibold text-white">Not in a team <span class="font-normal text-gray-400">{lone.filter((m) => m.kind === 'person').length}</span></h3>
+					<div class="mt-2 flex flex-wrap gap-2">
+						{#each lone.filter((m) => m.kind === 'person') as m (m.id)}
+							<MemberTile member={m} size="sm" selected={selected === m.id} onselect={select} />
+						{/each}
+					</div>
+				</section>
+			{/if}
+		</div>
 	{:else}
-		<div id="panel-{tab}" role="tabpanel" aria-labelledby="tab-{tab}" class="rounded-xl bg-white/5 px-6 py-10 text-center outline-1 -outline-offset-1 outline-white/10">
-			<p class="text-sm/6 font-semibold text-white">{TABS.find((t) => t.id === tab)?.label}</p>
-			<Badge variant="secondary" class="mt-2">Coming next</Badge>
+		<div id="panel-reporting" role="tabpanel" aria-labelledby="tab-reporting" class="space-y-5">
+			<h2 class="sr-only">Reporting lines</h2>
+			<!-- REPORT-5: reporting lines and teams are separate things. -->
+			<p class="rounded-lg bg-sky-500/10 px-4 py-3 text-sm/6 text-sky-100 outline-1 -outline-offset-1 outline-sky-400/20" data-testid="reporting-note">
+				Reporting lines show who reports to whom. They are separate from teams: changing a team or its lead doesn't change anyone's manager.
+			</p>
+			{#if reporting}
+				<div class="flex justify-end gap-x-2">
+					<Button variant="outline" size="sm" onclick={() => (fit = !fit)}>{fit ? 'Actual size' : 'Fit to width'}</Button>
+					<Button variant="outline" size="sm" onclick={() => collapsedReports.clear()}>Expand all</Button>
+					<Button variant="outline" size="sm" onclick={() => reportParents(reporting).forEach((id) => collapsedReports.add(id))}>Collapse all</Button>
+				</div>
+				<div class="overflow-x-auto pb-4">
+					<ReportingChart {snapshot} root={reporting} collapsed={collapsedReports} {selected} {fit} onselect={select} />
+				</div>
+			{/if}
 		</div>
 	{/if}
 </div>

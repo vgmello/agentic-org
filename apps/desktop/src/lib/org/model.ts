@@ -2,7 +2,7 @@
 // place and the rules are tested without a browser. Nothing here changes a snapshot.
 import type { Member, OrgSnapshot, ProjectSummary, Team } from '$lib/proto';
 
-const byName = <T extends { name: string }>(a: T, b: T) =>
+export const byName = <T extends { name: string }>(a: T, b: T) =>
 	a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
 
 export const owner = (s: OrgSnapshot): Member | undefined => s.members.find((m) => m.owner);
@@ -51,6 +51,9 @@ export function membersOfTeam(s: OrgSnapshot, teamId: string): Member[] {
 	const ids = new Set(s.memberships.filter((m) => m.team_id === teamId).map((m) => m.member_id));
 	return nonOwners(s).filter((m) => ids.has(m.id)).sort(byName);
 }
+
+/** How a member's kind reads in words, for screens and screen readers. */
+export const kindWord = (kind: Member['kind']): 'Agent' | 'Person' | 'Member' => (kind === 'agent' ? 'Agent' : kind === 'person' ? 'Person' : 'Member');
 
 export const agentsOf = (members: Member[]) => members.filter((m) => m.kind === 'agent');
 export const peopleOf = (members: Member[]) => members.filter((m) => m.kind === 'person');

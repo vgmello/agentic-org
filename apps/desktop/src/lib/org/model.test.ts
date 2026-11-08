@@ -4,6 +4,7 @@ import {
 	highlightedByOffice,
 	leadOf,
 	membersOfTeam,
+	kindWord,
 	normalizeKinds,
 	notInATeam,
 	othersOf,
@@ -175,5 +176,11 @@ describe('what an office sends', () => {
 		expect(fixed.members.find((m) => m.id === 'leo')?.kind).toBe('unknown');
 		expect(fixed.members.find((m) => m.id === 'sam')?.kind).toBe('agent');
 		expect(fixed.members.find((m) => m.id === 'hana')?.kind).toBe('person');
+	});
+});
+
+describe('kindWord', () => {
+	it('says Agent, Person, or Member for a kind this build does not know', () => {
+		expect([kindWord('agent'), kindWord('person'), kindWord('unknown')]).toEqual(['Agent', 'Person', 'Member']);
 	});
 });
