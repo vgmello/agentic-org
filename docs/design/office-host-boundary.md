@@ -94,6 +94,8 @@ org-office-server --discard <id>    # remove an unfinished office and its key, t
 - `create` with `--create`, `start` with `--office`; `--discard` reads no line. A first line that's
   malformed, an unknown op or for the other flag → `failed: invalid_request`. EOF before the first
   line → exit 0 without a `failed` line (the host is gone).
+- After the first line, a v1 server ignores every further stdin line, known ops included, so a
+  second `start` can't swap the token mid-life. stdin stays open only so its EOF can stop the server.
 - **`app_token`** (ADR-0003 §2.1): the office's ephemeral app token, made by the host for each office
   each time the host starts, kept only in memory, never in argv, env, a file, a log or the Keychain.
   The server keeps it only in memory. The database key never crosses the pipe (ADR-0002).
@@ -107,7 +109,8 @@ with the same rule (one implementation, see 6). Later lines are reserved: the se
 {"v":1,"event":"created","office":{…office.json…}}      // --create only: key, databases and
                                                         // office.json are durable
 {"v":1,"event":"ready","socket":"/…/run/3RXF2NS0SH83.sock","pid":4242}  // listening, hello works
-{"v":1,"event":"discarded"}                                            // --discard only, then exit 0
+{"v":1,"event":"discarded"}                                            // --discard only, then exit 0;
+                                                                       // also when there's no folder and no key (idempotent)
 {"v":1,"event":"failed","code":"key_missing","message":"…"}             // then exits non-zero
 ```
 - `created` comes before `ready`. `organization.create` answers the client as soon as `created`
