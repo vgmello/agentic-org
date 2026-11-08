@@ -1,8 +1,9 @@
 <script lang="ts">
 	import Crown from '@lucide/svelte/icons/crown';
+	import { Badge } from '$lib/components/ui/badge';
 	import type { Member } from '$lib/proto';
 
-	let { owner, organization }: { owner: Member | undefined; organization: string } = $props();
+	let { owner, organization, sample = false }: { owner: Member | undefined; organization: string; /** The data is invented: say so where the owner is shown. */ sample?: boolean } = $props();
 </script>
 
 <!-- The owner is shown once, above every view: never on a team card or in a count (OWNER-1). -->
@@ -12,7 +13,7 @@
 			<Crown class="size-5" aria-hidden="true" />
 		</span>
 		<span class="min-w-0">
-			<span class="block text-sm/6 font-semibold text-white">{owner.name} <span class="font-normal text-gray-400">(you)</span> · Owner of {organization}</span>
+			<span class="block text-sm/6 font-semibold text-white">{owner.name} <span class="font-normal text-gray-400">(you)</span> · Owner of {organization}{#if sample} <Badge variant="secondary" data-testid="owner-sample">Sample data</Badge>{/if}</span>
 			<span class="block text-xs/5 text-gray-400">Full access to every team, member and project. Any agent can message, ask or assign you.</span>
 		</span>
 	</section>

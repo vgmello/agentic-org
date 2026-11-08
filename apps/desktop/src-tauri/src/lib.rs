@@ -5,14 +5,23 @@
 //! every build, so the shell can be run and shown end to end. It is wired in one place (`run`).
 
 mod connections;
+mod login_item;
 mod menu_model;
 mod mock;
 mod office;
+mod org_agent_rules;
+mod org_command;
+mod org_engine;
+mod org_mock;
+mod real;
 mod tray;
+mod work_engine;
 
 use connections::{local_office, Connection, ConnectionStore};
+use login_item::{LoginService, LoginState};
 use office::{OfficeConnection, SetupError};
-use org_proto::{ApiError, HelloResult, OfficeStatus, Organization};
+use org_command::OrgCommand;
+use org_proto::{ApiError, CommandAccepted, HelloResult, OfficeStatus, OrgSnapshot, Organization};
 use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -29,6 +38,15 @@ struct AppState {
     /// Counts successful starts, so a caller can tell whether someone else already restarted the
     /// office since it saw a failure.
     epoch: AtomicU64,
+}
+
+/// An organization's structure as the UI reads it. `sample` is app-local, not part of `org-proto`.
+#[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(serde::Deserialize))]
+struct OrgView {
+    snapshot: OrgSnapshot,
+    /// True while the snapshot is invented (the mock office), not the organization's own.
+    sample: bool,
 }
 
 /// An error the UI can tell apart: `source` says which layer failed and `code` is its code.
@@ -66,6 +84,16 @@ impl From<SetupError> for CommandError {
     }
 }
 
+impl From<work_engine::WorkError> for CommandError {
+    fn from(e: work_engine::WorkError) -> Self {
+        Self {
+            source: "api",
+            code: e.code.to_string(),
+            message: e.message,
+        }
+    }
+}
+
 impl From<ApiError> for CommandError {
     fn from(e: ApiError) -> Self {
         Self {
@@ -81,6 +109,13 @@ impl AppState {
     fn ensure_running(&self) -> Result<HelloResult, CommandError> {
         let _one_at_a_time = self.start.lock().unwrap_or_else(|e| e.into_inner());
         self.start_locked()
+    }
+
+    /// Whether the connected office answers. Read-only: no start lock, no epoch, no restart, so a status
+    /// check can't pile up behind (or cause) a start. Before the office has been started there is nothing to ask.
+    fn ping(&self) -> Result<(), CommandError> {
+        self.ensure_connected()?;
+        Ok(self.office.ping()?)
     }
 
     fn start_locked(&self) -> Result<HelloResult, CommandError> {
@@ -148,9 +183,9 @@ impl AppState {
             }
             // The office couldn't be reached or understood. An answer it gave (a storage error, a bad
             // request) is not a reason to restart it.
-            // PLACEHOLDER: today the mock stands in for an unreachable office with an `unknown` api
-            // code. When `org-client` is wired in, map its transport failures (NotRunning, Io,
-            // Timeout, Disconnected) to a `setup`-source error here, and drop the `unknown` arm.
+            // `unknown` is how an office connection that was lost is reported (the mock stands in for an
+            // unreachable office with it too); a timeout, a bad answer or a wrong version are `unavailable`
+            // and are not retried.
             Err(e) if e.source == "setup" || (e.source == "api" && e.code == "unknown") => {
                 self.restart_since(seen)?;
                 f(self)
@@ -221,6 +256,57 @@ impl AppState {
         self.remember(organization)
     }
 
+    /// The structure of an organization this machine hosts, and whether it is invented.
+    fn org_snapshot(&self, organization_id: &str) -> Result<OrgView, CommandError> {
+        self.ensure_connected()?;
+        Ok(OrgView {
+            snapshot: self.office.org_snapshot(organization_id)?,
+            sample: self.office.serves_sample_data(),
+        })
+    }
+
+    /// Send an organization command to HQ. A command carries its own `command_id`, so running it
+    /// again after the office was restarted gets the same answer and changes nothing twice.
+    fn org_command(
+        &self,
+        organization_id: &str,
+        command: &OrgCommand,
+    ) -> Result<CommandAccepted, CommandError> {
+        self.ensure_connected()?;
+        Ok(self.office.org_command(organization_id, command)?)
+    }
+
+    fn work_snapshot(
+        &self,
+        organization_id: &str,
+        project_id: Option<&str>,
+        closed_since: Option<&str>,
+    ) -> Result<serde_json::Value, CommandError> {
+        self.ensure_connected()?;
+        Ok(self
+            .office
+            .work_snapshot(organization_id, project_id, closed_since)?)
+    }
+
+    fn work_get(
+        &self,
+        organization_id: &str,
+        item_id: &str,
+    ) -> Result<serde_json::Value, CommandError> {
+        self.ensure_connected()?;
+        Ok(self.office.work_get(organization_id, item_id)?)
+    }
+
+    /// A work call carries its own `change_id`, so running it again after a restart changes nothing twice.
+    fn work_command(
+        &self,
+        organization_id: &str,
+        call: &serde_json::Value,
+    ) -> Result<serde_json::Value, CommandError> {
+        self.ensure_connected()?;
+        Ok(self.office.work_command(organization_id, call)?)
+    }
+
     fn connections(&self) -> Result<Vec<Connection>, CommandError> {
         self.store
             .list()
@@ -244,6 +330,63 @@ async fn office_ensure_running(
 ) -> Result<HelloResult, CommandError> {
     let state = Arc::clone(&state);
     blocking(move || state.ensure_running()).await
+}
+
+#[tauri::command]
+async fn office_ping(state: State<'_, Arc<AppState>>) -> Result<(), CommandError> {
+    let state = Arc::clone(&state);
+    blocking(move || state.ping()).await
+}
+
+/// Whether the office host's login service is on, waiting for the owner's approval, or missing.
+#[tauri::command]
+async fn login_item_status(
+    login: State<'_, Arc<dyn LoginService>>,
+) -> Result<LoginState, CommandError> {
+    let login = Arc::clone(&login);
+    blocking(move || Ok(login.status())).await
+}
+
+/// Turn the host's login service on or off (what Settings offers). Returns the state it ends in; macOS may leave
+/// it waiting for approval, and that is not an error.
+#[tauri::command]
+async fn login_item_set(
+    login: State<'_, Arc<dyn LoginService>>,
+    enabled: bool,
+) -> Result<LoginState, CommandError> {
+    let login = Arc::clone(&login);
+    blocking(move || set_login_item(login.as_ref(), enabled)).await
+}
+
+fn set_login_item(login: &dyn LoginService, enabled: bool) -> Result<LoginState, CommandError> {
+    let outcome = if enabled {
+        login.register()
+    } else {
+        login.unregister()
+    };
+    let state = login.status();
+    let wanted = if enabled {
+        matches!(state, LoginState::Enabled | LoginState::RequiresApproval)
+    } else {
+        state == LoginState::NotRegistered
+    };
+    match outcome {
+        Err(reason) if !wanted => Err(CommandError::local("login_item", reason)),
+        _ => Ok(state),
+    }
+}
+
+/// Open System Settings at Login Items, where the owner approves the service.
+#[tauri::command]
+async fn login_item_open_settings(
+    login: State<'_, Arc<dyn LoginService>>,
+) -> Result<(), CommandError> {
+    let login = Arc::clone(&login);
+    blocking(move || {
+        login.open_settings();
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -278,6 +421,65 @@ async fn organization_open(
     Ok(connection)
 }
 
+#[tauri::command]
+async fn org_snapshot(
+    state: State<'_, Arc<AppState>>,
+    organization_id: String,
+) -> Result<OrgView, CommandError> {
+    let state = Arc::clone(&state);
+    blocking(move || state.with_restart(|s| s.org_snapshot(&organization_id))).await
+}
+
+#[tauri::command]
+async fn org_command(
+    state: State<'_, Arc<AppState>>,
+    organization_id: String,
+    command: OrgCommand,
+) -> Result<CommandAccepted, CommandError> {
+    let state = Arc::clone(&state);
+    blocking(move || state.with_restart(|s| s.org_command(&organization_id, &command))).await
+}
+
+#[tauri::command]
+async fn work_snapshot(
+    state: State<'_, Arc<AppState>>,
+    organization_id: String,
+    project_id: Option<String>,
+    closed_since: Option<String>,
+) -> Result<serde_json::Value, CommandError> {
+    let state = Arc::clone(&state);
+    blocking(move || {
+        state.with_restart(|s| {
+            s.work_snapshot(
+                &organization_id,
+                project_id.as_deref(),
+                closed_since.as_deref(),
+            )
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn work_get(
+    state: State<'_, Arc<AppState>>,
+    organization_id: String,
+    item_id: String,
+) -> Result<serde_json::Value, CommandError> {
+    let state = Arc::clone(&state);
+    blocking(move || state.with_restart(|s| s.work_get(&organization_id, &item_id))).await
+}
+
+#[tauri::command]
+async fn work_command(
+    state: State<'_, Arc<AppState>>,
+    organization_id: String,
+    call: serde_json::Value,
+) -> Result<serde_json::Value, CommandError> {
+    let state = Arc::clone(&state);
+    blocking(move || state.with_restart(|s| s.work_command(&organization_id, &call))).await
+}
+
 /// Remembered connections, oldest first (the most recent is last).
 #[tauri::command]
 async fn connections_list(
@@ -287,16 +489,43 @@ async fn connections_list(
     blocking(move || state.connections()).await
 }
 
+/// Which office the app talks to: the real one (the host and HQ office sockets, through `org-client`) when
+/// `AGENTIC_ORG_OFFICE=real` and there is an office home to look in, otherwise the mock. Until the host is bundled
+/// and started by the app, the mock is the default.
+fn choose_office(
+    data: &std::path::Path,
+    choice: Option<&str>,
+    real: Option<real::RealOffice>,
+) -> (Arc<dyn OfficeConnection>, std::path::PathBuf) {
+    match (choice, real) {
+        (Some("real"), Some(real)) => (Arc::new(real), data.join("real")),
+        (Some("real"), None) => {
+            eprintln!("AGENTIC_ORG_OFFICE=real, but there is no office folder to look in: using the mock office.");
+            let dir = data.join("mock");
+            (Arc::new(mock::MockOffice::from_env(dir.clone())), dir)
+        }
+        _ => {
+            let dir = data.join("mock");
+            (Arc::new(mock::MockOffice::from_env(dir.clone())), dir)
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            // The mock's connections live apart from anything a real office will remember, so a build
-            // that has the real client never opens a fake organization.
+            // The mock's connections live apart from anything the real office remembers, so choosing the real
+            // office never opens a fake organization (and the other way round).
             let data = app.path().app_data_dir()?;
-            let dir = data.join("mock");
+            let data_for_login = data.clone();
+            let (office, dir) = choose_office(
+                &data,
+                std::env::var("AGENTIC_ORG_OFFICE").ok().as_deref(),
+                real::RealOffice::from_env(&data),
+            );
             app.manage(Arc::new(AppState {
-                office: Arc::new(mock::MockOffice::from_env(dir.clone())),
+                office,
                 store: ConnectionStore::new(dir),
                 connected: Mutex::new(None),
                 start: Mutex::new(()),
@@ -305,6 +534,7 @@ pub fn run() {
             let dock = tray::DockPreference::load(data);
             tray::apply_dock(app.handle(), dock.shown());
             app.manage(dock);
+            app.manage::<Arc<dyn LoginService>>(Arc::from(login_item::system_in(&data_for_login)));
             tray::create(app.handle())?;
             Ok(())
         })
@@ -317,10 +547,19 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             office_ensure_running,
+            office_ping,
             organization_create,
             organizations_list,
             organization_open,
-            connections_list
+            org_snapshot,
+            org_command,
+            connections_list,
+            work_snapshot,
+            work_get,
+            work_command,
+            login_item_status,
+            login_item_set,
+            login_item_open_settings
         ])
         .build(tauri::generate_context!())
         .expect("error while building Agentic Org")
@@ -363,6 +602,97 @@ mod tests {
     }
 
     #[test]
+    fn an_organizations_structure_needs_a_running_office_and_says_it_is_sample_data() {
+        let (state, dir) = state_with(vec![hosted("a", "Alpha")]);
+        let err = state.org_snapshot("a").unwrap_err();
+        assert_eq!((err.source, err.code.as_str()), ("app", "not_connected"));
+        state.ensure_running().unwrap();
+        let view = state.org_snapshot("a").unwrap();
+        assert!(view.sample, "the mock office's data is invented");
+        assert_eq!(view.snapshot.members.iter().filter(|m| m.owner).count(), 1);
+        let err = state.org_snapshot("nope").unwrap_err();
+        assert_eq!((err.source, err.code.as_str()), ("api", "not_found"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_command_needs_a_running_office_and_reaches_hq_once() {
+        let (state, dir) = state_with(vec![hosted("a", "Alpha")]);
+        let command: OrgCommand = serde_json::from_value(serde_json::json!({
+            "method": "team.create",
+            "params": {"command_id": "C1", "team_id": "ops", "name": "Ops"}
+        }))
+        .unwrap();
+        let err = state.org_command("a", &command).unwrap_err();
+        assert_eq!((err.source, err.code.as_str()), ("app", "not_connected"));
+        state.ensure_running().unwrap();
+        let first = state
+            .with_restart(|s| s.org_command("a", &command))
+            .unwrap();
+        let again = state
+            .with_restart(|s| s.org_command("a", &command))
+            .unwrap();
+        assert_eq!(first, again);
+        let refused = state
+            .org_command(
+                "a",
+                &serde_json::from_value(serde_json::json!({
+                    "method": "team.delete",
+                    "params": {"command_id": "C2", "team_id": "nope", "expected_version": 1}
+                }))
+                .unwrap(),
+            )
+            .unwrap_err();
+        assert_eq!(
+            (refused.source, refused.code.as_str()),
+            ("api", "not_found")
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_snapshot_failure_the_office_answered_is_not_a_reason_to_restart_it() {
+        let (state, dir) = state_with(vec![hosted("a", "Alpha")]);
+        state.ensure_running().unwrap();
+        let starts_before = state.epoch.load(Ordering::SeqCst);
+        let err = state.with_restart(|s| s.org_snapshot("nope")).unwrap_err();
+        assert_eq!((err.source, err.code.as_str()), ("api", "not_found"));
+        assert_eq!(state.epoch.load(Ordering::SeqCst), starts_before);
+        // Not connected yet: with_restart starts the office, then answers.
+        let (fresh, dir2) = state_with(vec![hosted("a", "Alpha")]);
+        assert!(fresh.with_restart(|s| s.org_snapshot("a")).is_ok());
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(dir2);
+    }
+
+    #[test]
+    fn a_ping_only_asks_it_never_starts_or_restarts_the_office() {
+        let (state, dir) = make_state(Scenario::Healthy);
+        // Before anything started the office there is nothing to ask, and asking starts nothing.
+        let err = state.ping().unwrap_err();
+        assert_eq!((err.source, err.code.as_str()), ("app", "not_connected"));
+        assert_eq!(state.epoch.load(Ordering::SeqCst), 0);
+        state.ensure_running().unwrap();
+        let epoch = state.epoch.load(Ordering::SeqCst);
+        for _ in 0..3 {
+            assert!(state.ping().is_ok());
+        }
+        assert_eq!(
+            state.epoch.load(Ordering::SeqCst),
+            epoch,
+            "a ping is not a start"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+        // An office that doesn't answer is reported as unreachable (a setup error), not restarted.
+        let (state, dir) = make_state(Scenario::Unreachable);
+        *state.connected.lock().unwrap() = Some("This Mac".into());
+        let err = state.ping().unwrap_err();
+        assert_eq!((err.source, err.code.as_str()), ("setup", "unreachable"));
+        assert_eq!(state.epoch.load(Ordering::SeqCst), 0);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn creating_before_the_office_is_running_is_refused() {
         let (state, dir) = make_state(Scenario::Healthy);
         let err = state.create_organization("Acme").unwrap_err();
@@ -396,12 +726,51 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir2);
     }
 
-    const COMMANDS: [&str; 5] = [
+    #[test]
+    fn turning_the_login_service_on_or_off_reports_the_state_it_ends_in() {
+        use login_item::FakeLogin;
+        let on = FakeLogin::new(&[LoginState::Enabled]);
+        assert_eq!(set_login_item(&on, true).unwrap(), LoginState::Enabled);
+
+        // macOS may refuse until the owner approves: that is a state, not an error.
+        let mut waiting = FakeLogin::new(&[LoginState::RequiresApproval]);
+        waiting.register_result = Err("Operation not permitted".into());
+        assert_eq!(
+            set_login_item(&waiting, true).unwrap(),
+            LoginState::RequiresApproval
+        );
+
+        let mut broken = FakeLogin::new(&[LoginState::NotRegistered]);
+        broken.register_result = Err("Disk is full".into());
+        let err = set_login_item(&broken, true).unwrap_err();
+        assert_eq!(
+            (err.source, err.code.as_str(), err.message.as_str()),
+            ("app", "login_item", "Disk is full")
+        );
+
+        let off = FakeLogin::new(&[LoginState::NotRegistered]);
+        assert_eq!(
+            set_login_item(&off, false).unwrap(),
+            LoginState::NotRegistered
+        );
+        assert_eq!(off.unregister_calls.load(Ordering::SeqCst), 1);
+    }
+
+    const COMMANDS: [&str; 14] = [
         "office_ensure_running",
+        "office_ping",
         "organization_create",
         "organizations_list",
         "organization_open",
+        "org_snapshot",
+        "org_command",
         "connections_list",
+        "work_snapshot",
+        "work_get",
+        "work_command",
+        "login_item_status",
+        "login_item_set",
+        "login_item_open_settings",
     ];
 
     /// Every command the UI invokes is declared in `build.rs`, allowed in the capability file and
@@ -421,6 +790,8 @@ mod tests {
                 .collect()
         };
         let mut from_ui = quoted(include_str!("../../src/lib/office/tauri.ts"));
+        from_ui.extend(quoted(include_str!("../../src/lib/org/tauri.ts")));
+        from_ui.extend(quoted(include_str!("../../src/lib/work/tauri.ts")));
         let mut from_build = quoted(include_str!("../build.rs"));
         let mut declared: Vec<String> = COMMANDS.iter().map(|c| c.to_string()).collect();
         from_ui.sort();
@@ -454,6 +825,8 @@ mod tests {
             host: "This Mac".into(),
             endpoint: None,
             status: org_proto::OfficeStatus::Active,
+            status_reason: None,
+            next_restart_at: None,
         }
     }
 
@@ -593,6 +966,9 @@ mod tests {
                 office: None,
             })
         }
+        fn ping(&self) -> Result<(), office::SetupError> {
+            Ok(())
+        }
         fn create_organization(&self, _: &str) -> Result<Organization, ApiError> {
             unreachable!()
         }
@@ -606,6 +982,15 @@ mod tests {
                 ));
             }
             Ok(vec![hosted("a", "Alpha")])
+        }
+        fn org_snapshot(&self, _: &str) -> Result<OrgSnapshot, ApiError> {
+            unreachable!()
+        }
+        fn org_command(&self, _: &str, _: &OrgCommand) -> Result<CommandAccepted, ApiError> {
+            unreachable!()
+        }
+        fn serves_sample_data(&self) -> bool {
+            false
         }
     }
 
@@ -789,5 +1174,40 @@ mod tests {
             serde_json::to_value(connection).unwrap(),
             fixture["connection"]
         );
+        let view: OrgView = serde_json::from_value(fixture["org_view"].clone()).unwrap();
+        assert_eq!(serde_json::to_value(view).unwrap(), fixture["org_view"]);
+        let accepted: CommandAccepted =
+            serde_json::from_value(fixture["command_accepted"].clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(accepted).unwrap(),
+            fixture["command_accepted"]
+        );
+    }
+
+    #[test]
+    fn the_mock_is_the_default_and_the_real_office_needs_asking_for_and_a_home() {
+        let data = std::env::temp_dir().join(format!("agentic-org-choose-{}", std::process::id()));
+        let real = || {
+            Some(real::RealOffice::new(
+                data.join("home"),
+                Arc::new(login_item::Unsupported),
+            ))
+        };
+        let (office, dir) = choose_office(&data, None, real());
+        assert!(office.serves_sample_data(), "the mock by default");
+        assert_eq!(dir, data.join("mock"));
+        let (office, dir) = choose_office(&data, Some("real"), real());
+        assert!(!office.serves_sample_data());
+        assert_eq!(
+            dir,
+            data.join("real"),
+            "its connections are kept apart from the mock's"
+        );
+        let (office, dir) = choose_office(&data, Some("real"), None);
+        assert!(office.serves_sample_data(), "no office home: the mock");
+        assert_eq!(dir, data.join("mock"));
+        let (office, _) = choose_office(&data, Some("mock"), real());
+        assert!(office.serves_sample_data());
+        let _ = std::fs::remove_dir_all(&data);
     }
 }

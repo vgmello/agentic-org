@@ -2,6 +2,7 @@
 	import Bug from '@lucide/svelte/icons/bug';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { buttonVariants } from '$lib/components/ui/button';
+	import { Toaster } from '$lib/components/ui/sonner';
 
 	import { page } from '$app/state';
 	import { titleFor } from '$lib/nav';
@@ -25,3 +26,4 @@
 		{@render children()}
 	</div>
 </div>
+<Toaster position="bottom-right" />

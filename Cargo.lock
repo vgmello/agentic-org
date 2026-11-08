@@ -12,11 +12,16 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 name = "agentic-org"
 version = "0.0.0"
 dependencies = [
+ "objc2",
+ "objc2-foundation",
+ "objc2-service-management",
+ "org-client",
  "org-proto",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
+ "tempfile",
 ]
 
 [[package]]
@@ -2087,6 +2092,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-security"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "709fe137109bd1e8b5a99390f77a7d8b2961dafc1a1c5db8f2e60329ad6d895a"
+dependencies = [
+ "bitflags 2.13.2",
+ "objc2",
+ "objc2-core-foundation",
+]
+
+[[package]]
+name = "objc2-service-management"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b213642d6959cc6023ceb1217aa595eaaf09b8094ce95127c103cab611fe65e8"
+dependencies = [
+ "objc2",
+ "objc2-core-foundation",
+ "objc2-foundation",
+ "objc2-security",
+]
+
+[[package]]
 name = "objc2-ui-kit"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2148,6 +2176,7 @@ name = "org-agent"
 version = "0.0.0"
 dependencies = [
  "org-spool",
+ "serde_json",
 ]
 
 [[package]]
@@ -2155,6 +2184,8 @@ name = "org-client"
 version = "0.0.0"
 dependencies = [
  "org-proto",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -2169,8 +2200,32 @@ dependencies = [
 name = "org-office"
 version = "0.0.0"
 dependencies = [
+ "org-proto",
  "rusqlite",
+ "serde",
+ "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "org-office-host"
+version = "0.0.0"
+dependencies = [
+ "libc",
+ "org-office-host",
+ "org-office-launch",
+ "org-proto",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "org-office-launch"
+version = "0.0.0"
+dependencies = [
+ "org-proto",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2190,8 +2245,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "org-runtime"
+version = "0.0.0"
+dependencies = [
+ "org-runtime",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "org-spool"
 version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "org-work"
+version = "0.0.0"
+dependencies = [
+ "org-proto",
+ "serde",
+ "serde_json",
+ "sha2",
+]
 
 [[package]]
 name = "pango"

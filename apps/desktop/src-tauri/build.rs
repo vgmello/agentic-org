@@ -4,10 +4,19 @@ fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "office_ensure_running",
+            "office_ping",
             "organization_create",
             "organizations_list",
             "organization_open",
+            "org_snapshot",
+            "org_command",
             "connections_list",
+            "work_snapshot",
+            "work_get",
+            "work_command",
+            "login_item_status",
+            "login_item_set",
+            "login_item_open_settings",
         ]),
     ))
     .expect("failed to run tauri-build");

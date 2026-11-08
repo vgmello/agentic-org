@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-org-command"
+description = "Enables the org_command command without any pre-configured scope."
+commands.allow = ["org_command"]
+
+[[permission]]
+identifier = "deny-org-command"
+description = "Denies the org_command command without any pre-configured scope."
+commands.deny = ["org_command"]

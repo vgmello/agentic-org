@@ -1,0 +1,14 @@
+{
+  "can_use_tool_requests": [
+    {
+      "tool_name": "Bash",
+      "input": {
+        "command": "touch CONTROL.txt",
+        "description": "Create empty CONTROL.txt file via touch"
+      }
+    }
+  ],
+  "file_created": false,
+  "result": "DENIED",
+  "exit": 0
+}

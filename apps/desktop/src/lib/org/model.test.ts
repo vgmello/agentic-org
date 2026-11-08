@@ -18,8 +18,7 @@ import {
 	teamTree,
 	teamsOfMember,
 	unassignedProjects,
-	type OfficeFilter
-} from './model';
+	type OfficeFilter, searchMembers } from './model';
 import { emptyOrg, sampleOrg } from './sample';
 
 const s = sampleOrg('office-1');
@@ -112,7 +111,7 @@ describe('TEAM-3 and OWNER-1 not in a team', () => {
 	});
 
 	it('counts leave the owner out', () => {
-		expect(owner(s)?.name).toBe('You');
+		expect(owner(s)?.name).toBe('Alex Kim');
 		expect(organizationCounts(s)).toEqual({ agents: 8, people: 3, others: 0, teams: 5 });
 		expect(organizationCounts(emptyOrg())).toEqual({ agents: 0, people: 0, others: 0, teams: 0 });
 		const odd = { ...s, members: s.members.map((m) => (m.id === 'leo' ? { ...m, kind: 'unknown' as const } : m)) };
@@ -182,5 +181,60 @@ describe('what an office sends', () => {
 describe('kindWord', () => {
 	it('says Agent, Person, or Member for a kind this build does not know', () => {
 		expect([kindWord('agent'), kindWord('person'), kindWord('unknown')]).toEqual(['Agent', 'Person', 'Member']);
+	});
+});
+
+describe('normalizeKinds and an agent’s profile', () => {
+	const agent = (over: Record<string, unknown>) => ({
+		id: 'a',
+		kind: 'agent' as const,
+		name: 'A',
+		version: 1,
+		agent: { role: 'r', title: 't', runtime: 'claude_code', messaging_name: 'a', status: 'active', ...over }
+	});
+	const read = (m: unknown) => normalizeKinds({ position: { epoch: 1, seq: 1 }, teams: [], memberships: [], members: [m as never] }).members[0];
+
+	it('keeps what it knows', () => {
+		const m = read(agent({ run_mode: 'on_call', runtime: { other: 'my-runtime' } }));
+		expect(m.agent).toMatchObject({ status: 'active', run_mode: 'on_call', runtime: { other: 'my-runtime' } });
+	});
+
+	it('reads an unknown runtime, status or run mode as unknown, never as working', () => {
+		const m = read(agent({ status: 'sleeping', runtime: 'quantum', run_mode: 'whenever' }));
+		expect(m.agent).toMatchObject({ status: 'unknown', runtime: 'unknown', run_mode: 'unknown' });
+	});
+
+	it('reads a runtime that is not a name or a named other as unknown', () => {
+		for (const runtime of [{ other: 5 }, {}, 7, null]) expect(read(agent({ runtime })).agent?.runtime).toBe('unknown');
+	});
+
+	it('passes an offboarded agent with its date through, and normalizes a person that carries a profile too', () => {
+		expect(read(agent({ status: 'offboarded', offboarded_at: '2026-11-08T10:00:00.000Z' })).agent).toMatchObject({ status: 'offboarded', offboarded_at: '2026-11-08T10:00:00.000Z' });
+		const odd = read({ ...agent({ status: 'sleeping' }), kind: 'person' });
+		expect(odd.kind).toBe('person');
+		expect(odd.agent?.status).toBe('unknown');
+	});
+
+	it('leaves a missing run mode missing, and a person without a profile alone', () => {
+		expect(read(agent({})).agent).not.toHaveProperty('run_mode');
+		const person = { id: 'p', kind: 'person', name: 'P', version: 1 };
+		expect(read(person)).toEqual(person);
+	});
+});
+
+describe('TEAM-11 searching members', () => {
+	const s = sampleOrg('office-1');
+	it('matches names, ignoring case and accents, and an agent’s role, title and messaging name', () => {
+		expect([...searchMembers(s, 'ines')!]).toEqual(['ines']); // "Inês"
+		expect([...searchMembers(s, 'HANA')!]).toEqual(['hana']);
+		expect([...searchMembers(s, 'designer')!].sort()).toEqual(['juno', 'pax']); // role
+		expect([...searchMembers(s, 'sam')!]).toEqual(['sam']); // messaging name
+	});
+
+	it('finds no one for nonsense, and never the owner; an empty search dims nothing', () => {
+		expect(searchMembers(s, 'zzzz')!.size).toBe(0);
+		expect(searchMembers(s, 'alex')!.size).toBe(0); // the owner is shown apart
+		expect(searchMembers(s, '   ')).toBeUndefined();
+		expect(searchMembers(s, '')).toBeUndefined();
 	});
 });

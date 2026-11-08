@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-org-snapshot"
+description = "Enables the org_snapshot command without any pre-configured scope."
+commands.allow = ["org_snapshot"]
+
+[[permission]]
+identifier = "deny-org-snapshot"
+description = "Denies the org_snapshot command without any pre-configured scope."
+commands.deny = ["org_snapshot"]

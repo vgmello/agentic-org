@@ -29,5 +29,80 @@
     }
    ]
   }
+ },
+ "org_view": {
+  "sample": true,
+  "snapshot": {
+   "areas": [],
+   "position": {
+    "epoch": 1,
+    "seq": 4
+   },
+   "teams": [
+    {
+     "id": "eng",
+     "name": "Engineering",
+     "lead_member_id": "sam",
+     "version": 2
+    }
+   ],
+   "members": [
+    {
+     "id": "you",
+     "kind": "person",
+     "name": "You",
+     "owner": true,
+     "version": 1
+    },
+    {
+     "id": "sam",
+     "kind": "agent",
+     "name": "Sam Okafor",
+     "office_id": "office-1",
+     "agent": {
+      "role": "software engineer",
+      "title": "Staff engineer",
+      "runtime": "claude_code",
+      "run_mode": "on_call",
+      "messaging_name": "sam",
+      "status": "active"
+     },
+     "reports_to_member_id": "you",
+     "version": 1
+    }
+   ],
+   "memberships": [
+    {
+     "id": "ms-1",
+     "team_id": "eng",
+     "member_id": "sam",
+     "title_in_team": "Staff engineer",
+     "version": 1
+    }
+   ],
+   "projects": [
+    {
+     "id": "atlas",
+     "key": "",
+     "name": "Atlas",
+     "version": 0
+    }
+   ],
+   "project_teams": [
+    {
+     "id": "pt-1",
+     "project_id": "atlas",
+     "team_id": "eng",
+     "version": 1
+    }
+   ]
+  }
+ },
+ "command_accepted": {
+  "status": "committed",
+  "position": {
+   "epoch": 1,
+   "seq": 2
+  }
  }
 }

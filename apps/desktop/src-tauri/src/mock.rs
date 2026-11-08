@@ -5,14 +5,20 @@
 //! like the server will: 1 to 64 characters after trimming, no control characters.
 
 use crate::office::{OfficeConnection, SetupError, SetupErrorCode};
+use crate::org_command::OrgCommand;
+use crate::org_engine::{Ctx, Hq};
+use crate::org_mock::Seed;
+use crate::work_engine::{self, WorkError, WorkState};
 use org_proto::{
-    ApiError, ErrorCode, HelloResult, OfficeInfo, OfficeRole, OfficeStatus, Organization,
-    OrganizationName, API_VERSION,
+    ApiError, CommandAccepted, ErrorCode, HelloResult, OfficeInfo, OfficeRole, OfficeStatus,
+    OrgSnapshot, Organization, OrganizationName, API_VERSION,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -21,6 +27,7 @@ pub enum Scenario {
     Healthy,
     NotInstalled,
     NeedsApproval,
+    TurnedOff,
     Unreachable,
     StorageError,
 }
@@ -30,6 +37,7 @@ impl Scenario {
         match value {
             Some("not_installed") => Self::NotInstalled,
             Some("needs_approval") => Self::NeedsApproval,
+            Some("turned_off") => Self::TurnedOff,
             Some("unreachable") => Self::Unreachable,
             Some("storage_error") => Self::StorageError,
             _ => Self::Healthy,
@@ -42,6 +50,17 @@ pub struct MockOffice {
     /// How long `ensure_running` pretends to take, so the progress state is visible.
     startup_delay: Duration,
     organizations: Mutex<Vec<Organization>>,
+    /// What a new organization's structure starts as, and the structure of each one opened so far.
+    seed: Seed,
+    structures: Mutex<HashMap<String, Hq>>,
+    /// Where the structures are kept (next to the organizations); `None` keeps them in memory only.
+    structures_file: Option<PathBuf>,
+    /// The work (tasks) of each organization, kept next to the structures in `work.json`.
+    work: Mutex<HashMap<String, WorkState>>,
+    work_file: Option<PathBuf>,
+    /// Set when the stored structures are from a newer version: the office then refuses to read or
+    /// change any rather than overwrite them.
+    structures_unreadable: bool,
     /// Where the organizations are kept between launches, like the real office's storage. `None`
     /// keeps them in memory only (tests).
     store: Option<PathBuf>,
@@ -56,6 +75,12 @@ impl MockOffice {
             scenario,
             startup_delay,
             organizations: Mutex::new(Vec::new()),
+            seed: Seed::Sample,
+            structures: Mutex::new(HashMap::new()),
+            structures_file: None,
+            work: Mutex::new(HashMap::new()),
+            work_file: None,
+            structures_unreadable: false,
             store: None,
             unreadable: Mutex::new(false),
         }
@@ -79,8 +104,19 @@ impl MockOffice {
             Ok(organizations) => (organizations, false),
             Err(_) => (Vec::new(), true),
         };
+        let structures_file = dir.join("structures.json");
+        let (structures, structures_unreadable) = match load_structures(&structures_file) {
+            Ok(structures) => (structures, false),
+            Err(_) => (HashMap::new(), true),
+        };
         Self {
+            structures: Mutex::new(structures),
+            work: Mutex::new(load_work(&dir.join("work.json"))),
+            work_file: Some(dir.join("work.json")),
+            structures_file: Some(structures_file),
+            structures_unreadable,
             organizations: Mutex::new(organizations),
+            seed: Seed::parse(std::env::var("AGENTIC_ORG_MOCK_ORG").ok().as_deref()),
             store: Some(file),
             unreadable: Mutex::new(unreadable),
             ..Self::new(scenario, Duration::from_millis(900))
@@ -131,6 +167,91 @@ impl MockOffice {
             )
         })
     }
+
+    /// The id of the organization's HQ office, after the checks every organization call makes.
+    fn hq_office_id(&self, organization_id: &str) -> Result<String, ApiError> {
+        self.check_readable()?;
+        if self.structures_unreadable {
+            return Err(api_error(
+                ErrorCode::StorageError,
+                "The office couldn't read the stored organization structures: the file is unreadable or from a newer version.",
+            ));
+        }
+        let organizations = self.organizations.lock().unwrap_or_else(|e| e.into_inner());
+        let organization = organizations
+            .iter()
+            .find(|o| o.id == organization_id)
+            .ok_or_else(|| api_error(ErrorCode::NotFound, "That organization isn't here."))?;
+        organization
+            .offices
+            .iter()
+            .find(|o| o.role == OfficeRole::Hq)
+            .map(|o| o.id.clone())
+            .ok_or_else(|| api_error(ErrorCode::NotFound, "That organization has no HQ office."))
+    }
+
+    /// Every office the organization has: where an agent can be placed.
+    fn office_ids(&self, organization_id: &str) -> Vec<String> {
+        self.organizations
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .find(|o| o.id == organization_id)
+            .map(|o| o.offices.iter().map(|office| office.id.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    /// The organization's HQ state, seeded the first time it is asked for.
+    fn hq<'a>(
+        &self,
+        structures: &'a mut HashMap<String, Hq>,
+        organization_id: &str,
+        hq_office: &str,
+    ) -> &'a mut Hq {
+        structures
+            .entry(organization_id.to_string())
+            .or_insert_with(|| Hq::new(self.seed.snapshot(hq_office)))
+    }
+
+    fn persist_structures(&self, structures: &HashMap<String, Hq>) -> Result<(), ApiError> {
+        let Some(file) = &self.structures_file else {
+            return Ok(());
+        };
+        write_structures(file, structures).map_err(|_| {
+            api_error(
+                ErrorCode::StorageError,
+                "The office couldn't write the organization's structure.",
+            )
+        })
+    }
+}
+
+/// The office's refusal as the work calls report it: the same code, as text.
+fn into_work_error(e: ApiError) -> WorkError {
+    let code = match e.code {
+        ErrorCode::NotFound => "not_found",
+        ErrorCode::StorageError => "storage_error",
+        _ => "unavailable",
+    };
+    WorkError {
+        code,
+        message: e.message,
+    }
+}
+
+/// The tasks as they were last saved; a file that can't be read starts empty (it is a mock's sample data).
+fn load_work(file: &Path) -> HashMap<String, WorkState> {
+    std::fs::read_to_string(file)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+fn write_work(file: &Path, work: &HashMap<String, WorkState>) -> std::io::Result<()> {
+    let text = serde_json::to_string(work).map_err(std::io::Error::other)?;
+    let tmp = file.with_extension("json.tmp");
+    std::fs::write(&tmp, text)?;
+    std::fs::rename(&tmp, file)
 }
 
 const STORE_VERSION: u32 = 1;
@@ -171,6 +292,57 @@ fn load_store(file: &std::path::Path) -> io::Result<Vec<Organization>> {
         .map_or(0, |d| d.as_millis());
     fs::rename(file, file.with_extension(format!("json.corrupt-{millis}")))?;
     Ok(sample_organizations())
+}
+
+const STRUCTURES_VERSION: u32 = 1;
+
+#[derive(Serialize, Deserialize)]
+struct StructuresFile {
+    version: u32,
+    organizations: HashMap<String, Hq>,
+}
+
+/// The stored structures. Missing: none yet. Unparseable: set aside as `structures.json.corrupt-<ms>`
+/// and started again. Unknown version or an I/O error: an error, and the file is left alone.
+fn load_structures(file: &std::path::Path) -> io::Result<HashMap<String, Hq>> {
+    let bytes = match fs::read(file) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(HashMap::new()),
+        Err(e) => return Err(e),
+    };
+    match serde_json::from_slice::<StoreVersion>(&bytes) {
+        Ok(StoreVersion { version }) if version != STRUCTURES_VERSION => {
+            return Err(io::Error::other("unsupported structures.json version"))
+        }
+        Ok(_) => {
+            if let Ok(mut stored) = serde_json::from_slice::<StructuresFile>(&bytes) {
+                stored.organizations.values_mut().for_each(Hq::tidy);
+                return Ok(stored.organizations);
+            }
+        }
+        Err(_) => {}
+    }
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis());
+    fs::rename(file, file.with_extension(format!("json.corrupt-{millis}")))?;
+    Ok(HashMap::new())
+}
+
+fn write_structures(file: &std::path::Path, structures: &HashMap<String, Hq>) -> io::Result<()> {
+    if let Some(dir) = file.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let tmp = file.with_extension("json.tmp");
+    let contents = StructuresFile {
+        version: STRUCTURES_VERSION,
+        organizations: structures.clone(),
+    };
+    let mut out = fs::File::create(&tmp)?;
+    io::Write::write_all(&mut out, &serde_json::to_vec_pretty(&contents)?)?;
+    out.sync_all()?; // on disk before it replaces the old one, so a crash can't leave an empty file
+    drop(out);
+    fs::rename(&tmp, file)
 }
 
 /// RFC 3339 UTC with milliseconds, like the real office writes.
@@ -233,6 +405,8 @@ fn hq_office(organization_id: &str) -> OfficeInfo {
         host: "This Mac".to_string(),
         endpoint: None,
         status: OfficeStatus::Active,
+        status_reason: None,
+        next_restart_at: None,
     }
 }
 
@@ -277,6 +451,10 @@ impl OfficeConnection for MockOffice {
                 SetupErrorCode::NeedsApproval,
                 "Allow Agentic Org to run in the background in System Settings, then try again.",
             )),
+            Scenario::TurnedOff => Err(setup_error(
+                SetupErrorCode::TurnedOff,
+                "The office is off. Turn it on to start your office on this Mac.",
+            )),
             Scenario::Unreachable => Err(setup_error(
                 SetupErrorCode::Unreachable,
                 "The office server started but isn't answering.",
@@ -287,6 +465,19 @@ impl OfficeConnection for MockOffice {
                 host: "This Mac".to_string(),
                 office: None,
             }),
+        }
+    }
+
+    fn ping(&self) -> Result<(), SetupError> {
+        match self.scenario {
+            Scenario::Healthy | Scenario::StorageError => Ok(()),
+            Scenario::NotInstalled
+            | Scenario::NeedsApproval
+            | Scenario::TurnedOff
+            | Scenario::Unreachable => Err(setup_error(
+                SetupErrorCode::Unreachable,
+                "The office isn't answering.",
+            )),
         }
     }
 
@@ -332,6 +523,138 @@ impl OfficeConnection for MockOffice {
             .unwrap_or_else(|e| e.into_inner())
             .clone())
     }
+
+    fn org_snapshot(&self, organization_id: &str) -> Result<OrgSnapshot, ApiError> {
+        let hq_office = self.hq_office_id(organization_id)?;
+        let mut structures = self.structures.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(self
+            .hq(&mut structures, organization_id, &hq_office)
+            .snapshot
+            .clone())
+    }
+
+    fn org_command(
+        &self,
+        organization_id: &str,
+        command: &OrgCommand,
+    ) -> Result<CommandAccepted, ApiError> {
+        let hq_office = self.hq_office_id(organization_id)?;
+        let offices = self.office_ids(organization_id);
+        let mut structures = self.structures.lock().unwrap_or_else(|e| e.into_inner());
+        let hq = self.hq(&mut structures, organization_id, &hq_office);
+        let before = hq.clone();
+        let ctx = Ctx {
+            now: now_rfc3339(),
+            offices,
+        };
+        let (answer, _changed) = hq.handle_with(command, &ctx);
+        // A retry changes nothing; anything else (a commit, or a first refusal) is kept.
+        if *hq != before {
+            if let Err(e) = self.persist_structures(&structures) {
+                structures.insert(organization_id.to_string(), before);
+                return Err(e);
+            }
+        }
+        answer
+    }
+
+    fn work_snapshot(
+        &self,
+        organization_id: &str,
+        project_id: Option<&str>,
+        closed_since: Option<&str>,
+    ) -> Result<Value, WorkError> {
+        self.hq_office_id(organization_id)
+            .map_err(into_work_error)?;
+        let work = self.work.lock().unwrap_or_else(|e| e.into_inner());
+        let state = work
+            .get(organization_id)
+            .cloned()
+            .unwrap_or_else(work_engine::new_state);
+        Ok(json!({
+            "position": {"incarnation": state.incarnation, "seq": state.seq},
+            "items": work_engine::summaries(&state, project_id, closed_since),
+        }))
+    }
+
+    fn work_get(&self, organization_id: &str, item_id: &str) -> Result<Value, WorkError> {
+        self.hq_office_id(organization_id)
+            .map_err(into_work_error)?;
+        let work = self.work.lock().unwrap_or_else(|e| e.into_inner());
+        let state = work
+            .get(organization_id)
+            .cloned()
+            .unwrap_or_else(work_engine::new_state);
+        work_engine::get(&state, item_id, &now_rfc3339())
+    }
+
+    fn work_command(&self, organization_id: &str, call: &Value) -> Result<Value, WorkError> {
+        let snapshot = self
+            .org_snapshot(organization_id)
+            .map_err(into_work_error)?;
+        let ctx = work_engine::Ctx {
+            now: now_rfc3339(),
+            actor: snapshot
+                .members
+                .iter()
+                .find(|m| m.owner)
+                .map(|m| m.id.clone())
+                .unwrap_or_else(|| "owner".into()),
+            projects: snapshot
+                .projects
+                .iter()
+                .map(|p| work_engine::Project {
+                    id: p.id.clone(),
+                    archived: false,
+                    // Until the area commands exist every project has just General.
+                    areas: vec![format!("{}-general", p.id)],
+                    general_area: Some(format!("{}-general", p.id)),
+                    team_ids: snapshot
+                        .project_teams
+                        .iter()
+                        .filter(|l| l.project_id == p.id)
+                        .map(|l| l.team_id.clone())
+                        .collect(),
+                })
+                .collect(),
+            members: snapshot
+                .members
+                .iter()
+                .filter(|m| {
+                    !(m.kind == org_proto::MemberKind::Agent
+                        && m.agent
+                            .as_ref()
+                            .is_some_and(|a| a.status == org_proto::AgentStatus::Offboarded))
+                })
+                .map(|m| m.id.clone())
+                .collect(),
+        };
+        let mut work = self.work.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = work
+            .get(organization_id)
+            .cloned()
+            .unwrap_or_else(work_engine::new_state);
+        let answer = work_engine::apply(&mut state, call, &ctx)?;
+        let before = work.insert(organization_id.to_string(), state);
+        if let Some(file) = &self.work_file {
+            if write_work(file, &work).is_err() {
+                // Not saved, so not kept either (as the structure commands do).
+                match before {
+                    Some(previous) => work.insert(organization_id.to_string(), previous),
+                    None => work.remove(organization_id),
+                };
+                return Err(WorkError {
+                    code: "storage_error",
+                    message: "The office couldn't write the tasks.".into(),
+                });
+            }
+        }
+        Ok(answer)
+    }
+
+    fn serves_sample_data(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]
@@ -340,6 +663,276 @@ mod tests {
 
     fn healthy() -> MockOffice {
         MockOffice::new(Scenario::Healthy, Duration::ZERO)
+    }
+
+    #[test]
+    fn tasks_are_kept_per_organization_and_survive_a_restart() {
+        let dir = std::env::temp_dir().join(format!("agentic-work-{}", unique_id(7)));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let first = MockOffice::from_env(dir.clone());
+        let org = first.create_organization("Alpha").unwrap();
+        let project = first.org_snapshot(&org.id).unwrap().projects[0].id.clone();
+        let create = json!({"method": "task.create", "change_id": "c1", "item_id": "01JC0000000000000000000001", "project_id": project, "title": "Ship it"});
+        let answer = first.work_command(&org.id, &create).unwrap();
+        assert_eq!(answer["items"][0]["number"], 1);
+        // The same change id gets the same answer and changes nothing.
+        assert_eq!(first.work_command(&org.id, &create).unwrap(), answer);
+        let other = first.create_organization("Beta").unwrap();
+        assert_eq!(
+            first.work_snapshot(&other.id, None, None).unwrap()["items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+
+        let second = MockOffice::from_env(dir.clone());
+        let items = second.work_snapshot(&org.id, Some(&project), None).unwrap();
+        assert_eq!(items["items"][0]["title"], "Ship it");
+        assert_eq!(
+            second
+                .work_get(&org.id, "01JC0000000000000000000001")
+                .unwrap()["summary"]["status"],
+            "todo"
+        );
+        // A refusal carries the contract code.
+        let bad = json!({"method": "task.create", "change_id": "c2", "item_id": "01JC0000000000000000000002", "project_id": "nope", "title": "x"});
+        assert_eq!(
+            second.work_command(&org.id, &bad).unwrap_err().code,
+            "not_found"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn org_snapshot_seeds_each_organization_once_with_agents_placed_in_its_hq() {
+        let office = healthy();
+        let a = office.create_organization("Alpha").unwrap();
+        let b = office.create_organization("Beta").unwrap();
+        let hq = |o: &Organization| o.offices[0].id.clone();
+        let sa = office.org_snapshot(&a.id).unwrap();
+        assert!(sa
+            .members
+            .iter()
+            .any(|m| m.office_id.as_deref() == Some(hq(&a).as_str())));
+        assert!(!sa
+            .members
+            .iter()
+            .any(|m| m.office_id.as_deref() == Some(hq(&b).as_str())));
+        assert_eq!(
+            office.org_snapshot(&a.id).unwrap(),
+            sa,
+            "the same structure on every call"
+        );
+        assert!(office
+            .org_snapshot(&b.id)
+            .unwrap()
+            .members
+            .iter()
+            .any(|m| m.office_id.as_deref() == Some(hq(&b).as_str())));
+        assert_eq!(
+            office.org_snapshot("missing").unwrap_err().code,
+            ErrorCode::NotFound
+        );
+        assert!(office.serves_sample_data());
+    }
+
+    #[test]
+    fn org_snapshot_refuses_when_the_stored_organizations_cannot_be_read() {
+        let dir =
+            std::env::temp_dir().join(format!("agentic-org-test-snapshot-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("organizations.json"),
+            br#"{"version": 999, "organizations": []}"#,
+        )
+        .unwrap();
+        let office = MockOffice::from_env(dir.clone());
+        assert_eq!(
+            office.org_snapshot("a").unwrap_err().code,
+            ErrorCode::StorageError
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn org_snapshot_needs_an_hq_office() {
+        let mut org = healthy().create_organization("Alpha").unwrap();
+        org.offices.clear();
+        let office = healthy().with_organizations(vec![org.clone()]);
+        let err = office.org_snapshot(&org.id).unwrap_err();
+        assert_eq!(err.code, ErrorCode::NotFound);
+    }
+
+    fn create_team(id: &str, command_id: &str) -> OrgCommand {
+        serde_json::from_value(serde_json::json!({
+            "method": "team.create",
+            "params": {"command_id": command_id, "team_id": id, "name": id}
+        }))
+        .unwrap()
+    }
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("agentic-org-test-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_committed_command_is_kept_between_launches_and_a_retry_is_not_applied_twice() {
+        let dir = temp_dir("commands");
+        let first = MockOffice::from_env(dir.clone());
+        let org = first.list_organizations().unwrap().remove(0);
+        let c = create_team("ops", "C1");
+        let a = first.org_command(&org.id, &c).unwrap();
+        assert_eq!(a.status, org_proto::CommandStatus::Committed);
+        drop(first);
+        let second = MockOffice::from_env(dir.clone());
+        let snapshot = second.org_snapshot(&org.id).unwrap();
+        assert!(snapshot.teams.iter().any(|t| t.id == "ops"));
+        assert_eq!(
+            second.org_command(&org.id, &c).unwrap(),
+            a,
+            "the retry is answered, not applied"
+        );
+        assert_eq!(
+            second.org_snapshot(&org.id).unwrap().position,
+            snapshot.position
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_refusal_is_remembered_between_launches_and_a_failed_write_can_be_retried() {
+        let dir = temp_dir("refusal");
+        let first = MockOffice::from_env(dir.clone());
+        let org = first.list_organizations().unwrap().remove(0);
+        let bad = create_team("eng", "R1"); // Engineering exists in the sample
+        assert_eq!(
+            first.org_command(&org.id, &bad).unwrap_err().code,
+            ErrorCode::AlreadyExists
+        );
+        drop(first);
+        let second = MockOffice::from_env(dir.clone());
+        assert_eq!(
+            second.org_command(&org.id, &bad).unwrap_err().code,
+            ErrorCode::AlreadyExists
+        );
+        // A write that fails is not remembered, so the same command can be sent again.
+        let good = create_team("ops", "R2");
+        let saved = fs::read(dir.join("structures.json")).unwrap();
+        fs::remove_file(dir.join("structures.json")).unwrap();
+        fs::create_dir(dir.join("structures.json")).unwrap(); // a folder where the file goes: the rename fails
+        assert_eq!(
+            second.org_command(&org.id, &good).unwrap_err().code,
+            ErrorCode::StorageError
+        );
+        assert!(!second
+            .org_snapshot(&org.id)
+            .unwrap()
+            .teams
+            .iter()
+            .any(|t| t.id == "ops"));
+        fs::remove_dir(dir.join("structures.json")).unwrap();
+        fs::write(dir.join("structures.json"), saved).unwrap();
+        assert!(second.org_command(&org.id, &good).is_ok());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_refused_command_is_an_api_error_and_changes_nothing() {
+        let office = healthy();
+        let org = office.create_organization("Alpha").unwrap();
+        let before = office.org_snapshot(&org.id).unwrap();
+        let err = office
+            .org_command(&org.id, &create_team("eng", "C1"))
+            .unwrap_err();
+        assert_eq!(
+            err.code,
+            ErrorCode::AlreadyExists,
+            "Engineering exists in the sample"
+        );
+        assert_eq!(office.org_snapshot(&org.id).unwrap(), before);
+        assert_eq!(
+            office
+                .org_command("missing", &create_team("x", "C2"))
+                .unwrap_err()
+                .code,
+            ErrorCode::NotFound
+        );
+    }
+
+    #[test]
+    fn structures_from_a_newer_version_are_never_overwritten() {
+        let dir = temp_dir("newer");
+        fs::write(
+            dir.join("structures.json"),
+            br#"{"version": 99, "organizations": {}}"#,
+        )
+        .unwrap();
+        let office = MockOffice::from_env(dir.clone());
+        let org = office.list_organizations().unwrap().remove(0);
+        assert_eq!(
+            office.org_snapshot(&org.id).unwrap_err().code,
+            ErrorCode::StorageError
+        );
+        assert_eq!(
+            office
+                .org_command(&org.id, &create_team("x", "C"))
+                .unwrap_err()
+                .code,
+            ErrorCode::StorageError
+        );
+        assert!(fs::read_to_string(dir.join("structures.json"))
+            .unwrap()
+            .contains("99"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn unparseable_structures_are_set_aside_and_started_again() {
+        let dir = temp_dir("corrupt");
+        fs::write(dir.join("structures.json"), b"{ not json").unwrap();
+        let office = MockOffice::from_env(dir.clone());
+        let org = office.list_organizations().unwrap().remove(0);
+        assert!(office.org_snapshot(&org.id).is_ok());
+        let aside = fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|e| e.file_name().to_string_lossy().contains("corrupt"));
+        assert!(aside, "the unreadable file was kept");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_failed_write_refuses_the_command_and_leaves_the_structure_as_it_was() {
+        let dir = temp_dir("writefail");
+        let office = MockOffice::from_env(dir.clone());
+        let org = office.list_organizations().unwrap().remove(0);
+        let before = office.org_snapshot(&org.id).unwrap();
+        // The folder disappears and a file takes its place, so the structure can't be written.
+        fs::remove_dir_all(&dir).unwrap();
+        fs::write(&dir, b"in the way").unwrap();
+        let err = office
+            .org_command(&org.id, &create_team("ops", "C1"))
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::StorageError);
+        assert_eq!(office.org_snapshot(&org.id).unwrap(), before);
+        let _ = fs::remove_file(&dir);
+    }
+
+    #[test]
+    fn an_empty_seed_starts_an_organization_with_only_its_owner() {
+        let mut office = healthy();
+        office.seed = Seed::Empty;
+        let a = office.create_organization("Alpha").unwrap();
+        let s = office.org_snapshot(&a.id).unwrap();
+        assert_eq!(s.members.len(), 1);
+        assert!(s.members[0].owner);
     }
 
     #[test]

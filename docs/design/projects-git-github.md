@@ -17,6 +17,8 @@ Each project is a **git repository on GitHub**. **One GitHub App, "Agentic Org"*
   - `worktrees/<task-id>/` holds each task's working copy, from `work.git`, on branch `task/<task-id>-<slug>`.
 
   Agents' git settings (`git config` in a worktree writes to `work.git/config`) never touch the repository that holds the network settings and uses the token.
+
+  (amended 2026-11-08: agent sessions rev 3, ada) For sessions the office runs, `work.git/config` and `work.git/hooks/` are read-only to agents, and the office sets agents' hooks path and git config through the environment. See `agent-sessions.md`, "Git in worktrees". (amended 2026-11-08: agent sessions rev 3.3, ada) Agents can't write any git config, `config.worktree` included, so the office doesn't set `extensions.worktreeConfig`. This layout puts every worktree and `work.git` inside the office home: agents get the session's own worktree and the literal `work.git` commit paths as their only writable roots there, and named denies for the rest (`agent-sessions.md`, "What agents can reach under `<office home>`").
 - **Encryption:** these are ordinary files. FileVault protects them, not our database (ADR-0002, "Not covered here").
 
 ## The app and HQ

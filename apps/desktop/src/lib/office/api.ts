@@ -4,6 +4,7 @@ import {
 	type AppError,
 	type Connection,
 	type HelloResult,
+	type LoginState,
 	type Organization
 } from '$lib/proto';
 import { mockOffice } from './mock';
@@ -18,12 +19,20 @@ export interface OfficeApi {
 	connections(): Promise<Connection[]>;
 	/** Make sure an office is installed, running and answering. */
 	ensureRunning(): Promise<HelloResult>;
+	/** Whether the running office answers. Read-only (never starts anything): safe to call often. */
+	ping(): Promise<void>;
 	/** Create an organization on this Mac's host (reached by `ensureRunning`), and remember it. */
 	createOrganization(name: string): Promise<Connection>;
 	/** The organizations this Mac already has, each with its offices here (`organization.list`). */
 	listOrganizations(): Promise<Organization[]>;
 	/** Open one of them: remember the connection to its office here. */
 	openOrganization(id: string): Promise<Connection>;
+	/** The office host's login service: whether macOS runs it at login, or waits for the owner's approval. */
+	loginItem(): Promise<LoginState>;
+	/** Turn that service on or off. Resolves to the state it ends in (macOS may leave it waiting for approval). */
+	setLoginItem(enabled: boolean): Promise<LoginState>;
+	/** Open System Settings at Login Items, where the owner approves it. */
+	openLoginSettings(): Promise<void>;
 }
 
 /** Normalize anything thrown by a call into an `AppError`. */
