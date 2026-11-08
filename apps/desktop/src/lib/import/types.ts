@@ -54,3 +54,19 @@ export interface Defaults {
 	/** The name this Mac's user goes by (the owner's own inbox is not an agent). */
 	user?: string;
 }
+
+/** One team of the optional team hints file: members, lead and parent by messaging name or HR id; the parent by team key. */
+export interface HintTeam {
+	key: string;
+	name?: string;
+	parent?: string;
+	lead?: string;
+	members: string[];
+}
+
+export interface Hints {
+	path: string;
+	/** Why the file could not be used (the import goes on without it). */
+	error?: string;
+	teams: HintTeam[];
+}

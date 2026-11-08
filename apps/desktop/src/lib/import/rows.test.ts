@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Member } from '$lib/proto';
 import { SAMPLE_SCAN } from './mock';
-import { buildRows, counts, hasNoMessages, isReady, isValidHandle, missingOf, OWNER, roleWords } from './rows';
+import { buildRows, chooseRole, chooseTitle, counts, handleProblem, hasNoMessages, isReady, isValidHandle, missingOf, OWNER, roleWords, suggestRole } from './rows';
 import type { HrAgent, Scan } from './types';
 
 const rowsOf = (scan: Scan = SAMPLE_SCAN, exclude = ['sample']) => buildRows(scan, { exclude });
@@ -161,5 +161,54 @@ describe('a messaging name HQ would refuse is not ready', () => {
 		const { rows } = buildRows({ hr: { path: '/h', agents: [{ id: 'has space', role: 'x', title: 'y' }], roles: [], skipped: [] } });
 		expect(missingOf(rows[0])).toEqual(['name']);
 		expect(counts(rows)).toMatchObject({ ready: 0, needDetails: 1 });
+	});
+});
+
+describe('IMP-3 (rev 14) role, title and messaging name', () => {
+	const roles = SAMPLE_SCAN.hr!.roles;
+
+	it('says why a messaging name is refused, in plain words', () => {
+		expect(handleProblem('ada')).toBeUndefined();
+		expect(handleProblem('x'.repeat(65))).toBe('Messaging names are at most 64 characters.');
+		expect(handleProblem('has space')).toMatch(/letters, digits/);
+		expect(handleProblem('01ARZ3NDEKTSV4RRFFQ69G5FAV')).toMatch(/member id/);
+		expect(handleProblem('Owner')).toMatch(/reserved/);
+		expect(handleProblem('office')).toMatch(/reserved/);
+	});
+
+	it('the title follows the chosen role until the owner gives their own', () => {
+		const row = { ...rowsOf().rows.find((r) => r.name === 'server-dev')! };
+		const withRole = chooseRole(row, 'software engineer');
+		expect(withRole).toMatchObject({ role: 'software engineer', title: 'software engineer' });
+		const custom = chooseTitle(withRole, 'Senior Backend Engineer', roles);
+		expect(custom.title).toBe('Senior Backend Engineer');
+		expect(chooseRole(custom, 'staff engineer')).toMatchObject({ role: 'staff engineer', title: 'Senior Backend Engineer' });
+	});
+
+	it('suggests the catalog role closest to a custom title when there is one clear winner, marked Suggested, and counts it as filled', () => {
+		expect(suggestRole('Staff Engineer', roles)).toBe('staff engineer');
+		expect(suggestRole('Senior Backend Engineer', roles)).toBeUndefined(); // several roles share "engineer"
+		expect(suggestRole('Chef', roles)).toBeUndefined();
+		const row = { ...rowsOf().rows.find((r) => r.name === 'server-dev')!, runtime: 'codex' as const };
+		const custom = chooseTitle(row, 'Product Designer', roles);
+		expect(custom).toMatchObject({ role: 'product designer', roleSuggested: true });
+		expect(missingOf(custom)).toEqual([]);
+		// With no match the role stays empty and the row still needs details.
+		expect(missingOf(chooseTitle(row, 'Chef', roles))).toEqual(['role']);
+	});
+
+	it('does not replace a role the owner already chose', () => {
+		const row = chooseRole({ ...rowsOf().rows.find((r) => r.name === 'server-dev')! }, 'qa engineer');
+		expect(chooseTitle(row, 'Staff Engineer', roles).role).toBe('qa engineer');
+	});
+
+	it('treats a person already in the organization with the same name as taken, as HQ does (the owner apart)', () => {
+		const people = [
+			{ id: 'p1', kind: 'person', name: 'Server-Dev', owner: false },
+			{ id: 'me', kind: 'person', name: 'codex-dev', owner: true }
+		] as unknown as import('$lib/proto').Member[];
+		const { rows } = buildRows(SAMPLE_SCAN, { exclude: ['sample'], members: people });
+		expect(rows.find((r) => r.messagingName === 'server-dev')).toMatchObject({ existingMemberId: 'p1', existingKind: 'person' });
+		expect(rows.find((r) => r.messagingName === 'codex-dev')?.existingMemberId).toBeUndefined();
 	});
 });

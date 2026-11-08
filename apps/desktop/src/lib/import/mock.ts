@@ -1,5 +1,5 @@
 import type { ImportApi } from './api';
-import type { HrAgent, Scan } from './types';
+import type { Hints, HrAgent, Scan } from './types';
 
 /**
  * A team to bring in, for running the UI in a plain browser: the five HR agents and the ten messaging names our own
@@ -54,6 +54,21 @@ export const SAMPLE_SCAN: Scan = {
 	}
 };
 
+const HINTS = '/Users/sample/teams.toml';
+
+/** Our own team's shape (agents/.../dogfood/teams.toml): Engineering with App, Office, Agent tooling and Quality, and Design. */
+export const SAMPLE_HINTS: Hints = {
+	path: HINTS,
+	teams: [
+		{ key: 'engineering', name: 'Engineering', lead: 'ac-staff-engineer-ada', members: ['ac-staff-engineer-ada'] },
+		{ key: 'app', name: 'App', parent: 'engineering', lead: 'app-frontend-dev', members: ['app-frontend-dev', 'ac-software-engineer-riley'] },
+		{ key: 'office', name: 'Office', parent: 'engineering', lead: 'server-dev', members: ['server-dev', 'ac-software-engineer-river'] },
+		{ key: 'agent-tooling', name: 'Agent tooling', parent: 'engineering', lead: 'ac-software-engineer-remy', members: ['ac-software-engineer-remy', 'codex-dev', 'agy-senior-dev'] },
+		{ key: 'quality', name: 'Quality', parent: 'engineering', lead: 'reviewer', members: ['reviewer'] },
+		{ key: 'design', name: 'Design', lead: 'ac-product-designer-eden', members: ['ac-product-designer-eden'] }
+	]
+};
+
 export const mockImport: ImportApi = {
 	async defaults() {
 		return { hr: HR, messaging: SPOOL, user: 'sample' };
@@ -66,5 +81,11 @@ export const mockImport: ImportApi = {
 	},
 	async pickFolder() {
 		return undefined;
+	},
+	async pickFile() {
+		return undefined;
+	},
+	async readHints(path) {
+		return path === HINTS ? SAMPLE_HINTS : { path, error: "The file can't be read (No such file).", teams: [] };
 	}
 };
