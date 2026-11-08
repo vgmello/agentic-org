@@ -2,7 +2,7 @@
 kind: spec
 title: "Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)"
 status: for-review
-revision: 12
+revision: 13
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-08"
@@ -14,6 +14,8 @@ builds_on: [offices-and-teams-ux, work-items-ux]
 # Spec · Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)
 
 Builds on `offices-and-teams-ux.md` rev 4, `work-items-ux.md` rev 5 and `desktop-app-v1.md` (in Eden's notes, not in this repository) (hire §3.6, profile §3.5).
+
+**Revision 13 (2026-11-08): where suggested teams come from (app-frontend-dev's question).** The HR records have a `department` but nothing about sub-teams, and `AGENTS.md` isn't in the HR workspace, so teams can't be suggested "from roles and AGENTS.md ownership". Now: top-level teams come from `department`; every review row has a **Team** picker (default: its department's team, or "Not in a team" for an agent with no department); and an optional team hints file the owner chooses (the **Team hints** row's **Choose…**, a `teams.toml` from anywhere, never in or written into `hr/`, HR's ground, ada) prefills teams, parents, leads and members (§4). **Added:** IMP-10.
 
 **Revision 12 (2026-11-08): live updates paused.** When the app stops getting live changes from the office (the feed drops, for example when the office restarts, or listening fails), every screen shows a line saying so, with **Retry**, instead of looking current (§6, decision 8). From Eden's review of the live org screens with app-frontend-dev; the reviewer asked for it to be specified. **Added:** LIVE-8.
 
@@ -132,6 +134,8 @@ Every organization has one built-in agent, **HR lead**, created with the organiz
                         Found 5 agents in 1 project (ac)
    ☑ Messaging          ~/.agency/spool                             [Change…]
                         Found 9 names, 5 not in the HR workspace
+   ☐ Team hints         (optional)                                  [Choose…]
+                        A teams.toml that says who is in which team
                                                             [Cancel]  [Scan]
 ```
 
@@ -151,7 +155,7 @@ Every organization has one built-in agent, **HR lead**, created with the organiz
  [R] Riley          Senior Frontend Eng.  HR only          Claude Code   App ▾           ⓘ No messages
                                                                          [Bring in ▾: Active · Paused · Skip]
  ─────────────────────────────────────────────────────────────────────────────────
- Teams: create Engineering, App, Office, Agent tooling, Quality, Design   [Edit…]
+ Teams: from teams.toml (6) · Engineering, App, Office, Agent tooling, Quality, Design   [Edit…]
  Reporting lines: from HR (ada → you; River, Remy, Riley → ada)           [Edit…]
  Project: Agentic Org (ac), from HR · shared by Engineering, Design      [Edit…]
 ```
@@ -160,7 +164,10 @@ Every organization has one built-in agent, **HR lead**, created with the organiz
 - **Messaging-only agents** need a **role** (a catalog combobox, or "Custom title…") and a **runtime**. The row says "2 to fill", and **Bring in** counts only complete rows ("Bring in 5 agents · 5 need details").
 - **HR-only agents with no messaging inbox** get an info note, "No messages from Riley yet", and a per-row choice **Active · Paused · Skip**, defaulting to Active. The note explains: "Riley is active in HR but hasn't joined messaging. Bring in as Paused if Riley isn't working now."
 - **Offboarded HR agents** are listed collapsed under "Offboarded in HR (n)", unchecked, as a record.
-- **Teams:** HR has no teams, so the app suggests them from roles and AGENTS.md ownership (the shape in §2) in an editable preview. **Edit…** opens a small tree editor (rename, move, lead, members). **Skip teams** leaves everyone in "Not in a team".
+- **Teams** *(rev 13)*: HR has no teams, only each agent's `department`. So:
+  - **Top-level teams come from departments** (Engineering, Design), and each review row has a **Team** picker that defaults to its department's team. An agent with no department (messaging-only) defaults to "Not in a team"; a team is optional, so it doesn't count toward "need details". The picker lists every team in the plan, plus **New team…**, which opens the tree editor.
+  - **An optional team hints file**, chosen with the **Team hints** row's **Choose…** (a `teams.toml` from anywhere, never in `hr/`, which is HR's ground; the app never writes into `hr/`), prefills the rest: each team's name, parent, lead and members, by messaging name or HR id (for example `[teams.app] name = "App"`, `parent = "engineering"`, `lead = "app-frontend-dev"`, `members = ["app-frontend-dev", "ac-software-engineer-riley"]`). A `parent` names any team in the plan, including a team made from a department (its id is the department's name in lowercase, `engineering`). A table whose id matches a department team (`[teams.engineering]`) sets that team's name, lead and members instead of adding a second one. An unknown `parent` makes the team top-level, shown as "Parent not found: <id>"; a `lead` not found leaves the team without a lead, shown as "Lead not found: <name>". Neither blocks the import. When a file is chosen, the Teams line says "Teams: from <file name> (n)", where n counts every team in the plan. A member it names that isn't found shows as "Not found in this import: <name>" and blocks nothing. Rows it doesn't mention keep their department's team. A file that can't be read shows "Couldn't read <file name>: <reason>" and the import goes on without it.
+  - The suggested teams (the shape in §2 for us) show in an editable preview. **Edit…** opens a small tree editor (rename, move, lead, members). **Skip teams** leaves everyone in "Not in a team".
 - **Reporting lines** come from HR's `reports_to`. Messaging-only agents default to the owner, editable per row.
 - **What happens** (always visible, like Hire's dry run): "Creates 10 agents, 6 teams and 1 project in <org>. Nothing changes in your HR workspace or in messaging. Agents keep running where they are."
 - **Bring in** → progress in words (Adding agents… Creating teams… Linking messaging names…), then **Done**: the org chart opens with the new members highlighted, and a summary "10 agents, 6 teams, 1 project." (and "n agents paused." when any were brought in Paused) with **View Activity**.
@@ -275,6 +282,7 @@ The owner can always approve or reject any proposal. Someone who requests a hire
 - IMP-7 · After Bring in, the org chart shows every brought-in agent in its team, under its manager, highlighted. Messages from each agent's messaging name appear on that agent in Activity.
 - IMP-8 · Running import again shows only new or changed agents, and an agent already in the organization offers Update from HR or Skip.
 - IMP-9 · An interrupted import leaves no half-created agent, and Try again continues where it stopped.
+- IMP-10 · *(new, rev 13)* Top-level teams are suggested from each agent's department, and every review row has a Team picker (default: the department's team, plus New team…). A team hints file the owner chooses (Team hints › Choose…), when given, prefills teams, parents, leads and members, and the review says it came from that file. A table matching a department team fills that team in instead of adding another. An agent with no department and no hint defaults to Not in a team, which doesn't count as needing details. Names it lists that aren't found, and a file that can't be read, are shown and don't block the import.
 
 **Agent record (PROF)**
 - PROF-1 · Every agent's profile and quick view show its runtime, messaging name, office and status. A missing runtime reads "Runtime not set · Set runtime".
