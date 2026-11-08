@@ -2,7 +2,7 @@
 kind: spec
 title: "Offices, organizations and teams (UX)"
 status: for-review
-revision: 9
+revision: 10
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-08"
@@ -20,6 +20,8 @@ Requested by ada for the user.
 **What it changes in my earlier work:** it replaces, for the office model, `desktop-app-v1.md` (in Eden's notes, not in this repository) §2.5 (workspace switcher), §3.2 (department and reporting-line chart) and §7.1 (Machines). Revision 5 of that spec folds this in. Acceptance-criterion IDs here are stable: changed criteria are rewritten under the same ID, retired IDs are never reused.
 
 ## Changelog
+
+**Revision 10 (2026-11-08): key custody wording (ada).** With key custody (the host holds the office keys, River's `river/host-keys`, not yet on `v1`; until it merges, ADR-0002 and `office-host-boundary.md` still describe the Keychain model, and ada updates them), `key_missing` covers both a key that isn't there and a key that doesn't open the databases. The new copy is right under both models. Its copy no longer names the Keychain: "This office's key isn't available on this Mac, so its data can't be opened" (§3.3). The action is unchanged. No criteria changed.
 
 **Revision 9 (2026-11-08): host capabilities (A50).** The host's `hello` lists its capabilities, and that list replaces version comparison for status events and restart. Without `office.status_changed` the app shows "Status unknown" (as in rev 8). Without `office.restart` the restart button is hidden and "Update Agentic Org to restart offices from here" shows, besides the refusals for `unsupported_version` and `invalid_request` (§3.3). `HelloResult.capabilities` is on v1 (`crates/org-proto/src/calls.rs`, with `capability::OFFICE_RESTART`, `OFFICE_STATUS_CHANGED` and `HelloResult::supports`; ada, merged at `b9f1198`). **Criteria rewritten (same ID):** OFC-11, OFC-12 *(rev 9)*.
 
@@ -174,7 +176,7 @@ Shown as the Stopped row's secondary text and at the top of its details, with th
 | `restarts_exhausted` | "It kept stopping, so it won't restart on its own" | **Restart office** · Copy details |
 | `storage_error` | "It can't read or write its data on this Mac" (also used when the Keychain doesn't allow access, `office-host-boundary.md`) | **Restart office** · Copy details *(rev 8)* |
 | `in_use` | "Its data is still in use by another Agentic Org process. Trying again in N s" (N from `next_restart_at`) *(rev 8)* | **Restart office** · Copy details (the host also retries by itself) *(rev 8)* |
-| `key_missing` | "Its data key is missing from this Mac's Keychain, so its data can't be opened" (the databases exist, the key doesn't) | **Try again** (`office.restart`, which asks the Keychain again and returns straight to this reason if the key is still missing) · Copy details. The button says Try again, never Restart. |
+| `key_missing` | "This office's key isn't available on this Mac, so its data can't be opened" *(rev 10)* (the databases exist, and no key that opens them is available on this Mac: missing, or not the right one) | **Try again** (`office.restart`, which asks for the key again and returns straight to this reason if it still isn't available) · Copy details. The button says Try again, never Restart. |
 | `stopped_by_owner` | "You stopped it" | **Start office** (`office.restart`). Phase 1 has no stop call, so this appears only once one exists. |
 | `unsupported_version` | "Parts of Agentic Org on this Mac don't match. Update or reinstall Agentic Org, then log out and back in." *(rev 8)* | **Check for updates** · Copy details. No Restart: the contract refuses it. |
 | `invalid_request` | "It couldn't start because of an internal error" | Copy details (to send to support). No Restart: the contract refuses it. |
