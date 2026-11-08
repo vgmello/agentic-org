@@ -118,8 +118,40 @@ mod tests {
             ProjectRemoveTeam::METHOD,
         ];
         assert_eq!(methods, contract);
-        // And the enum accepts exactly these names (a params object of the right shape for each is
-        // exercised by the engine's tests; here an unknown name is refused).
+        // The enum's own wire names: each parses with the contract's params for it (so a typo in a
+        // `rename` can't pass), and writes back under the same name.
+        let c = |extra: serde_json::Value| {
+            let mut p = serde_json::json!({"command_id": "c"});
+            p.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            p
+        };
+        let params = [
+            c(serde_json::json!({"team_id": "t", "name": "n"})),
+            c(serde_json::json!({"team_id": "t", "expected_version": 1, "name": "n"})),
+            c(serde_json::json!({"team_id": "t", "expected_version": 1})),
+            c(serde_json::json!({"team_id": "t", "expected_version": 1})),
+            c(serde_json::json!({"team_id": "t", "expected_version": 1})),
+            c(serde_json::json!({"membership_id": "m", "team_id": "t", "member_id": "p"})),
+            c(serde_json::json!({"membership_id": "m", "expected_version": 1})),
+            c(serde_json::json!({"membership_id": "m", "expected_version": 1})),
+            c(serde_json::json!({"member_id": "p", "name": "n"})),
+            c(serde_json::json!({"member_id": "p", "expected_version": 1})),
+            c(serde_json::json!({"member_id": "p", "expected_version": 1})),
+            c(serde_json::json!({"member_id": "p", "expected_version": 1})),
+            c(
+                serde_json::json!({"membership_id": "m", "expected_version": 1, "new_membership_id": "n", "to_team_id": "t"}),
+            ),
+            c(serde_json::json!({"project_team_id": "x", "project_id": "p", "team_id": "t"})),
+            c(serde_json::json!({"project_team_id": "x", "expected_version": 1})),
+        ];
+        for (method, params) in methods.iter().zip(params) {
+            let wire = serde_json::json!({"method": method, "params": params});
+            let command: OrgCommand = serde_json::from_value(wire.clone())
+                .unwrap_or_else(|e| panic!("{method} doesn't parse: {e}"));
+            assert_eq!(serde_json::to_value(&command).unwrap()["method"], *method);
+        }
         let unknown = serde_json::json!({"method": "team.explode", "params": {"command_id": "c"}});
         assert!(serde_json::from_value::<OrgCommand>(unknown).is_err());
     }

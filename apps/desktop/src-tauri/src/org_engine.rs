@@ -726,6 +726,16 @@ fn fingerprint(command: &OrgCommand) -> Option<String> {
     Some(format!("{hash:016x}:{}", json.len()))
 }
 
+/// Whether `text` is what `fingerprint` writes: sixteen hex digits, a colon and a length.
+fn is_fingerprint(text: &str) -> bool {
+    text.split_once(':').is_some_and(|(hash, len)| {
+        hash.len() == 16
+            && hash.bytes().all(|b| b.is_ascii_hexdigit())
+            && !len.is_empty()
+            && len.bytes().all(|b| b.is_ascii_digit())
+    })
+}
+
 /// A structure with its history of answers: HQ's side of "a retry with the same `command_id` gets
 /// the same answer" and the position that moves with every commit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -744,6 +754,24 @@ impl Hq {
             snapshot,
             answers: Default::default(),
             order: Default::default(),
+        }
+    }
+
+    /// Make a structure read from a file consistent: keep only answers kept in the current form (a
+    /// fingerprint, not a command's text), list them in `order`, and honour the cap. Older files
+    /// written by earlier builds had neither.
+    pub fn tidy(&mut self) {
+        self.answers.retain(|_, a| is_fingerprint(&a.command));
+        let known: std::collections::HashSet<String> = self.answers.keys().cloned().collect();
+        self.order.retain(|id| known.contains(id));
+        let listed: std::collections::HashSet<String> = self.order.iter().cloned().collect();
+        let mut missing: Vec<String> = known.difference(&listed).cloned().collect();
+        missing.sort();
+        self.order.extend(missing);
+        while self.order.len() > ANSWERS_KEPT {
+            if let Some(oldest) = self.order.pop_front() {
+                self.answers.remove(&oldest);
+            }
         }
     }
 
@@ -1700,7 +1728,11 @@ mod tests {
             serde_json::from_value(json!({"method": step["method"], "params": params})).unwrap()
         };
         let cases = vectors["cases"].as_array().unwrap();
-        assert!(cases.len() > 50);
+        assert_eq!(
+            cases.len(),
+            80,
+            "a case was lost or added: update this count"
+        );
         for case in cases {
             let mut h = hq();
             for (i, step) in case["setup"].as_array().into_iter().flatten().enumerate() {
@@ -1828,5 +1860,38 @@ mod tests {
             ErrorCode::InvalidRequest
         );
         assert_eq!(serde_json::to_string(&h).unwrap().len(), size_before);
+    }
+
+    #[test]
+    fn an_older_file_is_tidied_on_load_only_current_answers_survive_in_order() {
+        let mut h = hq();
+        let c = cmd("team.create", json!({"team_id": "ops", "name": "Ops"}));
+        assert!(h.handle(&c).0.is_ok());
+        // A file written by an earlier build: the answer holds the command's text, and no `order`.
+        let mut legacy: serde_json::Value = serde_json::to_value(&h).unwrap();
+        legacy["answers"]["old"] = json!({"command": "{\"method\":\"team.create\"}", "result": {"Err": {"code": "not_found", "message": "x"}}});
+        legacy.as_object_mut().unwrap().remove("order");
+        let mut loaded: Hq = serde_json::from_value(legacy).unwrap();
+        loaded.tidy();
+        // The current-form answer is kept and listed; the legacy one is dropped.
+        assert_eq!(
+            loaded.handle(&c).0.unwrap().status,
+            CommandStatus::Committed
+        );
+        assert_eq!(
+            loaded
+                .snapshot
+                .teams
+                .iter()
+                .filter(|t| t.id == "ops")
+                .count(),
+            1
+        );
+        assert!(serde_json::to_string(&loaded)
+            .unwrap()
+            .contains(r#""order":["c-team.create"]"#));
+        assert!(!serde_json::to_string(&loaded)
+            .unwrap()
+            .contains("team.create\\\"}"));
     }
 }

@@ -5,7 +5,7 @@
 // error codes HQ would, in the contract's order: not_found, invalid_request, invalid_name, conflict, then the
 // command's own rule (owner_protected, cycle, not_a_member, not_empty), then already_exists.
 import type { ApiErrorCode, AppError, Member, Membership, OrgSnapshot, ProjectTeam, Team } from '$lib/proto';
-import { validateName } from '$lib/name';
+import { trimWhiteSpace, validateName } from '$lib/name';
 import type { OrgCommand } from './commands';
 
 const fail = (code: ApiErrorCode, message: string): never => {
@@ -60,7 +60,7 @@ const AGENT_TEXT_MAX = 200;
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 export const badId = (id: string | undefined) => id !== undefined && (id === '' || [...id].length > ID_MAX || CONTROL.test(id));
-const badText = (t: string | undefined) => t !== undefined && (t.trim() === '' || [...t].length > AGENT_TEXT_MAX || CONTROL.test(t));
+const badText = (t: string | undefined) => t !== undefined && (trimWhiteSpace(t) === '' || [...t].length > AGENT_TEXT_MAX || CONTROL.test(t));
 
 /** An id that is not an id can never name anything, so it is refused before the organization is looked at. */
 export function wellFormed(c: OrgCommand) {

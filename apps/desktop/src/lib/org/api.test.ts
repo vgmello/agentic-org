@@ -152,3 +152,29 @@ describe('the browser mock keeps its history bounded, like the Rust mock HQ', ()
 		await expect(make(storage).command('org-1', { method: 'team.create', params: { command_id: 'X', team_id: 'n', name: 'N' } })).resolves.toMatchObject({ status: 'committed' });
 	});
 });
+
+describe('the browser mock agrees with the Rust mock on the edges', () => {
+	it('counts the size of a command in bytes, so 6000 wide characters are too big', async () => {
+		const org = make();
+		await expect(org.command('org-1', { method: 'team.create', params: { team_id: 'w', name: '名'.repeat(6000) } })).rejects.toMatchObject({ code: 'invalid_request' });
+		await expect(org.command('org-1', { method: 'team.create', params: { team_id: 'a', name: 'a'.repeat(60) } })).resolves.toMatchObject({ status: 'committed' });
+	});
+
+	it('answers not_found for a missing organization before it judges the request', async () => {
+		const org = createMockOrg(async () => {
+			throw { source: 'api', code: 'not_found', message: 'gone' };
+		}, { storage: memory() });
+		await expect(org.command('missing', { method: 'team.create', params: { command_id: '', team_id: 'a', name: 'A' } })).rejects.toMatchObject({ code: 'not_found' });
+	});
+
+	it('a stored list of answers that is not a list is ignored, and a bad answer is replaced once in the order', async () => {
+		const storage = memory();
+		const first = make(storage);
+		const snapshot = (await first.view('org-1')).snapshot;
+		storage.setItem('agentic-org.mock.org.org-1', JSON.stringify({ snapshot, answers: {}, order: 'x' }));
+		await expect(make(storage).command('org-1', { method: 'team.create', params: { command_id: 'Q', team_id: 'q', name: 'Q' } })).resolves.toMatchObject({ status: 'committed' });
+		storage.setItem('agentic-org.mock.org.org-1', JSON.stringify({ snapshot, answers: { Z: { command: 'x', result: null } }, order: ['Z'] }));
+		await make(storage).command('org-1', { method: 'team.create', params: { command_id: 'Z', team_id: 'z', name: 'Z' } });
+		expect(JSON.parse(storage.getItem('agentic-org.mock.org.org-1')!).order).toEqual(['Z']);
+	});
+});

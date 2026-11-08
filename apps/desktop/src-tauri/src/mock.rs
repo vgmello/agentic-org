@@ -265,7 +265,8 @@ fn load_structures(file: &std::path::Path) -> io::Result<HashMap<String, Hq>> {
             return Err(io::Error::other("unsupported structures.json version"))
         }
         Ok(_) => {
-            if let Ok(stored) = serde_json::from_slice::<StructuresFile>(&bytes) {
+            if let Ok(mut stored) = serde_json::from_slice::<StructuresFile>(&bytes) {
+                stored.organizations.values_mut().for_each(Hq::tidy);
                 return Ok(stored.organizations);
             }
         }

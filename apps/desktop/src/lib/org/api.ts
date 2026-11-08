@@ -37,7 +37,8 @@ interface Stored {
 
 const isStored = (x: unknown): x is Stored => {
 	const s = (x as Stored | null)?.snapshot;
-	return !!s && Array.isArray(s.teams) && Array.isArray(s.members) && Array.isArray(s.memberships) && !!s.position && typeof (x as Stored).answers === 'object' && (x as Stored).answers !== null;
+	const order = (x as Stored | null)?.order;
+	return (order === undefined || (Array.isArray(order) && order.every((id) => typeof id === 'string'))) && !!s && Array.isArray(s.teams) && Array.isArray(s.members) && Array.isArray(s.memberships) && !!s.position && typeof (x as Stored).answers === 'object' && (x as Stored).answers !== null;
 };
 const isAnswer = (x: unknown): x is Answer => {
 	const a = x as Answer | null;
@@ -48,12 +49,13 @@ const refusal = (code: ApiErrorCode, message: string): AppError => ({ source: 'a
 
 /** As in the Rust mock HQ: only recent answers are kept, and a command can't be bigger than a command. */
 const ANSWERS_KEPT = 500;
-const COMMAND_MAX_CHARS = 16 * 1024;
+const COMMAND_MAX_BYTES = 16 * 1024;
 
 /** A small stable hash (cyrb53) of the command's JSON: enough to tell two commands with one id apart. */
 function fingerprint(command: OrgCommand): string | undefined {
 	const text = JSON.stringify(command);
-	if (text.length > COMMAND_MAX_CHARS) return undefined;
+	// Bytes, as the Rust side counts them (a character may be up to three).
+	if (new TextEncoder().encode(text).length > COMMAND_MAX_BYTES) return undefined;
 	let h1 = 0xdeadbeef;
 	let h2 = 0x41c6ce57;
 	for (let i = 0; i < text.length; i++) {
@@ -103,9 +105,9 @@ export function createMockOrg(
 		const command = ready(input);
 		const id = command.params.command_id;
 		const print = fingerprint(command);
+		const { key, store, state } = await load(organizationId); // not_found first, as in the Rust mock
 		// A request that can't be read as a command is refused and never remembered.
 		if (!print || badId(id)) throw refusal('invalid_request', "That request isn't valid.");
-		const { key, store, state } = await load(organizationId);
 		const earlier = Object.hasOwn(state.answers, id) && isAnswer(state.answers[id]) ? state.answers[id] : undefined;
 		if (earlier) {
 			if (earlier.command !== print) throw refusal('invalid_request', 'That command id was already used for a different command.');
@@ -121,7 +123,8 @@ export function createMockOrg(
 			if (!(e && typeof e === 'object' && 'code' in e && 'source' in e)) throw e;
 			result = { error: e as AppError };
 		}
-		const order = [...(state.order ?? Object.keys(state.answers)), id];
+		// An answer that couldn't be read is replaced: its id goes to the back of the list once.
+		const order = [...(state.order ?? Object.keys(state.answers)).filter((x) => x !== id), id];
 		const answers = { ...state.answers, [id]: { command: print, result } };
 		while (order.length > ANSWERS_KEPT) delete answers[order.shift()!];
 		try {

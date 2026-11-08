@@ -976,6 +976,18 @@
      }
     }
    ]
+  },
+  {
+   "name": "set title: a byte-order mark is a character, not blank",
+   "command": {
+    "method": "team.set_title",
+    "params": {
+     "membership_id": "ms-1",
+     "expected_version": 1,
+     "title_in_team": "﻿"
+    }
+   },
+   "expect": "ok"
   }
  ]
 }
