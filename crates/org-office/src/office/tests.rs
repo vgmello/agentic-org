@@ -3,7 +3,6 @@ use std::os::unix::fs::PermissionsExt;
 use tempfile::TempDir;
 
 use super::*;
-use crate::key::{InMemoryKeys, KeyError};
 use crate::model::OfficeRole;
 use org_proto::org::CommandStatus;
 
@@ -24,11 +23,16 @@ fn folder_of(dir: &TempDir, id: &str) -> PathBuf {
     dir.path().join("offices").join(id)
 }
 
-fn made() -> (TempDir, InMemoryKeys, Office) {
+/// The key the host would send (the office never makes one).
+fn test_key() -> Key {
+    Key::from_bytes([5; 32])
+}
+
+fn made() -> (TempDir, Key, Office) {
     let dir = TempDir::new().unwrap();
-    let keys = InMemoryKeys::new();
-    let office = Office::create(folder_of(&dir, ID), &new_office(ID), &keys).unwrap();
-    (dir, keys, office)
+    let key = test_key();
+    let office = Office::create(folder_of(&dir, ID), &new_office(ID), key.clone()).unwrap();
+    (dir, key, office)
 }
 
 fn mode(path: &Path) -> u32 {
@@ -44,48 +48,11 @@ fn names_in(folder: &Path) -> Vec<String> {
     names
 }
 
-/// A key store that cannot delete.
-struct CannotDelete(InMemoryKeys);
-
-impl KeyProvider for CannotDelete {
-    fn load(&self, id: &str) -> Result<Option<Key>, KeyError> {
-        self.0.load(id)
-    }
-    fn store(&self, id: &str, key: &Key) -> Result<(), KeyError> {
-        self.0.store(id, key)
-    }
-    fn delete(&self, _id: &str) -> Result<(), KeyError> {
-        Err("the keychain refuses".into())
-    }
-}
-
-/// A key store whose `delete` tries to take the folder's lock: it records whether it found it taken.
-struct ChecksLock {
-    inner: InMemoryKeys,
-    folder: PathBuf,
-    lock_was_held: std::sync::atomic::AtomicBool,
-}
-impl KeyProvider for ChecksLock {
-    fn load(&self, id: &str) -> Result<Option<Key>, KeyError> {
-        self.inner.load(id)
-    }
-    fn store(&self, id: &str, key: &Key) -> Result<(), KeyError> {
-        self.inner.store(id, key)
-    }
-    fn delete(&self, id: &str) -> Result<(), KeyError> {
-        let probe = private_file(&self.folder.join(LOCK_FILE))?;
-        let held = matches!(probe.try_lock(), Err(TryLockError::WouldBlock));
-        self.lock_was_held
-            .store(held, std::sync::atomic::Ordering::SeqCst);
-        self.inner.delete(id)
-    }
-}
-
 // ---- create ---------------------------------------------------------------------------------
 
 #[test]
-fn create_makes_the_whole_folder_with_a_saved_key_and_office_json() {
-    let (dir, keys, office) = made();
+fn create_makes_the_whole_folder_and_office_json() {
+    let (dir, _key, office) = made();
     let folder = folder_of(&dir, ID);
 
     assert_eq!(
@@ -114,10 +81,6 @@ fn create_makes_the_whole_folder_with_a_saved_key_and_office_json() {
     );
     assert_eq!(info.role, OfficeRole::Hq);
     assert_eq!(office_file::read(&folder).unwrap().as_ref(), Some(info));
-    assert!(
-        keys.load(ID).unwrap().is_some(),
-        "the key was saved under the office id"
-    );
 
     // Owner-only everywhere.
     assert_eq!(mode(&folder), 0o700);
@@ -129,7 +92,7 @@ fn create_makes_the_whole_folder_with_a_saved_key_and_office_json() {
 
 #[test]
 fn both_databases_are_encrypted_with_the_one_key() {
-    let (dir, keys, office) = made();
+    let (dir, key, office) = made();
     let folder = folder_of(&dir, ID);
     drop(office);
     for file in ["org.db", "office.db"] {
@@ -144,38 +107,33 @@ fn both_databases_are_encrypted_with_the_one_key() {
         );
     }
     // The same key opens both.
-    let key = keys.load(ID).unwrap().unwrap();
     for file in ["org.db", "office.db"] {
         Store::open(&folder.join(file), &key, Opening::Existing, &org_db::SCHEMA).unwrap();
     }
 }
 
 #[test]
-fn a_failed_create_leaves_nothing_but_the_lock_file_and_no_key_and_can_be_repeated() {
+fn a_failed_create_leaves_nothing_but_the_lock_file_and_can_be_repeated() {
     for step in ["databases", "workspace", "organization", "office_json"] {
         let dir = TempDir::new().unwrap();
-        let keys = InMemoryKeys::new();
+        let key = test_key();
         let folder = folder_of(&dir, ID);
 
         FAIL_AT.with(|f| f.set(Some(step)));
-        let failed = Office::create(&folder, &new_office(ID), &keys);
+        let failed = Office::create(&folder, &new_office(ID), key.clone());
         FAIL_AT.with(|f| f.set(None));
 
         assert!(matches!(failed, Err(OfficeError::Storage(_))), "{step}");
         assert_eq!(names_in(&folder), ["office.lock"], "{step}");
-        assert!(
-            keys.load(ID).unwrap().is_none(),
-            "{step}: the key it made is gone"
-        );
         // The id can be created again.
-        Office::create(&folder, &new_office(ID), &keys).unwrap();
+        Office::create(&folder, &new_office(ID), key.clone()).unwrap();
     }
 }
 
 #[test]
 fn office_json_is_written_after_every_other_step() {
     REACHED.with(|reached| reached.borrow_mut().clear());
-    let (dir, _keys, _office) = made();
+    let (dir, _key, _office) = made();
     let steps = REACHED.with(|reached| reached.borrow().clone());
     assert_eq!(
         steps,
@@ -195,14 +153,14 @@ fn an_office_without_its_office_json_is_unfinished() {
     // A create that stops just before it leaves a folder the host sees as unfinished: no
     // `office.json`, though both databases hold the organization.
     let dir = TempDir::new().unwrap();
-    let keys = InMemoryKeys::new();
+    let key = test_key();
     let folder = folder_of(&dir, ID);
-    let office = Office::create(&folder, &new_office(ID), &keys).unwrap();
+    let office = Office::create(&folder, &new_office(ID), key.clone()).unwrap();
     drop(office);
     fs::remove_file(folder.join("office.json")).unwrap();
     // ...and `open` does not treat it as an office.
     assert!(matches!(
-        Office::open(&folder, &keys),
+        Office::open(&folder, key.clone()),
         Err(OfficeError::NotFound)
     ));
 }
@@ -217,13 +175,13 @@ fn create_refuses_anything_already_there_and_changes_none_of_it() {
         "workspace",
     ] {
         let dir = TempDir::new().unwrap();
-        let keys = InMemoryKeys::new();
+        let key = test_key();
         let folder = folder_of(&dir, ID);
         fs::create_dir_all(&folder).unwrap();
         fs::write(folder.join(planted), b"precious").unwrap();
         let before = names_in(&folder);
 
-        let result = Office::create(&folder, &new_office(ID), &keys);
+        let result = Office::create(&folder, &new_office(ID), key.clone());
 
         assert!(
             matches!(result, Err(OfficeError::OfficeExists)),
@@ -234,40 +192,18 @@ fn create_refuses_anything_already_there_and_changes_none_of_it() {
             before.iter().all(|n| after.contains(n)),
             "{planted} vanished"
         );
-        assert!(
-            keys.load(ID).unwrap().is_none(),
-            "{planted}: a key was made"
-        );
         assert_eq!(fs::read(folder.join(planted)).unwrap(), b"precious");
     }
 }
 
 #[test]
-fn create_refuses_an_id_that_already_has_a_key_and_keeps_that_key() {
-    let dir = TempDir::new().unwrap();
-    let keys = InMemoryKeys::new();
-    let old = Key::from_bytes([9; 32]);
-    keys.store(ID, &old).unwrap();
-
-    let result = Office::create(folder_of(&dir, ID), &new_office(ID), &keys);
-
-    assert!(matches!(result, Err(OfficeError::KeyExists)));
-    assert_eq!(
-        keys.load(ID).unwrap(),
-        Some(old),
-        "the existing key was replaced or deleted"
-    );
-    assert_eq!(names_in(&folder_of(&dir, ID)), ["office.lock"]);
-}
-
-#[test]
 fn create_checks_its_arguments_before_touching_anything() {
     let dir = TempDir::new().unwrap();
-    let keys = InMemoryKeys::new();
+    let key = test_key();
     let make = |change: &dyn Fn(&mut NewOffice)| {
         let mut new = new_office(ID);
         change(&mut new);
-        Office::create(folder_of(&dir, ID), &new, &keys)
+        Office::create(folder_of(&dir, ID), &new, key.clone())
     };
     // A bad id is `Invalid`.
     for result in [
@@ -296,20 +232,19 @@ fn create_checks_its_arguments_before_touching_anything() {
     let wrong = Office::create(
         dir.path().join("offices").join("OTHER"),
         &new_office(ID),
-        &keys,
+        key.clone(),
     );
     assert!(matches!(wrong, Err(OfficeError::Invalid(_))));
     assert!(!dir.path().join("offices").exists(), "something was made");
-    assert!(keys.load(ID).unwrap().is_none());
 }
 
 #[test]
 fn names_are_trimmed_into_office_json() {
     let dir = TempDir::new().unwrap();
-    let keys = InMemoryKeys::new();
+    let key = test_key();
     let mut new = new_office(ID);
     new.org_name = "  Acme Corp ".into();
-    let office = Office::create(folder_of(&dir, ID), &new, &keys).unwrap();
+    let office = Office::create(folder_of(&dir, ID), &new, key.clone()).unwrap();
     assert_eq!(office.info().org_name, "Acme Corp");
 }
 
@@ -317,38 +252,38 @@ fn names_are_trimmed_into_office_json() {
 
 #[test]
 fn open_reopens_what_create_made() {
-    let (dir, keys, office) = made();
+    let (dir, key, office) = made();
     let info = office.info().clone();
     drop(office);
 
-    let again = Office::open(folder_of(&dir, ID), &keys).unwrap();
+    let again = Office::open(folder_of(&dir, ID), key.clone()).unwrap();
 
     assert_eq!(again.info(), &info);
 }
 
 #[test]
 fn one_process_at_a_time_owns_an_office_and_a_new_one_waits_for_the_old() {
-    let (dir, keys, office) = made();
+    let (dir, key, office) = made();
     let folder = folder_of(&dir, ID);
 
     assert!(matches!(
-        Office::open_waiting(&folder, &keys, SHORT),
+        Office::open_waiting(&folder, key.clone(), SHORT),
         Err(OfficeError::InUse)
     ));
     assert!(matches!(
-        Office::create_waiting(&folder, &new_office(ID), &keys, SHORT),
+        Office::create_waiting(&folder, &new_office(ID), key.clone(), SHORT),
         Err(OfficeError::InUse)
     ));
     assert!(matches!(
-        Office::discard_waiting(&folder, ID, &keys, SHORT),
+        Office::discard_waiting(&folder, ID, Some(&key), SHORT),
         Err(OfficeError::InUse)
     ));
 
     // A replacement that starts while the old one is still shutting down waits for it.
     let waiter = {
-        let (folder, keys) = (folder.clone(), keys);
+        let (folder, key) = (folder.clone(), key);
         std::thread::spawn(move || {
-            Office::open_waiting(&folder, &keys, Duration::from_secs(10)).map(|_| ())
+            Office::open_waiting(&folder, key.clone(), Duration::from_secs(10)).map(|_| ())
         })
     };
     std::thread::sleep(Duration::from_millis(200));
@@ -359,12 +294,12 @@ fn one_process_at_a_time_owns_an_office_and_a_new_one_waits_for_the_old() {
 #[test]
 fn open_makes_nothing() {
     let dir = TempDir::new().unwrap();
-    let keys = InMemoryKeys::new();
+    let key = test_key();
     let folder = folder_of(&dir, ID);
 
     // No folder.
     assert!(matches!(
-        Office::open(&folder, &keys),
+        Office::open(&folder, key.clone()),
         Err(OfficeError::NotFound)
     ));
     assert!(!dir.path().join("offices").exists());
@@ -372,50 +307,33 @@ fn open_makes_nothing() {
     // A folder with no office.json: an unfinished create, not an office.
     fs::create_dir_all(&folder).unwrap();
     assert!(matches!(
-        Office::open(&folder, &keys),
+        Office::open(&folder, key.clone()),
         Err(OfficeError::NotFound)
     ));
     assert_eq!(names_in(&folder), ["office.lock"]);
-    assert!(keys.load(ID).unwrap().is_none());
 }
 
 #[test]
-fn open_with_the_key_gone_is_key_missing_and_mints_nothing() {
-    let (dir, keys, office) = made();
+fn open_with_a_key_that_does_not_open_the_databases_is_key_missing_and_changes_nothing() {
+    let (dir, _key, office) = made();
     let folder = folder_of(&dir, ID);
     drop(office);
-    keys.delete(ID).unwrap();
     let before = names_in(&folder);
+    let org_before = fs::read(folder.join("org.db")).unwrap();
 
+    // The host sent another key: the databases are not opened, nor a key made in its place.
     assert!(matches!(
-        Office::open(&folder, &keys),
+        Office::open(&folder, Key::from_bytes([1; 32])),
         Err(OfficeError::KeyMissing)
     ));
 
-    assert!(keys.load(ID).unwrap().is_none(), "a key was made");
+    assert_eq!(fs::read(folder.join("org.db")).unwrap(), org_before);
     assert_eq!(names_in(&folder), before);
 }
 
 #[test]
-fn open_with_the_wrong_key_is_an_error_that_leaves_the_files_alone() {
-    let (dir, keys, office) = made();
-    let folder = folder_of(&dir, ID);
-    drop(office);
-    keys.delete(ID).unwrap();
-    keys.store(ID, &Key::from_bytes([1; 32])).unwrap();
-    let before = fs::read(folder.join("org.db")).unwrap();
-
-    assert!(matches!(
-        Office::open(&folder, &keys),
-        Err(OfficeError::Storage(_))
-    ));
-
-    assert_eq!(fs::read(folder.join("org.db")).unwrap(), before);
-}
-
-#[test]
 fn open_refuses_an_office_json_that_names_another_office_or_organization() {
-    let (dir, keys, office) = made();
+    let (dir, key, office) = made();
     let folder = folder_of(&dir, ID);
     let info = office.info().clone();
     drop(office);
@@ -426,7 +344,7 @@ fn open_refuses_an_office_json_that_names_another_office_or_organization() {
     fs::remove_file(folder.join("office.json")).unwrap();
     office_file::write(&folder, &other).unwrap();
     assert!(matches!(
-        Office::open(&folder, &keys),
+        Office::open(&folder, key.clone()),
         Err(OfficeError::Invalid(_))
     ));
 
@@ -436,14 +354,14 @@ fn open_refuses_an_office_json_that_names_another_office_or_organization() {
     fs::remove_file(folder.join("office.json")).unwrap();
     office_file::write(&folder, &other).unwrap();
     assert!(matches!(
-        Office::open(&folder, &keys),
+        Office::open(&folder, key.clone()),
         Err(OfficeError::Invalid(_))
     ));
 }
 
 #[test]
 fn open_refuses_a_missing_database_and_does_not_make_one() {
-    let (dir, keys, office) = made();
+    let (dir, key, office) = made();
     let folder = folder_of(&dir, ID);
     drop(office);
     for name in ["office.db", "office.db-wal", "office.db-shm"] {
@@ -451,7 +369,7 @@ fn open_refuses_a_missing_database_and_does_not_make_one() {
     }
 
     assert!(matches!(
-        Office::open(&folder, &keys),
+        Office::open(&folder, key.clone()),
         Err(OfficeError::Storage(_))
     ));
     assert!(!folder.join("office.db").exists());
@@ -460,15 +378,13 @@ fn open_refuses_a_missing_database_and_does_not_make_one() {
 // ---- discard --------------------------------------------------------------------------------
 
 #[test]
-fn discard_removes_an_unfinished_create_and_its_key() {
+fn discard_removes_an_unfinished_create() {
     // (a) a folder with only the lock; (b) databases made but the organization not committed.
     for with_schema_only_database in [false, true] {
         let dir = TempDir::new().unwrap();
-        let keys = InMemoryKeys::new();
+        let key = test_key();
         let folder = folder_of(&dir, ID);
         fs::create_dir_all(&folder).unwrap();
-        let key = Key::generate().unwrap();
-        keys.store(ID, &key).unwrap();
         if with_schema_only_database {
             drop(Store::open(&folder.join("org.db"), &key, Opening::New, &org_db::SCHEMA).unwrap());
             drop(
@@ -483,121 +399,88 @@ fn discard_removes_an_unfinished_create_and_its_key() {
             fs::create_dir(folder.join("workspace")).unwrap();
         }
 
-        Office::discard(&folder, ID, &keys).unwrap();
+        Office::discard(&folder, ID, Some(&key)).unwrap();
 
         assert!(!folder.exists(), "the folder is still there");
-        assert!(keys.load(ID).unwrap().is_none(), "the key is still there");
     }
 }
 
 #[test]
 fn discard_never_removes_a_finished_office() {
-    let (dir, keys, office) = made();
+    let (dir, key, office) = made();
     let folder = folder_of(&dir, ID);
     drop(office);
     let before = names_in(&folder);
 
     assert!(matches!(
-        Office::discard(&folder, ID, &keys),
+        Office::discard(&folder, ID, Some(&key)),
         Err(OfficeError::OfficeExists)
     ));
 
     assert_eq!(names_in(&folder), before);
-    assert!(keys.load(ID).unwrap().is_some());
-    Office::open(&folder, &keys).unwrap();
+    Office::open(&folder, key.clone()).unwrap();
 }
 
 #[test]
 fn discard_never_removes_an_office_that_lost_its_office_json() {
-    let (dir, keys, office) = made();
+    let (dir, key, office) = made();
     let folder = folder_of(&dir, ID);
     drop(office);
     fs::remove_file(folder.join("office.json")).unwrap();
 
     assert!(matches!(
-        Office::discard(&folder, ID, &keys),
+        Office::discard(&folder, ID, Some(&key)),
         Err(OfficeError::OfficeExists)
     ));
 
     assert!(folder.join("org.db").exists());
-    assert!(keys.load(ID).unwrap().is_some());
 }
 
 #[test]
 fn discard_refuses_databases_it_cannot_check() {
-    let (dir, keys, office) = made();
+    let (dir, _key, office) = made();
     let folder = folder_of(&dir, ID);
     drop(office);
     fs::remove_file(folder.join("office.json")).unwrap();
 
-    // The key is gone.
-    let kept = keys.load(ID).unwrap().unwrap();
-    keys.delete(ID).unwrap();
+    // The host has no key for it: databases are not looked into, and are not deleted.
     assert!(matches!(
-        Office::discard(&folder, ID, &keys),
+        Office::discard(&folder, ID, None),
         Err(OfficeError::Storage(_))
     ));
     assert!(folder.join("org.db").exists());
 
-    // The key is wrong.
-    keys.store(ID, &Key::from_bytes([3; 32])).unwrap();
+    // The key is wrong: it does not open them (KeyMissing), and nothing is deleted.
     assert!(matches!(
-        Office::discard(&folder, ID, &keys),
-        Err(OfficeError::Storage(_))
+        Office::discard(&folder, ID, Some(&Key::from_bytes([3; 32]))),
+        Err(OfficeError::KeyMissing)
     ));
     assert!(folder.join("org.db").exists());
-    keys.delete(ID).unwrap();
-    keys.store(ID, &kept).unwrap();
+    assert!(folder.join("office.db").exists());
 }
 
 #[test]
-fn discard_whose_keychain_refuses_fails_and_a_retry_finishes_the_job() {
-    // Databases made, organization not committed; the keychain refuses to delete.
+fn discard_with_no_key_removes_only_a_folder_with_no_database_file() {
     let dir = TempDir::new().unwrap();
-    let inner = InMemoryKeys::new();
     let folder = folder_of(&dir, ID);
-    fs::create_dir_all(&folder).unwrap();
-    let key = Key::generate().unwrap();
-    inner.store(ID, &key).unwrap();
-    drop(Store::open(&folder.join("org.db"), &key, Opening::New, &org_db::SCHEMA).unwrap());
-    let keys = CannotDelete(inner);
+    fs::create_dir_all(folder.join("workspace")).unwrap();
 
-    assert!(matches!(
-        Office::discard(&folder, ID, &keys),
-        Err(OfficeError::Storage(_))
-    ));
+    Office::discard(&folder, ID, None).unwrap();
 
-    // The folder holds nothing the key was for, so a retry is not blocked by databases whose
-    // key is gone.
-    assert_eq!(names_in(&folder), ["office.lock"]);
-    Office::discard(&folder, ID, &keys.0).unwrap();
     assert!(!folder.exists());
-    assert!(keys.0.load(ID).unwrap().is_none());
-}
-
-#[test]
-fn discard_of_a_folder_that_is_not_there_still_removes_its_orphan_key() {
-    let dir = TempDir::new().unwrap();
-    let keys = InMemoryKeys::new();
-    keys.store(ID, &Key::from_bytes([5; 32])).unwrap();
-
-    Office::discard(folder_of(&dir, ID), ID, &keys).unwrap();
-
-    assert!(keys.load(ID).unwrap().is_none());
-    assert!(!folder_of(&dir, ID).exists(), "it left a folder");
 }
 
 #[test]
 fn discard_checks_the_id_and_the_folder_name() {
     let dir = TempDir::new().unwrap();
-    let keys = InMemoryKeys::new();
+    let key = test_key();
     let folder = folder_of(&dir, ID);
     fs::create_dir_all(&folder).unwrap();
 
     for (path, id) in [(&folder, "has-dash"), (&folder, "OTHER"), (&folder, "")] {
         assert!(
             matches!(
-                Office::discard(path, id, &keys),
+                Office::discard(path, id, Some(&key)),
                 Err(OfficeError::Invalid(_))
             ),
             "{id:?}"
@@ -607,26 +490,23 @@ fn discard_checks_the_id_and_the_folder_name() {
 }
 
 #[test]
-fn discard_without_a_folder_removes_the_key_and_with_a_held_lock_gives_up() {
+fn discard_without_a_folder_is_fine_and_with_a_held_lock_gives_up() {
     let dir = TempDir::new().unwrap();
-    let keys = InMemoryKeys::new();
+    let key = test_key();
     let folder = folder_of(&dir, ID);
-    keys.store(ID, &Key::from_bytes([6; 32])).unwrap();
 
-    // With the folder absent the discard takes no lock and removes the orphan key.
-    Office::discard(&folder, ID, &keys).unwrap();
-    assert!(keys.load(ID).unwrap().is_none());
+    // With the folder absent the discard takes no lock and makes nothing.
+    Office::discard(&folder, ID, Some(&key)).unwrap();
+    assert!(!dir.path().join("offices").exists(), "it made a folder");
 
-    // While someone holds the folder's lock (a create of the same id) it waits, then gives
-    // up without touching the key.
+    // While someone holds the folder's lock (a create of the same id) it waits, then gives up.
     fs::create_dir_all(&folder).unwrap();
-    keys.store(ID, &Key::from_bytes([6; 32])).unwrap();
     let _held = lock_folder(&folder, SHORT).unwrap();
     assert!(matches!(
-        Office::discard_waiting(&folder, ID, &keys, SHORT),
+        Office::discard_waiting(&folder, ID, Some(&key), SHORT),
         Err(OfficeError::InUse)
     ));
-    assert!(keys.load(ID).unwrap().is_some());
+    assert!(folder.exists());
 }
 
 #[test]
@@ -649,52 +529,37 @@ fn a_lock_taken_on_a_file_that_was_unlinked_does_not_count() {
 fn the_cleanup_of_a_failed_create_happens_while_the_lock_is_held() {
     let dir = TempDir::new().unwrap();
     let folder = folder_of(&dir, ID);
-    let keys = ChecksLock {
-        inner: InMemoryKeys::new(),
-        folder: folder.clone(),
-        lock_was_held: false.into(),
-    };
+    let held = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let seen = std::sync::Arc::clone(&held);
+    ON_STEP.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move |folder, step| {
+            if step == "cleanup" {
+                // Another process trying the lock now must find it taken.
+                let probe = private_file(&folder.join(LOCK_FILE)).unwrap();
+                let taken = matches!(probe.try_lock(), Err(TryLockError::WouldBlock));
+                seen.store(taken, std::sync::atomic::Ordering::SeqCst);
+            }
+        }));
+    });
 
     FAIL_AT.with(|f| f.set(Some("workspace")));
-    let failed = Office::create(&folder, &new_office(ID), &keys);
+    let failed = Office::create(&folder, &new_office(ID), test_key());
     FAIL_AT.with(|f| f.set(None));
+    ON_STEP.with(|hook| *hook.borrow_mut() = None);
 
     assert!(failed.is_err());
-    assert!(keys.lock_was_held.load(std::sync::atomic::Ordering::SeqCst));
-}
-
-#[test]
-fn a_key_that_cannot_be_saved_fails_the_create_and_leaves_nothing() {
-    struct CannotStore;
-    impl KeyProvider for CannotStore {
-        fn load(&self, _id: &str) -> Result<Option<Key>, KeyError> {
-            Ok(None)
-        }
-        fn store(&self, _id: &str, _key: &Key) -> Result<(), KeyError> {
-            Err("the keychain refuses".into())
-        }
-        fn delete(&self, _id: &str) -> Result<(), KeyError> {
-            Ok(())
-        }
-    }
-    let dir = TempDir::new().unwrap();
-    let folder = folder_of(&dir, ID);
-
-    let failed = Office::create(&folder, &new_office(ID), &CannotStore);
-
-    assert!(matches!(failed, Err(OfficeError::Storage(_))));
-    assert_eq!(names_in(&folder), ["office.lock"]);
+    assert!(held.load(std::sync::atomic::Ordering::SeqCst));
 }
 
 #[test]
 fn a_loose_folder_is_tightened_by_create() {
     let dir = TempDir::new().unwrap();
-    let keys = InMemoryKeys::new();
+    let key = test_key();
     let folder = folder_of(&dir, ID);
     fs::create_dir_all(&folder).unwrap();
     fs::set_permissions(&folder, fs::Permissions::from_mode(0o755)).unwrap();
 
-    Office::create(&folder, &new_office(ID), &keys).unwrap();
+    Office::create(&folder, &new_office(ID), key.clone()).unwrap();
 
     assert_eq!(mode(&folder), 0o700);
 }
@@ -702,10 +567,9 @@ fn a_loose_folder_is_tightened_by_create() {
 #[test]
 fn open_checks_that_each_database_belongs_to_the_office() {
     for file in ["org.db", "office.db"] {
-        let (dir, keys, office) = made();
+        let (dir, key, office) = made();
         let folder = folder_of(&dir, ID);
         drop(office);
-        let key = keys.load(ID).unwrap().unwrap();
         let store =
             Store::open(&folder.join(file), &key, Opening::Existing, &org_db::SCHEMA).unwrap();
         store
@@ -721,7 +585,10 @@ fn open_checks_that_each_database_belongs_to_the_office() {
         drop(store);
 
         assert!(
-            matches!(Office::open(&folder, &keys), Err(OfficeError::Invalid(_))),
+            matches!(
+                Office::open(&folder, key.clone()),
+                Err(OfficeError::Invalid(_))
+            ),
             "{file}"
         );
     }
@@ -730,10 +597,9 @@ fn open_checks_that_each_database_belongs_to_the_office() {
 #[test]
 fn discard_looks_at_office_db_alone_too_and_refuses_what_it_cannot_check() {
     let dir = TempDir::new().unwrap();
-    let keys = InMemoryKeys::new();
+    let key = test_key();
     let folder = folder_of(&dir, ID);
     fs::create_dir_all(&folder).unwrap();
-    let key = Key::generate().unwrap();
     drop(
         Store::open(
             &folder.join("office.db"),
@@ -745,31 +611,27 @@ fn discard_looks_at_office_db_alone_too_and_refuses_what_it_cannot_check() {
     );
     // Data in office.db and no key: refused, as for org.db.
     assert!(matches!(
-        Office::discard(&folder, ID, &keys),
+        Office::discard(&folder, ID, None),
         Err(OfficeError::Storage(_))
     ));
     assert!(folder.join("office.db").exists());
 
     // An empty org.db beside a log that is not empty: not looked at (SQLite would delete
     // the log), refused.
-    keys.store(ID, &key).unwrap();
     fs::write(folder.join("org.db-wal"), b"frames").unwrap();
     assert!(matches!(
-        Office::discard(&folder, ID, &keys),
+        Office::discard(&folder, ID, Some(&key)),
         Err(OfficeError::Storage(_))
     ));
     assert_eq!(fs::read(folder.join("org.db-wal")).unwrap(), b"frames");
 }
 
 #[test]
-fn discard_of_a_missing_folder_takes_no_lock_makes_nothing_and_removes_the_orphan_key() {
+fn discard_of_a_missing_folder_takes_no_lock_and_makes_nothing() {
     let dir = TempDir::new().unwrap();
-    let keys = InMemoryKeys::new();
-    keys.store(ID, &Key::from_bytes([2; 32])).unwrap();
 
-    Office::discard(folder_of(&dir, ID), ID, &keys).unwrap();
+    Office::discard(folder_of(&dir, ID), ID, None).unwrap();
 
-    assert!(keys.load(ID).unwrap().is_none());
     assert!(!dir.path().join("offices").exists(), "it made a folder");
 }
 
@@ -803,27 +665,27 @@ fn a_lock_whose_file_is_replaced_before_it_is_taken_is_not_returned() {
 #[test]
 fn a_folder_that_is_gone_is_not_found_not_a_storage_error() {
     let dir = TempDir::new().unwrap();
-    let keys = InMemoryKeys::new();
+    let key = test_key();
     let folder = folder_of(&dir, ID);
     assert!(matches!(
         lock_folder(&folder, SHORT),
         Err(OfficeError::NotFound)
     ));
     assert!(matches!(
-        Office::open(&folder, &keys),
+        Office::open(&folder, key.clone()),
         Err(OfficeError::NotFound)
     ));
 }
 
 #[test]
-fn a_failed_create_whose_cleanup_fails_keeps_the_key_with_its_databases_and_discard_finishes() {
+fn a_failed_create_whose_cleanup_fails_leaves_an_unfinished_create_and_discard_finishes() {
     let dir = TempDir::new().unwrap();
-    let keys = InMemoryKeys::new();
+    let key = test_key();
     let folder = folder_of(&dir, ID);
 
     FAIL_AT.with(|f| f.set(Some("workspace")));
     FAIL_CLEANUP.with(|f| f.set(true));
-    let failed = Office::create(&folder, &new_office(ID), &keys);
+    let failed = Office::create(&folder, &new_office(ID), key.clone());
     FAIL_AT.with(|f| f.set(None));
     FAIL_CLEANUP.with(|f| f.set(false));
 
@@ -832,33 +694,25 @@ fn a_failed_create_whose_cleanup_fails_keeps_the_key_with_its_databases_and_disc
         folder.join("org.db").exists(),
         "the cleanup was meant to fail"
     );
-    assert!(
-        keys.load(ID).unwrap().is_some(),
-        "the key went while its databases stayed"
-    );
-    // What is left is an unfinished create: discard removes it and the key.
-    Office::discard(&folder, ID, &keys).unwrap();
+    // What is left is an unfinished create: discard, given the key, removes it.
+    Office::discard(&folder, ID, Some(&key)).unwrap();
     assert!(!folder.exists());
-    assert!(keys.load(ID).unwrap().is_none());
 }
 
 #[test]
 fn a_crashed_create_before_the_organization_commit_is_discardable() {
     // org.db holds the office id but no organization yet (a crash at "databases"/"workspace").
     let dir = TempDir::new().unwrap();
-    let keys = InMemoryKeys::new();
+    let key = test_key();
     let folder = folder_of(&dir, ID);
     fs::create_dir_all(&folder).unwrap();
-    let key = Key::generate().unwrap();
-    keys.store(ID, &key).unwrap();
     let org = Store::open(&folder.join("org.db"), &key, Opening::New, &org_db::SCHEMA).unwrap();
     put_meta(&org, &[("office_id", ID)]).unwrap();
     drop(org);
 
-    Office::discard(&folder, ID, &keys).unwrap();
+    Office::discard(&folder, ID, Some(&key)).unwrap();
 
     assert!(!folder.exists());
-    assert!(keys.load(ID).unwrap().is_none());
 }
 
 #[test]
@@ -889,8 +743,7 @@ fn files_are_removed_logs_first_and_main_databases_last() {
 fn discard_refuses_a_folder_holding_something_an_office_does_not_make() {
     // A wrong path whose last name happens to be an id: its own files are not ours to delete.
     let dir = TempDir::new().unwrap();
-    let keys = InMemoryKeys::new();
-    keys.store(ID, &Key::from_bytes([1; 32])).unwrap();
+    let key = test_key();
     let folder = folder_of(&dir, ID);
     fs::create_dir_all(folder.join("sub/deep")).unwrap();
     fs::write(folder.join("notes.txt"), b"mine").unwrap();
@@ -898,7 +751,7 @@ fn discard_refuses_a_folder_holding_something_an_office_does_not_make() {
     fs::create_dir(folder.join("workspace")).unwrap();
 
     assert!(matches!(
-        Office::discard(&folder, ID, &keys),
+        Office::discard(&folder, ID, Some(&key)),
         Err(OfficeError::Invalid(_))
     ));
 
@@ -908,14 +761,12 @@ fn discard_refuses_a_folder_holding_something_an_office_does_not_make() {
         folder.join("workspace").exists(),
         "something went before the refusal"
     );
-    assert!(keys.load(ID).unwrap().is_some(), "the key went");
 }
 
 #[test]
 fn a_folder_that_is_a_link_is_never_followed() {
     let dir = TempDir::new().unwrap();
-    let keys = InMemoryKeys::new();
-    keys.store(ID, &Key::from_bytes([1; 32])).unwrap();
+    let key = test_key();
     let target = dir.path().join("elsewhere");
     fs::create_dir_all(&target).unwrap();
     fs::write(target.join("keep"), b"mine").unwrap();
@@ -924,15 +775,15 @@ fn a_folder_that_is_a_link_is_never_followed() {
     std::os::unix::fs::symlink(&target, &folder).unwrap();
 
     assert!(matches!(
-        Office::discard(&folder, ID, &keys),
+        Office::discard(&folder, ID, Some(&key)),
         Err(OfficeError::Invalid(_))
     ));
     assert!(matches!(
-        Office::create(&folder, &new_office(ID), &keys),
+        Office::create(&folder, &new_office(ID), key.clone()),
         Err(OfficeError::Invalid(_))
     ));
     assert!(matches!(
-        Office::open(&folder, &keys),
+        Office::open(&folder, key.clone()),
         Err(OfficeError::Invalid(_))
     ));
 
@@ -941,12 +792,11 @@ fn a_folder_that_is_a_link_is_never_followed() {
         ["keep"],
         "something was made or removed through the link"
     );
-    assert!(keys.load(ID).unwrap().is_some());
 }
 
 #[test]
 fn discard_refuses_a_folder_with_office_json_even_if_nothing_is_committed() {
-    let (dir, keys, office) = made();
+    let (dir, key, office) = made();
     let folder = folder_of(&dir, ID);
     drop(office);
     // Only the marker and the lock are left: still a finished office as far as discard knows.
@@ -961,21 +811,20 @@ fn discard_refuses_a_folder_with_office_json_even_if_nothing_is_committed() {
         let _ = fs::remove_file(folder.join(entry));
     }
     assert!(matches!(
-        Office::discard(&folder, ID, &keys),
+        Office::discard(&folder, ID, Some(&key)),
         Err(OfficeError::OfficeExists)
     ));
     assert!(folder.join("office.json").exists());
-    assert!(keys.load(ID).unwrap().is_some());
 }
 
 #[test]
 fn the_organization_is_committed_before_office_json_is_written() {
-    let keys = std::sync::Arc::new(InMemoryKeys::new());
-    let seen_keys = std::sync::Arc::clone(&keys);
+    let key = test_key();
+    let seen_key = key.clone();
     ON_STEP.with(|hook| {
         *hook.borrow_mut() = Some(Box::new(move |folder, step| {
             if step == "office_json" {
-                let key = seen_keys.load(ID).unwrap().unwrap();
+                let key = seen_key.clone();
                 let committed = Store::inspect(&folder.join("org.db"), &key, |db| {
                     db.query_row(
                         "SELECT EXISTS (SELECT 1 FROM meta WHERE key = 'organization_id')",
@@ -993,7 +842,7 @@ fn the_organization_is_committed_before_office_json_is_written() {
         }));
     });
     let dir = TempDir::new().unwrap();
-    let result = Office::create(folder_of(&dir, ID), &new_office(ID), &*keys);
+    let result = Office::create(folder_of(&dir, ID), &new_office(ID), key);
     ON_STEP.with(|hook| *hook.borrow_mut() = None);
     result.unwrap();
 }
@@ -1040,7 +889,7 @@ fn the_last_step_never_removes_a_folder_a_create_has_started_filling() {
 #[test]
 fn a_trailing_slash_does_not_hide_a_link() {
     let dir = TempDir::new().unwrap();
-    let keys = InMemoryKeys::new();
+    let key = test_key();
     let target = dir.path().join("elsewhere");
     fs::create_dir_all(&target).unwrap();
     let folder = folder_of(&dir, ID);
@@ -1049,15 +898,15 @@ fn a_trailing_slash_does_not_hide_a_link() {
     let slashed = PathBuf::from(format!("{}/", folder.display()));
 
     assert!(matches!(
-        Office::create(&slashed, &new_office(ID), &keys),
+        Office::create(&slashed, &new_office(ID), key.clone()),
         Err(OfficeError::Invalid(_))
     ));
     assert!(matches!(
-        Office::open(&slashed, &keys),
+        Office::open(&slashed, key.clone()),
         Err(OfficeError::Invalid(_))
     ));
     assert!(matches!(
-        Office::discard(&slashed, ID, &keys),
+        Office::discard(&slashed, ID, Some(&key)),
         Err(OfficeError::Invalid(_))
     ));
     assert!(
@@ -1068,47 +917,18 @@ fn a_trailing_slash_does_not_hide_a_link() {
     // A real folder with a trailing slash works as without.
     let real = folder_of(&dir, "OFFICE2");
     let slashed = PathBuf::from(format!("{}/", real.display()));
-    Office::create(&slashed, &new_office("OFFICE2"), &keys).unwrap();
+    Office::create(&slashed, &new_office("OFFICE2"), key.clone()).unwrap();
 }
 
 #[test]
-fn a_failed_key_store_deletes_nothing() {
-    // The keychain says "exists" for a key some other office made under this id: it must stay.
-    struct Refuses {
-        deleted: std::sync::atomic::AtomicBool,
-    }
-    impl KeyProvider for Refuses {
-        fn load(&self, _id: &str) -> Result<Option<Key>, KeyError> {
-            Ok(None)
-        }
-        fn store(&self, _id: &str, _key: &Key) -> Result<(), KeyError> {
-            Err("exists".into())
-        }
-        fn delete(&self, _id: &str) -> Result<(), KeyError> {
-            self.deleted
-                .store(true, std::sync::atomic::Ordering::SeqCst);
-            Ok(())
-        }
-    }
+fn a_cleanup_that_fails_part_way_stops_there() {
     let dir = TempDir::new().unwrap();
-    let keys = Refuses {
-        deleted: false.into(),
-    };
-
-    assert!(Office::create(folder_of(&dir, ID), &new_office(ID), &keys).is_err());
-
-    assert!(!keys.deleted.load(std::sync::atomic::Ordering::SeqCst));
-}
-
-#[test]
-fn a_cleanup_that_fails_part_way_stops_there_and_keeps_the_key() {
-    let dir = TempDir::new().unwrap();
-    let keys = InMemoryKeys::new();
+    let key = test_key();
     let folder = folder_of(&dir, ID);
 
     FAIL_AT.with(|f| f.set(Some("workspace")));
     FAIL_REMOVING.with(|f| f.set(Some("org.db-wal")));
-    let failed = Office::create(&folder, &new_office(ID), &keys);
+    let failed = Office::create(&folder, &new_office(ID), key.clone());
     FAIL_AT.with(|f| f.set(None));
     FAIL_REMOVING.with(|f| f.set(None));
 
@@ -1119,13 +939,12 @@ fn a_cleanup_that_fails_part_way_stops_there_and_keeps_the_key() {
         folder.join("org.db").exists(),
         "the main file went before its log"
     );
-    assert!(keys.load(ID).unwrap().is_some());
-    Office::discard(&folder, ID, &keys).unwrap();
+    Office::discard(&folder, ID, Some(&key)).unwrap();
 }
 
 #[test]
 fn a_created_office_has_its_owner_in_the_first_log_entry_and_keeps_it_across_a_restart() {
-    let (dir, keys, office) = made();
+    let (dir, key, office) = made();
     let snapshot = office.org_snapshot().unwrap();
     assert_eq!(
         snapshot.position,
@@ -1142,7 +961,7 @@ fn a_created_office_has_its_owner_in_the_first_log_entry_and_keeps_it_across_a_r
     );
     drop(office);
 
-    let again = Office::open(folder_of(&dir, ID), &keys).unwrap();
+    let again = Office::open(folder_of(&dir, ID), key.clone()).unwrap();
     assert_eq!(again.org_snapshot().unwrap(), snapshot);
 }
 
@@ -1172,7 +991,7 @@ const DAY_MS: i64 = 86_400_000;
 
 #[test]
 fn a_command_is_logged_at_the_next_position_and_changes_the_snapshot() {
-    let (_dir, _keys, office) = made();
+    let (_dir, _key, office) = made();
 
     let accepted = office
         .submit_org(team_create(&cmd(1, 0), "T1", "Platform"))
@@ -1189,7 +1008,7 @@ fn a_command_is_logged_at_the_next_position_and_changes_the_snapshot() {
 
 #[test]
 fn a_retried_command_gets_its_own_commit_back_and_changes_nothing_again() {
-    let (dir, keys, office) = made();
+    let (dir, key, office) = made();
     let (c1, c2) = (cmd(1, 0), cmd(2, 0));
     let first = office
         .submit_org(team_create(&c1, "T1", "Platform"))
@@ -1213,7 +1032,7 @@ fn a_retried_command_gets_its_own_commit_back_and_changes_nothing_again() {
         first
     );
     drop(office);
-    let office = Office::open(folder_of(&dir, ID), &keys).unwrap();
+    let office = Office::open(folder_of(&dir, ID), key.clone()).unwrap();
     assert_eq!(
         office
             .submit_org(team_create(&c1, "T1", "Platform"))
@@ -1227,7 +1046,7 @@ fn a_retried_command_gets_its_own_commit_back_and_changes_nothing_again() {
 
 #[test]
 fn the_same_command_sent_at_once_commits_once() {
-    let (_dir, _keys, office) = made();
+    let (_dir, _key, office) = made();
     let c1 = cmd(1, 0);
 
     let answers: Vec<_> = std::thread::scope(|scope| {
@@ -1247,7 +1066,7 @@ fn the_same_command_sent_at_once_commits_once() {
 
 #[test]
 fn a_refusal_is_remembered_and_a_retry_gets_the_same_refusal_even_if_it_would_now_succeed() {
-    let (dir, keys, office) = made();
+    let (dir, key, office) = made();
     let (c1, c2) = (cmd(1, 0), cmd(2, 0));
     let before = office.org_snapshot().unwrap();
 
@@ -1277,7 +1096,7 @@ fn a_refusal_is_remembered_and_a_retry_gets_the_same_refusal_even_if_it_would_no
         org_proto::ErrorCode::NotFound
     );
     drop(office);
-    let office = Office::open(folder_of(&dir, ID), &keys).unwrap();
+    let office = Office::open(folder_of(&dir, ID), key.clone()).unwrap();
     assert_eq!(
         code(&office, command(Some("T1"))),
         org_proto::ErrorCode::NotFound
@@ -1297,7 +1116,7 @@ fn a_refusal_is_remembered_and_a_retry_gets_the_same_refusal_even_if_it_would_no
 
 #[test]
 fn an_id_reused_with_other_params_is_refused_whether_it_committed_or_was_refused() {
-    let (_dir, _keys, office) = made();
+    let (_dir, _key, office) = made();
     let (c1, c2) = (cmd(1, 0), cmd(2, 0));
     office
         .submit_org(team_create(&c1, "T1", "Platform"))
@@ -1321,7 +1140,7 @@ fn an_id_reused_with_other_params_is_refused_whether_it_committed_or_was_refused
 
 #[test]
 fn commands_are_logged_one_after_another_without_gaps() {
-    let (_dir, _keys, office) = made();
+    let (_dir, _key, office) = made();
     for (n, name) in ["A", "B", "C"].into_iter().enumerate() {
         let accepted = office
             .submit_org(team_create(&cmd(n as u8, 0), &format!("T{n}"), name))
@@ -1333,7 +1152,7 @@ fn commands_are_logged_one_after_another_without_gaps() {
 
 #[test]
 fn a_command_id_that_is_not_a_ulid_is_refused_and_not_remembered() {
-    let (_dir, _keys, office) = made();
+    let (_dir, _key, office) = made();
     let before = office.org_snapshot().unwrap();
     let lower = cmd(1, 0).to_lowercase();
 
@@ -1350,7 +1169,7 @@ fn a_command_id_that_is_not_a_ulid_is_refused_and_not_remembered() {
 
 #[test]
 fn an_id_dated_outside_the_window_is_expired_or_clock_skew_and_changes_nothing() {
-    let (_dir, _keys, office) = made();
+    let (_dir, _key, office) = made();
     let before = office.org_snapshot().unwrap();
 
     assert_eq!(
@@ -1380,7 +1199,7 @@ fn an_id_dated_outside_the_window_is_expired_or_clock_skew_and_changes_nothing()
 
 #[test]
 fn the_clock_never_goes_back_so_a_stepped_back_clock_cannot_reopen_the_window() {
-    let (_dir, _keys, office) = made();
+    let (_dir, _key, office) = made();
     // HQ's clock once read the year 2100 (the high-water mark is kept); it now reads the
     // present again. An id dated now is then decades behind the mark: `expired`, as it would
     // have been with the clock that never stepped back.
@@ -1396,7 +1215,7 @@ fn the_clock_never_goes_back_so_a_stepped_back_clock_cannot_reopen_the_window() 
 
 #[test]
 fn the_high_water_mark_follows_the_clock_forward() {
-    let (_dir, _keys, office) = made();
+    let (_dir, _key, office) = made();
     office
         .submit_org(team_create(&cmd(1, 0), "T1", "Platform"))
         .unwrap()
@@ -1421,7 +1240,7 @@ fn the_high_water_mark_follows_the_clock_forward() {
 
 #[test]
 fn the_log_after_a_position_is_what_the_commands_made_oldest_first() {
-    let (_dir, _keys, office) = made();
+    let (_dir, _key, office) = made();
     let (c1, c2, c3) = (cmd(1, 0), cmd(2, 0), cmd(3, 0));
     for (id, team, name) in [(&c1, "T1", "A"), (&c2, "T2", "B"), (&c3, "T3", "C")] {
         office
@@ -1461,7 +1280,7 @@ fn the_log_after_a_position_is_what_the_commands_made_oldest_first() {
 
 #[test]
 fn a_subscriber_can_resume_only_from_a_position_this_log_has() {
-    let (_dir, _keys, office) = made();
+    let (_dir, _key, office) = made();
     office
         .submit_org(team_create(&cmd(1, 0), "T1", "A"))
         .unwrap()
@@ -1486,7 +1305,7 @@ fn a_subscriber_can_resume_only_from_a_position_this_log_has() {
 
 #[test]
 fn followers_are_woken_by_a_commit_and_a_wait_that_sees_a_newer_token_returns_at_once() {
-    let (_dir, _keys, office) = made();
+    let (_dir, _key, office) = made();
     let before = office.org_change_token();
 
     // Nothing committed: the wait runs out its time and the token is the same.

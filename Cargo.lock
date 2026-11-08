@@ -2229,13 +2229,11 @@ dependencies = [
 name = "org-office-server"
 version = "0.0.0"
 dependencies = [
- "core-foundation",
  "libc",
  "org-client",
  "org-office",
  "org-office-launch",
  "org-proto",
- "security-framework",
  "serde",
  "serde_json",
  "tempfile",
