@@ -90,3 +90,42 @@ export function deleteSummary(s: OrgSnapshot, team: Team): { refused: string | u
 
 /** "A", "A and B", "A, B and C". */
 const list = (names: string[]) => (names.length <= 1 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
+
+export interface MoveChoice {
+	option: TeamOption;
+	/** Why this team can't be chosen, in words; absent when it can. */
+	disabled?: string;
+}
+
+/**
+ * The teams a team can be moved under (TEAM-7), every team listed: itself and the teams under it say why
+ * they can't be chosen, and so does the team it is already under.
+ */
+export function moveChoices(s: OrgSnapshot, team: Team): MoveChoice[] {
+	const below = new Set<string>();
+	const walk = (id: string) => s.teams.filter((t) => t.owner_team_id === id).forEach((t) => !below.has(t.id) && (below.add(t.id), walk(t.id)));
+	walk(team.id);
+	return teamOptions(s).map((option) => ({
+		option,
+		disabled:
+			option.team.id === team.id || below.has(option.team.id)
+				? "Can't move a team under itself or its own teams"
+				: option.team.id === team.owner_team_id
+					? `${team.name} is already here`
+					: undefined
+	}));
+}
+
+/** How many teams and projects move along with a team: "with 1 team and 2 projects", or nothing to add. */
+export function movesAlong(s: OrgSnapshot, team: Team): string {
+	const below = new Set<string>();
+	const walk = (id: string) => s.teams.filter((t) => t.owner_team_id === id).forEach((t) => !below.has(t.id) && (below.add(t.id), walk(t.id)));
+	walk(team.id);
+	const scope = new Set([team.id, ...below]);
+	const projects = new Set((s.project_teams ?? []).filter((p) => scope.has(p.team_id)).map((p) => p.project_id));
+	const parts = [
+		below.size > 0 ? `${below.size} ${below.size === 1 ? 'team' : 'teams'}` : '',
+		projects.size > 0 ? `${projects.size} ${projects.size === 1 ? 'project' : 'projects'}` : ''
+	].filter(Boolean);
+	return parts.length > 0 ? ` (with ${parts.join(' and ')})` : '';
+}

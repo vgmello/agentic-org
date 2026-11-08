@@ -136,6 +136,7 @@ test('the team menu works from the keyboard', async ({ page }) => {
 	await page.keyboard.press('Enter');
 	await expect(page.getByRole('menuitem', { name: 'Rename…' })).toBeVisible();
 	await page.keyboard.press('ArrowDown');
+	await page.keyboard.press('ArrowDown');
 	await page.keyboard.press('Enter'); // Add team under Design…
 	await expect(page.getByLabel('Part of')).toHaveValue('design');
 });
@@ -144,4 +145,38 @@ test('the list view has the same team menus', async ({ page }) => {
 	await openChart(page);
 	await page.getByRole('button', { name: 'List' }).click();
 	await expect(menu(page, 'Web')).toBeVisible();
+});
+
+test('TEAM-7: Move to… never offers a team and its sub-teams, names what moves, and offers Undo', async ({ page }) => {
+	await openChart(page);
+	await menu(page, 'Engineering').click();
+	await page.getByRole('menuitem', { name: 'Move to…' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Move Engineering to…' });
+	// Itself and the teams under it are listed, disabled, with the reason.
+	for (const name of ['Engineering', 'Web', 'Platform']) await expect(dialog.getByRole('radio', { name: new RegExp(`^${name}`) })).toBeDisabled();
+	await expect(dialog.getByText("Can't move a team under itself or its own teams").first()).toBeVisible();
+	await expect(dialog.getByRole('radio', { name: /^None: top level/ })).toBeDisabled(); // already at the top level
+	await expect(dialog.getByRole('button', { name: 'Move Engineering' })).toBeDisabled();
+	await dialog.getByRole('radio', { name: /^Design/ }).check();
+	await expect(dialog.getByTestId('move-summary')).toContainText('Move Engineering (with 2 teams and 2 projects) from the top level to Design? Members and projects stay with it.');
+	await shot(page, 'move-team');
+	await dialog.getByRole('button', { name: 'Move Engineering' }).click();
+	await expect(page.getByText('Moved Engineering to Design.')).toBeVisible();
+	// Engineering is now under Design: the sub-team count shows on Design.
+	await expect(card(page, 'design').getByRole('button', { name: /^1 team: / })).toBeVisible();
+	await page.getByRole('button', { name: 'Undo' }).click();
+	await expect(page.getByText('Moved Engineering back.')).toBeVisible();
+	await expect(card(page, 'design').getByRole('button', { name: /^1 team: / })).toHaveCount(0);
+});
+
+test('TEAM-7: a team can be moved to the top level', async ({ page }) => {
+	await openChart(page);
+	await menu(page, 'Web').click();
+	await page.getByRole('menuitem', { name: 'Move to…' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Move Web to…' });
+	await expect(dialog.getByText('Web is already here')).toBeVisible(); // under Engineering
+	await dialog.getByRole('radio', { name: 'None: top level' }).check();
+	await dialog.getByRole('button', { name: 'Move Web' }).click();
+	await expect(page.getByText('Moved Web to the top level.')).toBeVisible();
+	await expect(card(page, 'eng').getByRole('button', { name: /^1 team: / })).toBeVisible();
 });

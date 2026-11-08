@@ -9,6 +9,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import DeleteTeamDialog from '$lib/components/DeleteTeamDialog.svelte';
 	import MemberTile from '$lib/components/MemberTile.svelte';
+	import MoveTeamDialog from '$lib/components/MoveTeamDialog.svelte';
 	import NewTeamSheet from '$lib/components/NewTeamSheet.svelte';
 	import OwnerBar from '$lib/components/OwnerBar.svelte';
 	import PeopleChart from '$lib/components/PeopleChart.svelte';
@@ -30,6 +31,7 @@
 		type OfficeFilter,
 		type TeamNode
 	} from '$lib/org/model';
+	import { toAppError } from '$lib/office/api';
 	import { orgApi } from '$lib/org/api';
 	import { reportingTree, type ReportNode } from '$lib/org/reporting';
 	import { sessionFor } from '$lib/org/session';
@@ -90,11 +92,14 @@
 	let renameOpen = $state(false);
 	let deleting = $state<Team | undefined>();
 	let deleteOpen = $state(false);
+	let moving = $state<Team | undefined>();
+	let moveOpen = $state(false);
 	let justAdded = $state<string | undefined>();
 
 	function teamAction(action: TeamAction, team: Team) {
 		if (action === 'rename') ((renaming = team), (renameOpen = true));
 		else if (action === 'delete') ((deleting = team), (deleteOpen = true));
+		else if (action === 'move') ((moving = team), (moveOpen = true));
 		else ((newTeamUnder = team.id), (newTeamOpen = true));
 	}
 	function newTeam(under?: string) {
@@ -114,6 +119,27 @@
 	async function teamRenamed(r: { name?: string; stale?: boolean }) {
 		await reload();
 		if (r.name) toast.success(`Renamed to ${r.name}.`);
+	}
+	async function teamMoved(r: { name: string; to: string; undo: () => Promise<void> } | { stale: true }) {
+		await reload();
+		if ('stale' in r) return;
+		// Undo is the reverse move, offered for 8 seconds (TEAM-7).
+		toast.success(`Moved ${r.name} to ${r.to}.`, {
+			duration: 8000,
+			action: {
+				label: 'Undo',
+				onClick: async () => {
+					try {
+						await r.undo();
+						await reload();
+						toast.success(`Moved ${r.name} back.`);
+					} catch (e) {
+						await reload();
+						toast.error(`Couldn't undo: ${toAppError(e).message} Nothing changed.`);
+					}
+				}
+			}
+		});
 	}
 	async function teamDeleted(r: { name: string } | { stale: true }) {
 		await reload();
@@ -303,3 +329,4 @@
 <NewTeamSheet bind:open={newTeamOpen} {snapshot} {session} ownerTeamId={newTeamUnder} ondone={teamCreated} />
 <RenameTeamDialog bind:open={renameOpen} team={renaming && snapshot.teams.find((x) => x.id === renaming?.id)} {snapshot} {session} ondone={teamRenamed} />
 <DeleteTeamDialog bind:open={deleteOpen} team={deleting && snapshot.teams.find((x) => x.id === deleting?.id)} {snapshot} {session} ondone={teamDeleted} />
+<MoveTeamDialog bind:open={moveOpen} team={moving && snapshot.teams.find((x) => x.id === moving?.id)} {snapshot} {session} ondone={teamMoved} />

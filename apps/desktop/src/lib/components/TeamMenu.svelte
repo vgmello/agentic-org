@@ -4,7 +4,7 @@
 	import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '$lib/components/ui/dropdown-menu';
 	import type { Team } from '$lib/proto';
 
-	export type TeamAction = 'rename' | 'add-team' | 'delete';
+	export type TeamAction = 'rename' | 'move' | 'add-team' | 'delete';
 
 	let { team, onaction }: { team: Team; onaction: (action: TeamAction, team: Team) => void } = $props();
 </script>
@@ -17,6 +17,7 @@
 	</DropdownMenuTrigger>
 	<DropdownMenuContent align="end">
 		<DropdownMenuItem onSelect={() => onaction('rename', team)}>Rename…</DropdownMenuItem>
+		<DropdownMenuItem onSelect={() => onaction('move', team)}>Move to…</DropdownMenuItem>
 		<DropdownMenuItem onSelect={() => onaction('add-team', team)}>Add team under {team.name}…</DropdownMenuItem>
 		<DropdownMenuSeparator />
 		<DropdownMenuItem variant="destructive" onSelect={() => onaction('delete', team)}>Delete…</DropdownMenuItem>

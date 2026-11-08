@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { sampleOrg } from './sample';
-import { checkTeamName, deleteSummary, teamOptions, teamPath } from './team-edit';
+import { checkTeamName, deleteSummary, moveChoices, movesAlong, teamOptions, teamPath } from './team-edit';
 
 const s = sampleOrg('office-1');
 
@@ -67,5 +67,28 @@ describe('TEAM-9 deleteSummary', () => {
 	it('says so when no one is in the team', () => {
 		const r = deleteSummary({ ...s, memberships: [], project_teams: [] }, s.teams.find((t) => t.id === 'web')!);
 		expect(r.lines).toEqual(['No one is in Web.']);
+	});
+});
+
+describe('TEAM-7 moving a team', () => {
+	it('lists every team; the team, the teams under it and its current owner say why they can’t be chosen', () => {
+		const choices = moveChoices(s, s.teams.find((t) => t.id === 'eng')!);
+		const byName = Object.fromEntries(choices.map((c) => [c.option.team.name, c.disabled]));
+		expect(byName).toEqual({
+			Design: undefined,
+			Engineering: "Can't move a team under itself or its own teams",
+			Platform: "Can't move a team under itself or its own teams",
+			Web: "Can't move a team under itself or its own teams",
+			People: undefined
+		});
+		const web = moveChoices(s, s.teams.find((t) => t.id === 'web')!);
+		expect(web.find((c) => c.option.team.id === 'eng')?.disabled).toBe('Web is already here');
+		expect(web.find((c) => c.option.team.id === 'platform')?.disabled).toBeUndefined();
+	});
+
+	it('says what goes along: the teams under it and their projects', () => {
+		expect(movesAlong(s, s.teams.find((t) => t.id === 'eng')!)).toBe(' (with 2 teams and 2 projects)');
+		expect(movesAlong(s, s.teams.find((t) => t.id === 'design')!)).toBe(' (with 1 project)');
+		expect(movesAlong({ ...s, project_teams: [] }, s.teams.find((t) => t.id === 'web')!)).toBe('');
 	});
 });
