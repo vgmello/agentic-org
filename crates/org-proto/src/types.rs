@@ -4,13 +4,17 @@ use serde::{Deserialize, Serialize};
 ///
 /// The server enforces the name rules and is the source of truth. Clients may use this
 /// constant to pre-check input, but must still handle [`crate::ErrorCode::InvalidName`].
-/// Rules: trimmed, 1..=64 chars, no control characters; unique case-insensitively among
-/// the organizations on this machine.
+/// Rules: trimmed, 1..=64 chars, no control characters, no format characters (Cf) or
+/// default-ignorable code points, plus U+2028/U+2029, except U+200C, U+200D, U+FE0E and U+FE0F;
+/// unique case-insensitively among the organizations on this machine.
 ///
 /// "Trimmed" means leading and trailing characters with the Unicode `White_Space` property
 /// are removed, exactly as Rust's `str::trim` does. JavaScript's `String.prototype.trim`
 /// uses a different set (it strips U+FEFF and keeps U+0085), so a TypeScript pre-check must
 /// trim the `White_Space` set itself.
+///
+/// Servers check the rule with [`crate::OrganizationName::parse`], and compare names for
+/// uniqueness by [`crate::OrganizationName::key`].
 pub const ORGANIZATION_NAME_MAX_CHARS: usize = 64;
 
 /// An office: a node of one organization, run by its own `org-office-server` process.
