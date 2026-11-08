@@ -1750,6 +1750,8 @@ fn reserved_handle_words_and_address_shapes() {
         "01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "01arz3ndektsv4rrffq69g5fav",
         " 01ARZ3NDEKTSV4RRFFQ69G5FAV ",
+        // KELVIN SIGN lower-cases to ASCII `k`: handles are compared by their lower-cased key.
+        "\u{212A}1ARZ3NDEKTSV4RRFFQ69G5FAV",
         // A lenient ULID decoder reads I, L, O and U too: any 26 letters and digits count.
         "01ARZ3NDEKTSV4RRFFQ69G5FAI",
         "01ARZ3NDEKTSV4RRFFQ69G5FAL",
@@ -1759,8 +1761,8 @@ fn reserved_handle_words_and_address_shapes() {
     ] {
         assert!(is_shaped_like_an_address(bad), "{bad}");
     }
-    // Not addresses: a run word without the colon, wrong length, letters Crockford lacks
-    // (I, L, O, U), punctuation, or non-ASCII where a prefix would end.
+    // Not addresses: a run word without the colon, the wrong length, punctuation, or
+    // non-ASCII where a prefix would end.
     for fine in [
         "run",
         "runner:1",
