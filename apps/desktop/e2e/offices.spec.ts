@@ -143,7 +143,7 @@ test('OFC-12: HQ says Checking… until the app has verified the connection, and
 	await expect(badge).toContainText('Online');
 	await expect(badge).toHaveAttribute('data-status-icon', 'circle');
 	await expect(badge.locator('svg')).toHaveCount(1);
-	await expect(page.getByTestId('live-status')).toHaveText('Online HQ'); // said once for screen readers
+	await expect(page.getByTestId('live-status')).toHaveText('HQ: Online'); // said once for screen readers
 });
 
 test('OFC-12: when the office does not answer, the row says Unreachable with a Retry, never a stale Online', async ({ page }) => {
@@ -159,17 +159,18 @@ test('OFC-12: when the office does not answer, the row says Unreachable with a R
 	await expect(hq.locator('[data-status-icon]')).toHaveAttribute('data-status-icon', 'wifi-off');
 	await expect(hq.getByRole('button', { name: /^HQ, HQ, .*Unreachable/ })).toBeVisible();
 	await expect(hq.locator('[data-status-icon] svg')).toHaveCount(1);
-	const retry = hq.getByRole('button', { name: 'Retry reaching HQ' });
-	await expect(retry).toBeVisible();
+	const retry = hq.getByTestId('retry-office'); // its name changes while it works, so find it by id
+	await expect(retry).toHaveAccessibleName('Retry reaching HQ');
 	await shot(page, 'offices-unreachable');
 	// Retry keeps the keyboard focus while it works, and says so; the office still doesn't answer, so it ends Unreachable again.
 	await retry.focus();
 	await page.keyboard.press('Enter');
 	await expect(retry).toHaveText('Retrying…');
+	await expect(retry).toHaveAccessibleName('Retrying… reaching HQ'); // the name follows the visible text
 	await expect(retry).toBeFocused();
 	await expect(hq).toContainText('Checking…');
 	await expect(retry).toHaveText('Retry', { timeout: 15_000 });
 	await expect(hq).toContainText('Unreachable');
 	await expect(retry).toBeFocused();
-	await expect(page.getByTestId('live-status')).toHaveText('Unreachable HQ');
+	await expect(page.getByTestId('live-status')).toHaveText('HQ: Unreachable');
 });

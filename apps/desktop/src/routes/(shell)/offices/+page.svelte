@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { createProbe } from '$lib/offices/probe';
 	import { invalidate } from '$app/navigation';
 	import Plus from '@lucide/svelte/icons/plus';
 	import CircleAlert from '@lucide/svelte/icons/circle-alert';
@@ -7,7 +8,7 @@
 	import OfficeStatusBadge from '$lib/components/OfficeStatusBadge.svelte';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
-	import { officeApi, toAppError } from '$lib/office/api';
+	import { officeApi } from '$lib/office/api';
 	import { agentsIn, displayStatusFor, isHq, orderOffices, rowLabel, secondaryText, statusInfo, unplacedAgents, type LiveCheck } from '$lib/offices/model';
 	import type { Counts } from './+page';
 
@@ -46,57 +47,25 @@
 	// The one live signal there is: whether the office this app is connected to answers. Checked now, every
 	// half minute and on Retry; a background check keeps the last answer instead of flashing "Checking…".
 	let check = $state<LiveCheck>('checking');
-	const PROBE_TIMEOUT_MS = 5000;
-	let probeId = 0;
-	let probing = false;
-	/** A read-only question to the office (it never starts anything), with a timeout: silence is not "up". */
-	async function ask(): Promise<void> {
-		const answer = (async () => {
-			try {
-				await officeApi.ping();
-			} catch (e) {
-				// Nothing started the office yet: do what the window itself does at launch, then ask again.
-				if (toAppError(e).code !== 'not_connected') throw e;
-				await officeApi.ensureRunning();
-				await officeApi.ping();
-			}
-		})();
-		let timer: ReturnType<typeof setTimeout> | undefined;
-		const timeout = new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error('timeout')), PROBE_TIMEOUT_MS)));
-		try {
-			await Promise.race([answer, timeout]);
-		} finally {
-			clearTimeout(timer);
-		}
-	}
-	/** The newest probe wins; a background one is skipped while another is running (no pile-up). */
-	async function probe(quiet = false) {
-		if (quiet && probing) return;
-		const mine = ++probeId;
-		probing = true;
-		if (!quiet) check = 'checking';
-		let result: LiveCheck;
-		try {
-			await ask();
-			result = 'up';
-		} catch {
-			result = 'down';
-		}
-		if (mine === probeId) {
-			check = result;
-			probing = false;
-		}
-	}
+	const probe = createProbe(officeApi, (next) => {
+		check = next;
+		// A Retry that worked removes the button the keyboard was on: move focus to the row instead of dropping it.
+		if (next === 'up' && document.activeElement?.matches('[data-testid=retry-office]')) rowButton(here.id)?.focus();
+	});
+	const rowButton = (officeId: string) => document.querySelector<HTMLElement>(`[data-office="${officeId}"] button[aria-haspopup]`);
 	onMount(() => {
-		void probe();
-		const again = setInterval(() => void probe(true), 30_000);
+		void probe.run('explicit');
+		const again = setInterval(() => void probe.run('background'), 30_000);
 		return () => clearInterval(again);
 	});
 	// Another organization's office is another thing to verify: don't carry the last answer over.
 	let lastOffice: string | undefined;
 	$effect(() => {
 		const id = here.id;
-		if (lastOffice !== undefined && id !== lastOffice) void probe();
+		if (lastOffice !== undefined && id !== lastOffice) {
+			retryingProbe = false;
+			void probe.run('explicit');
+		}
 		lastOffice = id;
 	});
 	const statusOf = (officeId: string) => displayStatusFor(officeId, here.id, check);
@@ -138,7 +107,7 @@
 	</div>
 
 	<!-- Said once when the answer changes: the badge and count are hidden from screen readers, the row's label has them. -->
-	<p class="sr-only" role="status" data-testid="live-status">{statusInfo(statusOf(here.id)).label} {offices.find((o) => o.id === here.id)?.name ?? ''}</p>
+	<p class="sr-only" role="status" data-testid="live-status">{offices.find((o) => o.id === here.id)?.name ?? 'Office'}: {statusInfo(statusOf(here.id)).label}</p>
 
 	<ul class="divide-y divide-white/5 overflow-hidden rounded-xl bg-white/5 outline-1 -outline-offset-1 outline-white/10" aria-label="Offices">
 		{#each offices as office (office.id)}
@@ -161,7 +130,15 @@
 				<span aria-hidden="true"><OfficeStatusBadge status={statusOf(office.id)} /></span>
 				{#if statusOf(office.id) === 'unreachable' || (office.id === here.id && retryingProbe)}
 					<!-- Stays mounted while it works (aria-disabled, not disabled), so keyboard focus isn't lost. -->
-					<Button variant="outline" size="xs" aria-label="Retry reaching {office.name}" aria-disabled={check === 'checking'} aria-busy={check === 'checking'} onclick={() => check !== 'checking' && probe()}>{check === 'checking' ? 'Retrying…' : 'Retry'}</Button>
+					<Button
+						variant="outline"
+						size="xs"
+						data-testid="retry-office"
+						class="aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
+						aria-label="{check === 'checking' ? 'Retrying…' : 'Retry'} reaching {office.name}"
+						aria-disabled={check === 'checking'}
+						aria-busy={check === 'checking'}
+						onclick={() => check !== 'checking' && probe.run('explicit')}>{check === 'checking' ? 'Retrying…' : 'Retry'}</Button>
 				{/if}
 				<span class="w-20 text-right text-xs/5 text-gray-400" data-testid="agent-count" aria-hidden="true">
 					{#if agents !== undefined}{agents} {agents === 1 ? 'agent' : 'agents'}
@@ -178,7 +155,7 @@
 		<p class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-red-500/10 px-4 py-3 text-sm/6 text-red-100 outline-1 -outline-offset-1 outline-red-400/20" role="alert" data-testid="count-error">
 			<CircleAlert class="size-4 shrink-0" aria-hidden="true" />
 			<span class="[overflow-wrap:anywhere]">Can't count agents right now: {countError}</span>
-			<Button variant="outline" size="xs" aria-disabled={retrying} aria-busy={retrying} onclick={() => !retrying && retry()}>{retrying ? 'Retrying…' : 'Retry'}</Button>
+			<Button variant="outline" size="xs" class="aria-disabled:cursor-not-allowed aria-disabled:opacity-60" aria-disabled={retrying} aria-busy={retrying} onclick={() => !retrying && retry()}>{retrying ? 'Retrying…' : 'Retry'}</Button>
 		</p>
 	{/if}
 
