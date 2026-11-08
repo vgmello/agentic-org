@@ -2,7 +2,7 @@
 kind: spec
 title: "Retrospectives: learn from each delivery, and apply it to every agent (UX)"
 status: for-review
-revision: 2
+revision: 4
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-08"
@@ -19,6 +19,10 @@ Extends `features-ux.md` (delivered features), `feature-requests-ux.md`, `decisi
 
 > From time to time, after a larger delivery, the agents run a **retrospective**: what could we have done better, what did we do well that we should keep doing, what should we **stop** doing because it doesn't work, and why did problems happen, so they don't happen next time. Agents work fast, so retros are more frequent: at the end of each feature, or every X hours (every hour, three or four hours), **configurable**, **whichever comes first**. On a time interval, only the features **finished** in that period are included, never the ones in flight. After the retro, the **action items** become **tasks** and updated **procedures**, so next time every agent applies them. For example, if running tests always takes too long, the process for running tests (say, on a single branch) is improved and applied to all agents.
 
+**Revision 4 (2026-11-08): where Process items land.** A Process item for a handbook process (organization, team or private) goes on its own branch in the organization's handbook, and the owner's approval of the retro is the level approval for every Process item, with no second approval (`processes-ux.md` decision 8). Project processes and the other procedure changes still go on the project's docs branch. Each branch shows its own "Waiting to merge", and "Applied to all agents" shows once every branch the retro produced is merged (decisions 6 and 7, §3). **[diff]** also shows process files (§3). **Criteria rewritten (same ID):** RETRO-6, RETRO-7 *(rev 4)*.
+
+**Revision 3 (2026-11-08): processes.** A new action-item kind, **Process** (decision 6): it proposes a diff to a process file (`processes-ux.md`). Like the other procedure changes it lands through the docs merge flow after the owner approves the retro's items, and the process's level owner approves the change itself (`processes-ux.md` decision 8). **Criteria rewritten (same ID):** RETRO-6 *(rev 3)*.
+
 **Revision 2 (2026-11-08): aligned with ada's W7 model.** Task numbers follow `work-items-ux.md` rev 6: `T-17` inside the project (`ac-T-17` elsewhere). No criteria changed.
 
 ## 0. Decisions
@@ -28,8 +32,8 @@ Extends `features-ux.md` (delivered features), `feature-requests-ux.md`, `decisi
 3. **Four questions, in plain words:** **Keep doing** (what worked) · **Do better** (what could improve) · **Stop doing** (what doesn't work) · **Problems** (what went wrong, **why**, and how to prevent it next time).
 4. **Evidence first, opinions second.** Before anyone answers, the tool gathers the period's facts: the features and their cycle times, waiting on the owner, blocked time, review rounds, reopened bugs, failed runs, tests and their time (when reported), debt taken, exceptions, and cost. Every answer can cite them ("T-17 needed 5 review rounds").
 5. **The agents who did the work take part.** Everyone with a finished task in the scope is asked for input (woken if on call), plus the **facilitator**, by default the project's lead, who merges the answers, groups duplicates, and proposes action items. The owner can add input any time and is never required to.
-6. **Action items are changes, not wishes.** Each has a **kind**: **Task** (work to do) · **Guidance** (a change to agent guidance, §6.2 of the decisions spec) · **Checklist** (a change to a checklist template) · **Template** (a doc template) · **Decision** (a new ADR) · **Rule** (AGENTS.md or the project brief). Each has an owner and, for non-tasks, the exact proposed change (a diff).
-7. **The owner approves, and then it's applied everywhere.** **Approve** creates the tasks and proposes every procedure change through the normal branch and merge flow (docs land through branches). Once merged, every agent gets it at its next start or wake: the guidance moment, the checklist or the rule. The owner can turn on **"Apply procedure changes without asking"** for low-risk kinds (guidance and checklists). That skips only the owner's approval: the changes still land through review, go and merge (`decisions-and-tech-debt-ux.md` A36).
+6. **Action items are changes, not wishes.** Each has a **kind**: **Task** (work to do) · **Guidance** (a change to agent guidance, §6.2 of the decisions spec) · **Checklist** (a change to a checklist template) · **Template** (a doc template) · **Decision** (a new ADR) · **Rule** (AGENTS.md or the project brief) · **Process** (a change to a process file, `processes-ux.md`) *(rev 3)*. Each has an owner and, for non-tasks, the exact proposed change (a diff). A Process item lands through the merge flow once the owner approves the retro's items. *(rev 4)* That approval is also the process's level approval: the owner can approve a process change at every level (`processes-ux.md` decision 8), so no second approval is needed. For a handbook process (organization, team or private) it goes on its own branch in the organization's handbook, since that's another repository. For a project process it goes on the project's docs branch with the other procedure changes.
+7. **The owner approves, and then it's applied everywhere.** **Approve** creates the tasks and proposes every procedure change through the normal branch and merge flow (docs land through branches): *(rev 4)* one docs branch in the project for project processes and the other procedure changes, and one handbook branch for each Process item on a handbook process (decision 6). The retro shows "Applied to all agents" once every branch it produced is merged. Once merged, every agent gets it at its next start or wake: the guidance moment, the checklist or the rule. The owner can turn on **"Apply procedure changes without asking"** for low-risk kinds (guidance and checklists). That skips only the owner's approval: the changes still land through review, go and merge (`decisions-and-tech-debt-ux.md` A36).
 8. **The next retro checks the last one's actions:** "Last time: run tests on a single branch. Did it help?" with the before and after numbers when they exist (median test time 14 min → 6 min). Items that didn't help can be reverted from there.
 9. **A retro is a persistent record:** `docs/retros/<date>-<slug>.md` with front matter (period, features, participants, action-item ids, status). The action-item tasks are database work items linked to it.
 
@@ -88,8 +92,8 @@ The retro's page shows its stage at the top: Gathering · Waiting for input (3 o
 
 - **Each answer** shows who raised it (avatars, with a count), and its evidence as links.
 - **Action items:** tick to include. **Edit** changes the text, kind, owner or diff. **Add item…** adds one, and **Discard** removes one with a reason (kept in the record).
-- **[diff]** opens the exact change: the guidance moment's text, the checklist template or the AGENTS.md lines, before and after.
-- **Approve n items:** tasks appear in the project (To do, "from Retro 8 Nov"). Procedure changes become one docs branch, shown as "Waiting to merge". When it's merged, the retro shows "Applied to all agents" with the date.
+- **[diff]** opens the exact change: the guidance moment's text, the checklist template, the AGENTS.md lines or the process file, before and after. *(rev 4)*
+- **Approve n items:** tasks appear in the project (To do, "from Retro 8 Nov"). *(rev 4)* Project procedure changes become one docs branch in the project. Each Process item on a handbook process (organization, team or private) gets its own handbook branch. The owner's approval here covers every level, so none of them waits for a second approval (decision 6). Each item shows "Waiting to merge" until its branch is merged. When every branch the retro produced is merged, the retro shows "Applied to all agents" with the date.
 - **States:** an agent didn't answer in time (the retro continues without it, noted "4 of 5 answered") · nothing to approve ("No action items. Keep doing what you're doing.") · a procedure change conflicts with one waiting to merge (shown on the item, with both diffs) · retro cost limit reached (the facilitator stops and synthesizes what it has).
 
 ## 4. Where retros show
@@ -110,8 +114,8 @@ The retro's page shows its stage at the top: Gathering · Waiting for input (3 o
 - RETRO-3 · Each retro starts with an evidence panel: features with cycle time, review rounds, waiting on the owner and blocked time, plus tests, debt, reopened bugs, failed runs and cost when available.
 - RETRO-4 · Every agent with finished work in the scope is asked for Keep doing, Do better, Stop doing and Problems (with why and prevention), and on-call agents are woken for it.
 - RETRO-5 · The facilitator's synthesis groups duplicates with a count and links each item to its evidence.
-- RETRO-6 · Each action item has a kind (Task, Guidance, Checklist, Template, Decision, Rule), an owner, and for non-tasks the exact change as a diff.
-- RETRO-7 · Approve creates the tasks and proposes all procedure changes on one docs branch through the merge flow. The retro shows "Applied to all agents" once merged.
+- RETRO-6 · *(rev 4)* Each action item has a kind (Task, Guidance, Checklist, Template, Decision, Rule, Process), an owner, and for non-tasks the exact change as a diff. A Process item proposes a diff to a process file and lands through the merge flow (the project's docs branch, or its own handbook branch for a handbook process), with the owner's retro approval as the level approval (RETRO-7).
+- RETRO-7 · *(rev 4)* Approve creates the tasks and proposes the procedure changes through the merge flow: project processes and the other procedure changes on one docs branch in the project, and each Process item on a handbook process (organization, team or private) on its own handbook branch, with the owner's retro approval as the level approval (no second approval). Each item shows "Waiting to merge" until its branch is merged, and the retro shows "Applied to all agents" once every branch it produced is merged.
 - RETRO-8 · After the merge, each agent sees the change at its next start or wake.
 - RETRO-9 · The next retro shows the previous action items with "Did it help?" and before/after numbers when they exist, and offers to revert one.
 - RETRO-10 · Each retro is saved as `docs/retros/<date>-<slug>.md` with front matter, and listed in Docs › Retrospectives.
