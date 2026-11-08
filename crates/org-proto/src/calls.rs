@@ -3,6 +3,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::{OfficeInfo, Organization};
 
+/// The identity an office server reports in `hello`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OfficeHello {
+    /// The organization's name. Its id is `office.organization_id`.
+    pub organization_name: String,
+    pub office: OfficeInfo,
+}
+
 /// One method of the API: its wire name and the shapes of its params and result.
 /// Params and results are JSON objects (structs), so fields can be added later.
 pub trait Call {
@@ -22,7 +30,11 @@ pub struct Hello;
 pub struct HelloResult {
     pub api_version: u32,
     pub server_version: String,
-    pub office: OfficeInfo,
+    /// The machine, for display, e.g. "This Mac".
+    pub host: String,
+    /// Set when an office server answers; absent when this machine's host answers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub office: Option<OfficeHello>,
 }
 
 impl Call for Hello {
@@ -31,7 +43,12 @@ impl Call for Hello {
     type Result = HelloResult;
 }
 
-/// `organization.create`: create an empty organization on this office server.
+/// `organization.create` (host): create an organization and start its HQ office on this
+/// machine. The result lists that HQ.
+///
+/// It succeeds once the organization and its HQ office are stored. Whether the HQ's server
+/// process started is reported in that office's `status` (`starting`, `active`, or
+/// `unavailable`), not as an error, so a client never retries into `already_exists`.
 /// Errors: `invalid_name`, `already_exists`, `storage_error`.
 pub struct OrganizationCreate;
 
@@ -46,7 +63,8 @@ impl Call for OrganizationCreate {
     type Result = Organization;
 }
 
-/// `organization.list`: every organization this office server hosts.
+/// `organization.list` (host): every organization with an office on this machine, each
+/// with its offices here.
 pub struct OrganizationList;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,4 +87,18 @@ impl Call for Subscribe {
     const METHOD: &'static str = "subscribe";
     type Params = Empty;
     type Result = Empty;
+}
+
+/// `office.list` (host): every office on this machine, with how to reach each one.
+pub struct OfficeList;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListOfficesResult {
+    pub offices: Vec<OfficeInfo>,
+}
+
+impl Call for OfficeList {
+    const METHOD: &'static str = "office.list";
+    type Params = Empty;
+    type Result = ListOfficesResult;
 }

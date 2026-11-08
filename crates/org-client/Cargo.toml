@@ -1,6 +1,6 @@
 [package]
 name = "org-client"
-description = "Talks to an office server over its socket using org-proto. Used by the desktop app."
+description = "Talks to this machine's host and its office servers over their sockets using org-proto. Used by the desktop app and org-agent."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

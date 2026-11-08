@@ -1,5 +1,5 @@
-//! # org-client: connect to an office
+//! # org-client: connect to the host and its offices
 //!
-//! Opens a connection to an office server (a local Unix socket today, an authenticated
-//! remote connection later) and speaks `org-proto`. Used by the desktop app's Tauri shell.
-//! Knows nothing about how an office stores its data.
+//! Opens a connection to this machine's host or to an office server (local Unix sockets,
+//! found through `org_proto::location`) and speaks `org-proto`. Used by the desktop app's
+//! Tauri shell and by `org-agent`. Knows nothing about how an office stores its data.
