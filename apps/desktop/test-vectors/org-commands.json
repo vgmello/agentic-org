@@ -1,0 +1,813 @@
+{
+ "comment": "Cases for the organization commands, run against the sample organization by BOTH engines: the Rust mock HQ (src-tauri/src/org_engine.rs) and the TypeScript browser mock (src/lib/org/reducer.ts). Each case applies its setup commands, then the command; `expect` is `ok` or the error code. Commands carry no command_id: the runner adds one. The sample: office id 'office-1', teams at version 1, memberships ms-1..ms-11.",
+ "cases": [
+  {
+   "name": "remove: the owner",
+   "command": {
+    "method": "member.remove",
+    "params": {
+     "member_id": "you",
+     "expected_version": 1
+    }
+   },
+   "expect": "owner_protected"
+  },
+  {
+   "name": "reports to: the owner reports to no one",
+   "command": {
+    "method": "member.set_reports_to",
+    "params": {
+     "member_id": "you",
+     "expected_version": 1,
+     "reports_to_member_id": "avery"
+    }
+   },
+   "expect": "owner_protected"
+  },
+  {
+   "name": "create: a blank name beats a taken id",
+   "command": {
+    "method": "team.create",
+    "params": {
+     "team_id": "eng",
+     "name": " "
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "create: a missing owner team beats a taken id",
+   "command": {
+    "method": "team.create",
+    "params": {
+     "team_id": "eng",
+     "name": "Ops",
+     "owner_team_id": "ghost"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "create: a taken id",
+   "command": {
+    "method": "team.create",
+    "params": {
+     "team_id": "eng",
+     "name": "Ops"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "create: a sibling's name, ignoring case",
+   "command": {
+    "method": "team.create",
+    "params": {
+     "team_id": "ops",
+     "name": "DESIGN"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "create: the same name under another team is fine",
+   "command": {
+    "method": "team.create",
+    "params": {
+     "team_id": "ops",
+     "name": "Design",
+     "owner_team_id": "eng"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "create: an empty id",
+   "command": {
+    "method": "team.create",
+    "params": {
+     "team_id": "",
+     "name": "Ops"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "create: an id with a control character",
+   "command": {
+    "method": "team.create",
+    "params": {
+     "team_id": "a\nb",
+     "name": "Ops"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "rename: a blank name beats a stale version",
+   "command": {
+    "method": "team.rename",
+    "params": {
+     "team_id": "web",
+     "expected_version": 9,
+     "name": " "
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "rename: a stale version beats a sibling clash",
+   "command": {
+    "method": "team.rename",
+    "params": {
+     "team_id": "web",
+     "expected_version": 9,
+     "name": "Platform"
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "rename: a sibling clash",
+   "command": {
+    "method": "team.rename",
+    "params": {
+     "team_id": "web",
+     "expected_version": 1,
+     "name": "platform"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "rename: keeping its own name in another case",
+   "command": {
+    "method": "team.rename",
+    "params": {
+     "team_id": "web",
+     "expected_version": 1,
+     "name": "WEB"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "move: a missing owner beats a stale version",
+   "command": {
+    "method": "team.move",
+    "params": {
+     "team_id": "web",
+     "expected_version": 9,
+     "owner_team_id": "ghost"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "move: a stale version beats a loop",
+   "command": {
+    "method": "team.move",
+    "params": {
+     "team_id": "eng",
+     "expected_version": 9,
+     "owner_team_id": "web"
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "move: under a team below it",
+   "command": {
+    "method": "team.move",
+    "params": {
+     "team_id": "eng",
+     "expected_version": 1,
+     "owner_team_id": "web"
+    }
+   },
+   "expect": "cycle"
+  },
+  {
+   "name": "move: under itself",
+   "command": {
+    "method": "team.move",
+    "params": {
+     "team_id": "eng",
+     "expected_version": 1,
+     "owner_team_id": "eng"
+    }
+   },
+   "expect": "cycle"
+  },
+  {
+   "name": "move: to the top level",
+   "command": {
+    "method": "team.move",
+    "params": {
+     "team_id": "web",
+     "expected_version": 1
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "lead: a missing member beats a stale version",
+   "command": {
+    "method": "team.set_lead",
+    "params": {
+     "team_id": "web",
+     "expected_version": 9,
+     "lead_member_id": "ghost"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "lead: a stale version beats the owner",
+   "command": {
+    "method": "team.set_lead",
+    "params": {
+     "team_id": "web",
+     "expected_version": 9,
+     "lead_member_id": "you"
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "lead: the owner",
+   "command": {
+    "method": "team.set_lead",
+    "params": {
+     "team_id": "web",
+     "expected_version": 1,
+     "lead_member_id": "you"
+    }
+   },
+   "expect": "owner_protected"
+  },
+  {
+   "name": "lead: someone who is not in the team",
+   "command": {
+    "method": "team.set_lead",
+    "params": {
+     "team_id": "web",
+     "expected_version": 1,
+     "lead_member_id": "juno"
+    }
+   },
+   "expect": "not_a_member"
+  },
+  {
+   "name": "lead: a member",
+   "command": {
+    "method": "team.set_lead",
+    "params": {
+     "team_id": "web",
+     "expected_version": 1,
+     "lead_member_id": "mira"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "delete: a stale version beats not empty",
+   "command": {
+    "method": "team.delete",
+    "params": {
+     "team_id": "eng",
+     "expected_version": 9
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "delete: a team that owns teams",
+   "command": {
+    "method": "team.delete",
+    "params": {
+     "team_id": "eng",
+     "expected_version": 1
+    }
+   },
+   "expect": "not_empty"
+  },
+  {
+   "name": "delete: a leaf team",
+   "command": {
+    "method": "team.delete",
+    "params": {
+     "team_id": "design",
+     "expected_version": 1
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "add member: the owner",
+   "command": {
+    "method": "team.add_member",
+    "params": {
+     "membership_id": "m1",
+     "team_id": "web",
+     "member_id": "you"
+    }
+   },
+   "expect": "owner_protected"
+  },
+  {
+   "name": "add member: already in the team",
+   "command": {
+    "method": "team.add_member",
+    "params": {
+     "membership_id": "m1",
+     "team_id": "web",
+     "member_id": "mira"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "add member: a taken membership id",
+   "command": {
+    "method": "team.add_member",
+    "params": {
+     "membership_id": "ms-1",
+     "team_id": "web",
+     "member_id": "pax"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "add member: an empty title",
+   "command": {
+    "method": "team.add_member",
+    "params": {
+     "membership_id": "m1",
+     "team_id": "web",
+     "member_id": "pax",
+     "title_in_team": ""
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add member: a too long title",
+   "command": {
+    "method": "team.add_member",
+    "params": {
+     "membership_id": "m1",
+     "team_id": "web",
+     "member_id": "pax",
+     "title_in_team": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add member: with a title",
+   "command": {
+    "method": "team.add_member",
+    "params": {
+     "membership_id": "m1",
+     "team_id": "web",
+     "member_id": "pax",
+     "title_in_team": "Designer"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "remove member: a stale version",
+   "command": {
+    "method": "team.remove_member",
+    "params": {
+     "membership_id": "ms-2",
+     "expected_version": 9
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "remove member: gone",
+   "command": {
+    "method": "team.remove_member",
+    "params": {
+     "membership_id": "nope",
+     "expected_version": 1
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "add person: a blank name beats a taken id",
+   "command": {
+    "method": "member.add_person",
+    "params": {
+     "member_id": "sam",
+     "name": " "
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "add person: a taken id",
+   "command": {
+    "method": "member.add_person",
+    "params": {
+     "member_id": "sam",
+     "name": "Someone"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "add person: another person's name, ignoring case",
+   "command": {
+    "method": "member.add_person",
+    "params": {
+     "member_id": "p1",
+     "name": "avery stone"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "add person: an agent's handle",
+   "command": {
+    "method": "member.add_person",
+    "params": {
+     "member_id": "p1",
+     "name": "SAM"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "add person: the owner's handle",
+   "command": {
+    "method": "member.add_person",
+    "params": {
+     "member_id": "p1",
+     "name": "Owner"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "add person: an agent's display name is not a handle",
+   "command": {
+    "method": "member.add_person",
+    "params": {
+     "member_id": "p1",
+     "name": "Sam Okafor"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "add person: an empty contact",
+   "command": {
+    "method": "member.add_person",
+    "params": {
+     "member_id": "p1",
+     "name": "Sam Ortiz",
+     "contact": ""
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "update person: an agent beats a stale version",
+   "command": {
+    "method": "member.update_person",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 9,
+     "name": "X"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "update person: a blank name beats a stale version",
+   "command": {
+    "method": "member.update_person",
+    "params": {
+     "member_id": "avery",
+     "expected_version": 9,
+     "name": " "
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "update person: a stale version beats a clash",
+   "command": {
+    "method": "member.update_person",
+    "params": {
+     "member_id": "avery",
+     "expected_version": 9,
+     "name": "Hana Weiss"
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "update person: another member's handle",
+   "command": {
+    "method": "member.update_person",
+    "params": {
+     "member_id": "avery",
+     "expected_version": 1,
+     "name": "hana weiss"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "update person: contact and clear together",
+   "command": {
+    "method": "member.update_person",
+    "params": {
+     "member_id": "avery",
+     "expected_version": 1,
+     "contact": "a@b.c",
+     "clear_contact": true
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "update person: your own name in another case",
+   "command": {
+    "method": "member.update_person",
+    "params": {
+     "member_id": "avery",
+     "expected_version": 1,
+     "name": "AVERY STONE"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "remove: a stale version beats the owner",
+   "command": {
+    "method": "member.remove",
+    "params": {
+     "member_id": "you",
+     "expected_version": 9
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "remove: a stale version",
+   "command": {
+    "method": "member.remove",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 9
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "remove: reporters move to the removed member's manager (and get a new version)",
+   "command": {
+    "method": "member.set_reports_to",
+    "params": {
+     "member_id": "noor",
+     "expected_version": 2
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "member.remove",
+     "params": {
+      "member_id": "sam",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "remove: a stale reporter version after the removal",
+   "command": {
+    "method": "member.set_reports_to",
+    "params": {
+     "member_id": "noor",
+     "expected_version": 1
+    }
+   },
+   "expect": "conflict",
+   "setup": [
+    {
+     "method": "member.remove",
+     "params": {
+      "member_id": "sam",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "reports to: a missing manager beats a stale version",
+   "command": {
+    "method": "member.set_reports_to",
+    "params": {
+     "member_id": "leo",
+     "expected_version": 9,
+     "reports_to_member_id": "ghost"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "reports to: a stale version beats the owner",
+   "command": {
+    "method": "member.set_reports_to",
+    "params": {
+     "member_id": "you",
+     "expected_version": 9,
+     "reports_to_member_id": "avery"
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "reports to: a stale version",
+   "command": {
+    "method": "member.set_reports_to",
+    "params": {
+     "member_id": "leo",
+     "expected_version": 9,
+     "reports_to_member_id": "juno"
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "reports to: a loop",
+   "command": {
+    "method": "member.set_reports_to",
+    "params": {
+     "member_id": "avery",
+     "expected_version": 1,
+     "reports_to_member_id": "leo"
+    }
+   },
+   "expect": "cycle"
+  },
+  {
+   "name": "reports to: yourself",
+   "command": {
+    "method": "member.set_reports_to",
+    "params": {
+     "member_id": "avery",
+     "expected_version": 1,
+     "reports_to_member_id": "avery"
+    }
+   },
+   "expect": "cycle"
+  },
+  {
+   "name": "reports to: the owner",
+   "command": {
+    "method": "member.set_reports_to",
+    "params": {
+     "member_id": "leo",
+     "expected_version": 1,
+     "reports_to_member_id": "you"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "move member: a missing team beats a stale version",
+   "command": {
+    "method": "member.move",
+    "params": {
+     "membership_id": "ms-2",
+     "expected_version": 9,
+     "new_membership_id": "n1",
+     "to_team_id": "ghost"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "move member: a stale version",
+   "command": {
+    "method": "member.move",
+    "params": {
+     "membership_id": "ms-2",
+     "expected_version": 9,
+     "new_membership_id": "n1",
+     "to_team_id": "platform"
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "move member: already in the team",
+   "command": {
+    "method": "member.move",
+    "params": {
+     "membership_id": "ms-2",
+     "expected_version": 1,
+     "new_membership_id": "n1",
+     "to_team_id": "web"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "move member: a taken new id",
+   "command": {
+    "method": "member.move",
+    "params": {
+     "membership_id": "ms-2",
+     "expected_version": 1,
+     "new_membership_id": "ms-1",
+     "to_team_id": "platform"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "move member: to another team",
+   "command": {
+    "method": "member.move",
+    "params": {
+     "membership_id": "ms-2",
+     "expected_version": 1,
+     "new_membership_id": "n1",
+     "to_team_id": "platform",
+     "title_in_team": "Engineer"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "project: a missing project",
+   "command": {
+    "method": "project.add_team",
+    "params": {
+     "project_team_id": "pt-9",
+     "project_id": "ghost",
+     "team_id": "web"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "project: already linked",
+   "command": {
+    "method": "project.add_team",
+    "params": {
+     "project_team_id": "pt-9",
+     "project_id": "beacon",
+     "team_id": "web"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "project: a new link",
+   "command": {
+    "method": "project.add_team",
+    "params": {
+     "project_team_id": "pt-9",
+     "project_id": "scratch",
+     "team_id": "web"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "project: remove with a stale version",
+   "command": {
+    "method": "project.remove_team",
+    "params": {
+     "project_team_id": "pt-1",
+     "expected_version": 9
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "project: remove",
+   "command": {
+    "method": "project.remove_team",
+    "params": {
+     "project_team_id": "pt-1",
+     "expected_version": 1
+    }
+   },
+   "expect": "ok"
+  }
+ ]
+}

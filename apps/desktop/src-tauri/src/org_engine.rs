@@ -15,7 +15,9 @@ use org_proto::org::{
     TeamDeleteParams, TeamMoveParams, TeamRemoveMemberParams, TeamRenameParams, TeamSetLeadParams,
     TeamSetTitleParams,
 };
-use org_proto::{ApiError, ErrorCode, OrganizationName, OWNER_HANDLE};
+use org_proto::{
+    ApiError, ErrorCode, NameError, OrganizationName, AGENT_TEXT_MAX_CHARS, OWNER_HANDLE,
+};
 use serde::{Deserialize, Serialize};
 
 /// The commands the app sends for the org chart, as one value that carries its own method name.
@@ -89,7 +91,11 @@ fn err<T>(code: ErrorCode, message: impl Into<String>) -> Outcome<T> {
 fn checked_name(raw: &str) -> Outcome<String> {
     OrganizationName::parse(raw)
         .map(OrganizationName::into_string)
-        .map_err(ApiError::from)
+        .map_err(|e| match e {
+            // The only message that names an organization; a team or a person is being named here.
+            NameError::Empty => ApiError::new(ErrorCode::InvalidName, "Give it a name."),
+            other => ApiError::from(other),
+        })
 }
 
 fn same(a: &str, b: &str) -> bool {
@@ -206,7 +212,98 @@ pub fn apply(s: &mut OrgSnapshot, command: &OrgCommand) -> Outcome {
     Ok(changes)
 }
 
+/// The longest id the mock accepts. The real ones are ULIDs (26 characters); the sample uses short
+/// readable ids, so only the shape is checked here: not empty, not long, no control characters.
+const ID_MAX_CHARS: usize = 64;
+
+fn bad_id(id: &str) -> bool {
+    id.is_empty() || id.chars().count() > ID_MAX_CHARS || id.chars().any(char::is_control)
+}
+
+fn bad_text(text: &Option<String>) -> bool {
+    text.as_deref().is_some_and(|t| {
+        t.trim().is_empty()
+            || t.chars().count() > AGENT_TEXT_MAX_CHARS
+            || t.chars().any(char::is_control)
+    })
+}
+
+/// The ids a command carries, for `well_formed`.
+fn ids_of(command: &OrgCommand) -> Vec<&str> {
+    fn opt(o: &Option<String>) -> Option<&str> {
+        o.as_deref()
+    }
+    let mut ids: Vec<&str> = vec![command.command_id()];
+    match command {
+        OrgCommand::TeamCreate(p) => ids.extend(
+            [Some(p.team_id.as_str()), opt(&p.owner_team_id)]
+                .into_iter()
+                .flatten(),
+        ),
+        OrgCommand::TeamRename(p) => ids.push(&p.team_id),
+        OrgCommand::TeamMove(p) => ids.extend(
+            [Some(p.team_id.as_str()), opt(&p.owner_team_id)]
+                .into_iter()
+                .flatten(),
+        ),
+        OrgCommand::TeamSetLead(p) => ids.extend(
+            [Some(p.team_id.as_str()), opt(&p.lead_member_id)]
+                .into_iter()
+                .flatten(),
+        ),
+        OrgCommand::TeamDelete(p) => ids.push(&p.team_id),
+        OrgCommand::TeamAddMember(p) => {
+            ids.extend([&p.membership_id, &p.team_id, &p.member_id].map(String::as_str))
+        }
+        OrgCommand::TeamRemoveMember(p) => ids.push(&p.membership_id),
+        OrgCommand::TeamSetTitle(p) => ids.push(&p.membership_id),
+        OrgCommand::MemberAddPerson(p) => ids.push(&p.member_id),
+        OrgCommand::MemberUpdatePerson(p) => ids.push(&p.member_id),
+        OrgCommand::MemberRemove(p) => ids.push(&p.member_id),
+        OrgCommand::MemberSetReportsTo(p) => ids.extend(
+            [Some(p.member_id.as_str()), opt(&p.reports_to_member_id)]
+                .into_iter()
+                .flatten(),
+        ),
+        OrgCommand::MemberMove(p) => {
+            ids.extend([&p.membership_id, &p.new_membership_id, &p.to_team_id].map(String::as_str))
+        }
+        OrgCommand::ProjectAddTeam(p) => {
+            ids.extend([&p.project_team_id, &p.project_id, &p.team_id].map(String::as_str))
+        }
+        OrgCommand::ProjectRemoveTeam(p) => ids.push(&p.project_team_id),
+    }
+    ids
+}
+
+/// What HQ refuses as `invalid_request` before looking at the organization: an id that is not an
+/// id, or a title or contact that is empty (clear it instead), too long or has control characters.
+fn well_formed(command: &OrgCommand) -> Outcome<()> {
+    if ids_of(command).into_iter().any(bad_id) {
+        return err(
+            ErrorCode::InvalidRequest,
+            "An id in that request isn't valid.",
+        );
+    }
+    let texts: Vec<&Option<String>> = match command {
+        OrgCommand::TeamAddMember(p) => vec![&p.title_in_team],
+        OrgCommand::TeamSetTitle(p) => vec![&p.title_in_team],
+        OrgCommand::MemberAddPerson(p) => vec![&p.contact],
+        OrgCommand::MemberUpdatePerson(p) => vec![&p.contact],
+        OrgCommand::MemberMove(p) => vec![&p.title_in_team],
+        _ => vec![],
+    };
+    if texts.into_iter().any(bad_text) {
+        return err(
+            ErrorCode::InvalidRequest,
+            "A title or contact can't be empty, too long or contain control characters.",
+        );
+    }
+    Ok(())
+}
+
 fn apply_to(s: &mut OrgSnapshot, command: &OrgCommand) -> Outcome {
+    well_formed(command)?;
     match command {
         OrgCommand::TeamCreate(p) => {
             if let Some(owner) = &p.owner_team_id {
@@ -505,14 +602,14 @@ fn apply_to(s: &mut OrgSnapshot, command: &OrgCommand) -> Outcome {
                     "An agent who has left stays on record.",
                 );
             }
-            if s.members[i].owner {
-                return err(ErrorCode::OwnerProtected, "The owner can't be removed.");
-            }
             if s.members[i].version != p.expected_version {
                 return err(
                     ErrorCode::Conflict,
                     format!("{} changed since you looked.", s.members[i].name),
                 );
+            }
+            if s.members[i].owner {
+                return err(ErrorCode::OwnerProtected, "The owner can't be removed.");
             }
             let gone = s.members.remove(i);
             let mut changes = vec![OrgChange::MemberRemoved {
@@ -663,13 +760,21 @@ fn apply_to(s: &mut OrgSnapshot, command: &OrgCommand) -> Outcome {
     }
 }
 
+/// What HQ answered a command id, and the command it answered, so the same id sent for a
+/// different command is refused instead of getting the first one's answer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct Answer {
+    command: String,
+    result: Result<CommandAccepted, ApiError>,
+}
+
 /// A structure with its history of answers: HQ's side of "a retry with the same `command_id` gets
 /// the same answer" and the position that moves with every commit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Hq {
     pub snapshot: OrgSnapshot,
     /// What each command id was answered, so a retry is answered again, not applied again.
-    answers: std::collections::HashMap<String, Result<CommandAccepted, ApiError>>,
+    answers: std::collections::HashMap<String, Answer>,
 }
 
 impl Hq {
@@ -681,16 +786,35 @@ impl Hq {
     }
 
     /// Answer a command. Returns the answer and, for a new commit, the `org.changed` data to
-    /// send; a retry (same `command_id`) is answered the same and sends nothing.
+    /// send; a retry (same `command_id`, same command) is answered the same and sends nothing.
     pub fn handle(
         &mut self,
         command: &OrgCommand,
     ) -> (Result<CommandAccepted, ApiError>, Option<OrgChangedData>) {
         let id = command.command_id().to_string();
-        if let Some(answer) = self.answers.get(&id) {
-            return (answer.clone(), None);
+        if bad_id(&id) {
+            return (
+                err(
+                    ErrorCode::InvalidRequest,
+                    "An id in that request isn't valid.",
+                ),
+                None,
+            );
         }
-        match apply(&mut self.snapshot, command) {
+        let fingerprint = serde_json::to_string(command).unwrap_or_default();
+        if let Some(answer) = self.answers.get(&id) {
+            if answer.command == fingerprint {
+                return (answer.result.clone(), None);
+            }
+            return (
+                err(
+                    ErrorCode::InvalidRequest,
+                    "That command id was already used for a different command.",
+                ),
+                None,
+            );
+        }
+        let (result, changed) = match apply(&mut self.snapshot, command) {
             Ok(changes) => {
                 self.snapshot.position.seq += 1;
                 let position: Position = self.snapshot.position;
@@ -698,21 +822,23 @@ impl Hq {
                     status: CommandStatus::Committed,
                     position: Some(position),
                 };
-                self.answers.insert(id.clone(), Ok(accepted));
-                (
-                    Ok(accepted),
-                    Some(OrgChangedData {
-                        position,
-                        command_id: id,
-                        changes,
-                    }),
-                )
+                let data = OrgChangedData {
+                    position,
+                    command_id: id.clone(),
+                    changes,
+                };
+                (Ok(accepted), Some(data))
             }
-            Err(e) => {
-                self.answers.insert(id, Err(e.clone()));
-                (Err(e), None)
-            }
-        }
+            Err(e) => (Err(e), None),
+        };
+        self.answers.insert(
+            id,
+            Answer {
+                command: fingerprint,
+                result: result.clone(),
+            },
+        );
+        (result, changed)
     }
 }
 
@@ -1595,5 +1721,82 @@ mod tests {
             again.is_ok() && changed.is_none(),
             "still answered from memory after a restart"
         );
+    }
+
+    /// The cases shared with the TypeScript reducer (`src/lib/org/vectors.test.ts`): both engines
+    /// must give the same answer to each.
+    #[test]
+    fn the_shared_cases_agree_with_the_contract() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../../test-vectors/org-commands.json")).unwrap();
+        let build = |step: &serde_json::Value, n: usize| -> OrgCommand {
+            let mut params = step["params"].clone();
+            params["command_id"] = json!(format!("c-{n}"));
+            serde_json::from_value(json!({"method": step["method"], "params": params})).unwrap()
+        };
+        let cases = vectors["cases"].as_array().unwrap();
+        assert!(cases.len() > 50);
+        for case in cases {
+            let mut h = hq();
+            for (i, step) in case["setup"].as_array().into_iter().flatten().enumerate() {
+                apply(&mut h.snapshot, &build(step, i))
+                    .unwrap_or_else(|e| panic!("setup of {}: {e}", case["name"]));
+            }
+            let outcome = apply(&mut h.snapshot, &build(&case["command"], 99));
+            match case["expect"].as_str().unwrap() {
+                "ok" => assert!(outcome.is_ok(), "{}: {:?}", case["name"], outcome),
+                code => {
+                    let got = serde_json::to_value(outcome.unwrap_err().code).unwrap();
+                    assert_eq!(got, json!(code), "{}", case["name"]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_same_command_id_for_a_different_command_is_refused_and_ids_must_be_ids() {
+        let mut h = hq();
+        let a = cmd("team.create", json!({"team_id": "ops", "name": "Ops"}));
+        assert!(h.handle(&a).0.is_ok());
+        // Same command_id, another command: not answered with the first one's answer.
+        let mut other = json!({"team_id": "qa", "name": "QA"});
+        other["command_id"] = json!("c-team.create");
+        let b: OrgCommand =
+            serde_json::from_value(json!({"method": "team.create", "params": other})).unwrap();
+        assert_eq!(h.handle(&b).0.unwrap_err().code, ErrorCode::InvalidRequest);
+        assert!(h.snapshot.teams.iter().all(|t| t.id != "qa"));
+        // An empty, over-long or control-character command id is never recorded.
+        for id in ["", &"x".repeat(65), "a\u{7}b"] {
+            let c: OrgCommand = serde_json::from_value(json!({"method": "team.create", "params": {"command_id": id, "team_id": "z", "name": "Z"}})).unwrap();
+            assert_eq!(
+                h.handle(&c).0.unwrap_err().code,
+                ErrorCode::InvalidRequest,
+                "{id:?}"
+            );
+        }
+        assert!(h.snapshot.teams.iter().all(|t| t.id != "z"));
+        // Contact and title can't be blank, long, or hold control characters.
+        for contact in [" ", "x".repeat(201).as_str(), "a\nb"] {
+            let r = run(
+                &mut h,
+                "member.add_person",
+                70,
+                json!({"member_id": "p9", "name": "Pat", "contact": contact}),
+            );
+            assert_eq!(code(r), ErrorCode::InvalidRequest, "{contact:?}");
+        }
+    }
+
+    #[test]
+    fn a_refused_command_after_a_partial_change_leaves_the_state_alone() {
+        // `apply` works on a copy: even a rule that is checked late can't leave half a change.
+        let mut h = hq();
+        let before = h.snapshot.clone();
+        let c = cmd(
+            "member.remove",
+            json!({"member_id": "you", "expected_version": 1}),
+        );
+        assert!(apply(&mut h.snapshot, &c).is_err());
+        assert_eq!(h.snapshot, before);
     }
 }

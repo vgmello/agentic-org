@@ -1,5 +1,5 @@
 import { inTauri, officeApi } from '$lib/office/api';
-import type { CommandAccepted, OrgSnapshot, OrgView } from '$lib/proto';
+import type { ApiErrorCode, AppError, CommandAccepted, OrgSnapshot, OrgView } from '$lib/proto';
 import { ready, type OrgCommand, type OrgCommandInput } from './commands';
 import { normalizeKinds } from './model';
 import { applyCommand } from './reducer';
@@ -22,17 +22,29 @@ export interface MockStorage {
 	setItem(key: string, value: string): void;
 }
 
+/** What the mock HQ answered a command id, and the command it answered (a reused id for another command is refused). */
+interface Answer {
+	command: string;
+	result: { accepted: CommandAccepted } | { error: AppError };
+}
+
 interface Stored {
 	snapshot: OrgSnapshot;
-	/** Answers to commands already applied, so a retry gets the same answer. */
-	answers: Record<string, CommandAccepted>;
+	answers: Record<string, Answer>;
 }
+
+const isStored = (x: unknown): x is Stored => {
+	const s = (x as Stored | null)?.snapshot;
+	return !!s && Array.isArray(s.teams) && Array.isArray(s.members) && Array.isArray(s.memberships) && !!s.position && typeof (x as Stored).answers === 'object' && (x as Stored).answers !== null;
+};
+
+const refusal = (code: ApiErrorCode, message: string): AppError => ({ source: 'api', code, message });
 
 /**
  * A mock office's organization, for a plain browser (`bun run dev`, tests): the Tauri app asks the Rust
- * shell, whose mock office applies the same rules (`src-tauri/src/org_engine.rs`). Changes are kept in
- * the browser's storage so they survive a reload. `?org=empty` in the URL shows an organization with
- * only its owner (nothing is stored then). Always sample data.
+ * shell, whose mock office applies the same rules (`src-tauri/src/org_engine.rs`; the two are tested against
+ * the same cases). Changes are kept in the browser's storage so they survive a reload. `?org=empty` in the
+ * URL shows an organization with only its owner (nothing is stored then). Always sample data.
  */
 export function createMockOrg(
 	hqOfficeId: (organizationId: string) => Promise<string>,
@@ -46,8 +58,8 @@ export function createMockOrg(
 		const key = keyFor(organizationId);
 		if (!empty()) {
 			try {
-				const raw = store.getItem(key);
-				if (raw) return { key, state: JSON.parse(raw) as Stored };
+				const parsed: unknown = JSON.parse(store.getItem(key) ?? 'null');
+				if (isStored(parsed)) return { key, state: parsed };
 			} catch {
 				// unreadable: start from the sample
 			}
@@ -55,19 +67,48 @@ export function createMockOrg(
 		return { key, state: { snapshot: empty() ? emptyOrg() : sampleOrg(await hqOfficeId(organizationId)), answers: {} } };
 	}
 
+	// Commands are answered one at a time, as HQ does, so two sent together can't overwrite each other.
+	let queue: Promise<unknown> = Promise.resolve();
+
+	async function run(organizationId: string, input: OrgCommandInput | OrgCommand): Promise<CommandAccepted> {
+		const command = ready(input);
+		const id = command.params.command_id;
+		const fingerprint = JSON.stringify(command);
+		const { key, state } = await load(organizationId);
+		const earlier = Object.hasOwn(state.answers, id) ? state.answers[id] : undefined;
+		if (earlier) {
+			if (earlier.command !== fingerprint) throw refusal('invalid_request', 'That command id was already used for a different command.');
+			if ('error' in earlier.result) throw earlier.result.error;
+			return earlier.result.accepted;
+		}
+		let result: Answer['result'];
+		let snapshot = state.snapshot;
+		try {
+			snapshot = applyCommand(state.snapshot, command); // throws HQ's error
+			result = { accepted: { status: 'committed', position: snapshot.position } };
+		} catch (e) {
+			if (!(e && typeof e === 'object' && 'code' in e && 'source' in e)) throw e;
+			result = { error: e as AppError };
+		}
+		if (!empty()) {
+			try {
+				store.setItem(key, JSON.stringify({ snapshot, answers: { ...state.answers, [id]: { command: fingerprint, result } } } satisfies Stored));
+			} catch {
+				throw { source: 'app', code: 'internal', message: "The change couldn't be saved in this browser." } satisfies AppError;
+			}
+		}
+		if ('error' in result) throw result.error;
+		return result.accepted;
+	}
+
 	return {
 		async view(organizationId) {
 			return { snapshot: normalizeKinds((await load(organizationId)).state.snapshot), sample: true };
 		},
-		async command(organizationId, input) {
-			const command = ready(input);
-			const { key, state } = await load(organizationId);
-			const earlier = state.answers[command.params.command_id];
-			if (earlier) return earlier;
-			const snapshot = applyCommand(state.snapshot, command); // throws HQ's error
-			const accepted: CommandAccepted = { status: 'committed', position: snapshot.position };
-			if (!empty()) store.setItem(key, JSON.stringify({ snapshot, answers: { ...state.answers, [command.params.command_id]: accepted } } satisfies Stored));
-			return accepted;
+		command(organizationId, input) {
+			const answer = queue.then(() => run(organizationId, input));
+			queue = answer.catch(() => undefined);
+			return answer;
 		}
 	};
 }
