@@ -453,12 +453,18 @@ impl Client {
 
         let mut outcome = answer.recv_timeout(deadline.saturating_duration_since(Instant::now()));
         // On timeout the entry is still there: drop it, so a late answer is ignored.
-        lock(&self.shared.pending).remove(&id);
+        let entry = lock(&self.shared.pending).remove(&id);
         if matches!(outcome, Err(mpsc::RecvTimeoutError::Timeout)) {
             // An answer that came in between the wait ending and the entry going is still an
             // answer: a call that succeeded is not reported as timed out (the caller might
-            // retry a create that went through).
-            if let Ok(late) = answer.try_recv() {
+            // retry a create that went through). If the entry was already gone, the reader has
+            // taken it and is about to send: wait a moment for that.
+            let late = if entry.is_none() {
+                answer.recv_timeout(Duration::from_millis(100)).ok()
+            } else {
+                answer.try_recv().ok()
+            };
+            if let Some(late) = late {
                 outcome = Ok(late);
             }
         }
@@ -720,7 +726,8 @@ fn write_before(
         if remaining.is_zero() && Instant::now() >= deadline + WRITE_GRACE {
             return Err(ErrorKind::TimedOut.into());
         }
-        // Past the deadline, keep going in short steps; the caller will cut it if it sticks.
+        // Past the deadline, keep going in short steps; the check above (or the caller, in
+        // `settle`) cuts it if it sticks.
         let step = if remaining.is_zero() {
             WRITE_GRACE
         } else {
