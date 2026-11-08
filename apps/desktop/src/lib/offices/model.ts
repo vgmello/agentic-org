@@ -41,6 +41,10 @@ export function displayStatus(connected: boolean, check: LiveCheck): DisplayStat
 	return check === 'up' ? 'active' : check === 'down' ? 'unreachable' : 'checking';
 }
 
+/** `displayStatus` for an office in a list: connected means it is the office the app is connected to. */
+export const displayStatusFor = (officeId: string, connectedOfficeId: string, check: LiveCheck): DisplayStatus =>
+	displayStatus(officeId === connectedOfficeId, check);
+
 /** The owner-facing word for an office's status, with its icon family and tone (spec §3.1). */
 export function statusInfo(status: DisplayStatus | undefined): { label: string; tone: 'ok' | 'info' | 'muted' | 'warn' | 'bad' } {
 	switch (status) {
@@ -124,10 +128,11 @@ export function statusIcon(status: DisplayStatus | undefined): StatusIcon {
  * What a screen reader hears for an office row (OFC-13): its name, HQ, where it runs, its status and how many
  * agents it has. `agents` is undefined while they are still being counted.
  */
-export function rowLabel(o: OfficeInfo, agents: number | undefined, here: boolean, status: DisplayStatus | undefined = o.status): string {
+export function rowLabel(o: OfficeInfo, agents: number | undefined, here: boolean, status: DisplayStatus | undefined): string {
 	const parts = [o.name];
 	if (isHq(o)) parts.push('HQ');
-	parts.push(secondaryText(o) + (here ? " (you're here)" : ''));
+	// An office that can't be reached shows "Can't reach this office" where its location was: the label says the same.
+	parts.push(status === 'unreachable' ? "Can't reach this office" : secondaryText(o) + (here ? " (you're here)" : ''));
 	parts.push(statusInfo(status).label);
 	if (agents !== undefined) parts.push(`${agents} ${agents === 1 ? 'agent' : 'agents'}`);
 	parts.push('opens details');

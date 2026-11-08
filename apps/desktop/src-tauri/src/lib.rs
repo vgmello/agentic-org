@@ -83,6 +83,13 @@ impl AppState {
         self.start_locked()
     }
 
+    /// Whether the connected office answers. Read-only: no start lock, no epoch, no restart, so a status
+    /// check can't pile up behind (or cause) a start. Before the office has been started there is nothing to ask.
+    fn ping(&self) -> Result<(), CommandError> {
+        self.ensure_connected()?;
+        Ok(self.office.ping()?)
+    }
+
     fn start_locked(&self) -> Result<HelloResult, CommandError> {
         let hello = self.office.ensure_running()?;
         // The epoch moves before the connection is published, so a caller that sees the new
@@ -247,6 +254,12 @@ async fn office_ensure_running(
 }
 
 #[tauri::command]
+async fn office_ping(state: State<'_, Arc<AppState>>) -> Result<(), CommandError> {
+    let state = Arc::clone(&state);
+    blocking(move || state.ping()).await
+}
+
+#[tauri::command]
 async fn organization_create(
     app: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
@@ -317,6 +330,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             office_ensure_running,
+            office_ping,
             organization_create,
             organizations_list,
             organization_open,
@@ -363,6 +377,33 @@ mod tests {
     }
 
     #[test]
+    fn a_ping_only_asks_it_never_starts_or_restarts_the_office() {
+        let (state, dir) = make_state(Scenario::Healthy);
+        // Before anything started the office there is nothing to ask, and asking starts nothing.
+        let err = state.ping().unwrap_err();
+        assert_eq!((err.source, err.code.as_str()), ("app", "not_connected"));
+        assert_eq!(state.epoch.load(Ordering::SeqCst), 0);
+        state.ensure_running().unwrap();
+        let epoch = state.epoch.load(Ordering::SeqCst);
+        for _ in 0..3 {
+            assert!(state.ping().is_ok());
+        }
+        assert_eq!(
+            state.epoch.load(Ordering::SeqCst),
+            epoch,
+            "a ping is not a start"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+        // An office that doesn't answer is reported as unreachable (a setup error), not restarted.
+        let (state, dir) = make_state(Scenario::Unreachable);
+        *state.connected.lock().unwrap() = Some("This Mac".into());
+        let err = state.ping().unwrap_err();
+        assert_eq!((err.source, err.code.as_str()), ("setup", "unreachable"));
+        assert_eq!(state.epoch.load(Ordering::SeqCst), 0);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn creating_before_the_office_is_running_is_refused() {
         let (state, dir) = make_state(Scenario::Healthy);
         let err = state.create_organization("Acme").unwrap_err();
@@ -396,8 +437,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir2);
     }
 
-    const COMMANDS: [&str; 5] = [
+    const COMMANDS: [&str; 6] = [
         "office_ensure_running",
+        "office_ping",
         "organization_create",
         "organizations_list",
         "organization_open",
@@ -592,6 +634,9 @@ mod tests {
                 host: "This Mac".into(),
                 office: None,
             })
+        }
+        fn ping(&self) -> Result<(), office::SetupError> {
+            Ok(())
         }
         fn create_organization(&self, _: &str) -> Result<Organization, ApiError> {
             unreachable!()

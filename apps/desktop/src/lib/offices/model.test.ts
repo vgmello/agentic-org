@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { OfficeInfo } from '$lib/proto';
 import { sampleOrg } from '$lib/org/sample';
-import { agentsIn, displayStatus, isHere, orderOffices, roleInfo, rowLabel, secondaryText, statusIcon, statusInfo, unplacedAgents } from './model';
+import { agentsIn, displayStatus, displayStatusFor, isHere, orderOffices, roleInfo, rowLabel, secondaryText, statusIcon, statusInfo, unplacedAgents } from './model';
 
 const office = (id: string, name: string, over: Partial<OfficeInfo> = {}): OfficeInfo => ({
 	id,
@@ -85,12 +85,12 @@ describe('OFC-13 each status has its icon, and a row says everything to a screen
 	});
 
 	it('the row label has the name, HQ, where it runs, the status and the agents', () => {
-		expect(rowLabel(hq, 6, true)).toBe("Main office, HQ, This Mac (you're here), Online, 6 agents, opens details");
-		expect(rowLabel(office('s', 'Studio', { host: '192.168.1.31', status: 'offline' }), 1, false)).toBe('Studio, 192.168.1.31, Offline, 1 agent, opens details');
+		expect(rowLabel(hq, 6, true, 'active')).toBe("Main office, HQ, This Mac (you're here), Online, 6 agents, opens details");
+		expect(rowLabel(office('s', 'Studio', { host: '192.168.1.31', status: 'offline' }), 1, false, 'offline')).toBe('Studio, 192.168.1.31, Offline, 1 agent, opens details');
 	});
 
 	it('leaves the count out while the agents are still being counted', () => {
-		expect(rowLabel(hq, undefined, false)).toBe('Main office, HQ, This Mac, Online, opens details');
+		expect(rowLabel(hq, undefined, false, 'active')).toBe('Main office, HQ, This Mac, Online, opens details');
 	});
 });
 
@@ -111,6 +111,15 @@ describe('OFC-12 status is never shown stale', () => {
 	});
 
 	it('the row label says the verified status, not the saved one', () => {
-		expect(rowLabel(hq, 1, true, 'unreachable')).toBe("Main office, HQ, This Mac (you're here), Unreachable, 1 agent, opens details");
+		expect(rowLabel(hq, 1, true, 'unreachable')).toBe("Main office, HQ, Can't reach this office, Unreachable, 1 agent, opens details");
+		expect(rowLabel(hq, 1, false, 'status_unknown')).toBe('Main office, HQ, This Mac, Status unknown, 1 agent, opens details');
+	});
+});
+
+describe('OFC-12 which office is verified', () => {
+	it('only the office the app is connected to can be Online; another office with the same saved status reads unknown', () => {
+		expect(displayStatusFor('hq', 'hq', 'up')).toBe('active');
+		expect(displayStatusFor('office-2', 'hq', 'up')).toBe('status_unknown');
+		expect(displayStatusFor('office-2', 'hq', 'down')).toBe('status_unknown');
 	});
 });

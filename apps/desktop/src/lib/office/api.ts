@@ -18,6 +18,8 @@ export interface OfficeApi {
 	connections(): Promise<Connection[]>;
 	/** Make sure an office is installed, running and answering. */
 	ensureRunning(): Promise<HelloResult>;
+	/** Whether the running office answers. Read-only (never starts anything): safe to call often. */
+	ping(): Promise<void>;
 	/** Create an organization on this Mac's host (reached by `ensureRunning`), and remember it. */
 	createOrganization(name: string): Promise<Connection>;
 	/** The organizations this Mac already has, each with its offices here (`organization.list`). */

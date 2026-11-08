@@ -108,7 +108,7 @@ test('Unplaced agents are a group with a disabled Place… that says why', async
 	await openOffices(page);
 	const group = page.getByTestId('unplaced-note');
 	await expect(group.getByRole('heading', { name: 'Unplaced · 1 agent' })).toBeVisible();
-	const place = group.getByRole('button', { name: 'Place Inês Duarte…' });
+	const place = group.getByRole('button', { name: 'Place… Inês Duarte' });
 	await expect(place).toBeDisabled();
 	await expect(place).toHaveAccessibleDescription('Placing agents is available in a later release.');
 });
@@ -129,15 +129,21 @@ test('a failure to count agents keeps the list and shows an in-page error with R
 	await shot(page, 'offices-count-error');
 });
 
-test('OFC-12: HQ is Online only once the app has verified the connection, and says it is checking before that', async ({ page }) => {
+test('OFC-12: HQ says Checking… until the app has verified the connection, and only then Online', async ({ page }) => {
 	await visit(page, '/create');
 	await page.getByLabel('Organization name').fill('Acme');
 	await page.getByRole('button', { name: 'Create organization' }).click();
 	await expect(page).toHaveURL(/\/agents$/);
 	await visit(page, '/offices');
 	// The saved status says active, but the row has to earn "Online" by the office answering.
-	await expect(rows(page).first()).toContainText('Online');
-	await expect(rows(page).first().locator('[data-status-icon]')).toHaveAttribute('data-status-icon', 'circle');
+	const badge = rows(page).first().locator('[data-status-icon]');
+	await expect(badge).toContainText('Checking…');
+	await expect(badge).toHaveAttribute('data-status-icon', 'loader');
+	await expect(rows(page).first()).not.toContainText('Online');
+	await expect(badge).toContainText('Online');
+	await expect(badge).toHaveAttribute('data-status-icon', 'circle');
+	await expect(badge.locator('svg')).toHaveCount(1);
+	await expect(page.getByTestId('live-status')).toHaveText('Online HQ'); // said once for screen readers
 });
 
 test('OFC-12: when the office does not answer, the row says Unreachable with a Retry, never a stale Online', async ({ page }) => {
@@ -152,6 +158,18 @@ test('OFC-12: when the office does not answer, the row says Unreachable with a R
 	await expect(hq).not.toContainText('Online');
 	await expect(hq.locator('[data-status-icon]')).toHaveAttribute('data-status-icon', 'wifi-off');
 	await expect(hq.getByRole('button', { name: /^HQ, HQ, .*Unreachable/ })).toBeVisible();
-	await expect(hq.getByRole('button', { name: 'Retry reaching HQ' })).toBeVisible();
+	await expect(hq.locator('[data-status-icon] svg')).toHaveCount(1);
+	const retry = hq.getByRole('button', { name: 'Retry reaching HQ' });
+	await expect(retry).toBeVisible();
 	await shot(page, 'offices-unreachable');
+	// Retry keeps the keyboard focus while it works, and says so; the office still doesn't answer, so it ends Unreachable again.
+	await retry.focus();
+	await page.keyboard.press('Enter');
+	await expect(retry).toHaveText('Retrying…');
+	await expect(retry).toBeFocused();
+	await expect(hq).toContainText('Checking…');
+	await expect(retry).toHaveText('Retry', { timeout: 15_000 });
+	await expect(hq).toContainText('Unreachable');
+	await expect(retry).toBeFocused();
+	await expect(page.getByTestId('live-status')).toHaveText('Unreachable HQ');
 });

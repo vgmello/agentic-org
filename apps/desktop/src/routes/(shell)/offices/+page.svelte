@@ -7,8 +7,8 @@
 	import OfficeStatusBadge from '$lib/components/OfficeStatusBadge.svelte';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
-	import { officeApi } from '$lib/office/api';
-	import { agentsIn, displayStatus, isHq, orderOffices, rowLabel, secondaryText, unplacedAgents, type LiveCheck } from '$lib/offices/model';
+	import { officeApi, toAppError } from '$lib/office/api';
+	import { agentsIn, displayStatusFor, isHq, orderOffices, rowLabel, secondaryText, statusInfo, unplacedAgents, type LiveCheck } from '$lib/offices/model';
 	import type { Counts } from './+page';
 
 	let { data } = $props();
@@ -18,6 +18,12 @@
 	// The agent counts arrive after the list: `undefined` while they are being counted.
 	let counts = $state<Counts | undefined>();
 	let retrying = $state(false);
+	// True from the first failure until the office answers again: the Retry button stays while it works.
+	let retryingProbe = $state(false);
+	$effect(() => {
+		if (check === 'down') retryingProbe = true;
+		else if (check === 'up') retryingProbe = false;
+	});
 	$effect(() => {
 		const pending = data.counts;
 		// The last answer stays until the next arrives, so Retry (and its focus) isn't removed while it works.
@@ -40,13 +46,45 @@
 	// The one live signal there is: whether the office this app is connected to answers. Checked now, every
 	// half minute and on Retry; a background check keeps the last answer instead of flashing "Checking…".
 	let check = $state<LiveCheck>('checking');
-	async function probe(quiet = false) {
-		if (!quiet) check = 'checking';
+	const PROBE_TIMEOUT_MS = 5000;
+	let probeId = 0;
+	let probing = false;
+	/** A read-only question to the office (it never starts anything), with a timeout: silence is not "up". */
+	async function ask(): Promise<void> {
+		const answer = (async () => {
+			try {
+				await officeApi.ping();
+			} catch (e) {
+				// Nothing started the office yet: do what the window itself does at launch, then ask again.
+				if (toAppError(e).code !== 'not_connected') throw e;
+				await officeApi.ensureRunning();
+				await officeApi.ping();
+			}
+		})();
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const timeout = new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error('timeout')), PROBE_TIMEOUT_MS)));
 		try {
-			await officeApi.ensureRunning();
-			check = 'up';
+			await Promise.race([answer, timeout]);
+		} finally {
+			clearTimeout(timer);
+		}
+	}
+	/** The newest probe wins; a background one is skipped while another is running (no pile-up). */
+	async function probe(quiet = false) {
+		if (quiet && probing) return;
+		const mine = ++probeId;
+		probing = true;
+		if (!quiet) check = 'checking';
+		let result: LiveCheck;
+		try {
+			await ask();
+			result = 'up';
 		} catch {
-			check = 'down';
+			result = 'down';
+		}
+		if (mine === probeId) {
+			check = result;
+			probing = false;
 		}
 	}
 	onMount(() => {
@@ -54,7 +92,14 @@
 		const again = setInterval(() => void probe(true), 30_000);
 		return () => clearInterval(again);
 	});
-	const statusOf = (officeId: string) => displayStatus(officeId === here.id, check);
+	// Another organization's office is another thing to verify: don't carry the last answer over.
+	let lastOffice: string | undefined;
+	$effect(() => {
+		const id = here.id;
+		if (lastOffice !== undefined && id !== lastOffice) void probe();
+		lastOffice = id;
+	});
+	const statusOf = (officeId: string) => displayStatusFor(officeId, here.id, check);
 
 	let detailsId = $state<string | undefined>();
 	// The open sheet shows the latest data for its office, not the copy captured when it was clicked.
@@ -92,6 +137,9 @@
 		</div>
 	</div>
 
+	<!-- Said once when the answer changes: the badge and count are hidden from screen readers, the row's label has them. -->
+	<p class="sr-only" role="status" data-testid="live-status">{statusInfo(statusOf(here.id)).label} {offices.find((o) => o.id === here.id)?.name ?? ''}</p>
+
 	<ul class="divide-y divide-white/5 overflow-hidden rounded-xl bg-white/5 outline-1 -outline-offset-1 outline-white/10" aria-label="Offices">
 		{#each offices as office (office.id)}
 			{@const agents = snapshot ? agentsIn(snapshot, office.id).length : undefined}
@@ -111,8 +159,9 @@
 				</button>
 				<!-- The button's label already says the status and the count: not read twice. -->
 				<span aria-hidden="true"><OfficeStatusBadge status={statusOf(office.id)} /></span>
-				{#if statusOf(office.id) === 'unreachable'}
-					<Button variant="outline" size="xs" aria-label="Retry reaching {office.name}" onclick={() => probe()}>Retry</Button>
+				{#if statusOf(office.id) === 'unreachable' || (office.id === here.id && retryingProbe)}
+					<!-- Stays mounted while it works (aria-disabled, not disabled), so keyboard focus isn't lost. -->
+					<Button variant="outline" size="xs" aria-label="Retry reaching {office.name}" aria-disabled={check === 'checking'} aria-busy={check === 'checking'} onclick={() => check !== 'checking' && probe()}>{check === 'checking' ? 'Retrying…' : 'Retry'}</Button>
 				{/if}
 				<span class="w-20 text-right text-xs/5 text-gray-400" data-testid="agent-count" aria-hidden="true">
 					{#if agents !== undefined}{agents} {agents === 1 ? 'agent' : 'agents'}
@@ -129,7 +178,7 @@
 		<p class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-red-500/10 px-4 py-3 text-sm/6 text-red-100 outline-1 -outline-offset-1 outline-red-400/20" role="alert" data-testid="count-error">
 			<CircleAlert class="size-4 shrink-0" aria-hidden="true" />
 			<span class="[overflow-wrap:anywhere]">Can't count agents right now: {countError}</span>
-			<Button variant="outline" size="xs" disabled={retrying} aria-busy={retrying} onclick={retry}>{retrying ? 'Retrying…' : 'Retry'}</Button>
+			<Button variant="outline" size="xs" aria-disabled={retrying} aria-busy={retrying} onclick={() => !retrying && retry()}>{retrying ? 'Retrying…' : 'Retry'}</Button>
 		</p>
 	{/if}
 
@@ -142,7 +191,7 @@
 					<li class="flex items-center justify-between gap-x-3 text-sm/6 text-amber-50">
 						<span class="min-w-0 [overflow-wrap:anywhere]">{agent.name}</span>
 						<!-- Placing an agent is its own flow, which comes later: shown, not hidden, so nobody looks for it. -->
-						<Button variant="outline" size="xs" disabled aria-label="Place {agent.name}…" aria-describedby="place-reason">Place…</Button>
+						<Button variant="outline" size="xs" disabled aria-label="Place… {agent.name}" aria-describedby="place-reason">Place…</Button>
 					</li>
 				{/each}
 			</ul>
