@@ -8,10 +8,12 @@
 //! anything it creates, and the `expected_version` of what it edits.
 //!
 //! ## Who may send what
-//! Every command in this module is for the app. A command that arrives on an agent's connection
-//! is refused with `not_authorized` unless the agent-sessions design lists it as allowed for
-//! agents (none is today). In particular `member.add_agent`, `member.update_agent`,
-//! `member.set_agent_status`, `member.set_run_mode`, `member.offboard` and `member.remove` change
+//! Every command in this module is for the app. A command that arrives on a connection that
+//! isn't the app's is refused with `not_authorized` unless a row of ADR-0003 §2.1.4 allows it
+//! (none does today). It applies to every command here, though only the ones below that change
+//! who works for the organization name `not_authorized` in their `Errors:` lists. In particular
+//! `member.add_agent`, `member.update_agent`, `member.set_agent_status`, `member.set_run_mode`,
+//! `member.offboard` and `member.remove` change
 //! who works for the organization and what it spends, and some cannot be undone. The wire
 //! carries no caller identity: the office that receives a command knows whose connection it came
 //! in on (the app's connection is bound with the app token, ADR-0003), enforces this before it
@@ -21,7 +23,11 @@
 //! A command can break more than one rule at once. HQ returns the first of: `not_authorized`,
 //! `not_found`, `invalid_request` (unreadable, outside a limit, the wrong kind of member or the
 //! wrong state, a value that makes no sense), `invalid_name`, `conflict` (a stale
-//! `expected_version`), `already_exists`. Every command below uses this one order.
+//! `expected_version`), `already_exists`. Every command below checks in this one order (its
+//! `Errors:` list names the codes it can return, not the order they are checked in). The
+//! domain codes (`owner_protected`, `cycle`, `not_a_member`, `not_empty`) come after
+//! `invalid_name` and before `conflict`: a rule that would refuse the command at any version
+//! is not hidden by a stale one.
 
 use serde::{Deserialize, Serialize};
 
@@ -524,8 +530,8 @@ command!(
     /// for a member who has no history to keep: that is the CALLER'S duty (HQ sees the
     /// organization's structure, not messages or tasks, and cannot tell). What HQ does refuse is
     /// an offboarded agent, whose record and handle are kept for good (`invalid_request`);
-    /// offboard an agent that has worked, remove one that never did. Errors: `owner_protected`,
-    /// `not_found`, `invalid_request`, `conflict`.
+    /// offboard an agent that has worked, remove one that never did. Errors: `not_authorized`,
+    /// `owner_protected`, `not_found`, `invalid_request`, `conflict`.
     MemberRemove, "member.remove", MemberRemoveParams {
         member_id: String,
         expected_version: u64,
@@ -549,11 +555,11 @@ command!(
     /// `Other("codex")` are `invalid_request`), its `status` must be `active` or `paused`
     /// (`Unknown` and `offboarded` are refused: an agent is offboarded with `member.offboard`),
     /// and `offboarded_at` must be absent. If `run_mode` is `scheduled` a `schedule` is required,
-    /// and otherwise there must be none. Errors: `invalid_name` (the name, or a `messaging_name`
-    /// that breaks its format), `invalid_request` (a profile that breaks its limits or rules
-    /// above), `already_exists` (the id is taken, or `messaging_name` is already another member's
-    /// handle: an agent's `messaging_name`, a person's `name` or [`OWNER_HANDLE`], ignoring
-    /// case), `not_found` (no such office).
+    /// and otherwise there must be none. Errors: `not_authorized`, `invalid_name` (the name, or a
+    /// `messaging_name` that breaks its format), `invalid_request` (a profile that breaks its
+    /// limits or rules above), `already_exists` (the id is taken, or `messaging_name` is already
+    /// another member's handle: an agent's `messaging_name`, a person's `name` or
+    /// [`OWNER_HANDLE`], ignoring case), `not_found` (no such office).
     MemberAddAgent, "member.add_agent", MemberAddAgentParams {
         member_id: String,
         name: String,
@@ -571,7 +577,8 @@ command!(
     /// and the offices design rely on such a move). The run mode is changed with
     /// `member.set_run_mode`, the status with `member.set_agent_status` and `member.offboard`. An
     /// offboarded agent is not edited at all (`invalid_request`): its record, handle included, is
-    /// history. Errors: `invalid_name` (the name or a `messaging_name` that breaks its format),
+    /// history. Errors: `not_authorized`, `invalid_name` (the name or a `messaging_name` that
+    /// breaks its format),
     /// `already_exists` (`messaging_name` is already another member's handle, as for
     /// `member.add_agent`), `conflict`, `not_found`, and `invalid_request` if the member is not
     /// an agent (people are edited with `member.update_person`), is offboarded, or a value breaks
@@ -607,8 +614,8 @@ command!(
     /// `member.set_agent_status`: pause or resume an agent. `status` must be `active` or
     /// `paused`; setting the status it already has is not an error. Anything else is
     /// `invalid_request`: `offboarded` (use `member.offboard`), `Unknown`, a member that is not
-    /// an agent, and an agent that is already offboarded. Errors: `conflict`, `not_found`,
-    /// `invalid_request`.
+    /// an agent, and an agent that is already offboarded. Errors: `not_authorized`, `not_found`,
+    /// `invalid_request`, `conflict`.
     MemberSetAgentStatus, "member.set_agent_status", MemberSetAgentStatusParams {
         member_id: String,
         expected_version: u64,
