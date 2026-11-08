@@ -39,6 +39,8 @@ impl Shared {
                 api_version: API_VERSION,
                 server_version: env!("CARGO_PKG_VERSION").to_owned(),
                 host: "This Mac".to_owned(),
+                // Part 1 implements only what every server of this api_version has.
+                capabilities: Vec::new(),
                 office: Some(OfficeHello {
                     organization_name: organization_name.to_owned(),
                     office: OfficeInfo {
