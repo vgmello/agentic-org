@@ -28,7 +28,8 @@
 //!   binding may call only `who`, `msg.list`, `msg.get`, `msg.threads` and
 //!   `msg.human_needs_you`. Those that act as a member (`msg.send`, `msg.inbox`,
 //!   `status.set`, ...) fail on it with `not_bound`. Calls of other modules follow their own
-//!   rules: the organization commands ([`crate::org`]) need the app-wide binding.
+//!   rules: the organization commands ([`crate::org`]) need an app-bound connection, one
+//!   bound with `app_token`, such as the app-wide binding.
 //!
 //! ## Events
 //! Message events ([`MessageReceived`], [`MessageStateChanged`], [`MessageDeliveryFailed`])
@@ -412,7 +413,8 @@ impl fmt::Debug for MetaSize<'_> {
 /// office runner spawns every agent, ADR-0003 M-A). A person or the owner needs `app_token`.
 /// The desktop app may bind app-wide, with `app_token` and no `member`. Of the messaging and
 /// directory calls, that binding may call only `who`, `msg.list`, `msg.get`, `msg.threads` and
-/// `msg.human_needs_you`; the organization commands ([`crate::org`]) need it.
+/// `msg.human_needs_you`. The organization commands ([`crate::org`]) need a binding with
+/// `app_token`, such as this one.
 ///
 /// It fails closed, checking in this order:
 /// 1. The input alone: params that don't decode (including a malformed `app_token`, or both

@@ -26,13 +26,13 @@
 //! characters (`0-9`, `A-Z` without `I`, `L`, `O`, `U`), the first `0` to `7`. Its time part
 //! dates the command. Work writes' `change_id` ([`crate::work`]) has the same form.
 //!
-//! HQ keeps each command's answer, refusals included, until the id's time plus 30 days
-//! (offices design, "Dedup window"). A retry with the same `command_id` and the same params
-//! gets the stored answer again, without being validated again, even after the state changed.
-//! The same `command_id` with different params is refused with `invalid_request` ("command id
-//! reused with different params"). The refusals that come before HQ looks at the command
-//! itself (`not_authorized`, the id's format, `expired`, `clock_skew`; see below) are never
-//! kept, so a later retry may succeed. To try again after any other refusal, use a new
+//! HQ keeps each command's answer, refusals included, until the id's time plus 30 days (offices
+//! design, "Dedup window"). A retry with the same `command_id` and the same params gets the stored
+//! answer again, without being validated again, even after the state changed. The same `command_id`
+//! with different params is refused with `invalid_request` ("command id reused with different
+//! params"). The refusals that come before HQ looks at the command itself (`not_authorized`, the
+//! id's format, `expired`, `clock_skew`; see below), and `storage_error` and `unavailable`, are
+//! never kept, so a later retry may succeed. To try again after any other refusal, use a new
 //! `command_id`.
 //!
 //! ## When several errors apply
@@ -51,11 +51,12 @@
 //!    kind of member or the wrong state, a value that makes no sense), `invalid_name`,
 //!    `conflict` (a stale `expected_version`), `already_exists`.
 //!
-//! Every command below checks in this one order (its `Errors:` list names the codes it can
-//! return, not the order they are checked in). Within step 5, the domain codes (`owner_protected`, `cycle`, `not_a_member`, `not_empty`) come after
-//! `invalid_name` and before `conflict`: a rule that would refuse the command at any version
-//! is not hidden by a stale one. Among themselves `owner_protected` comes first, so a lead
-//! who is the owner is `owner_protected`, not `not_a_member`.
+//! Every command below checks in this one order (its `Errors:` list names the codes it can return,
+//! not the order they are checked in). Within step 5, the domain codes (`owner_protected`, `cycle`,
+//! `not_a_member`, `not_empty`) come after `invalid_name` and before `conflict`: a rule that would
+//! refuse the command at any version is not hidden by a stale one. Among themselves
+//! `owner_protected` comes first, so a lead who is the owner is `owner_protected`, not
+//! `not_a_member`.
 //!
 //! ## Limits every command shares
 //! All are `invalid_request`, so a client can check them before sending:
@@ -494,11 +495,12 @@ pub const RESERVED_BRANCH_PREFIXES: &[&str] = &["task/", "docs/", "merged/", "ar
 /// `invalid_request` (docs/design/processes.md, "Project rule"). The one rule the office and
 /// the app's mocks share.
 ///
-/// Stricter than a plain prefix test, so a spelling git would resolve to the same ref isn't a
-/// way around it: a leading `refs/heads/` is looked through, and the prefix is compared
-/// ignoring ASCII case (refs can live on a case-insensitive file system).
+/// Stricter than a plain prefix test, so a spelling git would resolve to the same branch isn't
+/// a way around it: a leading `refs/heads/` or `heads/` is looked through, and the prefix is
+/// compared ignoring ASCII case (refs can live on a case-insensitive file system).
 pub fn has_reserved_branch_prefix(name: &str) -> bool {
-    let name = name.strip_prefix("refs/heads/").unwrap_or(name);
+    let name = name.strip_prefix("refs/").unwrap_or(name);
+    let name = name.strip_prefix("heads/").unwrap_or(name);
     RESERVED_BRANCH_PREFIXES.iter().any(|prefix| {
         name.len() >= prefix.len()
             && name.is_char_boundary(prefix.len())
@@ -1052,7 +1054,8 @@ command!(
     /// the key.
     ///
     /// `repo` absent: the project has no repository. `integration_branch` may not start with a
-    /// reserved prefix (`task/`, `docs/`, `merged/`, `archive/`; [`has_reserved_branch_prefix`]).
+    /// reserved prefix (`task/`, `docs/`, `merged/`, `archive/`, ignoring ASCII case;
+    /// [`has_reserved_branch_prefix`]).
     /// App-only, like every command here. Errors: `not_found` (a team), `invalid_request` (key
     /// format or reserved; limits; a repeated team; the repo spec; an `integration_branch` with
     /// a reserved prefix), `invalid_name` (the name or the area name), `already_exists` (an id,
@@ -1078,8 +1081,8 @@ command!(
 command!(
     /// `project.update`: only the fields given change; a field and its `clear_` flag together,
     /// or nothing to change, is `invalid_request`. The key never changes, and the repository
-    /// isn't changed here. `integration_branch` may not start with a reserved prefix
-    /// ([`has_reserved_branch_prefix`]). Errors: `not_found`, `invalid_request` (also an
+    /// isn't changed here. `integration_branch` may not start with a reserved prefix (ignoring
+    /// ASCII case; [`has_reserved_branch_prefix`]). Errors: `not_found`, `invalid_request` (also an
     /// `integration_branch` with a reserved prefix), `invalid_name`, `conflict`,
     /// `already_exists` (the name, ignoring case).
     ProjectUpdate, "project.update", ProjectUpdateParams {

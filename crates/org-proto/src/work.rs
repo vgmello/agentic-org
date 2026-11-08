@@ -22,9 +22,9 @@
 //!   but binding. In this module: `work.delete`. (Every organization command is app-only too.)
 //! - Every write's params start with **`change_id`**, a client-made ULID (26 **uppercase**
 //!   Crockford base32 characters, the first `0` to `7`; `invalid_request` otherwise), and its
-//!   result is [`WorkAccepted`]. The owning office keeps `change_id → (params hash, result)`
-//!   for 30 days: a retry with the same `change_id` and params gets the stored answer (refusals included,
-//!   except `storage_error`, `unavailable`, `not_bound`, `too_large`, `expired` and
+//!   result is [`WorkAccepted`]. The owning office keeps `change_id → (params hash, result)` for
+//!   30 days: a retry with the same `change_id` and params gets the stored answer (refusals
+//!   included, except `storage_error`, `unavailable`, `not_bound`, `too_large`, `expired` and
 //!   `clock_skew`, which are never stored); the same `change_id` with other params is
 //!   `invalid_request` ("change id reused"). A `change_id` dated more than 29 days ago is
 //!   `expired`, more than 5 minutes ahead of the office's clock `clock_skew`.

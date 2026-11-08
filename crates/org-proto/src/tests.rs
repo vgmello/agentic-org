@@ -1864,6 +1864,7 @@ fn an_integration_branch_may_not_start_with_a_prefix_the_office_owns() {
         "archive/task/W-9",
         "task/",
         "refs/heads/task/W-12",
+        "heads/task/W-12",
         "Task/W-12",
         "DOCS/x",
     ] {
