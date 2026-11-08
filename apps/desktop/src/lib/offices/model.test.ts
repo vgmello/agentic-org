@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { OfficeInfo } from '$lib/proto';
 import { sampleOrg } from '$lib/org/sample';
-import { agentsIn, isHere, orderOffices, secondaryText, statusInfo, unplacedAgents } from './model';
+import { agentsIn, isHere, orderOffices, roleInfo, secondaryText, statusInfo, unplacedAgents } from './model';
 
 const office = (id: string, name: string, over: Partial<OfficeInfo> = {}): OfficeInfo => ({
 	id,
@@ -44,6 +44,21 @@ describe('OFC-1 the list order and what each row says', () => {
 		expect(isHere(hq)).toBe(true);
 		expect(isHere(office('e', 'E', { host: 'studio.local', endpoint: 'unix:///tmp/o.sock' }))).toBe(true); // structural: it has a local endpoint
 		expect(isHere(office('s', 'S', { host: '192.168.1.31' }))).toBe(false);
+	});
+
+	it('an unrecognised role is never described as HQ or as an office that keeps a copy', () => {
+		expect(roleInfo(hq).label).toBe('HQ');
+		expect(roleInfo(office('s', 'S')).label).toBe('Office');
+		for (const role of ['unknown', undefined] as const) {
+			const info = roleInfo(office('x', 'X', { role }));
+			expect(info.label).toBe('Unknown');
+			expect(info.description).not.toMatch(/keeps/);
+		}
+	});
+
+	it('the other statuses have their words too', () => {
+		expect(statusInfo('starting').label).toBe('Starting');
+		expect(statusInfo('offline')).toEqual({ label: 'Offline', tone: 'muted' });
 	});
 
 	it('counts the agents placed in an office; people are never placed', () => {

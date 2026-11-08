@@ -57,21 +57,23 @@
 					{isHq(office) ? 'HQ' : ''}
 				</span>
 				<button type="button" class="min-w-0 flex-1 text-left focus-visible:outline-2 focus-visible:outline-indigo-400" onclick={() => open(office.id)}>
-					<span class="block truncate text-sm/6 font-semibold text-white">{office.name}</span>
+					<span class="block truncate text-sm/6 font-semibold text-white" title={office.name}>{office.name}</span>
 					<span class="block truncate text-xs/5 text-gray-400">{secondaryText(office) + (here.id === office.id ? " (you're here)" : '')}</span>
 				</button>
 				<OfficeStatusBadge status={office.status} />
 				<span class="w-20 text-right text-xs/5 text-gray-400">{agents} {agents === 1 ? 'agent' : 'agents'}</span>
 			</li>
+		{:else}
+			<li class="px-4 py-3 text-sm/6 text-gray-400" data-testid="no-offices">No offices to show.</li>
 		{/each}
 	</ul>
 
 	{#if unplaced.length > 0}
-		<p class="rounded-lg bg-amber-500/10 px-4 py-3 text-sm/6 text-amber-100 outline-1 -outline-offset-1 outline-amber-400/20" data-testid="unplaced-note">
+		<p class="rounded-lg bg-amber-500/10 px-4 py-3 text-sm/6 [overflow-wrap:anywhere] text-amber-100 outline-1 -outline-offset-1 outline-amber-400/20" data-testid="unplaced-note">
 			{unplaced.length} {unplaced.length === 1 ? 'agent is' : 'agents are'} not placed in an office: {unplaced.map((a) => a.name).join(', ')}.
 		</p>
 	{/if}
 	<p class="text-xs/5 text-gray-500">Shown from this Mac.</p>
 </div>
 
-<OfficeDetailsSheet bind:open={detailsOpen} office={detailsFor} snapshot={data.snapshot} />
+<OfficeDetailsSheet bind:open={detailsOpen} office={detailsFor} snapshot={data.snapshot} sample={data.sample} here={detailsFor?.id === here.id} />

@@ -8,6 +8,18 @@ export const isHq = (o: OfficeInfo) => o.role === 'hq';
 // On this Mac: it has a local endpoint (the host label is the fallback).
 export const isHere = (o: OfficeInfo) => !!o.endpoint || o.host === THIS_MAC;
 
+/** The owner-facing word for an office's role: an unrecognised role is never described as HQ or as an office that keeps a copy. */
+export function roleInfo(o: OfficeInfo): { label: string; description: string } {
+	switch (o.role) {
+		case 'hq':
+			return { label: 'HQ', description: 'HQ keeps the records and approves new offices.' };
+		case 'satellite':
+			return { label: 'Office', description: 'An office keeps a copy of the records.' };
+		default:
+			return { label: 'Unknown', description: "This app doesn't recognise this office's role." };
+	}
+}
+
 /** The owner-facing word for an office's status, with its icon family and tone (spec §3.1). */
 export function statusInfo(status: OfficeStatus | undefined): { label: string; tone: 'ok' | 'info' | 'muted' | 'warn' | 'bad' } {
 	switch (status) {

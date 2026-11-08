@@ -37,6 +37,8 @@ test('OFC-1: a row opens a slide-over with the office’s details', async ({ pag
 	await expect(details).toContainText('This Mac');
 	await expect(details).toContainText('Online');
 	await expect(details).toContainText('Sam Okafor'); // an agent placed here
+	await expect(page.getByTestId('sample-data-note-sheet')).toContainText('Sample data'); // the sheet covers the page's note
+	await expect(details).toContainText("This Mac (you're here)");
 	await expect(page.getByRole('button', { name: /Remove office/ })).toHaveCount(0); // phase 1 has HQ only
 	await shot(page, 'offices-details');
 });
