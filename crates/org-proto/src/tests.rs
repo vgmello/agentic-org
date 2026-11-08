@@ -491,3 +491,239 @@ fn trimming_is_rust_str_trim_unicode_white_space() {
     assert_eq!("\u{85}Acme\u{85}".trim(), "Acme");
     assert_eq!("\u{feff}Acme".trim(), "\u{feff}Acme");
 }
+
+#[test]
+fn org_wire_names_are_pinned() {
+    use crate::org::*;
+    let names = [
+        (OrgSnapshotCall::METHOD, "org.snapshot"),
+        (TeamCreate::METHOD, "team.create"),
+        (TeamRename::METHOD, "team.rename"),
+        (TeamMove::METHOD, "team.move"),
+        (TeamSetLead::METHOD, "team.set_lead"),
+        (TeamDelete::METHOD, "team.delete"),
+        (TeamAddMember::METHOD, "team.add_member"),
+        (TeamRemoveMember::METHOD, "team.remove_member"),
+        (TeamSetTitle::METHOD, "team.set_title"),
+        (MemberAddPerson::METHOD, "member.add_person"),
+        (MemberUpdatePerson::METHOD, "member.update_person"),
+        (MemberRemove::METHOD, "member.remove"),
+        (MemberSetReportsTo::METHOD, "member.set_reports_to"),
+        (ProjectAddTeam::METHOD, "project.add_team"),
+        (ProjectRemoveTeam::METHOD, "project.remove_team"),
+        (OrgChanged::NAME, "org.changed"),
+        (OrgRejected::NAME, "org.rejected"),
+    ];
+    for (got, want) in names {
+        assert_eq!(got, want);
+    }
+    for (code, name) in [
+        (ErrorCode::Cycle, "cycle"),
+        (ErrorCode::NotEmpty, "not_empty"),
+        (ErrorCode::NotAMember, "not_a_member"),
+        (ErrorCode::OwnerProtected, "owner_protected"),
+        (ErrorCode::NotFound, "not_found"),
+        (ErrorCode::Conflict, "conflict"),
+        (ErrorCode::UnknownRecipient, "unknown_recipient"),
+        (ErrorCode::SnapshotRequired, "snapshot_required"),
+        (ErrorCode::Expired, "expired"),
+        (ErrorCode::ClockSkew, "clock_skew"),
+    ] {
+        assert_eq!(serde_json::to_value(code).unwrap(), name);
+        assert_eq!(
+            serde_json::from_value::<ErrorCode>(name.into()).unwrap(),
+            code
+        );
+    }
+}
+
+#[test]
+fn positions_order_by_epoch_then_seq() {
+    let a = Position { epoch: 1, seq: 900 };
+    let b = Position { epoch: 2, seq: 1 };
+    assert!(a < b);
+    assert!(Position { epoch: 2, seq: 2 } > b);
+}
+
+#[test]
+fn subscribe_accepts_empty_params_and_a_position() {
+    let req: Request =
+        serde_json::from_str(r#"{"id":1,"method":"subscribe","params":{}}"#).unwrap();
+    assert_eq!(
+        req.params::<Subscribe>().unwrap(),
+        SubscribeParams::default()
+    );
+    let req: Request = serde_json::from_str(
+        r#"{"id":1,"method":"subscribe","params":{"from_position":{"epoch":1,"seq":42}}}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        req.params::<Subscribe>().unwrap().from_position,
+        Some(Position { epoch: 1, seq: 42 })
+    );
+}
+
+#[test]
+fn member_owner_flag_and_kind_round_trip() {
+    let owner = Member {
+        id: "m1".into(),
+        kind: MemberKind::Person,
+        name: "Vitor".into(),
+        contact: None,
+        owner: true,
+        office_id: None,
+        reports_to_member_id: None,
+        version: 1,
+    };
+    let v = serde_json::to_value(&owner).unwrap();
+    assert!(v.get("reports_to_member_id").is_none());
+    assert_eq!(v["owner"], true);
+    assert_eq!(v["kind"], "person");
+    let agent: Member = serde_json::from_value(json!({
+        "id": "a1", "kind": "agent", "name": "ada", "office_id": "o1",
+        "reports_to_member_id": "p1", "version": 3
+    }))
+    .unwrap();
+    assert_eq!(agent.reports_to_member_id.as_deref(), Some("p1"));
+    assert!(!agent.owner);
+    assert!(serde_json::to_value(&agent).unwrap().get("owner").is_none());
+    let robot: Member =
+        serde_json::from_value(json!({"id": "x", "kind": "robot", "name": "r", "version": 1}))
+            .unwrap();
+    assert_eq!(robot.kind, MemberKind::Unknown);
+}
+
+#[test]
+fn snapshot_and_changes_round_trip_and_unknown_changes_are_tolerated() {
+    let snap = OrgSnapshot {
+        position: Position { epoch: 1, seq: 7 },
+        teams: vec![Team {
+            id: "t1".into(),
+            name: "Product".into(),
+            owner_team_id: None,
+            lead_member_id: Some("a1".into()),
+            version: 2,
+        }],
+        members: vec![],
+        memberships: vec![Membership {
+            id: "ms1".into(),
+            team_id: "t1".into(),
+            member_id: "a1".into(),
+            title_in_team: None,
+            version: 1,
+        }],
+        projects: vec![ProjectSummary {
+            id: "p1".into(),
+            name: "Checkout".into(),
+        }],
+        project_teams: vec![ProjectTeam {
+            id: "pt1".into(),
+            project_id: "p1".into(),
+            team_id: "t1".into(),
+            version: 1,
+        }],
+    };
+    let v = serde_json::to_value(Response::ok::<OrgSnapshotCall>(1, &snap).unwrap()).unwrap();
+    assert_eq!(v["result"]["teams"][0]["name"], "Product");
+    assert!(v["result"]["teams"][0].get("labels").is_none());
+    let back: Response = serde_json::from_value(v).unwrap();
+    assert_eq!(back.into_result::<OrgSnapshotCall>().unwrap(), snap);
+
+    let ev = Event::new::<OrgChanged>(
+        3,
+        &OrgChangedData {
+            position: Position { epoch: 1, seq: 8 },
+            command_id: "c42".into(),
+            changes: vec![OrgChange::TeamDeleted {
+                team_id: "t9".into(),
+            }],
+        },
+    )
+    .unwrap();
+    let v = serde_json::to_value(&ev).unwrap();
+    assert_eq!(v["event"], "org.changed");
+    assert_eq!(v["data"]["changes"][0]["type"], "team_deleted");
+    assert_eq!(v["data"]["command_id"], "c42");
+
+    let newer: OrgChangedData = serde_json::from_value(json!({
+        "position": {"epoch": 1, "seq": 9},
+        "command_id": "c43",
+        "changes": [{"type": "budget_set", "amount": 5}]
+    }))
+    .unwrap();
+    assert_eq!(newer.changes, vec![OrgChange::Unknown]);
+}
+
+#[test]
+fn commands_carry_command_ids_and_expected_versions() {
+    use crate::org::*;
+    let req = Request::new::<TeamMove>(
+        5,
+        &TeamMoveParams {
+            command_id: "c1".into(),
+            team_id: "t2".into(),
+            expected_version: 4,
+            owner_team_id: None,
+        },
+    )
+    .unwrap();
+    let v = serde_json::to_value(&req).unwrap();
+    assert_eq!(v["method"], "team.move");
+    assert_eq!(v["params"]["command_id"], "c1");
+    assert_eq!(v["params"]["expected_version"], 4);
+    assert!(v["params"].get("owner_team_id").is_none());
+
+    let missing: Request = serde_json::from_str(
+        r#"{"id":1,"method":"team.rename","params":{"command_id":"c","team_id":"t","name":"x"}}"#,
+    )
+    .unwrap();
+    assert!(missing.params::<TeamRename>().is_err());
+
+    let ok = Response::ok::<TeamCreate>(
+        1,
+        &CommandAccepted {
+            status: CommandStatus::Committed,
+            position: Some(Position { epoch: 1, seq: 10 }),
+        },
+    )
+    .unwrap();
+    let v = serde_json::to_value(ok).unwrap();
+    assert_eq!(v["result"]["status"], "committed");
+    assert_eq!(v["result"]["position"]["seq"], 10);
+
+    let queued = CommandAccepted {
+        status: CommandStatus::Queued,
+        position: None,
+    };
+    let v = serde_json::to_value(queued).unwrap();
+    assert_eq!(v["status"], "queued");
+    assert!(v.get("position").is_none());
+    let newer: CommandAccepted = serde_json::from_value(json!({"status": "deferred"})).unwrap();
+    assert_eq!(newer.status, CommandStatus::Unknown);
+
+    let p: MemberUpdatePersonParams = serde_json::from_value(json!({
+        "command_id": "c", "member_id": "m", "expected_version": 1, "clear_contact": true
+    }))
+    .unwrap();
+    assert!(p.clear_contact && p.contact.is_none());
+}
+
+#[test]
+fn rejections_reach_the_client_by_command_id() {
+    let ev = Event::new::<OrgRejected>(
+        4,
+        &OrgRejectedData {
+            position: Position { epoch: 1, seq: 11 },
+            command_id: "c7".into(),
+            error: ApiError::new(ErrorCode::Cycle, "a team can't own its own owner"),
+        },
+    )
+    .unwrap();
+    let v = serde_json::to_value(&ev).unwrap();
+    assert_eq!(v["event"], "org.rejected");
+    assert_eq!(v["data"]["command_id"], "c7");
+    assert_eq!(v["data"]["error"]["code"], "cycle");
+    let parsed: Event = serde_json::from_value(v).unwrap();
+    let back = parsed.data::<OrgRejected>().unwrap().unwrap();
+    assert_eq!(back.error.code, ErrorCode::Cycle);
+}

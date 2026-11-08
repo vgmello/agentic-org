@@ -48,6 +48,7 @@
 
 pub mod frame;
 pub mod location;
+pub mod org;
 
 mod calls;
 mod error;
@@ -58,9 +59,15 @@ mod wire;
 pub use calls::{
     Call, Empty, Hello, HelloResult, ListOfficesResult, ListOrganizationsResult, OfficeHello,
     OfficeList, OrganizationCreate, OrganizationCreateParams, OrganizationList, Subscribe,
+    SubscribeParams,
 };
 pub use error::{ApiError, CallError, ErrorCode};
 pub use events::{EventKind, OrganizationCreated};
+pub use org::{
+    CommandAccepted, CommandStatus, Member, MemberKind, Membership, OrgChange, OrgChanged,
+    OrgChangedData, OrgRejected, OrgRejectedData, OrgSnapshot, OrgSnapshotCall, Position,
+    ProjectSummary, ProjectTeam, Team,
+};
 pub use types::{OfficeInfo, OfficeRole, OfficeStatus, Organization, ORGANIZATION_NAME_MAX_CHARS};
 pub use wire::{
     salvage_id, Event, Outcome, Request, Response, ServerMessage, UNREADABLE_REQUEST_ID,

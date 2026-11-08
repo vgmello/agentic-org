@@ -11,12 +11,40 @@ pub enum ErrorCode {
     InvalidRequest,
     /// The server doesn't know the method.
     UnknownMethod,
-    /// The organization name breaks the name rules.
+    /// A name breaks the name rules (an organization, team or person: trimmed, not empty, no
+    /// control characters).
     InvalidName,
-    /// An organization with that name (case-insensitively) already exists.
+    /// Something with that name or id already exists: an organization or a sibling team with
+    /// that name (names compare ignoring case), a membership or project-team link that already
+    /// exists, or a client-made id that's taken.
     AlreadyExists,
     /// The server couldn't read or write its storage. Partial state is cleaned up.
     StorageError,
+    /// A loop: a team would own itself or a team above it, or someone would report to
+    /// themselves, directly or through others.
+    Cycle,
+    /// A team still owns teams, so it can't be deleted.
+    NotEmpty,
+    /// The lead isn't a member of the team.
+    NotAMember,
+    /// The command would remove the owner, add the owner to a team, make it a lead, or give it
+    /// someone to report to.
+    OwnerProtected,
+    /// Something the command names doesn't exist (any more).
+    NotFound,
+    /// The `expected_version` is stale: the thing changed since the caller saw it.
+    Conflict,
+    /// `subscribe { from_position }` can't resume from there; take a fresh `org.snapshot`.
+    SnapshotRequired,
+    /// The command is too old for HQ to accept (its id's time is past the dedup window).
+    /// Applies to every organization command.
+    Expired,
+    /// The command's id is dated too far ahead of HQ's clock. Applies to every organization
+    /// command.
+    ClockSkew,
+    /// A message or task is addressed to someone who isn't an agent or person of the
+    /// organization.
+    UnknownRecipient,
     /// A code this build doesn't know (sent by a newer server).
     #[serde(other)]
     Unknown,

@@ -18,7 +18,7 @@ Each project is a **git repository on GitHub**. **One GitHub App, "Agentic Org"*
 - **Encryption:** these are ordinary files. FileVault protects them, not our database (ADR-0002, "Not covered here").
 
 ## The app and HQ
-**One GitHub App, "Agentic Org"** *(the user, 2026-11-08)*, registered once by you (steps below) and **installed on all repositories** of your account. New repositories are covered automatically.
+**One GitHub App, "Agentic Org"** *(the user, 2026-11-08)*, registered by you on 2026-11-08: **Client ID `Iv23lidV8LP1kzk02Fnx`** (public). Registration steps below and **installed on all repositories** of your account. New repositories are covered automatically.
 - **Permissions** (repository permissions):
   - **Contents: read and write**: clone, fetch, push
   - **Pull requests: read and write**: see and create pull requests
