@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyDraft, BUG_ENVIRONMENT_MAX_CHARS, clippedFields, draftedFields, prefillFromDraft, undoDraft, type BugFields } from './bug-prefill';
+import { applyDraft, BUG_ENVIRONMENT_MAX_CHARS, clippedFields, draftedFields, markDrafted, prefillFromDraft, undoDraft, validSeverity, type BugFields } from './bug-prefill';
 import { createMockCopilot } from './mock';
 import type { BugDraft } from './types';
 import { WORK_LIMITS } from '$lib/proto';
@@ -104,5 +104,24 @@ describe('draftedFields', () => {
 	it('leaves out blank parts and an area that is not the project’s', () => {
 		expect(draftedFields(draft({ steps: ' ', expected: '', area_id: 'invented' }), areas)).toEqual(['title', 'happened']);
 		expect(applyDraft(undefined, mine, draft({ steps: 'x' }), areas, limits).drafted).toEqual(['title', 'happened', 'steps']);
+	});
+});
+
+describe('the suggestion and the tags across drafts', () => {
+	it('suggests only a severity the office has', () => {
+		expect(validSeverity('major')).toBe('major');
+		for (const bad of ['high', 'Major', '', undefined, null, 3]) expect(validSeverity(bad)).toBeUndefined();
+		expect(applyDraft(undefined, mine, draft({ severity: 'high' as never }), areas, limits).suggestedSeverity).toBeUndefined();
+	});
+
+	it('a field an earlier draft set keeps its tag when a later draft leaves it alone', () => {
+		const first = applyDraft(undefined, mine, draft({ steps: 'one\ntwo' }), areas, limits);
+		const tagged = markDrafted({}, first.drafted, first.fields);
+		expect(Object.keys(tagged)).toEqual(['title', 'happened', 'steps']);
+		const second = applyDraft(first.before, first.fields, draft({ title: 'Second' }), areas, limits);
+		const again = markDrafted(tagged, second.drafted, second.fields);
+		expect(Object.keys(again).sort()).toEqual(['happened', 'steps', 'title']);
+		expect(again.steps).toBe('one\ntwo');
+		expect(again.title).toBe('Second');
 	});
 });

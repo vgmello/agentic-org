@@ -55,6 +55,21 @@ export function clippedFields(draft: BugDraft, limits: BugFieldLimits): string[]
 	].filter((x): x is string => typeof x === 'string');
 }
 
+const SEVERITY_IDS = ['critical', 'major', 'minor', 'trivial'] as const;
+
+/** The draft's severity if it is one of the office's, else none: only a valid one is ever suggested. */
+export const validSeverity = (value: unknown): (typeof SEVERITY_IDS)[number] | undefined => SEVERITY_IDS.find((s) => s === value);
+
+/**
+ * Which fields wear a "Drafted" tag after a draft: the ones already tagged (and not edited since,
+ * an edit removes the entry) plus the ones this draft set. A field a later draft leaves alone keeps
+ * the earlier draft's text, so it keeps its tag.
+ */
+export const markDrafted = (tagged: Partial<BugFields>, keys: (keyof BugFields)[], fields: BugFields): Partial<BugFields> => ({
+	...tagged,
+	...Object.fromEntries(keys.map((k) => [k, fields[k]]))
+});
+
 /** The fields the draft really set (so the dialog can tag them "Drafted"). The severity is never one. */
 export function draftedFields(draft: BugDraft, areas: { id: string }[]): (keyof BugFields)[] {
 	const has = (v: string | undefined) => !!v?.trim();
@@ -76,13 +91,13 @@ export function applyDraft(
 	draft: BugDraft,
 	areas: { id: string }[],
 	limits: BugFieldLimits
-): { fields: BugFields; before: BugFields; clipped: string[]; drafted: (keyof BugFields)[]; suggestedSeverity: string } {
+): { fields: BugFields; before: BugFields; clipped: string[]; drafted: (keyof BugFields)[]; suggestedSeverity: (typeof SEVERITY_IDS)[number] | undefined } {
 	return {
 		fields: prefillFromDraft(current, draft, areas, limits),
 		before: before ?? { ...current },
 		clipped: clippedFields(draft, limits),
 		drafted: draftedFields(draft, areas),
-		suggestedSeverity: draft.severity
+		suggestedSeverity: validSeverity(draft.severity)
 	};
 }
 

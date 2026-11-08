@@ -53,6 +53,10 @@ test('report dialog: a sentence drafts the fields of the real form, and nothing 
 	await dialog.getByLabel('Title').fill('Save does nothing after a rename');
 	await expect(dialog.getByTestId('drafted-tag-bug-title')).toHaveCount(0);
 	await expect(dialog.getByTestId('drafted-tag-bug-happened')).toBeVisible();
+	// Typing it back to the draft's words doesn't bring the tag back: it is the person's text now.
+	await dialog.getByLabel('Title').fill("The save button doesn't work after I rename a file");
+	await expect(dialog.getByTestId('drafted-tag-bug-title')).toHaveCount(0);
+	await dialog.getByLabel('Title').fill('Save does nothing after a rename');
 
 	// Report bug still needs a severity the person picked.
 	await dialog.getByRole('button', { name: 'Report bug' }).click();
@@ -60,6 +64,7 @@ test('report dialog: a sentence drafts the fields of the real form, and nothing 
 	await expect(bugRows(page)).toHaveCount(0);
 	await dialog.getByRole('radio', { name: /^Major/ }).check();
 	await expect(dialog.getByTestId('severity-suggestion')).toHaveCount(0);
+	await expect(dialog.getByTestId('severity-suggested')).toHaveCount(0);
 	await dialog.getByRole('button', { name: 'Report bug' }).click();
 	await expect(page.getByText('Bug B-1 reported.')).toBeVisible();
 	await expect(bugRows(page)).toHaveCount(1);
@@ -279,6 +284,7 @@ for (const [scenario, title] of [
 
 		// Running it again clears the panel's own error while it works, and Dismiss clears it too.
 		await panel.getByRole('button', { name: 'Improve' }).click();
+		await expect(panel.getByText('Drafting…')).toBeVisible();
 		await expect(panel.getByRole('alert')).toHaveCount(0);
 		await expect(panel.getByRole('alert').filter({ hasText: title })).toBeVisible();
 		await panel.getByRole('button', { name: 'Cancel' }).click();
@@ -287,8 +293,9 @@ for (const [scenario, title] of [
 		// The sentence draft's error has a Dismiss of its own, and a new draft closes an open panel.
 		await dialog.getByRole('button', { name: 'Draft the report' }).click();
 		await expect(dialog.getByRole('alert').filter({ hasText: title })).toBeVisible();
-		await dialog.getByRole('button', { name: 'Dismiss' }).click();
+		await dialog.getByRole('button', { name: 'Dismiss the draft error' }).click();
 		await expect(dialog.getByRole('alert')).toHaveCount(0);
+		await expect(dialog.getByRole('button', { name: 'Draft the report' })).toBeFocused();
 		await dialog.getByRole('button', { name: 'Draft or improve What happened' }).click();
 		await panel.getByRole('button', { name: 'Improve' }).click();
 		await expect(panel.getByRole('alert').filter({ hasText: title })).toBeVisible();

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, onMount, tick } from 'svelte';
+	import { onDestroy, onMount, tick, untrack } from 'svelte';
 	import CircleAlert from '@lucide/svelte/icons/circle-alert';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import Sparkles from '@lucide/svelte/icons/sparkles';
@@ -30,6 +30,8 @@
 		limit,
 		hint,
 		tag = false,
+		showDraftedTag = false,
+		onedit,
 		onrun,
 		resetKey,
 		placeholder,
@@ -51,6 +53,10 @@
 		hint?: string;
 		/** Show the "Drafted" tag: the parent says the field's text came from a draft (it clears the tag when the person edits). */
 		tag?: boolean;
+		/** Tag the field "Drafted" itself after "Use this draft", until the person types in it. */
+		showDraftedTag?: boolean;
+		/** The person typed in the field (not a draft being used). */
+		onedit?: () => void;
 		/** The copilot panel of this field is about to run (so the screen can clear other errors it shows). */
 		onrun?: () => void;
 		/** When this changes, the panel closes (so only one panel on a screen shows an error at a time). */
@@ -75,8 +81,13 @@
 	let clipped = $state<number | undefined>();
 	// The draft last put in the field: while the field still holds it, Undo goes back past it.
 	let lastApplied = $state<string | undefined>();
-	// "Drafted": the field holds a draft nobody has edited since (cleared by an edit, and by Undo).
-	const drafted = $derived(tag || (lastApplied !== undefined && value === lastApplied));
+	// "Drafted": the field holds a draft the person hasn't typed in since (an edit clears it for good,
+	// and so does Undo). Only where the screen asks for the tag.
+	const drafted = $derived(tag || (showDraftedTag && lastApplied !== undefined));
+	function typed() {
+		lastApplied = undefined;
+		onedit?.();
+	}
 	// `api` is chosen once, when the field is made (a test passes its own); it is not meant to change.
 	// svelte-ignore state_referenced_locally
 	const flow = createDraftFlow(api, 'text.improve', (next) => (phase = next));
@@ -85,17 +96,14 @@
 	const drafting = $derived(isDrafting(phase));
 	const failure = $derived(phase.kind === 'failed' ? describeCopilotFailure(phase.error) : undefined);
 
-	let seenKey: unknown;
-	let firstKey = true;
+	let seenKey = untrack(() => resetKey);
 	$effect(() => {
 		const key = resetKey;
-		if (firstKey) {
-			firstKey = false;
-			seenKey = key;
-		} else if (key !== seenKey) {
+		untrack(() => {
+			if (key === seenKey) return;
 			seenKey = key;
 			if (open) close();
-		}
+		});
 	});
 
 	onMount(() => {
@@ -183,6 +191,7 @@
 			{disabled}
 			bind:value
 			{onblur}
+			oninput={typed}
 			class={fieldClass}
 			aria-invalid={error ? true : undefined}
 			aria-describedby={error ? `${id}-error` : undefined}
@@ -196,6 +205,7 @@
 			autocomplete="off"
 			bind:value
 			{onblur}
+			oninput={typed}
 			aria-invalid={error ? true : undefined}
 			aria-describedby={error ? `${id}-error` : undefined}
 		/>
