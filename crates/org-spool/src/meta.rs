@@ -179,7 +179,7 @@ impl MemberProfile {
     }
 
     /// The same profile with variation selectors dropped from every text field.
-    fn without_variation_selectors(&self) -> Self {
+    pub(crate) fn without_variation_selectors(&self) -> Self {
         let clean = |s: &String| drop_variation_selectors(s);
         let clean_ref = |r: &RefEntry| RefEntry {
             id: clean(&r.id),
@@ -754,7 +754,7 @@ impl Spool {
         self.write_agent_json_unlocked(agent, &self.agent_triage_path(agent), state)
     }
 
-    fn load_profile_unlocked(&self, agent: &str) -> MemberProfile {
+    pub(crate) fn load_profile_unlocked(&self, agent: &str) -> MemberProfile {
         let path = self.agent_profile_path(agent);
         if let Ok(SpoolFile::Bytes(bytes)) = read_spool_file(&path, MAX_ENVELOPE_BYTES) {
             if let Ok(mut profile) = serde_json::from_slice::<MemberProfile>(&bytes) {
@@ -771,17 +771,27 @@ impl Spool {
     /// Update or create `inbox/<agent>/profile.json` under the per-agent `flock`.
     /// Variation selectors are dropped from its text, as in output.
     pub fn set_profile(&self, profile: &MemberProfile) -> Result<MemberProfile, SpoolError> {
+        profile
+            .without_variation_selectors()
+            .validate()
+            .map_err(SpoolError::InvalidInput)?;
+        self.register(&profile.id)?;
+        self.with_agent_meta_lock(&profile.id, || self.store_profile_unlocked(profile))
+    }
+
+    /// Drop variation selectors, validate and write `profile` (caller holds the meta lock).
+    pub(crate) fn store_profile_unlocked(
+        &self,
+        profile: &MemberProfile,
+    ) -> Result<MemberProfile, SpoolError> {
         let profile = profile.without_variation_selectors();
         profile.validate().map_err(SpoolError::InvalidInput)?;
-        self.register(&profile.id)?;
-        self.with_agent_meta_lock(&profile.id, || {
-            self.write_agent_json_unlocked(
-                &profile.id,
-                &self.agent_profile_path(&profile.id),
-                &profile,
-            )?;
-            Ok(profile.clone())
-        })
+        self.write_agent_json_unlocked(
+            &profile.id,
+            &self.agent_profile_path(&profile.id),
+            &profile,
+        )?;
+        Ok(profile)
     }
 
     /// Read a member's profile (falling back to default profile if not customized).

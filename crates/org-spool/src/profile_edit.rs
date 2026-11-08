@@ -1,6 +1,7 @@
 //! Editing a member's profile (`profile set`, `msg register <id> --name ...`): who may edit
 //! whom, and what each change means.
 
+use crate::envelope::validate_agent_id;
 use crate::meta::{MemberProfile, RefEntry, TeamEntry, OWNER_ID};
 use crate::spool::{Spool, SpoolError};
 
@@ -148,6 +149,8 @@ impl ProfileUpdate {
 impl Spool {
     /// `editor` changes `target`'s profile (registering `target` if needed): authorized by
     /// [`authorize_profile_edit`], applied onto the current profile, validated and written.
+    /// Load, apply, validate and write all happen under the member's meta lock, so two edits
+    /// of different fields at once both survive.
     pub fn edit_profile(
         &self,
         editor: &str,
@@ -155,10 +158,20 @@ impl Spool {
         update: &ProfileUpdate,
     ) -> Result<MemberProfile, SpoolError> {
         authorize_profile_edit(editor, target)?;
-        let mut profile = self
-            .get_profile(target)
-            .unwrap_or_else(|_| MemberProfile::default_for(target));
-        update.apply_to(&mut profile);
-        self.set_profile(&profile)
+        validate_agent_id(target, "profile").map_err(SpoolError::InvalidInput)?;
+        let edited = |current: MemberProfile| {
+            let mut profile = current;
+            update.apply_to(&mut profile);
+            profile
+        };
+        // Refuse an invalid edit before creating anything (re-checked under the lock).
+        edited(self.load_profile_unlocked(target))
+            .without_variation_selectors()
+            .validate()
+            .map_err(SpoolError::InvalidInput)?;
+        self.register(target)?;
+        self.with_agent_meta_lock(target, || {
+            self.store_profile_unlocked(&edited(self.load_profile_unlocked(target)))
+        })
     }
 }

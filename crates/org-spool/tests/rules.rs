@@ -1100,6 +1100,36 @@ fn rule_profile_edits_are_authorized_and_applied_in_order() {
 }
 
 #[test]
+fn rule_concurrent_profile_edits_of_different_fields_both_survive() {
+    use std::sync::{Arc, Barrier};
+    let t = TempSpool::new("profile_race");
+    for round in 0..100 {
+        let barrier = Arc::new(Barrier::new(2));
+        let edits: Vec<_> = [true, false]
+            .into_iter()
+            .map(|name_edit| {
+                let spool = t.spool.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let mut update = org_spool::ProfileUpdate::default();
+                    if name_edit {
+                        update.name(&format!("Agy {round}"));
+                    } else {
+                        update.role(&format!("role {round}"));
+                    }
+                    barrier.wait();
+                    spool.edit_profile(ME, ME, &update).unwrap();
+                })
+            })
+            .collect();
+        edits.into_iter().for_each(|h| h.join().unwrap());
+        let p = t.spool.get_profile(ME).unwrap();
+        assert_eq!(p.name, format!("Agy {round}"), "round {round}");
+        assert_eq!(p.role_title, Some(format!("role {round}")), "round {round}");
+    }
+}
+
+#[test]
 fn rule_inbox_query_filters_by_sender_and_thread_with_defaults() {
     let t = TempSpool::new("inbox_query");
     let a = t.send("a", None);
