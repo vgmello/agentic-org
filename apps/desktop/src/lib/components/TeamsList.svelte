@@ -1,8 +1,14 @@
 <script lang="ts">
-	import { leadOf, membersOfTeam, projectsOfTeam, type TeamNode } from '$lib/org/model';
+	import { highlightedByOffice, leadOf, membersOfTeam, projectsOfTeam, subTeamCount, type OfficeFilter, type TeamNode } from '$lib/org/model';
 	import type { OrgSnapshot } from '$lib/proto';
 
-	let { snapshot, tree }: { snapshot: OrgSnapshot; tree: TeamNode[] } = $props();
+	let {
+		snapshot,
+		tree,
+		filter = { kind: 'all' },
+		highlightLabel = '',
+		knownOffices
+	}: { snapshot: OrgSnapshot; tree: TeamNode[]; filter?: OfficeFilter; highlightLabel?: string; knownOffices?: ReadonlySet<string> } = $props();
 </script>
 
 <!-- The same tree as the chart, as a plain nested list: for screen readers and for reading it in order (TEAM-10). -->
@@ -17,7 +23,8 @@
 					{lead ? `Lead: ${lead.name}` : 'No lead'} ·
 					{members.length === 0
 						? 'No members'
-						: members.map((m) => `${m.name} (${m.kind})`).join(', ')}
+						: members.map((m) => `${m.name} (${m.kind})${highlightedByOffice(m, filter, knownOffices) === true ? ` — at ${highlightLabel}` : ''}`).join(', ')}
+					{#if node.children.length > 0} · {subTeamCount(node)} {subTeamCount(node) === 1 ? 'team' : 'teams'} below{/if}
 					{#if projectsOfTeam(snapshot, node.team.id).length > 0}
 						· Projects: {projectsOfTeam(snapshot, node.team.id).map((p) => p.name).join(', ')}
 					{/if}

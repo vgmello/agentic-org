@@ -53,7 +53,7 @@
 	{/if}
 	{#if alsoIn.length > 0}
 		<span class="absolute -top-1.5 -right-1.5 rounded-full bg-gray-700 px-1 text-[0.6rem] leading-4 font-semibold text-white outline-1 outline-white/20" aria-hidden="true">
-			+{alsoIn.length}
+			+{alsoIn.length} {alsoIn.length === 1 ? 'team' : 'teams'}
 		</span>
 	{/if}
 	{#if highlighted}

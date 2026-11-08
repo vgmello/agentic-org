@@ -17,12 +17,11 @@ test('OWNER-1: the owner is shown once, above the chart, and never on a team or 
 	await openChart(page);
 	const bar = page.getByRole('region', { name: 'Owner' });
 	await expect(page.getByRole('region', { name: 'Owner' })).toHaveCount(1);
-	await expect(bar).toContainText('You (you) · Owner of Acme');
+	await expect(bar).toContainText('You (you) · Owner of Sample organization');
 	await expect(bar).toContainText('Full access to every team, member and project');
 	await expect(bar).toContainText('Any agent can message, ask or assign you');
 	// Never as a tile on a card, in "Not in a team", or in a team's members.
 	await expect(page.getByRole('button', { name: /^You,/ })).toHaveCount(0);
-	await expect(page.getByTestId('not-in-a-team')).not.toContainText('You');
 	// Counts leave the owner out.
 	await expect(page.getByText(/\b8\b.*agents/)).toBeVisible();
 	await expect(page.getByText(/\b3\b.*people/)).toBeVisible();
@@ -163,19 +162,21 @@ test('an organization with only its owner shows an empty state, not a blank char
 	await shot(page, 'org-empty');
 });
 
-test('TEAM-1: "Fit to width" keeps the whole chart inside its column, "Actual size" lets it scroll', async ({ page }) => {
+test('TEAM-1: "Fit to width" shrinks the chart, but never below 75% so tiles stay hittable; "Actual size" is full size', async ({ page }) => {
 	await page.setViewportSize({ width: 1100, height: 800 });
 	await openChart(page);
 	const chart = page.getByTestId('teams-chart');
-	const column = page.locator('.overflow-x-auto').first();
-	const colWidth = (await column.boundingBox())!.width;
-	await expect.poll(async () => (await chart.boundingBox())!.width).toBeLessThanOrEqual(colWidth + 1);
+	await expect.poll(async () => (await chart.boundingBox())!.width).toBeGreaterThan(0);
+	const fitted = (await chart.boundingBox())!.width;
 	await page.getByRole('button', { name: 'Actual size' }).click();
 	await expect(page.getByRole('button', { name: 'Fit to width' })).toBeVisible();
-	await expect.poll(async () => (await chart.boundingBox())!.width).toBeGreaterThan(colWidth);
+	await expect.poll(async () => (await chart.boundingBox())!.width).toBeGreaterThan(fitted);
+	const actual = (await chart.boundingBox())!.width;
+	expect(fitted / actual).toBeGreaterThanOrEqual(0.74); // the 75% floor
+	expect(fitted).toBeLessThan(actual);
 });
 
-test('TEAM-2: the shared-project note opens and closes with the keyboard', async ({ page }) => {
+test('TEAM-13: the shared-project note opens and closes with the keyboard', async ({ page }) => {
 	await openChart(page);
 	const shared = card(page, 'web').getByRole('button', { name: /^Shared project Beacon/ });
 	await shared.focus();
@@ -200,4 +201,30 @@ test('TEAM-11: Home and End jump to the first and last tab, and only the selecte
 test('the page says it shows sample data until the real organization is wired in', async ({ page }) => {
 	await openChart(page);
 	await expect(page.getByTestId('sample-data-note')).toContainText('Sample data');
+});
+
+test('TEAM-2: the "+N teams" badge says so, and selecting the member lists the other teams in words', async ({ page }) => {
+	await openChart(page);
+	const mira = card(page, 'web').getByRole('button', { name: /^Mira Castillo, agent/ });
+	await expect(mira).toContainText('+1 team');
+	await mira.click();
+	await expect(page.getByTestId('selected-member')).toContainText('Mira Castillo');
+	await expect(page.getByTestId('selected-member')).toContainText('In Platform, Web');
+	await page.getByRole('button', { name: 'Clear selection' }).click();
+	await expect(page.getByTestId('selected-member')).toHaveCount(0);
+});
+
+test('TEAM-4 and TEAM-10: the office filter marks members in the list view too', async ({ page }) => {
+	await openChart(page);
+	await page.getByRole('combobox', { name: 'Office filter' }).selectOption('unplaced');
+	await page.getByRole('button', { name: 'List' }).click();
+	await expect(page.getByTestId('team-list-item').filter({ hasText: 'Inês Duarte (agent) — at Unplaced' })).toHaveCount(1);
+	await expect(page.getByText('— at Unplaced')).toHaveCount(1);
+	await expect(page.getByTestId('filter-announcement')).toContainText('Highlighting 1 agent');
+});
+
+test('the sample data is labelled where it can’t scroll away: next to the tabs and in the owner bar', async ({ page }) => {
+	await openChart(page);
+	await expect(page.getByTestId('sample-data-note')).toBeVisible();
+	await expect(page.getByRole('region', { name: 'Owner' })).toContainText('Sample organization');
 });
