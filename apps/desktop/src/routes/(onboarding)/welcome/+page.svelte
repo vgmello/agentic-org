@@ -72,7 +72,12 @@
 				<AlertTitle>{failure.title}</AlertTitle>
 				<AlertDescription>
 					<p>{failure.hint}</p>
-					<Button variant="outline" size="sm" class="mt-3" onclick={() => load(true)}>Try again</Button>
+					<div class="mt-3 flex gap-x-2">
+						{#if failure.action === 'open_login_items'}
+							<Button variant="outline" size="sm" onclick={() => officeApi.openLoginSettings()}>Open Login Items</Button>
+						{/if}
+						<Button variant="outline" size="sm" onclick={() => load(true)}>Try again</Button>
+					</div>
 				</AlertDescription>
 			</Alert>
 		{:else if organizations.length === 0}

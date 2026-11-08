@@ -4,6 +4,7 @@ import {
 	type AppError,
 	type Connection,
 	type HelloResult,
+	type LoginState,
 	type Organization
 } from '$lib/proto';
 import { mockOffice } from './mock';
@@ -26,6 +27,12 @@ export interface OfficeApi {
 	listOrganizations(): Promise<Organization[]>;
 	/** Open one of them: remember the connection to its office here. */
 	openOrganization(id: string): Promise<Connection>;
+	/** The office host's login service: whether macOS runs it at login, or waits for the owner's approval. */
+	loginItem(): Promise<LoginState>;
+	/** Turn that service on or off. Resolves to the state it ends in (macOS may leave it waiting for approval). */
+	setLoginItem(enabled: boolean): Promise<LoginState>;
+	/** Open System Settings at Login Items, where the owner approves it. */
+	openLoginSettings(): Promise<void>;
 }
 
 /** Normalize anything thrown by a call into an `AppError`. */

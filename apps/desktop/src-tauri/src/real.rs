@@ -1,10 +1,12 @@
 //! The real office: `OfficeConnection` over `org-client`, talking to this machine's host and the HQ office's
 //! socket. Phase 1 has one organization per HQ on this Mac, so every call goes to a local socket.
 //!
-//! Setup (installing the host, registering the login item, starting it) is not here yet: `ensure_running` only
-//! connects and says `hello`, and reports a host that isn't there as unreachable. The mock office stays the default
-//! until the host is bundled (`AGENTIC_ORG_OFFICE=real` picks this one).
+//! Setup: `ensure_running` says `hello` to the host; when nothing is listening it turns the host's login service
+//! on (see `login_item`) and waits for it to come up, or says what the owner has to do (allow it in System
+//! Settings). `ping` never does any of that. The mock office stays the default until the host is bundled
+//! (`AGENTIC_ORG_OFFICE=real` picks this one).
 
+use crate::login_item::{LoginService, LoginState};
 use crate::office::{OfficeConnection, SetupError, SetupErrorCode};
 use crate::org_command::OrgCommand;
 use org_client::{Client, ClientError};
@@ -21,9 +23,18 @@ use org_proto::{
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+/// How long a host that was just turned on has to start answering.
+// Longer than the plist's ThrottleInterval (10 s), so a host that crashed once is back inside it.
+const HOST_START_WAIT: Duration = Duration::from_secs(15);
+const HOST_START_POLL: Duration = Duration::from_millis(200);
 
 pub struct RealOffice {
     home: PathBuf,
+    /// The login service the host runs under: turned on when the host isn't there.
+    login: Arc<dyn LoginService>,
+    start_wait: Duration,
     host: Mutex<Option<Arc<Client>>>,
     /// Open connections to HQ offices, by office id.
     offices: Mutex<HashMap<String, Arc<Client>>>,
@@ -128,9 +139,11 @@ fn not_connectable(status: OfficeStatus) -> Option<ApiError> {
 }
 
 impl RealOffice {
-    pub fn new(home: PathBuf) -> Self {
+    pub fn new(home: PathBuf, login: Arc<dyn LoginService>) -> Self {
         Self {
             home,
+            login,
+            start_wait: HOST_START_WAIT,
             host: Mutex::new(None),
             offices: Mutex::new(HashMap::new()),
             hq: Mutex::new(HashMap::new()),
@@ -139,7 +152,8 @@ impl RealOffice {
 
     /// The real office in this user's office home, or `None` when there is no home to look in.
     pub fn from_env() -> Option<Self> {
-        org_proto::location::default_office_home().map(Self::new)
+        org_proto::location::default_office_home()
+            .map(|home| Self::new(home, Arc::from(crate::login_item::system())))
     }
 
     /// The host's connection: the cached one, or a new one that has said `hello` (so a host of another API version
@@ -169,15 +183,65 @@ impl RealOffice {
         drop(old);
     }
 
-    /// A probe of the host (the shell uses these to decide whether to restart it): one that gets no answer drops the
-    /// connection too, so a restart doesn't reuse a wedged one.
-    fn probe_host(&self) -> Result<HelloResult, SetupError> {
-        self.with_host(true, |c| c.hello()).map_err(|e| {
+    /// Say `hello` to the host. One that gets no answer drops the connection too, so a restart doesn't reuse a
+    /// wedged one.
+    fn hello(&self) -> Result<HelloResult, ClientError> {
+        self.with_host(true, |c| c.hello()).inspect_err(|e| {
             if matches!(e, ClientError::Timeout) {
                 self.forget_host(None);
             }
-            setup_error(&e)
         })
+    }
+
+    /// The host isn't there: turn its login service on (once; macOS may ask the owner to approve it) and wait for
+    /// the host to answer. What the owner has to do, if anything, comes back as the error.
+    fn start_host(&self) -> Result<HelloResult, SetupError> {
+        let mut state = self.login.status();
+        let mut refused = None;
+        if state == LoginState::NotRegistered {
+            refused = self.login.register().err();
+            state = self.login.status();
+        }
+        match state {
+            LoginState::Enabled => self.wait_for_host(),
+            LoginState::RequiresApproval => Err(SetupError {
+                code: SetupErrorCode::NeedsApproval,
+                message: "Allow Agentic Org in System Settings, under General, Login Items, then try again.".into(),
+            }),
+            LoginState::NotFound => Err(SetupError {
+                code: SetupErrorCode::NotInstalled,
+                message: "This copy of Agentic Org doesn't include the office service. Reinstall the app.".into(),
+            }),
+            LoginState::NotRegistered => Err(SetupError {
+                code: SetupErrorCode::NotInstalled,
+                message: match refused {
+                    Some(reason) => format!("macOS wouldn't turn on the office service: {reason}"),
+                    None => "The office service isn't turned on.".into(),
+                },
+            }),
+        }
+    }
+
+    fn wait_for_host(&self) -> Result<HelloResult, SetupError> {
+        let deadline = Instant::now() + self.start_wait;
+        loop {
+            match self.hello() {
+                Ok(hello) => return Ok(hello),
+                // Not listening yet, or accepted and not answering yet: launchd is still starting the host.
+                Err(ClientError::NotRunning(_) | ClientError::Io(_) | ClientError::Timeout)
+                    if Instant::now() < deadline =>
+                {
+                    std::thread::sleep(HOST_START_POLL);
+                }
+                Err(ClientError::NotRunning(_) | ClientError::Io(_) | ClientError::Timeout) => {
+                    return Err(SetupError {
+                        code: SetupErrorCode::Unreachable,
+                        message: "The office service is on, but the host didn't start. Try again in a moment.".into(),
+                    })
+                }
+                Err(e) => return Err(setup_error(&e)),
+            }
+        }
     }
 
     /// Run a call on the host. `again`: if the connection had died, forget it and try once on a new one; only for
@@ -290,11 +354,14 @@ impl RealOffice {
 
 impl OfficeConnection for RealOffice {
     fn ensure_running(&self) -> Result<HelloResult, SetupError> {
-        self.probe_host()
+        match self.hello() {
+            Err(ClientError::NotRunning(_)) => self.start_host(),
+            other => other.map_err(|e| setup_error(&e)),
+        }
     }
 
     fn ping(&self) -> Result<(), SetupError> {
-        self.probe_host().map(|_| ())
+        self.hello().map(|_| ()).map_err(|e| setup_error(&e))
     }
 
     fn create_organization(&self, name: &str) -> Result<Organization, ApiError> {
@@ -385,6 +452,7 @@ fn send(c: &Client, command: &OrgCommand) -> Result<CommandAccepted, ClientError
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::login_item::Unsupported;
     use crate::org_mock::empty_org;
     use org_proto::frame::{read_message, write_message};
     use org_proto::location::{host_socket_path, office_socket_path};
@@ -542,7 +610,7 @@ mod tests {
     }
 
     fn real(f: &Fake) -> RealOffice {
-        RealOffice::new(f.home.path().to_path_buf())
+        RealOffice::new(f.home.path().to_path_buf(), Arc::new(Unsupported))
     }
 
     fn command(method: &str, params: serde_json::Value) -> OrgCommand {
@@ -563,10 +631,12 @@ mod tests {
     #[test]
     fn a_host_that_is_not_there_is_unreachable_and_says_so() {
         let home = tempfile::Builder::new().prefix("ao").tempdir().unwrap();
-        let office = RealOffice::new(home.path().to_path_buf());
-        let err = office.ensure_running().unwrap_err();
-        assert_eq!(err.code, SetupErrorCode::Unreachable);
-        assert_eq!(err.message, "The office host isn't running.");
+        let office = RealOffice::new(home.path().to_path_buf(), Arc::new(Unsupported));
+        // A ping only looks: it never starts the host.
+        assert_eq!(
+            office.ping().unwrap_err().message,
+            "The office host isn't running."
+        );
         assert_eq!(office.ping().unwrap_err().code, SetupErrorCode::Unreachable);
         // Organization calls report the transport failure as `unknown`, which the shell reads as "start it again".
         assert_eq!(
@@ -881,5 +951,139 @@ mod tests {
             ErrorCode::NotFound
         );
         assert!(f.asked.lock().unwrap().is_empty());
+    }
+
+    // --- Starting the host through its login service ---
+
+    use crate::login_item::FakeLogin;
+
+    fn without_host() -> tempfile::TempDir {
+        let home = tempfile::Builder::new().prefix("ao").tempdir().unwrap();
+        std::fs::create_dir_all(home.path().join("run")).unwrap();
+        home
+    }
+
+    fn office_with(home: &tempfile::TempDir, login: Arc<FakeLogin>, wait_ms: u64) -> RealOffice {
+        let mut office = RealOffice::new(home.path().to_path_buf(), login);
+        office.start_wait = Duration::from_millis(wait_ms);
+        office
+    }
+
+    fn setup(result: Result<HelloResult, SetupError>) -> (SetupErrorCode, String) {
+        let e = result.unwrap_err();
+        (e.code, e.message)
+    }
+
+    /// A host that appears when the login service is registered, as launchd would start it.
+    fn host_appears_on_register(home: &std::path::Path, login: &mut FakeLogin) {
+        let path = host_socket_path(home);
+        login.on_register = Box::new(move || {
+            let listener = UnixListener::bind(&path).unwrap();
+            serve(
+                listener,
+                Arc::new(|r| {
+                    Some(
+                        Response::ok::<Hello>(
+                            r.id,
+                            &HelloResult {
+                                api_version: org_proto::API_VERSION,
+                                server_version: "test".into(),
+                                host: "This Mac".into(),
+                                office: None,
+                            },
+                        )
+                        .unwrap(),
+                    )
+                }),
+            );
+        });
+    }
+
+    #[test]
+    fn a_host_that_is_already_there_does_not_touch_the_login_service() {
+        let f = fake(OfficeStatus::Active, 0);
+        let login = Arc::new(FakeLogin::new(&[LoginState::NotRegistered]));
+        let office = RealOffice::new(f.home.path().to_path_buf(), login.clone());
+        office.ensure_running().unwrap();
+        assert_eq!(login.register_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_missing_host_is_started_by_turning_the_login_service_on() {
+        let home = without_host();
+        let mut login = FakeLogin::new(&[LoginState::NotRegistered, LoginState::Enabled]);
+        host_appears_on_register(home.path(), &mut login);
+        let login = Arc::new(login);
+        let hello = office_with(&home, login.clone(), 3000)
+            .ensure_running()
+            .unwrap();
+        assert_eq!(hello.host, "This Mac");
+        assert_eq!(login.register_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_login_service_waiting_for_approval_says_so_without_registering_again() {
+        let home = without_host();
+        let login = Arc::new(FakeLogin::new(&[LoginState::RequiresApproval]));
+        let result = office_with(&home, login.clone(), 50).ensure_running();
+        let (code, message) = setup(result);
+        assert_eq!(code, SetupErrorCode::NeedsApproval);
+        assert!(message.contains("Login Items"), "{message}");
+        assert_eq!(login.register_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn registering_that_leaves_the_service_waiting_for_approval_asks_for_approval() {
+        let home = without_host();
+        let mut login = FakeLogin::new(&[LoginState::NotRegistered, LoginState::RequiresApproval]);
+        login.register_result = Err("Operation not permitted".into());
+        let login = Arc::new(login);
+        let (code, _) = setup(office_with(&home, login.clone(), 50).ensure_running());
+        assert_eq!(code, SetupErrorCode::NeedsApproval);
+        assert_eq!(login.register_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_build_without_the_service_is_not_installed_and_nothing_is_registered() {
+        let home = without_host();
+        let login = Arc::new(FakeLogin::new(&[LoginState::NotFound]));
+        let (code, message) = setup(office_with(&home, login.clone(), 50).ensure_running());
+        assert_eq!(code, SetupErrorCode::NotInstalled);
+        assert!(message.contains("Reinstall"), "{message}");
+        assert_eq!(login.register_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn macos_refusing_to_register_is_not_installed_with_its_reason() {
+        let home = without_host();
+        let mut login = FakeLogin::new(&[LoginState::NotRegistered]);
+        login.register_result = Err("Disk is full".into());
+        let (code, message) = setup(office_with(&home, Arc::new(login), 50).ensure_running());
+        assert_eq!(code, SetupErrorCode::NotInstalled);
+        assert!(message.contains("Disk is full"), "{message}");
+    }
+
+    #[test]
+    fn a_service_that_is_on_but_whose_host_never_answers_is_unreachable_after_the_wait() {
+        let home = without_host();
+        let login = Arc::new(FakeLogin::new(&[LoginState::Enabled]));
+        let started = Instant::now();
+        let (code, _) = setup(office_with(&home, login.clone(), 400).ensure_running());
+        assert_eq!(code, SetupErrorCode::Unreachable);
+        assert!(started.elapsed() >= Duration::from_millis(400));
+        assert_eq!(
+            login.register_calls.load(Ordering::SeqCst),
+            0,
+            "already on: nothing to register"
+        );
+    }
+
+    #[test]
+    fn a_ping_never_turns_anything_on() {
+        let home = without_host();
+        let login = Arc::new(FakeLogin::new(&[LoginState::NotRegistered]));
+        let err = office_with(&home, login.clone(), 50).ping().unwrap_err();
+        assert_eq!(err.code, SetupErrorCode::Unreachable);
+        assert_eq!(login.register_calls.load(Ordering::SeqCst), 0);
     }
 }

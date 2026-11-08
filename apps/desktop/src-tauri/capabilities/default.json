@@ -16,6 +16,9 @@
     "allow-organization-open",
     "allow-org-snapshot",
     "allow-org-command",
+    "allow-login-item-status",
+    "allow-login-item-set",
+    "allow-login-item-open-settings",
     "core:event:allow-listen",
     "core:event:allow-unlisten"
   ]

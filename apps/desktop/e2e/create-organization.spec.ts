@@ -65,6 +65,12 @@ for (const [scenario, title] of failures) {
 	});
 }
 
+test('an office waiting for approval offers to open Login Items', async ({ page }) => {
+	await visit(page, '/create?mock=needs_approval');
+	await createOrg(page, 'Acme');
+	await expect(page.getByRole('button', { name: 'Open Login Items' })).toBeVisible();
+});
+
 test('the form cannot be left while the office is starting', async ({ page }) => {
 	await visit(page, '/welcome');
 	await page.getByRole('link', { name: /Create organization/ }).click();

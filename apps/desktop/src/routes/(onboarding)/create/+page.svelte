@@ -128,7 +128,12 @@
 		<Alert variant="destructive">
 			<CircleAlert aria-hidden="true" />
 			<AlertTitle>{failure.title}</AlertTitle>
-			<AlertDescription>{failure.hint}</AlertDescription>
+			<AlertDescription>
+				<p>{failure.hint}</p>
+				{#if failure.action === 'open_login_items'}
+					<Button type="button" variant="outline" size="sm" class="mt-3" onclick={() => officeApi.openLoginSettings()}>Open Login Items</Button>
+				{/if}
+			</AlertDescription>
 		</Alert>
 	{/if}
 

@@ -45,6 +45,7 @@ describe('createOrganization', () => {
 	it('answers a bad name without calling the office', async () => {
 		let called = false;
 		const api: OfficeApi = {
+			...mock(),
 			connections: async () => [],
 			ping: async () => {},
 			listOrganizations: async () => [],
@@ -72,6 +73,7 @@ describe('createOrganization', () => {
 
 	it('sends a name the office rejects back to the form', async () => {
 		const api: OfficeApi = {
+			...mock(),
 			connections: async () => [],
 			ping: async () => {},
 			listOrganizations: async () => [],
@@ -90,6 +92,7 @@ describe('createOrganization', () => {
 
 	it('turns an unexpected throw into a failed phase', async () => {
 		const api: OfficeApi = {
+			...mock(),
 			connections: async () => [],
 			ping: async () => {},
 			listOrganizations: async () => [],
@@ -107,6 +110,26 @@ describe('describeFailure', () => {
 		const error = { source: 'api', code: 'storage_error', message: 'm' } as const;
 		expect(describeFailure(error).title).toBe("Couldn't create the organization");
 		expect(describeFailure(error, 'list').title).toBe("Couldn't read the organizations");
+	});
+});
+
+describe('the office host login service', () => {
+	it('approval offers to open Login Items; other failures do not', () => {
+		const setup = (code: 'needs_approval' | 'not_installed') => describeFailure({ source: 'setup', code, message: 'm' });
+		expect(setup('needs_approval').action).toBe('open_login_items');
+		expect(setup('not_installed').action).toBeUndefined();
+	});
+
+	it('the mock reports the state macOS would, and turning it on or off moves it', async () => {
+		expect(await mock().loginItem()).toBe('enabled');
+		expect(await mock('needs_approval').loginItem()).toBe('requires_approval');
+		expect(await mock('not_installed').loginItem()).toBe('not_found');
+		const api = mock();
+		expect(await api.setLoginItem(false)).toBe('not_registered');
+		expect(await api.setLoginItem(true)).toBe('enabled');
+		// Waiting for approval stays waiting; a build without the service can't be turned on.
+		expect(await mock('needs_approval').setLoginItem(true)).toBe('requires_approval');
+		await expect(mock('not_installed').setLoginItem(true)).rejects.toMatchObject({ code: 'login_item' });
 	});
 });
 

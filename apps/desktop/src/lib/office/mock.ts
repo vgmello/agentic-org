@@ -1,4 +1,4 @@
-import type { AppError, Connection, HelloResult, OfficeInfo, Organization } from '$lib/proto';
+import type { AppError, Connection, HelloResult, LoginState, OfficeInfo, Organization } from '$lib/proto';
 import { validateName } from '$lib/name';
 import type { OfficeApi } from './api';
 
@@ -69,6 +69,9 @@ export function createMockOffice({
 	storage = browserStorage()
 }: { delayMs?: number; scenario?: Scenario; storage?: MockStorage } = {}): OfficeApi {
 	let connected = false;
+	// What macOS would say about the host's login service in each scenario.
+	let login: LoginState =
+		scenario === 'needs_approval' ? 'requires_approval' : scenario === 'not_installed' ? 'not_found' : 'enabled';
 	// Oldest first, like the Rust store.
 	const load = (): Connection[] => {
 		try {
@@ -100,6 +103,17 @@ export function createMockOffice({
 		async connections() {
 			return load();
 		},
+		async loginItem() {
+			return login;
+		},
+		async setLoginItem(enabled) {
+			// A copy without the service can't turn it on; one waiting for approval stays waiting until it is allowed.
+			if (login === 'not_found') fail({ source: 'app', code: 'login_item', message: "This build doesn't include the office service." });
+			if (!enabled) login = 'not_registered';
+			else if (login === 'not_registered') login = scenario === 'needs_approval' ? 'requires_approval' : 'enabled';
+			return login;
+		},
+		async openLoginSettings() {},
 		async ensureRunning(): Promise<HelloResult> {
 			await wait(delayMs);
 			if (scenario === 'not_installed')
