@@ -19,6 +19,7 @@ docs/
   architecture-rules.md         how we write code here
   adr/                          decisions for this codebase
   design/                       flow designs (start with create-organization.md)
+  specs/                        UX specs (Eden's, moving in)
 ```
 
 Dependencies point one way, and apps depend on crates, never the reverse:

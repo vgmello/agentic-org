@@ -1,10 +1,11 @@
 import { expect, test } from '@playwright/test';
+import { visit } from './ready';
 import { shot } from './shot';
 
 const rows = (page: import('@playwright/test').Page) => page.getByTestId('organization-row');
 
 test('the welcome screen lists the organizations this Mac already has, and opening one enters it', async ({ page }) => {
-	await page.goto('/welcome');
+	await visit(page, '/welcome');
 	await expect(page.getByText('Looking for organizations on this Mac')).toBeVisible();
 	await expect(rows(page)).toHaveCount(2);
 	await expect(rows(page).first()).toContainText('Northwind Labs');
@@ -17,13 +18,13 @@ test('the welcome screen lists the organizations this Mac already has, and openi
 	await expect(page.getByText('Globex Research', { exact: true })).toBeVisible();
 
 	// Remembered: the next launch goes straight in.
-	await page.goto('/');
+	await visit(page, '/');
 	await expect(page).toHaveURL(/\/agents$/);
 	await expect(page.getByText('Globex Research', { exact: true })).toBeVisible();
 });
 
 test('Switch organization returns to the list, marks the current one, and opens another', async ({ page }) => {
-	await page.goto('/welcome');
+	await visit(page, '/welcome');
 	await page.getByRole('button', { name: 'Open Northwind Labs' }).click();
 	await expect(page).toHaveURL(/\/agents$/);
 
@@ -40,7 +41,7 @@ test('Switch organization returns to the list, marks the current one, and opens 
 });
 
 test('an organization created here is listed afterwards', async ({ page }) => {
-	await page.goto('/create');
+	await visit(page, '/create');
 	await page.getByLabel('Organization name').fill('Fresh Start');
 	await page.getByRole('button', { name: 'Create organization' }).click();
 	await expect(page).toHaveURL(/\/agents$/);
@@ -51,7 +52,7 @@ test('an organization created here is listed afterwards', async ({ page }) => {
 });
 
 test('when the office cannot start, the screen explains why and still offers Create', async ({ page }) => {
-	await page.goto('/welcome?mock=needs_approval');
+	await visit(page, '/welcome?mock=needs_approval');
 	await expect(page.getByText('Approval needed')).toBeVisible();
 	await expect(rows(page)).toHaveCount(0);
 	await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
@@ -60,7 +61,7 @@ test('when the office cannot start, the screen explains why and still offers Cre
 });
 
 test('an organization that vanished is dropped from the list when opening it fails', async ({ page }) => {
-	await page.goto('/welcome');
+	await visit(page, '/welcome');
 	await expect(rows(page)).toHaveCount(2);
 	// The Mac loses an organization after the list was shown: its stored list now has only Northwind.
 	await page.evaluate(() => {
@@ -76,7 +77,7 @@ test('an organization that vanished is dropped from the list when opening it fai
 });
 
 test('an organization whose office is unavailable is listed, marked, and cannot be opened', async ({ page }) => {
-	await page.goto('/welcome');
+	await visit(page, '/welcome');
 	await page.evaluate(() => {
 		const office = (id: string, status: string) => ({ id: `office-${id}`, organization_id: id, name: 'HQ', role: 'hq', host: 'This Mac', status });
 		const org = (id: string, name: string, status: string) => ({ id, name, created_at: '2026-09-14T09:30:00.000Z', offices: [office(id, status)] });
@@ -95,7 +96,7 @@ test('an organization whose office is unavailable is listed, marked, and cannot 
 });
 
 test('an organization whose office goes down after the list was shown is marked unavailable when opening it fails', async ({ page }) => {
-	await page.goto('/welcome');
+	await visit(page, '/welcome');
 	await expect(rows(page)).toHaveCount(2);
 	await page.evaluate(() => {
 		const office = (id: string, status: string) => ({ id: `office-${id}`, organization_id: id, name: 'HQ', role: 'hq', host: 'This Mac', status });
