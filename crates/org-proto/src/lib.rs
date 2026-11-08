@@ -77,10 +77,10 @@ mod types;
 mod wire;
 
 pub use calls::{
-    Call, Empty, Hello, HelloResult, ListOfficesResult, ListOrganizationsResult, OfficeAppToken,
-    OfficeAppTokenParams, OfficeAppTokenResult, OfficeHello, OfficeList, OfficeRestart,
-    OfficeRestartParams, OrganizationCreate, OrganizationCreateParams, OrganizationList, Subscribe,
-    SubscribeParams,
+    capability, Call, Empty, Hello, HelloResult, ListOfficesResult, ListOrganizationsResult,
+    OfficeAppToken, OfficeAppTokenParams, OfficeAppTokenResult, OfficeHello, OfficeList,
+    OfficeRestart, OfficeRestartParams, OrganizationCreate, OrganizationCreateParams,
+    OrganizationList, Subscribe, SubscribeParams,
 };
 pub use error::{ApiError, CallError, ErrorCode};
 pub use events::{EventKind, OfficeStatusChanged, OfficeStatusChangedData, OrganizationCreated};

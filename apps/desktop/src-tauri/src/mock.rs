@@ -464,6 +464,7 @@ impl OfficeConnection for MockOffice {
                 server_version: "0.0.0-mock".to_string(),
                 host: "This Mac".to_string(),
                 office: None,
+                capabilities: vec![],
             }),
         }
     }

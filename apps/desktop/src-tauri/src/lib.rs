@@ -964,6 +964,7 @@ mod tests {
                 server_version: "t".into(),
                 host: "This Mac".into(),
                 office: None,
+                capabilities: vec![],
             })
         }
         fn ping(&self) -> Result<(), office::SetupError> {

@@ -19,19 +19,22 @@ The product is named **Agentic Org**. The designs that are the reference for cur
 
 ## Rules
 1. **Read [`docs/architecture-rules.md`](docs/architecture-rules.md) first.** Dependencies point one way (apps → crates; everything → `org-proto`). No cycles. Logic lives in libraries, and binaries stay thin.
-2. **Branches:** work on your own branch, created from `origin/v1` in your own worktree:
-   `git -C <repo> worktree add ../app-<you> -b <you>/<topic> origin/v1`.
-   Merge `origin/v1` into your branch often. Never push to `main`.
+2. **Branches: one open branch per agent.** The full process is [`docs/processes/branch-and-merge.md`](docs/processes/branch-and-merge.md); follow it.
+   - You have exactly **one** open working branch. Don't start new work, open a second branch or stack branches until it's reviewed and merged into `v1`.
+   - Start every branch from `origin/v1` in your own worktree:
+     `git -C <repo> worktree add ../app-<you> -b <you>/<topic> origin/v1`.
+   - Keep it small, and merge `origin/v1` into it often. Never push to `main`.
+   - After the merge, ada deletes the branch on origin once it's confirmed fully in `v1` (nothing unmerged is ever deleted; closed work is archived as an `archive/<branch>` tag), and tells you when your local branch and worktree can go. Then start your next branch from `origin/v1`.
 3. **Before asking for the go:**
    - `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` pass
    - for the app, the type check, its tests and a build pass
    - **your own independent review** of your whole diff (a fresh subagent you start, with no context: valid, reliable, secure, meets the brief), with every confirmed finding fixed. This is separate from step 4, and step 4 doesn't replace it.
-4. **Send it to the reviewer agent** (`reviewer`, on `org-agent`) with: repo, branch, base, commit, and the design or brief it implements (and screenshots for UI work). It reports a verdict and findings to you and ada. Fix, re-run step 3's checks on the fixed commit, and ask it to re-review, until it says **ready** for your final commit.
-5. **Ask ada for the go** with: branch, commit, the final lines of every check, your own review's findings and fixes, **the reviewer's ready verdict for that exact commit** (any later commit needs a re-review), and a screenshot for UI work. After the go: `git merge --no-ff` into `v1`, then push `v1` and your branch.
+4. **Send it to the reviewer agent** (`reviewer`, on `org-agent`) with: repo, branch, base, commit, and the design or brief it implements (and screenshots for UI work). It reports a verdict and findings to you and ada. Fix, re-run step 3's checks on the fixed commit, and ask it to re-review, until it says **ready** for your final commit. If it doesn't answer within 30 minutes, tell ada, who starts another reviewer so work never stalls.
+5. **Ask ada for the go** with: branch, commit, the final lines of every check, your own review's findings and fixes, **the reviewer's ready verdict for that exact commit** (any later commit needs a re-review), and a screenshot for UI work. After the go: `git merge --no-ff` into `v1`, then push `v1` (or ada merges and pushes for you, if your session can't push).
 6. **Never write to a user's organization workspace from tests.** Use temporary directories.
 
 ## Talking to other agents
-Use the **already-installed** `org-agent` CLI at `~/.local/bin/org-agent`. That is the working older version, built from branch `v1-old`. `apps/org-agent` in this repo is its successor, still a stub, and it takes over once ported:
+Use the **installed** `org-agent` CLI at `~/.local/bin/org-agent`, built from `apps/org-agent` on `v1` (messaging Phase A, over the spool):
 ```
 export ORG_AGENT=<your-id>
 org-agent msg register <your-id>                  # once
@@ -39,6 +42,11 @@ org-agent msg inbox | read --next | reply <id> "…"
 org-agent msg send --to <agent> "…"               # fire-and-forget
 org-agent msg ask  --to <agent> --timeout 300s "…" # wait for the answer
 org-agent msg wait --timeout 600s                  # block until something arrives
+org-agent msg send --to owner "…"                 # reaches the user
+org-agent msg defer <id> --until 2h               # park a message
+org-agent msg done <id>                           # close it
+org-agent who                                     # the team
+org-agent status "<what you're on>"               # your status line
 ```
 Check your inbox at the start of every turn and after every step. ada is `ac-staff-engineer-ada`. Keep messages short, with the result or the question first.
 
