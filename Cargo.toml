@@ -7,6 +7,7 @@ members = [
   "crates/org-office-launch",
   "crates/org-spool",
   "crates/org-work",
+  "crates/org-runtime",
   "apps/org-office-server",
   "apps/org-agent",
   "apps/desktop/src-tauri",
@@ -20,6 +21,7 @@ default-members = [
   "crates/org-office-launch",
   "crates/org-spool",
   "crates/org-work",
+  "crates/org-runtime",
   "apps/org-office-server",
   "apps/org-agent",
 ]
