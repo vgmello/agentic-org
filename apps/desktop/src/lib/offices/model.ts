@@ -137,8 +137,9 @@ export function rowLabel(o: OfficeInfo, agents: number | undefined, here: boolea
 	const parts = [o.name];
 	if (isHq(o)) parts.push('HQ');
 	// An office that can't be reached shows "Can't reach this office" where its location was: the label says the same.
-	parts.push(status === 'unreachable' ? "Can't reach this office" : (why ?? secondaryText(o) + (here ? " (you're here)" : '')));
-	parts.push(statusInfo(status).label);
+	// Where it runs always stays; a stopped office's reason follows its status (spec §6.1).
+	parts.push(status === 'unreachable' ? "Can't reach this office" : secondaryText(o) + (here ? " (you're here)" : ''));
+	parts.push(statusInfo(status).label + (why ? `: ${why}` : ''));
 	if (agents !== undefined) parts.push(`${agents} ${agents === 1 ? 'agent' : 'agents'}`);
 	parts.push('opens details');
 	return parts.join(', ');
@@ -163,7 +164,14 @@ const REASON_COPY: Record<OfficeStatusReason, string> = {
 /** The reason line for the screen-reader label: it never ticks, so a pending restart reads "restarting shortly" (spec §3.3). */
 export function whyForLabel(o: Pick<OfficeInfo, 'status' | 'status_reason' | 'next_restart_at'>, now: Date): string | undefined {
 	const text = whyStopped({ ...o, next_restart_at: undefined }, now);
-	return text !== undefined && secondsUntil(o.next_restart_at, now) !== undefined ? `${text}. Restarting shortly` : text;
+	if (text === undefined) return undefined;
+	const lower = text.charAt(0).toLowerCase() + text.slice(1);
+	const n = secondsUntil(o.next_restart_at, now);
+	if (n === undefined || n === 0) return lower;
+	// A restart a minute or more away is read as a clock time, which does not tick; a nearer one as "shortly".
+	if (n < 60) return `${lower}, restarting shortly`;
+	const at = new Date(Date.parse(o.next_restart_at!)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+	return `${lower}, restarting at ${at}`;
 }
 
 /** Seconds from `now` until `next_restart_at`, rounded up; never negative. Nothing when it is absent or unreadable. */

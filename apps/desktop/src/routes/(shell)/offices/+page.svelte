@@ -67,6 +67,9 @@
 		const tick = setInterval(() => (now = new Date()), 10_000);
 		return () => (clearInterval(again), clearInterval(tick));
 	});
+	// TODO (OFC-11/12, with the Restart branch): the reported status, reason and countdown are those saved when the page loaded
+	// (nothing subscribes to office.status_changed yet), and a host whose hello lacks that capability should read "Status unknown".
+	// Restart office / Try again / Start office / Check for updates are not built: OFC-11 is partial.
 	// Why a stopped office stopped: only for an office whose status is shown as reported by the host.
 	const labelWhyOf = (officeId: string) => {
 		const shown = statusOf(officeId);
@@ -127,7 +130,7 @@
 	</div>
 
 	<!-- Said once when the answer changes: the badge and count are hidden from screen readers, the row's label has them. -->
-	<p class="sr-only" role="status" data-testid="live-status">{offices.find((o) => o.id === here.id)?.name ?? 'Office'}: {statusInfo(statusOf(here.id)).label}</p>
+	<p class="sr-only" role="status" data-testid="live-status">{offices.find((o) => o.id === here.id)?.name ?? 'Office'}: {statusInfo(statusOf(here.id)).label}{labelWhyOf(here.id) ? `: ${labelWhyOf(here.id)}` : ''}</p>
 
 	<ul class="divide-y divide-white/5 overflow-hidden rounded-xl bg-white/5 outline-1 -outline-offset-1 outline-white/10" aria-label="Offices">
 		{#each offices as office (office.id)}

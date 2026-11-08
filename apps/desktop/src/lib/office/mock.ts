@@ -21,7 +21,7 @@ const hqOffice = (organizationId: string): OfficeInfo => {
 	const base: OfficeInfo = { id: `office-${organizationId}`, organization_id: organizationId, name: 'HQ', role: 'hq', host: 'This Mac', status: 'active' };
 	const stopped = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('office');
 	if (stopped === 'crashed') return { ...base, status: 'unavailable', status_reason: 'crashed' };
-	if (stopped === 'restarting') return { ...base, status: 'offline', status_reason: 'crashed', next_restart_at: new Date(Date.now() + 25_000).toISOString() };
+	if (stopped === 'restarting') return { ...base, status: 'offline', status_reason: 'crashed', next_restart_at: new Date(Date.now() + 10 * 60_000).toISOString() };
 	if (stopped === 'key_missing') return { ...base, status: 'unavailable', status_reason: 'key_missing' };
 	if (stopped === 'unknown') return { ...base, status: 'unavailable' };
 	return base;

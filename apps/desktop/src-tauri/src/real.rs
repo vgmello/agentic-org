@@ -1232,4 +1232,19 @@ mod tests {
         assert!(err.message.contains("still starting"), "{}", err.message);
         assert!(started.elapsed() >= Duration::from_millis(150));
     }
+
+    #[test]
+    fn only_not_ready_is_waited_out_a_refusal_is_answered_at_once() {
+        let f = fake(OfficeStatus::Active, 0);
+        let office = quick(&f, 5000);
+        let started = Instant::now();
+        let err = office.create_organization("Taken").unwrap_err();
+        assert_eq!(err.code, ErrorCode::AlreadyExists);
+        assert!(
+            started.elapsed() < Duration::from_millis(2000),
+            "not retried"
+        );
+        // hello (connect), hello (check), one create.
+        assert_eq!(f.host_requests.load(Ordering::SeqCst), 3);
+    }
 }

@@ -177,10 +177,17 @@ describe('OFC-11..13 why an office stopped', () => {
 		expect(whyStopped(stopped('crashed', '2026-11-08T14:00:20+02:00'), NOW)).toBe('It stopped unexpectedly. Restarting in 20 s');
 	});
 
-	it('the screen-reader line never ticks: a pending restart reads "Restarting shortly"', () => {
-		expect(whyForLabel(stopped('crashed', '2026-11-08T12:00:20.000Z'), NOW)).toBe('It stopped unexpectedly. Restarting shortly');
-		expect(whyForLabel(stopped('crashed', '2026-11-08T12:00:20.000Z'), new Date('2026-11-08T12:00:09.000Z'))).toBe('It stopped unexpectedly. Restarting shortly');
-		expect(whyForLabel(stopped('crashed'), NOW)).toBe('It stopped unexpectedly');
+	it('the screen-reader line never ticks: a near restart reads "shortly", a later one a clock time', () => {
+		expect(whyForLabel(stopped('crashed', '2026-11-08T12:00:20.000Z'), NOW)).toBe('it stopped unexpectedly, restarting shortly');
+		expect(whyForLabel(stopped('crashed', '2026-11-08T12:00:20.000Z'), new Date('2026-11-08T12:00:09.000Z'))).toBe('it stopped unexpectedly, restarting shortly');
+		expect(whyForLabel(stopped('crashed', '2026-11-08T12:10:00.000Z'), NOW)).toMatch(/^it stopped unexpectedly, restarting at \d\d:\d\d$/);
+		expect(whyForLabel(stopped('crashed'), NOW)).toBe('it stopped unexpectedly');
+		expect(whyForLabel(stopped('crashed', '2026-11-08T11:00:00.000Z'), NOW)).toBe('it stopped unexpectedly');
+	});
+
+	it('a stopped row’s label keeps where it runs and puts the reason after the status', () => {
+		const o = office('hq', 'HQ', { role: 'hq', status: 'unavailable' });
+		expect(rowLabel(o, 7, true, 'unavailable', 'it stopped unexpectedly, restarting shortly')).toBe("HQ, HQ, This Mac (you're here), Stopped: it stopped unexpectedly, restarting shortly, 7 agents, opens details");
 	});
 
 	it('an office on this Mac never reads Offline: the connected office that the host reports offline is Stopped', () => {

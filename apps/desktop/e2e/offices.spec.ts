@@ -186,6 +186,7 @@ test('OFC-11: a stopped office says why, in its row and in its details, with Cop
 	await hq.getByRole('button').first().click();
 	const sheet = page.getByRole('dialog');
 	await expect(sheet.getByTestId('office-why')).toHaveText('It stopped unexpectedly');
+	await shot(page, 'office-stopped-details');
 	await sheet.getByRole('button', { name: 'Copy details' }).click();
 	await expect(page.getByText('Copied the details.')).toBeVisible();
 	const text = await page.evaluate(() => navigator.clipboard.readText());
@@ -212,4 +213,9 @@ test('OFC-11: a restart that is pending counts down, and the office reads Stoppe
 	await expect(hq).toContainText('Stopped');
 	await expect(hq).not.toContainText('Offline');
 	await expect(hq).toContainText(/It stopped unexpectedly\. Restarting in \d+ s/);
+	// The screen-reader label keeps where it runs, puts the reason after the status, and never ticks (spec §6.1).
+	const label = (await hq.getByRole('button').first().getAttribute('aria-label')) ?? '';
+	expect(label).toContain('This Mac');
+	expect(label).toMatch(/Stopped: it stopped unexpectedly, restarting at \d\d:\d\d/);
+	expect(label).not.toMatch(/\d+ s\b/);
 });

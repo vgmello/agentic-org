@@ -14,7 +14,6 @@ export type OfficeStatus =
 	| 'update_needed'
 	| 'unknown';
 
-/** An office: a node of one organization, run by its own server process. */
 /** Why an office is not running (`org_proto::OfficeStatusReason`); a reason this build doesn't know reads as `unknown`. */
 export type OfficeStatusReason =
 	| 'key_missing'
@@ -28,6 +27,7 @@ export type OfficeStatusReason =
 	| 'stopped_by_owner'
 	| 'unknown';
 
+/** An office: a node of one organization, run by its own server process. */
 export interface OfficeInfo {
 	id: string;
 	organization_id: string;
