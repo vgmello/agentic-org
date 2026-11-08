@@ -8,3 +8,5 @@ publish.workspace = true
 
 [dependencies]
 org-spool = { path = "../../crates/org-spool" }
+serde.workspace = true
+serde_json.workspace = true
