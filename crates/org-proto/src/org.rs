@@ -984,9 +984,12 @@ command!(
     /// project-team links, in one `org.changed` (`project_upserted`, `area_upserted`,
     /// `project_team_added`). `project_id` and the link ids are client-made.
     ///
-    /// `key` absent: HQ derives one from the name (its ASCII letters and digits, lowercased,
-    /// first 3; prefixed with `p` if that doesn't start with a letter and padded with `x` to 2;
-    /// if taken or reserved, a digit 2, 3, … is appended). The event carries the key.
+    /// `key` absent: HQ derives one from the name. Take its ASCII letters and digits,
+    /// lowercased, and keep the first 3; then prefix `p` if that doesn't start with a letter
+    /// (the prefix doesn't count toward the 3); then pad with `x` to 2 characters; if the key is
+    /// taken or reserved, append a digit 2, 3, …. Examples: "Billing" → `bil`, "123 Project" →
+    /// `p123`, "Q" → `qx`, "9" → `p9`, "Exc" → `exc2` (`exc` is reserved). The event carries
+    /// the key.
     ///
     /// `repo` absent: the project has no repository. App-only, like every command here. Errors:
     /// `not_found` (a team), `invalid_request` (key format or reserved; limits; a repeated team;

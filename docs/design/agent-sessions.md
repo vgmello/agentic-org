@@ -188,8 +188,10 @@ The research behind it, with exact flags, protocols and what was verified, is in
    **Fallback:** if a runtime's approval bridge doesn't work, its actions that need approval are **denied**, the run ends as `blocked`, and a Needs-you item says what was denied. Skip-permissions modes are never used.
 8. **Instructions are composed by the office** from:
    - the agent's identity and memory: its home `CLAUDE.md` / `AGENTS.md` and its profile
-   - the project's instruction files, **read from the project's default branch in `work.git`** (with the office's hardened git), never from the worktree
-   - the **wake guidance** for the moment: the agent's own guidance (org data, editable in How it runs, RUN-11), else the default for the moment (Eden's agent-guidance), with project guidance files (`docs/.guidance/<moment>.md`) also read from the default branch
+   - the project's instruction files, **read from the project's `integration_branch` (the default branch when that's empty) in `mirror.git`** (with the office's hardened git), never from the worktree or `work.git`, whose refs agents can move
+   - the **wake guidance** for the moment: the agent's own guidance (org data, editable in How it runs, RUN-11), else the default for the moment (Eden's agent-guidance), with project guidance files (`docs/.guidance/<moment>.md`) also read from the integration branch
+
+   (amended 2026-11-08: A57) Instruction files, guidance files and project processes ([`processes.md`](processes.md)) are all read from the integration branch as fetched into `mirror.git`, so all three follow merged work. Reading in `mirror.git` instead of `work.git` follows `tasks-projects-docs.md` §4.9 ("reads only in mirror.git"): agents can move refs in `work.git`, and once processes gate enforcement, a moved integration ref there would let one agent change what every session reads.
 
    So what an agent writes in its worktree never changes what the office tells the next session. Codex and Antigravity also read instruction files from the cwd by themselves (`AGENTS.md`, `.agents/rules`). That's the task branch's own content, so it can steer only that task's sessions, and it's treated as untrusted (see "Security"). **Claude doesn't:** under `--setting-sources ""` it read none of them in the spike, and auto-memory is off (decision 6). A nested `CLAUDE.md` that Claude might load lazily, when the agent reads files in a subfolder, wasn't tested, so it's still treated as untrusted.
 
@@ -458,8 +460,8 @@ This applies `projects-git-github.md` (a bare `work.git` and a worktree per task
 
 ## Security
 - **The workspace is hostile.** An agent can write anything in its worktree, so nothing there may change a session's **settings, permissions, hooks, tools or MCP servers**:
-  - Settings come only from the office (decision 6), and the office's composed instructions come from the default branch (decision 8).
-  - Instruction files that a runtime reads from the cwd by itself (`AGENTS.md`, `.agents/rules`; Claude reads none under `--setting-sources ""`, decision 8) are the task branch's own content. They can steer only that task's sessions, never another agent's or the office's, and they reach the default branch only through review. We accept that.
+  - Settings come only from the office (decision 6), and the office's composed instructions come from the project's integration branch as fetched into `mirror.git` (decision 8; amended 2026-11-08: A57).
+  - Instruction files that a runtime reads from the cwd by itself (`AGENTS.md`, `.agents/rules`; Claude reads none under `--setting-sources ""`, decision 8) are the task branch's own content. They can steer only that task's sessions, never another agent's or the office's, and they reach the integration branch only through review (amended 2026-11-08: A57). We accept that.
   - **A workspace skill's `allowed-tools` does pre-approve tools** in Claude, whenever the project setting source is loaded (the spike ran one with no approval request). Under `--setting-sources ""` workspace skills don't load at all, so that source is never turned on.
 - **Fixed denies**, for every runtime, through its permission policy and its sandbox. They override every allow rule:
   - writes to `.claude/**`, `.agents/**`, `.codex/**` and `.gemini/**` in the workspace
@@ -631,7 +633,7 @@ Every other new dependency points from volatile to stable too: adapters → `org
 | D1 | ADR-0002 note: runtime transcripts are plaintext outside `office.db` (U-S3) | ada | U-S3 |
 | D2 | ADR-0004 rewritten to the headless-first decision | ada | U-S4 |
 | D3 | AGENTS.md rows for `org-office-launch`'s children lines and the guidance files | ada | — |
-| D4 | The guidance files: the default wake guidance per moment, and how the office loads them from the default branch | Eden (the text), server-dev (loading) | S3a |
+| D4 | The guidance files: the default wake guidance per moment, and how the office loads them from the integration branch in `mirror.git` (amended 2026-11-08: A57) | Eden (the text), server-dev (loading) | S3a |
 
 **Security tests (S6):**
 - A **hostile workspace**, like G2c's hostile git config: `.claude/settings.local.json` allowing everything, `.claude/skills` with `allowed-tools`, hooks, rules files, `.agents/hooks.json`, `.codex` config, `.git/hooks/*`. None of it may take effect, and writes to them are denied.
