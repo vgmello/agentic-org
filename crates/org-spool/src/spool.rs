@@ -16,7 +16,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
-use crate::envelope::{validate_agent_id, Envelope};
+use crate::envelope::{validate_agent_id, Envelope, MAX_ENVELOPE_BYTES};
+use crate::safe_read::{read_spool_file, SpoolFile};
 use crate::time::format_iso8601_utc;
 use crate::ulid::{generate_ulid, is_valid_ulid};
 
@@ -92,13 +93,14 @@ pub fn poll_unix_listener(listener: &UnixListener, timeout: Duration) -> bool {
     poll_unix_listener_events(listener, timeout).any
 }
 
-/// Read a file, treating "not there (any more)" as `None` rather than an error.
-fn read_if_present(path: &Path) -> Result<Option<Vec<u8>>, SpoolError> {
-    match fs::read(path) {
-        Ok(bytes) => Ok(Some(bytes)),
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(SpoolError::Io(e)),
-    }
+/// Read a message file (see [`read_spool_file`]): `None` if it's not there (any more), and an
+/// envelope, or why it isn't one (not a regular file, too large, not a valid envelope).
+fn read_envelope(path: &Path) -> Result<Option<Result<Envelope, String>>, SpoolError> {
+    Ok(match read_spool_file(path, MAX_ENVELOPE_BYTES)? {
+        SpoolFile::Missing => None,
+        SpoolFile::Bytes(bytes) => Some(Envelope::from_json_bytes(&bytes)),
+        SpoolFile::Rejected(why) => Some(Err(why)),
+    })
 }
 
 fn is_pid_dead(pid: u32) -> bool {
@@ -331,6 +333,9 @@ impl Spool {
         Ok(())
     }
 
+    /// The `*.json` entries of `dir` (not dot-files), sorted. Anything but a directory is
+    /// listed, symlinks and FIFOs included (without following them), so readers treat those
+    /// like corrupt files (dead-lettered or skipped) instead of leaving them behind.
     pub(crate) fn sorted_json_entries(dir: &Path) -> Result<Vec<PathBuf>, SpoolError> {
         if !dir.is_dir() {
             return Ok(Vec::new());
@@ -340,7 +345,10 @@ impl Spool {
             let entry = entry?;
             let path = entry.path();
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if !name.starts_with('.') && name.ends_with(".json") && path.is_file() {
+                if !name.starts_with('.')
+                    && name.ends_with(".json")
+                    && !entry.file_type().is_ok_and(|t| t.is_dir())
+                {
                     files.push(path);
                 }
             }
@@ -519,18 +527,14 @@ impl Spool {
             .ok_or_else(|| SpoolError::InvalidInput("invalid outbox file name".into()))?;
         let id_stem = file_name.strip_suffix(".json").unwrap_or(file_name);
 
-        let bytes = match fs::read(outbox_file) {
-            Ok(b) => b,
-            Err(e) if e.kind() == ErrorKind::NotFound => {
-                return Err(SpoolError::NotFound(format!(
-                    "outbox file {} already moved",
-                    outbox_file.display()
-                )));
-            }
-            Err(e) => return Err(SpoolError::Io(e)),
+        let Some(parsed) = read_envelope(outbox_file)? else {
+            return Err(SpoolError::NotFound(format!(
+                "outbox file {} already moved",
+                outbox_file.display()
+            )));
         };
 
-        let env = match Envelope::from_json_bytes(&bytes) {
+        let env = match parsed {
             Ok(env) => env,
             Err(err) => {
                 return self.move_to_dead(
@@ -611,10 +615,10 @@ impl Spool {
         validate_agent_id(agent, "agent").map_err(SpoolError::InvalidInput)?;
         let mut out = Vec::new();
         for path in Self::sorted_json_entries(&self.agent_new_dir(agent))? {
-            let Ok(bytes) = fs::read(&path) else {
+            let Ok(Some(parsed)) = read_envelope(&path) else {
                 continue;
             };
-            match Envelope::from_json_bytes(&bytes) {
+            match parsed {
                 Ok(env) => out.push(env),
                 Err(err) => {
                     let stem = path
@@ -627,10 +631,8 @@ impl Spool {
         }
         if include_cur {
             for path in Self::sorted_json_entries(&self.agent_cur_dir(agent))? {
-                if let Ok(bytes) = fs::read(&path) {
-                    if let Ok(env) = Envelope::from_json_bytes(&bytes) {
-                        out.push(env);
-                    }
+                if let Ok(Some(Ok(env))) = read_envelope(&path) {
+                    out.push(env);
                 }
             }
             out.sort_by(|a, b| a.id.cmp(&b.id));
@@ -653,8 +655,8 @@ impl Spool {
         // `defer` may move the file between new/ and cur/ while we look (it holds the meta lock;
         // we don't, to keep reads cheap), so a miss in both places is retried once.
         for _ in 0..2 {
-            if let Some(bytes) = read_if_present(&new_path)? {
-                let env = match Envelope::from_json_bytes(&bytes) {
+            if let Some(parsed) = read_envelope(&new_path)? {
+                let env = match parsed {
                     Ok(e) => e,
                     Err(err) => {
                         let _ =
@@ -669,8 +671,8 @@ impl Spool {
                     return Ok(env);
                 }
             }
-            if let Some(bytes) = read_if_present(&cur_path)? {
-                return Envelope::from_json_bytes(&bytes).map_err(SpoolError::InvalidInput);
+            if let Some(parsed) = read_envelope(&cur_path)? {
+                return parsed.map_err(SpoolError::InvalidInput);
             }
         }
 
@@ -723,8 +725,8 @@ impl Spool {
         // Retried once: a concurrent `defer` or `read` may be moving it between new/ and cur/.
         for _ in 0..2 {
             for dir in [self.agent_new_dir(agent), self.agent_cur_dir(agent)] {
-                if let Some(bytes) = read_if_present(&dir.join(&fname))? {
-                    return Envelope::from_json_bytes(&bytes).map_err(SpoolError::InvalidInput);
+                if let Some(parsed) = read_envelope(&dir.join(&fname))? {
+                    return parsed.map_err(SpoolError::InvalidInput);
                 }
             }
         }
@@ -742,10 +744,10 @@ impl Spool {
     ) -> Result<Option<Envelope>, SpoolError> {
         validate_agent_id(agent, "agent").map_err(SpoolError::InvalidInput)?;
         for path in Self::sorted_json_entries(&self.agent_new_dir(agent))? {
-            let Ok(bytes) = fs::read(&path) else {
+            let Ok(Some(parsed)) = read_envelope(&path) else {
                 continue;
             };
-            let env = match Envelope::from_json_bytes(&bytes) {
+            let env = match parsed {
                 Ok(env) => env,
                 Err(err) => {
                     let stem = path
@@ -874,7 +876,7 @@ impl Spool {
             let agent_entry = agent_entry?;
             let cur_dir = agent_entry.path().join("cur");
             for file_path in Self::sorted_json_entries(&cur_dir)? {
-                if let Ok(meta) = fs::metadata(&file_path) {
+                if let Ok(meta) = fs::symlink_metadata(&file_path) {
                     if let Ok(modified) = meta.modified() {
                         if modified < cutoff && fs::remove_file(&file_path).is_ok() {
                             pruned += 1;

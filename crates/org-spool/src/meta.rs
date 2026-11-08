@@ -13,7 +13,8 @@ use std::time::{Duration, SystemTime};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::envelope::{validate_agent_id, Envelope};
+use crate::envelope::{validate_agent_id, Envelope, MAX_ENVELOPE_BYTES};
+use crate::safe_read::{read_spool_file, SpoolFile};
 use crate::spool::{Spool, SpoolError};
 use crate::time::{format_iso8601_utc, is_valid_iso8601_utc, parse_duration_arg};
 use crate::ulid::{generate_ulid, is_valid_ulid};
@@ -28,6 +29,10 @@ const MAX_NOTE_BYTES: usize = 1024;
 const MAX_REPORTED_SESSIONS: usize = 16;
 const MAX_SESSION_ID_BYTES: usize = 128;
 const MAX_SNOOZE_SECS: u64 = 365 * 24 * 3600;
+/// `triage.json` grows with the inbox (one entry per triaged message still in `new/` or `cur/`,
+/// kept 30 days), so it gets more room than an envelope: hitting the cap sets the file aside
+/// like a corrupt one, losing its snoozes.
+const MAX_TRIAGE_BYTES: usize = 16 * 1024 * 1024;
 /// The organization's owner (a person), the only member that may carry `owner: true`.
 pub const OWNER_ID: &str = "vgmello";
 const MAX_PROFILE_FIELD_CHARS: usize = 128;
@@ -594,18 +599,19 @@ impl Spool {
 
     /// Load `triage.json` (caller holds the meta lock). A missing file is an empty state; a read
     /// error is an I/O error (so a transient failure never wipes the snoozes); an unparseable
-    /// file is set aside as `triage.json.corrupt-<ulid>` and replaced by an empty state, so one
-    /// bad write can't wedge triage forever.
+    /// file (or a symlink, FIFO or oversized file in its place) is set aside as
+    /// `triage.json.corrupt-<ulid>` and replaced by an empty state, so one bad write can't wedge
+    /// triage forever.
     fn load_triage_unlocked(&self, agent: &str) -> Result<TriageState, SpoolError> {
         let path = self.agent_triage_path(agent);
-        let bytes = match fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(TriageState::empty()),
-            Err(e) => return Err(SpoolError::Io(e)),
+        let parsed = match read_spool_file(&path, MAX_TRIAGE_BYTES)? {
+            SpoolFile::Missing => return Ok(TriageState::empty()),
+            SpoolFile::Bytes(bytes) => serde_json::from_slice(&bytes).ok(),
+            SpoolFile::Rejected(_) => None,
         };
-        match serde_json::from_slice(&bytes) {
-            Ok(state) => Ok(state),
-            Err(_) => {
+        match parsed {
+            Some(state) => Ok(state),
+            None => {
                 let aside = self
                     .agent_inbox_dir(agent)
                     .join(format!("triage.json.corrupt-{}", generate_ulid()));
@@ -621,7 +627,7 @@ impl Spool {
 
     fn load_profile_unlocked(&self, agent: &str) -> MemberProfile {
         let path = self.agent_profile_path(agent);
-        if let Ok(bytes) = fs::read(&path) {
+        if let Ok(SpoolFile::Bytes(bytes)) = read_spool_file(&path, MAX_ENVELOPE_BYTES) {
             if let Ok(mut profile) = serde_json::from_slice::<MemberProfile>(&bytes) {
                 // The directory names the member, not the file: a profile can't claim to be
                 // someone else, nor make itself the owner.
@@ -716,7 +722,9 @@ impl Spool {
     /// Return an agent's active (non-expired) status line, or `None` if unset/expired.
     pub fn get_active_status(&self, agent: &str, now_iso: &str) -> Option<MemberStatus> {
         let path = self.agent_status_path(agent);
-        let bytes = fs::read(&path).ok()?;
+        let SpoolFile::Bytes(bytes) = read_spool_file(&path, MAX_ENVELOPE_BYTES).ok()? else {
+            return None;
+        };
         let status: MemberStatus = serde_json::from_slice(&bytes).ok()?;
         if status.expires_at.as_str() <= now_iso {
             None
@@ -1115,7 +1123,7 @@ impl Spool {
 
         if include_all {
             for path in Self::sorted_json_entries(&self.agent_cur_dir(agent))? {
-                if let Ok(bytes) = fs::read(&path) {
+                if let Ok(SpoolFile::Bytes(bytes)) = read_spool_file(&path, MAX_ENVELOPE_BYTES) {
                     if let Ok(env) = Envelope::from_json_bytes(&bytes) {
                         if items.iter().any(|i| i.id == env.id) {
                             continue;

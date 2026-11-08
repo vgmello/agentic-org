@@ -648,6 +648,53 @@ fn rule_format_and_invisible_characters_are_stripped_from_output_and_refused_in_
 }
 
 #[test]
+fn rule_special_and_oversized_spool_files_are_dead_lettered_not_read() {
+    let t = TempSpool::new("special");
+    let spool_dir = t.dir.join("spool");
+    // A FIFO in outbox/new: the relay must not block on it.
+    let fifo_id = generate_ulid();
+    let made = process::Command::new("mkfifo")
+        .arg(spool_dir.join(format!("outbox/new/{fifo_id}.json")))
+        .status()
+        .unwrap();
+    assert!(made.success());
+    // An oversized file in new/ is never read whole.
+    let big_id = generate_ulid();
+    let big = spool_dir.join(format!("inbox/{ME}/new/{big_id}.json"));
+    fs::write(&big, vec![b' '; org_spool::MAX_ENVELOPE_BYTES + 10]).unwrap();
+
+    let summary = t.spool.deliver_all().unwrap();
+    assert_eq!(summary.dead, 1);
+    let reason = fs::read_to_string(spool_dir.join(format!("dead/{fifo_id}.reason"))).unwrap();
+    assert!(reason.contains("not a regular file (FIFO)"), "{reason}");
+
+    assert!(t.spool.list_inbox(ME, false).unwrap().is_empty());
+    let reason = fs::read_to_string(spool_dir.join(format!("dead/{big_id}.reason"))).unwrap();
+    assert!(reason.contains("larger than"), "{reason}");
+
+    // A FIFO in place of triage.json is set aside, never opened for a blocking read.
+    let triage = spool_dir.join(format!("inbox/{ME}/triage.json"));
+    let made = process::Command::new("mkfifo")
+        .arg(&triage)
+        .status()
+        .unwrap();
+    assert!(made.success());
+    let id = t.send("x", None);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let spool = t.spool.clone();
+    let deferring = id.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(spool.defer_message(ME, &deferring, "1h", None).is_ok());
+    });
+    let deferred = rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("defer hung on a FIFO triage.json");
+    assert!(deferred);
+    assert!(fs::symlink_metadata(&triage).unwrap().is_file());
+    assert_eq!(t.triage_json()["messages"][&id]["triage_gen"], 1);
+}
+
+#[test]
 fn rule_a_corrupt_triage_file_is_set_aside_not_fatal() {
     let t = TempSpool::new("corrupt");
     let id = t.ask("q");

@@ -791,6 +791,92 @@ fn notify_strips_tag_characters_hidden_in_a_subject() {
     assert!(report["text"].as_str().unwrap().contains("\"Hi\""));
 }
 
+/// Run `org-agent` in the background and wait at most `limit` for it (killing it if it hangs).
+fn run_with_timeout(env: &TempOrgHome, args: &[&str], limit: Duration) -> common::Run {
+    let mut child = TempOrgHome::command(&env.root, ME, args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + limit;
+    while child.try_wait().unwrap().is_none() {
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("org-agent {args:?} hung for {limit:?}");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    child.wait_with_output().unwrap().into()
+}
+
+#[test]
+fn a_fifo_in_new_is_never_opened_for_a_blocking_read() {
+    // Regression: `msg read <id>` opened new/<id>.json with a plain blocking open, so a FIFO
+    // there hung it forever.
+    let env = setup("fifo");
+    let id = org_spool::generate_ulid();
+    let fifo = env.inbox_file(ME, "new", &id);
+    let made = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap();
+    assert!(made.success());
+
+    let r = run_with_timeout(&env, &["msg", "read", &id], Duration::from_secs(10));
+    assert_eq!(r.code, 1, "an error, not a hang: {}", r.stderr);
+    assert!(r.stderr.contains("not a regular file"), "{}", r.stderr);
+    assert!(!fifo.exists(), "dead-lettered like a corrupt message");
+    assert!(env.root.join(format!("spool/dead/{id}.json")).exists());
+
+    // Listing and notify skip one too, without hanging.
+    let other = org_spool::generate_ulid();
+    let made = std::process::Command::new("mkfifo")
+        .arg(env.inbox_file(ME, "new", &other))
+        .status()
+        .unwrap();
+    assert!(made.success());
+    for args in [
+        &["msg", "inbox"][..],
+        &["msg", "notify", "--after-task"],
+        &["msg", "read", "--next"],
+    ] {
+        let r = run_with_timeout(&env, args, Duration::from_secs(10));
+        assert_eq!(r.code, 0, "{args:?}: {}", r.stderr);
+    }
+}
+
+#[test]
+fn a_symlink_in_new_is_not_followed() {
+    let env = setup("symlink");
+    // A valid envelope for ME outside the spool, linked into new/.
+    let target = env.root.join("outside.json");
+    let id = org_spool::generate_ulid();
+    let mut outside =
+        org_spool::Envelope::new_msg(PEER, ME, Some("linked".into()), SECRET, Default::default())
+            .unwrap();
+    outside.id = id.clone();
+    fs::write(&target, outside.to_json_bytes().unwrap()).unwrap();
+    let link = env.inbox_file(ME, "new", &id);
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+
+    let r = env.run(ME, &["msg", "read", &id]);
+    assert_eq!(r.code, 1, "{}", r.stdout);
+    assert!(!r.stdout.contains(SECRET) && !r.stderr.contains(SECRET));
+    assert!(
+        r.stderr.contains("not a regular file (symlink)"),
+        "{}",
+        r.stderr
+    );
+
+    let link2 = env.inbox_file(ME, "new", &org_spool::generate_ulid());
+    std::os::unix::fs::symlink(&target, &link2).unwrap();
+    let inbox = env.run(ME, &["msg", "inbox", "--json"]);
+    assert_eq!(inbox.code, 0, "{}", inbox.stderr);
+    assert!(!inbox.stdout.contains(SECRET), "{}", inbox.stdout);
+    assert!(target.is_file(), "the target is never touched");
+}
+
 #[test]
 fn any_msg_command_marks_the_caller_online_in_who() {
     let env = setup("presence_cli");

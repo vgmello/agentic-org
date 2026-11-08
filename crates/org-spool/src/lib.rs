@@ -7,6 +7,7 @@
 
 pub mod envelope;
 pub mod meta;
+mod safe_read;
 pub mod spool;
 pub mod time;
 pub mod ulid;
