@@ -17,7 +17,7 @@ use std::time::{Duration, Instant, SystemTime};
 use org_office_launch::{FailCode, ServerEvent};
 use org_proto::{AppToken, OfficeStatusReason};
 
-use super::child::{Mode, RunningChild, Signal, Spawner};
+use super::child::{Mode, RunningChild, Signal, SpawnError, Spawner};
 use super::state::{OfficeState, SharedState};
 use crate::host_log;
 use crate::keys::{KeyStore, KeyStoreError};
@@ -211,8 +211,15 @@ impl OfficeRunner {
                     "couldn't start the server of office {}: {e}",
                     self.office_id
                 ));
+                // A server that isn't the signed one (`server_check`) is a storage error: not
+                // fatal, retried with backoff (a wrong program isn't fixed by itself, so the
+                // give-up rule ends it), and it never got the key.
+                let reason = match e {
+                    SpawnError::Untrusted(_) => OfficeStatusReason::StorageError,
+                    SpawnError::Io(_) => OfficeStatusReason::Crashed,
+                };
                 Ending::Ended {
-                    reason: OfficeStatusReason::Crashed,
+                    reason,
                     fatal: false,
                     uptime: None,
                 }

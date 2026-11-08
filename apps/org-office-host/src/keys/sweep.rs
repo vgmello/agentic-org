@@ -2,11 +2,10 @@
 //!
 //! A key whose office has nothing left in this home can never open anything: its databases are
 //! gone, or never existed (a create whose `--create` and `--discard` servers couldn't even
-//! start). An office has something left when a folder is named after it in `offices/` or
-//! `offices/.refused/` (`<id>` or `<id>-<unix ms>`), or when an `office.json` in any folder
-//! there names it (a folder renamed by hand, moved aside at startup with its data). The host
-//! sweeps once at startup, after the startup discards and before any create can store a key for
-//! a folder not made yet.
+//! start). Which keys those are is the catalog's to say (`catalog::orphans`, given to
+//! [`sweep_orphans`] as `find_orphans`): this module owns only the key store's side, the record
+//! and the policy. The host sweeps once at startup, after the startup discards and before any
+//! create can store a key for a folder not made yet.
 //!
 //! **Never on first sight.** Deleting a key can't be undone, so the sweep only *marks* an
 //! orphaned key the first time it finds it, in the orphan record, and deletes it only at a host
@@ -34,18 +33,18 @@
 //! when the key store belongs to this office home alone: `Host::start` decides whether it runs
 //! (`may_sweep_orphan_keys`: release builds, on the account's own office home).
 //!
-//! It fails safe: if `offices/` or `offices/.refused/` can't be read, an `office.json` in them
-//! can't be read, or the store can't list, nothing is marked, unmarked or deleted; a folder that
-//! can't be checked keeps its key. Every mark, unmark and deletion is logged, with ids only.
+//! It fails safe: if the store can't list, or `find_orphans` can't tell (e.g. an `office.json`
+//! it can't read), nothing is marked, unmarked or deleted, and a WARNING is logged at every
+//! start until it's fixed. Every mark, unmark and deletion is logged, with ids only.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use org_office_launch::{is_plain_id, OFFICES_DIR_NAME, OFFICE_FILE_NAME, REFUSED_DIR_NAME};
+use org_office_launch::is_plain_id;
 use serde::{Deserialize, Serialize};
 
 use super::KeyStore;
@@ -110,18 +109,36 @@ pub(crate) fn decide(
 /// Sweeps `store` for the offices of `home` at `now` (see the module docs): marks new orphans,
 /// unmarks keys whose office came back, deletes keys orphaned for [`ORPHAN_GRACE`] or more, and
 /// saves the record. Returns the ids it deleted.
-pub(crate) fn sweep_orphans(store: &dyn KeyStore, home: &Path, now: SystemTime) -> Vec<String> {
+pub(crate) fn sweep_orphans(
+    store: &dyn KeyStore,
+    home: &Path,
+    find_orphans: impl FnOnce(&[String]) -> Result<Vec<String>, String>,
+    now: SystemTime,
+) -> Vec<String> {
     let now_ms = now.duration_since(UNIX_EPOCH).map_or(0, |since| {
         u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
     });
     if now_ms < CLOCK_FLOOR_MS {
-        host_log::log("no orphan-key sweep: the system clock is before 2026, so it is wrong");
+        host_log::log(
+            "WARNING: no orphan-key sweep: the system clock is before 2026, so it is wrong",
+        );
         return Vec::new();
     }
-    let orphans = match find_orphans(store, home) {
+    let ids = match store.list() {
+        Ok(ids) => ids,
+        Err(e) => {
+            host_log::log(&format!(
+                "WARNING: no orphan-key sweep: the key store can't list its keys: {e}"
+            ));
+            return Vec::new();
+        }
+    };
+    // Every start, loudly: until it's fixed (e.g. an office.json that can't be read), no
+    // orphaned key is ever marked or deleted.
+    let orphans = match find_orphans(&ids) {
         Ok(orphans) => orphans,
         Err(why) => {
-            host_log::log(&format!("no orphan-key sweep: {why}"));
+            host_log::log(&format!("WARNING: no orphan-key sweep: {why}"));
             return Vec::new();
         }
     };
@@ -178,39 +195,6 @@ pub(crate) fn sweep_orphans(store: &dyn KeyStore, home: &Path, now: SystemTime) 
         }
     }
     deleted
-}
-
-/// The ids of the keys in `store` whose office has nothing left in `home` (see the module
-/// docs), or why it can't tell.
-fn find_orphans(store: &dyn KeyStore, home: &Path) -> Result<Vec<String>, String> {
-    let offices = home.join(OFFICES_DIR_NAME);
-    // Everything readable, or no answer: a key is never taken for an orphan for a folder not
-    // looked at.
-    let mut claimed = folders_in(&offices, false).map_err(|e| e.to_string())?;
-    claimed.extend(folders_in(&offices.join(REFUSED_DIR_NAME), true).map_err(|e| e.to_string())?);
-    let folder_names: Vec<&String> = claimed.iter().map(|(name, _)| name).collect();
-    let named: HashSet<&String> = claimed.iter().filter_map(|(_, id)| id.as_ref()).collect();
-    let ids = store
-        .list()
-        .map_err(|e| format!("the key store can't list its keys: {e}"))?;
-    let mut orphans = Vec::new();
-    for id in ids {
-        match fs::symlink_metadata(offices.join(&id)) {
-            Ok(_) => continue,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => {
-                host_log::log(&format!(
-                    "kept the key of office {id}: its folder can't be checked: {e}"
-                ));
-                continue;
-            }
-        }
-        if named.contains(&id) || folder_names.iter().any(|name| is_refused_as(name, &id)) {
-            continue;
-        }
-        orphans.push(id);
-    }
-    Ok(orphans)
 }
 
 /// The orphan record at `path` (empty if there is none), or why it can't be used.
@@ -287,57 +271,11 @@ fn save_record(home: &Path, path: &Path, record: &OrphanRecord) -> io::Result<io
     Ok(File::open(home).and_then(|dir| dir.sync_all()))
 }
 
-/// The entries in `dir`, each with the office id its `office.json` names, if it has one. With
-/// `may_be_missing`, a `dir` that doesn't exist has none. An `office.json` that can't be read
-/// (a symlink, a FIFO, someone else's, too large, invalid) is an error.
-fn folders_in(dir: &Path, may_be_missing: bool) -> io::Result<Vec<(String, Option<String>)>> {
-    let shown = dir.display();
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(e) if may_be_missing && e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => {
-            return Err(io::Error::new(
-                e.kind(),
-                format!("{shown} can't be read: {e}"),
-            ))
-        }
-    };
-    let mut folders = Vec::new();
-    for entry in entries {
-        let entry = entry?;
-        let file = entry.path().join(OFFICE_FILE_NAME);
-        let id = office_id_in(&file)?;
-        folders.push((entry.file_name().to_string_lossy().into_owned(), id));
-    }
-    Ok(folders)
-}
-
-/// The office id `file` (an `office.json`) names, or `None` if there is no such file (or its
-/// folder isn't a folder), read the catalog's careful way (`catalog::read_office_file`: no
-/// symlink, never blocked by a FIFO, owned by this user, capped).
-fn office_id_in(file: &Path) -> io::Result<Option<String>> {
-    match crate::catalog::read_office_file(file) {
-        Ok(office) => Ok(office.map(|office| office.office_id)),
-        // A plain file where a folder was expected has no office.json.
-        Err(_) if file.parent().is_some_and(|folder| !folder.is_dir()) => Ok(None),
-        Err(why) => Err(io::Error::other(format!("{}: {why}", file.display()))),
-    }
-}
-
-/// Whether the folder `name` in `.refused/` is office `id`'s: `<id>`, or `<id>-<unix ms>` when
-/// that name was taken (`catalog::move_refused`).
-fn is_refused_as(name: &str, id: &str) -> bool {
-    name == id
-        || name
-            .strip_prefix(id)
-            .and_then(|rest| rest.strip_prefix('-'))
-            .is_some_and(|ms| !ms.is_empty() && ms.bytes().all(|b| b.is_ascii_digit()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::keys::memory::{Fault, MemoryKeys, Op};
+    use org_office_launch::{OFFICES_DIR_NAME, OFFICE_FILE_NAME, REFUSED_DIR_NAME};
     use org_proto::DbKey;
     use std::os::unix::fs::PermissionsExt;
 
@@ -403,6 +341,11 @@ mod tests {
             "2026-11-08T00:00:00.000Z",
         );
         fs::write(folder.join(OFFICE_FILE_NAME), office.to_vec().unwrap()).unwrap();
+    }
+
+    /// Sweeps as the host does, with the catalog finding the orphans in `home`.
+    fn sweep_orphans(store: &dyn KeyStore, home: &Path, now: SystemTime) -> Vec<String> {
+        super::sweep_orphans(store, home, |ids| crate::catalog::orphans(home, ids), now)
     }
 
     /// Sweeps at t0 (which must only mark) and again 7 days later: what that second sweep
@@ -663,21 +606,6 @@ mod tests {
         fs::write(moved.join(OFFICE_FILE_NAME), b"{not an office").unwrap();
         assert!(sweep_orphans(&keys, dir.path(), t0() + 30 * DAY).is_empty());
         assert!(keys.has(ORPHAN));
-    }
-
-    #[test]
-    fn a_refused_name_must_be_the_id_or_the_id_with_a_timestamp() {
-        assert!(is_refused_as(REFUSED, REFUSED));
-        assert!(is_refused_as(&format!("{REFUSED}-123"), REFUSED));
-        for other in [
-            format!("{REFUSED}-"),
-            format!("{REFUSED}-x"),
-            format!("{REFUSED}X"),
-            format!("{REFUSED}-1-2"),
-            REFUSED[1..].to_owned(),
-        ] {
-            assert!(!is_refused_as(&other, REFUSED), "{other}");
-        }
     }
 
     #[test]

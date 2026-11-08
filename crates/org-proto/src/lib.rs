@@ -67,7 +67,7 @@
 //!   [`ErrorCode::Unknown`], and answer unknown methods with [`ErrorCode::UnknownMethod`].
 
 // No unsafe code, except the one function that zeroes an `AppToken`'s or a `DbKey`'s bytes (see
-// `token`). Two tests there also allow it, to read a token's or a key's bytes after it's dropped.
+// `token`).
 #![deny(unsafe_code)]
 
 pub mod directory;

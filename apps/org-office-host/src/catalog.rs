@@ -5,7 +5,7 @@
 //!
 //! The catalog holds no process state; status comes from supervision.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
@@ -357,6 +357,88 @@ fn has_office_file(dir: &Path) -> bool {
     }
 }
 
+/// Of the offices `ids` (the ones with a key), those that have nothing left in `home`, or why
+/// it can't tell (for the orphan-key sweep, `keys::sweep_orphans`). An office has something
+/// left when a folder is named after it in `offices/` or `offices/.refused/` (`<id>` or
+/// `<id>-<unix ms>`), or when an `office.json` in any folder there names it (a folder renamed by
+/// hand, moved aside at startup with its data). Everything must be readable, an `office.json`
+/// included, or it can't tell: a key is never taken for an orphan for a folder not looked at.
+pub(crate) fn orphans(home: &Path, ids: &[String]) -> Result<Vec<String>, String> {
+    let offices = home.join(OFFICES_DIR_NAME);
+    // Everything readable, or no answer: a key is never taken for an orphan for a folder not
+    // looked at.
+    let mut claimed = folders_in(&offices, false).map_err(|e| e.to_string())?;
+    claimed.extend(folders_in(&offices.join(REFUSED_DIR_NAME), true).map_err(|e| e.to_string())?);
+    let folder_names: Vec<&String> = claimed.iter().map(|(name, _)| name).collect();
+    let named: HashSet<&String> = claimed.iter().filter_map(|(_, id)| id.as_ref()).collect();
+    let mut orphans = Vec::new();
+    for id in ids {
+        let id = id.clone();
+        match fs::symlink_metadata(offices.join(&id)) {
+            Ok(_) => continue,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => {
+                host_log::log(&format!(
+                    "kept the key of office {id}: its folder can't be checked: {e}"
+                ));
+                continue;
+            }
+        }
+        if named.contains(&id) || folder_names.iter().any(|name| is_refused_as(name, &id)) {
+            continue;
+        }
+        orphans.push(id);
+    }
+    Ok(orphans)
+}
+
+/// The entries in `dir`, each with the office id its `office.json` names, if it has one. With
+/// `may_be_missing`, a `dir` that doesn't exist has none. An `office.json` that can't be read
+/// (a symlink, a FIFO, someone else's, too large, invalid) is an error.
+fn folders_in(dir: &Path, may_be_missing: bool) -> io::Result<Vec<(String, Option<String>)>> {
+    let shown = dir.display();
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if may_be_missing && e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => {
+            return Err(io::Error::new(
+                e.kind(),
+                format!("{shown} can't be read: {e}"),
+            ))
+        }
+    };
+    let mut folders = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        let file = entry.path().join(OFFICE_FILE_NAME);
+        let id = office_id_in(&file)?;
+        folders.push((entry.file_name().to_string_lossy().into_owned(), id));
+    }
+    Ok(folders)
+}
+
+/// The office id `file` (an `office.json`) names, or `None` if there is no such file (or its
+/// folder isn't a folder), read the catalog's careful way (`catalog::read_office_file`: no
+/// symlink, never blocked by a FIFO, owned by this user, capped).
+fn office_id_in(file: &Path) -> io::Result<Option<String>> {
+    match read_office_file(file) {
+        Ok(office) => Ok(office.map(|office| office.office_id)),
+        // A plain file where a folder was expected has no office.json.
+        Err(_) if file.parent().is_some_and(|folder| !folder.is_dir()) => Ok(None),
+        Err(why) => Err(io::Error::other(format!("{}: {why}", file.display()))),
+    }
+}
+
+/// Whether the folder `name` in `.refused/` is office `id`'s: `<id>`, or `<id>-<unix ms>` when
+/// that name was taken (`catalog::move_refused`).
+fn is_refused_as(name: &str, id: &str) -> bool {
+    name == id
+        || name
+            .strip_prefix(id)
+            .and_then(|rest| rest.strip_prefix('-'))
+            .is_some_and(|ms| !ms.is_empty() && ms.bytes().all(|b| b.is_ascii_digit()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -632,5 +714,21 @@ mod tests {
         );
         assert!(locked_stored);
         assert_eq!(unfinished, ["UNFINISHED"]);
+    }
+
+    #[test]
+    fn a_refused_name_must_be_the_id_or_the_id_with_a_timestamp() {
+        const REFUSED: &str = "01REFUSEDREFUSEDREFUSEDREF";
+        assert!(is_refused_as(REFUSED, REFUSED));
+        assert!(is_refused_as(&format!("{REFUSED}-123"), REFUSED));
+        for other in [
+            format!("{REFUSED}-"),
+            format!("{REFUSED}-x"),
+            format!("{REFUSED}X"),
+            format!("{REFUSED}-1-2"),
+            REFUSED[1..].to_owned(),
+        ] {
+            assert!(!is_refused_as(&other, REFUSED), "{other}");
+        }
     }
 }

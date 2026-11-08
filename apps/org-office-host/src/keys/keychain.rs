@@ -142,14 +142,19 @@ impl KeyStore for Keychain {
         }
     }
 
-    fn load(&self, office_id: &str) -> Result<Option<Box<DbKey>>, KeyStoreError> {
+    fn load(&self, office_id: &str) -> Result<Option<DbKey>, KeyStoreError> {
         if !is_plain_id(office_id) {
             return Err(KeyStoreError::NotPlainId);
         }
         match passwords::generic_password(self.options(office_id)) {
             Ok(mut data) => {
                 let key = <&[u8; DB_KEY_BYTES]>::try_from(data.as_slice())
-                    .map(|bytes| Box::new(DbKey::from_bytes(*bytes)))
+                    .map(|bytes| {
+                        let mut array = *bytes;
+                        let key = DbKey::from_bytes(array);
+                        zero(&mut array);
+                        key
+                    })
                     .map_err(|_| KeyStoreError::Corrupt);
                 zero(&mut data);
                 key.map(Some)

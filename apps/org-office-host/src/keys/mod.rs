@@ -35,12 +35,10 @@ pub(crate) use sweep::sweep_orphans;
 
 use std::fmt;
 use std::io;
+use std::path::Path;
 use std::sync::Arc;
 
 use org_proto::DbKey;
-
-use crate::error::HostError;
-use crate::Config;
 
 /// Where the host keeps every office's database key (see the module docs). Office ids are plain
 /// ids ([`org_office_launch::is_plain_id`]); a store refuses any other
@@ -51,9 +49,9 @@ pub(crate) trait KeyStore: Send + Sync {
     fn create(&self, office_id: &str, key: &DbKey) -> Result<(), KeyStoreError>;
 
     /// Office `office_id`'s key, or `None` if the store has no item for it. An item that isn't a
-    /// key (the wrong length, not hex) is [`KeyStoreError::Corrupt`]. The key is on the heap, so
-    /// moving it moves a pointer; drop it as soon as its line is written.
-    fn load(&self, office_id: &str) -> Result<Option<Box<DbKey>>, KeyStoreError>;
+    /// key (the wrong length, not hex) is [`KeyStoreError::Corrupt`]. A `DbKey` keeps its bytes
+    /// on the heap, so moving it moves a pointer; drop it as soon as its line is written.
+    fn load(&self, office_id: &str) -> Result<Option<DbKey>, KeyStoreError>;
 
     /// Deletes office `office_id`'s key. A missing item is `Ok`.
     fn delete(&self, office_id: &str) -> Result<(), KeyStoreError>;
@@ -105,25 +103,38 @@ impl From<io::Error> for KeyStoreError {
     }
 }
 
-/// The key store this host uses. Debug builds: the development folder `config.dev_key_dir`
-/// (absolute), and [`HostError::NoDevKeyDir`] without one, so a debug host never writes a real
-/// Keychain item. Release builds: the Data Protection keychain in the access group compiled in
-/// as `ORG_HOST_KEYCHAIN_GROUP`: [`HostError::NoKeychainGroup`] without one, and
-/// [`HostError::KeychainGroupNotEntitled`] unless `own_access_groups` (the host's own
-/// `keychain-access-groups` entitlement) lists it, so a misbuilt host fails at startup rather
-/// than at its first `SecItemAdd`.
+/// Why no key store could be chosen (the host maps it to its own startup error).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum StoreError {
+    /// A debug build has no development key folder (absolute, outside the office home).
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    NoDevKeyDir,
+    /// A release build has no Keychain access group compiled in.
+    NoKeychainGroup,
+    /// A release build's access group isn't in its own `keychain-access-groups` entitlement.
+    KeychainGroupNotEntitled { group: String },
+}
+
+/// The key store this host uses. Debug builds: the development folder `dev_key_dir`
+/// (absolute, outside the office `home`), and [`StoreError::NoDevKeyDir`] without one, so a
+/// debug host never writes a real Keychain item. Release builds: the Data Protection keychain
+/// in the access group compiled in as `ORG_HOST_KEYCHAIN_GROUP`: [`StoreError::NoKeychainGroup`]
+/// without one, and [`StoreError::KeychainGroupNotEntitled`] unless `own_access_groups` (the
+/// host's own `keychain-access-groups` entitlement) lists it, so a misbuilt host fails at
+/// startup rather than at its first `SecItemAdd`. A release build ignores `dev_key_dir`.
 pub(crate) fn store_for(
-    config: &Config,
+    dev_key_dir: Option<&Path>,
+    home: &Path,
     own_access_groups: impl FnOnce() -> Option<Vec<String>>,
-) -> Result<Arc<dyn KeyStore>, HostError> {
+) -> Result<Arc<dyn KeyStore>, StoreError> {
     #[cfg(debug_assertions)]
     {
         let _ = own_access_groups;
-        dev_store(config.dev_key_dir.as_deref(), &config.home)
+        dev_store(dev_key_dir, home)
     }
     #[cfg(not(debug_assertions))]
     {
-        let _ = config;
+        let _ = (dev_key_dir, home);
         release_store(option_env!("ORG_HOST_KEYCHAIN_GROUP"), own_access_groups)
     }
 }
@@ -132,11 +143,8 @@ pub(crate) fn store_for(
 /// `offices/` it would look like an unfinished office (and be discarded with every key in it),
 /// and anywhere in the home it would put plain-text keys there.
 #[cfg(debug_assertions)]
-fn dev_store(
-    dir: Option<&std::path::Path>,
-    home: &std::path::Path,
-) -> Result<Arc<dyn KeyStore>, HostError> {
-    let inside = |dir: &std::path::Path| {
+fn dev_store(dir: Option<&Path>, home: &Path) -> Result<Arc<dyn KeyStore>, StoreError> {
+    let inside = |dir: &Path| {
         let lexical = dir.starts_with(home);
         let canonical = match (dir.canonicalize(), home.canonicalize()) {
             (Ok(dir), Ok(home)) => dir.starts_with(home),
@@ -148,7 +156,7 @@ fn dev_store(
         Some(dir) if dir.is_absolute() && !inside(dir) => {
             Ok(Arc::new(dev::DevKeys::new(dir.to_path_buf())))
         }
-        _ => Err(HostError::NoDevKeyDir),
+        _ => Err(StoreError::NoDevKeyDir),
     }
 }
 
@@ -163,13 +171,13 @@ fn dev_store(
 fn release_store(
     group: Option<&str>,
     entitled: impl FnOnce() -> Option<Vec<String>>,
-) -> Result<Arc<dyn KeyStore>, HostError> {
+) -> Result<Arc<dyn KeyStore>, StoreError> {
     let group = match group {
         Some(group) if !group.trim().is_empty() => group,
-        _ => return Err(HostError::NoKeychainGroup),
+        _ => return Err(StoreError::NoKeychainGroup),
     };
     if !group_entitled(group, entitled().as_deref()) {
-        return Err(HostError::KeychainGroupNotEntitled {
+        return Err(StoreError::KeychainGroupNotEntitled {
             group: group.to_owned(),
         });
     }
@@ -179,7 +187,7 @@ fn release_store(
     }
     #[cfg(not(target_os = "macos"))]
     {
-        Err(HostError::NoKeychainGroup)
+        Err(StoreError::NoKeychainGroup)
     }
 }
 
@@ -220,7 +228,7 @@ mod tests {
                 Some(vec!["G".to_owned()])
             });
             assert!(
-                matches!(store, Err(HostError::NoKeychainGroup)),
+                matches!(store, Err(StoreError::NoKeychainGroup)),
                 "{group:?}"
             );
         }
@@ -245,10 +253,9 @@ mod tests {
                 .err()
                 .unwrap();
             assert!(
-                matches!(&err, HostError::KeychainGroupNotEntitled { group } if group == GROUP),
-                "{entitled:?}: {err}"
+                matches!(&err, StoreError::KeychainGroupNotEntitled { group } if group == GROUP),
+                "{entitled:?}: {err:?}"
             );
-            assert!(err.to_string().contains(GROUP), "{err}");
         }
         let entitled = groups(&["TEAMID1234.other", GROUP]);
         assert!(group_entitled(GROUP, entitled.as_deref()));
@@ -268,7 +275,7 @@ mod tests {
             Some(Path::new("/tmp/org-home-never-made/offices/keys")),
         ] {
             assert!(
-                matches!(dev_store(dir, home), Err(HostError::NoDevKeyDir)),
+                matches!(dev_store(dir, home), Err(StoreError::NoDevKeyDir)),
                 "{dir:?}"
             );
         }

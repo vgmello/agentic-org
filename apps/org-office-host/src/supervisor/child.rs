@@ -1,9 +1,10 @@
 //! One `org-office-server` process: spawning it with its pipes, reading its control lines,
 //! copying its stderr to the office's log, and stopping it.
 
+use std::ffi::{OsStr, OsString};
+use std::fs::File;
 use std::io::{self, BufReader, Read};
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -19,6 +20,8 @@ use org_proto::{AppToken, DbKey, APP_TOKEN_BYTES, DB_KEY_BYTES};
 use crate::cloexec::SPAWN_LOCK;
 use crate::host_log;
 use crate::logs::RotatingLog;
+use crate::server_check::ServerCheck;
+use crate::spawn::{spawn_suspended, Process, Spawned};
 use crate::sync::lock;
 
 /// How often a stop polls whether the child has exited.
@@ -56,6 +59,42 @@ const PASSED_ENV: [&str; 6] = ["HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LAN
 pub(crate) struct Spawner {
     pub(crate) program: PathBuf,
     pub(crate) home: PathBuf,
+    /// Who may get a first line: every child is checked before it's written (`server_check`).
+    pub(crate) check: Arc<ServerCheck>,
+}
+
+/// Why a server wasn't started.
+#[derive(Debug)]
+pub(crate) enum SpawnError {
+    /// It couldn't be spawned (or its pipes' threads couldn't start).
+    Io(io::Error),
+    /// It was spawned, but isn't the signed office server (or no server may be started): it
+    /// was killed and reaped, and got nothing (`server_check`).
+    Untrusted(String),
+}
+
+impl std::fmt::Display for SpawnError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SpawnError::Io(e) => write!(f, "{e}"),
+            SpawnError::Untrusted(why) => write!(f, "refused to start it: {why}"),
+        }
+    }
+}
+
+impl From<io::Error> for SpawnError {
+    fn from(e: io::Error) -> Self {
+        SpawnError::Io(e)
+    }
+}
+
+impl From<SpawnError> for io::Error {
+    fn from(e: SpawnError) -> Self {
+        match e {
+            SpawnError::Io(e) => e,
+            SpawnError::Untrusted(_) => io::Error::other(e.to_string()),
+        }
+    }
 }
 
 /// Which server to start, with what its first line carries. Every first line is written with
@@ -121,57 +160,72 @@ impl CreateLine {
 /// A running server process. Dropping it kills and reaps the process if it's still running,
 /// so a server is never left behind unsupervised.
 pub(crate) struct RunningChild {
-    child: Child,
-    stdin: Option<ChildStdin>,
+    process: Process,
+    stdin: Option<File>,
     pub(crate) generation: u64,
     pub(crate) started: Instant,
-    reaped: bool,
 }
 
 impl Spawner {
     /// Starts a server. Its control lines go to `signals` tagged with `generation`; its stderr
-    /// goes to `log`. Its first line (per [`Mode`]) is written at once.
+    /// goes to `log`. Its first line (per [`Mode`]) is written at once, once it passed the check.
+    ///
+    /// It is started suspended (`spawn::spawn_suspended`), so not one instruction of its image
+    /// runs before the check (`server_check`) unless another process resumes it (the residual
+    /// risk in `spawn`'s docs): a child that fails is killed still suspended, having got
+    /// nothing. One that passes is resumed, and its token checked again right before the line.
     pub(crate) fn spawn(
         &self,
         mode: Mode<'_>,
         generation: u64,
         signals: Sender<Signal>,
         log: Arc<Mutex<RotatingLog>>,
-    ) -> io::Result<RunningChild> {
-        let mut command = Command::new(&self.program);
-        match mode {
-            Mode::Create(_) => command.arg(CREATE_FLAG),
-            Mode::Office(id, ..) => command.arg(OFFICE_FLAG).arg(id),
-            Mode::Discard(id, _) => command.arg(DISCARD_FLAG).arg(id),
+    ) -> Result<RunningChild, SpawnError> {
+        self.check.may_spawn().map_err(|why| {
+            host_log::log(&format!("didn't start an office server: {why}"));
+            SpawnError::Untrusted(why)
+        })?;
+        let args: Vec<&OsStr> = match mode {
+            Mode::Create(_) => vec![OsStr::new(CREATE_FLAG)],
+            Mode::Office(id, ..) => vec![OsStr::new(OFFICE_FLAG), OsStr::new(id)],
+            Mode::Discard(id, _) => vec![OsStr::new(DISCARD_FLAG), OsStr::new(id)],
         };
-        command.env_clear();
-        for name in PASSED_ENV {
-            if let Some(value) = std::env::var_os(name) {
-                command.env(name, value);
-            }
-        }
-        command
-            .env(OFFICE_HOME_ENV, &self.home)
-            .current_dir("/")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let mut child = {
+        let mut env: Vec<(OsString, OsString)> = PASSED_ENV
+            .iter()
+            .filter_map(|name| std::env::var_os(name).map(|value| ((*name).into(), value)))
+            .collect();
+        env.push((OFFICE_HOME_ENV.into(), self.home.clone().into_os_string()));
+        let spawned = {
             // See `cloexec`: no fd of ours may be half-made while a child is spawned.
             let _one_at_a_time = lock(&SPAWN_LOCK);
-            command.spawn()?
+            spawn_suspended(&self.program, &args, &env)?
         };
-        let stdin = child.stdin.take();
-        let stdout = child.stdout.take().expect("stdout is piped");
-        let stderr = child.stderr.take().expect("stderr is piped");
-        let mut running = RunningChild {
-            child,
+        let Spawned {
+            mut process,
             stdin,
+            stdout,
+            stderr,
+        } = spawned;
+        let pid = process.id();
+        // Suspended: check the image, before any of it has run.
+        let admitted = match self.check.admit(pid) {
+            Ok(admitted) => admitted,
+            Err(why) => {
+                process.kill();
+                host_log::log(&format!(
+                    "refused office server {pid}: {why}; it was stopped before it ran and got \
+                     nothing"
+                ));
+                return Err(SpawnError::Untrusted(why));
+            }
+        };
+        let mut running = RunningChild {
+            process,
+            stdin: Some(stdin),
             generation,
             started: Instant::now(),
-            reaped: false,
         };
-        let pid = running.child.id();
+        running.process.resume()?;
         thread::Builder::new()
             .name(format!("office-{pid}-out"))
             .spawn(move || read_events(stdout, generation, &signals))?;
@@ -179,6 +233,14 @@ impl Spawner {
             .name(format!("office-{pid}-err"))
             .spawn(move || copy_stderr(stderr, &log))?;
 
+        // Still the image that was checked (no exec since), right before the line.
+        if let Err(why) = self.check.still(pid, admitted) {
+            host_log::log(&format!(
+                "refused office server {pid}: {why}; it was stopped and got nothing"
+            ));
+            running.kill();
+            return Err(SpawnError::Untrusted(why));
+        }
         running.write_first_line(mode);
         Ok(running)
     }
@@ -190,7 +252,7 @@ impl RunningChild {
     /// key), `--discard` the discard message (the database key or `null`). `write_host_line`
     /// zeroes its encoded copy of the line.
     fn write_first_line(&mut self, mode: Mode<'_>) {
-        let pid = self.child.id();
+        let pid = self.process.id();
         let Some(stdin) = self.stdin.as_mut() else {
             return;
         };
@@ -224,38 +286,27 @@ impl RunningChild {
 
     #[cfg(test)]
     pub(crate) fn pid(&self) -> u32 {
-        self.child.id()
+        self.process.id()
     }
 
     /// Whether the process has exited (it is reaped if so). Doesn't wait.
     pub(crate) fn has_exited(&mut self) -> bool {
-        if !self.reaped && matches!(self.child.try_wait(), Ok(Some(_))) {
-            self.reaped = true;
-        }
-        self.reaped
+        self.process.try_wait().unwrap_or(false)
     }
 
     /// SIGKILLs and reaps the process.
     pub(crate) fn kill(&mut self) {
         self.close_stdin();
-        if !self.reaped {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-            self.reaped = true;
-        }
+        self.process.kill();
     }
 
     /// Waits for the process to exit until `deadline`; reaps it if it did.
     fn wait_until(&mut self, deadline: Instant) -> bool {
         loop {
-            if self.reaped {
-                return true;
-            }
-            match self.child.try_wait() {
-                Ok(Some(_)) => self.reaped = true,
-                Ok(None) if Instant::now() < deadline => thread::sleep(EXIT_POLL),
-                Ok(None) => return false,
-                Err(_) => return false,
+            match self.process.try_wait() {
+                Ok(true) => return true,
+                Ok(false) if Instant::now() < deadline => thread::sleep(EXIT_POLL),
+                Ok(false) | Err(_) => return false,
             }
         }
     }

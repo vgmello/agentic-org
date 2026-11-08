@@ -23,6 +23,7 @@ mod broadcast;
 mod catalog;
 mod clock;
 mod cloexec;
+mod code_signing;
 mod error;
 mod home;
 mod host_log;
@@ -32,8 +33,10 @@ mod logs;
 mod offices;
 mod peer;
 mod secrets;
+mod server_check;
 mod service;
 pub mod signals;
+mod spawn;
 mod supervisor;
 mod sync;
 mod timings;
@@ -49,11 +52,17 @@ use crate::broadcast::Broadcast;
 use crate::catalog::Catalog;
 use crate::home::{HostLock, Layout};
 use crate::offices::Offices;
+use crate::server_check::ServerCheck;
 use crate::service::listener::{self, BindError, Listener, ListenerConfig};
 use crate::service::Service;
 use crate::supervisor::{Supervisor, SupervisorConfig};
 
 pub use crate::app_auth::APP_BUNDLE_ID;
+pub use crate::server_check::SERVER_SIGNING_ID;
+
+/// The host's own signing identifier (ADR-0003 §2.1), for the bundle's signing of
+/// `Contents/MacOS/org-office-host`.
+pub const HOST_SIGNING_ID: &str = "com.ellosoft.agentic-org.org-office-host";
 pub use crate::error::HostError;
 pub use crate::logs::DEFAULT_LOG_MAX_BYTES;
 pub use crate::timings::Timings;
@@ -108,7 +117,7 @@ pub struct Config {
 }
 
 impl Config {
-    /// What this build trusts: the office home ([`trusted_office_home`]), the office server
+    /// What this build trusts: the office home (`trusted_office_home`), the office server
     /// next to this executable, and the team id it was built with. The only way to make a
     /// release config.
     pub fn trusted() -> Result<Self, String> {
@@ -228,9 +237,12 @@ fn sweep_refusal(
     }
 }
 
-/// `org-office-server` next to this executable (both live in the app bundle).
+/// `org-office-server` next to this executable (both live in the app bundle), found through the
+/// executable's canonical path (symlinks resolved). Defence in depth only: a hard link or a
+/// copied bundle still puts another server next to the host, which is why a release host checks
+/// every server's code signature before it gives it a key (`server_check`).
 pub fn default_server_program() -> io::Result<PathBuf> {
-    let exe = std::env::current_exe()?;
+    let exe = std::env::current_exe()?.canonicalize()?;
     let dir = exe
         .parent()
         .ok_or_else(|| io::Error::other("the host's executable has no folder"))?;
@@ -265,13 +277,32 @@ impl Host {
             host_log::log(&line);
         }
         // Before anything is made on disk or started: no office runs without its key store.
-        let keys = keys::store_for(&config, app_auth::own_keychain_access_groups)?;
+        #[cfg(debug_assertions)]
+        let dev_key_dir = config.dev_key_dir.as_deref();
+        #[cfg(not(debug_assertions))]
+        let dev_key_dir = None;
+        let keys = keys::store_for(
+            dev_key_dir,
+            &config.home,
+            code_signing::own_keychain_access_groups,
+        )
+        .map_err(|e| match e {
+            keys::StoreError::NoDevKeyDir => HostError::NoDevKeyDir,
+            keys::StoreError::NoKeychainGroup => HostError::NoKeychainGroup,
+            keys::StoreError::KeychainGroupNotEntitled { group } => {
+                HostError::KeychainGroupNotEntitled { group }
+            }
+        })?;
         let layout = Layout::new(&config.home);
         layout.check_socket_paths()?;
         layout.prepare()?;
         let lock = HostLock::acquire(&layout)?;
         // Decided only by the host that holds the home.
         let sweep_orphans = may_sweep_orphan_keys(&layout.home);
+        let server_check =
+            ServerCheck::for_build(cfg!(debug_assertions), config.app_team_id.as_deref())
+                .map_err(|why| HostError::InvalidAppIdentity { why })?;
+        host_log::log(&server_check.describe());
         let io = |context| move |source| HostError::Io { context, source };
         let catalog = Catalog::scan(&layout.home).map_err(io("reading the office folders"))?;
         let unfinished =
@@ -295,6 +326,7 @@ impl Host {
             log_max_bytes: config.log_max_bytes,
             timings: config.timings.clone(),
             keys,
+            server_check: Arc::new(server_check),
             sweep_orphans,
         });
         let broadcast = Arc::new(Broadcast::default());

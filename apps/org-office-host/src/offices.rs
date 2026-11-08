@@ -157,7 +157,8 @@ impl Offices {
         });
         // After the discards (which need their keys), before creates are let in (a create
         // stores its key before its folder exists).
-        self.supervisor.sweep_orphan_keys();
+        self.supervisor
+            .sweep_orphan_keys(|ids| catalog::orphans(&self.home, ids));
     }
 
     fn startup_done(&self) {
@@ -762,6 +763,7 @@ mod tests {
             log_max_bytes: 1024,
             timings: Timings::default(),
             keys: Arc::new(MemoryKeys::default()),
+            server_check: Arc::new(crate::server_check::ServerCheck::Skip),
             sweep_orphans: false,
         });
         for (id, stored) in [("STORED", true), ("UNFINISHED", false)] {
@@ -799,6 +801,7 @@ mod tests {
             log_max_bytes: 1024,
             timings: Timings::default(),
             keys: Arc::new(MemoryKeys::default()),
+            server_check: Arc::new(crate::server_check::ServerCheck::Skip),
             sweep_orphans: false,
         });
         if stopped {
@@ -843,6 +846,7 @@ mod tests {
                 log_max_bytes: 1024,
                 timings: Timings::default(),
                 keys: Arc::clone(&keys) as Arc<dyn KeyStore>,
+                server_check: Arc::new(crate::server_check::ServerCheck::Skip),
                 sweep_orphans: sweep,
             });
             let offices = Offices::start(
@@ -867,6 +871,55 @@ mod tests {
             }
             offices.shutdown();
         }
+    }
+
+    /// L-d: the startup sweep runs before creates are let in, so it never sees a create's key
+    /// (stored before its folder exists): a create waits behind a slow sweep.
+    #[test]
+    fn a_create_waits_for_the_startup_sweep() {
+        use crate::keys::memory::Op;
+        use crate::keys::KeyStore;
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let keys = Arc::new(MemoryKeys::default());
+        keys.delay_list(Duration::from_millis(500));
+        let supervisor = Supervisor::new(SupervisorConfig {
+            program: home.join("no-such-server"),
+            home: home.to_path_buf(),
+            logs_dir: home.join("logs"),
+            log_max_bytes: 1024,
+            timings: Timings::default(),
+            keys: Arc::clone(&keys) as Arc<dyn KeyStore>,
+            server_check: Arc::new(crate::server_check::ServerCheck::Skip),
+            sweep_orphans: true,
+        });
+        let offices = Offices::start(
+            home,
+            Catalog::default(),
+            Vec::new(),
+            supervisor,
+            Arc::new(Broadcast::default()),
+            &Timings::default(),
+        );
+        // At once, while the sweep is still listing: the create waits for it. (It then fails:
+        // there's no server program, and its key stays.)
+        let err = offices.create_organization("Acme", |_| {}).unwrap_err();
+        assert_eq!(err.code, ErrorCode::StorageError);
+        let calls = keys.calls();
+        let listed = calls.iter().position(|(op, _)| *op == Op::List).unwrap();
+        let (created, (_, new_id)) = calls
+            .iter()
+            .enumerate()
+            .find(|(_, (op, _))| *op == Op::Create)
+            .unwrap();
+        assert!(
+            listed < created,
+            "the create stored its key during the sweep: {calls:?}"
+        );
+        assert!(keys.has(new_id));
+        let record = fs::read_to_string(home.join("orphan-keys.json")).unwrap_or_default();
+        assert!(!record.contains(new_id.as_str()), "{record}");
+        offices.shutdown();
     }
 
     /// `office.restart` on an office the host couldn't supervise, when it still can't: listed

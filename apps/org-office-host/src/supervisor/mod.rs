@@ -40,6 +40,7 @@ use crate::ids::handle_of;
 use crate::keys::KeyStore;
 use crate::logs::RotatingLog;
 use crate::secrets;
+use crate::server_check::ServerCheck;
 use crate::sync::lock;
 use crate::timings::Timings;
 use child::{CreateLine, Mode, RunningChild, Signal, Spawner};
@@ -57,6 +58,8 @@ pub(crate) struct SupervisorConfig {
     pub(crate) timings: Timings,
     /// Where every office's database key is kept.
     pub(crate) keys: Arc<dyn KeyStore>,
+    /// How every server is checked before it gets its first line (`server_check`).
+    pub(crate) server_check: Arc<ServerCheck>,
     /// Whether [`Supervisor::sweep_orphan_keys`] may delete keys (see `keys::sweep_orphans`
     /// for when that's safe).
     pub(crate) sweep_orphans: bool,
@@ -202,6 +205,7 @@ impl Supervisor {
         let spawner = Spawner {
             program: config.program.clone(),
             home: config.home.clone(),
+            check: Arc::clone(&config.server_check),
         };
         Self {
             config,
@@ -217,15 +221,19 @@ impl Supervisor {
         let _ = self.observer.set(observer);
     }
 
-    /// Marks, and after 7 days deletes, the keys of offices with no folder (see
-    /// `keys::sweep_orphans`), if this host may
-    /// (`SupervisorConfig::sweep_orphans`). Run once at startup, after the startup discards and
-    /// before any create.
-    pub(crate) fn sweep_orphan_keys(&self) {
+    /// Marks, and after 7 days deletes, the keys of offices that have nothing left (which
+    /// `find_orphans` says, given the ids with a key: the caller owns the catalog), if this host
+    /// may (`SupervisorConfig::sweep_orphans`); see `keys::sweep_orphans`. Run once at startup,
+    /// after the startup discards and before any create.
+    pub(crate) fn sweep_orphan_keys(
+        &self,
+        find_orphans: impl FnOnce(&[String]) -> Result<Vec<String>, String>,
+    ) {
         if self.config.sweep_orphans {
             crate::keys::sweep_orphans(
                 &*self.config.keys,
                 &self.config.home,
+                find_orphans,
                 std::time::SystemTime::now(),
             );
         }
@@ -296,6 +304,11 @@ impl Supervisor {
         let registration = self
             .register(&sender)
             .map_err(|e| CreateStartError::NotStarted(e.to_string()))?;
+        // No key is made for a server that may not be started at all (no team id).
+        self.config
+            .server_check
+            .may_spawn()
+            .map_err(CreateStartError::NotStarted)?;
         let mut line = CreateLine::new(create);
         // Before the spawn: no server ever holds a key the host hasn't stored.
         if let Err(e) = self.config.keys.create(line.office_id(), line.db_key()) {
@@ -308,7 +321,7 @@ impl Supervisor {
             .spawner
             .spawn(Mode::Create(&line), 0, sender.clone(), Arc::clone(&log));
         line.drop_key();
-        let child = spawned.map_err(CreateStartError::KeyStored)?;
+        let child = spawned.map_err(|e| CreateStartError::KeyStored(e.into()))?;
         Ok(PendingCreate {
             registration,
             line,
@@ -338,14 +351,14 @@ impl Supervisor {
             }
         };
         let spawned = self.spawner.spawn(
-            Mode::Discard(office_id, key.as_deref()),
+            Mode::Discard(office_id, key.as_ref()),
             0,
             sender,
             self.log_for(office_id),
         );
         // The line is written (or can't be): only the key store holds the key from here on.
         drop(key);
-        let mut child = spawned?;
+        let mut child = spawned.map_err(io::Error::from)?;
         let outcome = self.wait_for_discard(office_id, &mut child, &signals);
         if outcome == DiscardOutcome::Discarded {
             if let Err(e) = self.config.keys.delete(office_id) {
@@ -666,6 +679,15 @@ mod tests {
     const OFFICE: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
 
     fn supervisor(dir: &Path, program: PathBuf, keys: &Arc<MemoryKeys>) -> Supervisor {
+        checked_supervisor(dir, program, keys, ServerCheck::Skip)
+    }
+
+    fn checked_supervisor(
+        dir: &Path,
+        program: PathBuf,
+        keys: &Arc<MemoryKeys>,
+        check: ServerCheck,
+    ) -> Supervisor {
         let timings = Timings {
             shutdown_grace: Duration::from_millis(200),
             discard_timeout: Duration::from_secs(10),
@@ -678,6 +700,7 @@ mod tests {
             log_max_bytes: 1024,
             timings,
             keys: Arc::clone(keys) as Arc<dyn KeyStore>,
+            server_check: Arc::new(check),
             sweep_orphans: false,
         })
     }
@@ -834,6 +857,73 @@ mod tests {
         // Nothing was deleted, and the item that isn't a key is still there.
         assert!(!keys.calls().iter().any(|(op, _)| *op == Op::Delete));
         assert!(keys.has(B));
+    }
+
+    /// H1: a server that isn't the signed one (this unsigned script, against a release
+    /// requirement) is spawned suspended, checked, killed and reaped before it runs anything,
+    /// and gets no line: no key. With no
+    /// team id, nothing is even spawned. A start ends as `storage_error`, retried; a discard
+    /// fails and keeps the key.
+    #[test]
+    fn a_server_that_isnt_the_signed_one_gets_nothing() {
+        const B: &str = "01BBBBBBBBBBBBBBBBBBBBBBBB";
+        let dir = tempfile::tempdir().unwrap();
+        let got = dir.path().join("got");
+        let program = script(dir.path(), "server", &format!("cat >> '{}'", got.display()));
+        let keys = Arc::new(MemoryKeys::default());
+        for id in [OFFICE, B] {
+            keys.create(id, &DbKey::from_bytes([3; 32])).unwrap();
+        }
+        let requirement = crate::server_check::server_requirement("AB12CD34EF").unwrap();
+        let checked = checked_supervisor(
+            dir.path(),
+            program.clone(),
+            &keys,
+            ServerCheck::Requirement(requirement),
+        );
+        assert!(checked.discard(OFFICE).is_err());
+        checked.start_office(B).unwrap();
+        wait_for_state(&checked, B, |s| {
+            s.status == OfficeStatus::Offline && s.reason == Some(OfficeStatusReason::StorageError)
+        });
+        checked.shutdown();
+        let pending = checked.begin_create(create_message(DbKey::from_bytes([4; 32])));
+        assert!(pending.is_err());
+        // They got no line: nothing reached `got` (it isn't even there: they were stopped while
+        // still suspended; that suspension holds is `spawn`'s own test).
+        assert!(!got.exists(), "a server that isn't the signed one ran");
+        assert!(keys.has(OFFICE) && keys.has(B));
+
+        // No team id: nothing is spawned at all, and a create makes no key.
+        let dir = tempfile::tempdir().unwrap();
+        let ran = dir.path().join("ran");
+        let program = script(
+            dir.path(),
+            "server",
+            &format!("echo run >> '{}'", ran.display()),
+        );
+        let refusing = checked_supervisor(dir.path(), program, &keys, ServerCheck::Refuse);
+        assert!(refusing.discard(OFFICE).is_err());
+        refusing.start_office(B).unwrap();
+        wait_for_state(&refusing, B, |s| {
+            s.status == OfficeStatus::Offline && s.reason == Some(OfficeStatusReason::StorageError)
+        });
+        let stores = || {
+            keys.calls()
+                .iter()
+                .filter(|(op, _)| *op == Op::Create)
+                .count()
+        };
+        let before = stores();
+        let created = refusing.begin_create(create_message(DbKey::from_bytes([5; 32])));
+        assert!(matches!(created, Err(CreateStartError::NotStarted(_))));
+        assert_eq!(
+            stores(),
+            before,
+            "a key was stored for a server that can't be started"
+        );
+        refusing.shutdown();
+        assert!(!ran.exists(), "a server was started without a team id");
     }
 
     #[test]

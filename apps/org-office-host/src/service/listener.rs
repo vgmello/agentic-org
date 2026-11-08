@@ -473,7 +473,7 @@ impl Connection {
 
     /// Closes the socket both ways, which ends the connection's threads.
     pub(crate) fn close(&self) {
-        let _ = self.stream.shutdown(std::net::Shutdown::Both);
+        shut_down(&self.stream);
     }
 
     fn finish(&self) {
@@ -494,6 +494,15 @@ impl crate::broadcast::Subscriber for Connection {
     }
 }
 
+/// Shuts a socket down both ways: writing first, then reading, each on its own. Not
+/// `Shutdown::Both`: on macOS that fails (`ENOTCONN`) once the client has shut down its own
+/// writing, and then shuts nothing down, so a client that half-closed and reads to EOF would
+/// wait forever (the socket stays open while anything holds a copy of it).
+fn shut_down(stream: &UnixStream) {
+    let _ = stream.shutdown(std::net::Shutdown::Write);
+    let _ = stream.shutdown(std::net::Shutdown::Read);
+}
+
 /// The writer: writes queued messages until [`Outbound::Close`], until every sender is gone,
 /// or until a write fails (then it closes the socket, which also ends the reader).
 fn write_loop(stream: &UnixStream, queue: Receiver<Outbound>) {
@@ -510,7 +519,7 @@ fn write_loop(stream: &UnixStream, queue: Receiver<Outbound>) {
                     io::Write::write_all(&mut socket, &line.0)
                 });
                 if written.is_err() {
-                    let _ = stream.shutdown(std::net::Shutdown::Both);
+                    shut_down(stream);
                     return;
                 }
                 continue;
@@ -529,7 +538,7 @@ fn write_loop(stream: &UnixStream, queue: Receiver<Outbound>) {
         };
         if let Err(e) = written {
             if e.closes_stream() {
-                let _ = stream.shutdown(std::net::Shutdown::Both);
+                shut_down(stream);
                 return;
             }
         }
@@ -639,6 +648,24 @@ mod tests {
             reply.outcome,
             org_proto::Outcome::Result(Value::String("x".into()))
         );
+    }
+
+    /// S1: a client that half-closes after its requests gets their answers, then EOF.
+    #[test]
+    fn a_half_closed_connection_is_answered_then_closed() {
+        use std::io::Read;
+        let dir = short_tempdir();
+        let (_listener, path) = start(dir.path(), crate::home::euid());
+        let mut stream = connect(&path);
+        stream
+            .write_all(b"{\"id\":1,\"method\":\"hello\"}\n")
+            .unwrap();
+        stream.shutdown(std::net::Shutdown::Write).unwrap();
+        let mut all = String::new();
+        stream
+            .read_to_string(&mut all)
+            .expect("EOF within the read timeout");
+        assert_eq!(all.lines().count(), 1, "{all}");
     }
 
     #[test]

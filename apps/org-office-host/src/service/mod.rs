@@ -284,6 +284,7 @@ mod tests {
             log_max_bytes: 1024,
             timings: Timings::default(),
             keys: Arc::new(MemoryKeys::default()),
+            server_check: Arc::new(crate::server_check::ServerCheck::Skip),
             sweep_orphans: false,
         });
         let broadcast = Arc::new(Broadcast::default());

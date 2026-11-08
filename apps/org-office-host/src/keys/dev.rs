@@ -100,7 +100,7 @@ impl KeyStore for DevKeys {
         }
     }
 
-    fn load(&self, office_id: &str) -> Result<Option<Box<DbKey>>, KeyStoreError> {
+    fn load(&self, office_id: &str) -> Result<Option<DbKey>, KeyStoreError> {
         let path = self.path(office_id)?;
         // No symlink, and never blocked by a FIFO: only a regular file can be a key.
         let opened = OpenOptions::new()
@@ -166,7 +166,7 @@ fn encode_hex(bytes: &[u8; DB_KEY_BYTES], out: &mut [u8; HEX_LEN]) {
 }
 
 /// 64 hex digits (either case, as the server's store read them) as a key, or `None`.
-fn decode_hex(text: &[u8]) -> Option<Box<DbKey>> {
+fn decode_hex(text: &[u8]) -> Option<DbKey> {
     if text.len() != HEX_LEN {
         return None;
     }
@@ -178,7 +178,8 @@ fn decode_hex(text: &[u8]) -> Option<Box<DbKey>> {
             _ => ok = false,
         }
     }
-    let key = ok.then(|| Box::new(DbKey::from_bytes(bytes)));
+    // `from_bytes` takes a copy; the local array is zeroed either way.
+    let key = ok.then(|| DbKey::from_bytes(bytes));
     zero(&mut bytes);
     key
 }
@@ -213,7 +214,7 @@ mod tests {
         let store = DevKeys::new(dir.path().join("keys"));
         assert!(store.load(A).unwrap().is_none());
         store.create(A, &key(7)).unwrap();
-        assert_eq!(*store.load(A).unwrap().unwrap(), key(7));
+        assert_eq!(store.load(A).unwrap().unwrap(), key(7));
 
         let path = dir.path().join("keys").join(format!("{A}.key"));
         let text = fs::read_to_string(&path).unwrap();
@@ -238,7 +239,7 @@ mod tests {
             store.create(A, &key(2)),
             Err(KeyStoreError::Exists)
         ));
-        assert_eq!(*store.load(A).unwrap().unwrap(), key(1));
+        assert_eq!(store.load(A).unwrap().unwrap(), key(1));
     }
 
     #[test]

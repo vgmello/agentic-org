@@ -42,15 +42,23 @@ impl Fault {
 /// Keys in a map, by office id.
 #[derive(Default)]
 pub(crate) struct MemoryKeys {
-    keys: Mutex<HashMap<String, Box<DbKey>>>,
+    keys: Mutex<HashMap<String, DbKey>>,
     faults: Mutex<HashMap<Op, Fault>>,
     calls: Mutex<Vec<(Op, String)>>,
+    /// How long `list` takes (it's recorded once done).
+    list_delay: Mutex<Option<std::time::Duration>>,
 }
 
 impl MemoryKeys {
     /// From now on, every `op` fails with `fault` (until [`MemoryKeys::clear_fault`]).
     pub(crate) fn fail(&self, op: Op, fault: Fault) {
         lock(&self.faults).insert(op, fault);
+    }
+
+    /// From now on, `list` takes `delay` (and is recorded in [`MemoryKeys::calls`] only once
+    /// it's done).
+    pub(crate) fn delay_list(&self, delay: std::time::Duration) {
+        *lock(&self.list_delay) = Some(delay);
     }
 
     pub(crate) fn clear_fault(&self, op: Op) {
@@ -71,7 +79,7 @@ impl MemoryKeys {
     pub(crate) fn holds(&self, office_id: &str, key: &DbKey) -> bool {
         lock(&self.keys)
             .get(office_id)
-            .is_some_and(|stored| **stored == *key)
+            .is_some_and(|stored| *stored == *key)
     }
 
     fn begin(&self, op: Op, office_id: &str) -> Result<(), KeyStoreError> {
@@ -87,8 +95,8 @@ impl MemoryKeys {
 }
 
 /// A copy of `key` (test only: `DbKey` isn't `Clone`).
-fn copy(key: &DbKey) -> Box<DbKey> {
-    Box::new(DbKey::from_bytes(*key.expose_bytes()))
+fn copy(key: &DbKey) -> DbKey {
+    DbKey::from_bytes(*key.expose_bytes())
 }
 
 impl KeyStore for MemoryKeys {
@@ -102,9 +110,9 @@ impl KeyStore for MemoryKeys {
         Ok(())
     }
 
-    fn load(&self, office_id: &str) -> Result<Option<Box<DbKey>>, KeyStoreError> {
+    fn load(&self, office_id: &str) -> Result<Option<DbKey>, KeyStoreError> {
         self.begin(Op::Load, office_id)?;
-        Ok(lock(&self.keys).get(office_id).map(|key| copy(key)))
+        Ok(lock(&self.keys).get(office_id).map(copy))
     }
 
     fn delete(&self, office_id: &str) -> Result<(), KeyStoreError> {
@@ -114,6 +122,10 @@ impl KeyStore for MemoryKeys {
     }
 
     fn list(&self) -> Result<Vec<String>, KeyStoreError> {
+        let delay = *lock(&self.list_delay);
+        if let Some(delay) = delay {
+            std::thread::sleep(delay);
+        }
         lock(&self.calls).push((Op::List, String::new()));
         if let Some(fault) = lock(&self.faults).get(&Op::List) {
             return Err(fault.error());
@@ -138,7 +150,7 @@ mod tests {
         store.create(A, &one).unwrap();
         assert!(matches!(store.create(A, &two), Err(KeyStoreError::Exists)));
         assert!(store.holds(A, &one));
-        assert_eq!(*store.load(A).unwrap().unwrap(), one);
+        assert_eq!(store.load(A).unwrap().unwrap(), one);
         assert_eq!(store.list().unwrap(), [A]);
         store.delete(A).unwrap();
         assert!(!store.has(A));
