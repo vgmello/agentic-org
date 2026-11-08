@@ -74,6 +74,7 @@ mod events;
 mod name;
 mod token;
 mod types;
+mod ulid;
 mod wire;
 
 pub use calls::{
@@ -101,6 +102,7 @@ pub use types::{
     OfficeInfo, OfficeRole, OfficeStatus, OfficeStatusReason, Organization,
     ORGANIZATION_NAME_MAX_CHARS,
 };
+pub use ulid::ulid_time_ms;
 pub use wire::{
     salvage_id, Event, Outcome, Request, Response, ServerMessage, UNREADABLE_REQUEST_ID,
 };
