@@ -110,8 +110,11 @@ Inputs now refused with a usage error (exit 1), nothing written:
   `msg deregister` without `<agent>`.
 
 `msg inbox` text: the subject is sanitized so each message stays one row (control, format and
-invisible characters become spaces, `"` becomes `'`) and cut to 200 characters (`…`). Profile
-names refuse `( ) [ ] : "`. `msg reply` marks the original read (above).
+invisible characters become spaces, `"` becomes `'`) and cut to 200 characters (`…`); so is
+the header line of `msg read` and `msg wait` text output (the body is printed as is). Profile
+names refuse `( ) [ ] : "`: a member whose saved name already has one must fix the name
+(`--name`) in the same `profile set` as any other change, since the whole profile is checked.
+`msg reply` marks the original read (above).
 
 ## Known limits
 
