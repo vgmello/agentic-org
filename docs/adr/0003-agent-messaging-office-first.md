@@ -1,6 +1,6 @@
 # ADR-0003 · Agent messaging: office-first, high-volume storage, directory, presence, triage, and cross-office routing
 
-Status: **proposed** 2026-11-08. Author: `agy-senior-dev`.
+Status: **proposed** 2026-11-08. Author: `agy-senior-dev`. Owner of the messaging code since 2026-11-08: Remy (`ac-software-engineer-remy`), see §4.3.
 Builds on [ADR-0001](0001-app-is-a-client-office-is-a-server.md) (decision 4: the office server is the agents' message hub), [ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md) (SQLCipher, `org.db` + `office.db`, one batching writer with `fullfsync`), [`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md) ("Office-first: tasks and messages"), and [`teams-and-org-chart.md`](../design/teams-and-org-chart.md) (who agents may interact with).
 Supersedes the `v1-old` file-spool relay (`org-relay` + `~/.agency/spool`) and the pre-offices ADR-0003 draft.
 
@@ -120,7 +120,7 @@ To keep `inbox`, `notify`, `wait`, `read --next`, and UI thread views sub-millis
      - `triage_gen INTEGER NOT NULL DEFAULT 0`
      - `snoozed_until TEXT` (`NULL` unless `state = 'snoozed'` with a UTC deadline)
      - `snooze_after_task INTEGER NOT NULL DEFAULT 0` (`1` iff `state = 'snoozed'` until `after-task`)
-     - `reason TEXT` (optional `snooze_note` when `'snoozed'`/`'unread'`, optional `done` note when `'done'`, or `'expired'` / `'unknown_recipient'`)
+     - `reason TEXT` (optional `snooze_note` when `'snoozed'`/`'unread'`, optional `done` note when `'done'`, or `'expired'` / `'unknown_recipient'`, and (amended 2026-11-08: agent sessions rev 3, ada) `'run_ended'`)
      - `updated_at TEXT NOT NULL`
      - `owner_office_id TEXT NOT NULL`
      - `origin_incarnation TEXT NOT NULL`
@@ -186,10 +186,11 @@ To keep `inbox`, `notify`, `wait`, `read --next`, and UI thread views sub-millis
 #### 2.1 How `org-agent` Finds Its Office and Authenticates (`office.json`, `<handle>.sock`, `app_token`, and Call Authorization)
 
 1. Each office on a Mac owns `<office_home>/offices/<office_id>/office.json` and, while running, listens on `<office_home>/run/<handle>.sock` (`org_proto::location::office_socket_path`).
-2. When an agent runs in an office, `ORG_OFFICE=<office_id>` and `ORG_AGENT=<member_id_or_name>` identify its office and member identity.
+2. When an agent runs in an office, `ORG_OFFICE=<office_id>` and `ORG_AGENT=<member_id_or_handle>` identify its office and member identity. (amended 2026-11-08: agent sessions rev 3, ada: a handle, not a display name; see §2.6.)
 3. `org-agent` resolves its target `office_id` deterministically (never guessing from which `.sock` files happen to be open in `run/`):
    - If `--office <id>` or `$ORG_OFFICE` is set, it uses that `office_id`.
-   - Otherwise, it scans `<office_home>/offices/*/office.json` (read through `org-office-launch`) and ignores any folder without an `office.json`: that is an unfinished create, which the host never starts and removes ([`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md)). If **exactly one** office on this Mac has an `office.json`, it uses that `office_id`; if zero or multiple do, it exits `1` with a clear message instructing the caller to set `ORG_OFFICE` or pass `--office`.
+   - Otherwise, it scans `<office_home>/offices/*/office.json` (read through `org-office-launch`) and ignores any folder without an `office.json`: that is an unfinished create, which the host never starts and discards with `org-office-server --discard <id>` ([`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md)). If **exactly one** office on this Mac has an `office.json`, it uses that `office_id`; if zero or multiple do, it exits `1` with a clear message instructing the caller to set `ORG_OFFICE` or pass `--office`.
+   - (amended 2026-11-08: agent sessions rev 3.1, ada) `--discard` and the "discarded" control line (here and in §2.1.4) are defined in the offices design as amended on `ada/docs-followups-2`, with [`office-host-boundary.md`](../design/office-host-boundary.md). That branch merges into `v1` before the agent-sessions branch, so these references resolve when this lands.
 4. **Authentication, Accepted Risks, and Call-by-Call Authorization (`H1a`, `H1b`, `M-A`, `M-B`):**
    - **Human / App Capability (`app_token` in the host's memory + `SecCode` peer check, never on disk):**
      - (amended 2026-11-08: ephemeral app_token, ada)
@@ -197,12 +198,32 @@ To keep `inbox`, `notify`, `wait`, `read --next`, and UI thread views sub-millis
      - Therefore, the per-office **`app_token`** (256-bit random secret) is **ephemeral in phase 1**. `org-office-host` makes a fresh random token for each office every time the host starts and keeps it **only in memory**. It is never written to disk or to the Keychain, so a failed create leaves nothing behind.
      - A host restart rotates every token. The office servers die with the host ([`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md)), and the desktop app fetches the token again when it reconnects.
      - How satellites (phase 2+) handle it is decided then.
-     - **How `org-office-server` receives `app_token` (`R3`):** When `org-office-host` spawns `org-office-server`, it passes the office's `app_token` over the **launch pipe** ([`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md)) — never via `argv`, environment variables, or disk files, and never inherited by any child process. The pipe is long-lived and two-way: stdin carries host → server lines (the first one at every start), stdout carries the server's control lines to the host ("created", "ready", "failed"), and the server exits when stdin closes. The host sends the token on every start, both `--create` and an existing office, and `app_token` is never logged. The SQLCipher database key never travels over the pipe: the server creates and keeps its own key ([ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md)), and the host never sees it.
+     - **How `org-office-server` receives `app_token` (`R3`):** When `org-office-host` spawns `org-office-server`, it passes the office's `app_token` over the **launch pipe** ([`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md)) — never via `argv`, environment variables, or disk files, and never inherited by any child process. The pipe is long-lived and two-way: stdin carries host → server lines (the first one at every start), stdout carries the server's control lines to the host ("created", "ready", "failed", "discarded"), and the server exits when stdin closes. The host sends the token on every start, both `--create` and an existing office, and `app_token` is never logged. The SQLCipher database key never travels over the pipe: the server creates and keeps its own key ([ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md)), and the host never sees it.
      - **Peer code-signature check on `host.sock` (`R3`):** When the desktop app requests an office's `app_token` from `org-office-host` over `host.sock` (`office.app_token { office_id }`), `org-office-host` verifies the connecting peer's kernel `audit_token_t` (`LOCAL_PEERTOKEN`) via `SecCodeCopyGuestWithAttributes` + `SecCodeCheckValidityWithErrors` against the designated requirement `identifier "com.ellosoft.agentic-org" and anchor apple generic and certificate leaf[subject.OU] = "<TEAM_ID>"` (the app's bundle identifier; it must match tauri.conf.json) before returning the token.
-     - Binding as a `Person` or `owner` (`msg.bind { agent: "owner" | "<person_id>", app_token }`), or calling app-only methods, requires a valid `app_token`. Any connection without `app_token` attempting to bind as a `Person` or `owner` is rejected with `ErrorCode::InvalidRequest` ("human binding requires app token").
+     - Binding as a `Person` or `owner` (`msg.bind { agent: "owner" | "<person_id>", app_token }`), or calling app-only methods, requires a valid `app_token`. Any connection without `app_token` attempting to bind as a `Person` or `owner` is rejected with `ErrorCode::NotAuthorized` ("human binding requires app token"). (amended 2026-11-08: agent sessions rev 3, ada) This was `InvalidRequest`. It's now `not_authorized`, like a missing session token, so every missing credential on `msg.bind` gets the same code.
      - **Residual risk (v1):** An unsandboxed local process that can drive the macOS GUI (Accessibility) or attach to an unsigned dev build of the app could still act through the UI; OS-level sandboxing of agent child processes is deferred to v2.
    - **Agent Identity (Accepted Risk Until Office Runner Spawns Agents, `M-A`):**
      - **Accepted risk for v1:** Until the office runner spawns every agent session directly, agents are launched by `bin/agent` or developer terminals outside `org-office-server`. Therefore, any local process on the office machine can bind as any **`MemberKind::Agent`** via `--as` / `ORG_AGENT` (never as a `Person` or `owner`). Once the office runner spawns agents directly, `org-office-server` will issue a per-session capability token (`ORG_SESSION_TOKEN`) in the spawned child's environment and require it on `msg.bind` for agent identities.
+     - (amended 2026-11-08: agent sessions, ada) **The token is now issued** ([`agent-sessions.md`](../design/agent-sessions.md)). The office runner spawns office-run agents, meaning agents with a `run_mode`:
+       - Every run gets a fresh random `ORG_SESSION_TOKEN` (amended 2026-11-08: agent sessions rev 3, ada) (rev 2 said every start and resume). A run is one process's life, so every spawn (start, resume or take-over) gets a fresh token, and the token dies when the process exits. The office holds it only in memory and puts it only in the child's environment, next to `ORG_OFFICE=<office_id>` and `ORG_AGENT`. It's never in argv or a settings file, and never logged. The office redacts the live session tokens and `app_token`s it knows from every event it stores or streams.
+       - `msg.bind` as an office-run agent requires that agent's live session token (`msg.bind { agent, session_token }`). A missing or invalid one is refused with `not_authorized`. `org-agent` reads the token from `ORG_SESSION_TOKEN`.
+       - (amended 2026-11-08: agent sessions rev 3.1, ada) **It fails closed.** A token is required for any agent with a `run_mode`, `Unknown` included. Binding as an offboarded agent, an agent whose status this office can't read (`Unknown`), or a member that isn't found is refused with `not_authorized`, and so is a bind when the lookup itself fails. An offboarded or removed agent's connections are closed, and no token is ever issued for it again.
+       - (amended 2026-11-08: agent sessions rev 3, ada) **Peer ancestry too.** The office reads the caller's audit token (`LOCAL_PEERTOKEN`: the pid plus its pid version, so a reused pid doesn't match) and walks its parent chain, which must include the session's recorded child pid. Otherwise the bind is refused with `not_authorized`.
+       - (amended 2026-11-08: agent sessions rev 3, ada) **Where it's checked.** `org-mailbox` owns a narrow port, `SessionAuth`, which verifies a token for a member or a one-off run, given the caller's audit token (§4.3). `org-office-server` implements it ((amended 2026-11-08: agent sessions rev 3.1, ada) through `org-office-sessions`). Tokens are compared in constant time. When a run's process exits, its token dies and the office closes every connection bound with that token.
+       - (amended 2026-11-08: agent sessions rev 3, ada) **One-offs** have no Member. A one-off run binds with its run's token and no `agent` (`msg.bind { session_token }`), with the same peer-ancestry check. See [`agent-sessions.md`](../design/agent-sessions.md), "One-offs".
+         - Its address is a **run address**, `run:<office id>/<run id>`, a reserved form that's never a member id or handle. It goes in `from_member_id` / `to_member_id` (§1.1) like a member id, with the display name "<role> (one-off R-n)".
+         - Wherever the table below says `bound_member_id`, a run-bound connection uses its run address. It may call `who`, but `status.set` is refused with `not_authorized`.
+         - **Whom it may message:** only the people of its job (whoever started it, the job's assignee and reviewers, and the owner). `msg.send` and `msg.ask` to anyone else are refused with `not_authorized`. `org-mailbox` asks `SessionAuth::allowed_recipients` (§4.3).
+         - Routing: the office in the address owns the run's inbox, so HQ routes a message to a run address to that office, as it does for a placed agent (§3). Only the owning office knows the run's job and whether it's live: other offices and HQ forward it, and the owning office dead-letters a message to an ended run with `delivery_failed` (reason `run_ended`).
+         - (amended 2026-11-08: agent sessions rev 3.1, ada) **Who may message it:** only the people of its job and the office's own notices (`from: office`). Teams-and-org-chart limits agents to the agents and people of the organization, and a run is neither. A message to it from anyone else is `unknown_recipient`, as if the run didn't exist: synchronously when the sender is in the owning office, and as a dead-letter with `unknown_recipient` when it came from another office.
+         - (amended 2026-11-08: agent sessions rev 3.1, ada) **`run:` is reserved.** HQ refuses a person name that parses as a run address (it starts with `run:`, in any case) with `invalid_name`, on add and rename. Agents' `messaging_name`s can't contain `:`. An address is checked for the run form before any handle lookup.
+         - (amended 2026-11-08: agent sessions rev 3.2, ada) The rule covers every handle: HQ refuses a person's name or an agent's `messaging_name` that starts with `run:` (any case) or is ULID-shaped with `invalid_name` (the owner's display name apart: it isn't a handle), so a handle never looks like a run address or a ULID id (and an exact id beats a handle, §2.6, "Addressing").
+         - (amended 2026-11-08: agent sessions rev 3.1, ada) The app controls a one-off with `run.stop`, `run.interrupt` and `run.send` (by `run_id`). A one-off can't be taken over.
+       - (amended 2026-11-08: agent sessions rev 3, ada) **No spool.** Office-run agents never use the spool (they die with the office): `org-agent` with `ORG_SESSION_TOKEN` set exits `5` instead of spooling.
+       - (amended 2026-11-08: agent sessions rev 3.1, ada) **Spool ingest accepts only active agents run by hand** (§3.5). The spool is the one path that skips `msg.bind`, and any process of the user's can write into it. So a spooled send is ingested only when its `from` resolves to a member of kind agent with status `active` and no `run_mode`. Persons, `owner`, `office`, run addresses, office-run agents, offboarded, paused or `Unknown`-status agents, and unknown ids or handles go to `spool/dead/`.
+       - (amended 2026-11-08: agent sessions rev 3.1, ada) So **M-A is closed for office-run agents**, and **forging a person's or the owner's message through the spool is closed for everyone**. M-A stays an accepted risk for agents people start interactively (`bin/agent`, developer terminals): one can still bind or spool as another hand-run agent. An office-run agent that a person starts by hand can't bind; people work with it through take-over.
+       - **Residual risk:** a hostile process running as the same user can read another process's environment on macOS, and could start a child of the agent's own process. The token and the ancestry check stop casual and accidental impersonation, not that. Real isolation stays a v2 item, as above.
+       - (amended 2026-11-08: agent sessions rev 3.1, ada) **Residual risk:** ancestry is checked at bind only. A bound connection's file descriptor that's passed to another process (inherited, or sent over a socket) keeps working there until the run ends and the office closes the connection.
    - **Parent Verification on `reply_to` and No Retroactive Thread Escalation (`H1b`):**
      - When `msg.send` includes `reply_to: Some(parent_id)` or when `msg.reply { to_id: parent_id }` is called on an agent-bound connection, the server verifies that `bound_member_id` is authorized to read `parent_id` (`parent.from_member_id == bound_member_id || parent.to_member_id == bound_member_id`); otherwise it rejects the call with `ErrorCode::NotFound`. An agent cannot attach a message to a foreign thread by passing an arbitrary message ULID.
      - Furthermore, an agent-bound connection can read **only messages where `from_member_id == bound_member_id` or `to_member_id == bound_member_id`** (never earlier or third-party messages in a thread between other members).
@@ -211,14 +232,29 @@ To keep `inbox`, `notify`, `wait`, `read --next`, and UI thread views sub-millis
 | Wire Call | Who May Call It | Row / Target Authorization Rule |
 | :--- | :--- | :--- |
 | `who` | `agent-bound` or `app-bound` | Reads organization directory cards (`org.db` + runtime status). |
+| `subscribe` | `agent-bound` or `app-bound` | (amended 2026-11-08: agent sessions rev 3, ada) On an agent-bound connection the server never pushes `run.*`, `approval.*` or `agent.state_changed`: those go only to app-bound subscribers. A test subscribes agent-bound and checks it never receives them. |
 | `status.set` | `agent-bound` | Updates `member_status` for `bound_member_id` only. |
-| `msg.bind` | Any local client | `MemberKind::Agent`: allowed on office socket. `MemberKind::Person` or `owner`: **requires `app_token`**. `"office"`: always rejected. |
+| `msg.bind` | Any local client | `MemberKind::Agent`: allowed on office socket, **except an office-run agent, which requires its live `session_token`** (next row). `MemberKind::Person` or `owner`: **requires `app_token`**. `"office"`: always rejected. (amended 2026-11-08: agent sessions rev 3, ada) A missing `session_token` or `app_token` is refused with `not_authorized`. (amended 2026-11-08: agent sessions rev 3.1, ada) An offboarded agent, an agent with an `Unknown` status, an unknown member, or a failed lookup: `not_authorized` (it fails closed). |
 | `msg.send`, `msg.ask` | `agent-bound` or `app-bound` | Sends with `from_member_id = bound_member_id`. If `reply_to` is set on an agent-bound call, requires `parent.from_member_id == bound_member_id \|\| parent.to_member_id == bound_member_id` (else `NotFound`). |
 | `msg.reply`, `msg.defer`, `msg.done` | `agent-bound` or `app-bound` | Requires `target.to_member_id == bound_member_id` (else `NotFound`). |
 | `msg.inbox`, `msg.read`, `msg.wait`, `msg.notify` | `agent-bound` or `app-bound` | Operates strictly on rows where `to_member_id == bound_member_id`. |
 | `msg.get` | `agent-bound` or `app-bound` | `app-bound` (`app_token`): any message in the office. `agent-bound`: requires `msg.from_member_id == bound_member_id \|\| msg.to_member_id == bound_member_id` (else `NotFound`). |
 | `msg.list` | `agent-bound` or `app-bound` | `app-bound` (`app_token`): any thread/participant in the office. `agent-bound`: `participant` must be `None` or resolve to `bound_member_id` (else `InvalidRequest`), and rows are restricted to `from_member_id == bound_member_id \|\| to_member_id == bound_member_id`. |
 | `msg.threads`, `msg.human_needs_you` | **`app-bound` (`app_token`) only** | Used by the Agentic Org desktop app to render org/human thread lists and the menu-bar "Needs you" queue. |
+| `msg.bind` as an office-run agent | Any local client **with that agent's live `session_token`**, from a process in that session's tree | (amended 2026-11-08: agent sessions, ada) Refused with `not_authorized` without a valid token (M-A above). (amended 2026-11-08: agent sessions rev 3, ada) Also refused if the caller's process isn't a descendant of the session's child (peer ancestry). |
+| `msg.bind { session_token }` (a one-off run) | Any local client **with that run's live `session_token`**, from a process in its tree | (amended 2026-11-08: agent sessions rev 3, ada) Binds the connection to the run, not to a member. It reads only its own messages, like an agent-bound connection. `msg.send` / `msg.ask` from it are limited to the people of its job (`not_authorized` otherwise), and `status.set` is refused. |
+| `agent.wake`, `agent.stop`, `agent.interrupt`, `agent.send` | **`app-bound` (`app_token`) only** | (amended 2026-11-08: agent sessions, ada) The owner drives agents ([`agent-sessions.md`](../design/agent-sessions.md)). An agent-bound connection is refused with `not_authorized`, so an agent can't wake, stop or prompt another agent, or itself. |
+| `approval.list`, `approval.answer` | **`app-bound` (`app_token`) only** | (amended 2026-11-08: agent sessions, ada) An agent can never answer an approval, including its own. |
+| `run.list`, `run.get`, `run.events` | **`app-bound` (`app_token`) only** | (amended 2026-11-08: agent sessions, ada) Runs, usage and event logs. |
+| `session.take_over`, `session.heartbeat`, `session.hand_back` | **`app-bound` (`app_token`) only** | (amended 2026-11-08: agent sessions, ada) Take-over and its lease. |
+| `session.input`, `session.resize`, and the `session.output` event | **the app-bound connection that holds the lease** only | (amended 2026-11-08: agent sessions rev 3.1, ada) Terminal frames travel only on the lease holder's connection, never on a separate stream. From another app connection: `held`. From an agent-bound connection: `not_authorized`. `session.output` is never pushed to any other subscriber. So an agent can't type into a person's terminal or answer its prompts. |
+| `runtime.status`, `permission_policy.get`, `permission_policy.set` | **`app-bound` (`app_token`) only** | (amended 2026-11-08: agent sessions, ada) An agent can't read or widen its own permission policy. |
+| `run.one_off` | **`app-bound` (`app_token`) only** | (amended 2026-11-08: agent sessions rev 3, ada) Starts a one-off run (no Member). |
+| `run.stop`, `run.interrupt`, `run.send` | **`app-bound` (`app_token`) only** | (amended 2026-11-08: agent sessions rev 3.1, ada) Control a live one-off by `run_id`. An agent's run is `invalid_request` (the `agent.*` calls take a `member_id`). |
+| `member.set_run_mode` | **`app-bound` (`app_token`) only** | (amended 2026-11-08: agent sessions rev 3, ada) An org command, relayed to HQ. An agent can't change its own or another agent's run mode. |
+| Every other org command (`member.*`, `team.*`, `project.*`, …) | **`app-bound` (`app_token`) only**, unless a row above allows it | (amended 2026-11-08: agent sessions rev 3, ada) Org commands from an agent-bound connection are refused with `not_authorized` in general. |
+
+(amended 2026-11-08: agent sessions, ada) A test calls every `app-bound`-only method on an agent-bound connection and expects `not_authorized`.
 
 #### 2.2 In-Memory Waiter Registry, Snooze Timer Heap, and Claim-Before-Commit Reply Hand-Off (`M1`, `M2`, `M-C`, `L-a`)
 
@@ -287,7 +323,7 @@ To prevent agents from being interrupted mid-task by routine messages while guar
      ```json
      {
        "v": 1,
-       "agent": "agy-senior-dev",
+       "agent": "ac-software-engineer-remy",
        "urgent": true,
        "count": 1,
        "urgent_count": 1,
@@ -317,11 +353,12 @@ Agents must be able to discover everyone in the organization (agents, people, an
 
 1. **Directory (`org-agent who` → wire call `who`):**
    - `org-agent who [--team <name_or_id>] [--kind agent|person|owner] [--json]` lists all members matching the optional filters, read from the local office's copy of `org.db` (`Member`, `Membership`, `Team`, `reports_to_member_id`, `office_id`) combined with live runtime presence and `member_status`.
-   - `org-agent who <id_or_name> [--json]` returns one member's full card (`role_title` is `null` in Phase B until the role catalogue is added to `org_proto::org::Member`, while per-team titles are carried in `teams[].title_in_team`, `L-d`):
+   - `org-agent who <id_or_handle> [--json]` returns one member's full card (`role_title` is `null` in Phase B until the role catalogue is added to `org_proto::org::Member`, while per-team titles are carried in `teams[].title_in_team`, `L-d`):
      ```json
      {
        "id": "01M6W...",
-       "name": "agy-senior-dev",
+       "name": "Remy",
+       "handle": "ac-software-engineer-remy",
        "kind": "agent",
        "owner": false,
        "role_title": null,
@@ -335,8 +372,20 @@ Agents must be able to discover everyone in the organization (agents, people, an
        "current_task_id": null
      }
      ```
+   - (amended 2026-11-08: agent sessions rev 3, ada) Every card carries **`handle`**: an agent's `messaging_name`, a person's `name`, or `owner` for the owner. It's what `--to` takes. An agent's `name` is its display name, which isn't an address.
+   - (amended 2026-11-08: agent sessions rev 3.2, ada) The owner's card carries `owner` as its handle. **The owner's display name isn't a handle**, so `--to` never resolves it (§2.6).
 2. **Presence (`online | busy | idle | offline`):**
    - Derived from each office's runtime state (`busy` while executing a turn, `idle` while holding `msg.wait` or between turns, `offline` when no session is active).
+   - (amended 2026-11-08: agent sessions, ada) **Agent presence is now `busy | idle | needs_you | with_you | asleep | offline`** ([`agent-sessions.md`](../design/agent-sessions.md)). `online` stays for people only. Unknown values decode as `Unknown`.
+     - `busy`: a turn is running.
+     - `idle`: a live session between turns, **or a turn whose connection holds an `org-agent` wait (`msg.wait` or `msg.ask`)**. The wait still counts toward the run's busy time.
+     - `needs_you`: the agent is waiting for an approval.
+     - `with_you`: a person has taken the session over.
+     - `asleep`: derived, never stored. An on-call or scheduled agent with no live run.
+     - `offline`: an always-on agent with no live session, or an agent the office doesn't run and that has no live session.
+     - For office-run agents the office derives presence from the session's own events, not from hooks. Office-run sessions load no presence or inbox hooks.
+     - **Blocking waits:** in office-run mode the wake guidance tells agents not to block in `msg wait` or `msg ask --timeout` for longer than **60 s**, because the office is their wake path. The 1-hour socket limit (§4.1) is unchanged for agents people start interactively.
+     - (amended 2026-11-08: agent sessions rev 3, ada) **The server enforces it:** on a token-bound connection it caps `wait_ms` and `timeout_ms` at 60 s, and `org-agent` lowers its own defaults to match when `ORG_SESSION_TOKEN` is set. An `ask` keeps its full `ttl_ms` (up to 24 h for a person). After the 60-second hold, `org-agent msg ask` exits `2` with `"pending": true`, and the reply wakes the agent when it arrives.
    - **How presence propagates across offices:** Per [`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md) ("Runtime summaries are not logged"), presence is **ephemeral runtime data**, never written to `org.db`'s event log. Each office sends HQ passing `MemberPresenceUpdate` frames over its open connection when an agent's presence or status changes (debounced to at most 1 update/second per agent). HQ keeps the latest map in memory and forwards updates to connected offices and app subscribers (`member.presence_changed` event), avoiding any `fullfsync` per status change.
 3. **Self-Reported Status Line (`org-agent status` → wire call `status.set`):**
    - `org-agent status "<text>" [--ttl 8h] [--json]` sets the calling agent's status line; `org-agent status --clear` clears it.
@@ -362,7 +411,7 @@ Per [`teams-and-org-chart.md`](../design/teams-and-org-chart.md), agents can mes
 4. **What an `ask` to a Human Does While They Are Away (`ttl_ms` vs per-call `wait_ms`):**
    - Humans answer on human timescales (minutes to hours, not milliseconds).
    - `msg.ask` separates the request's overall deadline **`ttl_ms`** (which sets `expires_at = created_at + ttl_ms` once when the request is created; up to `86_400_000` ms / 24h) from the per-socket-call hold time **`wait_ms`** ($\le 3\_600\_000$ ms / 1h per socket call).
-   - When `org-agent msg ask --to <human>` targets a `Person` or `owner` and the caller does not pass an explicit `--timeout`, the default `ttl_ms` is **`24h`** (vs `120s` for agent recipients), automatically held across 1-hour `wait_ms` socket calls using idempotent re-ask (`§3.3.4`) without altering `expires_at`.
+   - When `org-agent msg ask --to <human>` targets a `Person` or `owner` and the caller does not pass an explicit `--timeout`, the default `ttl_ms` is **`24h`** (vs `120s` for agent recipients), automatically held across 1-hour `wait_ms` socket calls using idempotent re-ask (`§3.3.4`) without altering `expires_at`. (amended 2026-11-08: agent sessions rev 3.1, ada) On a token-bound connection (an office-run agent or a one-off) there's no re-ask: the server caps each hold at 60 s, and after one hold `org-agent msg ask` exits `2` with `"pending": true`. The reply wakes the agent when it arrives (§2.4).
    - **Graceful Expiry ("Late Human Reply"):** Only when the full `expires_at` (`created_at + ttl_ms`) elapses before the human replies:
      - `org-agent msg ask` exits `2` (`timeout`) so the calling agent can move on or fallback.
      - Instead of hiding the request as dead-lettered, HQ sets `flags |= FLAG_EXPIRED_WAITING_HUMAN` (`8`) and **keeps the request visible in the human's "Needs you" / Inbox queue** marked *"Agent timed out waiting — your reply will still be delivered"*.
@@ -386,18 +435,29 @@ org-agent msg read   <id> | --next [--office <id>] [--as <member>] [--json]
 org-agent msg wait   [--timeout 60s] [--from <member>] [--urgent-only] [--office <id>] [--as <member>] [--json]
 ```
 
-- **Addressing (`--to`, `--from`, `--as`):** Accepts a member's ULID `id`, their unique `name` (case-insensitive match against `org.db`'s `members` table), or `"owner"` (which resolves to the organization's `owner: true` member). If a display name matches more than one member in `org.db`, the server rejects it with `ErrorCode::InvalidRequest` instructing the caller to pass the member's ULID.
+- **Addressing (`--to`, `--from`, `--as`):** Accepts a member's ULID `id`, their **handle** (case-insensitive; an agent's `messaging_name` or a person's `name`, which share ONE namespace with the reserved `owner`, so a handle names at most one member; amended 2026-11-08: one handle namespace, ada), or `"owner"` (which resolves to the organization's `owner: true` member). (amended 2026-11-08: agent sessions rev 3, ada) HQ keeps handles unique, so a handle never matches two members. An agent's display name (`Member.name`) isn't a handle and isn't accepted: an address that's neither an id, a handle nor a well-formed one-off run address (`run:<office id>/<run id>`, §2.1.4) is `unknown_recipient`. (amended 2026-11-08: agent sessions rev 3.1, ada) A run address is checked first, and a message to one is delivered only from the people of its job (else `unknown_recipient`, §3.2 item 4).
+  - (amended 2026-11-08: agent sessions rev 3.2, ada) **How an address resolves**, in order:
+    1. A well-formed run address (`run:<office id>/<run id>`).
+    2. The reserved `owner` (ignoring case), which is the owner. It comes before ids, so a member whose id is `owner` can't capture it.
+    3. An **exact member id** (case-sensitive). It beats a handle: if one member's id equals another member's handle, the id wins.
+    4. A **handle**, ignoring case: an agent's `messaging_name` or a person's `name`.
+    5. Anything else is `unknown_recipient`. **Display names never resolve**: not an agent's `Member.name`, and not the owner's.
+
+    As a recipient (`--to`) or a bind target, `office` (ignoring case) is refused before any of this (`invalid_request`, see "Reserved names & kinds" below).
+  - (amended 2026-11-08: agent sessions rev 3.2, ada) **Reserved and refused handles.** `owner` and `office` are reserved: no member may take either (`already_exists`), and `office` is the server's own sender id. A handle that starts with `run:` (any case) or is **ULID-shaped** (26 Crockford base32 characters, any case) is refused with `invalid_name`, for people and agents alike, on add and on rename. I, L, O and U count too (a lenient decoder maps them), as `teams-and-org-chart.md` says.
+  - (amended 2026-11-08: agent sessions rev 3.2, ada) **The owner's display name isn't a handle.** It's exempt from the namespace and from the shape check, so a person may share it, and it never resolves. The owner is addressed only as `owner`.
+  - (amended 2026-11-08: agent sessions rev 3.2, ada) These rules follow `teams-and-org-chart.md` (as amended on `ada/docs-followups-3`). Server-dev's `proto-wording` has them (`OWNER_HANDLE`, `OFFICE_HANDLE`, `is_shaped_like_an_address`), except that its ULID shape leaves out I, L, O and U. `proto-wording` is to be changed to count I, L, O and U too (a follow-up for server-dev).
 - **Reserved names & kinds:** `"office"` is reserved for the server (`msg.bind { agent: "office" }`, `to: "office"`, or a client sending `kind: "delivery_failed"` fails with `ErrorCode::InvalidRequest`).
 - **Exit codes:**
 
 | Exit Code | Meaning | `org-proto` Error Codes / Conditions |
 | :--- | :--- | :--- |
 | `0` | Success (`read --next` on empty inbox prints `null` in `--json` and exits `0`; `notify` when nothing is due exits `0`) | `ok: true` (or offline spool queued on `send`) |
-| `1` | Usage, validation, or authorization error | `invalid_request`, `invalid_name`, `too_large`, `already_exists`, `not_found`, `not_bound` |
+| `1` | Usage, validation, or authorization error | `invalid_request`, `invalid_name`, `too_large`, `already_exists`, `not_found`, `not_bound`, and (amended 2026-11-08: agent sessions rev 3, ada) `not_authorized`, `conflict` and `held` |
 | `2` | Timeout waiting for message or reply | `timeout` (or `msg.wait` returning `null` at deadline) |
 | `3` | Unknown recipient | `unknown_recipient` |
 | `4` | Storage or protocol error (including any future error code that decodes as `ErrorCode::Unknown` on an older CLI) | `storage_error`, `unknown_method`, `unknown`, frame decode error |
-| `5` | Office server unavailable | Socket connect failure on `ask`, `reply`, `defer`, `done`, `notify`, `due`, `wait`, `read`, `inbox`, `who`, `status` |
+| `5` | Office server unavailable | Socket connect failure on `ask`, `reply`, `defer`, `done`, `notify`, `due`, `wait`, `read`, `inbox`, `who`, `status`; (amended 2026-11-08: agent sessions rev 3, ada) the `unavailable` error code; and a `send` that can't reach the office when `ORG_SESSION_TOKEN` is set (office-run agents don't spool) |
 | `10` | Normal (non-urgent) messages need triage (`msg notify` only) | `msg notify` found $>0$ actionable normal messages and $0$ urgent messages |
 | `11` | Urgent messages need triage (`msg notify` only) | `msg notify` found $>0$ actionable urgent messages |
 | `130` | Interrupted | `SIGINT` / `SIGTERM` |
@@ -444,8 +504,19 @@ Per [`teams-and-org-chart.md`](../design/teams-and-org-chart.md) ("Who agents ma
    - **Rule:** Only the **recipient's owning office at `org_position`** (or **HQ alone** if the recipient member was removed in `org.db` or has no office) may transition a message to `read`, `done`, `expired`, or `dead_letter` in `msg_state` and emit a `delivery_failed` notice. Other offices following the thread apply the synced `WorkChange::MessageStateChanged` event and never emit their own `delivery_failed`.
    - When the owning office (or HQ on `member.remove`) dead-letters an open message:
      - It upserts `state = 'dead_letter'`, `reason = 'unknown_recipient'` in `msg_state`, sets `flags |= FLAG_DEAD_LETTER` in `msg_headers`, and removes the row from `msg_unread`.
-     - If `original.kind != "delivery_failed"` and `original.from_member_id != "office"` and `original.from_member_id` is still an active member in `org.db`, it emits a single `delivery_failed` message (`from_member_id = "office"`, `to_member_id = original.from_member_id`, `kind = "delivery_failed"`, `priority = "high"`, `reply_to = original.id`), guarded by `idx_msg_delivery_failed_once`.
-     - **`delivery_failed` payload (for agents and Eden's UX):** The `delivery_failed` message carries structured `meta` (and human-readable `body`) with the **recipient as addressed at send time** (`recipient_id`: `original.to_member_id`, `recipient_name`: `original.to_display_name`) and the **reason code** (`reason`: `"unknown_recipient"` | `"expired"`), so both the sending agent and the desktop UI can display who the message was addressed to even after that member has been removed.
+     - If `original.kind != "delivery_failed"` and `original.from_member_id != "office"` and `original.from_member_id` is still an active member in `org.db` ((amended 2026-11-08: agent sessions rev 3, ada) or a run address, §3.2 item 4; if that run has ended, its owning office dead-letters the notice, and the `kind` check stops a loop), it emits a single `delivery_failed` message (`from_member_id = "office"`, `to_member_id = original.from_member_id`, `kind = "delivery_failed"`, `priority = "high"`, `reply_to = original.id`), guarded by `idx_msg_delivery_failed_once`.
+     - **`delivery_failed` payload (for agents and Eden's UX):** The `delivery_failed` message carries structured `meta` (and human-readable `body`) with the **recipient as addressed at send time** (`recipient_id`: `original.to_member_id`, `recipient_name`: `original.to_display_name`) and the **reason code** (`reason`: `"unknown_recipient"` | `"expired"`, and (amended 2026-11-08: agent sessions rev 3, ada) `"run_ended"`), so both the sending agent and the desktop UI can display who the message was addressed to even after that member has been removed.
+
+4. (amended 2026-11-08: agent sessions rev 3, ada) **Run addresses (one-offs, §2.1.4).**
+   - A well-formed run address (`run:<office id>/<run id>`) skips the member checks in stages 1 and 2. It isn't in `org.db`, so it never gets `FLAG_UNRESOLVED_REF`.
+   - (amended 2026-11-08: agent sessions rev 3.1, ada) **Who may message a run.** The owning office delivers a message to a run only from the people of its job (whoever started it, the job's assignee and reviewers, and the owner) or from `office`. Anything else is `unknown_recipient`: refused at once in stage 1 when the sender is in the owning office, and dead-lettered with `unknown_recipient` (with the usual `delivery_failed` to the sender) when it came from another office. Offices that don't own the run, and HQ, forward it without this check, because only the owning office knows the job.
+   - (amended 2026-11-08: agent sessions rev 3.1, ada) HQ refuses a person name that parses as a run address (`invalid_name`), so `run:` never names a member.
+   - (amended 2026-11-08: agent sessions rev 3.2, ada) That covers agents' `messaging_name`s and ULID-shaped handles too (§2.6, "Addressing").
+   - The office named in the address owns it, so HQ routes the message there.
+   - **No spoofed runs.** HQ accepts a run address in `from` only when the message's `origin_office_id` is the office named in the address. Otherwise HQ rejects the work change. It isn't applied or forwarded, and it's logged with its ids and the reason `spoofed_sender`. HQ still acknowledges it (`WorkAck`), and a redelivery is rejected, logged and acknowledged the same way, so the origin's stream doesn't stall. No `delivery_failed` is sent, because it would go to the spoofed run. This isn't a dead-letter under item 3: the message never enters any inbox.
+   - A message to an ended run is dead-lettered with `run_ended`. One to a run id the owning office never had gets `unknown_recipient`. HQ dead-letters one whose office id isn't an office of the organization with `unknown_recipient`.
+   - `run_ended` joins the `delivery_failed` reason codes (`"unknown_recipient" | "expired" | "run_ended"`), and `msg_state.reason` takes the matching value.
+   - A `msg.ask` whose wake-up is a `delivery_failed` with `run_ended` returns `unknown_recipient` (exit code `3`), as for a removed member.
 
 #### 3.3 Cross-Office `ask` with Deadlines, Bounded Clock-Skew Grace, and Idempotent Re-Ask
 
@@ -499,6 +570,7 @@ Per [`teams-and-org-chart.md`](../design/teams-and-org-chart.md) ("Who agents ma
    - **Spool Ingest, FIFO/Symlink Protection, and Plaintext Lifetime:**
      - `org-office-server` drains `<office_home>/offices/<office_id>/spool/new/` through `crates/org-spool` on startup **before** accepting client connections, and re-scans every 5 seconds as a backstop.
      - **Non-blocking regular-file verification (`M4`):** Every entry in `spool/new/` must have a valid `<26-char ULID>.json` filename, is opened with `O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC`, and is immediately checked with `fstat`: the descriptor must satisfy `S_ISREG(st_mode)` (rejecting FIFOs, sockets, symlinks, and device nodes so startup ingest can never block on a named pipe) and `st_uid == geteuid()`, with size $\le 512\text{ KiB}$. Non-regular or oversized files are unlinked or moved to `spool/dead/` without reading.
+     - (amended 2026-11-08: agent sessions rev 3, ada; rev 3.1) **Spool ingest accepts only active agents run by hand.** Office-run agents never spool (§2.1.4, M-A), and the spool is the one path that skips `msg.bind`. At ingest, the office resolves the spooled send's `from` at its applied org position. It ingests the send only if `from` is a member of kind agent with status `active` and no `run_mode`. Everything else is moved to `spool/dead/` and logged with its id and the reason, never its body: a person, `owner`, `office`, a run address (`run:<office id>/<run id>`), an office-run agent (any `run_mode`, `Unknown` included), an offboarded, paused or `Unknown`-status agent, and an id or handle that resolves to no member. So no process can forge a person's or the owner's message through the spool. Spooled sends from active hand-run agents are ingested as before (their accepted risk). The one-time `import-v1-old-spool` at cutover is a separate path, run by the owner. The check runs in `org-mailbox`'s ingest path through `MemberDirectory`, so `org-spool` still only reads files.
      - **Time-bounded plaintext exception:** Spooled files exist on disk only while `org-office-server` is mid-restart and are ingested into SQLCipher-encrypted `office.db` and `unlink`ed immediately upon server startup (any corrupt file in `spool/dead/` is purged after 24 hours). Similarly, Phase A's `~/.agency/spool` directory (`0700`/`0600`) is a temporary pre-cutover spool that is imported into HQ's encrypted `office.db` at Phase B cutover and deleted after the 1-week rollback window.
 
 ---
@@ -511,11 +583,12 @@ Per [`teams-and-org-chart.md`](../design/teams-and-org-chart.md) ("Who agents ma
 
 - **Directory & Presence Calls (handled by `org-office` runtime):**
   - `who { member?: String, team?: String, kind?: MemberKind } → { members: Vec<DirectoryCard> }`
-    - Returns directory cards (`id`, `name`, `kind`, `owner`, `role_title`, `teams`, `reports_to`, `office`, `presence`, `last_seen_at`, `status`, `status_expires_at`, `current_task_id`).
+    - Returns directory cards (`id`, `name`, `handle` (amended 2026-11-08: agent sessions rev 3, ada), `kind`, `owner`, `role_title`, `teams`, `reports_to`, `office`, `presence`, `last_seen_at`, `status`, `status_expires_at`, `current_task_id`).
   - `status.set { text?: String, ttl_ms?: u64 } → { status: Option<String>, expires_at: Option<String> }` (`text: None` clears the caller's status line).
 - **Agent & Shared Messaging Calls (handled by `org-mailbox`):**
-  - `msg.bind { agent?: String, app_token?: String } → { member_id?: String, office_id: String }`
-    - Resolves `agent` (member ID, unique member name, or `"owner"`; `"office"` is rejected) against `org.db`, requires a valid `app_token` when binding as a `Person`/`owner` (or for app-wide queries), and binds the connection's acting member.
+  - `msg.bind { agent?: String, app_token?: String, session_token?: String } → { member_id?: String, run_id?: String, office_id: String }`
+    - Resolves `agent` (member ID, handle, or `"owner"`; `"office"` is rejected; (amended 2026-11-08: agent sessions rev 3.2, ada) in §2.6's order, an exact id before a handle, and never a display name) against `org.db`, requires a valid `app_token` when binding as a `Person`/`owner` (or for app-wide queries), and binds the connection's acting member.
+    - (amended 2026-11-08: agent sessions rev 3, ada) `session_token` is required when binding as an office-run agent, with the peer-ancestry check. With no `agent`, it binds a one-off run (`run_id` in the result). Every missing or invalid credential is `not_authorized`. (amended 2026-11-08: agent sessions rev 3.1, ada) Binding as an offboarded or `Unknown`-status agent, or when the lookup fails, is `not_authorized` too.
   - `msg.send { id: String, to: String, kind: String, priority?: MessagePriority, subject?: String, body: String, meta?: BTreeMap<String, Value>, reply_to?: String, expires_at?: String, ttl_ms?: u64 } → { id: String, thread_id: String, local_seq: u64, origin_seq: u64 }`
   - `msg.reply { id: String, to_id: String, priority?: MessagePriority, subject?: String, body: String, meta?: BTreeMap<String, Value> } → { id: String, thread_id: String, local_seq: u64, origin_seq: u64 }`
   - `msg.ask { id: String, to: String, priority?: MessagePriority, subject?: String, body: String, meta?: BTreeMap<String, Value>, ttl_ms: u64, wait_ms: u64 } → { reply: Message }`
@@ -535,11 +608,15 @@ Per [`teams-and-org-chart.md`](../design/teams-and-org-chart.md) ("Who agents ma
   - `message.state_changed { id: String, thread_id: String, to_member_id: String, state: MessageLifecycleState, triage_gen: u64, snoozed_until: Option<String>, snooze_after_task: bool, reason: Option<String>, updated_at: String }`
   - `message.delivery_failed { id: String, original_id: String, thread_id: String, from_member_id: String, recipient_id: String, recipient_name: String, reason: String }` (carries both the recipient's `id` and `display_name` as addressed at send time and the `reason` code such as `unknown_recipient` or `expired`)
   - `member.presence_changed { member_id: String, presence: MemberPresence, last_seen_at: String, status: Option<String>, status_expires_at: Option<String>, current_task_id: Option<String> }`
+    - (amended 2026-11-08: agent sessions, ada) `MemberPresence` gains `NeedsYou`, `WithYou` and `Asleep`, and decodes unknown values as `Unknown` (§2.4).
+- (amended 2026-11-08: agent sessions, ada) **Agent-session calls** (`agent.*`, `approval.*`, `run.*`, `session.*`, `runtime.status`, `permission_policy.*`) are defined in [`agent-sessions.md`](../design/agent-sessions.md). All are app-only (§2.1.4). `msg.bind` gains `session_token?: String`, required when binding as an office-run agent (M-A).
 - **Error codes added to `org_proto::ErrorCode`:**
+  - (amended 2026-11-08: agent sessions rev 3, ada) `Held` (a session is held by someone else's take-over lease), so `Conflict` keeps its one meaning, a stale `expected_version`.
+    - (amended 2026-11-08: agent sessions rev 3.1, ada) It isn't in `error.rs` yet; the agent-sessions contract step adds it. It's additive: `ErrorCode` is `#[non_exhaustive]` and decodes unknown codes as `Unknown` (`#[serde(other)]`). `ApiError` gains an optional `reason` with `#[serde(default, skip_serializing_if = "Option::is_none")]`, so older peers still read errors.
   - `Timeout`, `TooLarge`, `NotBound` (`AlreadyExists`, `UnknownRecipient`, `NotFound`, `InvalidRequest`, `StorageError`, `Unknown` already exist in `crates/org-proto/src/error.rs`).
 - **Limits (measured on JSON-encoded wire bytes, fitting inside `MAX_FRAME_BYTES = 1 MiB`):**
   - `body` $\le 256\text{ KiB}$, `meta` $\le 64\text{ KiB}$, `subject` $\le 1\text{ KiB}$, `status` $\le 256\text{ B}$ ($140$ chars), `snooze_note` / `done` note $\le 1\text{ KiB}$, `kind` / member names / IDs $\le 128\text{ B}$.
-  - `wait_ms` / `timeout_ms` $\le 3\_600\_000$ (1 hour per socket call), `ttl_ms` $\le 86\_400\_000$ (24 hours request deadline), max 16 held `wait`/`ask` requests per connection.
+  - `wait_ms` / `timeout_ms` $\le 3\_600\_000$ (1 hour per socket call; (amended 2026-11-08: agent sessions rev 3, ada) 60 s on a token-bound connection), `ttl_ms` $\le 86\_400\_000$ (24 hours request deadline), max 16 held `wait`/`ask` requests per connection.
 - **Offline spool contract (`org_proto::msg::SpooledSend`):**
   - `{ v: 1, office_id: String, from: String, id: String, to: String, kind: String, priority: MessagePriority, subject?: String, body: String, meta?: BTreeMap<String, Value>, reply_to?: String, expires_at?: String, ttl_ms?: u64, created_at: String }`
 
@@ -552,39 +629,56 @@ In the office-to-office protocol (`crates/org-sync-proto`):
   - `WorkChange::MessageStateChanged(SyncedMessageState)`: carries `origin_office_id`, `origin_incarnation`, `origin_seq`, `org_position: Position`, `msg_id`, `to_member_id`, `state: Unread | Snoozed | Read | Done | Expired | DeadLetter`, `triage_gen: u64`, `snoozed_until: Option<String>`, `snooze_after_task: bool`, `reason: Option<String>`, `updated_at: String`.
 - **Passing runtime updates (not logged in `org.db` or `work_origin_log`):**
   - `RuntimeUpdate::MemberPresence { office_id: String, members: Vec<MemberRuntimeState> }` (carries `member_id`, `presence: Online | Busy | Idle | Offline`, `last_seen_at`, `status`, `status_expires_at`, `current_task_id`).
+    - (amended 2026-11-08: agent sessions, ada) `presence` carries the same values as `MemberPresence` in §4.1 (`NeedsYou`, `WithYou` and `Asleep` added, unknown values decoded as `Unknown`).
 
 #### 4.3 Where the Code Lives, Coupling Metrics (`docs/architecture-rules.md`), and the `MemberDirectory` & `MessageStore` Traits
 
-Per `AGENTS.md`:
+Per `AGENTS.md` (amended 2026-11-08: agent sessions rev 3, ada) (Remy, `ac-software-engineer-remy`, owns messaging in place of `agy-senior-dev`):
 
 ```text
-apps/org-agent (agy-senior-dev) ──┬──▶ crates/org-client (server-dev) ──┐
-                                  └──▶ crates/org-spool  (agy-senior-dev)├──▶ crates/org-proto (ada)
-                                                                         │
-apps/org-office-server (server-dev) ─▶ crates/org-office (server-dev) ───┤
-                                            │                            │
-                                            ▼                            │
-                                       crates/org-mailbox (agy-senior-dev)┘
+apps/org-agent (Remy) ──┬──▶ crates/org-client (server-dev) ──┐
+                        └──▶ crates/org-spool  (Remy) ────────├──▶ crates/org-proto (ada)
+                                                              │
+apps/org-office-server (server-dev) ─▶ crates/org-office (server-dev) ─┤
+                                            │                          │
+                                            ▼                          │
+                                       crates/org-mailbox (Remy) ──────┘
 ```
 
 | Component | Owner | Role | Dependencies (`Ce`) | Instability (`I`) |
 | :--- | :--- | :--- | :--- | :--- |
 | `crates/org-proto` | `ada` | Client ↔ Office wire & spool contract | `serde`, `serde_json` (`Ce = 2`) | `~0.15` (Stable contract) |
 | `crates/org-sync-proto` | `ada` | Office ↔ HQ sync & runtime contract | `org-proto`, `serde`, `serde_json` (`Ce = 3`) | `~0.25` (Stable contract) |
-| `crates/org-mailbox` | `agy-senior-dev` | Pure messaging & triage/snooze domain (`WaiterRegistry` + snooze timer heap, `sha2` canonical `content_hash`, `flate2` compression + bounded decompression, `notify` formatter + session dedup, idempotent `ask`, dead-letter rules) over `MemberDirectory` + `MessageStore` traits | `org-proto`, `org-sync-proto`, `flate2`, `sha2` (`Ce = 4`, **no SQLite**) | `~0.40` (Domain capability) |
-| `crates/org-spool` | `agy-senior-dev` | Crash-safe local spool (`tmp` + `F_FULLFSYNC` + `rename` into `new`, `O_NOFOLLOW | O_NONBLOCK` regular-file ingest; powers Phase A CLI and Phase B offline fallback) | `org-proto`, `serde`, `serde_json` (`Ce = 3`) | `~0.35` (Platform primitive) |
-| `apps/org-agent` | `agy-senior-dev` | Fast stateless CLI (`who`, `status`, `msg` with `defer`/`done`/`notify`/`due`) | `org-client`, `org-spool`, `org-proto` (`Ce = 3`) | `1.00` (Edge binary) |
+| `crates/org-mailbox` | Remy (`ac-software-engineer-remy`) | Pure messaging & triage/snooze domain (`WaiterRegistry` + snooze timer heap, `sha2` canonical `content_hash`, `flate2` compression + bounded decompression, `notify` formatter + session dedup, idempotent `ask`, dead-letter rules) over `MemberDirectory` + `MessageStore` traits | `org-proto`, `org-sync-proto`, `flate2`, `sha2` (`Ce = 4`, **no SQLite**) | `~0.40` (Domain capability) |
+| `crates/org-spool` | Remy (`ac-software-engineer-remy`) | Crash-safe local spool (`tmp` + `F_FULLFSYNC` + `rename` into `new`, `O_NOFOLLOW | O_NONBLOCK` regular-file ingest; powers Phase A CLI and Phase B offline fallback) | `org-proto`, `serde`, `serde_json` (`Ce = 3`) | `~0.35` (Platform primitive) |
+| `apps/org-agent` | Remy (`ac-software-engineer-remy`) | Fast stateless CLI (`who`, `status`, `msg` with `defer`/`done`/`notify`/`due`) | `org-client`, `org-spool`, `org-proto` (`Ce = 3`) | `1.00` (Edge binary) |
 | `crates/org-office` (`store.rs`) | `server-dev` | Owns `who` / `status.set` runtime capability and implements `MemberDirectory` + `MessageStore` inside `store.rs` on the single batching SQLCipher writer and read pool | Owns `rusqlite` / SQLCipher | Domain + Store |
 
-**Dependency Inversion Traits (`MemberDirectory` and `MessageStore` in `crates/org-mailbox`):**
-`crates/org-mailbox` defines two narrow traits that `crates/org-office/src/store.rs` implements:
+**Dependency Inversion Traits (`MemberDirectory`, `MessageStore` and `SessionAuth` in `crates/org-mailbox`):**
+`crates/org-mailbox` defines two narrow traits that `crates/org-office/src/store.rs` implements, and (amended 2026-11-08: agent sessions rev 3, ada) a third, `SessionAuth`, that `org-office-server` implements from the office's live runs and the OS process table ((amended 2026-11-08: agent sessions rev 3.1, ada) in the new `org-office-sessions` crate that `org-office-server` wires in):
 
 ```rust
 /// Narrow read-only port into `org.db` (shared with tasks; full `who` and `status.set` live in `org-office`).
 pub trait MemberDirectory {
-    /// Resolve an active member by ULID, unique case-insensitive name, or "owner" at the office's applied Position.
-    /// Returns `Err(StoreError::AmbiguousName)` if a display name matches >1 member in `org.db`.
-    fn resolve_member(&self, id_or_name: &str) -> Result<Option<(Member, Position)>, StoreError>;
+    /// Resolve an active member by ULID, case-insensitive handle (an agent's messaging_name or a person's name), or "owner" at the office's applied Position.
+    /// (amended 2026-11-08: agent sessions rev 3, ada) HQ keeps handles unique, so a handle names at most one member.
+    /// Display names aren't accepted. There's no `AmbiguousName`: two members with one handle is a storage error.
+    /// (amended 2026-11-08: agent sessions rev 3.2, ada) "owner" is checked before ids, and an exact id match beats a handle. The owner resolves only as "owner":
+    /// its display name isn't a handle. "office" is reserved and never resolves to a member.
+    fn resolve_member(&self, id_or_handle: &str) -> Result<Option<(Member, Position)>, StoreError>;
+}
+
+/// (amended 2026-11-08: agent sessions rev 3, ada) Checks `msg.bind`'s session token for office-run agents and one-off runs.
+pub trait SessionAuth {
+    /// Whether `member_id` is office-run (has a `run_mode`, `Unknown` included), so `msg.bind` as it needs a token.
+    /// (amended 2026-11-08: agent sessions rev 3.1, ada) It fails closed: `Err` refuses the bind (`not_authorized`)
+    /// for an offboarded agent, an `Unknown` status, a member that isn't found, or a failed lookup.
+    fn requires_token(&self, member_id: &str) -> Result<bool, AuthError>;
+    /// Verify `token` (constant-time) against the live run of `who` (a member or a one-off run), and that
+    /// the peer (its audit token: pid and pid version) descends from that run's child. Returns the run id the binding belongs to.
+    fn verify(&self, who: BindTarget<'_>, token: &str, peer: PeerToken) -> Result<String, AuthError>;
+    /// For a one-off run: the member ids it may message (the people of its job). `None` for a member.
+    fn allowed_recipients(&self, run_id: &str) -> Option<Vec<String>>;
 }
 
 pub trait MessageStore {
