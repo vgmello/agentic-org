@@ -4,7 +4,7 @@ import { NAV, navFor, titleFor } from './nav';
 describe('titleFor', () => {
 	it('is the section name for a sidebar page', () => {
 		expect(titleFor('/org-chart')).toBe('Org chart');
-		expect(titleFor('/tasks/12')).toBe('Tasks');
+		expect(titleFor('/offices/12')).toBe('Offices');
 	});
 
 	it('names the Report a bug page, which is not in the sidebar', () => {
