@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "agentic.org",
+  "productName": "Agentic Org",
   "version": "0.1.0",
   "identifier": "com.ellosoft.agentic-org",
   "build": {
@@ -15,7 +15,7 @@
       {
         "label": "main",
         "url": "/",
-        "title": "agentic.org",
+        "title": "Agentic Org",
         "width": 1440,
         "height": 900,
         "minWidth": 960,

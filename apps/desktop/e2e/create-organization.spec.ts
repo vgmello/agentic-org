@@ -9,7 +9,7 @@ async function createOrg(page: Page, name: string) {
 test('first launch: welcome → create → shell, then straight into the shell', async ({ page }) => {
 	await page.goto('/');
 	await expect(page).toHaveURL(/\/welcome$/);
-	await expect(page.getByRole('heading', { name: 'Welcome to agentic.org' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Welcome to Agentic Org' })).toBeVisible();
 	await expect(page.getByTestId('organization-row')).toHaveCount(2);
 	await shot(page, 'welcome');
 

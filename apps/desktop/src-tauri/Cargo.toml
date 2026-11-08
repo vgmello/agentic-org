@@ -1,6 +1,6 @@
 [package]
 name = "agentic-org"
-description = "agentic.org: the desktop client for an AI organization's office servers"
+description = "Agentic Org: the desktop client for an AI organization's office servers"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -16,6 +16,6 @@ tauri-build = { version = "=2.7.4", features = [] }
 
 [dependencies]
 org-proto = { path = "../../../crates/org-proto" }
-tauri = { version = "=2.12.5", features = [] }
+tauri = { version = "=2.12.5", features = ["tray-icon", "image-png"] }
 serde.workspace = true
 serde_json.workspace = true
