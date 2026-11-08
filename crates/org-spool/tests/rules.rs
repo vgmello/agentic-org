@@ -1580,6 +1580,16 @@ fn rule_an_ask_that_expired_before_delivery_still_reaches_a_person() {
     // An agent's still goes to dead/, as before.
     let reason = fs::read_to_string(t.dir.join(format!("spool/dead/{to_agent}.reason"))).unwrap();
     assert!(reason.starts_with("expired:"), "{reason}");
+    // Only asks: an expired plain message (another writer may set expires_at) to a person
+    // is still dead-lettered.
+    let mut msg = Envelope::new_msg(PEER, "pat", None, "b", BTreeMap::new()).unwrap();
+    msg.expires_at = Some("2000-01-01T00:00:00.000Z".into());
+    t.spool.enqueue(&msg).unwrap();
+    assert_eq!(t.spool.deliver_all().unwrap().dead, 1);
+    assert!(t
+        .dir
+        .join(format!("spool/dead/{}.reason", msg.id))
+        .is_file());
 }
 
 #[test]

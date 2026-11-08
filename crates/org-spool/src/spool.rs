@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
-use crate::envelope::{validate_agent_id, Envelope, MAX_ENVELOPE_BYTES};
+use crate::envelope::{validate_agent_id, Envelope, MessageKind, MAX_ENVELOPE_BYTES};
 use crate::safe_read::{create_new_nofollow, is_permanent_file_error, read_spool_file, SpoolFile};
 use crate::time::{check_wait_timeout, format_iso8601_utc};
 use crate::ulid::{generate_ulid, is_valid_ulid};
@@ -603,7 +603,9 @@ impl Spool {
         let now_iso = format_iso8601_utc(SystemTime::now());
         // An expired ask to a person or the owner is still delivered (it then shows as urgent,
         // "(expired)"): a human must see it even if it expired while the relay was down.
-        if env.is_expired_at(&now_iso) && !self.is_person(&env.to) {
+        if env.is_expired_at(&now_iso)
+            && !(env.kind == MessageKind::Request && self.is_person(&env.to))
+        {
             let exp = env.expires_at.as_deref().unwrap_or("unknown");
             return self.move_to_dead(outbox_file, &env.id, &format!("expired: expires_at={exp}"));
         }

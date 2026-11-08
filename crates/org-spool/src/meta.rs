@@ -806,7 +806,8 @@ impl Spool {
     }
 
     /// Whether `agent` is a person (its profile's kind is `person`) or the owner. A member
-    /// with no profile counts as an agent. Decides whether an expired ask stays urgent.
+    /// with no profile counts as an agent. Decides whether an expired ask stays urgent, and
+    /// whether one that expired before delivery is still delivered.
     pub fn is_person(&self, agent: &str) -> bool {
         let profile = self.load_profile_unlocked(agent);
         // Case-insensitive, like `who --kind`.
