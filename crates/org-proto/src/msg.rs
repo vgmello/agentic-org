@@ -9,6 +9,10 @@
 //!   the office's [`AppToken`] and no member. A connection whose binding presented the token
 //!   (a person, the owner, or app-wide) is **app-bound**. An agent binds by handle or id
 //!   without a token; a person or the owner needs the token.
+//! - Binding fails closed (ADR-0003 §2.1.4, as amended by the agent-sessions design): a
+//!   missing or wrong token, an unknown member, an offboarded agent or one whose status this
+//!   office can't read, and a lookup that fails are all `not_authorized`. A paused agent may
+//!   still bind: it keeps reading and answering its messages.
 //! - Each `msg.bind` replaces the connection's previous binding and is checked only on its
 //!   own params: an earlier binding grants nothing. A failed `msg.bind` leaves the connection
 //!   unbound. Any re-bind, failed or not, ends the previous binding's held `msg.wait` and
@@ -374,14 +378,20 @@ impl fmt::Debug for MetaSize<'_> {
 /// The desktop app may bind app-wide, with `app_token` and no `member`; that binding may call
 /// only `who`, `msg.list`, `msg.get`, `msg.threads` and `msg.human_needs_you`.
 ///
+/// It fails closed: every missing or wrong credential, and every member it can't bind, is
+/// `not_authorized`. A [`Paused`](crate::org::AgentStatus::Paused) agent may still bind;
+/// an [`Offboarded`](crate::org::AgentStatus::Offboarded) agent, or one whose status is
+/// [`Unknown`](crate::org::AgentStatus::Unknown), may not.
+///
 /// Each call replaces the previous binding and is checked only on its own params. A failed
 /// call leaves the connection unbound. Any re-bind, failed or not, ends the previous
 /// binding's held `msg.wait` and `msg.ask` calls with `not_bound`.
 ///
-/// Errors: `invalid_request` (a person or the owner without `app_token`, an agent with
-/// `app_token`, `office`, or neither `member` nor `app_token`), `not_authorized` (a wrong
-/// `app_token`), `not_found` (no such member, or an agent not placed in this office),
-/// `too_large` (`member`).
+/// Errors: `not_authorized` (a missing or wrong `app_token` for a person or the owner, a
+/// wrong `app_token` for an app-wide binding, a member that isn't found, an agent not placed
+/// in this office, an offboarded or `Unknown`-status agent, or a lookup that fails),
+/// `invalid_request` (`office`, neither `member` nor `app_token`, or an agent with
+/// `app_token`), `too_large` (`member`).
 pub struct MsgBind;
 
 /// `msg.bind`'s params. Its `Debug` shows no token (see [`AppToken`]), and it isn't `Clone`.
@@ -390,10 +400,12 @@ pub struct MsgBind;
 /// agent-sessions design).
 #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MsgBindParams {
-    /// Who to act as (see [Addressing](self#addressing)); at most [`MAX_HANDLE_BYTES`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Who to act as (see [Addressing](self#addressing)); at most [`MAX_HANDLE_BYTES`]. Also
+    /// read from `agent`, the ADR's name for it.
+    #[serde(default, alias = "agent", skip_serializing_if = "Option::is_none")]
     pub member: Option<String>,
-    /// Required to bind a person or the owner, or to bind app-wide. Refused with an agent.
+    /// Required to bind a person or the owner (`not_authorized` without it), or to bind
+    /// app-wide. Refused with an agent (`invalid_request`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub app_token: Option<AppToken>,
 }
@@ -1393,6 +1405,14 @@ mod tests {
             json!({"member": "ac-software-engineer-remy"}),
         );
         empty_decodes::<MsgBindParams>();
+        // `agent` (the ADR's name) is read as `member`; `member` is what's written.
+        assert_eq!(
+            serde_json::from_value::<MsgBindParams>(json!({"agent": "x"})).unwrap(),
+            MsgBindParams {
+                member: Some("x".into()),
+                app_token: None,
+            }
+        );
         check(
             &MsgBindResult {
                 member_id: Some("01M6WB".into()),
