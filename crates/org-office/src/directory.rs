@@ -77,6 +77,13 @@ fn handle_key(member: &Member) -> Option<String> {
     }
 }
 
+/// An addressing input without the ASCII whitespace around it (space, tab, newline, form feed,
+/// carriage return): every address (`who`, `msg.bind`'s member, a recipient) is trimmed so, and
+/// only so, before it is looked up. Other Unicode spaces are part of the text.
+pub fn trim_address(text: &str) -> &str {
+    text.trim_matches(|c: char| c.is_ascii_whitespace())
+}
+
 /// Two members have the same handle: a record that breaks HQ's uniqueness (a replayed or damaged
 /// organization). Callers fail closed rather than pick one.
 #[derive(Debug, PartialEq, Eq)]
@@ -91,7 +98,7 @@ pub fn resolve_member<'a>(
     snapshot: &'a OrgSnapshot,
     id_or_handle: &str,
 ) -> Result<Option<&'a Member>, AmbiguousHandle> {
-    let wanted = id_or_handle.trim();
+    let wanted = trim_address(id_or_handle);
     if wanted.eq_ignore_ascii_case(OWNER_HANDLE) {
         return Ok(snapshot.members.iter().find(|m| m.owner));
     }
@@ -101,7 +108,8 @@ pub fn resolve_member<'a>(
     if let Some(by_id) = snapshot.members.iter().find(|m| m.id == wanted) {
         return Ok(Some(by_id));
     }
-    let key = name_key(wanted);
+    // Compared as stored handles are keyed (lower-cased); `wanted` is already trimmed.
+    let key = wanted.to_lowercase();
     let mut named = snapshot
         .members
         .iter()
@@ -150,7 +158,7 @@ pub fn who(
     if params
         .member
         .as_deref()
-        .is_some_and(|m| m.trim().eq_ignore_ascii_case(OFFICE_HANDLE))
+        .is_some_and(|m| trim_address(m).eq_ignore_ascii_case(OFFICE_HANDLE))
     {
         return Err(ApiError::new(
             ErrorCode::InvalidRequest,
@@ -870,6 +878,10 @@ mod tests {
                 .map(|m| m.id.clone())
         };
         assert_eq!(found(" pixel "), Some(id("PIXEL")));
+        assert_eq!(found("\t\npixel\r\n"), Some(id("PIXEL")));
+        // Only ASCII whitespace is trimmed: a no-break space or an ideographic space is text.
+        assert_eq!(found("\u{a0}pixel"), None);
+        assert_eq!(found("pixel\u{3000}"), None);
         assert_eq!(found(" owner "), Some(id("OWNER")));
         assert_eq!(found(&format!(" {} ", id("ANA"))), Some(id("ANA")));
         assert!(resolve_member(&snapshot, " office ").unwrap().is_none());
