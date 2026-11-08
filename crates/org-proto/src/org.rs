@@ -30,16 +30,17 @@
 //! design, "Dedup window"). A retry with the same `command_id` and the same params gets the stored
 //! answer again, without being validated again, even after the state changed. The same `command_id`
 //! with different params is refused with `invalid_request` ("command id reused with different
-//! params"). The refusals that come before HQ looks at the command itself (`not_authorized`, the
-//! id's format, `expired`, `clock_skew`; see below), and `storage_error` and `unavailable`, are
-//! never kept, so a later retry may succeed. To try again after any other refusal, use a new
+//! params"). The refusals that come before HQ looks at the command itself (`not_authorized`,
+//! params that don't decode, the id's format, `expired`, `clock_skew`; see below), and
+//! `storage_error` and `unavailable`, are never kept, so a later retry may succeed. To try again after any other refusal, use a new
 //! `command_id`.
 //!
 //! ## When several errors apply
 //! A command can break more than one rule at once. The answer is the first that applies, in
 //! this order:
-//! 1. `not_authorized`: the receiving office's check of the connection ("Who may send what"),
-//!    before it queues or forwards the command.
+//! 1. **The receiving office**, before it queues or forwards the command: `not_authorized`
+//!    (its check of the connection, "Who may send what"), then `invalid_request` for params
+//!    that don't decode into the command.
 //! 2. **The stored answer.** HQ looks `command_id` up first: a command it has answered gets
 //!    that answer again (or `invalid_request` for different params, above), even when a check
 //!    below would now refuse it (a stored command's retry 29.5 days on is still answered).
@@ -47,8 +48,8 @@
 //! 4. **Age and skew**, by HQ's clock (it keeps a monotonic high-water mark of it, so a clock
 //!    that steps back can't reopen the window): `expired` when the id is dated more than 29
 //!    days ago, `clock_skew` when it's more than 5 minutes ahead.
-//! 5. **The rules**: `not_found`, `invalid_request` (unreadable, outside a limit, the wrong
-//!    kind of member or the wrong state, a value that makes no sense), `invalid_name`,
+//! 5. **The rules**: `not_found`, `invalid_request` (outside a limit, the wrong kind of member
+//!    or the wrong state, a value that makes no sense), `invalid_name`,
 //!    `conflict` (a stale `expected_version`), `already_exists`.
 //!
 //! Every command below checks in this one order (its `Errors:` list names the codes it can return,
@@ -493,14 +494,16 @@ pub const RESERVED_BRANCH_PREFIXES: &[&str] = &["task/", "docs/", "merged/", "ar
 /// Whether `name` starts with one of [`RESERVED_BRANCH_PREFIXES`], so it can't be a project's
 /// `integration_branch`: `project.create` and `project.update` refuse it with
 /// `invalid_request` (docs/design/processes.md, "Project rule"). The one rule the office and
-/// the app's mocks share.
+/// the app's mocks are to share.
 ///
 /// Stricter than a plain prefix test, so a spelling git would resolve to the same branch isn't
-/// a way around it: a leading `refs/heads/` or `heads/` is looked through, and the prefix is
+/// a way around it: one leading `refs/heads/` or `heads/` is looked through, and the prefix is
 /// compared ignoring ASCII case (refs can live on a case-insensitive file system).
 pub fn has_reserved_branch_prefix(name: &str) -> bool {
-    let name = name.strip_prefix("refs/").unwrap_or(name);
-    let name = name.strip_prefix("heads/").unwrap_or(name);
+    let name = name
+        .strip_prefix("refs/heads/")
+        .or_else(|| name.strip_prefix("heads/"))
+        .unwrap_or(name);
     RESERVED_BRANCH_PREFIXES.iter().any(|prefix| {
         name.len() >= prefix.len()
             && name.is_char_boundary(prefix.len())
@@ -537,7 +540,7 @@ pub struct Project {
     /// The project's integration branch: task branches start from it, the office reads the
     /// project's instruction files, guidance files and processes from it (and the Docs tab its
     /// docs), and a task branch counts as merged once its work is reachable from it
-    /// (docs/design/processes.md, A56 and A57). Absent: the repository's default branch.
+    /// (docs/design/processes.md, A56 to A58). Absent: the repository's default branch.
     /// Never starts with a reserved prefix ([`has_reserved_branch_prefix`]): `project.create`
     /// and `project.update` refuse one with `invalid_request`.
     #[serde(default, skip_serializing_if = "Option::is_none")]

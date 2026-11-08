@@ -1880,6 +1880,7 @@ fn an_integration_branch_may_not_start_with_a_prefix_the_office_owns() {
         "my-task/x",
         "feature/task/x",
         "refs/heads/main",
+        "refs/task/x",
         "",
         "é/task/",
     ] {
