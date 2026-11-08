@@ -2,8 +2,9 @@
 // what HQ validates. The TEMPORARY browser mock uses it so the UI can be built and tested without the app;
 // the Rust shell's mock HQ (src-tauri/src/org_engine.rs) follows the same rules, and test-vectors/org-commands.json
 // is run against both. The real HQ is the authority. Pure: it returns a new snapshot, or throws the same
-// error codes HQ would, in the contract's order: not_found, invalid_request, invalid_name, conflict, then the
-// command's own rule (owner_protected, cycle, not_a_member, not_empty), then already_exists.
+// error codes HQ would, in the contract's order: not_found, invalid_request, invalid_name, then the command's own rule
+// (owner_protected, cycle, not_a_member, not_empty), conflict, then already_exists: a permanent refusal is never hidden
+// behind a stale version.
 import type { ApiErrorCode, AppError, Member, Membership, OrgSnapshot, ProjectTeam, Team } from '$lib/proto';
 import { trimWhiteSpace, validateName } from '$lib/name';
 import { withoutNulls, type OrgCommand } from './commands';
@@ -132,9 +133,9 @@ function apply(s: OrgSnapshot, c: OrgCommand): OrgSnapshot {
 			const p = c.params;
 			const t = team(s, p.team_id);
 			if (p.owner_team_id !== undefined) team(s, p.owner_team_id);
-			fresh(t, p.expected_version, t.name);
 			if (p.owner_team_id !== undefined && (p.owner_team_id === t.id || teamsBelow(s, t.id).has(p.owner_team_id)))
 				fail('cycle', `${t.name} can't go under itself or a team below it.`);
+			fresh(t, p.expected_version, t.name);
 			if (siblingTaken(s, p.owner_team_id, t.name, t.id)) fail('already_exists', `There's already a team called ${t.name} there.`);
 			const moved = bump(p.owner_team_id !== undefined ? { ...t, owner_team_id: p.owner_team_id } : (without(t, 'owner_team_id') as Team));
 			return { ...s, teams: replace(s.teams, moved) };
@@ -144,17 +145,17 @@ function apply(s: OrgSnapshot, c: OrgCommand): OrgSnapshot {
 			const t = team(s, p.team_id);
 			const m = p.lead_member_id !== undefined ? member(s, p.lead_member_id) : undefined;
 			if (m && isOffboarded(m)) fail('invalid_request', `${m.name} has left the organization.`);
-			fresh(t, p.expected_version, t.name);
 			if (m?.owner) fail('owner_protected', "The owner can't lead a team.");
 			if (m && !s.memberships.some((x) => x.team_id === t.id && x.member_id === m.id)) fail('not_a_member', `${m.name} isn't in ${t.name}.`);
+			fresh(t, p.expected_version, t.name);
 			const led = bump(m ? { ...t, lead_member_id: m.id } : (without(t, 'lead_member_id') as Team));
 			return { ...s, teams: replace(s.teams, led) };
 		}
 		case 'team.delete': {
 			const p = c.params;
 			const t = team(s, p.team_id);
-			fresh(t, p.expected_version, t.name);
 			if (s.teams.some((x) => x.owner_team_id === t.id)) fail('not_empty', `${t.name} still has teams under it.`);
+			fresh(t, p.expected_version, t.name);
 			return {
 				...s,
 				teams: s.teams.filter((x) => x.id !== t.id),
@@ -213,8 +214,8 @@ function apply(s: OrgSnapshot, c: OrgCommand): OrgSnapshot {
 			const p = c.params;
 			const m = member(s, p.member_id);
 			if (isOffboarded(m)) fail('invalid_request', 'An agent who has left stays on record.');
-			fresh(m, p.expected_version, m.name);
 			if (m.owner) fail('owner_protected', "The owner can't be removed.");
+			fresh(m, p.expected_version, m.name);
 			// Whoever reported to them now reports to their own manager, or to the owner if they had none.
 			const members = s.members
 				.filter((x) => x.id !== m.id)
@@ -232,9 +233,9 @@ function apply(s: OrgSnapshot, c: OrgCommand): OrgSnapshot {
 			const m = member(s, p.member_id);
 			const boss = p.reports_to_member_id !== undefined ? member(s, p.reports_to_member_id) : undefined;
 			if (isOffboarded(m) || (boss && isOffboarded(boss))) fail('invalid_request', "Someone who has left can't be given a manager or be one.");
-			fresh(m, p.expected_version, m.name);
 			if (m.owner) fail('owner_protected', 'The owner reports to no one.');
 			if (boss && (boss.id === m.id || reportsBelow(s, m.id).has(boss.id))) fail('cycle', `${boss.name} reports to ${m.name}, directly or through others.`);
+			fresh(m, p.expected_version, m.name);
 			const to = boss && !boss.owner ? boss.id : undefined; // the owner's own id is stored as empty
 			const updated = bump(to ? { ...m, reports_to_member_id: to } : (without(m, 'reports_to_member_id') as Member));
 			return { ...s, members: replace(s.members, updated) };
