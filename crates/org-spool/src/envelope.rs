@@ -130,8 +130,8 @@ impl Envelope {
 
     /// [`Envelope::effective_priority`] as of `now_iso`, for a recipient that is a person (or
     /// the owner) or not. An expired request to an agent counts as normal; one to a person
-    /// keeps its priority (as in `org_proto::msg`: an ask to a person past its deadline stays
-    /// in "Needs you", urgent).
+    /// keeps its priority (ADR-0003 §2.5.4: an ask to a person past its deadline stays in
+    /// "Needs you", urgent).
     pub fn priority_at(&self, now_iso: &str, recipient_is_person: bool) -> MessagePriority {
         if !recipient_is_person && self.is_expired_request_at(now_iso) {
             MessagePriority::Normal
