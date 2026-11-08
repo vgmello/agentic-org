@@ -880,13 +880,15 @@ impl Spool {
                 return Err(SpoolError::Interrupted);
             }
             let triage = self.release_due_snoozes(agent, false)?;
+            let person = urgent_only && self.is_person(agent);
             for env in self.list_inbox(agent, false)? {
                 if let Some(entry) = triage.messages.get(&env.id) {
                     if entry.snoozed_until.is_some() || entry.done_at.is_some() {
                         continue;
                     }
                 }
-                if urgent_only && !env.is_urgent_at(&format_iso8601_utc(SystemTime::now())) {
+                if urgent_only && !env.is_urgent_at(&format_iso8601_utc(SystemTime::now()), person)
+                {
                     continue;
                 }
                 if from_filter.map(|f| env.from == f).unwrap_or(true) {

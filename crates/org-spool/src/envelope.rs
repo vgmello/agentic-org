@@ -123,26 +123,29 @@ impl Envelope {
             )
     }
 
-    /// A request (`ask`) past its `expires_at`: nobody is waiting for the answer any more.
+    /// A request (`ask`) past its `expires_at`: the asker stopped waiting for the answer.
     pub fn is_expired_request_at(&self, now_iso: &str) -> bool {
         self.kind == MessageKind::Request && self.is_expired_at(now_iso)
     }
 
-    /// [`Envelope::effective_priority`] as of `now_iso`: an expired request counts as normal.
-    pub fn priority_at(&self, now_iso: &str) -> MessagePriority {
-        if self.is_expired_request_at(now_iso) {
+    /// [`Envelope::effective_priority`] as of `now_iso`, for a recipient that is a person (or
+    /// the owner) or not. An expired request to an agent counts as normal; one to a person
+    /// keeps its priority (as in `org_proto::msg`: an ask to a person past its deadline stays
+    /// in "Needs you", urgent).
+    pub fn priority_at(&self, now_iso: &str, recipient_is_person: bool) -> MessagePriority {
+        if !recipient_is_person && self.is_expired_request_at(now_iso) {
             MessagePriority::Normal
         } else {
             self.effective_priority()
         }
     }
 
-    /// [`Envelope::is_urgent`] as of `now_iso`: an expired request is no longer urgent (it
-    /// stays in the inbox as a normal message). Used by notify, due, inbox and
-    /// `wait --urgent-only`.
-    pub fn is_urgent_at(&self, now_iso: &str) -> bool {
+    /// [`Envelope::is_urgent`] as of `now_iso` (see [`Envelope::priority_at`]): an expired
+    /// request is no longer urgent for an agent (it stays in the inbox as a normal message),
+    /// but still is for a person. Used by notify, due, inbox and `wait --urgent-only`.
+    pub fn is_urgent_at(&self, now_iso: &str, recipient_is_person: bool) -> bool {
         matches!(
-            self.priority_at(now_iso),
+            self.priority_at(now_iso, recipient_is_person),
             MessagePriority::High | MessagePriority::Urgent
         )
     }

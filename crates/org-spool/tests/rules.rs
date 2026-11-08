@@ -1419,8 +1419,8 @@ fn rule_reading_while_a_defer_moves_the_file_never_reports_not_found() {
 }
 
 #[test]
-fn rule_an_ask_is_no_longer_urgent_once_it_expires() {
-    // Nobody waits for the answer any more: it stays in the inbox, as a normal message.
+fn rule_an_ask_to_an_agent_is_no_longer_urgent_once_it_expires() {
+    // The asker stopped waiting: for an agent it stays in the inbox, as a normal message.
     let mut env = Envelope::new_request(
         PEER,
         ME,
@@ -1431,12 +1431,15 @@ fn rule_an_ask_is_no_longer_urgent_once_it_expires() {
     )
     .unwrap();
     let now = format_iso8601_utc(SystemTime::now());
-    assert!(env.is_urgent_at(&now));
-    assert_eq!(env.priority_at(&now), MessagePriority::Urgent);
+    assert!(env.is_urgent_at(&now, false));
+    assert_eq!(env.priority_at(&now, false), MessagePriority::Urgent);
     env.expires_at = Some("2000-01-01T00:00:00.000Z".into());
-    assert!(!env.is_urgent_at(&now));
-    assert_eq!(env.priority_at(&now), MessagePriority::Normal);
+    assert!(!env.is_urgent_at(&now, false));
+    assert_eq!(env.priority_at(&now, false), MessagePriority::Normal);
     assert!(env.is_expired_request_at(&now));
+    // For a person (or the owner) it stays urgent, with its own priority.
+    assert!(env.is_urgent_at(&now, true));
+    assert_eq!(env.priority_at(&now, true), MessagePriority::Urgent);
 
     // In notify: not urgent, still listed at the break, marked in the text only.
     let t = TempSpool::new("expired_ask");
@@ -1479,6 +1482,57 @@ fn rule_an_ask_is_no_longer_urgent_once_it_expires() {
         "JSON shape unchanged"
     );
     assert!(!t.spool.list_inbox_items(ME, false, true, None).unwrap()[0].urgent);
+}
+
+#[test]
+fn rule_an_expired_ask_to_a_person_or_the_owner_stays_urgent() {
+    for (recipient, make_person) in [("pat", true), (org_spool::OWNER_ID, false)] {
+        let t = TempSpool::new("expired_person");
+        t.spool.register(recipient).unwrap();
+        if make_person {
+            let mut profile = MemberProfile::default_for(recipient);
+            profile.kind = "person".into();
+            t.spool.set_profile(&profile).unwrap();
+        }
+        assert!(t.spool.is_person(recipient));
+        let mut ask = Envelope::new_request(
+            PEER,
+            recipient,
+            Some("q".into()),
+            "q",
+            BTreeMap::new(),
+            Duration::from_secs(60),
+        )
+        .unwrap();
+        ask.set_priority(MessagePriority::High);
+        t.spool.enqueue(&ask).unwrap();
+        t.spool.deliver_all().unwrap();
+        ask.expires_at = Some("2000-01-01T00:00:00.000Z".into());
+        fs::write(
+            t.dir
+                .join(format!("spool/inbox/{recipient}/new/{}.json", ask.id)),
+            ask.to_json_bytes().unwrap(),
+        )
+        .unwrap();
+        let report = t.spool.notify(recipient, &opts(None, false, true)).unwrap();
+        assert_eq!(report.count, 1, "{recipient}: urgent-only still sees it");
+        assert!(report.urgent && report.items[0].urgent);
+        assert_eq!(report.items[0].priority, "high", "its own priority");
+        assert!(
+            report.text.contains("[URGENT]") && report.text.contains("[request] (expired) (id: "),
+            "{}",
+            report.text
+        );
+        assert!(
+            t.spool
+                .list_inbox_items(recipient, false, true, None)
+                .unwrap()[0]
+                .urgent
+        );
+    }
+    // No profile at all: an agent.
+    let t = TempSpool::new("expired_noprof");
+    assert!(!t.spool.is_person("nobody"));
 }
 
 #[test]

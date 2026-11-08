@@ -1354,6 +1354,36 @@ fn a_fifo_or_symlink_at_meta_lock_is_a_clear_io_error() {
 }
 
 #[test]
+fn an_expired_unanswered_ask_to_a_person_stays_urgent() {
+    let mut env = setup("expired_person");
+    let p = env.run(ME, &["profile", "set", "--kind", "person"]);
+    assert_eq!(p.code, 0, "{}", p.stderr);
+    env.start_relay();
+    let asked = env.run(PEER, &["msg", "ask", "--to", ME, "--timeout", "1s", "q?"]);
+    assert_eq!(asked.code, 2, "no answer: {}", asked.stderr);
+    env.stop_relay();
+
+    let r = env.run(ME, &["msg", "notify", "--urgent-only"]);
+    assert_eq!(r.code, 11, "still urgent for a person: {}", r.stdout);
+    assert!(r.stdout.contains("- [URGENT] "), "{}", r.stdout);
+    assert!(
+        r.stdout.contains("[request] (expired) (id: "),
+        "{}",
+        r.stdout
+    );
+    let started = Instant::now();
+    let w = env.run(ME, &["msg", "wait", "--urgent-only", "--timeout", "5s"]);
+    assert_eq!(w.code, 0, "{}", w.stderr);
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "returns at once"
+    );
+    let due = json(&env.run(ME, &["msg", "due"]).stdout);
+    assert_eq!(due["items"][0]["urgent"], true);
+    assert_eq!(due["items"][0]["priority"], "urgent");
+}
+
+#[test]
 fn an_expired_unanswered_ask_is_no_longer_urgent() {
     // Regression: an ask stayed urgent forever, so an urgent-only watcher kept waking on it.
     let mut env = setup("expired_ask");

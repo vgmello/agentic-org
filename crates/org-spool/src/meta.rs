@@ -804,6 +804,13 @@ impl Spool {
         Ok(profile)
     }
 
+    /// Whether `agent` is a person (its profile's kind is `person`) or the owner. A member
+    /// with no profile counts as an agent. Decides whether an expired ask stays urgent.
+    pub fn is_person(&self, agent: &str) -> bool {
+        let profile = self.load_profile_unlocked(agent);
+        profile.owner || profile.kind == "person"
+    }
+
     /// Read a member's profile (falling back to default profile if not customized).
     pub fn get_profile(&self, agent: &str) -> Result<MemberProfile, SpoolError> {
         validate_agent_id(agent, "agent").map_err(SpoolError::InvalidInput)?;
@@ -1242,6 +1249,7 @@ impl Spool {
     ) -> Result<Vec<InboxItem>, SpoolError> {
         validate_agent_id(agent, "agent").map_err(SpoolError::InvalidInput)?;
         let now_iso = format_iso8601_utc(SystemTime::now());
+        let person = self.is_person(agent);
         let state = self.release_due_snoozes(agent, false)?;
         let new_envs = self.list_inbox(agent, false)?;
         let mut items = Vec::new();
@@ -1268,8 +1276,8 @@ impl Spool {
                 from: env.from.clone(),
                 to: env.to.clone(),
                 kind: env.kind.as_str().to_string(),
-                priority: env.priority_at(&now_iso).as_str().to_string(),
-                urgent: env.is_urgent_at(&now_iso),
+                priority: env.priority_at(&now_iso, person).as_str().to_string(),
+                urgent: env.is_urgent_at(&now_iso, person),
                 triage_gen: t.triage_gen,
                 status,
                 snoozed_until: t.snoozed_until,
@@ -1302,8 +1310,8 @@ impl Spool {
                             from: env.from.clone(),
                             to: env.to.clone(),
                             kind: env.kind.as_str().to_string(),
-                            priority: env.priority_at(&now_iso).as_str().to_string(),
-                            urgent: env.is_urgent_at(&now_iso),
+                            priority: env.priority_at(&now_iso, person).as_str().to_string(),
+                            urgent: env.is_urgent_at(&now_iso, person),
                             triage_gen: t.triage_gen,
                             status,
                             snoozed_until: t.snoozed_until,
@@ -1350,6 +1358,7 @@ impl Spool {
         if !self.agent_inbox_dir(agent).exists() {
             return Ok(NotifyReport::build(agent, 0, 0, Vec::new()));
         }
+        let person = self.is_person(agent);
 
         let now = SystemTime::now();
         let now_iso = format_iso8601_utc(now);
@@ -1373,7 +1382,7 @@ impl Spool {
                 if entry.is_some_and(|e| e.done_at.is_some() || e.snoozed_until.is_some()) {
                     continue;
                 }
-                let urgent = env.is_urgent_at(&now_iso);
+                let urgent = env.is_urgent_at(&now_iso, person);
                 if opts.urgent_only && !urgent {
                     continue;
                 }
@@ -1417,7 +1426,7 @@ impl Spool {
                         .insert(sess.to_string(), entry.triage_gen);
                     dirty = true;
                 }
-                items.push(self.notify_item(env, &now_iso, triage_gen, reason));
+                items.push(self.notify_item(env, &now_iso, person, triage_gen, reason));
             }
 
             if dirty {
@@ -1435,6 +1444,7 @@ impl Spool {
         &self,
         env: Envelope,
         now_iso: &str,
+        person: bool,
         triage_gen: u64,
         reason: String,
     ) -> NotifyItem {
@@ -1449,8 +1459,8 @@ impl Spool {
                 subject
             },
             kind: env.kind.as_str().to_string(),
-            urgent: env.is_urgent_at(now_iso),
-            priority: env.priority_at(now_iso).as_str().to_string(),
+            urgent: env.is_urgent_at(now_iso, person),
+            priority: env.priority_at(now_iso, person).as_str().to_string(),
             expired: env.is_expired_request_at(now_iso),
             triage_gen,
             created_at: env.created_at,
