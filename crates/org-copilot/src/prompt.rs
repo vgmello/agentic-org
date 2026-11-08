@@ -48,17 +48,22 @@ pub fn escape_json(value: &Value) -> String {
     out
 }
 
+/// The data block's content: the input and the context as one escaped JSON line.
+pub(crate) fn data_json(input: &Value, context: &[ContextItem]) -> String {
+    let items: Vec<Value> = context
+        .iter()
+        .map(|c| json!({ "kind": c.kind, "label": c.label, "text": c.text }))
+        .collect();
+    escape_json(&json!({ "input": input, "context": items }))
+}
+
 /// The full prompt for one run.
 pub fn render(
     feature: &Feature,
     input: &Value,
     context: &[ContextItem],
 ) -> Result<String, RenderError> {
-    let items: Vec<Value> = context
-        .iter()
-        .map(|c| json!({ "kind": c.kind, "label": c.label, "text": c.text }))
-        .collect();
-    let data = escape_json(&json!({ "input": input, "context": items }));
+    let data = data_json(input, context);
     if data.contains(['<', '>', '\n']) {
         return Err(RenderError);
     }

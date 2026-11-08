@@ -9,7 +9,8 @@ use std::time::Duration;
 pub struct Limits {
     /// A run that takes longer is `timeout`, and its answer is thrown away.
     pub timeout: Duration,
-    /// Bytes of input and context together (each field also has its own cap in the feature's schema).
+    /// Bytes of the escaped data block (input and context together, as they go into the prompt).
+    /// Each field also has its own cap, in characters, in the feature's schema.
     pub max_input_bytes: usize,
     /// Bytes of runtime answer.
     pub max_output_bytes: usize,
@@ -21,7 +22,7 @@ impl Default for Limits {
     fn default() -> Self {
         Limits {
             timeout: Duration::from_secs(60),
-            max_input_bytes: 16 * 1024,
+            max_input_bytes: 64 * 1024,
             max_output_bytes: 64 * 1024,
             max_context_items: 8,
         }

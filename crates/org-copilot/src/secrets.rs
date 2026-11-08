@@ -26,6 +26,13 @@ const TOKEN_PREFIXES: &[(&str, usize)] = &[
     ("ghr_", 20),
     ("github_pat_", 20),
     ("sk-", 20),
+    ("sk_live_", 16),
+    ("sk_test_", 16),
+    ("rk_live_", 16),
+    ("glpat-", 16),
+    ("npm_", 30),
+    ("xapp-", 10),
+    ("xoxe", 10),
     ("AKIA", 16),
     ("ASIA", 16),
     ("AIza", 30),
@@ -61,15 +68,32 @@ pub fn text_has_secret(text: &str) -> bool {
             }
         }
     }
-    // A pasted "Authorization: Bearer <token>" header.
+    // A pasted "Authorization: Bearer <token>" header: a long run that holds a digit (plain
+    // words after "Bearer" are not a token).
     for marker in ["Bearer ", "bearer "] {
         for (at, _) in text.match_indices(marker) {
-            if token_run(&text[at + marker.len()..]) >= 20 {
+            let run: String = text[at + marker.len()..]
+                .chars()
+                .take_while(|c| is_token_char(*c))
+                .collect();
+            if run.chars().count() >= 20 && run.chars().any(|c| c.is_ascii_digit()) {
                 return true;
             }
         }
     }
-    longest_hex_run(text) >= HEX_RUN
+    has_jwt(text) || longest_hex_run(text) >= HEX_RUN
+}
+
+/// A JSON web token: `eyJ` (a base64 `{"`), then two more dot-separated parts.
+fn has_jwt(text: &str) -> bool {
+    text.match_indices("eyJ").any(|(at, _)| {
+        let token: String = text[at..]
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+            .collect();
+        let parts: Vec<&str> = token.split('.').collect();
+        parts.len() >= 3 && parts.iter().take(3).all(|p| p.len() >= 10)
+    })
 }
 
 fn longest_hex_run(text: &str) -> usize {

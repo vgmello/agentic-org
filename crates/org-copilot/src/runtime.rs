@@ -52,7 +52,8 @@ pub enum RuntimeError {
 /// return the final message. The service does not trust it: it checks time, size, JSON and
 /// schema again.
 ///
-/// The call blocks; the office calls it from a worker thread.
+/// The call blocks; the office calls it from a worker thread. The crate cannot stop a call that
+/// never returns (and the run keeps the person's slot), so an adapter must honour `timeout` itself.
 pub trait CopilotRuntime {
     /// True when a runtime is set up here. When false, no feature is offered.
     fn available(&self) -> bool;

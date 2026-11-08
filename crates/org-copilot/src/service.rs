@@ -11,7 +11,6 @@ use crate::feature::{Feature, Registry};
 use crate::limits::{Limits, RunGate};
 use crate::prompt;
 use crate::runtime::{CopilotRuntime, RunRequest, RuntimeError, Usage};
-use crate::schema::Violation;
 use crate::secrets::contains_secret;
 
 /// Why a request was refused before any run. Maps to the wire error `invalid_request`.
@@ -38,6 +37,8 @@ pub enum FailReason {
     NotJson,
     /// The answer was JSON, but not the shape the feature asks for.
     SchemaMismatch,
+    /// The answer holds something shaped like a secret.
+    SecretInAnswer,
 }
 
 /// What `draft` can return as an error. The messages are fixed text: they never include the
@@ -100,6 +101,9 @@ impl fmt::Display for CopilotError {
             CopilotError::Failed(FailReason::NotJson) => "the answer wasn't one JSON document",
             CopilotError::Failed(FailReason::SchemaMismatch) => {
                 "the answer didn't match the feature's schema"
+            }
+            CopilotError::Failed(FailReason::SecretInAnswer) => {
+                "the answer looked like it held a secret"
             }
         })
     }
@@ -177,7 +181,9 @@ impl<R: CopilotRuntime> Copilot<R> {
         let feature = self.registry.get(&request.feature);
         let mut record = RunRecord {
             user: user.to_owned(),
-            feature: request.feature.clone(),
+            // A name the registry doesn't know came from the caller and could be anything, so it is
+            // never logged.
+            feature: feature.map_or_else(|| "unknown".to_owned(), |f| f.id().to_owned()),
             version: feature.map_or(0, Feature::version),
             outcome: Outcome::Ok,
             duration: Duration::ZERO,
@@ -225,13 +231,16 @@ impl<R: CopilotRuntime> Copilot<R> {
         };
         let started = Instant::now();
         let outcome = self.runtime.run(&run);
-        // A late answer is thrown away, whatever the adapter did about the deadline.
-        let late = started.elapsed() > self.limits.timeout;
+        // Whatever the adapter did about the deadline, a run that ended after it is a timeout and
+        // its answer is thrown away. (The call blocks: an adapter that never returns is its own
+        // bug, see `CopilotRuntime`.)
+        if started.elapsed() > self.limits.timeout {
+            return Err(CopilotError::Timeout);
+        }
         let output = match outcome {
             Err(RuntimeError::TimedOut) => return Err(CopilotError::Timeout),
             Err(RuntimeError::NotSetUp) => return Err(CopilotError::Unavailable),
             Err(RuntimeError::Failed) => return Err(Failed(FailReason::Runtime)),
-            Ok(_) if late => return Err(CopilotError::Timeout),
             Ok(output) => output,
         };
         record.output_bytes = output.text.len();
@@ -241,9 +250,12 @@ impl<R: CopilotRuntime> Copilot<R> {
         }
         let answer: Value =
             serde_json::from_str(&output.text).map_err(|_| Failed(FailReason::NotJson))?;
-        let violations: Vec<Violation> = feature.output_schema().violations(&answer);
-        if !violations.is_empty() {
+        if !feature.output_schema().violations(&answer).is_empty() {
             return Err(Failed(FailReason::SchemaMismatch));
+        }
+        // Defence in depth: a draft that carries something shaped like a secret is not shown.
+        if contains_secret(&answer) {
+            return Err(Failed(FailReason::SecretInAnswer));
         }
         let notes = answer["notes"]
             .as_array()
@@ -278,13 +290,9 @@ impl<R: CopilotRuntime> Copilot<R> {
         {
             return Err(Invalid(InvalidReason::ContextNotAllowed));
         }
-        let context_bytes: usize = request
-            .context
-            .iter()
-            .map(|c| c.kind.len() + c.label.len() + c.text.len())
-            .sum();
-        // Counting the input's JSON is a fair measure of what the prompt will carry.
-        let input_bytes = request.input.to_string().len() + context_bytes;
+        // The cap is on what goes into the prompt: the escaped data block. Field caps in the
+        // schema are in characters, this outer one in bytes.
+        let input_bytes = prompt::data_json(&request.input, &request.context).len();
         record.input_bytes = input_bytes;
         if input_bytes > self.limits.max_input_bytes {
             return Err(Invalid(InvalidReason::TooLarge));

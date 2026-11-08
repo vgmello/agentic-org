@@ -17,7 +17,7 @@ The first set (the phases below are these three features):
 1. **Drafts only.** A copilot result is a value the app shows in an editable form. Nothing is saved, sent, hired or run until the person presses the normal confirm button. The copilot has no write path into the office.
 2. **Read-only, tool-less runs.** The runtime is started with no tools, no file access, no network and no MCP servers, in an empty temporary directory. If a runtime cannot be started that way, it is not offered as a copilot runtime.
 3. **Inputs are data, never instructions.** Everything that comes from a person or from the workspace (the text, a task's body, a message) is escaped, fenced in one data block, and introduced by a fixed template that says so. Nothing the person types ever becomes part of the template.
-4. **Outputs are validated.** The runtime must answer with one JSON document. It is parsed and checked against the feature's schema before anyone sees it. Anything else is `copilot_failed`. Strings in a result are shown as plain text, never as markup and never run.
+4. **Outputs are validated.** The runtime must answer with one JSON document. It is parsed and checked against the feature's schema before anyone sees it. Anything else is `copilot_failed`, and so is a draft whose required text is only whitespace or that carries something shaped like a secret. Strings in a result are shown as plain text, never as markup and never run.
 5. **No secrets in prompts.** The office adds only what the feature's registry entry names. It never adds environment variables, tokens, keys, file contents or paths. The input is also checked for obvious secret shapes (private keys, access tokens, the 64-hex app token), and a match refuses the run without echoing it.
 6. **It runs in the office server.** Not in the WebView and not in the app's Rust shell. The app asks `copilot.features` and `copilot.draft` like any other call.
 7. **Hidden when it can't work.** With no runtime set up, `copilot.features` is empty and the app hides every smart button. A screen never shows a smart button that will only fail.
@@ -47,7 +47,7 @@ A feature is a registry entry. Nothing else in the system knows what a feature d
 | `draft_schema` | The JSON Schema of the `draft` the runtime must return. |
 | `context` | The kinds of context the office may attach (data, capped). Empty for features 1 and 2. |
 
-The schema dialect is a small subset of JSON Schema (`type`, `properties`, `required`, `additionalProperties`, `items`, `enum`, `minLength`, `maxLength`, `minItems`, `maxItems`, `minimum`, `maximum`), which the crate checks itself. A schema using anything else is rejected when the registry is built. The same documents can be handed to a runtime that has native structured output (`claude -p --json-schema`), but the crate never relies on that: it always validates.
+The schema dialect is a small subset of JSON Schema (`type`, `properties`, `required`, `additionalProperties`, `items`, `enum`, `minLength`, `maxLength`, `minItems`, `maxItems`, `minimum`, `maximum`), which the crate checks itself. A `minLength` of 1 or more also refuses a string of only whitespace.  A schema using anything else is rejected when the registry is built. The same documents can be handed to a runtime that has native structured output (`claude -p --json-schema`), but the crate never relies on that: it always validates.
 
 #### 1. `text.improve` (built in this PR)
 - Input: `{ mode: "draft" | "improve", field: string (<= 80), text: string (<= 8000), instruction?: string (<= 500) }`. `field` is the label of the field ("Task description"), which helps tone.
@@ -75,7 +75,7 @@ pub struct RunRequest { prompt: String, output_schema: Value, timeout: Duration,
 pub struct RunOutput  { text: String, usage: Option<Usage> }   // text = the one JSON document
 pub enum RuntimeError { NotSetUp, TimedOut, Failed }           // no payload: nothing to leak
 ```
-The adapter's duties: run tool-less and read-only (principle 2), enforce the timeout by killing the process, cap the bytes it reads, and return the model's final message. The service does not trust the adapter: it checks the elapsed time itself, the size, the JSON and the schema. The port is synchronous. The office calls it from a worker thread, one blocking call per run.
+The adapter's duties: run tool-less and read-only (principle 2), enforce the timeout by killing the process, cap the bytes it reads, and return the model's final message. The service does not trust the adapter: it checks the elapsed time itself, the size, the JSON and the schema. The port is synchronous. The office calls it from a worker thread, one blocking call per run. The crate cannot stop a call that never returns, and that run keeps the person's slot: an adapter that ignores its timeout is a bug in the adapter, and the office should run the call on a worker it can abandon. A run that ends after the deadline, with an answer or an error, is reported as `timeout`.
 
 ### The contract sketch
 Calls on the office server's socket. **Not added to `org-proto` in this PR**: the shapes live in `org-copilot` and the app's mock, and become `org-proto` types, additive, when the office wires them (ada's review then).
@@ -102,12 +102,12 @@ Bad input uses the existing `invalid_request`: unknown feature, input that break
 ### Limits
 - **One run per person per feature at a time.** A second call gets `copilot_busy` at once (no queue). The slot is freed when the run ends, even on a panic.
 - **60 s timeout** per run (`Limits::timeout`).
-- **Input cap:** each field by its schema, and 16 KiB for the input and context together.
+- **Input cap:** each field by its schema (in characters), and 64 KiB for the escaped data block, which is what goes into the prompt.
 - **Output cap:** 64 KiB read from the runtime.
 - No retries inside the copilot. The person presses the button again.
 
 ### Logging without bodies
-Per run the office logs one record: feature id and version, the user id, outcome (`ok`, `invalid_input`, `busy`, `unavailable`, `timeout`, `failed`), duration, input and output sizes in bytes, and usage. **Never the input, the context, the prompt or the output.** The record type has no field that could hold a body, and the crate's errors carry fixed messages only (a runtime error has no payload at all). Adapters follow the same rule for their stderr.
+Per run the office logs one record: feature id and version (`unknown` for a name the registry doesn't have: caller text is never logged), the user id, outcome (`ok`, `invalid_input`, `busy`, `unavailable`, `timeout`, `failed`), duration, input and output sizes in bytes, and usage. **Never the input, the context, the prompt or the output.** The record type has no field that could hold a body, and the crate's errors carry fixed messages only (a runtime error has no payload at all). Adapters follow the same rule for their stderr.
 
 ### Prompt rendering
 The template is fixed text. The renderer puts the feature's output schema in the `{{schema}}` hole and the data in `{{data}}`:

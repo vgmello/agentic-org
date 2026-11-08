@@ -17,6 +17,8 @@ pub enum Reply {
     Error(RuntimeError),
     /// Wait this long (a real sleep: keep it short in tests), then answer with the text.
     Slow(Duration, String),
+    /// Wait this long, then fail.
+    SlowFail(Duration),
 }
 
 /// Plays its replies in order. With none left, a run fails with [`RuntimeError::Failed`].
@@ -89,6 +91,10 @@ impl CopilotRuntime for FakeRuntime {
             Some(Reply::Slow(wait, text)) => {
                 thread::sleep(wait);
                 text
+            }
+            Some(Reply::SlowFail(wait)) => {
+                thread::sleep(wait);
+                return Err(RuntimeError::Failed);
             }
         };
         Ok(RunOutput {

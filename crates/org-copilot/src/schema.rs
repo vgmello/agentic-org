@@ -2,7 +2,8 @@
 //!
 //! It supports only what the registry needs: `type`, `enum`, `description` (ignored), and per type
 //! `properties` / `required` / `additionalProperties`, `items` / `minItems` / `maxItems`,
-//! `minLength` / `maxLength`, `minimum` / `maximum`. A schema that uses anything else, or that
+//! `minLength` / `maxLength`, `minimum` / `maximum`. One twist: a `minLength` of 1 or more also
+//! refuses a string that is only whitespace, because a draft that looks empty is empty. A schema that uses anything else, or that
 //! leaves an object open (no `additionalProperties: false`), is refused when it is compiled.
 //! A violation names the path and the rule, never the value: values can be a person's text.
 
@@ -222,7 +223,11 @@ fn visit(schema: &Value, value: &Value, path: &mut String, found: &mut Vec<Viola
     match value {
         Value::String(s) => {
             let chars = s.chars().count() as u64;
-            if schema["minLength"].as_u64().is_some_and(|m| chars < m) {
+            let blank = s.trim().is_empty();
+            if schema["minLength"]
+                .as_u64()
+                .is_some_and(|m| chars < m || (m > 0 && blank))
+            {
                 add(found, path, "minLength");
             }
             if schema["maxLength"].as_u64().is_some_and(|m| chars > m) {
