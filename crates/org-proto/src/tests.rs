@@ -1737,3 +1737,92 @@ fn a_schedule_missing_a_field_still_reads_so_a_newer_writer_cannot_break_older_r
         })
     );
 }
+
+#[test]
+fn reserved_handle_words_and_address_shapes() {
+    assert_eq!(OFFICE_HANDLE, "office");
+    assert_eq!(RUN_HANDLE_PREFIX, "run:");
+    // A `run:` prefix, any case, after trimming.
+    for bad in ["run:1", "RUN:x", "Run:", " run:abc ", "rUn:0123456789"] {
+        assert!(is_shaped_like_an_address(bad), "{bad}");
+    }
+    // A ULID: exactly 26 Crockford base32 characters, either case.
+    for bad in [
+        "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "01arz3ndektsv4rrffq69g5fav",
+        " 01ARZ3NDEKTSV4RRFFQ69G5FAV ",
+        // A lenient ULID decoder reads I, L, O and U too: any 26 letters and digits count.
+        "01ARZ3NDEKTSV4RRFFQ69G5FAI",
+        "01ARZ3NDEKTSV4RRFFQ69G5FAL",
+        "01arz3ndektsv4rrffq69g5fao",
+        "UUUUUUUUUUUUUUUUUUUUUUUUUU",
+        "remyremyremyremyremyremyre",
+    ] {
+        assert!(is_shaped_like_an_address(bad), "{bad}");
+    }
+    // Not addresses: a run word without the colon, wrong length, letters Crockford lacks
+    // (I, L, O, U), punctuation, or non-ASCII where a prefix would end.
+    for fine in [
+        "run",
+        "runner:1",
+        "Ana",
+        "pixel",
+        "owner",
+        "01ARZ3NDEKTSV4RRFFQ69G5FA",
+        "01ARZ3NDEKTSV4RRFFQ69G5FAVV",
+        "01ARZ3NDEKTSV4RRFFQ69G5F-V",
+        "rün:1",
+        "ab€c",
+        "a€bc",
+        "ru€:",
+        "😀run:",
+        "",
+    ] {
+        assert!(!is_shaped_like_an_address(fine), "{fine}");
+    }
+}
+
+#[test]
+fn client_made_ids_are_short_and_plain() {
+    assert_eq!(ID_MAX_CHARS, 64);
+    for good in [
+        "a",
+        "t1",
+        "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "ms-ann_2",
+        &"x".repeat(64),
+    ] {
+        assert!(is_valid_id(good), "{good}");
+    }
+    for bad in ["", " ", "a b", "a.b", "a/b", "é", "a\n", &"x".repeat(65)] {
+        assert!(!is_valid_id(bad), "{bad:?}");
+    }
+}
+
+#[test]
+fn member_ids_are_26_letters_and_digits_and_no_handle_has_that_shape() {
+    assert_eq!(MEMBER_ID_CHARS, 26);
+    for good in [
+        "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "01arz3ndektsv4rrffq69g5fav",
+        "00000000000000000000000000",
+    ] {
+        assert!(is_valid_member_id(good), "{good}");
+        assert!(
+            is_shaped_like_an_address(good),
+            "an id must never be a handle: {good}"
+        );
+    }
+    for bad in [
+        "",
+        "remy",
+        "ann",
+        "01ARZ3NDEKTSV4RRFFQ69G5FA",
+        "01ARZ3NDEKTSV4RRFFQ69G5FAVV",
+        "01ARZ3NDEKTSV4RRFFQ69G5F-V",
+        "01ARZ3NDEKTSV4RRFFQ69G5FAé",
+        " 01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    ] {
+        assert!(!is_valid_member_id(bad), "{bad:?}");
+    }
+}
