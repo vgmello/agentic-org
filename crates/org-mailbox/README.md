@@ -17,6 +17,8 @@ What slice 1 does:
   receives, computes the canonical `content_hash` (ADR §3.4) and commits with this office's
   origin. The store allocates `local_seq` and `origin_seq` from one local counter. A retry with
   the same id and content returns the first result. Send never creates an expiring message.
+- Sending to an agent placed in another office is `unavailable`: cross-office routing isn't
+  in slice 1.
 - **inbox** lists headers newest first by `local_seq`, unread only unless `include_all`.
 - **read** claims a message once (the named one, or the oldest unread) and marks it read.
 - **wait** follows ADR §2.2: register, then check, then block. A commit between the check and
@@ -55,8 +57,10 @@ After each commit, and after each claim this call made, the Mailbox calls `Messa
 
 The `testkit` feature exports `InMemoryStore` (delivery port only), `InMemoryDirectory`, a
 standard fixture (`testkit::fixture`) and the generic conformance suite
-(`testkit::conformance`): store, directory and Mailbox cases over any backend. To run it
-against another backend:
+(`testkit::conformance`): store, directory and Mailbox cases over any backend. The backend
+seeds the fixture's members raw: one agent's handle is deliberately shaped like another
+member's id (HQ would refuse it) to pin that an exact id beats a handle. To run it against
+another backend:
 
 ```rust
 fn open(members: &[Member], position: Position) -> (MyStore, MyDirectory) { /* fresh, seeded */ }

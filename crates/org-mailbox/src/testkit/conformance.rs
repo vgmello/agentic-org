@@ -1397,7 +1397,9 @@ macro_rules! __mailbox_conformance_cases {
 
 /// Generates one `#[test]` per conformance case, each opening a fresh backend with
 /// `$open`, any `Fn(&[Member], Position) -> (impl MessageStore, impl MemberDirectory)`
-/// (both `Send + Sync + 'static`). Needs the `testkit` feature.
+/// (both `Send + Sync + 'static`). Needs the `testkit` feature. The backend seeds
+/// `testkit::fixture::members()` raw: the fixture holds a handle shaped like an id, which
+/// HQ's validated commands would refuse.
 ///
 /// ```ignore
 /// mod conformance {

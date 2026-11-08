@@ -240,7 +240,9 @@ impl Mailbox {
         if let Some(stored) = &stored {
             let header = &stored.message.header;
             // The store stamps read_at with this call's time only when it made the claim;
-            // an already read message keeps its earlier read_at and publishes nothing.
+            // an already read message keeps its earlier read_at and publishes nothing. (A
+            // re-read in the same millisecond as the claim may publish a duplicate
+            // state_changed event; events are idempotent state, so that is harmless.)
             if header.state == MessageLifecycleState::Read
                 && header.read_at.as_deref() == Some(now.as_str())
             {

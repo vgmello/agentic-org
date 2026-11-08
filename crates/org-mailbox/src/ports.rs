@@ -46,7 +46,8 @@ pub trait MessageStore {
     fn commit_message(&self, msg: NewStoredMessage) -> Result<CommitMessageOutcome, StoreError>;
     /// Atomically claim and mark read `id`, or with no `id` the oldest unsnoozed unread
     /// message, for `to_member_id`. `None` when `id` isn't addressed to the member, or with
-    /// no `id` when nothing is unread. An already read `id` comes back unchanged. Concurrent
+    /// no `id` when nothing is unread. The claim sets `read_at` to exactly `now_utc`; an
+    /// already read `id` comes back unchanged, keeping its earlier `read_at`. Concurrent
     /// claims of one message succeed once.
     fn claim_read(
         &self,

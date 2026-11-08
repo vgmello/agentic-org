@@ -36,7 +36,9 @@ pub const ODD_HANDLE: &str = "odd";
 /// An active agent placed in another office (cross-office routing is out of slice 1).
 pub const FAR_ID: &str = "01JCMFAR000000000000000000";
 pub const FAR_HANDLE: &str = "far";
-/// An agent whose handle is spelled like Pat's id: Pat's exact id must still win.
+/// An agent whose handle is spelled like Pat's id: Pat's exact id must still win. HQ refuses
+/// an address-shaped handle (`invalid_name`), so a backend must seed [`members`] raw, not
+/// through org-proto's validated commands.
 pub const SHADOW_ID: &str = "01JCMSHADOW000000000000000";
 
 /// 2026-11-08T12:00:00.000Z, the suite's wall clock.
