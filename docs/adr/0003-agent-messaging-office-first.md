@@ -183,19 +183,22 @@ To keep `inbox`, `notify`, `wait`, `read --next`, and UI thread views sub-millis
 
 ### 2. Local Delivery, Authentication & Authorization, Triage & Snooze, Directory & Presence, and CLI Surface (`org-agent`)
 
-#### 2.1 How `org-agent` Finds Its Office and Authenticates (`office.json`, `<handle>.sock`, Keychain `app_token`, and Call Authorization)
+#### 2.1 How `org-agent` Finds Its Office and Authenticates (`office.json`, `<handle>.sock`, `app_token`, and Call Authorization)
 
 1. Each office on a Mac owns `<office_home>/offices/<office_id>/office.json` and, while running, listens on `<office_home>/run/<handle>.sock` (`org_proto::location::office_socket_path`).
 2. When an agent runs in an office, `ORG_OFFICE=<office_id>` and `ORG_AGENT=<member_id_or_name>` identify its office and member identity.
 3. `org-agent` resolves its target `office_id` deterministically (never guessing from which `.sock` files happen to be open in `run/`):
    - If `--office <id>` or `$ORG_OFFICE` is set, it uses that `office_id`.
-   - Otherwise, it scans `<office_home>/offices/*/office.json`: if there is **exactly one** office directory on this Mac, it uses that `office_id`; if there are zero or multiple offices on this Mac, it exits `1` with a clear message instructing the caller to set `ORG_OFFICE` or pass `--office`.
+   - Otherwise, it scans `<office_home>/offices/*/office.json` (read through `org-office-launch`) and ignores any folder without an `office.json`: that is an unfinished create, which the host never starts and removes ([`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md)). If **exactly one** office on this Mac has an `office.json`, it uses that `office_id`; if zero or multiple do, it exits `1` with a clear message instructing the caller to set `ORG_OFFICE` or pass `--office`.
 4. **Authentication, Accepted Risks, and Call-by-Call Authorization (`H1a`, `H1b`, `M-A`, `M-B`):**
-   - **Human / App Capability (`app_token` in macOS Keychain + `SecCode` peer check, never a file on disk):**
+   - **Human / App Capability (`app_token` in the host's memory + `SecCode` peer check, never on disk):**
+     - (amended 2026-11-08: ephemeral app_token, ada)
      - Because agents run under the same macOS user account as the owner ([`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md)), a mode-`0600` token file on disk could be read by an agent to forge human replies.
-     - Therefore, the per-office **`app_token`** (256-bit random secret) is stored **only in the macOS Keychain** with its Keychain access control list restricted to the code-signed `org-office-host` and desktop app binaries (the same code-signature-bound Keychain protection used by [ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md) for the database keys) — **never written to a file on disk**.
-     - **How `org-office-server` receives `app_token` (`R3`):** When `org-office-host` spawns `org-office-server`, it reads `app_token` from the Keychain and passes it over the one-shot **startup stdin pipe** ([`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md) — never via `argv`, environment variables, or disk files, and never inherited by any child process). It does this on every start, both `--create` and an existing office, and `app_token` is never logged. The SQLCipher database key never travels over the pipe: the server creates and keeps its own key ([ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md)), and the host never sees it.
-     - **Peer code-signature check on `host.sock` (`R3`):** When the desktop app requests `app_token` from `org-office-host` over `host.sock`, `org-office-host` verifies the connecting peer's kernel `audit_token_t` (`LOCAL_PEERTOKEN`) via `SecCodeCopyGuestWithAttributes` + `SecCodeCheckValidityWithErrors` against the designated requirement `identifier "com.agentic-org.desktop" and anchor apple generic and certificate leaf[subject.OU] = "<TEAM_ID>"` before returning the token.
+     - Therefore, the per-office **`app_token`** (256-bit random secret) is **ephemeral in phase 1**. `org-office-host` makes a fresh random token for each office every time the host starts and keeps it **only in memory**. It is never written to disk or to the Keychain, so a failed create leaves nothing behind.
+     - A host restart rotates every token. The office servers die with the host ([`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md)), and the desktop app fetches the token again when it reconnects.
+     - How satellites (phase 2+) handle it is decided then.
+     - **How `org-office-server` receives `app_token` (`R3`):** When `org-office-host` spawns `org-office-server`, it passes the office's `app_token` over the **launch pipe** ([`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md)) — never via `argv`, environment variables, or disk files, and never inherited by any child process. The pipe is long-lived and two-way: stdin carries host → server lines (the first one at every start), stdout carries the server's control lines to the host ("created", "ready", "failed"), and the server exits when stdin closes. The host sends the token on every start, both `--create` and an existing office, and `app_token` is never logged. The SQLCipher database key never travels over the pipe: the server creates and keeps its own key ([ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md)), and the host never sees it.
+     - **Peer code-signature check on `host.sock` (`R3`):** When the desktop app requests an office's `app_token` from `org-office-host` over `host.sock` (`office.app_token { office_id }`), `org-office-host` verifies the connecting peer's kernel `audit_token_t` (`LOCAL_PEERTOKEN`) via `SecCodeCopyGuestWithAttributes` + `SecCodeCheckValidityWithErrors` against the designated requirement `identifier "com.agentic-org.desktop" and anchor apple generic and certificate leaf[subject.OU] = "<TEAM_ID>"` before returning the token.
      - Binding as a `Person` or `owner` (`msg.bind { agent: "owner" | "<person_id>", app_token }`), or calling app-only methods, requires a valid `app_token`. Any connection without `app_token` attempting to bind as a `Person` or `owner` is rejected with `ErrorCode::InvalidRequest` ("human binding requires app token").
      - **Residual risk (v1):** An unsandboxed local process that can drive the macOS GUI (Accessibility) or attach to an unsigned dev build of the app could still act through the UI; OS-level sandboxing of agent child processes is deferred to v2.
    - **Agent Identity (Accepted Risk Until Office Runner Spawns Agents, `M-A`):**
@@ -346,7 +349,7 @@ Per [`teams-and-org-chart.md`](../design/teams-and-org-chart.md), agents can mes
 
 1. **HQ Owns All Human Inboxes:**
    - People are not placed in offices (`office_id: None`). **HQ is the owning office for every person's and the owner's inbox** (`office.db` at HQ), because humans interact through the Agentic Org desktop app.
-   - If the desktop app is running on a Mac that only has a satellite office, the satellite proxies human inbox reads, replies, and sends over its connection to HQ (authenticated with the user's Keychain `app_token`).
+   - If the desktop app is running on a Mac that only has a satellite office, the satellite proxies human inbox reads, replies, and sends over its connection to HQ (authenticated with the user's `app_token`; how a satellite gets it is decided in phase 2).
 2. **How Messages Reach a Human in the Desktop App:**
    - **Menu-Bar "Needs you" Rows & Indicator Dot (Eden's UX spec):**
      - When an agent sends an `ask` (`kind == "request"`) or an urgent message (`priority` in `("high", "urgent")`) to the owner (or a person), HQ emits `message.received` (`urgent: true`).
@@ -354,7 +357,7 @@ Per [`teams-and-org-chart.md`](../design/teams-and-org-chart.md), agents can mes
    - **App Inbox & Threads View:**
      - All messages to/from the owner and people (urgent and normal) appear in the app's Inbox view, grouped by thread (`msg.threads` / `msg.list`), where the human can read, reply (`msg.reply`), snooze (`msg.defer`), or mark done (`msg.done`).
 3. **How a Human Replies:**
-   - When the owner (or person) replies in the app, the app authenticates with its Keychain `app_token`, binds as that human member at HQ, and calls `msg.reply`.
+   - When the owner (or person) replies in the app, the app authenticates with HQ's `app_token` (fetched from the host, §2.1), binds as that human member at HQ, and calls `msg.reply`.
    - HQ commits the reply in HQ's `office.db`, transitions the agent's original message to `state = 'read'`, and streams the reply immediately to the asking agent's office (`HQ → satellite`), waking a waiting `msg.ask` or surfacing at the agent's next break.
 4. **What an `ask` to a Human Does While They Are Away (`ttl_ms` vs per-call `wait_ms`):**
    - Humans answer on human timescales (minutes to hours, not milliseconds).
@@ -512,7 +515,7 @@ Per [`teams-and-org-chart.md`](../design/teams-and-org-chart.md) ("Who agents ma
   - `status.set { text?: String, ttl_ms?: u64 } → { status: Option<String>, expires_at: Option<String> }` (`text: None` clears the caller's status line).
 - **Agent & Shared Messaging Calls (handled by `org-mailbox`):**
   - `msg.bind { agent?: String, app_token?: String } → { member_id?: String, office_id: String }`
-    - Resolves `agent` (member ID, unique member name, or `"owner"`; `"office"` is rejected) against `org.db`, requires a valid Keychain `app_token` when binding as a `Person`/`owner` (or for app-wide queries), and binds the connection's acting member.
+    - Resolves `agent` (member ID, unique member name, or `"owner"`; `"office"` is rejected) against `org.db`, requires a valid `app_token` when binding as a `Person`/`owner` (or for app-wide queries), and binds the connection's acting member.
   - `msg.send { id: String, to: String, kind: String, priority?: MessagePriority, subject?: String, body: String, meta?: BTreeMap<String, Value>, reply_to?: String, expires_at?: String, ttl_ms?: u64 } → { id: String, thread_id: String, local_seq: u64, origin_seq: u64 }`
   - `msg.reply { id: String, to_id: String, priority?: MessagePriority, subject?: String, body: String, meta?: BTreeMap<String, Value> } → { id: String, thread_id: String, local_seq: u64, origin_seq: u64 }`
   - `msg.ask { id: String, to: String, priority?: MessagePriority, subject?: String, body: String, meta?: BTreeMap<String, Value>, ttl_ms: u64, wait_ms: u64 } → { reply: Message }`

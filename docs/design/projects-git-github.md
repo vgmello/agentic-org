@@ -9,7 +9,7 @@ Each project is a **git repository on GitHub**. **One GitHub App, "Agentic Org"*
 
 ## What lives where
 - **Organization data** (HQ-owned, copied everywhere): the project record. It holds the project's id, name and team, and **its repository**: `github`, owner, name, numeric id, default branch, private or public. It never holds a token.
-- **HQ-only data** (never copied): the app's **private key** (in HQ's Keychain), the app's installation id, and, if v2's live run picks that path, HQ's own user token for creating repositories (see "Creating repositories").
+- **HQ-only data** (never copied): the app's **private key** (in HQ's Keychain), the app's installation id, and, when the device-flow path is used, HQ's own user token for creating repositories (in HQ's Keychain; see "Creating repositories").
 - **Office data** (each office's own): its clones and worktrees, each project's clone status, and **tokens in memory only**, never written to disk.
 - **On disk:** `<home>/offices/<office-id>/workspace/projects/<project-id>/`
   - `mirror.git` is the **office's own bare mirror**. Only the office runs git in it, and it's the only repository that talks to GitHub.
@@ -95,7 +95,7 @@ Each project is a **git repository on GitHub**. **One GitHub App, "Agentic Org"*
   - Opening a pull request needs the task branch pushed first, through the office.
 - **Residual risk, stated plainly:** agents run as the **same macOS user** as their office.
   - A determined agent could edit the mirror's files directly, or reach the office's memory.
-  - **At HQ, it could reach the app's private key** (and HQ's user token, if repository creation needs one), which can mint any token within the app's permissions, on every repository. That includes pushing to default branches and creating repositories.
+  - **At HQ, it could reach the app's private key** (and HQ's user token, when the device-flow path is used), which can mint any token within the app's permissions, on every repository. That includes pushing to default branches and creating repositories.
   - **With a gh token**, an agent could also update any open pull request's branch from its base (`update-branch`, which writes a merge commit), going around the "own task branch" rule for that kind of write. It still can't merge or push.
 
   The separate mirror, the hardening and the narrow tokens stop accidents and ordinary misuse, not a hostile agent. Real isolation means running agents as a separate macOS user or in a sandbox, planned for v2 (decision 6). Until then, keep HQ's machine and its agents trusted.
@@ -137,12 +137,12 @@ Order: **after the HQ office is serving** (create organization, phase 1), and **
 | Step | What | Who | Depends on |
 | --- | --- | --- | --- |
 | G1 | The contract in `org-proto` and `org-sync-proto`, built against the fake GitHub now and confirmed by G2a in v2 | ada | design approved |
-| G2b | `org-github`, key import with checks and storage in HQ's Keychain, token minting, caching and revocation per office, and the token request from offices, tested against a local fake GitHub | River | G1 |
-| G2c | `org-git`, the mirror and work clones, the worktree per task, `org-agent push` and `gh-token`, tested over HTTP (`git http-backend` behind the fake GitHub, so authentication is exercised; `file://` would skip it). Includes tests with a **hostile `work.git` config** (a credential helper, `insteadOf`, a proxy, filters) and a push to the default branch, all of which must fail to leak or succeed | River | G1, G2b |
+| G2b | `org-github`, key import with checks and storage in HQ's Keychain, token minting, caching and revocation per office, and the token request from offices, tested against a local fake GitHub. Both repository-creation paths (an installation token with `repository_creation`, and the device flow with HQ's user token) are built and tested against the fake GitHub | River | G1 |
+| G2c | `org-git`, the mirror and work clones, the worktree per task, `org-agent push` and `gh-token`, tested over HTTP (`git http-backend` behind the fake GitHub, so authentication is exercised; `file://` would skip it). Includes tests with a **hostile `work.git` config** (a credential helper, `insteadOf`, a proxy, filters) and a push to the default branch, all of which must fail to leak or succeed | River: `org-git` (clones, worktrees, hardened push); agy (`agy-senior-dev`): the `org-agent push` and `gh-token` commands; server-dev: the office-side handlers in `org-office-server` | G1, G2b |
 | G2d | Project commands and events in `org-office` (create with a new or existing repository, list, get, follow), with HQ's repository creation or lookup before the command | server-dev; River's adapters implement `org-office`'s traits | G1, G2b, the HQ event log |
 | G3 | App: Settings → GitHub at HQ (import key, connection status, the installation's repositories, "allow creating repositories" for the device-flow path); Create project (name, team; a new repository, or pick one); the project list with clone status. Built on a mock first | app-frontend-dev | G1 (mock), then G2b–d |
 | G4 | End-to-end test: create an organization → import the key (a fake GitHub in CI; the real-GitHub run is v2) → create a project with a new repository → an agent task gets a worktree, commits, pushes through its office, and opens a pull request with `gh` | River + server-dev + app-frontend-dev | all |
-| G2a | **v2.** A **spike** (about half a day) with the registered app. It confirms: the JWT and **minting a token scoped to one repository and chosen permissions**; git over HTTPS with that token; `gh` with `GH_TOKEN`; creating a private repository under your account with an installation token, or else with HQ's user token (device flow); a new repository showing up in the all-repositories installation. Then the office does a bare clone, a worktree and a push with the hardened commands. Testing against real GitHub moves to v2 (the user, 2026-11-08) | River | you register the app and import its key |
+| G2a | **v2.** A **spike** (about half a day) with the registered app. It confirms: the JWT and **minting a token scoped to one repository and chosen permissions**; git over HTTPS with that token; `gh` with `GH_TOKEN`; creating a private repository under your account with an installation token, or else with HQ's user token (device flow); a new repository showing up in the all-repositories installation. Then the office does a bare clone, a worktree and a push with the hardened commands. Testing against real GitHub moves to v2 (the user, 2026-11-08) | River | the app's key import (the app is already registered) |
 
 Each step: its own branch, an independent review, my go, then a merge into `v1`.
 
