@@ -236,7 +236,7 @@ Every feature status change also commits the doc's front matter on a docs branch
 - Reads are open to every bound member (no row visibility rules for work items in phase 1).
 
 ### 2.3 Ids, idempotency and conflicts
-- **Every write carries `change_id`**, a client-made ULID. The owning office keeps `change_id → (params hash, result)` for 30 days after the ULID's time, failures included except `storage_error`, `unavailable`, `not_bound`, `too_large`, `expired` and `clock_skew` (never stored: a later retry may succeed).
+- **Every write carries `change_id`**, a client-made ULID. The owning office keeps `change_id → (params hash, result)` for 30 days after the ULID's time, failures included except `storage_error`, `unavailable`, `not_bound`, `too_large`, `expired` and `clock_skew` (never stored: a later retry may succeed). (amended 2026-11-08: proto follow-ups) Nor are `not_authorized` and a `change_id` that isn't a ULID, which come before the lookup or the store, as `org-work` does.
   - The params hash is SHA-256 over the method name, the bound member id and the decoded, re-encoded typed params as canonical JSON (object keys sorted, no insignificant whitespace).
   - The app-only check comes first, then the lookup. A retry with the same `change_id` and hash gets the stored result without re-validating. The same `change_id` with another hash is `invalid_request` ("change id reused").
   - The lookup comes **before** the age checks. Then: dated more than 29 days ago, `expired`; more than 5 minutes ahead of the office's clock, `clock_skew`. The office keeps a monotonic high-water mark of its clock (offices design).

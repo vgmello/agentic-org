@@ -27,8 +27,8 @@
 //!   included, except `storage_error`, `unavailable`, `not_bound`, `not_authorized`,
 //!   `too_large`, a `change_id` that isn't a ULID, `expired` and `clock_skew`, which are never
 //!   stored); the same `change_id` with other params is `invalid_request` ("change id
-//!   reused"). A `change_id` dated more than 29 days ago is
-//!   `expired`, more than 5 minutes ahead of the office's clock `clock_skew`.
+//!   reused"). A `change_id` dated more than 29 days ago is `expired`, more than 5 minutes
+//!   ahead of the office's clock `clock_skew`.
 //! - Client-made ids (`item_id`, `step_id`, `link_id`, `comment_id`, `task_id`, …) are ULIDs
 //!   (`invalid_request` otherwise) not already used (`already_exists`).
 //! - **`expected_version`** is required on every call that changes an existing item, except
