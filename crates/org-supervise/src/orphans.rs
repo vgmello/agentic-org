@@ -416,3 +416,22 @@ mod tests {
         assert!(id.start_us > 0);
     }
 }
+#[cfg(test)]
+mod align_probe_tmp {
+    use super::*;
+    #[test]
+    fn align_probe() {
+        let uid = sys::geteuid();
+        let (mut ok, mut bad, mut pads) = (0, 0, std::collections::BTreeMap::new());
+        for pid in sys::list_pids(PidFilter::Uid(uid)).unwrap() {
+            let Ok(a) = sys::procargs(pid) else { continue };
+            if a.len() < 5 { continue; }
+            let end = skip_string(&a, 4);
+            let mut pos = end;
+            while pos < a.len() && a[pos] == 0 { pos += 1; }
+            *pads.entry(pos - end).or_insert(0) += 1;
+            if (pos - 4) % 8 == 0 { ok += 1 } else { bad += 1; eprintln!("unaligned pid {pid} end {end} pos {pos}"); }
+        }
+        eprintln!("aligned8={ok} not={bad} pads={pads:?}");
+    }
+}
