@@ -7,8 +7,9 @@
 //! picks the invented one instead.
 
 use crate::login_item::{LoginService, LoginState};
-use crate::office::{OfficeConnection, SetupError, SetupErrorCode};
+use crate::office::{OfficeConnection, SetupError, SetupErrorCode, StatusSink};
 use crate::org_command::OrgCommand;
+use crate::status_feed;
 use org_client::{Client, ClientError};
 use org_proto::org::{
     AreaCreate, AreaRename, AreaSetLead, AreaSetTeam, MemberAddAgent, MemberAddPerson, MemberMove,
@@ -23,6 +24,7 @@ use org_proto::{
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -532,6 +534,15 @@ impl OfficeConnection for RealOffice {
 
     fn serves_sample_data(&self) -> bool {
         false
+    }
+
+    fn follow_status(&self, sink: StatusSink) {
+        let home = self.home.clone();
+        std::thread::spawn(move || {
+            // The app never stops following: the thread ends with the process.
+            let never = AtomicBool::new(false);
+            status_feed::follow(&home, &never, &*sink);
+        });
     }
 }
 

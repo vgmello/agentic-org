@@ -261,3 +261,20 @@ test('OFC-11: an accepted restart keeps the spinner while the office is still st
 	await expect(sheet.getByTestId('restart-office')).toHaveText('Restarting…');
 	await expect(rows(page).first()).toContainText('Stopped');
 });
+
+test('OFC-11: a status change the host pushes shows at once, without waiting for the next check', async ({ page }) => {
+	await openOffices(page);
+	const hq = rows(page).first();
+	await expect(hq).toContainText('Online');
+	const officeId = (await hq.getAttribute('data-office')) ?? '';
+	const office = { id: officeId, organization_id: officeId.replace('office-', ''), name: 'HQ', role: 'hq', host: 'This Mac' };
+	const push = (update: object) => page.evaluate((u) => (window as unknown as { __mockOfficeStatus: (u: object) => void }).__mockOfficeStatus(u), update);
+	await push({ kind: 'office', office: { ...office, status: 'unavailable', status_reason: 'crashed' } });
+	await expect(hq).toContainText('Stopped');
+	await expect(hq).toContainText('It stopped unexpectedly');
+	await push({ kind: 'office', office: { ...office, organization_id: 'another', status: 'active' } }); // another organization: nothing changes
+	await expect(hq).toContainText('Stopped');
+	await push({ kind: 'offices', offices: [{ ...office, status: 'active' }] }); // the whole list, as after a reconnect
+	await expect(hq).toContainText('Online');
+	await expect(hq).not.toContainText('It stopped unexpectedly');
+});

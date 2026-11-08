@@ -14,6 +14,7 @@ mod org_command;
 mod org_engine;
 mod org_mock;
 mod real;
+mod status_feed;
 pub mod stdio;
 mod tray;
 mod work_engine;
@@ -26,7 +27,7 @@ use org_proto::{ApiError, CommandAccepted, HelloResult, OfficeStatus, OrgSnapsho
 use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 /// What the shell holds for the UI commands.
 struct AppState {
@@ -613,6 +614,11 @@ pub fn run() {
                 std::env::var("AGENTIC_ORG_OFFICE").ok().as_deref(),
                 real::RealOffice::from_env(&data),
             );
+            // Live office status goes to the UI as it changes (the mock has none).
+            let handle = app.handle().clone();
+            office.follow_status(Arc::new(move |update| {
+                let _ = handle.emit("office-status", &update);
+            }));
             app.manage(Arc::new(AppState {
                 office,
                 store: ConnectionStore::new(dir),
