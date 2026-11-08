@@ -67,8 +67,9 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 /// up on a call that is going to succeed.
 pub const CREATE_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// The timeout [`Client::call`] gives a call by default: [`CREATE_TIMEOUT`] for the calls that
-/// create things on the host, [`DEFAULT_TIMEOUT`] for every other. A caller that knows better
+/// The timeout [`Client::call`] gives a call by default: [`CREATE_TIMEOUT`] for
+/// `organization.create` (the one call that is slow by nature), [`DEFAULT_TIMEOUT`] for every
+/// other. A caller that knows better
 /// uses [`Client::call_with_timeout`].
 pub fn default_timeout(method: &str) -> Duration {
     match method {
@@ -527,7 +528,8 @@ impl Client {
         Ok(hello)
     }
 
-    /// `organization.create` (host): creates an organization and starts its HQ office. Check
+    /// `organization.create` (host): creates an organization and starts its HQ office, waiting
+    /// up to [`CREATE_TIMEOUT`] (the host may hold a create while it starts up). Check
     /// the HQ office's `status` in the result: the organization exists even if its server
     /// hasn't started.
     pub fn create_organization(&self, name: &str) -> Result<Organization, ClientError> {
