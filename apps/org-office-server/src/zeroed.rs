@@ -9,6 +9,12 @@ use std::io::{self, BufRead, Read};
 
 const SIZE: usize = 1024;
 
+#[cfg(test)]
+thread_local! {
+    /// How many times a buffer was wiped on this thread (tests count it, to know `Drop` wipes).
+    static WIPES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 pub struct ZeroedReader {
     inner: Option<File>,
     buf: [u8; SIZE],
@@ -35,6 +41,8 @@ impl ZeroedReader {
 
     /// Overwrites the buffer with zeros (volatile writes, so they are not optimized away).
     pub fn wipe(&mut self) {
+        #[cfg(test)]
+        WIPES.with(|w| w.set(w.get() + 1));
         for byte in &mut self.buf {
             // SAFETY: `byte` is a valid, aligned, exclusive reference into the array.
             unsafe { std::ptr::write_volatile(byte, 0) };
@@ -86,10 +94,8 @@ impl Drop for ZeroedReader {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-    use std::mem::ManuallyDrop;
-
     use super::*;
+    use std::io::Write;
 
     fn reader_after_one_line() -> ZeroedReader {
         let mut file = tempfile::tempfile().unwrap();
@@ -130,14 +136,14 @@ mod tests {
     }
 
     #[test]
-    fn dropping_the_reader_wipes_the_buffer() {
-        let mut reader = ManuallyDrop::new(reader_after_one_line());
-        // SAFETY: dropped exactly once, here; the memory stays valid (ManuallyDrop) so the test
-        // can look at what `Drop` left in it.
-        #[allow(unsafe_code)]
-        unsafe {
-            ManuallyDrop::drop(&mut reader);
-        }
-        assert!(reader.buffer_is_zero());
+    fn dropping_the_reader_wipes_its_buffer() {
+        let reader = reader_after_one_line();
+        let before = WIPES.with(std::cell::Cell::get);
+        drop(reader);
+        assert_eq!(
+            WIPES.with(std::cell::Cell::get),
+            before + 1,
+            "Drop did not wipe"
+        );
     }
 }

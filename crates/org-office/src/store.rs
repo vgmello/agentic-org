@@ -1,7 +1,8 @@
 //! The office's storage engine. **The only module that knows SQLite**: it owns the
 //! connections, the encryption, the schema and every SQL statement, and speaks to the rest
 //! of the crate in the plain values of `model` and `OfficeError`. Replacing the engine means
-//! replacing this file; `Office` and its rules don't change.
+//! replacing this file and its submodules (`store/`, e.g. `store/org.rs`, the organization's
+//! tables); `Office` and its rules don't change.
 //!
 //! The database is SQLCipher (encrypted at rest) with exactly one writer: a dedicated
 //! thread owns the only writing connection. It takes every request queued at that moment,
@@ -9,6 +10,8 @@
 //! request), commits once, and only then answers each request. Readers use their own
 //! connections (WAL lets them run beside the writer), so many concurrent callers never see
 //! `SQLITE_BUSY`.
+
+pub(crate) mod org;
 
 use std::any::Any;
 use std::panic::{catch_unwind, AssertUnwindSafe};

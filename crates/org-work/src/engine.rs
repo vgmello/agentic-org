@@ -8,8 +8,8 @@ use std::collections::HashMap;
 
 use org_proto::org::{AgentStatus, MemberKind, Position};
 use org_proto::work::{
-    EventRef, WorkAccepted, WorkChangedData, WorkEvent, WorkEventKind, WorkStatus,
-    WORK_PARAMS_MAX_BYTES,
+    EventRef, ItemKind, LinkKind, WorkAccepted, WorkChangedData, WorkEvent, WorkEventKind,
+    WorkItemSummary, WorkStatus, WORK_PARAMS_MAX_BYTES,
 };
 use org_proto::{ApiError, ErrorCode};
 
@@ -21,7 +21,7 @@ use crate::ids::ulid_time_ms;
 use crate::model::{StoredItem, StoredResult};
 use crate::ports::{Clock, NumberScope, OrgView, StoreError, WorkTxn};
 use crate::time::format_ms;
-use crate::{checklist, feed, items, tasks, undo};
+use crate::{bugs, checklist, feed, items, tasks, undo};
 
 const MINUTE_MS: u64 = 60_000;
 const DAY_MS: u64 = 24 * 60 * MINUTE_MS;
@@ -181,7 +181,7 @@ pub fn execute(
             Ok(TxnOutput::Refused(e))
         }
         Ok(plan) => {
-            let (accepted, changed) = write(&mut ctx, plan, change_id)?;
+            let (accepted, changed) = write(&mut ctx, plan, Some(change_id))?;
             ctx.txn
                 .put_change_result(change_id, &stored(Ok(accepted.clone())))?;
             Ok(TxnOutput::Committed { accepted, changed })
@@ -208,13 +208,43 @@ fn decide(ctx: &mut Ctx, call: &WorkCall) -> Result<Plan, Fail> {
         WorkCall::ChecklistRemove(p) => checklist::remove(ctx, p),
         WorkCall::ChecklistMakeTask(p) => checklist::make_task(ctx, p),
         WorkCall::ChecklistUnlinkTask(p) => checklist::unlink_task(ctx, p),
+        WorkCall::BugReport(p) => bugs::report(ctx, p),
+        WorkCall::BugUpdate(p) => bugs::update(ctx, p),
+        WorkCall::BugTriage(p) => bugs::triage(ctx, p),
+        WorkCall::BugAssign(p) => bugs::assign(ctx, p),
+        WorkCall::BugMarkFixed(p) => bugs::mark_fixed(ctx, p),
+        WorkCall::BugVerify(p) => bugs::verify(ctx, p),
+        WorkCall::BugClose(p) => bugs::close(ctx, p),
+        WorkCall::BugReopen(p) => bugs::reopen(ctx, p),
     }
 }
 
-fn write(
+/// The items as the wire shows them. A bug's summary lists its fix tasks (the live tasks with a
+/// `fixes` link to it), which only the link index knows.
+pub(crate) fn summaries<'a>(
+    txn: &mut dyn WorkTxn,
+    items: impl Iterator<Item = &'a StoredItem>,
+) -> Result<Vec<WorkItemSummary>, StoreError> {
+    items
+        .map(|item| {
+            if item.kind != ItemKind::Bug {
+                return Ok(item.summary());
+            }
+            let fixed_by = txn
+                .linked_to(&item.id, LinkKind::Fixes)?
+                .into_iter()
+                .filter(|t| !t.deleted)
+                .map(|t| t.id)
+                .collect();
+            Ok(item.summary_with_fixed_by(fixed_by))
+        })
+        .collect()
+}
+
+pub(crate) fn write(
     ctx: &mut Ctx,
     plan: Plan,
-    change_id: &str,
+    change_id: Option<&str>,
 ) -> Result<(WorkAccepted, Vec<WorkChangedData>), StoreError> {
     let mut drafts: Vec<Draft> = plan
         .drafts
@@ -227,7 +257,7 @@ fn write(
         let accepted = WorkAccepted {
             status: WorkStatus::Committed,
             position: None,
-            items: plan.unchanged.iter().map(StoredItem::summary).collect(),
+            items: summaries(ctx.txn, plan.unchanged.iter())?,
             features: vec![],
             docs: vec![],
         };
@@ -247,17 +277,17 @@ fn write(
             version: e.version,
         })
         .collect();
-    let position = ctx
-        .txn
-        .record_change(ctx.org_position, &refs, Some(change_id))?;
+    let position = ctx.txn.record_change(ctx.org_position, &refs, change_id)?;
+    // After the writes, so a bug's fix tasks are those the call left.
+    let items = summaries(ctx.txn, drafts.iter().map(|d| &d.item))?;
     let accepted = WorkAccepted {
         status: WorkStatus::Committed,
         position: Some(position),
-        items: drafts.iter().map(|d| d.item.summary()).collect(),
+        items: items.clone(),
         features: vec![],
         docs: vec![],
     };
-    let changed = feed::parts(position, Some(change_id), &drafts);
+    let changed = feed::parts(position, change_id, &drafts, &items);
     Ok((accepted, changed))
 }
 
@@ -297,6 +327,7 @@ impl Plan {
 }
 
 /// Who made an event.
+#[derive(Clone)]
 pub(crate) enum Origin {
     /// The caller (the bound member).
     Caller,
@@ -306,6 +337,8 @@ pub(crate) enum Origin {
     System(EventRef),
     /// The caller undoing this automatic event (`cause` names it).
     Undo(EventRef),
+    /// A cascade from an organization change (§2.5): no actor, not automatic, no cause.
+    Cascade,
 }
 
 /// One item's new state and the events that got it there, built one event at a time.
@@ -438,6 +471,7 @@ impl Draft {
             Origin::Auto(cause) => (None, true, Some(cause)),
             Origin::System(cause) => (None, false, Some(cause)),
             Origin::Undo(cause) => (Some(self.actor_id.clone()), false, Some(cause)),
+            Origin::Cascade => (None, false, None),
         };
         self.events.push(WorkEvent {
             target_id: self.item.id.clone(),
