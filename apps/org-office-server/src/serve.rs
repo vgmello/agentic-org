@@ -435,7 +435,7 @@ fn bind_connection(request: &Request, shared: &Shared, binding: &mut Binding) ->
         if member.len() > MAX_HANDLE_BYTES {
             return bind_error(request.id, ErrorCode::TooLarge, "the member is too long");
         }
-        if member.trim().eq_ignore_ascii_case(OFFICE_SENDER) {
+        if org_office::directory::trim_address(member).eq_ignore_ascii_case(OFFICE_SENDER) {
             return bind_error(
                 request.id,
                 ErrorCode::InvalidRequest,
