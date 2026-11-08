@@ -1,0 +1,1203 @@
+{
+ "context": {
+  "now": "2026-11-01T00:00:00.000Z",
+  "actor": "owner",
+  "projects": [
+   {
+    "id": "p1",
+    "teamIds": [
+     "web"
+    ]
+   },
+   {
+    "id": "old",
+    "archived": true,
+    "teamIds": []
+   }
+  ],
+  "members": [
+   "owner",
+   "sam"
+  ]
+ },
+ "cases": [
+  {
+   "name": "a task starts To do at normal priority, numbered from 1 per project",
+   "steps": [
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg001",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Task 1"
+     },
+     "items": [
+      {
+       "number": 1,
+       "status": "todo",
+       "priority": "normal",
+       "version": 1,
+       "kind": "task"
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg002",
+      "item_id": "01JC0000000000000000000002",
+      "project_id": "p1",
+      "title": "Task 2",
+      "priority": "high"
+     },
+     "items": [
+      {
+       "number": 2,
+       "priority": "high"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "a number is never reused after a delete",
+   "steps": [
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg003",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Task 1"
+     },
+     "items": [
+      {
+       "number": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "work.delete",
+      "change_id": "chg004",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 1
+     },
+     "items": [
+      {
+       "deleted": true
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg005",
+      "item_id": "01JC0000000000000000000002",
+      "project_id": "p1",
+      "title": "Task 2"
+     },
+     "items": [
+      {
+       "number": 2
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "bad titles are refused",
+   "steps": [
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg006",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "   "
+     },
+     "error": "invalid_request"
+    },
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg007",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "a\nb"
+     },
+     "error": "invalid_request"
+    },
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg008",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+     },
+     "error": "invalid_request"
+    }
+   ]
+  },
+  {
+   "name": "unknown and archived projects, other teams, unknown assignees",
+   "steps": [
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg009",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "nope",
+      "title": "Task 1"
+     },
+     "error": "not_found"
+    },
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg010",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "old",
+      "title": "Task 1"
+     },
+     "error": "invalid_request"
+    },
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg011",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Task 1",
+      "team_id": "design"
+     },
+     "error": "invalid_request"
+    },
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg012",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Task 1",
+      "assignee_id": "ghost"
+     },
+     "error": "unknown_recipient"
+    }
+   ]
+  },
+  {
+   "name": "an id that exists is refused",
+   "steps": [
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg013",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Task 1"
+     },
+     "items": [
+      {
+       "number": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg014",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Task 1"
+     },
+     "error": "already_exists"
+    }
+   ]
+  },
+  {
+   "name": "a repeated change id gets the same answer; another change under it is refused",
+   "steps": [
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg015",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "One"
+     },
+     "items": [
+      {
+       "number": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg015",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "One"
+     },
+     "items": [
+      {
+       "number": 1,
+       "version": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg015",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Other"
+     },
+     "error": "invalid_request"
+    }
+   ]
+  },
+  {
+   "name": "update checks the version, needs a change and refuses a value with its clear",
+   "steps": [
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg016",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Task 1"
+     },
+     "items": [
+      {
+       "version": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.update",
+      "change_id": "chg017",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 1,
+      "title": "Renamed",
+      "priority": "high"
+     },
+     "items": [
+      {
+       "title": "Renamed",
+       "priority": "high",
+       "version": 2
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.update",
+      "change_id": "chg018",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 1,
+      "title": "Late"
+     },
+     "error": "conflict"
+    },
+    {
+     "call": {
+      "method": "task.update",
+      "change_id": "chg019",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 2
+     },
+     "error": "invalid_request"
+    },
+    {
+     "call": {
+      "method": "task.update",
+      "change_id": "chg020",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 2,
+      "description": "x",
+      "clear_description": true
+     },
+     "error": "invalid_request"
+    }
+   ]
+  },
+  {
+   "name": "assign and unassign",
+   "steps": [
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg021",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Task 1"
+     },
+     "items": [
+      {
+       "version": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.assign",
+      "change_id": "chg022",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 1,
+      "assignee_id": "sam"
+     },
+     "items": [
+      {
+       "assignee_id": "sam"
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.assign",
+      "change_id": "chg023",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 2,
+      "assignee_id": "ghost"
+     },
+     "error": "unknown_recipient"
+    },
+    {
+     "call": {
+      "method": "task.assign",
+      "change_id": "chg024",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 2
+     },
+     "items": [
+      {
+       "version": 3
+      }
+     ]
+    },
+    {
+     "get": "01JC0000000000000000000001",
+     "expect": {
+      "summary": {
+       "version": 3
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "the state machine: blocked needs a reason, a reason only goes with blocked, Done only reopens",
+   "steps": [
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg025",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Task 1"
+     },
+     "items": [
+      {
+       "version": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.set_status",
+      "change_id": "chg026",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 1,
+      "status": "blocked"
+     },
+     "error": "invalid_request"
+    },
+    {
+     "call": {
+      "method": "task.set_status",
+      "change_id": "chg027",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 1,
+      "status": "in_progress",
+      "blocked_reason": "x"
+     },
+     "error": "invalid_request"
+    },
+    {
+     "call": {
+      "method": "task.set_status",
+      "change_id": "chg028",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 1,
+      "status": "blocked",
+      "blocked_reason": "Waiting on design"
+     },
+     "items": [
+      {
+       "status": "blocked",
+       "blocked_reason": "Waiting on design"
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.set_status",
+      "change_id": "chg029",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 2,
+      "status": "in_progress"
+     },
+     "items": [
+      {
+       "status": "in_progress"
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.set_status",
+      "change_id": "chg030",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 3,
+      "status": "done"
+     },
+     "items": [
+      {
+       "status": "done",
+       "resolution": "completed"
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.set_status",
+      "change_id": "chg031",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 4,
+      "status": "blocked",
+      "blocked_reason": "x"
+     },
+     "error": "invalid_request"
+    },
+    {
+     "call": {
+      "method": "task.set_status",
+      "change_id": "chg032",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 4,
+      "status": "todo"
+     },
+     "items": [
+      {
+       "status": "todo",
+       "reopen_count": 1
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Done is guarded by required steps; done anyway needs a real reason; cancelled skips the guard",
+   "steps": [
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg033",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Task 1"
+     },
+     "items": [
+      {
+       "version": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "checklist.add",
+      "change_id": "chg034",
+      "item_id": "01JC0000000000000000000001",
+      "steps": [
+       {
+        "step_id": "01JC0000000000000000000060",
+        "text": "Write tests",
+        "required": true
+       },
+       {
+        "step_id": "01JC0000000000000000000061",
+        "text": "Polish",
+        "required": false
+       }
+      ]
+     },
+     "items": [
+      {
+       "checklist": {
+        "total": 2,
+        "done": 0,
+        "required_left": 1
+       }
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.set_status",
+      "change_id": "chg035",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 2,
+      "status": "done"
+     },
+     "error": "checklist_incomplete"
+    },
+    {
+     "call": {
+      "method": "task.set_status",
+      "change_id": "chg036",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 2,
+      "status": "done",
+      "anyway_reason": "   "
+     },
+     "error": "invalid_request"
+    },
+    {
+     "call": {
+      "method": "task.set_status",
+      "change_id": "chg037",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 2,
+      "status": "done",
+      "anyway_reason": "Covered elsewhere"
+     },
+     "items": [
+      {
+       "status": "done",
+       "done_anyway": true
+      }
+     ]
+    },
+    {
+     "get": "01JC0000000000000000000001",
+     "expect": {
+      "done_anyway_detail": {
+       "reason": "Covered elsewhere",
+       "steps": [
+        "01JC0000000000000000000060"
+       ]
+      }
+     }
+    },
+    {
+     "call": {
+      "method": "task.set_status",
+      "change_id": "chg038",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 3,
+      "status": "todo"
+     },
+     "items": [
+      {
+       "done_anyway": false
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.set_status",
+      "change_id": "chg039",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 4,
+      "status": "done",
+      "resolution": "cancelled"
+     },
+     "items": [
+      {
+       "resolution": "cancelled"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "a ticked required step lets the task be Done",
+   "steps": [
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg040",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Task 1"
+     },
+     "items": [
+      {
+       "version": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "checklist.add",
+      "change_id": "chg041",
+      "item_id": "01JC0000000000000000000001",
+      "steps": [
+       {
+        "step_id": "01JC0000000000000000000060",
+        "text": "One",
+        "required": true
+       }
+      ]
+     },
+     "items": [
+      {
+       "version": 2
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "checklist.check",
+      "change_id": "chg042",
+      "step_id": "01JC0000000000000000000060",
+      "done": true
+     },
+     "items": [
+      {
+       "version": 3,
+       "checklist": {
+        "total": 1,
+        "done": 1,
+        "required_left": 0
+       }
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "checklist.check",
+      "change_id": "chg043",
+      "step_id": "01JC0000000000000000000060",
+      "done": true
+     },
+     "items": [
+      {
+       "version": 3
+      }
+     ]
+    },
+    {
+     "get": "01JC0000000000000000000001",
+     "expect": {
+      "checklist": [
+       {
+        "done": true,
+        "checked_by": "owner"
+       }
+      ]
+     }
+    },
+    {
+     "call": {
+      "method": "task.set_status",
+      "change_id": "chg044",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 3,
+      "status": "done"
+     },
+     "items": [
+      {
+       "status": "done"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "checklist add after a step, edit with the steps version, remove",
+   "steps": [
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg045",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Task 1"
+     },
+     "items": [
+      {
+       "version": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "checklist.add",
+      "change_id": "chg046",
+      "item_id": "01JC0000000000000000000001",
+      "steps": [
+       {
+        "step_id": "01JC0000000000000000000060",
+        "text": "One",
+        "required": true
+       }
+      ]
+     },
+     "items": [
+      {
+       "version": 2
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "checklist.add",
+      "change_id": "chg047",
+      "item_id": "01JC0000000000000000000001",
+      "steps": [
+       {
+        "step_id": "01JC0000000000000000000061",
+        "text": "Two",
+        "required": false
+       }
+      ],
+      "after_step_id": "01JC0000000000000000000060"
+     },
+     "items": [
+      {
+       "version": 3
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "checklist.add",
+      "change_id": "chg048",
+      "item_id": "01JC0000000000000000000001",
+      "steps": [
+       {
+        "step_id": "01JC0000000000000000000061",
+        "text": "Dup",
+        "required": false
+       }
+      ]
+     },
+     "error": "already_exists"
+    },
+    {
+     "call": {
+      "method": "checklist.edit",
+      "change_id": "chg049",
+      "step_id": "01JC0000000000000000000061",
+      "expected_version": 1,
+      "text": "Second",
+      "required": true
+     },
+     "items": [
+      {
+       "version": 4
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "checklist.edit",
+      "change_id": "chg050",
+      "step_id": "01JC0000000000000000000061",
+      "expected_version": 1,
+      "text": "Late"
+     },
+     "error": "conflict"
+    },
+    {
+     "call": {
+      "method": "checklist.remove",
+      "change_id": "chg051",
+      "step_id": "01JC0000000000000000000061",
+      "expected_version": 2
+     },
+     "items": [
+      {
+       "checklist": {
+        "total": 1,
+        "done": 0,
+        "required_left": 1
+       }
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "checklist.check",
+      "change_id": "chg052",
+      "step_id": "nope",
+      "done": true
+     },
+     "error": "not_found"
+    }
+   ]
+  },
+  {
+   "name": "lead time stops at Done, cycle time starts at the first start",
+   "steps": [
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg053",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Task 1"
+     },
+     "items": [
+      {
+       "version": 1
+      }
+     ],
+     "now": "2026-11-01T00:00:00.000Z"
+    },
+    {
+     "call": {
+      "method": "task.set_status",
+      "change_id": "chg054",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 1,
+      "status": "in_progress"
+     },
+     "items": [
+      {
+       "status": "in_progress"
+      }
+     ],
+     "now": "2026-11-01T01:00:00.000Z"
+    },
+    {
+     "call": {
+      "method": "task.set_status",
+      "change_id": "chg055",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 2,
+      "status": "done"
+     },
+     "items": [
+      {
+       "status": "done"
+      }
+     ],
+     "now": "2026-11-01T03:00:00.000Z"
+    },
+    {
+     "call": {
+      "method": "task.update",
+      "change_id": "chg056",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 3,
+      "description": "Notes",
+      "definition_of_done": "All green"
+     },
+     "items": [
+      {
+       "version": 4
+      }
+     ],
+     "now": "2026-11-07T00:00:00.000Z"
+    },
+    {
+     "get": "01JC0000000000000000000001",
+     "now": "2026-11-08T00:00:00.000Z",
+     "expect": {
+      "description": "Notes",
+      "definition_of_done": "All green",
+      "time": {
+       "lead_ms": 10800000,
+       "cycle_ms": 7200000,
+       "open": false,
+       "rounds": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a refused create leaves nothing behind, so the next one is number 1",
+   "steps": [
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg057",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": ""
+     },
+     "error": "invalid_request"
+    },
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg058",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "nope",
+      "title": "Task 1"
+     },
+     "error": "not_found"
+    },
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg059",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Task 1"
+     },
+     "items": [
+      {
+       "number": 1
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "bad ids, priorities and resolutions are refused",
+   "steps": [
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg060",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Task 1",
+      "priority": "bogus"
+     },
+     "error": "invalid_request"
+    },
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Task 1"
+     },
+     "error": "invalid_request"
+    },
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg062",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Task 1"
+     },
+     "items": [
+      {
+       "version": 1
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.set_status",
+      "change_id": "chg063",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 1,
+      "status": "done",
+      "resolution": "garbage"
+     },
+     "error": "invalid_request"
+    },
+    {
+     "call": {
+      "method": "checklist.check",
+      "change_id": "chg064",
+      "step_id": "",
+      "done": true
+     },
+     "error": "invalid_request"
+    }
+   ]
+  },
+  {
+   "name": "a task can be created with a checklist; unticking a step and an unknown after_step_id",
+   "steps": [
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg065",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Task 1",
+      "checklist": [
+       {
+        "step_id": "01JC0000000000000000000060",
+        "text": "A",
+        "required": true
+       }
+      ]
+     },
+     "items": [
+      {
+       "checklist": {
+        "total": 1,
+        "done": 0,
+        "required_left": 1
+       }
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "checklist.check",
+      "change_id": "chg066",
+      "step_id": "01JC0000000000000000000060",
+      "done": true
+     },
+     "items": [
+      {
+       "checklist": {
+        "total": 1,
+        "done": 1,
+        "required_left": 0
+       }
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "checklist.check",
+      "change_id": "chg067",
+      "step_id": "01JC0000000000000000000060",
+      "done": false
+     },
+     "items": [
+      {
+       "checklist": {
+        "total": 1,
+        "done": 0,
+        "required_left": 1
+       }
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "checklist.add",
+      "change_id": "chg068",
+      "item_id": "01JC0000000000000000000001",
+      "steps": [
+       {
+        "step_id": "01JC0000000000000000000061",
+        "text": "B",
+        "required": false
+       }
+      ],
+      "after_step_id": "ghost"
+     },
+     "error": "not_found"
+    }
+   ]
+  },
+  {
+   "name": "team and definition of done can be set and cleared; a deleted item is gone",
+   "steps": [
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg069",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Task 1",
+      "team_id": "web",
+      "definition_of_done": "Goal"
+     },
+     "items": [
+      {
+       "team_id": "web"
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.update",
+      "change_id": "chg070",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 1,
+      "clear_team": true,
+      "clear_definition_of_done": true
+     },
+     "items": [
+      {
+       "version": 2
+      }
+     ]
+    },
+    {
+     "get": "01JC0000000000000000000001",
+     "expect": {
+      "summary": {
+       "version": 2
+      }
+     }
+    },
+    {
+     "call": {
+      "method": "work.delete",
+      "change_id": "chg071",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 2
+     },
+     "items": [
+      {
+       "deleted": true
+      }
+     ]
+    },
+    {
+     "call": {
+      "method": "task.update",
+      "change_id": "chg072",
+      "item_id": "01JC0000000000000000000001",
+      "expected_version": 3,
+      "title": "x"
+     },
+     "error": "not_found"
+    }
+   ]
+  },
+  {
+   "name": "fractional seconds count exactly",
+   "steps": [
+    {
+     "call": {
+      "method": "task.create",
+      "change_id": "chg073",
+      "item_id": "01JC0000000000000000000001",
+      "project_id": "p1",
+      "title": "Task 1"
+     },
+     "items": [
+      {
+       "version": 1
+      }
+     ],
+     "now": "2026-11-01T00:00:00.000Z"
+    },
+    {
+     "get": "01JC0000000000000000000001",
+     "now": "2026-11-01T00:00:01.001Z",
+     "expect": {
+      "time": {
+       "lead_ms": 1001
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

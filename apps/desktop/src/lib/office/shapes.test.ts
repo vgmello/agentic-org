@@ -39,7 +39,7 @@ describe('what the Tauri commands return', () => {
 
 	it('tauri.ts invokes exactly the commands build.rs declares', () => {
 		const names = (text: string) => [...text.matchAll(/['"]([a-z]+(?:_[a-z]+)+)['"]/g)].map((m) => m[1]).sort();
-		const ui = [...names(readFileSync('src/lib/office/tauri.ts', 'utf8')), ...names(readFileSync('src/lib/org/tauri.ts', 'utf8'))].sort();
+		const ui = [...names(readFileSync('src/lib/office/tauri.ts', 'utf8')), ...names(readFileSync('src/lib/org/tauri.ts', 'utf8')), ...names(readFileSync('src/lib/work/tauri.ts', 'utf8'))].sort();
 		const build = names(readFileSync('src-tauri/build.rs', 'utf8'));
 		expect(ui).toEqual(build);
 	});

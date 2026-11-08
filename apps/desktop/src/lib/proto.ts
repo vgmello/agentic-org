@@ -90,7 +90,10 @@ export const API_ERROR_CODES = [
 	'unknown_recipient',
 	'not_authorized',
 	'unavailable',
-	// ada's W7 work contract (docs/design/tasks-projects-docs.md §4.4): required checklist steps are not done.
+	// org_proto::work (ada/proto-work-p1 @ 495ccff): the connection is not bound to a member; a write over the size limit;
+	// required checklist steps are not done.
+	'not_bound',
+	'too_large',
 	'checklist_incomplete',
 	'unknown'
 ] as const;

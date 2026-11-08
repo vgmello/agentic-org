@@ -124,6 +124,13 @@ export function applyWork(state: WorkState, call: WorkCall, ctx: WorkContext): {
 		if (kept.call !== JSON.stringify(call)) fail('invalid_request', 'That change id was used for a different change.');
 		return { state, accepted: kept.accepted };
 	}
+	for (const [what, value] of [['change_id', call.change_id], ['item_id', 'item_id' in call ? call.item_id : undefined], ['step_id', 'step_id' in call ? call.step_id : undefined]] as const) {
+		const needed = what === 'change_id' || (what === 'item_id' && 'item_id' in call) || (what === 'step_id' && 'step_id' in call);
+		if (needed && (typeof value !== 'string' || value === '' || value.length > 128)) fail('invalid_request', `${what} must be a text of 1 to 128 characters.`);
+	}
+	if ('priority' in call && call.priority !== undefined && !['urgent', 'high', 'normal', 'low'].includes(call.priority)) fail('invalid_request', 'The priority must be urgent, high, normal or low.');
+	if ('resolution' in call && call.resolution !== undefined && !['completed', 'cancelled'].includes(call.resolution)) fail('invalid_request', 'A task resolution is completed or cancelled.');
+	if ('done' in call && typeof call.done !== 'boolean') fail('invalid_request', 'done must be true or false.');
 	const next: WorkState = structuredClone(state);
 	const changed: StoredTask[] = [];
 	const { now, actor } = ctx;

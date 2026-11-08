@@ -5,8 +5,10 @@
 //! (install, login-service registration, start), neither of which exists yet.
 
 use crate::org_command::OrgCommand;
+use crate::work_engine::WorkError;
 use org_proto::{ApiError, CommandAccepted, HelloResult, OrgSnapshot, Organization};
 use serde::Serialize;
+use serde_json::Value;
 
 /// Why the office could not be made ready. These belong to the app's setup layer, not to
 /// `org-proto`: the server cannot report that it was never installed.
@@ -22,6 +24,13 @@ pub enum SetupErrorCode {
 pub struct SetupError {
     pub code: SetupErrorCode,
     pub message: String,
+}
+
+fn no_work() -> WorkError {
+    WorkError {
+        code: "unavailable",
+        message: "This office doesn't serve tasks yet.".into(),
+    }
 }
 
 pub trait OfficeConnection: Send + Sync {
@@ -46,6 +55,28 @@ pub trait OfficeConnection: Send + Sync {
         organization_id: &str,
         command: &OrgCommand,
     ) -> Result<CommandAccepted, ApiError>;
+
+    /// `work.snapshot`: the tasks of a project, as JSON in the contract's shapes. Done tasks only since
+    /// `closed_since` (all when absent). An office that doesn't serve work yet says `unavailable`.
+    fn work_snapshot(
+        &self,
+        _organization_id: &str,
+        _project_id: Option<&str>,
+        _closed_since: Option<&str>,
+    ) -> Result<Value, WorkError> {
+        Err(no_work())
+    }
+
+    /// `work.get`: one item in full.
+    fn work_get(&self, _organization_id: &str, _item_id: &str) -> Result<Value, WorkError> {
+        Err(no_work())
+    }
+
+    /// A work call (`{ "method": "task.create", "change_id": …, … }`): the answer, or the office's refusal. A
+    /// repeated `change_id` gets the same answer and changes nothing.
+    fn work_command(&self, _organization_id: &str, _call: &Value) -> Result<Value, WorkError> {
+        Err(no_work())
+    }
 
     /// True while the data this connection serves is invented (the mock office), so the UI says so.
     /// Every implementation says so: a stand-in that forgot would show invented data as real.

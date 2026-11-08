@@ -13,6 +13,7 @@ mod org_command;
 mod org_engine;
 mod org_mock;
 mod tray;
+mod work_engine;
 
 use connections::{local_office, Connection, ConnectionStore};
 use office::{OfficeConnection, SetupError};
@@ -75,6 +76,16 @@ impl From<SetupError> for CommandError {
         Self {
             source: "setup",
             code: code_of(e.code),
+            message: e.message,
+        }
+    }
+}
+
+impl From<work_engine::WorkError> for CommandError {
+    fn from(e: work_engine::WorkError) -> Self {
+        Self {
+            source: "api",
+            code: e.code.to_string(),
             message: e.message,
         }
     }
@@ -255,6 +266,37 @@ impl AppState {
         Ok(self.office.org_command(organization_id, command)?)
     }
 
+    fn work_snapshot(
+        &self,
+        organization_id: &str,
+        project_id: Option<&str>,
+        closed_since: Option<&str>,
+    ) -> Result<serde_json::Value, CommandError> {
+        self.ensure_connected()?;
+        Ok(self
+            .office
+            .work_snapshot(organization_id, project_id, closed_since)?)
+    }
+
+    fn work_get(
+        &self,
+        organization_id: &str,
+        item_id: &str,
+    ) -> Result<serde_json::Value, CommandError> {
+        self.ensure_connected()?;
+        Ok(self.office.work_get(organization_id, item_id)?)
+    }
+
+    /// A work call carries its own `change_id`, so running it again after a restart changes nothing twice.
+    fn work_command(
+        &self,
+        organization_id: &str,
+        call: &serde_json::Value,
+    ) -> Result<serde_json::Value, CommandError> {
+        self.ensure_connected()?;
+        Ok(self.office.work_command(organization_id, call)?)
+    }
+
     fn connections(&self) -> Result<Vec<Connection>, CommandError> {
         self.store
             .list()
@@ -331,6 +373,46 @@ async fn org_command(
     blocking(move || state.with_restart(|s| s.org_command(&organization_id, &command))).await
 }
 
+#[tauri::command]
+async fn work_snapshot(
+    state: State<'_, Arc<AppState>>,
+    organization_id: String,
+    project_id: Option<String>,
+    closed_since: Option<String>,
+) -> Result<serde_json::Value, CommandError> {
+    let state = Arc::clone(&state);
+    blocking(move || {
+        state.with_restart(|s| {
+            s.work_snapshot(
+                &organization_id,
+                project_id.as_deref(),
+                closed_since.as_deref(),
+            )
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn work_get(
+    state: State<'_, Arc<AppState>>,
+    organization_id: String,
+    item_id: String,
+) -> Result<serde_json::Value, CommandError> {
+    let state = Arc::clone(&state);
+    blocking(move || state.with_restart(|s| s.work_get(&organization_id, &item_id))).await
+}
+
+#[tauri::command]
+async fn work_command(
+    state: State<'_, Arc<AppState>>,
+    organization_id: String,
+    call: serde_json::Value,
+) -> Result<serde_json::Value, CommandError> {
+    let state = Arc::clone(&state);
+    blocking(move || state.with_restart(|s| s.work_command(&organization_id, &call))).await
+}
+
 /// Remembered connections, oldest first (the most recent is last).
 #[tauri::command]
 async fn connections_list(
@@ -375,7 +457,10 @@ pub fn run() {
             organization_open,
             org_snapshot,
             org_command,
-            connections_list
+            connections_list,
+            work_snapshot,
+            work_get,
+            work_command
         ])
         .build(tauri::generate_context!())
         .expect("error while building Agentic Org")
@@ -515,7 +600,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir2);
     }
 
-    const COMMANDS: [&str; 7] = [
+    const COMMANDS: [&str; 10] = [
         "office_ensure_running",
         "organization_create",
         "organizations_list",
@@ -523,6 +608,9 @@ mod tests {
         "org_snapshot",
         "org_command",
         "connections_list",
+        "work_snapshot",
+        "work_get",
+        "work_command",
     ];
 
     /// Every command the UI invokes is declared in `build.rs`, allowed in the capability file and

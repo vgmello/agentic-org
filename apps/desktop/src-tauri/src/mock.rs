@@ -8,15 +8,17 @@ use crate::office::{OfficeConnection, SetupError, SetupErrorCode};
 use crate::org_command::OrgCommand;
 use crate::org_engine::{Ctx, Hq};
 use crate::org_mock::Seed;
+use crate::work_engine::{self, WorkError, WorkState};
 use org_proto::{
     ApiError, CommandAccepted, ErrorCode, HelloResult, OfficeInfo, OfficeRole, OfficeStatus,
     OrgSnapshot, Organization, OrganizationName, API_VERSION,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -51,6 +53,9 @@ pub struct MockOffice {
     structures: Mutex<HashMap<String, Hq>>,
     /// Where the structures are kept (next to the organizations); `None` keeps them in memory only.
     structures_file: Option<PathBuf>,
+    /// The work (tasks) of each organization, kept next to the structures in `work.json`.
+    work: Mutex<HashMap<String, WorkState>>,
+    work_file: Option<PathBuf>,
     /// Set when the stored structures are from a newer version: the office then refuses to read or
     /// change any rather than overwrite them.
     structures_unreadable: bool,
@@ -71,6 +76,8 @@ impl MockOffice {
             seed: Seed::Sample,
             structures: Mutex::new(HashMap::new()),
             structures_file: None,
+            work: Mutex::new(HashMap::new()),
+            work_file: None,
             structures_unreadable: false,
             store: None,
             unreadable: Mutex::new(false),
@@ -102,6 +109,8 @@ impl MockOffice {
         };
         Self {
             structures: Mutex::new(structures),
+            work: Mutex::new(load_work(&dir.join("work.json"))),
+            work_file: Some(dir.join("work.json")),
             structures_file: Some(structures_file),
             structures_unreadable,
             organizations: Mutex::new(organizations),
@@ -213,6 +222,34 @@ impl MockOffice {
             )
         })
     }
+}
+
+/// The office's refusal as the work calls report it: the same code, as text.
+fn into_work_error(e: ApiError) -> WorkError {
+    let code = match e.code {
+        ErrorCode::NotFound => "not_found",
+        ErrorCode::StorageError => "storage_error",
+        _ => "unavailable",
+    };
+    WorkError {
+        code,
+        message: e.message,
+    }
+}
+
+/// The tasks as they were last saved; a file that can't be read starts empty (it is a mock's sample data).
+fn load_work(file: &Path) -> HashMap<String, WorkState> {
+    std::fs::read_to_string(file)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+fn write_work(file: &Path, work: &HashMap<String, WorkState>) -> std::io::Result<()> {
+    let text = serde_json::to_string(work).map_err(std::io::Error::other)?;
+    let tmp = file.with_extension("json.tmp");
+    std::fs::write(&tmp, text)?;
+    std::fs::rename(&tmp, file)
 }
 
 const STORE_VERSION: u32 = 1;
@@ -500,6 +537,97 @@ impl OfficeConnection for MockOffice {
         answer
     }
 
+    fn work_snapshot(
+        &self,
+        organization_id: &str,
+        project_id: Option<&str>,
+        closed_since: Option<&str>,
+    ) -> Result<Value, WorkError> {
+        self.hq_office_id(organization_id)
+            .map_err(into_work_error)?;
+        let work = self.work.lock().unwrap_or_else(|e| e.into_inner());
+        let state = work
+            .get(organization_id)
+            .cloned()
+            .unwrap_or_else(work_engine::new_state);
+        Ok(json!({
+            "position": {"incarnation": state.incarnation, "seq": state.seq},
+            "items": work_engine::summaries(&state, project_id, closed_since),
+        }))
+    }
+
+    fn work_get(&self, organization_id: &str, item_id: &str) -> Result<Value, WorkError> {
+        self.hq_office_id(organization_id)
+            .map_err(into_work_error)?;
+        let work = self.work.lock().unwrap_or_else(|e| e.into_inner());
+        let state = work
+            .get(organization_id)
+            .cloned()
+            .unwrap_or_else(work_engine::new_state);
+        work_engine::get(&state, item_id, &now_rfc3339())
+    }
+
+    fn work_command(&self, organization_id: &str, call: &Value) -> Result<Value, WorkError> {
+        let snapshot = self
+            .org_snapshot(organization_id)
+            .map_err(into_work_error)?;
+        let ctx = work_engine::Ctx {
+            now: now_rfc3339(),
+            actor: snapshot
+                .members
+                .iter()
+                .find(|m| m.owner)
+                .map(|m| m.id.clone())
+                .unwrap_or_else(|| "owner".into()),
+            projects: snapshot
+                .projects
+                .iter()
+                .map(|p| work_engine::Project {
+                    id: p.id.clone(),
+                    archived: false,
+                    team_ids: snapshot
+                        .project_teams
+                        .iter()
+                        .filter(|l| l.project_id == p.id)
+                        .map(|l| l.team_id.clone())
+                        .collect(),
+                })
+                .collect(),
+            members: snapshot
+                .members
+                .iter()
+                .filter(|m| {
+                    !(m.kind == org_proto::MemberKind::Agent
+                        && m.agent
+                            .as_ref()
+                            .is_some_and(|a| a.status == org_proto::AgentStatus::Offboarded))
+                })
+                .map(|m| m.id.clone())
+                .collect(),
+        };
+        let mut work = self.work.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = work
+            .get(organization_id)
+            .cloned()
+            .unwrap_or_else(work_engine::new_state);
+        let answer = work_engine::apply(&mut state, call, &ctx)?;
+        let before = work.insert(organization_id.to_string(), state);
+        if let Some(file) = &self.work_file {
+            if write_work(file, &work).is_err() {
+                // Not saved, so not kept either (as the structure commands do).
+                match before {
+                    Some(previous) => work.insert(organization_id.to_string(), previous),
+                    None => work.remove(organization_id),
+                };
+                return Err(WorkError {
+                    code: "storage_error",
+                    message: "The office couldn't write the tasks.".into(),
+                });
+            }
+        }
+        Ok(answer)
+    }
+
     fn serves_sample_data(&self) -> bool {
         true
     }
@@ -511,6 +639,46 @@ mod tests {
 
     fn healthy() -> MockOffice {
         MockOffice::new(Scenario::Healthy, Duration::ZERO)
+    }
+
+    #[test]
+    fn tasks_are_kept_per_organization_and_survive_a_restart() {
+        let dir = std::env::temp_dir().join(format!("agentic-work-{}", unique_id(7)));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let first = MockOffice::from_env(dir.clone());
+        let org = first.create_organization("Alpha").unwrap();
+        let project = first.org_snapshot(&org.id).unwrap().projects[0].id.clone();
+        let create = json!({"method": "task.create", "change_id": "c1", "item_id": "01JC0000000000000000000001", "project_id": project, "title": "Ship it"});
+        let answer = first.work_command(&org.id, &create).unwrap();
+        assert_eq!(answer["items"][0]["number"], 1);
+        // The same change id gets the same answer and changes nothing.
+        assert_eq!(first.work_command(&org.id, &create).unwrap(), answer);
+        let other = first.create_organization("Beta").unwrap();
+        assert_eq!(
+            first.work_snapshot(&other.id, None, None).unwrap()["items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+
+        let second = MockOffice::from_env(dir.clone());
+        let items = second.work_snapshot(&org.id, Some(&project), None).unwrap();
+        assert_eq!(items["items"][0]["title"], "Ship it");
+        assert_eq!(
+            second
+                .work_get(&org.id, "01JC0000000000000000000001")
+                .unwrap()["summary"]["status"],
+            "todo"
+        );
+        // A refusal carries the contract code.
+        let bad = json!({"method": "task.create", "change_id": "c2", "item_id": "01JC0000000000000000000002", "project_id": "nope", "title": "x"});
+        assert_eq!(
+            second.work_command(&org.id, &bad).unwrap_err().code,
+            "not_found"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -172,6 +172,10 @@ export interface TaskCreate {
 	assignee_id?: string;
 	team_id?: string;
 	priority?: Priority;
+	/** P3. */
+	feature_id?: string;
+	/** P2: the bugs this task fixes. */
+	fixes?: { link_id: string; bug_id: string }[];
 	checklist?: NewStep[];
 }
 
@@ -187,6 +191,9 @@ export interface TaskUpdate {
 	priority?: Priority;
 	team_id?: string;
 	clear_team?: boolean;
+	/** P3. */
+	feature_id?: string;
+	clear_feature?: boolean;
 }
 
 export interface TaskAssign {
@@ -208,6 +215,8 @@ export interface TaskSetStatus {
 	resolution?: 'completed' | 'cancelled';
 	/** Only with `done`: records "done anyway" when required steps are unticked. */
 	anyway_reason?: string;
+	/** P4: `{ type: 'none' }` or `{ type: 'debt', ids }`, only with `done`. */
+	shortcut?: { type: 'none' } | { type: 'debt'; ids: string[] };
 }
 
 export const WORK_LIMITS = {
