@@ -232,10 +232,10 @@ pub struct TriageState {
     pub messages: BTreeMap<String, MessageTriageEntry>,
     /// Counts the agent's natural breaks (`--after-task` checks, i.e. the Stop after a task).
     /// A break starts at the first such check after one that listed nothing new, after any
-    /// other check from the same session (a triage turn's Stop, the next prompt, the watcher),
-    /// or from another
-    /// `--session`; it lasts while each `--after-task` check lists something not yet listed in
-    /// this break (the agent is triaging). Missing in older files: 0.
+    /// other check from the same session (a triage turn's Stop, the next prompt, the watcher;
+    /// "no session" counts as one), or from another `--session`; it lasts while each
+    /// `--after-task` check lists something not yet listed in this break (the agent is
+    /// triaging). Missing in older files: 0.
     #[serde(default)]
     pub break_seq: u64,
     /// Whether the last `--after-task` check listed something new to this break, i.e. a break
@@ -286,7 +286,9 @@ impl TriageState {
     /// `--after-task` at a triage turn's Stop, so this can't re-release a deferral made while
     /// triaging.) Returns whether the state changed.
     fn end_break_from_session(&mut self, session: Option<&str>) -> bool {
-        let same_session = session.is_some() && self.break_session.as_deref() == session;
+        // Session-less callers (`msg due`) are one "session" too, while no session has run a
+        // break check.
+        let same_session = self.break_session.as_deref() == session;
         if !(self.in_break && same_session) {
             return false;
         }
