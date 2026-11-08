@@ -143,6 +143,20 @@ pub(crate) fn open_regular_nofollow(options: &mut OpenOptions, path: &Path) -> i
     Ok(file)
 }
 
+/// Create `path` (mode 0600) and write `bytes`, with `O_CREAT | O_EXCL | O_NOFOLLOW`: fails
+/// if anything (a file, a symlink, a FIFO) is already there, so a planted symlink can never
+/// redirect the write.
+pub(crate) fn create_new_nofollow(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::io::Write;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(flags::O_NOFOLLOW | flags::O_CLOEXEC)
+        .open(path)?;
+    file.write_all(bytes)
+}
+
 fn describe(kind: fs::FileType) -> &'static str {
     use std::os::unix::fs::FileTypeExt;
     if kind.is_symlink() {

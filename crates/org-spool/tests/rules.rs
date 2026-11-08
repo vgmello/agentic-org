@@ -873,6 +873,31 @@ fn rule_an_unreadable_outbox_file_is_dead_lettered_and_delivery_goes_on() {
 }
 
 #[test]
+fn rule_a_symlinked_dead_reason_is_never_written_through() {
+    let t = TempSpool::new("dead_reason");
+    let target = t.dir.join("precious.txt");
+    fs::write(&target, b"keep me").unwrap();
+    // A message to nobody, so it is dead-lettered, with a symlink waiting at its .reason.
+    let env = Envelope::new_msg(PEER, "nobody", None, "b", BTreeMap::new()).unwrap();
+    let id = env.id.clone();
+    std::os::unix::fs::symlink(&target, t.dir.join(format!("spool/dead/{id}.reason"))).unwrap();
+    t.spool.enqueue(&env).unwrap();
+
+    assert_eq!(t.spool.deliver_all().unwrap().dead, 1);
+    assert_eq!(fs::read(&target).unwrap(), b"keep me");
+    // It went to a fresh stem with its own reason.
+    let reasons: Vec<String> = fs::read_dir(t.dir.join("spool/dead"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with(&format!("{id}-")) && n.ends_with(".reason"))
+        .collect();
+    assert_eq!(reasons.len(), 1, "{reasons:?}");
+    let reason = fs::read_to_string(t.dir.join("spool/dead").join(&reasons[0])).unwrap();
+    assert!(reason.contains("unknown_recipient"), "{reason}");
+}
+
+#[test]
 fn rule_a_corrupt_triage_file_is_set_aside_not_fatal() {
     let t = TempSpool::new("corrupt");
     let id = t.ask("q");

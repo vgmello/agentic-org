@@ -17,7 +17,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::envelope::{validate_agent_id, Envelope, MAX_ENVELOPE_BYTES};
-use crate::safe_read::{read_spool_file, SpoolFile};
+use crate::safe_read::{create_new_nofollow, read_spool_file, SpoolFile};
 use crate::time::{check_wait_timeout, format_iso8601_utc};
 use crate::ulid::{generate_ulid, is_valid_ulid};
 
@@ -503,7 +503,14 @@ impl Spool {
         } else {
             generate_ulid()
         };
-        if !self.dead_dir().join(format!("{base}.json")).exists() {
+        // Taken if either file exists in any form (`symlink_metadata`: a dangling symlink
+        // counts too).
+        let taken = |stem: &str| {
+            ["json", "reason"].iter().any(|ext| {
+                fs::symlink_metadata(self.dead_dir().join(format!("{stem}.{ext}"))).is_ok()
+            })
+        };
+        if !taken(&base) {
             base
         } else {
             format!("{base}-{}", generate_ulid())
@@ -520,7 +527,7 @@ impl Spool {
         let dead_json = self.dead_dir().join(format!("{safe_stem}.json"));
         let dead_reason = self.dead_dir().join(format!("{safe_stem}.reason"));
         fs::rename(source_file, &dead_json)?;
-        Self::write_file_0600(&dead_reason, format!("{reason}\n").as_bytes(), false)?;
+        create_new_nofollow(&dead_reason, format!("{reason}\n").as_bytes())?;
         Ok(DeliverOutcome::Dead {
             id: safe_stem,
             reason: reason.to_string(),
