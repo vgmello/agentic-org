@@ -17,16 +17,14 @@
 //! one's effects). Tests use an in-memory implementation.
 //!
 //! Errors follow the one precedence rule in `org_proto::org` (`not_found`, `invalid_request`,
-//! `invalid_name`, `conflict`, `already_exists`). That rule does not place the domain codes
-//! (`owner_protected`, `cycle`, `not_a_member`, `not_empty`); here they come after
-//! `invalid_name` and before `conflict`, so a stale version never hides a rule that would
-//! refuse the command whatever its version.
-
-//! Limits the contract leaves to HQ: a client-made id is 1 to [`ID_MAX_CHARS`] ASCII letters,
-//! digits, `-` or `_`; a contact and a title in a team are 1 to
-//! [`org_proto::org::AGENT_TEXT_MAX_CHARS`] characters after trimming, without control
-//! characters (all `invalid_request`). Setting a field to the value it has still raises the
+//! `invalid_name`, `conflict`, `already_exists`), which also places the domain codes
+//! (`owner_protected`, `cycle`, `not_a_member`, `not_empty`) after `invalid_name` and before
+//! `conflict`: a stale version never hides a rule that would refuse the command whatever its
 //! version.
+
+//! The limits every command shares (client-made ids, free text, an edit that changes nothing)
+//! are the contract's: see "Limits every command shares" in `org_proto::org`. `check_id` and
+//! `check_text` apply them.
 
 mod apply;
 mod command;
@@ -44,9 +42,6 @@ pub use decide::{decide, name_key, owner_bootstrap};
 pub use view::{OrgView, OrgWrite};
 
 use org_proto::{ApiError, ErrorCode};
-
-/// The longest client-made id, in characters.
-pub const ID_MAX_CHARS: usize = 64;
 
 pub(crate) fn fail(code: ErrorCode, message: &str) -> ApiError {
     ApiError::new(code, message)

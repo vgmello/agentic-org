@@ -10,8 +10,8 @@ use org_proto::org::{
 use org_proto::{ApiError, ErrorCode, NameError, OrganizationName};
 
 use super::command::OrgCommand;
+use super::fail;
 use super::view::OrgView;
-use super::{fail, ID_MAX_CHARS};
 
 type Decision = Result<Vec<OrgChange>, ApiError>;
 
@@ -518,14 +518,9 @@ fn owner_protected(message: &str) -> ApiError {
     fail(ErrorCode::OwnerProtected, message)
 }
 
-/// A client-made id: 1 to [`ID_MAX_CHARS`] ASCII letters, digits, `-` and `_`.
+/// A client-made id: the contract's `org_proto::is_valid_id`.
 fn check_id(id: &str) -> Result<(), ApiError> {
-    let fine = !id.is_empty()
-        && id.len() <= ID_MAX_CHARS
-        && id
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
-    if fine {
+    if org_proto::is_valid_id(id) {
         Ok(())
     } else {
         Err(fail(

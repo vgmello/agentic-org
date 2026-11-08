@@ -1845,3 +1845,42 @@ fn the_owners_display_name_is_not_a_handle() {
     // And people still clash with each other.
     assert_eq!(code(org.person("p10", "vi")), ErrorCode::AlreadyExists);
 }
+
+#[test]
+fn an_offboarded_agents_handle_stays_taken_by_name_and_by_messaging_name() {
+    let mut org = staffed();
+    org.agent("old", "Pixel", AgentStatus::Offboarded);
+    assert_eq!(code(org.person("p2", "pixel")), ErrorCode::AlreadyExists);
+    // A person cannot be renamed onto it either.
+    let command_id = org.id();
+    let expected_version = org.state.members["ann"].version;
+    let renamed = org.run(OrgCommand::MemberUpdatePerson(MemberUpdatePersonParams {
+        command_id,
+        member_id: "ann".into(),
+        expected_version,
+        name: Some("PIXEL".into()),
+        contact: None,
+        clear_contact: false,
+    }));
+    assert_eq!(code(renamed), ErrorCode::AlreadyExists);
+}
+
+#[test]
+fn a_view_that_returns_the_owner_for_a_handle_still_does_not_block_its_display_name() {
+    let mut org = staffed();
+    // The owner is displayed as "Vi"; a store that wrongly answered handle lookups with the
+    // owner must not make "Vi" unavailable to a new person.
+    let command_id = org.id();
+    let expected_version = org.state.members[OWNER].version;
+    org.run(OrgCommand::MemberUpdatePerson(MemberUpdatePersonParams {
+        command_id,
+        member_id: OWNER.into(),
+        expected_version,
+        name: Some("Vi".into()),
+        contact: None,
+        clear_contact: false,
+    }))
+    .unwrap();
+    org.state.leaky_handles = true;
+    org.person("vi2", "Vi").unwrap();
+}

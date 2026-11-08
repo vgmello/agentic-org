@@ -13,6 +13,9 @@ pub struct MemState {
     pub memberships: BTreeMap<String, Membership>,
     pub project_teams: BTreeMap<String, ProjectTeam>,
     pub projects: BTreeSet<String>,
+    /// Test switch: answer handle lookups with the owner too, as a store that broke the
+    /// `OrgView` contract would.
+    pub leaky_handles: bool,
 }
 
 use super::name_key as key;
@@ -58,7 +61,7 @@ impl OrgView for MemState {
             .values()
             // The owner's handle is only `owner` (reserved by the rules); its display name is not
             // one.
-            .find(|m| !m.owner && handle_of(m) == handle_key)
+            .find(|m| (self.leaky_handles || !m.owner) && handle_of(m) == handle_key)
             .cloned()
     }
     fn reports_of(&self, member_id: &str) -> Vec<Member> {
