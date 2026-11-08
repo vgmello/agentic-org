@@ -4,13 +4,14 @@
 //! Served by the office runtime, not the messaging library. Cards combine the office's copy
 //! of the organization (see [`crate::org`]) with live presence and each agent's self-reported
 //! status line. Presence and status are runtime data: never in the organization's event log.
-//! Members are named as in [`crate::msg`]'s addressing rules.
+//! Members are named as in [`crate::msg`]'s addressing rules. Deliberate differences from
+//! the ADR text are listed in [`crate::msg`]'s module docs.
 
 use serde::{Deserialize, Serialize};
 
 use crate::calls::Call;
 use crate::events::EventKind;
-use crate::org::MemberKind;
+use crate::org::{AgentStatus, MemberKind};
 
 /// The longest status line, in characters (Unicode scalar values), after trimming.
 pub const STATUS_MAX_CHARS: usize = 140;
@@ -23,11 +24,15 @@ pub const DEFAULT_STATUS_TTL_MS: u64 = 8 * 3_600_000;
 /// The longest `ttl_ms` a status line may have: 24 hours. More is `invalid_request`.
 pub const MAX_STATUS_TTL_MS: u64 = 24 * 3_600_000;
 
-/// What a member is doing right now. Unknown values decode as [`MemberPresence::Unknown`].
+/// What a member is doing right now. `online` is for people; the other values are for
+/// agents (ADR-0003 §2.4, as amended by the agent-sessions design), and `offline` for both.
+/// Unknown values decode as [`MemberPresence::Unknown`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum MemberPresence {
+    /// A person with the app open. People only.
+    Online,
     /// Running a turn.
     Busy,
     /// Between turns, or holding an `org-agent` wait.
@@ -38,7 +43,7 @@ pub enum MemberPresence {
     WithYou,
     /// An on-call or scheduled agent with no live run (derived, not reported).
     Asleep,
-    /// No live session.
+    /// No live session (an agent), or the app isn't open (a person).
     Offline,
     /// A value this build doesn't know (sent by a newer peer).
     #[serde(other)]
@@ -61,10 +66,10 @@ pub struct MemberRef {
     /// The display name (`Member.name`), not a handle.
     pub name: String,
     /// The handle to address this member by: an agent's
-    /// [`messaging_name`](crate::org::AgentProfile::messaging_name), a person's `name`. The
-    /// owner is also always reachable as [`OWNER_HANDLE`](crate::OWNER_HANDLE). Absent when
-    /// the member has none (e.g. an agent record without its profile). At most
-    /// [`MAX_HANDLE_BYTES`](crate::msg::MAX_HANDLE_BYTES).
+    /// [`messaging_name`](crate::org::AgentProfile::messaging_name), a person's `name`, and
+    /// for the owner always [`OWNER_HANDLE`](crate::OWNER_HANDLE) (`owner`), never their
+    /// name. Absent when the member has none (e.g. an agent record without its profile). At
+    /// most [`MAX_HANDLE_BYTES`](crate::msg::MAX_HANDLE_BYTES).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handle: Option<String>,
 }
@@ -83,16 +88,24 @@ pub struct DirectoryCard {
     /// The display name (`Member.name`). For an agent it is not a handle; use `handle`.
     pub name: String,
     /// The handle to address this member by: an agent's
-    /// [`messaging_name`](crate::org::AgentProfile::messaging_name), a person's `name`. The
-    /// owner is also always reachable as [`OWNER_HANDLE`](crate::OWNER_HANDLE). Absent when
-    /// the member has none (e.g. an agent record without its profile). At most
-    /// [`MAX_HANDLE_BYTES`](crate::msg::MAX_HANDLE_BYTES).
+    /// [`messaging_name`](crate::org::AgentProfile::messaging_name), a person's `name`, and
+    /// for the owner always [`OWNER_HANDLE`](crate::OWNER_HANDLE) (`owner`), never their
+    /// name. Absent when the member has none (e.g. an agent record without its profile). At
+    /// most [`MAX_HANDLE_BYTES`](crate::msg::MAX_HANDLE_BYTES).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handle: Option<String>,
     pub kind: MemberKind,
     /// The organization's owner (a person).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub owner: bool,
+    /// Agents only: whether it takes work
+    /// ([`AgentProfile::status`](crate::org::AgentProfile::status)). `who` never lists an
+    /// [`Offboarded`](crate::org::AgentStatus::Offboarded) agent, so this is `active`,
+    /// `paused` or `unknown`; a client must not treat `unknown` as working. Absent for
+    /// people; on an agent's card, absent (an older server, or a record without its profile)
+    /// means the same as `unknown`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_status: Option<AgentStatus>,
     /// For an agent, its job title ([`AgentProfile::title`](crate::org::AgentProfile::title)).
     /// Absent for people, whom the organization model gives no title. Per-team titles are in
     /// `teams`.
@@ -119,7 +132,8 @@ pub struct DirectoryCard {
 }
 
 /// `who`: directory cards for everyone in the organization, or those matching the filters.
-/// Agent-bound or app-bound.
+/// Agent-bound or app-bound. Offboarded agents are left out: they're no longer in the
+/// organization's directory (a `member` naming one is `not_found`).
 ///
 /// Errors: `not_found` (`member` or `team` names nothing), `invalid_request` (`office`, an
 /// `Unknown` kind, or a team name that matches more than one team), `too_large` (`member` or
@@ -240,6 +254,7 @@ mod tests {
             handle: Some("agy-senior-dev".into()),
             kind: MemberKind::Agent,
             owner: false,
+            agent_status: Some(AgentStatus::Paused),
             role_title: Some("Senior Backend Engineer".into()),
             teams: vec![CardTeam {
                 id: "01M6T".into(),
@@ -287,6 +302,7 @@ mod tests {
                 "name": "Agy",
                 "handle": "agy-senior-dev",
                 "kind": "agent",
+                "agent_status": "paused",
                 "role_title": "Senior Backend Engineer",
                 "teams": [{"id": "01M6T", "name": "Platform", "title_in_team": "Messaging Engineer"}],
                 "reports_to": {"id": "01M6A", "name": "Ada", "handle": "ac-staff-engineer-ada"},
@@ -298,18 +314,19 @@ mod tests {
             }]}),
         );
         // The owner: no team, office, manager or title; `teams` is still sent, and may be
-        // missing. A person's handle is their name.
+        // missing. The owner's handle is always `owner`, never their name.
         let owner = DirectoryCard {
             id: "01M6X".into(),
             name: "Vinicius".into(),
-            handle: Some("Vinicius".into()),
+            handle: Some(crate::OWNER_HANDLE.into()),
             kind: MemberKind::Person,
             owner: true,
+            agent_status: None,
             role_title: None,
             teams: vec![],
             reports_to: None,
             office: None,
-            presence: MemberPresence::Offline,
+            presence: MemberPresence::Online,
             last_seen_at: None,
             status: None,
             status_expires_at: None,
@@ -318,18 +335,54 @@ mod tests {
         check(
             &owner,
             json!({
-                "id": "01M6X", "name": "Vinicius", "handle": "Vinicius", "kind": "person",
-                "owner": true, "teams": [], "presence": "offline",
+                "id": "01M6X", "name": "Vinicius", "handle": "owner", "kind": "person",
+                "owner": true, "teams": [], "presence": "online",
                 "current_task_id": "T-1"
             }),
         );
         let decoded: DirectoryCard = serde_json::from_value(json!({
-            "id": "01M6X", "name": "Vinicius", "handle": "Vinicius", "kind": "person",
-            "owner": true, "presence": "offline", "current_task_id": "T-1",
+            "id": "01M6X", "name": "Vinicius", "handle": "owner", "kind": "person",
+            "owner": true, "presence": "online", "current_task_id": "T-1",
             "pronouns": "he/him"
         }))
         .unwrap();
         assert_eq!(decoded, owner);
+    }
+
+    #[test]
+    fn card_agent_status_values() {
+        for (status, name) in [
+            (AgentStatus::Active, "active"),
+            (AgentStatus::Paused, "paused"),
+        ] {
+            let mut c = card();
+            c.agent_status = Some(status);
+            assert_eq!(serde_json::to_value(&c).unwrap()["agent_status"], name);
+            assert_eq!(
+                serde_json::from_value::<DirectoryCard>(serde_json::to_value(&c).unwrap()).unwrap(),
+                c
+            );
+        }
+        // Any other value, in any shape, reads as `Unknown` (never as working) and never
+        // fails the card, except `offboarded`, which `who` never sends but still decodes;
+        // `null` reads as absent.
+        for (value, expected) in [
+            (json!("sabbatical"), Some(AgentStatus::Unknown)),
+            (json!(5), Some(AgentStatus::Unknown)),
+            (json!({"status": "active"}), Some(AgentStatus::Unknown)),
+            (json!("offboarded"), Some(AgentStatus::Offboarded)),
+            (Value::Null, None),
+        ] {
+            let mut v = serde_json::to_value(card()).unwrap();
+            v["agent_status"] = value.clone();
+            assert_eq!(
+                serde_json::from_value::<DirectoryCard>(v)
+                    .unwrap()
+                    .agent_status,
+                expected,
+                "{value}"
+            );
+        }
     }
 
     #[test]
@@ -417,6 +470,7 @@ mod tests {
     #[test]
     fn presence_values_on_the_wire() {
         for (presence, name) in [
+            (MemberPresence::Online, "online"),
             (MemberPresence::Busy, "busy"),
             (MemberPresence::Idle, "idle"),
             (MemberPresence::NeedsYou, "needs_you"),
@@ -433,7 +487,7 @@ mod tests {
             );
         }
         assert_eq!(
-            serde_json::from_value::<MemberPresence>(json!("online")).unwrap(),
+            serde_json::from_value::<MemberPresence>(json!("away")).unwrap(),
             MemberPresence::Unknown
         );
     }
