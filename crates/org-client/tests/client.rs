@@ -565,8 +565,15 @@ fn a_server_that_stops_reading_cannot_hang_a_caller_or_the_others() {
     let _exclusive = exclusive();
     watchdog(Duration::from_secs(60), || {
         let (release, hold) = mpsc::channel::<()>();
-        // Accepts, then never reads a byte.
-        let server = fake(move |peer| {
+        let (write_started, started) = mpsc::channel::<()>();
+        // Reads one byte (proof that the big request's write has started), then never reads
+        // again.
+        let server = fake(move |mut peer| {
+            use std::io::Read;
+            let mut first = [0u8; 1];
+            if peer.stream.read_exact(&mut first).is_ok() {
+                let _ = write_started.send(());
+            }
             hold.recv().unwrap();
             drop(peer);
         });
@@ -590,9 +597,9 @@ fn a_server_that_stops_reading_cannot_hang_a_caller_or_the_others() {
                     .map(|_| ())
             }))
         };
-        // Long enough for the big request to reach the writer and block, even in a slow
-        // debug build under load.
-        std::thread::sleep(Duration::from_millis(300));
+        started
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the big request's write never started");
         let other = {
             let client = std::sync::Arc::clone(&client);
             timed(Box::new(move || {
@@ -878,9 +885,14 @@ fn a_server_that_half_closes_while_a_request_is_being_written_wakes_the_caller_a
     let (seen_end, saw_end) = mpsc::channel::<()>();
     let server = fake(move |mut peer| {
         use std::io::Read;
-        // Never reads, so the client's write blocks; then says it is done sending. After
-        // that macOS refuses the client's `shutdown(Both)`, so only the fallback can wake it.
-        std::thread::sleep(Duration::from_millis(300));
+        // Reads one byte, which proves the client's write has started, and nothing more, so
+        // the write blocks; then says it is done sending. After that macOS refuses the
+        // client's `shutdown(Both)`, so only the fallback can wake it.
+        peer.stream
+            .set_read_timeout(Some(Duration::from_secs(60)))
+            .unwrap();
+        let mut first = [0u8; 1];
+        peer.stream.read_exact(&mut first).unwrap();
         peer.stream.shutdown(std::net::Shutdown::Write).unwrap();
         // Now read what the client had written and wait for the end of the stream. It only
         // comes if the client freed its blocked writer and shut its end: a writer left blocked
@@ -1310,7 +1322,15 @@ fn a_subscribe_that_gets_no_answer_closes_the_connection_but_one_that_was_never_
         // (b) Stuck behind another call's write, so nothing of it was sent: leave the
         // connection alone.
         let (release, hold) = mpsc::channel::<()>();
-        let server = fake(move |peer| {
+        let (write_started, started) = mpsc::channel::<()>();
+        let server = fake(move |mut peer| {
+            use std::io::Read;
+            // One byte of the big request proves the writer has started on it; the rest is
+            // never read, so the write stays blocked.
+            let mut first = [0u8; 1];
+            if peer.stream.read_exact(&mut first).is_ok() {
+                let _ = write_started.send(());
+            }
             hold.recv().ok();
             drop(peer);
         });
@@ -1324,7 +1344,9 @@ fn a_subscribe_that_gets_no_answer_closes_the_connection_but_one_that_was_never_
                 client.call_with_timeout::<OrganizationCreate>(&big, Duration::from_secs(3))
             })
         };
-        std::thread::sleep(Duration::from_millis(400));
+        started
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the big request's write never started");
         let waiting = client.subscribe_from_with_timeout(None, Duration::from_millis(300));
         assert!(matches!(waiting, Err(ClientError::Timeout)), "{waiting:?}");
         // The stuck write is still going, and the subscribe did not kill the connection.
@@ -1345,7 +1367,13 @@ fn more_callers_than_the_queue_holds_wait_for_room_and_time_out_without_closing_
     let _exclusive = exclusive();
     watchdog(Duration::from_secs(90), || {
         let (release, hold) = mpsc::channel::<()>();
-        let server = fake(move |peer| {
+        let (write_started, started) = mpsc::channel::<()>();
+        let server = fake(move |mut peer| {
+            use std::io::Read;
+            let mut first = [0u8; 1];
+            if peer.stream.read_exact(&mut first).is_ok() {
+                let _ = write_started.send(());
+            }
             hold.recv().ok();
             drop(peer);
         });
@@ -1359,7 +1387,9 @@ fn more_callers_than_the_queue_holds_wait_for_room_and_time_out_without_closing_
                 client.call_with_timeout::<OrganizationCreate>(&big, Duration::from_secs(4))
             })
         };
-        std::thread::sleep(Duration::from_millis(500));
+        started
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the big request's write never started");
 
         // 1,100 small calls behind a stuck write: more than the 1,024-slot queue holds.
         let callers: Vec<_> = (0..1_100)
@@ -1417,5 +1447,47 @@ fn creating_an_organization_waits_longer_than_the_short_default() {
     });
 
     assert_eq!(created.unwrap().name, "Acme");
+    server.finish();
+}
+
+#[test]
+fn a_server_that_answers_before_it_has_read_the_whole_request_cannot_wedge_the_connection() {
+    // The call is answered (ids are sequential, so a server can predict them) while the rest of
+    // its request is still being written. The writer itself must give the stuck write up, so
+    // later calls fail with `Disconnected` at once instead of timing out for ever.
+    let _exclusive = exclusive();
+    let (release, hold) = mpsc::channel::<()>();
+    let server = fake(move |mut peer| {
+        use std::io::Read;
+        let mut first = [0u8; 1];
+        peer.stream.read_exact(&mut first).unwrap();
+        // Answer id 1 now, then never read the request's rest.
+        peer.reply::<OrganizationCreate>(1, &organization("Acme"));
+        hold.recv().ok();
+        drop(peer);
+    });
+    let client = server.client();
+
+    let big = OrganizationCreateParams {
+        name: "x".repeat(256 * 1024),
+    };
+    let answered =
+        client.call_with_timeout::<OrganizationCreate>(&big, Duration::from_millis(1500));
+    assert!(answered.is_ok(), "{answered:?}");
+
+    let started = Instant::now();
+    let later = client.call_with_timeout::<Hello>(&Empty {}, Duration::from_secs(20));
+    assert!(
+        matches!(later, Err(ClientError::Disconnected)),
+        "{later:?} after {:?}",
+        started.elapsed()
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
+    release.send(()).unwrap();
+    drop(client);
     server.finish();
 }

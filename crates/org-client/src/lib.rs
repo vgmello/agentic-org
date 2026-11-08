@@ -451,9 +451,17 @@ impl Client {
             std::thread::sleep(Duration::from_millis(1));
         }
 
-        let outcome = answer.recv_timeout(deadline.saturating_duration_since(Instant::now()));
+        let mut outcome = answer.recv_timeout(deadline.saturating_duration_since(Instant::now()));
         // On timeout the entry is still there: drop it, so a late answer is ignored.
         lock(&self.shared.pending).remove(&id);
+        if matches!(outcome, Err(mpsc::RecvTimeoutError::Timeout)) {
+            // An answer that came in between the wait ending and the entry going is still an
+            // answer: a call that succeeded is not reported as timed out (the caller might
+            // retry a create that went through).
+            if let Ok(late) = answer.try_recv() {
+                outcome = Ok(late);
+            }
+        }
         if !matches!(outcome, Ok(Ok(_))) && self.settle(&state) {
             // Withdrawn before the writer started on it: the server never saw any of it.
             *sent = false;
@@ -704,6 +712,13 @@ fn write_before(
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() && rest.len() == bytes.len() {
             return Ok(Written::NotStarted);
+        }
+        // A write that has started but is still not done `WRITE_GRACE` after the deadline is
+        // given up here, which closes the connection (part of the request is on the wire).
+        // This does not wait for a caller to notice: a caller whose call was answered early
+        // (a server may answer before it has read the whole request) never will.
+        if remaining.is_zero() && Instant::now() >= deadline + WRITE_GRACE {
+            return Err(ErrorKind::TimedOut.into());
         }
         // Past the deadline, keep going in short steps; the caller will cut it if it sticks.
         let step = if remaining.is_zero() {
