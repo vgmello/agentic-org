@@ -406,6 +406,21 @@ mod tests {
     }
 
     #[test]
+    fn a_snapshot_failure_the_office_answered_is_not_a_reason_to_restart_it() {
+        let (state, dir) = state_with(vec![hosted("a", "Alpha")]);
+        state.ensure_running().unwrap();
+        let starts_before = state.epoch.load(Ordering::SeqCst);
+        let err = state.with_restart(|s| s.org_snapshot("nope")).unwrap_err();
+        assert_eq!((err.source, err.code.as_str()), ("api", "not_found"));
+        assert_eq!(state.epoch.load(Ordering::SeqCst), starts_before);
+        // Not connected yet: with_restart starts the office, then answers.
+        let (fresh, dir2) = state_with(vec![hosted("a", "Alpha")]);
+        assert!(fresh.with_restart(|s| s.org_snapshot("a")).is_ok());
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(dir2);
+    }
+
+    #[test]
     fn creating_before_the_office_is_running_is_refused() {
         let (state, dir) = make_state(Scenario::Healthy);
         let err = state.create_organization("Acme").unwrap_err();

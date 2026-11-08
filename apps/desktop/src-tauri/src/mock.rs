@@ -412,6 +412,34 @@ mod tests {
     }
 
     #[test]
+    fn org_snapshot_refuses_when_the_stored_organizations_cannot_be_read() {
+        let dir =
+            std::env::temp_dir().join(format!("agentic-org-test-snapshot-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("organizations.json"),
+            br#"{"version": 999, "organizations": []}"#,
+        )
+        .unwrap();
+        let office = MockOffice::from_env(dir.clone());
+        assert_eq!(
+            office.org_snapshot("a").unwrap_err().code,
+            ErrorCode::StorageError
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn org_snapshot_needs_an_hq_office() {
+        let mut org = healthy().create_organization("Alpha").unwrap();
+        org.offices.clear();
+        let office = healthy().with_organizations(vec![org.clone()]);
+        let err = office.org_snapshot(&org.id).unwrap_err();
+        assert_eq!(err.code, ErrorCode::NotFound);
+    }
+
+    #[test]
     fn an_empty_seed_starts_an_organization_with_only_its_owner() {
         let mut office = healthy();
         office.seed = Seed::Empty;

@@ -165,7 +165,6 @@ export interface ProjectSummary {
 	name: string;
 }
 
-/** Everything the org chart needs, as of `position` (`org.snapshot`). */
 /**
  * An organization's structure as the app reads it. App-local (not in `org-proto`): `sample` is true while the
  * snapshot is invented because the office behind it is the mock.
@@ -175,6 +174,7 @@ export interface OrgView {
 	sample: boolean;
 }
 
+/** Everything the org chart needs, as of `position` (`org.snapshot`). */
 export interface OrgSnapshot {
 	position: Position;
 	teams: Team[];
