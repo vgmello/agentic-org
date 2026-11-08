@@ -5,7 +5,7 @@ use org_proto::org::{
     MemberSetReportsToParams, MemberUpdatePersonParams, Membership, OrgChange,
     ProjectAddTeamParams, ProjectRemoveTeamParams, ProjectTeam, Team, TeamAddMemberParams,
     TeamCreateParams, TeamDeleteParams, TeamMoveParams, TeamRemoveMemberParams, TeamRenameParams,
-    TeamSetLeadParams, TeamSetTitleParams, AGENT_TEXT_MAX_CHARS, OWNER_HANDLE,
+    TeamSetLeadParams, TeamSetTitleParams, AGENT_TEXT_MAX_CHARS, OFFICE_HANDLE, OWNER_HANDLE,
 };
 use org_proto::{ApiError, ErrorCode, NameError, OrganizationName};
 
@@ -41,7 +41,7 @@ pub fn decide(view: &dyn OrgView, now: &str, command: &OrgCommand) -> Decision {
 /// `member_id` is made by the office; the app sets the real name later with
 /// `member.update_person`.
 pub fn owner_bootstrap(member_id: &str, name: &str, now: &str) -> Decision {
-    check_id(member_id)?;
+    check_member_id(member_id)?;
     let name = parse_name(name)?;
     Ok(vec![OrgChange::MemberUpserted {
         member: Member {
@@ -296,9 +296,9 @@ fn team_set_title(view: &dyn OrgView, p: &TeamSetTitleParams) -> Decision {
 // ---- members --------------------------------------------------------------------------
 
 fn member_add_person(view: &dyn OrgView, now: &str, p: &MemberAddPersonParams) -> Decision {
-    check_id(&p.member_id)?;
+    check_member_id(&p.member_id)?;
     let contact = check_text(p.contact.as_deref(), "contact")?;
-    let name = parse_name(&p.name)?;
+    let name = parse_handle(&p.name)?;
     if view.member(&p.member_id).is_some() {
         return Err(fail(ErrorCode::AlreadyExists, "that member id is taken"));
     }
@@ -334,9 +334,13 @@ fn member_update_person(view: &dyn OrgView, p: &MemberUpdatePersonParams) -> Dec
         ));
     }
     let contact = check_text(p.contact.as_deref(), "contact")?;
-    let name = p.name.as_deref().map(parse_name).transpose()?;
+    // The owner's display name is not a handle: it never clashes and has no address shape to avoid.
+    let name = match (p.name.as_deref(), member.owner) {
+        (Some(raw), true) => Some(parse_name(raw)?),
+        (Some(raw), false) => Some(parse_handle(raw)?),
+        (None, _) => None,
+    };
     check_version(member.version, p.expected_version)?;
-    // The owner's display name is not a handle, so it never clashes.
     if let Some(name) = name.as_ref().filter(|_| !member.owner) {
         check_handle_free(view, name.key(), Some(&member.id))?;
     }
@@ -495,7 +499,8 @@ pub fn name_key(stored: &str) -> String {
         .unwrap_or_else(|_| stored.trim().to_lowercase())
 }
 
-/// A team's or a person's name. `NameError::Empty` speaks of "the organization", so the empty
+/// A team's name, the owner's display name, or any other name that is not a handle. (A person's
+/// name is a handle: `parse_handle`.) `NameError::Empty` speaks of "the organization", so the empty
 /// case gets its own words here; the other messages are about "the name" in general.
 fn parse_name(raw: &str) -> Result<OrganizationName, ApiError> {
     OrganizationName::parse(raw).map_err(|reason| {
@@ -505,6 +510,20 @@ fn parse_name(raw: &str) -> Result<OrganizationName, ApiError> {
         };
         ApiError::new(ErrorCode::InvalidName, message)
     })
+}
+
+/// A person's name, which is also the handle messaging addresses them by: a name, and one that
+/// does not look like what messaging already addresses by (a member id, a run), so a handle never
+/// shadows either.
+fn parse_handle(raw: &str) -> Result<OrganizationName, ApiError> {
+    let name = parse_name(raw)?;
+    if org_proto::is_shaped_like_an_address(name.as_str()) {
+        return Err(ApiError::new(
+            ErrorCode::InvalidName,
+            "a name can't look like a member id or start with `run:`",
+        ));
+    }
+    Ok(name)
 }
 
 fn sibling_clash() -> ApiError {
@@ -526,6 +545,19 @@ fn check_id(id: &str) -> Result<(), ApiError> {
         Err(fail(
             ErrorCode::InvalidRequest,
             "an id is 1 to 64 letters, digits, '-' or '_'",
+        ))
+    }
+}
+
+/// A member id: exactly 26 ASCII letters and digits, the shape of a ULID. No handle has this
+/// shape (`parse_handle` refuses it), so an id and a handle never name different members.
+fn check_member_id(id: &str) -> Result<(), ApiError> {
+    if org_proto::is_valid_member_id(id) {
+        Ok(())
+    } else {
+        Err(fail(
+            ErrorCode::InvalidRequest,
+            "a member id is exactly 26 letters and digits",
         ))
     }
 }
@@ -570,7 +602,7 @@ fn check_handle_free(view: &dyn OrgView, key: &str, except: Option<&str>) -> Res
     let taken_by_other = view
         .member_with_handle(key)
         .is_some_and(|holder| !holder.owner && Some(holder.id.as_str()) != except);
-    if taken_by_other || key == OWNER_HANDLE {
+    if taken_by_other || key == OWNER_HANDLE || key == OFFICE_HANDLE {
         Err(fail(
             ErrorCode::AlreadyExists,
             "that name is already another member's handle",
