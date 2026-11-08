@@ -20,7 +20,11 @@ export interface OfficeApi {
 	/** Make sure an office is installed, running and answering. */
 	ensureRunning(): Promise<HelloResult>;
 	/** Whether the running office answers. Read-only (never starts anything): safe to call often. */
-	ping(): Promise<void>;
+	ping(): Promise<HelloResult>;
+	/** The organizations as the host lists them now, read-only: it never starts or restarts anything (for the status checks). */
+	peekOrganizations(): Promise<Organization[]>;
+	/** Ask the host to start an office again (`office.restart`, app-only). Rejects with the host's refusal; an office already starting is not an error. */
+	restartOffice(officeId: string): Promise<void>;
 	/** Create an organization on this Mac's host (reached by `ensureRunning`), and remember it. */
 	createOrganization(name: string): Promise<Connection>;
 	/** The organizations this Mac already has, each with its offices here (`organization.list`). */

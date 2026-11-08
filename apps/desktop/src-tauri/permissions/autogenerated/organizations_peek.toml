@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-organizations-peek"
+description = "Enables the organizations_peek command without any pre-configured scope."
+commands.allow = ["organizations_peek"]
+
+[[permission]]
+identifier = "deny-organizations-peek"
+description = "Denies the organizations_peek command without any pre-configured scope."
+commands.deny = ["organizations_peek"]

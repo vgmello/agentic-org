@@ -39,16 +39,18 @@ export type DisplayStatus = OfficeStatus | 'unreachable' | 'checking' | 'status_
  * not enough: a stopped office under a running host must not read Online, OFC-12). If it answers but reports another
  * status (Starting, Stopped…), that status is shown. Any other office reads "Status unknown".
  */
-export function displayStatus(connected: boolean, check: LiveCheck, reported?: OfficeStatus): DisplayStatus {
+export function displayStatus(connected: boolean, check: LiveCheck, reported?: OfficeStatus, capabilities?: string[]): DisplayStatus {
 	if (!connected) return 'status_unknown';
+	// A host whose hello doesn't list `office.status_changed` is not live: what it reported is not trusted (spec rev 9).
+	if (check === 'up' && capabilities && !capabilities.includes('office.status_changed')) return 'status_unknown';
 	// An office on this Mac never reads Offline, only Stopped (spec §3.1); the connected office is always on this Mac.
 	if (check === 'up') return reported === 'offline' ? 'unavailable' : reported && reported !== 'active' ? reported : 'active';
 	return check === 'down' ? 'unreachable' : 'checking';
 }
 
 /** `displayStatus` for an office in a list: connected means it is the office the app is connected to. */
-export const displayStatusFor = (officeId: string, connectedOfficeId: string, check: LiveCheck, reported?: OfficeStatus): DisplayStatus =>
-	displayStatus(officeId === connectedOfficeId, check, reported);
+export const displayStatusFor = (officeId: string, connectedOfficeId: string, check: LiveCheck, reported?: OfficeStatus, capabilities?: string[]): DisplayStatus =>
+	displayStatus(officeId === connectedOfficeId, check, reported, capabilities);
 
 /** The owner-facing word for an office's status, with its icon family and tone (spec §3.1). */
 export function statusInfo(status: DisplayStatus | undefined): { label: string; tone: 'ok' | 'info' | 'muted' | 'warn' | 'bad' } {
@@ -208,4 +210,41 @@ export function copyDetails(o: OfficeInfo, statusLabel: string, now: Date, appVe
 		`Time: ${now.toISOString()}`,
 		`Agentic Org: ${appVersion}`
 	].join('\n');
+}
+
+/** What can be done about a stopped office (spec §3.3): the button's words, or why there is none. */
+export interface RestartAction {
+	/** "Restart office", "Try again" or "Start office"; absent when the contract refuses a restart for this reason. */
+	label?: string;
+	/** A line instead of a button (a host that can't restart from here). */
+	note?: string;
+}
+
+export function restartAction(o: Pick<OfficeInfo, 'status' | 'status_reason'>, capabilities?: string[]): RestartAction {
+	if (o.status !== 'offline' && o.status !== 'unavailable') return {};
+	// The contract refuses a restart only for these two reasons.
+	if (o.status_reason === 'unsupported_version' || o.status_reason === 'invalid_request') return {};
+	if (capabilities && !capabilities.includes('office.restart')) return { note: 'Update Agentic Org to restart offices from here' };
+	if (o.status_reason === 'key_missing') return { label: 'Try again' };
+	if (o.status_reason === 'stopped_by_owner') return { label: 'Start office' };
+	return { label: 'Restart office' };
+}
+
+/** What `office.restart` answered, in the owner's words (spec §3.3); `ignore` is an answer that is no error. */
+export function restartOutcome(code: string): { kind: 'wait' | 'unsupported' | 'refresh' | 'error'; message?: string } {
+	switch (code) {
+		case 'conflict':
+			return { kind: 'wait' };
+		case 'unknown_method':
+			return { kind: 'unsupported', message: 'Update Agentic Org to restart offices from here' };
+		case 'not_found':
+		case 'unavailable':
+			return { kind: 'refresh' };
+		case 'not_authorized':
+			return { kind: 'error', message: "You can't restart this office from here." };
+		case 'not_ready':
+			return { kind: 'error', message: 'The office host is still starting. Try again in a moment.' };
+		default:
+			return { kind: 'error', message: "The office couldn't be restarted. Try again in a moment." };
+	}
 }
