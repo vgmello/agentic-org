@@ -170,9 +170,9 @@ impl AppState {
             }
             // The office couldn't be reached or understood. An answer it gave (a storage error, a bad
             // request) is not a reason to restart it.
-            // PLACEHOLDER: today the mock stands in for an unreachable office with an `unknown` api
-            // code. When `org-client` is wired in, map its transport failures (NotRunning, Io,
-            // Timeout, Disconnected) to a `setup`-source error here, and drop the `unknown` arm.
+            // `unknown` is how an office connection that was lost is reported (the mock stands in for an
+            // unreachable office with it too); a timeout, a bad answer or a wrong version are `unavailable`
+            // and are not retried.
             Err(e) if e.source == "setup" || (e.source == "api" && e.code == "unknown") => {
                 self.restart_since(seen)?;
                 f(self)
@@ -364,6 +364,11 @@ fn choose_office(
 ) -> (Arc<dyn OfficeConnection>, std::path::PathBuf) {
     match (choice, real) {
         (Some("real"), Some(real)) => (Arc::new(real), data.join("real")),
+        (Some("real"), None) => {
+            eprintln!("AGENTIC_ORG_OFFICE=real, but there is no office folder to look in: using the mock office.");
+            let dir = data.join("mock");
+            (Arc::new(mock::MockOffice::from_env(dir.clone())), dir)
+        }
         _ => {
             let dir = data.join("mock");
             (Arc::new(mock::MockOffice::from_env(dir.clone())), dir)
