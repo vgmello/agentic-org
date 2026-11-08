@@ -15,7 +15,7 @@ builds_on: [offices-and-teams-ux, work-items-ux]
 
 Builds on `offices-and-teams-ux.md` rev 4, `work-items-ux.md` rev 5 and `desktop-app-v1.md` (in Eden's notes, not in this repository) (hire §3.6, profile §3.5).
 
-**Revision 11 (2026-11-08): import counts.** The import's examples now match our team today: 10 agents (Remy is working, and Riley comes in Active and shows Offline, U13), so "Bring in 10 agents" once every row is complete, and a summary with none paused; offboarded HR agents are counted as "(n)", since none are today (decision 1, §4). No criteria changed.
+**Revision 11 (2026-11-08): import counts.** The import's examples now match our team today: 10 agents (Remy is working, and Riley comes in Active and shows Offline, U13), so "Bring in 5 agents · 5 need details" until the five messaging-only agents get a role and runtime, then "Bring in 10 agents", and a summary with none paused; offboarded HR agents are counted as "(n)", since none are today (decision 1, §4). No criteria changed.
 
 **Revision 10 (2026-11-08): small fixes.** HRL-2 lists member, lead and manager pickers, matching §2a. The profile tabs include **Processes** (`processes-ux.md` §2).
 
@@ -137,7 +137,7 @@ Every organization has one built-in agent, **HR lead**, created with the organiz
 - **Review** (one row per agent, merged across sources by name):
 
 ```
- Review 10 agents                         Filter: [All ▾]   [Bring in 8 agents · 2 need details]
+ Review 10 agents                         Filter: [All ▾]   [Bring in 5 agents · 5 need details]
  ─────────────────────────────────────────────────────────────────────────────────
  [A] ada            Staff Engineer        HR + messaging   Claude Code   Engineering ▾
  [E] Eden           Product Designer      HR + messaging   Claude Code   Design ▾
@@ -155,7 +155,7 @@ Every organization has one built-in agent, **HR lead**, created with the organiz
 ```
 
 - **Merged rows:** an agent in both sources shows "HR + messaging" and links its messaging name automatically when the HR id matches the inbox name.
-- **Messaging-only agents** need a **role** (a catalog combobox, or "Custom title…") and a **runtime**. The row says "2 to fill", and **Bring in** counts only complete rows ("Bring in 8 agents · 2 need details").
+- **Messaging-only agents** need a **role** (a catalog combobox, or "Custom title…") and a **runtime**. The row says "2 to fill", and **Bring in** counts only complete rows ("Bring in 5 agents · 5 need details").
 - **HR-only agents with no messaging inbox** get an info note, "No messages from Riley yet", and a per-row choice **Active · Paused · Skip**, defaulting to Active. The note explains: "Riley is active in HR but hasn't joined messaging. Bring in as Paused if Riley isn't working now."
 - **Offboarded HR agents** are listed collapsed under "Offboarded in HR (n)", unchecked, as a record.
 - **Teams:** HR has no teams, so the app suggests them from roles and AGENTS.md ownership (the shape in §2) in an editable preview. **Edit…** opens a small tree editor (rename, move, lead, members). **Skip teams** leaves everyone in "Not in a team".
