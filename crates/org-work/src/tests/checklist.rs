@@ -481,3 +481,30 @@ fn making_a_ticked_step_into_a_task_unticks_it_until_the_task_is_completed() {
     w.ok(&agent(), WorkCall::TaskSetStatus(p));
     assert!(!w.step(&parent, &step).done);
 }
+
+#[test]
+fn a_deleted_parent_gets_no_automatic_tick() {
+    let w = World::new();
+    let (parent, step) = w.task_with_step(false);
+    let (task, call) = w.make_task(&step);
+    w.ok(&agent(), call);
+    w.ok(&app(), w.delete(&parent));
+    let n = w.events(&parent).len();
+    let accepted = w.set(&task, Done);
+    assert_eq!(accepted.items.len(), 1);
+    assert_eq!(w.events(&parent).len(), n);
+}
+
+#[test]
+fn undoing_a_tick_is_stale_once_the_step_stopped_following_its_task() {
+    let w = World::new();
+    let (parent, step, _, v) = auto_ticked(&w);
+    w.ok(
+        &agent(),
+        WorkCall::ChecklistUnlinkTask(ChecklistUnlinkTaskParams {
+            change_id: w.id(),
+            step_id: step,
+        }),
+    );
+    assert_eq!(w.code(&app(), undo(&w, &parent, v)), ErrorCode::Conflict);
+}

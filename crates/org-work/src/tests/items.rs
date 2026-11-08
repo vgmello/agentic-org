@@ -99,8 +99,27 @@ fn a_rounds_end_closes_every_open_span_and_a_reopen_opens_the_ones_that_still_ho
         w.last_event(&id).change,
         WorkEventKind::Comment { .. }
     ));
+    let before = w.events(&id).len();
     w.set(&id, ItemStatus::Todo);
-    assert_eq!(w.last_event(&id).change, started(&q2_id));
+    let reopened: Vec<WorkEventKind> = w.events(&id)[before..]
+        .iter()
+        .map(|e| e.change.clone())
+        .collect();
+    assert!(matches!(reopened[0], WorkEventKind::StatusChanged { .. }));
+    assert_eq!(
+        reopened[1..],
+        [started(&q2_id)],
+        "only the unanswered question"
+    );
+    assert_eq!(
+        w.item(&id).waiting,
+        vec![crate::OpenWait {
+            on_member_id: OWNER.into(),
+            reason: WaitReason::Question {
+                comment_id: q2_id.clone()
+            }
+        }]
+    );
     // A question asked while done opens nothing until the reopen.
     w.set(&id, ItemStatus::Done);
     w.ok(&agent(), WorkCall::Comment(question(&w, &id, OWNER)));
@@ -534,14 +553,26 @@ fn deleting_an_item_ends_its_waiting_spans() {
 #[test]
 fn a_connection_that_isnt_the_apps_acts_only_as_an_agent() {
     let w = World::new();
-    for who in [OWNER, "pat", "nobody"] {
+    for caller in [
+        Caller::agent(OWNER),
+        Caller::agent("pat"),
+        Caller::agent("nobody"),
+        Caller::agent("off"),
+        Caller::app("ada"),
+        Caller::app("nobody"),
+    ] {
         let p = w.create_params(PROJECT);
         assert_eq!(
-            w.code(&Caller::agent(who), WorkCall::TaskCreate(p)),
+            w.code(&caller, WorkCall::TaskCreate(p)),
             ErrorCode::NotAuthorized,
-            "{who}"
+            "{caller:?}"
         );
     }
+    // A paused agent still acts.
+    w.ok(
+        &Caller::agent("pau"),
+        WorkCall::TaskCreate(w.create_params(PROJECT)),
+    );
     // The app may act as the owner or a person.
     w.ok(
         &Caller::app("pat"),
@@ -562,4 +593,47 @@ fn writers_never_send_unknown() {
         w.code(&agent(), WorkCall::TaskSetStatus(p)),
         ErrorCode::InvalidRequest
     );
+}
+
+/// Appends an event to an item behind the library's back (an office write the library doesn't
+/// make, or a kind from a newer build).
+fn inject(w: &World, id: &str, change: WorkEventKind) {
+    let mut work = w.store.work.lock().unwrap();
+    let item = work.items.get_mut(id).unwrap();
+    item.version += 1;
+    let mut e = work.events[id].last().unwrap().clone();
+    e.version += 1;
+    e.actor_id = None;
+    e.cause = None;
+    e.change = change;
+    work.events.get_mut(id).unwrap().push(e);
+}
+
+#[test]
+fn bookkeeping_never_makes_a_delete_stale_and_an_unknown_event_makes_anything_stale() {
+    let w = World::new();
+    let id = w.task();
+    inject(
+        &w,
+        &id,
+        WorkEventKind::WaitingStarted {
+            on_member_id: OWNER.into(),
+            reason: WaitReason::Message {
+                message_id: "m1".into(),
+            },
+        },
+    );
+    let stale_by_bookkeeping = WorkCall::Delete(WorkDeleteParams {
+        change_id: w.id(),
+        item_id: id.clone(),
+        expected_version: 1,
+    });
+    w.ok(&app(), stale_by_bookkeeping);
+
+    let id = w.task();
+    inject(&w, &id, WorkEventKind::Unknown);
+    let mut p = w.update(&id);
+    p.expected_version = 1;
+    p.title = Some("x".into());
+    assert_eq!(w.code(&app(), WorkCall::TaskUpdate(p)), ErrorCode::Conflict);
 }

@@ -106,7 +106,9 @@ pub trait WorkTxn {
     /// The item holding the link `link_id` (its `from` item), live or removed.
     fn item_of_link(&mut self, link_id: &str) -> Result<Option<StoredItem>, StoreError>;
     /// Whether a client-made id is taken: an item, a step (removed ones included), a link
-    /// (removed ones included) or a comment (`already_exists`, §2.3).
+    /// (removed ones included) or a comment (`already_exists`, §2.3). The four share one id
+    /// space, so a store keeps them in one unique index (a `work_ids` table, or a union over
+    /// the item, step, link and comment rows); §3.3's sketch has no comment table yet.
     fn id_in_use(&mut self, id: &str) -> Result<bool, StoreError>;
     /// The item's events after `after_version`, oldest first.
     fn events_since(

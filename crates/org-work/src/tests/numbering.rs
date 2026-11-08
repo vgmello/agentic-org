@@ -37,7 +37,12 @@ fn a_refused_create_uses_no_number() {
 fn a_thousand_creates_get_a_thousand_consecutive_numbers() {
     let w = World::new();
     let mut numbers: Vec<u64> = (0..1000)
-        .map(|_| w.item(&w.task()).number.unwrap())
+        .map(|_| {
+            let p = w.create_params(PROJECT);
+            w.ok(&app(), WorkCall::TaskCreate(p)).items[0]
+                .number
+                .unwrap()
+        })
         .collect();
     numbers.sort_unstable();
     assert_eq!(numbers, (1..=1000).collect::<Vec<_>>());

@@ -338,3 +338,15 @@ fn a_corrupt_stored_tally_never_panics() {
     let tally: TimeTally = serde_json::from_value(tally).unwrap();
     assert_eq!(tally.figures(T0).rest_ms, 0);
 }
+
+#[test]
+fn a_span_started_outside_a_round_counts_nothing() {
+    let events = [
+        ev(T0, WorkEventKind::Created),
+        status(T0 + HOUR, Todo, Done),
+        wait(T0 + 2 * HOUR, true),
+        status(T0 + 3 * HOUR, Done, Todo),
+    ];
+    let t = task(&events, T0 + 5 * HOUR);
+    assert_eq!((t.lead_ms, t.waiting_on_owner_ms), (3 * HOUR, 0));
+}

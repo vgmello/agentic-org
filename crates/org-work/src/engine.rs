@@ -93,16 +93,25 @@ pub fn execute(
             format!("`{}` can only be made from the app", call.method()),
         )));
     }
-    // Only the app's connection acts as the owner or a person (§2.2); the office binds
-    // connections, and this keeps the rule true inside the library too.
-    if !caller.via_app
-        && !org
-            .member(&caller.member_id)?
-            .is_some_and(|m| m.kind == MemberKind::Agent && !m.owner)
-    {
+    // An agent's connection acts as an agent that isn't offboarded, and only the app's acts as
+    // the owner or a person (§2.2). The office binds connections; this keeps the rule true
+    // inside the library too.
+    let member = org.member(&caller.member_id)?;
+    let may_act = match &member {
+        Some(m) if caller.via_app => m.owner || m.kind == MemberKind::Person,
+        Some(m) => {
+            !m.owner
+                && m.kind == MemberKind::Agent
+                && m.agent
+                    .as_ref()
+                    .is_some_and(|a| matches!(a.status, AgentStatus::Active | AgentStatus::Paused))
+        }
+        None => false,
+    };
+    if !may_act {
         return Ok(TxnOutput::Refused(ApiError::new(
             ErrorCode::NotAuthorized,
-            "only the app acts as the owner or a person",
+            "this connection can't act as that member",
         )));
     }
     let params = call.params_json();

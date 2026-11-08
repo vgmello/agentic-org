@@ -42,9 +42,13 @@ pub(crate) fn undo(ctx: &mut Ctx, p: &WorkUndoParams) -> Result<Plan, Fail> {
     }) {
         return Err(invalid("this change was already undone"));
     }
-    let own = ctx
+    let mut own = ctx
         .aspects(&item.id, std::slice::from_ref(&target))?
         .remove(0);
+    // A tick that followed a task is stale once the step stopped following it.
+    if let WorkEventKind::StepChecked { step_id, .. } = &target.change {
+        own.push(crate::aspects::Aspect::StepTask(step_id.clone()));
+    }
     for aspects in ctx.aspects(&item.id, &later)? {
         if aspects
             .iter()

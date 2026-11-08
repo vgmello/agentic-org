@@ -19,6 +19,8 @@ pub(crate) fn one_line(field: &str, value: &str, max: usize) -> Result<String, F
 /// A required multi-line field: 1 to `max` characters after trimming; `\n` and `\t` are the
 /// only control characters allowed.
 pub(crate) fn multi_line(field: &str, value: &str, max: usize) -> Result<String, Fail> {
+    // Text pasted with Windows line ends reads as plain new lines.
+    let value = value.replace("\r\n", "\n");
     let value = value.trim();
     if value
         .chars()
@@ -67,6 +69,7 @@ mod tests {
         assert_eq!(multi_line("body", "a\n\tb", 5).unwrap(), "a\n\tb");
         assert!(multi_line("body", "a\u{7}b", 5).is_err());
         assert!(multi_line("body", "a\rb", 5).is_err());
+        assert_eq!(multi_line("body", "a\r\nb", 5).unwrap(), "a\nb");
         assert_eq!(cut("abc def", 4), "abc");
         for c in ['\u{2028}', '\u{2029}', '\u{202E}', '\u{2066}', '\u{200F}'] {
             assert!(one_line("title", &format!("a{c}b"), 5).is_err(), "{c:?}");
