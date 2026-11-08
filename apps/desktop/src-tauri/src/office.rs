@@ -39,7 +39,6 @@ pub trait OfficeConnection: Send + Sync {
     fn org_snapshot(&self, organization_id: &str) -> Result<OrgSnapshot, ApiError>;
 
     /// True while the data this connection serves is invented (the mock office), so the UI says so.
-    fn serves_sample_data(&self) -> bool {
-        false
-    }
+    /// Every implementation says so: a stand-in that forgot would show invented data as real.
+    fn serves_sample_data(&self) -> bool;
 }

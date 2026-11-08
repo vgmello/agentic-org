@@ -184,3 +184,30 @@ describe('kindWord', () => {
 		expect([kindWord('agent'), kindWord('person'), kindWord('unknown')]).toEqual(['Agent', 'Person', 'Member']);
 	});
 });
+
+describe('normalizeKinds and an agent’s profile', () => {
+	const agent = (over: Record<string, unknown>) => ({
+		id: 'a',
+		kind: 'agent' as const,
+		name: 'A',
+		version: 1,
+		agent: { role: 'r', title: 't', runtime: 'claude_code', messaging_name: 'a', status: 'active', ...over }
+	});
+	const read = (m: unknown) => normalizeKinds({ position: { epoch: 1, seq: 1 }, teams: [], memberships: [], members: [m as never] }).members[0];
+
+	it('keeps what it knows', () => {
+		const m = read(agent({ run_mode: 'on_call', runtime: { other: 'my-runtime' } }));
+		expect(m.agent).toMatchObject({ status: 'active', run_mode: 'on_call', runtime: { other: 'my-runtime' } });
+	});
+
+	it('reads an unknown runtime, status or run mode as unknown, never as working', () => {
+		const m = read(agent({ status: 'sleeping', runtime: 'quantum', run_mode: 'whenever' }));
+		expect(m.agent).toMatchObject({ status: 'unknown', runtime: 'unknown', run_mode: 'unknown' });
+	});
+
+	it('leaves a missing run mode missing, and a person without a profile alone', () => {
+		expect(read(agent({})).agent).not.toHaveProperty('run_mode');
+		const person = { id: 'p', kind: 'person', name: 'P', version: 1 };
+		expect(read(person)).toEqual(person);
+	});
+});

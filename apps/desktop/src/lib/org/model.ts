@@ -141,5 +141,20 @@ export function organizationCounts(s: OrgSnapshot) {
  * the app only ever sees the kinds it handles (like `toAppError` does for error codes).
  */
 export function normalizeKinds(s: OrgSnapshot): OrgSnapshot {
-	return { ...s, members: s.members.map((m) => (m.kind === 'agent' || m.kind === 'person' ? m : { ...m, kind: 'unknown' as const })) };
+	return { ...s, members: s.members.map(normalizeMember) };
+}
+
+const RUNTIMES = new Set(['claude_code', 'codex', 'antigravity', 'unknown']);
+const STATUSES = new Set(['active', 'paused', 'offboarded']);
+const RUN_MODES = new Set(['always_on', 'on_call', 'scheduled']);
+
+/** One member as the app reads it: an unknown kind, and an agent's unknown runtime, status or run mode, become `unknown`. */
+function normalizeMember(m: Member): Member {
+	const kind = m.kind === 'agent' || m.kind === 'person' ? m.kind : ('unknown' as const);
+	if (!m.agent) return kind === m.kind ? m : { ...m, kind };
+	const a = m.agent;
+	const runtime = typeof a.runtime === 'object' && a.runtime !== null && typeof (a.runtime as { other?: unknown }).other === 'string' ? a.runtime : RUNTIMES.has(a.runtime as string) ? a.runtime : ('unknown' as const);
+	const status = STATUSES.has(a.status) ? a.status : ('unknown' as const);
+	const run_mode = a.run_mode === undefined ? undefined : RUN_MODES.has(a.run_mode) ? a.run_mode : ('unknown' as const);
+	return { ...m, kind, agent: { ...a, runtime, status, ...(run_mode === undefined ? {} : { run_mode }) } };
 }

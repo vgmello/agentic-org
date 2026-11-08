@@ -25,6 +25,10 @@ describe('what the Tauri commands return', () => {
 		expect(Object.keys(view.snapshot).sort()).toEqual(['members', 'memberships', 'position', 'project_teams', 'projects', 'teams']);
 		expect(view.snapshot.members.find((m) => m.kind === 'agent')).toMatchObject({ office_id: 'office-1', reports_to_member_id: 'you' });
 		expect(view.snapshot.members.find((m) => m.owner)).not.toHaveProperty('office_id');
+		const agent = view.snapshot.members.find((m) => m.kind === 'agent')!;
+		expect(Object.keys(agent).sort()).toEqual(['agent', 'id', 'kind', 'name', 'office_id', 'reports_to_member_id', 'version']);
+		expect(Object.keys(agent.agent!).sort()).toEqual(['messaging_name', 'role', 'run_mode', 'runtime', 'status', 'title']);
+		expect(agent.agent).toMatchObject({ runtime: 'claude_code', status: 'active', run_mode: 'on_call' });
 	});
 
 	it('tauri.ts invokes exactly the commands build.rs declares', () => {

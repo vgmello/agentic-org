@@ -670,6 +670,9 @@ mod tests {
         fn org_snapshot(&self, _: &str) -> Result<OrgSnapshot, ApiError> {
             unreachable!()
         }
+        fn serves_sample_data(&self) -> bool {
+            false
+        }
     }
 
     fn flaky_state(failures: usize) -> (AppState, Arc<Flaky>) {
