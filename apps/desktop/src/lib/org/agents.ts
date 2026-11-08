@@ -19,6 +19,21 @@ export const RUN_MODES = [
 	{ id: 'scheduled', label: 'Scheduled', help: "Wakes on a schedule, and when it's needed." }
 ] as const;
 
+/** What ends a run, as HQ applies it to every agent (U20). The profile has no fields for these, so they are shown, not edited. */
+export const RUN_LIMITS = {
+	idleMinutes: 5,
+	busyMinutesAtHome: 30,
+	busyHoursOnATask: 2
+} as const;
+
+/** The limits in words for a mode, or '' when nothing ends a run by itself (a person starts the agent). */
+export function runLimitsText(mode: string): string {
+	const busy = `A run stops after ${RUN_LIMITS.busyMinutesAtHome} minutes of work at home, or ${RUN_LIMITS.busyHoursOnATask} hours on a task.`;
+	if (mode === 'on_call' || mode === 'scheduled') return `It goes back to sleep after ${RUN_LIMITS.idleMinutes} minutes with nothing to do. ${busy}`;
+	if (mode === 'always_on') return busy;
+	return '';
+}
+
 /** The mode in words. A missing mode means a person starts the agent by hand (RUN-1); one this app can't read says so. */
 export function runModeLabel(mode: RunMode | undefined): string {
 	if (mode === undefined) return 'Started by a person';
