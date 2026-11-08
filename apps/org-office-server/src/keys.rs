@@ -6,35 +6,47 @@
 use org_office::KeyProvider;
 
 /// The provider for this run, or why there is none.
+///
+/// A build with the `dev-keys` feature NEVER reaches the Keychain: it uses files in
+/// `ORG_OFFICE_DEV_KEY_DIR`, and refuses to start without that variable, so a forgotten variable
+/// can't write a real item.
 pub fn provider() -> Result<Box<dyn KeyProvider>, String> {
     #[cfg(feature = "dev-keys")]
-    if let Some(dir) = std::env::var_os("ORG_OFFICE_DEV_KEY_DIR") {
-        return Ok(Box::new(dev::FileKeys::new(dir.into())));
+    {
+        match std::env::var_os("ORG_OFFICE_DEV_KEY_DIR") {
+            Some(dir) => Ok(Box::new(dev::FileKeys::new(dir.into()))),
+            None => Err("a dev-keys build needs ORG_OFFICE_DEV_KEY_DIR".to_owned()),
+        }
     }
+    #[cfg(not(feature = "dev-keys"))]
     keychain()
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(feature = "dev-keys")))]
 fn keychain() -> Result<Box<dyn KeyProvider>, String> {
     Ok(Box::new(mac::Keychain))
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(not(target_os = "macos"), not(feature = "dev-keys")))]
 fn keychain() -> Result<Box<dyn KeyProvider>, String> {
     Err("this platform has no Keychain".to_owned())
 }
 
 #[cfg(target_os = "macos")]
+#[cfg_attr(feature = "dev-keys", allow(dead_code))]
 mod mac {
+    use core_foundation::data::CFData;
     use org_office::{Key, KeyError, KeyProvider};
-    use security_framework::passwords::{
-        delete_generic_password, get_generic_password, set_generic_password,
-    };
+    use security_framework::item::{ItemAddOptions, ItemAddValue, ItemClass};
+    use security_framework::passwords::{delete_generic_password, get_generic_password};
 
-    /// The Keychain service every office key is filed under; the account is the office id.
-    const SERVICE: &str = "agentic.org office key";
+    /// The Keychain service every office key is filed under (ADR-0002); the account is the
+    /// office id. It is persisted state: changing it later would orphan every office's key.
+    pub(super) const SERVICE: &str = "org.agentic.office";
     /// `errSecItemNotFound`.
     const NOT_FOUND: i32 = -25300;
+    /// `errSecDuplicateItem`.
+    const DUPLICATE: i32 = -25299;
 
     pub(super) struct Keychain;
 
@@ -54,12 +66,20 @@ mod mac {
         }
 
         fn store(&self, office_id: &str, key: &Key) -> Result<(), KeyError> {
-            // `set_generic_password` would update an existing item: never replace a key.
-            if self.load(office_id)?.is_some() {
-                return Err("a key for this office already exists".into());
+            // `SecItemAdd` only: unlike `set_generic_password` it never updates an existing
+            // item, so a key is never replaced, even by a racing process.
+            let mut item = ItemAddOptions::new(ItemAddValue::Data {
+                class: ItemClass::generic_password(),
+                data: CFData::from_buffer(key.as_bytes()),
+            });
+            item.set_service(SERVICE).set_account_name(office_id);
+            match item.add() {
+                Ok(()) => Ok(()),
+                Err(e) if e.code() == DUPLICATE => {
+                    Err("a key for this office already exists".into())
+                }
+                Err(e) => Err(e.to_string().into()),
             }
-            set_generic_password(SERVICE, office_id, key.as_bytes())
-                .map_err(|e| KeyError::from(e.to_string()))
         }
 
         fn delete(&self, office_id: &str) -> Result<(), KeyError> {
@@ -144,5 +164,15 @@ mod dev {
                 Err(e) => Err(e.into()),
             }
         }
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    #[test]
+    fn the_keychain_names_are_the_ones_the_adr_fixes() {
+        // Persisted state: an office's key is filed under this service and its id. Changing
+        // either orphans every key, so a change must be deliberate (ADR-0002).
+        assert_eq!(super::mac::SERVICE, "org.agentic.office");
     }
 }

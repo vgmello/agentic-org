@@ -498,3 +498,53 @@ fn the_token_never_reaches_the_log_and_fds_0_and_1_are_dev_null() {
     let log = run.stderr();
     assert!(!log.contains("a7a7a7a7"), "the app token reached the log");
 }
+
+#[test]
+fn a_folder_that_is_not_what_an_office_makes_is_storage_error_not_invalid_request() {
+    // Disk state, not a bad argument: the host must be able to restart it once repaired.
+    let world = World::new();
+    std::fs::create_dir_all(world.folder("UNFINISHED1")).unwrap();
+    std::fs::write(world.folder("UNFINISHED1").join("notes.txt"), b"not ours").unwrap();
+    let mut run = world.spawn(&["--discard", "UNFINISHED1"]);
+    assert_eq!(failed_code(run.event()), FailCode::StorageError);
+    assert_eq!(run.wait().code(), Some(1));
+    assert!(
+        world.folder("UNFINISHED1").join("notes.txt").exists(),
+        "a foreign file was removed"
+    );
+}
+
+#[test]
+fn a_name_that_is_not_trimmed_is_refused_not_quietly_trimmed() {
+    let world = World::new();
+    for (org_name, office_name) in [(" Acme", "HQ"), ("Acme", "HQ ")] {
+        let mut run = world.spawn(&["--create"]);
+        let HostMessage::Create(mut create) = create_message() else {
+            unreachable!()
+        };
+        create.org_name = org_name.into();
+        create.office_name = office_name.into();
+        run.send(&HostMessage::Create(create));
+        assert_eq!(failed_code(run.event()), FailCode::InvalidName);
+        assert!(!run.wait().success());
+        assert!(!world.key_file(OFFICE).exists());
+    }
+}
+
+#[test]
+fn a_dev_keys_build_without_a_key_folder_refuses_to_start_instead_of_using_the_keychain() {
+    let world = World::new();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_org-office-server"))
+        .args(["--office", OFFICE])
+        .env("ORG_OFFICE_HOME", &world.home)
+        .env_remove("ORG_OFFICE_DEV_KEY_DIR")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    let event = read_server_event(&mut reader).unwrap().unwrap();
+    assert_eq!(failed_code(event), FailCode::StorageError);
+    assert_eq!(child.wait().unwrap().code(), Some(1));
+}

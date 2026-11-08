@@ -17,9 +17,10 @@ pub mod fdswap;
 mod keys;
 mod serve;
 mod signals;
+mod zeroed;
 
 use std::fs::File;
-use std::io::{BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -134,6 +135,13 @@ fn create_and_serve(
     if let Err(message) = socket_path(home, &create.office_id) {
         return fail(&mut control, FailCode::InvalidRequest, message);
     }
+    // The contract: names travel trimmed, and a name that isn't is refused, not quietly trimmed
+    // (the host would take the changed name for a different office).
+    for name in [&create.org_name, &create.office_name] {
+        if name.trim() != name.as_str() {
+            return fail(&mut control, FailCode::InvalidName, "a name is not trimmed");
+        }
+    }
     let new = NewOffice {
         office_id: create.office_id.clone(),
         office_name: create.office_name.clone(),
@@ -204,7 +212,7 @@ fn first_line(control: &mut ControlPipe, expected: FirstLine) -> Result<(HostMes
         )
     })?;
     // A small buffer we control, since the line carries the app token.
-    let mut reader = BufReader::with_capacity(1024, from_host);
+    let mut reader = zeroed::ZeroedReader::new(from_host);
     match read_first_host_message(&mut reader, expected) {
         Ok(Some(message)) => Ok((message, reader.into_inner())),
         Ok(None) => Err(0),
@@ -260,7 +268,14 @@ fn serve_office(
             .spawn(move || {
                 let mut from_host = from_host;
                 let mut sink = [0u8; 4096];
-                while matches!(from_host.read(&mut sink), Ok(n) if n > 0) {}
+                loop {
+                    match from_host.read(&mut sink) {
+                        Ok(n) if n > 0 => {}
+                        // A signal interrupting the read is not the host leaving.
+                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                        _ => break,
+                    }
+                }
                 host_gone.store(true, Ordering::SeqCst);
             })
     };
@@ -337,7 +352,13 @@ fn fail_code(error: &OfficeError) -> FailCode {
         }
         OfficeError::KeyMissing => FailCode::KeyMissing,
         OfficeError::InUse => FailCode::InUse,
-        OfficeError::Invalid(_) | OfficeError::NotFound => FailCode::InvalidRequest,
+        // `NotFound` on `--office`: serving an office that does not exist is a bad argument.
+        OfficeError::NotFound => FailCode::InvalidRequest,
+        // Everything else `Invalid` that the office still reports describes the disk (databases
+        // of another office, a folder that is not plain, a stray file): the server has already
+        // checked the arguments and the first line. `invalid_request` is fatal for the host until
+        // a new binary; a repaired folder must be restartable.
+        OfficeError::Invalid(_) => FailCode::StorageError,
         _ => FailCode::StorageError,
     }
 }
@@ -364,7 +385,7 @@ mod tests {
             (OfficeError::KeyExists, FailCode::AlreadyExists),
             (OfficeError::KeyMissing, FailCode::KeyMissing),
             (OfficeError::InUse, FailCode::InUse),
-            (OfficeError::Invalid("x"), FailCode::InvalidRequest),
+            (OfficeError::Invalid("x"), FailCode::StorageError),
             (OfficeError::NotFound, FailCode::InvalidRequest),
             (storage(), FailCode::StorageError),
         ] {

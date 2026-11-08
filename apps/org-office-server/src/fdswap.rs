@@ -34,6 +34,10 @@ pub fn take_control_pipe() -> io::Result<ControlPipe> {
         }
         if null > 2 {
             libc::close(null);
+        } else {
+            // Only when a descriptor 0-2 was closed at launch: it is now one of the three a
+            // child inherits, so it must not be close-on-exec.
+            libc::fcntl(null, libc::F_SETFD, 0);
         }
         // Files a server makes are owner-only whatever a caller forgets.
         libc::umask(0o077);
