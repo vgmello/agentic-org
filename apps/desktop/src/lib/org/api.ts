@@ -79,10 +79,10 @@ export function createMockOrg(
 	hqOfficeId: (organizationId: string) => Promise<string>,
 	{
 		empty = (): boolean => false,
-		storage = globalThis.localStorage as MockStorage | undefined,
 		fails = (): boolean => false,
-		delayMs = (): number => 0
-	}: { empty?: () => boolean; storage?: MockStorage; fails?: () => boolean; delayMs?: () => number } = {}
+		delayMs = (): number => 0,
+		storage = globalThis.localStorage as MockStorage | undefined
+	}: { empty?: () => boolean; fails?: () => boolean; delayMs?: () => number; storage?: MockStorage } = {}
 ): OrgApi {
 	const memory = new Map<string, string>();
 	const inMemory: MockStorage = { getItem: (k) => memory.get(k) ?? null, setItem: (k, v) => void memory.set(k, v) };
@@ -145,7 +145,7 @@ export function createMockOrg(
 	return {
 		async view(organizationId) {
 			if (delayMs() > 0) await new Promise((resolve) => setTimeout(resolve, delayMs()));
-			if (fails()) throw { source: 'api', code: 'storage_error', message: "The office couldn't read its storage." } satisfies AppError;
+			if (fails()) throw refusal('storage_error', "The office couldn't read its storage.");
 			return { snapshot: normalizeKinds((await load(organizationId)).state.snapshot), sample: true };
 		},
 		command(organizationId, input) {
@@ -157,9 +157,10 @@ export function createMockOrg(
 }
 
 const wantsEmpty = () => typeof location !== 'undefined' && new URLSearchParams(location.search).get('org') === 'empty';
+
 /**
  * `?org=fails` makes reading the structure fail, `?org=fails_once` only the first time (so Retry can be shown to
- * work), `?org=slow` makes it take a moment: to show how a screen copes. Browser mock only.
+ * work), `?org=slow` makes it take a moment: to show how a screen copes.
  */
 let failedOnce = false;
 const wantsFailure = () => {

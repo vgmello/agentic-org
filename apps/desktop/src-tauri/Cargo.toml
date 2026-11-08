@@ -16,6 +16,15 @@ tauri-build = { version = "=2.7.4", features = [] }
 
 [dependencies]
 org-proto = { path = "../../../crates/org-proto" }
+org-client = { path = "../../../crates/org-client" }
 tauri = { version = "=2.12.5", features = ["tray-icon", "image-png"] }
 serde.workspace = true
 serde_json.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "=0.6.5"
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSString", "NSError"] }
+objc2-service-management = { version = "=0.3.2", default-features = false, features = ["std", "SMAppService", "objc2", "objc2-foundation"] }
+
+[dev-dependencies]
+tempfile.workspace = true

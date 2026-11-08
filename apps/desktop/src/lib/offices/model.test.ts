@@ -75,6 +75,17 @@ describe('OFC-1 the list order and what each row says', () => {
 	});
 });
 
+describe('agents who have left are not in an office', () => {
+	it('are not counted in an office nor listed as unplaced', () => {
+		const s = sampleOrg('office-1');
+		const left = { ...s, members: s.members.map((m) => (m.id === 'sam' ? { ...m, agent: { ...m.agent!, status: 'offboarded' as const } } : m)) };
+		expect(agentsIn(s, 'office-1').length).toBe(7);
+		expect(agentsIn(left, 'office-1').map((m) => m.id)).not.toContain('sam');
+		expect(agentsIn(left, 'office-1').length).toBe(6);
+		expect(unplacedAgents(left, []).map((m) => m.id)).not.toContain('sam'); // the office is gone, he is not "unplaced" either
+	});
+});
+
 describe('OFC-13 each status has its icon, and a row says everything to a screen reader', () => {
 	it('gives every status its own icon from the spec, and an unknown one a question mark', () => {
 		expect(
@@ -126,16 +137,5 @@ describe('OFC-12 which office is verified', () => {
 		expect(displayStatusFor('hq', 'hq', 'up')).toBe('active');
 		expect(displayStatusFor('office-2', 'hq', 'up')).toBe('status_unknown');
 		expect(displayStatusFor('office-2', 'hq', 'down')).toBe('status_unknown');
-	});
-});
-
-describe('agents who have left are not in an office', () => {
-	it('are not counted in an office nor listed as unplaced', () => {
-		const s = sampleOrg('office-1');
-		const left = { ...s, members: s.members.map((m) => (m.id === 'sam' ? { ...m, agent: { ...m.agent!, status: 'offboarded' as const } } : m)) };
-		expect(agentsIn(s, 'office-1').length).toBe(7);
-		expect(agentsIn(left, 'office-1').map((m) => m.id)).not.toContain('sam');
-		expect(agentsIn(left, 'office-1').length).toBe(6);
-		expect(unplacedAgents(left, []).map((m) => m.id)).not.toContain('sam'); // the office is gone, he is not "unplaced" either
 	});
 });

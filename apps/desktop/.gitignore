@@ -10,6 +10,7 @@ vite.config.*.timestamp-*
 # Tauri
 src-tauri/target/
 src-tauri/gen/schemas/
+src-tauri/office-bin/
 
 # Playwright
 test-results/

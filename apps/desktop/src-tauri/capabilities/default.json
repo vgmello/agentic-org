@@ -19,6 +19,9 @@
     "allow-work-snapshot",
     "allow-work-get",
     "allow-work-command",
+    "allow-login-item-status",
+    "allow-login-item-set",
+    "allow-login-item-open-settings",
     "core:event:allow-listen",
     "core:event:allow-unlisten"
   ]

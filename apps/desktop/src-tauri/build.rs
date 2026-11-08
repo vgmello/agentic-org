@@ -14,6 +14,9 @@ fn main() {
             "work_snapshot",
             "work_get",
             "work_command",
+            "login_item_status",
+            "login_item_set",
+            "login_item_open_settings",
         ]),
     ))
     .expect("failed to run tauri-build");

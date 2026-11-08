@@ -1,9 +1,9 @@
 import { toAppError } from '$lib/office/api';
 import { orgApi } from '$lib/org/api';
-import type { OrgView } from '$lib/proto';
+import type { OrgSnapshot } from '$lib/proto';
 
 /** What the agent counts need: the organization's structure, or why it couldn't be read. */
-export type Counts = OrgView | { error: string };
+export type Counts = { snapshot: OrgSnapshot; sample: boolean } | { error: string };
 
 export async function load({ depends, parent }) {
 	depends('app:offices');

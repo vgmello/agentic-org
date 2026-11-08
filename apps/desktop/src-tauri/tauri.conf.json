@@ -63,6 +63,13 @@
     "targets": ["app"],
     "category": "DeveloperTool",
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
-    "macOS": { "minimumSystemVersion": "13.0" }
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "files": {
+        "MacOS/org-office-host": "office-bin/org-office-host",
+        "MacOS/org-office-server": "office-bin/org-office-server",
+        "Library/LaunchAgents/org.agentic.office-host.plist": "launch-agents/org.agentic.office-host.plist"
+      }
+    }
   }
 }
