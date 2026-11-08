@@ -1,5 +1,5 @@
 {
- "comment": "The organization-name rule's vectors, owned by org-proto (OrganizationName::parse) and shared with the app's pre-check. An entry with no `name` must be rejected as invalid_name. \"Trimmed\" is Unicode White_Space (Rust str::trim), which differs from JavaScript's trim at U+0085 and U+FEFF.",
+ "comment": "The organization-name rule's vectors, owned by org-proto (OrganizationName::parse) and shared with the app's pre-check. An entry with no `name` must be rejected as invalid_name. \"Trimmed\" is Unicode White_Space (Rust str::trim), which differs from JavaScript's trim at U+0085 and U+FEFF. Invisible and direction-changing characters (format characters except U+200D, and U+2028/U+2029) are refused, so U+FEFF is refused too.",
  "vectors": [
   {
    "input": "Acme",
@@ -43,12 +43,27 @@
    "name": "Acme"
   },
   {
-   "input": "\ufeffAcme",
-   "name": "\ufeffAcme"
+   "input": "\ufeffAcme"
   },
   {
    "input": "\u00a0\u2003Acme\u3000",
    "name": "Acme"
+  },
+  {
+   "input": "Acme\u200b"
+  },
+  {
+   "input": "Ac\u202eme"
+  },
+  {
+   "input": "Ac\u2066me\u2069"
+  },
+  {
+   "input": "Ac\u2028me"
+  },
+  {
+   "input": "\ud83d\udc69\u200d\ud83d\udcbb Labs",
+   "name": "\ud83d\udc69\u200d\ud83d\udcbb Labs"
   }
  ]
 }

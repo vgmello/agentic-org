@@ -29,6 +29,9 @@ impl OrganizationName {
     /// - The result must have 1..=[`ORGANIZATION_NAME_MAX_CHARS`] Unicode scalar values.
     /// - It must have no control characters (`char::is_control`: U+0000–U+001F and
     ///   U+007F–U+009F).
+    /// - It must have no invisible or direction-changing characters (the list is on the private `is_invisible` below), so
+    ///   two names that look the same can't be two organizations, and a name can't reverse how
+    ///   the text around it displays. Names travel to other Macs (invitations), so this matters.
     pub fn parse(raw: &str) -> Result<Self, NameError> {
         let name = raw.trim();
         if name.is_empty() {
@@ -39,6 +42,9 @@ impl OrganizationName {
         }
         if name.chars().any(char::is_control) {
             return Err(NameError::ControlChar);
+        }
+        if name.chars().any(is_invisible) {
+            return Err(NameError::InvisibleChar);
         }
         Ok(Self {
             name: name.to_owned(),
@@ -85,6 +91,8 @@ pub enum NameError {
     TooLong,
     /// The name contains a control character.
     ControlChar,
+    /// The name contains an invisible or direction-changing character.
+    InvisibleChar,
 }
 
 impl NameError {
@@ -94,8 +102,37 @@ impl NameError {
             Self::Empty => "Give the organization a name.".to_owned(),
             Self::TooLong => format!("Use {ORGANIZATION_NAME_MAX_CHARS} characters or fewer."),
             Self::ControlChar => "The name can't contain control characters.".to_owned(),
+            Self::InvisibleChar => {
+                "The name can't contain invisible or direction-changing characters.".to_owned()
+            }
         }
     }
+}
+
+/// Characters a name may not contain because they're invisible or change text direction: the
+/// Unicode format characters (category Cf) that matter here, and the line and paragraph
+/// separators. U+200D (zero-width joiner) is allowed, because emoji sequences need it.
+///
+/// - U+00AD soft hyphen, U+061C Arabic letter mark, U+180E Mongolian vowel separator
+/// - U+200B–U+200C and U+200E–U+200F: zero-width space and non-joiner, direction marks
+/// - U+2028–U+202E: line and paragraph separators, direction embeddings and overrides
+/// - U+2060–U+2064 and U+2066–U+206F: word joiner, invisible operators, direction isolates
+///   and deprecated format characters
+/// - U+FEFF zero-width no-break space (byte-order mark), U+FFF9–U+FFFB interlinear annotation
+fn is_invisible(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}'
+            | '\u{061C}'
+            | '\u{180E}'
+            | '\u{200B}'..='\u{200C}'
+            | '\u{200E}'..='\u{200F}'
+            | '\u{2028}'..='\u{202E}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{206F}'
+            | '\u{FEFF}'
+            | '\u{FFF9}'..='\u{FFFB}'
+    )
 }
 
 impl fmt::Display for NameError {
@@ -164,10 +201,40 @@ mod tests {
             OrganizationName::parse("\tAcme\u{85}").unwrap().as_str(),
             "Acme"
         );
-        // U+FEFF isn't White_Space (unlike JavaScript's trim) and isn't a control character.
+        // U+FEFF isn't White_Space (unlike JavaScript's trim), so it isn't trimmed: it's refused.
         assert_eq!(
-            OrganizationName::parse("\u{feff}Acme").unwrap().as_str(),
-            "\u{feff}Acme"
+            OrganizationName::parse("\u{feff}Acme").unwrap_err(),
+            NameError::InvisibleChar
+        );
+    }
+
+    #[test]
+    fn invisible_and_direction_changing_characters_are_refused() {
+        for c in [
+            '\u{ad}', '\u{61c}', '\u{180e}', '\u{200b}', '\u{200c}', '\u{200e}', '\u{200f}',
+            '\u{2028}', '\u{2029}', '\u{202a}', '\u{202e}', '\u{2060}', '\u{2064}', '\u{2066}',
+            '\u{2069}', '\u{206f}', '\u{feff}', '\u{fff9}', '\u{fffb}',
+        ] {
+            let raw = format!("Ac{c}me");
+            assert_eq!(
+                OrganizationName::parse(&raw).unwrap_err(),
+                NameError::InvisibleChar,
+                "{c:?}"
+            );
+        }
+        // The neighbours of the refused ranges are fine, and so is an emoji sequence (U+200D).
+        for ok in [
+            "Ac\u{200d}me",
+            "👩\u{200d}💻 Labs",
+            "Ac\u{2027}me",
+            "Ac\u{205f}me",
+            "Ac\u{fffc}me",
+        ] {
+            assert!(OrganizationName::parse(ok).is_ok(), "{ok:?}");
+        }
+        assert_eq!(
+            NameError::InvisibleChar.message(),
+            "The name can't contain invisible or direction-changing characters."
         );
     }
 

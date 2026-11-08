@@ -4,8 +4,9 @@ use serde::{Deserialize, Serialize};
 ///
 /// The server enforces the name rules and is the source of truth. Clients may use this
 /// constant to pre-check input, but must still handle [`crate::ErrorCode::InvalidName`].
-/// Rules: trimmed, 1..=64 chars, no control characters; unique case-insensitively among
-/// the organizations on this machine.
+/// Rules: trimmed, 1..=64 chars, no control characters, no invisible or direction-changing
+/// characters (format characters except U+200D, and U+2028/U+2029); unique case-insensitively
+/// among the organizations on this machine.
 ///
 /// "Trimmed" means leading and trailing characters with the Unicode `White_Space` property
 /// are removed, exactly as Rust's `str::trim` does. JavaScript's `String.prototype.trim`
