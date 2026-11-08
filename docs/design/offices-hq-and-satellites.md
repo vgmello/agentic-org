@@ -225,8 +225,9 @@ If HQ is gone for good, the owner can **promote** a satellite to HQ. It's a deli
 - **`org-sync-proto`** (new contract crate): the office-to-office protocol (stream, snapshot chunks, enrollment, status updates). It stays out of `org-proto`, so the crate every client depends on doesn't grow.
 - **`org-office-server` and `org-office-host`** stay thin, each with a library target for its logic.
 - **Owners (AGENTS.md):**
-  - The server agent owns `org-sync`, `org-pki` and `org-office-host`.
-  - `org-sync-proto` is a contract, so it gets ada's review like `org-proto`.
+  - **River** (`ac-software-engineer-river`) owns `org-office-host`, `org-sync` and `org-pki`.
+  - **server-dev** owns `org-office` (incl. `store.rs` and its implementations of the storage and apply traits) and `org-office-server`.
+  - `org-sync-proto` is a contract, so ada owns it and reviews changes, like `org-proto`.
 
 ## Phases
 1. **Now: HQ only.** Create organization = start a new HQ office.
