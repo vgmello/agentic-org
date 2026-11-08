@@ -4,7 +4,8 @@
 | Area | Owner |
 | --- | --- |
 | `apps/desktop/` | the **app agent** |
-| `apps/org-office-server/`, `apps/org-office-host/`, `crates/org-office/`, `crates/org-client/`, `crates/org-sync/`, `crates/org-pki/`, `crates/org-github/`, `crates/org-git/` (later also `apps/org-agent/`, `crates/org-spool/`) | the **server agent** |
+| `apps/org-office-server/`, `apps/org-office-host/`, `crates/org-office/`, `crates/org-client/`, `crates/org-sync/`, `crates/org-pki/`, `crates/org-github/`, `crates/org-git/`, and the SQL for every table in `store.rs` (messaging's included) | the **server agent** |
+| `apps/org-agent/` (the CLI agents use), `crates/org-spool/`, and the messaging library (its crate name is set in ADR-0003) | the **messaging agent** (`agy-senior-dev`) |
 | `crates/org-proto/` and `crates/org-sync-proto/` (the contracts), `docs/`, this file | **ada** (`ac-staff-engineer-ada`), Staff Engineer, who also reviews and gives the "go" on every merge |
 
 Don't edit another owner's area. If you need a change there, message its owner. A change to `org-proto` or `org-sync-proto` goes through ada.
