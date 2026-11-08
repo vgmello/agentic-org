@@ -19,7 +19,8 @@ pub enum ErrorCode {
     /// A name breaks its rule. Each kind of name (an organization, a team, a person, an agent)
     /// has its own rule; an organization's is [`crate::OrganizationName::parse`]. An agent's
     /// `messaging_name` that breaks its format is also `invalid_name`, and so is a person's name
-    /// or an agent's `messaging_name` that looks like an address (a `run:` prefix, or a ULID).
+    /// or an agent's `messaging_name` that looks like an address (a `run:` prefix, or 26 letters
+    /// and digits, the shape of a member id).
     InvalidName,
     /// Something with that name or id already exists: an organization or a sibling team with
     /// that name (names compare ignoring case), another agent with that `messaging_name`

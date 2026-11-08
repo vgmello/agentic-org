@@ -637,9 +637,9 @@ command!(
     /// and otherwise there must be none. Errors: `not_authorized`, `invalid_name` (the name, or a
     /// `messaging_name` that breaks its format or [`is_shaped_like_an_address`]),
     /// `invalid_request` (a profile that breaks its limits or rules above, or a `member_id` that
-    /// is not [`is_valid_member_id`]), `already_exists` (the id is taken, or `messaging_name` is already another member's handle: an agent's
-    /// `messaging_name`, a person's `name`, [`OWNER_HANDLE`] or [`OFFICE_HANDLE`], ignoring
-    /// case), `not_found` (no such office).
+    /// is not [`is_valid_member_id`]), `already_exists` (the id is taken, or `messaging_name` is
+    /// already another member's handle: an agent's `messaging_name`, a person's `name`,
+    /// [`OWNER_HANDLE`] or [`OFFICE_HANDLE`], ignoring case), `not_found` (no such office).
     MemberAddAgent, "member.add_agent", MemberAddAgentParams {
         member_id: String,
         name: String,
