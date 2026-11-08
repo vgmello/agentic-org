@@ -214,7 +214,7 @@ fn first_line(control: &mut ControlPipe, expected: FirstLine) -> Result<(HostMes
     // A small buffer we control, since the line carries the app token.
     let mut reader = zeroed::ZeroedReader::new(from_host);
     match read_first_host_message(&mut reader, expected) {
-        Ok(Some(message)) => Ok((message, reader.into_inner())),
+        Ok(Some(message)) => Ok((message, reader.take_inner())),
         Ok(None) => Err(0),
         Err(e) if e.is_host_gone() => Err(0),
         Err(e) => Err(fail(control, e.fail_code(), &e.to_string())),

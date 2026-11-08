@@ -4,7 +4,7 @@
 //! to two new close-on-exec descriptors and fds 0 and 1 are reopened on `/dev/null`; a child
 //! then gets `/dev/null` unless it is given its own pipes. fd 2 (the logs) stays.
 //!
-//! The only unsafe code in the server, kept to this file.
+//! Unsafe code in the server is kept to this file, `signals.rs` and `zeroed.rs`.
 #![allow(unsafe_code)]
 
 use std::fs::File;

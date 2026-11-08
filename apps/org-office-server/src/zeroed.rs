@@ -26,8 +26,9 @@ impl ZeroedReader {
         }
     }
 
-    /// Gives the file back (what is still buffered is wiped).
-    pub fn into_inner(mut self) -> File {
+    /// Wipes the buffer IN PLACE and gives the file back. It takes `&mut self` on purpose: a
+    /// by-value `self` would be moved, leaving the token in the caller's old stack slot.
+    pub fn take_inner(&mut self) -> File {
         self.wipe();
         self.inner.take().expect("the file is only taken here")
     }
@@ -38,6 +39,7 @@ impl ZeroedReader {
             // SAFETY: `byte` is a valid, aligned, exclusive reference into the array.
             unsafe { std::ptr::write_volatile(byte, 0) };
         }
+        std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
         self.pos = 0;
         self.cap = 0;
     }
@@ -64,7 +66,7 @@ impl BufRead for ZeroedReader {
             let file = self
                 .inner
                 .as_mut()
-                .expect("the file is only taken by into_inner");
+                .expect("the file is only taken by take_inner");
             self.cap = file.read(&mut self.buf)?;
             self.pos = 0;
         }
@@ -85,24 +87,57 @@ impl Drop for ZeroedReader {
 #[cfg(test)]
 mod tests {
     use std::io::Write;
+    use std::mem::ManuallyDrop;
 
     use super::*;
 
-    #[test]
-    fn it_reads_lines_and_wipes_its_buffer() {
+    fn reader_after_one_line() -> ZeroedReader {
         let mut file = tempfile::tempfile().unwrap();
         file.write_all(b"first line with a secret\nsecond\n")
             .unwrap();
         std::io::Seek::rewind(&mut file).unwrap();
         let mut reader = ZeroedReader::new(file);
-
         let mut line = String::new();
         reader.read_line(&mut line).unwrap();
         assert_eq!(line, "first line with a secret\n");
         assert!(!reader.buffer_is_zero(), "the secret is in the buffer");
+        reader
+    }
 
-        reader.wipe();
+    #[test]
+    fn it_reads_lines_and_a_line_longer_than_its_buffer() {
+        let mut file = tempfile::tempfile().unwrap();
+        let long = "x".repeat(3000);
+        file.write_all(format!("{long}\nshort\n").as_bytes())
+            .unwrap();
+        std::io::Seek::rewind(&mut file).unwrap();
+        let mut reader = ZeroedReader::new(file);
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        assert_eq!(line, format!("{long}\n"));
+        line.clear();
+        reader.read_line(&mut line).unwrap();
+        assert_eq!(line, "short\n");
+        line.clear();
+        assert_eq!(reader.read_line(&mut line).unwrap(), 0, "end of file");
+    }
+
+    #[test]
+    fn taking_the_file_wipes_the_buffer_in_place() {
+        let mut reader = reader_after_one_line();
+        let _file = reader.take_inner();
         assert!(reader.buffer_is_zero());
-        let _file = reader.into_inner();
+    }
+
+    #[test]
+    fn dropping_the_reader_wipes_the_buffer() {
+        let mut reader = ManuallyDrop::new(reader_after_one_line());
+        // SAFETY: dropped exactly once, here; the memory stays valid (ManuallyDrop) so the test
+        // can look at what `Drop` left in it.
+        #[allow(unsafe_code)]
+        unsafe {
+            ManuallyDrop::drop(&mut reader);
+        }
+        assert!(reader.buffer_is_zero());
     }
 }
