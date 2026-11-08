@@ -61,7 +61,7 @@ These are organization commands, so they go through HQ and every office gets the
   - people are added with `member.add_person { member_id, name, contact? }` and edited with `member.update_person { member_id, name?, contact?, clear_contact? }`
   - **`member.set_reports_to { member_id, reports_to_member_id? }`** sets a reporting line (`cycle` on a loop; `owner_protected` for the owner)
   - **`member.remove { member_id }`** removes anyone except the owner. Offboarding an agent issues it, with the same cascade.
-  - **`member.move { membership_id, expected_version, new_membership_id, to_team_id, title_in_team? }`** (the membership's title carries over unless a new one is given) moves a member from one team to another **atomically**: one event removes the old membership and adds the new one. If the member led the team they leave, removing them clears the lead, as above.
+  - **`member.move { membership_id, expected_version, new_membership_id, to_team_id, title_in_team? }`** (`title_in_team` is the new membership's title; the old title isn't carried over) moves a member from one team to another **atomically**: one event removes the old membership and adds the new one. If the member led the team they leave, removing them clears the lead, as above.
 
 Each command carries a client-made id for anything it creates, and the version of what it edits, as in the offices design:
 - `team.move` expects the moved team's version. The new owner and the loop check are judged against HQ's current state.
@@ -95,7 +95,7 @@ Editing (create, add member, move, add a person, link a project, set who someone
 - Events: one per command.
 - Error codes: `cycle`, `not_empty`, `not_a_member` (a lead who isn't in the team), `owner_protected` (removing the owner, adding them to a team, making them a lead, or giving them someone to report to), `not_found` and `conflict` (both also used by the offices design), `unknown_recipient` (messaging and tasks, ADR-0003) `snapshot_required` (`subscribe` can't resume from the given position), and `expired` / `clock_skew` (any command, offices design), plus the existing ones.
 - Events: `org.changed` (with the `command_id`) and **`org.rejected`** (a queued command HQ rejected, with its `command_id` and error), so a satellite's app can show it as blocked.
-- Names (teams, people, agents, and agents' `messaging_name`s) follow the organization-name rules (trimmed, not empty, no control characters: `invalid_name`), and sibling team names compare ignoring case.
+- Names (teams, people, agents) follow the organization-name rules (trimmed, not empty, no control characters: `invalid_name`), and sibling team names compare ignoring case. An agent's `messaging_name` has its own format: 1 to 64 ASCII letters, digits, `-`, `_` and `.`, starting with a letter or digit (`invalid_name` otherwise).
 - `already_exists` covers a sibling team name, a membership or project-team link that already exists, and a handle that's already taken (agents' `messaging_name`s, people's names, `owner`; one namespace, ignoring case).
 - **The crate (`org_proto::org`) is the reference for the exact shapes.**
 - `project.create` gains `team_ids?` when the projects contract (GitHub design, G1) is written. It isn't in the crate yet.
