@@ -47,8 +47,7 @@ pub fn derive_key(s: &OrgSnapshot, name: &str) -> String {
         .take(3)
         .collect();
     if !base.chars().next().is_some_and(|c| c.is_ascii_lowercase()) {
-        base.insert(0, 'p');
-        base.truncate(3);
+        base.insert(0, 'p'); // the prefix doesn't count toward the 3 (ada's ruling)
     }
     while base.chars().count() < 2 {
         base.push('x');

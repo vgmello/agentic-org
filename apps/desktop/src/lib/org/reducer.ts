@@ -224,7 +224,7 @@ const projectTeamIds = (s: OrgSnapshot, projectId: string) => (s.project_teams ?
 /** A key from the name: its ASCII letters and digits, lowercased, the first 3 (prefixed with `p` if that doesn't start with a letter, padded with `x` to 2); a digit 2, 3, … is appended while it is taken or reserved. */
 export function deriveKey(s: OrgSnapshot, name: string): string {
 	let base = [...name].filter((c) => /[A-Za-z0-9]/.test(c)).slice(0, 3).join('').toLowerCase();
-	if (!/^[a-z]/.test(base)) base = ('p' + base).slice(0, 3);
+	if (!/^[a-z]/.test(base)) base = 'p' + base; // the prefix doesn't count toward the 3 (ada's ruling)
 	while (base.length < 2) base += 'x';
 	let key = base;
 	for (let n = 2; keyTaken(s, key); n++) key = `${base}${n}`;
