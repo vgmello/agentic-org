@@ -2,7 +2,7 @@
 kind: spec
 title: "Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)"
 status: for-review
-revision: 3
+revision: 4
 owner: ac-product-designer-eden
 created: 2026-11-08
 updated: 2026-11-08
@@ -13,7 +13,9 @@ builds_on: [offices-and-teams-ux, work-items-ux]
 
 # Spec · Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)
 
-Builds on `offices-and-teams-ux.md` rev 2, `work-items-ux.md` rev 5 and `desktop-app-v1.md` (in Eden's notes, not in this repository) (hire §3.6, profile §3.5).
+Builds on `offices-and-teams-ux.md` rev 4, `work-items-ux.md` rev 5 and `desktop-app-v1.md` (in Eden's notes, not in this repository) (hire §3.6, profile §3.5).
+
+**Revision 4 (2026-11-08): Remy is online.** The user started Remy, who owns messaging and `org-agent` (AGENTS.md on v1) since agy-senior-dev ran out of credits. §2 moves him to Agent tooling as its lead. Riley stays Offline.
 
 **Revision 3 (2026-11-08): reviewer fixes.** Offboarding's kept records, reserved name and Former members are now a contract request (A37), because `member.remove` deletes the member today. The spool-import facts follow ADR-0003. Duplicate open questions removed.
 
@@ -46,16 +48,16 @@ Builds on `offices-and-teams-ux.md` rev 2, `work-items-ux.md` rev 5 and `desktop
 | River (`ac-software-engineer-river`) | active | yes | Claude Code | Senior Backend: office host, sync, PKI, git and GitHub (`org-git`, `org-github`) | ada |
 | server-dev | **no** | yes | Codex | office server, storage | ada |
 | app-frontend-dev | **no** | yes | ? (A14) | the desktop app | ada |
-| agy-senior-dev | **no** | yes | Antigravity | messaging: org-agent CLI, spool, mailbox | ada |
+| agy-senior-dev | **no** | yes | Antigravity | owned messaging (org-agent CLI, spool, mailbox) until it ran out of runtime credits | ada |
 | codex-dev | **no** | yes | Codex | inbox adapters; the work-items library (W7) | ada |
 | reviewer | **no** | yes | ? (A14) | independent reviews ("ready" verdicts) | ada |
-| Remy (`ac-software-engineer-remy`) | active | **no** | Claude Code | Senior Backend (the old orgd daemon) | ada |
+| Remy (`ac-software-engineer-remy`) | active | yes (started by the user later the same day) | Claude Code | messaging: `org-agent`, spool, the messaging library and the chat extension (AGENTS.md on v1) | ada |
 | Riley (`ac-software-engineer-riley`) | active | **no** | Claude Code | Senior Frontend (the old prototype) | ada |
 
 **What this tells the design:**
 - An organization is **mixed-runtime**. The app must show and respect each agent's runtime, and never assume Claude Code.
 - **Not every agent was hired through HR.** Some were simply started in a runtime and given a messaging name. The app needs **Add an existing agent**, not only Hire.
-- Records **drift**. HR says Remy and Riley are active, but they haven't messaged and their work moved to server-dev and app-frontend-dev. Import must show this and let the owner decide (pause, offboard, keep), not copy it blindly.
+- Records **drift**. HR says Riley is active, but Riley hasn't messaged and the app work moved to app-frontend-dev. (Remy was in the same state until the user started him.) Import must show this and let the owner decide (pause, offboard, keep), not copy it blindly.
 
 ## 2. Proposed shape of our organization (for the user to approve, U11)
 
@@ -63,8 +65,8 @@ Builds on `offices-and-teams-ux.md` rev 2, `work-items-ux.md` rev 5 and `desktop
  (VM) Vitor (you) · Owner
  ├─ Engineering                 lead: ada
  │   ├─ App                     lead: app-frontend-dev     · app-frontend-dev, Riley (offline)
- │   ├─ Office                  lead: server-dev           · server-dev, River, Remy (offline)
- │   ├─ Agent tooling           lead: agy-senior-dev       · agy-senior-dev, codex-dev
+ │   ├─ Office                  lead: server-dev           · server-dev, River
+ │   ├─ Agent tooling           lead: Remy                 · Remy (messaging, org-agent), codex-dev, agy-senior-dev (no credits)
  │   └─ Quality                 lead: reviewer             · reviewer
  └─ Design                      lead: Eden                 · Eden
  Project: Agentic Org (key ac) · teams: Engineering, Design · Shared
@@ -116,8 +118,9 @@ The organization's name is U10 ("Agentic Consulting" from the folder? another?).
  [R] River          Senior Backend Eng.   HR + messaging   Claude Code   Office ▾
  [S] server-dev     — Role? ▾             messaging only   Runtime? ▾    Office ▾        ⚠ 2 to fill
  [C] codex-dev      — Role? ▾             messaging only   Codex ▾       Agent tooling ▾
+ [R] Remy           Senior Backend Eng.   HR + messaging   Claude Code   Agent tooling ▾
  …
- [R] Remy           Senior Backend Eng.   HR only          Claude Code   Office ▾        ⓘ No messages
+ [R] Riley          Senior Frontend Eng.  HR only          Claude Code   App ▾           ⓘ No messages
                                                                          [Bring in ▾: Active · Paused · Skip]
  ─────────────────────────────────────────────────────────────────────────────────
  Teams: create Engineering, App, Office, Agent tooling, Quality, Design   [Edit…]
@@ -127,7 +130,7 @@ The organization's name is U10 ("Agentic Consulting" from the folder? another?).
 
 - **Merged rows:** an agent in both sources shows "HR + messaging" and links its messaging name automatically when the HR id matches the inbox name.
 - **Messaging-only agents** need a **role** (a catalog combobox, or "Custom title…") and a **runtime**. The row says "2 to fill", and **Bring in** counts only complete rows ("Bring in 7 agents · 2 need details").
-- **HR-only agents with no messaging inbox** get an info note, "No messages from Remy yet", and a per-row choice **Active · Paused · Skip**, defaulting to Active. The note explains: "Remy is active in HR but hasn't joined messaging. Bring in as Paused if Remy isn't working now."
+- **HR-only agents with no messaging inbox** get an info note, "No messages from Riley yet", and a per-row choice **Active · Paused · Skip**, defaulting to Active. The note explains: "Riley is active in HR but hasn't joined messaging. Bring in as Paused if Riley isn't working now."
 - **Offboarded HR agents** are listed collapsed under "Offboarded in HR (2)", unchecked, as a record.
 - **Teams:** HR has no teams, so the app suggests them from roles and AGENTS.md ownership (the shape in §2) in an editable preview. **Edit…** opens a small tree editor (rename, move, lead, members). **Skip teams** leaves everyone in "Not in a team".
 - **Reporting lines** come from HR's `reports_to`. Messaging-only agents default to the owner, editable per row.
@@ -199,8 +202,8 @@ v1 §3.6 holds, with these changes for the office model:
 ## 9. Flow 6 · Deallocate: remove from team, pause, offboard
 
 - **Remove from team** (team ⋯ › member › Remove from App, or Edit teams): no confirmation when the agent has other teams. When it's the last one: "Remove Riley from App? Riley will be in Not in a team and won't work on any project. 2 open tasks stay assigned." · **Remove**.
-- **Pause** (quick view, profile ⋯): a dialog "Pause Remy? Remy won't be started or woken, and new tasks and messages wait until you resume. Remy stays in Office." If a session is running: "Remy's session is running. Stop it now / Let it finish". The card then shows a **Paused** badge (gray `pause`), and the chart can hide paused agents (toolbar ☐ Show paused). **Resume** is one click.
-- **Offboard…** (v1 §3.5 dialog, office model): it lists only what applies: "Remy leaves Office. 1 open task comes back unassigned for you to reassign. Nobody reports to Remy (or: "Riley, who reports to Remy, will report to you"). Remy's records stay in the HR workspace. The name stays reserved." · **Offboard Remy** (red). After it, Remy appears in Settings › Team › **Former members** with the date, read-only.
+- **Pause** (quick view, profile ⋯): a dialog "Pause Remy? Remy won't be started or woken, and new tasks and messages wait until you resume. Remy stays in Agent tooling." If a session is running: "Remy's session is running. Stop it now / Let it finish". The card then shows a **Paused** badge (gray `pause`), and the chart can hide paused agents (toolbar ☐ Show paused). **Resume** is one click.
+- **Offboard…** (v1 §3.5 dialog, office model): it lists only what applies: "Remy leaves Agent tooling. 1 open task comes back unassigned for you to reassign. Nobody reports to Remy (or: "Riley, who reports to Remy, will report to you"). Remy's records stay in the HR workspace. The name stays reserved." · **Offboard Remy** (red). After it, Remy appears in Settings › Team › **Former members** with the date, read-only.
 - **States:** the agent is working right now (the dialog says so and offers to stop the session first) · offboarding fails partway (names what was done, **Try again**) · it was already changed elsewhere (the dialog refreshes, and nothing is applied twice).
 
 ## 10. Accessibility and copy
@@ -265,8 +268,8 @@ v1 §3.6 holds, with these changes for the office model:
 | G1 | `Member` fields for agents: role, title, focus, runtime, model, home, messaging name, status incl. Paused, hired on | ada (contract) + server-dev (store) | W3 / W10 |
 | G2 | `member.add_agent`, `member.move` (one command), `member.pause` / `resume`, `member.offboard` (A37) | ada + server-dev | W3 |
 | G3 | Import: read the HR workspace and the spool inboxes into a reviewable plan, then apply it (CLI first, then the app) | codex-dev (ada, after W8, with the W7 model) | W12 |
-| G4 | Messaging names ⇄ members: a message from `codex-dev` is linked to its member, and `who`/presence are keyed the same way | agy-senior-dev | W6 Phase B |
-| G5 | Activity feed: one stream over messages, status, work items, team changes and git merges | ada (contract), server-dev, agy | new |
+| G4 | Messaging names ⇄ members: a message from `codex-dev` is linked to its member, and `who`/presence are keyed the same way | Remy (messaging owner) | W6 Phase B |
+| G5 | Activity feed: one stream over messages, status, work items, team changes and git merges | ada (contract), server-dev, Remy | new |
 | G6 | Hire on the office: HR's proposal and provisioning as an office call (the `hr.py` logic ported) | codex-dev (ada) | W12 |
 | G7 | App screens: Import, the agent record, Activity, Home, Hire and Add agent, Move, Pause and Offboard | app-frontend-dev (ada; Riley stays offline) | W9 / W12 |
 | G8 | Runtime hand-off: "Open in Codex/Antigravity" and session launch per runtime | codex-dev (adapters, W8) + app-frontend-dev | W8 / W9 |
@@ -275,9 +278,9 @@ v1 §3.6 holds, with these changes for the office model:
 
 **For the user**
 - U10 · *My recommendation:* **Agentic Consulting**, the workspace's name, distinct from the app. Use another name if you prefer.
-- U11 · *My recommendation:* the shape in §2, with Riley and Remy shown Offline in App and Office.
+- U11 · *My recommendation:* the shape in §2: Remy leads Agent tooling, and Riley shows Offline in App.
 - U12 · *My recommendation:* yes. After the import, the app (and `org-agent`) is where we hire, move and offboard. HR's folders stay as a read-only record, and later imports only bring in what changed.
-- ~~U13~~ · *Resolved (the user):* don't start Remy and Riley. They're brought in Active and show as **Offline** (no session), not Paused. Their planned work (G3, G6, G7) needs another owner (ada).
+- ~~U13~~ · *Resolved (the user):* don't start Remy and Riley. They're brought in Active and show as **Offline** (no session), not Paused. Their planned work (G3, G6, G7) needs another owner (ada). *Update (later the same day): the user started Remy, who now owns messaging (AGENTS.md). Riley stays Offline.*
 
 **For ada**
 - ~~A37~~ · *Resolved (ada):* offboarding is a state. `AgentStatus` gains `offboarded`, and `member.offboard { member_id, expected_version }` sets it with `offboarded_at`. The record stays, the handle stays reserved, the agent shows under Former members, and its open tasks are reclaimed as in the teams design. `member.remove` stays for hard deletes of members with no history (mistakes). server-dev drafts it. ada updates `docs/design/teams-and-org-chart.md`, which still says offboarding issues `member.remove`.

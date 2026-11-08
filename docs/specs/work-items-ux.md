@@ -13,7 +13,7 @@ builds_on: [offices-and-teams-ux]
 
 # Spec · Work items: tasks, bugs and project docs (UX)
 
-Phase 1 workstream W7 (UX), with codex-dev (model and library) · Builds on `offices-and-teams-ux.md` rev 2.
+Phase 1 workstream W7 (UX), with codex-dev (model and library) · Builds on `offices-and-teams-ux.md` rev 4.
 
 **Sources:** ada's phase-1 plan (`ac-staff-engineer-ada/knowledge/plans/phase-1.md`, W7 and W9). The user's rule (2026-11-08): **bugs are first class**. Every project has its own bugs, and each bug sits in an **area** of the project, owned by a team, so it reaches the people who own that part. codex-dev's provisional model (not yet approved): flat areas per project with stable ids, a renamable name and an owning team; the reporter suggests the area and triage confirms or reroutes it; severity is separate from priority; New → Triaged → In progress → Fixed → Verified/Closed, with reopen, duplicate and won't-fix paths; a bug links to one or more fix tasks rather than turning into one. **ada's defaults (2026-11-08, for the user to approve with this design):** areas are flat, each owned by one of the project's teams, with an optional area lead (default: the team's lead), and every project has a default area **General**; severity is critical, major, minor or trivial, set by the reporter and confirmed at triage; **priority is a separate field shared with tasks** (urgent, high, normal, low); the reporter or the area lead verifies the fix.
 
@@ -49,7 +49,7 @@ Phase 1 workstream W7 (UX), with codex-dev (model and library) · Builds on `off
 ## 0. Decisions in this spec
 
 1. **The project page is where work lives.** Tabs: **Overview | Features | Tasks | Bugs | Debt | Docs | Insights | Settings** *(rev 5; was Overview, Tasks, Bugs, Docs, Settings)*. Bugs sit next to tasks and docs, never in a separate tool.
-2. **One cross-project view, Work,** with pill tabs **Tasks | Bugs** (the Org chart pattern). It replaces the v1 Tasks nav item. Nav: Home · Org chart · Projects · **Work** · Knowledge · … · Offices · Settings.
+2. **One cross-project view, Work,** with pill tabs **Tasks | Bugs | Debt | Requests** *(rev 5)* (the Org chart pattern). It replaces the v1 Tasks nav item. Nav: Home · Chat (`chat-ux.md`) · Org chart · Projects · **Work** · Knowledge · … · Offices · Settings.
 3. **One number sequence per project for tasks and bugs:** `chk-12` is either a task or a bug, never both. The type icon and the word ("Bug chk-12") always show with the number, so a reference in a message or doc can't point at the wrong thing. (Model question C1.)
 4. **Severity is the bug's impact,** in four plain words: **Critical · Major · Minor · Trivial**. The reporter sets it, helped by a one-line meaning for each level, and triage confirms it.
 5. **Priority is the order of work, separate from severity,** and shared by tasks and bugs: **Urgent · High · Normal · Low**. Normal is the default and isn't shown on rows and cards, so only the exceptions stand out. Lists and the To do column sort by priority, then age. *(rev 2: was a manual To do order.)*
@@ -148,13 +148,13 @@ Nav **Projects** → list (as v1 §3.9, plus the columns **Teams** with Shared, 
  │ checkout  chk   Teams: Checkout · Platform  [Shared]   Leads: Riley, ada      │
  │ Payments and the checkout flow of the Lumen web app.   [New task] [Report bug]│
  │ ──────────────────────────────────────────────────────────────────────────── │
- │  Overview   Tasks 12   Bugs 7 ●   Docs 5   Settings                           │
+ │  Overview  Features 4  Tasks 12  Bugs 7 ●  Debt 14  Docs 5  Insights  Settings │
  └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 - Header actions: **New task** (primary) and **Report bug**. Both are also in ⌘K ("Report a bug in checkout…").
 - The Bugs tab count is open bugs. The dot (amber, "2 need triage") shows while any bug is New.
-- **Overview:** four tiles and a feed.
+- **Overview:** four tiles and a feed. *(rev 5: the Overview tab is the project's Status page, `project-status-ux.md` §1, and these tiles are part of it.)*
 
 ```
  ┌ Needs triage ─┐ ┌ Open bugs ──────────────┐ ┌ Tasks ───────────────────┐ ┌ Brief ──────┐
@@ -348,7 +348,7 @@ Triage is the step from **New** to **Triaged**: confirm the area and severity, s
 - **Card:** number · priority (unless Normal) · title · assignee (shape + name) · team · the goal chip when the assignee's session reports one (v1 rule R#33) · a fix chip with the bug's severity · Blocked shows its reason.
 - **Moving:** drag between columns, or ⋯ › **Move to ▸** To do / In progress / Blocked / Done, or the keyboard (select a card with Space, arrow to a column, Space to drop; announced "chk-17 moved to In progress"). **Blocked needs a reason** (one line). Each column sorts by priority, then age (decision 5). Priority changes through ⋯ › **Priority ▸** or the task page, and the card moves to its place with the change announced.
 - **List:** a table with the same columns as v1 §3.10 (status, number, priority, title, assignee, team, fixes, goal, updated), grouped by status, Blocked first.
-- **New task** (slide-over): Title * (1–120) · Assignee (optional; the owner first) · Team (the project's teams; prefilled when there's one) · Priority (Normal) · Description (Markdown) · Definition of done (one or two sentences: the goal the agent works to) · Fixes (bug picker; prefilled from Create fix task) · **Start now** for an agent with no session running (v1 §3.7 rule: never typed into a running session). **Create task**. Toast "Task chk-17 created and given to River."
+- **New task** (slide-over): Title * (1–120) · Assignee (optional; the owner first) · Team (the project's teams; prefilled when there's one) · Feature (optional, the project's features; prefilled when started from a feature) · Priority (Normal) · Description (Markdown) · Definition of done (one or two sentences: the goal the agent works to) · Fixes (bug picker; prefilled from Create fix task) · **Start now** for an agent with no session running (v1 §3.7 rule: never typed into a running session). **Create task**. Toast "Task chk-17 created and given to River."
 - **Task page:** like the bug page. Main column: description, definition of done, activity. Side column: status, priority, assignee, team, fixes (bugs, with severity), branch and worktree (W4: "Worktree: ~/…/chk-17, branch task/chk-17-coupon-edge-cases"), commits, docs, **Open session** / **Start a session on this task**.
 - **States:** board loading (columns with skeleton cards) · no tasks: "No tasks in checkout yet." **New task** · no matches: **Clear filters** · move refused by the office (e.g. a Done task whose worktree has uncommitted changes, C7: the card springs back and the message says why) · someone moved it first (the card animates to its new column, and a toast says "River moved chk-17 to In progress").
 
@@ -420,7 +420,7 @@ Docs are files in the project's repository (A11). Agents edit them with git like
 
 ## 11. Flow 9 · Work (cross-project)
 
-Nav **Work**, pill tabs **Tasks | Bugs**: the same lists as the project tabs, across every project, with a **Project** column and filter.
+Nav **Work**, pill tabs **Tasks | Bugs | Debt | Requests** *(rev 5)*: the same lists as the project tabs, across every project, with a **Project** column and filter.
 
 - **Saved filters** in a left rail, with counts: **Assigned to me** · **Needs my triage** · **Waiting for me to verify** · **Critical and Major bugs** · **Blocked tasks** · **All**. "Me" is the owner. Agents use their CLI.
 - **Default:** Bugs opens on **Needs my triage** if it has any, otherwise **Critical and Major bugs**. Tasks opens on **Blocked tasks** if any, otherwise **All**, grouped by project.
@@ -448,7 +448,7 @@ Nav **Work**, pill tabs **Tasks | Bugs**: the same lists as the project tabs, ac
 ## 14. UX acceptance criteria
 
 **Project page (PRJ)**
-- PRJ-1 · The project page has tabs Overview, Tasks, Bugs, Docs, Settings. The header shows name, key, teams (with Shared when more than one), leads, **New task** and **Report bug**.
+- PRJ-1 · *(rev 5)* The project page has tabs Overview, Features, Tasks, Bugs, Debt, Docs, Insights, Settings. The header shows name, key, teams (with Shared when more than one), leads, **New task** and **Report bug**.
 - PRJ-2 · The Bugs tab label shows the number of open bugs, plus an amber dot with the text "n need triage" for screen readers while any bug is New.
 - PRJ-3 · *(rev 2)* Overview shows Needs triage, Open bugs by severity in words (Critical, Major, Minor, Trivial), Tasks by status, and the Brief's last update, each linking to its tab.
 - PRJ-4 · When the office isn't running, every write action in the project is disabled, with the reason in its tooltip, and the data stays readable.
@@ -543,7 +543,7 @@ Nav **Work**, pill tabs **Tasks | Bugs**: the same lists as the project tabs, ac
 - DOC-9 · *(rev 4)* A doc an agent changes outside the app appears in the list once its commit reaches the integration branch, showing the agent (from the co-author trailer) as who changed it, without a reload.
 
 **Work (WORK)**
-- WORK-1 · Nav has Work (not Tasks), with pill tabs Tasks and Bugs over every project, and a Project column and filter.
+- WORK-1 · *(rev 5)* Nav has Work (not Tasks), with pill tabs Tasks, Bugs, Debt and Requests over every project, and a Project column and filter.
 - WORK-2 · *(rev 2)* The saved filters Assigned to me, Needs my triage, Waiting for me to verify, Critical and Major bugs, Blocked tasks and All show counts.
 - WORK-3 · *(U8 recommended)* The Work nav badge counts bugs the owner can triage, bugs waiting for the owner's verification and blocked tasks assigned to the owner.
 - WORK-4 · Every task and bug number shows with its type icon and word wherever it appears (lists, chips, docs, activity, toasts).

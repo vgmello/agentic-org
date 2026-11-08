@@ -2,7 +2,7 @@
 kind: spec
 title: "Offices, organizations and teams (UX)"
 status: for-review
-revision: 3
+revision: 4
 owner: ac-product-designer-eden
 created: 2026-11-08
 updated: 2026-11-08
@@ -21,6 +21,8 @@ Requested by ada for the user.
 
 ## Changelog
 
+**Revision 4 (2026-11-08): one handle namespace (org-proto on v1, `86a6a9f`).** A person's name is also their handle, unique across every member ignoring case (agents' messaging names, people's names and the reserved `owner`), so two people can't share a name and a person can't take an agent's handle. §7.4's "Add anyway" is replaced by a refusal with a suggestion. PEOPLE-4 rewritten, PEOPLE-8 added.
+
 **Revision 3 (2026-11-08): reviewer fixes.** A removed person's tasks come back **unassigned** for the owner to reassign (teams design). "Open organization" stays on the first-launch screen (ada, A38). "Join organization" is used only for joining with an invitation link (phase 3).
 
 **Revision 2 (2026-11-08): the user's final team model, and ada's answers.**
@@ -30,7 +32,7 @@ Requested by ada for the user.
 - **The owner** is the organization's special user: in no team, full rights, reachable by any agent, shown once above the chart (§7.1), never on a card.
 - **Lead** is optional, an agent or a person, and also leads the team's projects.
 - **Shared projects:** a project can have several teams (usually one), with a **Shared** badge. A project with no team is **unassigned**. §7.6 rewritten (it used to move a project between teams).
-- **Three views of one chart:** **Teams**, **People** (where you add a person, §7.2) and **Reporting lines** (where you set someone's manager, §7.8). The nav item is **Org chart** again (decision 10).
+- **Three views of one chart:** **Teams**, **People** (where you add a person, §7.3 and §7.4) and **Reporting lines** (where you set someone's manager, §7.8). The nav item is **Org chart** again (decision 10).
 - **Product name: Agentic Org.** All copy says "Agentic Org" where it said "agentic.org". The sample organization in this spec is renamed **Lumen Labs** so copy like "Join Lumen Labs?" can't be confused with the app.
 - **Resolved:** U1 (keep "HQ" and "office" for now), U2 (reporting lines stay, as their own view), U3 (no departments, no labels), U4 (one optional lead; the owner in no team; shared projects allowed), A1 (join warning copy), A2 (stable check code: the "code changed" state is removed), A3 (three wrong codes cancel the invitation), A4 (a removed office's agents become unplaced), A5 (Add office and approval only on HQ's Mac), A6 (8 characters, Crockford base32, two groups of four).
 - **Criteria rewritten (same ID):** JOIN-3, OFC-6, OFC-7, OFC-8, TEAM-1, TEAM-3, TEAM-4, TEAM-5, TEAM-8, TEAM-9, TEAM-10.
@@ -509,7 +511,7 @@ Entry points: the People toolbar's **Add person**; a team's ⋯ › **Add person
                                         [Cancel]  [Add person]
 ```
 
-- **Name:** required, trimmed, no control characters ("Enter a name." / "Names can't contain special control characters."). A name matching an existing person (ignoring case) asks once: "There's already someone called Sam Ortiz. Add another person with the same name?" · **Add anyway**.
+- **Name:** required, trimmed, no control characters ("Enter a name." / "Names can't contain special control characters."). Names are handles: agents address people by name (`--to "Sam Ortiz"`), so a name must be unique across all members ignoring case, and can't be `owner` *(rev 4)*. As the owner types, a clash shows inline: "Sam Ortiz is already in Lumen Labs. Use a different name, such as Sam Ortiz (Design)." or "codex-dev is an agent's name. Choose another." **Add person** stays disabled until the name is free.
 - **Contact** is free text, stored now and used later (the design says so). Not validated beyond trimming.
 - **Added:** the person appears in their teams (highlighted for 2 s), or in **Not in a team**. Toast: "Added Sam Ortiz. Agents can now reach Sam." On an office that can't reach HQ, it shows as **Pending**.
 - **Person quick view:** name · Person · contact · teams (links) · reports to · their reports · "Agents can reach Sam". Actions: **Edit** (name, contact; clearing contact is allowed) · **Edit teams…** · **Change manager…** · **Remove from Lumen Labs…**.
@@ -683,10 +685,11 @@ Two directions, same result:
 - PEOPLE-1 · The People view shows the same team tree with only people on the cards; teams without people stay as compact "No people" cards; agents appear only when naming a team's lead, marked "(agent)".
 - PEOPLE-2 · The People view always shows that agents can only reach the people listed in the organization.
 - PEOPLE-3 · Add person (from the toolbar, a team's menu, or "Add a new person" in a member picker) requires a name and takes an optional contact, teams and manager (the owner by default); the person then appears in their teams, or in Not in a team.
-- PEOPLE-4 · A name matching an existing person asks before adding another; an empty or invalid name shows the inline error.
+- PEOPLE-4 · *(rev 4)* A name that matches any member's handle ignoring case (a person's name, an agent's messaging name, or `owner`) is refused inline with a suggestion, and Add person stays disabled. An empty or invalid name shows the inline error.
 - PEOPLE-5 · Removing a person confirms first, naming the teams they leave and stop leading, who will report to the owner instead, and that their waiting messages won't be delivered and their open tasks come back for reassignment.
 - PEOPLE-6 · People never show an office, and the office filter never highlights them.
 - PEOPLE-7 · When an agent's message or task fails because the recipient isn't in the organization (or was removed), the agent's activity says so in plain words, with Add a person… for an unknown recipient.
+- PEOPLE-8 · *(new, rev 4)* Renaming a person checks the same handle rule, and the rename dialog says agents will address them by the new name from now on.
 
 **Org chart: Reporting lines (REPORT)**
 - REPORT-1 · The Reporting lines view draws who reports to whom with the owner at the root; anyone without a manager hangs directly under the owner, and everyone appears exactly once.

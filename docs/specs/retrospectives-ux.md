@@ -27,7 +27,7 @@ Extends `features-ux.md` (delivered features), `feature-requests-ux.md`, `decisi
 4. **Evidence first, opinions second.** Before anyone answers, the tool gathers the period's facts: the features and their cycle times, waiting on the owner, blocked time, review rounds, reopened bugs, failed runs, tests and their time (when reported), debt taken, exceptions, and cost. Every answer can cite them ("ac-17 needed 5 review rounds").
 5. **The agents who did the work take part.** Everyone with a finished task in the scope is asked for input (woken if on call), plus the **facilitator**, by default the project's lead, who merges the answers, groups duplicates, and proposes action items. The owner can add input any time and is never required to.
 6. **Action items are changes, not wishes.** Each has a **kind**: **Task** (work to do) · **Guidance** (a change to agent guidance, §6.2 of the decisions spec) · **Checklist** (a change to a checklist template) · **Template** (a doc template) · **Decision** (a new ADR) · **Rule** (AGENTS.md or the project brief). Each has an owner and, for non-tasks, the exact proposed change (a diff).
-7. **The owner approves, and then it's applied everywhere.** **Approve** creates the tasks and proposes every procedure change through the normal branch and merge flow (docs land through branches). Once merged, every agent gets it at its next start or wake: the guidance moment, the checklist or the rule. The owner can turn on **"Apply procedure changes without asking"** for low-risk kinds (guidance and checklists).
+7. **The owner approves, and then it's applied everywhere.** **Approve** creates the tasks and proposes every procedure change through the normal branch and merge flow (docs land through branches). Once merged, every agent gets it at its next start or wake: the guidance moment, the checklist or the rule. The owner can turn on **"Apply procedure changes without asking"** for low-risk kinds (guidance and checklists). That skips only the owner's approval: the changes still land through review, go and merge (`decisions-and-tech-debt-ux.md` A36).
 8. **The next retro checks the last one's actions:** "Last time: run tests on a single branch. Did it help?" with the before and after numbers when they exist (median test time 14 min → 6 min). Items that didn't help can be reverted from there.
 9. **A retro is a persistent record:** `docs/retros/<date>-<slug>.md` with front matter (period, features, participants, action-item ids, status). The action-item tasks are database work items linked to it.
 
@@ -63,15 +63,15 @@ The retro's page shows its stage at the top: Gathering · Waiting for input (3 o
 ```
  Retro · Agentic Org · 8 Nov 13:10–17:10 · 3 features · 5 agents · ≈ $2.40      [Approve 4 items]
  ┌ Evidence ────────────────────────────────────────────────────────────────────────────────┐
- │ REQ-14 Quick capture  cycle 3 h 10 m · 2 review rounds · 0 bugs                           │
- │ REQ-13 Costs          cycle 5 h 40 m · 5 review rounds ⚠ · waiting on you 1 h 50 m ⚠       │
- │ REQ-11 Run modes      cycle 2 h 05 m · 1 review round                                     │
+ │ FEAT-0003 Org chart views  cycle 3 h 10 m · 2 review rounds · 0 bugs                       │
+ │ FEAT-0004 Offices (HQ)     cycle 5 h 40 m · 5 review rounds ⚠ · waiting on you 1 h 50 m ⚠  │
+ │ FEAT-0005 Create org       cycle 2 h 05 m · 1 review round                                 │
  │ Tests: median 14 min per run ⚠ (38 runs)   Debt taken: 2   Reopened bugs: 0   Cost ≈ $61   │
  └───────────────────────────────────────────────────────────────────────────────────────────┘
  Keep doing                     Do better                         Stop doing
  • Independent review before    • Check the accepted designs       • Running the full test suite
    the reviewer (4 agents)        before writing a spec (Eden,       for one-crate changes
-                                  ada) → REQ-13: 5 rounds            (3 agents)
+                                  ada) → FEAT-0004: 5 rounds           (3 agents)
  Problems
  • Specs contradicted the git design twice. Why: the designs weren't in the spec checklist.
    Prevent: add "check docs/design" to the spec checklist.
@@ -113,7 +113,7 @@ The retro's page shows its stage at the top: Gathering · Waiting for input (3 o
 - RETRO-8 · After the merge, each agent sees the change at its next start or wake.
 - RETRO-9 · The next retro shows the previous action items with "Did it help?" and before/after numbers when they exist, and offers to revert one.
 - RETRO-10 · Each retro is saved as `docs/retros/<date>-<slug>.md` with front matter, and listed in Docs › Retrospectives.
-- RETRO-11 · The owner can turn on applying guidance and checklist changes without asking. Other kinds always need approval.
+- RETRO-11 · The owner can turn on applying guidance and checklist changes without their own approval (they still land through review, go and merge). Other kinds always need approval.
 - RETRO-12 · `org-agent retro input|show|synthesize|list` work like the app, with the same words.
 
 ## 7. Open questions

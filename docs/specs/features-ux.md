@@ -25,7 +25,7 @@ Extends `feature-requests-ux.md` (requests), `work-items-ux.md` (project page, t
 
    | Object | Lives in | Lifetime | Example |
    | --- | --- | --- | --- |
-   | Feature request (`REQ-14`) | office database | transient: until it's scoped, declined or merged | "Let me capture requests with a shortcut…" |
+   | Feature request (`REQ-14`) | office database | transient: until it's approved, declined or merged | "Let me capture requests with a shortcut…" |
    | **Feature** (`FEAT-0007`) | **repository**, `docs/features/0007-<slug>.md` | **persistent**: the definition of what the product does | "Quick capture of requests" |
    | Task (`ac-88`) | office database | transient: done and archived | "Register the global shortcut" |
 
@@ -33,7 +33,7 @@ Extends `feature-requests-ux.md` (requests), `work-items-ux.md` (project page, t
 3. **Scoping a request materializes a feature.** The scoping agent's outcome (`feature-requests-ux.md` decision 7) is a **feature doc** (status Proposed) plus its draft tasks. **Approve** sets the feature to **Planned** and creates the tasks linked to it. A request can also extend an existing feature instead ("Adds to FEAT-0003").
 4. **Tasks don't need a feature.** Small work, fixes and chores stay plain tasks. A task can be linked to one feature at most. Bugs can name the feature they affect.
 5. **Feature statuses:** **Proposed · Planned · In progress · Delivered · Retired.** In progress follows its first task starting, and Delivered follows all its tasks being done (with Undo, like bugs and debt). Retired is set by hand with a reason ("replaced by FEAT-0012"). Each status change is a commit on a docs branch (`decisions-and-tech-debt-ux.md` §0.2).
-6. **"Delivered" is what retros listen for** (`retrospectives-ux.md` decision 1, A31): a feature reaching Delivered triggers the after-a-feature retro.
+6. **"Delivered" is what retros listen for** (`retrospectives-ux.md` decision 1, A31): a feature reaching Delivered triggers the after-a-feature retro. The trigger is the office recording Delivered (the last task done), not the merge of the doc's status commit.
 7. **Features are the project's map.** The project page gets a **Features** tab, the first after Overview, showing what the product does and what's coming, with progress from their tasks.
 
 ## 1. The feature file
@@ -84,19 +84,21 @@ The template is editable like every kind (`decisions-and-tech-debt-ux.md` §3.2)
 - **Overview tile:** "Features: 2 in progress · 1 planned · 5 delivered".
 - **States:** a task linked to the feature is deleted (removed from `tasks`, noted in history) · all tasks done (Delivered, with Undo) · a feature Retired with open tasks ("Retire FEAT-0006? Its 3 open tasks stay as plain tasks, or **Close them**").
 
-## 3. UX acceptance criteria (FEAT)
+## 3. UX acceptance criteria (FTR)
 
-- FEAT-1 · A feature is a file `docs/features/<n>-<slug>.md` with front matter per the feature template, numbered FEAT-<n>.
-- FEAT-2 · Scoping a request produces a Proposed feature with draft tasks. Approve sets it to Planned and creates the tasks linked to it.
-- FEAT-3 · A request can extend an existing feature, which then lists the request in `requests`.
-- FEAT-4 · Tasks can exist without a feature, and a task links to at most one feature.
-- FEAT-5 · A feature moves to In progress when its first task starts and to Delivered when all its tasks are done, each as a commit on a docs branch with Undo.
-- FEAT-6 · The project's Features tab groups features by status with task progress, and each feature page shows its tasks, bugs, cost and time, retros and history.
-- FEAT-7 · A feature reaching Delivered triggers the after-a-feature retrospective.
-- FEAT-8 · Retiring a feature needs a reason, and its open tasks stay as plain tasks unless the owner closes them.
+Criterion ids use **FTR-** so they never collide with feature records (`FEAT-n`) *(renamed in rev 1a, before any test used them)*.
+
+- FTR-1 · A feature is a file `docs/features/<n>-<slug>.md` with front matter per the feature template, numbered FEAT-<n>.
+- FTR-2 · Scoping a request produces a Proposed feature with draft tasks. Approve sets it to Planned and creates the tasks linked to it.
+- FTR-3 · A request can extend an existing feature, which then lists the request in `requests`.
+- FTR-4 · Tasks can exist without a feature, and a task links to at most one feature.
+- FTR-5 · A feature moves to In progress when its first task starts and to Delivered when all its tasks are done, each as a commit on a docs branch with Undo.
+- FTR-6 · The project's Features tab groups features by status with task progress, and each feature page shows its tasks, bugs, cost and time, retros and history.
+- FTR-7 · A feature reaching Delivered (recorded by the office when its last task is done, not when the status commit merges) triggers the after-a-feature retrospective.
+- FTR-8 · Retiring a feature needs a reason, and its open tasks stay as plain tasks unless the owner closes them.
 
 ## 4. Open questions
 
 **For ada and codex-dev**
 - ~~A34~~ · *Resolved (ada):* the definition is a repo doc. The task ↔ feature link (`feature_id` on tasks) is database data and the source of truth. The doc's `tasks` list is regenerated from the database on each status commit, never edited by hand.
-- ~~A35~~ · *Resolved (ada):* Delivered is automatic when the last task is done, with Undo, and the owner is notified. Plan row W17: codex-dev (model), agy (CLI), app-frontend-dev (UI).
+- ~~A35~~ · *Resolved (ada):* Delivered is automatic when the last task is done, with Undo, and the owner is notified. Plan row W17: codex-dev (model), Remy (CLI, the messaging and `org-agent` owner since agy ran out of credits), app-frontend-dev (UI).

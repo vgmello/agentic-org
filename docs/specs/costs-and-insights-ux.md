@@ -45,7 +45,7 @@ Extends `work-items-ux.md` (tasks, bugs), `our-org-in-the-app.md` (sessions, run
 | --- | --- |
 | **Session row** (agent profile › Sessions, task page) | runtime · model · duration (active / total) · tokens in / out / cache · cost (Reported / ≈ / —) · the task |
 | **Task, bug and debt pages** (side column, **Cost and time**) | cost · tokens · sessions (n) · working time · waiting on you · blocked · lead time, with the comparison "Typical for a task in Office: $3–6, 2–5 h" |
-| **Project › Insights tab** (new tab, after Docs) | this month and last: cost, tokens, working time, tasks and bugs done · cost by team, area, agent, model and kind (task, bug, debt, copilot, not linked) · speed (median lead time, working time, waiting on you, by kind) · the insights list · the budget bar |
+| **Project › Insights tab** (new tab, after Docs) | this month and last: cost, tokens, working time, tasks and bugs done · cost by team, area, agent, model and kind (task, bug, debt payback, copilot, retro, report, not linked; was: task, bug, debt, copilot, not linked) · speed (median lead time, working time, waiting on you, by kind) · the insights list · the budget bar |
 | **Insights** (nav, org-wide) | the same, across projects · a Projects table (investment to date, this month, last month, change, working time, items done) · Export |
 | **Projects list** | an **Investment** column (total to date, US dollars) |
 | **Agent profile › Overview** | this week's cost, working time and tasks done, and cost per task done, vs the team median |

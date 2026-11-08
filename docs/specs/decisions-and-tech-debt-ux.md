@@ -23,11 +23,11 @@ Extends `work-items-ux.md` rev 5 (Docs, work items) and `our-org-in-the-app.md` 
 
 **Revision 7 (2026-11-08): reviewer fixes.** §0.2 now says the docs flow **needs** an extension of the git design (A36), since that design lets the office push only an agent's own `task/…` branch and leaves merging for later. ada agreed office-created `docs/<slug>-<short-id>` branches (A36). "Integration branch" replaces "docs branch" where it meant the branch the Docs tab reads. Branch examples follow `task/<task-id>-<slug>`. The kind list matches §0.1. The Spec template includes `created` and `updated`, and member fields hold member ids.
 
-**Revision 6 (2026-11-08): doc changes land through branches (review fix).** Following `docs/design/projects-git-github.md` (never push to the default branch; the owner is the commit author, the agent is co-author): every doc change is a commit on a task or docs branch that lands through the merge flow, and the app shows "Waiting to merge" (§0.2). DEC-4, DEBT-5, AUTH-1 rewritten. C13 partly answered.
+**Revision 6 (2026-11-08): doc changes land through branches (review fix).** Following `docs/design/projects-git-github.md` (never push to the default branch; the owner is the commit author, the agent is co-author): every doc change is a commit on a task or docs branch that lands through the merge flow, and the app shows "Waiting to merge" (§0.2). DEC-4, DBT-5, AUTH-1 rewritten. C13 partly answered.
 
 **Revision 5 (2026-11-08): agent guidance (the user).** The shortcut question, and every prompt the tool uses to steer agents, is **agent guidance**: short prompts at set moments that the owner can customize per organization and per project (§6.2). U14 resolved (yes, as guidance), U15 my recommendation. GUIDE-1 to GUIDE-5 added (50 criteria).
 
-**Revision 4 (2026-11-08): what lives in the repository and what doesn't (the user).** **Persistent knowledge goes in the repository** as Markdown with front matter: decisions, designs, specs, evaluations, architecture and design reviews, plans, **tech debt**, **known limitations** and **exceptions**. **Transitional items stay in the office database:** tasks, bugs, internal queues, messages and other things that are acted on, fixed and can be deleted. Tech debt therefore becomes a doc kind (`docs/debt/`, `DEBT-0012`) instead of a work item. Two new kinds: **Known limitation** (`docs/limitations/`) and **Exception** (`docs/exceptions/`), §6.1. A23 resolved, C12 rewritten, new C18. DEBT-3, DEBT-5, DEBT-10, AUTH-6 rewritten. LIM-1 to LIM-3 and EXC-1 to EXC-4 added (45 criteria).
+**Revision 4 (2026-11-08): what lives in the repository and what doesn't (the user).** **Persistent knowledge goes in the repository** as Markdown with front matter: decisions, designs, specs, evaluations, architecture and design reviews, plans, **tech debt**, **known limitations** and **exceptions**. **Transitional items stay in the office database:** tasks, bugs, internal queues, messages and other things that are acted on, fixed and can be deleted. Tech debt therefore becomes a doc kind (`docs/debt/`, `DEBT-0012`) instead of a work item. Two new kinds: **Known limitation** (`docs/limitations/`) and **Exception** (`docs/exceptions/`), §6.1. A23 resolved, C12 rewritten, new C18. DBT-3, DBT-5, DBT-10, AUTH-6 rewritten. LMT-1 to LMT-3 and EXN-1 to EXN-4 added (45 criteria).
 
 **Revision 3 (2026-11-08): Markdown with front matter, and editable templates (the user).** Every doc is Markdown with **YAML front matter** that follows its kind's template (§3): the UI presents it as a header card and sections, and agents read the same structure (`org-agent doc schema`). Templates live in the repository and can be changed in the app or by agents (§3.2). The status line is gone as the source (decision 2 rewritten), and existing docs are converted when they move in (§7). C11 resolved. DEC-2, DEC-4, DEC-7, AUTH-1, AUTH-2 rewritten. TPL-1 to TPL-6 added (41 criteria).
 
@@ -279,7 +279,7 @@ accepted: null               # { on, by, reason } when we decide to live with it
 
 **Debt page:** the header card (§3.0) · What we did · Why · The proper fix · **Taken by** ("Taken by River in ac-17 · 9c1e0b2") · **Why** block (§5) · **Create payback task** · history (the file's commits).
 
-**Where debt shows up besides its tab:** the task it was taken in ("Debt taken: DEBT-0012"), the commit, the area's header in the Bugs tab ("Payments · 2 open debt"), the project Overview tile ("Tech debt 14 · 3 High"), and Work › **Debt** (the third pill: Tasks | Bugs | Debt).
+**Where debt shows up besides its tab:** the task it was taken in ("Debt taken: DEBT-0012"), the commit, the area's header in the Bugs tab ("Payments · 2 open debt"), the project Overview tile ("Tech debt 14 · 3 High"), and Work › **Debt** (the third pill: Tasks | Bugs | Debt | Requests).
 
 **For agents:** the tool asks at the right moment through agent guidance (§6.2), and every agent's manual adds one rule: "When you take a shortcut (skip a test, hard-code, defer a refactor, work around a bug, leave a TODO), record it with `org-agent debt add` in the same session." The task-Done question backs this up.
 
@@ -308,6 +308,9 @@ The tool helps agents work the way the organization wants by **prompting them at
 | Departing from a rule | "This goes against {rule}. Propose an exception: `org-agent doc new exception`." | when a review or check names a rule |
 | Finishing a task | the project's checklist (work-items §9.1) and "Is anything here a known limitation? `org-agent doc new limitation`." | `org-agent task done` |
 | Asking the owner | "Say what you need, your recommendation and what happens if there's no answer." | `org-agent msg ask --to owner` |
+| Waking up (on-call and scheduled agents) | "Read your inbox and backlog, do what's due, record what you did, then stop." (`agent-run-modes-ux.md` decision 6) | at every wake |
+| Procedure changed | "New from <retro>: <the change>." (`retrospectives-ux.md` decision 7) | at the agent's next start or wake after the change merges |
+| Posting to chat | "Post only what someone must answer, act on or know. Put details in the task or doc and link it." (`chat-ux.md` §5) | `org-agent msg` |
 
 - **Settings › Agent guidance** (organization) and project Settings › Agent guidance (overrides): one row per moment with **On/Off**, the text (with placeholders like `{task}`, `{area}`, `{decisions}` and a picker to insert them), and a **Preview as** an agent and task ("What River will see on ac-17").
 - **Add guidance…** adds a moment from a list (task started, task done, bug fixed, branch created, review requested, message to the owner) with its own text, for the owner's own practices ("Always add a screenshot for UI work").
@@ -325,6 +328,8 @@ When the Agentic Org project is brought in (dogfood spec Flow 1, or later from p
 
 ## 8. UX acceptance criteria
 
+Criterion ids for debt, limitations and exceptions use **DBT-**, **LMT-** and **EXN-** so they never collide with the records' ids (`DEBT-0012`, `LIM-0003`, `EXC-0002`) *(renamed in rev 7, before any test used them)*.
+
 **Docs and decisions (DEC)**
 - DEC-1 · The Docs tab groups docs as Brief, Decisions, Designs, Evaluations, Specs and Other, by folder under `docs/`, each with a count and status badges.
 - DEC-2 · *(rev 3)* Each doc's YAML front matter is shown as a header card (kind, number, title, status badge, owner, dates, relations as chips with their status), never as raw YAML, and the section rail follows its `##` headings.
@@ -341,18 +346,18 @@ When the Agentic Org project is brought in (dogfood spec Flow 1, or later from p
 - WHY-3 · The Evaluations group shows each evaluation's question and its verdict in one line.
 - WHY-4 · ⌘K "Why is…" finds decisions, evaluations and designs by text.
 
-**Tech debt (DEBT)**
-- DEBT-1 · Record debt needs only "What we did". Missing fields show "Needs details" on the item.
-- DEBT-2 · Marking a task Done asks "Did you take a shortcut?", and Yes opens Record debt prefilled with the task, branch and commits.
-- DEBT-3 · *(rev 4)* A debt item is a file `docs/debt/<n>-<slug>.md` with front matter per the debt template, numbered DEBT-<n>, shown with its icon, and sits in an area.
-- DEBT-4 · The Debt tab groups by area, sorts by cost then effort, and shows the summary bar with open, High, quick wins and paid this week.
-- DEBT-5 · *(rev 4)* A debt doc becomes Planned when a payback task is linked and Paid when all of them are Done, each written to the front matter in a commit on a docs branch (never the default branch), with an activity entry and Undo.
-- DEBT-6 · Accept needs a reason and can link the ADR that accepts it.
-- DEBT-7 · Each line under "Tech debt accepted" in an Accepted ADR is offered as a debt item linked to that ADR.
-- DEBT-8 · A review finding can be recorded as debt with the finding and commit linked.
-- DEBT-9 · The task page shows the debt taken in it, and the project Overview shows a Tech debt tile.
-- DEBT-10 · *(rev 4)* Work has a third pill, Debt, across projects. Debt on an unmerged branch is shown with its branch.
-- DEBT-11 · Draft debt found by a scan (TODOs, review findings, "Not covered here") is never created without Record.
+**Tech debt (DBT)**
+- DBT-1 · Record debt needs only "What we did". Missing fields show "Needs details" on the item.
+- DBT-2 · Marking a task Done asks "Did you take a shortcut?", and Yes opens Record debt prefilled with the task, branch and commits.
+- DBT-3 · *(rev 4)* A debt item is a file `docs/debt/<n>-<slug>.md` with front matter per the debt template, numbered DEBT-<n>, shown with its icon, and sits in an area.
+- DBT-4 · The Debt tab groups by area, sorts by cost then effort, and shows the summary bar with open, High, quick wins and paid this week.
+- DBT-5 · *(rev 4)* A debt doc becomes Planned when a payback task is linked and Paid when all of them are Done, each written to the front matter in a commit on a docs branch (never the default branch), with an activity entry and Undo.
+- DBT-6 · Accept needs a reason and can link the ADR that accepts it.
+- DBT-7 · Each line under "Tech debt accepted" in an Accepted ADR is offered as a debt item linked to that ADR.
+- DBT-8 · A review finding can be recorded as debt with the finding and commit linked.
+- DBT-9 · The task page shows the debt taken in it, and the project Overview shows a Tech debt tile.
+- DBT-10 · *(rev 4)* Work has a third pill, Debt, across projects. Debt on an unmerged branch is shown with its branch.
+- DBT-11 · Draft debt found by a scan (TODOs, review findings, "Not covered here") is never created without Record.
 
 **Our project (OURDOC)**
 - OURDOC-1 · Indexing the Agentic Org project shows its 3 ADRs and 4 designs from `docs/` on `v1`, and ada's 9 v0 ADRs under Earlier decisions (v0), with no number clash.
@@ -366,16 +371,16 @@ When the Agentic Org project is brought in (dogfood spec Flow 1, or later from p
 - AUTH-5 · `org-agent doc list` and `doc show` print the same kinds, numbers, statuses and words as the app.
 - AUTH-6 · *(rev 4)* `org-agent debt add` writes a debt doc on the agent's current branch with only the sentence, and prefills the task, branch and commit.
 
-**Known limitations (LIM)**
-- LIM-1 · Limitations are docs in `docs/limitations/` with front matter, listed in the Docs tab's Limitations group with status Current or Lifted.
-- LIM-2 · Report bug shows a matching current limitation with Read it and Report anyway.
-- LIM-3 · A bug closed as Won't fix offers Record as known limitation, prefilled from the bug.
+**Known limitations (LMT)**
+- LMT-1 · Limitations are docs in `docs/limitations/` with front matter, listed in the Docs tab's Limitations group with status Current or Lifted.
+- LMT-2 · Report bug shows a matching current limitation with Read it and Report anyway.
+- LMT-3 · A bug closed as Won't fix offers Record as known limitation, prefilled from the bug.
 
-**Exceptions (EXC)**
-- EXC-1 · Exceptions are docs in `docs/exceptions/` with front matter naming the rule, scope, approver and review date.
-- EXC-2 · A proposed exception appears in the owner's Needs you with Approve and Reject.
-- EXC-3 · On its review date, an exception appears in Needs you with Keep, Renew and Revoke, and past the date it shows as Expired.
-- EXC-4 · The rule's doc lists its approved exceptions.
+**Exceptions (EXN)**
+- EXN-1 · Exceptions are docs in `docs/exceptions/` with front matter naming the rule, scope, approver and review date.
+- EXN-2 · A proposed exception appears in the owner's Needs you with Approve and Reject.
+- EXN-3 · On its review date, an exception appears in Needs you with Keep, Renew and Revoke, and past the date it shows as Expired.
+- EXN-4 · The rule's doc lists its approved exceptions.
 
 **Agent guidance (GUIDE)** *(rev 5)*
 - GUIDE-1 · Settings › Agent guidance lists each moment with On/Off, editable text with placeholders, and Preview as an agent and task.
@@ -409,7 +414,7 @@ When the Agentic Org project is brought in (dogfood spec Flow 1, or later from p
 - ~~A19~~ · *Resolved by the user (rev 2):* they move into the project's repository and are written through the tool from now on.
 - ~~A23~~ · *Resolved by the user (rev 4):* persistent knowledge (decisions, designs, specs, evaluations, reviews, plans, debt, limitations, exceptions) is in the repository. Tasks, bugs, queues, messages and other transitional state are in the database.
 - ~~A24~~ · *Resolved (ada):* yes. My specs move to the product repo's `docs/specs/` on an `eden/specs-*` branch through the reviewer and ada's go.
-- ~~A20~~ · *Resolved (ada):* yes, agents record knowledge with `org-agent doc new|validate` and `debt add` on their own branch (agy owns the CLI). Was: the rules for every agent, through HR's templates and AGENTS.md: record shortcuts with `org-agent debt add`, and write decisions, designs, specs, plans and reviews with `org-agent doc`, not in your home folder.
+- ~~A20~~ · *Resolved (ada):* yes, agents record knowledge with `org-agent doc new|validate` and `debt add` on their own branch (Remy owns the CLI since agy-senior-dev ran out of credits). Was: the rules for every agent, through HR's templates and AGENTS.md: record shortcuts with `org-agent debt add`, and write decisions, designs, specs, plans and reviews with `org-agent doc`, not in your home folder.
 
 **For the user**
 - ~~U14~~ · *Resolved (the user):* yes, as agent guidance the owner can customize (§6.2).
