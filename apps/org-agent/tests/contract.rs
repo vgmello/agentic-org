@@ -337,7 +337,7 @@ fn after_task_deferred_during_a_break_does_not_loop() {
     assert_eq!(report["items"][0]["reason"], "after_task");
     assert_eq!(stop().code, 0, "reported once");
 
-    // `msg due --after-task` (the stateless alias) follows the same rule.
+    // `msg due --after-task` (the session-less alias) follows the same rule.
     let due = || json(&env.run(ME, &["msg", "due", "--after-task"]).stdout);
     let n = env.send(PEER, ME, &["--subject", "another", "b"]);
     env.run(ME, &["msg", "done", &m]);
@@ -394,14 +394,14 @@ fn defer_done_due_and_snooze_aware_inbox() {
     assert_eq!(row["snooze_note"], "after the PR");
     assert!(row["snoozed_until"].as_str().unwrap().ends_with('Z'));
 
-    // due: stateless JSON, exit 0, nothing due yet.
+    // due: JSON without session dedup, exit 0, nothing due yet.
     let due = env.run(ME, &["msg", "due"]);
     assert_eq!(due.code, 0);
     assert_eq!(json(&due.stdout)["count"], 0);
     assert_eq!(env.run(ME, &["msg", "due", "--session", "x"]).code, 1);
     assert_eq!(env.run(ME, &["msg", "due", "--format", "text"]).code, 1);
 
-    // Re-defer to the past -> due now, reason "due"; `due` reports it every time (stateless).
+    // Re-defer to the past -> due now, reason "due"; `due` reports it every time (no session dedup).
     env.run(ME, &["msg", "defer", &b, "--until", "2000-01-01T00:00:00Z"]);
     for _ in 0..2 {
         let due = json(&env.run(ME, &["msg", "due", "--json"]).stdout);
@@ -940,6 +940,20 @@ fn a_huge_timeout_is_a_usage_error_not_a_panic() {
     let r = env.run(
         "fresh-asker",
         &["msg", "ask", "--to", PEER, "--timeout", "25h", "q"],
+    );
+    assert_eq!(r.code, 1, "{}", r.stderr);
+    assert!(!env.root.join("spool/inbox/fresh-asker").exists());
+    // Same for an ask too large to deliver or with too long a subject.
+    let long = "s".repeat(org_spool::MAX_SUBJECT_BYTES + 1);
+    let r = env.run(
+        "fresh-asker",
+        &["msg", "ask", "--to", PEER, "--subject", &long, "q"],
+    );
+    assert_eq!(r.code, 1, "{}", r.stderr);
+    let r = env.run_stdin(
+        "fresh-asker",
+        &["msg", "ask", "--to", PEER, "-"],
+        &"\u{1}".repeat(100 * 1024),
     );
     assert_eq!(r.code, 1, "{}", r.stderr);
     assert!(!env.root.join("spool/inbox/fresh-asker").exists());

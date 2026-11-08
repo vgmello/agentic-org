@@ -1002,14 +1002,16 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
                 return Err(CliError::Spool(SpoolError::UnknownRecipient(to)));
             }
 
-            spool.register(&from)?;
-            let listener = spool.bind_wake_listener(&from)?;
-
+            // Build and size-check the request before any side effect (inbox, wake socket).
             let mut req = Envelope::new_request(&from, to, subject, body, meta, timeout)
                 .map_err(CliError::Usage)?;
             if let Some(p) = priority {
                 req.set_priority(p);
             }
+            req.to_json_bytes().map_err(CliError::Usage)?;
+
+            spool.register(&from)?;
+            let listener = spool.bind_wake_listener(&from)?;
             spool.enqueue(&req)?;
             spool.nudge_relay();
 
@@ -1381,7 +1383,7 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
         }
 
         "notify" | "due" => {
-            // `due` is the stateless JSON alias of `notify` (ADR-0003 §2.3): no --session, no
+            // `due` is the session-less JSON alias of `notify` (ADR-0003 §2.3): no --session, no
             // --format, and it exits 0 whatever it finds.
             let is_notify = sub == "notify";
             let me = resolve_identity(as_agent.as_deref())?;
@@ -1395,7 +1397,7 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
                     "--urgent-only" | "--urgent" => opts.urgent_only = true,
                     "--session" if !is_notify => {
                         return Err(CliError::Usage(
-                            "msg due is stateless; use msg notify --session <id>".into(),
+                            "msg due has no session dedup; use msg notify --session <id>".into(),
                         ));
                     }
                     "--format" if !is_notify => {
