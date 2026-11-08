@@ -2,6 +2,8 @@
 
 Status: **approved by the user** 2026-11-08 (decisions at the end). Owner: ada. It follows the user's decisions: project files are git repositories, the GitHub connection comes first, and **one GitHub App, managed by HQ** (revised the same day). It builds on `offices-hq-and-satellites.md`.
 
+> **For now: local git** *(the user, 2026-11-08: "let's use a local git for now")*. Projects use a local bare repository on disk as their remote, with the same `mirror.git`/`work.git` layout, the same office-run push and the same hardening. The remote sits behind a small interface (a URL plus a credential source), so moving to GitHub later is a configuration change. Everything GitHub-specific below (the app, tokens, repository creation) waits until you say so.
+
 ## In one paragraph
 Each project is a **git repository on GitHub**. **One GitHub App, "Agentic Org"**, is installed on your account, and **HQ holds its private key**. Whenever an office needs GitHub (fetch, push, a pull request), **HQ mints it a short-lived token** (one hour) limited to **that one repository and only the permissions that job needs**, and sends it over the office's connection. Offices never sign in to GitHub and never keep a GitHub credential. Every office clones the projects it works on, and its agents work in their own **git worktrees**, one per task. GitHub is the hub for files: offices tell each other "I pushed" through the work-data stream, and the others fetch. HQ also **creates project repositories automatically**.
 
