@@ -72,12 +72,13 @@ pub struct AgentSessionEnv {
     pub workspace: PathBuf,
     /// The agent's home: `PATH` entries inside it are dropped.
     pub agent_home: PathBuf,
-    /// `GIT_CONFIG_GLOBAL`: the office-generated git config file, in the agent's runtime dir.
-    pub git_config_global: PathBuf,
-    /// `core.hooksPath`: an empty office directory, in the agent's runtime dir.
-    pub git_hooks_dir: PathBuf,
-    /// `GH_CONFIG_DIR`: an empty office directory, in the agent's runtime dir.
-    pub gh_config_dir: PathBuf,
+    /// The commit identity's `user.name` (from `projects-git-github.md`).
+    pub git_user_name: String,
+    /// The commit identity's `user.email`.
+    pub git_user_email: String,
+    /// For a Codex session: the folder of the real git (`xcrun --find git`, resolved at
+    /// preflight), put in `PATH` before `/usr/bin` (decision 6). `None` for other runtimes.
+    pub git_bin_dir: Option<PathBuf>,
 }
 
 /// Builds an [`Env`] from the office's values.
@@ -111,8 +112,12 @@ impl EnvBuilder {
         }
     }
 
-    /// Adds an agent session's values: `ORG_AGENT`, `ORG_SESSION_TOKEN`, the `GIT_*` set and
-    /// `GH_CONFIG_DIR`. [`crate::spawn_session`] requires them.
+    /// Adds an agent session's values: `ORG_AGENT`, `ORG_SESSION_TOKEN`, the `GIT_*` set
+    /// (`GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`, and through
+    /// `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n` the commit identity, an empty `credential.helper`,
+    /// `core.hooksPath=/dev/null`, `core.fsmonitor=false`, `gc.auto=0`,
+    /// `maintenance.auto=false`) and `GH_CONFIG_DIR=<TMPDIR>/gh/` (the office makes that empty
+    /// folder). [`crate::spawn_session`] requires them.
     pub fn agent_session(mut self, session: AgentSessionEnv) -> Self {
         self.session = Some(session);
         self
@@ -158,14 +163,14 @@ impl EnvBuilder {
 
         let mut excludes = Vec::new();
         if let Some(s) = &self.session {
-            for (what, path) in [
-                ("workspace", &s.workspace),
-                ("agent home", &s.agent_home),
-                ("GIT_CONFIG_GLOBAL", &s.git_config_global),
-                ("git hooks dir", &s.git_hooks_dir),
-                ("GH_CONFIG_DIR", &s.gh_config_dir),
-            ] {
+            for (what, path) in [("workspace", &s.workspace), ("agent home", &s.agent_home)] {
                 require_absolute(what, path)?;
+            }
+            if let Some(dir) = &s.git_bin_dir {
+                require_absolute("the git folder", dir)?;
+                if path_str("the git folder", dir)?.contains(':') {
+                    return Err(Error::invalid("the git folder holds a `:`"));
+                }
             }
             excludes.push(s.workspace.clone());
             excludes.push(s.agent_home.clone());
@@ -175,7 +180,12 @@ impl EnvBuilder {
         let mut set = |name: &str, value: String| vars.insert(name.to_owned(), value);
         set(
             "PATH",
-            compose_path(&b.office_home, &b.login_path, &excludes),
+            compose_path(
+                &b.office_home,
+                &b.login_path,
+                &excludes,
+                self.session.as_ref().and_then(|s| s.git_bin_dir.as_deref()),
+            ),
         );
         set("HOME", path_str("HOME", &b.home)?.to_owned());
         if let Some(lang) = &b.lang {
@@ -195,14 +205,15 @@ impl EnvBuilder {
         if let Some(s) = self.session {
             set("ORG_AGENT", s.agent);
             set("ORG_SESSION_TOKEN", s.token.0);
+            // Rev 3.3: no git or gh setting is a file in the runtime dir. They travel in the
+            // environment, which overrides every config file.
             set("GIT_CONFIG_NOSYSTEM", "1".to_owned());
-            set(
-                "GIT_CONFIG_GLOBAL",
-                path_str("GIT_CONFIG_GLOBAL", &s.git_config_global)?.to_owned(),
-            );
-            let hooks = path_str("git hooks dir", &s.git_hooks_dir)?.to_owned();
+            set("GIT_CONFIG_GLOBAL", "/dev/null".to_owned());
             let config = [
-                ("core.hooksPath", hooks),
+                ("user.name", s.git_user_name),
+                ("user.email", s.git_user_email),
+                ("credential.helper", String::new()),
+                ("core.hooksPath", "/dev/null".to_owned()),
                 ("core.fsmonitor", "false".to_owned()),
                 ("gc.auto", "0".to_owned()),
                 ("maintenance.auto", "false".to_owned()),
@@ -212,10 +223,9 @@ impl EnvBuilder {
                 set(&format!("GIT_CONFIG_KEY_{i}"), key.to_owned());
                 set(&format!("GIT_CONFIG_VALUE_{i}"), value);
             }
-            set(
-                "GH_CONFIG_DIR",
-                path_str("GH_CONFIG_DIR", &s.gh_config_dir)?.to_owned(),
-            );
+            // An empty folder the office makes for the session, in its TMPDIR.
+            let gh = b.tmpdir.join("gh");
+            set("GH_CONFIG_DIR", format!("{}/", path_str("TMPDIR", &gh)?));
         }
         let env = Env {
             vars,
@@ -242,19 +252,22 @@ pub struct Env {
 
 impl Env {
     /// An environment of exactly these variables, for a child that isn't an agent's (an
-    /// office server, say). The first value of a repeated name wins.
+    /// office server, say). The first value of a repeated name wins. A `TERM` is passed to a
+    /// terminal child only.
     pub fn from_vars(vars: impl IntoIterator<Item = (EnvName, String)>) -> Result<Env> {
         let mut map = BTreeMap::new();
         for (name, value) in vars {
             map.entry(name.as_str().to_owned()).or_insert(value);
         }
+        // `TERM` belongs to a terminal only, like the builder's.
+        let term = map.remove("TERM");
         let mark = map.get("ORG_SESSION_MARK").cloned();
         if let Some(mark) = &mark {
             check_mark(mark)?;
         }
         let env = Env {
             vars: map,
-            term: None,
+            term,
             mark,
             session: false,
         };
@@ -372,7 +385,12 @@ fn check_mark(mark: &str) -> Result<()> {
 
 /// `<office home>/bin`, then the login `PATH`'s entries that pass the filter (see
 /// [`EnvBuilder::build`]).
-fn compose_path(office_home: &Path, login_path: &str, excludes: &[PathBuf]) -> String {
+fn compose_path(
+    office_home: &Path,
+    login_path: &str,
+    excludes: &[PathBuf],
+    git_bin_dir: Option<&Path>,
+) -> String {
     let office_bin = office_home.join("bin");
     let mut roots: Vec<PathBuf> = excludes.to_vec();
     roots.extend(excludes.iter().map(|p| real_prefix(p)));
@@ -392,7 +410,17 @@ fn compose_path(office_home: &Path, login_path: &str, excludes: &[PathBuf]) -> S
             continue;
         }
         seen.push(entry.to_path_buf());
-        parts.push(raw.trim_end_matches('/').to_owned());
+        // `/` stays `/`: trimmed to nothing it would be an empty entry, which means the cwd.
+        let trimmed = raw.trim_end_matches('/');
+        parts.push(if trimmed.is_empty() { "/" } else { trimmed }.to_owned());
+    }
+    // Codex's real git goes before `/usr/bin` (its launcher there stalls in Codex's sandbox),
+    // or right after the office's folder when `/usr/bin` isn't listed.
+    if let Some(dir) = git_bin_dir {
+        let dir = dir.to_string_lossy().trim_end_matches('/').to_owned();
+        parts.retain(|p| *p != dir);
+        let at = parts.iter().position(|p| p == "/usr/bin").unwrap_or(1);
+        parts.insert(at, dir);
     }
     parts.join(":")
 }
@@ -447,6 +475,25 @@ fn is_plain_absolute(raw: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn compose_path_t(office_home: &Path, login_path: &str, excludes: &[PathBuf]) -> String {
+        compose_path(office_home, login_path, excludes, None)
+    }
+
+    #[test]
+    fn codex_real_git_goes_before_usr_bin() {
+        let git = Some(Path::new(
+            "/Applications/Xcode.app/Contents/Developer/usr/bin",
+        ));
+        assert_eq!(
+            compose_path(Path::new("/o"), "/opt/bin:/usr/bin:/bin", &[], git),
+            "/o/bin:/opt/bin:/Applications/Xcode.app/Contents/Developer/usr/bin:/usr/bin:/bin"
+        );
+        assert_eq!(
+            compose_path(Path::new("/o"), "/bin", &[], git),
+            "/o/bin:/Applications/Xcode.app/Contents/Developer/usr/bin:/bin"
+        );
+    }
+
     fn base() -> BaseEnv {
         BaseEnv {
             office_home: "/o/home".into(),
@@ -467,22 +514,24 @@ mod tests {
             token: SessionToken::new("s3cr3t-token".into()),
             workspace: "/w/ws".into(),
             agent_home: "/w/home".into(),
-            git_config_global: "/o/rt/gitconfig".into(),
-            git_hooks_dir: "/o/rt/hooks".into(),
-            gh_config_dir: "/o/rt/gh".into(),
+            git_user_name: "ada (agent)".into(),
+            git_user_email: "ada@agents.example".into(),
+            git_bin_dir: None,
         }
     }
 
     #[test]
     fn path_puts_office_bin_first_and_filters_the_login_path() {
-        let path = compose_path(
+        let path = compose_path_t(
             Path::new("/o/home"),
             "/usr/bin::rel/bin:./x:/w/ws/node_modules/.bin:/w/home/bin:/w/wsx/bin:/a/../b:\
              /a//b:/usr/bin:/o/home/bin:/opt/homebrew/bin/:/w/ws",
             &["/w/ws".into(), "/w/home".into()],
         );
         assert_eq!(path, "/o/home/bin:/usr/bin:/w/wsx/bin:/opt/homebrew/bin");
-        let path = compose_path(Path::new("/o"), "/W/WS/bin:/w/home2", &["/w/ws".into()]);
+        let path = compose_path_t(Path::new("/o"), "/:/usr/bin:", &[]);
+        assert_eq!(path, "/o/bin:/:/usr/bin", "never an empty (cwd) entry");
+        let path = compose_path_t(Path::new("/o"), "/W/WS/bin:/w/home2", &["/w/ws".into()]);
         assert_eq!(path, "/o/bin:/w/home2", "case is ignored");
     }
 
@@ -494,7 +543,7 @@ mod tests {
         let link = root.join("link");
         let _ = std::fs::remove_file(&link);
         std::os::unix::fs::symlink(ws.join("bin"), &link).unwrap();
-        let path = compose_path(
+        let path = compose_path_t(
             Path::new("/o"),
             // Through the link, existing or not yet; and the workspace spelled through the
             // temp folder's own symlinks (`/var` is `/private/var`).
@@ -527,11 +576,17 @@ mod tests {
                 "GIT_CONFIG_KEY_1",
                 "GIT_CONFIG_KEY_2",
                 "GIT_CONFIG_KEY_3",
+                "GIT_CONFIG_KEY_4",
+                "GIT_CONFIG_KEY_5",
+                "GIT_CONFIG_KEY_6",
                 "GIT_CONFIG_NOSYSTEM",
                 "GIT_CONFIG_VALUE_0",
                 "GIT_CONFIG_VALUE_1",
                 "GIT_CONFIG_VALUE_2",
                 "GIT_CONFIG_VALUE_3",
+                "GIT_CONFIG_VALUE_4",
+                "GIT_CONFIG_VALUE_5",
+                "GIT_CONFIG_VALUE_6",
                 "HOME",
                 "LANG",
                 "LOGNAME",
@@ -548,9 +603,13 @@ mod tests {
         );
         let envp = env.to_envp(false).unwrap();
         let has = |s: &str| envp.iter().any(|c| c.to_str().unwrap() == s);
-        assert!(has("GIT_CONFIG_KEY_0=core.hooksPath"));
-        assert!(has("GIT_CONFIG_VALUE_0=/o/rt/hooks"));
-        assert!(has("GIT_CONFIG_COUNT=4"));
+        assert!(has("GIT_CONFIG_GLOBAL=/dev/null"));
+        assert!(has("GIT_CONFIG_KEY_2=credential.helper"));
+        assert!(has("GIT_CONFIG_VALUE_2="));
+        assert!(has("GIT_CONFIG_KEY_3=core.hooksPath"));
+        assert!(has("GIT_CONFIG_VALUE_3=/dev/null"));
+        assert!(has("GIT_CONFIG_COUNT=7"));
+        assert!(has("GH_CONFIG_DIR=/private/tmp/s1/gh/"));
         assert!(has("ORG_SESSION_TOKEN=s3cr3t-token"));
         assert!(!envp
             .iter()

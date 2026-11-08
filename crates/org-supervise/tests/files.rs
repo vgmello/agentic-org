@@ -1,3 +1,4 @@
+#![cfg(target_os = "macos")]
 //! A plan's directories and files are written without ever following a symlink.
 
 mod common;
@@ -55,7 +56,6 @@ fn dirs_and_files_are_written_with_their_modes_and_excludes() {
     let targets = PlanTargets {
         runtime_dir: spec(&rt),
         git_exclude_file: Some(spec(&exclude)),
-        cleanup_root: None,
     };
     let setup = |p: &mut org_runtime::LaunchPlan| {
         p.dirs = vec![PlannedDir {
@@ -206,4 +206,58 @@ fn a_git_exclude_needs_a_workspace_file_and_an_exclude_file() {
     })
     .unwrap_err();
     assert!(matches!(err, Error::Invalid { .. }), "{err:?}");
+}
+
+#[test]
+fn the_child_starts_in_its_workspace_and_a_symlinked_workspace_is_refused() {
+    let tmp = TempDir::new();
+    let ws = tmp.dir("ws");
+    let mark = mark("cwd");
+    let mut child = spawn_session(
+        &plan("/bin/pwd", &["-P"], &ws),
+        &targets(&tmp.dir("rt")),
+        &session_env(&tmp, &ws, &mark),
+    )
+    .unwrap();
+    let pid = child.pid();
+    let out = Reader::spawn(child.take_stdout().unwrap()).read_to_end();
+    child.reap().unwrap();
+    assert_eq!(out.trim(), ws.to_str().unwrap());
+    assert_clean(&[pid], Some(&mark));
+
+    // The workspace itself, or a folder above it, swapped for a symlink.
+    let link_ws = tmp.path().join("ws-link");
+    symlink(&ws, &link_ws).unwrap();
+    let parent_link = tmp.path().join("parent-link");
+    symlink(tmp.path(), &parent_link).unwrap();
+    for cwd in [link_ws, parent_link.join("ws")] {
+        let err = spawn_session(
+            &plan("/usr/bin/true", &[], &cwd),
+            &targets(&tmp.dir("rt")),
+            &session_env(&tmp, &cwd, &mark),
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::Refused { .. }), "{err:?}");
+    }
+}
+
+#[test]
+fn the_exclude_file_keeps_its_mode_and_may_hold_any_bytes() {
+    let tmp = TempDir::new();
+    let ws = tmp.dir("ws");
+    let rt = tmp.dir("rt");
+    let info = tmp.dir("work.git/info");
+    let exclude = info.join("exclude");
+    fs::write(&exclude, b"caf\xe9\n").unwrap();
+    fs::set_permissions(&exclude, fs::Permissions::from_mode(0o640)).unwrap();
+    let targets = PlanTargets {
+        runtime_dir: spec(&rt),
+        git_exclude_file: Some(spec(&exclude)),
+    };
+    run(&tmp, &ws, &targets, |p| {
+        p.files = vec![file(FileLocation::Workspace, "A.md", "x", true)];
+    })
+    .unwrap();
+    assert_eq!(fs::read(&exclude).unwrap(), b"caf\xe9\n/A.md\n");
+    assert_eq!(mode(&exclude), 0o640);
 }

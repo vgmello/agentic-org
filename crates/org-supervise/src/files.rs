@@ -20,7 +20,7 @@ use std::io::{self, Read, Write};
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Component, Path};
 use std::sync::Mutex;
 
 use org_runtime::{FileLocation, LaunchPlan, PlannedDir, PlannedFile, RelPath, SpecPath};
@@ -38,10 +38,6 @@ pub struct PlanTargets {
     /// a workspace file with `git_exclude`. `None` when the session has no repository; a plan
     /// that asks for an exclude is then refused.
     pub git_exclude_file: Option<SpecPath>,
-    /// The folder every [`org_runtime::CleanupPath`] of the plan must lie inside (e.g.
-    /// `/private/tmp/cc-socks` for Claude), by its real path. Required when the plan has
-    /// cleanup paths. (Interim: the port's `CleanupPath` will carry its own root.)
-    pub cleanup_root: Option<SpecPath>,
 }
 
 /// The largest exclude file read back (it's rewritten whole).
@@ -102,10 +98,31 @@ fn cstring(path: &Path, bytes: &[u8]) -> Result<CString> {
     })
 }
 
-/// Opens the location itself (`O_DIRECTORY | O_NOFOLLOW`).
+/// Opens a location the office names by its real path, walking from `/` one component at a
+/// time with `O_DIRECTORY | O_NOFOLLOW` (stricter than the port asks: a symlink swapped in
+/// for any parent is refused too, not only one at the last component).
 fn open_location(path: &Path) -> Result<OwnedFd> {
-    let c = cstring(path, path.as_os_str().as_bytes())?;
-    sys::open_dir_nofollow(&c).map_err(|e| refusal_or_io("open the location", path, e))
+    open_real_dir(path).map_err(|e| refusal_or_io("open the location", path, e))
+}
+
+/// Opens the directory at the absolute `path` without following a symlink anywhere on it.
+pub(crate) fn open_real_dir(path: &Path) -> io::Result<OwnedFd> {
+    let not_plain = || io::Error::new(io::ErrorKind::InvalidInput, "not a plain absolute path");
+    let mut dir = sys::open_dir_nofollow(c"/")?;
+    for c in path.components() {
+        match c {
+            Component::RootDir => {}
+            Component::Normal(name) => {
+                let name = CString::new(name.as_bytes()).map_err(|_| not_plain())?;
+                dir = sys::openat_dir_nofollow(dir.as_fd(), &name)?;
+            }
+            _ => return Err(not_plain()),
+        }
+    }
+    if !path.is_absolute() {
+        return Err(not_plain());
+    }
+    Ok(dir)
 }
 
 /// A symlink (`ELOOP`) or a non-directory (`ENOTDIR`) on the way is a refusal; anything else
@@ -231,7 +248,9 @@ fn add_excludes(exclude_file: &SpecPath, rels: &[&RelPath]) -> Result<()> {
     let _guard = EXCLUDE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let dir = open_location(&parent)?;
     let leaf_c = cstring(&full, leaf.as_bytes())?;
-    let mut text = String::new();
+    // Bytes, not text: git doesn't require UTF-8 there. The file's mode is kept.
+    let mut text: Vec<u8> = Vec::new();
+    let mut mode = 0o644;
     match sys::openat_read_nofollow(dir.as_fd(), &leaf_c) {
         Ok(fd) => {
             let f = File::from(fd);
@@ -242,8 +261,9 @@ fn add_excludes(exclude_file: &SpecPath, rels: &[&RelPath]) -> Result<()> {
                     why: "it isn't a regular file",
                 });
             }
+            mode = meta.permissions().mode() & 0o777;
             f.take(MAX_EXCLUDE_BYTES + 1)
-                .read_to_string(&mut text)
+                .read_to_end(&mut text)
                 .map_err(|e| Error::io_at("read", &full, e))?;
             if text.len() as u64 > MAX_EXCLUDE_BYTES {
                 return Err(Error::Refused {
@@ -258,19 +278,19 @@ fn add_excludes(exclude_file: &SpecPath, rels: &[&RelPath]) -> Result<()> {
     let missing: Vec<String> = rels
         .iter()
         .map(|r| exclude_line(r))
-        .filter(|line| !text.lines().any(|l| l == line))
+        .filter(|line| !text.split(|&b| b == b'\n').any(|l| l == line.as_bytes()))
         .collect();
     if missing.is_empty() {
         return Ok(());
     }
-    if !text.is_empty() && !text.ends_with('\n') {
-        text.push('\n');
+    if !text.is_empty() && !text.ends_with(b"\n") {
+        text.push(b'\n');
     }
     for line in missing {
-        text.push_str(&line);
-        text.push('\n');
+        text.extend_from_slice(line.as_bytes());
+        text.push(b'\n');
     }
-    replace_file(dir.as_fd(), leaf, text.as_bytes(), 0o644, &full)
+    replace_file(dir.as_fd(), leaf, &text, mode, &full)
 }
 
 #[cfg(test)]

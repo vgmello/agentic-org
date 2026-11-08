@@ -13,16 +13,19 @@
 //! 1. [`spawn_session`] writes the plan's dirs and files, then spawns. Record [`Child::id`]
 //!    (pid and start time) and the mark before the first byte is sent.
 //! 2. The caller (the pump) owns the pipes it takes out ([`Child::take_stdout`], ...).
-//! 3. To end it: [`Child::stop`] (after the session's own `CloseStdin` and its wait, the
-//!    pump's business): `SIGTERM` to the runtime's pid, then the plan's steps, then `SIGKILL`
-//!    to the group. It **doesn't reap**, so the pump can drain stdout to its end first.
+//! 3. To end it: [`Child::stop`] (after the session's own `CloseStdin`, or the pump's timeout
+//!    for it): the plan's graceful steps, `SIGTERM` to the runtime's pid at the first signal
+//!    step, the plan's signals, then `SIGKILL` to the group. It **doesn't reap**, so the pump
+//!    can drain stdout first.
 //! 4. [`Child::reap`]: waits for the exit, `SIGKILL`s the group (whatever is left of it),
 //!    removes the plan's [`CleanupPath`]s while the child is still a zombie (so its pid can't
 //!    have been reused), runs orphan cleanup for the session's mark, and only then reaps,
 //!    returning the [`ExitInfo`].
 //!
 //! Dropping a `Child` that wasn't reaped kills its group and reaps it (with the cleanup), so
-//! no zombie or stray group outlives it.
+//! no zombie or stray group outlives it. That **blocks** (up to the orphan grace, 5 s by
+//! default, and a little more), during a panic's unwinding too: reap explicitly where that
+//! matters.
 //!
 //! **The pump's drain must be time-limited.** End-of-file on the child's stdout isn't
 //! guaranteed once it has exited: a tool that detached (and so survived the group kill) may
@@ -59,6 +62,10 @@ use crate::sys::{self, ChildStdio, PidFilter, SpawnRequest};
 /// a session (the design's 5 s).
 pub const ORPHAN_GRACE: Duration = Duration::from_secs(5);
 
+/// The grace of the stop sequence's first `SIGTERM` to the leader when the plan has no signal
+/// step (the port's default).
+pub const DEFAULT_TERM_GRACE: Duration = Duration::from_secs(5);
+
 /// How often a wait checks whether the child has exited.
 const POLL_MAX: Duration = Duration::from_millis(20);
 
@@ -89,32 +96,26 @@ pub fn spawn(cmd: &Command) -> Result<Child> {
         env: &cmd.env,
         stdio: cmd.stdio,
         cleanup: Vec::new(),
-        cleanup_root: None,
     })
 }
 
 /// Carries out a [`LaunchPlan`]: writes its directories and files (never through a symlink;
 /// see [`PlanTargets`]), then spawns its program in its workspace with `env` plus the plan's
-/// `env_add` (which never overrides the office's variables).
+/// `env_add` (which never overrides the office's variables: an entry naming one of them, or
+/// under an `ORG_`, `GIT_`, `GH_` or `DYLD_` prefix, is dropped).
 ///
 /// `env` must be an agent session's ([`crate::EnvBuilder::agent_session`]) with a mark, so
-/// orphan cleanup can always find the session's processes; and a plan with cleanup paths
-/// needs [`PlanTargets::cleanup_root`]. Otherwise nothing is written or spawned.
+/// orphan cleanup can always find the session's processes, and the workspace can't be `/`.
+/// Otherwise nothing is written or spawned.
 pub fn spawn_session(plan: &LaunchPlan, targets: &PlanTargets, env: &Env) -> Result<Child> {
     if !env.is_agent_session() || env.mark().is_none() {
         return Err(Error::invalid(
             "a session's environment needs the agent session values and a mark",
         ));
     }
-    let cleanup_root = match (&targets.cleanup_root, plan.cleanup_after_exit.is_empty()) {
-        (Some(root), _) => Some(root.to_path_buf()),
-        (None, true) => None,
-        (None, false) => {
-            return Err(Error::invalid(
-                "the plan has cleanup paths, but no cleanup root was given",
-            ))
-        }
-    };
+    if plan.cwd.is_root() {
+        return Err(Error::invalid("the workspace is `/`"));
+    }
     check_program(&plan.program)?;
     let env = env.with_additions(&plan.env_add)?;
     files::write_plan(plan, targets)?;
@@ -125,7 +126,6 @@ pub fn spawn_session(plan: &LaunchPlan, targets: &PlanTargets, env: &Env) -> Res
         env: &env,
         stdio: plan.stdio,
         cleanup: plan.cleanup_after_exit.clone(),
-        cleanup_root,
     })
 }
 
@@ -136,7 +136,6 @@ pub(crate) struct Spawn<'a> {
     pub env: &'a Env,
     pub stdio: Stdio,
     pub cleanup: Vec<CleanupPath>,
-    pub cleanup_root: Option<PathBuf>,
 }
 
 /// The program must be absolute and its own real path, so what runs is what the office
@@ -167,7 +166,13 @@ pub(crate) fn spawn_inner(s: Spawn<'_>) -> Result<Child> {
         return Err(Error::invalid("the working directory isn't absolute"));
     }
     let program = c_path(s.program)?;
-    let cwd = c_path(s.cwd)?;
+    let cwd = files::open_real_dir(s.cwd).map_err(|e| match e.raw_os_error() {
+        Some(libc::ELOOP) | Some(libc::ENOTDIR) => Error::Refused {
+            path: s.cwd.to_path_buf(),
+            why: "a symlink or a non-directory is on the way to the working directory",
+        },
+        _ => Error::io_at("open the working directory", s.cwd, e),
+    })?;
     let mut argv = vec![program.clone()];
     for arg in s.args {
         argv.push(
@@ -187,7 +192,6 @@ pub(crate) fn spawn_inner(s: Spawn<'_>) -> Result<Child> {
         stderr: None,
         pty: None,
         cleanup: s.cleanup,
-        cleanup_root: s.cleanup_root,
         tool_sessions: BTreeSet::new(),
         exited: false,
         reaped: true,
@@ -204,7 +208,7 @@ pub(crate) fn spawn_inner(s: Spawn<'_>) -> Result<Child> {
                 program: &program,
                 argv: &argv,
                 envp: &envp,
-                cwd: &cwd,
+                cwd: cwd.as_fd(),
                 stdio: ChildStdio::Fds {
                     stdin: in_r.as_fd(),
                     stdout: out_w.as_fd(),
@@ -227,7 +231,7 @@ pub(crate) fn spawn_inner(s: Spawn<'_>) -> Result<Child> {
                 program: &program,
                 argv: &argv,
                 envp: &envp,
-                cwd: &cwd,
+                cwd: cwd.as_fd(),
                 stdio: ChildStdio::Terminal { slave: &slave },
             })
             .map_err(|e| Error::io_at("spawn", s.program, e))?;
@@ -266,7 +270,6 @@ pub struct Child {
     stderr: Option<File>,
     pty: Option<Pty>,
     cleanup: Vec<CleanupPath>,
-    cleanup_root: Option<PathBuf>,
     tool_sessions: BTreeSet<ProcessId>,
     /// The child has exited (seen with `WNOWAIT`; still a zombie until reaped).
     exited: bool,
@@ -408,23 +411,28 @@ impl Child {
         self.tool_sessions.iter().copied().collect()
     }
 
-    /// The stop sequence. Call it once the session has had its say (the pump closes stdin on
-    /// the session's `CloseStdin` and waits, or gives up after a timeout):
-    /// 1. `SIGTERM` to the runtime's own pid, always (Claude kills its tools' trees on it),
-    ///    then up to `term_grace` for the exit;
-    /// 2. the plan's steps in order, each followed by its grace, skipped once the child has
-    ///    exited (`CloseStdin` closes the stdin this `Child` still holds; a terminal child has
-    ///    no stdin pipe, so for it the step only waits);
-    /// 3. `SIGKILL` to the whole group (and the pid, in case it left the group).
+    /// The stop sequence, as `org_runtime::StopPlan` defines it. Call it only after the
+    /// session's `CloseStdin` (the pump closes stdin then), or after the pump's own timeout
+    /// for it:
+    /// 1. the plan's steps run in order, each followed by up to its grace for the exit, and
+    ///    are skipped once the child has exited. `CloseStdin` closes the stdin this `Child`
+    ///    still holds (a terminal child has none, so for it the step only waits);
+    /// 2. at the first signal step, whatever it says, `SIGTERM` goes to the runtime's own pid
+    ///    first (Claude kills its tools' trees on it), with that step's grace; then the signal
+    ///    steps run, that first one included unless it's itself `SIGTERM` to the leader;
+    /// 3. a plan with no signal step still gets that `SIGTERM`, after its graceful steps, with
+    ///    [`DEFAULT_TERM_GRACE`];
+    /// 4. `SIGKILL` to the whole group (and to the pid, in case it left the group).
     ///
-    /// It doesn't reap: drain the pipes, then call [`Child::reap`], which runs the cleanup
-    /// and the orphan scan.
-    pub fn stop(&mut self, plan: &StopPlan, term_grace: Duration) -> Result<()> {
-        if !self.has_exited()? {
-            let _ = self.record_tool_sessions();
-            self.signal_leader(libc::SIGTERM);
-            self.wait_exit(Some(term_grace))?;
-        }
+    /// Once the runtime has exited (on the first `SIGTERM`, say), the remaining steps are
+    /// skipped: the group `SIGKILL` and [`Child::reap`]'s orphan cleanup still cover what's
+    /// left of its group and its tools.
+    ///
+    /// Tool sessions are recorded before the first signal. It doesn't reap: drain the pipes
+    /// (for a bounded time), then call [`Child::reap`], which runs the cleanup and the orphan
+    /// scan.
+    pub fn stop(&mut self, plan: &StopPlan) -> Result<()> {
+        let mut termed = false;
         for step in &plan.steps {
             if self.has_exited()? {
                 break;
@@ -439,6 +447,18 @@ impl Child {
                     target,
                     grace_ms,
                 } => {
+                    let grace = Duration::from_millis(grace_ms);
+                    if !termed {
+                        termed = true;
+                        self.term_leader(grace)?;
+                        let same = matches!(
+                            (signal, target),
+                            (StopSignal::Terminate, SignalTarget::Leader)
+                        );
+                        if same || self.has_exited()? {
+                            continue;
+                        }
+                    }
                     let sig = match signal {
                         StopSignal::Interrupt => libc::SIGINT,
                         StopSignal::Terminate => libc::SIGTERM,
@@ -447,11 +467,23 @@ impl Child {
                         SignalTarget::Leader => self.signal_leader(sig),
                         SignalTarget::Group => self.signal_group(sig),
                     }
-                    self.wait_exit(Some(Duration::from_millis(grace_ms)))?;
+                    self.wait_exit(Some(grace))?;
                 }
             }
         }
+        if !termed && !self.has_exited()? {
+            self.term_leader(DEFAULT_TERM_GRACE)?;
+        }
         self.kill();
+        Ok(())
+    }
+
+    /// Records the tool sessions, sends `SIGTERM` to the runtime's own pid, and waits up to
+    /// `grace` for the exit.
+    fn term_leader(&mut self, grace: Duration) -> Result<()> {
+        let _ = self.record_tool_sessions();
+        self.signal_leader(libc::SIGTERM);
+        self.wait_exit(Some(grace))?;
         Ok(())
     }
 
@@ -492,12 +524,10 @@ impl Child {
         self.kill();
         // The child is an unreaped zombie here, so its pid names no other process.
         let mut cleanup = Vec::new();
-        if let Some(root) = &self.cleanup_root {
-            for template in &self.cleanup {
-                let path = template.path_for(self.pid());
-                let outcome = cleanup::remove_path(&path, root);
-                cleanup.push(CleanupReport { path, outcome });
-            }
+        for template in &self.cleanup {
+            let path = template.path_for(self.pid());
+            let outcome = cleanup::remove_path(&path, &template.root().to_path_buf());
+            cleanup.push(CleanupReport { path, outcome });
         }
         let tool_sessions = self.tool_sessions();
         let orphans = self.mark.as_deref().map(|mark| {

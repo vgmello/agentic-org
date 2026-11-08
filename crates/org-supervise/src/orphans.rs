@@ -11,9 +11,11 @@
 //! - processes that **carry the mark** in their environment (read with
 //!   `sysctl(KERN_PROCARGS2)`, which shows the environment a process was started with), and
 //!   their **descendants** (by parent pid, in one snapshot);
-//! - the members of a **recorded tool session** whose leader is still the very process that
-//!   was recorded (same pid and start time), and their descendants. A session id can't be
-//!   reused while its leader lives, so those members are the tool's.
+//! - the members of a **recorded tool session** whose leader was still the very process that
+//!   was recorded (same pid and start time) when cleanup began, and of the **recorded group**
+//!   on the same condition, for as long as a process already identified as the session's
+//!   lives in it (a session or group id can't be reused while it has a member), and their
+//!   descendants.
 //!
 //! Why both: on macOS 26 (verified on 26.7.2) the kernel **withholds the environment of Apple
 //! platform binaries** (`/bin/zsh`, `/bin/sh`, `/bin/sleep`, `/usr/bin/perl`, ...) from
@@ -103,9 +105,6 @@ struct Target {
     marked: bool,
 }
 
-/// How many times the scan repeats after the kill, to catch processes forked meanwhile.
-const RESCANS: usize = 3;
-
 /// How often a wait checks the process table.
 const POLL: Duration = Duration::from_millis(10);
 
@@ -120,156 +119,195 @@ pub fn find_by_mark(mark: &str) -> Result<Vec<ProcessId>> {
         .collect())
 }
 
-/// Finds and kills what's left of a session (see the module docs), in the design's order:
-/// 1. the recorded leader, if alive with its start time: its group's members are taken by
-///    identity (pid and start time), then the leader gets `SIGTERM`, the grace, `SIGKILL` to
-///    its group if it's still alive (safe while the leader lives: its group id can't be
-///    reused), and `SIGKILL` to every member still the process that was taken;
-/// 2. the recorded tool sessions' members (while each session's recorded leader lives), then
-///    the recorded group's members and every process of this user that carry the mark or
-///    descend from one that does: `SIGTERM`, the grace, `SIGKILL` for those still there;
-/// 3. the scan again (up to three times) for processes forked meanwhile, killed at once.
+/// Finds and kills what's left of a session (see the module docs):
+/// 1. **Who:** the processes that carry the mark; the members of each recorded tool session
+///    whose leader is still the recorded process; the members of the recorded group if its
+///    leader is still the recorded process; and all their descendants.
+/// 2. **`SIGTERM`:** the recorded leader first (Claude kills its tools' trees on it), then
+///    every other target; then up to `grace` for them to go.
+/// 3. **Freeze:** whatever is left (scanned again) gets `SIGSTOP`, and the scan repeats until
+///    it finds nothing new, so nothing can fork between the scan and the kill.
+/// 4. **`SIGKILL`** to every frozen process (and to the group while it's proven to be the
+///    session's); one that can no longer be confirmed is resumed (`SIGCONT`), never left
+///    stopped.
+///
+/// A recorded session or group stays "the session's" for as long as one process already
+/// identified as the session's still lives in it: a session or group id can't be reused
+/// while the session or group has a member. So children forked during the grace inside a
+/// tool session are found even after its leader died, and with no readable mark.
+///
+/// `survivors` is a fresh scan at the end (plus anything identified that still lives).
 pub fn kill_orphans(query: &OrphanQuery<'_>) -> Result<OrphanReport> {
     if query.mark.is_empty() {
         return Err(Error::invalid("an empty session mark"));
     }
-    let mut report = OrphanReport::default();
     let uid = sys::geteuid();
-
-    let mut group_members: Vec<ProcessId> = Vec::new();
-    if let Some(leader) = query.group_leader {
-        if is_still(leader, uid) {
-            let pid = to_pid(leader.pid);
-            // While the leader lives its group id is surely its group's, so its members are
-            // the session's: take them by identity now, before the leader can exit on the
-            // SIGTERM and leave them unreachable (Apple binaries show no mark, and they're
-            // no longer anyone's descendants once reparented).
-            group_members = sys::list_pids(PidFilter::Pgrp(pid))
-                .map_err(|e| Error::io("list a process group", e))?
-                .into_iter()
-                .filter_map(|p| sys::proc_info(p).ok().flatten())
-                .filter(|i| i.uid == uid && !i.zombie && i.pgid == pid && i.pid != pid)
-                .map(identity)
-                .collect();
-            if is_still(leader, uid) {
-                report.leader_signalled = true;
-                let _ = sys::kill(pid, libc::SIGTERM);
-                wait_gone(&[leader], uid, query.grace);
-                if is_still(leader, uid) {
-                    let _ = sys::killpg(pid, libc::SIGKILL);
-                    let _ = sys::kill(pid, libc::SIGKILL);
-                }
-                // Whether or not the leader went on SIGTERM: every member still the process
-                // that was recorded gets SIGKILL.
-                for m in &group_members {
-                    if is_still(*m, uid) && sys::kill(to_pid(m.pid), libc::SIGKILL).is_ok() {
-                        report.signalled.push(*m);
-                    }
-                }
-                wait_gone(&group_members, uid, Duration::from_secs(1));
-            }
+    let mut report = OrphanReport::default();
+    let mut signalled: BTreeSet<ProcessId> = BTreeSet::new();
+    let mut scope = Scope {
+        mark: query.mark,
+        sessions: BTreeSet::new(),
+        group: None,
+        known: BTreeSet::new(),
+    };
+    for leader in query.tool_sessions {
+        if is_still(*leader, uid) {
+            scope.sessions.insert(to_pid(leader.pid));
+            scope.known.insert(*leader);
         }
     }
+    let leader = query.group_leader.filter(|l| is_still(*l, uid));
+    if let Some(l) = leader {
+        scope.group = Some(to_pid(l.pid));
+        scope.known.insert(l);
+    }
 
-    let targets = targets(query, uid)?;
-    for t in &targets {
+    // SIGTERM: the leader first, then the rest, then one grace for all of them.
+    let first = scope.collect(&Snapshot::take()?);
+    scope.known.extend(first.iter().map(|t| t.id));
+    if let Some(l) = leader {
+        if is_still(l, uid) && sys::kill(to_pid(l.pid), libc::SIGTERM).is_ok() {
+            report.leader_signalled = true;
+            signalled.insert(l);
+        }
+    }
+    for t in first.iter().filter(|t| Some(t.id) != leader) {
         if signal_if_still(*t, uid, query.mark, libc::SIGTERM) {
-            report.signalled.push(t.id);
+            signalled.insert(t.id);
         }
     }
-    let ids: Vec<ProcessId> = targets.iter().map(|t| t.id).collect();
-    wait_gone(&ids, uid, query.grace);
-    for t in &targets {
-        signal_if_still(*t, uid, query.mark, libc::SIGKILL);
-    }
-    wait_gone(&ids, uid, Duration::from_secs(1));
+    let mut waiting: Vec<ProcessId> = first.iter().map(|t| t.id).collect();
+    waiting.extend(leader);
+    wait_gone(&waiting, uid, query.grace);
 
-    let mut seen: BTreeSet<ProcessId> = ids.iter().chain(&group_members).copied().collect();
-    for _ in 0..RESCANS {
-        let late: Vec<Target> = targets_in(&Snapshot::take()?, query.mark, &BTreeSet::new(), None)
+    // Freeze what's left, until a scan finds nothing new.
+    let mut frozen: Vec<Target> = Vec::new();
+    let mut tried: BTreeSet<ProcessId> = BTreeSet::new();
+    for _ in 0..FREEZE_ROUNDS {
+        let new: Vec<Target> = scope
+            .collect(&Snapshot::take()?)
             .into_iter()
-            .filter(|t| !seen.contains(&t.id))
+            .filter(|t| tried.insert(t.id))
             .collect();
-        if late.is_empty() {
+        if new.is_empty() {
             break;
         }
-        for t in &late {
-            seen.insert(t.id);
-            if signal_if_still(*t, uid, query.mark, libc::SIGKILL) {
-                report.signalled.push(t.id);
+        for t in new {
+            scope.known.insert(t.id);
+            if signal_if_still(t, uid, query.mark, libc::SIGSTOP) {
+                frozen.push(t);
             }
         }
-        let late_ids: Vec<ProcessId> = late.iter().map(|t| t.id).collect();
-        wait_gone(&late_ids, uid, Duration::from_secs(1));
     }
 
-    report.survivors = seen.into_iter().filter(|t| is_still(*t, uid)).collect();
+    // SIGKILL.
+    if let Some(group) = scope.group {
+        if scope.group_proven(group, uid) {
+            let _ = sys::killpg(group, libc::SIGKILL);
+        }
+    }
+    for t in &frozen {
+        if signal_if_still(*t, uid, query.mark, libc::SIGKILL) {
+            signalled.insert(t.id);
+        } else if is_still(t.id, uid) {
+            let _ = sys::kill(to_pid(t.id.pid), libc::SIGCONT);
+        }
+    }
+    let frozen_ids: Vec<ProcessId> = frozen.iter().map(|t| t.id).collect();
+    wait_gone(&frozen_ids, uid, Duration::from_secs(1));
+
+    let mut left: BTreeSet<ProcessId> = scope
+        .collect(&Snapshot::take()?)
+        .into_iter()
+        .map(|t| t.id)
+        .collect();
+    left.extend(scope.known.iter().copied());
+    report.survivors = left.into_iter().filter(|id| is_still(*id, uid)).collect();
+    report.signalled = signalled.into_iter().collect();
     Ok(report)
 }
 
-/// The targets, in order: recorded group members, recorded tool sessions' members, then the
-/// rest of the full scan.
-fn targets(query: &OrphanQuery<'_>, uid: u32) -> Result<Vec<Target>> {
-    let snap = Snapshot::take()?;
-    let mut first: BTreeSet<libc::pid_t> = BTreeSet::new();
-    let live_sessions: BTreeSet<libc::pid_t> = query
-        .tool_sessions
-        .iter()
-        .filter(|leader| is_still(**leader, uid))
-        .map(|leader| to_pid(leader.pid))
-        .collect();
-    let mut in_sessions = BTreeSet::new();
-    if !live_sessions.is_empty() {
-        for &pid in snap.procs.keys() {
-            if sys::getsid(pid).is_ok_and(|sid| live_sessions.contains(&sid)) {
-                in_sessions.insert(pid);
-            }
-        }
-        first.extend(in_sessions.iter().copied());
-    }
-    if let Some(leader) = query.group_leader {
-        let members = sys::list_pids(PidFilter::Pgrp(to_pid(leader.pid)))
-            .map_err(|e| Error::io("list a process group", e))?;
-        first.extend(members);
-    }
-    Ok(targets_in(&snap, query.mark, &in_sessions, Some(&first)))
+/// How many rounds the freeze takes at most (each stops what the round before it found).
+const FREEZE_ROUNDS: usize = 8;
+
+/// What counts as the session's, re-proven at every scan.
+struct Scope<'q> {
+    mark: &'q str,
+    /// Recorded tool sessions whose leader was the recorded process at the start.
+    sessions: BTreeSet<libc::pid_t>,
+    /// The recorded group, if its leader was the recorded process at the start.
+    group: Option<libc::pid_t>,
+    /// Every process identified as the session's so far.
+    known: BTreeSet<ProcessId>,
 }
 
-/// The marked processes in `snap`, the `extra` roots, and all their descendants, those in
-/// `first` (if given) first.
-fn targets_in(
-    snap: &Snapshot,
-    mark: &str,
-    extra: &BTreeSet<libc::pid_t>,
-    first: Option<&BTreeSet<libc::pid_t>>,
-) -> Vec<Target> {
-    let marked: BTreeSet<libc::pid_t> = snap
-        .procs
-        .keys()
-        .copied()
-        .filter(|&pid| carries_mark(pid, mark))
-        .collect();
-    let mut chosen: BTreeSet<libc::pid_t> = marked.union(extra).copied().collect();
-    let mut queue: Vec<libc::pid_t> = chosen.iter().copied().collect();
-    while let Some(pid) = queue.pop() {
-        for &child in snap.children.get(&pid).map(Vec::as_slice).unwrap_or(&[]) {
-            if chosen.insert(child) {
-                queue.push(child);
+impl Scope<'_> {
+    /// Whether a process identified as the session's still lives in `group`.
+    fn group_proven(&self, group: libc::pid_t, uid: u32) -> bool {
+        self.known.iter().any(|k| {
+            sys::proc_info(to_pid(k.pid))
+                .ok()
+                .flatten()
+                .is_some_and(|i| {
+                    !i.zombie && i.uid == uid && i.start_us == k.start_us && i.pgid == group
+                })
+        })
+    }
+
+    /// The session's processes in `snap`: marked ones, members of proven sessions and of the
+    /// proven group, those already known, and all their descendants.
+    fn collect(&self, snap: &Snapshot) -> Vec<Target> {
+        let live_known: Vec<&ProcInfo> = snap
+            .procs
+            .values()
+            .filter(|p| self.known.contains(&identity(**p)))
+            .collect();
+        let sessions: BTreeSet<libc::pid_t> = if self.sessions.is_empty() {
+            BTreeSet::new()
+        } else {
+            live_known
+                .iter()
+                .filter_map(|p| sys::getsid(p.pid).ok())
+                .filter(|sid| self.sessions.contains(sid))
+                .collect()
+        };
+        let group = self
+            .group
+            .filter(|g| live_known.iter().any(|p| p.pgid == *g));
+        let marked: BTreeSet<libc::pid_t> = snap
+            .procs
+            .keys()
+            .copied()
+            .filter(|&pid| carries_mark(pid, self.mark))
+            .collect();
+        let mut chosen: BTreeSet<libc::pid_t> = marked.clone();
+        chosen.extend(live_known.iter().map(|p| p.pid));
+        for p in snap.procs.values() {
+            let in_group = group == Some(p.pgid);
+            let in_session =
+                !sessions.is_empty() && sys::getsid(p.pid).is_ok_and(|s| sessions.contains(&s));
+            if in_group || in_session {
+                chosen.insert(p.pid);
             }
         }
-    }
-    let (mut head, tail): (Vec<_>, Vec<_>) = chosen
-        .into_iter()
-        .partition(|pid| first.is_some_and(|f| f.contains(pid)));
-    head.extend(tail);
-    head.into_iter()
-        .filter_map(|pid| {
-            snap.procs.get(&pid).map(|p| Target {
-                id: identity(*p),
-                marked: marked.contains(&pid),
+        let mut queue: Vec<libc::pid_t> = chosen.iter().copied().collect();
+        while let Some(pid) = queue.pop() {
+            for &child in snap.children.get(&pid).map(Vec::as_slice).unwrap_or(&[]) {
+                if chosen.insert(child) {
+                    queue.push(child);
+                }
+            }
+        }
+        chosen
+            .into_iter()
+            .filter_map(|pid| {
+                snap.procs.get(&pid).map(|p| Target {
+                    id: identity(*p),
+                    marked: marked.contains(&pid),
+                })
             })
-        })
-        .collect()
+            .collect()
+    }
 }
 
 /// This user's live processes (not this one, not zombies), and who's whose child.
@@ -348,17 +386,18 @@ pub(crate) fn carries_mark(pid: libc::pid_t, mark: &str) -> bool {
 }
 
 /// The environment strings of a `KERN_PROCARGS2` area: after `argc` (a native `int`), the exec
-/// path, its NUL padding and `argc` argument strings, each NUL-terminated, up to the first
-/// empty string.
+/// path, its NUL padding (to 8 bytes) and `argc` argument strings, each NUL-terminated, up to
+/// the first empty string.
 fn environment(area: &[u8]) -> impl Iterator<Item = &[u8]> {
     let mut rest: &[u8] = &[];
     if area.len() >= 4 {
         let argc = i32::from_ne_bytes([area[0], area[1], area[2], area[3]]);
         let mut pos = 4;
-        // The exec path.
+        // The exec path, NUL-padded so that it (with its NUL) fills a multiple of 8 bytes from
+        // offset 4 (verified on every process of a macOS 26.7 machine). Skipping only that
+        // padding keeps an empty `argv[0]` (a lone NUL) from being taken for more padding.
         pos = skip_string(area, pos);
-        // Its padding.
-        while pos < area.len() && area[pos] == 0 {
+        while pos < area.len() && (pos - 4) % 8 != 0 && area[pos] == 0 {
             pos += 1;
         }
         for _ in 0..argc.max(0) {
@@ -391,10 +430,11 @@ mod tests {
 
     #[test]
     fn the_environment_is_read_after_argv_only() {
+        // "/bin/sh\0" fills exactly 8 bytes: no padding.
         let a = area(
             2,
             &[
-                b"/bin/sh\0\0\0\0",
+                b"/bin/sh\0",
                 b"sh\0ORG_SESSION_MARK=fake\0",
                 b"A=1\0ORG_SESSION_MARK=m1\0\0",
                 b"executable_path=/bin/sh\0",
@@ -402,6 +442,10 @@ mod tests {
         );
         let env: Vec<&[u8]> = environment(&a).collect();
         assert_eq!(env, [b"A=1".as_slice(), b"ORG_SESSION_MARK=m1"]);
+        // "/x/y\0" plus 3 NULs of padding, then an empty argv[0] and the mark first.
+        let a = area(1, &[b"/x/y\0\0\0\0", b"\0", b"ORG_SESSION_MARK=m2\0\0"]);
+        let env: Vec<&[u8]> = environment(&a).collect();
+        assert_eq!(env, [b"ORG_SESSION_MARK=m2".as_slice()]);
         assert!(environment(&area(5, &[b"/x\0a\0"])).next().is_none());
         assert!(environment(&[1, 0]).next().is_none());
     }
@@ -414,24 +458,5 @@ mod tests {
         assert!(!carries_mark(me, "no-such-mark"));
         let id = process_id(std::process::id()).unwrap().unwrap();
         assert!(id.start_us > 0);
-    }
-}
-#[cfg(test)]
-mod align_probe_tmp {
-    use super::*;
-    #[test]
-    fn align_probe() {
-        let uid = sys::geteuid();
-        let (mut ok, mut bad, mut pads) = (0, 0, std::collections::BTreeMap::new());
-        for pid in sys::list_pids(PidFilter::Uid(uid)).unwrap() {
-            let Ok(a) = sys::procargs(pid) else { continue };
-            if a.len() < 5 { continue; }
-            let end = skip_string(&a, 4);
-            let mut pos = end;
-            while pos < a.len() && a[pos] == 0 { pos += 1; }
-            *pads.entry(pos - end).or_insert(0) += 1;
-            if (pos - 4) % 8 == 0 { ok += 1 } else { bad += 1; eprintln!("unaligned pid {pid} end {end} pos {pos}"); }
-        }
-        eprintln!("aligned8={ok} not={bad} pads={pads:?}");
     }
 }

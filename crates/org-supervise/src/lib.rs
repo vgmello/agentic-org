@@ -22,8 +22,8 @@
 //!   ([`CleanupReport`]) and orphan cleanup.
 //! - [`orphans`]: finds and kills a session's leftovers by group, tool session and
 //!   `ORG_SESSION_MARK`, checking each process's identity right before each signal.
-//! - [`run_probe`] / [`run_probe_with`]: a probe, fixed or as a conversation, with a timeout,
-//!   capped output and a group kill.
+//! - [`run_probe`]: a probe ([`org_runtime::ProbeRun`]), one-shot or a conversation driven by
+//!   its [`org_runtime::ProbeSession`], with a timeout, capped output and a group kill.
 //! - [`remove_stale`]: the startup form of the stale-file cleanup, for a pid that's gone.
 //!
 //! ## Spawning guarantees (every child)
@@ -52,12 +52,12 @@ mod probe;
 mod pty;
 mod sys;
 
-pub use child::{spawn, spawn_session, Child, Command, Exit, ORPHAN_GRACE};
+pub use child::{spawn, spawn_session, Child, Command, Exit, DEFAULT_TERM_GRACE, ORPHAN_GRACE};
 pub use cleanup::{remove_stale, CleanupOutcome, CleanupReport};
 pub use env::{AgentSessionEnv, BaseEnv, Env, EnvBuilder, SessionToken, DEFAULT_TERM};
 pub use error::{Error, Result};
 pub use files::PlanTargets;
-pub use probe::{run_probe, run_probe_with, ProbeConversation, ProbeReply, PROBE_OUTPUT_CAP};
+pub use probe::{run_probe, ProbeOutcome, PROBE_OUTPUT_CAP};
 pub use pty::Pty;
 
 #[cfg(test)]

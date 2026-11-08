@@ -30,7 +30,6 @@ const TIOCPTYGNAME: libc::c_ulong = 0x4080_7453;
 /// The buffer size `TIOCPTYGNAME` writes into.
 const PTY_NAME_LEN: usize = 128;
 /// `proc_listpids` filters (`<sys/proc_info.h>`).
-const PROC_PGRP_ONLY: u32 = 2;
 const PROC_UID_ONLY: u32 = 4;
 const PROC_PPID_ONLY: u32 = 6;
 /// `SZOMB` (`<sys/proc.h>`): a process awaiting collection by its parent.
@@ -109,8 +108,9 @@ pub(crate) struct SpawnRequest<'a> {
     pub argv: &'a [CString],
     /// The whole environment, `NAME=value` each.
     pub envp: &'a [CString],
-    /// The working directory.
-    pub cwd: &'a CStr,
+    /// The working directory, already opened (without following symlinks); the child
+    /// `fchdir`s to it.
+    pub cwd: BorrowedFd<'a>,
     pub stdio: ChildStdio<'a>,
 }
 
@@ -137,9 +137,12 @@ impl FileActions {
         })
     }
 
-    fn chdir(&mut self, path: &CStr) -> io::Result<()> {
-        // SAFETY: `self.0` is initialized and `path` is a valid C string (the call copies it).
-        cvt_spawn(unsafe { libc::posix_spawn_file_actions_addchdir_np(&mut self.0, path.as_ptr()) })
+    fn fchdir(&mut self, dir: BorrowedFd<'_>) -> io::Result<()> {
+        // SAFETY: `self.0` is initialized; the call records the fd number, which stays open
+        // in this process until `posix_spawn` returns (the caller borrows it for that long).
+        cvt_spawn(unsafe {
+            libc::posix_spawn_file_actions_addfchdir_np(&mut self.0, dir.as_raw_fd())
+        })
     }
 }
 
@@ -204,7 +207,9 @@ fn resettable_sigset() -> libc::sigset_t {
 ///   (pgid = pid) in the caller's session. A terminal: `POSIX_SPAWN_SETSID`, so it leads a new
 ///   session (sid = pgid = pid) and acquires the slave as its controlling terminal when the
 ///   open file action runs.
-/// - `posix_spawn_file_actions_addchdir_np` sets the cwd in the child before the exec.
+/// - `posix_spawn_file_actions_addfchdir_np` sets the cwd in the child, through a directory
+///   the caller opened without following symlinks, so a symlink swapped in for the workspace
+///   after the check can't move the child elsewhere.
 ///
 /// `posix_spawn` is one system call on macOS: on failure (no such binary, no permission) no
 /// child exists, so nothing needs reaping.
@@ -240,7 +245,7 @@ pub(crate) fn spawn(req: &SpawnRequest<'_>) -> io::Result<pid_t> {
             true
         }
     };
-    actions.chdir(req.cwd)?;
+    actions.fchdir(req.cwd)?;
 
     let mut attr = SpawnAttr::new()?;
     let mut flags = libc::POSIX_SPAWN_CLOEXEC_DEFAULT
@@ -539,7 +544,10 @@ pub(crate) fn fstatat_nofollow(dir: BorrowedFd<'_>, name: &CStr) -> io::Result<E
 /// becomes this process's controlling terminal, even if this process leads a session without
 /// one (a launchd service does). The window size is set through the slave: macOS refuses
 /// `TIOCSWINSZ` on a master whose slave was never opened (`ENOTTY`). The caller keeps the
-/// slave only until the child, which opens it again by path, is spawned.
+/// slave only until the child, which opens it again by path, is spawned. As with [`pipe`],
+/// close-on-exec is set on the master right after `posix_openpt` (it takes no `O_CLOEXEC`),
+/// so another spawner in this process could inherit it in that instant; this crate's own
+/// children never do (`POSIX_SPAWN_CLOEXEC_DEFAULT`).
 pub(crate) fn open_pty(cols: u16, rows: u16) -> io::Result<(OwnedFd, CString, OwnedFd)> {
     // SAFETY: `posix_openpt` has no memory effects.
     let master = owned(cvt(unsafe {
@@ -661,8 +669,6 @@ pub(crate) fn proc_info(pid: pid_t) -> io::Result<Option<ProcInfo>> {
 pub(crate) enum PidFilter {
     /// Those with this effective uid.
     Uid(u32),
-    /// The members of this process group.
-    Pgrp(pid_t),
     /// The children of this process.
     Ppid(pid_t),
 }
@@ -671,7 +677,6 @@ pub(crate) enum PidFilter {
 pub(crate) fn list_pids(filter: PidFilter) -> io::Result<Vec<pid_t>> {
     let (kind, arg) = match filter {
         PidFilter::Uid(uid) => (PROC_UID_ONLY, uid),
-        PidFilter::Pgrp(pgid) => (PROC_PGRP_ONLY, u32::try_from(pgid).unwrap_or(0)),
         PidFilter::Ppid(pid) => (PROC_PPID_ONLY, u32::try_from(pid).unwrap_or(0)),
     };
     let pid_size = mem::size_of::<pid_t>();

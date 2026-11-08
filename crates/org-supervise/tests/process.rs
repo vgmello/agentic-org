@@ -1,3 +1,4 @@
+#![cfg(target_os = "macos")]
 //! Process groups, the stop sequence, reaping, and orphan cleanup, with real processes.
 
 mod common;
@@ -162,7 +163,7 @@ fn closing_stdin_ends_a_child_that_waits_for_it() {
     let ws = tmp.dir("ws");
     let mark = mark("stdin");
     let env = session_env(&tmp, &ws, &mark);
-    // SIGTERM is ignored, so only the plan's CloseStdin step can end it gracefully.
+    // Graceful steps come before any signal, and keep their full grace.
     let mut p = plan("/bin/sh", &["-c", "trap '' TERM; read x; exit 7"], &ws);
     p.stop = StopPlan {
         steps: vec![StopStep::CloseStdin { grace_ms: 5000 }],
@@ -171,7 +172,7 @@ fn closing_stdin_ends_a_child_that_waits_for_it() {
     let pid = child.pid();
     thread::sleep(Duration::from_millis(100)); // let the trap be set
     let started = Instant::now();
-    child.stop(&p.stop, Duration::from_millis(100)).unwrap();
+    child.stop(&p.stop).unwrap();
     assert!(started.elapsed() < Duration::from_secs(3));
     let exit = child.reap().unwrap();
     assert_eq!(exit.info.code, Some(7));
@@ -207,7 +208,7 @@ fn stop_sends_sigterm_to_the_leader_first() {
     let ws = tmp.dir("ws");
     let mark = mark("term");
     let env = session_env(&tmp, &ws, &mark);
-    let script = "trap 'exit 5' TERM; while :; do /bin/sleep 0.05; done";
+    let script = "trap 'exit 5' TERM; echo ready; while :; do /bin/sleep 0.05; done";
     let mut child = spawn_session(
         &plan("/bin/sh", &["-c", script], &ws),
         &targets(&tmp.dir("rt")),
@@ -215,8 +216,11 @@ fn stop_sends_sigterm_to_the_leader_first() {
     )
     .unwrap();
     let pid = child.pid();
-    thread::sleep(Duration::from_millis(100));
-    // The plan would SIGINT first; the leader's SIGTERM comes before it regardless.
+    // The trap is set once it says so.
+    let mut out = Reader::spawn(child.take_stdout().unwrap());
+    out.until("ready\n");
+    // The plan's first signal is SIGINT to the group; the leader's SIGTERM comes first, with
+    // that step's grace.
     let stop = StopPlan {
         steps: vec![StopStep::Signal {
             signal: StopSignal::Interrupt,
@@ -224,7 +228,7 @@ fn stop_sends_sigterm_to_the_leader_first() {
             grace_ms: 5000,
         }],
     };
-    child.stop(&stop, Duration::from_secs(5)).unwrap();
+    child.stop(&stop).unwrap();
     assert_eq!(child.reap().unwrap().info.code, Some(5));
     assert_clean(&[pid], Some(&mark));
 }
@@ -235,7 +239,7 @@ fn a_child_that_ignores_every_step_gets_sigkill_after_the_graces() {
     let ws = tmp.dir("ws");
     let mark = mark("kill");
     let env = session_env(&tmp, &ws, &mark);
-    let script = "trap '' TERM INT; while :; do /bin/sleep 0.05; done";
+    let script = "trap '' TERM INT; echo ready; while :; do /bin/sleep 0.05; done";
     let mut child = spawn_session(
         &plan("/bin/sh", &["-c", script], &ws),
         &targets(&tmp.dir("rt")),
@@ -243,7 +247,9 @@ fn a_child_that_ignores_every_step_gets_sigkill_after_the_graces() {
     )
     .unwrap();
     let pid = child.pid();
-    thread::sleep(Duration::from_millis(100));
+    // The trap is set once it says so.
+    let mut out = Reader::spawn(child.take_stdout().unwrap());
+    out.until("ready\n");
     let stop = StopPlan {
         steps: vec![
             StopStep::CloseStdin { grace_ms: 150 },
@@ -260,7 +266,7 @@ fn a_child_that_ignores_every_step_gets_sigkill_after_the_graces() {
         ],
     };
     let started = Instant::now();
-    child.stop(&stop, Duration::from_millis(150)).unwrap();
+    child.stop(&stop).unwrap();
     let took = started.elapsed();
     assert!(
         took >= Duration::from_millis(600),
@@ -357,7 +363,8 @@ fn kill_orphans_from_a_record_kills_the_group_even_when_the_leader_exits_on_sigt
     let ws = tmp.dir("ws");
     let mark = mark("host2");
     let env = session_env(&tmp, &ws, &mark);
-    let script = "trap '' TERM; /bin/sleep 67 & echo $!; trap - TERM; wait";
+    // The member starts with SIGTERM ignored; the leader takes it again before `ready`.
+    let script = "trap '' TERM; /bin/sleep 67 & echo $!; trap - TERM; echo ready; wait";
     let mut child = spawn_session(
         &plan("/bin/sh", &["-c", script], &ws),
         &targets(&tmp.dir("rt")),
@@ -366,7 +373,7 @@ fn kill_orphans_from_a_record_kills_the_group_even_when_the_leader_exits_on_sigt
     .unwrap();
     let leader = child.id().unwrap();
     let mut out = Reader::spawn(child.take_stdout().unwrap());
-    let member: u32 = out.lines(1)[0].trim().parse().unwrap();
+    let member: u32 = out.lines(2)[0].trim().parse().unwrap();
     let report = orphans::kill_orphans(&orphans::OrphanQuery {
         mark: &mark,
         group_leader: Some(leader),
@@ -387,4 +394,112 @@ fn kill_orphans_from_a_record_kills_the_group_even_when_the_leader_exits_on_sigt
     );
     assert!(report.survivors.is_empty(), "{report:?}");
     assert_clean(&[leader.pid, member], Some(&mark));
+}
+
+#[test]
+fn a_plan_without_signal_steps_still_gets_sigterm_to_the_leader() {
+    let tmp = TempDir::new();
+    let ws = tmp.dir("ws");
+    let mark = mark("empty");
+    let script = "trap 'exit 9' TERM; echo ready; while :; do /bin/sleep 0.05; done";
+    let mut child = spawn_session(
+        &plan("/bin/sh", &["-c", script], &ws),
+        &targets(&tmp.dir("rt")),
+        &session_env(&tmp, &ws, &mark),
+    )
+    .unwrap();
+    let pid = child.pid();
+    // The trap is set once it says so.
+    let mut out = Reader::spawn(child.take_stdout().unwrap());
+    out.until("ready\n");
+    let started = Instant::now();
+    child.stop(&StopPlan { steps: Vec::new() }).unwrap();
+    assert!(started.elapsed() < Duration::from_secs(3));
+    assert_eq!(child.reap().unwrap().info.code, Some(9));
+    assert_clean(&[pid], Some(&mark));
+}
+
+#[test]
+fn a_first_step_of_sigterm_to_the_leader_isnt_sent_twice() {
+    let tmp = TempDir::new();
+    let ws = tmp.dir("ws");
+    let mark = mark("twice");
+    // Counts the SIGTERMs it gets; SIGINT (the second step) then ends it.
+    let script =
+        "n=0; trap 'n=$((n+1)); echo term$n' TERM; echo ready; while :; do /bin/sleep 0.05; done";
+    let mut child = spawn_session(
+        &plan("/bin/sh", &["-c", script], &ws),
+        &targets(&tmp.dir("rt")),
+        &session_env(&tmp, &ws, &mark),
+    )
+    .unwrap();
+    let pid = child.pid();
+    let mut out = Reader::spawn(child.take_stdout().unwrap());
+    out.until("ready\n");
+    let stop = StopPlan {
+        steps: vec![
+            StopStep::Signal {
+                signal: StopSignal::Terminate,
+                target: SignalTarget::Leader,
+                grace_ms: 300,
+            },
+            // To the group: bash exits on SIGINT only if its foreground child died of it.
+            StopStep::Signal {
+                signal: StopSignal::Interrupt,
+                target: SignalTarget::Group,
+                grace_ms: 2000,
+            },
+        ],
+    };
+    child.stop(&stop).unwrap();
+    assert_eq!(child.reap().unwrap().info.signal, Some(libc::SIGINT));
+    assert_eq!(out.read_to_end(), "ready\nterm1\n");
+    assert_clean(&[pid], Some(&mark));
+}
+
+/// A tool session (an Apple binary: no readable mark) that survives SIGTERM and keeps forking
+/// during the grace: nothing it forks escapes, and the report says so truthfully.
+#[test]
+fn a_tool_session_forking_during_the_grace_leaves_nothing_behind() {
+    let tmp = TempDir::new();
+    let ws = tmp.dir("ws");
+    let mark = mark("fork");
+    let tool = "trap true TERM; while :; do /bin/sleep 101 & wait; done";
+    let script = format!(
+        "/usr/bin/perl -MPOSIX -e 'POSIX::setsid() or die; exec q(/bin/sh), q(-c), q({tool})' & \\
+         echo $!; wait"
+    );
+    let mut child = spawn_session(
+        &plan("/bin/sh", &["-c", &script], &ws),
+        &targets(&tmp.dir("rt")),
+        &session_env(&tmp, &ws, &mark),
+    )
+    .unwrap();
+    child.set_orphan_grace(Duration::from_millis(300));
+    let leader = child.pid();
+    let mut out = Reader::spawn(child.take_stdout().unwrap());
+    let tool_pid: u32 = out.lines(1)[0].parse().unwrap();
+    eventually("the tool forks", || sleeps_101() > 0);
+    child.kill();
+    let exit = child.reap().unwrap();
+    let report = exit.orphans.unwrap().unwrap();
+    assert!(report.survivors.is_empty(), "{report:?}");
+    assert!(
+        report.signalled.iter().any(|p| p.pid == tool_pid),
+        "{report:?}"
+    );
+    eventually("no sleep 101 left", || sleeps_101() == 0);
+    assert_clean(&[leader, tool_pid], Some(&mark));
+}
+
+/// How many `/bin/sleep 101` processes exist.
+fn sleeps_101() -> usize {
+    let out = std::process::Command::new("/bin/ps")
+        .args(["-A", "-o", "command="])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| l.trim() == "/bin/sleep 101")
+        .count()
 }

@@ -1,3 +1,4 @@
+#![cfg(target_os = "macos")]
 //! The zombie-window cleanup of a runtime's stale socket, and what it refuses.
 
 mod common;
@@ -10,10 +11,11 @@ use std::time::Duration;
 
 use common::*;
 use org_runtime::CleanupPath;
-use org_supervise::{remove_stale, spawn_session, CleanupOutcome, PlanTargets};
+use org_supervise::{remove_stale, spawn_session, CleanupOutcome, CleanupReport};
 
-fn template(s: &str) -> CleanupPath {
-    CleanupPath::try_from(s).unwrap()
+/// A cleanup template inside `root`.
+fn template(root: &Path, rest: &str) -> CleanupPath {
+    CleanupPath::new(spec(root), &format!("{}/{rest}", root.display())).unwrap()
 }
 
 /// Leaves a socket file at `path` (the listener is closed; the file stays).
@@ -38,6 +40,13 @@ fn dead_pid(tmp: &TempDir) -> u32 {
     pid
 }
 
+fn refused(report: &CleanupReport) -> &'static str {
+    match report.outcome {
+        CleanupOutcome::Refused(why) => why,
+        ref other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
 #[test]
 fn reap_removes_the_socket_while_the_child_is_a_zombie() {
     let tmp = TempDir::new();
@@ -45,12 +54,9 @@ fn reap_removes_the_socket_while_the_child_is_a_zombie() {
     let socks = tmp.dir("cc-socks"); // stands in for /private/tmp/cc-socks
     let mark = mark("sock");
     let mut p = plan("/bin/sh", &["-c", "read x; exit 0"], &ws);
-    p.cleanup_after_exit = vec![template(&format!("{}/{{pid}}.sock", socks.display()))];
-    let t = PlanTargets {
-        cleanup_root: Some(spec(&socks)),
-        ..targets(&tmp.dir("rt"))
-    };
-    let mut child = spawn_session(&p, &t, &session_env(&tmp, &ws, &mark)).unwrap();
+    p.cleanup_after_exit = vec![template(&socks, "{pid}.sock")];
+    let mut child =
+        spawn_session(&p, &targets(&tmp.dir("rt")), &session_env(&tmp, &ws, &mark)).unwrap();
     let pid = child.pid();
     let sock = socks.join(format!("{pid}.sock"));
     socket_at(&sock);
@@ -73,102 +79,49 @@ fn reap_removes_the_socket_while_the_child_is_a_zombie() {
 }
 
 #[test]
-fn a_plan_with_cleanup_paths_needs_a_root() {
-    let tmp = TempDir::new();
-    let ws = tmp.dir("ws");
-    let mut p = plan("/usr/bin/true", &[], &ws);
-    p.cleanup_after_exit = vec![template("/private/tmp/cc-socks/{pid}.sock")];
-    let err = spawn_session(
-        &p,
-        &targets(&tmp.dir("rt")),
-        &session_env(&tmp, &ws, &mark("r")),
-    )
-    .unwrap_err();
-    assert!(
-        matches!(err, org_supervise::Error::Invalid { .. }),
-        "{err:?}"
-    );
-}
-
-fn refused(report: &org_supervise::CleanupReport) -> &'static str {
-    match report.outcome {
-        CleanupOutcome::Refused(why) => why,
-        ref other => panic!("expected a refusal, got {other:?}"),
-    }
-}
-
-#[test]
-fn it_refuses_a_symlinked_component_a_non_socket_and_a_path_outside_the_root() {
+fn it_refuses_a_symlinked_component_and_anything_but_a_socket() {
     let tmp = TempDir::new();
     let pid = dead_pid(&tmp);
     let socks = tmp.dir("cc-socks");
-    let root = spec(&socks);
 
     // A symlinked directory on the way (planted in a shared folder, say).
     let real = tmp.dir("cc-socks/real");
     symlink(&real, socks.join("link")).unwrap();
     let target = real.join(format!("{pid}.sock"));
     socket_at(&target);
-    let r = remove_stale(
-        &template(&format!("{}/link/{{pid}}.sock", socks.display())),
-        &root,
-        pid,
-    );
+    let r = remove_stale(&template(&socks, "link/{pid}.sock"), pid);
     assert!(refused(&r).contains("symlink"), "{r:?}");
     assert!(target.exists());
 
     // A symlink at the leaf is not a socket: left alone, and its target too.
     let leaf_link = socks.join(format!("{pid}.lnk"));
     symlink(&target, &leaf_link).unwrap();
-    let r = remove_stale(
-        &template(&format!("{}/{{pid}}.lnk", socks.display())),
-        &root,
-        pid,
-    );
+    let r = remove_stale(&template(&socks, "{pid}.lnk"), pid);
     assert_eq!(refused(&r), "not a socket");
     assert!(fs::symlink_metadata(&leaf_link).is_ok() && target.exists());
 
     // A directory.
     fs::create_dir(socks.join(format!("{pid}.dir"))).unwrap();
-    let r = remove_stale(
-        &template(&format!("{}/{{pid}}.dir", socks.display())),
-        &root,
-        pid,
-    );
+    let r = remove_stale(&template(&socks, "{pid}.dir"), pid);
     assert_eq!(refused(&r), "not a socket");
     assert!(socks.join(format!("{pid}.dir")).is_dir());
 
     // A regular file.
     fs::write(socks.join(format!("{pid}.txt")), "x").unwrap();
-    let r = remove_stale(
-        &template(&format!("{}/{{pid}}.txt", socks.display())),
-        &root,
-        pid,
-    );
+    let r = remove_stale(&template(&socks, "{pid}.txt"), pid);
     assert_eq!(refused(&r), "not a socket");
 
-    // Outside the allowed root.
-    let outside = tmp.dir("elsewhere").join(format!("{pid}.sock"));
-    socket_at(&outside);
-    let r = remove_stale(
-        &template(&format!("{}/elsewhere/{{pid}}.sock", tmp.path().display())),
-        &root,
-        pid,
-    );
-    assert_eq!(refused(&r), "outside the allowed root");
-    assert!(outside.exists());
-
-    // And a socket of ours in the root is removed; a missing one is absent.
+    // A socket of ours in the root is removed; a missing one is absent.
     let ours = socks.join(format!("{pid}.sock"));
     socket_at(&ours);
-    let t = template(&format!("{}/{{pid}}.sock", socks.display()));
+    let t = template(&socks, "{pid}.sock");
     assert!(matches!(
-        remove_stale(&t, &root, pid).outcome,
+        remove_stale(&t, pid).outcome,
         CleanupOutcome::Removed
     ));
     assert!(!ours.exists());
     assert!(matches!(
-        remove_stale(&t, &root, pid).outcome,
+        remove_stale(&t, pid).outcome,
         CleanupOutcome::Absent
     ));
 }
@@ -180,11 +133,7 @@ fn it_refuses_while_a_process_has_the_pid() {
     let me = std::process::id();
     let sock = socks.join(format!("{me}.sock"));
     socket_at(&sock);
-    let r = remove_stale(
-        &template(&format!("{}/{{pid}}.sock", socks.display())),
-        &spec(&socks),
-        me,
-    );
+    let r = remove_stale(&template(&socks, "{pid}.sock"), me);
     assert_eq!(refused(&r), "a process has that pid");
     assert!(sock.exists());
 }
@@ -198,8 +147,8 @@ fn it_refuses_another_users_socket() {
     let pid = dead_pid(&tmp);
     let socks = tmp.dir("cc-socks");
     let link = socks.join(format!("{pid}.sock"));
-    let sources = ["/private/var/run/mDNSResponder", "/private/var/run/syslog"];
     let our_uid = fs::metadata(tmp.path()).unwrap().uid();
+    let sources = ["/private/var/run/mDNSResponder", "/private/var/run/syslog"];
     let made = sources.iter().any(|s| {
         fs::symlink_metadata(s).is_ok_and(|m| m.file_type().is_socket() && m.uid() != our_uid)
             && fs::hard_link(s, &link).is_ok()
@@ -208,11 +157,7 @@ fn it_refuses_another_users_socket() {
         eprintln!("skipped: no other user's socket could be linked here");
         return;
     }
-    let r = remove_stale(
-        &template(&format!("{}/{{pid}}.sock", socks.display())),
-        &spec(&socks),
-        pid,
-    );
+    let r = remove_stale(&template(&socks, "{pid}.sock"), pid);
     assert_eq!(refused(&r), "owned by another user");
     assert!(fs::symlink_metadata(&link).is_ok());
     fs::remove_file(&link).unwrap();

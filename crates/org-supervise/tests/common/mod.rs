@@ -88,9 +88,9 @@ pub fn agent_session(tmp: &TempDir, ws: &Path) -> AgentSessionEnv {
         token: SessionToken::new("tok-SECRET-123".into()),
         workspace: ws.to_path_buf(),
         agent_home: tmp.path().join("home"),
-        git_config_global: tmp.path().join("rt/gitconfig"),
-        git_hooks_dir: tmp.path().join("rt/hooks"),
-        gh_config_dir: tmp.path().join("rt/gh"),
+        git_user_name: "ada (agent)".into(),
+        git_user_email: "ada@agents.example".into(),
+        git_bin_dir: None,
     }
 }
 
@@ -130,7 +130,6 @@ pub fn targets(rt: &Path) -> PlanTargets {
     PlanTargets {
         runtime_dir: spec(rt),
         git_exclude_file: None,
-        cleanup_root: None,
     }
 }
 

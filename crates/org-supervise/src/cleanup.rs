@@ -2,8 +2,9 @@
 //! `/private/tmp/cc-socks/<pid>.sock`), from a plan's [`CleanupPath`]s.
 //!
 //! The rule, for each path:
-//! 1. It's resolved for the child's pid, and must lie **inside the allowed root** the caller
-//!    gives (e.g. `/private/tmp/cc-socks`), strictly below it.
+//! 1. It's resolved for the child's pid, and must lie **inside its allowed root**
+//!    ([`CleanupPath::root`], e.g. `/private/tmp/cc-socks`), strictly below it (the type
+//!    checks it too; this is checked again on the resolved path).
 //! 2. It's walked from `/` one directory at a time with `openat(O_DIRECTORY | O_NOFOLLOW)`: a
 //!    symlink or non-directory anywhere on the way ends the cleanup for that path.
 //! 3. The leaf is checked with `fstatat(AT_SYMLINK_NOFOLLOW)` and unlinked (`unlinkat`, no
@@ -23,7 +24,7 @@ use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
 
-use org_runtime::{CleanupPath, SpecPath};
+use org_runtime::CleanupPath;
 
 use crate::sys;
 
@@ -54,14 +55,14 @@ pub struct CleanupReport {
 /// Removes `template`'s path for `pid` under the rule above. For a caller that knows `pid`'s
 /// process is gone but isn't its parent (cleanup at office startup): it refuses while any
 /// process has that pid. That check is best effort: a pid reused right after it can race.
-pub fn remove_stale(template: &CleanupPath, root: &SpecPath, pid: u32) -> CleanupReport {
+pub fn remove_stale(template: &CleanupPath, pid: u32) -> CleanupReport {
     let path = template.path_for(pid);
     let alive = libc::pid_t::try_from(pid)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "bad pid"))
         .and_then(sys::proc_info);
     let outcome = match alive {
         Ok(Some(_)) => CleanupOutcome::Refused("a process has that pid"),
-        Ok(None) => remove_path(&path, &root.to_path_buf()),
+        Ok(None) => remove_path(&path, &template.root().to_path_buf()),
         Err(e) => CleanupOutcome::Failed(e),
     };
     CleanupReport { path, outcome }

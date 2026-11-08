@@ -1,3 +1,4 @@
+#![cfg(target_os = "macos")]
 //! Take-over terminals: the child leads a session whose controlling terminal is the PTY.
 
 mod common;
