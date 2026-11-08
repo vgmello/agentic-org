@@ -13,6 +13,7 @@ pub struct MemState {
     pub memberships: BTreeMap<String, Membership>,
     pub project_teams: BTreeMap<String, ProjectTeam>,
     pub projects: BTreeSet<String>,
+    pub offices: BTreeSet<String>,
     /// Test switch: answer handle lookups with the owner too, as a store that broke the
     /// `OrgView` contract would.
     pub leaky_handles: bool,
@@ -93,6 +94,9 @@ impl OrgView for MemState {
             .filter(|m| m.member_id == member_id)
             .cloned()
             .collect()
+    }
+    fn office_exists(&self, office_id: &str) -> bool {
+        self.offices.contains(office_id)
     }
     fn project_exists(&self, project_id: &str) -> bool {
         self.projects.contains(project_id)

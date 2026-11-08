@@ -141,7 +141,7 @@ Derived, never stored: the **suggested triager** (the area lead, else the area t
 - `Project { id, key, name, description?, repo?: ProjectRepo, integration_branch?, archived, created_at?, version }` (`created_at` is absent only on records from before it existed)
   - `key`: 2–10 characters, lowercase ASCII letters and digits, starting with a letter; unique in the organization; never changes. Reserved: `req`, `feat`, `adr`, `eval`, `debt`, `lim`, `exc`.
   - `repo`: `ProjectRepo { host: local | github, default_branch, path? (local: the bare repository on HQ's Mac), github?: { owner, name, repo_id, private } }`. Never a token. The local path is visible organization-wide (like an agent's `home`).
-  - `integration_branch`: the branch the Docs tab reads (C13). Empty means the repository's default branch.
+  - `integration_branch`: the branch the Docs tab reads (C13). Empty means the repository's default branch. (amended 2026-11-08: proto follow-ups) It is also the branch task branches start from, the source of instructions, guidance and processes, and the test for "merged", and it may not start with `task/`, `docs/`, `merged/` or `archive/`: see [`processes.md`](processes.md), A56 to A58 and "Project rule".
   - `archived`: no new items in it; everything else still works.
 - `Area { id, project_id, name, team_id?, lead_member_id?, general: bool, deleted: bool, replaced_by?, version }`
   - `name`: 1–40 characters (organization-name rules), unique in its project among areas that aren't deleted, ignoring case.
@@ -236,7 +236,7 @@ Every feature status change also commits the doc's front matter on a docs branch
 - Reads are open to every bound member (no row visibility rules for work items in phase 1).
 
 ### 2.3 Ids, idempotency and conflicts
-- **Every write carries `change_id`**, a client-made ULID. The owning office keeps `change_id → (params hash, result)` for 30 days after the ULID's time, failures included except `storage_error`, `unavailable`, `not_bound`, `too_large`, `expired` and `clock_skew` (never stored: a later retry may succeed).
+- **Every write carries `change_id`**, a client-made ULID. The owning office keeps `change_id → (params hash, result)` for 30 days after the ULID's time, failures included except `storage_error`, `unavailable`, `not_bound`, `too_large`, `expired` and `clock_skew` (never stored: a later retry may succeed). (amended 2026-11-08: proto follow-ups) Nor are `not_authorized` and a `change_id` that isn't a ULID, which come before the lookup or the store, as `org-work` does.
   - The params hash is SHA-256 over the method name, the bound member id and the decoded, re-encoded typed params as canonical JSON (object keys sorted, no insignificant whitespace).
   - The app-only check comes first, then the lookup. A retry with the same `change_id` and hash gets the stored result without re-validating. The same `change_id` with another hash is `invalid_request` ("change id reused").
   - The lookup comes **before** the age checks. Then: dated more than 29 days ago, `expired`; more than 5 minutes ahead of the office's clock, `clock_skew`. The office keeps a monotonic high-water mark of its clock (offices design).
@@ -352,7 +352,7 @@ pub trait OrgView {
     fn project_by_key(&self, key: &str) -> Result<Option<ProjectView>, StoreError>;
     fn project_teams(&self, project_id: &str) -> Result<Vec<String>, StoreError>;  // team ids
     fn area(&self, id: &str) -> Result<Option<AreaView>, StoreError>;           // incl. deleted, replaced_by
-    fn general_area(&self, project_id: &str) -> Result<String, StoreError>;
+    fn general_area(&self, project_id: &str) -> Result<Option<String>, StoreError>; // (amended 2026-11-08: P2) None: none found
     fn team_lead(&self, team_id: &str) -> Result<Option<String>, StoreError>;
 }
 
@@ -394,6 +394,9 @@ pub trait WorkTxn {
     /// The open items linked to a doc (`relates_to`) or named in its front-matter `related`; P4 (§6).
     fn items_for_doc(&mut self, project_id: &str, doc_key: &str) -> Result<Vec<StoredItem>, StoreError>;
     fn open_items(&mut self, filter: &CascadeFilter) -> Result<Vec<StoredItem>, StoreError>; // cascades
+    /// (amended 2026-11-08: P2) The bugs that aren't closed or deleted, of one project or (None) of
+    /// every project: the bug cascades' scan (`reconcile_bugs`: deleted areas, triage spans).
+    fn open_bugs(&mut self, project_id: Option<&str>) -> Result<Vec<StoredItem>, StoreError>;
     fn events_since(&mut self, item_id: &str, after_version: u64) -> Result<Vec<WorkEvent>, StoreError>;
     fn change_result(&mut self, change_id: &str) -> Result<Option<StoredResult>, StoreError>;
 
@@ -412,6 +415,8 @@ pub trait WorkTxn {
 
 pub trait Clock { fn now_ms(&self) -> u64; }
 ```
+(amended 2026-11-08: P2) As implemented on `v1`: `OrgView::general_area` returns `Option<String>`: `None` when it finds no General area for the project, which `bug.report` refuses with `invalid_request` instead of failing the store, and the bug cascades scan with `WorkTxn::open_bugs(project_id)`. The member and team cascades, when they land, may generalise that scan into `open_items(&CascadeFilter)`.
+
 `OrgView` is wider than ADR-0003's `MemberDirectory` (projects, areas, teams); `store.rs` implements both over the same queries. `org-work` defines its own port rather than depending on the messaging library, so the two domains stay independent.
 
 Exact names and signatures are the library owner's, agreed with server-dev (AGENTS.md: the trait's owner and its implementer agree changes). **The library decides before it writes:** it reads, checks every rule and computes the whole outcome (automatic changes included) first, and only then writes. So a refusal has nothing to undo: it writes only the change-result row (plus any org catch-up, which has its own savepoint, §2.5) and returns `Ok(TxnOutput::Refused(error))`, and refusals are stored (§2.3). `Err` is kept for storage failures, which roll everything back and aren't stored. What is fixed here: **all reads a rule depends on happen inside `transact`**, so a decision is never made on state another write changed in between; and **one call = one `transact`**, its automatic changes and its origin records included. The one exception is a call that writes git (`feature.create`, `doc.*`): an intent transaction, then the git work, then a record transaction (§4.9).
@@ -584,7 +589,10 @@ pub enum WorkEventKind {
     Created,
     FieldsChanged { fields: Vec<FieldChange> },         // { field, from?, to? } as JSON values
     StatusChanged { from: ItemStatus, to: ItemStatus, resolution: Option<Resolution>, reason: Option<String>,
-                    anyway: Option<DoneAnyway> },   // Done or Fixed with required steps left
+                    anyway: Option<DoneAnyway>,     // Done or Fixed with required steps left
+                    duplicate_of: Option<String> }, // (amended 2026-11-08: P2) a bug closed as a duplicate: the
+                                                    // original's id; absent otherwise. `reason` is free text, never an id (events from before have the id there).
+                                                    // The reopen of a duplicate is `Reopened`; its item state has it cleared.
     Assigned { from: Option<String>, to: Option<String> },
     Triaged { area_id: String, severity: Severity, priority: Priority, assignee_id: Option<String> },
     Verified { outcome: VerifyOutcome, by_reporter: bool, note: Option<String> },
@@ -663,7 +671,7 @@ Rust details (derives, `#[serde(default)]` and `skip_serializing_if` on every op
 | `bug.report` | `item_id`, `project_id`, `title`, `what_happened`, `severity`, `area_id?`, `expected?`, `steps?`, `environment?`, `from?: { link_id, to: LinkTarget }`, `affects_feature_id?` (P3), `checklist?` | `not_found`, `invalid_request` (limits; archived project; area not in the project or deleted), `already_exists` |
 | `bug.update` | `item_id`, `expected_version`, `title?`, `what_happened?`, `expected?`, `clear_expected?`, `steps?`, `clear_steps?`, `environment?`, `clear_environment?`, `severity?`, `priority?`, `area_id?`, `affects_feature_id?`, `clear_affects_feature?` | `not_found`, `invalid_request`, `conflict` |
 | `bug.triage` | `item_id`, `expected_version`, `area_id`, `severity`, `priority`, `assignee_id?` | `not_found`, `invalid_request` (wrong state; area), `unknown_recipient`, `conflict` |
-| `bug.assign` | `item_id`, `expected_version`, `assignee_id?` | `not_found`, `unknown_recipient`, `conflict` |
+| `bug.assign` | `item_id`, `expected_version`, `assignee_id?` | `not_found`, `invalid_request` (the bug is closed; amended 2026-11-08: P2), `unknown_recipient`, `conflict` |
 | `bug.mark_fixed` | `item_id`, `expected_version`, `note`, `anyway_reason?` | `not_found`, `invalid_request`, `conflict`, `checklist_incomplete` |
 | `bug.verify` | `item_id`, `expected_version`, `outcome: fixed \| still_happens`, `note?` (required for `still_happens`) | `not_found`, `invalid_request` (not `fixed`; note missing), `conflict` |
 | `bug.close` | `item_id`, `expected_version`, one of `duplicate_of` or `{ resolution: wont_fix \| cant_reproduce, reason }` | `not_found` (the original), `invalid_request` (wrong state; the original in another project, itself, or closed as a duplicate; reason missing), `conflict` |
@@ -724,8 +732,8 @@ Same style as T1: params start with `command_id`, the result is `CommandAccepted
 
 | Command | Params (after `command_id`) | Errors | Phase |
 | --- | --- | --- | --- |
-| `project.create` | `project_id`, `name`, `key?` (absent: HQ derives one, §below), `description?`, `teams?: Vec<{ project_team_id, team_id }>`, `general_area_id`, `general_area_name?` (default "General"), `repo?: RepoSpec`, `integration_branch?` | `not_found` (a team), `invalid_request` (key format or reserved; limits; a repeated team; repo spec), `invalid_name` (name, area name), `already_exists` (an id; the key; the name, ignoring case) | P1 |
-| `project.update` | `project_id`, `expected_version`, `name?`, `description?`, `clear_description?`, `integration_branch?`, `clear_integration_branch?` | `not_found`, `invalid_request`, `invalid_name`, `conflict`, `already_exists` | P1 |
+| `project.create` | `project_id`, `name`, `key?` (absent: HQ derives one, §below), `description?`, `teams?: Vec<{ project_team_id, team_id }>`, `general_area_id`, `general_area_name?` (default "General"), `repo?: RepoSpec`, `integration_branch?` | `not_found` (a team), `invalid_request` (key format or reserved; limits; a repeated team; repo spec; an `integration_branch` with a reserved prefix, amended 2026-11-08: proto follow-ups, `processes.md` "Project rule"), `invalid_name` (name, area name), `already_exists` (an id; the key; the name, ignoring case) | P1 |
+| `project.update` | `project_id`, `expected_version`, `name?`, `description?`, `clear_description?`, `integration_branch?`, `clear_integration_branch?` | `not_found`, `invalid_request` (also an `integration_branch` with a reserved prefix, amended 2026-11-08: proto follow-ups), `invalid_name`, `conflict`, `already_exists` | P1 |
 | `project.archive` | `project_id`, `expected_version`, `archived: bool` | `not_found`, `conflict` | P1 |
 | `project.add_team` (exists) | unchanged | unchanged | — |
 | `project.remove_team` (extended) | `project_team_id`, `expected_version`, `areas_to_team_id?` (§2.5) | adds `invalid_request` (missing or not a remaining team) | P1 |

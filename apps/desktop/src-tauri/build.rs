@@ -5,6 +5,8 @@ fn main() {
         tauri_build::AppManifest::new().commands(&[
             "office_ensure_running",
             "office_ping",
+            "office_restart",
+            "organizations_peek",
             "organization_create",
             "organizations_list",
             "organization_open",
@@ -17,6 +19,7 @@ fn main() {
             "login_item_status",
             "login_item_set",
             "login_item_open_settings",
+            "open_external_url",
         ]),
     ))
     .expect("failed to run tauri-build");

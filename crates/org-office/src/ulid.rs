@@ -27,19 +27,8 @@ pub(crate) fn random_bytes<const N: usize>() -> std::io::Result<[u8; N]> {
 }
 
 /// The Unix milliseconds a ULID was made at, or `None` if `id` is not a ULID in its canonical
-/// form: 26 upper-case Crockford Base32 characters whose first is `0` to `7` (so it fits 128
-/// bits). Same rule as `org-work`'s `ulid_time_ms`, so a command id and a change id are
-/// judged alike.
-pub(crate) fn time_ms(id: &str) -> Option<u64> {
-    let digit = |c: u8| CROCKFORD.iter().position(|&d| d == c).map(|p| p as u64);
-    let bytes = id.as_bytes();
-    if bytes.len() != 26 || !bytes.iter().all(|&b| digit(b).is_some()) || digit(bytes[0])? > 7 {
-        return None;
-    }
-    bytes[..10]
-        .iter()
-        .try_fold(0u64, |acc, &b| Some((acc << 5) | digit(b)?))
-}
+/// form: `org-proto`'s shared rule, so a command id and a change id are judged alike.
+pub(crate) use org_proto::ulid_time_ms as time_ms;
 
 /// A ULID made at `ms` whose random part is `n` repeated (for tests).
 #[cfg(test)]

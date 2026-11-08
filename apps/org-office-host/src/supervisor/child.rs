@@ -41,7 +41,19 @@ pub(crate) enum Signal {
     Stop {
         deadline: Instant,
     },
+    /// `office.restart`: start the office again now, if it isn't running.
+    Restart,
 }
+
+/// The environment a server gets, besides `ORG_OFFICE_HOME`: only these of the host's own, so
+/// nothing else in the login session reaches it. The Keychain and SQLCipher need only the user's
+/// identity and home; `TMPDIR` is the user's temporary folder.
+const PASSED_ENV: [&str; 6] = ["HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG"];
+
+/// The key folder a `dev-keys` build of org-office-server reads (org-office-server's keys.rs).
+/// Passed through in debug builds only, so a release host never hands it on.
+#[cfg(debug_assertions)]
+const DEV_KEY_DIR_ENV: &str = "ORG_OFFICE_DEV_KEY_DIR";
 
 /// How to start a server: the program and the office home it is given.
 #[derive(Debug, Clone)]
@@ -65,23 +77,30 @@ pub(crate) enum Mode<'a> {
 ///
 /// The lines are kept as the messages themselves, built once, because a [`HostMessage`] owns
 /// its token and [`AppToken`] isn't `Clone`: writing a kept line never copies the token, and
-/// dropping it zeroes the token.
-pub(crate) struct CreateLine(HostMessage);
+/// dropping it zeroes the token. They live on the heap (a `Box`, or the `Arc` a start line is
+/// shared through), so moving one moves a pointer, not the token. Building one still leaves the
+/// usual stack copies of the token behind (see `AppToken`'s docs).
+pub(crate) struct CreateLine(Box<HostMessage>);
 
 /// The `--office` first line, holding the office's app token for this host run. Written, as is,
-/// on every start of the office within the run. See [`CreateLine`].
+/// on every start of the office within the run, and shared (through an `Arc`) with the
+/// supervisor, which hands the token to the app. See [`CreateLine`].
 pub(crate) struct StartLine(HostMessage);
 
 impl CreateLine {
     pub(crate) fn new(create: CreateOffice) -> Self {
-        Self(HostMessage::Create(create))
+        Self(Box::new(HostMessage::Create(create)))
     }
 
     /// The start line for the office this line created: the same token, so its restarts get
     /// the token it was created with.
-    pub(crate) fn into_start_line(self) -> StartLine {
-        match self.0 {
-            HostMessage::Create(create) => StartLine::new(create.app_token),
+    pub(crate) fn into_start_line(mut self) -> Arc<StartLine> {
+        match &mut *self.0 {
+            // Taken out in place, leaving zeros: the box's memory never keeps a copy.
+            HostMessage::Create(create) => Arc::new(StartLine::new(std::mem::replace(
+                &mut create.app_token,
+                AppToken::from_bytes([0; 32]),
+            ))),
             _ => unreachable!("a create line holds a create message"),
         }
     }
@@ -90,6 +109,14 @@ impl CreateLine {
 impl StartLine {
     pub(crate) fn new(app_token: AppToken) -> Self {
         Self(HostMessage::Start(StartOffice { app_token }))
+    }
+
+    /// The office's app token. Never clone it into a string or log it.
+    pub(crate) fn app_token(&self) -> &AppToken {
+        match &self.0 {
+            HostMessage::Start(start) => &start.app_token,
+            _ => unreachable!("a start line holds a start message"),
+        }
     }
 }
 
@@ -119,6 +146,17 @@ impl Spawner {
             Mode::Office(id, _) => command.arg(OFFICE_FLAG).arg(id),
             Mode::Discard(id) => command.arg(DISCARD_FLAG).arg(id),
         };
+        command.env_clear();
+        for name in PASSED_ENV {
+            if let Some(value) = std::env::var_os(name) {
+                command.env(name, value);
+            }
+        }
+        // A dev-keys build of org-office-server needs its key folder; development only.
+        #[cfg(debug_assertions)]
+        if let Some(value) = std::env::var_os(DEV_KEY_DIR_ENV) {
+            command.env(DEV_KEY_DIR_ENV, value);
+        }
         command
             .env(OFFICE_HOME_ENV, &self.home)
             .current_dir("/")
@@ -163,9 +201,8 @@ impl RunningChild {
             return;
         };
         let written = match mode {
-            Mode::Create(CreateLine(message)) | Mode::Office(_, StartLine(message)) => {
-                write_host_message(stdin, message)
-            }
+            Mode::Create(CreateLine(message)) => write_host_message(stdin, message),
+            Mode::Office(_, StartLine(message)) => write_host_message(stdin, message),
             Mode::Discard(_) => Ok(()),
         };
         // A child that dies at once makes this fail with a broken pipe; its stdout then closes

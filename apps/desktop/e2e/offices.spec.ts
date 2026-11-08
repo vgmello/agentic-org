@@ -219,3 +219,62 @@ test('OFC-11: a restart that is pending counts down, and the office reads Stoppe
 	expect(label).toMatch(/Stopped: it stopped unexpectedly, restarting at \d\d:\d\d/);
 	expect(label).not.toMatch(/\d+ s\b/);
 });
+
+test('OFC-11: Restart office brings a crashed office back, and the row reads Online', async ({ page }) => {
+	await openOffices(page, 'crashed');
+	const hq = rows(page).first();
+	await expect(hq).toContainText('Stopped');
+	await hq.getByRole('button').first().click();
+	const sheet = page.getByRole('dialog');
+	await expect(sheet.getByTestId('restart-office')).toHaveText('Restart office');
+	await sheet.getByTestId('restart-office').click();
+	await expect(hq).toContainText('Online', { timeout: 30_000 });
+	await expect(hq).not.toContainText('It stopped unexpectedly');
+	await expect(sheet.getByTestId('restart-office')).toHaveCount(0);
+});
+
+test('OFC-11: a missing key says Try again, and an unsupported version has no button', async ({ page }) => {
+	await openOffices(page, 'key_missing');
+	await rows(page).first().getByRole('button').first().click();
+	await expect(page.getByRole('dialog').getByTestId('restart-office')).toHaveText('Try again');
+});
+
+test('OFC-11: a host that is still starting says so and the button comes back', async ({ page }) => {
+	await openOffices(page, 'crashed');
+	await visit(page, '/offices?restart=not_ready');
+	await rows(page).first().getByRole('button').first().click();
+	const sheet = page.getByRole('dialog');
+	await sheet.getByTestId('restart-office').click();
+	await expect(sheet.getByTestId('restart-error')).toHaveText('The office host is still starting. Try again in a moment.');
+	await expect(sheet.getByTestId('restart-office')).toHaveText('Restart office');
+	await expect(sheet.getByTestId('restart-office')).toBeEnabled();
+});
+
+test('OFC-11: an accepted restart keeps the spinner while the office is still stopped', async ({ page }) => {
+	await openOffices(page, 'crashed');
+	await visit(page, '/offices?restart=stuck');
+	await rows(page).first().getByRole('button').first().click();
+	const sheet = page.getByRole('dialog');
+	await sheet.getByTestId('restart-office').click();
+	await expect(sheet.getByTestId('restart-office')).toHaveText('Restarting…');
+	await page.waitForTimeout(5000); // several status re-reads later
+	await expect(sheet.getByTestId('restart-office')).toHaveText('Restarting…');
+	await expect(rows(page).first()).toContainText('Stopped');
+});
+
+test('OFC-11: a status change the host pushes shows at once, without waiting for the next check', async ({ page }) => {
+	await openOffices(page);
+	const hq = rows(page).first();
+	await expect(hq).toContainText('Online');
+	const officeId = (await hq.getAttribute('data-office')) ?? '';
+	const office = { id: officeId, organization_id: officeId.replace('office-', ''), name: 'HQ', role: 'hq', host: 'This Mac' };
+	const push = (update: object) => page.evaluate((u) => (window as unknown as { __mockOfficeStatus: (u: object) => void }).__mockOfficeStatus(u), update);
+	await push({ kind: 'office', office: { ...office, status: 'unavailable', status_reason: 'crashed' } });
+	await expect(hq).toContainText('Stopped');
+	await expect(hq).toContainText('It stopped unexpectedly');
+	await push({ kind: 'office', office: { ...office, organization_id: 'another', status: 'active' } }); // another organization: nothing changes
+	await expect(hq).toContainText('Stopped');
+	await push({ kind: 'offices', offices: [{ ...office, status: 'active' }] }); // the whole list, as after a reconnect
+	await expect(hq).toContainText('Online');
+	await expect(hq).not.toContainText('It stopped unexpectedly');
+});

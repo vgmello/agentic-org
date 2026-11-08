@@ -6,6 +6,8 @@
 //!   office servers and answers `hello`, `organization.create`, `organization.list`,
 //!   `office.list`, `office.app_token`, `office.restart` and `subscribe` (it emits
 //!   `organization.created` and `office.status_changed`).
+//!   Its `hello` lists in `capabilities` the optional calls and events it implements
+//!   ([`capability`]), so a client checks before relying on one.
 //! - **An office server** (`org-office-server`), one process per office. An organization's
 //!   first office is its HQ. It answers `hello` with its identity, the organization's calls
 //!   ([`org`]: teams, members, projects and areas), the work calls ([`work`]: tasks and their
@@ -16,6 +18,13 @@
 //! in on. **App-only** calls are refused on any other connection with `not_authorized`: every
 //! organization command ([`org`]) and `work.delete` ([`work`]). Every work call needs a bound
 //! connection (`not_bound` otherwise), and acts as the member it is bound as.
+//! On the host, an app-only call (`office.app_token`, `office.restart`) is accepted only on a
+//! connection whose client sent it after reading `hello`'s answer. Bytes already buffered when
+//! the host accepted the connection are refused with `not_authorized`, so never pipeline an
+//! app-only call before `hello`'s answer. First thing in the app's main, before any output or
+//! threads: fstat fds 0-2 and dup2 `/dev/null` over any that is a socket; the app never reads or
+//! writes an fd it didn't open. After sending an app-only call, the client sends nothing else on
+//! that connection until its answer arrives.
 //!
 //! **The most depended-on crate: keep it small, stable, additive-only.** Every change needs
 //! ada's review (see AGENTS.md).
@@ -74,6 +83,7 @@ mod events;
 mod name;
 mod token;
 mod types;
+mod ulid;
 mod wire;
 
 pub use calls::{
@@ -86,20 +96,22 @@ pub use error::{ApiError, CallError, ErrorCode};
 pub use events::{EventKind, OfficeStatusChanged, OfficeStatusChangedData, OrganizationCreated};
 pub use name::{NameError, OrganizationName};
 pub use org::{
-    is_shaped_like_an_address, is_valid_id, is_valid_member_id, AgentProfile, AgentRuntime,
-    AgentStatus, Area, CommandAccepted, CommandStatus, GithubRepo, Member, MemberKind, Membership,
-    OrgChange, OrgChanged, OrgChangedData, OrgRejected, OrgRejectedData, OrgSnapshot,
-    OrgSnapshotCall, Position, Project, ProjectCreateTeam, ProjectRepo, ProjectSummary,
-    ProjectTeam, RepoHost, RepoSpec, RunMode, Schedule, Team, AGENT_HOME_MAX_BYTES,
-    AGENT_MESSAGING_NAME_MAX_CHARS, AGENT_TEXT_MAX_CHARS, AGENT_TIME_ZONE_MAX_CHARS,
-    AREA_NAME_MAX_CHARS, ID_MAX_CHARS, MEMBER_ID_CHARS, OFFICE_HANDLE, OWNER_HANDLE,
-    PROJECT_DESCRIPTION_MAX_CHARS, PROJECT_KEY_MAX_CHARS, RESERVED_PROJECT_KEYS, RUN_HANDLE_PREFIX,
+    has_reserved_branch_prefix, is_shaped_like_an_address, is_valid_id, is_valid_member_id,
+    AgentProfile, AgentRuntime, AgentStatus, Area, CommandAccepted, CommandStatus, GithubRepo,
+    Member, MemberKind, Membership, OrgChange, OrgChanged, OrgChangedData, OrgRejected,
+    OrgRejectedData, OrgSnapshot, OrgSnapshotCall, Position, Project, ProjectCreateTeam,
+    ProjectRepo, ProjectSummary, ProjectTeam, RepoHost, RepoSpec, RunMode, Schedule, Team,
+    AGENT_HOME_MAX_BYTES, AGENT_MESSAGING_NAME_MAX_CHARS, AGENT_TEXT_MAX_CHARS,
+    AGENT_TIME_ZONE_MAX_CHARS, AREA_NAME_MAX_CHARS, ID_MAX_CHARS, MEMBER_ID_CHARS, OFFICE_HANDLE,
+    OWNER_HANDLE, PROJECT_DESCRIPTION_MAX_CHARS, PROJECT_KEY_MAX_CHARS, RESERVED_BRANCH_PREFIXES,
+    RESERVED_PROJECT_KEYS, RUN_HANDLE_PREFIX,
 };
 pub use token::{AppToken, APP_TOKEN_BYTES};
 pub use types::{
     OfficeInfo, OfficeRole, OfficeStatus, OfficeStatusReason, Organization,
     ORGANIZATION_NAME_MAX_CHARS,
 };
+pub use ulid::ulid_time_ms;
 pub use wire::{
     salvage_id, Event, Outcome, Request, Response, ServerMessage, UNREADABLE_REQUEST_ID,
 };

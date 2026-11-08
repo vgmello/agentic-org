@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { OfficeInfo, OfficeStatusReason } from '$lib/proto';
 import { sampleOrg } from '$lib/org/sample';
-import { agentsIn, copyDetails, displayStatus, displayStatusFor, isHere, orderOffices, roleInfo, rowLabel, secondaryText, statusIcon, statusInfo, unplacedAgents, whyForLabel, whyStopped } from './model';
+import { agentsIn, applyStatusUpdate, copyDetails, displayStatus, displayStatusFor, isHere, orderOffices, roleInfo, rowLabel, secondaryText, statusIcon, statusInfo, unplacedAgents, restartAction, restartOutcome, whyForLabel, whyStopped } from './model';
 
 const office = (id: string, name: string, over: Partial<OfficeInfo> = {}): OfficeInfo => ({
 	id,
@@ -205,5 +205,62 @@ describe('OFC-11..13 why an office stopped', () => {
 		const text = copyDetails(o, 'Stopped', NOW, '0.1.0');
 		expect(text).toBe(['Office: HQ', 'Id: o1', 'Status: Stopped', 'Reason: key_missing', 'Time: 2026-11-08T12:00:00.000Z', 'Agentic Org: 0.1.0'].join('\n'));
 		expect(text).not.toMatch(/endpoint|key=|secret/i);
+	});
+});
+
+describe('OFC-11 what can be done about a stopped office', () => {
+	const stoppedFor = (status_reason?: OfficeStatusReason, status: OfficeInfo['status'] = 'unavailable') => ({ status, status_reason });
+	it('names the button by reason: Restart office, Try again for a missing key, Start office after the owner stopped it', () => {
+		expect(restartAction(stoppedFor('crashed'))).toEqual({ label: 'Restart office' });
+		expect(restartAction(stoppedFor(undefined, 'offline'))).toEqual({ label: 'Restart office' });
+		expect(restartAction(stoppedFor('in_use'))).toEqual({ label: 'Restart office' });
+		expect(restartAction(stoppedFor('key_missing'))).toEqual({ label: 'Try again' });
+		expect(restartAction(stoppedFor('stopped_by_owner'))).toEqual({ label: 'Start office' });
+		expect(restartAction(stoppedFor('unknown'))).toEqual({ label: 'Restart office' });
+	});
+	it('offers none where the contract refuses a restart, or the office is not stopped', () => {
+		expect(restartAction(stoppedFor('unsupported_version'))).toEqual({});
+		expect(restartAction(stoppedFor('invalid_request'))).toEqual({});
+		expect(restartAction({ status: 'active', status_reason: 'crashed' })).toEqual({});
+	});
+	it('a host that does not list office.restart gets a line instead of a button', () => {
+		expect(restartAction(stoppedFor('crashed'), ['office.status_changed'])).toEqual({ note: 'Update Agentic Org to restart offices from here' });
+		expect(restartAction(stoppedFor('crashed'), ['office.restart'])).toEqual({ label: 'Restart office' });
+		// A reason that can't be restarted still has no button, whatever the host lists.
+		expect(restartAction(stoppedFor('unsupported_version'), [])).toEqual({});
+	});
+	it('reads what office.restart answered', () => {
+		expect(restartOutcome('conflict').kind).toBe('wait');
+		expect(restartOutcome('unknown_method').kind).toBe('unsupported');
+		expect(restartOutcome('not_found').kind).toBe('refresh');
+		expect(restartOutcome('unavailable').kind).toBe('refresh');
+		expect(restartOutcome('not_authorized').message).toBe("You can't restart this office from here.");
+		expect(restartOutcome('not_ready').message).toBe('The office host is still starting. Try again in a moment.');
+		expect(restartOutcome('weird').kind).toBe('error');
+	});
+	it('a host that does not list office.status_changed is not live: its connected office reads Status unknown', () => {
+		expect(displayStatus(true, 'up', 'active', ['office.status_changed'])).toBe('active');
+		expect(displayStatus(true, 'up', 'active', [])).toBe('status_unknown');
+		expect(displayStatus(true, 'up', 'unavailable', ['office.restart'])).toBe('status_unknown');
+		expect(displayStatus(true, 'up', 'active')).toBe('active'); // capabilities not known yet
+		expect(displayStatus(true, 'down', 'active', [])).toBe('unreachable');
+	});
+});
+
+describe('OFC-11 a live status update from the host', () => {
+	const sat = office('sat', 'Second', { status: 'active' });
+	const known = [hq, sat];
+	it('replaces one office with its updated record and leaves the others as they were', () => {
+		const stopped = { ...hq, status: 'unavailable' as const, status_reason: 'crashed' as const };
+		expect(applyStatusUpdate(known, 'org', { kind: 'office', office: stopped })).toEqual([stopped, sat]);
+	});
+	it('adds an office this organization did not have yet, and ignores another organization’s', () => {
+		const added = office('new', 'New', { status: 'pending' });
+		expect(applyStatusUpdate(known, 'org', { kind: 'office', office: added })).toEqual([hq, sat, added]);
+		expect(applyStatusUpdate(known, 'org', { kind: 'office', office: { ...added, organization_id: 'other' } })).toBe(known);
+	});
+	it('takes the whole list as the truth, keeping only this organization’s offices', () => {
+		const stranger = office('x', 'Elsewhere', { organization_id: 'other' });
+		expect(applyStatusUpdate(known, 'org', { kind: 'offices', offices: [sat, stranger] })).toEqual([sat]);
 	});
 });

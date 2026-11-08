@@ -23,8 +23,8 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use org_proto::org::{
-    Area, CommandAccepted, CommandStatus, Member, MemberKind, Membership, OrgChange, OrgSnapshot,
-    Position, Project, ProjectTeam, Team,
+    Area, CommandAccepted, CommandStatus, Member, MemberKind, Membership, OrgChange,
+    OrgChangedData, OrgSnapshot, Position, Project, ProjectTeam, Team,
 };
 use org_proto::{ApiError, ErrorCode};
 
@@ -192,6 +192,14 @@ impl OrgView for OrgSql<'_> {
         self.many(
             "SELECT body FROM memberships WHERE member_id = ?1 ORDER BY id",
             [member_id],
+        )
+    }
+    fn office_exists(&self, office_id: &str) -> bool {
+        // HQ is the one office there is (its id is in `meta`); offices that enrol later get a
+        // table of their own.
+        self.exists(
+            "SELECT EXISTS (SELECT 1 FROM meta WHERE key = 'office_id' AND value = ?1)",
+            [office_id],
         )
     }
     fn project_exists(&self, project_id: &str) -> bool {
@@ -531,6 +539,64 @@ fn committed(position: Position) -> CommandAccepted {
     }
 }
 
+/// Whether a subscriber that holds the organization as of `after` can be sent the changes
+/// that follow: `after` is a position this log has (same epoch, at least the genesis, no later
+/// than the head). Nothing is trimmed yet, so every earlier position of the epoch qualifies.
+pub(crate) fn can_resume_from(db: &Connection, after: Position) -> Result<bool, OfficeError> {
+    Ok(match last_position(db)? {
+        Some(head) => after.epoch == head.epoch && (1..=head.seq).contains(&after.seq),
+        None => false,
+    })
+}
+
+/// Up to `limit` committed commands after `after`, oldest first, as the `org.changed` events'
+/// data. The log stores each command's changes verbatim, so this is a read, not a rebuild.
+pub(crate) fn changes_after(
+    db: &Connection,
+    after: Position,
+    limit: usize,
+) -> Result<Vec<OrgChangedData>, OfficeError> {
+    let mut statement = db
+        .prepare(
+            "SELECT epoch, seq, command_id, body FROM events
+             WHERE kind = 'org.changed' AND (epoch, seq) > (?1, ?2)
+             ORDER BY epoch, seq LIMIT ?3",
+        )
+        .map_err(OfficeError::storage)?;
+    let rows = statement
+        .query_map(
+            (after.epoch as i64, after.seq as i64, limit as i64),
+            |row| {
+                Ok((
+                    Position {
+                        epoch: row.get::<_, i64>(0)? as u64,
+                        seq: row.get::<_, i64>(1)? as u64,
+                    },
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
+        )
+        .map_err(OfficeError::storage)?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (position, command_id, body) = row.map_err(OfficeError::storage)?;
+        let changes = serde_json::from_str(&body)
+            .map_err(|_| OfficeError::Invalid("a logged entry is not readable"))?;
+        out.push(OrgChangedData {
+            position,
+            command_id,
+            changes,
+        });
+    }
+    Ok(out)
+}
+
+/// The position of the last log entry; `NotFound` for an empty log (an unfinished create).
+pub(crate) fn head(db: &Connection) -> Result<Position, OfficeError> {
+    last_position(db)?.ok_or(OfficeError::NotFound)
+}
+
 /// Whether the organization is committed: the log has an entry, or (an `org.db` from before the
 /// log existed) the identity row `organization_id` is there. Anything less is an unfinished
 /// create, which `Office::discard` may remove.
@@ -614,11 +680,12 @@ pub(crate) fn snapshot(db: &Connection) -> Result<OrgSnapshot, OfficeError> {
 #[cfg(test)]
 mod tests {
     use org_proto::org::{
-        AgentProfile, AgentRuntime, AgentStatus, MemberAddPersonParams, MemberKind,
-        MemberRemoveParams, MemberSetReportsToParams, MemberUpdatePersonParams,
-        ProjectAddTeamParams, ProjectRemoveTeamParams, TeamAddMemberParams, TeamCreateParams,
-        TeamDeleteParams, TeamMoveParams, TeamRemoveMemberParams, TeamRenameParams,
-        TeamSetLeadParams,
+        AgentProfile, AgentRuntime, AgentStatus, MemberAddAgentParams, MemberAddPersonParams,
+        MemberKind, MemberOffboardParams, MemberRemoveParams, MemberSetAgentStatusParams,
+        MemberSetReportsToParams, MemberSetRunModeParams, MemberUpdateAgentParams,
+        MemberUpdatePersonParams, ProjectAddTeamParams, ProjectRemoveTeamParams, RunMode, Schedule,
+        TeamAddMemberParams, TeamCreateParams, TeamDeleteParams, TeamMoveParams,
+        TeamRemoveMemberParams, TeamRenameParams, TeamSetLeadParams,
     };
     use tempfile::TempDir;
 
@@ -721,6 +788,27 @@ mod tests {
                 team_id: team_id.into(),
                 name: name.into(),
                 owner_team_id: owner.map(Into::into),
+            })
+        };
+        let hire = |n: u32, member: u32, name: &str, office: &str, handle: &str| {
+            OrgCommand::MemberAddAgent(MemberAddAgentParams {
+                command_id: c(n),
+                member_id: id(member),
+                name: name.into(),
+                office_id: office.into(),
+                profile: AgentProfile {
+                    role: "engineer".into(),
+                    title: "Engineer".into(),
+                    focus: None,
+                    runtime: AgentRuntime::ClaudeCode,
+                    model: None,
+                    run_mode: None,
+                    schedule: None,
+                    home: None,
+                    messaging_name: handle.into(),
+                    status: AgentStatus::Active,
+                    offboarded_at: None,
+                },
             })
         };
         let person = |n: u32, member: &str, name: &str| {
@@ -845,6 +933,90 @@ mod tests {
                 member_id: id(1),
                 expected_version: 1,
             }),
+            // ---- agents: hire, edit, pause, schedule, offboard (with relations), refusals
+            hire(90, 20, "Robo", "office1", "Robo.bot"),
+            hire(91, 21, "Dup", "office1", "ROBO.bot"), // the handle, any case: already_exists
+            hire(92, 22, "Lost", "nowhere", "lost"),    // no such office: not_found
+            hire(93, 23, "Pixel2", "office1", "pixel"), // an agent's handle: already_exists
+            hire(94, 24, "Old2", "office1", "old"), // an offboarded agent's handle: already_exists
+            OrgCommand::MemberUpdateAgent(MemberUpdateAgentParams {
+                command_id: c(95),
+                member_id: id(20),
+                expected_version: 1,
+                name: Some("Robo Two".into()),
+                role: Some("tester".into()),
+                title: None,
+                focus: Some("qa".into()),
+                clear_focus: false,
+                runtime: Some(AgentRuntime::Antigravity),
+                model: None,
+                clear_model: false,
+                home: Some("/agents/robo".into()),
+                clear_home: false,
+                messaging_name: Some("ROBO.bot".into()),
+            }),
+            OrgCommand::MemberUpdateAgent(MemberUpdateAgentParams {
+                command_id: c(96),
+                member_id: id(20),
+                expected_version: 1, // stale
+                name: None,
+                role: Some("x".into()),
+                title: None,
+                focus: None,
+                clear_focus: false,
+                runtime: None,
+                model: None,
+                clear_model: false,
+                home: None,
+                clear_home: false,
+                messaging_name: None,
+            }),
+            OrgCommand::MemberSetAgentStatus(MemberSetAgentStatusParams {
+                command_id: c(97),
+                member_id: id(20),
+                expected_version: 2,
+                status: AgentStatus::Paused,
+            }),
+            OrgCommand::MemberSetRunMode(MemberSetRunModeParams {
+                command_id: c(98),
+                member_id: id(20),
+                expected_version: 3,
+                run_mode: Some(RunMode::Scheduled),
+                schedule: Some(Schedule {
+                    spec: "weekdays at 9".into(),
+                    time_zone: "Europe/Lisbon".into(),
+                }),
+            }),
+            OrgCommand::TeamCreate(TeamCreateParams {
+                command_id: c(99),
+                team_id: "ag-team".into(),
+                name: "Agents".into(),
+                owner_team_id: None,
+            }),
+            OrgCommand::TeamAddMember(TeamAddMemberParams {
+                command_id: c(100),
+                membership_id: "m-ag".into(),
+                team_id: "ag-team".into(),
+                member_id: id(20),
+                title_in_team: None,
+            }),
+            OrgCommand::TeamSetLead(TeamSetLeadParams {
+                command_id: c(101),
+                team_id: "ag-team".into(),
+                expected_version: 1,
+                lead_member_id: Some(id(20)),
+            }),
+            OrgCommand::MemberOffboard(MemberOffboardParams {
+                command_id: c(102),
+                member_id: id(20),
+                expected_version: 4,
+            }),
+            OrgCommand::MemberOffboard(MemberOffboardParams {
+                command_id: c(103),
+                member_id: id(20), // already offboarded: invalid_request
+                expected_version: 5,
+            }),
+            hire(104, 25, "Again", "office1", "robo.bot"), // reserved for good: already_exists
         ]
     }
 
@@ -855,7 +1027,7 @@ mod tests {
         for change in crate::rules::owner_bootstrap(OWNER, "Owner", NOW).unwrap() {
             crate::rules::apply(&mut mem, &change).unwrap();
         }
-        // An agent, placed straight into both (the agent commands come in a later slice).
+        // Two agents, placed straight into both (a live one and an offboarded one).
         let agent = Member {
             id: id(9),
             kind: MemberKind::Agent,
@@ -914,6 +1086,8 @@ mod tests {
             })
             .unwrap();
         mem.projects.insert("p1".to_owned());
+        mem.offices.insert("office1".to_owned());
+        store.run_sql_for_test("INSERT INTO meta (key, value) VALUES ('office_id', 'office1')");
         store
             .write(|db| {
                 db.execute(
@@ -974,6 +1148,27 @@ mod tests {
         // The sequence really did add, remove and cascade-delete project links and memberships.
         assert!(snapshot.project_teams.is_empty());
         assert!(snapshot.memberships.iter().all(|m| m.id != "m2"));
+        // And the agent commands really ran: hired, edited, paused, scheduled, offboarded with
+        // its membership ended and the team it led left without a lead.
+        let robo = snapshot
+            .members
+            .iter()
+            .find(|m| m.id == id(20))
+            .expect("the agent was hired");
+        let profile = robo.agent.as_ref().unwrap();
+        assert_eq!(robo.version, 5);
+        assert_eq!(robo.name, "Robo Two");
+        assert_eq!(profile.status, AgentStatus::Offboarded);
+        assert_eq!(profile.run_mode, Some(RunMode::Scheduled));
+        assert_eq!(profile.messaging_name, "ROBO.bot");
+        assert!(profile.offboarded_at.is_some());
+        assert!(snapshot.memberships.iter().all(|m| m.id != "m-ag"));
+        let agents_team = snapshot.teams.iter().find(|t| t.id == "ag-team").unwrap();
+        assert_eq!(agents_team.lead_member_id, None);
+        assert!(snapshot
+            .members
+            .iter()
+            .all(|m| m.id != id(21) && m.id != id(25)));
     }
 
     fn put_fails(store: &Store, put: impl FnOnce(&mut OrgSql<'_>) + Send + 'static) -> bool {

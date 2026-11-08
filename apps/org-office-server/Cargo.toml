@@ -27,6 +27,7 @@ org-proto = { path = "../../crates/org-proto" }
 org-office = { path = "../../crates/org-office" }
 org-office-launch = { path = "../../crates/org-office-launch" }
 libc.workspace = true
+serde.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework.workspace = true

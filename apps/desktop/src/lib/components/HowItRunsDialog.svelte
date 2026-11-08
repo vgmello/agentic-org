@@ -6,7 +6,7 @@
 	import { Label } from '$lib/components/ui/label';
 	import { toAppError } from '$lib/office/api';
 	import { setRunMode } from '$lib/org/actions';
-	import { RUN_MODES } from '$lib/org/agents';
+	import { RUN_MODES, runLimitsText } from '$lib/org/agents';
 	import type { OrgSession } from '$lib/org/session';
 	import type { Member, RunMode } from '$lib/proto';
 
@@ -45,6 +45,7 @@
 		}
 	});
 
+	const limits = $derived(runLimitsText(mode));
 	const scheduleMissing = $derived((mode === 'scheduled' && (spec.trim() === '' || zone.trim() === '')) || mode === 'unknown');
 
 	// After a stale edit (HQ changed the agent meanwhile) the page reloads: take the latest as the baseline and the
@@ -114,6 +115,7 @@
 					</div>
 				</div>
 			{/if}
+			{#if limits}<p class="text-xs/5 text-gray-400" data-testid="run-limits">{limits}</p>{/if}
 			{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 			<DialogFooter>
 				<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}>Cancel</Button>

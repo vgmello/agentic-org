@@ -151,13 +151,7 @@ fn unknown_error_code_and_unknown_fields_are_tolerated() {
 
 #[test]
 fn hello_and_list_wire_shapes() {
-    let hello = HelloResult {
-        api_version: API_VERSION,
-        server_version: "0.0.0".into(),
-        host: "This Mac".into(),
-        office: None,
-        capabilities: vec![],
-    };
+    let hello = HelloResult::host("0.0.0", "This Mac");
     let v = serde_json::to_value(Response::ok::<Hello>(1, &hello).unwrap()).unwrap();
     assert_eq!(v["result"]["api_version"], 1);
     assert_eq!(v["result"]["host"], "This Mac");
@@ -424,17 +418,44 @@ fn wire_names_are_pinned() {
 }
 
 #[test]
+fn hello_constructors_fill_every_field() {
+    let identity = OfficeHello {
+        organization_name: "Acme".into(),
+        office: hq(),
+    };
+    assert_eq!(
+        HelloResult::host("1.2.3", "This Mac"),
+        HelloResult {
+            api_version: API_VERSION,
+            server_version: "1.2.3".into(),
+            host: "This Mac".into(),
+            office: None,
+            capabilities: vec![],
+        }
+    );
+    assert_eq!(
+        HelloResult::office("1.2.3", "This Mac", identity.clone())
+            .with_capabilities(vec!["x.y".into()]),
+        HelloResult {
+            api_version: API_VERSION,
+            server_version: "1.2.3".into(),
+            host: "This Mac".into(),
+            office: Some(identity),
+            capabilities: vec!["x.y".into()],
+        }
+    );
+}
+
+#[test]
 fn office_server_hello_carries_its_identity() {
-    let hello = HelloResult {
-        api_version: API_VERSION,
-        server_version: "0.0.0".into(),
-        host: "This Mac".into(),
-        office: Some(OfficeHello {
+    let hello = HelloResult::office(
+        "0.0.0",
+        "This Mac",
+        OfficeHello {
             organization_name: "Acme".into(),
             office: hq(),
-        }),
-        capabilities: vec![],
-    };
+        },
+    );
     let v = serde_json::to_value(&hello).unwrap();
     assert_eq!(v["office"]["office"]["role"], "hq");
     assert_eq!(v["office"]["organization_name"], "Acme");
@@ -1830,6 +1851,49 @@ fn member_ids_are_26_letters_and_digits_and_no_handle_has_that_shape() {
     }
 }
 
+#[test]
+fn an_integration_branch_may_not_start_with_a_prefix_the_office_owns() {
+    assert_eq!(
+        RESERVED_BRANCH_PREFIXES,
+        ["task/", "docs/", "merged/", "archive/"]
+    );
+    for reserved in [
+        "task/W-12-login",
+        "docs/adr-0004",
+        "merged/task/W-12-login",
+        "archive/task/W-9",
+        "task/",
+        "refs/heads/task/W-12",
+        "heads/task/W-12",
+        "Refs/Heads/task/W-12",
+        "HEADS/Merged/x",
+        "refs/heads/Merged/x",
+        "Task/W-12",
+        "DOCS/x",
+    ] {
+        assert!(has_reserved_branch_prefix(reserved), "{reserved:?}");
+    }
+    for fine in [
+        "main",
+        "v1",
+        "develop",
+        "release/2026-11",
+        "tasks/x",
+        "task",
+        "my-task/x",
+        "feature/task/x",
+        "refs/heads/main",
+        "refs/task/x",
+        "refs/heads/heads/task/x",
+        "heads/heads/task/x",
+        "refs/tags/merged/task/W-1",
+        "",
+        "é/task/",
+    ] {
+        assert!(!has_reserved_branch_prefix(fine), "{fine:?}");
+    }
+}
+
 // ---- Work items (org_proto::work) and the project and area commands --------------------------
 
 /// Pins a call's params: built through `Request::new` they are exactly `want`, and the line
@@ -2371,6 +2435,50 @@ fn work_get_returns_the_whole_item_and_unknown_links_never_break_it() {
 }
 
 #[test]
+fn status_changed_names_a_duplicates_original_only_when_there_is_one() {
+    use crate::work::*;
+    // A duplicate close carries the original's id in `duplicate_of`; `reason` stays free text.
+    let dup = WorkEventKind::StatusChanged {
+        from: ItemStatus::New,
+        to: ItemStatus::Closed,
+        resolution: Some(Resolution::Duplicate),
+        reason: None,
+        anyway: None,
+        duplicate_of: Some("b1".into()),
+    };
+    assert_eq!(
+        serde_json::to_value(&dup).unwrap(),
+        json!({"type": "status_changed", "from": "new", "to": "closed",
+               "resolution": "duplicate", "duplicate_of": "b1"})
+    );
+    let back: WorkEventKind = serde_json::from_value(serde_json::to_value(&dup).unwrap()).unwrap();
+    assert_eq!(back, dup);
+    // Any other status change leaves it out.
+    let wont_fix = WorkEventKind::StatusChanged {
+        from: ItemStatus::Triaged,
+        to: ItemStatus::Closed,
+        resolution: Some(Resolution::WontFix),
+        reason: Some("By design".into()),
+        anyway: None,
+        duplicate_of: None,
+    };
+    let wire = serde_json::to_value(&wont_fix).unwrap();
+    assert_eq!(
+        wire,
+        json!({"type": "status_changed", "from": "triaged", "to": "closed",
+               "resolution": "wont_fix", "reason": "By design"})
+    );
+    // An older writer's event (no `duplicate_of`) still reads, as absent.
+    let old: WorkEventKind = serde_json::from_value(wire).unwrap();
+    assert_eq!(old, wont_fix);
+    let explicit_null: WorkEventKind = serde_json::from_value(json!({"type": "status_changed",
+        "from": "triaged", "to": "closed", "resolution": "wont_fix", "reason": "By design",
+        "duplicate_of": null}))
+    .unwrap();
+    assert_eq!(explicit_null, wont_fix);
+}
+
+#[test]
 fn work_events_round_trip_and_unknown_kinds_never_break_the_activity() {
     use crate::work::*;
     let step = ChecklistStep {
@@ -2398,6 +2506,7 @@ fn work_events_round_trip_and_unknown_kinds_never_break_the_activity() {
                 reason: "Shipped behind a flag".into(),
                 steps: vec!["s2".into()],
             }),
+            duplicate_of: None,
         },
         WorkEventKind::Assigned {
             from: None,
@@ -3709,13 +3818,7 @@ fn project_and_area_commands_are_pinned() {
 #[test]
 fn hello_capabilities_are_additive_and_checked_by_name() {
     // Empty: absent on the wire, so older clients see exactly the old shape.
-    let plain = HelloResult {
-        api_version: API_VERSION,
-        server_version: "0.0.0".into(),
-        host: "This Mac".into(),
-        office: None,
-        capabilities: vec![],
-    };
+    let plain = HelloResult::host("0.0.0", "This Mac");
     let v = serde_json::to_value(&plain).unwrap();
     assert!(v.get("capabilities").is_none());
 
@@ -3728,15 +3831,12 @@ fn hello_capabilities_are_additive_and_checked_by_name() {
     assert!(!old.supports(capability::OFFICE_RESTART));
 
     // Listed names round-trip; unknown names are kept and simply never asked for.
-    let host = HelloResult {
-        capabilities: vec![
-            capability::OFFICE_APP_TOKEN.into(),
-            capability::OFFICE_RESTART.into(),
-            capability::OFFICE_STATUS_CHANGED.into(),
-            "some.future_call".into(),
-        ],
-        ..plain
-    };
+    let host = plain.with_capabilities(vec![
+        capability::OFFICE_APP_TOKEN.into(),
+        capability::OFFICE_RESTART.into(),
+        capability::OFFICE_STATUS_CHANGED.into(),
+        "some.future_call".into(),
+    ]);
     let v = serde_json::to_value(&host).unwrap();
     assert_eq!(v["capabilities"][1], "office.restart");
     let back: HelloResult = serde_json::from_value(v).unwrap();

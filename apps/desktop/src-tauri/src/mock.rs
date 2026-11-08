@@ -11,7 +11,7 @@ use crate::org_mock::Seed;
 use crate::work_engine::{self, WorkError, WorkState};
 use org_proto::{
     ApiError, CommandAccepted, ErrorCode, HelloResult, OfficeInfo, OfficeRole, OfficeStatus,
-    OrgSnapshot, Organization, OrganizationName, API_VERSION,
+    OrgSnapshot, Organization, OrganizationName,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -395,6 +395,14 @@ fn sample_organizations() -> Vec<Organization> {
     ]
 }
 
+/// The mock host's `hello`: a current host, which lists the optional calls and events the app uses.
+fn mock_hello() -> HelloResult {
+    HelloResult::host("0.0.0-mock", "This Mac").with_capabilities(vec![
+        org_proto::capability::OFFICE_STATUS_CHANGED.to_string(),
+        org_proto::capability::OFFICE_RESTART.to_string(),
+    ])
+}
+
 /// The HQ office every organization starts with, on this Mac.
 fn hq_office(organization_id: &str) -> OfficeInfo {
     OfficeInfo {
@@ -459,19 +467,18 @@ impl OfficeConnection for MockOffice {
                 SetupErrorCode::Unreachable,
                 "The office server started but isn't answering.",
             )),
-            Scenario::Healthy | Scenario::StorageError => Ok(HelloResult {
-                api_version: API_VERSION,
-                server_version: "0.0.0-mock".to_string(),
-                host: "This Mac".to_string(),
-                office: None,
-                capabilities: vec![],
-            }),
+            Scenario::Healthy | Scenario::StorageError => Ok(mock_hello()),
         }
     }
 
-    fn ping(&self) -> Result<(), SetupError> {
+    fn restart_office(&self, _office_id: &str) -> Result<(), ApiError> {
+        // Nothing here is ever stopped for real: the answer is the accepted one.
+        Ok(())
+    }
+
+    fn ping(&self) -> Result<HelloResult, SetupError> {
         match self.scenario {
-            Scenario::Healthy | Scenario::StorageError => Ok(()),
+            Scenario::Healthy | Scenario::StorageError => Ok(mock_hello()),
             Scenario::NotInstalled
             | Scenario::NeedsApproval
             | Scenario::TurnedOff

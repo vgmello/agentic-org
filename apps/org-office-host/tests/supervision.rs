@@ -489,7 +489,7 @@ fn the_host_answers_at_once_during_a_slow_startup_discard_and_a_create_waits_for
 }
 
 #[test]
-fn a_create_during_a_too_slow_startup_gets_unavailable() {
+fn a_create_during_a_too_slow_startup_gets_not_ready() {
     let home = TestHome::new();
     fs::create_dir_all(home.office_dir("01UNFINISHEDUNFINISHEDUNFI")).unwrap();
     home.script(json!({"discard": {"do": "ready", "delay_ms": 2000}}));

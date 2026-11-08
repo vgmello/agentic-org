@@ -19,6 +19,21 @@ export const RUN_MODES = [
 	{ id: 'scheduled', label: 'Scheduled', help: "Wakes on a schedule, and when it's needed." }
 ] as const;
 
+/** What ends a run: a mirror of the defaults HQ applies to every agent (U20, ada's agent-sessions design). The profile has no fields for them, so they are shown, not edited; change them here if HQ's defaults change. */
+export const RUN_LIMITS = {
+	idleMinutes: 5,
+	busyMinutesAtHome: 30,
+	busyHoursOnATask: 2
+} as const;
+
+/** The limits in words for a mode, or '' when nothing ends a run by itself (a person starts the agent). */
+export function runLimitsText(mode: string): string {
+	const stop = `a run stops after ${RUN_LIMITS.busyMinutesAtHome} minutes of work in its home, or ${RUN_LIMITS.busyHoursOnATask} hours on a task.`;
+	if (mode === 'on_call' || mode === 'scheduled') return `Defaults for all agents: it goes back to sleep after ${RUN_LIMITS.idleMinutes} minutes with nothing to do; ${stop}`;
+	if (mode === 'always_on') return `Defaults for all agents: ${stop}`;
+	return '';
+}
+
 /** The mode in words. A missing mode means a person starts the agent by hand (RUN-1); one this app can't read says so. */
 export function runModeLabel(mode: RunMode | undefined): string {
 	if (mode === undefined) return 'Started by a person';

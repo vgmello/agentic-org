@@ -44,6 +44,12 @@ export interface OfficeInfo {
 	next_restart_at?: string;
 }
 
+/**
+ * What the shell's live status feed sends (`office-status`): the whole list of this Mac's offices (when the feed
+ * starts and after it reconnects), or one office's updated record (`office.status_changed`).
+ */
+export type StatusUpdate = { kind: 'offices'; offices: OfficeInfo[] } | { kind: 'office'; office: OfficeInfo };
+
 /** Set when an office server answers `hello`. */
 export interface OfficeHello {
 	organization_name: string;
@@ -146,6 +152,12 @@ export const ORGANIZATION_NAME_MAX_CHARS = 64;
 export interface Position {
 	epoch: number;
 	seq: number;
+}
+
+/** The shell's live feed (`org-changed`): the organization changed, and its log is now at `position`. */
+export interface OrgChangedNotice {
+	organization_id: string;
+	position: Position;
 }
 
 /** A team. Teams own teams (a tree). Optional lead: a member of the team. */

@@ -1,10 +1,15 @@
 //! The app's view of an office server.
 //!
-//! `OfficeConnection` is the seam between the Tauri shell and an office. Today only `MockOffice`
-//! implements it. The real implementation will sit on `org-client` and the office-setup layer
-//! (install, login-service registration, start), neither of which exists yet.
+//! `OfficeConnection` is the seam between the Tauri shell and an office. `RealOffice` (on `org-client` and the
+//! login-service setup) is the app's default; `MockOffice` stands in for development and when there is no office home.
 
 use crate::org_command::OrgCommand;
+use crate::org_feed::OrgUpdate;
+pub use crate::status_feed::StatusSink;
+use std::sync::Arc;
+
+/// Where organization changes go (the UI's event channel).
+pub type OrgSink = Arc<dyn Fn(OrgUpdate) + Send + Sync>;
 use crate::work_engine::WorkError;
 use org_proto::{ApiError, CommandAccepted, HelloResult, OrgSnapshot, Organization};
 use serde::Serialize;
@@ -44,12 +49,28 @@ pub trait OfficeConnection: Send + Sync {
     /// starts anything, so it is safe to call often (the Offices screen checks every half minute). Every failure is
     /// reported as `setup/unreachable`. This says the host (or the mock) answers, not that the connected office is up:
     /// the screen shows Online only when the office's reported status is also `active` (OFC-12).
-    fn ping(&self) -> Result<(), SetupError>;
+    fn ping(&self) -> Result<HelloResult, SetupError>;
+
+    /// `office.restart` (app-only): ask the host to start an office that is `offline` or `unavailable` again. Refused as the
+    /// contract says: `unknown_method` from a host that doesn't list the `office.restart` capability, `not_found`,
+    /// `not_authorized`, `unavailable` (only for reasons a restart can't fix) and `not_ready` after the wait. `conflict`
+    /// (already starting or running) is not an error to the caller: it comes back as `Ok`. A mock with nothing to restart says Ok.
+    fn restart_office(&self, _office_id: &str) -> Result<(), ApiError> {
+        Err(ApiError::new(
+            org_proto::ErrorCode::UnknownMethod,
+            "This office can't be restarted from here.",
+        ))
+    }
 
     fn create_organization(&self, name: &str) -> Result<Organization, ApiError>;
 
     /// Every organization this office hosts (`organization.list`).
     fn list_organizations(&self) -> Result<Vec<Organization>, ApiError>;
+
+    /// Every organization this office hosts, read-only: never starts or restarts anything (the status checks use it).
+    fn peek_organizations(&self) -> Result<Vec<Organization>, ApiError> {
+        self.list_organizations()
+    }
 
     /// `org.snapshot`: the structure of an organization, from this machine's office. The call has no
     /// parameters on the wire: `organization_id` picks which organization's office the shell asks (the real
@@ -89,4 +110,15 @@ pub trait OfficeConnection: Send + Sync {
     /// True while the data this connection serves is invented (the mock office), so the UI says so.
     /// Every implementation says so: a stand-in that forgot would show invented data as real.
     fn serves_sample_data(&self) -> bool;
+
+    /// Start telling `sink` about office status changes as they happen. Once per office, at startup; the work runs
+    /// on a thread of its own for as long as the app lives. An office with no live status (the mock) does nothing.
+    fn follow_status(&self, _sink: StatusSink) {}
+
+    /// Where to report the changes of the organizations passed to `follow_org`. Set once, at startup.
+    fn set_org_sink(&self, _sink: OrgSink) {}
+
+    /// Start following one organization's changes (once; later calls do nothing), reporting to the sink. An office
+    /// with no live changes (the mock) does nothing.
+    fn follow_org(self: Arc<Self>, _organization_id: &str) {}
 }

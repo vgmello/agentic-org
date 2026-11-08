@@ -21,7 +21,7 @@ pub(crate) fn generate() -> io::Result<AppToken> {
 }
 
 /// Overwrites with zeros in a way the optimizer can't remove (best effort, as `AppToken` does).
-fn zero(bytes: &mut [u8]) {
+pub(crate) fn zero(bytes: &mut [u8]) {
     for b in bytes.iter_mut() {
         // SAFETY: `b` is a valid, aligned, exclusive reference to a u8.
         unsafe { std::ptr::write_volatile(b, 0) };

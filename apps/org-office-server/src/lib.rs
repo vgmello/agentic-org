@@ -13,7 +13,9 @@
 
 #![deny(unsafe_code)]
 
+mod bounded;
 pub mod fdswap;
+mod follow;
 mod keys;
 mod serve;
 mod signals;
@@ -258,6 +260,7 @@ fn serve_office(
                 let office = Arc::clone(&office);
                 Box::new(move || office.org_snapshot().map_err(|e| logged("snapshot", &e)))
             },
+            feed: Box::new(OfficeFeed(Arc::clone(&office))),
             submit: {
                 let office = Arc::clone(&office);
                 Box::new(move |command| {
@@ -336,6 +339,39 @@ fn log_causes(error: &OfficeError) {
     while let Some(inner) = cause {
         eprintln!("org-office-server:   caused by: {inner}");
         cause = inner.source();
+    }
+}
+
+/// The office's log, for `subscribe`.
+struct OfficeFeed(Arc<Office>);
+
+impl follow::OrgFeed for OfficeFeed {
+    fn head(&self) -> Result<org_proto::org::Position, String> {
+        self.0.org_head().map_err(|e| logged("head", &e))
+    }
+
+    fn can_resume_from(&self, after: org_proto::org::Position) -> Result<bool, String> {
+        self.0
+            .org_can_resume_from(after)
+            .map_err(|e| logged("resume check", &e))
+    }
+
+    fn changes_after(
+        &self,
+        after: org_proto::org::Position,
+        limit: usize,
+    ) -> Result<Vec<org_proto::org::OrgChangedData>, String> {
+        self.0
+            .org_changes_after(after, limit)
+            .map_err(|e| logged("log read", &e))
+    }
+
+    fn token(&self) -> u64 {
+        self.0.org_change_token()
+    }
+
+    fn wait(&self, seen: u64, timeout: std::time::Duration) -> u64 {
+        self.0.wait_for_org_change(seen, timeout)
     }
 }
 

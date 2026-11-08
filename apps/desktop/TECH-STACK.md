@@ -31,7 +31,7 @@ cd apps/desktop
 bun install
 bunx playwright install chromium   # once, for bun run test:e2e
 bun run dev                 # the UI in a browser on the mock, http://localhost:1420
-bun run tauri dev           # the real app (Rust mock until org-client exists)
+bun run tauri dev           # the real app, on the real office (AGENTIC_ORG_OFFICE=mock for the invented one)
 bun run check && bun run test && bun run test:e2e
 cargo test -p agentic-org   # from the repo root
 bun run tauri build --bundles app

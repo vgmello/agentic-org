@@ -5,9 +5,10 @@ import {
 	type Connection,
 	type HelloResult,
 	type LoginState,
-	type Organization
+	type Organization,
+	type StatusUpdate
 } from '$lib/proto';
-import { mockOffice } from './mock';
+import { createMockOffice } from './mock';
 import { tauriOffice } from './tauri';
 
 /**
@@ -20,7 +21,11 @@ export interface OfficeApi {
 	/** Make sure an office is installed, running and answering. */
 	ensureRunning(): Promise<HelloResult>;
 	/** Whether the running office answers. Read-only (never starts anything): safe to call often. */
-	ping(): Promise<void>;
+	ping(): Promise<HelloResult>;
+	/** The organizations as the host lists them now, read-only: it never starts or restarts anything (for the status checks). */
+	peekOrganizations(): Promise<Organization[]>;
+	/** Ask the host to start an office again (`office.restart`, app-only). Rejects with the host's refusal; an office already starting is not an error. */
+	restartOffice(officeId: string): Promise<void>;
 	/** Create an organization on this Mac's host (reached by `ensureRunning`), and remember it. */
 	createOrganization(name: string): Promise<Connection>;
 	/** The organizations this Mac already has, each with its offices here (`organization.list`). */
@@ -33,6 +38,8 @@ export interface OfficeApi {
 	setLoginItem(enabled: boolean): Promise<LoginState>;
 	/** Open System Settings at Login Items, where the owner approves it. */
 	openLoginSettings(): Promise<void>;
+	/** Be told when an office's status changes (the host's `office.status_changed`). Resolves to the function that stops listening. */
+	onOfficeStatus(listener: (update: StatusUpdate) => void): Promise<() => void>;
 }
 
 /** Normalize anything thrown by a call into an `AppError`. */
@@ -51,4 +58,4 @@ export function inTauri(): boolean {
 	return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
-export const officeApi: OfficeApi = inTauri() ? tauriOffice : mockOffice;
+export const officeApi: OfficeApi = inTauri() ? tauriOffice : createMockOffice({ testHook: true });

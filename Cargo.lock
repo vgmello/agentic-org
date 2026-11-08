@@ -12,6 +12,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 name = "agentic-org"
 version = "0.0.0"
 dependencies = [
+ "libc",
  "objc2",
  "objc2-foundation",
  "objc2-service-management",
@@ -2212,10 +2213,13 @@ dependencies = [
 name = "org-office-host"
 version = "0.0.0"
 dependencies = [
+ "core-foundation",
  "libc",
  "org-office-host",
  "org-office-launch",
  "org-proto",
+ "security-framework",
+ "serde",
  "serde_json",
  "tempfile",
 ]
@@ -2240,6 +2244,7 @@ dependencies = [
  "org-office-launch",
  "org-proto",
  "security-framework",
+ "serde",
  "serde_json",
  "tempfile",
 ]

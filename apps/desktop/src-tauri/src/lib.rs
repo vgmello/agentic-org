@@ -12,8 +12,12 @@ mod office;
 mod org_agent_rules;
 mod org_command;
 mod org_engine;
+mod org_feed;
 mod org_mock;
+mod pacing;
 mod real;
+mod status_feed;
+pub mod stdio;
 mod tray;
 mod work_engine;
 
@@ -25,7 +29,7 @@ use org_proto::{ApiError, CommandAccepted, HelloResult, OfficeStatus, OrgSnapsho
 use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 /// What the shell holds for the UI commands.
 struct AppState {
@@ -113,9 +117,22 @@ impl AppState {
 
     /// Whether the connected office answers. Read-only: no start lock, no epoch, no restart, so a status
     /// check can't pile up behind (or cause) a start. Before the office has been started there is nothing to ask.
-    fn ping(&self) -> Result<(), CommandError> {
+    fn ping(&self) -> Result<HelloResult, CommandError> {
         self.ensure_connected()?;
         Ok(self.office.ping()?)
+    }
+
+    /// The listing for the status checks: needs a connected office, and never starts or restarts it.
+    fn peek_organizations(&self) -> Result<Vec<Organization>, CommandError> {
+        self.ensure_connected()?;
+        Ok(self.office.peek_organizations()?)
+    }
+
+    /// Ask the host to start an office again (`office.restart`). Not run through `with_restart`: restarting the host
+    /// over a refused restart would answer nothing.
+    fn restart_office(&self, office_id: &str) -> Result<(), CommandError> {
+        self.ensure_connected()?;
+        Ok(self.office.restart_office(office_id)?)
     }
 
     fn start_locked(&self) -> Result<HelloResult, CommandError> {
@@ -259,8 +276,11 @@ impl AppState {
     /// The structure of an organization this machine hosts, and whether it is invented.
     fn org_snapshot(&self, organization_id: &str) -> Result<OrgView, CommandError> {
         self.ensure_connected()?;
+        let snapshot = self.office.org_snapshot(organization_id)?;
+        // Reading it worked, so the organization is there to follow (once): its changes come to the UI as they happen.
+        Arc::clone(&self.office).follow_org(organization_id);
         Ok(OrgView {
-            snapshot: self.office.org_snapshot(organization_id)?,
+            snapshot,
             sample: self.office.serves_sample_data(),
         })
     }
@@ -333,9 +353,26 @@ async fn office_ensure_running(
 }
 
 #[tauri::command]
-async fn office_ping(state: State<'_, Arc<AppState>>) -> Result<(), CommandError> {
+async fn office_ping(state: State<'_, Arc<AppState>>) -> Result<HelloResult, CommandError> {
     let state = Arc::clone(&state);
     blocking(move || state.ping()).await
+}
+
+#[tauri::command]
+async fn organizations_peek(
+    state: State<'_, Arc<AppState>>,
+) -> Result<Vec<Organization>, CommandError> {
+    let state = Arc::clone(&state);
+    blocking(move || state.peek_organizations()).await
+}
+
+#[tauri::command]
+async fn office_restart(
+    state: State<'_, Arc<AppState>>,
+    office_id: String,
+) -> Result<(), CommandError> {
+    let state = Arc::clone(&state);
+    blocking(move || state.restart_office(&office_id)).await
 }
 
 /// Whether the office host's login service is on, waiting for the owner's approval, or missing.
@@ -385,6 +422,63 @@ async fn login_item_open_settings(
     blocking(move || {
         login.open_settings();
         Ok(())
+    })
+    .await
+}
+
+/// The address a link in a chat message may open: http or https, with a host, no spaces or control characters.
+/// Anything else (`javascript:`, `file:`, a custom scheme, an option-looking string) is refused before a process starts.
+fn external_url(raw: &str) -> Result<&str, &'static str> {
+    // A link the app draws can be 2000 characters raw and grow when its address is normalised (percent-encoding).
+    const MAX: usize = 8192;
+    if raw.is_empty() || raw.len() > MAX {
+        return Err("That link is not an address this app opens.");
+    }
+    if raw
+        .chars()
+        .any(|c| c.is_control() || c.is_whitespace() || matches!(c, '<' | '>' | '"'))
+    {
+        return Err("That link is not an address this app opens.");
+    }
+    let lower = raw.to_ascii_lowercase();
+    let rest = lower
+        .strip_prefix("https://")
+        .or_else(|| lower.strip_prefix("http://"))
+        .ok_or("Only http and https links are opened.")?;
+    match rest.chars().next() {
+        Some(c) if !matches!(c, '/' | '?' | '#' | ':' | '@') => Ok(raw),
+        _ => Err("That link has no host."),
+    }
+}
+
+/// Hand an already checked address to the system browser. No shell is involved: the address is one argument.
+fn open_in_browser(url: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let opener = "/usr/bin/open";
+    #[cfg(not(target_os = "macos"))]
+    let opener = "xdg-open";
+    let status = std::process::Command::new(opener)
+        .arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|_| "The browser could not be started.".to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("The browser did not open the link.".to_string())
+    }
+}
+
+/// Open a link from a chat message in the browser. The webview cannot open a new window itself, so a link would do nothing.
+#[tauri::command]
+async fn open_external_url(url: String) -> Result<(), CommandError> {
+    let url = external_url(&url)
+        .map_err(|reason| CommandError::local("open_external_url", reason))?
+        .to_string();
+    blocking(move || {
+        open_in_browser(&url).map_err(|reason| CommandError::local("open_external_url", reason))
     })
     .await
 }
@@ -489,26 +583,27 @@ async fn connections_list(
     blocking(move || state.connections()).await
 }
 
-/// Which office the app talks to: the real one (the host and HQ office sockets, through `org-client`) when
-/// `AGENTIC_ORG_OFFICE=real` and there is an office home to look in, otherwise the mock. Until the host is bundled
-/// and started by the app, the mock is the default.
+/// Which office the app talks to: the real one (the host and HQ office sockets, through `org-client`) unless
+/// `AGENTIC_ORG_OFFICE=mock` asks for the invented one (development, screenshots). With no office home to look in
+/// there is no real office to reach, so the mock stands in (its data is flagged as sample data).
 fn choose_office(
     data: &std::path::Path,
     choice: Option<&str>,
     real: Option<real::RealOffice>,
 ) -> (Arc<dyn OfficeConnection>, std::path::PathBuf) {
     match (choice, real) {
-        (Some("real"), Some(real)) => (Arc::new(real), data.join("real")),
-        (Some("real"), None) => {
-            eprintln!("AGENTIC_ORG_OFFICE=real, but there is no office folder to look in: using the mock office.");
-            let dir = data.join("mock");
-            (Arc::new(mock::MockOffice::from_env(dir.clone())), dir)
-        }
-        _ => {
-            let dir = data.join("mock");
-            (Arc::new(mock::MockOffice::from_env(dir.clone())), dir)
+        (Some("mock"), _) => mock_office(data),
+        (_, Some(real)) => (Arc::new(real), data.join("real")),
+        (_, None) => {
+            eprintln!("There is no office folder to look in: using the mock office.");
+            mock_office(data)
         }
     }
+}
+
+fn mock_office(data: &std::path::Path) -> (Arc<dyn OfficeConnection>, std::path::PathBuf) {
+    let dir = data.join("mock");
+    (Arc::new(mock::MockOffice::from_env(dir.clone())), dir)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -524,6 +619,15 @@ pub fn run() {
                 std::env::var("AGENTIC_ORG_OFFICE").ok().as_deref(),
                 real::RealOffice::from_env(&data),
             );
+            // Live office status goes to the UI as it changes (the mock has none).
+            let handle = app.handle().clone();
+            office.follow_status(Arc::new(move |update| {
+                let _ = handle.emit("office-status", &update);
+            }));
+            let handle = app.handle().clone();
+            office.set_org_sink(Arc::new(move |update| {
+                let _ = handle.emit("org-changed", &update);
+            }));
             app.manage(Arc::new(AppState {
                 office,
                 store: ConnectionStore::new(dir),
@@ -548,6 +652,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             office_ensure_running,
             office_ping,
+            office_restart,
+            organizations_peek,
             organization_create,
             organizations_list,
             organization_open,
@@ -559,7 +665,8 @@ pub fn run() {
             work_command,
             login_item_status,
             login_item_set,
-            login_item_open_settings
+            login_item_open_settings,
+            open_external_url
         ])
         .build(tauri::generate_context!())
         .expect("error while building Agentic Org")
@@ -756,9 +863,11 @@ mod tests {
         assert_eq!(off.unregister_calls.load(Ordering::SeqCst), 1);
     }
 
-    const COMMANDS: [&str; 14] = [
+    const COMMANDS: [&str; 17] = [
         "office_ensure_running",
         "office_ping",
+        "office_restart",
+        "organizations_peek",
         "organization_create",
         "organizations_list",
         "organization_open",
@@ -771,6 +880,7 @@ mod tests {
         "login_item_status",
         "login_item_set",
         "login_item_open_settings",
+        "open_external_url",
     ];
 
     /// Every command the UI invokes is declared in `build.rs`, allowed in the capability file and
@@ -792,6 +902,7 @@ mod tests {
         let mut from_ui = quoted(include_str!("../../src/lib/office/tauri.ts"));
         from_ui.extend(quoted(include_str!("../../src/lib/org/tauri.ts")));
         from_ui.extend(quoted(include_str!("../../src/lib/work/tauri.ts")));
+        from_ui.extend(quoted(include_str!("../../src/lib/open-external.ts")));
         let mut from_build = quoted(include_str!("../build.rs"));
         let mut declared: Vec<String> = COMMANDS.iter().map(|c| c.to_string()).collect();
         from_ui.sort();
@@ -814,6 +925,51 @@ mod tests {
                 "{name} not registered"
             );
         }
+    }
+
+    /// A link from a chat message opens in the browser only if it is an http or https address with a host: nothing that could
+    /// run code, read a file, start another program or look like an option reaches the process.
+    #[test]
+    fn external_links_are_http_or_https_with_a_host_and_nothing_else() {
+        for ok in [
+            "https://example.com",
+            "http://example.com/a?b=1#c",
+            "HTTPS://Example.com/x",
+            "https://user@example.com/",
+            "https://192.168.0.1:8080/",
+        ] {
+            assert_eq!(external_url(ok), Ok(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "javascript:alert(1)",
+            "data:text/html,<b>x",
+            "file:///etc/passwd",
+            "vbscript:x",
+            "mailto:a@b.c",
+            "ftp://example.com",
+            "//evil.com",
+            "-a Terminal",
+            "--help",
+            "https://",
+            "https:///path",
+            "https://?q=1",
+            "https://#frag",
+            "https://:80/",
+            "https://@host/",
+            "https://exa mple.com",
+            "https://example.com/\n--flag",
+            "https://example.com/\u{0}",
+            "https://example.com/<x>",
+            "https://example.com/\"x",
+            "not a url",
+        ] {
+            assert!(external_url(bad).is_err(), "{bad:?}");
+        }
+        let long = format!("https://example.com/{}", "a".repeat(8192));
+        assert!(external_url(&long).is_err());
+        let longest = format!("https://example.com/{}", "a".repeat(8192 - 20));
+        assert_eq!(external_url(&longest), Ok(longest.as_str()));
     }
 
     fn office(id: &str, role: org_proto::OfficeRole) -> org_proto::OfficeInfo {
@@ -959,16 +1115,10 @@ mod tests {
                     message: "down".into(),
                 });
             }
-            Ok(HelloResult {
-                api_version: org_proto::API_VERSION,
-                server_version: "t".into(),
-                host: "This Mac".into(),
-                office: None,
-                capabilities: vec![],
-            })
+            Ok(HelloResult::host("t", "This Mac"))
         }
-        fn ping(&self) -> Result<(), office::SetupError> {
-            Ok(())
+        fn ping(&self) -> Result<HelloResult, office::SetupError> {
+            self.ensure_running()
         }
         fn create_organization(&self, _: &str) -> Result<Organization, ApiError> {
             unreachable!()
@@ -1186,7 +1336,7 @@ mod tests {
     }
 
     #[test]
-    fn the_mock_is_the_default_and_the_real_office_needs_asking_for_and_a_home() {
+    fn the_real_office_is_the_default_and_the_mock_needs_asking_for_or_no_home() {
         let data = std::env::temp_dir().join(format!("agentic-org-choose-{}", std::process::id()));
         let real = || {
             Some(real::RealOffice::new(
@@ -1195,20 +1345,25 @@ mod tests {
             ))
         };
         let (office, dir) = choose_office(&data, None, real());
-        assert!(office.serves_sample_data(), "the mock by default");
-        assert_eq!(dir, data.join("mock"));
-        let (office, dir) = choose_office(&data, Some("real"), real());
-        assert!(!office.serves_sample_data());
+        assert!(!office.serves_sample_data(), "the real office by default");
         assert_eq!(
             dir,
             data.join("real"),
             "its connections are kept apart from the mock's"
         );
-        let (office, dir) = choose_office(&data, Some("real"), None);
+        let (office, _) = choose_office(&data, Some("real"), real());
+        assert!(!office.serves_sample_data());
+        let (office, _) = choose_office(&data, Some("anything else"), real());
+        assert!(
+            !office.serves_sample_data(),
+            "only `mock` asks for the mock"
+        );
+        let (office, dir) = choose_office(&data, Some("mock"), real());
+        assert!(office.serves_sample_data());
+        assert_eq!(dir, data.join("mock"));
+        let (office, dir) = choose_office(&data, None, None);
         assert!(office.serves_sample_data(), "no office home: the mock");
         assert_eq!(dir, data.join("mock"));
-        let (office, _) = choose_office(&data, Some("mock"), real());
-        assert!(office.serves_sample_data());
         let _ = std::fs::remove_dir_all(&data);
     }
 }

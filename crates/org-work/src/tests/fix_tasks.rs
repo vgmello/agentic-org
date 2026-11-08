@@ -269,7 +269,8 @@ fn the_first_fix_task_to_start_moves_a_triaged_bug_to_in_progress() {
             to: ItemStatus::InProgress,
             resolution: None,
             reason: None,
-            anyway: None
+            anyway: None,
+            duplicate_of: None,
         }
     );
 
@@ -464,6 +465,7 @@ fn fixed_stays_when_a_required_bug_step_is_left_and_an_event_says_so() {
             resolution: None,
             reason: Some("all fix tasks are done; required steps are left".into()),
             anyway: None,
+            duplicate_of: None,
         }
     );
     // There is nothing to undo in it.
@@ -514,7 +516,8 @@ fn reopening_a_fix_task_takes_a_fixed_bug_back_to_in_progress() {
             to: ItemStatus::InProgress,
             resolution: None,
             reason: None,
-            anyway: None
+            anyway: None,
+            duplicate_of: None,
         }
     );
     // And to todo.
