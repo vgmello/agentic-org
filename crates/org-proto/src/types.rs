@@ -96,7 +96,10 @@ pub enum OfficeStatus {
 #[non_exhaustive]
 pub enum OfficeStatusReason {
     /// The office's data exists but its encryption key is gone (e.g. removed from the
-    /// Keychain), so it can't be opened. Fatal: `office.restart` refuses it.
+    /// Keychain), so it can't be opened. Fatal until restored: the host doesn't retry it on
+    /// its own, but `office.restart` retries it (e.g. after the owner restores the key). If
+    /// the key is still missing, the office goes back to `unavailable` with this reason, with
+    /// no backoff retries.
     KeyMissing,
     /// Another process still held the office's lock when its server started (e.g. an old
     /// server that hadn't exited yet). The host retries.

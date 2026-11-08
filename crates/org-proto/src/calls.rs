@@ -160,15 +160,19 @@ impl Call for OfficeAppToken {
 /// It clears an `unavailable` status and resets the restart backoff. It answers once the
 /// start is under way; the office's new status arrives as `office.status_changed` events.
 ///
-/// It refuses the fatal reasons a restart can't fix: `key_missing`, `unsupported_version`
-/// and `invalid_request`. Any other reason, or none, is restarted (e.g. `restarts_exhausted`,
-/// `stopped_by_owner`, or an `offline` office waiting for its next backoff step).
+/// It refuses the two reasons a restart can't fix: `unsupported_version` and
+/// `invalid_request`. Any other reason, or none, is restarted (e.g. `key_missing`,
+/// `restarts_exhausted`, `stopped_by_owner`, or an `offline` office waiting for its next
+/// backoff step). `key_missing` is restarted so an owner who restores the Keychain item
+/// needn't restart the host; if the key is still missing, the office goes back to
+/// `unavailable` with `key_missing`, with no backoff retries (seen as `office.status_changed`
+/// events), not as an error from this call.
 ///
 /// App-only: the host verifies the caller's code signature as for [`OfficeAppToken`].
 /// Errors: `not_authorized` (the signature check failed), `not_found` (no such office here),
 /// `conflict` (the office isn't `offline` or `unavailable`, e.g. it's already `starting` or
-/// `active`), `unavailable` (a fatal reason above; the message says why). A host older than
-/// this call answers `unknown_method`.
+/// `active`), `unavailable` (`unsupported_version` or `invalid_request`; the message says
+/// why). A host older than this call answers `unknown_method`.
 pub struct OfficeRestart;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

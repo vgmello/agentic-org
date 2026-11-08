@@ -491,7 +491,8 @@ fn office_status_reason_and_next_restart_round_trip_and_are_omitted_when_absent(
         offline_hq()
     );
 
-    // A fatal reason, with no restart pending.
+    // A fatal reason (until the key is restored and `office.restart` retries), with no
+    // restart pending.
     let fatal = OfficeInfo {
         status: OfficeStatus::Unavailable,
         status_reason: Some(OfficeStatusReason::KeyMissing),

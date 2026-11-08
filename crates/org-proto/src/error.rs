@@ -60,8 +60,8 @@ pub enum ErrorCode {
     NotAuthorized,
     /// What was asked for exists but can't serve now, e.g. the office isn't running, so there's
     /// no app token to hand out. Trying again later may work. For `office.restart`, though, it
-    /// means the office's reason is one a restart can't fix (e.g. `key_missing`); the message
-    /// says why.
+    /// means the office's reason is one a restart can't fix (`unsupported_version` or
+    /// `invalid_request`); the message says why.
     Unavailable,
     /// A code this build doesn't know (sent by a newer server).
     #[serde(other)]
