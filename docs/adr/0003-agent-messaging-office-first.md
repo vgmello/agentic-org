@@ -408,7 +408,7 @@ org-agent msg read   <id> | --next [--office <id>] [--as <member>] [--json]
 org-agent msg wait   [--timeout 60s] [--from <member>] [--urgent-only] [--office <id>] [--as <member>] [--json]
 ```
 
-- **Addressing (`--to`, `--from`, `--as`):** Accepts a member's ULID `id`, their unique `name` (case-insensitive match against `org.db`'s `members` table), or `"owner"` (which resolves to the organization's `owner: true` member). If a display name matches more than one member in `org.db`, the server rejects it with `ErrorCode::InvalidRequest` instructing the caller to pass the member's ULID.
+- **Addressing (`--to`, `--from`, `--as`):** Accepts a member's ULID `id`, their **handle** (case-insensitive; an agent's `messaging_name` or a person's `name`, which share ONE namespace with the reserved `owner`, so a handle names at most one member; amended 2026-11-08: one handle namespace, ada), or `"owner"` (which resolves to the organization's `owner: true` member). If a display name matches more than one member in `org.db`, the server rejects it with `ErrorCode::InvalidRequest` instructing the caller to pass the member's ULID.
 - **Reserved names & kinds:** `"office"` is reserved for the server (`msg.bind { agent: "office" }`, `to: "office"`, or a client sending `kind: "delivery_failed"` fails with `ErrorCode::InvalidRequest`).
 - **Exit codes:**
 
@@ -537,7 +537,7 @@ Per [`teams-and-org-chart.md`](../design/teams-and-org-chart.md) ("Who agents ma
   - `status.set { text?: String, ttl_ms?: u64 } → { status: Option<String>, expires_at: Option<String> }` (`text: None` clears the caller's status line).
 - **Agent & Shared Messaging Calls (handled by `org-mailbox`):**
   - `msg.bind { agent?: String, app_token?: String } → { member_id?: String, office_id: String }`
-    - Resolves `agent` (member ID, unique member name, or `"owner"`; `"office"` is rejected) against `org.db`, requires a valid `app_token` when binding as a `Person`/`owner` (or for app-wide queries), and binds the connection's acting member.
+    - Resolves `agent` (member ID, handle, or `"owner"`; `"office"` is rejected) against `org.db`, requires a valid `app_token` when binding as a `Person`/`owner` (or for app-wide queries), and binds the connection's acting member.
   - `msg.send { id: String, to: String, kind: String, priority?: MessagePriority, subject?: String, body: String, meta?: BTreeMap<String, Value>, reply_to?: String, expires_at?: String, ttl_ms?: u64 } → { id: String, thread_id: String, local_seq: u64, origin_seq: u64 }`
   - `msg.reply { id: String, to_id: String, priority?: MessagePriority, subject?: String, body: String, meta?: BTreeMap<String, Value> } → { id: String, thread_id: String, local_seq: u64, origin_seq: u64 }`
   - `msg.ask { id: String, to: String, priority?: MessagePriority, subject?: String, body: String, meta?: BTreeMap<String, Value>, ttl_ms: u64, wait_ms: u64 } → { reply: Message }`
@@ -607,7 +607,7 @@ apps/org-office-server (server-dev) ─▶ crates/org-office (server-dev) ──
 ```rust
 /// Narrow read-only port into `org.db` (shared with tasks; full `who` and `status.set` live in `org-office`).
 pub trait MemberDirectory {
-    /// Resolve an active member by ULID, unique case-insensitive name, or "owner" at the office's applied Position.
+    /// Resolve an active member by ULID, case-insensitive handle (an agent's messaging_name or a person's name), or "owner" at the office's applied Position.
     /// Returns `Err(StoreError::AmbiguousName)` if a display name matches >1 member in `org.db`.
     fn resolve_member(&self, id_or_name: &str) -> Result<Option<(Member, Position)>, StoreError>;
 }
