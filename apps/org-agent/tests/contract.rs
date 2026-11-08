@@ -1033,6 +1033,64 @@ fn a_symlink_at_relay_lock_is_refused_and_its_target_kept() {
     assert_eq!(fs::read(&target).unwrap(), b"keep me");
 }
 
+fn mkfifo(path: &std::path::Path) {
+    let made = std::process::Command::new("mkfifo")
+        .arg(path)
+        .status()
+        .unwrap();
+    assert!(made.success());
+}
+
+#[test]
+fn a_fifo_or_symlink_at_last_seen_never_blocks_or_is_followed() {
+    // Regression: `.last_seen` was opened write+create with a blocking, symlink-following
+    // open, so a FIFO there hung every `msg` command of that agent.
+    let env = setup("last_seen");
+    let last_seen = env.root.join(format!("spool/inbox/{ME}/.last_seen"));
+    let _ = fs::remove_file(&last_seen);
+    mkfifo(&last_seen);
+    let r = run_with_timeout(&env, &["msg", "inbox"], Duration::from_secs(10));
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    assert!(
+        fs::symlink_metadata(&last_seen).unwrap().is_file(),
+        "replaced"
+    );
+
+    let target = env.root.join("elsewhere");
+    fs::remove_file(&last_seen).unwrap();
+    std::os::unix::fs::symlink(&target, &last_seen).unwrap();
+    let r = run_with_timeout(&env, &["msg", "inbox"], Duration::from_secs(10));
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    assert!(!target.exists(), "the link's target is never created");
+    assert!(
+        fs::symlink_metadata(&last_seen).unwrap().is_file(),
+        "replaced"
+    );
+}
+
+#[test]
+fn a_fifo_or_symlink_at_meta_lock_is_a_clear_io_error() {
+    let env = setup("meta_lock");
+    let lock = env.root.join(format!("spool/inbox/{ME}/.meta.lock"));
+    let _ = fs::remove_file(&lock);
+    mkfifo(&lock);
+    let r = run_with_timeout(&env, &["msg", "notify"], Duration::from_secs(10));
+    assert_eq!(r.code, 4, "{}", r.stderr);
+    assert!(
+        r.stderr.contains(".meta.lock") && r.stderr.contains("FIFO"),
+        "{}",
+        r.stderr
+    );
+
+    let target = env.root.join("elsewhere");
+    fs::remove_file(&lock).unwrap();
+    std::os::unix::fs::symlink(&target, &lock).unwrap();
+    let r = run_with_timeout(&env, &["msg", "notify"], Duration::from_secs(10));
+    assert_eq!(r.code, 4, "{}", r.stderr);
+    assert!(r.stderr.contains("symlink"), "{}", r.stderr);
+    assert!(!target.exists(), "the link's target is never created");
+}
+
 #[test]
 fn any_msg_command_marks_the_caller_online_in_who() {
     let env = setup("presence_cli");

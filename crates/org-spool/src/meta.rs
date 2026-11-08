@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::envelope::{validate_agent_id, Envelope, MAX_ENVELOPE_BYTES};
-use crate::safe_read::{read_spool_file, SpoolFile};
+use crate::safe_read::{open_regular_nofollow, read_spool_file, SpoolFile};
 use crate::spool::{Spool, SpoolError};
 use crate::time::{format_iso8601_utc, is_valid_iso8601_utc, parse_duration_arg};
 use crate::ulid::{generate_ulid, is_valid_ulid};
@@ -622,21 +622,36 @@ impl Spool {
         if !self.is_registered(agent) {
             return;
         }
-        if let Ok(file) = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .mode(0o600)
-            .open(self.agent_last_seen_path(agent))
-        {
+        let path = self.agent_last_seen_path(agent);
+        let open = || {
+            open_regular_nofollow(
+                OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(false)
+                    .mode(0o600),
+                &path,
+            )
+        };
+        // Never blocks on a FIFO or follows a symlink: anything but a regular file there is
+        // replaced (the entry itself, never its target).
+        let file = match open() {
+            Err(e) if e.kind() == io::ErrorKind::InvalidData => {
+                let _ = fs::remove_file(&path);
+                open()
+            }
+            other => other,
+        };
+        if let Ok(file) = file {
             let _ = file.set_modified(SystemTime::now());
         }
     }
 
     fn last_seen(&self, agent: &str) -> Option<SystemTime> {
-        fs::metadata(self.agent_last_seen_path(agent))
-            .and_then(|m| m.modified())
+        fs::symlink_metadata(self.agent_last_seen_path(agent))
             .ok()
+            .filter(|m| m.file_type().is_file())
+            .and_then(|m| m.modified().ok())
     }
 
     /// Acquire an exclusive `flock` on `inbox/<agent>/.meta.lock` and execute `f`.
@@ -650,13 +665,17 @@ impl Spool {
             return Err(SpoolError::NotFound(format!("'{agent}' is not registered")));
         }
         let lock_path = self.agent_meta_lock_path(agent);
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .mode(0o600)
-            .open(&lock_path)?;
+        // Never follows a symlink (it would create or touch its target) or blocks on a FIFO:
+        // anything but a regular file there is an I/O error naming it.
+        let file = open_regular_nofollow(
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .mode(0o600),
+            &lock_path,
+        )?;
         loop {
             let rc = unsafe { flock(file.as_raw_fd(), LOCK_EX) };
             if rc == 0 {
