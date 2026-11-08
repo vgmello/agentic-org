@@ -90,6 +90,11 @@ export const API_ERROR_CODES = [
 	'unknown_recipient',
 	'not_authorized',
 	'unavailable',
+	// org_proto::work (ada/proto-work-p1 @ 495ccff): the connection is not bound to a member; a write over the size limit;
+	// required checklist steps are not done.
+	'not_bound',
+	'too_large',
+	'checklist_incomplete',
 	'unknown'
 ] as const;
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
@@ -126,6 +131,37 @@ export interface Team {
 /** A kind this build doesn't know decodes as `unknown` (a missing kind is an error on the wire). */
 export type MemberKind = 'agent' | 'person' | 'unknown';
 
+/** What an agent runs on. A runtime this build doesn't know is `unknown` (or `{ other }` for a named one). */
+export type AgentRuntime = 'claude_code' | 'codex' | 'antigravity' | { other: string } | 'unknown';
+/** Whether the agent takes work. `unknown` is never read as working. */
+export type AgentStatus = 'active' | 'paused' | 'offboarded' | 'unknown';
+/** How an agent is run. Missing means a person starts it. */
+export type RunMode = 'always_on' | 'on_call' | 'scheduled' | 'unknown';
+
+/** When a scheduled agent runs. Both may be empty if a newer writer left them out. */
+export interface Schedule {
+	spec: string;
+	time_zone: string;
+}
+
+/** Who an agent is and how it runs (`AgentProfile` in org-proto). Set for agents, absent for people. */
+export interface AgentProfile {
+	role: string;
+	title: string;
+	focus?: string;
+	runtime: AgentRuntime;
+	model?: string;
+	run_mode?: RunMode;
+	schedule?: Schedule;
+	/** An absolute path on the agent's office's machine, shown and never opened by the app. */
+	home?: string;
+	/** The handle agents address it by (`--to <handle>`). */
+	messaging_name: string;
+	status: AgentStatus;
+	/** RFC 3339, set exactly when `status` is `offboarded`. */
+	offboarded_at?: string;
+}
+
 /**
  * An agent or a person. The owner is a person with `owner: true`: in no team, full rights
  * everywhere. `office_id` places an agent in an office; people aren't placed in offices.
@@ -139,6 +175,10 @@ export interface Member {
 	owner?: boolean;
 	office_id?: string;
 	reports_to_member_id?: string;
+	/** Agents only. */
+	agent?: AgentProfile;
+	/** RFC 3339, set by HQ when the member was created; missing on older records. */
+	created_at?: string;
 	version: number;
 }
 
@@ -163,6 +203,25 @@ export interface ProjectTeam {
 export interface ProjectSummary {
 	id: string;
 	name: string;
+}
+
+/**
+ * An organization's structure as the app reads it. App-local (not in `org-proto`): `sample` is true while the
+ * snapshot is invented because the office behind it is the mock.
+ */
+export interface OrgView {
+	snapshot: OrgSnapshot;
+	sample: boolean;
+}
+
+/** What happened to an organization command: committed by HQ, or queued while HQ is unreachable. */
+export type CommandStatus = 'committed' | 'queued' | 'unknown';
+
+/** The answer to every organization command (an error means HQ rejected it). */
+export interface CommandAccepted {
+	status: CommandStatus;
+	/** Set when `status` is `committed`. */
+	position?: Position;
 }
 
 /** Everything the org chart needs, as of `position` (`org.snapshot`). */
@@ -192,3 +251,5 @@ export interface OfficeAppTokenParams {
 export interface OfficeAppTokenResult {
 	app_token: string;
 }
+
+export * from './proto-work';

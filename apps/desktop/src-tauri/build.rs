@@ -8,7 +8,12 @@ fn main() {
             "organization_create",
             "organizations_list",
             "organization_open",
+            "org_snapshot",
+            "org_command",
             "connections_list",
+            "work_snapshot",
+            "work_get",
+            "work_command",
         ]),
     ))
     .expect("failed to run tauri-build");

@@ -14,6 +14,11 @@
     "allow-connections-list",
     "allow-organizations-list",
     "allow-organization-open",
+    "allow-org-snapshot",
+    "allow-org-command",
+    "allow-work-snapshot",
+    "allow-work-get",
+    "allow-work-command",
     "core:event:allow-listen",
     "core:event:allow-unlisten"
   ]

@@ -1,14 +1,16 @@
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import { highlightedByOffice, leadOf, membersOfTeam, projectsOfTeam, subTeamCount, type OfficeFilter, type TeamNode } from '$lib/org/model';
-	import type { OrgSnapshot } from '$lib/proto';
+	import type { OrgSnapshot, Team } from '$lib/proto';
 
 	let {
 		snapshot,
 		tree,
 		filter = { kind: 'all' },
 		highlightLabel = '',
-		knownOffices
-	}: { snapshot: OrgSnapshot; tree: TeamNode[]; filter?: OfficeFilter; highlightLabel?: string; knownOffices?: ReadonlySet<string> } = $props();
+		knownOffices,
+		actions
+	}: { snapshot: OrgSnapshot; tree: TeamNode[]; filter?: OfficeFilter; highlightLabel?: string; knownOffices?: ReadonlySet<string>; actions?: Snippet<[Team]> } = $props();
 </script>
 
 <!-- The same tree as the chart, as a plain nested list: for screen readers and for reading it in order (TEAM-10). -->
@@ -18,7 +20,7 @@
 			{@const members = membersOfTeam(snapshot, node.team.id)}
 			{@const lead = leadOf(snapshot, node.team)}
 			<li data-testid="team-list-item">
-				<p class="text-sm/6 font-semibold text-white">{node.team.name}</p>
+				<p class="flex items-center gap-x-1 text-sm/6 font-semibold text-white">{node.team.name}{#if actions}{@render actions(node.team)}{/if}</p>
 				<p class="text-xs/5 text-gray-400">
 					{lead ? `Lead: ${lead.name}` : 'No lead'} ·
 					{members.length === 0

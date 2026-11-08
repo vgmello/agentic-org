@@ -1,6 +1,7 @@
 <script lang="ts">
 	import './org-tree.css';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
+	import type { Snippet } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import MemberTile from './MemberTile.svelte';
 	import {
@@ -17,7 +18,7 @@
 		type OfficeFilter,
 		type TeamNode
 	} from '$lib/org/model';
-	import type { Member, OrgSnapshot } from '$lib/proto';
+	import type { Member, OrgSnapshot, Team } from '$lib/proto';
 
 	let {
 		snapshot,
@@ -28,7 +29,10 @@
 		onselect,
 		fit = true,
 		highlightLabel = 'here',
-		knownOffices
+		knownOffices,
+		actions,
+		justAdded,
+		onremoveproject
 	}: {
 		snapshot: OrgSnapshot;
 		tree: TeamNode[];
@@ -41,6 +45,12 @@
 		/** What the office-filter tag says: the filtered office's name. */
 		highlightLabel?: string;
 		knownOffices?: ReadonlySet<string>;
+		/** Rendered in each card's header: the team's menu. */
+		actions?: Snippet<[Team]>;
+		/** A team that was just created or changed: ringed for a moment. */
+		justAdded?: string;
+		/** Take a team off a project (the × on the project's row). */
+		onremoveproject?: (projectId: string, team: Team) => void;
 	} = $props();
 
 	// Below this the tiles would be too small to hit: scroll instead of shrinking further.
@@ -96,8 +106,11 @@
 	{@const projects = projectsOfTeam(snapshot, team.id)}
 	{@const open = !collapsed.has(team.id)}
 	<div class="flex w-64 flex-col items-center" data-testid="team-card" data-team={team.id}>
-		<div class="w-full rounded-xl bg-gray-800/50 p-3 text-left outline-1 -outline-offset-1 outline-white/10">
-			<h3 class="truncate text-sm/6 font-semibold text-white" title={team.name}>{team.name}</h3>
+		<div class="w-full rounded-xl bg-gray-800/50 p-3 text-left outline-1 -outline-offset-1 {justAdded === team.id ? 'outline-2 outline-indigo-400' : 'outline-white/10'}">
+			<div class="flex items-start justify-between gap-x-1">
+				<h3 class="min-w-0 truncate text-sm/6 font-semibold text-white" title={team.name}>{team.name}</h3>
+				{#if actions}<span class="-mt-1 -mr-1 shrink-0">{@render actions(team)}</span>{/if}
+			</div>
 			<p class="text-xs/5 text-gray-400">
 				{#if lead}Lead: <span class="break-words text-gray-200">{lead.name}</span>{:else}No lead{/if}
 			</p>
@@ -132,6 +145,9 @@
 						<li class="flex flex-wrap items-center gap-x-2">
 							<span class="font-medium break-words text-gray-200">{project.name}</span>
 							<span class="text-gray-400">· {lead ? `lead ${lead.name}` : 'No lead'}</span>
+							{#if onremoveproject}
+								<button type="button" aria-label="Remove {project.name} from {team.name}" onclick={() => onremoveproject(project.id, team)} class="ml-auto rounded px-1 text-gray-500 hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-indigo-400">×</button>
+							{/if}
 							{#if others.length > 0}
 								<button
 									type="button"

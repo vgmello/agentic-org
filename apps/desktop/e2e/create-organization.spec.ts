@@ -22,9 +22,10 @@ test('first launch: welcome → create → shell, then straight into the shell',
 
 	await expect(page).toHaveURL(/\/agents$/);
 	await expect(page.getByText('Acme Studio', { exact: true })).toBeVisible();
-	await shot(page, 'shell-empty');
-	await expect(page.getByText('No agents yet')).toBeVisible();
-	await expect(page.getByRole('button', { name: 'Hire your first agent' })).toBeDisabled();
+	await shot(page, 'shell-agents');
+	// The browser mock office starts every organization with a sample team: the roster lists it, labelled.
+	await expect(page.getByTestId('agent-roster')).toBeVisible();
+	await expect(page.getByTestId('sample-data-note')).toContainText('Sample data');
 
 	await visit(page, '/');
 	await expect(page).toHaveURL(/\/agents$/);
