@@ -22,6 +22,7 @@
     "allow-login-item-status",
     "allow-login-item-set",
     "allow-login-item-open-settings",
+    "allow-open-external-url",
     "core:event:allow-listen",
     "core:event:allow-unlisten"
   ]
