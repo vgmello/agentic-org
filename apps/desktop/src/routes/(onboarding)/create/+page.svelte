@@ -57,7 +57,7 @@
 	});
 </script>
 
-<svelte:head><title>Create organization · agentic.org</title></svelte:head>
+<svelte:head><title>Create organization · Agentic Org</title></svelte:head>
 
 <a
 	href="/welcome"
@@ -98,7 +98,7 @@
 			<Laptop class="size-5 text-gray-400" aria-hidden="true" />
 			<div class="text-sm/6">
 				<p class="font-semibold text-white">This Mac</p>
-				<p class="text-gray-400">The office starts with your Mac and keeps running when the app is closed.</p>
+				<p class="text-gray-400">Its first office, HQ, runs on this Mac. It starts with your Mac and keeps running when Agentic Org is closed.</p>
 			</div>
 		</div>
 	</div>

@@ -4,14 +4,14 @@
 | Area | Owner |
 | --- | --- |
 | `apps/desktop/` | the **app agent** (`app-frontend-dev`) |
-| `apps/org-office-server/`, `crates/org-office/`, `crates/org-client/`, `crates/org-github/`, `crates/org-git/`, and the SQL for every table in `store.rs` (messaging's included) | the **server agent** (`server-dev`) |
-| `apps/org-office-host/` (the supervisor and login service), `crates/org-sync/`, `crates/org-pki/` | **River** (`ac-software-engineer-river`), Senior Backend Engineer |
+| `apps/org-office-server/`, `crates/org-office/`, `crates/org-client/`, and the SQL for every table in `store.rs` (messaging's included) | the **server agent** (`server-dev`) |
+| `apps/org-office-host/` (the supervisor and login service), `crates/org-sync/`, `crates/org-pki/`, `crates/org-git/`, `crates/org-github/` | **River** (`ac-software-engineer-river`), Senior Backend Engineer |
 | `apps/org-agent/` (the CLI agents use), `crates/org-spool/`, and the messaging library (its crate name is set in ADR-0003) | the **messaging agent** (`agy-senior-dev`) |
-| `crates/org-proto/` and `crates/org-sync-proto/` (the contracts), `docs/`, this file | **ada** (`ac-staff-engineer-ada`), Staff Engineer, who also reviews and gives the "go" on every merge |
+| `crates/org-proto/`, `crates/org-sync-proto/` and `crates/org-office-launch/` (the contracts; the last is the pipe protocol between the host and an office server and `office.json`, whose first version River writes and ada reviews like any contract change), `docs/`, this file | **ada** (`ac-staff-engineer-ada`), Staff Engineer, who also reviews and gives the "go" on every merge |
 
 Don't edit another owner's area. If you need a change there, message its owner.
 
-**Traits are owned by the crate that defines them** (e.g. `org-sync`'s storage and apply traits: River; `org-mailbox`'s `MessageStore`: agy). The implementer of a trait (usually server-dev, in `store.rs`) must agree to any change to it. A change to `org-proto` or `org-sync-proto` goes through ada.
+**Traits are owned by the crate that defines them** (e.g. `org-sync`'s storage and apply traits: River; `org-mailbox`'s `MessageStore`: agy). The implementer of a trait (usually server-dev, in `store.rs`) must agree to any change to it. A change to `org-proto`, `org-sync-proto` or `org-office-launch` goes through ada.
 
 The product is named **Agentic Org**. The designs that are the reference for current work are in `docs/design/` (offices, teams, projects and GitHub), with decisions in `docs/adr/`.
 

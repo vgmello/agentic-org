@@ -1,17 +1,20 @@
-//! agentic.org: the desktop client. It talks to an office server through `OfficeConnection` and
+//! Agentic Org: the desktop client. It talks to an office server through `OfficeConnection` and
 //! never reads an office's storage itself.
 //!
 //! Until `org-client` and the office-setup layer exist, the office is `mock::MockOffice`, in
 //! every build, so the shell can be run and shown end to end. It is wired in one place (`run`).
 
 mod connections;
+mod menu_model;
 mod mock;
 mod office;
+mod tray;
 
-use connections::{Connection, ConnectionStore};
+use connections::{local_office, Connection, ConnectionStore};
 use office::{OfficeConnection, SetupError};
-use org_proto::{ApiError, HelloResult, OfficeInfo, OfficeRole, OfficeStatus, Organization};
+use org_proto::{ApiError, HelloResult, OfficeStatus, Organization};
 use serde::Serialize;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, State};
 
@@ -21,6 +24,11 @@ struct AppState {
     store: ConnectionStore,
     /// The host the last successful `ensure_running` reached ("This Mac").
     connected: Mutex<Option<String>>,
+    /// Starting the office is one-at-a-time: the window and the menu bar can both ask at launch.
+    start: Mutex<()>,
+    /// Counts successful starts, so a caller can tell whether someone else already restarted the
+    /// office since it saw a failure.
+    epoch: AtomicU64,
 }
 
 /// An error the UI can tell apart: `source` says which layer failed and `code` is its code.
@@ -68,20 +76,87 @@ impl From<ApiError> for CommandError {
     }
 }
 
-/// The office an organization is reached through on this machine: its HQ, else its first office.
-fn local_office(organization: &Organization) -> Option<&OfficeInfo> {
-    organization
-        .offices
-        .iter()
-        .find(|o| o.role == OfficeRole::Hq)
-        .or_else(|| organization.offices.first())
-}
-
 impl AppState {
+    /// Make sure the office is running (the window's own check). Calls are serialized.
     fn ensure_running(&self) -> Result<HelloResult, CommandError> {
+        let _one_at_a_time = self.start.lock().unwrap_or_else(|e| e.into_inner());
+        self.start_locked()
+    }
+
+    fn start_locked(&self) -> Result<HelloResult, CommandError> {
         let hello = self.office.ensure_running()?;
+        // The epoch moves before the connection is published, so a caller that sees the new
+        // connection can't still hold the old epoch (which would make it restart the office again).
+        self.epoch.fetch_add(1, Ordering::SeqCst);
         *self.connected.lock().unwrap_or_else(|e| e.into_inner()) = Some(hello.host.clone());
         Ok(hello)
+    }
+
+    /// Start the office only if it isn't already connected: the menu bar calls this often, and
+    /// starting an office (installing, registering, waiting for it) must not repeat or overlap.
+    /// `wanted` is checked once the start lock is held: a caller that has been overtaken while
+    /// waiting (an older menu refresh) gives up with `superseded` instead of starting anything.
+    fn start_if_needed_while(&self, wanted: impl Fn() -> bool) -> Result<(), CommandError> {
+        let _one_at_a_time = self.start.lock().unwrap_or_else(|e| e.into_inner());
+        if !wanted() {
+            return Err(CommandError::local(
+                "superseded",
+                "A newer request replaced this one.",
+            ));
+        }
+        if self.ensure_connected().is_ok() {
+            return Ok(());
+        }
+        self.start_locked().map(|_| ())
+    }
+
+    /// Start the office again after a failure seen at epoch `seen`, unless someone else already
+    /// has (the epoch moved on). Forgetting the connection and starting happen under one hold of
+    /// the start lock, so callers that use `with_restart` never see "not connected" in between
+    /// (they wait for the restart and retry).
+    fn restart_since(&self, seen: u64) -> Result<(), CommandError> {
+        let _one_at_a_time = self.start.lock().unwrap_or_else(|e| e.into_inner());
+        if self.epoch.load(Ordering::SeqCst) != seen {
+            return Ok(());
+        }
+        *self.connected.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        self.start_locked().map(|_| ())
+    }
+
+    /// Run `f` against a running office. If the office itself fails (it died, or the login service
+    /// was turned off since it was started), start it again and try once more; if `f` found the
+    /// office momentarily not connected because another caller is restarting it, wait for that and
+    /// try once more. A failure that is the app's own (nothing found, nothing saved) is not retried.
+    fn with_restart<T>(
+        &self,
+        f: impl Fn(&Self) -> Result<T, CommandError>,
+    ) -> Result<T, CommandError> {
+        self.with_restart_while(|| true, f)
+    }
+
+    fn with_restart_while<T>(
+        &self,
+        wanted: impl Fn() -> bool,
+        f: impl Fn(&Self) -> Result<T, CommandError>,
+    ) -> Result<T, CommandError> {
+        self.start_if_needed_while(&wanted)?;
+        let seen = self.epoch.load(Ordering::SeqCst);
+        match f(self) {
+            Err(e) if e.source == "app" && e.code == "not_connected" => {
+                self.start_if_needed_while(&wanted)?;
+                f(self)
+            }
+            // The office couldn't be reached or understood. An answer it gave (a storage error, a bad
+            // request) is not a reason to restart it.
+            // PLACEHOLDER: today the mock stands in for an unreachable office with an `unknown` api
+            // code. When `org-client` is wired in, map its transport failures (NotRunning, Io,
+            // Timeout, Disconnected) to a `setup`-source error here, and drop the `unknown` arm.
+            Err(e) if e.source == "setup" || (e.source == "api" && e.code == "unknown") => {
+                self.restart_since(seen)?;
+                f(self)
+            }
+            other => other,
+        }
     }
 
     fn ensure_connected(&self) -> Result<(), CommandError> {
@@ -173,11 +248,14 @@ async fn office_ensure_running(
 
 #[tauri::command]
 async fn organization_create(
+    app: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
     name: String,
 ) -> Result<Connection, CommandError> {
     let state = Arc::clone(&state);
-    blocking(move || state.create_organization(&name)).await
+    let connection = blocking(move || state.create_organization(&name)).await?;
+    tray::refresh(&app);
+    Ok(connection)
 }
 
 #[tauri::command]
@@ -185,16 +263,19 @@ async fn organizations_list(
     state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<Organization>, CommandError> {
     let state = Arc::clone(&state);
-    blocking(move || state.organizations()).await
+    blocking(move || state.with_restart(|s| s.organizations())).await
 }
 
 #[tauri::command]
 async fn organization_open(
+    app: tauri::AppHandle,
     state: State<'_, Arc<AppState>>,
     id: String,
 ) -> Result<Connection, CommandError> {
     let state = Arc::clone(&state);
-    blocking(move || state.open_organization(&id)).await
+    let connection = blocking(move || state.with_restart(|s| s.open_organization(&id))).await?;
+    tray::refresh(&app);
+    Ok(connection)
 }
 
 /// Remembered connections, oldest first (the most recent is last).
@@ -212,13 +293,27 @@ pub fn run() {
         .setup(|app| {
             // The mock's connections live apart from anything a real office will remember, so a build
             // that has the real client never opens a fake organization.
-            let dir = app.path().app_data_dir()?.join("mock");
+            let data = app.path().app_data_dir()?;
+            let dir = data.join("mock");
             app.manage(Arc::new(AppState {
                 office: Arc::new(mock::MockOffice::from_env(dir.clone())),
                 store: ConnectionStore::new(dir),
                 connected: Mutex::new(None),
+                start: Mutex::new(()),
+                epoch: AtomicU64::new(0),
             }));
+            let dock = tray::DockPreference::load(data);
+            tray::apply_dock(app.handle(), dock.shown());
+            app.manage(dock);
+            tray::create(app.handle())?;
             Ok(())
+        })
+        // A menu-bar app: closing the window hides it, and the app keeps running.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             office_ensure_running,
@@ -227,8 +322,21 @@ pub fn run() {
             organization_open,
             connections_list
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running agentic.org");
+        .build(tauri::generate_context!())
+        .expect("error while building Agentic Org")
+        .run(|app, event| {
+            // Clicking the Dock icon with no window showing brings the window back.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen {
+                has_visible_windows: false,
+                ..
+            } = event
+            {
+                tray::show_window(app);
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
+        });
 }
 
 #[cfg(test)]
@@ -248,6 +356,8 @@ mod tests {
             office: Arc::new(MockOffice::new(scenario, Duration::ZERO)),
             store: ConnectionStore::new(dir.clone()),
             connected: Mutex::new(None),
+            start: Mutex::new(()),
+            epoch: AtomicU64::new(0),
         };
         (state, dir)
     }
@@ -452,6 +562,213 @@ mod tests {
         );
         assert!(state.connections().unwrap().is_empty());
         assert!(state.open_organization("u").is_ok());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// An office that fails its first `fail_first` list calls with an office-side error, and counts
+    /// how many times it was started.
+    struct Flaky {
+        starts: std::sync::atomic::AtomicUsize,
+        lists_left_to_fail: std::sync::atomic::AtomicUsize,
+        /// While set, starting the office fails.
+        start_fails: std::sync::atomic::AtomicBool,
+    }
+
+    impl OfficeConnection for Flaky {
+        fn ensure_running(&self) -> Result<HelloResult, office::SetupError> {
+            self.starts
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            // Slow enough that callers which aren't serialized overlap.
+            std::thread::sleep(Duration::from_millis(20));
+            if self.start_fails.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(office::SetupError {
+                    code: office::SetupErrorCode::Unreachable,
+                    message: "down".into(),
+                });
+            }
+            Ok(HelloResult {
+                api_version: org_proto::API_VERSION,
+                server_version: "t".into(),
+                host: "This Mac".into(),
+                office: None,
+            })
+        }
+        fn create_organization(&self, _: &str) -> Result<Organization, ApiError> {
+            unreachable!()
+        }
+        fn list_organizations(&self) -> Result<Vec<Organization>, ApiError> {
+            use std::sync::atomic::Ordering::SeqCst;
+            if self.lists_left_to_fail.load(SeqCst) > 0 {
+                self.lists_left_to_fail.fetch_sub(1, SeqCst);
+                return Err(ApiError::new(
+                    org_proto::ErrorCode::Unknown,
+                    "the office is gone",
+                ));
+            }
+            Ok(vec![hosted("a", "Alpha")])
+        }
+    }
+
+    fn flaky_state(failures: usize) -> (AppState, Arc<Flaky>) {
+        let flaky = Arc::new(Flaky {
+            starts: 0.into(),
+            lists_left_to_fail: failures.into(),
+            start_fails: false.into(),
+        });
+        let (mut state, _dir) = make_state(Scenario::Healthy);
+        state.office = flaky.clone();
+        (state, flaky)
+    }
+
+    #[test]
+    fn the_office_is_started_once_however_often_it_is_asked_and_restarted_when_it_dies() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let (state, flaky) = flaky_state(0);
+        for _ in 0..3 {
+            state.start_if_needed_while(|| true).unwrap();
+        }
+        assert_eq!(
+            flaky.starts.load(SeqCst),
+            1,
+            "asked three times, started once"
+        );
+
+        // The office dies: the next list fails once, the app starts it again and succeeds.
+        let (state, flaky) = flaky_state(1);
+        let listed = state.with_restart(|s| s.organizations()).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(
+            flaky.starts.load(SeqCst),
+            2,
+            "started, then restarted after the failure"
+        );
+
+        // Still failing after the restart: the error is reported, not retried forever.
+        let (state, flaky) = flaky_state(5);
+        assert!(state.with_restart(|s| s.organizations()).is_err());
+        assert_eq!(flaky.starts.load(SeqCst), 2);
+    }
+
+    #[test]
+    fn a_restart_already_done_by_someone_else_is_not_repeated() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let (state, flaky) = flaky_state(0);
+        state.start_if_needed_while(|| true).unwrap();
+        let seen = state.epoch.load(SeqCst);
+        state.restart_since(seen).unwrap();
+        assert_eq!(flaky.starts.load(SeqCst), 2, "the first caller restarts it");
+        state.restart_since(seen).unwrap();
+        assert_eq!(
+            flaky.starts.load(SeqCst),
+            2,
+            "a caller that saw the old failure doesn't restart it again"
+        );
+    }
+
+    #[test]
+    fn a_failed_restart_leaves_the_office_disconnected_until_it_can_be_started() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let (state, flaky) = flaky_state(0);
+        state.start_if_needed_while(|| true).unwrap();
+        let seen = state.epoch.load(SeqCst);
+        flaky.start_fails.store(true, SeqCst);
+        assert!(state.restart_since(seen).is_err());
+        assert!(
+            state.ensure_connected().is_err(),
+            "the old connection was forgotten"
+        );
+        flaky.start_fails.store(false, SeqCst);
+        state.start_if_needed_while(|| true).unwrap();
+        assert!(state.ensure_connected().is_ok());
+    }
+
+    #[test]
+    fn a_caller_that_finds_the_office_mid_restart_waits_and_retries() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let (state, flaky) = flaky_state(0);
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let result = state.with_restart(|_| {
+            if calls.fetch_add(1, SeqCst) == 0 {
+                Err(CommandError::local("not_connected", "restarting"))
+            } else {
+                Ok(7)
+            }
+        });
+        assert_eq!(result.unwrap(), 7);
+        assert_eq!(calls.load(SeqCst), 2);
+        assert_eq!(flaky.starts.load(SeqCst), 1, "waiting is not restarting");
+    }
+
+    #[test]
+    fn an_answer_from_the_office_is_not_a_reason_to_restart_it() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let (state, flaky) = flaky_state(0);
+        let err = state
+            .with_restart(|_| -> Result<(), CommandError> {
+                Err(ApiError::new(org_proto::ErrorCode::StorageError, "disk").into())
+            })
+            .unwrap_err();
+        assert_eq!((err.source, err.code.as_str()), ("api", "storage_error"));
+        assert_eq!(
+            flaky.starts.load(SeqCst),
+            1,
+            "no restart for a storage error"
+        );
+    }
+
+    #[test]
+    fn an_overtaken_request_gives_up_instead_of_starting_the_office() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let (state, flaky) = flaky_state(0);
+        let err = state.start_if_needed_while(|| false).unwrap_err();
+        assert_eq!(err.code, "superseded");
+        assert_eq!(flaky.starts.load(SeqCst), 0);
+    }
+
+    #[test]
+    fn the_apps_own_failures_are_not_retried() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let (state, flaky) = flaky_state(0);
+        let err = state
+            .with_restart(|s| s.open_organization("missing"))
+            .unwrap_err();
+        assert_eq!(err.code, "not_found");
+        assert_eq!(
+            flaky.starts.load(SeqCst),
+            1,
+            "no restart for a plain not_found"
+        );
+    }
+
+    #[test]
+    fn concurrent_starts_are_one_at_a_time() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let (state, flaky) = flaky_state(0);
+        let state = Arc::new(state);
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let state = state.clone();
+                std::thread::spawn(move || state.start_if_needed_while(|| true).unwrap())
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(flaky.starts.load(SeqCst), 1);
+    }
+
+    #[test]
+    fn an_organization_without_hq_is_refused_when_the_office_it_opens_through_is_unavailable() {
+        let mut satellite_first = hosted("s", "Sat");
+        satellite_first.offices = vec![
+            office("z", org_proto::OfficeRole::Satellite),
+            office("a", org_proto::OfficeRole::Satellite),
+        ];
+        satellite_first.offices[0].status = org_proto::OfficeStatus::Unavailable;
+        let (state, dir) = state_with(vec![satellite_first]);
+        state.ensure_running().unwrap();
+        let err = state.open_organization("s").unwrap_err();
+        assert_eq!(err.code, "office_unavailable");
         let _ = std::fs::remove_dir_all(dir);
     }
 

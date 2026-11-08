@@ -1,4 +1,4 @@
-# agentic.org desktop: tech stack
+# Agentic Org desktop: tech stack
 
 What `apps/desktop` is built with, why, and what is still undecided. Versions are pinned exactly in `package.json` and `src-tauri/Cargo.toml`.
 

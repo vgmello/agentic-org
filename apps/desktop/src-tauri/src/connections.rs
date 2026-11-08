@@ -2,7 +2,7 @@
 //! shell. This is the app's own state (one small JSON file in its data directory), not the
 //! organization's data: that lives with the office server.
 
-use org_proto::{OfficeInfo, Organization};
+use org_proto::{OfficeInfo, OfficeRole, Organization};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
@@ -11,6 +11,17 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const FORMAT_VERSION: u32 = 1;
+
+/// The office an organization is reached through on this machine: its HQ, else its first office
+/// (in the order the host lists them). Used by opening, by the connection, and by the menu bar,
+/// so they never disagree.
+pub fn local_office(organization: &Organization) -> Option<&OfficeInfo> {
+    organization
+        .offices
+        .iter()
+        .find(|o| o.role == OfficeRole::Hq)
+        .or_else(|| organization.offices.first())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Connection {

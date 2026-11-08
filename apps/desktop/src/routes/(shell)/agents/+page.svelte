@@ -4,7 +4,7 @@
 	import { Badge } from '$lib/components/ui/badge';
 </script>
 
-<svelte:head><title>Agents · agentic.org</title></svelte:head>
+<svelte:head><title>Agents · Agentic Org</title></svelte:head>
 
 <div class="flex flex-col items-center px-8 py-24 text-center">
 	<span class="flex size-12 items-center justify-center rounded-full bg-white/5 text-gray-300">

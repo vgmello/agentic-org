@@ -15,8 +15,9 @@ pub enum ErrorCode {
     InvalidRequest,
     /// The server doesn't know the method.
     UnknownMethod,
-    /// A name breaks the name rules (an organization, team, person or agent: trimmed, not
-    /// empty, no control characters), or an agent's `messaging_name` breaks its format.
+    /// A name breaks its rule. Each kind of name (an organization, a team, a person, an agent)
+    /// has its own rule; an organization's is [`crate::OrganizationName::parse`]. An agent's
+    /// `messaging_name` that breaks its format is also `invalid_name`.
     InvalidName,
     /// Something with that name or id already exists: an organization or a sibling team with
     /// that name (names compare ignoring case), another agent with that `messaging_name`
@@ -50,6 +51,12 @@ pub enum ErrorCode {
     /// A message or task is addressed to someone who isn't an agent or person of the
     /// organization.
     UnknownRecipient,
+    /// The caller isn't allowed to make this call, e.g. the host's check of the peer's code
+    /// signature failed for `office.app_token`.
+    NotAuthorized,
+    /// What was asked for exists but can't serve now, e.g. the office isn't running, so there's
+    /// no app token to hand out. Trying again later may work.
+    Unavailable,
     /// A code this build doesn't know (sent by a newer server).
     #[serde(other)]
     Unknown,

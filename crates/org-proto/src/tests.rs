@@ -734,6 +734,128 @@ fn rejections_reach_the_client_by_command_id() {
     assert_eq!(back.error.code, ErrorCode::Cycle);
 }
 
+#[test]
+fn office_app_token_wire_shapes() {
+    assert_eq!(OfficeAppToken::METHOD, "office.app_token");
+    let req = Request::new::<OfficeAppToken>(
+        4,
+        &OfficeAppTokenParams {
+            office_id: "01M6WGY1WJCC503RXF2NS0SH83".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(&req).unwrap(),
+        json!({"id": 4, "method": "office.app_token",
+            "params": {"office_id": "01M6WGY1WJCC503RXF2NS0SH83"}})
+    );
+    assert_eq!(
+        req.params::<OfficeAppToken>().unwrap().office_id,
+        "01M6WGY1WJCC503RXF2NS0SH83"
+    );
+    let missing: Request =
+        serde_json::from_str(r#"{"id":4,"method":"office.app_token","params":{}}"#).unwrap();
+    assert!(missing.params::<OfficeAppToken>().is_err());
+
+    let hex = "ab".repeat(32);
+    let result = OfficeAppTokenResult {
+        app_token: AppToken::from_bytes([0xab; 32]),
+    };
+    let v = serde_json::to_value(Response::ok::<OfficeAppToken>(4, &result).unwrap()).unwrap();
+    assert_eq!(v, json!({"id": 4, "result": {"app_token": hex}}));
+    let back: Response = serde_json::from_value(v).unwrap();
+    let back = back.into_result::<OfficeAppToken>().unwrap();
+    assert_eq!(back, result);
+    // Debug of the result, as a log line would show it, has no token.
+    let debug = format!("{back:?}");
+    assert!(!debug.contains("abab"), "{debug}");
+    assert!(debug.contains("AppToken(<redacted>)"), "{debug}");
+
+    // A full-length token in uppercase is refused, and the error doesn't repeat it.
+    let upper = "AB".repeat(32);
+    let bad: Response =
+        serde_json::from_value(json!({"id": 4, "result": {"app_token": upper}})).unwrap();
+    match bad.into_result::<OfficeAppToken>() {
+        Err(CallError::Decode(e)) => assert!(!e.to_string().contains(&upper[..8]), "{e}"),
+        other => panic!("expected a decode error, got {other:?}"),
+    }
+}
+
+#[test]
+fn not_authorized_and_unavailable_codes_round_trip() {
+    for (code, name) in [
+        (ErrorCode::NotAuthorized, "not_authorized"),
+        (ErrorCode::Unavailable, "unavailable"),
+    ] {
+        assert_eq!(serde_json::to_value(code).unwrap(), name);
+        assert_eq!(
+            serde_json::from_value::<ErrorCode>(name.into()).unwrap(),
+            code
+        );
+        let line = serde_json::to_string(&Response::error(9, ApiError::new(code, "x"))).unwrap();
+        assert_eq!(
+            line,
+            format!(r#"{{"id":9,"error":{{"code":"{name}","message":"x"}}}}"#)
+        );
+        match serde_json::from_str::<Response>(&line)
+            .unwrap()
+            .into_result::<OfficeAppToken>()
+        {
+            Err(CallError::Api(e)) => assert_eq!(e.code, code),
+            other => panic!("expected an api error, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn envelope_debug_elides_payloads_that_may_hold_secrets() {
+    let hex = "c0ffee".repeat(10) + "abcd";
+    assert_eq!(hex.len(), 64);
+    let params = json!({"app_token": hex});
+    let size = serde_json::to_string(&params).unwrap().len();
+
+    let req: Request =
+        serde_json::from_value(json!({"id": 7, "method": "office.app_token", "params": params}))
+            .unwrap();
+    let debug = format!("{req:?}");
+    assert!(!debug.contains(&hex[..8]), "{debug}");
+    assert_eq!(
+        debug,
+        format!(
+            r#"Request {{ id: 7, method: "office.app_token", params: <elided {size} bytes> }}"#
+        )
+    );
+    assert!(!format!("{req:#?}").contains(&hex[..8]));
+
+    let resp = Response {
+        id: 7,
+        outcome: Outcome::Result(params.clone()),
+    };
+    let debug = format!("{resp:?}");
+    assert!(!debug.contains(&hex[..8]), "{debug}");
+    assert!(debug.contains("id: 7"), "{debug}");
+    let msg = ServerMessage::Response(resp);
+    assert!(!format!("{msg:?}").contains(&hex[..8]));
+
+    // An error is shown: its message is for people and holds no secrets.
+    let err = Response::error(8, ApiError::new(ErrorCode::NotAuthorized, "not the app"));
+    assert!(format!("{err:?}").contains("not the app"));
+
+    let ev = Event {
+        event: "office.token_rotated".into(),
+        seq: 2,
+        data: params.clone(),
+    };
+    let debug = format!("{:?}", ServerMessage::Event(ev));
+    assert!(!debug.contains(&hex[..8]), "{debug}");
+    assert!(debug.contains("office.token_rotated") && debug.contains("seq: 2"));
+
+    let unknown = ServerMessage::Unknown(json!({"id": 9, "secret": hex}));
+    let debug = format!("{unknown:?}");
+    assert!(!debug.contains(&hex[..8]), "{debug}");
+    assert!(debug.starts_with("Unknown(<elided "), "{debug}");
+}
+
 fn profile() -> AgentProfile {
     AgentProfile {
         role: "software engineer".into(),

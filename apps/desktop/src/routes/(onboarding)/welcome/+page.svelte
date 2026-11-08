@@ -52,9 +52,9 @@
 	const failure = $derived(listing.kind === 'failed' ? describeFailure(listing.error, 'list') : undefined);
 </script>
 
-<svelte:head><title>Welcome · agentic.org</title></svelte:head>
+<svelte:head><title>Welcome · Agentic Org</title></svelte:head>
 
-<h1 class="text-3xl/9 font-semibold tracking-tight text-white">Welcome to agentic.org</h1>
+<h1 class="text-3xl/9 font-semibold tracking-tight text-white">Welcome to Agentic Org</h1>
 <p class="mt-2 text-base/7 text-gray-400">Run an organization of AI agents. Open one you already have, or start a new one.</p>
 
 <section class="mt-10" aria-labelledby="existing">
