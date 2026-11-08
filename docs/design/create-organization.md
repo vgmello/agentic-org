@@ -3,10 +3,10 @@
 Status: **draft**. ada writes it with the app agent and the server agent, and they refine it before building.
 
 ## Goal
-On a Mac with nothing set up, the owner opens agentic.org, creates an organization, and lands in the app shell connected to the organization's HQ office on this machine.
+On a Mac with nothing set up, the owner opens Agentic Org, creates an organization, and lands in the app shell connected to the organization's HQ office on this machine.
 
 ## The flow
-1. **First launch:** two choices, **Create organization** and **Open organization** (open is phase 2).
+1. **First launch:** two choices, **Create organization** and **Open organization**. Open has two paths: open an organization this Mac already has (it lists them), or join an organization from another machine with an invitation link (offices design, phase 3).
 2. **Create:** the owner enters the organization's name (and later a description). The app shows where its office will run: "This Mac".
 3. **Start the host:** the app makes sure the host (`org-office-host`, bundled inside it) is **registered as a login service**, starts it if needed, and connects through `org-client` (`hello`, a version check). The host starts each office's server.
 4. **Create:** the app calls `organization.create { name }`. The host creates the organization and its HQ office (the HQ's server creates its own key and databases), and returns the organization with that office.

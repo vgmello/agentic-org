@@ -83,9 +83,23 @@ impl Call for OrganizationList {
 /// param, which is additive). A subscriber also receives events for its own actions.
 pub struct Subscribe;
 
+/// `subscribe`'s params. `{}` is still valid (live events only).
+///
+/// With `from_position` (an office only; the host ignores it): right after the `subscribe`
+/// response, the office sends the organization changes after that position (e.g. the one an
+/// [`crate::OrgSnapshot`] reflects), then live events, so nothing slips in between. If it
+/// can't resume from there (the log was trimmed, a promotion started a new epoch, or the
+/// position is beyond what this office has), it answers `snapshot_required`: take a fresh
+/// `org.snapshot` and subscribe from its position.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubscribeParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_position: Option<crate::org::Position>,
+}
+
 impl Call for Subscribe {
     const METHOD: &'static str = "subscribe";
-    type Params = Empty;
+    type Params = SubscribeParams;
     type Result = Empty;
 }
 
