@@ -1830,6 +1830,41 @@ fn member_ids_are_26_letters_and_digits_and_no_handle_has_that_shape() {
     }
 }
 
+#[test]
+fn an_integration_branch_may_not_start_with_a_prefix_the_office_owns() {
+    assert_eq!(
+        RESERVED_BRANCH_PREFIXES,
+        ["task/", "docs/", "merged/", "archive/"]
+    );
+    for reserved in [
+        "task/W-12-login",
+        "docs/adr-0004",
+        "merged/task/W-12-login",
+        "archive/task/W-9",
+        "task/",
+        "refs/heads/task/W-12",
+        "Task/W-12",
+        "DOCS/x",
+    ] {
+        assert!(has_reserved_branch_prefix(reserved), "{reserved:?}");
+    }
+    for fine in [
+        "main",
+        "v1",
+        "develop",
+        "release/2026-11",
+        "tasks/x",
+        "task",
+        "my-task/x",
+        "feature/task/x",
+        "refs/heads/main",
+        "",
+        "é/task/",
+    ] {
+        assert!(!has_reserved_branch_prefix(fine), "{fine:?}");
+    }
+}
+
 // ---- Work items (org_proto::work) and the project and area commands --------------------------
 
 /// Pins a call's params: built through `Request::new` they are exactly `want`, and the line

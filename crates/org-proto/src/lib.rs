@@ -86,14 +86,15 @@ pub use error::{ApiError, CallError, ErrorCode};
 pub use events::{EventKind, OfficeStatusChanged, OfficeStatusChangedData, OrganizationCreated};
 pub use name::{NameError, OrganizationName};
 pub use org::{
-    is_shaped_like_an_address, is_valid_id, is_valid_member_id, AgentProfile, AgentRuntime,
-    AgentStatus, Area, CommandAccepted, CommandStatus, GithubRepo, Member, MemberKind, Membership,
-    OrgChange, OrgChanged, OrgChangedData, OrgRejected, OrgRejectedData, OrgSnapshot,
-    OrgSnapshotCall, Position, Project, ProjectCreateTeam, ProjectRepo, ProjectSummary,
-    ProjectTeam, RepoHost, RepoSpec, RunMode, Schedule, Team, AGENT_HOME_MAX_BYTES,
-    AGENT_MESSAGING_NAME_MAX_CHARS, AGENT_TEXT_MAX_CHARS, AGENT_TIME_ZONE_MAX_CHARS,
-    AREA_NAME_MAX_CHARS, ID_MAX_CHARS, MEMBER_ID_CHARS, OFFICE_HANDLE, OWNER_HANDLE,
-    PROJECT_DESCRIPTION_MAX_CHARS, PROJECT_KEY_MAX_CHARS, RESERVED_PROJECT_KEYS, RUN_HANDLE_PREFIX,
+    has_reserved_branch_prefix, is_shaped_like_an_address, is_valid_id, is_valid_member_id,
+    AgentProfile, AgentRuntime, AgentStatus, Area, CommandAccepted, CommandStatus, GithubRepo,
+    Member, MemberKind, Membership, OrgChange, OrgChanged, OrgChangedData, OrgRejected,
+    OrgRejectedData, OrgSnapshot, OrgSnapshotCall, Position, Project, ProjectCreateTeam,
+    ProjectRepo, ProjectSummary, ProjectTeam, RepoHost, RepoSpec, RunMode, Schedule, Team,
+    AGENT_HOME_MAX_BYTES, AGENT_MESSAGING_NAME_MAX_CHARS, AGENT_TEXT_MAX_CHARS,
+    AGENT_TIME_ZONE_MAX_CHARS, AREA_NAME_MAX_CHARS, ID_MAX_CHARS, MEMBER_ID_CHARS, OFFICE_HANDLE,
+    OWNER_HANDLE, PROJECT_DESCRIPTION_MAX_CHARS, PROJECT_KEY_MAX_CHARS, RESERVED_BRANCH_PREFIXES,
+    RESERVED_PROJECT_KEYS, RUN_HANDLE_PREFIX,
 };
 pub use token::{AppToken, APP_TOKEN_BYTES};
 pub use types::{

@@ -455,6 +455,29 @@ pub const PROJECT_DESCRIPTION_MAX_CHARS: usize = 1_000;
 /// The longest area name, in characters (after trimming).
 pub const AREA_NAME_MAX_CHARS: usize = 40;
 
+/// The branch-name prefixes the office makes and owns: task branches (`task/…`), docs
+/// branches (`docs/…`) and the tags it leaves after a merge or an archive (`merged/…`,
+/// `archive/…`). A project's `integration_branch` may not start with one
+/// ([`has_reserved_branch_prefix`]).
+pub const RESERVED_BRANCH_PREFIXES: &[&str] = &["task/", "docs/", "merged/", "archive/"];
+
+/// Whether `name` starts with one of [`RESERVED_BRANCH_PREFIXES`], so it can't be a project's
+/// `integration_branch`: `project.create` and `project.update` refuse it with
+/// `invalid_request` (docs/design/processes.md, "Project rule"). The one rule the office and
+/// the app's mocks share.
+///
+/// Stricter than a plain prefix test, so a spelling git would resolve to the same ref isn't a
+/// way around it: a leading `refs/heads/` is looked through, and the prefix is compared
+/// ignoring ASCII case (refs can live on a case-insensitive file system).
+pub fn has_reserved_branch_prefix(name: &str) -> bool {
+    let name = name.strip_prefix("refs/heads/").unwrap_or(name);
+    RESERVED_BRANCH_PREFIXES.iter().any(|prefix| {
+        name.len() >= prefix.len()
+            && name.is_char_boundary(prefix.len())
+            && name[..prefix.len()].eq_ignore_ascii_case(prefix)
+    })
+}
+
 /// A project: the full record. It replaced `ProjectSummary` (`{ id, name }`) additively: every
 /// other field has a default, so a record from before reads with an empty `key`, no repository,
 /// not archived and `version` 0. [`ProjectSummary`] is kept as another name for it.
@@ -481,7 +504,12 @@ pub struct Project {
     /// don't).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<ProjectRepo>,
-    /// The branch the Docs tab reads. Absent: the repository's default branch.
+    /// The project's integration branch: task branches start from it, the office reads the
+    /// project's instruction files, guidance files and processes from it (and the Docs tab its
+    /// docs), and a task branch counts as merged once its work is reachable from it
+    /// (docs/design/processes.md, A56 and A57). Absent: the repository's default branch.
+    /// Never starts with a reserved prefix ([`has_reserved_branch_prefix`]): `project.create`
+    /// and `project.update` refuse one with `invalid_request`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub integration_branch: Option<String>,
     /// No new work items in it; everything else still works.
@@ -991,10 +1019,12 @@ command!(
     /// `p123`, "Q" → `qx`, "9" → `p9`, "Exc" → `exc2` (`exc` is reserved). The event carries
     /// the key.
     ///
-    /// `repo` absent: the project has no repository. App-only, like every command here. Errors:
-    /// `not_found` (a team), `invalid_request` (key format or reserved; limits; a repeated team;
-    /// the repo spec), `invalid_name` (the name or the area name), `already_exists` (an id, the
-    /// key, or the name ignoring case).
+    /// `repo` absent: the project has no repository. `integration_branch` may not start with a
+    /// reserved prefix (`task/`, `docs/`, `merged/`, `archive/`; [`has_reserved_branch_prefix`]).
+    /// App-only, like every command here. Errors: `not_found` (a team), `invalid_request` (key
+    /// format or reserved; limits; a repeated team; the repo spec; an `integration_branch` with
+    /// a reserved prefix), `invalid_name` (the name or the area name), `already_exists` (an id,
+    /// the key, or the name ignoring case).
     ProjectCreate, "project.create", ProjectCreateParams {
         project_id: String,
         name: String,
@@ -1016,7 +1046,9 @@ command!(
 command!(
     /// `project.update`: only the fields given change; a field and its `clear_` flag together,
     /// or nothing to change, is `invalid_request`. The key never changes, and the repository
-    /// isn't changed here. Errors: `not_found`, `invalid_request`, `invalid_name`, `conflict`,
+    /// isn't changed here. `integration_branch` may not start with a reserved prefix
+    /// ([`has_reserved_branch_prefix`]). Errors: `not_found`, `invalid_request` (also an
+    /// `integration_branch` with a reserved prefix), `invalid_name`, `conflict`,
     /// `already_exists` (the name, ignoring case).
     ProjectUpdate, "project.update", ProjectUpdateParams {
         project_id: String,
