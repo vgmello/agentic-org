@@ -77,6 +77,8 @@ pub enum RuntimeError { NotSetUp, TimedOut, Failed }           // no payload: no
 ```
 The adapter's duties: run tool-less and read-only (principle 2), enforce the timeout by killing the process, cap the bytes it reads, and return the model's final message. The service does not trust the adapter: it checks the elapsed time itself, the size, the JSON and the schema. The port is synchronous. The office calls it from a worker thread, one blocking call per run. The crate cannot stop a call that never returns, and that run keeps the person's slot: an adapter that ignores its timeout is a bug in the adapter, and the office should run the call on a worker it can abandon. A run that ends after the deadline, with an answer or an error, is reported as `timeout`.
 
+This port is not `org-runtime` (the session port in `docs/design/agent-sessions.md`, which drives long-lived interactive sessions). A copilot run is one prompt, one JSON answer and a process that ends, with no permission prompts and no session state. In P2 the adapters may share launch planning with `org-runtime-claude` and `org-runtime-codex`, but the office, not this crate, decides how; `org-copilot` depends on neither.
+
 ### The contract sketch
 Calls on the office server's socket. **Not added to `org-proto` in this PR**: the shapes live in `org-copilot` and the app's mock, and become `org-proto` types, additive, when the office wires them (ada's review then).
 
