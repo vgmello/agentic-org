@@ -40,8 +40,9 @@ EMPTY_MCP = '{"mcpServers":{}}'
 
 KEEP_TMP = "--keep" in sys.argv or os.environ.get("CLAUDE_SPIKE_KEEP") == "1"
 TURNS: list[str] = []  # model turns sent by this process (printed at exit)
-# Account-synced plugins are detected only by their `source: "<name>@synced"` entry (see synced_names);
-# their names, commands and skills are personal to the account, so the scrubber drops them.
+# Account-synced plugins and skills are detected by structure only, never by name (see synced_names):
+# a plugin entry with source "<name>@synced", or a non-builtin command aliased "<namespace>:<skill>".
+# Their names, commands and skills are personal to the account, so the scrubber drops them.
 # Built-in commands whose descriptions hint at the account's plan or org: descriptions are blanked.
 PLAN_HINT_COMMANDS = {"usage-credits", "extra-usage", "upgrade", "usage"}
 
@@ -445,6 +446,10 @@ def synced_names(corpus) -> tuple[set[str], set[str]]:
         if isinstance(o, dict):
             if isinstance(o.get("source"), str) and o["source"].endswith("@synced") and isinstance(o.get("name"), str):
                 ns.add(o["name"])
+            # account skills can load without a plugin entry: a non-builtin command whose aliases are
+            # "<namespace>:<skill>" marks that namespace (structural detection; no names are hard-coded)
+            if isinstance(o.get("name"), str) and not o.get("builtin") and isinstance(o.get("aliases"), list):
+                ns.update(a.split(":", 1)[0] for a in o["aliases"] if isinstance(a, str) and ":" in a)
             for v in o.values():
                 find_ns(v)
         elif isinstance(o, list):

@@ -11,7 +11,7 @@ Evidence tags:
 - **CLI:** `claude` 2.1.311 (`/opt/homebrew/bin/claude` → `/opt/homebrew/Caskroom/claude-code/2.1.311/claude`)
 - **Host:** macOS 26.7.2 (Darwin 25.6.0, arm64), Python 3.15.2, git 2.54.0 (Apple Git-157)
 - **Model:** `--model haiku` (`claude-haiku-5-5`), `--max-budget-usd 0.50` per process
-- **Model turns used:** about 55-60, including 1 interactive turn **[hand]** (counted with a run log that was later deleted; the scripts' own docstrings add up to the lower end). A one-line haiku turn reported about $0.002 `total_cost_usd` (list-price estimate).
+- **Model turns used:** about 58-63, including 1 interactive turn and item 12's 3 turns **[hand]** (counted with a run log that was later deleted; the scripts' own docstrings add up to the lower end). A one-line haiku turn reported about $0.002 `total_cost_usd` (list-price estimate).
 
 ## Summary
 
@@ -29,6 +29,7 @@ Evidence tags:
 | 9 | git commit in the sandbox | **pass**, but roots differ from the design | Claude's sandbox **by itself** makes much of the linked worktree's git common dir writable (refs, `HEAD`, `packed-refs`, `info/exclude`, …), but not `config`, `config.worktree`, `hooks/` or `objects/info`. The office's `denyWrite` entries override that, and the commit still works. `git config --worktree` was denied in both sandbox runs. |
 | 10 | Take-over | **pass** | Headless → `claude --resume <id>` in a PTY → headless `--resume`: same session id, one transcript, and the conversation carries both ways. A fresh config dir must be pre-seeded (onboarding, trust). |
 | 11 | Memory | **measured** | Idle RSS is 216 MiB after `initialize` with no turn yet (210 MiB in an unscripted probe **[hand]**), 228 MiB after 1 turn, and 238 MiB after 4 turns. |
+| 12 | MCP isolation | **pass** for the office config | `--strict-mcp-config --mcp-config '{"mcpServers":{}}'` plus `--setting-sources ""` loaded **no** MCP server and no `mcp__` tool. `--setting-sources ""` alone kept out a config-file server but **not** the account's claude.ai connectors (6 servers, 24 tools). `--tools ""` doesn't hide MCP tools. Tested in an isolated config dir, not the real `~/.claude`. |
 
 ## Facts that contradict or change `agent-sessions.md` (rev 3.1)
 
@@ -110,6 +111,7 @@ python3 item08_09_sandbox.py [--dry]  # items 8 and 9 (--dry: git setup and prob
 python3 item09b_sandbox_gitdir.py [--deny]  # item 9: what the sandbox allows by itself / with denyWrite (builds its own repos)
 python3 rescrub.py                  # offline: re-apply the scrubber to every fixture and result (no model call)
 python3 item10_takeover.py          # item 10
+python3 item11_mcp_isolation.py     # item 12, MCP isolation (2-3 turns, isolated config with a planted stub server)
 ```
 
 - `lib.py` holds the harness: the isolated env, stream-json framing, control requests, process-group kill, scrubbed fixture writer.
@@ -160,8 +162,19 @@ CLAUDE_CONFIG_DIR=<tmp>/cfg  CLAUDE_SECURESTORAGE_CONFIG_DIR=
 
 ```
 claude -p --input-format stream-json --output-format stream-json --verbose --model haiku
-  --max-budget-usd 0.50 --strict-mcp-config --mcp-config '{"mcpServers":{}}'  [+ per item]
+  --max-budget-usd 0.50 --strict-mcp-config --mcp-config '{"mcpServers":{}}'
+  --setting-sources "" --tools Bash,Read  [+ per item]
 ```
+
+- **`--setting-sources ""` and `--tools Bash,Read` are new defaults.** The recorded runs predate them: they used the default setting sources and toolset unless an item set its own (see each section's flags).
+  - A flag given by the item overrides the default.
+  - Item 5 (and its 5b control) opts out of both, and so does 5c's `--with-tools`, because they measure exactly what the sources and the default toolset load.
+  - Item 6 opts out of `--tools`, because its unknown-agent check relies on the full default toolset.
+- **Worst-case spend if every script is re-run once:**
+  - 40 headless processes at the `--max-budget-usd 0.50` cap, about $20. Items 1, 2 (3), 2b (3), 3, 4 (6), 5 (10), 5b, 5c (3), 6 (3), 7 (3), 8/9 (2), 9b (2) and 10 (2).
+  - Item 11's 3 processes at $0.25.
+  - Item 10's one interactive turn, which has no cap (`--max-budget-usd` works only with `--print`).
+  - The actual spend was far lower: about $0.002 per one-line haiku turn.
 
 ---
 
@@ -481,7 +494,33 @@ So roughly 210-240 MiB per idle live agent, which grows slowly with the conversa
 
 ---
 
+## 12. MCP isolation (item 12)
+
+Script: `item11_mcp_isolation.py`. Result: `results/item11_mcp.json`. Fixtures: `mcp-isolation-{A-office-strict-empty,B-no-strict-sources-empty,C-no-strict-default-sources}.jsonl`, with server names replaced by `<server-N>` and `mcp__…` names by `<mcp-tool-N>`. The script refuses to save a fixture that still holds a name.
+
+**Not the real `~/.claude`.** Spawning claude always writes its config dir (`.claude.json`, `backups/`, `session-env/`, shell snapshots), and controls B and C would start the user's own MCP servers. Both break the spike's rule never to write to or change the user's real setup, so this was run isolated:
+- `CLAUDE_CONFIG_DIR=<tmp>/cfg`, whose `.claude.json` holds one planted user-scope server, `spike-stub` (`command: /usr/bin/false`, so it can only fail). It stands in for the servers in a real `~/.claude.json`.
+- The account's claude.ai connectors come from the sign-in itself, so they're the real ones.
+- Running against the real `~/.claude` needs the user's go-ahead (Open questions).
+
+Common flags: `-p` stream-json, `--model haiku --max-budget-usd 0.25 --tools "" --permission-mode manual --permission-prompt-tool stdio`, a deny-all approver, a fresh `mkdtemp` cwd, and the prompt `hi`.
+
+| Run | Extra flags | MCP servers in `init` | Statuses | Planted stub listed | Any name contains claude.ai | `mcp__` tools |
+| --- | --- | --- | --- | --- | --- | --- |
+| A (office) | `--strict-mcp-config --mcp-config '{"mcpServers":{}}' --setting-sources ""` | **0** | — | no | no | **0** |
+| B | `--setting-sources ""` (no strict, no `--mcp-config`) | **6** | 2 connected, 4 needs-auth | **no** | **yes** | 24 |
+| C | none (default sources, no strict) | **7** | 2 connected, 1 failed, 4 needs-auth | **yes** (the failed one) | yes | 24 |
+
+- **A: the office config keeps out both** the config-file server and the account's connectors.
+- **B: `--setting-sources ""` alone kept out the config-file server** (it's back in C), **but not the claude.ai connectors.** So `--strict-mcp-config` is what keeps the connectors out.
+- **`--tools ""` doesn't hide MCP tools:** 24 `mcp__` tools in B and C. Only `--strict-mcp-config` removed them.
+- C ran because B didn't list the stub, so B alone couldn't tell "kept out" from "never read". The script's rule is to run C when B shows no server or doesn't list the stub. Model turns: 3.
+- **Inference, not tested:** the servers in the user's real `~/.claude.json` sit under the same `mcpServers` key and scope as the planted stub, so they should behave like it.
+- **Verdict: pass** for the office config (`--strict-mcp-config` with an empty `--mcp-config`, plus `--setting-sources ""`).
+
 ## Open questions / limits for the design
+
+0. **MCP check against the real `~/.claude`** (item 12) wasn't run. It writes to the user's config and starts their MCP servers. If the user wants it, they need to approve that explicitly.
 
 1. **Is `CLAUDE_SECURESTORAGE_CONFIG_DIR=` acceptable?** It's undocumented and could change in any release.
    - The alternatives are the real `~/.claude` as the config dir, which is the design's assumption and brings the user's config, plugins and history into every agent unless `--setting-sources ""` holds; `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, which is long-lived, inference-only, and needs the user to make it; or an API key.
@@ -499,7 +538,7 @@ So roughly 210-240 MiB per idle live agent, which grows slowly with the conversa
 
 ## Paths written
 
-- **In the worktree:** `spikes/claude/` only: `README.md`, `lib.py`, the `item*.py` scripts, `fixtures/` (40 files, about 0.9 MB, scrubbed), `results/` (17 JSON files, scrubbed).
+- **In the worktree:** `spikes/claude/` only: `README.md`, `lib.py`, the `item*.py` scripts, `fixtures/` (43 files, about 1 MB, scrubbed), `results/` (18 JSON files, scrubbed).
 - **Temp:** the recorded runs used fixed dirs, `/tmp/claude-spike-{auth,probe,s0,s1,s2,s2b,s3,s4,s5,s5c,s6,s7,s8,s10}/`, plus `/tmp/claude-spike-runs.log`. **All removed.** Scripts now use private `mkdtemp` dirs that they remove at exit.
 - `/tmp/cc-socks/<pid>.sock`: the CLI's. Clean exits removed theirs. The two SIGKILL runs left one each, and I removed both (`3623.sock`, `4147.sock`).
 - **The real `~/.claude`** **[hand]:** two empty folders, `~/.claude/ssh` and `~/.claude/bridge-spawn`, were created at 07:38:20 and 07:38:23, during the first sandbox-enabled run. They were the only entries born in `~/.claude` during the spike, and both were removed with `rmdir`.
@@ -509,11 +548,30 @@ So roughly 210-240 MiB per idle live agent, which grows slowly with the conversa
 - **API ids** (`msg_…`, `toolu_…`, `req_…`) are left in the fixtures. They're per-request ids, not personal data or secrets.
 - **Thinking `signature` blobs** (24 non-empty ones, in thinking blocks and `signature_delta` events) are `<scrubbed>`. So are the `description` and `displayName` of every model in `initialize`'s `models` list, and the `organization` key is dropped from `account`. `lib.Scrubber` does the same on re-runs.
 - **Re-scrubbed after a privacy review** (`rescrub.py`, offline, no model call). Every fixture and result was rewritten so that:
-  - all values inside `rate_limit_info` (utilization, `resetsAt`, overage status and reason) are `<scrubbed>`, with the keys kept
+  - every value inside `rate_limit_info` is a **synthetic value of the same JSON type**, with the keys kept (the "Synthetic values" table below), so the fixtures still work as contract fixtures
   - account-synced plugins (source `…@synced`) and their commands, skills and aliases are dropped from every list
+  - in `initialize`'s `models` list, only the model used (the `haiku` entry) is kept
   - the descriptions of the plan-related built-in commands (`usage-credits`, `extra-usage`, `upgrade`, `usage`) are `<scrubbed>`
   - TUI notice lines hinting at the plan or org (an upsell line, a hidden-notices count, and the `/usage-credits` help line) are cut from `takeover-pty.txt`
 
   On re-runs, `lib.Scrubber` does the JSON part and `lib.crop_tui_notices` the PTY crop (`item10` uses it for the fixture and for `pty_tail`).
+
+  **Synthetic values** in every `rate_limit_event` (all 34 in the fixtures are identical; `lib.SYNTH_RATE` / `SYNTH_WINDOW`):
+
+  | Field | Type | Synthetic value |
+  | --- | --- | --- |
+  | `status` | string | `"allowed"` |
+  | `resetsAt` | integer (epoch s) | `1800000000` |
+  | `rateLimitType` | string | `"five_hour"` |
+  | `overageStatus` | string | `"allowed"` |
+  | `overageDisabledReason` | string | `"synthetic_reason"` |
+  | `isUsingOverage` | boolean | `false` |
+  | `unifiedWindows.five_hour` | object | `{"utilization": 0.42, "resetsAt": 1800000000, "status": "allowed"}` |
+  | `unifiedWindows.seven_day` | object | `{"utilization": 0.17, "resetsAt": 1800500000, "status": "allowed"}` |
+
+  - `utilization` is a number from 0 to 1.
+  - A field not in the table gets a neutral value of its own type (0, `false`, `"synthetic"` or `null`).
+  - The real values were the account's own, and `overageStatus` and its reason described the account's state, so none of them was kept.
+  - **Synced plugins and account skills are detected by structure, never by name:** a plugin entry with `source: "<name>@synced"`, or a non-builtin command whose aliases are `<namespace>:<skill>`. That namespace's skills and the commands' plain names are then dropped. The second rule was added because item 12's control C loaded account skills that had no `@synced` plugin entry. The new `--setting-sources ""` default keeps both from loading at all, except where a script turns it off (item 5, item 12's control C).
 - **`results/item05.json` was edited by hand:** the original run recorded the user's real skill names. They, and the count that replaced them for a while, were removed. Only `real_user_skills_present: true` is left (the user has several), plus a `_note` saying so. Re-runs record only booleans for this and for the synced commands and plugins.
 - **Processes** **[hand]:** every spawned claude ran in its own group and was closed or killed. The tool `sleep`s from item 7 were killed by pid. `pgrep -x claude` at the end matched the baseline taken before the spike.
