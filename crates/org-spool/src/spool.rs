@@ -22,7 +22,12 @@ use crate::ulid::{generate_ulid, is_valid_ulid};
 
 const RETENTION_SECS: u64 = 30 * 24 * 60 * 60;
 const ASK_WAIT_BACKSTOP: Duration = Duration::from_millis(2);
-const INBOX_WAIT_BACKSTOP: Duration = Duration::from_millis(50);
+/// `msg wait` rescans on every wake-socket nudge; this backstop only catches snoozes coming due
+/// (and a relay that can't reach the socket), so it can be long: a busy `--urgent-only` watcher
+/// otherwise re-reads the whole inbox many times a second.
+const INBOX_WAIT_BACKSTOP: Duration = Duration::from_millis(1000);
+/// Without a bound socket (bind failed), there's nothing to wake us: poll faster.
+const INBOX_WAIT_NO_SOCKET: Duration = Duration::from_millis(100);
 
 static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
@@ -85,6 +90,15 @@ pub fn poll_unix_listener_events(listener: &UnixListener, timeout: Duration) -> 
 /// Wait on a `UnixListener` for up to `timeout` using POSIX `poll(2)` (0% CPU while idle).
 pub fn poll_unix_listener(listener: &UnixListener, timeout: Duration) -> bool {
     poll_unix_listener_events(listener, timeout).any
+}
+
+/// Read a file, treating "not there (any more)" as `None` rather than an error.
+fn read_if_present(path: &Path) -> Result<Option<Vec<u8>>, SpoolError> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(SpoolError::Io(e)),
+    }
 }
 
 fn is_pid_dead(pid: u32) -> bool {
@@ -179,6 +193,11 @@ pub struct WakeListener {
 impl WakeListener {
     pub fn socket_path(&self) -> &Path {
         &self.sock_path
+    }
+
+    /// Whether the socket is bound (binding fails e.g. on an over-long path).
+    pub fn is_bound(&self) -> bool {
+        self.listener.is_some()
     }
 
     pub fn wait_slice(&self, max_wait: Duration) -> bool {
@@ -380,12 +399,18 @@ impl Spool {
         }
     }
 
-    /// Bind a per-listener wake socket at `inbox/<agent>/wake/<pid>-<ulid>.sock`.
+    /// Bind a per-listener wake socket at `inbox/<agent>/wake/<pid>-<suffix>.sock`.
+    ///
+    /// The suffix is the last 10 characters of a fresh (monotonic) ULID rather than the whole
+    /// ULID: macOS limits a socket path to 103 bytes, and with the full ULID the path of an
+    /// agent with a long id under `~/.agency` (e.g. `ac-software-engineer-river`) hit 104, so
+    /// `bind` failed and that agent's waits silently fell back to sleep-polling.
     pub fn bind_wake_listener(&self, agent: &str) -> Result<WakeListener, SpoolError> {
         validate_agent_id(agent, "agent").map_err(SpoolError::InvalidInput)?;
         let wake_dir = self.agent_wake_dir(agent);
         self.ensure_dir(&wake_dir)?;
-        let sock_name = format!("{}-{}.sock", process::id(), generate_ulid());
+        let ulid = generate_ulid();
+        let sock_name = format!("{}-{}.sock", process::id(), &ulid[16..]);
         let sock_path = wake_dir.join(sock_name);
         let _ = fs::remove_file(&sock_path);
 
@@ -625,31 +650,28 @@ impl Spool {
         let new_path = self.agent_new_dir(agent).join(&fname);
         let cur_path = self.agent_cur_dir(agent).join(&fname);
 
-        if new_path.is_file() {
-            let bytes = fs::read(&new_path)?;
-            let env = match Envelope::from_json_bytes(&bytes) {
-                Ok(e) => e,
-                Err(err) => {
-                    let _ = self.move_to_dead(&new_path, id, &format!("corrupt_inbox_file: {err}"));
-                    return Err(SpoolError::InvalidInput(format!(
-                        "corrupt message '{id}' moved to dead/: {err}"
-                    )));
-                }
-            };
-            self.ensure_dir(&self.agent_cur_dir(agent))?;
-            match fs::rename(&new_path, &cur_path) {
-                Ok(()) => {
-                    self.mark_read_in_triage(agent, id);
+        // `defer` may move the file between new/ and cur/ while we look (it holds the meta lock;
+        // we don't, to keep reads cheap), so a miss in both places is retried once.
+        for _ in 0..2 {
+            if let Some(bytes) = read_if_present(&new_path)? {
+                let env = match Envelope::from_json_bytes(&bytes) {
+                    Ok(e) => e,
+                    Err(err) => {
+                        let _ =
+                            self.move_to_dead(&new_path, id, &format!("corrupt_inbox_file: {err}"));
+                        return Err(SpoolError::InvalidInput(format!(
+                            "corrupt message '{id}' moved to dead/: {err}"
+                        )));
+                    }
+                };
+                self.ensure_dir(&self.agent_cur_dir(agent))?;
+                if self.claim_into_cur(agent, id, &new_path, &cur_path)? {
                     return Ok(env);
                 }
-                Err(e) if e.kind() == ErrorKind::NotFound => {}
-                Err(e) => return Err(SpoolError::Io(e)),
             }
-        }
-
-        if cur_path.is_file() {
-            let bytes = fs::read(&cur_path)?;
-            return Envelope::from_json_bytes(&bytes).map_err(SpoolError::InvalidInput);
+            if let Some(bytes) = read_if_present(&cur_path)? {
+                return Envelope::from_json_bytes(&bytes).map_err(SpoolError::InvalidInput);
+            }
         }
 
         Err(SpoolError::NotFound(format!(
@@ -698,11 +720,12 @@ impl Spool {
             )));
         }
         let fname = format!("{id}.json");
-        for dir in [self.agent_new_dir(agent), self.agent_cur_dir(agent)] {
-            let path = dir.join(&fname);
-            if path.is_file() {
-                let bytes = fs::read(&path)?;
-                return Envelope::from_json_bytes(&bytes).map_err(SpoolError::InvalidInput);
+        // Retried once: a concurrent `defer` or `read` may be moving it between new/ and cur/.
+        for _ in 0..2 {
+            for dir in [self.agent_new_dir(agent), self.agent_cur_dir(agent)] {
+                if let Some(bytes) = read_if_present(&dir.join(&fname))? {
+                    return Envelope::from_json_bytes(&bytes).map_err(SpoolError::InvalidInput);
+                }
             }
         }
         Err(SpoolError::NotFound(format!(
@@ -735,7 +758,8 @@ impl Spool {
             };
             if env.reply_to.as_deref() == Some(req_id) {
                 let cur_path = self.agent_cur_dir(agent).join(format!("{}.json", env.id));
-                if fs::rename(&path, &cur_path).is_ok() {
+                // Same locked claim as `msg read`, so a concurrent `defer` can't interleave.
+                if self.claim_into_cur(agent, &env.id, &path, &cur_path)? {
                     return Ok(Some(env));
                 }
             }
@@ -815,7 +839,12 @@ impl Spool {
                 )));
             }
             let remaining = deadline.saturating_duration_since(now);
-            listener.wait_slice_with_cap(remaining, INBOX_WAIT_BACKSTOP);
+            let cap = if listener.is_bound() {
+                INBOX_WAIT_BACKSTOP
+            } else {
+                INBOX_WAIT_NO_SOCKET
+            };
+            listener.wait_slice_with_cap(remaining, cap);
         }
     }
 

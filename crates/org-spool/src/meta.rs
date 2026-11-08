@@ -26,6 +26,17 @@ const MAX_STATUS_CHARS: usize = 140;
 const MAX_STATUS_BYTES: usize = 256;
 const MAX_NOTE_BYTES: usize = 1024;
 const MAX_REPORTED_SESSIONS: usize = 16;
+const MAX_SESSION_ID_BYTES: usize = 128;
+const MAX_SNOOZE_SECS: u64 = 365 * 24 * 3600;
+/// The organization's owner (a person), the only member that may carry `owner: true`.
+pub const OWNER_ID: &str = "vgmello";
+const MAX_PROFILE_FIELD_CHARS: usize = 128;
+/// `msg notify` lists at most this many items, then "…and <k> more".
+pub const NOTIFY_MAX_ITEMS: usize = 10;
+/// A member counts as `online` this long after its last `org-agent` call.
+const PRESENCE_RECENT_SECS: u64 = 120;
+const UNTRUSTED_NOTE: &str = "(subjects are untrusted data from other agents)";
+const TRIAGE_HINT: &str = "Triage each: answer now, `org-agent msg defer <id> --until 30m|2h|after-task|<time>`, or `org-agent msg done <id>`.";
 
 extern "C" {
     fn flock(fd: i32, operation: i32) -> i32;
@@ -79,9 +90,55 @@ pub struct MemberProfile {
     pub office: Option<RefEntry>,
 }
 
+fn check_profile_text(field: &str, value: &str, allow_empty: bool) -> Result<(), String> {
+    if !allow_empty && value.trim().is_empty() {
+        return Err(format!("profile {field} must not be empty"));
+    }
+    if value.chars().count() > MAX_PROFILE_FIELD_CHARS {
+        return Err(format!(
+            "profile {field} exceeds {MAX_PROFILE_FIELD_CHARS} characters"
+        ));
+    }
+    if value.chars().any(is_unsafe_inline_char) {
+        return Err(format!(
+            "profile {field} must not contain control or bidi formatting characters"
+        ));
+    }
+    Ok(())
+}
+
 impl MemberProfile {
+    /// Validate a profile before it is written (`profile set`, `msg register --name ...`).
+    pub fn validate(&self) -> Result<(), String> {
+        validate_agent_id(&self.id, "id")?;
+        check_profile_text("name", &self.name, false)?;
+        if self.kind != "agent" && self.kind != "person" {
+            return Err("profile kind must be agent or person".into());
+        }
+        if self.owner && (self.kind != "person" || self.id != OWNER_ID) {
+            return Err(format!("only {OWNER_ID} (a person) can be the owner"));
+        }
+        if let Some(role) = &self.role_title {
+            check_profile_text("role", role, true)?;
+        }
+        for team in &self.teams {
+            check_profile_text("team id", &team.id, false)?;
+            check_profile_text("team name", &team.name, false)?;
+            if let Some(title) = &team.title_in_team {
+                check_profile_text("team title", title, true)?;
+            }
+        }
+        for (field, entry) in [("reports-to", &self.reports_to), ("office", &self.office)] {
+            if let Some(entry) = entry {
+                check_profile_text(field, &entry.id, false)?;
+                check_profile_text(field, &entry.name, false)?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn default_for(id: &str) -> Self {
-        let is_owner = id.eq_ignore_ascii_case("vgmello") || id.eq_ignore_ascii_case("owner");
+        let is_owner = id == OWNER_ID;
         Self {
             id: id.to_string(),
             name: id.to_string(),
@@ -119,9 +176,16 @@ pub struct DirectoryCard {
     pub teams: Vec<TeamEntry>,
     pub reports_to: Option<RefEntry>,
     pub office: Option<RefEntry>,
+    /// `online` while a `msg wait`/`ask` listener is live or within 2 minutes of the member's
+    /// last `org-agent` call, else `offline` (Phase A can't tell busy from idle).
     pub presence: String,
+    #[serde(default)]
+    pub last_seen_at: Option<String>,
     pub status: Option<String>,
     pub status_expires_at: Option<String>,
+    /// Always `null` in Phase A (no tasks yet); kept for the ADR-0003 card shape.
+    #[serde(default)]
+    pub current_task_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -154,6 +218,15 @@ pub struct TriageState {
 
 fn default_triage_version() -> u32 {
     1
+}
+
+impl TriageState {
+    fn empty() -> Self {
+        Self {
+            v: default_triage_version(),
+            messages: BTreeMap::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -190,10 +263,12 @@ pub struct InboxItem {
     pub created_at: String,
     pub expires_at: Option<String>,
     pub subject: Option<String>,
+    /// Absent (not `null`) with `--summary`, so header-only consumers can check for it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub body: Option<String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub meta: BTreeMap<String, Value>,
+    /// Always present (like v1-old's envelope list) unless `--summary`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<BTreeMap<String, Value>>,
 }
 
 #[derive(Debug, Clone)]
@@ -241,11 +316,33 @@ pub struct NotifyReport {
     pub text: String,
 }
 
+/// Control characters, zero-width and bidi formatting characters (which can visually reorder
+/// or hide text in a terminal or a model's context).
+fn is_unsafe_inline_char(ch: char) -> bool {
+    ch.is_control()
+        || matches!(
+            ch,
+            '\u{200B}'..='\u{200F}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2060}'..='\u{2069}'
+                | '\u{FEFF}'
+        )
+}
+
+/// Make untrusted text safe to show on one line: control, zero-width and bidi characters become
+/// spaces, runs of whitespace collapse, double quotes become single quotes (so a subject can't
+/// break out of the quotes `msg notify` wraps it in), and the result is cut to `max_chars`.
 pub fn sanitize_inline_text(raw: &str, max_chars: usize) -> String {
     let mut cleaned = String::with_capacity(raw.len().min(max_chars + 8));
     let mut prev_space = false;
     for ch in raw.chars() {
-        let mapped = if ch.is_control() { ' ' } else { ch };
+        let mapped = if is_unsafe_inline_char(ch) {
+            ' '
+        } else if ch == '"' {
+            '\''
+        } else {
+            ch
+        };
         if mapped.is_whitespace() {
             if !prev_space && !cleaned.is_empty() {
                 cleaned.push(' ');
@@ -277,18 +374,44 @@ pub fn parse_snooze_until(raw: &str, now: SystemTime) -> Result<String, SpoolErr
     if trimmed == "after-task" {
         return Ok("after-task".to_string());
     }
-    if is_valid_iso8601_utc(trimmed) {
-        return Ok(trimmed.to_string());
-    }
-    // Also tolerate YYYY-MM-DDTHH:MM:SSZ without fractional seconds by normalizing to .000Z
-    if trimmed.len() == 20 && trimmed.ends_with('Z') {
-        let normalized = format!("{}.000Z", &trimmed[..19]);
-        if is_valid_iso8601_utc(&normalized) {
-            return Ok(normalized);
+    // Snoozes are compared as strings, so a time must be canonical and in range.
+    let iso = if trimmed.len() == 20 && trimmed.ends_with('Z') {
+        // Tolerate YYYY-MM-DDTHH:MM:SSZ without fractional seconds.
+        format!("{}.000Z", &trimmed[..19])
+    } else {
+        trimmed.to_string()
+    };
+    if is_valid_iso8601_utc(&iso) {
+        let field = |a: usize, b: usize| iso[a..b].parse::<u32>().unwrap_or(u32::MAX);
+        let (year, month) = (field(0, 4), field(5, 7));
+        let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+        let month_days = match month {
+            2 if leap => 29,
+            2 => 28,
+            4 | 6 | 9 | 11 => 30,
+            _ => 31,
+        };
+        let in_range = (1..=12).contains(&month)
+            && (1..=month_days).contains(&field(8, 10))
+            && field(11, 13) < 24
+            && field(14, 16) < 60
+            && field(17, 19) < 60;
+        if !in_range {
+            return Err(SpoolError::InvalidInput(format!(
+                "--until '{raw}' is not a valid UTC time"
+            )));
         }
+        return Ok(iso);
     }
     let dur = parse_duration_arg(trimmed).map_err(SpoolError::InvalidInput)?;
-    let target = now.checked_add(dur).unwrap_or(now);
+    if dur > Duration::from_secs(MAX_SNOOZE_SECS) {
+        return Err(SpoolError::InvalidInput(
+            "--until can snooze for at most 365 days".into(),
+        ));
+    }
+    let target = now
+        .checked_add(dur)
+        .ok_or_else(|| SpoolError::InvalidInput(format!("--until '{raw}' is out of range")))?;
     Ok(format_iso8601_utc(target))
 }
 
@@ -309,13 +432,43 @@ impl Spool {
         self.agent_inbox_dir(agent).join("triage.json")
     }
 
+    fn agent_last_seen_path(&self, agent: &str) -> PathBuf {
+        self.agent_inbox_dir(agent).join(".last_seen")
+    }
+
+    /// Record that `agent` just used `org-agent` (the mtime of `inbox/<agent>/.last_seen`), for
+    /// `who`'s presence. Best effort and only for registered agents: never creates an inbox.
+    pub fn touch_last_seen(&self, agent: &str) {
+        if !self.is_registered(agent) {
+            return;
+        }
+        if let Ok(file) = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .open(self.agent_last_seen_path(agent))
+        {
+            let _ = file.set_modified(SystemTime::now());
+        }
+    }
+
+    fn last_seen(&self, agent: &str) -> Option<SystemTime> {
+        fs::metadata(self.agent_last_seen_path(agent))
+            .and_then(|m| m.modified())
+            .ok()
+    }
+
     /// Acquire an exclusive `flock` on `inbox/<agent>/.meta.lock` and execute `f`.
     pub fn with_agent_meta_lock<T, F>(&self, agent: &str, f: F) -> Result<T, SpoolError>
     where
         F: FnOnce() -> Result<T, SpoolError>,
     {
         validate_agent_id(agent, "agent").map_err(SpoolError::InvalidInput)?;
-        self.ensure_dir(&self.agent_tmp_dir(agent))?;
+        // Never creates an inbox: writers that may (profile, status) register first.
+        if !self.agent_inbox_dir(agent).is_dir() {
+            return Err(SpoolError::NotFound(format!("'{agent}' is not registered")));
+        }
         let lock_path = self.agent_meta_lock_path(agent);
         let file = OpenOptions::new()
             .read(true)
@@ -355,18 +508,27 @@ impl Spool {
         Ok(())
     }
 
-    fn load_triage_unlocked(&self, agent: &str) -> TriageState {
+    /// Load `triage.json` (caller holds the meta lock). A missing file is an empty state; a read
+    /// error is an I/O error (so a transient failure never wipes the snoozes); an unparseable
+    /// file is set aside as `triage.json.corrupt-<ulid>` and replaced by an empty state, so one
+    /// bad write can't wedge triage forever.
+    fn load_triage_unlocked(&self, agent: &str) -> Result<TriageState, SpoolError> {
         let path = self.agent_triage_path(agent);
-        let Ok(bytes) = fs::read(&path) else {
-            return TriageState {
-                v: 1,
-                messages: BTreeMap::new(),
-            };
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(TriageState::empty()),
+            Err(e) => return Err(SpoolError::Io(e)),
         };
-        serde_json::from_slice(&bytes).unwrap_or_else(|_| TriageState {
-            v: 1,
-            messages: BTreeMap::new(),
-        })
+        match serde_json::from_slice(&bytes) {
+            Ok(state) => Ok(state),
+            Err(_) => {
+                let aside = self
+                    .agent_inbox_dir(agent)
+                    .join(format!("triage.json.corrupt-{}", generate_ulid()));
+                fs::rename(&path, aside)?;
+                Ok(TriageState::empty())
+            }
+        }
     }
 
     fn save_triage_unlocked(&self, agent: &str, state: &TriageState) -> Result<(), SpoolError> {
@@ -376,7 +538,11 @@ impl Spool {
     fn load_profile_unlocked(&self, agent: &str) -> MemberProfile {
         let path = self.agent_profile_path(agent);
         if let Ok(bytes) = fs::read(&path) {
-            if let Ok(profile) = serde_json::from_slice::<MemberProfile>(&bytes) {
+            if let Ok(mut profile) = serde_json::from_slice::<MemberProfile>(&bytes) {
+                // The directory names the member, not the file: a profile can't claim to be
+                // someone else, nor make itself the owner.
+                profile.id = agent.to_string();
+                profile.owner = agent == OWNER_ID;
                 return profile;
             }
         }
@@ -385,7 +551,7 @@ impl Spool {
 
     /// Update or create `inbox/<agent>/profile.json` under the per-agent `flock`.
     pub fn set_profile(&self, profile: &MemberProfile) -> Result<MemberProfile, SpoolError> {
-        validate_agent_id(&profile.id, "id").map_err(SpoolError::InvalidInput)?;
+        profile.validate().map_err(SpoolError::InvalidInput)?;
         self.register(&profile.id)?;
         self.with_agent_meta_lock(&profile.id, || {
             self.write_agent_json_unlocked(
@@ -417,9 +583,10 @@ impl Spool {
                 "status text cannot be empty (use --clear to clear status)".into(),
             ));
         }
-        if trimmed.chars().any(|c| c.is_control()) {
+        if trimmed.chars().any(is_unsafe_inline_char) {
             return Err(SpoolError::InvalidInput(
-                "status text cannot contain control characters or newlines".into(),
+                "status text cannot contain control, zero-width or bidi characters, or newlines"
+                    .into(),
             ));
         }
         if trimmed.chars().count() > MAX_STATUS_CHARS || trimmed.len() > MAX_STATUS_BYTES {
@@ -477,14 +644,17 @@ impl Spool {
     fn build_directory_card(&self, id: &str, now_iso: &str) -> DirectoryCard {
         let profile = self.load_profile_unlocked(id);
         let active_status = self.get_active_status(id, now_iso);
-        let has_live_waiter = self.has_live_wake_listener(id);
-        let presence = if has_live_waiter {
-            "idle".to_string()
-        } else if active_status.is_some() || self.is_registered(id) {
-            "online".to_string()
+        let now = SystemTime::now();
+        let last_seen = if self.has_live_wake_listener(id) {
+            Some(now)
         } else {
-            "offline".to_string()
+            self.last_seen(id)
         };
+        let recent = last_seen.is_some_and(|seen| {
+            now.duration_since(seen).unwrap_or_default()
+                <= Duration::from_secs(PRESENCE_RECENT_SECS)
+        });
+        let presence = if recent { "online" } else { "offline" }.to_string();
         DirectoryCard {
             id: profile.id,
             name: profile.name,
@@ -495,8 +665,10 @@ impl Spool {
             reports_to: profile.reports_to,
             office: profile.office,
             presence,
+            last_seen_at: last_seen.map(format_iso8601_utc),
             status: active_status.as_ref().map(|s| s.status.clone()),
             status_expires_at: active_status.map(|s| s.expires_at),
+            current_task_id: None,
         }
     }
 
@@ -506,10 +678,20 @@ impl Spool {
         team_filter: Option<&str>,
         kind_filter: Option<&str>,
     ) -> Result<Vec<DirectoryCard>, SpoolError> {
+        if let Some(kf) = kind_filter {
+            if !matches!(
+                kf.trim().to_ascii_lowercase().as_str(),
+                "agent" | "person" | "owner"
+            ) {
+                return Err(SpoolError::InvalidInput(format!(
+                    "invalid --kind '{kf}' (expected agent, person, or owner)"
+                )));
+            }
+        }
         let now_iso = format_iso8601_utc(SystemTime::now());
         let mut ids = self.status()?.registered_agents;
-        if !ids.iter().any(|x| x == "vgmello") {
-            ids.push("vgmello".to_string());
+        if !ids.iter().any(|x| x == OWNER_ID) {
+            ids.push(OWNER_ID.to_string());
         }
         ids.sort();
         ids.dedup();
@@ -616,7 +798,7 @@ impl Spool {
                 }
             }
 
-            let mut state = self.load_triage_unlocked(agent);
+            let mut state = self.load_triage_unlocked(agent)?;
             let entry = state.messages.entry(id.to_string()).or_default();
             entry.triage_gen = entry.triage_gen.saturating_add(1);
             entry.snoozed_until = Some(snoozed_until.clone());
@@ -679,7 +861,7 @@ impl Spool {
                 )));
             }
 
-            let mut state = self.load_triage_unlocked(agent);
+            let mut state = self.load_triage_unlocked(agent)?;
             let entry = state.messages.entry(id.to_string()).or_default();
             entry.snoozed_until = None;
             entry.last_due_reason = None;
@@ -737,7 +919,7 @@ impl Spool {
         }
         let now_iso = format_iso8601_utc(SystemTime::now());
         self.with_agent_meta_lock(agent, || {
-            let mut state = self.load_triage_unlocked(agent);
+            let mut state = self.load_triage_unlocked(agent)?;
             if Self::release_due_in_state(&mut state, &now_iso, after_task) {
                 self.save_triage_unlocked(agent, &state)?;
             }
@@ -746,23 +928,46 @@ impl Spool {
     }
 
     /// Clear any active snooze on `id` when the message is explicitly read or replied to.
-    pub(crate) fn mark_read_in_triage(&self, agent: &str, id: &str) {
-        if !self.agent_inbox_dir(agent).exists() {
-            return;
-        }
+    /// Claim `new/<id>.json` into `cur/` and clear its snooze in one step under the meta lock,
+    /// so a concurrent `defer` (which moves `cur/` back to `new/`) can't land in between.
+    /// Returns `Ok(false)` when the file was no longer in `new/`.
+    pub(crate) fn claim_into_cur(
+        &self,
+        agent: &str,
+        id: &str,
+        new_path: &std::path::Path,
+        cur_path: &std::path::Path,
+    ) -> Result<bool, SpoolError> {
+        self.with_agent_meta_lock(agent, || match fs::rename(new_path, cur_path) {
+            Ok(()) => {
+                // The message is read either way; a triage write failure only leaves a stale
+                // entry for a message in cur/, which nothing consults.
+                let _ = self.mark_read_unlocked(agent, id);
+                Ok(true)
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(SpoolError::Io(e)),
+        })
+    }
+
+    fn mark_read_unlocked(&self, agent: &str, id: &str) -> Result<(), SpoolError> {
         let now_iso = format_iso8601_utc(SystemTime::now());
-        let _ = self.with_agent_meta_lock(agent, || {
-            let mut state = self.load_triage_unlocked(agent);
+        {
+            let mut state = self.load_triage_unlocked(agent)?;
             if let Some(entry) = state.messages.get_mut(id) {
-                if entry.snoozed_until.is_some() || entry.last_due_reason.is_some() {
+                if entry.snoozed_until.is_some()
+                    || entry.last_due_reason.is_some()
+                    || !entry.reported_sessions.is_empty()
+                {
                     entry.snoozed_until = None;
                     entry.last_due_reason = None;
+                    entry.reported_sessions.clear();
                     entry.triaged_at = Some(now_iso);
                     self.save_triage_unlocked(agent, &state)?;
                 }
             }
             Ok(())
-        });
+        }
     }
 
     /// List inbox items with triage metadata, hiding currently snoozed messages unless `include_all` is true.
@@ -811,11 +1016,7 @@ impl Spool {
                 expires_at: env.expires_at.clone(),
                 subject: env.subject.clone(),
                 body: if summary_only { None } else { Some(env.body) },
-                meta: if summary_only {
-                    BTreeMap::new()
-                } else {
-                    env.meta
-                },
+                meta: if summary_only { None } else { Some(env.meta) },
             });
         }
 
@@ -849,11 +1050,7 @@ impl Spool {
                             expires_at: env.expires_at.clone(),
                             subject: env.subject.clone(),
                             body: if summary_only { None } else { Some(env.body) },
-                            meta: if summary_only {
-                                BTreeMap::new()
-                            } else {
-                                env.meta
-                            },
+                            meta: if summary_only { None } else { Some(env.meta) },
                         });
                     }
                 }
@@ -867,20 +1064,28 @@ impl Spool {
         Ok(items)
     }
 
-    /// Evaluate actionable unread messages and build the sanitized `NotifyReport` (`org-agent msg notify`).
+    /// Evaluate actionable unread messages and build the sanitized `NotifyReport`
+    /// (`org-agent msg notify`, ADR-0003 §2.3 and the locked notify contract).
+    ///
+    /// Selection: unread messages that are neither snoozed nor done, plus time-based snoozes
+    /// that are now due (released here, `reason = "due"`), plus — with `after_task` — snoozes
+    /// set to `after-task` (`reason = "after_task"`). An urgent message (an `ask`, or priority
+    /// high/urgent) always counts (`"new"`); a non-urgent untriaged one counts at the natural
+    /// break (`after_task`, `"new"`) or once older than `sweep_after` (`"sweep"`).
+    ///
+    /// With a session, `(id, triage_gen)` pairs already reported to it are skipped, and the
+    /// listed ones are recorded, all under the per-agent `.meta.lock`. Only the first
+    /// [`NOTIFY_MAX_ITEMS`] (urgent first, then oldest) are listed and recorded; the rest are
+    /// counted in `more` and come up at the next check. Never reads out a body.
     pub fn notify(&self, agent: &str, opts: &NotifyOptions) -> Result<NotifyReport, SpoolError> {
         validate_agent_id(agent, "agent").map_err(SpoolError::InvalidInput)?;
+        let session = opts
+            .session
+            .as_deref()
+            .map(validate_session_id)
+            .transpose()?;
         if !self.agent_inbox_dir(agent).exists() {
-            return Ok(NotifyReport {
-                v: 1,
-                agent: agent.to_string(),
-                urgent: false,
-                count: 0,
-                urgent_count: 0,
-                items: Vec::new(),
-                more: 0,
-                text: String::new(),
-            });
+            return Ok(NotifyReport::build(agent, 0, 0, Vec::new()));
         }
 
         let now = SystemTime::now();
@@ -890,131 +1095,168 @@ impl Spool {
                 .unwrap_or(SystemTime::UNIX_EPOCH),
         );
 
-        let items = self.with_agent_meta_lock(agent, || {
-            let mut state = self.load_triage_unlocked(agent);
-            let mut state_dirty = Self::release_due_in_state(&mut state, &now_iso, opts.after_task);
-            let unread_envs = self.list_inbox(agent, false)?;
-            let mut matched = Vec::new();
+        let (count, urgent_count, items) = self.with_agent_meta_lock(agent, || {
+            let mut state = self.load_triage_unlocked(agent)?;
+            let mut dirty = Self::release_due_in_state(&mut state, &now_iso, opts.after_task);
 
-            for env in unread_envs {
-                let entry = state.messages.entry(env.id.clone()).or_default();
-                if entry.done_at.is_some() || entry.snoozed_until.is_some() {
+            let mut candidates: Vec<(Envelope, bool, String)> = Vec::new();
+            for env in self.list_inbox(agent, false)? {
+                let entry = state.messages.get(&env.id);
+                if entry.is_some_and(|e| e.done_at.is_some() || e.snoozed_until.is_some()) {
                     continue;
                 }
                 let urgent = env.is_urgent();
                 if opts.urgent_only && !urgent {
                     continue;
                 }
-                let priority = env.effective_priority().as_str().to_string();
-
-                let reason = if let Some(ref due_reason) = entry.last_due_reason {
-                    Some(due_reason.clone())
-                } else if urgent || opts.after_task {
-                    Some("new".to_string())
-                } else if entry.triaged_at.is_none()
-                    && env.created_at.as_str() <= sweep_cutoff_iso.as_str()
-                {
-                    Some("sweep".to_string())
-                } else {
-                    None
+                let untriaged = entry.is_none_or(|e| e.triaged_at.is_none());
+                let reason = match entry.and_then(|e| e.last_due_reason.clone()) {
+                    Some(due_reason) => due_reason,
+                    None if urgent || opts.after_task => "new".to_string(),
+                    None if untriaged && env.created_at.as_str() <= sweep_cutoff_iso.as_str() => {
+                        "sweep".to_string()
+                    }
+                    None => continue,
                 };
-
-                let Some(reason) = reason else {
-                    continue;
-                };
-
-                if let Some(ref session_id) = opts.session {
-                    let trimmed_sess = session_id.trim();
-                    if !trimmed_sess.is_empty() {
-                        if entry.reported_sessions.get(trimmed_sess) == Some(&entry.triage_gen) {
-                            continue;
-                        }
-                        if entry.reported_sessions.len() >= MAX_REPORTED_SESSIONS {
-                            if let Some(first_key) = entry.reported_sessions.keys().next().cloned()
-                            {
-                                entry.reported_sessions.remove(&first_key);
-                            }
-                        }
-                        entry
-                            .reported_sessions
-                            .insert(trimmed_sess.to_string(), entry.triage_gen);
-                        state_dirty = true;
+                if let (Some(sess), Some(e)) = (session, entry) {
+                    if e.reported_sessions.get(sess) == Some(&e.triage_gen) {
+                        continue;
                     }
                 }
-
-                let from_profile = self.load_profile_unlocked(&env.from);
-                let from_name = sanitize_inline_text(&from_profile.name, 48);
-                let from_id = sanitize_inline_text(&env.from, 64);
-                let raw_subj = env.subject.as_deref().unwrap_or("(no subject)");
-                let clean_subj = {
-                    let s = sanitize_inline_text(raw_subj, 80);
-                    if s.is_empty() {
-                        "(no subject)".to_string()
-                    } else {
-                        s
-                    }
-                };
-
-                matched.push(NotifyItem {
-                    id: env.id,
-                    from: from_id,
-                    from_name,
-                    subject: clean_subj,
-                    kind: env.kind.as_str().to_string(),
-                    urgent,
-                    priority,
-                    triage_gen: entry.triage_gen,
-                    created_at: env.created_at,
-                    reason,
-                });
+                candidates.push((env, urgent, reason));
             }
 
-            if state_dirty {
+            // Urgent first, then oldest first (ULIDs sort by creation time).
+            candidates.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.id.cmp(&b.0.id)));
+            let count = candidates.len();
+            let urgent_count = candidates.iter().filter(|c| c.1).count();
+            candidates.truncate(NOTIFY_MAX_ITEMS);
+
+            let mut items = Vec::with_capacity(candidates.len());
+            for (env, urgent, reason) in candidates {
+                let triage_gen = state.messages.get(&env.id).map_or(0, |e| e.triage_gen);
+                if let Some(sess) = session {
+                    let entry = state.messages.entry(env.id.clone()).or_default();
+                    if !entry.reported_sessions.contains_key(sess)
+                        && entry.reported_sessions.len() >= MAX_REPORTED_SESSIONS
+                    {
+                        if let Some(first) = entry.reported_sessions.keys().next().cloned() {
+                            entry.reported_sessions.remove(&first);
+                        }
+                    }
+                    entry
+                        .reported_sessions
+                        .insert(sess.to_string(), entry.triage_gen);
+                    dirty = true;
+                }
+                items.push(self.notify_item(env, urgent, triage_gen, reason));
+            }
+
+            if dirty {
+                self.prune_triage_entries(agent, &mut state)?;
                 self.save_triage_unlocked(agent, &state)?;
             }
-            Ok(matched)
+            Ok((count, urgent_count, items))
         })?;
 
-        let count = items.len();
-        let urgent_count = items.iter().filter(|i| i.urgent).count();
-        let urgent = urgent_count > 0;
-        let more = count.saturating_sub(10);
+        Ok(NotifyReport::build(agent, count, urgent_count, items))
+    }
 
+    /// Build one sanitized header line's data. Never touches `env.body`.
+    fn notify_item(
+        &self,
+        env: Envelope,
+        urgent: bool,
+        triage_gen: u64,
+        reason: String,
+    ) -> NotifyItem {
+        let from_profile = self.load_profile_unlocked(&env.from);
+        let subject = sanitize_inline_text(env.subject.as_deref().unwrap_or(""), 80);
+        NotifyItem {
+            from_name: sanitize_inline_text(&from_profile.name, 48),
+            from: sanitize_inline_text(&env.from, 128),
+            subject: if subject.is_empty() {
+                "(no subject)".to_string()
+            } else {
+                subject
+            },
+            kind: env.kind.as_str().to_string(),
+            urgent,
+            priority: env.effective_priority().as_str().to_string(),
+            triage_gen,
+            created_at: env.created_at,
+            reason,
+            id: env.id,
+        }
+    }
+
+    /// Drop triage entries whose message no longer exists in `new/` or `cur/` (e.g. pruned by
+    /// the relay after 30 days), so `triage.json` stays bounded. Caller holds the meta lock.
+    fn prune_triage_entries(&self, agent: &str, state: &mut TriageState) -> Result<(), SpoolError> {
+        let mut present = std::collections::BTreeSet::new();
+        for dir in [self.agent_new_dir(agent), self.agent_cur_dir(agent)] {
+            for path in Self::sorted_json_entries(&dir)? {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    present.insert(stem.to_string());
+                }
+            }
+        }
+        state.messages.retain(|id, _| present.contains(id));
+        Ok(())
+    }
+}
+
+/// A `--session` id: 1..=128 bytes after trimming, no control characters.
+fn validate_session_id(raw: &str) -> Result<&str, SpoolError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty()
+        || trimmed.len() > MAX_SESSION_ID_BYTES
+        || trimmed.chars().any(|c| c.is_control())
+    {
+        return Err(SpoolError::InvalidInput(format!(
+            "--session must be 1..={MAX_SESSION_ID_BYTES} bytes with no control characters"
+        )));
+    }
+    Ok(trimmed)
+}
+
+impl NotifyReport {
+    /// Assemble the report and its ready-to-show text (empty when there's nothing to report).
+    fn build(agent: &str, count: usize, urgent_count: usize, items: Vec<NotifyItem>) -> Self {
+        let more = count.saturating_sub(items.len());
         let text = if count == 0 {
             String::new()
         } else {
-            let mut lines = Vec::new();
+            let mut lines = Vec::with_capacity(items.len() + 3);
             if urgent_count > 0 {
-                lines.push(format!("{count} new message(s), {urgent_count} urgent:"));
+                lines.push(format!(
+                    "{count} new message(s), {urgent_count} urgent {UNTRUSTED_NOTE}:"
+                ));
             } else {
-                lines.push(format!("{count} new message(s):"));
+                lines.push(format!("{count} new message(s) {UNTRUSTED_NOTE}:"));
             }
-            for item in items.iter().take(10) {
+            for item in &items {
                 let prefix = if item.urgent { "- [URGENT] " } else { "- " };
                 lines.push(format!(
-                    "{prefix}{} ({}): {} [{}] ({})",
+                    "{prefix}{} ({}): \"{}\" [{}] (id: {})",
                     item.from_name, item.from, item.subject, item.kind, item.id
                 ));
             }
             if more > 0 {
                 lines.push(format!("…and {more} more (org-agent msg inbox)"));
             }
-            lines.push(
-                "Triage each: answer now, `org-agent msg defer <id> --until 30m|2h|after-task|<time>`, or `org-agent msg done <id>`."
-                    .to_string(),
-            );
+            lines.push(TRIAGE_HINT.to_string());
             lines.join("\n")
         };
-
-        Ok(NotifyReport {
+        Self {
             v: 1,
             agent: agent.to_string(),
-            urgent,
+            urgent: urgent_count > 0,
             count,
             urgent_count,
             items,
             more,
             text,
-        })
+        }
     }
 }

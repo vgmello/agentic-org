@@ -94,26 +94,25 @@ impl Envelope {
         serde_json::to_string(list).map_err(|e| format!("serialize envelope list: {e}"))
     }
 
-    /// Return the effective priority of this envelope.
-    /// For `request` (`ask`), defaults to `Urgent` unless overridden; for `msg`/`reply`,
-    /// reads `meta.priority` ("normal" | "high" | "urgent") and defaults to `Normal`.
+    /// Return the effective priority of this envelope: `meta.priority` ("normal" | "high" |
+    /// "urgent"; anything else, e.g. from a v1-old sender, counts as normal), except that a
+    /// `request` (`ask`) is at least `Urgent`.
     pub fn effective_priority(&self) -> MessagePriority {
-        if let Some(p_str) = self.meta.get("priority").and_then(|v| v.as_str()) {
-            if let Ok(p) = MessagePriority::parse(p_str) {
-                if self.kind == MessageKind::Request && p == MessagePriority::Normal {
-                    return MessagePriority::Urgent;
-                }
-                return p;
-            }
-        }
-        if self.kind == MessageKind::Request {
+        let explicit = self
+            .meta
+            .get("priority")
+            .and_then(|v| v.as_str())
+            .and_then(|p| MessagePriority::parse(p).ok())
+            .unwrap_or(MessagePriority::Normal);
+        if self.kind == MessageKind::Request && explicit == MessagePriority::Normal {
             MessagePriority::Urgent
         } else {
-            MessagePriority::Normal
+            explicit
         }
     }
 
-    /// Returns `true` iff this message is urgent (`kind == Request` or `priority` in `High | Urgent`).
+    /// Returns `true` iff this message is urgent: `kind == Request` (an `ask`) or priority
+    /// `High | Urgent` (the locked notify contract and ADR-0003 §2.3).
     pub fn is_urgent(&self) -> bool {
         self.kind == MessageKind::Request
             || matches!(
@@ -122,6 +121,7 @@ impl Envelope {
             )
     }
 
+    /// Set `meta.priority` (the Phase A spool carries priority in `meta`, ADR-0003 §2.3).
     pub fn set_priority(&mut self, priority: MessagePriority) {
         self.meta.insert(
             "priority".to_string(),
@@ -149,7 +149,7 @@ impl Envelope {
             body: body.into(),
             meta,
         };
-        env.validate()?;
+        env.validate_outgoing()?;
         Ok(env)
     }
 
@@ -176,7 +176,7 @@ impl Envelope {
             body: body.into(),
             meta,
         };
-        env.validate()?;
+        env.validate_outgoing()?;
         Ok(env)
     }
 
@@ -209,7 +209,7 @@ impl Envelope {
             body: body.into(),
             meta,
         };
-        env.validate()?;
+        env.validate_outgoing()?;
         Ok(env)
     }
 
@@ -259,6 +259,15 @@ impl Envelope {
                 MAX_BODY_BYTES
             ));
         }
+        Ok(())
+    }
+
+    /// Stricter checks for envelopes this CLI creates: on top of [`Envelope::validate`],
+    /// `meta.priority` must be `normal`, `high` or `urgent`. Envelopes read from the spool are
+    /// NOT held to this (a v1-old sender may have put anything in `meta`), so an unknown
+    /// priority there is treated as `normal` instead of dead-lettering the message.
+    pub fn validate_outgoing(&self) -> Result<(), String> {
+        self.validate()?;
         if let Some(p_val) = self.meta.get("priority") {
             let Some(p_str) = p_val.as_str() else {
                 return Err("meta.priority must be a string (normal, high, or urgent)".into());

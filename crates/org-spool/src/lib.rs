@@ -18,7 +18,7 @@ pub use envelope::{
 pub use meta::{
     parse_snooze_until, sanitize_inline_text, DeferOutcome, DirectoryCard, DoneOutcome, InboxItem,
     MemberProfile, MemberStatus, MessageTriageEntry, NotifyItem, NotifyOptions, NotifyReport,
-    RefEntry, TeamEntry, TriageState,
+    RefEntry, TeamEntry, TriageState, NOTIFY_MAX_ITEMS, OWNER_ID,
 };
 pub use spool::{
     is_interrupted, poll_unix_listener, poll_unix_listener_events, request_interrupt,
@@ -51,6 +51,31 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         let spool = Spool::open(&dir).expect("open spool");
         (dir, spool)
+    }
+
+    #[test]
+    fn ulids_stay_monotonic_while_other_threads_generate() {
+        // Regression: the clock used to be read before the lock, so a thread holding an older
+        // timestamp could reset the state and the next id in the same ms could sort lower.
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let noise: Vec<_> = (0..4)
+            .map(|_| {
+                let stop = Arc::clone(&stop);
+                thread::spawn(move || {
+                    while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                        let _ = generate_ulid();
+                    }
+                })
+            })
+            .collect();
+        let mut prev = generate_ulid();
+        for _ in 0..20_000 {
+            let next = generate_ulid();
+            assert!(next > prev, "{next} should be > {prev}");
+            prev = next;
+        }
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        noise.into_iter().for_each(|h| h.join().unwrap());
     }
 
     #[test]
@@ -449,18 +474,24 @@ mod tests {
         let (dir, spool) = temp_spool("notify_sanitize");
         spool.register("ada").unwrap();
         spool.register("agy").unwrap();
-        spool
-            .set_profile(&MemberProfile {
-                id: "ada".into(),
-                name: "Ada\nStaff\tLead".into(),
-                kind: "agent".into(),
-                owner: false,
-                role_title: Some("Staff Engineer".into()),
-                teams: vec![],
-                reports_to: None,
-                office: None,
-            })
-            .unwrap();
+        // `set_profile` rejects control characters, so write the file as a hand edit (or an
+        // older build) could have: notify must still sanitize what it reads.
+        let profile = MemberProfile {
+            id: "ada".into(),
+            name: "Ada\nStaff\tLead".into(),
+            kind: "agent".into(),
+            owner: false,
+            role_title: Some("Staff Engineer".into()),
+            teams: vec![],
+            reports_to: None,
+            office: None,
+        };
+        assert!(spool.set_profile(&profile).is_err());
+        fs::write(
+            dir.join("spool/inbox/ada/profile.json"),
+            serde_json::to_vec(&profile).unwrap(),
+        )
+        .unwrap();
 
         let long_subj = format!("Line1\nLine2\r\x07{}", "A".repeat(100));
         let secret_body = "TOP_SECRET_BODY_NEVER_IN_NOTIFY_OUTPUT";

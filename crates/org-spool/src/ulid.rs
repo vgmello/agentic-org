@@ -39,31 +39,33 @@ fn os_random_80(now_ns: u128) -> (u16, u64) {
 }
 
 /// Generate a fresh 26-character monotonic ULID string.
+///
+/// Monotonic within the process, across threads and clock steps backwards: the clock is read
+/// under the lock, and a time at or before the last one reuses the last millisecond and
+/// increments the randomness (so a thread that read the clock earlier can never move it back).
 pub fn generate_ulid() -> String {
-    let dur = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    let now_ms = (dur.as_millis() as u64) & 0x0000_FFFF_FFFF_FFFF;
-    let now_ns = dur.as_nanos();
-
-    let (hi, lo) = {
+    let (ms, hi, lo) = {
         let mut st = STATE.lock().unwrap_or_else(|e| e.into_inner());
-        if now_ms == st.last_ms && (st.rand_hi != 0 || st.rand_lo != 0) {
+        let dur = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
+        let now_ms = (dur.as_millis() as u64) & 0x0000_FFFF_FFFF_FFFF;
+        if now_ms <= st.last_ms && (st.rand_hi != 0 || st.rand_lo != 0) {
             let (new_lo, carry) = st.rand_lo.overflowing_add(1);
             st.rand_lo = new_lo;
             if carry {
                 st.rand_hi = st.rand_hi.wrapping_add(1);
             }
         } else {
-            let (r_hi, r_lo) = os_random_80(now_ns);
+            let (r_hi, r_lo) = os_random_80(dur.as_nanos());
             st.last_ms = now_ms;
             st.rand_hi = r_hi;
             st.rand_lo = r_lo;
         }
-        (st.rand_hi, st.rand_lo)
+        (st.last_ms, st.rand_hi, st.rand_lo)
     };
 
-    encode_ulid(now_ms, hi, lo)
+    encode_ulid(ms, hi, lo)
 }
 
 pub fn encode_ulid(time_ms_48: u64, rand_hi_16: u16, rand_lo_64: u64) -> String {
