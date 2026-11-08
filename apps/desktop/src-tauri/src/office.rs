@@ -4,7 +4,12 @@
 //! login-service setup) is the app's default; `MockOffice` stands in for development and when there is no office home.
 
 use crate::org_command::OrgCommand;
+use crate::org_feed::OrgUpdate;
 pub use crate::status_feed::StatusSink;
+use std::sync::Arc;
+
+/// Where organization changes go (the UI's event channel).
+pub type OrgSink = Arc<dyn Fn(OrgUpdate) + Send + Sync>;
 use crate::work_engine::WorkError;
 use org_proto::{ApiError, CommandAccepted, HelloResult, OrgSnapshot, Organization};
 use serde::Serialize;
@@ -109,4 +114,11 @@ pub trait OfficeConnection: Send + Sync {
     /// Start telling `sink` about office status changes as they happen. Once per office, at startup; the work runs
     /// on a thread of its own for as long as the app lives. An office with no live status (the mock) does nothing.
     fn follow_status(&self, _sink: StatusSink) {}
+
+    /// Where to report the changes of the organizations passed to `follow_org`. Set once, at startup.
+    fn set_org_sink(&self, _sink: OrgSink) {}
+
+    /// Start following one organization's changes (once; later calls do nothing), reporting to the sink. An office
+    /// with no live changes (the mock) does nothing.
+    fn follow_org(self: Arc<Self>, _organization_id: &str) {}
 }

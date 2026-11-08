@@ -1,5 +1,5 @@
 import { inTauri, officeApi } from '$lib/office/api';
-import type { ApiErrorCode, AppError, CommandAccepted, OrgSnapshot, OrgView } from '$lib/proto';
+import type { ApiErrorCode, AppError, CommandAccepted, OrgChangedNotice, OrgSnapshot, OrgView } from '$lib/proto';
 import { ready, type OrgCommand, type OrgCommandInput } from './commands';
 import { normalizeKinds } from './model';
 import { applyCommand, badId } from './reducer';
@@ -15,6 +15,8 @@ export interface OrgApi {
 	 * `AppError` with source `api`). A repeated `command_id` gets the same answer and changes nothing.
 	 */
 	command(organizationId: string, input: OrgCommandInput | OrgCommand): Promise<CommandAccepted>;
+	/** Be told when an organization's structure changes (anyone's command, ours included). Resolves to the function that stops listening. */
+	onChanged(listener: (notice: OrgChangedNotice) => void): Promise<() => void>;
 }
 
 export interface MockStorage {
@@ -114,6 +116,7 @@ export function createMockOrg(
 
 	// Commands are answered one at a time, as HQ does, so two sent together can't overwrite each other.
 	let queue: Promise<unknown> = Promise.resolve();
+	const listeners = new Set<(notice: OrgChangedNotice) => void>();
 
 	async function run(organizationId: string, input: OrgCommandInput | OrgCommand): Promise<CommandAccepted> {
 		const command = ready(input);
@@ -148,10 +151,13 @@ export function createMockOrg(
 			throw { source: 'app', code: 'internal', message: "The change couldn't be saved in this browser." } satisfies AppError;
 		}
 		if ('error' in result) throw result.error;
+		const { position } = result.accepted;
+		if (position) for (const listener of listeners) listener({ organization_id: organizationId, position });
 		return result.accepted;
 	}
 
-	return {
+	// A test makes a change as if another person had: `window.__mockOrgChange(organizationId, command)`.
+	const api: OrgApi = {
 		async view(organizationId) {
 			if (delayMs() > 0) await new Promise((resolve) => setTimeout(resolve, delayMs()));
 			if (fails()) throw refusal('storage_error', "The office couldn't read its storage.");
@@ -161,8 +167,14 @@ export function createMockOrg(
 			const answer = queue.then(() => run(organizationId, input));
 			queue = answer.catch(() => undefined);
 			return answer;
+		},
+		async onChanged(listener) {
+			listeners.add(listener);
+			return () => void listeners.delete(listener);
 		}
 	};
+	if (typeof window !== 'undefined') (window as unknown as { __mockOrgChange: OrgApi['command'] }).__mockOrgChange = api.command;
+	return api;
 }
 
 const wantsEmpty = () => typeof location !== 'undefined' && new URLSearchParams(location.search).get('org') === 'empty';
