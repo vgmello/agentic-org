@@ -2,7 +2,7 @@
 kind: spec
 title: "How agents run: always on, on call, scheduled, one-off (UX)"
 status: for-review
-revision: 3
+revision: 4
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-08"
@@ -18,6 +18,8 @@ Extends `our-org-in-the-app.md` (agent record, statuses, Activity) and `costs-an
 ## The request (the user, 2026-11-08)
 
 > Agents aren't always live. HR (or an agent in another project, like an SDM) doesn't need to be always live. It's a **stateful** agent that's almost **serverless**: it only runs when it's called, or on a long interval, like every 30 minutes: it comes up, checks its status, does its work and goes down again, unless it's called. We can also have **ephemeral** agents for other things. We need to support those kinds of agents.
+
+**Revision 4 (2026-11-08): aligned with ada's W7 model.** Item numbers on the Runs tab follow `work-items-ux.md` rev 6 and carry the project key (`Task ac-T-17 assigned`). No criteria changed.
 
 **Revision 3 (2026-11-08): review fixes.** A mention as a trigger is pending A45. A message to a running agent is queued for the session handling it and delivered at its next turn boundary. An agent the office doesn't run shows **Started by a person** (v1's run mode none). Schedules have a time zone. RUN-1, RUN-3 and RUN-4 rewritten.
 
@@ -46,7 +48,7 @@ Extends `our-org-in-the-app.md` (agent record, statuses, Activity) and `costs-an
 
 - **Org chart card and lists:** the status word gets the mode's detail: "Asleep · on call", "Asleep · next run 14:30", "Working · woken by ada's message". A small mode icon (`zap` Always on, `bell` On call, `clock` Scheduled) sits beside the status, always with the word in the tooltip and for screen readers ("HR, agent, on call, asleep").
 - **Quick view and profile header:** **How it runs:** On call · "Last run 12:04 (4 min) · next: when called". Actions: **Run now** (primary for asleep agents, with an optional note: "What should HR do?"), **Message**, ⋯ › Change how it runs…. **Stop** (⋯) pauses the agent: it's the same as Pause (`our-org-in-the-app.md` DEAL-3), so there's one way to stop an agent, not two.
-- **Profile › Runs tab:** one row per run: when · trigger (Schedule · Message from ada · Task ac-17 assigned · Run now by you · Mention) · duration · cost · outcome (the agent's one-line summary, or "Stopped at the time limit" / "Failed: <reason>") · **Open session log**. Filter by trigger and outcome.
+- **Profile › Runs tab:** one row per run: when · trigger (Schedule · Message from ada · Task ac-T-17 assigned · Run now by you · Mention) · duration · cost · outcome (the agent's one-line summary, or "Stopped at the time limit" / "Failed: <reason>") · **Open session log**. Filter by trigger and outcome.
 - **Home › Working now** includes agents woken right now, with their trigger. **Upcoming** (collapsed) lists scheduled runs in the next 2 hours.
 - **Activity:** a wake and a sleep are one row per run (not two), updated live ("running 2 min…" becomes "ran 4 min").
 
@@ -88,7 +90,7 @@ At hire (Review step) and in profile › Settings › **How it runs** (a slide-o
 
 ## 4. Our organization
 
-My recommended modes (U19): **HR: On call.** Reviewer: On call (woken by "Request review"). ada: Always on during phase pushes, otherwise On call. Builders (app-frontend-dev, server-dev, River, Remy, codex-dev): **On call**, woken by the tasks assigned to them, since the office caps live sessions (agent-sessions design: 4 live, at most 3 always on). agy-senior-dev: Offline while it has no runtime credits. Riley: **Offline**, as the user decided: not started and not on call, so nothing wakes him, and assigning him work warns "Riley is offline and won't pick this up". An SDM in another project: Scheduled, every 30 minutes on weekdays. *(rev 2: Remy was started by the user and is online.)*
+My recommended modes (U19, approved): **HR lead (built-in, `our-org-in-the-app.md` §2a): On call.** Reviewer: On call (woken by "Request review"). ada: Always on during phase pushes, otherwise On call. Builders (app-frontend-dev, server-dev, River, Remy, codex-dev): **On call**, woken by the tasks assigned to them, since the office caps live sessions (agent-sessions design: 4 live, at most 3 always on). agy-senior-dev: Offline while it has no runtime credits. Riley: **Offline**, as the user decided: not started and not on call, so nothing wakes him, and assigning him work warns "Riley is offline and won't pick this up". An SDM in another project: Scheduled, every 30 minutes on weekdays. *(rev 2: Remy was started by the user and is online.)*
 
 ## 5. UX acceptance criteria (RUN)
 
@@ -116,5 +118,5 @@ My recommended modes (U19): **HR: On call.** Reviewer: On call (woken by "Reques
 - ~~A28~~ · *Resolved (ada):* a one-off is a Run of a role or template with a temporary workspace, attached to its work item, with no Member. The workspace is cleaned up, and the transcript and outcome stay on the run record (so its **Open session log** link keeps working).
 
 **For the user**
-- U19 · The modes I recommend for our team (§4): HR and the reviewer On call, builders On call, ada Always on during pushes. OK?
-- U20 · Defaults: idle 5 min, max busy time 30 min in the agent's home and 2 h on a task (ada). OK?
+- ~~U19~~ · *Resolved (the user, 2026-11-08): as recommended.* The modes I recommend for our team (§4): HR and the reviewer On call, builders On call, ada Always on during pushes. OK?
+- ~~U20~~ · *Resolved (the user, 2026-11-08): as recommended.* Defaults: idle 5 min, max busy time 30 min in the agent's home and 2 h on a task (ada). OK?

@@ -2,7 +2,7 @@
 kind: spec
 title: "Capture requests and route them to whoever should scope them (UX)"
 status: for-review
-revision: 1
+revision: 2
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-08"
@@ -19,15 +19,17 @@ Extends `work-items-ux.md` (Work, tasks), `decisions-and-tech-debt-ux.md` (specs
 
 > I want to capture new requirements or features exactly the way I'm telling you now. I press a shortcut, anywhere, and start typing. It becomes a **feature request**, not a task yet, in a queue ("I need to design this later"). The right agent picks it up and scopes it, and then it becomes tasks we implement. A smart feature can **suggest** who should scope it: a feature goes to the designer, something technical to the SDM or the staff engineer, something very technical maybe straight to a dev. It's only a suggestion: I see the options, and I can change it. Or I can just talk to the agent directly.
 
+**Revision 2 (2026-11-08): aligned with ada's W7 model.** A request has a new state, **Routed**, between New and With <agent>: it reads "Sent to Eden · not accepted yet" until the agent accepts it (`request.accept`, `org-agent request accept`), then "Eden is scoping" (decisions 3 and 6, §2, §3). The With agents group holds both. Approve needs a project: if the request has none, Approve asks for one first (decision 7, §3). **Criteria rewritten (same ID):** RQS-7, RQS-9. **Added:** RQS-14.
+
 ## 0. Decisions
 
 1. **One shortcut, anywhere: ⌥⌘N, "New request".** It works system-wide (from the menu bar too), even with the app's window closed, and opens a small capture panel. The shortcut can be changed in Settings. Inside the app, ⌘K › "New request" does the same.
 2. **Capturing asks for nothing but the text.** Type (or dictate: macOS dictation works in the field) and press ⌘Enter. Everything else (project, kind, who scopes it) is suggested and can be changed, or left for later.
-3. **A request is not a task.** Its lifecycle: **New → With <agent> (scoping) → Scoped → Approved** (it becomes tasks), or **Declined · Merged into REQ-n**. Numbered org-wide, `REQ-12`, because a request may not belong to a project yet.
+3. **A request is not a task.** Its lifecycle: **New → Routed → With <agent> (scoping) → Scoped → Approved** (it becomes tasks), or **Declined · Merged into REQ-n**. **Routed** means sent to an agent that hasn't accepted it yet: "Sent to Eden · not accepted yet". When the agent accepts it (`request.accept`), it reads "Eden is scoping". *(rev 2)* Numbered org-wide, `REQ-12`, because a request may not belong to a project yet.
 4. **Routing is a suggestion with reasons, never a silent decision.** The panel shows the suggested agent and two alternatives, each with one line of why ("Eden, product designer: a new user-facing flow"). The owner picks one, types `@name`, or chooses **Just save** to queue it unrouted.
 5. **Talking to an agent directly stays a first-class path.** Starting the text with `@` and a handle (an agent's messaging name such as `@ac-product-designer-eden`, completed from display names as you type: "Eden") skips the suggestion and sends it there. **Message instead** turns the capture into an ordinary message.
-6. **The scoping agent is woken** (on call, `agent-run-modes-ux.md`), gets the request in its inbox, and owns it until it's scoped, rerouted, declined or merged. It can ask the owner questions inside the request.
-7. **Scoped means a feature the owner can approve** *(rev 1a: features are first class, `features-ux.md`)*: the request materializes as a **Proposed feature** (`FEAT-n`, in the repository) or extends an existing one, with links to the specs, designs or ADRs the agent wrote, the proposed tasks (drafts, not yet real), and an estimate (effort, and an API-price cost range when the agent gives one). **Approve** sets the feature to Planned and creates its tasks. Nothing is built before that.
+6. **The scoping agent is woken** (on call, `agent-run-modes-ux.md`), gets the request in its inbox, **accepts** it (`org-agent request accept`), and from then owns it until it's scoped, rerouted, declined or merged. It can ask the owner questions inside the request.
+7. **Scoped means a feature the owner can approve** *(rev 1a: features are first class, `features-ux.md`)*: the request materializes as a **Proposed feature** (`FEAT-n`, in the repository) or extends an existing one, with links to the specs, designs or ADRs the agent wrote, the proposed tasks (drafts, not yet real), and an estimate (effort, and an API-price cost range when the agent gives one). **Approve** sets the feature to Planned and creates its tasks. Approve needs a project: if the request has none yet, it asks for one first *(rev 2)*. Nothing is built before that.
 8. **Requests are working data, and their history lands in the repository:** a request lives in the office database like tasks. When it's approved, the **feature** it produced (or extended) lists it in its front matter (`requests: [REQ-n]`, `features-ux.md`) and quotes the original words in its Notes, so the "why" of a feature survives after the request is closed. *(rev 1a: on the feature, not on specs.)*
 9. **Agents can raise requests too** (`org-agent request add`), for example a dev who finds a missing capability. They arrive in the same queue, marked with who raised them.
 
@@ -64,16 +66,17 @@ Work gets a fourth pill: **Tasks | Bugs | Debt | Requests**. Each project's Over
  NEEDS YOU · 2
    REQ-13  Costs per project                     Scoped by Eden · FEAT-0009 · ≈ $40–70  [Review]
    REQ-15  Weekly digest by email                Eden asks: "Daily or weekly?"       [Answer]
- WITH AGENTS · 2
-   REQ-16  Keyboard shortcuts cheat sheet        Eden · scoping · 20 min
-   REQ-10  Checklists on tasks                   codex-dev · scoping · 1 h
+ WITH AGENTS · 3
+   REQ-17  Export a feature as PDF               Sent to Eden · not accepted yet · 5 min
+   REQ-16  Keyboard shortcuts cheat sheet        Eden is scoping · 20 min
+   REQ-10  Checklists on tasks                   codex-dev is scoping · 1 h
  NOT ROUTED · 1
    REQ-9   Dark mode for the docs reader         saved 2 d ago                         [Route]
  APPROVED · 1 (collapsed)
    REQ-14  Quick capture of feature requests     → FEAT-0007 · 4 of 6 tasks done
 ```
 
-- **Groups:** Needs you (scoped and waiting for approval, or a question for the owner) · With agents · Not routed · Approved (collapsed) · Declined and merged (collapsed).
+- **Groups:** Needs you (scoped and waiting for approval, or a question for the owner) · With agents (Routed, not accepted yet, and being scoped) · Not routed · Approved (collapsed) · Declined and merged (collapsed).
 - **Needs you** items also appear in the owner's Home › Needs you.
 - **Row:** number · title (the first line of the text, or a title the agent gave it) · state in words · who · age · the next action.
 
@@ -81,7 +84,7 @@ Work gets a fourth pill: **Tasks | Bugs | Debt | Requests**. Each project's Over
 
 - **Main column:** the original text (as typed, with attachments), then the conversation: the scoping agent's questions and the owner's answers, notes and changes of route ("You moved this from ada to Eden").
 - **Side column:** state · kind · project · who scopes it (**Change…**: the same suggestion list) · raised by and when · **Outcome** (once scoped: spec, design or ADR links, proposed tasks, estimate).
-- **Owner's actions by state:** New → **Route…** · With agent → **Change…**, **Message <agent>** · Scoped → **Approve and create 6 tasks** (opens the task drafts, each editable or removable, then **Create tasks**), **Ask for changes…**, **Decline…** · any state → **Merge into…** (another request), **Decline…** (reason required).
+- **Owner's actions by state:** New → **Route…** · Routed or With agent → **Change…**, **Message <agent>** · Scoped → **Approve and create 6 tasks** (when the request has no project, it first asks "Which project?" with a picker of projects that aren't archived; then it opens the task drafts, each editable or removable, then **Create tasks**), **Ask for changes…**, **Decline…** · any state → **Merge into…** (another request), **Decline…** (reason required).
 - **Agent side (CLI):** `org-agent request show|accept|ask|reroute --to <member> --reason|scope --doc <id> --task "<title>"…|decline --reason|merge --into REQ-n`, plus `request add` to raise one. The words match the app's.
 - **Approved:** the tasks appear in the project (To do) linked to the request ("from REQ-12"). The request shows their progress ("4 of 6 done") and the **feature** tracks the build from there (`features-ux.md`). The request itself ends at Approved.
 
@@ -106,13 +109,14 @@ Criterion ids use **RQS-** so they never collide with request records (`REQ-n`) 
 - RQS-4 · Starting the text with @name sends it to that member without a suggestion. Message instead sends it as an ordinary message.
 - RQS-5 · Without the copilot, the suggestion follows the kind rules and is marked "Suggested by rule".
 - RQS-6 · Text that reads like a bug offers Report a bug instead, carrying the text over.
-- RQS-7 · Work has a Requests pill grouped as Needs you, With agents, Not routed, Approved, and Declined and merged. Scoped requests and agents' questions appear in Home › Needs you.
+- RQS-7 · *(rev 2)* Work has a Requests pill grouped as Needs you, With agents (Routed and being scoped), Not routed, Approved, and Declined and merged. Scoped requests and agents' questions appear in Home › Needs you.
 - RQS-8 · A routed request wakes an on-call agent and appears in its inbox. Choosing an offline or paused agent warns first.
-- RQS-9 · A scoped request shows the linked docs, the draft tasks and the estimate. Approve creates the tasks (each editable or removable first), linked "from REQ-n".
+- RQS-9 · *(rev 2)* A scoped request shows the linked docs, the draft tasks and the estimate. Approve creates the tasks (each editable or removable first), linked "from REQ-n". When the request has no project, Approve asks for one first, and nothing is created without it.
 - RQS-10 · Reroutes, questions, answers, declines and merges are recorded on the request and in Activity, with who and why.
 - RQS-11 · The feature a request produced or extended lists it in its front matter (`requests:`) and quotes its original text.
 - RQS-12 · Agents can raise, accept, ask, reroute, scope, decline and merge requests with `org-agent request …`, with the same words as the app.
 - RQS-13 · Similar open requests show while typing, with Add to REQ-n.
+- RQS-14 · *(new, rev 2)* A routed request shows "Sent to <agent> · not accepted yet" until that agent accepts it, then "<agent> is scoping". Rerouting it makes it Routed again for the new agent.
 
 ## 6. Open questions
 
@@ -122,4 +126,4 @@ Criterion ids use **RQS-** so they never collide with request records (`REQ-n`) 
 - ~~C22~~ · *Resolved (ada):* smart feature #16, with the rule fallback when no runtime is set up.
 
 **For the user**
-- U21 · ⌥⌘N as the default shortcut (⌘N is New in many apps, and ⌥⌘N is rarely taken)? And is an approval step before tasks are created what you want (my recommendation), or should a scoped request become tasks straight away?
+- ~~U21~~ · *Resolved (the user, 2026-11-08): as recommended.* ⌥⌘N as the default shortcut (⌘N is New in many apps, and ⌥⌘N is rarely taken)? And is an approval step before tasks are created what you want (my recommendation), or should a scoped request become tasks straight away?

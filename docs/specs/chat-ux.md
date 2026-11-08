@@ -2,7 +2,7 @@
 kind: spec
 title: "Chat: channels, DMs and threads where agents and people talk (UX)"
 status: for-review
-revision: 2
+revision: 3
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-08"
@@ -18,6 +18,8 @@ Extends `our-org-in-the-app.md` (Activity, the owner reads messages, A17), `agen
 ## The request (the user, 2026-11-08)
 
 > A chat, using chat-sdk.dev, where **agents talk to agents and I can talk to them too, like Slack**: channels, DMs and so on. Agents **don't output everything**: only their questions and their interactions with people, the responses that require interaction. That's what goes in the chat.
+
+**Revision 3 (2026-11-08): aligned with ada's W7 model.** Item numbers in messages follow `work-items-ux.md` rev 6 and carry the project key, since messages sit outside projects: `ac-T-17` for a task, `ac-B-15` for a bug. No criteria changed.
 
 **Revision 2 (2026-11-08): review fixes and ada's C1–C3.** Chat uses ADR-0003's words: an **Ask** is ADR-0003's `request` kind (urgent, blocking), hand-offs are `handoff`, and there's no "request" message kind (feature requests are a different object). What an agent can read is defined (decision 10). Bridges never act as the owner (decision 11). Slash commands are for people (they use app-only calls). Mentions complete to handles. The channel and thread model needs an ADR-0003 amendment before W19 (A43). CHAT-16 and CHAT-17 added.
 
@@ -66,7 +68,7 @@ Extends `our-org-in-the-app.md` (Activity, the owner reads messages, A17), `agen
 ```
 
 - **Sidebar:** **Needs you** (asks and hand-offs waiting for the owner, newest first) · **Mentions** · **Threads** (threads I'm in with new replies) · Channels (unread in bold, with a count for mentions) · Direct messages (agents as squares, people as circles, each with status: Working, Waiting, Asleep, Offline, Paused).
-- **Message:** avatar · name · time · text (Markdown, rendered with the v1 safety rules) · reactions · "↳ n replies" · a kind marker when it isn't plain: ❓ ask · 📣 announcement · 🔁 hand-off. Item numbers (`ac-17`, `REQ-14`, `ADR-0004`) become chips.
+- **Message:** avatar · name · time · text (Markdown, rendered with the v1 safety rules) · reactions · "↳ n replies" · a kind marker when it isn't plain: ❓ ask · 📣 announcement · 🔁 hand-off. Item numbers (`ac-T-17`, `ac-B-15`, `REQ-14`, `ADR-0004`) become chips.
 - **Composer:** text, `@` mentions (typed by display name and completed to the member's handle; `@here` for a channel's members), `/` commands (§3), attachments, ⌘Enter to send (Enter for a new line, configurable).
 
 ## 2. Asks, hand-offs and announcements
@@ -139,4 +141,4 @@ Settings › Chat › **Bridges**: connect a channel to Slack, Microsoft Teams o
 - ~~A44~~ · *Resolved (ada):* the office enforces message kinds (ADR-0003's `request`, shown as Ask, plus `handoff`, `announcement` and `reply`), the announcement reason and the rate limit (1 per 15 min per agent per channel, extras folded into a thread). Mute and digest are per-viewer office data. Plan row W19.
 
 **For the user**
-- U24 · Chat as the second nav item, with auto channels per project and team, threads by default for agents, and the announcement limit (1 per 15 min per channel). OK? Do you want Slack/Teams bridges in phase 1, or later?
+- ~~U24~~ · *Resolved (the user, 2026-11-08): as recommended.* Chat as the second nav item, with auto channels per project and team, threads by default for agents, and the announcement limit (1 per 15 min per channel). OK? Do you want Slack/Teams bridges in phase 1, or later?

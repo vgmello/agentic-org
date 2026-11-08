@@ -2,7 +2,7 @@
 kind: spec
 title: "Project status: a visual status and a periodic report for each project (UX)"
 status: for-review
-revision: 2
+revision: 3
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-08"
@@ -18,6 +18,8 @@ Extends `features-ux.md` (feature progress), `work-items-ux.md` (tasks, bugs, ti
 ## The request (the user, 2026-11-08)
 
 > Every once in a while I want a **status**, a **visualization of the status of my project**. One of those ephemeral (one-off) runs, using the smartness of the system, calculates it for us and **creates a report for each project**.
+
+**Revision 3 (2026-11-08): aligned with ada's W7 model.** "Waiting on you" (the Flow tile, the health rule and Home › Projects status) counts what `costs-and-insights-ux.md` decision 5 counts: questions to you, Fixed bugs you reported, scoped requests, triage suggested to you and decisions waiting for your acceptance (§4). No criteria changed.
 
 **Revision 2 (2026-11-08): review fixes.** Starting a report on demand is app-only (no `org-agent report status`). Example dates and figures are set in December 2026. Health reasons cite only the rules. The Stop on a running report cancels that run.
 
@@ -85,6 +87,8 @@ Sorted by health (Off track first). Each row opens the project's Status page. **
 
 Schedule: **Weekly ▾** (Daily · Weekly on <day> at <time> · After each delivered feature · Monthly · Off) · Health rules (the defaults, each editable: Critical bug open more than **1 day** → Off track · waiting on you more than **24 h** → At risk · a feature past **2×** its typical cycle time → At risk · over budget → At risk) · Reporter's model and runtime (default: the organization's copilot runtime) · Include a cost section ☑.
 
+**Waiting on you** *(rev 3)*, in the health rule, the Flow tile and Home › Projects status, counts what `costs-and-insights-ux.md` decision 5 counts: questions to you, Fixed bugs you reported, scoped requests, triage suggested to you and tasks Blocked waiting for your decision (ada Q11).
+
 ## 5. UX acceptance criteria (STATUS)
 
 - STATUS-1 · Each project has a Status page with health, features, investment, flow, quality, Needs you and an 8-week trend, computed live by the office.
@@ -106,4 +110,4 @@ Schedule: **Weekly ▾** (Daily · Weekly on <day> at <time> · After each deliv
 - A41 · The Reporter as a one-off run (A28) with read-only, tool-less input (smart features P2): the office passes the facts as data, and the run returns the narrative in a schema. OK?
 
 **For the user**
-- U23 · Defaults: a weekly report on Monday at 08:00, health rules as in §4, and the costs spec's monthly report folded into this one. OK?
+- ~~U23~~ · *Resolved (the user, 2026-11-08): as recommended.* Defaults: a weekly report on Monday at 08:00, health rules as in §4, and the costs spec's monthly report folded into this one. OK?

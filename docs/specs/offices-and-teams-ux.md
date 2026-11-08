@@ -126,7 +126,7 @@ An organization is **unavailable** only when the app can't read it on this Mac a
 
 | Reason (exact copy) | Fix offered in the window |
 | --- | --- |
-| "Its office on this Mac stopped", followed by the reason's copy from §3.3 | The action for that reason from §3.3 (for example no Restart for `in_use`) · Copy details |
+| "Its office on this Mac stopped", followed by the reason's copy from §3.3 (reasons other than the data ones below) | The action for that reason from §3.3 (for example no Restart for `in_use`) · Copy details |
 | "Offices aren't running. Allow Agentic Org in Login Items" (all organizations) | **Open Login Items settings** |
 | "Needs a newer version of Agentic Org" | **Check for updates** |
 | "Can't open its data", followed by §3.3's copy for `key_missing` or `storage_error` | The action from §3.3 (**Try again** for `key_missing`, **Restart office** for `storage_error`) · Copy details |
@@ -153,7 +153,9 @@ Shown as the Stopped row's secondary text and at the top of its details, with th
 | `invalid_request` | "It couldn't start because of an internal error" | Copy details (to send to support) |
 | `unknown`, or anything else | "It stopped for a reason this version doesn't know" | **Restart office** · Copy details |
 
-- **Restart office** calls `office.restart`. While it runs: "Restarting…" with a spinner, then the live status. `office.restart` covers Restart, Try again and Start office (ada). It refuses only `unsupported_version` ("Needs a newer version of Agentic Org" · **Check for updates**) and `invalid_request` (shown as an error with Copy details).
+- **Restart office** calls `office.restart`. While it runs: "Restarting…" with a spinner, then the live status. `office.restart` covers Restart, Try again and Start office (ada). Besides `not_ready`, `conflict` and `unknown_method` (below), it refuses only `unsupported_version` ("Needs a newer version of Agentic Org" · **Check for updates**) and `invalid_request` (shown as an error with Copy details).
+- **Already starting** (`office.restart` answers `conflict`, for example Restart now during a crash countdown): no error. The row just shows the live status (Starting, then Online).
+- **Older host** (`unknown_method`): the restart button is hidden, and the details say "Restarting from here needs a newer version of Agentic Org."
 - **The host is still starting** (`office.restart` answers `not_ready`): the button shows "Starting…" and retries by itself for up to 30 s, then "The office host isn't ready yet" with **Try again**.
 - **Copy details** copies the office name, id, status, reason, the time and the app version. It never includes keys or tokens.
 
@@ -475,7 +477,7 @@ Agents and people are always told apart by **shape and words**, never by color a
          └─────────────┬───────────────┘            └─────────────────────────────┘
           ┌────────────┴─────────────┐
  ┌──────────────────────────┐ ┌──────────────────────────┐   ┌ Not in a team (3) ┐
- │ Checkout               ⋯ │ │ Growth                 ⋯ │   │ [H] HR            │
+ │ Checkout               ⋯ │ │ Growth                 ⋯ │   │ [J] Jules         │
  │ Lead: [R] Riley          │ │ No lead                  │   │ [N] Nova          │
  │ Agents [R][M]   2        │ │ Agents [E]   1           │   │ (P) Priya Shah    │
  │ People (J)      1        │ │ People —                 │   └───────────────────┘
@@ -610,7 +612,7 @@ Two directions, same result:
                        ┌ (AK) Alex Kim (you) · Owner ┐
           ┌────────────────────┼────────────────────────┐
  ┌───────────────────┐ ┌───────────────────────┐ ┌───────────────────┐
- │ [A] ada · Agent ⋯ │ │ (S) Sam Ortiz · Person⋯│ │ [H] HR · Agent  ⋯ │
+ │ [A] ada · Agent ⋯ │ │ (S) Sam Ortiz · Person⋯│ │ [J] Jules · Agent⋯│
  │ Platform          │ │ Product, Checkout     │ │ No team           │
  │ 2 reports         │ │ 2 reports             │ │                   │
  └─────────┬─────────┘ └───────────┬───────────┘ └───────────────────┘
@@ -741,8 +743,8 @@ Two directions, same result:
 ## 9. Open questions
 
 **For the user**
-- U5 · *My recommendation:* keep **Lumen Labs** for designs and mock data. It's neutral and can't be confused with the app or with our own organization.
-- U6 · *My recommendation:* keep "HQ" and "office". They're short and plain, and the layout doesn't depend on them.
+- ~~U5~~ · *Resolved (the user, 2026-11-08): as recommended.* *My recommendation:* keep **Lumen Labs** for designs and mock data. It's neutral and can't be confused with the app or with our own organization.
+- ~~U6~~ · *Resolved (the user, 2026-11-08): as recommended.* *My recommendation:* keep "HQ" and "office". They're short and plain, and the layout doesn't depend on them.
 
 **For ada**
 - ~~A38~~ · *Resolved (ada):* no rename. "Open organization" stays for an organization already on this Mac, and "Join organization" is reserved for the invitation link (phase 3).
