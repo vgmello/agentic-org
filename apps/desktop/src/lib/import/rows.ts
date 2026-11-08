@@ -30,6 +30,8 @@ export interface Row {
 	teamKey?: string;
 	/** Who it reports to: another row's key, or `owner`. */
 	managerKey: string;
+	/** The owner chose the manager by hand: the default (the top team's lead) no longer follows the team. */
+	managerSet?: boolean;
 	choice: Choice;
 	/** The member already in the organization with this messaging name ("Already in <org>"): an agent, or a person whose name it is. */
 	existingMemberId?: string;

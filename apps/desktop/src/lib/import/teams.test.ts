@@ -113,4 +113,14 @@ describe('rev 15 who a row reports to when HR does not say', () => {
 		expect(boss('server-dev')).toBe('owner');
 		expect(boss('codex-dev')).toBe('server-dev');
 	});
+
+	it('follows the team picker until the owner sets one by hand', () => {
+		const all = fitted();
+		const f = applyHints(rows(), SAMPLE_HINTS, suggestTeams(rows()));
+		const moved = f.rows.map((r) => (r.name === 'server-dev' ? { ...r, teamKey: 'design' } : r));
+		expect(withDefaultManagers(moved, f.drafts).find((r) => r.name === 'server-dev')!.managerKey).toBe('ac-product-designer-eden');
+		const byHand = moved.map((r) => (r.name === 'server-dev' ? { ...r, managerKey: 'owner', managerSet: true } : r));
+		expect(withDefaultManagers(byHand, f.drafts).find((r) => r.name === 'server-dev')!.managerKey).toBe('owner');
+		void all;
+	});
 });

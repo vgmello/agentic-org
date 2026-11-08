@@ -58,7 +58,7 @@ export function teamsToCreate(rows: Row[], drafts: TeamDraft[]): TeamDraft[] {
 
 /**
  * Who a row reports to when HR does not say: the lead of the top-level team it is in, unless that is the row itself; otherwise the
- * owner. A row with a reports_to in HR keeps it. Applied once the teams are known (the hints file and the department teams), so the
+ * owner. A row with a reports_to in HR keeps it, and so does one the owner set by hand. Applied once the teams are known (the hints file and the department teams), so the
  * lines of an organization shaped by its teams need no edits. A circle this could make is cut at the owner.
  */
 export function withDefaultManagers(rows: Row[], drafts: TeamDraft[]): Row[] {
@@ -69,7 +69,8 @@ export function withDefaultManagers(rows: Row[], drafts: TeamDraft[]): Row[] {
 		return at;
 	};
 	const next = rows.map((row) => {
-		if (row.hr?.reports_to?.trim() || !row.teamKey) return row;
+		if (row.hr?.reports_to?.trim() || row.managerSet) return row;
+		if (!row.teamKey) return { ...row, managerKey: OWNER };
 		const lead = topOf(row.teamKey)?.leadKey;
 		return lead && lead !== row.key && rows.some((r) => r.key === lead && r.choice !== 'skip') ? { ...row, managerKey: lead } : { ...row, managerKey: OWNER };
 	});

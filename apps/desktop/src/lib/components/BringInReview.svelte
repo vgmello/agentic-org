@@ -7,7 +7,7 @@
 	import type { HintNotes } from '$lib/import/hints';
 	import { addTeam, filterRows, FILTERS, patchRow, removeTeam, rowNote, setParent, type RowFilter } from '$lib/import/review';
 	import { chooseRole, chooseTitle, OWNER, roleWords, takesPart, type Row } from '$lib/import/rows';
-	import { teamsToCreate, type ProjectDraft, type TeamDraft } from '$lib/import/teams';
+	import { teamsToCreate, withDefaultManagers, type ProjectDraft, type TeamDraft } from '$lib/import/teams';
 	import type { HrAgent, Scan } from '$lib/import/types';
 
 	/** The review (our-org-in-the-app §4): one row per agent, the teams, and the project. Nothing is written until Bring in. */
@@ -64,16 +64,19 @@
 	const setRole = (r: Row, role: string) => (rows = patchRow(rows, r.key, (x) => (role ? chooseRole(x, role) : { ...x, role: undefined, roleSuggested: false })));
 	const setTitle = (r: Row, title: string) => (rows = patchRow(rows, r.key, (x) => chooseTitle(x, title, roles)));
 	const setRuntime = (r: Row, value: string) => (rows = patchRow(rows, r.key, { runtime: (value || undefined) as AgentRuntime | undefined }));
-	const setTeam = (r: Row, key: string) => (rows = patchRow(rows, r.key, { teamKey: key || undefined }));
-	const setManager = (r: Row, key: string) => (rows = patchRow(rows, r.key, { managerKey: key || OWNER }));
+	// The default manager follows the teams until the owner sets one by hand.
+	const refresh = () => (rows = withDefaultManagers(rows, drafts));
+	const setTeam = (r: Row, key: string) => ((rows = patchRow(rows, r.key, { teamKey: key || undefined })), refresh());
+	const setManager = (r: Row, key: string) => (rows = patchRow(rows, r.key, { managerKey: key || OWNER, managerSet: true }));
 	const setChoice = (r: Row, choice: string) => (rows = patchRow(rows, r.key, { choice: choice as Row['choice'] }));
 	const setHandle = (r: Row, name: string) => (rows = patchRow(rows, r.key, { messagingName: name.trim() }));
 	const rename = (d: TeamDraft, name: string) => (drafts = drafts.map((x) => (x.key === d.key ? { ...x, name: name.trim() || x.name } : x)));
-	const setLead = (d: TeamDraft, lead: string) => (drafts = drafts.map((x) => (x.key === d.key ? { ...x, leadKey: lead || undefined } : x)));
+	const setLead = (d: TeamDraft, lead: string) => ((drafts = drafts.map((x) => (x.key === d.key ? { ...x, leadKey: lead || undefined } : x))), refresh());
 	function remove(d: TeamDraft) {
 		const out = removeTeam(drafts, rows, d.key);
 		drafts = out.drafts;
 		rows = out.rows;
+		refresh();
 	}
 	function add() {
 		drafts = addTeam(drafts, newTeamName);
@@ -194,7 +197,7 @@
 				{#each drafts as d (d.key)}
 					<li class="grid gap-2 rounded-md bg-gray-800/60 p-2 sm:grid-cols-[1fr_1fr_1fr_auto]" data-testid="team-edit" data-team={d.key}>
 						<Input aria-label="Name of {d.name}" value={d.name} onchange={(e) => rename(d, e.currentTarget.value)} disabled={busy} />
-						<select aria-label="Owner of {d.name}" class={select} value={d.parentKey ?? ''} disabled={busy} onchange={(e) => (drafts = setParent(drafts, d.key, e.currentTarget.value || undefined))}>
+						<select aria-label="Owner of {d.name}" class={select} value={d.parentKey ?? ''} disabled={busy} onchange={(e) => ((drafts = setParent(drafts, d.key, e.currentTarget.value || undefined)), refresh())}>
 							<option value="">Top level</option>
 							{#each drafts.filter((x) => x.key !== d.key) as x (x.key)}<option value={x.key}>{x.name}</option>{/each}
 						</select>

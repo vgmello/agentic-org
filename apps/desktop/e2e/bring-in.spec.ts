@@ -52,6 +52,12 @@ test('IMP-10: the team hints file prefills the teams, the leads and the members'
 	// Rev 15: with no line in HR, a row reports to the lead of its top-level team: ada, with no edits.
 	await expect(dialog(page).getByLabel('Reports to for server-dev')).toHaveValue('ac-staff-engineer-ada');
 	await expect(dialog(page).getByLabel('Reports to for ada')).toHaveValue('owner');
+	// The default follows the Team picker until the owner sets a manager by hand.
+	await dialog(page).getByLabel('Team for server-dev').selectOption('design');
+	await expect(dialog(page).getByLabel('Reports to for server-dev')).toHaveValue('ac-product-designer-eden');
+	await dialog(page).getByLabel('Reports to for server-dev').selectOption('owner');
+	await dialog(page).getByLabel('Team for server-dev').selectOption('office');
+	await expect(dialog(page).getByLabel('Reports to for server-dev')).toHaveValue('owner');
 	await expect(dialog(page).getByLabel('Team for Riley')).toHaveValue('app');
 	await expect(dialog(page).getByLabel('Team for server-dev')).toHaveValue('office');
 	await dialog(page).getByRole('button', { name: 'Edit…' }).click();
