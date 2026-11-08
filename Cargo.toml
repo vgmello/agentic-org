@@ -4,8 +4,10 @@ members = [
   "crates/org-proto",
   "crates/org-client",
   "crates/org-office",
+  "crates/org-office-launch",
   "crates/org-spool",
   "apps/org-office-server",
+  "apps/org-office-host",
   "apps/org-agent",
   "apps/desktop/src-tauri",
 ]
@@ -15,8 +17,10 @@ default-members = [
   "crates/org-proto",
   "crates/org-client",
   "crates/org-office",
+  "crates/org-office-launch",
   "crates/org-spool",
   "apps/org-office-server",
+  "apps/org-office-host",
   "apps/org-agent",
 ]
 
@@ -31,6 +35,8 @@ repository = "https://github.com/vgmello/agentic-org"
 # Pin exact versions here; crates opt in with `x.workspace = true`.
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
+libc = "=0.2.191"
+tempfile = "=3.27.0"
 
 [profile.release]
 lto = "thin"
