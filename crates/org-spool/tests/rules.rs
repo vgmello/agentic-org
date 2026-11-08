@@ -661,12 +661,20 @@ fn rule_format_and_invisible_characters_are_stripped_from_output_and_refused_in_
         (0x2028, 0x2029),   // line / paragraph separators
     ];
     let t = TempSpool::new("invisible");
+    let variation_selectors = [(0xFE00, 0xFE0F), (0xE0100, 0xE01EF)];
     for &(lo, hi) in ranges {
+        // Variation selectors are dropped (they modify the previous glyph); the rest become a
+        // space.
+        let expected = if variation_selectors.contains(&(lo, hi)) {
+            "ab"
+        } else {
+            "a b"
+        };
         for cp in lo..=hi {
             let ch = char::from_u32(cp).unwrap();
             assert_eq!(
                 sanitize_inline_text(&format!("a{ch}b"), 80),
-                "a b",
+                expected,
                 "U+{cp:04X} stripped from output"
             );
             assert!(
@@ -684,6 +692,11 @@ fn rule_format_and_invisible_characters_are_stripped_from_output_and_refused_in_
             );
         }
     }
+    assert_eq!(
+        sanitize_inline_text("\u{26A0}\u{FE0F} blocked", 80),
+        "\u{26A0} blocked"
+    );
+    assert_eq!(sanitize_inline_text("\u{2764}\u{FE0F}!", 80), "\u{2764}!");
     // Ordinary text, including non-Latin scripts and plain emoji, is untouched.
     for fine in ["héllo wörld", "日本語", "مرحبا", "ok 👍"] {
         assert_eq!(sanitize_inline_text(fine, 80), fine);

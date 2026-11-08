@@ -108,7 +108,7 @@ fn check_profile_text(field: &str, value: &str, allow_empty: bool) -> Result<(),
     }
     if value.chars().any(is_unsafe_inline_char) {
         return Err(format!(
-            "profile {field} must not contain control, format (zero-width, bidi, tag) or invisible characters"
+            "profile {field} must not contain control, format (zero-width, bidi, tag), variation-selector (as in emoji like ⚠️) or invisible characters"
         ));
     }
     Ok(())
@@ -412,27 +412,37 @@ fn is_unsafe_inline_char(ch: char) -> bool {
                 // Zl / Zp: line and paragraph separators (they break a line like \n).
                 | '\u{2028}'..='\u{2029}'
                 // Invisible but not Cf: combining grapheme joiner, Hangul fillers, Khmer
-                // inherent vowels, variation selectors.
+                // inherent vowels.
                 | '\u{034F}'
                 | '\u{115F}'..='\u{1160}'
                 | '\u{17B4}'..='\u{17B5}'
                 | '\u{3164}'
                 | '\u{FFA0}'
-                | '\u{180B}'..='\u{180D}'
-                | '\u{180F}'
-                | '\u{FE00}'..='\u{FE0F}'
-                | '\u{E0100}'..='\u{E01EF}'
         )
+        || is_variation_selector(ch)
+}
+
+/// Variation selectors (incl. Mongolian free variation selectors): invisible, they pick a glyph
+/// variant of the character before them (e.g. the emoji form in "⚠️"), so output drops them
+/// rather than turning them into a space.
+fn is_variation_selector(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{180B}'..='\u{180D}' | '\u{180F}' | '\u{FE00}'..='\u{FE0F}' | '\u{E0100}'..='\u{E01EF}'
+    )
 }
 
 /// Make untrusted text safe to show on one line: control, format (zero-width, bidi, tag, ...)
-/// and other invisible characters become spaces, runs of whitespace collapse, double quotes
+/// and other invisible characters become spaces (variation selectors are dropped), runs of whitespace collapse, double quotes
 /// become single quotes (so a subject can't break out of the quotes `msg notify` wraps it in),
 /// and the result is cut to `max_chars`.
 pub fn sanitize_inline_text(raw: &str, max_chars: usize) -> String {
     let mut cleaned = String::with_capacity(raw.len().min(max_chars + 8));
     let mut prev_space = false;
     for ch in raw.chars() {
+        if is_variation_selector(ch) {
+            continue;
+        }
         let mapped = if is_unsafe_inline_char(ch) {
             ' '
         } else if ch == '"' {
@@ -695,7 +705,7 @@ impl Spool {
         }
         if trimmed.chars().any(is_unsafe_inline_char) {
             return Err(SpoolError::InvalidInput(
-                "status text cannot contain control, format (zero-width, bidi, tag) or invisible characters, or newlines"
+                "status text cannot contain control, format (zero-width, bidi, tag), variation-selector (as in emoji like ⚠️) or invisible characters, or newlines"
                     .into(),
             ));
         }
