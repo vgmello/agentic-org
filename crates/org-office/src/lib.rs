@@ -14,6 +14,7 @@
 pub mod directory;
 mod error;
 mod key;
+mod messaging;
 mod model;
 mod office;
 mod office_file;
@@ -27,5 +28,6 @@ pub use error::{NameError, OfficeError};
 #[cfg(any(test, feature = "dev-keys"))]
 pub use key::InMemoryKeys;
 pub use key::{Key, KeyError, KeyProvider};
+pub use messaging::{OfficeDirectory, OfficeMessageStore};
 pub use model::{NewOffice, OfficeInfo, OfficeRole};
 pub use office::{Office, LOCK_WAIT};
