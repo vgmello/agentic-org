@@ -2195,6 +2195,14 @@ name = "org-spool"
 version = "0.0.0"
 
 [[package]]
+name = "org-supervise"
+version = "0.0.0"
+dependencies = [
+ "libc",
+ "org-runtime",
+]
+
+[[package]]
 name = "pango"
 version = "0.18.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

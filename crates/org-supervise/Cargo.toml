@@ -1,0 +1,11 @@
+[package]
+name = "org-supervise"
+description = "The one place that spawns agent runtimes, their probes, office servers and take-over terminals: process groups, the environment allowlist, the stop sequence, reaping and orphan cleanup (macOS)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+libc.workspace = true
+org-runtime = { path = "../org-runtime" }
