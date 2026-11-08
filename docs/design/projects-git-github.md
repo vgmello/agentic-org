@@ -7,7 +7,7 @@ Each project is a **git repository on GitHub**. Every office that works on a pro
 
 ## What lives where
 - **Organization data** (HQ-owned, copied everywhere): the project record. It holds the project's id, name and team, and **its repository**: `github`, owner, name, numeric id, default branch, private or public. It never holds a token.
-- **Office data** (each office's own): its GitHub connection (which GitHub user and installation, and the tokens in its Keychain), its clones and worktrees, and each project's clone status.
+- **Office data** (each office's own): its GitHub connections (the "agentic.org" app at every office, plus the "agentic.org admin" app at HQ: which GitHub user and installation, and the tokens in its Keychain), its clones and worktrees, and each project's clone status.
 - **On disk:** `<home>/offices/<office-id>/workspace/projects/<project-id>/`
   - `mirror.git` is the **office's own bare mirror**. Only the office runs git in it, and it's the only repository that talks to GitHub.
   - `work.git` is a **bare** local clone of the mirror, for agents. It has no checked-out branch, so any branch can get a worktree.
@@ -23,7 +23,7 @@ Each project is a **git repository on GitHub**. Every office that works on a pro
 
 Splitting them means a leaked satellite token can push to repositories, but never delete one. We recommend installing on **selected repositories** (open question 4).
 
-**The flow in the app:** Settings → GitHub → **Connect**.
+**The flow in the app:** Settings → GitHub → **Connect**. Every office connects the "agentic.org" app. **At HQ, the app then runs the same flow a second time for "agentic.org admin"**, with its own code and its own install, so HQ can create repositories. The calls take an `app` parameter (`contents` or `admin`), and `admin` is accepted only at HQ.
 1. **Authorize.** The office starts the device flow, and the app shows a short code and opens `github.com/login/device`. The owner enters the code. The office polls at GitHub's interval, adding 5 seconds whenever GitHub answers `slow_down`.
 2. **Install.** Authorizing doesn't install the app. If no installation covers the chosen account or GitHub organization, the app sends the owner to the app's install page. The owner picks "All repositories" or selected ones (open question 4), and the app checks again.
 3. **Keep the tokens.** User tokens last 8 hours and come with a refresh token that lasts 6 months and works once.
@@ -49,7 +49,7 @@ Splitting them means a leaked satellite token can push to repositories, but neve
   - The office always passes `--` before any path or ref that came from an agent.
   - Agents never share a working copy.
 - **The office does all network git work, and agents never hold the token.**
-  - **Fetching:** the office fetches from GitHub into `mirror.git`, then updates `work.git` from the mirror locally. Agents read everything locally.
+  - **Fetching:** the office fetches from GitHub into `mirror.git`. Then it updates `work.git` from the mirror with the same hardening as every office git command: run with `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1`, from the mirror's explicit path (never a remote name or URL from `work.git`'s config, so an `insteadOf` rule or remote URL there can't redirect it), with explicit refspecs, `protocol.allow=never` except `file`, hooks off, and no token. Agents read everything locally.
   - **Pushing:** agents push with **`org-agent push`**.
     - The office checks that the branch is the agent's own `task/…` branch, in a project of that office.
     - It copies that one branch **into `mirror.git`, running in `mirror.git`**: a fetch from `work.git` by explicit path and refspec. So `work.git`'s config (which agents can edit) is never used and none of its hooks run. The copy uses the same `GIT_CONFIG_*` and hooks-off settings, and never gets the token's file descriptor.
@@ -106,10 +106,11 @@ Order: **after the HQ office is serving** (create organization, phase 1), and **
 Each step: its own branch, an independent review, my go, then a merge into `v1`.
 
 **G1, the contract** (drafted now, frozen after G2a):
-- `github.status → { connected, login?, installation?: { account, all_repositories } }`
-- `github.connect.start → { user_code, verification_uri, expires_at, interval_s }`
-- `github.connect.wait { timeout_ms } → { connected, login, needs_install, install_url? } | error (expired, denied, timeout)`
-- `github.disconnect → { revoke_url }`
+- `github.status { app } → { connected, login?, installation?: { account, all_repositories } }`
+- `github.connect.start { app } → { user_code, verification_uri, expires_at, interval_s }`
+- `github.connect.wait { app, timeout_ms } → { connected, login, needs_install, install_url? } | error (expired, denied, timeout)`
+- `github.disconnect { app } → { revoke_url }`
+- `app` is `contents` or `admin`; `admin` is accepted only at HQ.
 - `github.repos.list { cursor? } → { repos, next_cursor? }`
 - `project.create { command_id, project_id, name, repo: { new: { owner, name, private } } | { existing: { repo_id } } } → Project`
 - `project.list → { projects }` and `project.get { id } → Project`. A project includes this office's clone status.

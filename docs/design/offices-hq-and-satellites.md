@@ -131,9 +131,11 @@ Agents run on their office's machine and talk only to that office, through the l
 
 ## Provisioning a satellite
 1. In the app, the owner adds an office: a name, plus local or remote.
-2. HQ adds a `pending` registry entry and makes a **one-time invitation link** (see "The invitation link" below).
-3. **Local:** the host starts a new office server and passes it the invitation through a pipe, never on the command line. **Remote:** the owner copies the link to the other machine and pastes it into agentic.org at "Open organization" (recommended), or opens it, which pre-fills the same screen.
-4. **The satellite makes its own key pair** and keeps the private key in its Keychain. It sends HQ a certificate request together with its **proof of the invitation** (see "The invitation link"). The invitation secret itself never crosses the network.
+2. HQ adds a `pending` registry entry.
+   - **Local** (a second office on this Mac, phase 2): the host creates the office directly. It starts a new office server and passes it its details through a pipe, never on the command line. No link, TLS, certificate or approval is involved: trust rests on both offices running as the same macOS user. Steps 3–4 don't apply, and the satellite goes straight to step 5.
+   - **Remote** (phase 3): HQ makes a **one-time invitation link** (see "The invitation link" below).
+3. **Remote:** the owner copies the link to the other machine and pastes it into agentic.org at "Open organization" (recommended), or opens it, which pre-fills the same screen.
+4. **Remote: the satellite makes its own key pair** and keeps the private key in its Keychain. It sends HQ a certificate request together with its **proof of the invitation** (see "The invitation link"). The invitation secret itself never crosses the network.
    - HQ checks the proof, waits for the owner's approval, signs a client certificate with the organization's CA, and marks the invitation used.
    - **Certificates say who and what they are** (from phase 3): office id, role, and client or server use.
      - A satellite's certificate is client-only.
