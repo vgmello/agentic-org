@@ -20,7 +20,10 @@ use org_proto::DbKey;
 pub struct Key(Arc<DbKey>);
 
 impl Key {
-    /// Takes the key the host sent. The `DbKey` moves in, so its bytes are not left behind.
+    /// Takes the key the host sent. Best effort: the caller's `DbKey` is consumed, but a Rust move
+    /// is a bitwise copy, so a stack frame the key passed through may keep the bytes until it is
+    /// reused; the heap copy shared by the stores is the one that is wiped when the last holder
+    /// drops.
     pub fn from_db_key(key: DbKey) -> Self {
         Self(Arc::new(key))
     }

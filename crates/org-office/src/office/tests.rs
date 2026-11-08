@@ -1335,3 +1335,58 @@ fn followers_are_woken_by_a_commit_and_a_wait_that_sees_a_newer_token_returns_at
     );
     assert!(started.elapsed() < Duration::from_secs(5));
 }
+
+#[test]
+fn a_key_that_opens_nothing_never_deletes_more_than_no_key_would() {
+    // office.db holds data and org.db is missing: a folder only a key can vouch for.
+    let dir = TempDir::new().unwrap();
+    let key = test_key();
+    let folder = folder_of(&dir, ID);
+    fs::create_dir_all(&folder).unwrap();
+    drop(
+        Store::open(
+            &folder.join("office.db"),
+            &key,
+            Opening::New,
+            &OFFICE_SCHEMA,
+        )
+        .unwrap(),
+    );
+    let before = fs::read(folder.join("office.db")).unwrap();
+
+    // No key and a WRONG key both refuse, and leave the file byte for byte as it was.
+    assert!(matches!(
+        Office::discard(&folder, ID, None),
+        Err(OfficeError::Storage(_))
+    ));
+    assert!(matches!(
+        Office::discard(&folder, ID, Some(&Key::from_bytes([9; 32]))),
+        Err(OfficeError::KeyMissing)
+    ));
+    assert_eq!(fs::read(folder.join("office.db")).unwrap(), before);
+
+    // The key that opens it may remove the unfinished create.
+    Office::discard(&folder, ID, Some(&key)).unwrap();
+    assert!(!folder.exists());
+}
+
+#[test]
+fn a_log_left_beside_an_empty_database_is_never_looked_into_or_deleted() {
+    for name in ["org.db-wal", "office.db-wal"] {
+        let dir = TempDir::new().unwrap();
+        let folder = folder_of(&dir, ID);
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join(name), b"frames").unwrap();
+
+        for key in [None, Some(test_key())] {
+            assert!(
+                matches!(
+                    Office::discard(&folder, ID, key.as_ref()),
+                    Err(OfficeError::Storage(_))
+                ),
+                "{name} {key:?}"
+            );
+            assert_eq!(fs::read(folder.join(name)).unwrap(), b"frames");
+        }
+    }
+}

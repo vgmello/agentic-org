@@ -368,6 +368,10 @@ fn discard_that_cannot_check_the_databases_is_storage_error_and_deletes_nothing(
             world.folder(OFFICE).join("org.db").exists(),
             "a database was deleted"
         );
+        assert!(
+            !run.stderr().contains(DB_KEY_HEX),
+            "the key reached the log of a failed discard"
+        );
     }
 }
 
@@ -383,6 +387,9 @@ fn a_key_that_does_not_open_the_databases_is_key_missing_and_nothing_changes() {
     run.send(&start_message_with(DbKey::from_bytes([0xC4; 32])));
     assert_eq!(failed_code(run.event()), FailCode::KeyMissing);
     assert!(!run.wait().success());
+    let log = run.stderr();
+    assert!(!log.contains(DB_KEY_HEX), "the key reached the log");
+    assert!(!log.contains("c4c4c4c4"), "the wrong key reached the log");
 
     assert_eq!(
         std::fs::read(world.folder(OFFICE).join("org.db")).unwrap(),

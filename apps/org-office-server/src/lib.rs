@@ -4,7 +4,7 @@
 //! ```text
 //! org-office-server --create        # first stdin line: the create message; makes the office, serves it
 //! org-office-server --office <id>   # first stdin line: the start message; serves the office
-//! org-office-server --discard <id>  # removes an unfinished create; reads no line
+//! org-office-server --discard <id>  # first stdin line: the discard message (the key or null); removes an unfinished create
 //! ```
 //! stdout carries only [`ServerEvent`] lines (`created`, `ready`, `discarded`, `failed`), logs go
 //! to stderr, and EOF on stdin means the host is gone: the server closes its databases and exits 0.

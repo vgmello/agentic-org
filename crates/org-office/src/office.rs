@@ -324,6 +324,17 @@ impl Office {
                     return Err(OfficeError::OfficeExists);
                 }
             }
+            // office.db is checked the same way, so a key that opens nothing never has more
+            // power to delete than no key: the key must open every database that holds data.
+            let office_db = folder.join(OFFICE_DB);
+            if !holds_data(&office_db)? && holds_data(&folder.join("office.db-wal"))? {
+                return Err(OfficeError::storage(std::io::Error::other(
+                    "office.db is empty but its log is not: not looking",
+                )));
+            }
+            if holds_data(&office_db)? {
+                Store::inspect(&office_db, key, |_| Ok(()))?;
+            }
         }
         // Nothing here is a finished office. Empty the folder (all but the lock file), then
         // remove the lock file and the folder, so the lock is held until the end.
