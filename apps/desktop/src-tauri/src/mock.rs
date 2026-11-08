@@ -397,16 +397,10 @@ fn sample_organizations() -> Vec<Organization> {
 
 /// The mock host's `hello`: a current host, which lists the optional calls and events the app uses.
 fn mock_hello() -> HelloResult {
-    HelloResult {
-        api_version: API_VERSION,
-        server_version: "0.0.0-mock".to_string(),
-        host: "This Mac".to_string(),
-        office: None,
-        capabilities: vec![
-            org_proto::capability::OFFICE_STATUS_CHANGED.to_string(),
-            org_proto::capability::OFFICE_RESTART.to_string(),
-        ],
-    }
+    HelloResult::host("0.0.0-mock", "This Mac").with_capabilities(vec![
+        org_proto::capability::OFFICE_STATUS_CHANGED.to_string(),
+        org_proto::capability::OFFICE_RESTART.to_string(),
+    ])
 }
 
 /// The HQ office every organization starts with, on this Mac.
