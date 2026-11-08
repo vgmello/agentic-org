@@ -1,9 +1,15 @@
-//! `org.db`: the organization's data and, on HQ, its event log. **All of its SQL lives here.**
+//! `org.db`: the organization's data and, on HQ, its event log. A submodule of the store, so
+//! "all SQL and every rusqlite type stay in one private module" (ADR-0002 §5) still holds.
+//!
+//! **Persisted shapes change only with `SCHEMA.version`.** An entity's body is the contract's own
+//! JSON, and the contract's types drop fields and enum values they do not know when they decode.
+//! So an older build that rewrote a newer body would lose data silently. Any contract change that
+//! adds a persisted field or enum value therefore bumps `SCHEMA.version`, which makes older builds
+//! refuse the file (`Store::open`), instead of relying on unknown fields travelling along.
 //!
 //! Each entity is stored as the contract's own JSON (`org_proto::org`) in a `body` column, beside
-//! the few plain columns a query or a uniqueness rule needs. The contract is additive-only, so a
-//! newer field simply travels in the body, and there is no mapping layer between the wire
-//! type and the row to get wrong. The rules (`crate::rules`) read through [`OrgSql`] as an
+//! the few plain columns a query or a uniqueness rule needs, so there is no mapping layer between
+//! the wire type and the row to get wrong. The rules (`crate::rules`) read through [`OrgSql`] as an
 //! [`OrgView`] and write through it as an [`OrgWrite`], inside the writer's savepoint, so a
 //! command sees the effects of the one before it.
 //!
@@ -21,9 +27,9 @@ use org_proto::org::{
     Team,
 };
 
+use super::Schema;
 use crate::error::OfficeError;
 use crate::rules::{self, OrgView, OrgWrite};
-use crate::store::Schema;
 
 /// The epoch of every entry until promotion exists (phase 4).
 const EPOCH: u64 = 1;
@@ -346,20 +352,35 @@ pub(crate) fn append_event(
     Ok(next)
 }
 
-/// Whether the log has an entry: the organization is committed.
+/// Whether the organization is committed: the log has an entry, or (an `org.db` from before the
+/// log existed) the identity row `organization_id` is there. Anything less is an unfinished
+/// create, which `Office::discard` may remove.
 pub(crate) fn is_committed(db: &Connection) -> Result<bool, OfficeError> {
-    let has_log: bool = db
-        .query_row(
-            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE name = 'events')",
-            (),
+    let exists = |table: &str| -> Result<bool, OfficeError> {
+        db.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE name = ?1)",
+            [table],
             |row| row.get(0),
         )
-        .map_err(OfficeError::storage)?;
-    if !has_log {
-        return Ok(false);
-    }
-    db.query_row("SELECT EXISTS (SELECT 1 FROM events)", (), |row| row.get(0))
         .map_err(OfficeError::storage)
+    };
+    if exists("events")?
+        && db
+            .query_row("SELECT EXISTS (SELECT 1 FROM events)", (), |row| row.get(0))
+            .map_err(OfficeError::storage)?
+    {
+        return Ok(true);
+    }
+    if exists("meta")? {
+        return db
+            .query_row(
+                "SELECT EXISTS (SELECT 1 FROM meta WHERE key = 'organization_id')",
+                (),
+                |row| row.get(0),
+            )
+            .map_err(OfficeError::storage);
+    }
+    Ok(false)
 }
 
 /// What the organization is made of at creation.
@@ -551,6 +572,15 @@ mod tests {
             person(6, &id(2), "Bob"),
             person(7, &id(3), "ann"),    // a handle clash
             person(71, &id(4), "PIXEL"), // clashes with the agent's messaging name, any case
+            person(73, &id(5), "old"),   // an offboarded agent's handle stays reserved
+            OrgCommand::MemberUpdatePerson(MemberUpdatePersonParams {
+                command_id: c(74),
+                member_id: id(2),
+                expected_version: 1,
+                name: Some("OLD".into()), // ...also against a rename
+                contact: None,
+                clear_contact: false,
+            }),
             OrgCommand::MemberUpdatePerson(MemberUpdatePersonParams {
                 command_id: c(72),
                 member_id: OWNER.into(),
@@ -671,20 +701,35 @@ mod tests {
             created_at: Some(NOW.into()),
             version: 1,
         };
-        crate::rules::apply(
-            &mut mem,
-            &OrgChange::MemberUpserted {
-                member: agent.clone(),
-            },
-        )
-        .unwrap();
+        let mut old = agent.clone();
+        old.id = id(8);
+        old.name = "Old the retired".into();
+        if let Some(profile) = old.agent.as_mut() {
+            profile.messaging_name = "Old".into();
+            profile.status = AgentStatus::Offboarded;
+            profile.offboarded_at = Some(NOW.into());
+        }
+        for member in [&agent, &old] {
+            crate::rules::apply(
+                &mut mem,
+                &OrgChange::MemberUpserted {
+                    member: member.clone(),
+                },
+            )
+            .unwrap();
+        }
         store
             .write(move |db| {
                 apply_changes(
                     db,
-                    &[OrgChange::MemberUpserted {
-                        member: agent.clone(),
-                    }],
+                    &[
+                        OrgChange::MemberUpserted {
+                            member: agent.clone(),
+                        },
+                        OrgChange::MemberUpserted {
+                            member: old.clone(),
+                        },
+                    ],
                 )
                 .map(|()| ((), None))
             })
@@ -858,6 +903,33 @@ mod tests {
             version: 1,
         })));
         assert_eq!(store.read(snapshot).unwrap().memberships.len(), 1);
+    }
+
+    #[test]
+    fn an_org_db_from_before_the_log_with_its_identity_row_still_counts_as_committed() {
+        let dir = TempDir::new().unwrap();
+        let store = Store::open(
+            &dir.path().join("org.db"),
+            &Key::from_bytes([5; 32]),
+            Opening::New,
+            &SCHEMA,
+        )
+        .unwrap();
+        assert!(
+            !store.read(is_committed).unwrap(),
+            "a schema alone is not an organization"
+        );
+        store
+            .write(|db| {
+                db.execute(
+                    "INSERT INTO meta (key, value) VALUES ('organization_id', 'ORG1')",
+                    (),
+                )
+                .map_err(OfficeError::storage)?;
+                Ok(((), None))
+            })
+            .unwrap();
+        assert!(store.read(is_committed).unwrap());
     }
 
     #[test]

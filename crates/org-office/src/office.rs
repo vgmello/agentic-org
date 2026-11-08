@@ -9,7 +9,7 @@ use crate::office_file::{self, is_plain_id};
 use crate::private_fs::{absolute, private_dir, private_file, tighten_dir};
 use org_proto::org::OrgSnapshot;
 
-use crate::org_db;
+use crate::store::org as org_db;
 use crate::store::{Opening, Schema, Store};
 use crate::time;
 use org_proto::OrganizationName;
