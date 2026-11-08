@@ -8,7 +8,8 @@ use std::os::unix::fs::PermissionsExt;
 
 use org_office_host::Host;
 use org_proto::{
-    Empty, ErrorCode, Hello, OfficeList, Outcome, Subscribe, SubscribeParams, API_VERSION,
+    Empty, ErrorCode, Hello, OfficeList, OrganizationCreate, OrganizationCreateParams,
+    OrganizationList, Outcome, ServerMessage, Subscribe, SubscribeParams, API_VERSION,
     UNREADABLE_REQUEST_ID,
 };
 use support::{Client, TestHome};
@@ -158,5 +159,116 @@ fn shutdown_with_clients_connected_finishes_promptly() {
         "the interrupted create's folder to be discarded",
         || home.office_folders().is_empty(),
     );
+    host.shutdown();
+}
+
+/// An event published after a list snapshot never reaches a client before that snapshot: every
+/// organization a subscriber has heard of is in every list answer that comes after the event.
+/// List calls stream in on one subscribed connection (handled up to 16 at a time) while
+/// organizations are created on another.
+#[test]
+fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
+    use std::collections::HashSet;
+    use std::io::{BufRead, BufReader, Write};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::Arc;
+
+    const CREATES: usize = 40;
+    let home = TestHome::new();
+    let host = Host::start(home.config()).unwrap();
+    let path = host.socket_path().to_path_buf();
+    let stream = std::os::unix::net::UnixStream::connect(&path).unwrap();
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(30)));
+    let mut out = stream.try_clone().unwrap();
+    out.write_all(b"{\"id\":0,\"method\":\"subscribe\",\"params\":{}}\n")
+        .unwrap();
+    // Subscribed before anything is created, so every event reaches this connection.
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    reader.read_line(&mut line).unwrap();
+    assert!(
+        matches!(serde_json::from_str(&line), Ok(ServerMessage::Response(r)) if r.id == 0),
+        "{line}"
+    );
+
+    let (creating, sent) = (Arc::new(AtomicBool::new(true)), Arc::new(AtomicU64::new(0)));
+    let answered = Arc::new(AtomicU64::new(0));
+    let writer = {
+        let (creating, sent, answered) = (
+            Arc::clone(&creating),
+            Arc::clone(&sent),
+            Arc::clone(&answered),
+        );
+        std::thread::spawn(move || {
+            let mut id = 0u64;
+            // Lists keep coming until the creates are done, then one more. At most 64 are
+            // unanswered, so the answers never fill the connection's queue (a client that lets
+            // it fill is disconnected).
+            loop {
+                while id - answered.load(Ordering::SeqCst) >= 64 {
+                    std::thread::yield_now();
+                }
+                let last = !creating.load(Ordering::SeqCst);
+                id += 1;
+                let line =
+                    format!("{{\"id\":{id},\"method\":\"organization.list\",\"params\":{{}}}}\n");
+                out.write_all(line.as_bytes()).unwrap();
+                sent.store(id, Ordering::SeqCst);
+                if last {
+                    return;
+                }
+            }
+        })
+    };
+    let creator = {
+        let (path, creating) = (path.clone(), Arc::clone(&creating));
+        std::thread::spawn(move || {
+            let mut client = Client::connect(&path);
+            for i in 0..CREATES {
+                client
+                    .call::<OrganizationCreate>(&OrganizationCreateParams {
+                        name: format!("Org {i}"),
+                    })
+                    .unwrap();
+            }
+            creating.store(false, Ordering::SeqCst);
+        })
+    };
+
+    let (mut heard, mut answers) = (HashSet::new(), 0u64);
+    loop {
+        let done = writer.is_finished() && answers == sent.load(Ordering::SeqCst);
+        if done && heard.len() == CREATES {
+            break;
+        }
+        let mut line = String::new();
+        assert!(reader.read_line(&mut line).unwrap() > 0, "the host hung up");
+        match serde_json::from_str::<ServerMessage>(&line).unwrap() {
+            ServerMessage::Event(event) => {
+                if event.event == "organization.created" {
+                    heard.insert(event.data["id"].as_str().unwrap().to_owned());
+                }
+            }
+            ServerMessage::Response(response) => {
+                let listed: HashSet<String> = response
+                    .into_result::<OrganizationList>()
+                    .unwrap()
+                    .organizations
+                    .into_iter()
+                    .map(|o| o.id)
+                    .collect();
+                let missing: Vec<_> = heard.difference(&listed).collect();
+                assert!(
+                    missing.is_empty(),
+                    "a list answer came after the event for {missing:?} without it"
+                );
+                answers += 1;
+                answered.store(answers, Ordering::SeqCst);
+            }
+            ServerMessage::Unknown(v) => panic!("unexpected {v}"),
+        }
+    }
+    writer.join().unwrap();
+    creator.join().unwrap();
     host.shutdown();
 }
