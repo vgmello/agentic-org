@@ -1,111 +1,38 @@
-//! End-to-end integration tests for `org-agent` (including `relay`, `who`, `status`,
-//! `defer`, `done`, `notify`, `wait --urgent-only`) over temporary `$ORG_HOME` directories.
+//! End-to-end tests of `org-agent` (relay, send/ask/reply/read/inbox/wait, who, status,
+//! defer, done, notify, due) on a temporary `$ORG_HOME`.
+
+mod common;
 
 use std::collections::BTreeMap;
-use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
-use org_spool::{generate_ulid, Envelope, MessageKind, NotifyReport, Spool};
+use common::TempOrgHome;
+use org_spool::{Envelope, MessageKind, NotifyReport, Spool};
 
-fn org_agent_bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_org-agent"))
-}
-
-struct TempOrgHome {
-    root: PathBuf,
-    relay: Option<Child>,
-}
-
-impl TempOrgHome {
-    fn new(tag: &str) -> Self {
-        let root = PathBuf::from("/tmp").join(format!(
-            "oh_{}_{}_{}",
-            tag,
-            std::process::id(),
-            &generate_ulid()[20..]
-        ));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
-        Self { root, relay: None }
-    }
-
-    fn start_relay(&mut self) {
-        let child = Command::new(org_agent_bin())
-            .args(["relay", "run"])
-            .env("ORG_HOME", &self.root)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn org-agent relay run");
-        self.relay = Some(child);
-        for _ in 0..40 {
-            if self.root.join("spool/relay.sock").exists() {
-                break;
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-    }
-
-    fn stop_relay(&mut self) {
-        if let Some(mut child) = self.relay.take() {
-            let _ = Command::new("kill")
-                .args(["-TERM", &child.id().to_string()])
-                .status();
-            let _ = child.wait();
-        }
-    }
-
-    fn run_agent(&self, as_agent: &str, args: &[&str]) -> (i32, String, String) {
-        Self::run_agent_at(&self.root, as_agent, args)
-    }
-
-    fn run_agent_at(root: &Path, as_agent: &str, args: &[&str]) -> (i32, String, String) {
-        let out = Command::new(org_agent_bin())
-            .args(args)
-            .env("ORG_HOME", root)
-            .env("ORG_AGENT", as_agent)
-            .output()
-            .expect("run org-agent");
-        let code = out.status.code().unwrap_or(-1);
-        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        (code, stdout, stderr)
-    }
-}
-
-impl Drop for TempOrgHome {
-    fn drop(&mut self) {
-        self.stop_relay();
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
+const ADA: &str = "ac-staff-engineer-ada";
+const AGY: &str = "agy-senior-dev";
 
 #[test]
 fn send_to_read_and_fire_and_forget_while_relay_down() {
     let mut env = TempOrgHome::new("send_read");
+    env.register(&[ADA, AGY]);
 
-    let (c1, _, _) = env.run_agent("ac-staff-engineer-ada", &["msg", "register"]);
-    let (c2, _, _) = env.run_agent("agy-senior-dev", &["msg", "register"]);
-    assert_eq!(c1, 0);
-    assert_eq!(c2, 0);
-
-    let (code, msg_id, _) = env.run_agent(
-        "agy-senior-dev",
+    let sent = env.run(
+        AGY,
         &[
             "msg",
             "send",
             "--to",
-            "ac-staff-engineer-ada",
+            ADA,
             "--subject",
             "offline test",
             "queued while relay down",
         ],
     );
-    assert_eq!(code, 0);
+    assert_eq!(sent.code, 0);
+    let msg_id = sent.stdout;
     assert_eq!(msg_id.len(), 26);
     assert!(
         env.root
@@ -115,106 +42,90 @@ fn send_to_read_and_fire_and_forget_while_relay_down() {
     );
 
     env.start_relay();
-    for _ in 0..40 {
-        if env
-            .root
-            .join(format!(
-                "spool/inbox/ac-staff-engineer-ada/new/{msg_id}.json"
-            ))
-            .is_file()
-        {
+    for _ in 0..200 {
+        if env.inbox_file(ADA, "new", &msg_id).is_file() {
             break;
         }
         thread::sleep(Duration::from_millis(10));
     }
 
-    let (code_in, inbox_out, _) =
-        env.run_agent("ac-staff-engineer-ada", &["msg", "inbox", "--json"]);
-    assert_eq!(code_in, 0);
-    assert!(inbox_out.contains(&msg_id));
+    let inbox = env.run(ADA, &["msg", "inbox", "--json"]);
+    assert_eq!(inbox.code, 0);
+    assert!(inbox.stdout.contains(&msg_id));
 
-    let (code_rd, read_out, _) = env.run_agent("ac-staff-engineer-ada", &["msg", "read", &msg_id]);
-    assert_eq!(code_rd, 0);
-    assert!(read_out.contains("queued while relay down"));
+    let read = env.run(ADA, &["msg", "read", &msg_id]);
+    assert_eq!(read.code, 0);
+    assert!(read.stdout.contains("queued while relay down"));
 
-    let (_, inbox_after, _) = env.run_agent("ac-staff-engineer-ada", &["msg", "inbox"]);
-    assert!(inbox_after.is_empty());
-    assert!(env
-        .root
-        .join(format!(
-            "spool/inbox/ac-staff-engineer-ada/cur/{msg_id}.json"
-        ))
-        .is_file());
+    assert!(env.run(ADA, &["msg", "inbox"]).stdout.is_empty());
+    assert!(env.inbox_file(ADA, "cur", &msg_id).is_file());
 }
 
 #[test]
 fn ask_and_reply_round_trip_with_live_relay() {
     let mut env = TempOrgHome::new("ask_reply");
-    env.run_agent("ac-staff-engineer-ada", &["msg", "register"]);
-    env.run_agent("agy-senior-dev", &["msg", "register"]);
+    env.register(&[ADA, AGY]);
     env.start_relay();
 
-    let root_clone = env.root.clone();
+    let root = env.root.clone();
     let responder = thread::spawn(move || {
-        let (w_code, w_json, w_err) = TempOrgHome::run_agent_at(
-            &root_clone,
-            "ac-staff-engineer-ada",
-            &["msg", "wait", "--urgent-only", "--timeout", "5s", "--json"],
+        let waited = TempOrgHome::run_at(
+            &root,
+            ADA,
+            &["msg", "wait", "--urgent-only", "--timeout", "10s", "--json"],
         );
-        assert_eq!(w_code, 0, "wait failed: {w_err}");
-        let req: Envelope =
-            Envelope::from_json_bytes(w_json.as_bytes()).expect("parse waited request");
+        assert_eq!(waited.code, 0, "wait failed: {}", waited.stderr);
+        let req = Envelope::from_json_bytes(waited.stdout.as_bytes()).expect("parse request");
         assert_eq!(req.kind, MessageKind::Request);
 
-        // Replying directly (with `--body`) also marks `req.id` read in ada's inbox!
-        let (rep_code, _, rep_err) = TempOrgHome::run_agent_at(
-            &root_clone,
-            "ac-staff-engineer-ada",
+        // Replying (with `--body`) also marks the request read in ada's inbox.
+        let replied = TempOrgHome::run_at(
+            &root,
+            ADA,
             &["msg", "reply", &req.id, "--body", "go for merge into v1"],
         );
-        assert_eq!(rep_code, 0, "reply failed: {rep_err}");
+        assert_eq!(replied.code, 0, "reply failed: {}", replied.stderr);
     });
 
-    let (ask_code, ask_out, ask_err) = env.run_agent(
-        "agy-senior-dev",
+    let asked = env.run(
+        AGY,
         &[
             "msg",
             "ask",
             "--to",
-            "ac-staff-engineer-ada",
+            ADA,
             "--timeout",
-            "5s",
+            "10s",
             "ready for review?",
         ],
     );
     responder.join().unwrap();
-    assert_eq!(ask_code, 0, "ask failed: {ask_err}");
-    assert!(ask_out.contains("go for merge into v1"));
+    assert_eq!(asked.code, 0, "ask failed: {}", asked.stderr);
+    // v1-old prints only the answer's body for a plain ask.
+    assert_eq!(asked.stdout, "go for merge into v1");
 
-    // Verify `reply` marked `req` read in ac-staff-engineer-ada's inbox
-    let (_, ada_inbox, _) = env.run_agent("ac-staff-engineer-ada", &["msg", "inbox"]);
-    assert!(ada_inbox.is_empty());
+    assert!(env.run(ADA, &["msg", "inbox"]).stdout.is_empty());
 }
 
 #[test]
 fn unknown_recipient_exits_3_and_deregistered_or_expired_goes_to_dead() {
     let env = TempOrgHome::new("dead_and_exit3");
-    env.run_agent("agy-senior-dev", &["msg", "register"]);
+    env.register(&[AGY]);
 
-    let (code, _, stderr) = env.run_agent(
-        "agy-senior-dev",
-        &["msg", "send", "--to", "nobody", "hello?"],
+    let r = env.run(AGY, &["msg", "send", "--to", "nobody", "hello?"]);
+    assert_eq!(r.code, 3, "expected exit 3, stderr={}", r.stderr);
+    assert!(r.stderr.contains("unknown recipient nobody"));
+    assert_eq!(
+        fs::read_dir(env.root.join("spool/outbox/new"))
+            .unwrap()
+            .count(),
+        0,
+        "outbox/new must remain empty"
     );
-    assert_eq!(code, 3, "expected exit 3, stderr={stderr}");
-    assert!(stderr.contains("unknown recipient nobody"));
-    let outbox_files: Vec<_> = fs::read_dir(env.root.join("spool/outbox/new"))
-        .unwrap()
-        .collect();
-    assert!(outbox_files.is_empty(), "outbox/new must remain empty");
 
-    env.run_agent("ephemeral-agent", &["msg", "register"]);
-    let (s_code, msg_id, _) = env.run_agent(
-        "agy-senior-dev",
+    env.register(&["ephemeral-agent"]);
+    let sent = env.run(
+        AGY,
         &[
             "msg",
             "send",
@@ -223,28 +134,20 @@ fn unknown_recipient_exits_3_and_deregistered_or_expired_goes_to_dead() {
             "before deregister",
         ],
     );
-    assert_eq!(s_code, 0);
-    env.run_agent("agy-senior-dev", &["msg", "deregister", "ephemeral-agent"]);
+    assert_eq!(sent.code, 0);
+    let dereg = env.run(AGY, &["msg", "deregister", "ephemeral-agent"]);
+    assert_eq!(dereg.stdout, "ephemeral-agent", "v1-old prints the bare id");
 
     let spool = Spool::open(&env.root).unwrap();
-    let mut expired = Envelope::new_msg(
-        "agy-senior-dev",
-        "agy-senior-dev",
-        None,
-        "too late",
-        BTreeMap::new(),
-    )
-    .unwrap();
+    let mut expired = Envelope::new_msg(AGY, AGY, None, "too late", BTreeMap::new()).unwrap();
     expired.expires_at = Some("1999-12-31T23:59:59.000Z".into());
     spool.enqueue(&expired).unwrap();
 
-    let (r_code, _, _) = env.run_agent("agy-senior-dev", &["relay", "run", "--once"]);
-    assert_eq!(r_code, 0);
+    env.deliver();
 
     let reason_b =
-        fs::read_to_string(env.root.join(format!("spool/dead/{msg_id}.reason"))).unwrap();
+        fs::read_to_string(env.root.join(format!("spool/dead/{}.reason", sent.stdout))).unwrap();
     assert!(reason_b.contains("unknown_recipient: ephemeral-agent"));
-
     let reason_c =
         fs::read_to_string(env.root.join(format!("spool/dead/{}.reason", expired.id))).unwrap();
     assert!(reason_c.contains("expired"));
@@ -253,84 +156,76 @@ fn unknown_recipient_exits_3_and_deregistered_or_expired_goes_to_dead() {
 #[test]
 fn ask_timeout_exits_with_code_2() {
     let mut env = TempOrgHome::new("ask_timeout");
-    env.run_agent("ac-staff-engineer-ada", &["msg", "register"]);
-    env.run_agent("agy-senior-dev", &["msg", "register"]);
+    env.register(&[ADA, AGY]);
     env.start_relay();
 
-    let (code, _, stderr) = env.run_agent(
-        "agy-senior-dev",
+    let r = env.run(
+        AGY,
         &[
             "msg",
             "ask",
             "--to",
-            "ac-staff-engineer-ada",
+            ADA,
             "--timeout",
             "80ms",
             "nobody will answer",
         ],
     );
-    assert_eq!(code, 2, "expected exit code 2 on timeout, stderr={stderr}");
+    assert_eq!(
+        r.code, 2,
+        "expected exit code 2 on timeout, stderr={}",
+        r.stderr
+    );
 }
 
 #[test]
 fn triage_defer_done_notify_exit_codes_0_10_11_and_session_dedup() {
     let env = TempOrgHome::new("notify_e2e");
-    env.run_agent(
-        "ac-staff-engineer-ada",
-        &["msg", "register", "--name", "Ada"],
-    );
-    env.run_agent("agy-senior-dev", &["msg", "register", "--name", "Agy"]);
+    assert_eq!(env.run(ADA, &["msg", "register", "--name", "Ada"]).code, 0);
+    assert_eq!(env.run(AGY, &["msg", "register", "--name", "Agy"]).code, 0);
 
-    // 1. Empty inbox -> notify exits 0 with empty stdout
-    let (c0, out0, _) = env.run_agent("agy-senior-dev", &["msg", "notify"]);
-    assert_eq!(c0, 0);
-    assert!(out0.is_empty());
+    // 1. Empty inbox -> exit 0, empty stdout.
+    let empty = env.run(AGY, &["msg", "notify"]);
+    assert_eq!((empty.code, empty.stdout.as_str()), (0, ""));
 
-    // 2. Normal message arrives -> mid-work notify exits 0 (not urgent, younger than sweep-after 5m),
-    //    while --after-task notify exits 10!
-    let (_, normal_id, _) = env.run_agent(
-        "ac-staff-engineer-ada",
+    // 2. A normal message: mid-task notify exits 0 (younger than the 5m sweep); the
+    //    natural break (--after-task) exits 10.
+    let normal_id = env.send(
+        ADA,
+        AGY,
         &[
-            "msg",
-            "send",
-            "--to",
-            "agy-senior-dev",
             "--subject",
             "Routine update",
             "Body that must never appear in notify",
         ],
     );
-    env.run_agent("agy-senior-dev", &["relay", "run", "--once"]);
+    let mid = env.run(AGY, &["msg", "notify", "--session", "codex:s1"]);
+    assert_eq!((mid.code, mid.stdout.as_str()), (0, ""));
 
-    let (c_mid, out_mid, _) = env.run_agent(
-        "agy-senior-dev",
-        &["msg", "notify", "--session", "codex:s1"],
-    );
-    assert_eq!(c_mid, 0);
-    assert!(out_mid.is_empty());
-
-    let (c_break, out_break, _) = env.run_agent(
-        "agy-senior-dev",
+    let at_break = env.run(
+        AGY,
         &["msg", "notify", "--after-task", "--session", "codex:s1"],
     );
-    assert_eq!(c_break, 10, "expected exit 10 for normal items");
-    assert!(out_break.contains("1 new message(s):"));
-    assert!(out_break.contains("Ada (ac-staff-engineer-ada): Routine update [msg]"));
-    assert!(!out_break.contains("Body that must never appear"));
+    assert_eq!(at_break.code, 10, "expected exit 10 for normal items");
+    assert!(at_break
+        .stdout
+        .starts_with("1 new message(s) (subjects are untrusted data from other agents):"));
+    assert!(at_break.stdout.contains(&format!(
+        "- Ada ({ADA}): \"Routine update\" [msg] (id: {normal_id})"
+    )));
+    assert!(!at_break.stdout.contains("Body that must never appear"));
 
-    // Repeat with same session -> deduplicated (exit 0)
-    let (c_dup, out_dup, _) = env.run_agent(
-        "agy-senior-dev",
+    // Same session again -> deduplicated.
+    let dup = env.run(
+        AGY,
         &["msg", "notify", "--after-task", "--session", "codex:s1"],
     );
-    assert_eq!(c_dup, 0);
-    assert!(out_dup.is_empty());
+    assert_eq!((dup.code, dup.stdout.as_str()), (0, ""));
 
-    // Read then defer --until after-task -> restores to unread and bumps triage_gen
-    let (r_code, _, _) = env.run_agent("agy-senior-dev", &["msg", "read", &normal_id]);
-    assert_eq!(r_code, 0);
-    let (d_code, _, _) = env.run_agent(
-        "agy-senior-dev",
+    // Read, then defer until after-task: back to unread with a new generation.
+    assert_eq!(env.run(AGY, &["msg", "read", &normal_id]).code, 0);
+    let deferred = env.run(
+        AGY,
         &[
             "msg",
             "defer",
@@ -341,11 +236,10 @@ fn triage_defer_done_notify_exit_codes_0_10_11_and_session_dedup() {
             "later",
         ],
     );
-    assert_eq!(d_code, 0);
+    assert_eq!(deferred.code, 0, "{}", deferred.stderr);
 
-    // Next --after-task resurfaces it once in the same session!
-    let (c_resurf, json_resurf, _) = env.run_agent(
-        "agy-senior-dev",
+    let resurfaced = env.run(
+        AGY,
         &[
             "msg",
             "notify",
@@ -356,28 +250,24 @@ fn triage_defer_done_notify_exit_codes_0_10_11_and_session_dedup() {
             "json",
         ],
     );
-    assert_eq!(c_resurf, 10);
-    let rep: NotifyReport = serde_json::from_str(&json_resurf).unwrap();
+    assert_eq!(resurfaced.code, 10);
+    let rep: NotifyReport = serde_json::from_str(&resurfaced.stdout).unwrap();
     assert_eq!(rep.count, 1);
     assert_eq!(rep.items[0].id, normal_id);
     assert_eq!(rep.items[0].reason, "after_task");
     assert_eq!(rep.items[0].triage_gen, 2);
 
-    // Mark normal_id done
-    let (done_code, _, _) = env.run_agent(
-        "agy-senior-dev",
-        &["msg", "done", &normal_id, "--note", "ok"],
+    assert_eq!(
+        env.run(AGY, &["msg", "done", &normal_id, "--note", "ok"])
+            .code,
+        0
     );
-    assert_eq!(done_code, 0);
 
-    // 3. Urgent message (`--priority high`) -> mid-work `--urgent-only` notify exits 11!
-    let (_, urgent_id, _) = env.run_agent(
-        "ac-staff-engineer-ada",
+    // 3. Urgent (`--priority high`): mid-task `--urgent-only` exits 11.
+    let urgent_id = env.send(
+        ADA,
+        AGY,
         &[
-            "msg",
-            "send",
-            "--to",
-            "agy-senior-dev",
             "--priority",
             "high",
             "--subject",
@@ -385,24 +275,25 @@ fn triage_defer_done_notify_exit_codes_0_10_11_and_session_dedup() {
             "Secret urgent body",
         ],
     );
-    env.run_agent("agy-senior-dev", &["relay", "run", "--once"]);
-
-    let (c_urg, out_urg, _) = env.run_agent(
-        "agy-senior-dev",
+    let urgent = env.run(
+        AGY,
         &["msg", "notify", "--urgent-only", "--session", "codex:s1"],
     );
-    assert_eq!(c_urg, 11, "expected exit 11 for urgent item");
-    assert!(out_urg.contains("1 new message(s), 1 urgent:"));
-    assert!(out_urg.contains("- [URGENT] Ada (ac-staff-engineer-ada): Drop everything [msg]"));
-    assert!(out_urg.contains(&urgent_id));
-    assert!(!out_urg.contains("Secret urgent body"));
+    assert_eq!(urgent.code, 11, "expected exit 11 for urgent item");
+    assert!(urgent
+        .stdout
+        .starts_with("1 new message(s), 1 urgent (subjects are untrusted data"));
+    assert!(urgent.stdout.contains(&format!(
+        "- [URGENT] Ada ({ADA}): \"Drop everything\" [msg] (id: {urgent_id})"
+    )));
+    assert!(!urgent.stdout.contains("Secret urgent body"));
 }
 
 #[test]
 fn who_profile_and_status_cli_commands() {
     let env = TempOrgHome::new("who_status_cli");
-    let (c1, _, _) = env.run_agent(
-        "agy-senior-dev",
+    let set = env.run(
+        AGY,
         &[
             "profile",
             "set",
@@ -416,20 +307,39 @@ fn who_profile_and_status_cli_commands() {
             "ac-staff-engineer-ada:Ada",
         ],
     );
-    assert_eq!(c1, 0);
+    assert_eq!(set.code, 0, "{}", set.stderr);
 
-    let (c2, _, _) = env.run_agent(
-        "agy-senior-dev",
-        &["status", "Shipping Phase A CLI", "--ttl", "2h"],
+    assert_eq!(
+        env.run(AGY, &["status", "Shipping Phase A CLI", "--ttl", "2h"])
+            .code,
+        0
     );
-    assert_eq!(c2, 0);
 
-    let (c3, who_json, _) = env.run_agent("agy-senior-dev", &["who", "agy-senior-dev", "--json"]);
-    assert_eq!(c3, 0);
-    assert!(who_json.contains("\"name\":\"Agy Senior Dev\""));
-    assert!(who_json.contains("\"status\":\"Shipping Phase A CLI\""));
+    let card = env.run(AGY, &["who", AGY, "--json"]);
+    assert_eq!(card.code, 0);
+    let card: serde_json::Value = serde_json::from_str(&card.stdout).unwrap();
+    assert_eq!(card["name"], "Agy Senior Dev");
+    assert_eq!(card["status"], "Shipping Phase A CLI");
+    assert_eq!(card["role_title"], "Senior Engineer");
+    assert_eq!(card["teams"][0]["title_in_team"], "Messaging");
+    assert_eq!(card["reports_to"]["id"], ADA);
+    assert_eq!(card["presence"], "online", "it just ran org-agent");
+    assert!(card["last_seen_at"].is_string());
+    assert!(card["current_task_id"].is_null());
 
-    let (c4, owner_json, _) = env.run_agent("agy-senior-dev", &["who", "owner", "--json"]);
-    assert_eq!(c4, 0);
-    assert!(owner_json.contains("\"owner\":true"));
+    let owner = env.run(AGY, &["who", "owner", "--json"]);
+    assert_eq!(owner.code, 0);
+    assert!(owner.stdout.contains("\"owner\":true"));
+
+    // The text card and the list rows.
+    let text = env.run(AGY, &["who", AGY]);
+    assert!(text.stdout.contains("role:        Senior Engineer"));
+    assert!(text.stdout.contains("teams:       Platform (Messaging)"));
+    let rows = env.run(AGY, &["who", "--kind", "agent"]);
+    assert_eq!(rows.code, 0);
+    assert!(rows.stdout.lines().any(|l| l.starts_with(&format!(
+        "{AGY}\tAgy Senior Dev\tagent\tonline\tSenior Engineer\tShipping Phase A CLI"
+    ))));
+    assert_eq!(env.run(AGY, &["who", "--kind", "robot"]).code, 1);
+    assert_eq!(env.run(AGY, &["who", "nobody-here"]).code, 1);
 }
