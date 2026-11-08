@@ -106,6 +106,75 @@ export type AppError =
 /** Trimmed, no control, invisible or direction-changing characters (OrganizationName). The office is the authority; the app only pre-checks. */
 export const ORGANIZATION_NAME_MAX_CHARS = 64;
 
+// ---- The organization's structure (crates/org-proto/src/org.rs) -----------------------------
+
+/** A position in the organization's event log: `(epoch, seq)`, compared in that order. */
+export interface Position {
+	epoch: number;
+	seq: number;
+}
+
+/** A team. Teams own teams (a tree). Optional lead: a member of the team. */
+export interface Team {
+	id: string;
+	name: string;
+	owner_team_id?: string;
+	lead_member_id?: string;
+	version: number;
+}
+
+/** A kind this build doesn't know decodes as `unknown` (a missing kind is an error on the wire). */
+export type MemberKind = 'agent' | 'person' | 'unknown';
+
+/**
+ * An agent or a person. The owner is a person with `owner: true`: in no team, full rights
+ * everywhere. `office_id` places an agent in an office; people aren't placed in offices.
+ * `reports_to_member_id` empty means directly to the owner; reporting lines are separate from teams.
+ */
+export interface Member {
+	id: string;
+	kind: MemberKind;
+	name: string;
+	contact?: string;
+	owner?: boolean;
+	office_id?: string;
+	reports_to_member_id?: string;
+	version: number;
+}
+
+/** A member in a team. A member can be in any number of teams. */
+export interface Membership {
+	id: string;
+	team_id: string;
+	member_id: string;
+	title_in_team?: string;
+	version: number;
+}
+
+/** A team working on a project. Usually one per project; several teams can share one. */
+export interface ProjectTeam {
+	id: string;
+	project_id: string;
+	team_id: string;
+	version: number;
+}
+
+/** What the charts need to show a project. */
+export interface ProjectSummary {
+	id: string;
+	name: string;
+}
+
+/** Everything the org chart needs, as of `position` (`org.snapshot`). */
+export interface OrgSnapshot {
+	position: Position;
+	teams: Team[];
+	members: Member[];
+	memberships: Membership[];
+	projects?: ProjectSummary[];
+	project_teams?: ProjectTeam[];
+}
+
 // ---- office.app_token (crates/org-proto/src/calls.rs) -------------------------------------------
 
 export interface OfficeAppTokenParams {
