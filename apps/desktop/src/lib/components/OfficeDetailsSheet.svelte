@@ -46,38 +46,58 @@
 	let restarting = $state(false);
 	let restartNote = $state<string | undefined>();
 	let unsupported = $state(false);
+	let closeButton = $state<HTMLButtonElement | null>(null);
+	// Each restart run has a number; a run that is no longer the newest stops and leaves the state to the newer one.
+	let run = 0;
 	const action = $derived(office ? restartAction(office, capabilities) : {});
 	$effect(() => {
-		// A different office, or a closed sheet, starts clean.
+		// Another office starts clean (the run for the old one stops).
 		void office?.id;
+		run++;
 		restarting = false;
 		restartNote = undefined;
 	});
+	$effect(() => {
+		// A new hello may say the host can restart now (it was updated).
+		void capabilities;
+		unsupported = false;
+	});
+	$effect(() => () => void run++); // the page is leaving: stop any loop
 	async function restart() {
 		if (!office || restarting) return;
+		const mine = ++run;
+		const id = office.id;
 		restarting = true;
 		restartNote = undefined;
-		const id = office.id;
+		const live = () => mine === run;
 		try {
 			await officeApi.restartOffice(id);
 		} catch (e) {
+			if (!live()) return;
 			const err = toAppError(e);
 			const outcome = restartOutcome(err.source === 'api' ? err.code : 'unknown');
 			if (outcome.kind === 'unsupported') unsupported = true;
 			if (outcome.kind === 'refresh') await onrestarted?.();
 			if (outcome.kind !== 'wait') {
-				restartNote = outcome.message;
+				if (!live()) return;
+				// Unsupported says it once, in the note; the others say it here, in the host's words if the app has none.
+				restartNote = outcome.kind === 'unsupported' ? undefined : (outcome.message ?? err.message);
 				restarting = false;
 				return;
 			}
 		}
 		// Keep the spinner until the host says it is no longer stopped (the live status), for up to 30 s.
-		for (let i = 0; i < 15 && restarting; i++) {
+		for (let i = 0; i < 15 && live(); i++) {
 			await onrestarted?.();
+			if (!live()) return;
 			if (office?.id !== id || (office.status !== 'offline' && office.status !== 'unavailable')) break;
 			await new Promise((r) => setTimeout(r, 2000));
 		}
+		if (!live()) return;
+		const back = office?.id === id && office.status !== 'offline' && office.status !== 'unavailable';
 		restarting = false;
+		// The button goes with the stop; keep the keyboard somewhere sensible.
+		if (back) closeButton?.focus();
 	}
 
 	async function copy() {
@@ -115,16 +135,17 @@
 					{#if sample && agents.length > 0}<Badge variant="secondary" data-testid="sample-data-note-sheet">Sample data</Badge>{/if}
 				</dd>
 			</dl>
+			<p class="sr-only" role="status">{restarting ? 'Restarting…' : ''}</p>
 			{#if why && (action.note || unsupported)}
 				<p class="px-4 text-sm/6 text-gray-300" data-testid="restart-note">{action.note ?? 'Update Agentic Org to restart offices from here'}</p>
 			{/if}
 			{#if restartNote}<p class="px-4 text-sm/6 text-red-300" role="alert" data-testid="restart-error">{restartNote}</p>{/if}
 			<SheetFooter class="mt-auto">
 				{#if why && action.label && !unsupported}
-					<Button disabled={restarting} onclick={restart} data-testid="restart-office">{restarting ? 'Restarting…' : action.label}</Button>
+					<Button disabled={restarting} aria-busy={restarting} onclick={restart} data-testid="restart-office">{restarting ? 'Restarting…' : action.label}</Button>
 				{/if}
 				{#if why}<Button variant="outline" onclick={copy}>Copy details</Button>{/if}
-				<Button variant="outline" onclick={() => (open = false)}>Close</Button>
+				<Button variant="outline" onclick={() => (open = false)} bind:ref={closeButton}>Close</Button>
 			</SheetFooter>
 		{/if}
 	</SheetContent>

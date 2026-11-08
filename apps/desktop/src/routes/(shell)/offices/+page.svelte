@@ -10,11 +10,22 @@
 	import { Button } from '$lib/components/ui/button';
 	import { officeApi } from '$lib/office/api';
 	import { agentsIn, displayStatusFor, isHq, orderOffices, rowLabel, secondaryText, statusInfo, unplacedAgents, whyForLabel, whyStopped, type LiveCheck } from '$lib/offices/model';
+	import type { OfficeInfo } from '$lib/proto';
 	import type { Counts } from './+page';
 
 	let { data } = $props();
 
-	const offices = $derived(orderOffices(data.offices));
+	// The offices as the host last listed them; until it has, the ones saved with the connection.
+	let reported = $state<OfficeInfo[] | undefined>();
+	let reportedFor = '';
+	$effect(() => {
+		if (reportedFor !== data.connection.organization.id) {
+			reportedFor = data.connection.organization.id;
+			reported = undefined;
+		}
+	});
+	const current = $derived(reported ?? data.offices);
+	const offices = $derived(orderOffices(current));
 	const here = $derived(data.connection.office);
 	// The agent counts arrive after the list: `undefined` while they are being counted.
 	let counts = $state<Counts | undefined>();
@@ -47,7 +58,7 @@
 	const snapshot = $derived(counts && 'snapshot' in counts ? counts.snapshot : undefined);
 	const sample = $derived(!!counts && 'snapshot' in counts && counts.sample);
 	const countError = $derived(counts && 'error' in counts ? counts.error : undefined);
-	const unplaced = $derived(snapshot ? unplacedAgents(snapshot, data.offices) : []);
+	const unplaced = $derived(snapshot ? unplacedAgents(snapshot, current) : []);
 	const organization = $derived(data.connection.organization.name);
 
 	// The one live signal there is: whether the office this app is connected to answers. Checked now, every
@@ -55,11 +66,15 @@
 	let check = $state<LiveCheck>('checking');
 	// What the host said it can do in its last hello (`office.status_changed`, `office.restart`).
 	let capabilities = $state<string[] | undefined>();
-	/** The statuses the host reports come from the connection saved when the organization was opened: ask the host again. */
+	/**
+	 * The statuses the host reports are not the ones saved when the organization was opened: list them again. Read-only: it
+	 * remembers nothing and does not change which organization is open (an unavailable HQ is listed too).
+	 */
 	async function refreshOffices() {
+		const id = data.connection.organization.id;
 		try {
-			await officeApi.openOrganization(data.connection.organization.id);
-			await invalidate('app:connections');
+			const found = (await officeApi.listOrganizations()).find((o) => o.id === id);
+			if (found && id === data.connection.organization.id) reported = found.offices;
 		} catch {
 			// The next tick tries again; the probe already says whether the host answers.
 		}
@@ -88,12 +103,12 @@
 	// Why a stopped office stopped: only for an office whose status is shown as reported by the host.
 	const labelWhyOf = (officeId: string) => {
 		const shown = statusOf(officeId);
-		const office = data.offices.find((o) => o.id === officeId);
+		const office = current.find((o) => o.id === officeId);
 		return office && (shown === 'offline' || shown === 'unavailable') ? whyForLabel(office, new Date()) : undefined;
 	};
 	const whyOf = (officeId: string) => {
 		const shown = statusOf(officeId);
-		const office = data.offices.find((o) => o.id === officeId);
+		const office = current.find((o) => o.id === officeId);
 		return office && (shown === 'offline' || shown === 'unavailable') ? whyStopped(office, now) : undefined;
 	};
 	// Another organization's office is another thing to verify: don't carry the last answer over.
@@ -106,11 +121,11 @@
 		}
 		lastOffice = id;
 	});
-	const statusOf = (officeId: string) => displayStatusFor(officeId, here.id, check, data.offices.find((o) => o.id === officeId)?.status, capabilities);
+	const statusOf = (officeId: string) => displayStatusFor(officeId, here.id, check, current.find((o) => o.id === officeId)?.status, capabilities);
 
 	let detailsId = $state<string | undefined>();
 	// The open sheet shows the latest data for its office, not the copy captured when it was clicked.
-	const detailsFor = $derived(data.offices.find((o) => o.id === detailsId));
+	const detailsFor = $derived(current.find((o) => o.id === detailsId));
 	let detailsOpen = $state(false);
 	$effect(() => {
 		if (detailsOpen && !detailsFor) detailsOpen = false; // the office went away: close its sheet

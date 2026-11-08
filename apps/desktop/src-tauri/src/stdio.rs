@@ -29,11 +29,24 @@ pub fn sanitize_fd(fd: RawFd) -> bool {
     }
 }
 
-/// Run `sanitize_fd` over stdin, stdout and stderr. Call it first in `main`, before any output, logging or thread.
+/// Whether `fd` is a socket or not open: what `sanitize_fd` replaces.
+#[cfg(unix)]
+fn needs_fixing(fd: RawFd) -> bool {
+    // SAFETY: as in `sanitize_fd`.
+    unsafe {
+        let mut st: libc::stat = std::mem::zeroed();
+        libc::fstat(fd, &mut st) != 0 || (st.st_mode & libc::S_IFMT) == libc::S_IFSOCK
+    }
+}
+
+/// Run `sanitize_fd` over stdin, stdout and stderr. Call it first in `main`, before any output, logging or thread. If a
+/// socket can't be replaced the process stops: it must not run with one behind a standard descriptor.
 pub fn sanitize_stdio() {
     #[cfg(unix)]
     for fd in 0..=2 {
-        sanitize_fd(fd);
+        if needs_fixing(fd) && !sanitize_fd(fd) {
+            std::process::abort();
+        }
     }
 }
 
@@ -52,15 +65,15 @@ mod tests {
     }
 
     /// A copy of `fd` at some high descriptor number, so the test never touches 0, 1 or 2.
-    fn high_copy(fd: RawFd) -> RawFd {
+    fn high_copy(fd: RawFd, min: i32) -> RawFd {
         // SAFETY: F_DUPFD duplicates an open descriptor to the lowest free one at or above 100.
-        unsafe { libc::fcntl(fd, libc::F_DUPFD, 100) }
+        unsafe { libc::fcntl(fd, libc::F_DUPFD, min) }
     }
 
     #[test]
     fn a_socket_is_replaced_by_dev_null_and_the_original_is_untouched() {
         let (a, _b) = UnixStream::pair().unwrap();
-        let copy = high_copy(a.as_raw_fd());
+        let copy = high_copy(a.as_raw_fd(), 100);
         assert_eq!(mode(copy), Some(libc::S_IFSOCK as u32));
         assert!(sanitize_fd(copy));
         assert_eq!(mode(copy), Some(libc::S_IFCHR as u32), "now /dev/null");
@@ -76,7 +89,7 @@ mod tests {
     #[test]
     fn a_descriptor_that_is_not_a_socket_is_left_alone_and_a_closed_one_is_filled() {
         let file = std::fs::File::open("/dev/null").unwrap();
-        let copy = high_copy(file.as_raw_fd());
+        let copy = high_copy(file.as_raw_fd(), 200);
         assert!(!sanitize_fd(copy), "a character device is fine");
         // SAFETY: `copy` is ours.
         unsafe { libc::close(copy) };
