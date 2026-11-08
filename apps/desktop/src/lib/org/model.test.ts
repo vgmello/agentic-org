@@ -184,3 +184,41 @@ describe('kindWord', () => {
 		expect([kindWord('agent'), kindWord('person'), kindWord('unknown')]).toEqual(['Agent', 'Person', 'Member']);
 	});
 });
+
+describe('normalizeKinds and an agent’s profile', () => {
+	const agent = (over: Record<string, unknown>) => ({
+		id: 'a',
+		kind: 'agent' as const,
+		name: 'A',
+		version: 1,
+		agent: { role: 'r', title: 't', runtime: 'claude_code', messaging_name: 'a', status: 'active', ...over }
+	});
+	const read = (m: unknown) => normalizeKinds({ position: { epoch: 1, seq: 1 }, teams: [], memberships: [], members: [m as never] }).members[0];
+
+	it('keeps what it knows', () => {
+		const m = read(agent({ run_mode: 'on_call', runtime: { other: 'my-runtime' } }));
+		expect(m.agent).toMatchObject({ status: 'active', run_mode: 'on_call', runtime: { other: 'my-runtime' } });
+	});
+
+	it('reads an unknown runtime, status or run mode as unknown, never as working', () => {
+		const m = read(agent({ status: 'sleeping', runtime: 'quantum', run_mode: 'whenever' }));
+		expect(m.agent).toMatchObject({ status: 'unknown', runtime: 'unknown', run_mode: 'unknown' });
+	});
+
+	it('reads a runtime that is not a name or a named other as unknown', () => {
+		for (const runtime of [{ other: 5 }, {}, 7, null]) expect(read(agent({ runtime })).agent?.runtime).toBe('unknown');
+	});
+
+	it('passes an offboarded agent with its date through, and normalizes a person that carries a profile too', () => {
+		expect(read(agent({ status: 'offboarded', offboarded_at: '2026-11-08T10:00:00.000Z' })).agent).toMatchObject({ status: 'offboarded', offboarded_at: '2026-11-08T10:00:00.000Z' });
+		const odd = read({ ...agent({ status: 'sleeping' }), kind: 'person' });
+		expect(odd.kind).toBe('person');
+		expect(odd.agent?.status).toBe('unknown');
+	});
+
+	it('leaves a missing run mode missing, and a person without a profile alone', () => {
+		expect(read(agent({})).agent).not.toHaveProperty('run_mode');
+		const person = { id: 'p', kind: 'person', name: 'P', version: 1 };
+		expect(read(person)).toEqual(person);
+	});
+});

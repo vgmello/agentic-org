@@ -4,7 +4,7 @@
 //! implements it. The real implementation will sit on `org-client` and the office-setup layer
 //! (install, login-service registration, start), neither of which exists yet.
 
-use crate::org_engine::OrgCommand;
+use crate::org_command::OrgCommand;
 use org_proto::{ApiError, CommandAccepted, HelloResult, OrgSnapshot, Organization};
 use serde::Serialize;
 
@@ -48,7 +48,6 @@ pub trait OfficeConnection: Send + Sync {
     ) -> Result<CommandAccepted, ApiError>;
 
     /// True while the data this connection serves is invented (the mock office), so the UI says so.
-    fn serves_sample_data(&self) -> bool {
-        false
-    }
+    /// Every implementation says so: a stand-in that forgot would show invented data as real.
+    fn serves_sample_data(&self) -> bool;
 }

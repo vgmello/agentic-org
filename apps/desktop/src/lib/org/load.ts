@@ -10,6 +10,7 @@ export async function loadOrgView(organizationId: string) {
 	try {
 		return await orgApi.view(organizationId);
 	} catch (e) {
-		error(500, toAppError(e).message);
+		const failure = toAppError(e);
+		error(failure.source === 'api' && failure.code === 'not_found' ? 404 : 500, failure.message);
 	}
 }

@@ -1,7 +1,8 @@
 //! The mock office's organizations: what `org.snapshot` answers until the real office does.
 //!
-//! TEMPORARY: the data is invented. A new organization starts with the sample below unless
-//! `AGENTIC_ORG_MOCK_ORG=empty` asks for an owner and nothing else. Everything uses the real
+//! TEMPORARY: the data is invented. An organization's structure starts as the sample below unless
+//! `AGENTIC_ORG_MOCK_ORG=empty` asks for an owner and nothing else; the mock does not keep it between
+//! launches yet, so the setting applies each time it is served. Everything uses the real
 //! `org_proto::org` types, so only the transport changes when the real office lands.
 
 use org_proto::org::{

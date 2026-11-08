@@ -5,7 +5,8 @@
 //! like the server will: 1 to 64 characters after trimming, no control characters.
 
 use crate::office::{OfficeConnection, SetupError, SetupErrorCode};
-use crate::org_engine::{Hq, OrgCommand};
+use crate::org_command::OrgCommand;
+use crate::org_engine::Hq;
 use crate::org_mock::Seed;
 use org_proto::{
     ApiError, CommandAccepted, ErrorCode, HelloResult, OfficeInfo, OfficeRole, OfficeStatus,
@@ -264,7 +265,8 @@ fn load_structures(file: &std::path::Path) -> io::Result<HashMap<String, Hq>> {
             return Err(io::Error::other("unsupported structures.json version"))
         }
         Ok(_) => {
-            if let Ok(stored) = serde_json::from_slice::<StructuresFile>(&bytes) {
+            if let Ok(mut stored) = serde_json::from_slice::<StructuresFile>(&bytes) {
+                stored.organizations.values_mut().for_each(Hq::tidy);
                 return Ok(stored.organizations);
             }
         }
@@ -286,7 +288,10 @@ fn write_structures(file: &std::path::Path, structures: &HashMap<String, Hq>) ->
         version: STRUCTURES_VERSION,
         organizations: structures.clone(),
     };
-    fs::write(&tmp, serde_json::to_vec_pretty(&contents)?)?;
+    let mut out = fs::File::create(&tmp)?;
+    io::Write::write_all(&mut out, &serde_json::to_vec_pretty(&contents)?)?;
+    out.sync_all()?; // on disk before it replaces the old one, so a crash can't leave an empty file
+    drop(out);
     fs::rename(&tmp, file)
 }
 
