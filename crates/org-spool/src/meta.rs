@@ -40,7 +40,7 @@ const MAX_TRIAGE_BYTES: usize = 16 * 1024 * 1024;
 /// The organization's owner (a person), the only member that may carry `owner: true`.
 pub const OWNER_ID: &str = "vgmello";
 const MAX_PROFILE_FIELD_CHARS: usize = 128;
-/// `msg notify` lists at most this many items, then "…and <k> more".
+/// `msg notify` lists at most this many items, then "…and \<k\> more".
 pub const NOTIFY_MAX_ITEMS: usize = 10;
 /// A member counts as `online` this long after its last `org-agent` call.
 const PRESENCE_RECENT_SECS: u64 = 120;
