@@ -398,6 +398,7 @@ pub(crate) fn set_status(ctx: &mut Ctx, p: &TaskSetStatusParams) -> Result<Plan,
             resolution,
             reason: blocked_reason,
             anyway,
+            duplicate_of: None,
         },
         Origin::Caller,
     );

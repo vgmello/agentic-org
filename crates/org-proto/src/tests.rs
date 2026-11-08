@@ -2371,6 +2371,50 @@ fn work_get_returns_the_whole_item_and_unknown_links_never_break_it() {
 }
 
 #[test]
+fn status_changed_names_a_duplicates_original_only_when_there_is_one() {
+    use crate::work::*;
+    // A duplicate close carries the original's id in `duplicate_of`; `reason` stays free text.
+    let dup = WorkEventKind::StatusChanged {
+        from: ItemStatus::New,
+        to: ItemStatus::Closed,
+        resolution: Some(Resolution::Duplicate),
+        reason: None,
+        anyway: None,
+        duplicate_of: Some("b1".into()),
+    };
+    assert_eq!(
+        serde_json::to_value(&dup).unwrap(),
+        json!({"type": "status_changed", "from": "new", "to": "closed",
+               "resolution": "duplicate", "duplicate_of": "b1"})
+    );
+    let back: WorkEventKind = serde_json::from_value(serde_json::to_value(&dup).unwrap()).unwrap();
+    assert_eq!(back, dup);
+    // Any other status change leaves it out.
+    let wont_fix = WorkEventKind::StatusChanged {
+        from: ItemStatus::Triaged,
+        to: ItemStatus::Closed,
+        resolution: Some(Resolution::WontFix),
+        reason: Some("By design".into()),
+        anyway: None,
+        duplicate_of: None,
+    };
+    let wire = serde_json::to_value(&wont_fix).unwrap();
+    assert_eq!(
+        wire,
+        json!({"type": "status_changed", "from": "triaged", "to": "closed",
+               "resolution": "wont_fix", "reason": "By design"})
+    );
+    // An older writer's event (no `duplicate_of`) still reads, as absent.
+    let old: WorkEventKind = serde_json::from_value(wire).unwrap();
+    assert_eq!(old, wont_fix);
+    let explicit_null: WorkEventKind = serde_json::from_value(json!({"type": "status_changed",
+        "from": "triaged", "to": "closed", "resolution": "wont_fix", "reason": "By design",
+        "duplicate_of": null}))
+    .unwrap();
+    assert_eq!(explicit_null, wont_fix);
+}
+
+#[test]
 fn work_events_round_trip_and_unknown_kinds_never_break_the_activity() {
     use crate::work::*;
     let step = ChecklistStep {
@@ -2398,6 +2442,7 @@ fn work_events_round_trip_and_unknown_kinds_never_break_the_activity() {
                 reason: "Shipped behind a flag".into(),
                 steps: vec!["s2".into()],
             }),
+            duplicate_of: None,
         },
         WorkEventKind::Assigned {
             from: None,

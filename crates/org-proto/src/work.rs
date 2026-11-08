@@ -795,14 +795,19 @@ pub enum WorkEventKind {
         to: ItemStatus,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         resolution: Option<Resolution>,
-        /// The blocked reason, or another reason the move needed. For a bug (phase 2): the
-        /// note of `bug.mark_fixed`, the reason of a won't fix or can't reproduce close, and,
-        /// for a close with `resolution: duplicate`, the id of the original bug.
+        /// The blocked reason, or another reason the move needed: free text, never an id. For
+        /// a bug (phase 2): the note of `bug.mark_fixed`, or the reason of a won't fix or
+        /// can't reproduce close.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
         /// Done (or Fixed) with required steps left.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         anyway: Option<DoneAnyway>,
+        /// A bug closed as a duplicate (`resolution: duplicate`, phase 2): the id of the
+        /// original bug. Absent on every other status change. Added 2026-11-08 (P2): an event
+        /// recorded before it has the original's id in `reason` instead.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duplicate_of: Option<String>,
     },
     Assigned {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -829,7 +834,8 @@ pub enum WorkEventKind {
         note: Option<String>,
     },
     /// A closed bug was reopened (`bug.reopen`): to `triaged`, or to `new` when it had been
-    /// closed as a duplicate (phase 2).
+    /// closed as a duplicate, which also clears the bug's `duplicate_of` (phase 2). The item's
+    /// new state, sent with the event as a [`WorkChange::ItemUpserted`], has it cleared.
     Reopened {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         note: Option<String>,

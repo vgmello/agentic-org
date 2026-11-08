@@ -635,6 +635,7 @@ fn mark_fixed_records_what_fixed_it() {
             resolution: None,
             reason: Some("Rounded the total".into()),
             anyway: None,
+            duplicate_of: None,
         }
     );
 

@@ -75,6 +75,7 @@ fn set(draft: &mut Draft, to: ItemStatus, cause: EventRef) {
             resolution: None,
             reason: None,
             anyway: None,
+            duplicate_of: None,
         },
         Origin::Auto(cause),
     );
@@ -100,6 +101,7 @@ fn fix_done(draft: &mut Draft, cause: EventRef) {
                 resolution: None,
                 reason: Some(REQUIRED_LEFT.to_owned()),
                 anyway: None,
+                duplicate_of: None,
             },
             Origin::Auto(cause),
         );

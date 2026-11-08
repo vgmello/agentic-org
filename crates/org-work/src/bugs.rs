@@ -591,6 +591,7 @@ pub(crate) fn mark_fixed(ctx: &mut Ctx, p: &BugMarkFixedParams) -> Result<Plan, 
             resolution: None,
             reason: Some(note),
             anyway,
+            duplicate_of: None,
         },
         Origin::Caller,
     );
@@ -729,6 +730,7 @@ pub(crate) fn close(ctx: &mut Ctx, p: &BugCloseParams) -> Result<Plan, Fail> {
             resolution: Some(resolution),
             reason: original.as_ref().map(|o| o.id.clone()).or(reason),
             anyway: None,
+            duplicate_of: None,
         },
         Origin::Caller,
     );
