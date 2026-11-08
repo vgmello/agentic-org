@@ -38,6 +38,7 @@ mod tests;
 
 pub use apply::{apply, UnknownChange};
 pub use command::OrgCommand;
+pub(crate) use decide::is_offboarded;
 pub use decide::{decide, name_key, owner_bootstrap};
 pub use view::{OrgView, OrgWrite};
 

@@ -14,6 +14,77 @@ pub(crate) fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+/// Unix milliseconds of an RFC 3339 time: `YYYY-MM-DDTHH:MM:SS`, an optional fraction (any
+/// length, truncated to milliseconds), then `Z` or a `+HH:MM` / `-HH:MM` offset. `None` for
+/// anything else (or a time before 1970). Compare times with this, never as text: `...00Z` and
+/// `...00.000Z` are the same instant, and an offset changes the instant.
+pub(crate) fn parse_rfc3339_ms(text: &str) -> Option<u64> {
+    let b = text.as_bytes();
+    let digits = |from: usize, len: usize| -> Option<i64> {
+        let part = b.get(from..from + len)?;
+        part.iter()
+            .all(u8::is_ascii_digit)
+            .then(|| part.iter().fold(0i64, |n, d| n * 10 + i64::from(d - b'0')))
+    };
+    let (year, month, day) = (digits(0, 4)?, digits(5, 2)?, digits(8, 2)?);
+    let (hour, minute, second) = (digits(11, 2)?, digits(14, 2)?, digits(17, 2)?);
+    if b.get(4) != Some(&b'-')
+        || b.get(7) != Some(&b'-')
+        || !matches!(b.get(10), Some(b'T' | b't'))
+        || b.get(13) != Some(&b':')
+        || b.get(16) != Some(&b':')
+        || !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 60
+    {
+        return None;
+    }
+    let mut at = 19;
+    let mut millis = 0i64;
+    if b.get(at) == Some(&b'.') {
+        let start = at + 1;
+        let mut end = start;
+        while b.get(end).is_some_and(u8::is_ascii_digit) {
+            end += 1;
+        }
+        if end == start {
+            return None;
+        }
+        for (place, digit) in b[start..end].iter().take(3).enumerate() {
+            millis += i64::from(digit - b'0') * [100, 10, 1][place];
+        }
+        at = end;
+    }
+    let offset_minutes = match b.get(at..) {
+        Some(b"Z" | b"z") => 0,
+        Some([sign @ (b'+' | b'-'), rest @ ..]) if rest.len() == 5 && rest[2] == b':' => {
+            let hh = digits(at + 1, 2)?;
+            let mm = digits(at + 4, 2)?;
+            if hh > 23 || mm > 59 {
+                return None;
+            }
+            let minutes = hh * 60 + mm;
+            if *sign == b'+' {
+                minutes
+            } else {
+                -minutes
+            }
+        }
+        _ => return None,
+    };
+    // Days from the civil date (Howard Hinnant's algorithm, the inverse of `format_epoch_ms`).
+    let y = year - i64::from(month <= 2);
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let doy = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    let seconds = days * 86_400 + hour * 3600 + minute * 60 + second - offset_minutes * 60;
+    u64::try_from(seconds * 1000 + millis).ok()
+}
+
 /// Howard Hinnant's civil-from-days algorithm. The output format matches the agent message
 /// envelope's timestamps.
 pub(crate) fn format_epoch_ms(epoch_ms: u64) -> String {
@@ -60,5 +131,63 @@ mod tests {
         let now = now_rfc3339();
         assert_eq!(now.len(), 24);
         assert!(now.ends_with('Z'));
+    }
+
+    #[test]
+    fn parses_what_it_formats_and_reads_fractions_and_offsets() {
+        for ms in [
+            0,
+            1,
+            999,
+            86_400_000,
+            951_782_400_000,
+            1_800_000_000_123,
+            4_102_444_800_000,
+        ] {
+            assert_eq!(parse_rfc3339_ms(&format_epoch_ms(ms)), Some(ms), "{ms}");
+        }
+        // The same instant, written differently.
+        let instant = Some(1_800_000_000_000);
+        assert_eq!(parse_rfc3339_ms("2027-01-15T08:00:00Z"), instant);
+        assert_eq!(parse_rfc3339_ms("2027-01-15T08:00:00.000Z"), instant);
+        assert_eq!(parse_rfc3339_ms("2027-01-15T10:00:00+02:00"), instant);
+        assert_eq!(parse_rfc3339_ms("2027-01-15T07:30:00-00:30"), instant);
+        assert_eq!(parse_rfc3339_ms("2027-01-15t08:00:00z"), instant);
+        // A longer fraction is cut to milliseconds, a shorter one is padded.
+        assert_eq!(
+            parse_rfc3339_ms("2027-01-15T08:00:00.1Z"),
+            Some(1_800_000_000_100)
+        );
+        assert_eq!(
+            parse_rfc3339_ms("2027-01-15T08:00:00.123456Z"),
+            Some(1_800_000_000_123)
+        );
+        // Leap days.
+        assert_eq!(
+            parse_rfc3339_ms("2000-02-29T00:00:00Z"),
+            Some(951_782_400_000)
+        );
+    }
+
+    #[test]
+    fn refuses_what_is_not_an_rfc_3339_time() {
+        for bad in [
+            "",
+            "yesterday",
+            "2027-01-15",
+            "2027-01-15 08:00:00Z",
+            "2027-01-15T08:00:00",
+            "2027-01-15T08:00:00.Z",
+            "2027-01-15T08:00:00+0200",
+            "2027-01-15T08:00:00+25:00",
+            "2027-13-15T08:00:00Z",
+            "2027-01-32T08:00:00Z",
+            "2027-01-15T24:00:00Z",
+            "2027-01-15T08:60:00Z",
+            "2027-01-15T08:00:00Zjunk",
+            "1969-12-31T23:59:59Z",
+        ] {
+            assert_eq!(parse_rfc3339_ms(bad), None, "{bad:?}");
+        }
     }
 }
