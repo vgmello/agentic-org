@@ -86,6 +86,7 @@ fn hello_result(api_version: u32) -> HelloResult {
         server_version: "9.9.9".into(),
         host: "This Mac".into(),
         office: None,
+        capabilities: vec![],
     }
 }
 

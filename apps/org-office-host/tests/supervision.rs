@@ -502,7 +502,7 @@ fn a_create_during_a_too_slow_startup_gets_unavailable() {
             name: "Acme".into(),
         })
         .unwrap_err();
-    assert_eq!(err.code, ErrorCode::Unavailable);
+    assert_eq!(err.code, ErrorCode::NotReady);
     assert_eq!(err.message, "host starting");
     assert!(started.elapsed() >= Duration::from_millis(500));
     assert_eq!(home.runs("create"), 0);

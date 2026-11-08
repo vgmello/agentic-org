@@ -626,8 +626,8 @@ fn subscribing_twice_on_one_connection_sends_each_event_once() {
 #[test]
 fn at_most_four_creates_run_at_once_and_a_fifth_waits_then_gets_unavailable() {
     let home = TestHome::new();
-    // Every create's server takes 2 s to report.
-    home.script(json!({"create": {"do": "ready", "delay_ms": 2000}}));
+    // Every create's server takes 5 s to report.
+    home.script(json!({"create": {"do": "ready", "delay_ms": 5000}}));
     let mut config = home.config();
     config.timings.create_wait = Duration::from_millis(500);
     let host = Host::start(config).unwrap();
@@ -646,11 +646,49 @@ fn at_most_four_creates_run_at_once_and_a_fifth_waits_then_gets_unavailable() {
     assert_eq!(err.message, "too many creates in progress");
     assert!(started.elapsed() >= Duration::from_millis(500));
     assert_eq!(home.runs("create"), 4, "a fifth server started");
+    // A name already in flight is answered at once, slots or not (waiting for a slot would end
+    // in `unavailable`).
+    let err = create(&mut client, "ORG 0").unwrap_err();
+    assert_eq!(err.code, ErrorCode::AlreadyExists);
 
     for create in creates {
         create.join().unwrap().unwrap();
     }
     // The slots are free again.
     create(&mut client, "Sixth").unwrap();
+    host.shutdown();
+}
+
+#[test]
+fn a_waiting_create_goes_ahead_as_soon_as_a_slot_frees() {
+    let home = TestHome::new();
+    // The first four creates' servers take 1 s to report; the fifth's doesn't wait.
+    home.script(json!({"create": [
+        {"do": "ready", "delay_ms": 1000},
+        {"do": "ready", "delay_ms": 1000},
+        {"do": "ready", "delay_ms": 1000},
+        {"do": "ready", "delay_ms": 1000},
+        {"do": "ready"}
+    ]}));
+    let host = Host::start(home.config()).unwrap(); // a 10 s create wait
+    let creates: Vec<_> = (0..4)
+        .map(|i| {
+            let path = host.socket_path().to_path_buf();
+            thread::spawn(move || create(&mut Client::connect(&path), &format!("Org {i}")))
+        })
+        .collect();
+    eventually(WAIT, "four creates to run", || home.runs("create") == 4);
+    let started = Instant::now();
+    create(&mut Client::connect(host.socket_path()), "Fifth").unwrap();
+    // It went ahead when a slot freed (about 1 s), not at the end of its wait.
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "waited {:?}",
+        started.elapsed()
+    );
+    assert_eq!(home.runs("create"), 5);
+    for create in creates {
+        create.join().unwrap().unwrap();
+    }
     host.shutdown();
 }

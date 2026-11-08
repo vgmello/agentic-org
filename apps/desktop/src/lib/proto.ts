@@ -40,6 +40,8 @@ export interface HelloResult {
 	host: string;
 	/** Absent when this machine's host answers. */
 	office?: OfficeHello;
+	/** Optional calls and events the server implements (`office.app_token`, `office.restart`, `office.status_changed`, ...). Absent means none; ignore names you don't know. */
+	capabilities?: string[];
 }
 
 export interface Organization {
