@@ -10,7 +10,8 @@ const improve = (text: string, extra: object = {}) => ({ mode: 'improve' as cons
 describe('features', () => {
 	it('lists both features when a runtime is set up', async () => {
 		const features = await mock().features();
-		expect(features.map((f) => f.id)).toEqual(['text.improve', 'bug.report']);
+		expect(features.map((f) => f.id)).toEqual(['text.improve', 'bug.from_sentence']);
+		expect(features.find((f) => f.id === 'bug.from_sentence')?.version).toBe(2);
 	});
 
 	it('is empty without a runtime, and a draft is copilot_unavailable', async () => {
@@ -50,8 +51,8 @@ describe('text.improve', () => {
 
 	it('enforces the same caps as the office', async () => {
 		const tooLong = 'x'.repeat(COPILOT_LIMITS.textMaxChars + 1);
-		expect(await codeOf(mock().draft('text.improve', improve(tooLong)))).toBe('invalid_request');
-		expect(await codeOf(mock().draft('text.improve', improve('ok', { instruction: 'y'.repeat(501) })))).toBe('invalid_request');
+		expect(await codeOf(mock().draft('text.improve', improve(tooLong)))).toBe('too_large');
+		expect(await codeOf(mock().draft('text.improve', improve('ok', { instruction: 'y'.repeat(501) })))).toBe('too_large');
 		expect(await codeOf(mock().draft('text.improve', { ...improve('ok'), field: '' }))).toBe('invalid_request');
 		// Exactly at the cap is fine, and the result stays within it.
 		const atCap = 'x'.repeat(COPILOT_LIMITS.textMaxChars);
@@ -60,56 +61,84 @@ describe('text.improve', () => {
 	});
 });
 
-describe('bug.report', () => {
-	it('drafts a report from a sentence', async () => {
-		const r = await mock().draft('bug.report', { sentence: "the save button doesn't work after I rename a file. It just sits there" });
+describe('bug.from_sentence', () => {
+	it('drafts the fields of the real bug report from a sentence', async () => {
+		const r = await mock().draft('bug.from_sentence', { sentence: "the save button doesn't work after I rename a file. It just sits there" });
 		expect(r.draft.title).toBe("The save button doesn't work after I rename a file");
-		expect(r.draft.severity).toBe('high');
-		expect(r.draft.steps).toEqual([]);
-		expect(r.draft.expected).toBe('Not stated.');
+		expect(r.draft.severity).toBe('major');
+		expect(r.draft.what_happened).toMatch(/sits there/);
+		// What the sentence doesn't say is left out, not invented.
+		expect(r.draft).not.toHaveProperty('steps');
+		expect(r.draft).not.toHaveProperty('expected');
+		expect(r.draft).not.toHaveProperty('environment');
 		expect(r.notes.join(' ')).toMatch(/no steps/);
 	});
 
+	it('uses the office’s severities, never the old scale', async () => {
+		const sevs = await Promise.all(['It crashed', 'Search fails', 'A typo in the header', 'It feels odd'].map(async (sentence) => (await mock().draft('bug.from_sentence', { sentence })).draft.severity));
+		expect(sevs).toEqual(['critical', 'major', 'trivial', 'minor']);
+	});
+
+	it('names an area only when the sentence does, and only one from the context', async () => {
+		const context = [
+			{ kind: 'area' as const, label: 'Files', text: 'area-files' },
+			{ kind: 'area' as const, label: 'Billing', text: 'area-billing' }
+		];
+		const named = await mock().draft('bug.from_sentence', { sentence: 'Files screen shows nothing' }, context);
+		expect(named.draft.area_id).toBe('area-files');
+		const none = await mock().draft('bug.from_sentence', { sentence: 'Something is odd' }, context);
+		expect(none.draft).not.toHaveProperty('area_id');
+		const both = await mock().draft('bug.from_sentence', { sentence: 'Files and Billing disagree' }, context);
+		expect(both.draft).not.toHaveProperty('area_id');
+		const nowhere = await mock().draft('bug.from_sentence', { sentence: 'Files screen shows nothing' });
+		expect(nowhere.draft).not.toHaveProperty('area_id');
+	});
+
 	it('shortens a long first sentence for the title and keeps every field within its cap', async () => {
-		const r = await mock().draft('bug.report', { sentence: 'a'.repeat(COPILOT_LIMITS.sentenceMaxChars) });
+		const r = await mock().draft('bug.from_sentence', { sentence: 'a'.repeat(COPILOT_LIMITS.sentenceMaxChars) });
 		expect([...r.draft.title].length).toBeLessThanOrEqual(80);
-		expect([...r.draft.actual].length).toBeLessThanOrEqual(800);
+		expect([...r.draft.what_happened].length).toBeLessThanOrEqual(2000);
 	});
 
 	it('guesses severity from a few words', () => {
 		expect(guessSeverity('The app crashed')).toBe('critical');
 		expect(guessSeverity('I lost my notes')).toBe('critical');
-		expect(guessSeverity('Search fails')).toBe('high');
-		expect(guessSeverity('A typo in the header')).toBe('low');
-		expect(guessSeverity('It feels odd')).toBe('medium');
+		expect(guessSeverity('Search fails')).toBe('major');
+		expect(guessSeverity('A typo in the header')).toBe('trivial');
+		expect(guessSeverity('It feels odd')).toBe('minor');
 	});
 
-	it('refuses an empty or over-long sentence', async () => {
-		expect(await codeOf(mock().draft('bug.report', { sentence: '  ' }))).toBe('invalid_request');
-		expect(await codeOf(mock().draft('bug.report', { sentence: 'x'.repeat(1001) }))).toBe('invalid_request');
+	it('refuses an empty sentence, and an over-long one is too_large', async () => {
+		expect(await codeOf(mock().draft('bug.from_sentence', { sentence: '  ' }))).toBe('invalid_request');
+		expect(await codeOf(mock().draft('bug.from_sentence', { sentence: 'x'.repeat(1001) }))).toBe('too_large');
 	});
 });
 
 describe('scenarios and limits', () => {
 	it('a failed runtime is copilot_failed and a slow one is timeout', async () => {
-		expect(await codeOf(mock('failed').draft('bug.report', { sentence: 'it broke' }))).toBe('copilot_failed');
-		expect(await codeOf(mock('timeout').draft('bug.report', { sentence: 'it broke' }))).toBe('timeout');
+		expect(await codeOf(mock('failed').draft('bug.from_sentence', { sentence: 'it broke' }))).toBe('copilot_failed');
+		expect(await codeOf(mock('timeout').draft('bug.from_sentence', { sentence: 'it broke' }))).toBe('timeout');
+	});
+
+	it('a feature it does not offer is copilot_unavailable', async () => {
+		// @ts-expect-error not a feature of this build
+		expect(await codeOf(mock().draft('bug.report', { sentence: 'x' }))).toBe('copilot_unavailable');
 	});
 
 	it('allows one run of a feature at a time, and frees the slot when it ends', async () => {
 		const api = createMockCopilot({ delayMs: 5, scenario: 'on' });
-		const first = api.draft('bug.report', { sentence: 'one' });
-		expect(await codeOf(api.draft('bug.report', { sentence: 'two' }))).toBe('copilot_busy');
+		const first = api.draft('bug.from_sentence', { sentence: 'one' });
+		expect(await codeOf(api.draft('bug.from_sentence', { sentence: 'two' }))).toBe('copilot_busy');
 		// Another feature is not blocked.
 		const other = api.draft('text.improve', improve('hello'));
 		await Promise.all([first, other]);
-		await expect(api.draft('bug.report', { sentence: 'three' })).resolves.toBeDefined();
+		await expect(api.draft('bug.from_sentence', { sentence: 'three' })).resolves.toBeDefined();
 	});
 
 	it('frees the slot after a failure too', async () => {
 		const api = createMockCopilot({ delayMs: 0, scenario: 'failed' });
-		expect(await codeOf(api.draft('bug.report', { sentence: 'a' }))).toBe('copilot_failed');
-		expect(await codeOf(api.draft('bug.report', { sentence: 'a' }))).toBe('copilot_failed');
+		expect(await codeOf(api.draft('bug.from_sentence', { sentence: 'a' }))).toBe('copilot_failed');
+		expect(await codeOf(api.draft('bug.from_sentence', { sentence: 'a' }))).toBe('copilot_failed');
 	});
 });
 

@@ -2,120 +2,170 @@ import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
 
-// The smart features on the TypeScript mock: "Draft or improve" on every text field, and "Report a
-// bug from a sentence". `?copilot=off|failed|timeout` picks a scenario (src/lib/copilot/mock.ts).
+// The smart features on the TypeScript mock, in the real screens: "Report a bug from a sentence" in
+// the Report a bug dialog, and "Draft or improve" on the bug and task text fields.
+// `?copilot=off|failed|timeout` picks a scenario (src/lib/copilot/mock.ts).
 
-async function openReport(page: Page, scenario = '') {
+async function openProject(page: Page, tab: 'Bugs' | 'Tasks', scenario = '') {
 	await visit(page, '/create');
 	await page.getByLabel('Organization name').fill('Acme');
 	await page.getByRole('button', { name: 'Create organization' }).click();
 	await expect(page).toHaveURL(/\/agents$/);
-	await visit(page, `/report-bug${scenario ? `?copilot=${scenario}` : ''}`);
-	await expect(page.getByRole('heading', { level: 1, name: 'Report a bug' })).toBeVisible();
+	await visit(page, `/projects/atlas${scenario ? `?copilot=${scenario}` : ''}`);
+	await page.getByRole('tab', { name: tab }).click();
 }
 
-const smartButtons = (page: Page) => page.getByRole('button', { name: /^Draft or improve/ });
+async function openReportDialog(page: Page, scenario = '') {
+	await openProject(page, 'Bugs', scenario);
+	await page.getByRole('button', { name: 'Report a bug' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Report a bug' });
+	await expect(dialog).toBeVisible();
+	return dialog;
+}
 
-test('the header link opens the report page, and says it is sample data', async ({ page }) => {
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
-	await expect(page).toHaveURL(/\/agents$/);
-	await page.getByRole('link', { name: 'Report a bug' }).click();
-	await expect(page).toHaveURL(/\/report-bug$/);
-	await expect(page.getByRole('heading', { level: 1, name: 'Report a bug' })).toBeVisible();
-	await expect(page.getByTestId('sample-data-note')).toContainText('Sample data');
-	await shot(page, 'report-bug-empty');
+const smartButtons = (scope: ReturnType<Page['locator']>) => scope.getByRole('button', { name: /^Draft or improve/ });
+const bugRows = (page: Page) => page.getByTestId('bug-row');
+
+test('report dialog: a sentence drafts the fields of the real form, and nothing is reported until the person confirms', async ({ page }) => {
+	const dialog = await openReportDialog(page);
+	await dialog.getByLabel('What went wrong?').fill("The save button doesn't work after I rename a file. It just sits there.");
+	await dialog.getByRole('button', { name: 'Draft the report' }).click();
+
+	await expect(dialog.getByTestId('drafted-banner')).toContainText('Drafted by the copilot. Nothing is reported yet.');
+	await expect(dialog.getByLabel('Title')).toHaveValue("The save button doesn't work after I rename a file");
+	await expect(dialog.getByLabel('What happened')).toHaveValue(/sits there/);
+	// The office's severities, from the real form: "major", not the old low/medium/high.
+	await expect(dialog.getByRole('radio', { name: /^Major/ })).toBeChecked();
+	await expect(dialog.getByLabel('Area')).toHaveValue('atlas-general');
+	// The app's own environment line is not overwritten by a draft that doesn't have one.
+	await expect(dialog.getByLabel('Environment')).toHaveValue(/^This Mac \(HQ\)/);
+	await expect(bugRows(page)).toHaveCount(0);
+	await shot(page, 'report-dialog-drafted');
+
+	// The person edits, then confirms: the normal Report bug.
+	await dialog.getByLabel('Title').fill('Save does nothing after a rename');
+	await dialog.getByRole('button', { name: 'Report bug' }).click();
+	await expect(page.getByText('Bug B-1 reported.')).toBeVisible();
+	await expect(bugRows(page)).toHaveCount(1);
+	await expect(bugRows(page).first()).toContainText('Save does nothing after a rename');
+	await expect(bugRows(page).first()).toContainText('Major?');
 });
 
-test('a sentence drafts the normal form, and nothing is reported until the person confirms', async ({ page }) => {
-	await openReport(page);
-	await page.getByLabel('What went wrong?').fill("The save button doesn't work after I rename a file. It just sits there.");
-	await page.getByRole('button', { name: 'Draft the report' }).click();
+test('report dialog: Undo draft brings back the person’s own text, not an earlier draft', async ({ page }) => {
+	const dialog = await openReportDialog(page);
+	await dialog.getByLabel('Title').fill('My own title');
+	await dialog.getByLabel('What happened').fill('My own words');
+	await dialog.getByLabel('What went wrong?').fill('It crashed on start');
+	await dialog.getByRole('button', { name: 'Draft the report' }).click();
+	await expect(dialog.getByRole('radio', { name: /^Critical/ })).toBeChecked();
+	await expect(dialog.getByLabel('Title')).toHaveValue('It crashed on start');
 
-	const banner = page.getByTestId('drafted-banner');
-	await expect(banner).toContainText('Drafted by the copilot. Nothing is reported yet.');
-	await expect(page.getByLabel('Title', { exact: true })).toHaveValue("The save button doesn't work after I rename a file");
-	await expect(page.getByLabel('What happens')).toHaveValue(/sits there/);
-	await expect(page.getByLabel('Severity')).toHaveValue('high');
-	await expect(page.getByTestId('bug-sent')).toHaveCount(0);
-	await shot(page, 'report-bug-drafted');
+	// A second draft replaces the first.
+	await dialog.getByLabel('What went wrong?').fill('A typo in the header');
+	await dialog.getByRole('button', { name: 'Draft the report' }).click();
+	await expect(dialog.getByRole('radio', { name: /^Trivial/ })).toBeChecked();
+	await expect(dialog.getByLabel('Title')).toHaveValue('A typo in the header');
 
-	// The person edits the draft, then confirms.
-	await page.getByLabel('Title', { exact: true }).fill('Save does nothing after a rename');
-	await page.getByRole('button', { name: 'Report bug' }).click();
-	await expect(page.getByTestId('bug-sent')).toContainText('Bug reported');
-	await expect(page.getByTestId('bug-id')).toHaveText('BUG-1');
-	await expect(page.getByTestId('bug-sent')).toContainText('Save does nothing after a rename');
-	await shot(page, 'report-bug-sent');
-
-	await page.getByRole('button', { name: 'Report another bug' }).click();
-	await expect(page.getByLabel('Title', { exact: true })).toHaveValue('');
+	await dialog.getByRole('button', { name: 'Undo draft' }).click();
+	await expect(dialog.getByLabel('Title')).toHaveValue('My own title');
+	await expect(dialog.getByLabel('What happened')).toHaveValue('My own words');
+	await expect(dialog.getByRole('radio', { checked: true })).toHaveCount(0);
+	await expect(dialog.getByTestId('drafted-banner')).toHaveCount(0);
 });
 
-test('undo draft brings back what was in the form', async ({ page }) => {
-	await openReport(page);
-	await page.getByLabel('Title', { exact: true }).fill('My own title');
-	await page.getByLabel('What went wrong?').fill('It crashed on start');
-	await page.getByRole('button', { name: 'Draft the report' }).click();
-	await expect(page.getByLabel('Severity')).toHaveValue('critical');
-	await expect(page.getByLabel('Title', { exact: true })).toHaveValue('It crashed on start');
-	await page.getByRole('button', { name: 'Undo draft' }).click();
-	await expect(page.getByLabel('Title', { exact: true })).toHaveValue('My own title');
-	await expect(page.getByTestId('drafted-banner')).toHaveCount(0);
+test('report dialog: Undo cancels a draft that is still on its way', async ({ page }) => {
+	const dialog = await openReportDialog(page);
+	await dialog.getByLabel('Title').fill('My own title');
+	await dialog.getByLabel('What went wrong?').fill('It crashed on start');
+	await dialog.getByRole('button', { name: 'Draft the report' }).click();
+	await expect(dialog.getByText('Drafting the report…')).toBeVisible();
+	await dialog.getByRole('button', { name: 'Cancel draft' }).click();
+	// Longer than the mock's draft takes: the cancelled draft must not land on the form.
+	await page.waitForTimeout(1200);
+	await expect(dialog.getByLabel('Title')).toHaveValue('My own title');
+	await expect(dialog.getByTestId('drafted-banner')).toHaveCount(0);
+	await expect(dialog.getByRole('radio', { checked: true })).toHaveCount(0);
+
+	// And a second draft cancelled after a first one was applied puts the person's text back.
+	await dialog.getByRole('button', { name: 'Draft the report' }).click();
+	await expect(dialog.getByLabel('Title')).toHaveValue('It crashed on start');
+	await dialog.getByLabel('What went wrong?').fill('Search fails');
+	await dialog.getByRole('button', { name: 'Draft the report' }).click();
+	await dialog.getByRole('button', { name: 'Undo draft' }).click();
+	await page.waitForTimeout(1200);
+	await expect(dialog.getByLabel('Title')).toHaveValue('My own title');
 });
 
-test('the form checks the required fields', async ({ page }) => {
-	await openReport(page);
-	await expect(page.getByRole('button', { name: 'Report bug' })).toBeDisabled();
-	await page.getByLabel('What happens').fill('Nothing happens');
-	await page.getByRole('button', { name: 'Report bug' }).click();
-	await expect(page.getByText('Give the bug a title.')).toBeVisible();
-	await expect(page.getByTestId('bug-sent')).toHaveCount(0);
+test('report dialog: reporting while a draft is on its way drops the draft', async ({ page }) => {
+	const dialog = await openReportDialog(page);
+	await dialog.getByLabel('Title').fill('Typed title');
+	await dialog.getByLabel('What happened').fill('Typed text');
+	await dialog.getByRole('radio', { name: /^Minor/ }).check();
+	await dialog.getByLabel('What went wrong?').fill('It crashed on start');
+	await dialog.getByRole('button', { name: 'Draft the report' }).click();
+	await dialog.getByRole('button', { name: 'Report bug' }).click();
+	await expect(page.getByText('Bug B-1 reported.')).toBeVisible();
+	await expect(bugRows(page).first()).toContainText('Typed title');
+	await page.waitForTimeout(1000);
+	// A fresh dialog is empty: the late draft did not land on it.
+	await page.getByRole('button', { name: 'Report a bug' }).click();
+	await expect(dialog.getByLabel('Title')).toHaveValue('');
 });
 
-test('Draft or improve is on every text field and replaces the text only when the person says so', async ({ page }) => {
-	await openReport(page);
-	await expect(smartButtons(page)).toHaveCount(4);
-	const field = page.getByLabel('What happens');
+test('report dialog: Draft or improve is on the title, what happened, expected and steps, and replaces the text only when the person says so', async ({ page }) => {
+	const dialog = await openReportDialog(page);
+	await expect(smartButtons(dialog)).toHaveCount(4);
+	const field = dialog.getByLabel('What happened');
 	await field.fill('  the save  button does nothing');
 
-	await page.getByRole('button', { name: 'Draft or improve What happens' }).click();
-	const panel = page.getByTestId('copilot-bug-actual');
+	await dialog.getByRole('button', { name: 'Draft or improve What happened' }).click();
+	const panel = dialog.getByTestId('copilot-bug-happened');
 	await expect(panel).toContainText('Improve this text');
 	await expect(panel.getByTestId('copilot-sample')).toHaveText('Sample data');
 	await panel.getByRole('button', { name: 'Improve' }).click();
 	await expect(panel.getByTestId('copilot-proposal')).toHaveText('The save button does nothing.');
 	// It is only a proposal: the field still holds what the person wrote.
 	await expect(field).toHaveValue('  the save  button does nothing');
-	await shot(page, 'draft-or-improve-proposal');
+	await shot(page, 'report-dialog-improve-proposal');
 
 	await panel.getByRole('button', { name: 'Use this draft' }).click();
 	await expect(field).toHaveValue('The save button does nothing.');
 	await expect(panel).toHaveCount(0);
-	await page.getByRole('button', { name: 'Undo' }).click();
+	await dialog.getByRole('button', { name: 'Undo', exact: true }).click();
 	await expect(field).toHaveValue('  the save  button does nothing');
 });
 
-test('Dismiss leaves the text alone, and an empty field gets a draft from an instruction', async ({ page }) => {
-	await openReport(page);
-	const field = page.getByLabel('What you expected');
-	await page.getByRole('button', { name: 'Draft or improve What you expected' }).click();
-	const panel = page.getByTestId('copilot-bug-expected');
-	await expect(panel).toContainText('Draft this text');
-	await panel.getByLabel('Instruction (optional)').fill('the file is saved');
-	await panel.getByRole('button', { name: 'Draft', exact: true }).click();
-	await expect(panel.getByTestId('copilot-proposal')).toContainText('The file is saved. [?]');
-	await expect(panel.getByTestId('copilot-notes')).toContainText('Unknowns are marked [?]');
-	await panel.getByRole('button', { name: 'Dismiss' }).click();
-	await expect(field).toHaveValue('');
-	await expect(panel).toHaveCount(0);
+test('report dialog: Enter in the instruction field asks the copilot and does not submit the report', async ({ page }) => {
+	const dialog = await openReportDialog(page);
+	await dialog.getByLabel('Title').fill('Typed title');
+	await dialog.getByRole('button', { name: 'Draft or improve Steps to reproduce' }).click();
+	const panel = dialog.getByTestId('copilot-bug-steps');
+	await panel.getByLabel('Instruction (optional)').fill('open a file then press save');
+	await panel.getByLabel('Instruction (optional)').press('Enter');
+	await expect(panel.getByTestId('copilot-proposal')).toContainText('Open a file then press save');
+	await expect(dialog).toBeVisible();
+	await expect(bugRows(page)).toHaveCount(0);
 });
 
-test('with nothing to go on, Draft asks for an instruction instead of running', async ({ page }) => {
-	await openReport(page);
-	await page.getByRole('button', { name: 'Draft or improve What you expected' }).click();
-	const panel = page.getByTestId('copilot-bug-expected');
+test('report dialog: a draft longer than the field allows is cut to fit, and the person is told', async ({ page }) => {
+	const dialog = await openReportDialog(page);
+	// The title allows 120 characters (the office's cap); the mock's draft of a long instruction is longer.
+	await dialog.getByRole('button', { name: 'Draft or improve Title' }).click();
+	const panel = dialog.getByTestId('copilot-bug-title');
+	await panel.getByLabel('Instruction (optional)').fill('a'.repeat(200));
+	await panel.getByRole('button', { name: 'Draft', exact: true }).click();
+	await expect(panel.getByTestId('copilot-proposal')).toBeVisible();
+	await panel.getByRole('button', { name: 'Use this draft' }).click();
+	const value = await dialog.getByLabel('Title').inputValue();
+	expect(value.length).toBeLessThanOrEqual(120);
+	expect(value.length).toBeGreaterThan(100);
+	await expect(dialog.getByTestId('draft-used')).toContainText('Shortened to fit the limit of 120 characters');
+});
+
+test('report dialog: with nothing to go on, Draft asks for an instruction instead of running', async ({ page }) => {
+	const dialog = await openReportDialog(page);
+	await dialog.getByRole('button', { name: 'Draft or improve Expected' }).click();
+	const panel = dialog.getByTestId('copilot-bug-expected');
 	await panel.getByRole('button', { name: 'Draft', exact: true }).click();
 	await expect(panel.getByRole('alert')).toHaveText('Say what it should be about, then ask for a draft.');
 	await expect(panel.getByTestId('copilot-proposal')).toHaveCount(0);
@@ -123,52 +173,96 @@ test('with nothing to go on, Draft asks for an instruction instead of running', 
 	await expect(panel.getByRole('alert')).toHaveCount(0);
 });
 
-test('reporting while a draft is on its way drops the draft', async ({ page }) => {
-	await openReport(page);
-	await page.getByLabel('Title', { exact: true }).fill('Typed title');
-	await page.getByLabel('What happens').fill('Typed text');
-	await page.getByLabel('What went wrong?').fill('It crashed on start');
-	await page.getByRole('button', { name: 'Draft the report' }).click();
-	await page.getByRole('button', { name: 'Report bug' }).click();
-	await expect(page.getByTestId('bug-sent')).toContainText('Typed title');
-	await page.getByRole('button', { name: 'Report another bug' }).click();
-	// Longer than the mock's draft takes: the late draft must not fill the new, empty form.
-	await page.waitForTimeout(1200);
-	await expect(page.getByLabel('Title', { exact: true })).toHaveValue('');
-	await expect(page.getByTestId('drafted-banner')).toHaveCount(0);
-});
-
-test('without a runtime the smart buttons are not there, and the form still works', async ({ page }) => {
-	await openReport(page, 'off');
-	await expect(page.getByLabel('Title', { exact: true })).toBeVisible();
-	await expect(smartButtons(page)).toHaveCount(0);
-	await expect(page.getByRole('button', { name: 'Draft the report' })).toHaveCount(0);
-	await expect(page.getByLabel('What went wrong?')).toHaveCount(0);
-	await page.getByLabel('Title', { exact: true }).fill('Typed by hand');
-	await page.getByLabel('What happens').fill('It breaks');
-	await page.getByRole('button', { name: 'Report bug' }).click();
-	await expect(page.getByTestId('bug-sent')).toContainText('Typed by hand');
-	await shot(page, 'report-bug-no-copilot');
+test('report dialog: without a runtime there are no smart buttons and the form still reports a bug', async ({ page }) => {
+	const dialog = await openReportDialog(page, 'off');
+	await expect(dialog.getByLabel('Title')).toBeVisible();
+	await expect(smartButtons(dialog)).toHaveCount(0);
+	await expect(dialog.getByRole('button', { name: 'Draft the report' })).toHaveCount(0);
+	await expect(dialog.getByLabel('What went wrong?')).toHaveCount(0);
+	await dialog.getByLabel('Title').fill('Typed by hand');
+	await dialog.getByLabel('What happened').fill('It breaks');
+	await dialog.getByRole('radio', { name: /^Major/ }).check();
+	await dialog.getByRole('button', { name: 'Report bug' }).click();
+	await expect(page.getByText('Bug B-1 reported.')).toBeVisible();
+	await shot(page, 'report-dialog-no-copilot');
 });
 
 for (const [scenario, title] of [
 	['failed', "The copilot couldn't draft this"],
 	['timeout', 'The copilot took too long']
 ] as const) {
-	test(`when the copilot ${scenario}, the person is told and nothing changes`, async ({ page }) => {
-		await openReport(page, scenario);
-		await page.getByLabel('What went wrong?').fill('It crashed');
-		await page.getByRole('button', { name: 'Draft the report' }).click();
-		await expect(page.getByRole('alert').filter({ hasText: title })).toBeVisible();
-		await expect(page.getByLabel('Title', { exact: true })).toHaveValue('');
-		await expect(page.getByTestId('drafted-banner')).toHaveCount(0);
+	test(`report dialog: when the copilot ${scenario}, the person is told and nothing changes`, async ({ page }) => {
+		const dialog = await openReportDialog(page, scenario);
+		await dialog.getByLabel('What went wrong?').fill('It crashed');
+		await dialog.getByRole('button', { name: 'Draft the report' }).click();
+		await expect(dialog.getByRole('alert').filter({ hasText: title })).toBeVisible();
+		await expect(dialog.getByLabel('Title')).toHaveValue('');
+		await expect(dialog.getByTestId('drafted-banner')).toHaveCount(0);
 
-		await page.getByLabel('What happens').fill('Some text');
-		await page.getByRole('button', { name: 'Draft or improve What happens' }).click();
-		const panel = page.getByTestId('copilot-bug-actual');
+		await dialog.getByLabel('What happened').fill('Some text');
+		await dialog.getByRole('button', { name: 'Draft or improve What happened' }).click();
+		const panel = dialog.getByTestId('copilot-bug-happened');
 		await panel.getByRole('button', { name: 'Improve' }).click();
 		await expect(panel.getByRole('alert').filter({ hasText: title })).toBeVisible();
-		await expect(page.getByLabel('What happens')).toHaveValue('Some text');
+		await expect(dialog.getByLabel('What happened')).toHaveValue('Some text');
 		await shot(page, `copilot-${scenario}`);
 	});
 }
+
+test('task dialog: Draft or improve on the description of a new task, and the task is created with the text the person kept', async ({ page }) => {
+	await openProject(page, 'Tasks');
+	await page.getByRole('button', { name: 'New task' }).click();
+	const dialog = page.getByRole('dialog', { name: 'New task' });
+	await dialog.getByLabel('Title').fill('Plan the launch');
+	await dialog.getByLabel('Description').fill('  write  the launch plan');
+	await dialog.getByRole('button', { name: 'Draft or improve Description' }).click();
+	const panel = dialog.getByTestId('copilot-new-task-description');
+	await panel.getByRole('button', { name: 'Improve' }).click();
+	await expect(panel.getByTestId('copilot-proposal')).toHaveText('Write the launch plan.');
+	await panel.getByRole('button', { name: 'Use this draft' }).click();
+	await expect(dialog.getByLabel('Description')).toHaveValue('Write the launch plan.');
+	await dialog.getByRole('button', { name: 'Create task' }).click();
+	await expect(page.getByText('Task T-1 created.')).toBeVisible();
+
+	// The saved description is the one the person kept.
+	await page.getByTestId('task-card').filter({ hasText: 'Plan the launch' }).getByRole('button', { name: 'Plan the launch' }).click();
+	const sheet = page.getByRole('dialog');
+	await expect(sheet.getByLabel('Description')).toHaveValue('Write the launch plan.');
+	await shot(page, 'task-description-drafted');
+});
+
+test('task sheet: a draft used on the description of an existing task is saved like any edit, and Undo is saved too', async ({ page }) => {
+	await openProject(page, 'Tasks');
+	await page.getByRole('button', { name: 'New task' }).click();
+	const dialog = page.getByRole('dialog', { name: 'New task' });
+	await dialog.getByLabel('Title').fill('Fix the build');
+	await dialog.getByRole('button', { name: 'Create task' }).click();
+	await expect(page.getByText('Task T-1 created.')).toBeVisible();
+
+	await page.getByTestId('task-card').filter({ hasText: 'Fix the build' }).getByRole('button', { name: 'Fix the build' }).click();
+	const sheet = page.getByRole('dialog');
+	await sheet.getByLabel('Description').fill('the build is red');
+	await sheet.getByLabel('Description').blur();
+	await expect(sheet.getByTestId('saved')).toHaveText('Description saved.');
+	await sheet.getByRole('button', { name: 'Draft or improve Description' }).click();
+	const panel = sheet.getByTestId('copilot-task-description');
+	await panel.getByRole('button', { name: 'Improve' }).click();
+	await panel.getByRole('button', { name: 'Use this draft' }).click();
+	await expect(sheet.getByLabel('Description')).toHaveValue('The build is red.');
+	await expect(sheet.getByTestId('saved')).toHaveText('Description saved.');
+
+	await sheet.getByRole('button', { name: 'Undo', exact: true }).click();
+	await expect(sheet.getByLabel('Description')).toHaveValue('the build is red');
+	// Closing and reopening shows what the office kept.
+	await page.keyboard.press('Escape');
+	await page.getByTestId('task-card').filter({ hasText: 'Fix the build' }).getByRole('button', { name: 'Fix the build' }).click();
+	await expect(page.getByRole('dialog').getByLabel('Description')).toHaveValue('the build is red');
+});
+
+test('task dialog: without a runtime the description is a plain field', async ({ page }) => {
+	await openProject(page, 'Tasks', 'off');
+	await page.getByRole('button', { name: 'New task' }).click();
+	const dialog = page.getByRole('dialog', { name: 'New task' });
+	await expect(dialog.getByLabel('Description')).toBeVisible();
+	await expect(smartButtons(dialog)).toHaveCount(0);
+});

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, tick } from 'svelte';
 	import CircleAlert from '@lucide/svelte/icons/circle-alert';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import Sparkles from '@lucide/svelte/icons/sparkles';
@@ -10,7 +10,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import { copilotApi, copilotFeatures, describeCopilotFailure, offers, type CopilotApi } from '$lib/copilot/api';
-	import { checkTextRequest } from '$lib/copilot/check';
+	import { checkTextRequest, fitTo } from '$lib/copilot/check';
 	import { createDraftFlow, isDrafting, type DraftPhase } from '$lib/copilot/draft-flow';
 	import { COPILOT_LIMITS, type CopilotFeature, type TextDraft } from '$lib/copilot/types';
 
@@ -27,9 +27,13 @@
 		multiline = true,
 		rows = 4,
 		maxlength,
+		limit,
+		hint,
 		placeholder,
 		disabled = false,
 		error,
+		onchange,
+		onblur,
 		api = copilotApi
 	}: {
 		id: string;
@@ -38,9 +42,16 @@
 		multiline?: boolean;
 		rows?: number;
 		maxlength?: number;
+		/** The office's own cap, when the field's `maxlength` is looser (the field allows some slack). A draft is cut to the smaller. */
+		limit?: number;
+		/** Small grey text after the label, e.g. "(optional)". */
+		hint?: string;
 		placeholder?: string;
 		disabled?: boolean;
 		error?: string;
+		/** The text was replaced by a draft, or put back: the new value is already in `value`. */
+		onchange?: () => void;
+		onblur?: () => void;
 		api?: CopilotApi;
 	} = $props();
 
@@ -52,6 +63,7 @@
 	let requestError = $state<string | undefined>();
 	let phase = $state<DraftPhase<TextDraft>>({ kind: 'idle' });
 	let previous = $state<string | undefined>();
+	let clipped = $state<number | undefined>();
 	// `api` is chosen once, when the field is made (a test passes its own); it is not meant to change.
 	// svelte-ignore state_referenced_locally
 	const flow = createDraftFlow(api, 'text.improve', (next) => (phase = next));
@@ -69,6 +81,7 @@
 		if (open) return close();
 		open = true;
 		previous = undefined;
+		clipped = undefined;
 	}
 
 	function close() {
@@ -84,26 +97,37 @@
 		if (!requestError) flow.run(request);
 	}
 
-	function use() {
+	// The smaller of the field's own `maxlength` and the office's cap.
+	const cap = $derived(Math.min(maxlength ?? Infinity, limit ?? Infinity));
+
+	async function use() {
 		if (phase.kind !== 'ready') return;
 		previous = value;
-		value = phase.response.draft.text;
+		// A draft longer than the field allows is cut to fit, and the person is told.
+		const fitted = fitTo(phase.response.draft.text, Number.isFinite(cap) ? cap : undefined);
+		clipped = fitted.clipped ? cap : undefined;
+		value = fitted.text;
 		close();
+		await tick();
+		onchange?.();
 	}
 
-	function undo() {
+	async function undo() {
 		if (previous === undefined) return;
 		value = previous;
 		previous = undefined;
+		clipped = undefined;
+		await tick();
+		onchange?.();
 	}
 
 	const fieldClass =
-		'block w-full rounded-md bg-white/5 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-500 disabled:opacity-50 aria-invalid:outline-red-400';
+		'block w-full rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-500 disabled:opacity-50 aria-invalid:outline-red-400';
 </script>
 
 <div class="space-y-2" data-testid="draftable-{id}">
 	<div class="flex items-center justify-between gap-x-3">
-		<Label for={id}>{label}</Label>
+		<Label for={id}>{label}{#if hint}<span class="font-normal text-gray-400"> {hint}</span>{/if}</Label>
 		{#if available}
 			<Button
 				type="button"
@@ -127,6 +151,7 @@
 			{placeholder}
 			{disabled}
 			bind:value
+			{onblur}
 			class={fieldClass}
 			aria-invalid={error ? true : undefined}
 			aria-describedby={error ? `${id}-error` : undefined}
@@ -139,6 +164,7 @@
 			{disabled}
 			autocomplete="off"
 			bind:value
+			{onblur}
 			aria-invalid={error ? true : undefined}
 			aria-describedby={error ? `${id}-error` : undefined}
 		/>
@@ -148,8 +174,8 @@
 	{/if}
 
 	{#if previous !== undefined && !open}
-		<p class="flex items-center gap-x-2 text-xs/5 text-gray-400">
-			Draft used.
+		<p class="flex items-center gap-x-2 text-xs/5 text-gray-400" data-testid="draft-used">
+			Draft used.{#if clipped !== undefined} Shortened to fit the limit of {clipped} characters.{/if}
 			<button type="button" class="inline-flex items-center gap-x-1 font-semibold text-indigo-300 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-indigo-400" onclick={undo}>
 				<Undo class="size-3" aria-hidden="true" /> Undo
 			</button>
@@ -174,6 +200,13 @@
 						disabled={drafting}
 						bind:value={instruction}
 						oninput={() => (requestError = undefined)}
+					onkeydown={(e) => {
+						// Inside a form (a dialog), Enter here would submit the whole form.
+						if (e.key === 'Enter') {
+							e.preventDefault();
+							if (!drafting) ask();
+						}
+					}}
 						aria-invalid={requestError ? true : undefined}
 						aria-describedby={requestError ? `${id}-request-error` : undefined}
 					/>

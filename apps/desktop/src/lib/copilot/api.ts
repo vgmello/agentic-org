@@ -1,6 +1,6 @@
 import type { AppError } from '$lib/proto';
 import { mockCopilot } from './mock';
-import type { CopilotFeature, DraftResponse, FeatureId, FeatureShapes } from './types';
+import type { ContextItem, CopilotFeature, DraftResponse, FeatureId, FeatureShapes } from './types';
 
 /**
  * What the UI needs from the office's copilot. The copilot only drafts: a result is a value to show
@@ -11,10 +11,14 @@ export interface CopilotApi {
 	readonly sample: boolean;
 	/** `copilot.features`. Empty when no runtime is set up: the UI then hides every smart button. */
 	features(): Promise<CopilotFeature[]>;
-	/** `copilot.draft`. Rejects with an `AppError` whose code is one of `COPILOT_ERROR_CODES`. */
+	/**
+	 * `copilot.draft`. `context` is workspace text the office would resolve from `context_refs`.
+	 * Rejects with an `AppError` whose code is one of `COPILOT_ERROR_CODES`.
+	 */
 	draft<F extends FeatureId>(
 		feature: F,
-		input: FeatureShapes[F]['input']
+		input: FeatureShapes[F]['input'],
+		context?: ContextItem[]
 	): Promise<DraftResponse<FeatureShapes[F]['draft']>>;
 }
 
@@ -65,6 +69,8 @@ export function describeCopilotFailure(error: AppError): { title: string; hint: 
 			return { title: 'Still working on your last request', hint: 'Wait for it to finish, then try again.' };
 		case 'invalid_request':
 			return { title: "The copilot can't draft this", hint: error.message };
+		case 'too_large':
+			return { title: 'That is too long for the copilot', hint: 'Shorten it and try again.' };
 		default:
 			return { title: 'Something went wrong', hint: error.message };
 	}

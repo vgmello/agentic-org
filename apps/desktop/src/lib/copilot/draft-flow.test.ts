@@ -20,7 +20,7 @@ describe('createDraftFlow', () => {
 
 	it('a failure ends in failed, with the error unchanged and nothing thrown', async () => {
 		const phases: DraftPhase<BugDraft>[] = [];
-		const flow = createDraftFlow(mock('timeout'), 'bug.report', (p) => phases.push(p));
+		const flow = createDraftFlow(mock('timeout'), 'bug.from_sentence', (p) => phases.push(p));
 		await flow.run({ sentence: 'it broke' });
 		expect(kinds(phases)).toEqual(['drafting', 'failed']);
 		const last = phases.at(-1);
@@ -30,7 +30,7 @@ describe('createDraftFlow', () => {
 	it('turns anything thrown into an app error', async () => {
 		const api: CopilotApi = { ...mock(), draft: () => Promise.reject(new Error('boom')) };
 		const phases: DraftPhase<BugDraft>[] = [];
-		await createDraftFlow(api, 'bug.report', (p) => phases.push(p)).run({ sentence: 'x' });
+		await createDraftFlow(api, 'bug.from_sentence', (p) => phases.push(p)).run({ sentence: 'x' });
 		const last = phases.at(-1);
 		expect(last?.kind === 'failed' && last.error).toEqual({ source: 'app', code: 'internal', message: 'boom' });
 	});
@@ -39,14 +39,14 @@ describe('createDraftFlow', () => {
 		let calls = 0;
 		const real = mock();
 		const api: CopilotApi = { ...real, draft: (f, i) => (calls++, real.draft(f, i)) };
-		const flow = createDraftFlow(api, 'bug.report', () => {});
+		const flow = createDraftFlow(api, 'bug.from_sentence', () => {});
 		await Promise.all([flow.run({ sentence: 'a' }), flow.run({ sentence: 'a' })]);
 		expect(calls).toBe(1);
 	});
 
 	it('can run again after it finished', async () => {
 		const phases: DraftPhase<BugDraft>[] = [];
-		const flow = createDraftFlow(mock(), 'bug.report', (p) => phases.push(p));
+		const flow = createDraftFlow(mock(), 'bug.from_sentence', (p) => phases.push(p));
 		await flow.run({ sentence: 'a' });
 		await flow.run({ sentence: 'b' });
 		expect(kinds(phases)).toEqual(['drafting', 'ready', 'drafting', 'ready']);
@@ -54,7 +54,7 @@ describe('createDraftFlow', () => {
 
 	it('drops the answer of an ask that was cancelled', async () => {
 		const phases: DraftPhase<BugDraft>[] = [];
-		const flow = createDraftFlow(mock('on', 10), 'bug.report', (p) => phases.push(p));
+		const flow = createDraftFlow(mock('on', 10), 'bug.from_sentence', (p) => phases.push(p));
 		const pending = flow.run({ sentence: 'a' });
 		flow.cancel();
 		await pending;
@@ -69,11 +69,11 @@ describe('createDraftFlow', () => {
 
 describe('which smart buttons show', () => {
 	it('offers a feature only when the list has it', () => {
-		const some: CopilotFeature[] = [{ id: 'bug.report', version: 1, title: 'x' }];
-		expect(offers(some, 'bug.report')).toBe(true);
+		const some: CopilotFeature[] = [{ id: 'bug.from_sentence', version: 2, title: 'x' }];
+		expect(offers(some, 'bug.from_sentence')).toBe(true);
 		expect(offers(some, 'text.improve')).toBe(false);
-		expect(offers([], 'bug.report')).toBe(false);
-		expect(offers(undefined, 'bug.report')).toBe(false);
+		expect(offers([], 'bug.from_sentence')).toBe(false);
+		expect(offers(undefined, 'bug.from_sentence')).toBe(false);
 	});
 
 	it('asks once per api, and a failure means none and is asked again next time', async () => {
@@ -92,7 +92,7 @@ describe('which smart buttons show', () => {
 	it('with the copilot off, nothing is offered', async () => {
 		const features = await copilotFeatures(mock('off'));
 		expect(offers(features, 'text.improve')).toBe(false);
-		expect(offers(features, 'bug.report')).toBe(false);
+		expect(offers(features, 'bug.from_sentence')).toBe(false);
 	});
 });
 
@@ -103,6 +103,7 @@ describe('describeCopilotFailure', () => {
 		['copilot_failed', "The copilot couldn't draft this"],
 		['timeout', 'The copilot took too long'],
 		['copilot_busy', 'Still working on your last request'],
+		['too_large', 'That is too long for the copilot'],
 		['invalid_request', "The copilot can't draft this"],
 		['something_else', 'Something went wrong']
 	])('%s', (code, title) => {

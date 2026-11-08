@@ -1,3 +1,5 @@
+import type { Severity } from '$lib/proto';
+
 // The copilot's calls, as the app sees them (`copilot.features` and `copilot.draft`).
 // Mirrors `crates/org-copilot` and `docs/design/smart-features.md`. These are NOT in `org-proto`
 // yet: they move into `proto.ts` when the office wires the calls and `org-proto` gains them.
@@ -21,24 +23,37 @@ export interface TextDraft {
 	text: string;
 }
 
-/** `bug.report`: a bug report from a sentence. */
-export interface BugReportInput {
+/**
+ * `bug.from_sentence`: the fields of a bug report from one sentence. The draft is the fields of the
+ * real `bug.report` call (`org-proto`), so it fills the report dialog as it is. The copilot never
+ * reports the bug: the person confirms in the dialog.
+ */
+export interface BugFromSentenceInput {
 	sentence: string;
 }
-export type Severity = 'low' | 'medium' | 'high' | 'critical';
-export const SEVERITIES: readonly Severity[] = ['low', 'medium', 'high', 'critical'];
 export interface BugDraft {
 	title: string;
-	actual: string;
-	expected: string;
-	steps: string[];
-	severity: Severity;
+	what_happened: string;
+	severity: Exclude<Severity, 'unknown'>;
+	/** One string, one step per line. */
+	steps?: string;
+	expected?: string;
+	/** Only meaningful when it is the id of an area given as context. */
+	area_id?: string;
+	environment?: string;
+}
+
+/** A piece of the workspace the app hands the copilot as data (`copilot.draft`'s resolved `context_refs`). */
+export interface ContextItem {
+	kind: 'area';
+	label: string;
+	text: string;
 }
 
 /** The features built so far, with the shape of each one's input and draft. */
 export interface FeatureShapes {
 	'text.improve': { input: TextImproveInput; draft: TextDraft };
-	'bug.report': { input: BugReportInput; draft: BugDraft };
+	'bug.from_sentence': { input: BugFromSentenceInput; draft: BugDraft };
 }
 export type FeatureId = keyof FeatureShapes;
 
@@ -57,12 +72,13 @@ export const COPILOT_LIMITS = {
 	sentenceMaxChars: 1000
 } as const;
 
-/** What `copilot.*` can fail with. `invalid_request` already exists in `org-proto`; the rest are new. */
+/** What `copilot.*` can fail with. `invalid_request` and `too_large` already exist in `org-proto`; the rest are new. */
 export const COPILOT_ERROR_CODES = [
 	'copilot_unavailable',
 	'copilot_failed',
 	'timeout',
 	'copilot_busy',
-	'invalid_request'
+	'invalid_request',
+	'too_large'
 ] as const;
 export type CopilotErrorCode = (typeof COPILOT_ERROR_CODES)[number];
