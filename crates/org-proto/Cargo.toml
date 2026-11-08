@@ -1,0 +1,10 @@
+[package]
+name = "org-proto"
+description = "The contract between the agentic.org app, the agent CLI and an office server: request, response and event types."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+

@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+# apps/desktop/src-tauri joins this list once the app agent scaffolds it.
+members = [
+  "crates/org-proto",
+  "crates/org-client",
+  "crates/org-office",
+  "crates/org-spool",
+  "apps/org-office-server",
+  "apps/org-agent",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+publish = false
+repository = "https://github.com/vgmello/agentic-org"
+
+[workspace.dependencies]
+# Pin exact versions here; crates opt in with `x.workspace = true`.
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

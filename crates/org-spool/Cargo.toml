@@ -1,0 +1,10 @@
+[package]
+name = "org-spool"
+description = "An agent's local queue: fast, durable local writes that the office server picks up."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+

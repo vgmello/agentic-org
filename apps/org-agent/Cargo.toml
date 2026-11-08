@@ -1,0 +1,10 @@
+[package]
+name = "org-agent"
+description = "The agents' CLI: tiny and fast; messages now, tasks and queues later."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+org-spool = { path = "../../crates/org-spool" }

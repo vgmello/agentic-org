@@ -1,0 +1,11 @@
+[package]
+name = "org-office-server"
+description = "The office server: the daemon that holds an organization's office and serves org-proto."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+org-proto = { path = "../../crates/org-proto" }
+org-office = { path = "../../crates/org-office" }
