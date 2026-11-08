@@ -9,10 +9,12 @@
 //!   the office's [`AppToken`] and no member. A connection whose binding presented the token
 //!   (a person, the owner, or app-wide) is **app-bound**. An agent binds by handle or id
 //!   without a token; a person or the owner needs the token.
-//! - Binding fails closed (ADR-0003 §2.1.4, as amended by the agent-sessions design): a
-//!   missing or wrong token, an unknown member, an offboarded agent or one whose status this
-//!   office can't read, and a lookup that fails are all `not_authorized`. A paused agent may
-//!   still bind: it keeps reading and answering its messages.
+//! - Binding fails closed (ADR-0003 §2.1.4, as amended by the agent-sessions design): an
+//!   unknown member, an agent not placed in this office, an offboarded agent or one whose
+//!   status this office can't read, a lookup that fails, and a missing or wrong token are all
+//!   `not_authorized`. Only a malformed call, or an agent that may bind sending `app_token`,
+//!   is `invalid_request` (see [`MsgBind`] for the order). A paused agent may still bind: it
+//!   keeps reading and answering its messages.
 //! - Each `msg.bind` replaces the connection's previous binding and is checked only on its
 //!   own params: an earlier binding grants nothing. A failed `msg.bind` leaves the connection
 //!   unbound. Any re-bind, failed or not, ends the previous binding's held `msg.wait` and
@@ -43,21 +45,26 @@
 //! quote a body or meta value.
 //!
 //! ## Addressing
-//! A recipient or member (`to`, `from`, `member`, `participant`) is named by its member id, or
-//! by its handle, ignoring case: an agent's
-//! [`messaging_name`](crate::org::AgentProfile::messaging_name), a person's `name`, or
-//! [`OWNER_HANDLE`](crate::OWNER_HANDLE) (`owner`) for the organization's owner, who is
-//! addressed only as `owner`: the owner's name is not a handle. The handles form one
-//! namespace, so a handle names at most one member. An exact member-id match takes
-//! precedence over a handle.
+//! A recipient or member (`to`, `from`, `member`, `participant`) resolves in this order
+//! (ADR-0003 §2.6):
+//! 1. [`OWNER_HANDLE`](crate::OWNER_HANDLE) (`owner`, ignoring case) is the organization's
+//!    owner. It comes before ids, so a member whose id is `owner` can't capture it. The
+//!    owner is addressed only as `owner`: the owner's name is not a handle.
+//! 2. An exact member id (case-sensitive). It beats a handle.
+//! 3. A handle, ignoring case: an agent's
+//!    [`messaging_name`](crate::org::AgentProfile::messaging_name) or a person's `name`. The
+//!    handles form one namespace, so a handle names at most one member.
+//! 4. Anything else names no member. Display names never resolve.
+//!
+//! [`OFFICE_SENDER`] (`office`, ignoring case) is reserved for the server and refused before
+//! any of this: a `to`, `from`, `member` or `participant` of `office` is `invalid_request`.
+//! It appears only as the sender of a `delivery_failed` notice.
 //!
 //! A recipient (`msg.send`, `msg.ask`, and the sender a `msg.reply` answers) must be in the
 //! organization: an [`Offboarded`](crate::org::AgentStatus::Offboarded) agent, an agent
 //! whose status is [`Unknown`](crate::org::AgentStatus::Unknown), or a name that matches no
 //! member is `unknown_recipient`. A [`Paused`](crate::org::AgentStatus::Paused) agent still
-//! receives: its messages wait in its inbox. [`OFFICE_SENDER`] (`office`) is reserved for the server: a `to`
-//! or `member` of `office` is always refused (`invalid_request`). It appears only as the
-//! sender of a `delivery_failed` notice.
+//! receives: its messages wait in its inbox.
 //!
 //! ## Limits and their errors
 //! String limits are measured on the JSON encoding of the value as serde_json encodes it
@@ -71,7 +78,8 @@
 //! `invalid_request`.
 //!
 //! ## Differences from the ADR-0003 text
-//! Deliberate, and this module is the contract where they differ:
+//! Deliberate, and this crate is the contract where they differ (the `who` item is in
+//! [`crate::directory`]):
 //! - Headers carry `state` (the ADR's inbox list calls it `status`).
 //! - `who` has no `kind: owner`; find the owner with `member: "owner"`.
 //! - `reply_to` on `msg.send` is checked for app-bound callers too, not only agent-bound
@@ -209,7 +217,7 @@ pub enum MessagePriority {
     High,
     /// Urgent: interrupts a busy recipient.
     Urgent,
-    /// A value this build doesn't know (sent by a newer peer). Not urgent. Never sent:
+    /// A value this build doesn't know (sent by a newer peer). Not urgent. Refused as input:
     /// `msg.send`, `msg.reply`, `msg.ask` and spool ingest refuse it (`invalid_request`).
     #[serde(other)]
     Unknown,
@@ -403,20 +411,27 @@ impl fmt::Debug for MetaSize<'_> {
 /// The desktop app may bind app-wide, with `app_token` and no `member`; that binding may call
 /// only `who`, `msg.list`, `msg.get`, `msg.threads` and `msg.human_needs_you`.
 ///
-/// It fails closed: every missing or wrong credential, and every member it can't bind, is
-/// `not_authorized`. A [`Paused`](crate::org::AgentStatus::Paused) agent may still bind;
-/// an [`Offboarded`](crate::org::AgentStatus::Offboarded) agent, or one whose status is
-/// [`Unknown`](crate::org::AgentStatus::Unknown), may not.
+/// It fails closed, checking in this order:
+/// 1. The input alone: params that don't decode (including a malformed `app_token`, or both
+///    `member` and `agent`), `office` as `member`, or neither `member` nor `app_token`, are
+///    `invalid_request`; a `member` over [`MAX_HANDLE_BYTES`] is `too_large`. None of this
+///    depends on who the member is.
+/// 2. The member: one that isn't found, an agent not placed in this office, an
+///    [`Offboarded`](crate::org::AgentStatus::Offboarded) agent, one whose status is
+///    [`Unknown`](crate::org::AgentStatus::Unknown), or a lookup that fails, is
+///    `not_authorized`, whatever else the call sends. A
+///    [`Paused`](crate::org::AgentStatus::Paused) agent may still bind.
+/// 3. The credentials: a missing or wrong `app_token` for a person or the owner, or a wrong
+///    one for an app-wide binding, is `not_authorized`. An agent (one that passed step 2)
+///    with an `app_token` is `invalid_request`: an agent binds without one.
 ///
 /// Each call replaces the previous binding and is checked only on its own params. A failed
 /// call leaves the connection unbound. Any re-bind, failed or not, ends the previous
 /// binding's held `msg.wait` and `msg.ask` calls with `not_bound`.
 ///
-/// Errors: `not_authorized` (a missing or wrong `app_token` for a person or the owner, a
-/// wrong `app_token` for an app-wide binding, a member that isn't found, an agent not placed
-/// in this office, an offboarded or `Unknown`-status agent, or a lookup that fails),
-/// `invalid_request` (`office`, neither `member` nor `app_token`, or an agent with
-/// `app_token`), `too_large` (`member`).
+/// Errors: `not_authorized` (step 2, and a missing or wrong token in step 3),
+/// `invalid_request` (step 1, and an active or paused agent with `app_token` in step 3),
+/// `too_large` (step 1).
 pub struct MsgBind;
 
 /// `msg.bind`'s params. Its `Debug` shows no token (see [`AppToken`]), and it isn't `Clone`.
@@ -426,11 +441,13 @@ pub struct MsgBind;
 #[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MsgBindParams {
     /// Who to act as (see [Addressing](self#addressing)); at most [`MAX_HANDLE_BYTES`]. Also
-    /// read from `agent`, the ADR's name for it.
+    /// read from `agent`, the ADR's name for it; params with both don't decode
+    /// (`invalid_request`).
     #[serde(default, alias = "agent", skip_serializing_if = "Option::is_none")]
     pub member: Option<String>,
     /// Required to bind a person or the owner (`not_authorized` without it), or to bind
-    /// app-wide. Refused with an agent (`invalid_request`).
+    /// app-wide. Refused with an active or paused agent (`invalid_request`); see [`MsgBind`]
+    /// for the order.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub app_token: Option<AppToken>,
 }
@@ -575,10 +592,11 @@ impl Call for MsgReply {
 /// Errors: `unknown_recipient` (no such member, or an offboarded or `Unknown`-status agent;
 /// a paused agent still receives), `already_exists` (the id was used for different content),
 /// `too_large` (a string, body or meta over its limit), `invalid_request` (`wait_ms` or
-/// `ttl_ms` out of range, an `Unknown` priority, or `to` is `office`), `timeout` (`expires_at` passed without a
-/// reply), `unknown_recipient` or `timeout` when a `delivery_failed` answers the request,
-/// `unavailable` (the connection already holds [`MAX_HELD_CALLS_PER_CONNECTION`] calls),
-/// `not_bound` (also when a re-bind ends the call), `storage_error`.
+/// `ttl_ms` out of range, an `Unknown` priority, or `to` is `office`), `timeout`
+/// (`expires_at` passed without a reply), `unknown_recipient` or `timeout` when a
+/// `delivery_failed` answers the request, `unavailable` (the connection already holds
+/// [`MAX_HELD_CALLS_PER_CONNECTION`] calls), `not_bound` (also when a re-bind ends the call),
+/// `storage_error`.
 pub struct MsgAsk;
 
 /// `msg.ask`'s params. Its `Debug` prints only the sizes of `body` and `meta`.
@@ -742,8 +760,9 @@ pub struct MsgNotifyParams {
 /// [Unknown values](self#unknown-values)).
 ///
 /// Members appear by handle, as in the locked contract; a member with no handle appears by
-/// its member id. Handles appear in their stored case, so a client that bound by member id
-/// (e.g. `ORG_AGENT` holding an id) won't find that id in `agent`.
+/// its member id. `agent` is the bound member's handle in its stored case, not the string
+/// the client bound with: an `ORG_AGENT` holding a member id won't match it textually, and a
+/// handle should be compared ignoring case.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NotifyResult {
     /// [`NOTIFY_VERSION`].
@@ -804,10 +823,10 @@ impl Call for MsgNotify {
 /// `msg.wait`: hold until the bound member has an unread message, and return the oldest
 /// unsnoozed one **without** marking it read. Agent-bound or app-bound to a member.
 ///
-/// Errors: `invalid_request` (`timeout_ms` over [`MAX_WAIT_MS`]), `unavailable` (the
-/// connection already holds [`MAX_HELD_CALLS_PER_CONNECTION`] calls), `not_found` (`from`
-/// names no one), `too_large` (`from`), `not_bound` (also when a re-bind ends the call),
-/// `storage_error`.
+/// Errors: `invalid_request` (`timeout_ms` over [`MAX_WAIT_MS`], or `from` is `office`),
+/// `unavailable` (the connection already holds [`MAX_HELD_CALLS_PER_CONNECTION`] calls),
+/// `not_found` (`from` names no one), `too_large` (`from`), `not_bound` (also when a re-bind
+/// ends the call), `storage_error`.
 pub struct MsgWait;
 
 /// `msg.wait`'s params.
@@ -871,8 +890,9 @@ impl Call for MsgRead {
 /// By default it shows only unread, unsnoozed messages, following the triage spec (ADR-0003
 /// §2.3: the inbox hides snoozed messages until they're due; `--all` shows them).
 ///
-/// Errors: `invalid_request` (`limit` over [`MAX_PAGE_LIMIT`]), `not_found` (`from` names no
-/// one), `too_large` (`from` or `thread_id`), `not_bound`, `storage_error`.
+/// Errors: `invalid_request` (`limit` over [`MAX_PAGE_LIMIT`], or `from` is `office`),
+/// `not_found` (`from` names no one), `too_large` (`from` or `thread_id`), `not_bound`,
+/// `storage_error`.
 pub struct MsgInbox;
 
 /// `msg.inbox`'s params. `{}` is the first page of the default inbox.
@@ -913,9 +933,9 @@ impl Call for MsgInbox {
 /// or app-bound. An app-bound connection sees every message in the office. An agent sees only
 /// messages it sent or received, and `participant` must be omitted or name itself.
 ///
-/// Errors: `invalid_request` (an agent's `participant` names someone else, or `limit` over
-/// [`MAX_PAGE_LIMIT`]), `not_found`, `too_large` (`participant` or `thread_id`), `not_bound`,
-/// `storage_error`.
+/// Errors: `invalid_request` (an agent's `participant` names someone else, `participant` is
+/// `office`, or `limit` over [`MAX_PAGE_LIMIT`]), `not_found`, `too_large` (`participant` or
+/// `thread_id`), `not_bound`, `storage_error`.
 pub struct MsgList;
 
 /// `msg.list`'s params.
@@ -1008,9 +1028,9 @@ impl Call for MsgHumanNeedsYou {
 /// `msg.threads`: one page of thread summaries, most recently active first, for the app's
 /// Inbox view. **App-bound only.**
 ///
-/// Errors: `not_authorized` (bound as an agent), `invalid_request` (`limit` over
-/// [`MAX_PAGE_LIMIT`]), `not_found`, `too_large` (`participant` or a cursor field),
-/// `not_bound`, `storage_error`.
+/// Errors: `not_authorized` (bound as an agent), `invalid_request` (`participant` is
+/// `office`, or `limit` over [`MAX_PAGE_LIMIT`]), `not_found`, `too_large` (`participant` or
+/// a cursor field), `not_bound`, `storage_error`.
 pub struct MsgThreads;
 
 /// `msg.threads`'s params. `{}` is the first page of every thread in the office.
@@ -1437,6 +1457,10 @@ mod tests {
             json!({"member": "ac-software-engineer-remy"}),
         );
         empty_decodes::<MsgBindParams>();
+        // Both names at once don't decode (a server answers `invalid_request`).
+        assert!(
+            serde_json::from_value::<MsgBindParams>(json!({"member": "a", "agent": "b"})).is_err()
+        );
         // `agent` (the ADR's name) is read as `member`; `member` is what's written.
         assert_eq!(
             serde_json::from_value::<MsgBindParams>(json!({"agent": "x"})).unwrap(),

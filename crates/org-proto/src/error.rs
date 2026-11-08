@@ -53,11 +53,13 @@ pub enum ErrorCode {
     /// command.
     ClockSkew,
     /// A message or task is addressed to someone who isn't an agent or person of the
-    /// organization.
+    /// organization: no member at all, an offboarded agent, or one whose status this office
+    /// can't read.
     UnknownRecipient,
     /// The caller isn't allowed to make this call, e.g. the host's check of the peer's code
     /// signature failed for `office.app_token`, or an app-only command (`member.set_run_mode`)
-    /// arrived on a connection that is not the app's.
+    /// arrived on a connection that is not the app's, or `msg.bind` refused a member or a
+    /// credential (it fails closed).
     NotAuthorized,
     /// What was asked for exists but can't serve now, e.g. the office isn't running, so there's
     /// no app token to hand out. Trying again later may work.

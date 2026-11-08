@@ -4,7 +4,8 @@
 //! Served by the office runtime, not the messaging library. Cards combine the office's copy
 //! of the organization (see [`crate::org`]) with live presence and each agent's self-reported
 //! status line. Presence and status are runtime data: never in the organization's event log.
-//! Members are named as in [`crate::msg`]'s addressing rules.
+//! Members are named as in [`crate::msg`]'s addressing rules. Deliberate differences from
+//! the ADR text are listed in [`crate::msg`]'s module docs.
 
 use serde::{Deserialize, Serialize};
 
@@ -100,7 +101,9 @@ pub struct DirectoryCard {
     /// Agents only: whether it takes work
     /// ([`AgentProfile::status`](crate::org::AgentProfile::status)). `who` never lists an
     /// [`Offboarded`](crate::org::AgentStatus::Offboarded) agent, so this is `active`,
-    /// `paused` or `unknown`; a client must not treat `unknown` as working.
+    /// `paused` or `unknown`; a client must not treat `unknown` as working. Absent for
+    /// people; on an agent's card, absent (an older server, or a record without its profile)
+    /// means the same as `unknown`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_status: Option<AgentStatus>,
     /// For an agent, its job title ([`AgentProfile::title`](crate::org::AgentProfile::title)).
@@ -360,15 +363,26 @@ mod tests {
                 c
             );
         }
-        // A value from a newer server reads as `Unknown`, never as working.
-        let mut v = serde_json::to_value(card()).unwrap();
-        v["agent_status"] = json!("sabbatical");
-        assert_eq!(
-            serde_json::from_value::<DirectoryCard>(v)
-                .unwrap()
-                .agent_status,
-            Some(AgentStatus::Unknown)
-        );
+        // Any other value, in any shape, reads as `Unknown` (never as working) and never
+        // fails the card, except `offboarded`, which `who` never sends but still decodes;
+        // `null` reads as absent.
+        for (value, expected) in [
+            (json!("sabbatical"), Some(AgentStatus::Unknown)),
+            (json!(5), Some(AgentStatus::Unknown)),
+            (json!({"status": "active"}), Some(AgentStatus::Unknown)),
+            (json!("offboarded"), Some(AgentStatus::Offboarded)),
+            (Value::Null, None),
+        ] {
+            let mut v = serde_json::to_value(card()).unwrap();
+            v["agent_status"] = value.clone();
+            assert_eq!(
+                serde_json::from_value::<DirectoryCard>(v)
+                    .unwrap()
+                    .agent_status,
+                expected,
+                "{value}"
+            );
+        }
     }
 
     #[test]
