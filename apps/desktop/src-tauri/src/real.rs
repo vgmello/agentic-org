@@ -341,9 +341,37 @@ impl RealOffice {
         }
         let client = Arc::new(Client::connect_office(office, &self.home)?);
         client.hello()?; // a version this app can't speak is noticed here
+        self.bind_as_app(&client, &office.id)?;
         let replaced = lock(&self.offices).insert(office.id.clone(), Arc::clone(&client));
         drop(replaced);
         Ok(client)
+    }
+
+    /// The office refuses `org.snapshot` and the org commands on a connection that isn't bound as the app (ADR-0003 §2.1.4):
+    /// get the office's token from the host (`office.app_token`, an app-only call, so on a connection of its own, after
+    /// hello's answer) and `msg.bind` with it. Every new connection to an office binds again. The token is never logged or
+    /// kept. A host that doesn't list the capability is older than the rule: the connection is used as it is. A refused bind
+    /// is an error (the office would refuse every read anyway).
+    fn bind_as_app(&self, office: &Client, office_id: &str) -> Result<(), ClientError> {
+        // What the host can do is read from the shared connection; only the app-only call needs one of its own.
+        if !self
+            .hello()?
+            .supports(org_proto::capability::OFFICE_APP_TOKEN)
+        {
+            return Ok(());
+        }
+        let host = Client::connect_host_in(&self.home)?;
+        host.hello()?; // answered before the app-only call is sent
+        let token = self.until_ready(|| {
+            host.call::<org_proto::OfficeAppToken>(&org_proto::OfficeAppTokenParams {
+                office_id: office_id.to_string(),
+            })
+        })?;
+        drop(host);
+        match office.bind_app(token.app_token) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e),
+        }
     }
 
     /// Run a call on the organization's HQ office. If the connection had died (or the office is not where it was),
@@ -401,8 +429,51 @@ impl OfficeConnection for RealOffice {
         }
     }
 
-    fn ping(&self) -> Result<(), SetupError> {
-        self.hello().map(|_| ()).map_err(|e| setup_error(&e))
+    fn ping(&self) -> Result<HelloResult, SetupError> {
+        self.hello().map_err(|e| setup_error(&e))
+    }
+
+    fn restart_office(&self, office_id: &str) -> Result<(), ApiError> {
+        // An app-only call gets a connection of its own (host contract): hello is sent and its answer read before the call,
+        // and nothing else is sent on that connection until the answer arrives, however long the host holds it (up to 30
+        // s). Probe ticks, listings and other restarts use the shared connection and never overlap it.
+        let client = Client::connect_host_in(&self.home).map_err(api_error)?;
+        let hello = client.hello().map_err(api_error)?;
+        if !hello.supports(org_proto::capability::OFFICE_RESTART) {
+            return Err(ApiError::new(
+                ErrorCode::UnknownMethod,
+                "This host can't restart offices from here.",
+            ));
+        }
+        let params = org_proto::OfficeRestartParams {
+            office_id: office_id.to_string(),
+        };
+        // The host may hold the call up to 30 s while it starts: wait longer than that. `not_ready` (it is still starting)
+        // is tried once more, as the spec says.
+        let ask = || {
+            client.call_with_timeout::<org_proto::OfficeRestart>(&params, Duration::from_secs(45))
+        };
+        let result = match ask() {
+            Err(ClientError::Api(api)) if api.code == ErrorCode::NotReady => {
+                std::thread::sleep(self.not_ready_pause);
+                ask()
+            }
+            other => other,
+        };
+        match result {
+            Ok(_) => Ok(()),
+            // Already starting or running: it is on its way; the live status says the rest.
+            Err(ClientError::Api(api)) if api.code == ErrorCode::Conflict => Ok(()),
+            Err(ClientError::Api(api)) if api.code == ErrorCode::NotReady => Err(ApiError::new(
+                ErrorCode::NotReady,
+                "The office host is still starting. Try again in a moment.",
+            )),
+            Err(ClientError::Timeout) => Err(ApiError::new(
+                ErrorCode::Unavailable,
+                "The office host didn't answer in time. Check its status in a moment.",
+            )),
+            Err(e) => Err(api_error(e)),
+        }
     }
 
     fn create_organization(&self, name: &str) -> Result<Organization, ApiError> {
@@ -510,7 +581,7 @@ mod tests {
     };
     use std::io::BufReader;
     use std::os::unix::net::{UnixListener, UnixStream};
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 
     const HQ: &str = "hq1";
 
@@ -560,6 +631,17 @@ mod tests {
         host_requests: Arc<AtomicUsize>,
         /// How many more times the host answers `organization.list` / `organization.create` with `not_ready`.
         not_ready: Arc<AtomicUsize>,
+        /// What the host's `hello` lists, and every `office.restart` it was asked for (by office id).
+        capabilities: Arc<Mutex<Vec<String>>>,
+        restarts: Arc<Mutex<Vec<String>>>,
+        /// Every method the host was asked, in the order the requests arrived (all connections).
+        host_log: Arc<Mutex<Vec<String>>>,
+        /// When set, the office refuses org.snapshot and the commands on a connection that hasn't `msg.bind`-ed.
+        require_bind: Arc<AtomicBool>,
+        /// The byte the host's app token is made of (the office accepts 7 only).
+        token_byte: Arc<AtomicU8>,
+        /// How many more `office.restart` calls the host answers `not_ready`.
+        restart_not_ready: Arc<AtomicUsize>,
     }
 
     /// `host_hangs_up_on_request`: the host closes the connection on its Nth request (0: never).
@@ -575,6 +657,18 @@ mod tests {
         let host_requests = Arc::new(AtomicUsize::new(0));
         let not_ready = Arc::new(AtomicUsize::new(0));
         let host_not_ready = Arc::clone(&not_ready);
+        let capabilities = Arc::new(Mutex::new(Vec::<String>::new()));
+        let host_capabilities = Arc::clone(&capabilities);
+        let restarts = Arc::new(Mutex::new(Vec::<String>::new()));
+        let host_restarts = Arc::clone(&restarts);
+        let host_log = Arc::new(Mutex::new(Vec::<String>::new()));
+        let log_in_host = Arc::clone(&host_log);
+        let require_bind = Arc::new(AtomicBool::new(false));
+        let office_requires_bind = Arc::clone(&require_bind);
+        let token_byte = Arc::new(AtomicU8::new(7));
+        let host_token_byte = Arc::clone(&token_byte);
+        let restart_not_ready = Arc::new(AtomicUsize::new(0));
+        let host_restart_not_ready = Arc::clone(&restart_not_ready);
         let organization = Organization {
             id: "org1".into(),
             name: "Acme".into(),
@@ -588,6 +682,7 @@ mod tests {
             host,
             Arc::new(move |r| {
                 let n = count.fetch_add(1, Ordering::SeqCst) + 1;
+                log_in_host.lock().unwrap().push(r.method.clone());
                 if host_hangs_up_on_request == n {
                     return None;
                 }
@@ -599,10 +694,42 @@ mod tests {
                             server_version: "test".into(),
                             host: "This Mac".into(),
                             office: None,
-                            capabilities: vec![],
+                            capabilities: host_capabilities.lock().unwrap().clone(),
                         },
                     )
                     .unwrap(),
+                    "office.app_token" => Response::ok::<org_proto::OfficeAppToken>(
+                        r.id,
+                        &org_proto::OfficeAppTokenResult {
+                            app_token: org_proto::AppToken::from_bytes(
+                                [host_token_byte.load(Ordering::SeqCst);
+                                    org_proto::APP_TOKEN_BYTES],
+                            ),
+                        },
+                    )
+                    .unwrap(),
+                    "office.restart"
+                        if host_restart_not_ready
+                            .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                            .is_ok() =>
+                    {
+                        Response::error(r.id, ApiError::new(ErrorCode::NotReady, "starting"))
+                    }
+                    "office.restart" => {
+                        let id = r.params["office_id"].as_str().unwrap_or("").to_string();
+                        host_restarts.lock().unwrap().push(id.clone());
+                        match id.as_str() {
+                            "busy" => Response::error(
+                                r.id,
+                                ApiError::new(ErrorCode::Conflict, "already starting"),
+                            ),
+                            "gone" => Response::error(
+                                r.id,
+                                ApiError::new(ErrorCode::NotFound, "no such office"),
+                            ),
+                            _ => Response::ok::<org_proto::OfficeRestart>(r.id, &Empty {}).unwrap(),
+                        }
+                    }
                     "organization.list" | "organization.create"
                         if host_not_ready
                             .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
@@ -649,6 +776,39 @@ mod tests {
                     );
                 }
                 log.lock().unwrap().push(r.method.clone());
+                thread_local! {
+                    // Each connection is served on a thread of its own: this is that connection's binding.
+                    static BOUND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+                }
+                if r.method == "msg.bind" {
+                    let good = serde_json::to_value(org_proto::AppToken::from_bytes(
+                        [7; org_proto::APP_TOKEN_BYTES],
+                    ))
+                    .unwrap();
+                    if r.params["app_token"] != good {
+                        return Some(Response::error(
+                            r.id,
+                            ApiError::new(ErrorCode::NotAuthorized, "wrong token"),
+                        ));
+                    }
+                    BOUND.set(true);
+                    return Some(
+                        Response::ok::<org_proto::msg::MsgBind>(
+                            r.id,
+                            &org_proto::msg::MsgBindResult {
+                                member_id: None,
+                                office_id: HQ.into(),
+                            },
+                        )
+                        .unwrap(),
+                    );
+                }
+                if office_requires_bind.load(Ordering::SeqCst) && !BOUND.get() {
+                    return Some(Response::error(
+                        r.id,
+                        ApiError::new(ErrorCode::NotAuthorized, "bind first"),
+                    ));
+                }
                 Some(match r.method.as_str() {
                     "org.snapshot" => Response::ok::<OrgSnapshotCall>(r.id, &empty_org()).unwrap(),
                     _ if r.params["name"] == "Taken" => {
@@ -670,6 +830,12 @@ mod tests {
             asked,
             host_requests,
             not_ready,
+            capabilities,
+            restarts,
+            host_log,
+            require_bind,
+            token_byte,
+            restart_not_ready,
         }
     }
 
@@ -1016,8 +1182,8 @@ mod tests {
         let f = fake(OfficeStatus::Active, 0);
         let office = real(&f);
         office.org_snapshot("org1").unwrap();
-        let after_first = f.host_requests.load(Ordering::SeqCst); // hello on connecting, then the list
-        assert_eq!(after_first, 2);
+        let after_first = f.host_requests.load(Ordering::SeqCst); // hello on connecting, the list, hello for the capabilities
+        assert_eq!(after_first, 3);
         office.org_snapshot("org1").unwrap();
         assert_eq!(f.host_requests.load(Ordering::SeqCst), after_first);
     }
@@ -1246,5 +1412,140 @@ mod tests {
         );
         // hello (connect), hello (check), one create.
         assert_eq!(f.host_requests.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn a_restart_is_asked_only_of_a_host_that_lists_the_capability() {
+        let f = fake(OfficeStatus::Active, 0);
+        let err = real(&f).restart_office("hq1").unwrap_err();
+        assert_eq!(err.code, ErrorCode::UnknownMethod);
+        assert!(f.restarts.lock().unwrap().is_empty(), "nothing was sent");
+        f.capabilities
+            .lock()
+            .unwrap()
+            .push(org_proto::capability::OFFICE_RESTART.to_string());
+        f.host_log.lock().unwrap().clear();
+        real(&f).restart_office("hq1").unwrap();
+        assert_eq!(f.restarts.lock().unwrap().as_slice(), ["hq1"]);
+        // On a connection of its own: hello (answered, the client blocks), then the app-only call, and nothing else.
+        assert_eq!(
+            f.host_log.lock().unwrap().as_slice(),
+            ["hello", "office.restart"]
+        );
+    }
+
+    #[test]
+    fn an_office_that_is_already_starting_is_not_an_error_but_a_missing_one_is() {
+        let f = fake(OfficeStatus::Active, 0);
+        f.capabilities
+            .lock()
+            .unwrap()
+            .push(org_proto::capability::OFFICE_RESTART.to_string());
+        let office = real(&f);
+        office.restart_office("busy").unwrap();
+        assert_eq!(
+            office.restart_office("gone").unwrap_err().code,
+            ErrorCode::NotFound
+        );
+    }
+
+    #[test]
+    fn an_office_that_wants_the_app_bound_is_bound_before_snapshots_and_commands_and_an_unbound_call_is_refused(
+    ) {
+        let f = fake(OfficeStatus::Active, 0);
+        f.require_bind.store(true, Ordering::SeqCst);
+        f.capabilities
+            .lock()
+            .unwrap()
+            .push(org_proto::capability::OFFICE_APP_TOKEN.to_string());
+        // An unbound connection is refused by the office.
+        let unbound = Client::connect_office(&hq(OfficeStatus::Active), f.home.path()).unwrap();
+        let refused = unbound.call::<OrgSnapshotCall>(&Empty {}).unwrap_err();
+        assert!(
+            matches!(&refused, ClientError::Api(a) if a.code == ErrorCode::NotAuthorized),
+            "{refused:?}"
+        );
+        // The app asks the host for the token, on a connection of its own after hello, binds, and then it works.
+        let office = real(&f);
+        assert_eq!(
+            office
+                .org_snapshot("org1")
+                .unwrap()
+                .members
+                .iter()
+                .filter(|m| m.owner)
+                .count(),
+            1
+        );
+        let command = command(
+            "team.create",
+            serde_json::json!({"team_id": "t", "name": "Ops"}),
+        );
+        office.org_command("org1", &command).unwrap();
+        let host = f.host_log.lock().unwrap().clone();
+        let token_at = host
+            .iter()
+            .position(|m| m == "office.app_token")
+            .expect("the token was asked for");
+        assert_eq!(
+            host[token_at - 1],
+            "hello",
+            "hello comes first on that connection"
+        );
+        assert_eq!(
+            host.iter().filter(|m| *m == "office.app_token").count(),
+            1,
+            "once per connection, not per call"
+        );
+        assert!(f.asked.lock().unwrap().contains(&"msg.bind".to_string()));
+    }
+
+    #[test]
+    fn a_host_without_the_token_capability_is_an_older_one_and_the_connection_is_used_as_it_is() {
+        let f = fake(OfficeStatus::Active, 0);
+        real(&f).org_snapshot("org1").unwrap();
+        assert!(!f
+            .host_log
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|m| m == "office.app_token"));
+        assert!(!f.asked.lock().unwrap().contains(&"msg.bind".to_string()));
+    }
+
+    #[test]
+    fn a_wrong_token_binds_nothing_and_the_reads_fail_closed() {
+        let f = fake(OfficeStatus::Active, 0);
+        f.require_bind.store(true, Ordering::SeqCst);
+        f.capabilities
+            .lock()
+            .unwrap()
+            .push(org_proto::capability::OFFICE_APP_TOKEN.to_string());
+        f.token_byte.store(9, Ordering::SeqCst); // the host hands out a token the office doesn't accept
+        let err = real(&f).org_snapshot("org1").unwrap_err();
+        assert_eq!(err.code, ErrorCode::NotAuthorized);
+    }
+
+    #[test]
+    fn a_restart_that_is_not_ready_is_tried_once_more_and_then_says_so() {
+        let f = fake(OfficeStatus::Active, 0);
+        f.capabilities
+            .lock()
+            .unwrap()
+            .push(org_proto::capability::OFFICE_RESTART.to_string());
+        f.restart_not_ready.store(1, Ordering::SeqCst);
+        real(&f).restart_office("hq1").unwrap();
+        assert_eq!(
+            f.restarts.lock().unwrap().as_slice(),
+            ["hq1"],
+            "the second try went through"
+        );
+        f.restart_not_ready.store(2, Ordering::SeqCst);
+        let err = real(&f).restart_office("hq1").unwrap_err();
+        assert_eq!(err.code, ErrorCode::NotReady);
+        assert_eq!(
+            err.message,
+            "The office host is still starting. Try again in a moment."
+        );
     }
 }
