@@ -54,7 +54,8 @@ pub trait KeyProvider {
     fn load(&self, office_id: &str) -> Result<Option<Key>, KeyError>;
 
     /// Saves `key` for `office_id`. Must not return `Ok` until the key is durable: the
-    /// office creates its database only after this succeeds.
+    /// office creates its database only after this succeeds. Must never replace a key that
+    /// already exists for the id (fail instead): the office checks first, but two offices may race.
     fn store(&self, office_id: &str, key: &Key) -> Result<(), KeyError>;
 
     /// Removes the key saved for `office_id`; having none is not an error. Only a failed

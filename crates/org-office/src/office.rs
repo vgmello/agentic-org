@@ -117,6 +117,7 @@ impl Office {
         }
         let folder = absolute(folder.into()).map_err(OfficeError::storage)?;
         check_named_by(&folder, &info.office_id)?;
+        check_not_a_link(&folder)?;
         private_dir(&folder).map_err(OfficeError::storage)?;
         // The folder may already exist (e.g. the host made it): owner-only regardless.
         tighten_dir(&folder).map_err(OfficeError::storage)?;
@@ -136,11 +137,10 @@ impl Office {
             return Err(OfficeError::KeyExists);
         }
         let key = Key::generate().map_err(OfficeError::storage)?;
-        if let Err(error) = keys.store(&info.office_id, &key) {
-            // It may have saved the key before failing; no database exists yet to need it.
-            let _ = keys.delete(&info.office_id);
-            return Err(OfficeError::Storage(error));
-        }
+        // A failure here may have saved the key anyway; it is left for `discard`, since a
+        // delete could remove another office's key if the store failed for "exists".
+        keys.store(&info.office_id, &key)
+            .map_err(OfficeError::Storage)?;
 
         match build(&folder, &key, &info) {
             Ok((org, local)) => Ok(Self {
@@ -180,6 +180,7 @@ impl Office {
         lock_wait: Duration,
     ) -> Result<Self, OfficeError> {
         let folder = absolute(folder.into()).map_err(OfficeError::storage)?;
+        check_not_a_link(&folder)?;
         match fs::metadata(&folder) {
             Ok(metadata) if metadata.is_dir() => {}
             Ok(_) => return Err(OfficeError::Invalid("the office folder is not a folder")),
@@ -229,7 +230,9 @@ impl Office {
     /// - databases it cannot check (the key is missing, the keychain refuses, SQLCipher
     ///   fails) are an error (`Storage`), and nothing is deleted.
     ///
-    /// A folder that is not there is fine (its orphan key is still removed).
+    /// A refused discard removes nothing (checking a database may leave an empty log and index file
+    /// beside it, which SQLite ignores). A folder that is not there is fine (its orphan key is
+    /// still removed); one that is a link, or holds anything an office does not make, is `Invalid`.
     pub fn discard(
         folder: impl Into<PathBuf>,
         office_id: &str,
@@ -255,6 +258,7 @@ impl Office {
         // Lock first, even when there is no folder yet: a create of this id that starts now
         // must not have its key deleted under it. (An empty folder is left behind only if the
         // delete below fails; the next discard or create finds it empty.)
+        check_not_a_link(&folder)?;
         private_dir(&folder).map_err(OfficeError::storage)?;
         let _lock = lock_folder(&folder, lock_wait)?;
 
@@ -283,6 +287,10 @@ impl Office {
                 )));
             }
             if holds_data(&org_db)? {
+                // "Committed" means org.db holds the organization row `create` writes last. When
+                // the HQ event log arrives this must become "holds any committed log entry",
+                // in the same change, or a real office that lost its office.json becomes
+                // deletable.
                 let committed = Store::inspect(&org_db, &key, |db| {
                     let has_meta: bool = db
                         .query_row(
@@ -311,7 +319,7 @@ impl Office {
         // the end. If the key cannot be deleted (or we crash before), the folder holds nothing
         // the key was for and a retry finishes; databases whose key is gone, which a retry
         // would have to refuse, are never left.
-        empty_folder_but_the_lock(&folder)?;
+        empty_folder_but_the_lock(&folder, &mut |_| {})?;
         keys.delete(office_id).map_err(OfficeError::Storage)?;
         remove_the_empty_folder(&folder)
     }
@@ -463,19 +471,32 @@ fn remove_the_empty_folder(folder: &Path) -> Result<(), OfficeError> {
     }
 }
 
-/// Removes everything in `folder` except the lock file.
-fn empty_folder_but_the_lock(folder: &Path) -> Result<(), OfficeError> {
+/// Removes what an office makes from `folder`, all but the lock file. **Refuses** (and removes
+/// nothing) a folder that holds anything else, so a wrong path whose last name happens to be an
+/// id can never have its own files deleted. `removing` is told each name just before it goes.
+fn empty_folder_but_the_lock(
+    folder: &Path,
+    removing: &mut dyn FnMut(&str),
+) -> Result<(), OfficeError> {
     let mut entries = Vec::new();
     for entry in fs::read_dir(folder).map_err(OfficeError::storage)? {
         let entry = entry.map_err(OfficeError::storage)?;
-        if entry.file_name() != LOCK_FILE {
-            entries.push(entry);
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name == LOCK_FILE {
+            continue;
         }
+        if !OFFICE_ENTRIES.contains(&name.as_str()) {
+            return Err(OfficeError::Invalid(
+                "the folder holds something an office does not make",
+            ));
+        }
+        entries.push((name, entry));
     }
     // A failure or a crash part-way must leave a state a retry can finish: a database's main
     // file never goes before its log.
-    entries.sort_by_key(|entry| removal_rank(&entry.file_name().to_string_lossy()));
-    for entry in entries {
+    entries.sort_by_key(|(name, _)| removal_rank(name));
+    for (name, entry) in entries {
+        removing(&name);
         let path = entry.path();
         let removed = if entry.file_type().map_err(OfficeError::storage)?.is_dir() {
             fs::remove_dir_all(&path)
@@ -485,6 +506,19 @@ fn empty_folder_but_the_lock(folder: &Path) -> Result<(), OfficeError> {
         removed.map_err(OfficeError::storage)?;
     }
     Ok(())
+}
+
+/// Refuses a folder path that is a link (or anything but a directory): an office folder is
+/// never reached through one, so nothing is created, locked or removed through a planted link.
+fn check_not_a_link(folder: &Path) -> Result<(), OfficeError> {
+    match fs::symlink_metadata(folder) {
+        Ok(metadata) if metadata.is_dir() => Ok(()),
+        Ok(_) => Err(OfficeError::Invalid(
+            "the office folder is not a plain folder",
+        )),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(OfficeError::storage(e)),
+    }
 }
 
 /// The order entries are removed in: everything else, then a database's log and index files,
@@ -499,26 +533,23 @@ fn removal_rank(name: &str) -> u8 {
     }
 }
 
-/// Removal of what a failed `create` made (never the lock file). It tries every entry and
-/// reports whether all are gone.
+/// Removal of what a failed `create` made (never the lock file); an error means some is left.
 fn remove_entries(folder: &Path) -> std::io::Result<()> {
     #[cfg(test)]
     if FAIL_CLEANUP.with(std::cell::Cell::get) {
         return Err(std::io::Error::other("injected cleanup failure"));
     }
-    let mut result = Ok(());
+    // In order, stopping at the first failure: a database's main file never goes before its
+    // log, so what is left can still be discarded.
     for entry in OFFICE_ENTRIES {
         let path = folder.join(entry);
-        let removed = match fs::symlink_metadata(&path) {
-            Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(&path),
-            Ok(_) => fs::remove_file(&path),
-            Err(_) => Ok(()),
-        };
-        if let Err(error) = removed {
-            result = Err(error);
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(&path)?,
+            Ok(_) => fs::remove_file(&path)?,
+            Err(_) => {}
         }
     }
-    result
+    Ok(())
 }
 
 /// Whether anything is at `path` (a dangling link counts). Anything but "not found" is an
@@ -542,11 +573,16 @@ fn holds_data(path: &Path) -> Result<bool, OfficeError> {
 }
 
 #[cfg(test)]
+type StepHook = Box<dyn Fn(&Path, &str)>;
+
+#[cfg(test)]
 thread_local! {
     /// Makes `build` fail at the named step, to test what a half-done create leaves behind.
     static FAIL_AT: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
     /// Makes `remove_entries` fail without removing anything.
     static FAIL_CLEANUP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Called at every step `build` reaches.
+    static ON_STEP: std::cell::RefCell<Option<StepHook>> = const { std::cell::RefCell::new(None) };
     /// Each step `build` reached, and whether `office.json` existed by then.
     static REACHED: std::cell::RefCell<Vec<(&'static str, bool)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
@@ -555,6 +591,11 @@ thread_local! {
 fn failpoint(folder: &Path, step: &'static str) -> Result<(), OfficeError> {
     let finished = folder.join(office_file::FILE_NAME).exists();
     REACHED.with(|reached| reached.borrow_mut().push((step, finished)));
+    ON_STEP.with(|hook| {
+        if let Some(hook) = hook.borrow().as_ref() {
+            hook(folder, step);
+        }
+    });
     if FAIL_AT.with(std::cell::Cell::get) == Some(step) {
         return Err(OfficeError::storage(std::io::Error::other(
             "injected failure",

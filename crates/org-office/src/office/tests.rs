@@ -873,3 +873,157 @@ fn files_are_removed_logs_first_and_main_databases_last() {
     assert!(at("org.db-wal") < at("org.db") && at("org.db-shm") < at("org.db"));
     assert!(at("office.db-wal") < at("office.db") && at("office.db-shm") < at("office.db"));
 }
+
+// ---- review round 3 -------------------------------------------------------------------------
+
+#[test]
+fn discard_refuses_a_folder_holding_something_an_office_does_not_make() {
+    // A wrong path whose last name happens to be an id: its own files are not ours to delete.
+    let dir = TempDir::new().unwrap();
+    let keys = InMemoryKeys::new();
+    keys.store(ID, &Key::from_bytes([1; 32])).unwrap();
+    let folder = folder_of(&dir, ID);
+    fs::create_dir_all(folder.join("sub/deep")).unwrap();
+    fs::write(folder.join("notes.txt"), b"mine").unwrap();
+    fs::write(folder.join("sub/deep/x"), b"mine too").unwrap();
+    fs::create_dir(folder.join("workspace")).unwrap();
+
+    assert!(matches!(
+        Office::discard(&folder, ID, &keys),
+        Err(OfficeError::Invalid(_))
+    ));
+
+    assert_eq!(fs::read(folder.join("notes.txt")).unwrap(), b"mine");
+    assert_eq!(fs::read(folder.join("sub/deep/x")).unwrap(), b"mine too");
+    assert!(
+        folder.join("workspace").exists(),
+        "something went before the refusal"
+    );
+    assert!(keys.load(ID).unwrap().is_some(), "the key went");
+}
+
+#[test]
+fn a_folder_that_is_a_link_is_never_followed() {
+    let dir = TempDir::new().unwrap();
+    let keys = InMemoryKeys::new();
+    keys.store(ID, &Key::from_bytes([1; 32])).unwrap();
+    let target = dir.path().join("elsewhere");
+    fs::create_dir_all(&target).unwrap();
+    fs::write(target.join("keep"), b"mine").unwrap();
+    let folder = folder_of(&dir, ID);
+    fs::create_dir_all(folder.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&target, &folder).unwrap();
+
+    assert!(matches!(
+        Office::discard(&folder, ID, &keys),
+        Err(OfficeError::Invalid(_))
+    ));
+    assert!(matches!(
+        Office::create(&folder, &new_office(ID), &keys),
+        Err(OfficeError::Invalid(_))
+    ));
+    assert!(matches!(
+        Office::open(&folder, &keys),
+        Err(OfficeError::Invalid(_))
+    ));
+
+    assert_eq!(
+        names_in(&target),
+        ["keep"],
+        "something was made or removed through the link"
+    );
+    assert!(keys.load(ID).unwrap().is_some());
+}
+
+#[test]
+fn discard_refuses_a_folder_with_office_json_even_if_nothing_is_committed() {
+    let (dir, keys, office) = made();
+    let folder = folder_of(&dir, ID);
+    drop(office);
+    // Only the marker and the lock are left: still a finished office as far as discard knows.
+    for entry in [
+        "org.db",
+        "org.db-wal",
+        "org.db-shm",
+        "office.db",
+        "office.db-wal",
+        "office.db-shm",
+    ] {
+        let _ = fs::remove_file(folder.join(entry));
+    }
+    assert!(matches!(
+        Office::discard(&folder, ID, &keys),
+        Err(OfficeError::OfficeExists)
+    ));
+    assert!(folder.join("office.json").exists());
+    assert!(keys.load(ID).unwrap().is_some());
+}
+
+#[test]
+fn the_organization_is_committed_before_office_json_is_written() {
+    let keys = std::sync::Arc::new(InMemoryKeys::new());
+    let seen_keys = std::sync::Arc::clone(&keys);
+    ON_STEP.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move |folder, step| {
+            if step == "office_json" {
+                let key = seen_keys.load(ID).unwrap().unwrap();
+                let committed = Store::inspect(&folder.join("org.db"), &key, |db| {
+                    db.query_row(
+                        "SELECT EXISTS (SELECT 1 FROM meta WHERE key = 'organization_id')",
+                        (),
+                        |row| row.get::<_, bool>(0),
+                    )
+                    .map_err(OfficeError::storage)
+                })
+                .unwrap();
+                assert!(
+                    committed,
+                    "office.json would be written before the organization"
+                );
+            }
+        }));
+    });
+    let dir = TempDir::new().unwrap();
+    let result = Office::create(folder_of(&dir, ID), &new_office(ID), &*keys);
+    ON_STEP.with(|hook| *hook.borrow_mut() = None);
+    result.unwrap();
+}
+
+#[test]
+fn discard_removes_logs_before_main_databases_in_the_order_it_says() {
+    let dir = TempDir::new().unwrap();
+    let folder = dir.path().join("f");
+    fs::create_dir_all(folder.join("workspace")).unwrap();
+    for name in [
+        "org.db",
+        "org.db-wal",
+        "org.db-shm",
+        "office.db",
+        "office.db-wal",
+        "office.json.tmp",
+        LOCK_FILE,
+    ] {
+        fs::write(folder.join(name), b"x").unwrap();
+    }
+    let mut order = Vec::new();
+
+    empty_folder_but_the_lock(&folder, &mut |name| order.push(name.to_owned())).unwrap();
+
+    assert_eq!(names_in(&folder), [LOCK_FILE]);
+    let ranks: Vec<u8> = order.iter().map(|n| removal_rank(n)).collect();
+    assert!(ranks.windows(2).all(|w| w[0] <= w[1]), "{order:?}");
+    assert_eq!(order.len(), 7, "{order:?}");
+}
+
+#[test]
+fn the_last_step_never_removes_a_folder_a_create_has_started_filling() {
+    let dir = TempDir::new().unwrap();
+    let folder = dir.path().join("f");
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(folder.join(LOCK_FILE), b"").unwrap();
+    fs::write(folder.join("org.db"), b"a new create's").unwrap();
+
+    remove_the_empty_folder(&folder).unwrap();
+
+    assert_eq!(fs::read(folder.join("org.db")).unwrap(), b"a new create's");
+}
