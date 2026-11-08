@@ -389,6 +389,7 @@ codex exec review ...
 - **Hooks:** events are `PreModelRequest`, `PostModelRequest`, `PreToolUse`, `PermissionRequest`, `PostToolUse`, `PreCompact`, `PostCompact`, `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `SubagentStart`, `SubagentStop`, **`Stop`**, `Interrupt` **[src: hooks/src/lib.rs]**. They need **persisted hook trust**, or `--dangerously-bypass-hook-trust` for vetted automation. That matters for ADR-0003's Stop adapter.
 - **Required MCP servers:** an enabled server with `required = true` that fails to start makes `exec` exit with an error **[doc]**.
 - **Env vars:** `CODEX_HOME`, `CODEX_API_KEY` (exec), `OPENAI_API_KEY`. Don't put keys in the env of jobs that run repo code **[doc]**.
+- **Tool shells filter the environment:** `shell_environment_policy` (in 0.167.0, with `ignore_default_excludes` and `include_only`) drops variables whose names match `*KEY*`, `*SECRET*` or `*TOKEN*` from tool shells by default **[review]**. That would drop `ORG_SESSION_TOKEN`, so the office pins `shell_environment_policy.ignore_default_excludes=true` and an `include_only` list of its allowlist with `-c`, on the app-server and on `codex resume`. The S0 Codex spike proves `org-agent` binds from a tool. Antigravity's filtering is unknown: its spike checks it too.
 - **Stability:** app-server is experimental. Experimental fields need `capabilities.experimentalApi`, and the schema follows each CLI version.
 
 ---
@@ -651,11 +652,13 @@ Whatever the choice, ADR-0004 should state how the office sends a prompt and rea
   - `thread/tokenUsage/updated`.
   - TUI `--remote` joining a thread the office already loaded, only over `--ws-auth capability-token` (optional).
   - Hook trust for the ADR-0003 Stop adapter.
+  - `org-agent` binds from a tool shell with the `shell_environment_policy` pins (the token survives).
 - **S-agy** (install 1.5.x, sign in once):
   - `agy acp` versus stream-json: interrupt, resume, `request_permission`, usage.
   - Where conversations live.
   - Whether headless conversations are resumable interactively.
   - The custom-agent file as the instructions carrier.
+  - Whether agy filters its tools' environment (the session token must reach `org-agent`).
 
 ## Sources
 
