@@ -53,6 +53,7 @@ pub mod org;
 mod calls;
 mod error;
 mod events;
+mod name;
 mod types;
 mod wire;
 
@@ -63,6 +64,7 @@ pub use calls::{
 };
 pub use error::{ApiError, CallError, ErrorCode};
 pub use events::{EventKind, OrganizationCreated};
+pub use name::{NameError, OrganizationName};
 pub use org::{
     CommandAccepted, CommandStatus, Member, MemberKind, Membership, OrgChange, OrgChanged,
     OrgChangedData, OrgRejected, OrgRejectedData, OrgSnapshot, OrgSnapshotCall, Position,

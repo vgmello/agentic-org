@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 /// are removed, exactly as Rust's `str::trim` does. JavaScript's `String.prototype.trim`
 /// uses a different set (it strips U+FEFF and keeps U+0085), so a TypeScript pre-check must
 /// trim the `White_Space` set itself.
+///
+/// Servers check the rule with [`crate::OrganizationName::parse`], and compare names for
+/// uniqueness by [`crate::OrganizationName::key`].
 pub const ORGANIZATION_NAME_MAX_CHARS: usize = 64;
 
 /// An office: a node of one organization, run by its own `org-office-server` process.
