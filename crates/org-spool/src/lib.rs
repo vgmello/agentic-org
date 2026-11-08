@@ -7,6 +7,7 @@
 
 pub mod envelope;
 pub mod meta;
+pub mod relay;
 mod safe_read;
 pub mod spool;
 pub mod time;
@@ -21,6 +22,7 @@ pub use meta::{
     MemberProfile, MemberStatus, MessageTriageEntry, NotifyItem, NotifyOptions, NotifyReport,
     RefEntry, TeamEntry, TriageState, NOTIFY_MAX_ITEMS, OWNER_ID,
 };
+pub use relay::RelayOutcome;
 pub use spool::{
     is_interrupted, poll_unix_listener, poll_unix_listener_events, request_interrupt,
     DeliverOutcome, DeliverSummary, Spool, SpoolError, SpoolStatus, WakeEvents, WakeListener,

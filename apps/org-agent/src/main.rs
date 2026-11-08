@@ -5,21 +5,15 @@
 
 use std::collections::BTreeMap;
 use std::env;
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read, Write};
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-use std::os::unix::io::AsRawFd;
-use std::os::unix::net::UnixListener;
+use std::io::{self, Read};
 use std::path::Path;
-use std::process::{self, ExitCode};
-use std::thread;
-use std::time::{Duration, Instant, SystemTime};
+use std::process::ExitCode;
+use std::time::{Duration, SystemTime};
 
 use org_spool::{
-    format_iso8601_utc, is_interrupted, json_quote, parse_duration_arg, poll_unix_listener,
-    request_interrupt, sanitize_inline_text, validate_agent_id, DirectoryCard, Envelope,
-    MemberProfile, MessagePriority, MetaValue, NotifyOptions, RefEntry, Spool, SpoolError,
-    TeamEntry, OWNER_ID,
+    format_iso8601_utc, json_quote, parse_duration_arg, request_interrupt, sanitize_inline_text,
+    validate_agent_id, DirectoryCard, Envelope, MemberProfile, MessagePriority, MetaValue,
+    NotifyOptions, RefEntry, RelayOutcome, Spool, SpoolError, TeamEntry, OWNER_ID,
 };
 
 const EXIT_OK: u8 = 0;
@@ -33,13 +27,9 @@ const EXIT_INTERRUPTED: u8 = 130;
 
 const SIGINT: i32 = 2;
 const SIGTERM: i32 = 15;
-const LOCK_EX: i32 = 2;
-const LOCK_NB: i32 = 4;
-const LOCK_UN: i32 = 8;
 
 extern "C" {
     fn signal(sig: i32, handler: extern "C" fn(i32)) -> usize;
-    fn flock(fd: i32, operation: i32) -> i32;
 }
 
 extern "C" fn on_termination_signal(_sig: i32) {
@@ -64,117 +54,22 @@ impl From<SpoolError> for CliError {
     }
 }
 
-struct RelayLockGuard {
-    file: File,
-}
-
-impl RelayLockGuard {
-    fn try_acquire(spool: &Spool) -> Result<Option<Self>, io::Error> {
-        let lock_path = spool.relay_lock_path();
-        if let Some(parent) = lock_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .mode(0o600)
-            .open(&lock_path)?;
-        let rc = unsafe { flock(file.as_raw_fd(), LOCK_EX | LOCK_NB) };
-        if rc != 0 {
-            return Ok(None);
-        }
-        file.set_len(0)?;
-        let _ = writeln!(file, "{}", process::id());
-        let _ = file.sync_all();
-        Ok(Some(Self { file }))
-    }
-}
-
-impl Drop for RelayLockGuard {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = flock(self.file.as_raw_fd(), LOCK_UN);
-        }
-    }
-}
-
-fn is_relay_running(spool: &Spool) -> (bool, Option<u32>) {
-    let lock_path = spool.relay_lock_path();
-    let Ok(mut file) = OpenOptions::new().read(true).write(true).open(&lock_path) else {
-        return (false, None);
-    };
-    let rc = unsafe { flock(file.as_raw_fd(), LOCK_EX | LOCK_NB) };
-    if rc == 0 {
-        unsafe {
-            let _ = flock(file.as_raw_fd(), LOCK_UN);
-        }
-        (false, None)
-    } else {
-        let mut s = String::new();
-        let _ = file.read_to_string(&mut s);
-        let pid = s.trim().parse::<u32>().ok();
-        (true, pid)
-    }
-}
-
 fn run_relay_loop(spool: &Spool, once: bool) -> Result<u8, CliError> {
-    let Some(_guard) = RelayLockGuard::try_acquire(spool).map_err(SpoolError::Io)? else {
-        eprintln!("org-relay: another relay instance is already running");
-        return Ok(EXIT_USAGE);
-    };
-
-    let _ = spool.prune_old_cur();
-    let initial = spool.deliver_all()?;
-    if once {
-        println!("delivered={} dead={}", initial.delivered, initial.dead);
-        return Ok(EXIT_OK);
+    match spool.run_relay(once)? {
+        RelayOutcome::AlreadyRunning => {
+            eprintln!("org-relay: another relay instance is already running");
+            Ok(EXIT_USAGE)
+        }
+        RelayOutcome::Once(summary) => {
+            println!("delivered={} dead={}", summary.delivered, summary.dead);
+            Ok(EXIT_OK)
+        }
+        RelayOutcome::Stopped => Ok(EXIT_OK),
     }
-
-    let sock_path = spool.relay_socket_path();
-    let _ = fs::remove_file(&sock_path);
-    let listener = match UnixListener::bind(&sock_path) {
-        Ok(l) => {
-            let _ = fs::set_permissions(&sock_path, fs::Permissions::from_mode(0o600));
-            let _ = l.set_nonblocking(true);
-            Some(l)
-        }
-        Err(_) => None,
-    };
-
-    let poll_interval = Duration::from_millis(500);
-    let mut last_sweep = Instant::now();
-
-    while !is_interrupted() {
-        let mut nudged = false;
-        if let Some(ref l) = listener {
-            while let Ok((mut stream, _)) = l.accept() {
-                let mut buf = [0u8; 16];
-                let _ = stream.read(&mut buf);
-                nudged = true;
-            }
-        }
-        if nudged || spool.has_pending_outbox() || last_sweep.elapsed() >= poll_interval {
-            let _ = spool.deliver_all();
-            last_sweep = Instant::now();
-        }
-        if let Some(ref l) = listener {
-            let remaining = poll_interval.saturating_sub(last_sweep.elapsed());
-            let wait_slice = remaining.min(Duration::from_millis(2));
-            let _ = poll_unix_listener(l, wait_slice);
-        } else {
-            thread::sleep(Duration::from_millis(2));
-        }
-    }
-
-    let _ = spool.deliver_all();
-    let _ = fs::remove_file(&sock_path);
-    Ok(EXIT_OK)
 }
 
 fn run_relay_status(spool: &Spool, json: bool) -> Result<u8, CliError> {
-    let (running, pid) = is_relay_running(spool);
+    let (running, pid) = spool.is_relay_running();
     let st = spool.status()?;
     if json {
         let pid_str = pid.map(|p| p.to_string()).unwrap_or_else(|| "null".into());
