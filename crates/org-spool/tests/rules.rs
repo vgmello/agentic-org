@@ -966,6 +966,27 @@ fn rule_a_non_canonical_snooze_time_counts_as_due() {
 }
 
 #[test]
+fn rule_wake_nudges_go_only_to_real_sockets_not_through_symlinks() {
+    let t = TempSpool::new("wake_link");
+    let outside = std::os::unix::net::UnixListener::bind(t.dir.join("o.sock")).unwrap();
+    outside.set_nonblocking(true).unwrap();
+    let wake = t.dir.join(format!("spool/inbox/{ME}/wake"));
+    std::os::unix::fs::symlink(t.dir.join("o.sock"), wake.join("1-link.sock")).unwrap();
+    fs::write(wake.join("2-file.sock"), b"").unwrap();
+    let own = t.spool.bind_wake_listener(ME).unwrap();
+
+    t.send("x", Some(MessagePriority::High));
+    assert!(
+        outside.accept().is_err(),
+        "a symlinked .sock must not be connected to"
+    );
+    assert!(
+        own.wait_slice(Duration::from_millis(500)),
+        "the real socket was nudged"
+    );
+}
+
+#[test]
 fn rule_a_corrupt_triage_file_is_set_aside_not_fatal() {
     let t = TempSpool::new("corrupt");
     let id = t.ask("q");

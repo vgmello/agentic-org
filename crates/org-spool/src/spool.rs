@@ -7,7 +7,7 @@ use std::env;
 use std::fmt;
 use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::{self, ErrorKind, Read, Write};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, FileTypeExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::io::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -473,6 +473,11 @@ impl Spool {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) != Some("sock") {
+                continue;
+            }
+            // Only real sockets (the entry's own type, never a symlink's target): a link
+            // planted here must not make the relay connect elsewhere.
+            if !entry.file_type().is_ok_and(|t| t.is_socket()) {
                 continue;
             }
             match UnixStream::connect(&path) {
