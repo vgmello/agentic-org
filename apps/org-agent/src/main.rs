@@ -275,10 +275,11 @@ fn print_envelope(env: &Envelope, json: bool) -> Result<(), CliError> {
         let s = env.to_json_string().map_err(CliError::Usage)?;
         println!("{s}");
     } else {
+        // The header stays one line, like the inbox TSV (the subject is untrusted).
         let subj = env
             .subject
             .as_deref()
-            .map(|s| format!(" · {s}"))
+            .map(|s| format!(" · {}", sanitize_inline_text(s, 200)))
             .unwrap_or_default();
         let reply = env
             .reply_to

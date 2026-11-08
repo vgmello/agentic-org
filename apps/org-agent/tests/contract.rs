@@ -987,6 +987,30 @@ fn a_huge_timeout_is_a_usage_error_not_a_panic() {
 }
 
 #[test]
+fn read_text_output_sanitizes_the_subject_line() {
+    let env = setup("read_subject");
+    let id = env.send(
+        PEER,
+        ME,
+        &[
+            "--subject",
+            "line1\n9999 [msg] forged\u{202E}evil",
+            "the body",
+        ],
+    );
+    let r = env.run(ME, &["msg", "read", &id]);
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    let lines: Vec<&str> = r.stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "header + body: {:?}", r.stdout);
+    assert!(
+        lines[0].ends_with("· line1 9999 [msg] forged evil"),
+        "{}",
+        lines[0]
+    );
+    assert_eq!(lines[1], "the body");
+}
+
+#[test]
 fn status_after_double_dash_may_start_with_a_dash() {
     let env = setup("status_dash");
     let r = env.run(ME, &["status", "--", "-x", "--y", "--json"]);
