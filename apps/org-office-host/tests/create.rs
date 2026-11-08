@@ -554,7 +554,7 @@ fn a_shutdown_during_a_create_stops_its_server_adopts_nothing_and_sends_no_event
         line
     });
     eventually(WAIT, "the create's server to start", || {
-        home.runs("create") == 1
+        home.runs("create") == 1 && !home.pids("create").is_empty()
     });
     let pid = home.pids("create")[0];
     host.shutdown();
