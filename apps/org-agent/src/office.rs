@@ -14,7 +14,7 @@
 //! never in a notice or an error.
 
 use std::cell::Cell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::time::{Duration, Instant};
 
@@ -27,8 +27,8 @@ use org_proto::msg::{
 };
 use org_proto::{Call, ErrorCode, MemberKind};
 use org_spool::{
-    generate_ulid, is_interrupted, DirectoryCard, InboxItem, InboxQuery, MessagePriority, Outgoing,
-    RefEntry, TeamEntry, ENVELOPE_VERSION, INBOX_SUMMARY_DEFAULT_LIMIT,
+    generate_ulid, is_interrupted, sanitize_inline_text, DirectoryCard, InboxItem, InboxQuery,
+    MessagePriority, Outgoing, RefEntry, TeamEntry, ENVELOPE_VERSION, INBOX_SUMMARY_DEFAULT_LIMIT,
 };
 use serde::Serialize;
 
@@ -51,6 +51,9 @@ const WAIT_ANSWER_MARGIN: Duration = Duration::from_secs(10);
 pub(crate) struct Failure {
     pub code: u8,
     pub message: Option<String>,
+    /// The call was sent but no answer came (timeout, closed or broken connection): the office
+    /// may or may not have carried it out.
+    unanswered: bool,
 }
 
 impl Failure {
@@ -58,20 +61,31 @@ impl Failure {
         Failure {
             code,
             message: Some(message.into()),
+            unanswered: false,
         }
     }
 
     /// An error from the office: its code decides the exit code (ADR-0003 §2.6), and its text is
-    /// the office's fixed wording (never a body).
+    /// the office's fixed wording (never a body), kept to one clean line.
     pub(crate) fn from_office(error: &ClientError) -> Self {
-        Failure::new(exit_code(error), error.to_string())
+        Failure {
+            code: exit_code(error),
+            message: Some(sanitize_inline_text(&error.to_string(), 300)),
+            unanswered: matches!(
+                error,
+                ClientError::Timeout | ClientError::Disconnected | ClientError::Io(_)
+            ),
+        }
     }
 }
 
 /// The exit code for an office error (ADR-0003 §2.6).
 fn exit_code(error: &ClientError) -> u8 {
-    let ClientError::Api(error) = error else {
-        return EXIT_IO;
+    let error = match error {
+        ClientError::Api(error) => error,
+        // Refused before anything was sent: the message is over the frame limit.
+        ClientError::RequestTooLarge => return EXIT_USAGE,
+        _ => return EXIT_IO,
     };
     match error.code {
         ErrorCode::InvalidRequest
@@ -150,10 +164,15 @@ pub(crate) fn route(member: &str, office_flag: Option<&str>) -> Result<Route, Fa
 }
 
 /// An office-run agent (`ORG_SESSION_TOKEN` set) never falls back to the spool: its office
-/// not answering is exit 5 (ADR-0003 §2.1.4, §2.6). Office-run agents can't bind through this
-/// CLI yet (the session token isn't in the contract), so this only keeps them off the spool.
+/// not answering, or none found, is exit 5 (ADR-0003 §2.1.4, §2.6). Office-run agents can't bind
+/// through this CLI yet (the session token isn't in the contract), so this only keeps them off
+/// the spool.
 fn no_spool_when_office_run(route: Route, office_run: bool) -> Result<Route, Failure> {
     match route {
+        Route::NoOffice if office_run => Err(Failure::new(
+            EXIT_OFFICE_UNAVAILABLE,
+            "no office found (set ORG_OFFICE); an agent the office runs doesn't use the local spool",
+        )),
         Route::Unreachable(why) if office_run => Err(Failure::new(
             EXIT_OFFICE_UNAVAILABLE,
             format!(
@@ -233,7 +252,7 @@ pub(crate) struct Office {
 
 /// How a `wait` through the office ended.
 pub(crate) enum Waited {
-    Message(Box<Message>),
+    Message(Box<Shown>),
     TimedOut,
     Interrupted,
 }
@@ -256,6 +275,7 @@ impl Office {
                 return Err(Failure {
                     code: EXIT_INTERRUPTED,
                     message: None,
+                    unanswered: false,
                 });
             }
             match self.client.call::<C>(params) {
@@ -361,16 +381,37 @@ impl Office {
         if let Some(limit) = limit {
             headers.truncate(limit);
         }
-        Ok(headers.iter().map(inbox_item).collect())
+        let names = if headers.is_empty() {
+            Handles::default()
+        } else {
+            self.handles()
+        };
+        Ok(headers.iter().map(|h| inbox_item(h, &names)).collect())
+    }
+
+    /// Who is who, to show members by handle (what agents address each other by, as the spool's
+    /// names were) instead of by member id. Only for display: if `who` fails, ids are shown.
+    fn handles(&self) -> Handles {
+        match self.call::<Who>(&WhoParams::default()) {
+            Ok(who) => Handles(
+                who.members
+                    .into_iter()
+                    .filter_map(|card| card.handle.map(|handle| (card.id, handle)))
+                    .collect(),
+            ),
+            Err(_) => Handles::default(),
+        }
     }
 
     /// `msg read <id>` or `msg read --next` (`id` `None`): the message, marked read; `None`
     /// when `--next` finds the inbox empty.
-    pub(crate) fn read(&self, id: Option<&str>) -> Result<Option<Message>, Failure> {
+    pub(crate) fn read(&self, id: Option<&str>) -> Result<Option<Shown>, Failure> {
         let read = self.call::<MsgRead>(&MsgReadParams {
             id: id.map(str::to_owned),
         })?;
-        Ok(read.message)
+        Ok(read
+            .message
+            .map(|message| Shown::from_message(message, &self.handles())))
     }
 
     /// `msg wait`: the oldest unread message (not marked read), held for up to `timeout`, in
@@ -406,7 +447,8 @@ impl Office {
                 other => other.map_err(|e| Failure::from_office(&e))?,
             };
             if let Some(message) = answer.message {
-                return Ok(Waited::Message(Box::new(message)));
+                let shown = Shown::from_message(message, &self.handles());
+                return Ok(Waited::Message(Box::new(shown)));
             }
             if slice >= left {
                 return Ok(Waited::TimedOut);
@@ -421,10 +463,10 @@ impl Office {
     }
 }
 
-/// A send whose call failed without an answer from the office (exit 4): it may have been
-/// delivered, so say so, with its id, rather than invite a second copy.
+/// A send whose call got no answer from the office: it may have been delivered, so say so,
+/// with its id, rather than invite a second copy.
 fn unknown_outcome(failure: Failure, id: &str) -> Failure {
-    if failure.code != EXIT_IO {
+    if !failure.unanswered {
         return failure;
     }
     let why = failure.message.unwrap_or_default();
@@ -486,14 +528,28 @@ fn wire_name(value: impl Serialize) -> String {
     }
 }
 
+/// Member ids to handles, for display.
+#[derive(Default)]
+struct Handles(HashMap<String, String>);
+
+impl Handles {
+    /// The member's handle, else its id (an offboarded member, the office's own notices).
+    fn of(&self, member_id: &str) -> String {
+        self.0
+            .get(member_id)
+            .cloned()
+            .unwrap_or_else(|| member_id.to_owned())
+    }
+}
+
 /// An inbox row from an office header: the spool's `InboxItem`, with no body or meta (the
-/// office's inbox lists headers only).
-fn inbox_item(header: &MessageHeader) -> InboxItem {
+/// office's inbox lists headers only), and members by handle.
+fn inbox_item(header: &MessageHeader, names: &Handles) -> InboxItem {
     InboxItem {
         v: ENVELOPE_VERSION,
         id: header.id.clone(),
-        from: header.from_member_id.clone(),
-        to: header.to_member_id.clone(),
+        from: names.of(&header.from_member_id),
+        to: names.of(&header.to_member_id),
         kind: header.kind.clone(),
         priority: wire_name(header.priority),
         urgent: header.urgent,
@@ -530,7 +586,7 @@ pub(crate) struct Shown {
 }
 
 impl Shown {
-    pub(crate) fn from_message(message: Message) -> Self {
+    fn from_message(message: Message, names: &Handles) -> Self {
         let Message {
             header,
             body,
@@ -545,8 +601,8 @@ impl Shown {
         Shown {
             v: ENVELOPE_VERSION,
             id: header.id,
-            from: header.from_member_id,
-            to: header.to_member_id,
+            from: names.of(&header.from_member_id),
+            to: names.of(&header.to_member_id),
             kind: header.kind,
             reply_to: header.reply_to,
             created_at: header.created_at,
@@ -711,8 +767,15 @@ mod tests {
             no_spool_when_office_run(unreachable(), false),
             Ok(Route::Unreachable(_))
         ));
+        assert_eq!(
+            no_spool_when_office_run(Route::NoOffice, true)
+                .err()
+                .unwrap()
+                .code,
+            EXIT_OFFICE_UNAVAILABLE
+        );
         assert!(matches!(
-            no_spool_when_office_run(Route::NoOffice, true),
+            no_spool_when_office_run(Route::NoOffice, false),
             Ok(Route::NoOffice)
         ));
     }
@@ -868,7 +931,9 @@ mod tests {
             )
         });
         let (_dir, office, _got) = scripted(vec![not_bound(), refused]);
-        let failure = office.read(None).unwrap_err();
+        let Err(failure) = office.read(None) else {
+            panic!("read went through");
+        };
         assert_eq!(failure.code, EXIT_USAGE);
         let text = failure.message.unwrap();
         assert!(text.contains("office O1 unbound 'pixel'"), "{text}");
@@ -940,7 +1005,7 @@ mod tests {
 
     #[test]
     fn an_inbox_row_has_the_spool_shape_and_no_body_or_meta() {
-        let item = inbox_item(&header());
+        let item = inbox_item(&header(), &Handles::default());
         assert_eq!(item.from, "M-PIXEL");
         assert_eq!(item.to, "M-NOVA");
         assert_eq!(item.priority, "high");
@@ -979,7 +1044,8 @@ mod tests {
             body: "the body".into(),
             meta: meta.clone(),
         };
-        let shown = serde_json::to_string(&Shown::from_message(message)).unwrap();
+        let shown =
+            serde_json::to_string(&Shown::from_message(message, &Handles::default())).unwrap();
         meta.insert("priority".to_owned(), serde_json::json!("high"));
         let envelope = Envelope {
             v: ENVELOPE_VERSION,
@@ -998,22 +1064,36 @@ mod tests {
     }
 
     #[test]
+    fn members_show_by_handle_and_unknown_ones_by_id() {
+        let names = Handles(HashMap::from([("M-PIXEL".to_owned(), "pixel".to_owned())]));
+        let item = inbox_item(&header(), &names);
+        assert_eq!(item.from, "pixel");
+        assert_eq!(item.to, "M-NOVA");
+    }
+
+    #[test]
     fn a_normal_message_gets_no_priority_in_meta_and_its_own_meta_wins() {
         let mut plain = header();
         plain.priority = msg::MessagePriority::Normal;
-        let shown = Shown::from_message(Message {
-            header: plain,
-            body: String::new(),
-            meta: BTreeMap::new(),
-        });
+        let shown = Shown::from_message(
+            Message {
+                header: plain,
+                body: String::new(),
+                meta: BTreeMap::new(),
+            },
+            &Handles::default(),
+        );
         assert!(shown.meta.is_empty());
         let mut own = BTreeMap::new();
         own.insert("priority".to_owned(), serde_json::json!("custom"));
-        let shown = Shown::from_message(Message {
-            header: header(),
-            body: String::new(),
-            meta: own,
-        });
+        let shown = Shown::from_message(
+            Message {
+                header: header(),
+                body: String::new(),
+                meta: own,
+            },
+            &Handles::default(),
+        );
         assert_eq!(shown.meta["priority"], "custom");
     }
 

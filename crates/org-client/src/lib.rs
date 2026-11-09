@@ -88,7 +88,7 @@ pub fn default_timeout(method: &str) -> Duration {
 const EVENT_QUEUE: usize = 256;
 
 /// How often [`Client::call_unless`] checks whether to give up.
-pub const STOP_POLL: Duration = Duration::from_millis(50);
+const STOP_POLL: Duration = Duration::from_millis(50);
 
 /// How long dropping a `Client` waits for its reader thread to end before letting it go.
 const DROP_JOIN_WAIT: Duration = Duration::from_millis(500);
@@ -561,7 +561,12 @@ impl Client {
     /// `hello`, then checks the protocol version. A server of another version is refused:
     /// use this first on every new connection.
     pub fn hello(&self) -> Result<HelloResult, ClientError> {
-        let hello = self.call::<Hello>(&Empty {})?;
+        self.hello_with_timeout(DEFAULT_TIMEOUT)
+    }
+
+    /// [`Client::hello`] with a timeout of your own.
+    pub fn hello_with_timeout(&self, timeout: Duration) -> Result<HelloResult, ClientError> {
+        let hello = self.call_with_timeout::<Hello>(&Empty {}, timeout)?;
         if hello.api_version != API_VERSION {
             return Err(ClientError::VersionMismatch {
                 client: API_VERSION,
@@ -596,7 +601,7 @@ impl Client {
 
     /// [`Client::call_with_timeout`] that gives up early once `stop()` returns true, for a call
     /// the server holds (`msg.wait`) that a person may want to interrupt. `stop` is checked
-    /// every [`STOP_POLL`]. Giving up closes the connection, which also ends the held call on
+    /// every 50 ms. Giving up closes the connection, which also ends the held call on
     /// the server; the result is then `None`, and every later call on this client fails with
     /// [`ClientError::Disconnected`].
     pub fn call_unless<C: Call>(

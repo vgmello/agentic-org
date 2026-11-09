@@ -60,6 +60,7 @@ impl TempOrgHome {
             .env("HOME", root)
             .env_remove("ORG_OFFICE_HOME")
             .env_remove("ORG_OFFICE")
+            .env_remove("ORG_SESSION_TOKEN")
             .env("ORG_AGENT", as_agent);
         cmd
     }

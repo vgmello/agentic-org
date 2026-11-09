@@ -1424,7 +1424,7 @@ fn msg_read(sub_args: &[String], as_agent: Option<&str>, json_flag: bool) -> Res
     match office::route(&me, office_flag.as_deref())? {
         Route::Office(office) => {
             match office.read(id.as_deref())? {
-                Some(message) => print_shown(&Shown::from_message(message), json_flag)?,
+                Some(shown) => print_shown(&shown, json_flag)?,
                 None if id.is_some() => {
                     return Err(CliError::Usage("the office returned no message".into()));
                 }
@@ -1496,8 +1496,8 @@ fn msg_wait(sub_args: &[String], as_agent: Option<&str>, json_flag: bool) -> Res
     match office::route(&me, office_flag.as_deref())? {
         Route::Office(office) => {
             return match office.wait(from_filter.as_deref(), urgent_only, timeout)? {
-                Waited::Message(message) => {
-                    print_shown(&Shown::from_message(*message), json_flag)?;
+                Waited::Message(shown) => {
+                    print_shown(&shown, json_flag)?;
                     Ok(EXIT_OK)
                 }
                 // The spool's wording and exit codes.

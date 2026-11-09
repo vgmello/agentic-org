@@ -20,13 +20,17 @@ use std::time::{Duration, Instant};
 use org_office_launch::{
     is_plain_id, OfficeFile, MAX_OFFICE_FILE_BYTES, OFFICES_DIR_NAME, OFFICE_FILE_NAME,
 };
-use org_proto::msg::MsgBindResult;
+use org_proto::msg::{MsgBind, MsgBindParams, MsgBindResult};
 
 use crate::{Client, ClientError};
 
 /// How long [`open_as`] keeps trying to connect while nothing listens on the office's socket
 /// (the host may be restarting the server), backing off between tries (ADR-0003 §3.5).
 pub const CONNECT_RETRY: Duration = Duration::from_millis(500);
+
+/// How long [`open_as`] gives `hello` and `msg.bind` each. A server that accepts connections but
+/// doesn't answer (hung, stopped) counts as unreachable well before a caller's own deadline.
+pub const SETUP_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// The first pause between connection tries; each pause doubles, up to [`MAX_PAUSE`].
 const FIRST_PAUSE: Duration = Duration::from_millis(25);
@@ -179,11 +183,21 @@ pub fn open_as(
     member: &str,
 ) -> Result<(Client, MsgBindResult), OpenError> {
     let client = connect_retrying(office_id, home, CONNECT_RETRY).map_err(OpenError::from_setup)?;
-    let hello = client.hello().map_err(OpenError::from_setup)?;
+    let hello = client
+        .hello_with_timeout(SETUP_TIMEOUT)
+        .map_err(OpenError::from_setup)?;
     if hello.office.as_ref().map(|o| o.office.id.as_str()) != Some(office_id) {
         return Err(OpenError::Refused(another_office()));
     }
-    let bound = client.bind_member(member).map_err(OpenError::from_setup)?;
+    let bound = client
+        .call_with_timeout::<MsgBind>(
+            &MsgBindParams {
+                member: Some(member.to_owned()),
+                app_token: None,
+            },
+            SETUP_TIMEOUT,
+        )
+        .map_err(OpenError::from_setup)?;
     if bound.office_id != office_id {
         return Err(OpenError::Refused(another_office()));
     }
@@ -348,6 +362,30 @@ mod tests {
             "gave up at once: {took:?}"
         );
         assert!(took < Duration::from_secs(3), "{took:?}");
+    }
+
+    #[test]
+    fn a_server_that_accepts_but_never_answers_is_unreachable_within_the_setup_timeout() {
+        let (_dir, home) = home();
+        fs::create_dir_all(home.join("run")).unwrap();
+        let socket = org_proto::location::office_socket_path(&home, A).unwrap();
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let (_release, held) = std::sync::mpsc::channel::<()>();
+        std::thread::spawn(move || {
+            let connection = listener.accept();
+            let _ = held.recv();
+            drop(connection);
+        });
+        let started = Instant::now();
+        let error = match open_as(&home, A, "pixel") {
+            Err(error) => error,
+            Ok(_) => panic!("a silent server answered"),
+        };
+        assert!(
+            matches!(error, OpenError::Unreachable(ClientError::Timeout)),
+            "{error:?}"
+        );
+        assert!(started.elapsed() < SETUP_TIMEOUT + Duration::from_secs(2));
     }
 
     #[test]

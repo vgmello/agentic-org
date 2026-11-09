@@ -357,8 +357,9 @@ fn send_inbox_read_and_who_go_through_the_office() {
     let rows = rows.as_array().unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["id"], id.as_str());
-    assert_eq!(rows[0]["from"], PIXEL);
-    assert_eq!(rows[0]["to"], NOVA);
+    // Members by handle, as the spool showed names (the member ids are in who).
+    assert_eq!(rows[0]["from"], "pixel");
+    assert_eq!(rows[0]["to"], "nova");
     assert_eq!(rows[0]["subject"], "hi");
     assert_eq!(rows[0]["status"], "unread");
     assert_eq!(rows[0]["kind"], "msg");
@@ -397,14 +398,14 @@ fn send_inbox_read_and_who_go_through_the_office() {
     let message = read.json();
     assert_eq!(message["id"], id.as_str());
     assert_eq!(message["body"], "hello nova");
-    assert_eq!(message["from"], PIXEL);
+    assert_eq!(message["from"], "pixel");
     assert_eq!(message["kind"], "msg");
     assert_eq!(message["subject"], "hi");
     let by_id = world.run("nova", &["msg", "read", &second]).ok();
     assert!(
         by_id
             .stdout
-            .starts_with(&format!("{second} [msg] {PIXEL} -> {NOVA}")),
+            .starts_with(&format!("{second} [msg] pixel -> nova")),
         "{}",
         by_id.stdout
     );
@@ -518,7 +519,7 @@ fn wait_wakes_on_a_send() {
     let woken: Run = waiting.wait_with_output().unwrap().into();
     let woken = woken.ok();
     assert_eq!(woken.json()["body"], "wake up");
-    assert_eq!(woken.json()["from"], PIXEL);
+    assert_eq!(woken.json()["from"], "pixel");
     // wait doesn't mark it read.
     let inbox = world.run("nova", &["msg", "inbox", "--json"]).ok().json();
     assert_eq!(inbox.as_array().unwrap().len(), 1);
