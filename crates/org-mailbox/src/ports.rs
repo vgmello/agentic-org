@@ -131,7 +131,9 @@ pub trait TriageStore {
     ///   `InvalidTransition`); `snooze_note = reason`, `read_at` cleared (a read message
     ///   deferred is unread again when it comes back), `triage_gen += 1`, and the message
     ///   counts as triaged from now on (`triaged_at = now_utc`). Re-snoozing always applies,
-    ///   bumping `triage_gen` again.
+    ///   bumping `triage_gen` again. A `snoozed_until` that can't be read MAY be refused with
+    ///   `StoreError::InvalidTransition` (the Mailbox validates it before calling); a store
+    ///   that accepts one must release it as due in [`Self::check_notify`].
     /// - `Done`, from `unread`, `read` or `snoozed`: leaves the unread index (its snooze
     ///   cleared); `reason` is the done note (on the state row; no port reads it back).
     /// - `Read`, from `unread` or `snoozed`: leaves the unread index (its snooze cleared);

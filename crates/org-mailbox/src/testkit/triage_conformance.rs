@@ -871,16 +871,20 @@ pub fn triage_check_notify_returns_a_release_once_with_its_reason(backend: impl 
 }
 
 /// A time snooze whose `snoozed_until` can't be read is released as due by the next
-/// check_notify, whatever `now` is, rather than stranded. A store that refuses to write such
-/// a snooze through `update_state_local` has nothing to release, and the case checks nothing.
+/// check_notify, whatever `now` is, rather than stranded. A store may instead refuse to write
+/// such a snooze, but only with `StoreError::InvalidTransition` and writing nothing; then it
+/// has nothing to release. Any other error fails the case.
 pub fn triage_check_notify_releases_an_unreadable_snooze_as_due(backend: impl OpenTriageBackend) {
     let store = open_store(&backend);
     unread(&store, 1);
-    if store
-        .update_state_local(snooze_until(1, "not a time", None))
-        .is_err()
-    {
-        return;
+    let before = header_of(&store, 1);
+    match store.update_state_local(snooze_until(1, "not a time", None)) {
+        Ok(_) => {}
+        Err(StoreError::InvalidTransition) => {
+            assert_eq!(header_of(&store, 1), before, "a refusal writes nothing");
+            return;
+        }
+        Err(error) => panic!("an unreadable snoozed_until refused with {error:?}"),
     }
     assert_eq!(header_of(&store, 1).state, State::Snoozed);
     assert_eq!(
