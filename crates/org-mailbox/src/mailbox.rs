@@ -40,7 +40,8 @@ pub struct OfficeIdentity {
 }
 
 /// The server supplies a canonical member id from its authenticated binding, not
-/// from request JSON. Database calls never run while a registry lock is held.
+/// from request JSON. Database calls never run while a registry lock (waiters, snoozes) is
+/// held; only `triage_writes` is held across one.
 pub struct Mailbox {
     store: Arc<dyn MessageStore + Send + Sync>,
     /// `None` for a Mailbox made with [`Mailbox::new`]: triage calls are `unavailable`.
@@ -52,6 +53,12 @@ pub struct Mailbox {
     waiters: WaiterRegistry,
     /// Never locked across a store call.
     snoozes: Mutex<SnoozeTimers>,
+    /// Held across a local triage write (`update_state_local`) and the snooze timer update
+    /// that follows it, so the timers apply concurrent writes in the order the store did:
+    /// otherwise two defers of one message could reach the store as A then B but the timers
+    /// as B then A, leaving A's deadline (or none) while the store holds B's. Taken before
+    /// `snoozes`, never inside it. Events and waiter wake-ups happen after it is released.
+    triage_writes: Mutex<()>,
 }
 
 impl Mailbox {
@@ -71,6 +78,7 @@ impl Mailbox {
             events,
             waiters: WaiterRegistry::default(),
             snoozes: Mutex::new(SnoozeTimers::default()),
+            triage_writes: Mutex::new(()),
         }
     }
 
@@ -307,12 +315,18 @@ impl Mailbox {
                             // Already expired: make sure the asker was told. A notice an
                             // earlier expiry failed to commit is committed now (found by its
                             // deterministic id on the read path first, so the writer is used
-                            // only when it's missing).
+                            // only when it's missing). Only the notice itself counts: any
+                            // other row under its id means the asker wasn't told.
                             MessageLifecycleState::Expired
-                                if self
+                                if !self
                                     .store
-                                    .get_message(&delivery_failed_id(header))?
-                                    .is_none() =>
+                                    .get_message(&delivery_failed_id(
+                                        header,
+                                        &self.office.incarnation,
+                                    ))?
+                                    .is_some_and(|row| {
+                                        is_notice_for(&row.message.header, header)
+                                    }) =>
                             {
                                 self.notify_expired(header, &now)?
                             }
@@ -471,19 +485,20 @@ impl Mailbox {
             SnoozeTarget::AfterTask => (None, true),
             _ => return Err(MailboxError::InvalidRequest),
         };
-        let header = triage.update_state_local(LocalStateTransition {
-            snoozed_until,
-            snooze_after_task,
-            reason: params.note,
-            ..self.transition(
-                &params.id,
-                bound_member_id,
-                MessageLifecycleState::Snoozed,
-                position,
-                &now,
-            )
-        })?;
-        {
+        let header = {
+            let _ordered = lock(&self.triage_writes);
+            let header = triage.update_state_local(LocalStateTransition {
+                snoozed_until,
+                snooze_after_task,
+                reason: params.note,
+                ..self.transition(
+                    &params.id,
+                    bound_member_id,
+                    MessageLifecycleState::Snoozed,
+                    position,
+                    &now,
+                )
+            })?;
             let mut timers = lock(&self.snoozes);
             match header.snoozed_until.as_deref() {
                 Some(at) => timers.insert(
@@ -493,7 +508,8 @@ impl Mailbox {
                 ),
                 None => timers.remove(&header.id),
             }
-        }
+            header
+        };
         // A held wait recomputes its bound with the new timer.
         self.waiters.notify(bound_member_id);
         self.publish_state(&header, header.snooze_note.clone(), &now);
@@ -519,17 +535,21 @@ impl Mailbox {
         size(&params.id, MAX_ID_BYTES)?;
         optional_size(params.note.as_deref(), MAX_NOTE_BYTES)?;
         let now = self.now_utc()?;
-        let header = triage.update_state_local(LocalStateTransition {
-            reason: params.note.clone(),
-            ..self.transition(
-                &params.id,
-                bound_member_id,
-                MessageLifecycleState::Done,
-                position,
-                &now,
-            )
-        })?;
-        lock(&self.snoozes).remove(&header.id);
+        let header = {
+            let _ordered = lock(&self.triage_writes);
+            let header = triage.update_state_local(LocalStateTransition {
+                reason: params.note.clone(),
+                ..self.transition(
+                    &params.id,
+                    bound_member_id,
+                    MessageLifecycleState::Done,
+                    position,
+                    &now,
+                )
+            })?;
+            lock(&self.snoozes).remove(&header.id);
+            header
+        };
         self.waiters.notify(bound_member_id);
         self.publish_state(&header, params.note, &now);
         Ok(MsgDoneResult {
@@ -652,20 +672,24 @@ impl Mailbox {
                 now,
             )
         };
-        let header = match triage.update_state_local(change) {
-            Ok(header) => header,
-            Err(StoreError::InvalidTransition | StoreError::NotFound) => return Ok(None),
-            Err(error) => return Err(error.into()),
+        let header = {
+            let _ordered = lock(&self.triage_writes);
+            let header = match triage.update_state_local(change) {
+                Ok(header) => header,
+                Err(StoreError::InvalidTransition | StoreError::NotFound) => return Ok(None),
+                Err(error) => return Err(error.into()),
+            };
+            // An expired message has no snooze; a person's flagged ask keeps whatever it has.
+            if header.state == MessageLifecycleState::Expired {
+                lock(&self.snoozes).remove(&header.id);
+            }
+            header
         };
         self.publish_state(&header, None, now);
-        if header.state == MessageLifecycleState::Expired {
-            // An expired message has no snooze; a person's flagged ask keeps whatever it has.
-            lock(&self.snoozes).remove(&header.id);
-            if header.kind == KIND_REQUEST {
-                let notified = self.notify_expired(&header, now);
-                if on_notice_failure == NoticeFailure::Fail {
-                    notified?;
-                }
+        if header.state == MessageLifecycleState::Expired && header.kind == KIND_REQUEST {
+            let notified = self.notify_expired(&header, now);
+            if on_notice_failure == NoticeFailure::Fail {
+                notified?;
             }
         }
         Ok(Some(header))
@@ -674,7 +698,9 @@ impl Mailbox {
     /// Commits the `delivery_failed` notice for an expired request to its sender, when the
     /// sender is a member who may still receive. Its id and content are deterministic, so a
     /// second expiry of the same request replays the first commit (`inserted: false`) and
-    /// publishes nothing. It commits at this office, as slice 1's local/HQ messaging does:
+    /// publishes nothing. A row already at the id that isn't this request's notice
+    /// ([`is_notice_for`]) is a `StorageError`: the sender wasn't told, so it never passes
+    /// for success. It commits at this office, as slice 1's local/HQ messaging does:
     /// routing a notice to a sender another office owns comes with cross-office routing.
     fn notify_expired(&self, original: &MessageHeader, now: &str) -> Result<(), MailboxError> {
         if original.from_member_id == OFFICE_SENDER || original.kind == KIND_DELIVERY_FAILED {
@@ -687,7 +713,7 @@ impl Mailbox {
         if sender.id != original.from_member_id || !can_message(&sender) {
             return Ok(());
         }
-        let id = delivery_failed_id(original);
+        let id = delivery_failed_id(original, &self.office.incarnation);
         let body = format!(
             "Your request to {} expired before they acted on it.",
             original.to_display_name
@@ -713,7 +739,7 @@ impl Mailbox {
             &meta,
         )?;
         let header = MessageHeader {
-            id,
+            id: id.clone(),
             thread_id: original.thread_id.clone(),
             reply_to: Some(original.id.clone()),
             from_member_id: OFFICE_SENDER.into(),
@@ -748,10 +774,19 @@ impl Mailbox {
             initial_state: MessageLifecycleState::Unread,
         }) {
             Ok(outcome) => outcome,
-            // Another notice already holds the id: the sender was told.
-            Err(StoreError::AlreadyExists) => return Ok(()),
+            // The id is taken by a row with other content: the sender was told only if that
+            // row is this request's notice (an earlier one, e.g. under an old display name).
+            Err(StoreError::AlreadyExists) => {
+                return match self.store.get_message(&id)? {
+                    Some(row) if is_notice_for(&row.message.header, original) => Ok(()),
+                    _ => Err(MailboxError::StorageError),
+                };
+            }
             Err(error) => return Err(error.into()),
         };
+        if !is_notice_for(&outcome.message.message.header, original) {
+            return Err(MailboxError::StorageError);
+        }
         if outcome.inserted {
             let header = &outcome.message.message.header;
             self.waiters.notify(&header.to_member_id);
@@ -773,6 +808,10 @@ impl Mailbox {
         Ok(())
     }
 
+    /// Publishes `message.state_changed` for a header a triage call returned. A repeated
+    /// `Done` or `Expired` returns `Ok` with the header unchanged, and the Mailbox can't tell
+    /// a repeat from a change (a known limit), so a repeat publishes again. Events are
+    /// idempotent state, so that is harmless.
     fn publish_state(&self, header: &MessageHeader, reason: Option<String>, now: &str) {
         self.events
             .publish(MessageEvent::StateChanged(MessageStateChangedData {
@@ -831,6 +870,16 @@ impl Mailbox {
     }
 }
 
+/// Whether `row` is the office's `delivery_failed` notice for `original`: from the office,
+/// of that kind, replying to `original` and addressed to its sender. Whatever else sits
+/// under the notice's id (a member's message sent there first) doesn't tell the sender.
+fn is_notice_for(row: &MessageHeader, original: &MessageHeader) -> bool {
+    row.from_member_id == OFFICE_SENDER
+        && row.kind == KIND_DELIVERY_FAILED
+        && row.reply_to.as_deref() == Some(original.id.as_str())
+        && row.to_member_id == original.from_member_id
+}
+
 /// Whether a failed `delivery_failed` notice fails the call that expired the request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NoticeFailure {
@@ -883,5 +932,216 @@ fn send_result(stored: &StoredMessage) -> SendResult {
         thread_id: header.thread_id.clone(),
         local_seq: header.local_seq,
         origin_seq: stored.origin_seq,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{mpsc, Barrier};
+    use std::thread;
+
+    use org_proto::msg::{Meta, KIND_MSG};
+
+    use super::*;
+    use crate::testkit::fixture::*;
+    use crate::testkit::{InMemoryDirectory, InMemoryStore};
+    use crate::{NoMessageEvents, NotifyCandidate, SnoozeDeadline};
+
+    /// A triage store whose first `update_state_local` applies, then holds before returning
+    /// until the test lets it go: the window in which another defer could overtake it.
+    struct GatedTriage {
+        inner: InMemoryStore,
+        gated: AtomicBool,
+        applied: Mutex<mpsc::Sender<()>>,
+        release: Barrier,
+    }
+
+    impl TriageStore for GatedTriage {
+        fn update_state_local(
+            &self,
+            change: LocalStateTransition,
+        ) -> Result<MessageHeader, StoreError> {
+            let result = self.inner.update_state_local(change);
+            if self.gated.swap(false, Ordering::SeqCst) {
+                lock(&self.applied).send(()).unwrap();
+                self.release.wait();
+            }
+            result
+        }
+        fn check_notify(
+            &self,
+            to_member_id: &str,
+            after_task: bool,
+            urgent_only: bool,
+            sweep_before_utc: &str,
+            now_utc: &str,
+        ) -> Result<Vec<NotifyCandidate>, StoreError> {
+            self.inner.check_notify(
+                to_member_id,
+                after_task,
+                urgent_only,
+                sweep_before_utc,
+                now_utc,
+            )
+        }
+        fn list_active_snooze_deadlines(&self) -> Result<Vec<SnoozeDeadline>, StoreError> {
+            self.inner.list_active_snooze_deadlines()
+        }
+    }
+
+    fn identity() -> OfficeIdentity {
+        OfficeIdentity {
+            office_id: OFFICE_ID.into(),
+            incarnation: INCARNATION.into(),
+            is_hq: true,
+        }
+    }
+
+    fn defer_at(offset_ms: u64) -> MsgDeferParams {
+        MsgDeferParams {
+            id: msg_id(1),
+            until: SnoozeTarget::Until {
+                at: format_utc(NOW_MS + offset_ms).unwrap(),
+            },
+            note: None,
+        }
+    }
+
+    /// Two defers of one message: the second one starts while the first has written the
+    /// store but not yet its timer. It must wait for the first to finish, so the timers end
+    /// at the deadline the store holds (the second's).
+    #[test]
+    fn concurrent_defers_leave_the_timer_at_the_stores_deadline() {
+        let store = InMemoryStore::new();
+        let (applied, first_applied) = mpsc::channel();
+        let triage = Arc::new(GatedTriage {
+            inner: store.clone(),
+            gated: AtomicBool::new(false),
+            applied: Mutex::new(applied),
+            release: Barrier::new(2),
+        });
+        let mailbox = Arc::new(
+            Mailbox::with_triage(
+                Arc::new(store.clone()),
+                triage.clone(),
+                Arc::new(InMemoryDirectory::new(members(), POSITION)),
+                identity(),
+                Arc::new(ManualClock::new(NOW_MS)),
+                Arc::new(NoMessageEvents),
+            )
+            .unwrap(),
+        );
+        let sent = MsgSendParams {
+            id: msg_id(1),
+            to: ADA_ID.into(),
+            kind: KIND_MSG.into(),
+            priority: None,
+            subject: None,
+            body: "hello".into(),
+            meta: Meta::new(),
+            reply_to: None,
+        };
+        mailbox.send(PAT_ID, sent).unwrap();
+
+        triage.gated.store(true, Ordering::SeqCst);
+        let first = {
+            let mailbox = mailbox.clone();
+            thread::spawn(move || mailbox.defer(ADA_ID, defer_at(1_000)))
+        };
+        // Bounded, so a first defer that fails before its store write fails the test rather
+        // than hanging it.
+        first_applied
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the first defer reached its store write");
+        let (finished, second_done) = mpsc::channel();
+        let second = {
+            let mailbox = mailbox.clone();
+            thread::spawn(move || {
+                let result = mailbox.defer(ADA_ID, defer_at(2_000));
+                finished.send(()).unwrap();
+                result
+            })
+        };
+        // Without the ordering the second defer writes the store and its timer now, and the
+        // first then overwrites the timer with its own (older) deadline.
+        assert!(
+            second_done
+                .recv_timeout(Duration::from_millis(300))
+                .is_err(),
+            "the second defer finished while the first's timer update was pending"
+        );
+        triage.release.wait();
+        assert_eq!(first.join().unwrap().unwrap().triage_gen, 1);
+        let second = second.join().unwrap().unwrap();
+        assert_eq!(second.triage_gen, 2);
+
+        let stored = store
+            .get_message(&msg_id(1))
+            .unwrap()
+            .unwrap()
+            .message
+            .header;
+        let deadline = format_utc(NOW_MS + 2_000).unwrap();
+        assert_eq!(stored.snoozed_until.as_deref(), Some(deadline.as_str()));
+        let timers = lock(&mailbox.snoozes);
+        assert_eq!(timers.next_for(ADA_ID), Some(epoch_ms(NOW_MS + 2_000)));
+    }
+
+    /// Expiring a request twice commits one notice: the second commit is a replay
+    /// (`inserted: false`), and one with other content (the recipient renamed since) finds
+    /// the first notice under the id. Both count as told.
+    #[test]
+    fn expiring_twice_commits_exactly_one_notice() {
+        use crate::testkit::conformance::{commit, expired_request};
+
+        let store = Arc::new(InMemoryStore::new());
+        let events = Arc::new(crate::testkit::fixture::RecordingEvents::default());
+        let mailbox = Mailbox::with_triage(
+            store.clone(),
+            store.clone(),
+            Arc::new(InMemoryDirectory::new(members(), POSITION)),
+            identity(),
+            Arc::new(ManualClock::new(NOW_MS)),
+            events.clone(),
+        )
+        .unwrap();
+        let mut ask = expired_request(1, PAT_ID, ADA_ID);
+        ask.message.header.to_display_name = ADA_NAME.into();
+        commit(&*store, ask);
+        let request = store
+            .get_message(&msg_id(1))
+            .unwrap()
+            .unwrap()
+            .message
+            .header;
+
+        assert_eq!(mailbox.notify_expired(&request, NOW_UTC), Ok(()));
+        assert_eq!(mailbox.notify_expired(&request, NOW_UTC), Ok(()));
+        let renamed = MessageHeader {
+            to_display_name: "Ada L.".into(),
+            ..request.clone()
+        };
+        assert_eq!(mailbox.notify_expired(&renamed, NOW_UTC), Ok(()));
+
+        let notices: Vec<_> = store
+            .list_headers(HeaderQuery {
+                scope: HeaderScope::Inbox(PAT_ID.into()),
+                from_member_id: None,
+                thread_id: None,
+                unread_only: false,
+                include_snoozed: true,
+                cursor: None,
+                limit: 100,
+            })
+            .unwrap()
+            .headers
+            .into_iter()
+            .filter(|header| header.kind == KIND_DELIVERY_FAILED)
+            .collect();
+        assert_eq!(notices.len(), 1);
+        assert_eq!(notices[0].id, delivery_failed_id(&request, INCARNATION));
+        assert!(is_notice_for(&notices[0], &request));
+        assert_eq!(events.delivery_failed().len(), 1);
     }
 }

@@ -88,7 +88,9 @@ struct Data {
 
 /// An in-memory office.db message store: the delivery and triage ports. Clones share
 /// the same rows. One counter allocates both `local_seq` and a local `origin_seq`. It keeps
-/// no `msg_state.reason` (no port reads it back) and no work log.
+/// no `msg_state.reason` (no port reads it back) and no work log, and doesn't model the
+/// state row's sync metadata ([`TriageStore::update_state_local`]: its owner office, origin
+/// incarnation, org position and local edit sequence).
 #[derive(Clone, Default)]
 pub struct InMemoryStore(Arc<Mutex<Data>>);
 
@@ -329,6 +331,7 @@ impl TriageStore for InMemoryStore {
                     return Err(StoreError::InvalidTransition);
                 }
                 header.state = State::Snoozed;
+                header.read_at = None;
                 header.snoozed_until = change.snoozed_until;
                 header.snooze_after_task = change.snooze_after_task;
                 header.snooze_note = change.reason;
