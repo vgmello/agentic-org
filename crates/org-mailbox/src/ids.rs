@@ -55,12 +55,21 @@ pub(crate) fn delivery_failed_id(original: &MessageHeader, incarnation: &str) ->
 }
 
 /// The id of the `delivery_failed` notice for `original_id` when its first id
-/// ([`delivery_failed_id`]) is held by a row that isn't the notice: its time part is the
-/// time of `now_utc` (the expiry's `now`; 0 if unreadable), its random part the first 10 bytes of
-/// `sha256("delivery_failed:fallback:" + original id + ":" + now_utc)`.
-pub(crate) fn delivery_failed_fallback_id(original_id: &str, now_utc: &str) -> String {
+/// ([`delivery_failed_id`]) is held by a row that isn't the notice, at the office of
+/// `incarnation`: its time part is the time of `now_utc` (the expiry's `now`; 0 if
+/// unreadable), its random part the first 10 bytes of
+/// `sha256("delivery_failed:fallback:" + incarnation + ":" + original id + ":" + now_utc)`.
+/// Keyed by the incarnation as the first id is, so a member who squatted the first id still
+/// can't compute this one from the original and a guessed time alone.
+pub(crate) fn delivery_failed_fallback_id(
+    original_id: &str,
+    incarnation: &str,
+    now_utc: &str,
+) -> String {
     let digest = Sha256::new()
         .chain_update(b"delivery_failed:fallback:")
+        .chain_update(incarnation.as_bytes())
+        .chain_update(b":")
         .chain_update(original_id.as_bytes())
         .chain_update(b":")
         .chain_update(now_utc.as_bytes())
@@ -154,25 +163,42 @@ mod tests {
     }
 
     #[test]
-    fn delivery_failed_fallback_id_is_timed_now_and_keyed_by_original_and_now() {
+    fn delivery_failed_fallback_id_is_timed_now_and_keyed_by_incarnation_original_and_now() {
         let now = "2026-11-08T13:00:00.000Z";
         let original = "01JCMSG0000000000000000001";
-        let id = delivery_failed_fallback_id(original, now);
+        let id = delivery_failed_fallback_id(original, INCARNATION, now);
         assert_eq!(ulid_time_ms(&id), parse_utc(now));
         let digest = Sha256::digest(
-            b"delivery_failed:fallback:01JCMSG0000000000000000001:2026-11-08T13:00:00.000Z",
+            b"delivery_failed:fallback:01JCINCARNATION00000000000:\
+              01JCMSG0000000000000000001:2026-11-08T13:00:00.000Z",
         );
         let mut random = [0; 10];
         random.copy_from_slice(&digest[..10]);
         assert_eq!(id, encode_ulid(parse_utc(now).unwrap(), random));
-        assert_eq!(delivery_failed_fallback_id(original, now), id);
+        assert_eq!(delivery_failed_fallback_id(original, INCARNATION, now), id);
         assert_ne!(
-            delivery_failed_fallback_id("01JCMSG0000000000000000002", now),
+            delivery_failed_fallback_id("01JCMSG0000000000000000002", INCARNATION, now),
             id
         );
         assert_ne!(
-            delivery_failed_fallback_id(original, "2026-11-08T13:00:00.001Z"),
+            delivery_failed_fallback_id(original, INCARNATION, "2026-11-08T13:00:00.001Z"),
             id
+        );
+        // Another incarnation, or none, gives another id.
+        assert_ne!(
+            delivery_failed_fallback_id(original, "01JCINCARNATION00000000001", now),
+            id
+        );
+        assert_ne!(delivery_failed_fallback_id(original, "", now), id);
+        let digest = Sha256::digest(
+            b"delivery_failed:fallback:01JCMSG0000000000000000001:2026-11-08T13:00:00.000Z",
+        );
+        let mut unkeyed = [0; 10];
+        unkeyed.copy_from_slice(&digest[..10]);
+        assert_ne!(
+            encode_ulid(parse_utc(now).unwrap(), unkeyed),
+            id,
+            "the unkeyed fallback id of earlier builds"
         );
         let deadline = request(original, Some("2026-11-08T12:02:00.000Z"));
         assert_ne!(delivery_failed_id(&deadline, INCARNATION), id);

@@ -1707,7 +1707,8 @@ pub fn mailbox_a_squatted_notice_id_is_told_via_the_fallback(backend: impl OpenT
             .expect("addressed to Ada")
             .header
     };
-    let fallback = |n: u32| crate::ids::delivery_failed_fallback_id(&msg_id(n), NOW_UTC);
+    let fallback =
+        |n: u32| crate::ids::delivery_failed_fallback_id(&msg_id(n), INCARNATION, NOW_UTC);
     assert_eq!(by_id(1).state, State::Expired);
     assert_eq!(notices_for(&*office.store, 1), [fallback(1)]);
     assert_eq!(
@@ -1743,7 +1744,7 @@ pub fn mailbox_a_squatted_notice_id_is_told_via_the_fallback(backend: impl OpenT
 pub fn mailbox_squatted_notice_tells_the_asker_exactly_once(backend: impl OpenTriageBackend) {
     let office = triage_office(&backend);
     squatted_request(&office, 1);
-    let fallback = crate::ids::delivery_failed_fallback_id(&msg_id(1), NOW_UTC);
+    let fallback = crate::ids::delivery_failed_fallback_id(&msg_id(1), INCARNATION, NOW_UTC);
 
     assert_eq!(wait_now(&office.mailbox, ADA_ID), None);
     assert_eq!(state_of(&*office.store, &msg_id(1)), State::Expired);

@@ -749,7 +749,7 @@ impl Mailbox {
         let fallback = NewStoredMessage {
             message: Message {
                 header: MessageHeader {
-                    id: delivery_failed_fallback_id(&original.id, now),
+                    id: delivery_failed_fallback_id(&original.id, &self.office.incarnation, now),
                     ..notice.message.header
                 },
                 ..notice.message
