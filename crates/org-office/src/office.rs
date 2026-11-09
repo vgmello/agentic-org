@@ -427,6 +427,13 @@ impl Office {
         self.changes.token()
     }
 
+    /// Wakes everything waiting in [`Office::wait_for_org_change`] without a commit, for a live
+    /// event (a message, a status line) that followers should push now. They read the log and
+    /// their live events again; nothing in the log changed.
+    pub fn wake_followers(&self) {
+        self.changes.bump();
+    }
+
     /// Waits until the token is no longer `seen` (a command was committed) or `timeout` passes,
     /// and returns the current token.
     pub fn wait_for_org_change(&self, seen: u64, timeout: Duration) -> u64 {

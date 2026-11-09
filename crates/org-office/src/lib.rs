@@ -30,3 +30,4 @@ pub use key::Key;
 pub use messaging::{OfficeDirectory, OfficeMessageStore};
 pub use model::{NewOffice, OfficeInfo, OfficeRole};
 pub use office::{Office, LOCK_WAIT};
+pub use status::presence_after_status;

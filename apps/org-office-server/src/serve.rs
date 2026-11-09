@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use crate::bounded;
 use crate::follow::{self, OrgFeed, Timing};
+use crate::live::LiveEvents;
 use crate::msg_calls;
 use org_mailbox::{cancellation_pair, CancelHandle, Mailbox, MemberDirectory};
 use org_office::rules::OrgCommand;
@@ -65,6 +66,8 @@ pub struct OfficePorts {
     pub status: StatusFn,
     /// The log, for `subscribe`.
     pub feed: Box<dyn OrgFeed>,
+    /// Live events for `subscribe` (messages, status lines).
+    pub live: Arc<LiveEvents>,
     /// Messaging: what `msg.send`, `msg.inbox`, `msg.read` and `msg.wait` run on.
     pub mailbox: Arc<Mailbox>,
     /// Who a `msg.bind` names.
@@ -446,7 +449,12 @@ fn serve_connection(stream: UnixStream, shared: &Shared) {
                     binding.is_app_bound(),
                     subscribed,
                 ) {
-                    Ok(start) => {
+                    Ok(position) => {
+                        // Live events start from here: what is published from now on.
+                        let start = follow::Start {
+                            position,
+                            live: shared.ports.live.head(),
+                        };
                         // The answer first, then the events.
                         let answer =
                             Response::ok::<org_proto::Subscribe>(request.id, &org_proto::Empty {})
@@ -459,12 +467,15 @@ fn serve_connection(stream: UnixStream, shared: &Shared) {
                             let _ = old.join();
                         }
                         let mine = generation.load(Ordering::SeqCst);
-                        let (feed, out, generation, sent) =
-                            (&*shared.ports.feed, &out, &generation, &sent);
-                        let timing = shared.timing;
-                        pusher = Some(scope.spawn(move || {
-                            follow::push(feed, out, generation, mine, start, sent, timing)
-                        }));
+                        let (feed, live) = (&*shared.ports.feed, &*shared.ports.live);
+                        let wire = follow::Wire {
+                            out: &out,
+                            generation: &generation,
+                            mine,
+                            seq: &sent,
+                            timing: shared.timing,
+                        };
+                        pusher = Some(scope.spawn(move || follow::push(feed, live, &wire, start)));
                         continue;
                     }
                     Err(refusal) => Response::error(request.id, refusal),
@@ -819,6 +830,7 @@ mod tests {
             who: Box::new(|_| Err("none".to_owned())),
             status: Box::new(|_, _| Err("none".to_owned())),
             feed: Box::new(Arc::new(FakeFeed::default())),
+            live: Arc::new(LiveEvents::new(Box::new(|| {}))),
             mailbox,
             directory,
         }
@@ -827,11 +839,18 @@ mod tests {
     /// A mailbox and its directory over the testkit's in-memory store and the fixture members
     /// (ada and remy are agents, pat a person, plus the owner), at the fixture's time.
     fn messaging() -> (Arc<Mailbox>, Arc<org_mailbox::testkit::InMemoryDirectory>) {
+        messaging_with(Arc::new(LiveEvents::new(Box::new(|| {}))))
+    }
+
+    /// The same, with the mailbox's events going to `live`.
+    fn messaging_with(
+        live: Arc<LiveEvents>,
+    ) -> (Arc<Mailbox>, Arc<org_mailbox::testkit::InMemoryDirectory>) {
         use org_mailbox::testkit::fixture::{
             members, ManualClock, INCARNATION, NOW_MS, OFFICE_ID, POSITION,
         };
         use org_mailbox::testkit::{InMemoryDirectory, InMemoryStore};
-        use org_mailbox::{NoMessageEvents, OfficeIdentity};
+        use org_mailbox::OfficeIdentity;
         let directory = Arc::new(InMemoryDirectory::new(members(), POSITION));
         let mailbox = Mailbox::new(
             Arc::new(InMemoryStore::new()),
@@ -842,7 +861,7 @@ mod tests {
                 is_hq: true,
             },
             Arc::new(ManualClock::new(NOW_MS)),
-            Arc::new(NoMessageEvents),
+            live,
         );
         (Arc::new(mailbox), directory)
     }
@@ -868,6 +887,12 @@ mod tests {
         /// An event whose frame is about `size` bytes.
         fn push_big(&self, seq: u64, size: usize) {
             self.push_with(seq, "x".repeat(size));
+        }
+
+        /// Wakes the followers without a commit, as a live event's publish does.
+        fn wake(&self) {
+            *self.token.lock().unwrap() += 1;
+            self.woken.notify_all();
         }
 
         fn push_with(&self, seq: u64, command_id: String) {
@@ -1178,6 +1203,7 @@ mod tests {
                 who: Box::new(|_| Err("none".to_owned())),
                 status: Box::new(|_, _| Err("none".to_owned())),
                 feed: Box::new(Arc::new(FakeFeed::default())),
+                live: Arc::new(LiveEvents::new(Box::new(|| {}))),
                 mailbox,
                 directory,
             },
@@ -1601,6 +1627,7 @@ mod tests {
                     who: Box::new(|_| Err("none".to_owned())),
                     status: Box::new(|_, _| Err("none".to_owned())),
                     feed: Box::new(Arc::clone(&feed)),
+                    live: Arc::new(LiveEvents::new(Box::new(|| {}))),
                     mailbox,
                     directory,
                 },
@@ -2056,6 +2083,7 @@ mod tests {
                 }),
                 status: Box::new(|_, _| Err("none".to_owned())),
                 feed: Box::new(Arc::new(FakeFeed::default())),
+                live: Arc::new(LiveEvents::new(Box::new(|| {}))),
                 mailbox,
                 directory,
             },
@@ -2888,6 +2916,222 @@ mod tests {
         assert_eq!(error.code, ErrorCode::InvalidRequest);
         assert!(!error.message.contains("SECRET"), "{}", error.message);
         assert!(log.lock().unwrap().is_empty(), "nothing reached the office");
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    // ---- live events on subscribe ----------------------------------------------------------
+
+    /// A server whose mailbox publishes to `live`, which subscribers read.
+    fn events_server(
+        path: &Path,
+        live: &Arc<LiveEvents>,
+    ) -> (Arc<Mailbox>, Arc<AtomicBool>, std::thread::JoinHandle<()>) {
+        let (mailbox, directory) = messaging_with(Arc::clone(live));
+        let mut ports = ports(Box::new(|| Err("none".to_owned())));
+        ports.mailbox = Arc::clone(&mailbox);
+        ports.directory = directory;
+        ports.live = Arc::clone(live);
+        let timing = Timing {
+            idle: Duration::from_millis(20),
+            ..Timing::default()
+        };
+        let shared = Arc::new(Shared::new(&test_info(), path, ports, token()).with_timing(timing));
+        let (stop, server) = start(path, &shared);
+        (mailbox, stop, server)
+    }
+
+    /// The next event, skipping nothing: its name and data.
+    fn next_event(client: &mut Client) -> (String, serde_json::Value) {
+        let message = client.next_message();
+        (
+            message["event"].as_str().expect("an event").to_owned(),
+            message["data"].clone(),
+        )
+    }
+
+    #[test]
+    fn an_app_subscriber_is_told_of_a_message_and_of_its_reading_after_it_subscribed() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let live = Arc::new(LiveEvents::new(Box::new(|| {})));
+        let (_mailbox, stop, server) = events_server(&path, &live);
+        let mut ada = Client::bound_as(&path, "ada");
+        let mut remy = Client::bound_as(&path, "remy");
+        // Sent BEFORE the app subscribed: never told.
+        ada.call::<MsgSend>(&send_params(60, "remy", "earlier"));
+
+        let mut app = Client::connect(&path);
+        app.bind(None, Some(token()));
+        assert!(matches!(app.subscribe(None), org_proto::Outcome::Result(_)));
+        ada.call::<MsgSend>(&send_params(61, "remy", "now"));
+        let (name, data) = next_event(&mut app);
+        assert_eq!(name, "message.received");
+        assert_eq!(data["header"]["id"], msg_id(61));
+        assert_eq!(data["header"]["from_member_id"], ADA_ID);
+        assert_eq!(data["header"]["to_member_id"], REMY_ID);
+        assert!(
+            !data.to_string().contains("now"),
+            "no body in an event: {data}"
+        );
+
+        // Reading it is a state change.
+        remy.call::<MsgRead>(&MsgReadParams {
+            id: Some(msg_id(61)),
+        });
+        let (name, data) = next_event(&mut app);
+        assert_eq!(name, "message.state_changed");
+        assert_eq!(data["id"], msg_id(61));
+        assert_eq!(data["state"], "read");
+        assert!(
+            app.nothing_within(Duration::from_millis(200)),
+            "nothing else"
+        );
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_rebind_ends_the_live_events_too_and_a_new_subscriber_starts_from_now() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let live = Arc::new(LiveEvents::new(Box::new(|| {})));
+        let (_mailbox, stop, server) = events_server(&path, &live);
+        let mut ada = Client::bound_as(&path, "ada");
+        let mut app = Client::connect(&path);
+        app.bind(None, Some(token()));
+        app.subscribe(None);
+        // A bind ends the subscription: nothing more arrives until it subscribes again.
+        app.bind(None, Some(token()));
+        ada.call::<MsgSend>(&send_params(62, "remy", "missed"));
+        assert!(app.nothing_within(Duration::from_millis(300)));
+        assert!(matches!(app.subscribe(None), org_proto::Outcome::Result(_)));
+        assert!(
+            app.nothing_within(Duration::from_millis(300)),
+            "no replay of what was missed"
+        );
+        ada.call::<MsgSend>(&send_params(63, "remy", "seen"));
+        let (name, data) = next_event(&mut app);
+        assert_eq!(
+            (name.as_str(), &data["header"]["id"]),
+            ("message.received", &msg_id(63).into())
+        );
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    /// A server whose followers sleep `idle` between looks unless woken, over `feed`, with `live`
+    /// waking that feed on every publish (as the real office does).
+    fn waking_server(
+        path: &Path,
+        live: &Arc<LiveEvents>,
+        feed: &Arc<FakeFeed>,
+        timing: Timing,
+    ) -> (Arc<AtomicBool>, std::thread::JoinHandle<()>) {
+        let (mailbox, directory) = messaging_with(Arc::clone(live));
+        let mut ports = ports(Box::new(|| Err("none".to_owned())));
+        ports.mailbox = mailbox;
+        ports.directory = directory;
+        ports.live = Arc::clone(live);
+        ports.feed = Box::new(Arc::clone(feed));
+        let shared = Arc::new(Shared::new(&test_info(), path, ports, token()).with_timing(timing));
+        start(path, &shared)
+    }
+
+    #[test]
+    fn a_published_event_wakes_a_follower_that_would_otherwise_sleep_its_whole_idle_time() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let feed = Arc::new(FakeFeed::default());
+        let live = {
+            let feed = Arc::clone(&feed);
+            Arc::new(LiveEvents::new(Box::new(move || feed.wake())))
+        };
+        let timing = Timing {
+            idle: Duration::from_secs(5),
+            ..Timing::default()
+        };
+        let (stop, server) = waking_server(&path, &live, &feed, timing);
+        let mut ada = Client::bound_as(&path, "ada");
+        let mut app = Client::connect(&path);
+        app.bind(None, Some(token()));
+        app.subscribe(None);
+        // Let the follower go to sleep on its 5 s idle, then publish.
+        std::thread::sleep(Duration::from_millis(300));
+        let started = std::time::Instant::now();
+        ada.call::<MsgSend>(&send_params(64, "remy", "wake"));
+        let (name, _) = next_event(&mut app);
+        assert_eq!(name, "message.received");
+        // Without the wake it would sleep out the rest of its 5 s idle.
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    fn presence(member: &str, status: &str) -> crate::live::Live {
+        crate::live::Live::Presence(org_proto::directory::MemberPresenceChangedData {
+            member_id: member.to_owned(),
+            presence: org_proto::directory::MemberPresence::Offline,
+            last_seen_at: "2026-11-09T12:00:00.000Z".to_owned(),
+            status: Some(status.to_owned()),
+            status_expires_at: None,
+            current_task_id: None,
+        })
+    }
+
+    #[test]
+    fn presence_goes_at_once_then_at_most_once_a_gap_and_the_last_state_is_never_lost() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let feed = Arc::new(FakeFeed::default());
+        let live = {
+            let feed = Arc::clone(&feed);
+            Arc::new(LiveEvents::new(Box::new(move || feed.wake())))
+        };
+        let gap = Duration::from_millis(600);
+        let timing = Timing {
+            idle: Duration::from_millis(20),
+            presence_gap: gap,
+            ..Timing::default()
+        };
+        let (stop, server) = waking_server(&path, &live, &feed, timing);
+        let mut app = Client::connect(&path);
+        app.bind(None, Some(token()));
+        app.subscribe(None);
+
+        let started = std::time::Instant::now();
+        live.publish_live(presence("A", "one"));
+        live.publish_live(presence("A", "two"));
+        live.publish_live(presence("A", "three"));
+        live.publish_live(presence("B", "other"));
+        let mut got = Vec::new();
+        for _ in 0..3 {
+            let (name, data) = next_event(&mut app);
+            assert_eq!(name, "member.presence_changed");
+            got.push((
+                data["member_id"].as_str().unwrap().to_owned(),
+                data["status"].as_str().unwrap().to_owned(),
+                started.elapsed(),
+            ));
+        }
+        // "one" and B's go at once (in order), "two" is overtaken, "three" waits the gap.
+        assert_eq!((got[0].0.as_str(), got[0].1.as_str()), ("A", "one"));
+        assert_eq!((got[1].0.as_str(), got[1].1.as_str()), ("B", "other"));
+        assert_eq!((got[2].0.as_str(), got[2].1.as_str()), ("A", "three"));
+        assert!(got[1].2 < gap / 2, "{:?}", got[1].2);
+        assert!(
+            got[2].2 >= gap,
+            "the held one waited the gap: {:?}",
+            got[2].2
+        );
+        assert!(
+            app.nothing_within(Duration::from_millis(300)),
+            "nothing else"
+        );
         stop.store(true, Ordering::SeqCst);
         server.join().unwrap();
     }

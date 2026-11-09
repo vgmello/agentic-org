@@ -17,6 +17,7 @@
 mod bounded;
 pub mod fdswap;
 mod follow;
+mod live;
 mod msg_calls;
 mod serve;
 mod signals;
@@ -261,8 +262,12 @@ fn serve_office(
     // Stop signals are handled only from here: before this the default disposition applies, so a
     // server waiting for its first line or for the office lock can still be terminated.
     signals::install();
-    // No message events yet: `message.received` for subscribers arrives with the events slice.
-    let mailbox = match office.mailbox(Arc::new(org_mailbox::NoMessageEvents)) {
+    // Live events (messages, status lines) for subscribers; a publish wakes the followers.
+    let live = Arc::new(live::LiveEvents::new({
+        let office = Arc::clone(&office);
+        Box::new(move || office.wake_followers())
+    }));
+    let mailbox = match office.mailbox(live.clone()) {
         Ok(mailbox) => Arc::new(mailbox),
         Err(e) => {
             let _ = std::fs::remove_file(&socket);
@@ -288,12 +293,20 @@ fn serve_office(
             },
             status: {
                 let office = Arc::clone(&office);
+                let live = Arc::clone(&live);
                 Box::new(move |member, params| {
-                    office
+                    let answer = office
                         .set_status(member, params)
-                        .map_err(|e| logged("status", &e))
+                        .map_err(|e| logged("status", &e))?;
+                    if let Ok(set) = &answer {
+                        live.publish_live(live::Live::Presence(org_office::presence_after_status(
+                            member, set,
+                        )));
+                    }
+                    Ok(answer)
                 })
             },
+            live: Arc::clone(&live),
             feed: Box::new(OfficeFeed(Arc::clone(&office))),
             mailbox,
             directory: Arc::new(office.member_directory()),

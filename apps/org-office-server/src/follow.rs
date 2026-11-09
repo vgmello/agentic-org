@@ -1,18 +1,30 @@
 //! `subscribe`: a connection that follows the organization's log. After the `subscribe` answer a
 //! thread of its own pushes `org.changed` events, in log order, each read from the log (so a
-//! commit is never missed and never sent twice), and sleeps until the next commit.
+//! commit is never missed and never sent twice), and sleeps until the next commit. It also pushes
+//! the live events that happen after it subscribed (`message.received`,
+//! `message.state_changed`, `member.presence_changed`, see `live`): hints with no replay, and
+//! `member.presence_changed` at most once a second for a member (the latest one waits, and a
+//! waiting one is dropped if the subscription ends first: a client that subscribes again asks
+//! `who`).
 //!
 //! A subscription belongs to the binding that made it: any later `msg.bind` on the connection
 //! (failed or not) ends it, and the client subscribes again once it is bound. Events go out
 //! through the connection's one writer lock, so they never interleave with an answer.
 
+use std::collections::HashMap;
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use org_proto::directory::{MemberPresenceChanged, MemberPresenceChangedData};
+use org_proto::msg::{MessageReceived, MessageStateChanged};
 use org_proto::org::{OrgChangedData, Position};
-use org_proto::{ApiError, ErrorCode, Event, OrgChanged, Request, Subscribe, SubscribeParams};
+use org_proto::{
+    ApiError, ErrorCode, Event, EventKind, OrgChanged, Request, Subscribe, SubscribeParams,
+};
+
+use crate::live::{Live, LiveEvents};
 
 /// How many log entries are read at a time.
 const PAGE: usize = 100;
@@ -25,6 +37,8 @@ pub struct Timing {
     pub idle: Duration,
     /// The most one frame may take to reach a client; then the connection is dropped.
     pub write: Duration,
+    /// The least time between two `member.presence_changed` events for one member.
+    pub presence_gap: Duration,
 }
 
 impl Default for Timing {
@@ -32,6 +46,7 @@ impl Default for Timing {
         Self {
             idle: Duration::from_millis(200),
             write: Duration::from_secs(10),
+            presence_gap: Duration::from_secs(1),
         }
     }
 }
@@ -102,60 +117,249 @@ pub fn begin(
     }
 }
 
+/// Where a pusher starts: after this log position, and after this live event.
+#[derive(Clone, Copy)]
+pub struct Start {
+    pub position: Position,
+    pub live: u64,
+}
+
+/// What a pusher needs of the connection it writes to.
+pub struct Wire<'a> {
+    pub out: &'a Mutex<UnixStream>,
+    /// Moves on when the binding changes or the reader is gone; `mine` is the value this pusher
+    /// was made under.
+    pub generation: &'a AtomicU64,
+    pub mine: u64,
+    /// The events sent on the connection so far, whichever subscription sent them.
+    pub seq: &'a AtomicU64,
+    pub timing: Timing,
+}
+
+impl Wire<'_> {
+    /// Writes one event. `false` when the pusher must stop: the generation moved on (no event
+    /// goes out, and none takes a number it does not send) or the write failed (the connection
+    /// is shut down).
+    fn emit<K: EventKind>(&self, data: &K::Data) -> bool {
+        let stream = self.out.lock().unwrap_or_else(|p| p.into_inner());
+        // Checked under the writer lock: once a re-bind has moved the generation on, not one more
+        // event goes out.
+        if self.generation.load(Ordering::SeqCst) != self.mine {
+            return false;
+        }
+        // Counts per connection, so a client that subscribes again sees no restart and no gap
+        // (the number is taken here, under the lock, right before the write).
+        let number = self.seq.load(Ordering::SeqCst) + 1;
+        let Ok(event) = Event::new::<K>(number, data) else {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+            return false;
+        };
+        if crate::bounded::write_message(&stream, &event, self.timing.write).is_err() {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+            return false;
+        }
+        self.seq.store(number, Ordering::SeqCst);
+        true
+    }
+}
+
+/// Presence events, at most one a `gap` per member: the first goes at once, one that comes sooner
+/// waits (a newer one replaces it) and goes when the gap is over.
+struct PresenceGate {
+    gap: Duration,
+    sent: HashMap<String, Instant>,
+    waiting: HashMap<String, MemberPresenceChangedData>,
+}
+
+impl PresenceGate {
+    fn new(gap: Duration) -> Self {
+        Self {
+            gap,
+            sent: HashMap::new(),
+            waiting: HashMap::new(),
+        }
+    }
+
+    /// Takes a new event; `Some` if it may go now.
+    fn offer(
+        &mut self,
+        data: MemberPresenceChangedData,
+        now: Instant,
+    ) -> Option<MemberPresenceChangedData> {
+        let due = self
+            .sent
+            .get(&data.member_id)
+            .is_none_or(|at| now.duration_since(*at) >= self.gap);
+        if due {
+            self.waiting.remove(&data.member_id);
+            self.sent.insert(data.member_id.clone(), now);
+            Some(data)
+        } else {
+            self.waiting.insert(data.member_id.clone(), data);
+            None
+        }
+    }
+
+    /// The events whose gap is over.
+    fn due(&mut self, now: Instant) -> Vec<MemberPresenceChangedData> {
+        let ready: Vec<String> = self
+            .waiting
+            .keys()
+            .filter(|member| {
+                self.sent
+                    .get(*member)
+                    .is_none_or(|at| now.duration_since(*at) >= self.gap)
+            })
+            .cloned()
+            .collect();
+        ready
+            .into_iter()
+            .filter_map(|member| {
+                self.sent.insert(member.clone(), now);
+                self.waiting.remove(&member)
+            })
+            .collect()
+    }
+
+    /// How long until the earliest waiting event is due.
+    fn next_due(&self, now: Instant) -> Option<Duration> {
+        self.waiting
+            .keys()
+            .filter_map(|member| self.sent.get(member))
+            .map(|at| self.gap.saturating_sub(now.duration_since(*at)))
+            .min()
+    }
+}
+
 /// Pushes the events after `start` until the connection's generation moves on from `mine` (a
 /// re-bind, or the reader is gone) or a write fails. A failure to read the log or to write an
 /// event closes the connection: the client reconnects and resumes from the last position it got.
-pub fn push(
-    feed: &dyn OrgFeed,
-    out: &Mutex<UnixStream>,
-    generation: &AtomicU64,
-    mine: u64,
-    start: Position,
-    seq: &AtomicU64,
-    timing: Timing,
-) {
-    let mut last = start;
+pub fn push(feed: &dyn OrgFeed, live: &LiveEvents, wire: &Wire<'_>, start: Start) {
+    let mut last = start.position;
+    let mut live_cursor = start.live;
+    let mut presence = PresenceGate::new(wire.timing.presence_gap);
     loop {
-        if generation.load(Ordering::SeqCst) != mine {
+        if wire.generation.load(Ordering::SeqCst) != wire.mine {
             return;
         }
         // Before reading, so a commit while reading wakes the next wait at once.
         let token = feed.token();
         loop {
             let Ok(batch) = feed.changes_after(last, PAGE) else {
-                close(out);
+                close(wire.out);
                 return;
             };
             if batch.is_empty() {
                 break;
             }
             for data in batch {
-                let stream = out.lock().unwrap_or_else(|p| p.into_inner());
-                // Checked under the writer lock: once a re-bind has moved the generation on, not
-                // one more event goes out, and none takes a number it does not send.
-                if generation.load(Ordering::SeqCst) != mine {
+                if !wire.emit::<OrgChanged>(&data) {
                     return;
                 }
-                // Counts per connection, so a client that subscribes again sees no restart and
-                // no gap (the number is taken here, under the lock, right before the write).
-                let number = seq.load(Ordering::SeqCst) + 1;
-                let Ok(event) = Event::new::<OrgChanged>(number, &data) else {
-                    let _ = stream.shutdown(std::net::Shutdown::Both);
-                    return;
-                };
-                if crate::bounded::write_message(&stream, &event, timing.write).is_err() {
-                    let _ = stream.shutdown(std::net::Shutdown::Both);
-                    return;
-                }
-                seq.store(number, Ordering::SeqCst);
                 last = data.position;
             }
         }
-        feed.wait(token, timing.idle);
+        let (events, next) = live.since(live_cursor);
+        live_cursor = next;
+        for event in events {
+            let sent = match event {
+                Live::Received(data) => wire.emit::<MessageReceived>(&data),
+                Live::StateChanged(data) => wire.emit::<MessageStateChanged>(&data),
+                Live::Presence(data) => match presence.offer(data, Instant::now()) {
+                    Some(data) => wire.emit::<MemberPresenceChanged>(&data),
+                    None => true,
+                },
+            };
+            if !sent {
+                return;
+            }
+        }
+        for data in presence.due(Instant::now()) {
+            if !wire.emit::<MemberPresenceChanged>(&data) {
+                return;
+            }
+        }
+        let sleep = presence
+            .next_due(Instant::now())
+            .map_or(wire.timing.idle, |due| due.min(wire.timing.idle));
+        feed.wait(token, sleep.max(Duration::from_millis(1)));
     }
 }
 
 fn close(out: &Mutex<UnixStream>) {
     let stream = out.lock().unwrap_or_else(|p| p.into_inner());
     let _ = stream.shutdown(std::net::Shutdown::Both);
+}
+
+#[cfg(test)]
+mod tests {
+    use org_proto::directory::MemberPresence;
+
+    use super::*;
+
+    fn data(member: &str, status: &str) -> MemberPresenceChangedData {
+        MemberPresenceChangedData {
+            member_id: member.to_owned(),
+            presence: MemberPresence::Offline,
+            last_seen_at: "2026-11-09T12:00:00.000Z".to_owned(),
+            status: Some(status.to_owned()),
+            status_expires_at: None,
+            current_task_id: None,
+        }
+    }
+
+    #[test]
+    fn the_first_presence_goes_at_once_a_sooner_one_waits_and_the_latest_wins() {
+        let gap = Duration::from_secs(1);
+        let mut gate = PresenceGate::new(gap);
+        let t0 = Instant::now();
+        assert_eq!(gate.offer(data("A", "one"), t0), Some(data("A", "one")));
+        // Within the gap: held, and a newer one replaces it.
+        assert_eq!(
+            gate.offer(data("A", "two"), t0 + Duration::from_millis(100)),
+            None
+        );
+        assert_eq!(
+            gate.offer(data("A", "three"), t0 + Duration::from_millis(200)),
+            None
+        );
+        assert!(gate.due(t0 + Duration::from_millis(999)).is_empty());
+        assert_eq!(
+            gate.next_due(t0 + Duration::from_millis(400)),
+            Some(Duration::from_millis(600))
+        );
+        assert_eq!(gate.due(t0 + gap), [data("A", "three")]);
+        // Sent again at t0+gap: the next gap starts there.
+        assert_eq!(
+            gate.offer(data("A", "four"), t0 + gap + Duration::from_millis(10)),
+            None
+        );
+        assert_eq!(
+            gate.next_due(t0 + gap + Duration::from_millis(10)),
+            Some(Duration::from_millis(990))
+        );
+    }
+
+    #[test]
+    fn members_are_gated_apart_and_one_after_the_gap_goes_at_once() {
+        let gap = Duration::from_secs(1);
+        let mut gate = PresenceGate::new(gap);
+        let t0 = Instant::now();
+        assert!(gate.offer(data("A", "a"), t0).is_some());
+        assert!(
+            gate.offer(data("B", "b"), t0).is_some(),
+            "another member is not held"
+        );
+        assert!(
+            gate.offer(data("A", "a2"), t0 + gap).is_some(),
+            "after the gap it goes now"
+        );
+        assert_eq!(gate.next_due(t0 + gap), None, "nothing waits");
+        // A held event that a later one overtakes after the gap is not sent twice.
+        assert!(gate
+            .offer(data("B", "b2"), t0 + Duration::from_millis(10))
+            .is_none());
+        assert!(gate.offer(data("B", "b3"), t0 + gap).is_some());
+        assert!(gate.due(t0 + gap * 2).is_empty());
+    }
 }
