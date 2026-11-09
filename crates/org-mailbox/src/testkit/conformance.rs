@@ -6,6 +6,14 @@
 //! the ports' contracts (ADR-0003 §4.3, as amended by the store split); the `mailbox_*` cases
 //! run the slice-1 Mailbox (send, inbox, read, wait) over the backend, including the §2.2
 //! register-before-commit race and cancellation.
+//!
+//! **Run it against the production shape.** For a SQL store that means a file-backed WAL
+//! database, the real batching writer, and a read pool of two or more connections separate
+//! from the writer (thread-bound or small, so a thread's next read reuses its connection),
+//! with the production statement cache: prepared statements used and reset exactly as
+//! production does, since an unreset statement holds a stale read transaction open. With one
+//! shared connection the visibility and snapshot claim cases pass vacuously: every read then
+//! sees the writer's latest state.
 
 use std::sync::{Arc, Barrier, Mutex, Weak};
 use std::thread;
@@ -502,6 +510,58 @@ pub fn store_claim_read_is_once_under_concurrency(backend: impl OpenBackend) {
     let mut sorted = claimed.clone();
     sorted.sort();
     assert_eq!(sorted, (1..=5).map(msg_id).collect::<Vec<_>>());
+}
+
+/// A reader that peeked, then lost the oldest message to another claimer, must claim the
+/// next one: `claim_read(None)` never answers `None` while an unread message remains. A
+/// store that selects on the reader's stale snapshot and then loses its guarded update
+/// (`... WHERE state = 'unread'` touching 0 rows) fails here.
+pub fn store_claim_read_after_a_lost_race_takes_the_next(backend: impl OpenBackend) {
+    let store = open_store(&backend);
+    commit(
+        &store,
+        new_message(1, PAT_ID, ADA_ID, MessagePriority::Normal),
+    );
+    commit(
+        &store,
+        new_message(2, PAT_ID, ADA_ID, MessagePriority::Normal),
+    );
+    enum Step {
+        Peek,
+        Claim,
+    }
+    thread::scope(|scope| {
+        // Owned inside the scope, so a failed assertion ends reader A instead of stranding it.
+        let (ask, asked) = std::sync::mpsc::channel::<Step>();
+        let (answer, answers) = std::sync::mpsc::channel::<Option<String>>();
+        let store = &store;
+        // Reader A: one long-lived thread, as a pooled or thread-bound connection would be.
+        // The case bites only if A's claim reuses the connection A's peek used.
+        scope.spawn(move || {
+            while let Ok(step) = asked.recv() {
+                let seen = match step {
+                    Step::Peek => peek(store, ADA_ID).message,
+                    Step::Claim => store.claim_read(ADA_ID, None, NOW_UTC).unwrap(),
+                };
+                if answer.send(seen.map(|m| m.message.header.id)).is_err() {
+                    break;
+                }
+            }
+        });
+        let timeout = Duration::from_secs(10);
+        ask.send(Step::Peek).unwrap();
+        assert_eq!(answers.recv_timeout(timeout).unwrap(), Some(msg_id(1)));
+        // B claims message 1 between A's peek and A's claim.
+        let taken = store.claim_read(ADA_ID, None, NOW_UTC).unwrap().unwrap();
+        assert_eq!(taken.message.header.id, msg_id(1));
+        ask.send(Step::Claim).unwrap();
+        assert_eq!(
+            answers.recv_timeout(timeout).unwrap(),
+            Some(msg_id(2)),
+            "claim_read(None) answered without message 2 while it was unread"
+        );
+    });
+    assert_eq!(store.claim_read(ADA_ID, None, NOW_UTC).unwrap(), None);
 }
 
 /// A commit that returned `Ok` is visible at once to a reader on another, long-lived
@@ -1664,6 +1724,7 @@ macro_rules! mailbox_conformance_tests {
             store_claim_read_order_and_ownership,
             store_claim_read_is_once_under_concurrency,
             store_commits_and_claims_are_visible_to_other_readers,
+            store_claim_read_after_a_lost_race_takes_the_next,
             store_claim_read_selects_and_marks_atomically,
             store_list_headers_order_paging_and_filters,
             directory_resolution_order,
