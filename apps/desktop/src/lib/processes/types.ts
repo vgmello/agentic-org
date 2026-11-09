@@ -93,7 +93,8 @@ export interface Layer {
 	/** The team's name, the project's name or the agent's id. */
 	scopeName?: string;
 	doc: ProcessDoc;
-	outcome: 'applies' | 'overridden' | 'refused' | 'left_out' | 'turned_off' | 'not_applied';
+	/** `conflict`: another team's version disagrees and the project has not decided. */
+	outcome: 'applies' | 'overridden' | 'refused' | 'left_out' | 'turned_off' | 'not_applied' | 'conflict';
 	/** In words: why it lost, was refused or left out. */
 	note?: string;
 }
@@ -119,6 +120,10 @@ export interface Entry {
 	/** "Sealed by <team>; applies until the project decides": a sealed version applying while a sibling team disagrees. */
 	sealedNote?: string;
 	drift?: Drift;
+	/** An override that does not name the version it was written against: whether its parent changed is unknown. */
+	driftUnknown?: boolean;
+	/** For a team file: its place in the chain from the outermost parent team (0), to order a chain's processes. */
+	depth?: number;
 	/** The layers that had this key, highest first, and what happened to each. */
 	chain: Layer[];
 }

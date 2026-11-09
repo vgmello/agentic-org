@@ -1,4 +1,4 @@
-import type { Level, ProcessDoc, ProjectRef, TeamRef } from './types';
+import type { ProcessDoc, ProjectRef, TeamRef } from './types';
 
 // Invented processes for the sample organization (src/lib/org/sample.ts): Engineering with Web and Platform under it, Design,
 // People; the project Atlas (Platform), Beacon (Web and Design, shared), Onboarding (People). Shown as Sample data.
@@ -87,5 +87,3 @@ export function sampleProcessDocs(): ProcessDoc[] {
 		doc({ key: 'code-review', name: 'My code review', level: 'agent', scope: 'noor', version: 1, summary: 'My own way of reviewing.', body: '# My code review' })
 	];
 }
-
-export const levelOrder: Level[] = ['organization', 'team', 'project', 'agent'];

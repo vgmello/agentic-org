@@ -17,7 +17,7 @@ describe('PROC-7 what an agent is handed', () => {
 		const reads = Object.fromEntries(set.entries.map((e) => [e.key, { docId: e.doc.id, version: e.doc.version }]));
 		expect(changedSince(set, reads)).toEqual([]);
 		expect(startLine(set, reads, 'atl-T-17')).toBe(
-			'Your processes for atl-T-17: Branch, review and merge (org v3), Code review (org v2), Incident response (Engineering v1), Release checklist (Atlas v1), Security basics (org v1).'
+			'Your processes for atl-T-17: Branch, review and merge (org v3), Code review (org v2), Incident response (Engineering v1), Release checklist (Atlas v1), Security basics (org v1). Turned off: Weekly status (turned off for Atlas: we report daily).'
 		);
 		const stale = { ...reads, 'branch-and-merge': { docId: branch.doc.id, version: 2 } };
 		expect(startLine(set, stale)).toContain('Changed since you last read: Branch, review and merge v2 → v3.');

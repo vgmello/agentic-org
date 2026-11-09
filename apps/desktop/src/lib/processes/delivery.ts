@@ -21,7 +21,9 @@ export const changedSince = (set: EffectiveSet, reads: Reads): Entry[] => set.en
  */
 export function startLine(set: EffectiveSet, reads: Reads, taskRef?: string): string {
 	const list = set.entries.map((e) => `${e.doc.name} (${sourceShort(e)})`).join(', ') || 'none';
-	const head = `Your processes${taskRef ? ` for ${taskRef}` : ''}: ${list}.`;
+	const off = set.turnedOff.map((t) => `${t.name} (turned off${t.scopeName ? ` for ${t.scopeName}` : ''}: ${t.reason})`);
+	const conflicts = set.conflicts.map((c) => `${c.key}: ${c.teams.join(' and ')} disagree. ${c.applies}`);
+	const head = `Your processes${taskRef ? ` for ${taskRef}` : ''}: ${list}.${off.length ? ` Turned off: ${off.join(', ')}.` : ''}${conflicts.length ? ` Conflicts: ${conflicts.join('; ')}.` : ''}`;
 	const changed = changedSince(set, reads);
 	if (changed.length === 0) return head;
 	const words = changed.map((e) => {
@@ -47,14 +49,18 @@ export function momentPrompts(set: EffectiveSet, moment: Moment, momentOn: boole
  * project, never private ones); a step with the same text is merged, and required wins.
  */
 export function taskChecklist(set: EffectiveSet, projectDefault: ChecklistStep[]): ChecklistStep[] {
-	const steps: ChecklistStep[] = [];
+	const result: ChecklistStep[] = [];
 	const add = (step: ChecklistStep) => {
-		const found = steps.find((s) => s.text.trim().toLowerCase() === step.text.trim().toLowerCase());
+		const found = result.find((s) => s.text.trim().toLowerCase() === step.text.trim().toLowerCase());
 		if (found) found.required = found.required || step.required;
-		else steps.push({ ...step });
+		else result.push({ ...step });
 	};
 	projectDefault.forEach(add);
+	// Organization, then the team chain from the outermost parent down, then the project; within one place, by name.
 	const order: Level[] = ['organization', 'team', 'project'];
-	for (const entry of [...set.entries].filter((e) => e.source !== 'agent').sort((a, b) => order.indexOf(a.source) - order.indexOf(b.source))) (entry.doc.checklist ?? []).forEach(add);
-	return steps;
+	const chainOrdered = [...set.entries]
+		.filter((e) => e.source !== 'agent')
+		.sort((a, b) => order.indexOf(a.source) - order.indexOf(b.source) || (a.depth ?? 0) - (b.depth ?? 0));
+	for (const entry of chainOrdered) (entry.doc.checklist ?? []).forEach(add);
+	return result;
 }

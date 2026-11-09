@@ -22,7 +22,8 @@ export function branchRule(set: EffectiveSet | undefined, projectName: string): 
 	const off = set?.turnedOff.find((t) => t.key === BRANCH_KEY);
 	if (!off) return { on: true, text: 'On' };
 	const { author, approvedBy } = off.doc;
-	if (approvedBy && approvedBy !== author) return { on: false, text: `Turned off for ${off.scopeName ?? projectName}: ${off.reason}` };
+	// An approval counts only when the author is known and someone else approved: the rule fails closed.
+	if (approvedBy && author && approvedBy !== author) return { on: false, text: `Turned off for ${off.scopeName ?? projectName}: ${off.reason}` };
 	return { on: true, text: `On · turning it off needs approval by someone other than its author (${author ?? 'unknown'})`, ...(author ? { selfApprovedBy: author } : {}) };
 }
 

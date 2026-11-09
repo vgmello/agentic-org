@@ -123,8 +123,6 @@ describe('PROC-4 a lower level turns a process off', () => {
 
 describe('PROC-1/PROC-16 problems in the files', () => {
 	it('a file with unreadable front matter is listed with its field and left out of the set', () => {
-		const set = run('des1' as never, undefined, [], docs);
-		void set;
 		const design = resolve({ docs, teams: SAMPLE_TEAMS, project: { key: 'des1', name: 'Design one', teamIds: ['design'] } });
 		expect(design.problems.find((p) => p.kind === 'invalid')).toMatchObject({ key: 'design-handoff', text: 'Details not recognized: overridable.' });
 		expect(names(design)).not.toContain('design-handoff');
