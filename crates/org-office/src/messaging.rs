@@ -6,14 +6,15 @@
 use std::sync::Arc;
 
 use org_mailbox::{
-    CommitMessageOutcome, HeaderQuery, MemberDirectory, MessageStore, NewStoredMessage,
-    PeekUnreadOutcome, StoreError, StoredMessage,
+    CommitMessageOutcome, HeaderQuery, Mailbox, MemberDirectory, MessageEvents, MessageStore,
+    NewStoredMessage, OfficeIdentity, PeekUnreadOutcome, StoreError, StoredMessage, SystemClock,
 };
 use org_proto::msg::HeaderPage;
 use org_proto::{Member, Position};
 
 use crate::directory::resolve_member;
 use crate::error::OfficeError;
+use crate::model::OfficeRole;
 use crate::office::Office;
 use crate::store::{messages, org as org_db};
 
@@ -35,6 +36,30 @@ impl Office {
     /// The messages of this office, as the mailbox's storage port.
     pub fn message_store(self: &Arc<Self>) -> OfficeMessageStore {
         OfficeMessageStore(Arc::clone(self))
+    }
+
+    /// The office's mailbox: its message store and member directory under the messaging rules,
+    /// with `events` told of what is sent and read. Reads (or makes) the incarnation, so it can
+    /// fail on storage.
+    pub fn mailbox(
+        self: &Arc<Self>,
+        events: Arc<dyn MessageEvents>,
+    ) -> Result<Mailbox, OfficeError> {
+        let incarnation = self
+            .local_store()
+            .write(|db| Ok((messages::incarnation(db)?, None)))?;
+        let identity = OfficeIdentity {
+            office_id: self.info().office_id.clone(),
+            incarnation,
+            is_hq: matches!(self.info().role, OfficeRole::Hq),
+        };
+        Ok(Mailbox::new(
+            Arc::new(self.message_store()),
+            Arc::new(self.member_directory()),
+            identity,
+            Arc::new(SystemClock),
+            events,
+        ))
     }
 
     /// The members of this office's organization, as the mailbox's directory port.
@@ -549,6 +574,100 @@ mod tests {
         let at = peek("2026-11-08T12:00:11.000Z");
         assert!(at.message.is_none());
         assert_eq!(at.expired_ids, [id]);
+    }
+
+    #[test]
+    fn the_office_mailbox_sends_lists_and_reads_over_the_real_stores() {
+        use org_mailbox::NoMessageEvents;
+        use org_proto::msg::{MsgInboxParams, MsgReadParams, MsgSendParams, KIND_MSG};
+
+        let dir = TempDir::new().unwrap();
+        let office = office_in(&dir, &InMemoryKeys::new());
+        let mailbox = office.mailbox(Arc::new(NoMessageEvents)).unwrap();
+        let id = crate::ulid::generate().unwrap();
+        let sent = mailbox
+            .send(
+                ADA,
+                MsgSendParams {
+                    id: id.clone(),
+                    to: PAT.into(),
+                    kind: KIND_MSG.into(),
+                    priority: None,
+                    subject: Some("hello".into()),
+                    body: "from ada".into(),
+                    meta: Default::default(),
+                    reply_to: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(sent.id, id);
+
+        let inbox = mailbox
+            .inbox(
+                PAT,
+                MsgInboxParams {
+                    from: None,
+                    thread_id: None,
+                    include_all: false,
+                    cursor: None,
+                    limit: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(inbox.headers.len(), 1);
+        let read = mailbox
+            .read(
+                PAT,
+                MsgReadParams {
+                    id: Some(id.clone()),
+                },
+            )
+            .unwrap();
+        assert_eq!(read.message.unwrap().body, "from ada");
+        // Read now: nothing unread is left.
+        let unread = mailbox
+            .inbox(
+                PAT,
+                MsgInboxParams {
+                    from: None,
+                    thread_id: None,
+                    include_all: false,
+                    cursor: None,
+                    limit: None,
+                },
+            )
+            .unwrap();
+        assert!(unread.headers.is_empty());
+    }
+
+    #[test]
+    fn the_incarnation_is_made_once_and_survives_a_reopen() {
+        use org_mailbox::NoMessageEvents;
+        let dir = TempDir::new().unwrap();
+        let keys = InMemoryKeys::new();
+        let office = office_in(&dir, &keys);
+        let first = office
+            .local_store()
+            .write(|db| Ok((messages::incarnation(db)?, None)))
+            .unwrap();
+        let again = office
+            .local_store()
+            .write(|db| Ok((messages::incarnation(db)?, None)))
+            .unwrap();
+        assert_eq!(first, again);
+        assert_eq!(first.len(), 26);
+        office.mailbox(Arc::new(NoMessageEvents)).unwrap();
+        let folder = dir.path().join("offices").join(OFFICE_ID);
+        let Ok(office) = Arc::try_unwrap(office) else {
+            panic!("the only owner")
+        };
+        drop(office);
+        let reopened = Arc::new(Office::open(&folder, &keys).unwrap());
+        let after = reopened
+            .local_store()
+            .write(|db| Ok((messages::incarnation(db)?, None)))
+            .unwrap();
+        assert_eq!(first, after);
     }
 
     #[test]
