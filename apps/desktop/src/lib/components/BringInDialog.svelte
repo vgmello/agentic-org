@@ -185,7 +185,10 @@
 		const base = suggestTeams(review.rows);
 		const fitted = hints ? applyHints(review.rows, hints, base) : { rows: review.rows, drafts: base, notes: undefined };
 		drafts = fitted.drafts;
-		rows = withDefaultManagers(markRemoved(fitted.rows, browserLedger(organizationId).load(), new Set(snapshot.members.map((m) => m.id))), drafts);
+		// Who stays out (skipped, removed since an earlier import) is neither a manager nor a lead.
+		const settled = normalize(markRemoved(fitted.rows, browserLedger(organizationId).load(), new Set(snapshot.members.map((m) => m.id))), drafts);
+		drafts = settled.drafts;
+		rows = withDefaultManagers(settled.rows, drafts);
 		hintNotes = fitted.notes;
 		offboarded = review.offboarded;
 		project = suggestProject(rows, drafts);
