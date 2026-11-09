@@ -3,7 +3,7 @@ import { createMockOrg, type MockStorage } from '$lib/org/api';
 import type { OrgSession } from '$lib/org/session';
 import { sessionFor } from '$lib/org/session';
 import type { Member } from '$lib/proto';
-import { addResults, bringIn, type BringInInput } from './bring-in';
+import { addResults, bringIn, owesWork, type BringInInput } from './bring-in';
 import { applyHints } from './hints';
 import { memoryLedger, type LedgerStore } from './ledger';
 import { SAMPLE_HINTS, SAMPLE_SCAN } from './mock';
@@ -449,5 +449,44 @@ describe('one run at a time', () => {
 		expect((await agentsOf(w.s)).length).toBe(10);
 		// And once it is over, a new run is a new run.
 		expect(await run(w)).toMatchObject({ agents: 0 });
+	});
+});
+
+describe('a failure is reported once, and what is owed can be finished from a new review', () => {
+	it('reports a membership that failed once, not again from the lead step', async () => {
+		const w = world();
+		const down: OrgSession = { snapshot: () => w.s.snapshot(), command: (c) => (c.method === 'team.add_member' ? Promise.reject({ source: 'api', code: 'unavailable', message: 'gone' }) : w.s.command(c)) };
+		const result = await run(w, reviewed(), down);
+		const whats = result.failures.map((f) => f.what);
+		expect(new Set(whats).size).toBe(whats.length);
+		expect(whats).toContain('Add ada to engineering'.replace('engineering', 'Engineering'));
+	});
+
+	it('knows what an earlier run still owes, so a closed dialog can be finished', async () => {
+		const w = world();
+		let fail = true;
+		const flaky: OrgSession = { snapshot: () => w.s.snapshot(), command: (c) => (fail && c.method === 'team.add_member' ? Promise.reject({ source: 'api', code: 'unavailable', message: 'gone' }) : w.s.command(c)) };
+		expect(owesWork(w.ledger.load(), reviewed().rows, reviewed().drafts)).toBe(false);
+		await run(w, reviewed(), flaky);
+		const rebuilt = reviewed((await w.s.snapshot()).members); // the dialog was closed and opened again: everyone is "Already in"
+		expect(rebuilt.rows.every((r) => r.existingMemberId)).toBe(true);
+		expect(owesWork(w.ledger.load(), rebuilt.rows, rebuilt.drafts)).toBe(true);
+		fail = false;
+		expect(await run(w, rebuilt, flaky)).toMatchObject({ agents: 0, failures: [] });
+		expect(owesWork(w.ledger.load(), rebuilt.rows, rebuilt.drafts)).toBe(false);
+	});
+
+	it('leaves the line of an agent whose manager is still to be filled in for the run that has them', async () => {
+		const w = world();
+		const r = reviewed();
+		// ada is brought in later: not complete now (no role).
+		const late = { ...r, rows: r.rows.map((x) => (x.name === 'ada' ? { ...x, role: undefined } : x)) };
+		const first = await run(w, late);
+		expect(first.failures).toEqual([]);
+		expect((await find(w.s)).member('ac-software-engineer-river').reports_to_member_id).toBeUndefined();
+		const second = await run(w, r);
+		expect(second.failures).toEqual([]);
+		const { member } = await find(w.s);
+		expect(member('ac-software-engineer-river').reports_to_member_id).toBe(member('ac-staff-engineer-ada').id);
 	});
 });

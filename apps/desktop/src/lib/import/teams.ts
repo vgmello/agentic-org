@@ -2,7 +2,7 @@
 // teams: a department becomes a top-level team, and the owner shapes the rest (App, Office, ... under Engineering) in the
 // editable preview. Pure.
 
-import { breakCycles, isReady, OWNER, takesPart, type Row } from './rows';
+import { isReady, OWNER, takesPart, type Row } from './rows';
 
 /** A team to create. `key` is its name in lower case: the same team is the same team whatever its capitals. */
 export interface TeamDraft {
@@ -68,14 +68,23 @@ export function withDefaultManagers(rows: Row[], drafts: TeamDraft[]): Row[] {
 		for (let hops = 0; at?.parentKey && hops <= drafts.length; hops++) at = byKey.get(at.parentKey) ?? at;
 		return at;
 	};
-	const next = rows.map((row) => {
-		if (row.hr?.reports_to?.trim() || row.managerSet) return row;
-		if (!row.teamKey) return { ...row, managerKey: OWNER };
+	const fixed = (row: Row) => !!row.hr?.reports_to?.trim() || !!row.managerSet;
+	// HR's lines and the owner's own stay as they are; every other row starts at the owner and takes its default in turn.
+	const next = new Map(rows.map((r) => [r.key, fixed(r) ? r : { ...r, managerKey: OWNER }]));
+	const reaches = (from: string, target: string): boolean => {
+		for (let at = next.get(from), hops = 0; at && hops <= rows.length; at = next.get(at.managerKey), hops++) {
+			if (at.key === target) return true;
+		}
+		return false;
+	};
+	for (const row of rows) {
+		if (fixed(row) || !row.teamKey) continue;
 		const lead = topOf(row.teamKey)?.leadKey;
-		return lead && lead !== row.key && rows.some((r) => r.key === lead && r.choice !== 'skip') ? { ...row, managerKey: lead } : { ...row, managerKey: OWNER };
-	});
-	breakCycles(next);
-	return next;
+		const leadRow = lead ? next.get(lead) : undefined;
+		// Never to a skipped row, to itself, or to someone whose line already leads back here (HR's line wins, so the default goes).
+		if (leadRow && lead !== row.key && leadRow.choice !== 'skip' && !reaches(lead!, row.key)) next.set(row.key, { ...next.get(row.key)!, managerKey: lead! });
+	}
+	return rows.map((r) => next.get(r.key)!);
 }
 
 /** The project HR knows the agents by (`ac`), shared by the top-level teams that will exist. HR keeps only the code. */

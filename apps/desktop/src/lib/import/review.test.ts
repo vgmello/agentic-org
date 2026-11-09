@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addTeam, below, filterRows, normalize, patchRow, removeTeam, rowNote, setParent } from './review';
+import { addTeam, below, filterRows, managerChoices, normalize, patchRow, removeTeam, renameHandle, rowNote, setParent } from './review';
 import { SAMPLE_SCAN } from './mock';
 import { applyHints } from './hints';
 import { SAMPLE_HINTS } from './mock';
@@ -94,5 +94,35 @@ describe('what points at nothing after a change', () => {
 		const { rows: r, drafts } = filled();
 		const ada = patchRow(r, 'ac-staff-engineer-ada', { teamKey: 'app' });
 		expect(normalize(ada, drafts).drafts.find((d) => d.key === 'engineering')!.leadKey).toBe('ac-staff-engineer-ada');
+	});
+});
+
+describe('the manager choices and renaming a messaging name', () => {
+	const { rows: all } = buildRows(SAMPLE_SCAN, { exclude: ['sample'] });
+
+	it('leaves out a row whose own line leads back (a circle HQ would refuse), the row itself and skipped rows', () => {
+		const lines = all.map((r) => (r.name === 'River' ? { ...r, managerKey: 'ac-staff-engineer-ada' } : r));
+		const ada = lines.find((r) => r.name === 'ada')!;
+		expect(managerChoices(lines, ada).map((r) => r.name)).not.toContain('River');
+		expect(managerChoices(lines, ada).map((r) => r.name)).not.toContain('ada');
+		const skipped = patchRow(lines, 'reviewer', { choice: 'skip' });
+		expect(managerChoices(skipped, ada).map((r) => r.name)).not.toContain('reviewer');
+	});
+
+	it('refuses a name HQ would refuse, or another row’s name, and says why', () => {
+		expect(renameHandle(all, 'server-dev', 'has space', []).error).toMatch(/letters, digits/);
+		expect(renameHandle(all, 'server-dev', 'CODEX-dev', []).error).toBe('codex-dev already uses that name.');
+		expect(renameHandle(all, 'server-dev', 'server-dev-2', []).rows.find((r) => r.key === 'server-dev')!.messagingName).toBe('server-dev-2');
+	});
+
+	it('makes the row “Already in” when the organization already has an agent or a person by that name', () => {
+		const member = { id: 'm9', kind: 'agent', name: 'x', agent: { messaging_name: 'Taken', status: 'active' } } as unknown as import('$lib/proto').Member;
+		const person = { id: 'p9', kind: 'person', name: 'Pat', owner: false } as unknown as import('$lib/proto').Member;
+		const a = renameHandle(all, 'server-dev', 'taken', [member]).rows.find((r) => r.key === 'server-dev')!;
+		expect(a).toMatchObject({ existingMemberId: 'm9', existingKind: 'agent' });
+		const p = renameHandle(all, 'server-dev', 'pat', [person]).rows.find((r) => r.key === 'server-dev')!;
+		expect(p).toMatchObject({ existingMemberId: 'p9', existingKind: 'person' });
+		const clear = renameHandle([a, ...all.filter((r) => r.key !== 'server-dev')], 'server-dev', 'fresh-name', [member]).rows.find((r) => r.key === 'server-dev')!;
+		expect(clear.existingMemberId).toBeUndefined();
 	});
 });

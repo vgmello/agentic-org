@@ -1,5 +1,6 @@
 // What the review screen does with the rows and teams, as plain functions (so it is tested without the screen).
 
+import type { Member } from '$lib/proto';
 import { handleProblem, hasNoMessages, isValidHandle, missingOf, OWNER, type Row } from './rows';
 import type { TeamDraft } from './teams';
 import type { Scan } from './types';
@@ -36,8 +37,37 @@ export function rowNote(row: Row, scan: Scan, organization: string): { tone: 'in
 	return undefined;
 }
 
-/** Give the row a different messaging name (the one HR or the inbox had was refused). */
-export const renameHandle = (row: Row, name: string): Row => ({ ...row, messagingName: name.trim() });
+/** The rows `row` may report to: anyone staying but itself and anyone whose own line leads back to it (a circle HQ would refuse). */
+export function managerChoices(rows: Row[], row: Row): Row[] {
+	const byKey = new Map(rows.map((r) => [r.key, r]));
+	const leadsBack = (from: Row): boolean => {
+		for (let at: Row | undefined = from, hops = 0; at && hops <= rows.length; at = byKey.get(at.managerKey), hops++) if (at.key === row.key) return true;
+		return false;
+	};
+	return rows.filter((r) => r.key !== row.key && staying(r) && !leadsBack(r));
+}
+
+const lowerName = (s: string) => s.trim().toLowerCase();
+
+/**
+ * Give the row a different messaging name (the one HR or the inbox had was refused). It must be one HQ accepts, not another row's
+ * name; and if the organization already has an agent or a person by it, the row is "Already in" (never made twice).
+ */
+export function renameHandle(rows: Row[], key: string, raw: string, members: Member[]): { rows: Row[]; error?: string } {
+	const name = raw.trim();
+	const problem = handleProblem(name);
+	if (problem) return { rows, error: problem };
+	const other = rows.find((r) => r.key !== key && lowerName(r.messagingName) === lowerName(name));
+	if (other) return { rows, error: `${other.name} already uses that name.` };
+	const taken = members.find((m) => (m.kind === 'agent' && m.agent && lowerName(m.agent.messaging_name) === lowerName(name)) || (m.kind === 'person' && !m.owner && lowerName(m.name) === lowerName(name)));
+	return {
+		rows: rows.map((r) => {
+			if (r.key !== key) return r;
+			const { existingMemberId: _a, existingKind: _b, existingOffboarded: _c, ...rest } = r;
+			return { ...rest, messagingName: name, ...(taken ? { existingMemberId: taken.id, existingKind: taken.kind === 'agent' ? ('agent' as const) : ('person' as const), ...(taken.agent?.status === 'offboarded' ? { existingOffboarded: true } : {}) } : {}) };
+		})
+	};
+}
 export const handleOk = (name: string): boolean => isValidHandle(name.trim());
 
 // ---- teams

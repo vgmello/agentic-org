@@ -7,7 +7,7 @@ import { newId } from '$lib/org/commands';
 import type { OrgSession } from '$lib/org/session';
 import type { Member, OrgSnapshot, Team } from '$lib/proto';
 import { toAppError } from '$lib/office/api';
-import type { LedgerStore } from './ledger';
+import type { Ledger, LedgerStore } from './ledger';
 import { OWNER, takesPart, type Row } from './rows';
 import { teamsToCreate, type ProjectDraft, type TeamDraft } from './teams';
 
@@ -184,6 +184,7 @@ async function execute(session: OrgSession, input: BringInInput): Promise<BringI
 	// 3. Teams and managers of the agents this import still owes. An agent it only found keeps the teams it has.
 	say('Putting agents in their teams…');
 	const settled = new Map<string, boolean>(); // row key -> its team and manager are done
+	const failedAdds = new Set<string>(); // `${member}:${team}` memberships that failed in this run, already reported
 	for (const row of taking) {
 		const memberId = memberIds.get(row.key);
 		const entry = ledger.agents[lower(row.messagingName)];
@@ -194,7 +195,7 @@ async function execute(session: OrgSession, input: BringInInput): Promise<BringI
 			const s = await session.snapshot();
 			const mine = s.memberships.filter((m) => m.member_id === memberId);
 			if (!mine.some((m) => m.team_id === teamId) && (entry.created || mine.length === 0))
-				ok = await addToTeam(session, row.name, row.teamKey!, teamId, memberId, result.failures);
+				ok = await addToTeam(session, row.name, input.drafts.find((d) => d.key === lower(row.teamKey!))?.name ?? row.teamKey!, teamId, memberId, result.failures, failedAdds);
 		} else if (row.teamKey && wanted.some((t) => t.key === lower(row.teamKey!)) && !ledger.teams[lower(row.teamKey)]) {
 			ok = false; // its team could not be made: the failure above says so, and a retry puts it there
 		}
@@ -207,7 +208,8 @@ async function execute(session: OrgSession, input: BringInInput): Promise<BringI
 		const entry = ledger.agents[lower(row.messagingName)];
 		if (!memberId || !entry || entry.linked || settled.get(row.key) === false) continue;
 		const managerId = row.managerKey === OWNER ? undefined : memberIds.get(row.managerKey);
-		const managerTakesPart = row.managerKey !== OWNER && taking.some((r) => r.key === row.managerKey);
+		// A manager still in the import but not complete is not there yet: the line waits for the run that has them.
+		const managerStaying = row.managerKey !== OWNER && input.rows.some((r) => r.key === row.managerKey && r.choice !== 'skip' && r.existingKind !== 'person' && !r.existingOffboarded);
 		let ok = true;
 		if (managerId) {
 			const me = (await session.snapshot()).members.find((m) => m.id === memberId);
@@ -223,7 +225,7 @@ async function execute(session: OrgSession, input: BringInInput): Promise<BringI
 					ok = !now.members.some((m) => m.id === memberId) || !now.members.some((m) => m.id === managerId);
 				}
 			}
-		} else if (managerTakesPart) {
+		} else if (managerStaying) {
 			ok = false; // its manager could not be made (yet): the line is set when a retry has them
 		}
 		if (ok) {
@@ -246,7 +248,10 @@ async function execute(session: OrgSession, input: BringInInput): Promise<BringI
 			keep();
 			continue;
 		}
-		if (!s.memberships.some((m) => m.team_id === teamId && m.member_id === leadId) && !(await addToTeam(session, leadRow.name, draft.name, teamId, leadId, result.failures))) continue;
+		if (!s.memberships.some((m) => m.team_id === teamId && m.member_id === leadId)) {
+			if (failedAdds.has(`${leadId}:${teamId}`)) continue; // step 3 failed this very add and said so
+			if (!(await addToTeam(session, leadRow.name, draft.name, teamId, leadId, result.failures, failedAdds))) continue;
+		}
 		const fresh = (await session.snapshot()).teams.find((t) => t.id === teamId);
 		if (fresh && !fresh.lead_member_id && (await attempt(`Set the lead of ${draft.name}`, result.failures, () => session.command({ method: 'team.set_lead', params: { team_id: teamId, expected_version: fresh.version, lead_member_id: leadId } })))) {
 			owed.led = true;
@@ -262,8 +267,10 @@ async function execute(session: OrgSession, input: BringInInput): Promise<BringI
 	return result;
 }
 
-function addToTeam(session: OrgSession, name: string, teamName: string, teamId: string, memberId: string, failures: StepResult[]): Promise<boolean> {
-	return attempt(`Add ${name} to ${teamName}`, failures, () => session.command({ method: 'team.add_member', params: { membership_id: newId(), team_id: teamId, member_id: memberId } }));
+async function addToTeam(session: OrgSession, name: string, teamName: string, teamId: string, memberId: string, failures: StepResult[], failed: Set<string>): Promise<boolean> {
+	const ok = await attempt(`Add ${name} to ${teamName}`, failures, () => session.command({ method: 'team.add_member', params: { membership_id: newId(), team_id: teamId, member_id: memberId } }));
+	if (!ok) failed.add(`${memberId}:${teamId}`);
+	return ok;
 }
 
 /** How many owners above a team there are among the teams being made. */
@@ -308,3 +315,15 @@ async function setUpProject(session: OrgSession, project: ProjectDraft, teamIds:
 }
 
 const teamName = (teams: Team[], id: string) => teams.find((t) => t.id === id)?.name ?? 'the team';
+
+/**
+ * Whether an earlier run of this import still owes something that bringing in again would do: an agent it made whose team or
+ * manager is not done, or a team whose lead is not set. (The review's own count only counts agents still to be made.)
+ */
+export function owesWork(ledger: Ledger, rows: Row[], drafts: TeamDraft[]): boolean {
+	const taking = rows.filter(takesPart);
+	const waiting = (r: Row) => r.managerKey !== OWNER && rows.some((m) => m.key === r.managerKey && m.choice !== 'skip' && m.existingKind !== 'person' && !m.existingOffboarded && !takesPart(m));
+	const agents = taking.some((r) => ledger.agents[lower(r.messagingName)] && !ledger.agents[lower(r.messagingName)].linked && !waiting(r));
+	const leads = drafts.some((d) => ledger.teams[d.key] && !ledger.teams[d.key].led && d.leadKey && taking.some((r) => r.key === d.leadKey));
+	return agents || leads;
+}

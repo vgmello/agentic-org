@@ -138,7 +138,7 @@ const clip = (text: string): string => {
 // eslint-disable-next-line no-control-regex
 const CONTROLS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g;
 /** HR text without control characters (HQ refuses them) and trimmed the way HQ trims. */
-const plain = (text: string | undefined): string => trimWhiteSpace((text ?? '').replace(CONTROLS, ' '));
+export const plain = (text: string | undefined): string => trimWhiteSpace((text ?? '').replace(CONTROLS, ' '));
 /** A display name HQ will take: plain, and not longer than an organization name (64 characters). */
 const cleanName = (name: string | undefined): string => [...plain(name)].slice(0, 64).join('');
 
@@ -232,9 +232,9 @@ export function chooseRole(row: Row, role: string): Row {
 
 /** "Custom title…": the title is the owner's own, and an empty role gets the catalog's best match for it, marked Suggested. */
 export function chooseTitle(row: Row, title: string, roles: string[]): Row {
-	const next: Row = { ...row, title };
+	const next: Row = { ...row, title: plain(title) };
 	if (!next.role?.trim()) {
-		const suggested = suggestRole(title, roles);
+		const suggested = suggestRole(next.title ?? '', roles);
 		if (suggested) return { ...next, role: suggested, roleSuggested: true };
 	}
 	return next;

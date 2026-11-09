@@ -1,12 +1,12 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import CircleAlert from '@lucide/svelte/icons/circle-alert';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import { Button } from '$lib/components/ui/button';
 	import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '$lib/components/ui/dialog';
 	import BringInReview from '$lib/components/BringInReview.svelte';
 	import { importApi } from '$lib/import/api';
-	import { addResults, bringIn, type BringInResult } from '$lib/import/bring-in';
+	import { addResults, bringIn, owesWork, type BringInResult } from '$lib/import/bring-in';
 	import { applyHints, type HintNotes } from '$lib/import/hints';
 	import { browserLedger } from '$lib/import/ledger';
 	import { normalize } from '$lib/import/review';
@@ -68,6 +68,17 @@
 	let ran = false;
 	let reported = false;
 	let busy = $derived(step === 'running');
+
+	// A step that replaces the control the keyboard was on must not drop focus behind the dialog: it goes to the new step.
+	let body = $state<HTMLElement | null>(null);
+	let shownStep: Step | undefined;
+	$effect(() => {
+		const now = step;
+		untrack(() => {
+			if (shownStep && shownStep !== now) void tick().then(() => body?.focus());
+			shownStep = now;
+		});
+	});
 
 	$effect(() => {
 		// Only opening starts over: a reload behind the dialog must not throw away the owner's edits.
@@ -184,11 +195,13 @@
 
 	const c = $derived(counts(rows));
 	const happens = $derived(whatHappens(rows, drafts, projectOn ? project : undefined, organization));
-	const bringLabel = $derived(`Bring in ${c.ready} ${c.ready === 1 ? 'agent' : 'agents'}${c.needDetails > 0 ? ` · ${c.needDetails} need details` : ''}`);
+	// What an earlier try of this import left owing (it was closed after a failure): bringing in again finishes it.
+	const owed = $derived(step === 'review' && owesWork(browserLedger(organizationId).load(), rows, drafts));
+	const bringLabel = $derived(c.ready === 0 && owed ? 'Finish bringing in' : `Bring in ${c.ready} ${c.ready === 1 ? 'agent' : 'agents'}${c.needDetails > 0 ? ` · ${c.needDetails} need details` : ''}`);
 	const roleFiles = $derived(scan?.hr && !scan.hr.error ? scan.hr.roles : []);
 
 	async function run() {
-		if (busy || c.ready === 0) return;
+		if (busy || (c.ready === 0 && !owed)) return;
 		step = 'running';
 		crashed = undefined;
 		ran = true;
@@ -248,6 +261,7 @@
 			</DialogDescription>
 		</DialogHeader>
 
+		<div bind:this={body} tabindex="-1" class="outline-none">
 		{#if step === 'sources'}
 			<div class="space-y-3" data-testid="bring-in-sources">
 				{#each [{ id: 'hr', title: 'HR workspace', path: hrDir, scanned: scan?.hr }, { id: 'spool', title: 'Messaging', path: spoolDir, scanned: scan?.messaging }] as source (source.id)}
@@ -304,6 +318,7 @@
 				{hintsFailure}
 				alreadyThere={drafts.filter((d) => snapshot.teams.some((t) => t.name.trim().toLowerCase() === d.name.trim().toLowerCase())).map((d) => d.name)}
 				{busy}
+				members={snapshot.members}
 				onchoosehints={chooseHints}
 			/>
 			<p class="text-sm/6 text-gray-300" data-testid="what-happens">{happens}</p>
@@ -321,11 +336,12 @@
 				{#if result && result.failures.length > 0}
 					<div class="rounded-lg bg-red-500/10 p-3 text-sm/6 text-red-200 outline-1 -outline-offset-1 outline-red-400/30">
 						<p class="font-medium">Not everything went through. Agents already added stay; Try again continues where it stopped.</p>
-						<ul class="mt-1 list-disc pl-5">{#each result.failures as f (f.what)}<li class="[overflow-wrap:anywhere]">{f.what}: {f.error?.message}</li>{/each}</ul>
+						<ul class="mt-1 list-disc pl-5">{#each result.failures as f, i (i)}<li class="[overflow-wrap:anywhere]">{f.what}: {f.error?.message}</li>{/each}</ul>
 					</div>
 				{/if}
 			</div>
 		{/if}
+		</div>
 
 		<DialogFooter class="sticky -bottom-6 -mx-6 -mb-6 border-t border-white/10 bg-popover px-6 py-4">
 			{#if step === 'sources'}
@@ -333,7 +349,7 @@
 				<Button type="button" disabled={!scan || scanning || !found} onclick={build}>Scan</Button>
 			{:else if step === 'review'}
 				<Button type="button" variant="outline" onclick={() => (open = false)}>Cancel</Button>
-				<Button type="button" disabled={c.ready === 0} onclick={run}>{bringLabel}</Button>
+				<Button type="button" disabled={c.ready === 0 && !owed} onclick={run}>{bringLabel}</Button>
 			{:else if step === 'done'}
 				{#if (result && result.failures.length > 0) || crashed}<Button type="button" variant="outline" onclick={run}>Try again</Button>{/if}
 				{#if result && result.failures.length === 0 && !nothingNew}<Button type="button" variant="outline" onclick={() => (close(), void goto('/activity'))}>View Activity</Button>{/if}

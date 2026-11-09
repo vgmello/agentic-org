@@ -123,4 +123,22 @@ describe('rev 15 who a row reports to when HR does not say', () => {
 		expect(withDefaultManagers(byHand, f.drafts).find((r) => r.name === 'server-dev')!.managerKey).toBe('owner');
 		void all;
 	});
+
+	it('lets HR’s line win over a default that would loop: the default goes to the owner, not HR’s line', () => {
+		const all = rows();
+		const hints = { path: 'f', teams: [{ key: 'x', name: 'X', lead: 'server-dev', members: ['server-dev', 'codex-dev'] }] };
+		const f = applyHints(all, hints, []);
+		// HR says the team's lead reports to codex-dev, who has no line of their own: codex-dev would default to the lead.
+		const withHr = f.rows.map((r) => (r.name === 'server-dev' ? { ...r, hr: { id: 'server-dev', reports_to: 'codex-dev' }, managerKey: 'codex-dev' } : r));
+		const out = withDefaultManagers(withHr, f.drafts);
+		expect(out.find((r) => r.name === 'server-dev')!.managerKey).toBe('codex-dev');
+		expect(out.find((r) => r.name === 'codex-dev')!.managerKey).toBe('owner');
+	});
+
+	it('keeps HR’s reports_to even when a default would differ', () => {
+		const all = rows();
+		const f = applyHints(all, SAMPLE_HINTS, suggestTeams(all));
+		const hr = f.rows.map((r) => (r.name === 'River' ? { ...r, managerKey: 'ac-product-designer-eden', hr: { ...r.hr!, reports_to: 'ac-product-designer-eden' } } : r));
+		expect(withDefaultManagers(hr, f.drafts).find((r) => r.name === 'River')!.managerKey).toBe('ac-product-designer-eden');
+	});
 });

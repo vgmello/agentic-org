@@ -3,10 +3,10 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import { runtimeLabel } from '$lib/org/agents';
-	import type { AgentRuntime } from '$lib/proto';
+	import type { AgentRuntime, Member } from '$lib/proto';
 	import type { HintNotes } from '$lib/import/hints';
-	import { addTeam, filterRows, FILTERS, normalize, patchRow, removeTeam, rowNote, setParent, staying, type RowFilter } from '$lib/import/review';
-	import { chooseRole, chooseTitle, OWNER, roleWords, type Row } from '$lib/import/rows';
+	import { addTeam, filterRows, FILTERS, managerChoices, normalize, patchRow, removeTeam, renameHandle, rowNote, setParent, staying, type RowFilter } from '$lib/import/review';
+	import { chooseRole, chooseTitle, missingOf, OWNER, roleWords, type Row } from '$lib/import/rows';
 	import { teamsToCreate, withDefaultManagers, type ProjectDraft, type TeamDraft } from '$lib/import/teams';
 	import type { HrAgent, Scan } from '$lib/import/types';
 
@@ -25,6 +25,7 @@
 		hintsFailure,
 		alreadyThere,
 		busy,
+		members,
 		onchoosehints
 	}: {
 		rows: Row[];
@@ -44,6 +45,8 @@
 		/** Names of planned teams that the organization already has (they are left as they are). */
 		alreadyThere: string[];
 		busy: boolean;
+		/** Who is in the organization now (a messaging name given to a row may already be theirs). */
+		members: Member[];
 		onchoosehints: () => void;
 	} = $props();
 
@@ -74,7 +77,13 @@
 	const setTeam = (r: Row, key: string) => ((rows = patchRow(rows, r.key, { teamKey: key || undefined })), refresh());
 	const setManager = (r: Row, key: string) => (rows = patchRow(rows, r.key, { managerKey: key || OWNER, managerSet: true }));
 	const setChoice = (r: Row, choice: string) => ((rows = patchRow(rows, r.key, { choice: choice as Row['choice'] })), refresh());
-	const setHandle = (r: Row, name: string) => (rows = patchRow(rows, r.key, { messagingName: name.trim() }));
+	let handleError = $state<{ key: string; text: string } | undefined>();
+	function setHandle(r: Row, name: string) {
+		const out = renameHandle(rows, r.key, name, members);
+		handleError = out.error ? { key: r.key, text: out.error } : undefined;
+		rows = out.rows;
+		refresh();
+	}
 	const rename = (d: TeamDraft, name: string) => (drafts = drafts.map((x) => (x.key === d.key ? { ...x, name: name.trim() || x.name } : x)));
 	const setLead = (d: TeamDraft, lead: string) => ((drafts = drafts.map((x) => (x.key === d.key ? { ...x, leadKey: lead || undefined } : x))), refresh());
 	function remove(d: TeamDraft) {
@@ -87,7 +96,6 @@
 		drafts = addTeam(drafts, newTeamName);
 		newTeamName = '';
 	}
-	const managers = $derived(rows.filter(staying));
 	const needsName = (r: Row) => !!rowNote(r, scan, organization) && rowNote(r, scan, organization)!.tone === 'bad';
 </script>
 
@@ -123,6 +131,7 @@
 							<p class="font-medium text-white [overflow-wrap:anywhere]">{row.name}</p>
 							{#if needsName(row)}
 								<Input aria-label="Messaging name for {row.name}" value={row.messagingName} onchange={(e) => setHandle(row, e.currentTarget.value)} class="mt-1 font-mono" disabled={busy} />
+								{#if handleError?.key === row.key}<p class="mt-1 text-xs/5 text-red-300" role="alert">{handleError.text}</p>{/if}
 							{:else}
 								<p class="font-mono text-xs/5 text-gray-400 [overflow-wrap:anywhere]">{row.messagingName}</p>
 							{/if}
@@ -132,7 +141,7 @@
 						<td class="px-3 py-2 align-top">
 							<select aria-label="Role for {row.name}" class={select} value={row.role ?? ''} disabled={busy || settled} onchange={(e) => setRole(row, e.currentTarget.value)}>
 								<option value="">Role?</option>
-								{#each catalog as r (r)}<option value={r}>{r}</option>{/each}
+								{#each catalog as r, i (i)}<option value={r}>{r}</option>{/each}
 								{#if row.role && !catalog.includes(row.role)}<option value={row.role}>{row.role}</option>{/if}
 							</select>
 							{#if row.roleSuggested}<p class="mt-1 text-xs/5 text-gray-400">Suggested</p>{/if}
@@ -156,7 +165,7 @@
 						<td class="px-3 py-2 align-top">
 							<select aria-label="Reports to for {row.name}" class={select} value={row.managerKey} disabled={busy || settled} onchange={(e) => setManager(row, e.currentTarget.value)}>
 								<option value={OWNER}>The owner</option>
-								{#each managers.filter((m) => m.key !== row.key) as m (m.key)}<option value={m.key}>{m.name}</option>{/each}
+								{#each managerChoices(rows, row) as m (m.key)}<option value={m.key}>{m.name}{m.choice !== 'skip' && missingOf(m).length > 0 ? ' (needs details)' : ''}</option>{/each}
 							</select>
 						</td>
 						<td class="px-3 py-2 align-top">
@@ -177,7 +186,7 @@
 	{#if offboarded.length > 0}
 		<details class="rounded-lg bg-white/5 px-3 py-2 text-sm/6 outline-1 -outline-offset-1 outline-white/10">
 			<summary class="cursor-pointer text-gray-300">Offboarded in HR ({offboarded.length})</summary>
-			<ul class="mt-2 list-disc pl-5 text-gray-400">{#each offboarded as a (a.id)}<li class="[overflow-wrap:anywhere]">{a.name ?? a.id}: kept as a record, not brought in.</li>{/each}</ul>
+			<ul class="mt-2 list-disc pl-5 text-gray-400">{#each offboarded as a, i (i)}<li class="[overflow-wrap:anywhere]">{a.name ?? a.id}: kept as a record, not brought in.</li>{/each}</ul>
 		</details>
 	{/if}
 
@@ -189,13 +198,13 @@
 			<Button type="button" variant="outline" size="sm" disabled={busy} onclick={onchoosehints}>{hintsFile ? 'Change team hints…' : 'Team hints (optional)…'}</Button>
 			<Button type="button" variant="outline" size="sm" disabled={busy} onclick={() => (editingTeams = !editingTeams)} aria-expanded={editingTeams}>{editingTeams ? 'Done' : 'Edit…'}</Button>
 		</div>
-		{#each alreadyThere as t (t)}<p class="text-gray-300" data-testid="team-already">{t} is already in {organization}: left as it is.</p>{/each}
+		{#each alreadyThere as t, i (i)}<p class="text-gray-300" data-testid="team-already">{t} is already in {organization}: left as it is.</p>{/each}
 		{#if hintsFailure}<p class="text-amber-200" role="status">Couldn't read {hintsFailure.file}: {hintsFailure.reason}</p>{/if}
 		{#if hintsNotes}
-			{#each hintsNotes.parents as p (p)}<p class="text-amber-200">Parent not found: {p}</p>{/each}
-			{#each hintsNotes.leads as l (l)}<p class="text-amber-200">Lead not found: {l}</p>{/each}
-			{#each hintsNotes.members as m (m)}<p class="text-amber-200">Not found in this import: {m}</p>{/each}
-			{#each hintsNotes.circles as c (c)}<p class="text-amber-200">{c} owns itself through other teams: it goes at the top.</p>{/each}
+			{#each hintsNotes.parents as p, i (i)}<p class="text-amber-200">Parent not found: {p}</p>{/each}
+			{#each hintsNotes.leads as l, i (i)}<p class="text-amber-200">Lead not found: {l}</p>{/each}
+			{#each hintsNotes.members as m, i (i)}<p class="text-amber-200">Not found in this import: {m}</p>{/each}
+			{#each hintsNotes.circles as c, i (i)}<p class="text-amber-200">{c} owns itself through other teams: it goes at the top.</p>{/each}
 		{/if}
 		{#if editingTeams}
 			<ul class="space-y-2" aria-label="Teams to create">

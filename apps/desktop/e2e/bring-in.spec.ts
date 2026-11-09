@@ -115,3 +115,31 @@ test('IMP-7: closing the Done screen by Escape still shows what came in, and onl
 	await expect(page.locator('[data-member-tile][title^="reviewer"]')).toContainText('New');
 	await expect(page.locator('[data-member-tile]').filter({ hasText: 'New' })).toHaveCount(1);
 });
+
+test('IMP-9: a run that fails part way can be closed, and bringing in again from a new review finishes it', async ({ page }) => {
+	await openEmptyChart(page);
+	await scanToReview(page, true);
+	for (const name of ['server-dev', 'app-frontend-dev', 'codex-dev', 'agy-senior-dev', 'reviewer']) {
+		await dialog(page).getByLabel(`Role for ${name}`).selectOption('software engineer');
+		await dialog(page).getByLabel(`Runtime for ${name}`).selectOption('codex');
+	}
+	// The office drops the first lead being set.
+	await page.evaluate(() => (window as unknown as { __mockOrgFailNext: (m: string) => void }).__mockOrgFailNext('team.set_lead'));
+	await dialog(page).getByRole('button', { name: /^Bring in 10 agents$/ }).click();
+	await expect(dialog(page).getByTestId('bring-in-done')).toContainText('Not everything went through', { timeout: 30_000 });
+	await expect(dialog(page).getByTestId('bring-in-done')).toContainText('Set the lead of');
+	await dialog(page).getByRole('button', { name: 'Close', exact: true }).last().click();
+	// A new review: every agent is "Already in", yet there is something to finish.
+	await page.getByRole('button', { name: 'Bring in a team…' }).click();
+	await dialog(page).getByRole('button', { name: 'Choose a team hints file' }).click();
+	await dialog(page).getByRole('button', { name: 'Scan' }).click();
+	await expect(dialog(page).getByRole('button', { name: 'Finish bringing in' })).toBeEnabled();
+	await dialog(page).getByRole('button', { name: 'Finish bringing in' }).click();
+	await expect(dialog(page).getByTestId('bring-in-done')).not.toContainText('Not everything went through', { timeout: 30_000 });
+	await dialog(page).getByRole('button', { name: 'Close' }).last().click();
+	await page.getByRole('button', { name: 'Bring in a team…' }).click();
+	await dialog(page).getByRole('button', { name: 'Choose a team hints file' }).click();
+	await dialog(page).getByRole('button', { name: 'Scan' }).click();
+	await expect(dialog(page).getByRole('button', { name: /^Bring in 0 agents$/ })).toBeDisabled();
+});
+
