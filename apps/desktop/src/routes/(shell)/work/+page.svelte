@@ -23,6 +23,8 @@
 	const snapshot = $derived(data.snapshot);
 	const me = $derived(snapshot.members.find((m) => m.owner)?.id ?? 'owner');
 	const send = $derived(sender(organizationId));
+	/** The open requests with a word that starts with `text`, from the office (the similar requests offered while typing). */
+	const find = (text: string) => workApi.list(organizationId, { kinds: ['request'], statuses: ['new', 'routed', 'scoping', 'scoped'], text, limit: 20 }).then((r) => r.items);
 	/** The words of a request sent as an ordinary message to a member instead: their direct message, then the message (RQS-4). */
 	async function message(memberId: string, text: string) {
 		const chat = chatSender(organizationId);
@@ -155,7 +157,7 @@
 	{/if}
 </div>
 
-<NewRequestDialog bind:open={newRequestOpen} {snapshot} items={items ?? []} {send} {message} ondone={({ ref, sentTo }) => (toast.success(sentTo ? `${ref} sent to ${sentTo}.` : `${ref} saved.`), void load())} onadded={(ref) => (toast.success(`Added to ${ref}.`), void load())} onmessaged={(to) => toast.success(`Message sent to ${to}.`)} />
+<NewRequestDialog bind:open={newRequestOpen} {snapshot} {find} {send} {message} ondone={({ ref, sentTo }) => (toast.success(sentTo ? `${ref} sent to ${sentTo}.` : `${ref} saved.`), void load())} onadded={(ref) => (toast.success(`Added to ${ref}.`), void load())} onmessaged={(to) => toast.success(`Message sent to ${to}.`)} />
 <RequestSheet bind:open={requestOpen} {organizationId} {requestId} start={requestStart} {snapshot} items={items ?? []} {send} onchanged={(message) => (message && toast.success(message), void load())} />
 <TaskSheet bind:open={taskOpen} {organizationId} {taskId} {snapshot} {send} onchanged={() => void load()} />
 <BugSheet bind:open={bugOpen} {organizationId} {bugId} {snapshot} areas={areasOf(bugProject)} bugs={bugsOf(bugProject)} items={items ?? []} {send} onchanged={() => void load()} />

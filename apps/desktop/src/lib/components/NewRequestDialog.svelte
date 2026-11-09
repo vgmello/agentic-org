@@ -11,7 +11,7 @@
 	import { REQUEST_LIMITS, WORK_LIMITS } from '$lib/proto';
 	import type { WorkDraft } from '$lib/work';
 	import { nameOf } from '$lib/work/people';
-	import { atName, handleFor, KIND_WORD, requestRef, similarRequests, suggestScopers, withHandle } from '$lib/work/requests-view';
+	import { atName, handleFor, KIND_WORD, requestRef, similarFrom, similarKeywords, suggestScopers, withHandle } from '$lib/work/requests-view';
 	import type { Member } from '$lib/proto';
 
 	/**
@@ -22,7 +22,7 @@
 		open = $bindable(false),
 		snapshot,
 		defaultProjectId,
-		items = [],
+		find,
 		send,
 		message,
 		ondone,
@@ -32,8 +32,8 @@
 		open: boolean;
 		snapshot: OrgSnapshot;
 		defaultProjectId?: string;
-		/** The requests there are: the open ones that read alike are offered while typing (RQS-13). */
-		items?: WorkItemSummary[];
+		/** Open requests whose title or words have a word starting with `text` (`work.list { text }`): the ones that read alike are offered while typing (RQS-13). Without it nothing is offered. */
+		find?: (text: string) => Promise<WorkItemSummary[]>;
 		send: (draft: WorkDraft) => Promise<WorkAccepted>;
 		/** Send the words to a member as an ordinary message instead (RQS-4). Without it there is no such button. */
 		message?: (memberId: string, text: string) => Promise<void>;
@@ -95,7 +95,26 @@
 	const choice = $derived((pickStands ? picked : undefined) ?? atMember?.id ?? suggestions[0]?.member.id ?? 'none');
 	/** Added to a request the words become a note, which holds fewer characters than a request does. */
 	const tooLong = $derived([...text].length > WORK_LIMITS.text);
-	const similar = $derived(text.trim().length >= 12 ? similarRequests(text, items) : []);
+	// After a pause in typing, each keyword is looked up in the office; the requests several of them found are offered.
+	let similar = $state<WorkItemSummary[]>([]);
+	$effect(() => {
+		const words = open && find ? similarKeywords(text) : [];
+		const lookup = find;
+		if (!lookup || words.length < 2) {
+			similar = [];
+			return;
+		}
+		let live = true;
+		const timer = setTimeout(() => {
+			Promise.all(words.map((w) => lookup(w).catch(() => [] as WorkItemSummary[]))).then((found) => {
+				if (live) similar = similarFrom(found);
+			});
+		}, 350);
+		return () => {
+			live = false;
+			clearTimeout(timer);
+		};
+	});
 	const scoperId = $derived(choice === 'none' ? undefined : choice === 'other' ? other || undefined : choice);
 	const suggestion = $derived(suggestions.find((s) => s.member.id === scoperId));
 	/** Whether the route is still the one the rule suggested: nothing picked, no @name. */

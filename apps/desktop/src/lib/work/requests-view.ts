@@ -281,27 +281,26 @@ export const handleFor = (m: Member): string => m.agent?.messaging_name ?? slugO
 export const withHandle = (text: string, m: Member): string => text.replace(AT, (_, space: string) => `${space}@${handleFor(m)}`);
 
 const STOP = new Set(['the', 'and', 'for', 'with', 'that', 'this', 'let', 'want', 'need', 'make', 'when', 'what', 'from', 'into', 'have', 'would', 'should', 'could', 'about', 'there', 'their', 'them', 'than', 'then', 'also', 'just', 'like', 'some', 'more', 'every', 'each', 'only', 'your', 'our', 'can', 'are', 'was', 'were', 'but', 'not', 'all', 'any', 'its']);
-const wordsOf = (text: string): Set<string> => new Set((text.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).filter((w) => !STOP.has(w)));
 
 /**
- * Up to two open requests that read like these words (§4, RQS-13): at least two meaningful words in common, so "Add to
- * REQ-9" can offer to append instead of starting another. A leading `@handle` is not part of the words.
+ * The words to look similar requests up by (RQS-13): the longest few meaningful words of what was typed, without the
+ * `@handle` at the start. Each is asked of the office on its own (`work.list { text }` matches word prefixes), and
+ * `similarFrom` keeps the requests that several of them found.
  */
-export function similarRequests(text: string, items: WorkItemSummary[], limit = 2): WorkItemSummary[] {
-	const mine = wordsOf(text.replace(AT, '$1'));
-	if (mine.size < 2) return [];
-	return items
-		.filter((i) => i.kind === 'request' && !i.deleted && OPEN_STATUSES.includes(i.status))
-		.map((i) => {
-			const theirs = wordsOf(i.title);
-			let shared = 0;
-			for (const w of theirs) if (mine.has(w)) shared += 1;
-			return { i, shared, ratio: theirs.size === 0 ? 0 : shared / theirs.size };
-		})
-		.filter((c) => c.shared >= 2)
-		.sort((a, b) => b.shared - a.shared || b.ratio - a.ratio || (b.i.number ?? 0) - (a.i.number ?? 0))
+export function similarKeywords(text: string, max = 4): string[] {
+	const words = (text.replace(AT, '$1').toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) ?? []).filter((w) => !STOP.has(w));
+	return [...new Set(words)].sort((a, b) => b.length - a.length || a.localeCompare(b)).slice(0, max);
+}
+
+/** Up to two requests that at least two of the keywords found, the ones found by most first (§4: "Looks like REQ-9"). */
+export function similarFrom(found: WorkItemSummary[][], limit = 2): WorkItemSummary[] {
+	const hits = new Map<string, { item: WorkItemSummary; n: number }>();
+	for (const list of found) for (const item of new Map(list.map((i) => [i.id, i])).values()) if (item.kind === 'request' && !item.deleted && OPEN_STATUSES.includes(item.status)) hits.set(item.id, { item, n: (hits.get(item.id)?.n ?? 0) + 1 });
+	return [...hits.values()]
+		.filter((h) => h.n >= 2)
+		.sort((a, b) => b.n - a.n || (b.item.number ?? 0) - (a.item.number ?? 0))
 		.slice(0, limit)
-		.map((c) => c.i);
+		.map((h) => h.item);
 }
 
 // ---- the queue's filters and search (§2) -------------------------------------------------------------------------------

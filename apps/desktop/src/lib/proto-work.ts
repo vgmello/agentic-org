@@ -349,6 +349,19 @@ export interface WorkUnlink {
 	link_id: string;
 }
 
+/** `work.list`: items by filter (design §4.3). `text` matches word prefixes, without case, over the title and a request's own words. */
+export interface WorkListQuery {
+	project_id?: string;
+	kinds?: Exclude<ItemKind, 'unknown'>[];
+	statuses?: Exclude<ItemStatus, 'unknown'>[];
+	/** At most 200 characters; every word of it must start a word of the title or the request's words. */
+	text?: string;
+	/** Items that ended are left out unless asked for (or named in `statuses`). */
+	include_closed?: boolean;
+	/** At most 500. */
+	limit?: number;
+}
+
 /** `work.comment`: a note on any item. The mock keeps plain notes only (no question, answer or asks yet). */
 export interface WorkCommentCall {
 	change_id: string;

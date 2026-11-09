@@ -1,7 +1,7 @@
 import type { OrgApi } from '$lib/org/api';
 import { isFormer } from '$lib/org/model';
-import type { WorkAccepted, WorkEvent, WorkItem, WorkItemSummary, WorkPosition } from '$lib/proto';
-import { activityOf, applyWork, emptyWork, itemOf, positionOf, summaries, type WorkCall, type WorkContext, type WorkState } from './engine';
+import type { WorkAccepted, WorkEvent, WorkItem, WorkListQuery, WorkItemSummary, WorkPosition } from '$lib/proto';
+import { activityOf, applyWork, listItems, emptyWork, itemOf, positionOf, summaries, type WorkCall, type WorkContext, type WorkState } from './engine';
 
 /**
  * What the work screens need from an office: `work.snapshot`, `work.get` and the item calls. The calls are
@@ -14,6 +14,8 @@ export interface WorkApi {
 	get(organizationId: string, itemId: string): Promise<WorkItem>;
 	/** Rejects with the error the office gave (an `AppError` with source `api`). */
 	command(organizationId: string, call: WorkCall): Promise<WorkAccepted>;
+	/** `work.list`: items by filter, newest first (design §4.3). */
+	list(organizationId: string, query: WorkListQuery): Promise<{ items: WorkItemSummary[] }>;
 	/** `work.activity`: what happened to one item, oldest first. */
 	activity(organizationId: string, itemId: string): Promise<WorkEvent[]>;
 	/** Whether this office keeps feature requests yet (the Rust shell's mock office does not). */
@@ -95,6 +97,7 @@ export function createMockWork(
 			return itemOf(load(organizationId), itemId, now());
 		},
 		activity: async (organizationId, itemId) => activityOf(load(organizationId), itemId),
+		list: async (organizationId, query) => ({ items: structuredClone(listItems(load(organizationId), query)) }),
 		command: (organizationId, call) => apply(organizationId, call),
 		commandAs: (organizationId, actor, call) => apply(organizationId, call, actor)
 	};

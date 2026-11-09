@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Member, OrgSnapshot, WorkEvent, WorkItemSummary } from '$lib/proto';
-import { activityLines, ageWord, atName, filterActive, filterRequests, handleFor, NO_FILTER, similarRequests, withHandle, estimateWords, groupOf, groupRequests, nextAction, requestRef, requestsNeedingYou, stateWords, suggestScopers } from './requests-view';
+import { activityLines, ageWord, atName, filterActive, filterRequests, handleFor, NO_FILTER, similarFrom, similarKeywords, withHandle, estimateWords, groupOf, groupRequests, nextAction, requestRef, requestsNeedingYou, stateWords, suggestScopers } from './requests-view';
 
 const member = (id: string, name: string, title: string, extra: Partial<Member['agent']> = {}, kind: Member['kind'] = 'agent'): Member => ({
 	id,
@@ -263,29 +263,29 @@ describe('RQS-4 @name routing', () => {
 });
 
 describe('RQS-13 similar requests', () => {
-	const items = [
-		req('new', { id: 'a', number: 9, title: 'Dark mode for the docs reader' }),
-		req('scoping', { id: 'b', number: 10, title: 'Checklists on tasks' }),
-		req('approved', { id: 'c', number: 11, title: 'Dark mode everywhere' }),
-		req('new', { id: 'd', number: 12, title: 'Export a feature as PDF', deleted: true }),
-		{ ...req('new', { id: 't', number: 13, title: 'Dark mode task' }), kind: 'task' } as WorkItemSummary
-	];
-
-	it('finds open requests that share meaningful words, best first, and never closed ones or other kinds', () => {
-		expect(similarRequests('I want a dark mode for reading the docs', items).map((i) => i.id)).toEqual(['a']);
-		expect(similarRequests('Checklists for tasks please', items).map((i) => i.id)).toEqual(['b']);
+	it('looks up the longest few meaningful words, once each, without the @handle, stop words and short words', () => {
+		expect(similarKeywords('I would like a dark mode when reading the docs')).toEqual(['reading', 'dark', 'docs', 'mode']);
+		expect(similarKeywords('@ac-product-designer-eden Weekly digest by email, weekly')).toEqual(['digest', 'weekly', 'email']);
+		expect(similarKeywords('a b c')).toEqual([]);
+		expect(similarKeywords('one two three four five six seven eight', 2)).toEqual(['eight', 'seven']);
 	});
 
-	it('needs two shared words, or all the words of a short request, and offers at most two', () => {
-		expect(similarRequests('something about the docs', items)).toEqual([]);
-		expect(similarRequests('dark mode', [req('new', { id: 'x', title: 'Dark mode' })]).map((i) => i.id)).toEqual(['x']);
-		// One shared word is not enough, even for a one-word title.
-		expect(similarRequests('please export everything now', [req('new', { id: 'y', title: 'Export' })])).toEqual([]);
-		// The @handle at the start is not part of the words.
-		expect(similarRequests('@ac-product-designer-eden please', [req('new', { id: 'z', title: 'Product designer onboarding' })])).toEqual([]);
-		const many = Array.from({ length: 5 }, (_, n) => req('new', { id: `m${n}`, number: n + 1, title: 'Weekly digest by email' }));
-		expect(similarRequests('a weekly digest by email', many)).toHaveLength(2);
-		expect(similarRequests('x', items)).toEqual([]);
+	const found = (id: string, over: Partial<WorkItemSummary> = {}) => req('new', { id, number: Number(id.replace(/\D/g, '')) || 1, title: id, ...over });
+
+	it('keeps the open requests that at least two of the lookups found, most first, at most two', () => {
+		const a = found('a9');
+		const b = found('b10');
+		const c = found('c11');
+		expect(similarFrom([[a, b], [a, c], [a, b, c]]).map((i) => i.id)).toEqual(['a9', 'c11']);
+		expect(similarFrom([[a], [b]])).toEqual([]);
+		expect(similarFrom([[a, a], [a]]).map((i) => i.id)).toEqual(['a9']); // one lookup finding it twice counts once
+	});
+
+	it('never keeps one that ended, was deleted, or is a task', () => {
+		const ended = found('e1', { status: 'approved' });
+		const gone = found('g2', { deleted: true });
+		const task = { ...found('t3'), kind: 'task' } as WorkItemSummary;
+		expect(similarFrom([[ended, gone, task], [ended, gone, task]])).toEqual([]);
 	});
 });
 
