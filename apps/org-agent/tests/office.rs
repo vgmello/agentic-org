@@ -134,14 +134,17 @@ impl TestArgs {
             "--format",
             "--color",
             "--logfile",
-            "--report-time",
+            "--shuffle-seed",
             "-Z",
         ];
         let mut parsed = TestArgs::default();
-        let mut args = args.peekable();
+        let mut args = args;
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "--skip" => parsed.skips.extend(args.next()),
+                skip if skip.starts_with("--skip=") => {
+                    parsed.skips.push(skip["--skip=".len()..].to_owned());
+                }
                 "--exact" => parsed.exact = true,
                 "--list" => parsed.list = true,
                 "--ignored" => parsed.ignored_only = true,
