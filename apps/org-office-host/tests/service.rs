@@ -1,6 +1,10 @@
 //! The host's org-proto surface: hello, unknown methods, unreadable lines, and the
 //! owner-only files it serves from.
 
+// Every host here keeps its offices' keys in a development key folder, which only debug builds
+// have (a release host uses the Keychain, which tests never touch): debug builds only.
+#![cfg(debug_assertions)]
+
 mod support;
 
 use std::fs;

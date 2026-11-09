@@ -235,7 +235,7 @@ describe('a sibling never silently cancels a seal whose file is left out', () =>
 describe('PROC-16 an unknown status', () => {
 	it('is "Details not recognized", naming status, not a silent omission', () => {
 		const set = run([team('plat', { status: 'weird' as never })], ['plat']);
-		expect(set.problems).toEqual([expect.objectContaining({ kind: 'invalid', text: 'Details not recognized: status.' })]);
+		expect(set.problems).toEqual([expect.objectContaining({ kind: 'invalid', text: 'Details not recognized (status).' })]);
 	});
 });
 

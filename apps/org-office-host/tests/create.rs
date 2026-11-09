@@ -1,5 +1,9 @@
 //! `organization.create` end to end, against the fake office server.
 
+// Every host here keeps its offices' keys in a development key folder, which only debug builds
+// have (a release host uses the Keychain, which tests never touch): debug builds only.
+#![cfg(debug_assertions)]
+
 mod support;
 
 use std::fs;

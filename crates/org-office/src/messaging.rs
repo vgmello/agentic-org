@@ -160,7 +160,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::key::{InMemoryKeys, KeyProvider};
+    use crate::key::Key;
     use crate::model::{NewOffice, OfficeRole};
 
     fn new_office() -> NewOffice {
@@ -173,9 +173,14 @@ mod tests {
         }
     }
 
-    fn office_in(dir: &TempDir, keys: &InMemoryKeys) -> Arc<Office> {
+    /// The key the host would send (the office never makes one).
+    fn test_key() -> Key {
+        Key::from_bytes([5; 32])
+    }
+
+    fn office_in(dir: &TempDir) -> Arc<Office> {
         let folder = dir.path().join("offices").join(OFFICE_ID);
-        let office = Office::create(&folder, &new_office(), keys).expect("an office");
+        let office = Office::create(&folder, &new_office(), test_key()).expect("an office");
         office.seed_organization_for_test(&members(), POSITION);
         Arc::new(office)
     }
@@ -247,7 +252,7 @@ mod tests {
     /// A fresh office on disk with `members` at `position`, as the (store, directory) pair.
     fn open_sql(members: &[Member], position: Position) -> (Sql, SqlDirectory) {
         let dir = Arc::new(TempDir::new().expect("a temporary folder"));
-        let office = office_in(&dir, &InMemoryKeys::new());
+        let office = office_in(&dir);
         office.seed_organization_for_test(members, position);
         (
             Sql {
@@ -335,8 +340,7 @@ mod tests {
     #[test]
     fn a_message_survives_a_restart_with_its_body_meta_and_sequence_and_the_counter_goes_on() {
         let dir = TempDir::new().unwrap();
-        let keys = InMemoryKeys::new();
-        let office = office_in(&dir, &keys);
+        let office = office_in(&dir);
         let store = office.message_store();
         let first = store
             .commit_message(message(1, ADA, PAT, None, ""))
@@ -347,7 +351,7 @@ mod tests {
         let folder = office.folder().to_owned();
         drop(office);
 
-        let again = Arc::new(Office::open(&folder, &keys).unwrap());
+        let again = Arc::new(Office::open(&folder, test_key()).unwrap());
         let store = again.message_store();
         let read = store
             .get_message(&first.message.message.header.id)
@@ -371,12 +375,11 @@ mod tests {
     fn an_office_db_made_before_messaging_gets_its_tables_when_it_is_opened() {
         use crate::store::{Opening, Store};
         let dir = TempDir::new().unwrap();
-        let keys = InMemoryKeys::new();
-        let office = office_in(&dir, &keys);
+        let office = office_in(&dir);
         let folder = office.folder().to_owned();
         drop(office);
         // Put office.db back as version 1 made it: identity only, no message tables.
-        let key = keys.load(OFFICE_ID).unwrap().unwrap();
+        let key = test_key();
         std::fs::remove_file(folder.join("office.db")).unwrap();
         for sidecar in ["office.db-wal", "office.db-shm"] {
             let _ = std::fs::remove_file(folder.join(sidecar));
@@ -403,7 +406,7 @@ mod tests {
             .unwrap();
         drop(store);
 
-        let office = Arc::new(Office::open(&folder, &keys).unwrap());
+        let office = Arc::new(Office::open(&folder, test_key()).unwrap());
 
         assert_eq!(
             count(
@@ -412,7 +415,14 @@ mod tests {
             ),
             6
         );
-        assert_eq!(count(&office, "PRAGMA user_version"), 2);
+        assert_eq!(count(&office, "PRAGMA user_version"), 3);
+        assert_eq!(
+            count(
+                &office,
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'member_status'"
+            ),
+            1
+        );
         // ...and it works: the identity it had is kept, and a message commits.
         let stored = office
             .message_store()
@@ -424,7 +434,7 @@ mod tests {
     #[test]
     fn a_thread_summary_counts_new_messages_only_and_keeps_the_earliest_and_the_latest() {
         let dir = TempDir::new().unwrap();
-        let office = office_in(&dir, &InMemoryKeys::new());
+        let office = office_in(&dir);
         let store = office.message_store();
         let root = message(5, ADA, PAT, None, "");
         let thread = root.message.header.id.clone();
@@ -476,7 +486,7 @@ mod tests {
     #[test]
     fn a_thread_whose_root_arrives_last_takes_the_roots_subject_and_time() {
         let dir = TempDir::new().unwrap();
-        let office = office_in(&dir, &InMemoryKeys::new());
+        let office = office_in(&dir);
         let store = office.message_store();
         let root = message(5, ADA, PAT, None, "");
         let thread = root.message.header.id.clone();
@@ -521,7 +531,7 @@ mod tests {
     #[test]
     fn the_unread_index_holds_exactly_the_open_messages() {
         let dir = TempDir::new().unwrap();
-        let office = office_in(&dir, &InMemoryKeys::new());
+        let office = office_in(&dir);
         let store = office.message_store();
         store
             .commit_message(message(1, ADA, PAT, None, ""))
@@ -555,7 +565,7 @@ mod tests {
     #[test]
     fn an_ask_expires_exactly_at_its_deadline_plus_the_grace_and_not_a_millisecond_before() {
         let dir = TempDir::new().unwrap();
-        let office = office_in(&dir, &InMemoryKeys::new());
+        let office = office_in(&dir);
         let store = office.message_store();
         let mut ask = message(1, ADA, PAT, None, "");
         // Due at 12:00:10.000; the grace is a quarter of the ttl (here 1 s).
@@ -582,7 +592,7 @@ mod tests {
         use org_proto::msg::{MsgInboxParams, MsgReadParams, MsgSendParams, KIND_MSG};
 
         let dir = TempDir::new().unwrap();
-        let office = office_in(&dir, &InMemoryKeys::new());
+        let office = office_in(&dir);
         let mailbox = office.mailbox(Arc::new(NoMessageEvents)).unwrap();
         let id = crate::ulid::generate().unwrap();
         let sent = mailbox
@@ -644,8 +654,7 @@ mod tests {
     fn the_incarnation_is_made_once_and_survives_a_reopen() {
         use org_mailbox::NoMessageEvents;
         let dir = TempDir::new().unwrap();
-        let keys = InMemoryKeys::new();
-        let office = office_in(&dir, &keys);
+        let office = office_in(&dir);
         let first = office
             .local_store()
             .write(|db| Ok((messages::incarnation(db)?, None)))
@@ -662,7 +671,7 @@ mod tests {
             panic!("the only owner")
         };
         drop(office);
-        let reopened = Arc::new(Office::open(&folder, &keys).unwrap());
+        let reopened = Arc::new(Office::open(&folder, test_key()).unwrap());
         let after = reopened
             .local_store()
             .write(|db| Ok((messages::incarnation(db)?, None)))
@@ -673,7 +682,7 @@ mod tests {
     #[test]
     fn a_cursor_beyond_the_sequence_range_lists_from_the_newest() {
         let dir = TempDir::new().unwrap();
-        let office = office_in(&dir, &InMemoryKeys::new());
+        let office = office_in(&dir);
         let store = office.message_store();
         store
             .commit_message(message(1, ADA, PAT, None, ""))
@@ -695,7 +704,7 @@ mod tests {
     #[test]
     fn peeking_and_claiming_the_next_message_bring_its_body_not_just_its_header() {
         let dir = TempDir::new().unwrap();
-        let office = office_in(&dir, &InMemoryKeys::new());
+        let office = office_in(&dir);
         let store = office.message_store();
         let first = message(1, ADA, PAT, None, "");
         let (body, meta) = (first.message.body.clone(), first.message.meta.clone());
@@ -715,7 +724,7 @@ mod tests {
     #[test]
     fn a_garbled_sequence_counter_is_an_error_and_not_a_restart_from_zero() {
         let dir = TempDir::new().unwrap();
-        let office = office_in(&dir, &InMemoryKeys::new());
+        let office = office_in(&dir);
         office
             .local_store()
             .write(|db| {
@@ -737,7 +746,7 @@ mod tests {
     fn an_inbox_or_thread_page_is_answered_from_its_index_not_a_walk_of_every_header() {
         use org_mailbox::HeaderScope;
         let dir = TempDir::new().unwrap();
-        let office = office_in(&dir, &InMemoryKeys::new());
+        let office = office_in(&dir);
         let plan = |scope: HeaderScope, by_thread: bool| -> String {
             office
                 .local_store()
@@ -764,7 +773,7 @@ mod tests {
     #[test]
     fn claiming_the_next_message_skips_an_expired_ask_and_leaves_it_unread() {
         let dir = TempDir::new().unwrap();
-        let office = office_in(&dir, &InMemoryKeys::new());
+        let office = office_in(&dir);
         let store = office.message_store();
         let mut ask = message(1, ADA, PAT, None, "");
         ask.message.header.expires_at = Some("2026-11-08T12:00:10.000Z".into());
@@ -787,7 +796,7 @@ mod tests {
     #[test]
     fn a_message_committed_as_read_has_the_time_it_was_made_as_its_read_time() {
         let dir = TempDir::new().unwrap();
-        let office = office_in(&dir, &InMemoryKeys::new());
+        let office = office_in(&dir);
         let store = office.message_store();
         let mut read = message(4, ADA, PAT, None, "");
         read.initial_state = State::Read;
@@ -808,7 +817,7 @@ mod tests {
     #[test]
     fn the_database_allows_one_delivery_failed_notice_per_message_and_one_header_per_origin() {
         let dir = TempDir::new().unwrap();
-        let office = office_in(&dir, &InMemoryKeys::new());
+        let office = office_in(&dir);
         let store = office.message_store();
         let ask = message(1, ADA, PAT, None, "");
         let ask_id = ask.message.header.id.clone();
@@ -841,7 +850,7 @@ mod tests {
     #[test]
     fn a_message_from_another_office_is_stored_once_per_origin_whatever_its_id() {
         let dir = TempDir::new().unwrap();
-        let office = office_in(&dir, &InMemoryKeys::new());
+        let office = office_in(&dir);
         let store = office.message_store();
         let mut far = message(1, ADA, PAT, None, "");
         far.origin_office_id = "01JCOFFICEFAR0000000000000".into();

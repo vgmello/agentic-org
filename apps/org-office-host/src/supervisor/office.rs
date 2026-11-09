@@ -2,6 +2,11 @@
 //! `offline` or `unavailable`, and when it restarts next), restart it with backoff, and stop
 //! restarting on a fatal failure or when it keeps failing (the give-up rule), until
 //! `office.restart` or the next host run.
+//!
+//! Every start loads the office's database key from the key store first. A missing item, or one
+//! that isn't a key, starts no server: the office is `unavailable`/`key_missing`, the same as a
+//! server reporting `key_missing`, and `office.restart` loads it again. Any other key store error
+//! is a `storage_error`, retried with backoff. The key is dropped once its line is written.
 
 use std::collections::VecDeque;
 use std::path::Path;
@@ -10,11 +15,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use org_office_launch::{FailCode, ServerEvent};
-use org_proto::OfficeStatusReason;
+use org_proto::{AppToken, OfficeStatusReason};
 
-use super::child::{Mode, RunningChild, Signal, Spawner, StartLine};
+use super::child::{Mode, RunningChild, Signal, SpawnError, Spawner};
 use super::state::{OfficeState, SharedState};
 use crate::host_log;
+use crate::keys::{KeyStore, KeyStoreError};
 use crate::logs::RotatingLog;
 use crate::timings::Timings;
 
@@ -34,9 +40,11 @@ const EXIT_LINES_WAIT: Duration = Duration::from_millis(200);
 /// Everything one office's supervision thread owns.
 pub(crate) struct OfficeRunner {
     pub(crate) office_id: String,
-    /// The office's start line, with its app token for this host run: every start gets it.
-    /// Shared with the supervisor, which hands the token to the app (`office.app_token`).
-    pub(crate) start: Arc<StartLine>,
+    /// The office's app token for this host run: every start gets it. Shared with the
+    /// supervisor, which hands the token to the app (`office.app_token`).
+    pub(crate) token: Arc<AppToken>,
+    /// Where the office's database key is kept; loaded before every start.
+    pub(crate) keys: Arc<dyn KeyStore>,
     pub(crate) spawner: Spawner,
     pub(crate) timings: Timings,
     pub(crate) state: Arc<SharedState>,
@@ -155,12 +163,41 @@ impl OfficeRunner {
         taken
     }
 
-    /// Starts the office's server (already marked `starting`) and watches it.
+    /// Loads the office's key, then starts its server (already marked `starting`) and watches
+    /// it. Without its key, nothing is started.
     fn start(&self, generation: &mut u64) -> Ending {
-        let mode = Mode::Office(&self.office_id, &self.start);
+        let key = match self.keys.load(&self.office_id) {
+            Ok(Some(key)) => key,
+            Ok(None) | Err(KeyStoreError::Corrupt) => {
+                host_log::log(&format!(
+                    "office {} has no usable key in the host's key store; it isn't started \
+                     (office.restart tries again)",
+                    self.office_id
+                ));
+                return Ending::Ended {
+                    reason: OfficeStatusReason::KeyMissing,
+                    fatal: true,
+                    uptime: None,
+                };
+            }
+            Err(e) => {
+                host_log::log(&format!(
+                    "couldn't load the key of office {}: {e}",
+                    self.office_id
+                ));
+                return Ending::Ended {
+                    reason: OfficeStatusReason::StorageError,
+                    fatal: false,
+                    uptime: None,
+                };
+            }
+        };
+        let mode = Mode::Office(&self.office_id, &self.token, &key);
         let spawned = self
             .spawner
             .spawn(mode, *generation, self.sender.clone(), self.log.clone());
+        // The line is written (or can't be): only the key store holds the key from here on.
+        drop(key);
         *generation += 1;
         match spawned {
             Ok(child) => self.watch(Adopted {
@@ -174,8 +211,15 @@ impl OfficeRunner {
                     "couldn't start the server of office {}: {e}",
                     self.office_id
                 ));
+                // A server that isn't the signed one (`server_check`) is a storage error: not
+                // fatal, retried with backoff (a wrong program isn't fixed by itself, so the
+                // give-up rule ends it), and it never got the key.
+                let reason = match e {
+                    SpawnError::Untrusted(_) => OfficeStatusReason::StorageError,
+                    SpawnError::Io(_) => OfficeStatusReason::Crashed,
+                };
                 Ending::Ended {
-                    reason: OfficeStatusReason::Crashed,
+                    reason,
                     fatal: false,
                     uptime: None,
                 }
