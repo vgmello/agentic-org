@@ -77,11 +77,19 @@ fn main() {
             an_office_run_agent_never_falls_back_to_the_spool,
         ),
     ];
-    let filter: Option<String> = std::env::args().skip(1).find(|a| !a.starts_with('-'));
+    let args = TestArgs::parse(std::env::args().skip(1));
+    if args.list {
+        for (name, _) in tests {
+            if args.selects(name) {
+                println!("{name}: test");
+            }
+        }
+        return;
+    }
     let mut passed = 0;
     let mut failed = Vec::new();
     for (name, test) in tests {
-        if filter.as_deref().is_some_and(|f| !name.contains(f)) {
+        if !args.selects(name) {
             continue;
         }
         println!("test {name} ...");
@@ -104,6 +112,60 @@ fn main() {
     if !failed.is_empty() {
         println!("failures: {}", failed.join(", "));
         std::process::exit(101);
+    }
+}
+
+/// The libtest arguments this `main` honours: name filters, `--skip <name>`, `--exact` and
+/// `--list`. Other flags are accepted and ignored, with the value of those that take one
+/// (`--test-threads 2` is not a filter). `--ignored` runs nothing: no test here is ignored.
+#[derive(Default)]
+struct TestArgs {
+    filters: Vec<String>,
+    skips: Vec<String>,
+    exact: bool,
+    list: bool,
+    ignored_only: bool,
+}
+
+impl TestArgs {
+    fn parse(args: impl Iterator<Item = String>) -> Self {
+        const WITH_VALUE: &[&str] = &[
+            "--test-threads",
+            "--format",
+            "--color",
+            "--logfile",
+            "--report-time",
+            "-Z",
+        ];
+        let mut parsed = TestArgs::default();
+        let mut args = args.peekable();
+        while let Some(arg) = args.next() {
+            match arg.as_str() {
+                "--skip" => parsed.skips.extend(args.next()),
+                "--exact" => parsed.exact = true,
+                "--list" => parsed.list = true,
+                "--ignored" => parsed.ignored_only = true,
+                flag if WITH_VALUE.contains(&flag) => {
+                    args.next();
+                }
+                flag if flag.starts_with('-') => {}
+                filter => parsed.filters.push(filter.to_owned()),
+            }
+        }
+        parsed
+    }
+
+    fn selects(&self, name: &str) -> bool {
+        let matches = |pattern: &String| {
+            if self.exact {
+                name == pattern
+            } else {
+                name.contains(pattern.as_str())
+            }
+        };
+        !self.ignored_only
+            && (self.filters.is_empty() || self.filters.iter().any(matches))
+            && !self.skips.iter().any(matches)
     }
 }
 
