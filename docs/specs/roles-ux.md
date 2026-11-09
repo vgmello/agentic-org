@@ -54,7 +54,7 @@ Builds on `processes-ux.md` (levels, overrides, sealing, approvals, the "why" pa
  QA Engineer            v1   no agents yet
 ```
 
-- **New role…** asks the HR lead to draft one, like `@hr` (its proposal is approved by the owner, decision 4). It's available to the owner and to managers; for anyone else it's disabled with "Ask <your manager> or the owner to request a new role."
+- **New role…** asks the HR lead to draft one, like `@hr`. Anyone can ask; the HR lead's proposal is approved by the owner (decision 4).
 - **A role row** opens the role: its sections, its version history, the agents holding it (each with "Override" when it has one), and **Propose a change…** (a docs branch, approved by the owner).
 - **Profile › Role** shows the **effective role**, every line badged with where it came from: **Role v3** · **Override** · **Flagged** · **Superseded by <process>**, words plus icons, never color alone. A dropped line shows struck through with its reason. **Why** opens the chain (role → override → processes), as the Processes "why" panel does. Actions: **Propose an override…** (the agent's manager or the owner; the agent itself through the CLI) and, with an override, **Edit override…**.
 - **Drift:** when the role changes after an override was written, the row and the Role tab show ⚠ "Role changed: Software Engineer is now v3" with **Review**: a side-by-side diff, **Keep my override** · **Take the new version** · **Edit**, as for processes (`processes-ux.md` §2).
@@ -66,7 +66,7 @@ Builds on `processes-ux.md` (levels, overrides, sealing, approvals, the "why" pa
 - **At start:** the full effective role, in order: role, override, then "Your processes win where they disagree with your role" and the processes (`processes-ux.md` §3).
 - **At wake:** only what changed since it last read it (a new role version, a new override, a superseded line).
 - **CLI:** `org-agent role show` (the effective role with its layers), `role why "<line>"`, `role propose-override` (opens a handbook branch for its manager), `role flag "<line>" --process <key>`, and for approvers `role approve <doc id>` / `role reject <doc id> --reason "…"`.
-- **Hire:** the Hire review shows the role (title and version) and, if the role suggests one, its autonomy default for the owner to confirm (`processes-ux.md` §4a); the new agent starts with no override.
+- **Hire:** the Hire review shows the role (title and version) and the role's suggestions, if any (its autonomy, runtime and model defaults), for the owner to confirm (`processes-ux.md` §4a); the new agent starts with no override.
 
 ## 3. UX acceptance criteria (ROLE)
 
@@ -85,4 +85,4 @@ Builds on `processes-ux.md` (levels, overrides, sealing, approvals, the "why" pa
 
 **For ada (architecture)**
 - A74 · Roles move into the organization's handbook (`roles/<slug>.md`, Markdown with front matter, sections as above) instead of `hr/roles/*.toml`, so they share the processes machinery (merge flow, versions, drift, why); the HR lead drafts them on handbook branches, and `hr.py` reads them through the office (the handbook is office-only). Where HR's TOML fields go: `aliases` and `directories` move to the role's front matter (`aliases`, `home_directories`); `tools` stays with the office, as does the role's default permission policy (`agent-sessions.md` mentions it for one-offs; `permission_policy.set` is per member), not in the role doc. Where are role defaults kept and versioned? Agents' overrides go in `agents/<member id>/role.md`, readable by every member (unlike that folder's private processes: decision 6). The office composes the effective role into the instructions at start and wake (your `agent-sessions.md` decision 8), and HR stops copying the role into the agent's `CLAUDE.md`, so an agent can't edit its own boundaries. This overturns "hr/ is HR's ground" for roles only. Agree, or where should they live?
-- A75 · A role's `autonomy_default` and `model_default` are suggestions shown at hire, never applied by themselves (autonomy is the owner's, §4a). Any contract field needed on `AgentProfile` beyond the role slug and the override's version?
+- A75 · A role's `autonomy_default`, `runtime_default` and `model_default` are suggestions shown at hire, never applied by themselves (autonomy is the owner's, §4a). Any contract field needed on `AgentProfile` beyond the role slug and the override's version?
