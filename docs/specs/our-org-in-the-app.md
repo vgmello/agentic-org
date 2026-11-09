@@ -2,7 +2,7 @@
 kind: spec
 title: "Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)"
 status: for-review
-revision: 16
+revision: 17
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-09"
@@ -14,6 +14,8 @@ builds_on: [offices-and-teams-ux, work-items-ux]
 # Spec · Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)
 
 Builds on `offices-and-teams-ux.md` rev 4, `work-items-ux.md` rev 5 and `desktop-app-v1.md` (in Eden's notes, not in this repository) (hire §3.6, profile §3.5).
+
+**Revision 17 (2026-11-09): roles and Can approve processes.** The profile gains a **Role** tab, showing the agent's effective role with its layers (`roles-ux.md`). The agent's Settings gains **Change role…** (owner only) and **Can approve processes** (owner only, like Can approve hires, `processes-ux.md` decision 8), shown as an "Approves processes" badge on the roster and quick view. **Criteria rewritten (same ID):** APPR-1 *(rev 17)*.
 
 **Revision 16 (2026-11-09): autonomy.** The agent record gains an autonomy level, Asks first or Full autonomy, which only the owner sets: in the profile's Settings and in Hire's Review, where a role's default is shown and confirmed (`processes-ux.md` §4a). Activity gains the Decisions kind, hidden by default (§6). **Criteria rewritten (same ID):** LIVE-1 *(rev 16)*. See also PROC-20 to PROC-26.
 
@@ -190,7 +192,7 @@ Every organization has one built-in agent, **HR lead**, created with the organiz
 - **Card (org chart):** avatar (agent square) · name · title · status dot + word (Working · Waiting · Idle · Needs you · Paused · Offline) · team role (Lead). There's no runtime on cards (decision 3).
 - **Quick view:** name, title, status, **Runs on Codex** · messaging name (mono, copy) · office ("This Mac") · teams · reports to · current task · last activity ("Sent ada a status reply · 4 min ago"). Actions: **Message** · **Assign task** · **Move to team…** · ⋯ (Add to team… · Pause · Offboard…).
 - **Profile header** (v1 §3.5, extended): name · messaging name · title · focus · runtime · model · office · status · **Open in <runtime>** / **Open session** · **Assign task** · ⋯.
-- **Profile tabs:** Overview · **Activity** (this agent's feed, §6) · Tasks · Messages (threads it's in) · Sessions · Knowledge (its home folder, when the app can read it) · Processes (what it follows, `processes-ux.md` §2) · Settings (the record, editable: title, focus, model, runtime and home, with "Changes take effect at the agent's next session"; and, for the owner only, **Autonomy**: Asks first or Full autonomy, `processes-ux.md` §4a *(rev 16)*).
+- **Profile tabs:** Overview · **Activity** (this agent's feed, §6) · Tasks · Messages (threads it's in) · Sessions · Knowledge (its home folder, when the app can read it) · Processes (what it follows, `processes-ux.md` §2) · **Role** (its effective role: the role it was hired as, its own override, and what processes supersede, `roles-ux.md` §1) *(rev 17)* · Settings (the record, editable: title, focus, model, runtime and home, with "Changes take effect at the agent's next session"; and, for the owner only, **Autonomy**: Asks first or Full autonomy, `processes-ux.md` §4a *(rev 16)*, and **Can approve hires** and **Can approve processes** (§7.1, `processes-ux.md` decision 8), and **Change role…** (`roles-ux.md` decision 6) *(rev 17)*).
 - **Missing data** reads plainly, never blank: "Runtime not set · **Set runtime**", "No home folder (this agent runs elsewhere)".
 
 ## 6. Flow 3 · See everything that's happening (Activity and Home)
@@ -228,7 +230,7 @@ v1 §3.6 holds, with these changes for the office model:
 
 - **Describe:** "What do you need?" plus **Team** (optional, prefilled from where Hire was opened) instead of Project. Projects come with the team.
 - **Suggestion (the HR lead's proposal):** role, title (with level), name, focus, **team**, **reports to** (the team's lead by default), and **runtime** (the organization's default, or what the role suggests).
-- **Review:** what will be created, as a dry run: the member (name, messaging name `ac-qa-engineer-cameron`), team, reports to, runtime and model, autonomy (Asks first, or the role's default for the owner to confirm, `processes-ux.md` §4a *(rev 16)*), office ("This Mac"), home folder, the role file if it's new, and "Cameron can be reached by everyone in <org>".
+- **Review:** what will be created, as a dry run: the member (name, messaging name `ac-qa-engineer-cameron`), team, reports to, runtime and model, autonomy (Asks first, or the role's default for the owner to confirm, `processes-ux.md` §4a *(rev 16)*), office ("This Mac"), home folder, the role file if it's new (a hire that needs a new role goes to the owner, even when an agent approves hires, `roles-ux.md` decision 4 *(rev 17)*), and "Cameron can be reached by everyone in <org>".
 - **Hiring:** in words (Creating Cameron's record… Setting up the home folder… Registering with messaging…). **Done:** "Cameron is hired and in App." **Open in Claude Code** / **Open session** (primary), Assign a task, View profile.
 - **Runtime not installed or signed out** (chosen in Suggestion): the Review warns "Codex isn't signed in on This Mac. Cameron is hired, but can't start until it is." **Hire anyway** works.
 - **Add an existing agent** (the Hire panel's second tab, for an agent already running elsewhere, like ours were): name · messaging name · runtime · role and title *(rev 14)* · team · reports to · home folder (optional). **Add agent**. This is the one-row version of the import.
@@ -321,7 +323,7 @@ The owner can always approve or reject any proposal. Someone who requests a hire
 - MOVE-5 · Make lead updates the team card and its projects' lead line at once.
 
 **Hire approval (APPR)** *(new, rev 8)*
-- APPR-1 · Only the owner can set or clear an agent's Can approve hires flag, at hire or in the agent's Settings, and the roster and quick view show "Approves hires".
+- APPR-1 · *(rev 17)* Only the owner can set or clear an agent's Can approve hires flag, at hire or in the agent's Settings, and the roster and quick view show "Approves hires". The same holds for Can approve processes (`processes-ux.md` decision 8), shown as "Approves processes".
 - APPR-2 · A hire proposal goes to the requester's manager if that manager has the flag, else up the reporting line to the nearest manager with it, else to the owner. The proposal shows who it's waiting for.
 - APPR-3 · *(rev 9)* The requester never approves their own request (it goes one level up), except the owner, who approves their own hires since nobody is above the owner. The HR lead never approves.
 - APPR-4 · An approval by a manager with the flag is enough: the HR lead provisions at once, with no human step.
