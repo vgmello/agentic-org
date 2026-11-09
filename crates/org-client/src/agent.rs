@@ -187,8 +187,8 @@ impl From<io::Error> for SpoolSendError {
 /// file `0600`, created new, never through a symlink), flushed with `F_FULLFSYNC`, moved into
 /// `spool/new/<id>.json` in one step (never replacing a file already there), then `new/`
 /// flushed. The office must be a finished office of this Mac (its folder holds its
-/// `office.json`). A send the office's ingest would refuse is refused here. Returns the file's path. The office's folder must
-/// exist: this never creates an office.
+/// `office.json`); this never creates an office. A send the office's ingest would refuse is
+/// refused here. Returns the file's path.
 pub fn spool_send(home: &Path, send: &SpooledSend) -> Result<PathBuf, SpoolSendError> {
     if !is_plain_id(&send.id) {
         return Err(SpoolSendError::Invalid("the message id isn't a plain id"));
@@ -259,9 +259,11 @@ fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        // A link fails if `to` exists; then the staged name goes (the caller removes it on error).
+        // A link fails if `to` exists. Once it's in place the send will be ingested, so a staged
+        // name that won't go is no error (it holds the same content).
         fs::hard_link(from, to)?;
-        fs::remove_file(from)
+        let _ = fs::remove_file(from);
+        Ok(())
     }
 }
 
@@ -275,6 +277,9 @@ fn check_ingestible(send: &SpooledSend) -> Result<(), SpoolSendError> {
         MAX_HANDLE_BYTES, MAX_ID_BYTES, MAX_META_BYTES, MAX_SUBJECT_BYTES, OFFICE_SENDER,
     };
     let invalid = |why| Err(SpoolSendError::Invalid(why));
+    if send.v != org_proto::msg::SPOOL_VERSION {
+        return invalid("unknown spool version");
+    }
     if org_proto::ulid_time_ms(&send.id).is_none() {
         return invalid("the message id isn't a ULID");
     }
@@ -301,12 +306,13 @@ fn check_ingestible(send: &SpooledSend) -> Result<(), SpoolSendError> {
     {
         return invalid("the subject is too large (1 KiB at most)");
     }
+    // Message ids are ULIDs, so any other reply_to names no message.
     if send
         .reply_to
         .as_deref()
-        .is_some_and(|r| json_string_len(r) > MAX_ID_BYTES)
+        .is_some_and(|r| json_string_len(r) > MAX_ID_BYTES || org_proto::ulid_time_ms(r).is_none())
     {
-        return invalid("reply_to is too long");
+        return invalid("reply_to isn't a message id");
     }
     let meta_bytes = if send.meta.is_empty() {
         0
@@ -333,7 +339,11 @@ fn check_ingestible(send: &SpooledSend) -> Result<(), SpoolSendError> {
     }
     // Ingest takes a spooled send only from an agent: never from the office or the owner.
     let from = send.from.trim_ascii();
+    let run_address = from
+        .get(..org_proto::RUN_HANDLE_PREFIX.len())
+        .is_some_and(|p| p.eq_ignore_ascii_case(org_proto::RUN_HANDLE_PREFIX));
     if from.is_empty()
+        || run_address
         || from.eq_ignore_ascii_case(OFFICE_SENDER)
         || from.eq_ignore_ascii_case(org_proto::OWNER_HANDLE)
     {
@@ -617,6 +627,9 @@ mod tests {
         assert!(refused(&|s| s.to = "n".repeat(300)));
         assert!(refused(&|s| s.from = "owner".into()));
         assert!(refused(&|s| s.from = "office".into()));
+        assert!(refused(&|s| s.from = " RUN:o1/r1 ".into()));
+        assert!(refused(&|s| s.v = 2));
+        assert!(refused(&|s| s.reply_to = Some("NOTAMESSAGEID".into())));
         assert!(refused(&|s| s.kind = "request".into()));
         assert!(refused(&|s| s.kind = String::new()));
         assert!(refused(
@@ -632,9 +645,29 @@ mod tests {
             spool_send(&home, &spooled(A, "NOTAULID", "x")),
             Err(SpoolSendError::Invalid(_))
         ));
+        // What ingest accepts is not refused.
+        let accepted = |n: u8, change: &dyn Fn(&mut SpooledSend)| {
+            let id = format!("01MSG00000000000000000000{}", char::from(b'B' + n));
+            let mut send = spooled(A, &id, "x");
+            change(&mut send);
+            spool_send(&home, &send)
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        };
+        accepted(0, &|s| s.to = "owner".into()).unwrap();
+        accepted(1, &|s| s.to = " nova ".into()).unwrap();
+        accepted(2, &|s| s.from = " pixel ".into()).unwrap();
+        accepted(3, &|s| {
+            s.kind = "note".into();
+            s.priority = org_proto::msg::MessagePriority::Urgent;
+        })
+        .unwrap();
+        // At the limits: a 258-byte (as JSON) recipient, a ULID reply_to.
+        accepted(4, &|s| s.to = "n".repeat(256)).unwrap();
+        accepted(5, &|s| s.reply_to = Some(MSG.into())).unwrap();
         // Nothing refused left anything behind.
         let spool = home.join(OFFICES_DIR_NAME).join(A).join("spool");
-        assert_eq!(fs::read_dir(spool.join("new")).unwrap().count(), 1);
+        assert_eq!(fs::read_dir(spool.join("new")).unwrap().count(), 7);
         assert_eq!(fs::read_dir(spool.join("tmp")).unwrap().count(), 0);
     }
 
