@@ -641,38 +641,44 @@ pub(crate) fn get_message(db: &Connection, id: &str) -> Result<Option<StoredMess
     load(db, id)
 }
 
+/// The page query for `scope`. The scope is a separate condition (not a bound switch) so that
+/// SQLite can answer an inbox or a thread from `idx_msg_to_seq` instead of walking every header.
+pub(crate) fn headers_sql(scope: &HeaderScope) -> String {
+    let scope = match scope {
+        HeaderScope::Inbox(_) => "h.to_member_id = ?1",
+        HeaderScope::Participant(_) => "(h.to_member_id = ?1 OR h.from_member_id = ?1)",
+        HeaderScope::All => "?1 IS NULL",
+    };
+    format!(
+        "{} WHERE {scope}
+           AND (?2 IS NULL OR h.from_member_id = ?2)
+           AND (?3 IS NULL OR h.thread_id = ?3)
+           AND h.local_seq < ?4
+           AND (?5 = 1 OR NOT (s.state = 'snoozed' OR s.snoozed_until IS NOT NULL
+                               OR s.snooze_after_task = 1))
+           AND (?6 = 0 OR s.state = 'unread' OR (?5 = 1 AND s.state = 'snoozed'))
+         ORDER BY h.local_seq DESC LIMIT ?7",
+        select_headers()
+    )
+}
+
 /// One page of headers, newest first by `local_seq`, without reading bodies.
 pub(crate) fn list_headers(
     db: &Connection,
     query: &HeaderQuery,
 ) -> Result<HeaderPage, OfficeError> {
-    let (scope, member) = match &query.scope {
-        HeaderScope::Inbox(member) => (0, Some(member.as_str())),
-        HeaderScope::Participant(member) => (1, Some(member.as_str())),
-        HeaderScope::All => (2, None),
+    let member = match &query.scope {
+        HeaderScope::Inbox(member) | HeaderScope::Participant(member) => Some(member.as_str()),
+        HeaderScope::All => None,
     };
     let cursor = query
         .cursor
         .map_or(i64::MAX, |c| i64::try_from(c).unwrap_or(i64::MAX));
     let limit = i64::from(query.limit);
-    let mut statement = db
-        .prepare(&format!(
-            "{} WHERE (?1 = 2 OR (?1 = 0 AND h.to_member_id = ?2)
-                         OR (?1 = 1 AND (h.to_member_id = ?2 OR h.from_member_id = ?2)))
-               AND (?3 IS NULL OR h.from_member_id = ?3)
-               AND (?4 IS NULL OR h.thread_id = ?4)
-               AND h.local_seq < ?5
-               AND (?6 = 1 OR NOT (s.state = 'snoozed' OR s.snoozed_until IS NOT NULL
-                                   OR s.snooze_after_task = 1))
-               AND (?7 = 0 OR s.state = 'unread' OR (?6 = 1 AND s.state = 'snoozed'))
-             ORDER BY h.local_seq DESC LIMIT ?8",
-            select_headers()
-        ))
-        .map_err(storage)?;
+    let mut statement = db.prepare(&headers_sql(&query.scope)).map_err(storage)?;
     let rows = statement
         .query_map(
             params![
-                scope,
                 member,
                 query.from_member_id,
                 query.thread_id,

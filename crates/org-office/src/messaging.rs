@@ -620,6 +620,30 @@ mod tests {
     }
 
     #[test]
+    fn an_inbox_page_is_answered_from_the_recipient_index_not_a_walk_of_every_header() {
+        use org_mailbox::HeaderScope;
+        let dir = TempDir::new().unwrap();
+        let office = office_in(&dir, &InMemoryKeys::new());
+        let plan = |scope: HeaderScope| -> String {
+            office
+                .local_store()
+                .read(|db| {
+                    let sql = format!("EXPLAIN QUERY PLAN {}", messages::headers_sql(&scope));
+                    let mut statement = db.prepare(&sql).map_err(OfficeError::storage)?;
+                    let rows = statement
+                        .query_map(
+                            rusqlite::params![PAT, None::<String>, None::<String>, 9, 0, 0, 5],
+                            |row| row.get::<_, String>(3),
+                        )
+                        .map_err(OfficeError::storage)?;
+                    Ok(rows.map(Result::unwrap).collect::<Vec<_>>().join("\n"))
+                })
+                .unwrap()
+        };
+        assert!(plan(HeaderScope::Inbox(PAT.into())).contains("idx_msg_to_seq"));
+    }
+
+    #[test]
     fn a_message_committed_as_read_has_the_time_it_was_made_as_its_read_time() {
         let dir = TempDir::new().unwrap();
         let office = office_in(&dir, &InMemoryKeys::new());
