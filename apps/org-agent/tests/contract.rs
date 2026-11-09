@@ -1582,3 +1582,72 @@ fn any_msg_command_marks_the_caller_online_in_who() {
     env.run("nobody-yet", &["msg", "inbox"]);
     assert!(!env.root.join("spool/inbox/nobody-yet").exists());
 }
+
+/// An agent the office runs (`ORG_SESSION_TOKEN` set) never uses the local spool (ADR-0003
+/// §2.1.4): every command that would open it exits 5, and no spool is created.
+#[test]
+fn an_office_run_agent_never_opens_the_local_spool() {
+    let env = TempOrgHome::new("office_run");
+    let id = "01MSG0000000000000000000A1";
+    let commands: &[&[&str]] = &[
+        &["who"],
+        &["who", "nova"],
+        &["status"],
+        &["status", "on", "it"],
+        &["status", "--clear"],
+        &["profile", "set", "--name", "Me"],
+        &["msg", "register"],
+        &["msg", "deregister", "nova"],
+        &["msg", "send", "--to", "nova", "hi"],
+        &["msg", "ask", "--to", "nova", "--timeout", "1s", "hi"],
+        &["msg", "reply", id, "hi"],
+        &["msg", "defer", id, "--until", "1h"],
+        &["msg", "done", id],
+        &["msg", "notify"],
+        &["msg", "due"],
+        &["msg", "inbox"],
+        &["msg", "read", "--next"],
+        &["msg", "wait", "--timeout", "1s"],
+        &["relay", "status"],
+        &["relay", "run", "--once"],
+    ];
+    for args in commands {
+        let run: common::Run = TempOrgHome::command(&env.root, ME, args)
+            .env("ORG_SESSION_TOKEN", "t")
+            .output()
+            .unwrap()
+            .into();
+        assert_eq!(run.code, 5, "{args:?}: {}", run.stderr);
+        assert!(
+            run.stderr.contains("ORG_SESSION_TOKEN") || run.stderr.contains("office runs"),
+            "{args:?}: {}",
+            run.stderr
+        );
+        assert!(
+            !env.root.join("spool").exists(),
+            "{args:?} opened the spool"
+        );
+    }
+    // The org-relay name too.
+    let bin_dir = env.root.join("bin");
+    fs::create_dir_all(&bin_dir).unwrap();
+    let relay = bin_dir.join("org-relay");
+    std::os::unix::fs::symlink(common::org_agent_bin(), &relay).unwrap();
+    let run: common::Run = std::process::Command::new(&relay)
+        .args(["status"])
+        .env("ORG_HOME", &env.root)
+        .env("HOME", &env.root)
+        .env("ORG_SESSION_TOKEN", "t")
+        .output()
+        .unwrap()
+        .into();
+    assert_eq!(run.code, 5, "{}", run.stderr);
+    assert!(!env.root.join("spool").exists());
+    // whoami opens no spool, so it still answers.
+    let whoami: common::Run = TempOrgHome::command(&env.root, ME, &["whoami"])
+        .env("ORG_SESSION_TOKEN", "t")
+        .output()
+        .unwrap()
+        .into();
+    assert_eq!(whoami.code, 0, "{}", whoami.stderr);
+}

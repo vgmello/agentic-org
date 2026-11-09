@@ -72,6 +72,12 @@ use the local spool exactly as before, even on a Mac that has an office. (Once t
 `notify`, `reply`, `defer` and `done`, the default becomes ADR-0003 §2.1's: the only office with
 an `office.json` in the office home.) Agents must be members of the office before they name it.
 
+**Don't set `ORG_OFFICE` on a working agent yet.** `reply`, `defer`, `done`, `notify` (and so the
+inbox hooks), `ask`, `due`, `status` and `profile` still use the local spool. An agent that names
+its office reads the office's messages but can't reply to, defer or close them, isn't notified of
+them, and doesn't see messages sent to it through the spool. Name the office only once those
+commands move to it.
+
 With an office named, `org-agent` connects to `<office home>/run/<handle>.sock` (the office home is
 `$ORG_OFFICE_HOME`, else `~/Library/Application Support/agentic.org`), binds as `$ORG_AGENT` /
 `--as` with no token (an agent run by hand must be an agent placed in that office; otherwise
@@ -79,14 +85,15 @@ exit 1, never the spool), then makes the call. It asks the host nothing.
 
 - **The office doesn't answer** (nothing listening after about 0.4 s of retries, no answer to
   `hello`/`msg.bind` within 3 s, or it says it isn't ready yet):
-  - `send` writes the message into **that office's own spool**,
+  - `send` is **refused (exit 5, nothing sent)** until the office ingests its spool. The code
+    to queue it is there behind one switch (`OFFICE_SPOOL_INGEST` in `src/office.rs`), turned on
+    when server-dev's ingest lands: then the message goes into that office's own spool,
     `<office home>/offices/<id>/spool/new/<id>.json` (ADR-0003 §3.5: `0700` folders, a `0600`
-    file written in `spool/tmp/`, `F_FULLFSYNC`, then moved into `new/`), for the office to
-    ingest when it starts. stderr says so and `--json` adds `"queued": true`. An office with no
-    folder on this Mac is an error (exit 1): nothing would ingest it.
+    file written in `spool/tmp/`, `F_FULLFSYNC`, then moved into `new/`), stderr says so and
+    `--json` adds `"queued": true`.
   - `inbox`, `read`, `wait` and `who` say so on stderr and show the local spool.
-  - With `$ORG_SESSION_TOKEN` set (an agent the office runs) it is exit 5 instead, and so is
-    naming no office: those agents never use either spool.
+- **Agents the office runs** (`$ORG_SESSION_TOKEN` set) never use the local spool: every command
+  that would open it exits 5, as does naming no office or an office that is down.
 - **The office unbinds the agent mid-command** (`not_bound`): it binds again once and retries
   (a send keeps its id); if that fails, it exits saying so (1 for a refusal, 4 or 5 otherwise).
 - Exit codes follow ADR-0003 §2.6: the office's `unknown_recipient` is 3, `timeout` 2,

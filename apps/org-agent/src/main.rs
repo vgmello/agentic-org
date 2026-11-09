@@ -520,7 +520,13 @@ Usage:
   org-agent msg inbox  [--all] [--summary] [--from <agent>] [--thread <id>] [--limit <n>] [--office <id>] [--as <agent>] [--json]
   org-agent msg read   <id> | --next [--office <id>] [--as <agent>] [--json]
   org-agent msg wait   [--timeout 60s] [--from <agent>] [--urgent-only] [--office <id>] [--as <agent>] [--json]
-  org-agent relay <run [--once] | status [--json]>"
+  org-agent relay <run [--once] | status [--json]>
+
+Office (cutover, opt-in): --office <id> or $ORG_OFFICE sends msg send, inbox, read, wait and who
+through that office; without either, everything uses the local spool. Don't set ORG_OFFICE on a
+working agent until reply, defer, done and notify go through the office too: they still use the
+local spool and can't see the office's messages. A send to a named office that is down is not
+queued yet (exit 5)."
     );
 }
 
@@ -572,6 +578,10 @@ fn run_org_relay(args: &[String]) -> ExitCode {
     if matches!(cmd, "-h" | "--help" | "help") {
         eprintln!("{ORG_RELAY_USAGE}");
         return ExitCode::from(EXIT_OK);
+    }
+    if let Err(failure) = office::spool_allowed() {
+        eprintln!("org-relay: {}", failure.message.unwrap_or_default());
+        return ExitCode::from(failure.code);
     }
     let spool = match Spool::open_from_env() {
         Ok(spool) => spool,
@@ -759,7 +769,7 @@ fn run(args: Vec<String>) -> Result<u8, CliError> {
                 Err(CliError::Usage(why)) => office::who_without_identity_allowed(&why)?,
                 Err(other) => return Err(other),
             }
-            let spool = Spool::open_from_env()?;
+            let spool = open_spool()?;
             if let Some(member_query) = target {
                 let card = spool.resolve_directory_member(&member_query)?;
                 if json_flag {
@@ -797,7 +807,7 @@ fn run(args: Vec<String>) -> Result<u8, CliError> {
                     "unknown profile subcommand '{sub}' (expected 'set')"
                 )));
             }
-            let spool = Spool::open_from_env()?;
+            let spool = open_spool()?;
             let rest = &filtered[2..];
             let (target_id, flag_slice) = if let Some(first) = rest.first() {
                 if !first.starts_with('-') {
@@ -828,7 +838,7 @@ fn run(args: Vec<String>) -> Result<u8, CliError> {
             Ok(EXIT_OK)
         }
         "status" => {
-            let spool = Spool::open_from_env()?;
+            let spool = open_spool()?;
             let me = resolve_identity(as_agent.as_deref())?;
             spool.touch_last_seen(&me);
             let mut clear = false;
@@ -905,7 +915,7 @@ fn run(args: Vec<String>) -> Result<u8, CliError> {
             Ok(EXIT_OK)
         }
         "relay" => {
-            let spool = Spool::open_from_env()?;
+            let spool = open_spool()?;
             run_relay_subcommand(&spool, &filtered[1..], json_flag)
         }
         "msg" => run_msg(&filtered[1..], as_agent, json_flag),
@@ -1243,9 +1253,17 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
     }
 }
 
+/// The local spool. Every command opens it through here (or `local_spool`), so an agent the
+/// office runs is refused it in one place (exit 5, ADR-0003 §2.1.4). (`org-relay` checks the
+/// same rule itself.)
+fn open_spool() -> Result<Spool, CliError> {
+    office::spool_allowed()?;
+    Ok(Spool::open_from_env()?)
+}
+
 /// The local spool, with the caller's presence touched (as every spool `msg` command does).
 fn local_spool(as_agent: Option<&str>) -> Result<Spool, CliError> {
-    let spool = Spool::open_from_env()?;
+    let spool = open_spool()?;
     if let Ok(me) = resolve_identity(as_agent) {
         spool.touch_last_seen(&me);
     }
@@ -1275,7 +1293,7 @@ fn msg_send(sub_args: &[String], as_agent: Option<&str>, json_flag: bool) -> Res
         }
         // Into the office's own spool, for it to ingest when it's back (ADR-0003 §3.5).
         Route::Unreachable(why) => {
-            let id = why.spool_send(&from, &to, msg)?;
+            let id = why.send_while_down(&from, &to, msg)?;
             if json_flag {
                 println!("{{\"id\":{},\"queued\":true}}", json_quote(&id));
             } else {

@@ -679,32 +679,19 @@ fn send_falls_back_to_the_spool_when_the_office_is_down() {
     let mut server = world.office();
     server.stop();
 
-    // Into the office's own spool (ADR-0003 §3.5), not the local one.
+    // Until the office ingests its spool, a send to it while it's down is refused (exit 5):
+    // nothing is written anywhere, and the body isn't shown. (The queued path is unit-tested
+    // with the switch on.)
     let secret = "kept for later";
     let started = Instant::now();
-    let sent = world
-        .run(
-            "pixel",
-            &[
-                "msg",
-                "send",
-                "--to",
-                "nova",
-                "--priority",
-                "high",
-                "--json",
-                secret,
-            ],
-        )
-        .ok();
+    let sent = world.run("pixel", &["msg", "send", "--to", "nova", "--json", secret]);
+    assert_eq!(sent.code, 5, "{}", sent.stderr);
     assert!(
         started.elapsed() < Duration::from_secs(5),
         "{:?}",
         started.elapsed()
     );
-    let answer = sent.json();
-    assert_eq!(answer["queued"], true);
-    let id = answer["id"].as_str().unwrap();
+    assert_eq!(sent.stdout, "");
     assert!(
         sent.stderr
             .contains(&format!("office {OFFICE} is not reachable")),
@@ -712,22 +699,14 @@ fn send_falls_back_to_the_spool_when_the_office_is_down() {
         sent.stderr
     );
     assert!(
-        sent.stderr.contains("queued in its spool"),
+        sent.stderr
+            .contains("can't take queued sends yet; nothing was sent"),
         "{}",
         sent.stderr
     );
     assert!(!sent.stderr.contains(secret));
+    assert!(world.office_spooled().is_empty());
     assert!(world.spooled().is_empty(), "it went to the local spool");
-    let spooled = world.office_spooled();
-    assert_eq!(spooled.len(), 1);
-    assert!(spooled[0].ends_with(format!("{id}.json")), "{spooled:?}");
-    let send: org_proto::msg::SpooledSend =
-        serde_json::from_slice(&std::fs::read(&spooled[0]).unwrap()).unwrap();
-    assert_eq!(send.office_id, OFFICE);
-    assert_eq!(send.from, "pixel");
-    assert_eq!(send.to, "nova");
-    assert_eq!(send.body, secret);
-    assert_eq!(send.priority, org_proto::msg::MessagePriority::High);
 
     // The read side says the office isn't reachable and shows the local spool, as before.
     let inbox = world.run("nova", &["msg", "inbox", "--json"]).ok();
@@ -786,13 +765,12 @@ fn with_no_office_on_this_mac_the_spool_is_used_quietly() {
     assert_eq!(who.stderr, "");
     assert!(who.json().is_array(), "{}", who.stdout);
     assert_eq!(world.run_unnamed("nova", &["msg", "inbox"]).ok().stderr, "");
-    // Named but not on this Mac: unreachable, and with no office folder its spool can't take
-    // the message, so the send fails saying so (exit 1) rather than make an office folder.
+    // Named but not on this Mac: unreachable, so the send is refused (exit 5), and no office
+    // folder is made.
     let named = world.run("pixel", &["msg", "send", "--to", "nova", "hi"]);
-    assert_eq!(named.code, 1, "{}", named.stderr);
-    assert!(named.stderr.contains("not reachable"), "{}", named.stderr);
+    assert_eq!(named.code, 5, "{}", named.stderr);
     assert!(
-        named.stderr.contains("its spool did not take the message"),
+        named.stderr.contains("nothing was sent"),
         "{}",
         named.stderr
     );
