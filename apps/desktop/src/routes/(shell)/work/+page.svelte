@@ -2,11 +2,15 @@
 	import { onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import BugSheet from '$lib/components/BugSheet.svelte';
+	import NewRequestDialog from '$lib/components/NewRequestDialog.svelte';
+	import RequestSheet from '$lib/components/RequestSheet.svelte';
+	import RequestsPanel from '$lib/components/RequestsPanel.svelte';
 	import TaskSheet from '$lib/components/TaskSheet.svelte';
 	import { Badge } from '$lib/components/ui/badge';
 	import { toAppError } from '$lib/office/api';
 	import type { WorkItemSummary } from '$lib/proto';
 	import { sender, workApi } from '$lib/work';
+	import { requestsNeedingYou } from '$lib/work/requests-view';
 	import { BUG_STATUS_LABEL, bugRef, severityWord } from '$lib/work/bugs';
 	import { nameOf } from '$lib/work/people';
 	import { countOf, defaultFilter, needsYou, savedFilters, type WorkTab } from '$lib/work/saved';
@@ -30,10 +34,18 @@
 	let bugId = $state<string | undefined>();
 	let taskOpen = $state(false);
 	let bugOpen = $state(false);
+	// What the queue's ages count from: when the list was last loaded.
+	let now = $state(new Date().toISOString());
+	let requestId = $state<string | undefined>();
+	let requestStart = $state<'route' | undefined>();
+	let requestOpen = $state(false);
+	let newRequestOpen = $state(false);
+	const requestsOn = workApi.requests;
 
 	async function load() {
 		try {
 			items = (await workApi.snapshot(organizationId)).items;
+			now = new Date().toISOString();
 			loadError = undefined;
 			// Open on the default filter of the tab until the owner picks one.
 			if (!chosen) filterId = defaultFilter(tab, items, me);
@@ -51,9 +63,10 @@
 	}
 
 	const filters = $derived(savedFilters(tab, me));
-	const active = $derived(filters.find((f) => f.id === filterId) ?? filters[filters.length - 1]);
+	const active = $derived(filters.find((f) => f.id === filterId) ?? filters[filters.length - 1] ?? { id: '', label: '', test: () => false });
 	const shown = $derived((items ?? []).filter(active.test).sort((a, b) => projectName(a.project_id).localeCompare(projectName(b.project_id)) || (a.number ?? 0) - (b.number ?? 0)));
 	const waiting = $derived(needsYou(items ?? [], me));
+	const requestsWaiting = $derived(requestsNeedingYou(items ?? []));
 	const bugsOf = (projectId: string | undefined) => (items ?? []).filter((i) => i.kind === 'bug' && i.project_id === projectId);
 	const areasOf = (projectId: string | undefined) => (snapshot.areas ?? []).filter((a) => a.project_id === projectId && !a.deleted).map((a) => ({ id: a.id, name: a.name, general: a.general }));
 	const bugProject = $derived((items ?? []).find((i) => i.id === bugId)?.project_id);
@@ -63,7 +76,7 @@
 
 <div class="space-y-5 px-8 py-6">
 	<div class="flex flex-wrap items-center justify-between gap-3">
-		<p class="text-sm/6 text-gray-400">Tasks and bugs across every project. <Badge variant="secondary">Sample data</Badge></p>
+		<p class="text-sm/6 text-gray-400">{tab === 'requests' ? 'Requests across every project.' : 'Tasks and bugs across every project.'} <Badge variant="secondary">Sample data</Badge></p>
 		<p class="text-sm/6 {waiting > 0 ? 'font-semibold text-amber-200' : 'text-gray-400'}" data-testid="needs-you">{waiting === 0 ? 'Nothing needs you.' : `${waiting} ${waiting === 1 ? 'item needs' : 'items need'} you`}</p>
 	</div>
 
@@ -71,15 +84,23 @@
 		{#each [['tasks', 'Tasks'], ['bugs', 'Bugs']] as const as [id, name] (id)}
 			<button type="button" role="tab" aria-selected={tab === id} onclick={() => pick(id)} class="px-3 py-2 text-sm/6 focus-visible:outline-2 focus-visible:outline-indigo-400 {tab === id ? 'border-b-2 border-indigo-400 font-semibold text-white' : 'text-gray-300 hover:text-white'}">{name}</button>
 		{/each}
-		{#each ['Debt', 'Requests'] as name (name)}
+		{#each ['Debt'] as name (name)}
 			<span role="tab" aria-selected="false" aria-disabled="true" title="Available in a later release" class="cursor-not-allowed px-3 py-2 text-sm/6 text-gray-500">{name}</span>
 		{/each}
+		{#if requestsOn}
+			<button type="button" role="tab" aria-selected={tab === 'requests'} onclick={() => pick('requests')} class="px-3 py-2 text-sm/6 focus-visible:outline-2 focus-visible:outline-indigo-400 {tab === 'requests' ? 'border-b-2 border-indigo-400 font-semibold text-white' : 'text-gray-300 hover:text-white'}">Requests{#if requestsWaiting > 0}<span class="ml-1.5 rounded-full bg-amber-500/20 px-1.5 text-xs/5 text-amber-200" data-testid="requests-badge">{requestsWaiting}</span>{/if}</button>
+		{/if}
+		{#if !requestsOn}
+			<span role="tab" aria-selected="false" aria-disabled="true" title="Available in a later release" class="cursor-not-allowed px-3 py-2 text-sm/6 text-gray-500">Requests</span>
+		{/if}
 	</div>
 
 	{#if loadError}
 		<p class="rounded-xl bg-white/5 px-6 py-8 text-center text-sm/6 text-red-300" role="alert">{loadError} <button class="underline" onclick={load}>Try again</button></p>
 	{:else if items === undefined}
 		<p class="text-sm/6 text-gray-400">Loading work…</p>
+	{:else if tab === 'requests'}
+		<RequestsPanel items={items} {snapshot} {now} onopen={(id, start) => ((requestId = id), (requestStart = start), (requestOpen = true))} onnew={() => (newRequestOpen = true)} />
 	{:else if (snapshot.projects ?? []).length === 0}
 		<p class="rounded-xl bg-white/5 px-6 py-8 text-center text-sm/6 text-gray-300" data-testid="no-projects">No projects yet. Work items live in projects.</p>
 	{:else}
@@ -127,5 +148,7 @@
 	{/if}
 </div>
 
+<NewRequestDialog bind:open={newRequestOpen} {snapshot} {send} ondone={({ ref, sentTo }) => (toast.success(sentTo ? `${ref} sent to ${sentTo}.` : `${ref} saved.`), void load())} />
+<RequestSheet bind:open={requestOpen} {organizationId} {requestId} start={requestStart} {snapshot} items={items ?? []} {send} onchanged={(message) => (message && toast.success(message), void load())} />
 <TaskSheet bind:open={taskOpen} {organizationId} {taskId} {snapshot} {send} onchanged={() => void load()} />
 <BugSheet bind:open={bugOpen} {organizationId} {bugId} {snapshot} areas={areasOf(bugProject)} bugs={bugsOf(bugProject)} items={items ?? []} {send} onchanged={() => void load()} />

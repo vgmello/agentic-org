@@ -349,6 +349,18 @@ export interface WorkUnlink {
 	link_id: string;
 }
 
+/** `work.comment`: a note on any item. The mock keeps plain notes only (no question, answer or asks yet). */
+export interface WorkCommentCall {
+	change_id: string;
+	item_id: string;
+	comment_id: string;
+	/** 1 to 10,000 characters. */
+	body: string;
+	comment_kind?: Exclude<CommentKind, 'unknown'>;
+	/** The commenter also watches the item. */
+	watch?: boolean;
+}
+
 export const SEVERITIES = ['critical', 'major', 'minor', 'trivial'] as const;
 
 
@@ -486,3 +498,43 @@ export interface RequestMerge {
 }
 
 export const REQUEST_LIMITS = { text: 20_000, routeReason: 500, declineReason: 1_000, draftDescription: 2_000, drafts: 50, effort: 200 } as const;
+
+// ---- Activity (§4.3 `work.activity`): the events of one item ---------------------------------------------------------
+
+/** One field a call changed, with what it was and what it became (JSON values). */
+export interface FieldChange {
+	field: string;
+	from?: unknown;
+	to?: unknown;
+}
+
+/**
+ * What an event changed: the kinds a request's page shows. A call writes one event per item, carrying every change it
+ * made to that item (design §2.3). Other kinds are read as `unknown` ("changed").
+ */
+export type WorkEventKind =
+	| { type: 'created' }
+	| { type: 'fields_changed'; fields: FieldChange[] }
+	/** A request sent to someone, taken back, or accepted (`request.route`, `request.accept`): one event with both the status and who scopes it. */
+	| { type: 'routed'; from: ItemStatus; to: ItemStatus; scoper_from?: string; scoper_to?: string; reason?: string; routed_by?: RoutedBy }
+	| { type: 'status_changed'; from: ItemStatus; to: ItemStatus; resolution?: Resolution; reason?: string }
+	| { type: 'assigned'; from?: string; to?: string }
+	| { type: 'comment'; comment_id: string; body: string; comment_kind: CommentKind; asks?: string; answers?: string; watch?: boolean }
+	| { type: 'unknown' };
+
+/** A committed change to one item. Together an item's events are its activity feed. */
+export interface WorkEvent {
+	target_id: string;
+	/** The version this event made. */
+	version: number;
+	at: string;
+	/** The bound member that made the change. */
+	actor_id?: string;
+	/** An automatic change; absent (false) otherwise, as on the wire. */
+	auto?: boolean;
+	/** The triggering event, of an automatic change. */
+	cause?: { target_id: string; version: number };
+	/** The organization position the change was checked at. */
+	org_position: { epoch: number; seq: number };
+	change: WorkEventKind;
+}
