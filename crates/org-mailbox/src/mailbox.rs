@@ -10,6 +10,9 @@ use org_proto::msg::{
 };
 use org_proto::{ulid_time_ms, AgentStatus, Member, MemberKind, Position};
 
+#[path = "ingest.rs"]
+mod ingest;
+
 use crate::waiters::{WaitOutcome, WaiterRegistry};
 use crate::{
     content_hash, format_utc, Cancellation, Clock, HeaderQuery, HeaderScope, MailboxError,
@@ -56,6 +59,15 @@ impl Mailbox {
         &self,
         bound_member_id: &str,
         params: MsgSendParams,
+    ) -> Result<SendResult, MailboxError> {
+        self.send_at(bound_member_id, params, None)
+    }
+
+    pub(crate) fn send_at(
+        &self,
+        bound_member_id: &str,
+        params: MsgSendParams,
+        created_at: Option<String>,
     ) -> Result<SendResult, MailboxError> {
         let (sender, _) = self.bound_member(bound_member_id)?;
         size(&params.id, MAX_ID_BYTES)?;
@@ -148,7 +160,7 @@ impl Mailbox {
         } else {
             params.id.clone()
         };
-        let now = self.now_utc()?;
+        let now = created_at.map(Ok).unwrap_or_else(|| self.now_utc())?;
         let urgent = is_urgent(&params.kind, priority);
         let header = MessageHeader {
             id: params.id,

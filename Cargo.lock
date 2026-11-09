@@ -2223,6 +2223,7 @@ version = "0.0.0"
 dependencies = [
  "org-mailbox",
  "org-proto",
+ "org-spool",
  "rusqlite",
  "serde",
  "serde_json",
@@ -2265,6 +2266,7 @@ dependencies = [
  "org-office",
  "org-office-launch",
  "org-proto",
+ "org-spool",
  "serde",
  "serde_json",
  "tempfile",
@@ -2291,8 +2293,10 @@ dependencies = [
 name = "org-spool"
 version = "0.0.0"
 dependencies = [
+ "libc",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

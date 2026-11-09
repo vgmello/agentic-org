@@ -525,8 +525,8 @@ Usage:
 Office (cutover, opt-in): --office <id> or $ORG_OFFICE sends msg send, inbox, read, wait and who
 through that office; without either, everything uses the local spool. Don't set ORG_OFFICE on a
 working agent until reply, defer, done and notify go through the office too: they still use the
-local spool and can't see the office's messages. A send to a named office that is down is not
-queued yet (exit 5)."
+local spool and can't see the office's messages. A send to a named office that is down queues
+in that office's spool (exit 0, --json adds queued: true)."
     );
 }
 
@@ -1270,9 +1270,8 @@ fn local_spool(as_agent: Option<&str>) -> Result<Spool, CliError> {
     Ok(spool)
 }
 
-/// `msg send`: through the office named; refused (exit 5) when it doesn't answer, until the
-/// office ingests its spool (then queued there, `--json` adding `"queued": true`, ADR-0003
-/// §3.5); with no office named, the local spool as before.
+/// `msg send`: through the office named; queued there when it doesn't answer (`--json`
+/// adds `"queued": true`, ADR-0003 §3.5). With no office named, the local spool as before.
 fn msg_send(sub_args: &[String], as_agent: Option<&str>, json_flag: bool) -> Result<u8, CliError> {
     let from = resolve_identity(as_agent)?;
     let parsed = parse_outgoing(sub_args, OutgoingKind::Send)?;
@@ -1291,7 +1290,7 @@ fn msg_send(sub_args: &[String], as_agent: Option<&str>, json_flag: bool) -> Res
                 println!("{id}");
             }
         }
-        // Refused until the office ingests its spool; then queued there (ADR-0003 §3.5).
+        // Queue in the named office's fallback spool (ADR-0003 §3.5).
         Route::Unreachable(why) => {
             let id = why.send_while_down(&from, &to, msg)?;
             if json_flag {

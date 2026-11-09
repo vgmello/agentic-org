@@ -2,13 +2,14 @@
 //! `status.json`, `triage.json`), and Maildir-style spool operations for `org-agent`.
 //!
 //! Coupling metrics (per `docs/architecture-rules.md`):
-//! - Efferent coupling (`Ce`): 2 (`serde`, `serde_json`)
+//! - Efferent coupling (`Ce`): 3 (`serde`, `serde_json`, `libc`)
 //! - Instability (`I`): ~0.20 (Stable platform primitive)
 
 pub mod envelope;
 pub mod member;
 pub mod messaging;
 pub mod meta;
+pub mod office_ingest;
 pub mod profile_edit;
 pub mod relay;
 mod safe_read;

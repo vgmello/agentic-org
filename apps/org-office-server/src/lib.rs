@@ -21,6 +21,7 @@ mod live;
 mod msg_calls;
 mod serve;
 mod signals;
+mod spool;
 mod zeroed;
 
 use std::fs::File;
@@ -271,6 +272,17 @@ fn serve_office(
             return fail_with(&mut control, &e);
         }
     };
+    let ingest = match spool::Ingest::start(office.folder(), Arc::clone(&mailbox)) {
+        Ok(ingest) => ingest,
+        Err(_) => {
+            let _ = std::fs::remove_file(&socket);
+            return fail(
+                &mut control,
+                FailCode::StorageError,
+                "cannot ingest the office spool",
+            );
+        }
+    };
     let shared = Arc::new(serve::Shared::new(
         &info,
         &socket,
@@ -377,6 +389,7 @@ fn serve_office(
     let _ = std::fs::remove_file(&socket);
     // Every connection thread is gone (joined by `serve::run`): the only owners of the office
     // left are `shared` and this function.
+    drop(ingest);
     drop(shared);
     drop(office);
     0

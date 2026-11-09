@@ -1,5 +1,5 @@
 //! `org-agent` against a real office server: `msg send | inbox | read | wait` and `who` go
-//! through the office, and `send` falls back to the local spool when the office is down.
+//! through the office, and `send` queues in the named office spool when the office is down.
 //!
 //! The server is the real one: this test binary, started with `ORG_AGENT_TEST_OFFICE_SERVER`
 //! set, runs exactly what `org-office-server`'s `main` runs (its library). It is driven the way
@@ -19,7 +19,8 @@ use std::time::{Duration, Instant};
 
 use org_client::Client;
 use org_office_launch::{
-    read_server_event, write_host_message, CreateOffice, HostMessage, ServerEvent,
+    read_server_event, write_host_message, CreateOffice, HostMessage, OfficeFile, ServerEvent,
+    StartOffice,
 };
 use org_proto::location::office_socket_path;
 use org_proto::org::{
@@ -61,8 +62,12 @@ fn main() {
             an_agent_offboarded_during_a_wait_is_told_and_not_left_waiting,
         ),
         (
-            "a_send_to_an_office_that_is_down_is_refused_until_ingest",
-            a_send_to_an_office_that_is_down_is_refused_until_ingest,
+            "a_send_to_a_known_down_office_queues_without_a_socket",
+            a_send_to_a_known_down_office_queues_without_a_socket,
+        ),
+        (
+            "a_send_to_an_office_that_is_down_is_delivered_after_start",
+            a_send_to_an_office_that_is_down_is_delivered_after_start,
         ),
         (
             "an_office_not_named_is_not_used",
@@ -215,10 +220,10 @@ impl World {
         office_socket_path(&self.home, OFFICE).unwrap()
     }
 
-    /// Creates the office, hires pixel and nova into it, and returns the running server.
-    fn office(&self) -> Server {
+    /// Starts the real server process with this world's private home.
+    fn spawn_server(&self, args: &[&str]) -> Server {
         let mut child = Command::new(std::env::current_exe().unwrap())
-            .arg("--create")
+            .args(args)
             .env(SERVER_ENV, "1")
             .env("ORG_OFFICE_HOME", &self.home)
             .env("HOME", &self.user)
@@ -237,11 +242,16 @@ impl World {
                 }
             }
         });
-        let mut server = Server {
+        Server {
             stdin: child.stdin.take(),
             child,
             events,
-        };
+        }
+    }
+
+    /// Creates the office and hires pixel and nova into it.
+    fn office(&self) -> Server {
+        let mut server = self.spawn_server(&["--create"]);
         write_host_message(
             server.stdin.as_mut().unwrap(),
             &HostMessage::Create(CreateOffice {
@@ -282,6 +292,20 @@ impl World {
             })
             .unwrap();
         }
+        server
+    }
+
+    fn start(&self) -> Server {
+        let mut server = self.spawn_server(&["--office", OFFICE]);
+        write_host_message(
+            server.stdin.as_mut().unwrap(),
+            &HostMessage::Start(StartOffice {
+                app_token: token(),
+                db_key: DbKey::from_bytes([0xB3; 32]),
+            }),
+        )
+        .unwrap();
+        assert!(matches!(server.event(), ServerEvent::Ready { .. }));
         server
     }
 
@@ -762,38 +786,61 @@ fn an_agent_offboarded_during_a_wait_is_told_and_not_left_waiting() {
     assert!(next.stdout.is_empty());
 }
 
-fn a_send_to_an_office_that_is_down_is_refused_until_ingest() {
+fn a_send_to_a_known_down_office_queues_without_a_socket() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let world = World::new();
+    let folder = world.home.join("offices").join(OFFICE);
+    std::fs::create_dir(&folder).unwrap();
+    let office = OfficeFile::new(
+        OFFICE,
+        "HQ",
+        OfficeRole::Hq,
+        ORG,
+        "Acme",
+        "2026-11-09T00:00:00.000Z",
+    );
+    std::fs::write(folder.join("office.json"), office.to_vec().unwrap()).unwrap();
+    let sent = world
+        .run(
+            "pixel",
+            &["msg", "send", "--to", "nova", "--json", "PRIVATE_BODY"],
+        )
+        .ok();
+    assert_eq!(sent.json()["queued"], true);
+    assert!(!sent.stderr.contains("PRIVATE_BODY"));
+    assert_eq!(world.office_spooled().len(), 1);
+    assert!(world.spooled().is_empty());
+    let path = world.office_spooled().pop().unwrap();
+    let meta = std::fs::symlink_metadata(&path).unwrap();
+    assert_eq!(meta.permissions().mode() & 0o7777, 0o600);
+    assert_eq!(meta.nlink(), 1);
+    let send: org_proto::msg::SpooledSend =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(send.id, sent.json()["id"]);
+    assert_eq!(send.office_id, OFFICE);
+    assert_eq!(send.body, "PRIVATE_BODY");
+}
+
+fn a_send_to_an_office_that_is_down_is_delivered_after_start() {
     let world = World::new();
     let mut server = world.office();
     server.stop();
 
-    // Until the office ingests its spool, a send to it while it's down is refused (exit 5):
-    // nothing is written anywhere, and the body isn't shown. (The queued path is unit-tested
-    // with the switch on.)
     let secret = "kept for later";
     let started = Instant::now();
-    let sent = world.run("pixel", &["msg", "send", "--to", "nova", "--json", secret]);
-    assert_eq!(sent.code, 5, "{}", sent.stderr);
+    let sent = world
+        .run("pixel", &["msg", "send", "--to", "nova", "--json", secret])
+        .ok();
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert_eq!(sent.json()["queued"], true);
+    let id = sent.json()["id"].as_str().unwrap().to_owned();
     assert!(
-        started.elapsed() < Duration::from_secs(5),
-        "{:?}",
-        started.elapsed()
-    );
-    assert_eq!(sent.stdout, "");
-    assert!(
-        sent.stderr
-            .contains(&format!("office {OFFICE} is not reachable")),
-        "{}",
-        sent.stderr
-    );
-    assert!(
-        sent.stderr
-            .contains("can't take queued sends yet; nothing was sent"),
+        sent.stderr.contains("queued in its spool"),
         "{}",
         sent.stderr
     );
     assert!(!sent.stderr.contains(secret));
-    assert!(world.office_spooled().is_empty());
+    assert_eq!(world.office_spooled().len(), 1);
     assert!(world.spooled().is_empty(), "it went to the local spool");
 
     // The read side says the office isn't reachable and shows the local spool, as before.
@@ -807,6 +854,26 @@ fn a_send_to_an_office_that_is_down_is_refused_until_ingest() {
     let read = world.run("nova", &["msg", "read", "--next", "--json"]).ok();
     assert!(read.stderr.contains("not reachable"), "{}", read.stderr);
     assert_eq!(read.stdout, "null");
+    let mut server = world.start();
+    assert!(
+        world.office_spooled().is_empty(),
+        "startup did not drain before Ready"
+    );
+    let read = world
+        .run("nova", &["msg", "read", "--next", "--json"])
+        .ok()
+        .json();
+    assert_eq!(read["id"], id);
+    assert_eq!(read["body"], secret);
+    server.stop();
+    let _server = world.start();
+    assert_eq!(
+        world
+            .run("nova", &["msg", "read", "--next", "--json"])
+            .ok()
+            .json(),
+        Value::Null
+    );
 }
 
 fn an_office_not_named_is_not_used() {

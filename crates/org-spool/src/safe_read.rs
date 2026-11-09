@@ -4,7 +4,7 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, ErrorKind, Read};
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::Path;
 
 // `open(2)` flags, from the platform headers (no `libc` dependency). `O_RDONLY` is 0 everywhere
@@ -73,6 +73,46 @@ pub(crate) enum SpoolFile {
 /// (the spool belongs to one user, mode 0700); the point is that a file someone drops into a
 /// spool directory can't make us read elsewhere or block.
 pub(crate) fn read_spool_file(path: &Path, max: usize) -> io::Result<SpoolFile> {
+    read_checked(path, max, false, 0)
+}
+
+/// Office fallback files additionally require this euid, exactly 0600, one link, and
+/// lstat before open. The descriptor checks repeat the policy after O_NOFOLLOW open.
+pub(crate) fn read_office_spool_file(path: &Path, max: usize, uid: u32) -> io::Result<SpoolFile> {
+    read_checked(path, max, true, uid)
+}
+
+pub(crate) fn office_file_policy(meta: &fs::Metadata, uid: u32) -> Result<(), &'static str> {
+    if !meta.is_file() {
+        return Err("not a regular file");
+    }
+    if meta.uid() != uid {
+        return Err("wrong file owner");
+    }
+    if meta.mode() & 0o7777 != 0o600 {
+        return Err("file mode is not 0600");
+    }
+    if meta.nlink() != 1 {
+        return Err("file has multiple hard links");
+    }
+    Ok(())
+}
+
+fn read_checked(path: &Path, max: usize, office: bool, uid: u32) -> io::Result<SpoolFile> {
+    let before = if office {
+        let meta = match fs::symlink_metadata(path) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(SpoolFile::Missing),
+            Err(e) => return Err(e),
+        };
+        if let Err(reason) = office_file_policy(&meta, uid) {
+            return Ok(SpoolFile::Rejected(reason.into()));
+        }
+        Some(meta)
+    } else {
+        None
+    };
+
     let file = match OpenOptions::new()
         .read(true)
         .custom_flags(flags::O_NOFOLLOW | flags::O_NONBLOCK | flags::O_CLOEXEC)
@@ -94,6 +134,17 @@ pub(crate) fn read_spool_file(path: &Path, max: usize) -> io::Result<SpoolFile> 
         }
     };
     let meta = file.metadata()?;
+    if office {
+        if let Err(reason) = office_file_policy(&meta, uid) {
+            return Ok(SpoolFile::Rejected(reason.into()));
+        }
+        if before
+            .as_ref()
+            .is_some_and(|before| before.dev() != meta.dev() || before.ino() != meta.ino())
+        {
+            return Err(io::Error::other("spool entry changed"));
+        }
+    }
     if !meta.file_type().is_file() {
         return Ok(SpoolFile::Rejected(format!(
             "not a regular file ({})",
@@ -226,5 +277,25 @@ mod tests {
             );
         }
         assert!(!is_permanent_file_error(&io::Error::other("transient")));
+    }
+}
+
+#[cfg(test)]
+mod office_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn wrong_owner_is_refused_even_with_safe_mode_and_type() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("file");
+        fs::write(&path, b"private").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let meta = fs::symlink_metadata(&path).unwrap();
+        assert_eq!(office_file_policy(&meta, meta.uid()), Ok(()));
+        assert_eq!(
+            office_file_policy(&meta, meta.uid().wrapping_add(1)),
+            Err("wrong file owner")
+        );
     }
 }

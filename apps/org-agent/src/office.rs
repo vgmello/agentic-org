@@ -10,9 +10,7 @@
 //!
 //! - **Office named and reachable:** connect, `msg.bind` as the agent (no token: an agent run by
 //!   hand), then the call. Its errors are the office's.
-//! - **Office named but not reachable:** [`Route::Unreachable`]. `send` is refused (exit 5,
-//!   nothing sent) until the office ingests its spool; with [`OFFICE_SPOOL_INGEST`] on, it is
-//!   queued in that office's own spool (`<office>/spool/new/`, ADR-0003 §3.5). The read side says
+//! - **Office named but not reachable:** [`Route::Unreachable`]. `send` is queued in that office's own spool (`<office>/spool/new/`, ADR-0003 §3.5). The read side says
 //!   so on stderr and shows the local spool.
 //!
 //! Bodies and meta are printed only by the commands whose output shows them (`read`, `wait`),
@@ -53,11 +51,8 @@ const OFFICE_ENV: &str = "ORG_OFFICE";
 /// Set for an agent the office runs (ADR-0003 §2.1.4). Such an agent never uses the spool.
 const SESSION_TOKEN_ENV: &str = "ORG_SESSION_TOKEN";
 
-/// **The switch** for queueing a send while its named office is down (ADR-0003 §3.5, as
-/// amended for the cutover). Off until the office ingests `<office>/spool/new/` (server-dev):
-/// until then such a send is refused (exit 5), because nothing would deliver it and its body
-/// would stay on disk. Turn it on when ingest lands.
-pub(crate) const OFFICE_SPOOL_INGEST: bool = false;
+/// Queue into the office spool, drained at startup and every five seconds (ADR-0003 §3.5).
+pub(crate) const OFFICE_SPOOL_INGEST: bool = true;
 
 /// How much longer than the wait itself a `msg.wait` call may take to be answered.
 const WAIT_ANSWER_MARGIN: Duration = Duration::from_secs(10);
@@ -142,9 +137,7 @@ pub(crate) struct Unreachable {
 }
 
 impl Unreachable {
-    /// `msg send` while the named office is down. Until the office ingests its spool
-    /// ([`OFFICE_SPOOL_INGEST`]), nothing is sent: exit 5, saying so. After, the message is
-    /// queued in the office's spool.
+    /// `msg send` while the named office is down: queue in that office's spool.
     pub(crate) fn send_while_down(
         &self,
         from: &str,
@@ -936,7 +929,7 @@ mod tests {
 
         // The switch on. No such office on this Mac: refused, saying why (and never the body).
         let failure = why
-            .send_while_down_with("pixel", "nova", outgoing(), true)
+            .send_while_down("pixel", "nova", outgoing())
             .unwrap_err();
         assert_eq!(failure.code, EXIT_USAGE);
         let text = failure.message.unwrap();
@@ -960,9 +953,7 @@ mod tests {
             office.to_vec().unwrap(),
         )
         .unwrap();
-        let id = why
-            .send_while_down_with("pixel", "nova", outgoing(), true)
-            .unwrap();
+        let id = why.send_while_down("pixel", "nova", outgoing()).unwrap();
         let file = dir.path().join(format!("offices/O1/spool/new/{id}.json"));
         let send: SpooledSend = serde_json::from_slice(&std::fs::read(file).unwrap()).unwrap();
         assert_eq!(send.office_id, "O1");

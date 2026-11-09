@@ -651,6 +651,64 @@ mod tests {
     }
 
     #[test]
+    fn spool_replay_after_commit_before_unlink_is_durable_across_restart() {
+        use org_mailbox::NoMessageEvents;
+        use org_proto::msg::{SpooledSend, SPOOL_VERSION};
+        use org_spool::office_ingest::{Delivery, Drain};
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new().unwrap();
+        let office = office_in(&dir);
+        let folder = office.folder().to_owned();
+        let send = SpooledSend {
+            v: SPOOL_VERSION,
+            office_id: OFFICE_ID.into(),
+            from: "ada".into(),
+            id: crate::ulid::generate().unwrap(),
+            to: PAT.into(),
+            kind: KIND_MSG.into(),
+            priority: MessagePriority::Normal,
+            subject: None,
+            body: "offline".into(),
+            meta: Default::default(),
+            reply_to: None,
+            created_at: "2026-01-01T00:00:00.000Z".into(),
+        };
+        Drain::default()
+            .drain(&folder, |_, _| panic!("empty"), |_| {})
+            .unwrap();
+        let path = folder.join("spool/new").join(format!("{}.json", send.id));
+        std::fs::write(&path, serde_json::to_vec(&send).unwrap()).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let mailbox = office.mailbox(Arc::new(NoMessageEvents)).unwrap();
+        let first = mailbox.ingest_spooled(send.clone()).unwrap();
+        // Simulate a crash after the store commits and before the spool file is removed.
+        drop(mailbox);
+        drop(office);
+        let office = Arc::new(Office::open(&folder, test_key()).unwrap());
+        let mailbox = office.mailbox(Arc::new(NoMessageEvents)).unwrap();
+        Drain::default()
+            .drain(
+                &folder,
+                |id, bytes| {
+                    let replay = serde_json::from_slice(bytes).unwrap();
+                    assert_eq!(id, send.id);
+                    assert_eq!(mailbox.ingest_spooled(replay).unwrap(), first);
+                    Delivery::Accepted
+                },
+                |_| panic!("valid replay refused"),
+            )
+            .unwrap();
+        assert!(!path.exists());
+        assert_eq!(count(&office, "SELECT COUNT(*) FROM msg_headers"), 1);
+        assert_eq!(
+            count(&office, "SELECT SUM(message_count) FROM msg_threads"),
+            1
+        );
+        assert_eq!(count(&office, "SELECT COUNT(*) FROM msg_unread"), 1);
+    }
+
+    #[test]
     fn the_incarnation_is_made_once_and_survives_a_reopen() {
         use org_mailbox::NoMessageEvents;
         let dir = TempDir::new().unwrap();

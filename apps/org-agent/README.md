@@ -89,12 +89,13 @@ exit 1, never the spool), then makes the call. It asks the host nothing.
 
 - **The office doesn't answer** (nothing listening after about 0.4 s of retries, no answer to
   `hello`/`msg.bind` within 3 s, or it says it isn't ready yet):
-  - `send` is **refused (exit 5, nothing sent)** until the office ingests its spool. The code
-    to queue it is there behind one switch (`OFFICE_SPOOL_INGEST` in `src/office.rs`), turned on
-    when server-dev's ingest lands: then the message goes into that office's own spool,
-    `<office home>/offices/<id>/spool/new/<id>.json` (ADR-0003 §3.5: `0700` folders, a `0600`
-    file written in `spool/tmp/`, `F_FULLFSYNC`, then moved into `new/`), stderr says so and
-    `--json` adds `"queued": true`.
+  - `send` queues into that office's spool and exits `0`. With `--json` it prints
+    `"queued": true` and the message id, and stderr says it was queued. Files go to
+    `<office home>/offices/<id>/spool/new/<id>.json` (ADR-0003 §3.5: `0700` folders,
+    `0600` files, an atomic move from `tmp/` after `F_FULLFSYNC`). The server ingests
+    before accepting clients and polls every five seconds, deleting accepted plaintext
+    immediately. Only active agents run by hand (no `run_mode`) may send this way;
+    invalid files go to `spool/dead/` and are purged after 24 hours.
   - `inbox`, `read`, `wait` and `who` say so on stderr and show the local spool.
 - **Agents the office runs** (`$ORG_SESSION_TOKEN` set) never use the local spool: every command
   that would open it exits 5, as does naming no office or an office that is down.
