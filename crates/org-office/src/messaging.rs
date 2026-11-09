@@ -43,32 +43,12 @@ impl Office {
     }
 }
 
-impl OfficeMessageStore {
-    /// Runs `work` in the writer's savepoint. `work` may run again if SQLite aborts the batch, so
-    /// it takes what it needs by clone.
-    fn write<R: Send + 'static>(
-        &self,
-        mut work: impl FnMut(&rusqlite::Connection) -> Result<Result<R, StoreError>, OfficeError>
-            + Send
-            + 'static,
-    ) -> Result<R, StoreError> {
-        self.0
-            .local_store()
-            .write(move |db| Ok((work(db)?, None)))
-            .map_err(failure)?
-    }
-
-    fn read<R>(
-        &self,
-        work: impl FnOnce(&rusqlite::Connection) -> Result<R, OfficeError>,
-    ) -> Result<R, StoreError> {
-        self.0.local_store().read(work).map_err(failure)
-    }
-}
-
 impl MessageStore for OfficeMessageStore {
     fn commit_message(&self, msg: NewStoredMessage) -> Result<CommitMessageOutcome, StoreError> {
-        self.write(move |db| messages::commit_message(db, msg.clone()))
+        messages::write(self.0.local_store(), move |db| {
+            messages::commit_message(db, msg.clone())
+        })
+        .map_err(failure)?
     }
 
     fn claim_read(
@@ -82,7 +62,10 @@ impl MessageStore for OfficeMessageStore {
             id.map(str::to_owned),
             now_utc.to_owned(),
         );
-        self.write(move |db| messages::claim_read(db, &member, id.as_deref(), &now))
+        messages::write(self.0.local_store(), move |db| {
+            messages::claim_read(db, &member, id.as_deref(), &now)
+        })
+        .map_err(failure)?
     }
 
     fn peek_next_unread(
@@ -92,17 +75,26 @@ impl MessageStore for OfficeMessageStore {
         urgent_only: bool,
         now_utc: &str,
     ) -> Result<PeekUnreadOutcome, StoreError> {
-        self.read(|db| {
-            messages::peek_next_unread(db, to_member_id, from_member_id, urgent_only, now_utc)
-        })
+        self.0
+            .local_store()
+            .read(|db| {
+                messages::peek_next_unread(db, to_member_id, from_member_id, urgent_only, now_utc)
+            })
+            .map_err(failure)
     }
 
     fn get_message(&self, id: &str) -> Result<Option<StoredMessage>, StoreError> {
-        self.read(|db| messages::get_message(db, id))
+        self.0
+            .local_store()
+            .read(|db| messages::get_message(db, id))
+            .map_err(failure)
     }
 
     fn list_headers(&self, query: HeaderQuery) -> Result<HeaderPage, StoreError> {
-        self.read(|db| messages::list_headers(db, &query))
+        self.0
+            .local_store()
+            .read(|db| messages::list_headers(db, &query))
+            .map_err(failure)
     }
 
     fn find_reply_for_ask(
@@ -110,7 +102,10 @@ impl MessageStore for OfficeMessageStore {
         ask_id: &str,
         responder_id: &str,
     ) -> Result<Option<StoredMessage>, StoreError> {
-        self.read(|db| messages::find_reply_for_ask(db, ask_id, responder_id))
+        self.0
+            .local_store()
+            .read(|db| messages::find_reply_for_ask(db, ask_id, responder_id))
+            .map_err(failure)
     }
 }
 

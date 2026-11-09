@@ -25,6 +25,7 @@ use org_proto::Position;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::error::OfficeError;
+use crate::store::Store;
 
 const SEQUENCE_KEY: &str = "message_sequence";
 /// `msg_headers.flags`: an ask to a person whose deadline passed (it stays unread).
@@ -252,6 +253,16 @@ fn expired(header: &MessageHeader, now: &str) -> bool {
         return true;
     };
     now >= deadline.saturating_add((header.ttl_ms.unwrap_or(0) / 4).min(2000))
+}
+
+/// Runs `work` in `store`'s writer savepoint (the office's `office.db`). `work` may run again if
+/// SQLite aborts the batch, so it takes what it needs by clone. The inner result is the port's
+/// answer; an outer error is a storage failure.
+pub(crate) fn write<R: Send + 'static>(
+    store: &Store,
+    mut work: impl FnMut(&Connection) -> Result<Result<R, StoreError>, OfficeError> + Send + 'static,
+) -> Result<Result<R, StoreError>, OfficeError> {
+    store.write(move |db| Ok((work(db)?, None)))
 }
 
 /// The next `local_seq` (>= 1, increasing in commit order).
