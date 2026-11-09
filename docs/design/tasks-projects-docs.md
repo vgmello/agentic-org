@@ -109,6 +109,7 @@ Derived, never stored: the **suggested triager** (the area lead, else the area t
 | --- | --- | --- |
 | `text` | text | the original words, 1–20,000 characters; never edited |
 | `request_kind` | `feature \| change \| technical \| question`, optional | suggested, changeable |
+| (scoper) | the request's `assignee_id` | the request's scoper is stored as its assignee; there's no separate field (amended 2026-11-09) |
 | `route_reason` | text, optional | ≤ 500; why this scoper ("product designer: a new user-facing flow") |
 | `routed_by` | `person \| rule \| copilot`, optional | where the suggestion came from |
 | `outcome` | `Outcome` (`RequestOutcome` in Rust), optional | set when scoped (below) |
@@ -241,9 +242,9 @@ Every feature status change also commits the doc's front matter on a docs branch
   - The app-only check comes first, then the lookup. A retry with the same `change_id` and hash gets the stored result without re-validating. The same `change_id` with another hash is `invalid_request` ("change id reused").
   - The lookup comes **before** the age checks. Then: dated more than 29 days ago, `expired`; more than 5 minutes ahead of the office's clock, `clock_skew`. The office keeps a monotonic high-water mark of its clock (offices design).
   - The table moves with the item at a handover (phase 2).
-- **Client-made ids** (`item_id`, `step_id`, `link_id`, `comment_id`, `feature_id`, draft task ids): a valid ULID (`invalid_request` otherwise), not already used (`already_exists`).
+- **Client-made ids** (`item_id`, `step_id`, `link_id`, `comment_id`, `feature_id`, draft task ids): a valid ULID (`invalid_request` otherwise), not already used (`already_exists`). Exception: `request.ask_changes`'s `comment_id` names an existing comment (§4.7).
 - **`expected_version`** is required on every call that changes an existing item, except the commutative ones: `checklist.add`, `checklist.check`, `checklist.move`, `checklist.make_task`, `checklist.unlink_task`, `work.comment`, `work.watch`, `work.link` and `work.unlink` (`work.undo` has its own rule, §2.4). A value above the current version is `invalid_request`.
-- **Conflicts are per field, not per item.** Each call touches a set of aspects: the fields it writes, plus `status` when it changes the status. It is refused with `conflict` only when an event after `expected_version` changed one of those aspects. So a comment or a tick never makes someone's title edit stale, but two people triaging the same bug do conflict (TRI-6).
+- **Conflicts are per field, not per item.** Each call touches a set of aspects: the fields it writes, plus `status` when it changes the status (`request.route` and `request.accept` always count `status`, §4.7). It is refused with `conflict` only when an event after `expected_version` changed one of those aspects. So a comment or a tick never makes someone's title edit stale, but two people triaging the same bug do conflict (TRI-6).
   - **Checklist steps** have three aspects: content (text and required), `done`, and position. A step's `version` counts the events that touched it. `checklist.edit` and `checklist.remove` take the step's `expected_version` and conflict only if the step's **content** changed after it (or, for `remove`, it was made a task), so a tick or a move never makes a text edit stale (work-items §9.1: "my text edit is kept").
 - **One call, one event per item.** A call records exactly one event, at one new version, on each item it changes, carrying every change it made to that item (`Triaged` carries area, severity, priority and assignee; Done anyway is one `StatusChanged` with its `anyway` detail; `checklist.add` is one `StepsAdded`). Automatic changes are separate events at the next versions, in the same transaction (§2.4), and so are the office's waiting bookkeeping events (`WaitingStarted` / `WaitingEnded`, §6): system events (`actor_id: None`, `auto: false`, `cause` = the triggering item event, if there is one) whose only aspect is `waiting`, which no call writes, so they never make a caller's `expected_version` stale and are never undone.
 - **Error order** (the first that applies): `not_bound`, `not_authorized`, `expired`, `clock_skew`, `not_found`, `too_large`, `invalid_request` (the params alone: shape, limits, references), `invalid_name`, `unknown_recipient`, `not_a_member`, `owner_protected`, `conflict`, `invalid_request` (the current state doesn't allow it), `checklist_incomplete`, `already_exists`, then `unavailable` and `storage_error`. Stale beats wrong-state on purpose: "Riley triaged this a moment ago" is the useful answer. This departs from `org.rs`, where wrong state comes before `conflict`; the organization commands of §4.8 keep `org.rs`'s order (§9).
@@ -599,7 +600,7 @@ pub enum WorkEventKind {
     Reopened { note: Option<String> },
     Routed { from: ItemStatus, to: ItemStatus, scoper_from: Option<String>, scoper_to: Option<String>,
              reason: Option<String>, routed_by: Option<RoutedBy> },  // (amended 2026-11-09: request events)
-                                                    // request.route (unroute: scoper_to None, to: new) and request.accept; aspects: status + scoper_id (§4.7)
+                                                    // request.route (unroute: scoper_to None, to: new) and request.accept; aspects: status, assignee_id (the scoper), route_reason, routed_by (§4.7)
     Linked { link: Link }, Unlinked { link_id: String },
     Comment { comment_id: String, body: String, comment_kind: CommentKind,
               asks: Option<String>, answers: Option<String>,
@@ -725,7 +726,7 @@ Each request call records one event on the request (§2.3) (amended 2026-11-09: 
 - `request.update`: `FieldsChanged`.
 - `request.ask_changes`: `StatusChanged { from: scoped, to: scoping, reason: note }`, and nothing else. The comment it names was already recorded by its own `work.comment` call (its own `Comment` event); `ask_changes` doesn't record it again.
 - `request.scope`, `request.approve`, `request.decline`, `request.merge`: `StatusChanged`, with `resolution` / `reason` where relevant.
-- For aspects (§2.3), `Routed` counts as writing both `status` and the `scoper_id` field, even when `from == to` or the scoper is unchanged; it's never a no-op. For cycle time (§6), an accept (`Routed` into `scoping`) starts the round like a status change would.
+- For aspects (§2.3), `Routed` counts as writing `status`, `assignee_id` (the scoper), `route_reason` and `routed_by`, even when `from == to` or the scoper is unchanged; it's never a no-op. For cycle time (§6), a request's round starts at its first move into `scoping`, normally an accept's `Routed`.
 
 `ApprovedTask { item_id, link_id, title, description?, definition_of_done?, assignee_id?, team_id?, priority?, checklist? }`: the drafts as the owner edited them (RQS-9). `request.approve` creates them all or none, each with a `from_request` link and, when the outcome names a feature, its `feature_id`; the feature becomes `planned`.
 
@@ -868,7 +869,7 @@ Everything comes from the item's events (`at`, the owning office's clamped clock
 
 1. **Rounds.** A round opens at `Created` or at a reopen (`StatusChanged` out of a terminal status, `Reopened`) and closes at the next transition into a terminal status: task `done`; bug `closed`; request `approved`, `declined` or `merged`. A bug's verification wait is part of its round (Fixed isn't terminal). `rounds` = the number of rounds.
 2. **Lead time** = the sum of each round's length; the last round, if open, runs to `as_of` (now), and `open` is true ("so far").
-3. **Cycle time** = the sum, over rounds that started, of (round end or now) − (the round's start), where a round's **start** is its first transition into `in_progress` (tasks and bugs; a bug fixed by hand without passing through In progress starts at that `fixed`), or a request's `scoping` (a `Routed` or `StatusChanged` into it, §4.7). `None` when no round started.
+3. **Cycle time** = the sum, over rounds that started, of (round end or now) − (the round's start), where a round's **start** is its first transition into `in_progress` (tasks and bugs; a bug fixed by hand without passing through In progress starts at that `fixed`), or a request's first move into `scoping` (normally an accept's `Routed`, §4.7). `None` when no round started.
 4. **The split.** Every instant of every round belongs to exactly one bucket, by this precedence:
    1. **working**: at least one session attributed to the item is active (`WorkingStarted` / `WorkingStopped` events, keyed by session). Only when working time is tracked for the item (point 5);
    2. **waiting on the owner**: at least one open waiting span (point 6), or a bug in `fixed` whose reporter is the owner (the verify request is the owner's; FIX-4 sends it to the owner's Needs you only then), or a request in `scoped` (waiting for approval);
