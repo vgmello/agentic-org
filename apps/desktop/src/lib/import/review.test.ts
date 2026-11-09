@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addTeam, below, filterRows, managerChoices, normalize, patchRow, removeTeam, renameHandle, rowNote, setParent } from './review';
+import { addTeam, below, filterRows, managerChoices, markRemoved, normalize, patchRow, removeTeam, renameHandle, rowNote, setParent } from './review';
 import { SAMPLE_SCAN } from './mock';
 import { applyHints } from './hints';
 import { SAMPLE_HINTS } from './mock';
@@ -124,5 +124,18 @@ describe('the manager choices and renaming a messaging name', () => {
 		expect(p).toMatchObject({ existingMemberId: 'p9', existingKind: 'person' });
 		const clear = renameHandle([a, ...all.filter((r) => r.key !== 'server-dev')], 'server-dev', 'fresh-name', [member]).rows.find((r) => r.key === 'server-dev')!;
 		expect(clear.existingMemberId).toBeUndefined();
+	});
+});
+
+describe('a removed agent is not shown as a manager or a lead', () => {
+	it('sends their reports to the owner and clears their teams’ leads, once marked removed', () => {
+		const { rows: r } = buildRows(SAMPLE_SCAN, { exclude: ['sample'] });
+		const f = applyHints(r, SAMPLE_HINTS, suggestTeams(r));
+		const ledger = { teams: {}, agents: { 'ac-staff-engineer-ada': { id: 'gone', created: true, linked: true } } };
+		const marked = markRemoved(f.rows, ledger, new Set(['other']));
+		const fixed = normalize(marked, f.drafts);
+		expect(marked.find((x) => x.name === 'ada')!.removedEarlier).toBe(true);
+		expect(fixed.rows.find((x) => x.name === 'River')!.managerKey).toBe('owner');
+		expect(fixed.drafts.find((d) => d.key === 'engineering')!.leadKey).toBeUndefined();
 	});
 });

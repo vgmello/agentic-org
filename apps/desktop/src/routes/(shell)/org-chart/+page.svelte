@@ -14,7 +14,7 @@
 	import MoveMemberDialog from '$lib/components/MoveMemberDialog.svelte';
 	import AddAgentSheet from '$lib/components/AddAgentSheet.svelte';
 	import BringInDialog from '$lib/components/BringInDialog.svelte';
-	import { markArrived } from '$lib/import/arrived.svelte';
+	import { announceBroughtIn, idsOf } from '$lib/import/after';
 	import EditAgentDialog from '$lib/components/EditAgentDialog.svelte';
 	import HowItRunsDialog from '$lib/components/HowItRunsDialog.svelte';
 	import OffboardAgentDialog from '$lib/components/OffboardAgentDialog.svelte';
@@ -237,15 +237,11 @@
 	}
 	const organizationName = $derived(data.connection.organization.name);
 	// "Bring in an existing team" (IMP-7): the chart shows what came in, highlighted for a while.
-	async function broughtIn(r: { done: { agents: number; teams: number; projects: number; paused: number; failures: unknown[] } | undefined; handles: string[] }) {
+	async function broughtIn(r: { done: Parameters<typeof announceBroughtIn>[0]; handles: string[] }) {
 		if (!r.done) return;
 		await reload();
-		const handles = new Set(r.handles.map((h) => h.toLowerCase()));
-		markArrived(data.snapshot.members.filter((m) => m.agent && handles.has(m.agent.messaging_name.toLowerCase())).map((m) => m.id));
-		const { agents, teams, projects, paused } = r.done;
-		if (agents + teams + projects === 0) return;
-		const count = (n: number, one: string) => `${n} ${n === 1 ? one : `${one}s`}`;
-		toast.success(`Brought in ${count(agents, 'agent')}, ${count(teams, 'team')} and ${count(projects, 'project')}.${paused > 0 ? ` ${count(paused, 'agent')} paused.` : ''}`);
+		const said = announceBroughtIn(r.done, idsOf(data.snapshot.members, r.handles));
+		if (said) toast.success(said);
 	}
 	async function personAdded(r: { memberId: string; name: string; problems: string[] }) {
 		await reload();

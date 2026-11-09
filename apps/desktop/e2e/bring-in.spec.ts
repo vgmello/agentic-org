@@ -143,3 +143,20 @@ test('IMP-9: a run that fails part way can be closed, and bringing in again from
 	await expect(dialog(page).getByRole('button', { name: /^Bring in 0 agents$/ })).toBeDisabled();
 });
 
+
+test('IMP-1: a new organization lands on Agents, where bringing in an existing team is offered, and it opens the same review', async ({ page }) => {
+	await visit(page, '/create');
+	await page.getByLabel('Organization name').fill('Fresh Org');
+	await page.getByRole('button', { name: 'Create organization' }).click();
+	await expect(page).toHaveURL(/\/agents$/);
+	await visit(page, '/agents?org=empty');
+	await expect(page.getByTestId('no-agents')).toBeVisible();
+	await page.getByTestId('bring-in-empty-agents').click();
+	await expect(dialog(page).getByTestId('bring-in-sources')).toContainText('Found 5 agents in 1 project (ac)');
+	await dialog(page).getByRole('button', { name: 'Scan' }).click();
+	await expect(page.getByTestId('import-row')).toHaveCount(10);
+	await dialog(page).getByRole('button', { name: 'Cancel' }).click();
+	await expect(dialog(page)).toHaveCount(0);
+	await page.getByTestId('bring-in-header').click();
+	await expect(dialog(page)).toBeVisible();
+});
