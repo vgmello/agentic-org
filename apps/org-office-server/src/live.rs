@@ -161,6 +161,10 @@ impl MessageEvents for LiveEvents {
         match event {
             MessageEvent::Received(data) => self.publish_live(Live::Received(data)),
             MessageEvent::StateChanged(data) => self.publish_live(Live::StateChanged(data)),
+            // The notice itself reaches subscribers as `message.received` (the Mailbox
+            // publishes `Received` for it first). Forwarding `message.delivery_failed` to
+            // app-bound subscribers is a follow-up next to the two above.
+            MessageEvent::DeliveryFailed(_) => {}
         }
     }
 }
