@@ -207,7 +207,7 @@ describe('PROC-4/PROC-14 a turning-off of branch-and-merge that does not count',
 	});
 
 	it('does count when someone else approved it, and the process leaves the set', () => {
-		const set = run([base(), off({ approvedBy: 'you' })], []);
+		const set = resolve({ docs: [base(), off({ approvedBy: 'you' })], teams: TEAMS, project: P([]), approval: { ownerId: 'you', teams: TEAMS, projectLeads: [] } });
 		expect(win(set, 'branch-and-merge')).toBeUndefined();
 		expect(set.turnedOff).toHaveLength(1);
 	});
@@ -254,6 +254,37 @@ describe('the output does not depend on the order of the input', () => {
 		expect(a.conflicts).toEqual(b.conflicts);
 		expect(a.problems.map((p) => [p.key, p.doc.id])).toEqual(b.problems.map((p) => [p.key, p.doc.id]));
 		expect(a.entries.map((e) => e.chain.map((l) => l.doc.id))).toEqual(b.entries.map((e) => e.chain.map((l) => l.doc.id)));
+	});
+});
+
+describe('the rule fails safe, and conflicts are named for the file that applies', () => {
+	it('a turning-off approved by someone else does not count when nobody is known to be an approver', () => {
+		const set = run([org({ key: 'branch-and-merge' }), proj('p', { key: 'branch-and-merge', status: 'off', author: 'a', approvedBy: 'someone' })], []);
+		expect(set.turnedOff).toEqual([]);
+		expect(win(set, 'branch-and-merge')).toBeDefined();
+	});
+
+	it('names the team whose file applies, not the first sealed file', () => {
+		const set = run([team('des', { overridable: false, status: 'off', reason: 'x' }), team('plat', { overridable: false })], ['des', 'plat']);
+		expect(set.conflicts[0].applies).toBe('Sealed by Plat; applies until the project decides');
+	});
+
+	it('a broken seal next to a valid file of the same team is not a conflict of one team', () => {
+		const set = run([org(), team('plat', { overridable: false, problems: [{ field: 'version', message: 'x' }] }), team('plat', { version: 2 })], ['plat']);
+		expect(set.conflicts).toEqual([]);
+	});
+
+	it('a readable seal still applies when another team’s seal is unreadable', () => {
+		const set = run([team('des', { overridable: false }), team('plat', { overridable: false, problems: [{ field: 'version', message: 'x' }] })], ['des', 'plat']);
+		expect(win(set)).toMatchObject({ source: 'team', scopeName: 'Des', sealed: true });
+	});
+
+	it('a project turning-off of branch-and-merge that does not count does not settle a conflict', () => {
+		const set = run(
+			[org({ key: 'branch-and-merge' }), team('plat', { key: 'branch-and-merge' }), team('des', { key: 'branch-and-merge' }), proj('p', { key: 'branch-and-merge', status: 'off', author: 'a', approvedBy: 'a' })],
+			['plat', 'des']
+		);
+		expect(set.conflicts.map((c) => c.key)).toEqual(['branch-and-merge']);
 	});
 });
 

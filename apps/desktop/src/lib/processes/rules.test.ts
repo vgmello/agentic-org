@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { resolve } from './resolve';
 import { approversOf, BRANCH_KEY, branchRule, cannotApprove, leadRefusalLine, NOT_BY_AUTHOR, oneBranchRefusal } from './rules';
-import { SAMPLE_PROJECTS, SAMPLE_TEAMS, sampleProcessDocs } from './sample';
+import { approvalFor, SAMPLE_PROJECTS, SAMPLE_TEAMS, sampleProcessDocs } from './sample';
 
 const docs = sampleProcessDocs();
-const setFor = (key: string) => resolve({ docs, teams: SAMPLE_TEAMS, project: SAMPLE_PROJECTS.find((p) => p.key === key)! });
+const setFor = (key: string) => {
+	const project = SAMPLE_PROJECTS.find((p) => p.key === key)!;
+	return resolve({ docs, teams: SAMPLE_TEAMS, project, approval: approvalFor(project) });
+};
 
 describe('PROC-14 the one open branch rule', () => {
 	it('is on for a project that did not turn it off', () => {
@@ -15,7 +18,8 @@ describe('PROC-14 the one open branch rule', () => {
 		const set = resolve({
 			docs: docs.map((d) => (d.key === BRANCH_KEY && d.location.scope === 'onb' ? { ...d, approvedBy: 'you' } : d)),
 			teams: SAMPLE_TEAMS,
-			project: SAMPLE_PROJECTS.find((p) => p.key === 'onb')!
+			project: SAMPLE_PROJECTS.find((p) => p.key === 'onb')!,
+			approval: approvalFor(SAMPLE_PROJECTS.find((p) => p.key === 'onb')!)
 		});
 		expect(branchRule(set, 'Onboarding kit')).toEqual({ on: false, text: 'Turned off for Onboarding kit: a single agent works here' });
 	});
@@ -27,6 +31,13 @@ describe('PROC-14 the one open branch rule', () => {
 		expect(rule.on).toBe(true);
 		expect(rule.text).toBe('On · turning it off needs approval by someone other than its author (hana)');
 		expect(rule.selfApprovedBy).toBe('hana');
+	});
+
+	it('stays on when nothing says who may approve (no approval context): the rule fails safe', () => {
+		const approved = docs.map((d) => (d.key === BRANCH_KEY && d.location.scope === 'onb' ? { ...d, approvedBy: 'you' } : d));
+		const project = SAMPLE_PROJECTS.find((p) => p.key === 'onb')!;
+		expect(branchRule(resolve({ docs: approved, teams: SAMPLE_TEAMS, project }), 'Onboarding kit').on).toBe(true);
+		expect(branchRule(resolve({ docs: approved, teams: SAMPLE_TEAMS, project, approval: approvalFor(project) }), 'Onboarding kit').on).toBe(false);
 	});
 
 	it('stays on when the process is missing, clashing or invalid, and when the set could not be computed', () => {

@@ -132,7 +132,8 @@ export function resolve(input: ResolveInput): EffectiveSet {
 	const allKeys = new Set([...chainWinners.flatMap((w) => [...w.keys()]), ...chains.flatMap((c) => [...new Set(sealing.filter((d) => d.location.level === 'team' && c.some((t) => t.id === d.location.scope)).map((d) => d.key))])]);
 	for (const key of [...allKeys].sort(cmp)) {
 		const winners = [...new Set(chainWinners.flatMap((w) => (w.has(key) ? [w.get(key)!] : [])))].sort((a, b) => cmp(a.location.scope ?? '', b.location.scope ?? '') || cmp(a.id, b.id));
-		const dead = chains.map((c) => deadSeal(c, key)).filter((d): d is ProcessDoc => !!d);
+		// A broken seal counts only in a chain with no valid file for the key (next to a valid one it is a clash, left out).
+		const dead = chains.flatMap((c, i) => (chainWinners[i].has(key) ? [] : [deadSeal(c, key)])).filter((d): d is ProcessDoc => !!d);
 		if (winners.length === 1 && dead.length === 0) {
 			teamResult.set(key, winners[0]);
 			continue;
@@ -146,11 +147,12 @@ export function resolve(input: ResolveInput): EffectiveSet {
 		let meanwhile: ProcessDoc | undefined;
 		if (sealed.length > 0 || dead.length > 0) {
 			// Sealed by a team: it applies meanwhile (two different seals: the organization's version, else the first by team id that is not an off).
-			const live1 = dead.length === 0 && sealed.length === 1 ? sealed[0] : undefined;
-			meanwhile = live1 ?? org ?? (dead.length === 0 ? ([...sealed].sort(byTeamId).find((d) => d.status !== 'off') ?? [...sealed].sort(byTeamId)[0]) : undefined);
+			const readable = [...sealed].sort(byTeamId);
+			const only = dead.length === 0 && readable.length === 1 ? readable[0] : undefined;
+			meanwhile = only ?? org ?? readable.find((d) => d.status !== 'off') ?? readable[0];
 		} else meanwhile = org;
 		if (meanwhile && meanwhile.location.level === 'team') teamResult.set(key, meanwhile);
-		const sealer = sealed[0] ?? dead[0];
+		const sealer = meanwhile?.location.level === 'team' ? meanwhile : (sealed[0] ?? dead[0]);
 		const applies = !meanwhile
 			? 'Neither team’s version applies until the project decides'
 			: meanwhile.location.level === 'organization'
@@ -173,14 +175,14 @@ export function resolve(input: ResolveInput): EffectiveSet {
 	// The project's own file settles any conflict on its key: it is not a conflict any more. Its parent is what applied until then.
 	const conflicts = set.conflicts;
 	for (const [key, doc] of projectDocs) chainParent.set(doc, conflicts.find((c) => c.key === key)?.doc ?? teamResult.get(key) ?? orgDocs.get(key));
-	set.conflicts = conflicts.filter((c) => !projectDocs.has(c.key));
+	set.conflicts = conflicts; // filtered below, once the approval of a turning-off is known
 
 	// What each key resolves to, and 7. a surviving "off" removes it.
 	// A turning-off of the one open branch rule's process counts only when someone other than its author, and an approver of the level,
 	// approved it: otherwise it is not in force (the process stays, and the rule stays on).
 	const unapprovedOff = new Map<ProcessDoc, string>();
-	const approvedOff = (doc: ProcessDoc) =>
-		!!doc.author && !!doc.approvedBy && doc.approvedBy !== doc.author && (!input.approval || cannotApprove(doc.location, doc.author, doc.approvedBy, input.approval) === undefined);
+	// Without the approval context nobody is known to be an approver: the turning-off does not count (the rule fails safe).
+	const approvedOff = (doc: ProcessDoc) => !!doc.author && !!doc.approvedBy && doc.approvedBy !== doc.author && !!input.approval && cannotApprove(doc.location, doc.author, doc.approvedBy, input.approval) === undefined;
 	const winners = new Map<string, ProcessDoc>();
 	for (const key of new Set([...orgDocs.keys(), ...teamResult.keys(), ...projectDocs.keys()])) {
 		let win = projectDocs.get(key) ?? teamResult.get(key) ?? orgDocs.get(key);
@@ -190,6 +192,8 @@ export function resolve(input: ResolveInput): EffectiveSet {
 		}
 		if (win) winners.set(key, win);
 	}
+	// The project's own file settles a conflict on its key, unless it is a turning-off that does not count.
+	set.conflicts = set.conflicts.filter((c) => !projectDocs.has(c.key) || unapprovedOff.has(projectDocs.get(c.key)!));
 
 	// 8. Private files only add (their problems come first, so a chain can say why a private file is not applied).
 	const privateProblem = new Map<ProcessDoc, string>();

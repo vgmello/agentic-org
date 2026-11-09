@@ -1,4 +1,4 @@
-import type { ProcessDoc, ProjectRef, TeamRef } from './types';
+import type { ApprovalContext, ProcessDoc, ProjectRef, TeamRef } from './types';
 
 // Invented processes for the sample organization (src/lib/org/sample.ts): Engineering with Web and Platform under it, Design,
 // People; the project Atlas (Platform), Beacon (Web and Design, shared), Onboarding (People). Shown as Sample data.
@@ -87,3 +87,10 @@ export function sampleProcessDocs(): ProcessDoc[] {
 		doc({ key: 'code-review', name: 'My code review', level: 'agent', scope: 'noor', version: 1, summary: 'My own way of reviewing.', body: '# My code review' })
 	];
 }
+
+/** Who may approve at each level in the sample: the owner, and the leads of the project's teams. */
+export const approvalFor = (project: ProjectRef): ApprovalContext => ({
+	ownerId: 'you',
+	teams: SAMPLE_TEAMS,
+	projectLeads: project.teamIds.flatMap((id) => SAMPLE_TEAMS.find((t) => t.id === id)?.lead_member_id ?? [])
+});
