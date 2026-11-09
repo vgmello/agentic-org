@@ -483,7 +483,11 @@ pub fn store_claim_read_is_once_under_concurrency(backend: impl OpenBackend) {
                 scope.spawn(|| {
                     barrier.wait();
                     let mut mine = Vec::new();
-                    while let Some(stored) = store.claim_read(ADA_ID, None, NOW_UTC).unwrap() {
+                    // Bounded: a backend that keeps returning a message fails, never spins.
+                    for _ in 0..=5 {
+                        let Some(stored) = store.claim_read(ADA_ID, None, NOW_UTC).unwrap() else {
+                            break;
+                        };
                         mine.push(stored.message.header.id);
                     }
                     mine
@@ -578,9 +582,10 @@ pub fn store_claim_read_selects_and_marks_atomically(backend: impl OpenBackend) 
                 scope.spawn(move || {
                     // Read first, so a backend that claims from a reader's snapshot has one.
                     // Assert after the barrier, so a failure can't strand the other threads.
-                    let warmed = peek(store, ADA_ID).message.is_some();
+                    let warmed = store.peek_next_unread(ADA_ID, None, false, NOW_UTC);
                     barrier.wait();
-                    assert!(warmed, "peek sees the unread messages");
+                    let warmed = warmed.expect("peek_next_unread");
+                    assert!(warmed.message.is_some(), "peek sees the unread messages");
                     let mut mine = Vec::new();
                     for _ in 0..200 {
                         match store.claim_read(ADA_ID, None, NOW_UTC).unwrap() {
@@ -602,7 +607,11 @@ pub fn store_claim_read_selects_and_marks_atomically(backend: impl OpenBackend) 
             .flat_map(|c| c.join().unwrap())
             .collect()
     });
-    while let Some(stored) = store.claim_read(ADA_ID, None, NOW_UTC).unwrap() {
+    // Bounded: a backend that keeps returning a message fails below, never spins.
+    for _ in 0..=60 {
+        let Some(stored) = store.claim_read(ADA_ID, None, NOW_UTC).unwrap() else {
+            break;
+        };
         claimed.push(stored.message.header.id);
     }
     claimed.push(first.message.header.id);
@@ -1283,12 +1292,12 @@ pub fn mailbox_concurrent_reads_claim_once(backend: impl OpenBackend) {
                 scope.spawn(|| {
                     barrier.wait();
                     let mut mine = Vec::new();
-                    while let Some(message) = office
-                        .mailbox
-                        .read(ADA_ID, MsgReadParams::default())
-                        .unwrap()
-                        .message
-                    {
+                    // Bounded: an inbox that keeps returning a message fails, never spins.
+                    for _ in 0..=4 {
+                        let read = office.mailbox.read(ADA_ID, MsgReadParams::default());
+                        let Some(message) = read.unwrap().message else {
+                            break;
+                        };
                         mine.push(message.header.id);
                     }
                     mine
@@ -1357,7 +1366,6 @@ pub fn mailbox_wait_registered_before_commit_delivers_once(backend: impl OpenBac
     let office = office(&backend);
     let mailbox = office.mailbox.clone();
     let (_handle, cancel) = cancellation_pair();
-    let started = Instant::now();
     let waiter =
         thread::spawn(move || mailbox.wait(ADA_ID, wait_params(5_000), far_deadline(), &cancel));
     eventually("the waiter to register", || {
@@ -1365,11 +1373,8 @@ pub fn mailbox_wait_registered_before_commit_delivers_once(backend: impl OpenBac
     });
     send(&office.mailbox, PAT_ID, 1, ADA_HANDLE).unwrap();
     let waited = waiter.join().unwrap().unwrap();
+    // Woken by the commit: a lost wake-up returns None at the 5 s timeout and fails here.
     assert_eq!(waited.message.unwrap().header.id, msg_id(1));
-    assert!(
-        started.elapsed() < Duration::from_secs(20),
-        "woken by the commit"
-    );
     assert_eq!(office.mailbox.held_waits(), 0);
     assert_eq!(office.events.received(), [msg_id(1)]);
     assert_eq!(unread_inbox(&office.mailbox, ADA_ID), [msg_id(1)]);
@@ -1393,11 +1398,11 @@ pub fn mailbox_wait_registered_before_commit_delivers_once(backend: impl OpenBac
 pub fn mailbox_wait_one_commit_wakes_every_waiter(backend: impl OpenBackend) {
     let office = office(&backend);
     let (_handle, cancel) = cancellation_pair();
-    let (_other_handle, other_cancel) = cancellation_pair();
+    let (other_handle, other_cancel) = cancellation_pair();
     let other = {
         let mailbox = office.mailbox.clone();
         thread::spawn(move || {
-            mailbox.wait(REMY_ID, wait_params(1_500), far_deadline(), &other_cancel)
+            mailbox.wait(REMY_ID, wait_params(5_000), far_deadline(), &other_cancel)
         })
     };
     let waiters: Vec<_> = (0..3)
@@ -1419,7 +1424,13 @@ pub fn mailbox_wait_one_commit_wakes_every_waiter(backend: impl OpenBackend) {
             "every waiter of the recipient is woken by the one commit"
         );
     }
-    assert_eq!(other.join().unwrap().unwrap().message, None);
+    assert_eq!(
+        office.mailbox.held_waits(),
+        1,
+        "the other member's wait stays held"
+    );
+    drop(other_handle);
+    assert_eq!(other.join().unwrap(), Err(MailboxError::NotBound));
     assert_eq!(office.mailbox.held_waits(), 0);
     assert_eq!(office.events.received(), [msg_id(1)]);
 }
@@ -1506,7 +1517,7 @@ pub fn mailbox_wait_deadline(backend: impl OpenBackend) {
         mailbox.wait(
             ADA_ID,
             wait_params(MAX_WAIT_MS + 1),
-            far_deadline(),
+            Instant::now(),
             &cancel
         ),
         Err(MailboxError::InvalidRequest)
