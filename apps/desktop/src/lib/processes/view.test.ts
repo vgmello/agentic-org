@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parsePlace, placeKey, viewOf } from './view';
+import { knownPlace, parsePlace, placeKey, viewOf } from './view';
 import { sampleWorld } from './world';
 
 const world = sampleWorld();
@@ -9,6 +9,7 @@ describe('the places the Processes screen can show', () => {
 	it('round-trips a place through its text', () => {
 		for (const p of [{ kind: 'organization' }, { kind: 'team', id: 'web' }, { kind: 'project', key: 'atl' }, { kind: 'agent', id: 'noor' }] as const) expect(parsePlace(placeKey(p))).toEqual(p);
 		expect(parsePlace('nonsense:x')).toEqual({ kind: 'organization' });
+		expect(parsePlace('team:a:b')).toEqual({ kind: 'team', id: 'a:b' }); // the id may hold a colon
 		expect(parsePlace(null)).toEqual({ kind: 'organization' });
 	});
 
@@ -41,5 +42,16 @@ describe('the places the Processes screen can show', () => {
 		expect(sam.noCurrentWork).toBe(true);
 		expect(sam.subtitle).toBe("No current work. Showing the organization's processes and its own. Team and project processes apply when it starts a task.");
 		expect(keys(sam)).not.toContain('release-checklist');
+	});
+
+	it('a place that is not in the world falls back to the organization', () => {
+		expect(knownPlace(world, { kind: 'team', id: 'zzz' })).toEqual({ place: { kind: 'organization' }, missing: true });
+		expect(knownPlace(world, { kind: 'agent', id: 'noor' })).toEqual({ place: { kind: 'agent', id: 'noor' }, missing: false });
+	});
+
+	it('says nothing about the one open branch rule where the set has no branch-and-merge', () => {
+		const none = viewOf({ ...world, docs: [] }, { kind: 'project', key: 'atl' });
+		expect(none.rule).toBeUndefined();
+		expect(viewOf(world, { kind: 'project', key: 'atl' }).rule).toBeDefined();
 	});
 });

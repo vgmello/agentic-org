@@ -29,21 +29,24 @@
 			<SheetHeader>
 				<SheetTitle class="[overflow-wrap:anywhere]">{doc.name}</SheetTitle>
 				<SheetDescription class="flex flex-wrap items-center gap-2">
-					<ProcessBadges level={doc.location.level} version={doc.version} />
+					<ProcessBadges level={doc.location.level} scopeName={entry?.scopeName ?? off?.scopeName} version={doc.version} />
 					{#if entry?.sealed}<span class="inline-flex items-center gap-x-1 text-xs/5 text-amber-200"><Lock class="size-3.5" aria-hidden="true" /> Sealed</span>{/if}
 					{#if off}<span class="inline-flex items-center gap-x-1 text-xs/5 text-gray-300"><PowerOff class="size-3.5" aria-hidden="true" /> Turned off{off.scopeName ? ` for ${off.scopeName}` : ''}: {off.reason}</span>{/if}
 				</SheetDescription>
 			</SheetHeader>
 			<div class="space-y-5 px-4 pb-6 text-sm/6">
-				{#if doc.summary}<p class="text-gray-200">{doc.summary}</p>{/if}
-				<dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-gray-300">
-					<dt class="text-gray-400">Key</dt><dd class="font-mono">{doc.key}</dd>
-					<dt class="text-gray-400">Owner</dt><dd>{doc.owner}</dd>
-					{#if doc.appliesTo}<dt class="text-gray-400">Applies to</dt><dd>{doc.appliesTo}</dd>{/if}
+				{#if doc.summary}<p class="text-gray-200 [overflow-wrap:anywhere]">{doc.summary}</p>{/if}
+				<dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-gray-300">
+					<dt class="text-gray-400">Key</dt><dd class="font-mono [overflow-wrap:anywhere]">{doc.key}</dd>
+					<dt class="text-gray-400">Owner</dt><dd class="[overflow-wrap:anywhere]">{doc.owner}</dd>
+					{#if doc.appliesTo}<dt class="text-gray-400">Applies to</dt><dd class="[overflow-wrap:anywhere]">{doc.appliesTo}</dd>{/if}
 					<dt class="text-gray-400">Can be overridden</dt><dd>{doc.overridable ? 'Yes' : 'No: sealed'}</dd>
 					{#if doc.overrides}<dt class="text-gray-400">Overrides</dt><dd class="font-mono">{doc.overrides.key}@{doc.overrides.version}</dd>{/if}
 				</dl>
 
+				{#if off}
+					<p class="rounded-md bg-white/5 p-2 text-gray-200 outline-1 -outline-offset-1 outline-white/10" data-testid="off-why">Turned off{off.scopeName ? ` for ${off.scopeName}` : ''}: {off.reason}. The process it turns off stays as written at the level above.</p>
+				{/if}
 				{#if entry}
 					<section aria-labelledby="why-title" data-testid="why">
 						<h3 id="why-title" class="font-semibold text-white">Why it reads this way</h3>
@@ -55,7 +58,7 @@
 									{:else}<CircleMinus class="mt-0.5 size-4 shrink-0 text-gray-300" aria-hidden="true" />{/if}
 									<div class="min-w-0">
 										<p class="flex flex-wrap items-center gap-2 text-white">
-											<ProcessBadges level={layer.level} version={layer.doc.version} label={layer.scopeName ? `${layer.scopeName}` : undefined} />
+											<ProcessBadges level={layer.level} scopeName={layer.scopeName} version={layer.doc.version} />
 											<span class="font-medium">{OUTCOME[layer.outcome]}</span>
 										</p>
 										{#if layer.note}<p class="text-gray-300 [overflow-wrap:anywhere]">{layer.note}</p>{/if}
@@ -70,16 +73,16 @@
 					<section aria-labelledby="moments-title">
 						<h3 id="moments-title" class="font-semibold text-white">Prompts at guidance moments</h3>
 						<dl class="mt-1 space-y-1 text-gray-300">
-							{#if doc.moments.starting_task}<div><dt class="inline text-gray-400">Starting a task: </dt><dd class="inline">{doc.moments.starting_task}</dd></div>{/if}
-							{#if doc.moments.waking_up}<div><dt class="inline text-gray-400">Waking up: </dt><dd class="inline">{doc.moments.waking_up}</dd></div>{/if}
-							{#if doc.moments.finishing_task}<div><dt class="inline text-gray-400">Finishing a task: </dt><dd class="inline">{doc.moments.finishing_task}</dd></div>{/if}
+							{#if doc.moments.starting_task}<div><dt class="inline text-gray-400">Starting a task: </dt><dd class="inline [overflow-wrap:anywhere]">{doc.moments.starting_task}</dd></div>{/if}
+							{#if doc.moments.waking_up}<div><dt class="inline text-gray-400">Waking up: </dt><dd class="inline [overflow-wrap:anywhere]">{doc.moments.waking_up}</dd></div>{/if}
+							{#if doc.moments.finishing_task}<div><dt class="inline text-gray-400">Finishing a task: </dt><dd class="inline [overflow-wrap:anywhere]">{doc.moments.finishing_task}</dd></div>{/if}
 						</dl>
 					</section>
 				{/if}
 				{#if doc.checklist && doc.checklist.length > 0}
 					<section aria-labelledby="checklist-title">
 						<h3 id="checklist-title" class="font-semibold text-white">Checklist steps it adds to a task</h3>
-						<ul class="mt-1 list-disc pl-5 text-gray-300">{#each doc.checklist as step, i (i)}<li>{step.text}{step.required ? ' (required)' : ''}</li>{/each}</ul>
+						<ul class="mt-1 list-disc pl-5 text-gray-300">{#each doc.checklist as step, i (i)}<li class="[overflow-wrap:anywhere]">{step.text}{step.required ? ' (required)' : ''}</li>{/each}</ul>
 					</section>
 				{/if}
 				<section aria-labelledby="text-title">

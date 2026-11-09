@@ -2,7 +2,7 @@
 // and the rows' words. Pure.
 
 import { resolve } from './resolve';
-import { branchRule, type RuleState } from './rules';
+import { BRANCH_KEY, branchRule, type RuleState } from './rules';
 import type { AgentRef, ProcessWorld } from './world';
 import type { EffectiveSet, ProjectRef } from './types';
 
@@ -23,12 +23,26 @@ export interface PlaceView {
 
 export const placeKey = (p: Place): string => (p.kind === 'organization' ? 'organization' : p.kind === 'team' ? `team:${p.id}` : p.kind === 'project' ? `project:${p.key}` : `agent:${p.id}`);
 export function parsePlace(text: string | null): Place {
-	const [kind, id] = (text ?? '').split(':');
+	const at = (text ?? '').indexOf(':');
+	const kind = at < 0 ? (text ?? '') : (text ?? '').slice(0, at);
+	const id = at < 0 ? '' : (text ?? '').slice(at + 1);
 	if (kind === 'team' && id) return { kind: 'team', id };
 	if (kind === 'project' && id) return { kind: 'project', key: id };
 	if (kind === 'agent' && id) return { kind: 'agent', id };
 	return { kind: 'organization' };
 }
+
+/** The place if it exists in this world; otherwise the organization (a stale or mistyped link). */
+export function knownPlace(world: ProcessWorld, place: Place): { place: Place; missing: boolean } {
+	const found = place.kind === 'organization' || (place.kind === 'team' && world.teams.some((t) => t.id === place.id)) || (place.kind === 'project' && world.projects.some((p) => p.key === place.key)) || (place.kind === 'agent' && world.agents.some((a) => a.id === place.id));
+	return found ? { place, missing: false } : { place: { kind: 'organization' }, missing: true };
+}
+
+/** The one open branch rule's line, only where its process is part of the set (with none, there is nothing to say about it). */
+const ruleOf = (set: EffectiveSet, project: string): { rule?: RuleState } => {
+	const present = set.entries.some((e) => e.key === BRANCH_KEY) || set.turnedOff.some((t) => t.key === BRANCH_KEY);
+	return present ? { rule: branchRule(set, project) } : {};
+};
 
 export function viewOf(world: ProcessWorld, place: Place): PlaceView {
 	const base = { docs: world.docs, teams: world.teams };
@@ -41,7 +55,7 @@ export function viewOf(world: ProcessWorld, place: Place): PlaceView {
 	if (place.kind === 'project') {
 		const project = world.projects.find((p) => p.key === place.key);
 		const set = resolve({ ...base, ...(project ? { project, approval: world.approval(project) } : {}) });
-		return { title: `Processes · ${project?.name ?? 'Project'} (project)`, subtitle: `What agents follow when they work in ${project?.name ?? 'this project'}.`, set, ...(project ? { project, rule: branchRule(set, project.name) } : {}), noCurrentWork: false };
+		return { title: `Processes · ${project?.name ?? 'Project'} (project)`, subtitle: `What agents follow when they work in ${project?.name ?? 'this project'}.`, set, ...(project ? { project, ...ruleOf(set, project.name) } : {}), noCurrentWork: false };
 	}
 	if (place.kind === 'agent') {
 		const agent = world.agents.find((a) => a.id === place.id);
@@ -51,7 +65,7 @@ export function viewOf(world: ProcessWorld, place: Place): PlaceView {
 			title: `Processes · ${agent?.name ?? 'Agent'} (agent)`,
 			subtitle: project ? `What ${agent?.name} follows for its current work in ${project.name}.` : `No current work. Showing the organization's processes and its own. Team and project processes apply when it starts a task.`,
 			set,
-			...(project ? { project, rule: branchRule(set, project.name) } : {}),
+			...(project ? { project, ...ruleOf(set, project.name) } : {}),
 			...(agent ? { agent } : {}),
 			noCurrentWork: !project
 		};

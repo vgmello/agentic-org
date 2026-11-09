@@ -7,16 +7,17 @@
 	import Lock from '@lucide/svelte/icons/lock';
 	import PowerOff from '@lucide/svelte/icons/power-off';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
-	import ProcessBadges, { KIND_ICON, KIND_WORD } from '$lib/components/ProcessBadges.svelte';
+	import ProcessBadges, { KIND_ICON } from '$lib/components/ProcessBadges.svelte';
+	import { hhmm, KIND_WORD } from '$lib/processes/present';
 	import ProcessSheet from '$lib/components/ProcessSheet.svelte';
 	import { Badge } from '$lib/components/ui/badge';
-	import { parsePlace, placeKey, viewOf, type Place } from '$lib/processes/view';
+	import { knownPlace, parsePlace, placeKey, viewOf } from '$lib/processes/view';
 	import { sampleWorld, type ProcessWorld } from '$lib/processes/world';
 	import type { Entry, TurnedOff } from '$lib/processes/types';
 
 	// Until HQ serves processes this screen reads the sample organization's files (Sample data). `?handbook=down` shows the
 	// unreachable-handbook state, `?processes=empty` the empty one.
-	let world = $state<ProcessWorld | undefined>();
+	let world = $state.raw<ProcessWorld | undefined>();
 	onMount(() => {
 		const timer = setTimeout(() => (world = sampleWorld()), 250);
 		return () => clearTimeout(timer);
@@ -24,7 +25,10 @@
 	const handbookDown = $derived(page.url.searchParams.get('handbook') === 'down');
 	const empty = $derived(page.url.searchParams.get('processes') === 'empty');
 
-	const place = $derived<Place>(parsePlace(page.url.searchParams.get('place')));
+	const asked = $derived(parsePlace(page.url.searchParams.get('place')));
+	// A stale or mistyped place falls back to the organization, and says so.
+	const resolved = $derived(world ? knownPlace(world, asked) : { place: asked, missing: false });
+	const place = $derived(resolved.place);
 	const view = $derived(world ? viewOf(empty ? { ...world, docs: [] } : world, place) : undefined);
 	function choose(value: string) {
 		const next = new URL(page.url);
@@ -33,7 +37,6 @@
 		void goto(next, { replaceState: true, keepFocus: true, noScroll: true });
 	}
 
-	const hhmm = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
 	let sheetOpen = $state(false);
 	let shownEntry = $state<Entry | undefined>();
 	let shownOff = $state<TurnedOff | undefined>();
@@ -48,8 +51,6 @@
 		sheetOpen = true;
 	}
 
-	const SOURCE_WORD = { organization: 'Organization', team: 'Team', project: 'Project', agent: 'Agent' } as const;
-	/** "Organization v3 · override of Organization v1" in words for a row. */
 	const SKELETON = [0, 1, 2, 3];
 </script>
 
@@ -67,13 +68,17 @@
 				Show
 				<select aria-label="Show processes for" value={placeKey(place)} onchange={(e) => choose(e.currentTarget.value)} class="rounded-md bg-gray-800 px-2 py-1.5 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
 					<option value="organization">Organization</option>
-					<optgroup label="Team">{#each world.teams as t (t.id)}<option value={`team:${t.id}`}>{t.name}</option>{/each}</optgroup>
-					<optgroup label="Project">{#each world.projects as p (p.key)}<option value={`project:${p.key}`}>{p.name}</option>{/each}</optgroup>
-					<optgroup label="Agent">{#each world.agents as a (a.id)}<option value={`agent:${a.id}`}>{a.name}</option>{/each}</optgroup>
+					{#if world.teams.length > 0}<optgroup label="Team">{#each world.teams as t (t.id)}<option value={`team:${t.id}`}>{t.name}</option>{/each}</optgroup>{/if}
+					{#if world.projects.length > 0}<optgroup label="Project">{#each world.projects as p (p.key)}<option value={`project:${p.key}`}>{p.name}</option>{/each}</optgroup>{/if}
+					{#if world.agents.length > 0}<optgroup label="Agent">{#each world.agents as a (a.id)}<option value={`agent:${a.id}`}>{a.name}</option>{/each}</optgroup>{/if}
 				</select>
 			</label>
 		{/if}
 	</div>
+
+	{#if resolved.missing}
+		<p class="text-sm/6 text-amber-200" role="status" data-testid="place-missing">That place isn't here any more. Showing the organization's processes.</p>
+	{/if}
 
 	{#if handbookDown && world}
 		<p class="flex items-center gap-x-2 rounded-lg bg-amber-400/10 px-3 py-2 text-sm/6 text-amber-200 outline-1 -outline-offset-1 outline-amber-400/20" role="status" data-testid="handbook-down">
@@ -82,12 +87,12 @@
 	{/if}
 
 	{#if !view}
-		<ul class="space-y-2" aria-label="Loading processes" data-testid="processes-loading">
+		<ul class="space-y-2" aria-label="Loading processes" aria-busy="true" data-testid="processes-loading">
 			{#each SKELETON as i (i)}<li class="h-14 animate-pulse rounded-lg bg-white/5"></li>{/each}
 		</ul>
 	{:else}
 		{#if view.rule}
-			<p class="text-sm/6 text-gray-300" data-testid="branch-rule">One open branch per agent: <span class="font-medium text-white">{view.rule.text}</span></p>
+			<p class="text-sm/6 text-gray-300 [overflow-wrap:anywhere]" data-testid="branch-rule">One open branch per agent: <span class="font-medium text-white">{view.rule.text}</span></p>
 		{/if}
 
 		{#each view.set.conflicts as c (c.key)}
@@ -104,6 +109,7 @@
 				<p class="mt-1 max-w-sm text-sm/6 text-gray-400">Write down how your agents work. Start with how changes get reviewed and merged.</p>
 			</div>
 		{:else}
+			{#if view.set.entries.length > 0 || view.set.turnedOff.length > 0}
 			<ul class="divide-y divide-white/5 rounded-lg bg-white/5 outline-1 -outline-offset-1 outline-white/10" aria-label="Processes" data-testid="process-list">
 				{#each view.set.entries as entry (entry.key + entry.doc.id)}
 					{@const KindIcon = entry.kind === 'inherited' ? undefined : KIND_ICON[entry.kind]}
@@ -111,16 +117,16 @@
 						<button type="button" class="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-indigo-400" onclick={() => openEntry(entry)}>
 							<span class="min-w-0 flex-1">
 								<span class="block font-semibold text-white [overflow-wrap:anywhere]">{entry.doc.name}</span>
-								<span class="block text-xs/5 text-gray-400">{entry.doc.summary}</span>
+								<span class="block text-xs/5 text-gray-400 [overflow-wrap:anywhere]">{entry.doc.summary}</span>
 							</span>
 							<span class="flex flex-wrap items-center gap-2">
-								<ProcessBadges level={entry.source} version={entry.doc.version} label={entry.source === 'organization' || entry.source === 'agent' ? undefined : `${SOURCE_WORD[entry.source]} ${entry.scopeName ?? ''}`.trim()} />
+								<ProcessBadges level={entry.source} scopeName={entry.scopeName} version={entry.doc.version} />
 								{#if KindIcon}<span class="inline-flex items-center gap-x-1 text-xs/5 text-gray-300" data-testid="kind"><KindIcon class="size-3.5" aria-hidden="true" /> {KIND_WORD[entry.kind]}{entry.kind === 'override' && entry.doc.overrides ? ` of ${entry.doc.overrides.key}@${entry.doc.overrides.version}` : ''}{entry.kind === 'addition' ? ' (added here)' : ''}</span>{/if}
 								{#if entry.sealed}<span class="inline-flex items-center gap-x-1 text-xs/5 text-amber-200" data-testid="sealed"><Lock class="size-3.5" aria-hidden="true" /> {entry.sealedNote ?? 'Sealed'}</span>{/if}
-								{#if entry.drift}<span class="inline-flex items-center gap-x-1 text-xs/5 text-amber-200" data-testid="drift" aria-label={`Parent changed: ${entry.drift.parentName} is now v${entry.drift.parentVersion}`}><TriangleAlert class="size-3.5" aria-hidden="true" /> Parent changed: {entry.drift.parentName} is now v{entry.drift.parentVersion}</span>{/if}
+								{#if entry.drift}<span class="inline-flex items-center gap-x-1 text-xs/5 text-amber-200" data-testid="drift"><TriangleAlert class="size-3.5" aria-hidden="true" /> Parent changed: {entry.drift.parentName} is now v{entry.drift.parentVersion}</span>{/if}
 								{#if view.agent}
-									{@const read = view.agent.reads[entry.key]}
-									<span class="text-xs/5 text-gray-400" data-testid="read">{read ? `Read v${read.version} at ${hhmm(read.at)}${read.docId !== entry.doc.id || read.version !== entry.doc.version ? ` · now v${entry.doc.version}` : ''}` : 'Not read yet'}</span>
+									{@const read = Object.hasOwn(view.agent.reads, entry.key) ? view.agent.reads[entry.key] : undefined}
+									<span class="text-xs/5 text-gray-400" data-testid="read">{read ? `Read v${read.version} at ${hhmm(read.at)}${read.docId !== entry.doc.id || read.version !== entry.doc.version ? ` · now ${entry.source === 'organization' ? '' : `${entry.scopeName ?? entry.source} `}v${entry.doc.version}` : ''}` : 'Not read yet'}</span>
 								{/if}
 								{#if entry.driftUnknown}<span class="text-xs/5 text-gray-400" data-testid="drift-unknown">Parent changes unknown</span>{/if}
 							</span>
@@ -131,11 +137,12 @@
 					<li data-testid="turned-off-row" data-key={off.key}>
 						<button type="button" class="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-indigo-400" onclick={() => openOff(off)}>
 							<span class="min-w-0 flex-1 font-semibold text-gray-300 [overflow-wrap:anywhere]">{off.name}</span>
-							<span class="inline-flex items-center gap-x-1 text-xs/5 text-gray-300"><PowerOff class="size-3.5" aria-hidden="true" /> Turned off{off.scopeName ? ` for ${off.scopeName}` : ''}: {off.reason}</span>
+							<span class="flex flex-wrap items-center gap-2"><ProcessBadges level={off.level} scopeName={off.scopeName} version={off.doc.version} /><span class="inline-flex items-center gap-x-1 text-xs/5 text-gray-300 [overflow-wrap:anywhere]"><PowerOff class="size-3.5 shrink-0" aria-hidden="true" /> Turned off{off.scopeName ? ` for ${off.scopeName}` : ''}: {off.reason}</span></span>
 						</button>
 					</li>
 				{/each}
 			</ul>
+			{/if}
 
 			{#if view.set.problems.length > 0}
 				<section aria-labelledby="problems-title" class="space-y-2">

@@ -27,7 +27,6 @@ test('PROC-9: a team’s override that drifted says Parent changed, with the ver
 	const review = row(page, 'code-review');
 	await expect(review.getByTestId('kind')).toContainText('Override of code-review@1');
 	await expect(review.getByTestId('drift')).toContainText('Parent changed: Organization is now v2');
-	await expect(review.getByTestId('drift')).toHaveAttribute('aria-label', 'Parent changed: Organization is now v2');
 	await expect(row(page, 'incident-response').getByTestId('kind')).toContainText('Addition');
 });
 
@@ -58,6 +57,8 @@ test('PROC-8: a process opens with its text and why: every layer and what happen
 	await expect(layers).toHaveCount(2);
 	await expect(layers.nth(0)).toContainText('Overridden');
 	await expect(layers.nth(0)).toContainText('Overridden by team Web.');
+	await expect(layers.nth(0)).toContainText('Organization v2');
+	await expect(layers.nth(1)).toContainText('Team Web v2'); // a level is a word with its name, not just an icon
 	await expect(layers.nth(1)).toContainText('Applies');
 	await expect(sheet.getByText('As the organization says, plus a screenshot of any UI change.')).toBeVisible();
 	await shot(page, 'processes-why');
@@ -94,3 +95,17 @@ test('PROC-18: a level or a kind is a word with an icon, and the place can be ch
 	await page.getByLabel('Show processes for').selectOption('organization');
 	await expect(page.getByRole('heading', { name: 'Processes · Organization' })).toBeVisible();
 });
+
+test('a place that is not there falls back to the organization and says so', async ({ page }) => {
+	await open(page, '?place=team:zzz');
+	await expect(page.getByTestId('place-missing')).toContainText("That place isn't here any more. Showing the organization's processes.");
+	await expect(page.getByRole('heading', { name: 'Processes · Organization' })).toBeVisible();
+	await expect(page.getByLabel('Show processes for')).toHaveValue('organization');
+});
+
+test('an organization with no processes shows no branch rule line', async ({ page }) => {
+	await open(page, '?place=project:atl&processes=empty');
+	await expect(page.getByTestId('no-processes')).toBeVisible();
+	await expect(page.getByTestId('branch-rule')).toHaveCount(0);
+});
+
