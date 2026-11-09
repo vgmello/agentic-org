@@ -2479,6 +2479,65 @@ fn status_changed_names_a_duplicates_original_only_when_there_is_one() {
 }
 
 #[test]
+fn routed_is_one_event_for_route_and_accept_and_older_readers_see_unknown() {
+    use crate::work::*;
+    // A re-route with every field set.
+    let reroute = WorkEventKind::Routed {
+        from: ItemStatus::Scoping,
+        to: ItemStatus::Routed,
+        scoper_from: Some("eden".into()),
+        scoper_to: Some("ada".into()),
+        reason: Some("Owns the contract".into()),
+        routed_by: Some(RoutedBy::Copilot),
+    };
+    let wire = serde_json::to_value(&reroute).unwrap();
+    assert_eq!(
+        wire,
+        json!({"type": "routed", "from": "scoping", "to": "routed", "scoper_from": "eden",
+               "scoper_to": "ada", "reason": "Owns the contract", "routed_by": "copilot"})
+    );
+    let back: WorkEventKind = serde_json::from_value(wire).unwrap();
+    assert_eq!(back, reroute);
+
+    // An unroute: only the required fields, and absent options aren't written.
+    let unroute = WorkEventKind::Routed {
+        from: ItemStatus::Routed,
+        to: ItemStatus::New,
+        scoper_from: None,
+        scoper_to: None,
+        reason: None,
+        routed_by: None,
+    };
+    let wire = serde_json::to_value(&unroute).unwrap();
+    assert_eq!(
+        wire,
+        json!({"type": "routed", "from": "routed", "to": "new"})
+    );
+    let back: WorkEventKind = serde_json::from_value(wire).unwrap();
+    assert_eq!(back, unroute);
+    // Explicit nulls read as absent.
+    let nulls: WorkEventKind = serde_json::from_value(json!({"type": "routed", "from": "routed",
+        "to": "new", "scoper_from": null, "scoper_to": null, "reason": null, "routed_by": null}))
+    .unwrap();
+    assert_eq!(nulls, unroute);
+    // `from` and `to` are required.
+    assert!(
+        serde_json::from_value::<WorkEventKind>(json!({"type": "routed", "to": "new"})).is_err()
+    );
+
+    // A reader built before `Routed` (same tagging, an `other` catch-all) reads it as Unknown.
+    #[derive(Debug, PartialEq, serde::Deserialize)]
+    #[serde(tag = "type", rename_all = "snake_case")]
+    enum OlderKind {
+        Created,
+        #[serde(other)]
+        Unknown,
+    }
+    let older: OlderKind = serde_json::from_value(serde_json::to_value(&reroute).unwrap()).unwrap();
+    assert_eq!(older, OlderKind::Unknown);
+}
+
+#[test]
 fn work_events_round_trip_and_unknown_kinds_never_break_the_activity() {
     use crate::work::*;
     let step = ChecklistStep {
@@ -2594,6 +2653,14 @@ fn work_events_round_trip_and_unknown_kinds_never_break_the_activity() {
         },
         WorkEventKind::Undone { event_version: 6 },
         WorkEventKind::Deleted,
+        WorkEventKind::Routed {
+            from: ItemStatus::New,
+            to: ItemStatus::Scoping,
+            scoper_from: None,
+            scoper_to: Some("a1".into()),
+            reason: None,
+            routed_by: None,
+        },
     ];
     let events: Vec<WorkEvent> = kinds
         .into_iter()
@@ -2645,6 +2712,7 @@ fn work_events_round_trip_and_unknown_kinds_never_break_the_activity() {
             "watched",
             "undone",
             "deleted",
+            "routed",
         ]
     );
     assert_eq!(
@@ -2693,6 +2761,10 @@ fn work_events_round_trip_and_unknown_kinds_never_break_the_activity() {
             "type": "waiting_ended", "on_member_id": "owner1",
             "reason": {"type": "question", "comment_id": "c1"}
         })
+    );
+    assert_eq!(
+        v["result"]["events"][22]["change"],
+        json!({"type": "routed", "from": "new", "to": "scoping", "scoper_to": "a1"})
     );
     assert!(v["result"]["events"][0].get("auto").is_none());
     let back: Response = serde_json::from_value(v).unwrap();
