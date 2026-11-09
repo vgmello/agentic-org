@@ -726,6 +726,16 @@ fn with_no_office_on_this_mac_the_spool_is_used_quietly() {
     assert_eq!(sent.stderr, "");
     assert!(sent.json().get("queued").is_none());
     assert_eq!(world.spooled().len(), 1);
+    // Without a session token, who with no identity reads the spool as before.
+    let who: Run = world
+        .agent("pixel", &["who", "--json"])
+        .env_remove("ORG_AGENT")
+        .output()
+        .unwrap()
+        .into();
+    let who = who.ok();
+    assert_eq!(who.stderr, "");
+    assert!(who.json().is_array(), "{}", who.stdout);
     assert_eq!(world.run("nova", &["msg", "inbox"]).ok().stderr, "");
     // Named but missing, the office is unreachable rather than absent.
     let named = world
@@ -752,9 +762,22 @@ fn an_office_run_agent_never_falls_back_to_the_spool() {
         .into();
     assert_eq!(who.code, 5, "{}", who.stderr);
     assert!(
-        who.stderr.contains("without a valid identity"),
+        who.stderr.contains("without a valid identity") && who.stderr.contains("identity not set"),
         "{}",
         who.stderr
+    );
+    // An invalid identity: the same refusal, naming that error.
+    let invalid: Run = world
+        .agent("a b", &["who"])
+        .env("ORG_SESSION_TOKEN", "t")
+        .output()
+        .unwrap()
+        .into();
+    assert_eq!(invalid.code, 5, "{}", invalid.stderr);
+    assert!(
+        invalid.stderr.contains("may only contain"),
+        "{}",
+        invalid.stderr
     );
     assert!(!spool.exists(), "the spool was opened");
 
