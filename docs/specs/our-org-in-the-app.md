@@ -5,7 +5,7 @@ status: for-review
 revision: 16
 owner: ac-product-designer-eden
 created: "2026-11-08"
-updated: "2026-11-08"
+updated: "2026-11-09"
 requested_by: owner
 reviewers: [ac-staff-engineer-ada, owner, app-frontend-dev, server-dev, ac-software-engineer-river, ac-software-engineer-remy, codex-dev]
 builds_on: [offices-and-teams-ux, work-items-ux]
@@ -15,7 +15,7 @@ builds_on: [offices-and-teams-ux, work-items-ux]
 
 Builds on `offices-and-teams-ux.md` rev 4, `work-items-ux.md` rev 5 and `desktop-app-v1.md` (in Eden's notes, not in this repository) (hire §3.6, profile §3.5).
 
-**Revision 16 (2026-11-09): autonomy.** The agent record gains an autonomy level, Asks first or Full autonomy, which only the owner sets: in the profile's Settings and in Hire's Review, where a role's default is shown and confirmed (`processes-ux.md` §4a). No criteria changed here; see PROC-20 to PROC-26.
+**Revision 16 (2026-11-09): autonomy.** The agent record gains an autonomy level, Asks first or Full autonomy, which only the owner sets: in the profile's Settings and in Hire's Review, where a role's default is shown and confirmed (`processes-ux.md` §4a). Activity gains the Decisions kind, hidden by default (§6). **Criteria rewritten (same ID):** LIVE-1 *(rev 16)*. See also PROC-20 to PROC-26.
 
 **Revision 15 (2026-11-08): who agents report to by default (from the bring-in build review).** An agent with no `reports_to` in HR (every messaging-only agent) now defaults to the lead of its top-level team, unless it leads that team itself, and to the owner otherwise. HR's `reports_to` still wins. For our team this gives the §2 lines with no edits (§4). **Added:** IMP-11.
 
@@ -210,9 +210,9 @@ Every organization has one built-in agent, **HR lead**, created with the organiz
         ── Earlier: 14 more · [Show]
 ```
 
-- **Kinds** (filter, and an icon on each row): Messages · Status · Tasks and bugs · Team changes · Git (merges into the integration branch) · Sessions.
+- **Kinds** (filter, and an icon on each row): Messages · Status · Tasks and bugs · Team changes · Git (merges into the integration branch) · Sessions · *(rev 16)* Decisions (agents' recorded decisions and consults, `processes-ux.md` §4a).
 - **Messages between agents are readable by the owner** (it's the owner's organization), shown as one line with **Open thread**. Threads open in a side panel, read-only unless the owner is a recipient, where they can **Reply**. Broadcasts are one row ("ada → 7 members").
-- **Grouping:** consecutive rows of the same kind from the same member collapse ("River changed status 4 times · Show"). Default filter: everything except Status changes, which are noisy. They live as dots on the cards.
+- **Grouping:** consecutive rows of the same kind from the same member collapse ("River changed status 4 times · Show"). Default filter: everything except Status changes, which are noisy (they live as dots on the cards), and Decisions, which are for auditing (shown with the Decisions filter, and never on Home) *(rev 16)*.
 - **Home** shows: **Needs you** (unchanged), **Working now** (agents with status Working and their current task, one line each), and **Latest** (the top 8 Activity rows, with **All activity**).
 - **Live:** new rows slide in at the top with a 2-second highlight. When the owner has scrolled down, a pill shows "3 new · Jump to latest" and the list doesn't move.
 - **Live updates paused** *(rev 12)*: when the app isn't getting live changes from the office (the connection to the office ended or couldn't be made, for example while the office restarts, or listening failed), a line shows at the top of every screen, under the title: ⚠ "Live updates paused. Showing what was loaded at 21:51." (the time the organization was last loaded, in the app's 24-hour format; if nothing has loaded yet, the line reads "Live updates paused." alone) with **Retry**, which reconnects now and reads "Retrying…" while it works. The line clears by itself once live changes are back and the latest has loaded. It stays while the owner moves between screens. Word plus icon, never color alone; screen readers announce it once when it appears, not on every retry.
@@ -298,7 +298,7 @@ The owner can always approve or reject any proposal. Someone who requests a hire
 - PROF-4 · Title, focus, model, runtime and home can be edited in Settings, with "Changes take effect at the agent's next session".
 
 **Activity (LIVE)**
-- LIVE-1 · Activity lists messages, status changes, tasks and bugs, team changes, git merges and sessions, newest first, filterable by team, member, project and kind.
+- LIVE-1 · *(rev 16)* Activity lists messages, status changes, tasks and bugs, team changes, git merges, sessions and decisions, newest first, filterable by team, member, project and kind; Status and Decisions rows are hidden by default.
 - LIVE-2 · A message one agent sends another appears in Activity within 2 seconds, and Open thread shows the whole thread.
 - LIVE-3 · The owner can reply in a thread only when the owner is a recipient. Otherwise the thread is read-only and says so.
 - LIVE-4 · Home shows Needs you, Working now (each working agent with its current task) and the latest 8 Activity rows.
