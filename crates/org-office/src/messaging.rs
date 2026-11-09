@@ -620,19 +620,22 @@ mod tests {
     }
 
     #[test]
-    fn an_inbox_page_is_answered_from_the_recipient_index_not_a_walk_of_every_header() {
+    fn an_inbox_or_thread_page_is_answered_from_its_index_not_a_walk_of_every_header() {
         use org_mailbox::HeaderScope;
         let dir = TempDir::new().unwrap();
         let office = office_in(&dir, &InMemoryKeys::new());
-        let plan = |scope: HeaderScope| -> String {
+        let plan = |scope: HeaderScope, by_thread: bool| -> String {
             office
                 .local_store()
                 .read(|db| {
-                    let sql = format!("EXPLAIN QUERY PLAN {}", messages::headers_sql(&scope));
+                    let sql = format!(
+                        "EXPLAIN QUERY PLAN {}",
+                        messages::headers_sql(&scope, by_thread)
+                    );
                     let mut statement = db.prepare(&sql).map_err(OfficeError::storage)?;
                     let rows = statement
                         .query_map(
-                            rusqlite::params![PAT, None::<String>, None::<String>, 9, 0, 0, 5],
+                            rusqlite::params![PAT, None::<String>, Some("T"), 9, 0, 0, 5],
                             |row| row.get::<_, String>(3),
                         )
                         .map_err(OfficeError::storage)?;
@@ -640,7 +643,8 @@ mod tests {
                 })
                 .unwrap()
         };
-        assert!(plan(HeaderScope::Inbox(PAT.into())).contains("idx_msg_to_seq"));
+        assert!(plan(HeaderScope::Inbox(PAT.into()), false).contains("idx_msg_to_seq"));
+        assert!(plan(HeaderScope::All, true).contains("idx_msg_thread_seq"));
     }
 
     #[test]

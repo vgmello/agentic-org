@@ -641,18 +641,24 @@ pub(crate) fn get_message(db: &Connection, id: &str) -> Result<Option<StoredMess
     load(db, id)
 }
 
-/// The page query for `scope`. The scope is a separate condition (not a bound switch) so that
-/// SQLite can answer an inbox or a thread from `idx_msg_to_seq` instead of walking every header.
-pub(crate) fn headers_sql(scope: &HeaderScope) -> String {
+/// The page query for `scope`. The scope and the thread are separate conditions (not bound
+/// switches) so that SQLite can answer an inbox from `idx_msg_to_seq` and a thread from
+/// `idx_msg_thread_seq` instead of walking every header.
+pub(crate) fn headers_sql(scope: &HeaderScope, by_thread: bool) -> String {
     let scope = match scope {
         HeaderScope::Inbox(_) => "h.to_member_id = ?1",
         HeaderScope::Participant(_) => "(h.to_member_id = ?1 OR h.from_member_id = ?1)",
         HeaderScope::All => "?1 IS NULL",
     };
+    let thread = if by_thread {
+        "h.thread_id = ?3"
+    } else {
+        "?3 IS NULL"
+    };
     format!(
         "{} WHERE {scope}
            AND (?2 IS NULL OR h.from_member_id = ?2)
-           AND (?3 IS NULL OR h.thread_id = ?3)
+           AND {thread}
            AND h.local_seq < ?4
            AND (?5 = 1 OR NOT (s.state = 'snoozed' OR s.snoozed_until IS NOT NULL
                                OR s.snooze_after_task = 1))
@@ -675,7 +681,9 @@ pub(crate) fn list_headers(
         .cursor
         .map_or(i64::MAX, |c| i64::try_from(c).unwrap_or(i64::MAX));
     let limit = i64::from(query.limit);
-    let mut statement = db.prepare(&headers_sql(&query.scope)).map_err(storage)?;
+    let mut statement = db
+        .prepare(&headers_sql(&query.scope, query.thread_id.is_some()))
+        .map_err(storage)?;
     let rows = statement
         .query_map(
             params![
