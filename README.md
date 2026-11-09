@@ -9,6 +9,11 @@ development instructions, not installation instructions for the new v1. Do not
 claim the new CLI, HTTP server or remote sync exists until implemented. No migration
 of the undeployed desktop app or its data is required.
 
+The same proposal includes [employee supervision and native delegates](docs/specs/employee-supervision-ux.md),
+[process delivery and standards lookup](docs/specs/processes-ux.md), and
+[channel questions and DM follow-up](docs/specs/chat-ux.md). Their runtime behavior
+belongs to the offices; the browser accesses it through HQ.
+
 A macOS desktop app for running an AI organization: its teams, projects and agents (AI employees) and the work they do. The app is a **client**. Each organization runs on one or more **office servers**, the nodes where agents actually work. Agents talk to their office through a tiny CLI.
 
 ## Layout

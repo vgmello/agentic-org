@@ -105,6 +105,15 @@ names office IDs, release pin, endpoints and references to credentials, not inli
 private keys. SQLCipher databases, workspaces, logs and setup journal live under
 the selected root; binaries live outside it. File modes remain private.
 
+Keep office control state in `<instance root>/office-state/`, with each office at
+`office-state/offices/<office id>/`. This subtree is `<office home>` (or `<home>`)
+in the retained host/session contracts. Employee homes are server-provisioned
+siblings at `<instance root>/agents/<office id>/<member id>/`. Both belong to the
+instance, while employee homes remain outside the control-state subtree as the
+session security rules require. Task worktrees keep their existing office-owned
+`workspace/projects/` layout. The instance lock protects the full root; the host
+and office locks also protect their own state. None of these paths is browser-editable.
+
 Do not put long data-root paths directly into macOS Unix-socket names: the existing
 103-byte limit still applies. A private short runtime directory uses an opaque
 instance handle plus office handles. Authenticate the endpoint as well as checking
@@ -119,8 +128,8 @@ on restart because HQ's saved address is part of enrollment configuration.
 
 Credential names, key sweeps, cleanup, logs and process ownership include instance
 and office identities. A host only sweeps its own catalog; the previous account-wide
-orphan sweep cannot delete another instance's keys. Agent homes are keyed by stable
-member ID inside their office. Office storage and configuration are not globally
+orphan sweep cannot delete another instance's keys. Agent homes are scoped by stable
+office and member IDs within the instance. Office storage and configuration are not globally
 agent-readable just because everything is under one root. OS-user sharing is not
 a security isolation boundary between instances; stronger isolation needs separate
 users/containers. The runtime sandbox/permission model must still enforce its denies.
@@ -287,10 +296,15 @@ declare a reachable supported repository transport before it is advertised. The
 first satellite acceptance run can use a non-repository task; shared-repository
 execution remains an explicit feature gate until that contract is resolved.
 
-Earlier employee requirements remain responsibilities of the local office: a
-deterministic supervisor per employee, owned internal delegates/helpers, aggregate
-resource limits and cleanup, native harness persona provisioning, and bounded
-process/context delivery. A browser connection is never their lifetime owner.
+The [employee requirements](../specs/employee-supervision-ux.md) and
+[runtime design](employee-supervision.md) remain responsibilities of the local
+office: a deterministic supervisor per employee, owned internal delegates/helpers,
+aggregate resource limits and cleanup, and native harness persona provisioning.
+[Processes](processes.md#35-context-bounds-fresh-contexts-and-standards-proposed-2026-11-09)
+provide bounded instruction delivery and overridable delegation guidance, with
+standards retrieved on demand. [Channels](../specs/chat-ux.md) extend office-first
+messaging for authorized team questions and DM follow-up; membership does not wake
+every employee. A browser connection is never the lifetime owner of this work.
 
 ## 8. Implementation order and release evidence
 

@@ -2,10 +2,10 @@
 kind: spec
 title: "How agents run: always on, on call, scheduled, one-off (UX)"
 status: for-review
-revision: 6
+revision: 7
 owner: ac-product-designer-eden
 created: "2026-11-08"
-updated: "2026-11-08"
+updated: "2026-11-09"
 requested_by: owner
 reviewers: [ac-staff-engineer-ada, owner]
 builds_on: [our-org-in-the-app, costs-and-insights-ux]
@@ -28,6 +28,12 @@ Extends `our-org-in-the-app.md` (agent record, statuses, Activity) and `costs-an
 **Revision 3 (2026-11-08): review fixes.** A mention as a trigger is pending A45. A message to a running agent is queued for the session handling it and delivered at its next turn boundary. An agent the office doesn't run shows **Started by a person** (v1's run mode none). Schedules have a time zone. RUN-1, RUN-3 and RUN-4 rewritten.
 
 **Revision 2 (2026-11-08): aligned with ada's agent-sessions design (rev 3).** Max run time counts **busy time**: 30 min for runs in the agent's home, 2 h for runs on a task. A missing or signed-out runtime raises Needs you at once. One-offs show as "<role> (one-off R-n)" with no member. Stop means Pause. Recommended modes respect the live-session cap. Remy is online (the user started him), and Riley stays Offline. RUN-6, RUN-9 and RUN-12 rewritten.
+
+**Revision 7 (2026-11-09): owner-requested employee supervision.**
+[`employee-supervision-ux.md`](employee-supervision-ux.md) adds deterministic
+supervision, goal delivery, private delegates and memory helpers. These do not add
+run modes, hires or a second main session. Limits remain organization defaults;
+RUN-14/15 clarify how internal work follows lifecycle and accounting.
 
 ## 0. Decisions
 
@@ -111,6 +117,9 @@ My recommended modes (U19, approved): **HR lead (built-in, `our-org-in-the-app.m
 - RUN-11 · The wake-up guidance is shown and editable in How it runs, per agent, and every wake starts with it.
 - RUN-12 · *(rev 2)* One-off agents can be started from a job (review, task). They show as "<role> (one-off R-n)", never appear in the org chart (they aren't members), and their result, cost and duration are attached to the job.
 - RUN-13 · How it runs shows the agent's recent runs and cost, and explains that on-call and scheduled agents only cost while they run.
+
+- RUN-14 · *(new, rev 7)* Every office-managed employee has the supervision state described by EMP-1..14. Sleeping/paused records persist without model monitoring turns. Pause, offboard and placement changes stop/reconcile internal delegates, helpers and subprocesses; recovery never overrides Pause. Person-started sessions show supervision unavailable.
+- RUN-15 · *(new, rev 7)* Internal delegates and memory forks are owned work inside an employee's run, with shared aggregate limits and attributed usage, not members, independent run modes or role-based one-offs. The main-session lock stays; unsupported concurrent helper isolation uses a serialized fallback or reports unavailable.
 
 ## 6. Open questions
 

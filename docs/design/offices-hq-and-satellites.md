@@ -8,6 +8,9 @@ instance supervises its offices. Remote enrollment and synchronization are requi
 v1 work, not capabilities already present in code. Organization/work ownership,
 events, outboxes, snapshots and the outbound satellite topology below are retained.
 There is no migration from the undeployed desktop app.
+The server design's instance layout supersedes account-wide paths: `<home>` is
+the instance's `office-state/` subtree, and all employee homes and runtime paths
+are provisioned and scoped to that same instance.
 
 Status: **approved by the user** 2026-11-08 (decisions at the end); later amendments by ada (2026-11-08: adopting a stored create; the launch pipe, ephemeral `app_token`, name reservation, the dev-build fallback, the host-crash trade-off, structural launch stdio, `--discard`, where the app-only rule for org commands is enforced, phase 2 enrollment proof left open; key custody). To be recorded as an ADR. It settles the model, the rules and the phases. Wire formats and byte-level protocol details are written in each phase's own design before it's built. Owner: ada. Its decisions become an ADR, which amends ADR-0001 and ADR-0002, and the messaging ADR (0003, still a proposal).
 

@@ -8,7 +8,7 @@ created: "2026-11-09"
 updated: "2026-11-09"
 requested_by: owner
 reviewers: [ac-staff-engineer-ada, owner, app-frontend-dev, server-dev, ac-software-engineer-river, ac-software-engineer-remy]
-builds_on: [offices-and-teams-ux, agent-run-modes-ux]
+builds_on: [offices-and-teams-ux, agent-run-modes-ux, employee-supervision-ux, processes-ux, chat-ux]
 ---
 
 # Spec · Standalone server: installation, instances and browser access
@@ -102,9 +102,9 @@ The web UI may display an authorized user's server paths read-only. There is no
 folder picker, directory relocation setting, old-team scanner or automatic file
 upload in v1. The server writes its own data and agents write only their permitted
 workspaces. Instance credentials and another employee's private files are not
-part of an agent's writable configuration. Earlier requirements for employee
-supervision, bounded delegates and process-driven behavior still apply at the
-office; moving access to HTTP does not turn those into browser responsibilities.
+part of an agent's writable configuration. The [employee supervision requirements](employee-supervision-ux.md),
+including bounded delegates and process-driven behavior, apply at the owning office;
+moving access to HTTP does not turn those into browser responsibilities.
 
 Setup installs `org-agent` from the same release. It locates or installs only the
 selected supported harnesses, checks their versions and reports their sign-in

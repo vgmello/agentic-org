@@ -2,7 +2,7 @@
 kind: spec
 title: "Roles: what each agent is for, inherited and overridden per agent (UX)"
 status: for-review
-revision: 1
+revision: 2
 owner: ac-product-designer-eden
 created: "2026-11-09"
 updated: "2026-11-09"
@@ -40,6 +40,13 @@ Builds on `processes-ux.md` (levels, overrides, sealing, approvals, the "why" pa
 5. **The role text never lives where the agent can edit it.** The office composes the role into the agent's instructions at each start from merged handbook content (with its processes, `agent-sessions.md` decision 8). The agent's home `CLAUDE.md` keeps its identity, memory and notes, not a copy of its role or boundaries (today HR copies the role into it at provisioning, which lets an agent edit its own boundaries and keeps role changes from reaching agents already hired). *(For ada, A74.)*
 6. **Who can read a role and an override:** everyone in the organization. They describe what each agent's job is, which teammates need to know; only changing them is restricted (decision 4). This differs from private processes, which are the agent's own habits and visible only to the agent and the owner (`processes.md` A52, A69).
 7. **Changing an agent's role** (**Change role…** in the agent's Settings, owner only, since the role field isn't otherwise editable) archives its old override (kept as history) and starts it with no override. The dialog says so: "ada becomes a Product Manager. ada's override for Staff Engineer is archived."
+
+**Revision 2 (2026-11-09): native employee replicas and private specialists.**
+[`employee-supervision-ux.md`](employee-supervision-ux.md) adds generated harness
+definitions. The replica uses the effective approved role/override and inherited
+processes; it does not copy editable home notes into role boundaries. A private
+specialist is owned internal tooling, not a new role, hire or authority override.
+ROLE-11 makes this distinction explicit; the existing role approval flow is unchanged.
 
 ## 1. Flow 1 · Roles in the app
 
@@ -80,6 +87,8 @@ Builds on `processes-ux.md` (levels, overrides, sealing, approvals, the "why" pa
 - ROLE-8 · `org-agent role show|why|propose-override [--for <member>]|flag|approve|reject` work with the same words as the app; `--for` lets a manager who is an agent do what Propose an override… does in the app.
 - ROLE-9 · Change role… (agent Settings, owner only, decision 7) archives the agent's old override, says so in the dialog, and starts it with none.
 - ROLE-10 · The Roles views and Profile › Role cover loading, empty, the handbook unreachable, invalid details, refused overrides, a change waiting to merge, an agent with no role file yet (Propose a role…), and Propose an override… disabled with who can use it.
+
+- ROLE-11 · *(new, rev 2)* A generated employee harness definition reflects the effective approved role and override plus applicable processes. It cannot widen permissions or replace role approvals. Employee-created private specialists are scoped internal definitions, not organization roles/members, and cannot override the inherited processes; fresh-self delegates retain the employee persona without inheriting its conversation by default (EMP-4..8).
 
 ## 4. Questions
 

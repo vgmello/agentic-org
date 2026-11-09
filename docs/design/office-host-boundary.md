@@ -4,8 +4,10 @@
 [standalone-server.md](standalone-server.md) and
 [ADR-0005](../adr/0005-standalone-server-v1.md) amend this boundary for a named
 macOS/Linux instance. The catalog, locks, private launch channels, office process
-ownership, key custody and child cleanup remain. `<home>` is now the selected
-instance's persisted data root, with short instance-scoped socket paths. Service
+ownership, key custody and child cleanup remain. `<home>` is now `office-state/`
+under the selected instance's persisted data root; employee homes are siblings
+under `agents/<office id>/<member id>/`, as the server design specifies. Runtime
+sockets use short instance-scoped paths. Service
 names, credential namespaces and orphan-key sweeps cannot affect another instance.
 
 The app-only `office.app_token`/signed-Tauri-client contract, bundle-relative helper

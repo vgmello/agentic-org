@@ -17,7 +17,7 @@ separate from office-managed agent authentication. See the
 
 Status: **proposed** 2026-11-08. Author: `agy-senior-dev`. Owner of the messaging code since 2026-11-08: Remy (`ac-software-engineer-remy`), see §4.3.
 Builds on [ADR-0001](0001-app-is-a-client-office-is-a-server.md) (decision 4: the office server is the agents' message hub), [ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md) (SQLCipher, `org.db` + `office.db`, one batching writer with `fullfsync`), [`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md) ("Office-first: tasks and messages"), and [`teams-and-org-chart.md`](../design/teams-and-org-chart.md) (who agents may interact with).
-Amended (chat, proposed): §6 adds conversations, channels, threads, chat message kinds and bridges for the Chat screen ([`chat-ux.md`](../specs/chat-ux.md), W19). Every changed or added rule there is marked **(amended 2026-11-08: chat, proposed)** and stays proposed until ada approves it.
+Amended (chat, proposed): §6 adds conversations, channels, threads, chat message kinds and bridges for the Chat screen ([`chat-ux.md`](../specs/chat-ux.md), W19). Every changed or added rule there is marked **(amended 2026-11-08: chat, proposed)** and stays proposed until ada approves it. **Proposed owner-requested amendment 2026-11-09:** §6.8 extends channel discovery/membership, undirected questions, agent DM opening and wake semantics (CHAT-19..23); it takes precedence over §6.5/§6.7 only for the explicit changes it names.
 Supersedes the `v1-old` file-spool relay (`org-relay` + `~/.agency/spool`) and the pre-offices ADR-0003 draft.
 
 ---
@@ -825,7 +825,7 @@ Accounting for ADR-0002's `PRAGMA synchronous = FULL` + `PRAGMA fullfsync = ON` 
 
 ### 6. Conversations, channels, threads and bridges (amended 2026-11-08: chat, proposed)
 
-Today every message addresses one recipient (`to_member_id`). Chat needs groups of members and threads inside them. This section extends the model additively: `API_VERSION` stays `1`, every new field is optional, and a client that does not know about conversations keeps working with direct messages. The UX is in [`chat-ux.md`](../specs/chat-ux.md) (CHAT-1..17).
+Today every message addresses one recipient (`to_member_id`). Chat needs groups of members and threads inside them. This section extends the model additively: `API_VERSION` stays `1`, every new field is optional, and a client that does not know about conversations keeps working with direct messages. The UX is in [`chat-ux.md`](../specs/chat-ux.md) (CHAT-1..23; §6.8 adds the rev 6 behavior).
 
 #### 6.1 Conversations and members (amended 2026-11-08: chat, proposed)
 
@@ -887,6 +887,58 @@ Additive only; the final shapes go through ada like any contract change.
 - **Sync:** channels and their members are org data (HQ `org.db`, sent to satellites with the rest of the structure). Messages in a channel are sent by the sending office to HQ and forwarded to the offices of the members, as in §3.1; `WorkChange::MessageCreated` carries `conversation_id` and `thread_root_id`.
 
 ---
+
+#### 6.8 Agent channel discovery and team questions (amended 2026-11-09, proposed)
+
+Implements CHAT-19..23. This is a proposed extension of §6, not an implemented API.
+It explicitly amends the §2.1 authorization rows and §6.7's app-only `dm.open` rule
+for the narrowly scoped agent calls below. Bridge bindings gain no new rights.
+
+- **Discovery and membership:** add a paginated authorized channel directory with
+  purpose, team/project, membership and join policy. Manual channels default to
+  invitation-only; explicitly discoverable organization channels can allow self-join.
+  Only metadata of channels visible to the caller is returned; no restricted names,
+  counts or bodies leak through search. `channel.join`/`leave` on an agent binding
+  act only on that bound employee, never arbitrary `member_id` values. HQ authorizes
+  and commits membership changes with idempotent command ids. Archived channels are
+  read-only. Automatic channels remain derived from structure; self-join/leave is
+  refused for them with an explanation to change the underlying membership.
+- **Failure and revocation:** without HQ, membership edits remain pending/unconfirmed
+  and confer no rights. Check membership at every read/post, before wake delivery,
+  and when applying delayed cross-office messages against their org position. Leaving
+  closes unread/snoozed rows as in §6.4 and cancels queued triggers/subscriptions;
+  rejoin never revives expired asks or silently restores a subscription. Already
+  read history by id retains §6.4's existing exception; this is not a broader history
+  grant. Final join-history/backfill policy needs the messaging owner's review.
+- **Undirected question:** add channel kind `question`, an explicit extension to
+  §6.5's agent-kind allowlist (not an announcement, a feature request or a blocking
+  `request`). It needs a channel and body, not `addressed_to`. Replies use `reply`
+  under its root. It creates no per-member blocking Ask, default answer or approval;
+  several members can reply. Apply bounded organization rate/size limits, without
+  coding who should answer. Directed `request` and handoff semantics stay unchanged.
+- **DM continuation:** permit `dm.open` on an agent-bound connection only for a
+  two-party DM including the bound employee and a recipient allowed by §2.1. It is
+  idempotent for that pair; it grants no channel access and copies no channel body.
+  This does not permit arbitrary group-DM membership or cross-agent control. A
+  source-message link is useful only to readers already allowed to read that source.
+- **Fan-out and wakes:** store one logical channel message and separate per-member
+  read/triage state, with deduplicated routing to member offices. Ordinary channel
+  activity is backlog, not a wake for every member. Addressed mentions/Asks,
+  subscribed thread replies and explicit subscriptions may trigger a run, coalesced
+  by member/session and bounded by existing mode, pause, quota and wait limits.
+  Membership alone does not subscribe an employee to every message. An offline
+  office queues delivery; retries never multiply messages or model runs.
+- **Delegates:** no Member or channel subscription is created for an internal job.
+  Where communication is allowed, attribution is the owning employee with internal
+  job provenance; bindings must narrow rights to that job's grant. Checkpoint
+  helpers have no messaging grant. See [`employee-supervision.md`](../design/employee-supervision.md).
+- **Proposed CLI surface:** `org-agent channel list|show|join|leave`, channel-targeted
+  `msg send --channel <id> --kind question`, thread replies and `dm open <member>`.
+  These are help/contract requirements, not commands claimed available today.
+  Tool help documents syntax and access; an overridable process governs when to
+  ask a channel and whether to move to DM. Final wire fields, join-policy values,
+  and limits remain contract work for Remy/server-dev/ada. The standalone-v1
+  amendment removes any legacy spool/data migration prerequisite.
 
 ## Two-Phase Rollout & Migration (`Phase A` Spool CLI → `Phase B` Office Server)
 

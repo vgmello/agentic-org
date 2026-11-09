@@ -2,7 +2,7 @@
 kind: spec
 title: "Processes: how agents work, written down and inherited (UX)"
 status: for-review
-revision: 4
+revision: 5
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-09"
@@ -16,6 +16,11 @@ builds_on: [decisions-and-tech-debt-ux, retrospectives-ux, work-items-ux, our-or
 Builds on `decisions-and-tech-debt-ux.md` (docs in the repo, templates, agent guidance §6.2), `retrospectives-ux.md` (action items), `work-items-ux.md` (checklists §9.1), `our-org-in-the-app.md` (agents, teams, the HR lead), `offices-and-teams-ux.md` (nested teams §7.5, shared projects §7.9) and `agent-run-modes-ux.md` (start and wake).
 
 ## Changelog
+
+**Revision 5 (2026-11-09): owner-requested behavior and context clarification.**
+Processes guide delegation and specialist creation; tools expose mechanics.
+Standards are retrieved, not bulk injected. Fresh contexts receive effective guidance
+even when the employee previously read it, under explicit limits. PROC-27..30.
 
 **Revision 4 (2026-11-09): autonomy and the decide-and-escalate process (the user); U25–U28 decided.** Each agent has an **autonomy level**, **Asks first** (default) or **Full autonomy**, set only by the owner; it picks which of two sealed organization processes applies, `asks-first` or `decide-and-escalate` (the user's standard procedure: decide routine calls, consult a fresh peer when unsure, escalate only on no consensus or a critical decision). Escalations reach the owner in Needs you with the options, a recommendation and the peer's view; decisions are logged on the task and in Activity; the critical list is the owner's (§4a). Autonomy changes when an agent asks, never what it may do. U25–U28 decided by Eden with a peer consult, under that procedure: Processes is its own nav item (U25); the one open branch rule becomes its own sealed process, `one-open-branch`, with `review-and-merge` overridable (U26); organization processes are approved by the owner, or by a lead the owner flags **Can approve processes** for ordinary changes (U27); docs branches aren't limited (U28). §2 copy matches the built screen (sealed refusal, conflict line, invalid details). **Criteria rewritten (same ID):** PROC-3, PROC-4, PROC-11, PROC-14, PROC-16, PROC-19 *(rev 4)*. **Added:** PROC-20 to PROC-26.
 
@@ -141,7 +146,7 @@ checklist:                           # optional; added to the project's default 
 - PROC-4 · *(rev 4)* An overridable process can be turned off at a lower level with a reason, shown as "Turned off for <team or project name>: <reason>". For one-open-branch (once unsealed by the owner), a turning-off counts only when approved by someone other than its author; one that merged without that shows "On · turning it off needs approval by someone other than its author (<author>)" with **Ask for approval…** and **Have an agent draft it…**, each a new proposal through the change flow. When nobody else can approve at that level, **Ask for approval…** is disabled with "No one else can approve this here. Have an agent draft it instead."
 - PROC-5 · *(rev 3)* Private processes only add. A private file that sets `overrides:` or `status: off`, or uses an organization key, is refused when it's written (`private_only_adds`) with the reason. One whose key is used at an inherited level (a team or the project, or the organization later) isn't applied, and the agent's profile shows "Private processes only add: <name> isn't applied because it changes an inherited process."
 - PROC-6 · *(rev 3)* For a project shared by teams that both override a process, the organization's version (or a team's sealed version, PROC-3) applies until the project decides, and the conflict is shown to the project's leads (one per team) and the owner, in Needs you, or in the inbox for a lead who is an agent (decision 11); any one of them can approve the project's own version. Work isn't blocked. If the organization has no version of that process, neither override applies until the project resolves it, unless one team sealed it, in which case the sealed version applies meanwhile. If only one of the project's teams has a version, it applies, with no conflict.
-- PROC-7 · *(rev 3)* At the Starting a task and Waking up moments, an agent gets its effective set with summaries and the full text of the processes changed since it last read them. What's delivered counts as read once the runtime accepts the start or wake, or on `process ack`.
+- PROC-7 · *(rev 5)* At Starting a task and Waking up, an agent gets its effective set, summaries and changed bodies within the delivery cap; omitted bodies have retrieval references. Runtime acceptance or `process ack` records delivery/read history, not understanding. A new session/delegate or context reset needs guidance again (PROC-29), even if the employee read it before.
 - PROC-8 · *(rev 2)* `org-agent process list|show|why|ack`, `process new|override|off|edit|rename|keep|take-parent` (opening a docs or handbook branch for the level's approver), `process list --level` with the drift, clash and invalid flags, `process new --private` and `process approve|reject <doc id>` work with the same words as the app.
 - PROC-9 · *(rev 2: also in the CLI, PROC-8)* The inheritance view shows each process's source level, version and kind (override, addition, sealed, off), and a drift warning with a diff when an overridden parent changes.
 - PROC-10 · *(rev 2)* An agent's profile shows the processes it follows for its current work and the version it last read, or, with no current work, "No current work" and the organization's and its private processes.
@@ -161,6 +166,11 @@ checklist:                           # optional; added to the project's default 
 - PROC-24 · *(new, rev 4)* Settings › Autonomy holds the critical list (default: security, data loss, money or spend, irreversible or one-way, legal, product scope or priority), editable by the owner; teams and projects can add items, only the owner removes them. A critical decision always goes to the owner.
 - PROC-25 · *(new, rev 4)* An escalation shows in the owner's Needs you (or an agent lead's inbox, for a no-consensus question) with the question, what it blocks, the options with one marked Recommended, the peer's view and Reply; the answer goes back to the agent, and the item shows waiting, answered or withdrawn.
 - PROC-26 · *(new, rev 4)* Decisions are recorded on the task (decision, options, the consult's view, reversible or one-way) and as Activity rows of kind Decisions, hidden by default and shown with the Decisions filter; Full autonomy never lets an agent approve hires, its own changes or Allow once, or pass a spending guardrail.
+
+- PROC-27 · *(new, rev 5)* Overridable Markdown defaults guide delegation/consultation, private specialist creation, memory hygiene and channel questions/follow-up. Agents choose how to use the tools; edits follow normal process approvals. Limits and permissions are enforced in code and cannot be widened by a process.
+- PROC-28 · *(new, rev 5)* Applicable processes and concise `org-agent` command help reach main and delegate instructions as separate inputs. Standards such as stack/cloud conventions are discoverable and retrieved when needed, with source/version references; their bodies are not automatically loaded into every prompt.
+- PROC-29 · *(new, rev 5)* Fresh sessions, fresh-self delegates and observed context resets receive current effective guidance or explicit pinned-body retrieval instructions. A prior employee-level read acknowledgement never substitutes for delivery to the new context; unchanged resumes avoid repeated full-text injection.
+- PROC-30 · *(new, rev 5)* Process delivery stays within 24 KiB and the runtime's remaining verified instruction allowance. Deferred bodies are named and retrievable and never marked delivered. Overflow is visible with a remedy; if the minimum guidance/retrieval bootstrap cannot fit, launch fails explicitly. No rule is truncated mid-entry or silently replaced by a generated summary.
 
 ## 6. Questions
 
