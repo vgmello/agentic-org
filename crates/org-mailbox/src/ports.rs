@@ -121,7 +121,8 @@ pub trait TriageStore {
     ///
     /// The same `Read`, `Done` or `Expired` again is idempotent: `Ok` with the header
     /// unchanged (a known limit: the caller can't tell a repeat from a change, so the
-    /// Mailbox publishes a `state_changed` for each). Any other pair is
+    /// Mailbox publishes a `state_changed` for each repeated `Done` or `Expired`; its reads
+    /// go through [`MessageStore::claim_read`]). Any other pair is
     /// `StoreError::InvalidTransition`: nothing leaves `done`, `expired` or `dead_letter`, and
     /// `DeadLetter` and `Unknown` are never targets here (dead-lettering is a later slice).
     ///

@@ -953,7 +953,7 @@ mod tests {
     struct GatedTriage {
         inner: InMemoryStore,
         gated: AtomicBool,
-        applied: Barrier,
+        applied: Mutex<mpsc::Sender<()>>,
         release: Barrier,
     }
 
@@ -964,7 +964,7 @@ mod tests {
         ) -> Result<MessageHeader, StoreError> {
             let result = self.inner.update_state_local(change);
             if self.gated.swap(false, Ordering::SeqCst) {
-                self.applied.wait();
+                lock(&self.applied).send(()).unwrap();
                 self.release.wait();
             }
             result
@@ -1014,10 +1014,11 @@ mod tests {
     #[test]
     fn concurrent_defers_leave_the_timer_at_the_stores_deadline() {
         let store = InMemoryStore::new();
+        let (applied, first_applied) = mpsc::channel();
         let triage = Arc::new(GatedTriage {
             inner: store.clone(),
             gated: AtomicBool::new(false),
-            applied: Barrier::new(2),
+            applied: Mutex::new(applied),
             release: Barrier::new(2),
         });
         let mailbox = Arc::new(
@@ -1048,7 +1049,11 @@ mod tests {
             let mailbox = mailbox.clone();
             thread::spawn(move || mailbox.defer(ADA_ID, defer_at(1_000)))
         };
-        triage.applied.wait();
+        // Bounded, so a first defer that fails before its store write fails the test rather
+        // than hanging it.
+        first_applied
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the first defer reached its store write");
         let (finished, second_done) = mpsc::channel();
         let second = {
             let mailbox = mailbox.clone();
