@@ -55,7 +55,7 @@ impl SnoozeTimers {
 
     /// Removes and returns the member's timers due at `now_ms` (deadline <= now), as
     /// `(at_ms, id)`, earliest first. A caller that fails to release them puts them back with
-    /// [`Self::insert`].
+    /// [`Self::restore`].
     pub(crate) fn take_due(&mut self, member_id: &str, now_ms: i64) -> Vec<(i64, String)> {
         let due: Vec<(i64, String)> = self
             .by_time

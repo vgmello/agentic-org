@@ -291,7 +291,10 @@ impl Mailbox {
                             MessageLifecycleState::Unread | MessageLifecycleState::Snoozed
                                 if past_deadline(header, now_ms) =>
                             {
-                                if self.expire(&member, position, id, &now)?.is_some() {
+                                if self
+                                    .expire(&member, position, id, &now, NoticeFailure::Fail)?
+                                    .is_some()
+                                {
                                     let stored = self
                                         .store
                                         .get_message(id)?
@@ -302,20 +305,30 @@ impl Mailbox {
                                 }
                             }
                             // Already expired: make sure the asker was told. A notice an
-                            // earlier expiry failed to commit is committed now; one that
-                            // exists replays (the same id), publishing nothing.
-                            MessageLifecycleState::Expired => self.notify_expired(header, &now)?,
+                            // earlier expiry failed to commit is committed now (found by its
+                            // deterministic id on the read path first, so the writer is used
+                            // only when it's missing).
+                            MessageLifecycleState::Expired
+                                if self
+                                    .store
+                                    .get_message(&delivery_failed_id(header))?
+                                    .is_none() =>
+                            {
+                                self.notify_expired(header, &now)?
+                            }
                             _ => {}
                         }
                     }
                 }
                 Some(_) => {}
                 None => {
+                    // As wait does: release due snoozes, then expire what peek passes over.
+                    self.release_due_snoozes(bound_member_id, now_ms, &now)?;
                     let peek = self
                         .store
                         .peek_next_unread(bound_member_id, None, false, &now)?;
                     for id in &peek.expired_ids {
-                        self.expire(&member, position, id, &now)?;
+                        self.expire(&member, position, id, &now, NoticeFailure::Ignore)?;
                     }
                 }
             }
@@ -395,19 +408,21 @@ impl Mailbox {
             // (needs triage; without it they stay as they are, as in slice 1).
             let mut flagged = false;
             for id in &peek.expired_ids {
-                if let Some(header) = self.expire(&member, position, id, &now)? {
-                    flagged |= header.expired_waiting_person;
-                }
+                let expired = self.expire(&member, position, id, &now, NoticeFailure::Ignore)?;
+                flagged |= expired.is_some_and(|header| header.expired_waiting_person);
+            }
+            // A just-flagged ask may be older than the message peek found: peek again, so
+            // the oldest comes first.
+            let full_batch = self.triage.is_some() && peek.expired_ids.len() >= MAX_EXPIRED_IDS;
+            let recheck = flagged || (full_batch && peek.message.is_none());
+            if recheck && rechecks < MAX_RECHECKS {
+                rechecks += 1;
+                continue;
             }
             if let Some(message) = peek.message {
                 return Ok(MsgWaitResult {
                     message: Some(message.message),
                 });
-            }
-            let full_batch = self.triage.is_some() && peek.expired_ids.len() >= MAX_EXPIRED_IDS;
-            if (flagged || full_batch) && rechecks < MAX_RECHECKS {
-                rechecks += 1;
-                continue;
             }
             rechecks = 0;
             // Block until the request's deadline or the member's next snooze deadline,
@@ -440,6 +455,7 @@ impl Mailbox {
         params: MsgDeferParams,
     ) -> Result<MsgDeferResult, MailboxError> {
         let (_, position) = self.bound_member(bound_member_id)?;
+        let triage = self.triage()?;
         size(&params.id, MAX_ID_BYTES)?;
         optional_size(params.note.as_deref(), MAX_NOTE_BYTES)?;
         let now_ms = self.clock.now_ms();
@@ -455,7 +471,6 @@ impl Mailbox {
             SnoozeTarget::AfterTask => (None, true),
             _ => return Err(MailboxError::InvalidRequest),
         };
-        let triage = self.triage()?;
         let header = triage.update_state_local(LocalStateTransition {
             snoozed_until,
             snooze_after_task,
@@ -493,16 +508,16 @@ impl Mailbox {
 
     /// `msg.done`: close a message addressed to the bound member without replying. It never
     /// resurfaces. Done again is accepted (the store keeps the first close); `resolved_at`
-    /// is this call's time.
+    /// is this call's time, and its `state_changed` carries this call's note.
     pub fn done(
         &self,
         bound_member_id: &str,
         params: MsgDoneParams,
     ) -> Result<MsgDoneResult, MailboxError> {
         let (_, position) = self.bound_member(bound_member_id)?;
+        let triage = self.triage()?;
         size(&params.id, MAX_ID_BYTES)?;
         optional_size(params.note.as_deref(), MAX_NOTE_BYTES)?;
-        let triage = self.triage()?;
         let now = self.now_utc()?;
         let header = triage.update_state_local(LocalStateTransition {
             reason: params.note.clone(),
@@ -605,12 +620,19 @@ impl Mailbox {
     /// `delivery_failed` (ADR-0003 §3.2 item 3, §3.3.2). A person's or the owner's ask never
     /// expires: it stays unread, flagged `expired_waiting_person`. `None` when someone acted
     /// first (`InvalidTransition` or `NotFound`), else the header after the change.
+    ///
+    /// The notice is committed after the transition, so a request someone answered or closed
+    /// first is never reported. With `NoticeFailure::Ignore` (wait, and read with no id, whose
+    /// caller is not the party at fault) a failed notice doesn't fail the call; the request
+    /// stays expired without its notice until a read of it by id retries it (known gap: the
+    /// store's transition and the notice aren't one transaction yet).
     fn expire(
         &self,
         recipient: &Member,
         position: Position,
         id: &str,
         now: &str,
+        on_notice_failure: NoticeFailure,
     ) -> Result<Option<MessageHeader>, MailboxError> {
         let Some(triage) = self.triage.as_deref() else {
             return Ok(None);
@@ -640,7 +662,10 @@ impl Mailbox {
             // An expired message has no snooze; a person's flagged ask keeps whatever it has.
             lock(&self.snoozes).remove(&header.id);
             if header.kind == KIND_REQUEST {
-                self.notify_expired(&header, now)?;
+                let notified = self.notify_expired(&header, now);
+                if on_notice_failure == NoticeFailure::Fail {
+                    notified?;
+                }
             }
         }
         Ok(Some(header))
@@ -804,6 +829,13 @@ impl Mailbox {
             .map(|(member, _)| Some(member.id))
             .ok_or(MailboxError::NotFound)
     }
+}
+
+/// Whether a failed `delivery_failed` notice fails the call that expired the request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NoticeFailure {
+    Fail,
+    Ignore,
 }
 
 /// Wall-clock epoch milliseconds as the snooze timers key them.

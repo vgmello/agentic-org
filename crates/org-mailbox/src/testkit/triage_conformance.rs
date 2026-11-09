@@ -1150,6 +1150,25 @@ pub fn mailbox_defer_and_done_validation(backend: impl OpenTriageBackend) {
         plain.done(ADA_ID, done_params(1, None)),
         Err(MailboxError::Unavailable)
     );
+    // Unavailable comes before the input checks.
+    assert_eq!(
+        plain.defer(ADA_ID, defer_until(1, &at(-1), None)),
+        Err(MailboxError::Unavailable)
+    );
+    assert_eq!(
+        plain.done(ADA_ID, done_params(1, Some(&over(MAX_NOTE_BYTES)))),
+        Err(MailboxError::Unavailable)
+    );
+    assert_eq!(
+        plain.defer(
+            ADA_ID,
+            MsgDeferParams {
+                id: over(MAX_ID_BYTES),
+                ..defer_until(1, &later, None)
+            }
+        ),
+        Err(MailboxError::Unavailable)
+    );
 }
 
 /// A store whose peek keeps reporting every id it once reported as expired, as a second
@@ -1384,11 +1403,117 @@ pub fn mailbox_expiry_spares_persons_and_unmessageable_senders(backend: impl Ope
     assert_eq!(read_next(&office.mailbox, PAT_ID), Some(msg_id(3)));
     assert!(header_of(&*office.store, 3).expired_waiting_person);
 
+    // An overdue ask older than a new message still comes first.
+    commit(&*office.store, expired_request(4, ADA_ID, PAT_ID));
+    send(&office.mailbox, OWNER_ID, 5, PAT_HANDLE).unwrap();
+    assert_eq!(wait_now(&office.mailbox, PAT_ID), Some(msg_id(4)));
+    // Read by id, a person's overdue ask is read, not expired.
+    let read = office
+        .mailbox
+        .read(
+            PAT_ID,
+            MsgReadParams {
+                id: Some(msg_id(4)),
+            },
+        )
+        .unwrap()
+        .message
+        .unwrap();
+    assert_eq!(read.header.state, State::Read);
+
     commit(&*office.store, expired_request(2, GONE_ID, ADA_ID));
     assert_eq!(wait_now(&office.mailbox, ADA_ID), None);
     assert_eq!(state_of(&*office.store, &msg_id(2)), State::Expired);
     assert!(office.events.delivery_failed().is_empty());
-    assert!(office.events.received().is_empty());
+    assert_eq!(office.events.received(), [msg_id(5)]);
+}
+
+/// A directory that fails to resolve one reference while `failing` is set.
+struct FlakyDirectory<D> {
+    inner: D,
+    reference: &'static str,
+    failing: std::sync::atomic::AtomicBool,
+}
+
+impl<D: MemberDirectory> MemberDirectory for FlakyDirectory<D> {
+    fn resolve_member(&self, reference: &str) -> Result<Option<(Member, Position)>, StoreError> {
+        if reference == self.reference && self.failing.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(StoreError::new("directory unavailable"));
+        }
+        self.inner.resolve_member(reference)
+    }
+}
+
+/// A notice that fails to commit doesn't fail the recipient's wait (the request is still
+/// expired); a read of the request by id retries the notice, and fails while it can't be sent.
+pub fn mailbox_a_failed_notice_does_not_fail_the_recipient(backend: impl OpenTriageBackend) {
+    let (store, directory) = backend.open(&members(), POSITION);
+    let directory = Arc::new(FlakyDirectory {
+        inner: directory,
+        reference: PAT_ID,
+        failing: std::sync::atomic::AtomicBool::new(true),
+    });
+    let store = Arc::new(store);
+    let events = Arc::new(RecordingEvents::default());
+    let mailbox = Mailbox::with_triage(
+        store.clone(),
+        store.clone(),
+        directory.clone(),
+        identity(),
+        Arc::new(ManualClock::new(NOW_MS)),
+        events.clone(),
+    )
+    .unwrap();
+    let mut ask = expired_request(1, PAT_ID, ADA_ID);
+    ask.message.header.to_display_name = ADA_NAME.into();
+    commit(&*store, ask);
+    commit(
+        &*store,
+        new_message(2, OWNER_ID, ADA_ID, MessagePriority::Normal),
+    );
+
+    assert_eq!(wait_now(&mailbox, ADA_ID), Some(msg_id(2)));
+    assert_eq!(state_of(&*store, &msg_id(1)), State::Expired);
+    assert_eq!(store.find_reply_for_ask(&msg_id(1), ADA_ID).unwrap(), None);
+    let by_id = MsgReadParams {
+        id: Some(msg_id(1)),
+    };
+    assert_eq!(
+        mailbox.read(ADA_ID, by_id.clone()),
+        Err(MailboxError::StorageError)
+    );
+    directory
+        .failing
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    let read = mailbox
+        .read(ADA_ID, by_id.clone())
+        .unwrap()
+        .message
+        .unwrap();
+    assert_eq!(read.header.state, State::Expired);
+    expect_notice(&*store, 1, PAT_ID, PAT_HANDLE);
+    assert_eq!(events.delivery_failed().len(), 1);
+    // Once the notice exists, a read by id only looks it up: no directory, no commit.
+    directory
+        .failing
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let again = mailbox.read(ADA_ID, by_id).unwrap().message.unwrap();
+    assert_eq!(again.header.state, State::Expired);
+}
+
+/// read with no id releases due snoozes first, as wait does.
+pub fn mailbox_read_releases_due_snoozes(backend: impl OpenTriageBackend) {
+    let office = triage_office(&backend);
+    send(&office.mailbox, PAT_ID, 1, ADA_HANDLE).unwrap();
+    office
+        .mailbox
+        .defer(ADA_ID, defer_until(1, &at(250), None))
+        .unwrap();
+    assert_eq!(read_next(&office.mailbox, ADA_ID), None);
+    office.clock.set(NOW_MS + 250);
+    assert_eq!(read_next(&office.mailbox, ADA_ID), Some(msg_id(1)));
+    let header = header_of(&*office.store, 1);
+    assert_eq!((header.state, header.triage_gen), (State::Read, 2));
 }
 
 /// Reading an agent's overdue request by id expires it (and tells the asker) instead of
@@ -1520,6 +1645,8 @@ macro_rules! triage_conformance_tests {
             mailbox_expiry_spares_persons_and_unmessageable_senders,
             mailbox_read_expires_an_overdue_request,
             mailbox_wait_expires_more_than_one_batch,
+            mailbox_a_failed_notice_does_not_fail_the_recipient,
+            mailbox_read_releases_due_snoozes,
         }
     };
 }
