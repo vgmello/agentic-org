@@ -184,7 +184,9 @@ impl Call for Who {
 /// paragraph separators (U+2028, U+2029), the zero-width space (U+200B), the bidirectional
 /// embeddings, overrides and isolates (U+202A-202E, U+2066-2069), the word joiner and invisible
 /// operators (U+2060-2064), the deprecated formatting characters (U+206A-206F), the byte order
-/// mark (U+FEFF) and the tag block (U+E0000-E007F). The zero-width joiner and non-joiner and
+/// mark (U+FEFF), the invisible fillers (U+115F, U+1160, U+180E, U+3164, U+FFA0), the
+/// interlinear annotation marks (U+FFF9-FFFB), the tag block (U+E0000-E007F) and the variation
+/// selectors supplement (U+E0100-E01EF). The zero-width joiner and non-joiner and
 /// the left-to-right and right-to-left marks are allowed: emoji sequences and Persian, Indic
 /// and mixed-direction text need them.
 ///

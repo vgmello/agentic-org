@@ -55,8 +55,9 @@ fn check(params: &StatusSetParams) -> Result<Option<(String, u64)>, ApiError> {
 /// What `char::is_control` lets through but a one-line plain-text status must not hold: the
 /// Unicode line and paragraph separators (line breaks), and the characters that hide text or
 /// reorder it: the zero-width space, bidirectional embeddings, overrides and isolates, the word
-/// joiner and invisible operators, the deprecated formatting characters, the byte order mark and
-/// the tag block (the usual way to hide instructions in text another agent reads). The zero-width
+/// joiner and invisible operators, the deprecated formatting characters, the byte order mark, the
+/// invisible fillers, the tag block (the usual way to hide instructions in text another agent
+/// reads) and the variation selectors supplement. The zero-width
 /// joiner and non-joiner and the left/right marks stay: emoji sequences and Persian, Indic and
 /// mixed-direction text need them.
 fn is_invisible_or_break(c: char) -> bool {
@@ -69,7 +70,17 @@ fn is_invisible_or_break(c: char) -> bool {
             | '\u{2060}'..='\u{2064}'
             | '\u{2066}'..='\u{206f}'
             | '\u{feff}'
+            | '\u{180e}'
+            | '\u{fff9}'..='\u{fffb}'
+            // The fillers that render as nothing.
+            | '\u{115f}'
+            | '\u{1160}'
+            | '\u{3164}'
+            | '\u{ffa0}'
+            // The tag block and the variation selectors supplement (a run of them hides bytes
+            // behind one emoji).
             | '\u{e0000}'..='\u{e007f}'
+            | '\u{e0100}'..='\u{e01ef}'
     )
 }
 
@@ -382,6 +393,15 @@ mod tests {
             "embed\u{202a}",
             "tag\u{e0041}",
             "tag\u{e007f}",
+            "selector\u{e0100}",
+            "selector\u{e01ef}",
+            "mongolian\u{180e}",
+            "annotation\u{fff9}",
+            "annotation\u{fffb}",
+            "filler\u{115f}",
+            "filler\u{1160}",
+            "filler\u{3164}",
+            "filler\u{ffa0}",
         ] {
             assert_eq!(code(&text(bad)), ErrorCode::InvalidRequest, "{bad:?}");
         }
