@@ -101,6 +101,118 @@ pub(crate) fn euid() -> u32 {
     unsafe { libc::geteuid() }
 }
 
+/// Where the office home is inside an account's home folder (the shared rule's default).
+const OFFICE_HOME_IN_ACCOUNT: &str = "Library/Application Support/agentic.org";
+
+/// The office home of this process's user account: `<pw_dir>/Library/Application
+/// Support/agentic.org`, from the account database (`getpwuid_r`), never from the environment.
+/// `None` if the account has no absolute home folder.
+pub(crate) fn account_office_home() -> Option<PathBuf> {
+    account_dir().map(|dir| dir.join(OFFICE_HOME_IN_ACCOUNT))
+}
+
+/// This process's account home folder (`pw_dir`), if it is absolute.
+pub(crate) fn account_dir() -> Option<PathBuf> {
+    account_home(euid())
+}
+
+/// The office home a release host may serve: the one the shared rule
+/// (`org_proto::location::default_office_home`, which the app and `org-agent` also use to find
+/// `host.sock`) gives in this process's environment, `shared`, but only when it is the account's
+/// own office home, `<account_dir>/Library/Application Support/agentic.org`. So:
+/// `ORG_OFFICE_HOME` is unset (or not absolute, which the rule ignores) or names that home, and
+/// `HOME` (`home_env`) is the account's home folder. Anything else is refused with why, so a
+/// release host's home can't be moved by its environment, and the app and the host can't
+/// silently look in different places.
+///
+/// Pure: `same` compares two paths (the host compares them canonically where they exist,
+/// lexically otherwise: [`same_path`]).
+pub(crate) fn pinned_office_home(
+    shared: Option<&Path>,
+    home_env: Option<&Path>,
+    account_dir: Option<&Path>,
+    same: impl Fn(&Path, &Path) -> bool,
+) -> Result<PathBuf, String> {
+    let Some(account_dir) = account_dir.filter(|dir| dir.is_absolute()) else {
+        return Err("this account has no home folder, so it has no office home".into());
+    };
+    let account_home = account_dir.join(OFFICE_HOME_IN_ACCOUNT);
+    match home_env {
+        // Absolute only, as the shared rule reads it.
+        Some(home) if home.is_absolute() && same(home, account_dir) => {}
+        Some(home) => {
+            return Err(format!(
+                "HOME is {}, not this account's home folder {}: a release host serves only the \
+                 account's office home",
+                home.display(),
+                account_dir.display()
+            ))
+        }
+        None => {
+            return Err(format!(
+                "HOME isn't set: a release host serves only the account's office home {}",
+                account_home.display()
+            ))
+        }
+    }
+    let home = home_env.unwrap_or(account_dir);
+    match shared {
+        // Through HOME too (the same folder by now), since the home may not exist yet.
+        Some(shared)
+            if same(shared, &account_home) || same(shared, &home.join(OFFICE_HOME_IN_ACCOUNT)) =>
+        {
+            Ok(account_home)
+        }
+        Some(shared) => Err(format!(
+            "the office home is {} (from ORG_OFFICE_HOME), but a release host serves only this \
+             account's office home {}: unset ORG_OFFICE_HOME",
+            shared.display(),
+            account_home.display()
+        )),
+        None => Err(format!(
+            "no office home: a release host serves only this account's office home {}",
+            account_home.display()
+        )),
+    }
+}
+
+/// Whether `a` and `b` name the same place: compared canonically when both exist, lexically
+/// otherwise.
+pub(crate) fn same_path(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
+}
+
+/// The home folder (`pw_dir`) of the account `uid`, if it is absolute.
+fn account_home(uid: u32) -> Option<PathBuf> {
+    use std::ffi::CStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let mut buf = vec![0 as libc::c_char; 4096];
+    loop {
+        // SAFETY: an all-zero `passwd` is a valid value for the call to fill in.
+        let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut found: *mut libc::passwd = std::ptr::null_mut();
+        // SAFETY: `entry`, `buf` (of the length given) and `found` are valid for the call,
+        // which writes the strings `entry` points to into `buf`.
+        let rc =
+            unsafe { libc::getpwuid_r(uid, &mut entry, buf.as_mut_ptr(), buf.len(), &mut found) };
+        if rc == libc::ERANGE && buf.len() < 1 << 20 {
+            buf.resize(buf.len() * 2, 0);
+            continue;
+        }
+        if rc != 0 || found.is_null() || entry.pw_dir.is_null() {
+            return None;
+        }
+        // SAFETY: `pw_dir` is a NUL-terminated string inside `buf`, which is still alive.
+        let dir = unsafe { CStr::from_ptr(entry.pw_dir) };
+        let dir = PathBuf::from(std::ffi::OsStr::from_bytes(dir.to_bytes()));
+        return dir.is_absolute().then_some(dir);
+    }
+}
+
 /// `host.lock`, held (an exclusive `flock`) for as long as this value lives.
 #[derive(Debug)]
 pub(crate) struct HostLock {
@@ -139,6 +251,113 @@ impl HostLock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_release_home_must_be_the_accounts_own_office_home() {
+        let lexical = |a: &Path, b: &Path| a == b;
+        let account = Path::new("/Users/me");
+        let pinned = Path::new("/Users/me/Library/Application Support/agentic.org");
+        let pin = |shared: Option<&str>, home: Option<&str>, account: Option<&Path>| {
+            pinned_office_home(shared.map(Path::new), home.map(Path::new), account, lexical)
+        };
+        // ORG_OFFICE_HOME unset (the rule falls back to HOME) or naming the account's home.
+        let ok = pin(
+            Some(pinned.to_str().unwrap()),
+            Some("/Users/me"),
+            Some(account),
+        );
+        assert_eq!(ok.unwrap(), pinned);
+        // ORG_OFFICE_HOME somewhere else.
+        let err = pin(Some("/tmp/elsewhere"), Some("/Users/me"), Some(account)).unwrap_err();
+        assert!(
+            err.contains("ORG_OFFICE_HOME") && err.contains("/tmp/elsewhere"),
+            "{err}"
+        );
+        // HOME isn't the account's (the rule would give another home), or isn't set.
+        let err = pin(
+            Some("/Users/other/Library/Application Support/agentic.org"),
+            Some("/Users/other"),
+            Some(account),
+        )
+        .unwrap_err();
+        assert!(err.contains("HOME is /Users/other"), "{err}");
+        assert!(pin(Some(pinned.to_str().unwrap()), None, Some(account)).is_err());
+        // HOME is the account's, but ORG_OFFICE_HOME names another home.
+        assert!(pin(Some("/Users/me/other"), Some("/Users/me"), Some(account)).is_err());
+        // No office home at all, or no account home folder.
+        assert!(pin(None, Some("/Users/me"), Some(account)).is_err());
+        assert!(pin(Some(pinned.to_str().unwrap()), Some("/Users/me"), None).is_err());
+        // A relative HOME, even one naming the account's folder from `/`.
+        assert!(pin(
+            Some(pinned.to_str().unwrap()),
+            Some("Users/me"),
+            Some(account)
+        )
+        .is_err());
+        let relative = Path::new("Users/me");
+        assert!(pin(
+            Some("Users/me/Library/Application Support/agentic.org"),
+            Some("Users/me"),
+            Some(relative)
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn paths_are_the_same_canonically_where_they_exist_and_lexically_otherwise() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        fs::create_dir(&real).unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert!(same_path(&real, &link));
+        assert!(same_path(&real.join("."), &real));
+        assert!(!same_path(&real, dir.path()));
+        // Missing paths: lexically.
+        let missing = dir.path().join("missing");
+        assert!(same_path(&missing, &missing));
+        assert!(!same_path(&missing, &link.join("missing")));
+        // A release pin through a symlinked home folder, before the office home exists (the
+        // shared rule gives it through HOME, the symlink).
+        let pinned = pinned_office_home(
+            Some(&link.join(OFFICE_HOME_IN_ACCOUNT)),
+            Some(&link),
+            Some(&real),
+            same_path,
+        );
+        assert_eq!(pinned.unwrap(), real.join(OFFICE_HOME_IN_ACCOUNT));
+        // And once it exists.
+        fs::create_dir_all(real.join(OFFICE_HOME_IN_ACCOUNT)).unwrap();
+        let pinned = pinned_office_home(
+            Some(&link.join(OFFICE_HOME_IN_ACCOUNT)),
+            Some(&link),
+            Some(&real),
+            same_path,
+        );
+        assert_eq!(pinned.unwrap(), real.join(OFFICE_HOME_IN_ACCOUNT));
+    }
+
+    #[test]
+    fn the_account_office_home_comes_from_the_account_database() {
+        let Some(home) = account_office_home() else {
+            // A uid with no account entry (some CI containers): nothing to compare.
+            assert!(account_home(euid()).is_none());
+            eprintln!("skipped: this uid has no account home folder");
+            return;
+        };
+        assert!(home.is_absolute(), "{}", home.display());
+        assert!(
+            home.ends_with("Library/Application Support/agentic.org"),
+            "{}",
+            home.display()
+        );
+        // Built from the account's `pw_dir`.
+        assert_eq!(
+            home.parent().and_then(Path::parent).and_then(Path::parent),
+            account_home(euid()).as_deref()
+        );
+        assert_eq!(account_home(u32::MAX - 7), None);
+    }
 
     #[test]
     fn prepare_makes_and_tightens_owner_only_folders() {

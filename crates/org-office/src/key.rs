@@ -1,124 +1,56 @@
-//! The key that encrypts the office database, and where it is kept.
+//! The key that encrypts the office databases.
 //!
-//! `org-office` never talks to a keychain: the server binary supplies a [`KeyProvider`]
-//! (the macOS Keychain in production). Tests supply `InMemoryKeys`, which exists only in
-//! test builds and with the `dev-keys` feature (off by default), so it can't reach a release.
+//! **The host makes and keeps it** (ADR-0002, key custody): it creates the key, holds it in its
+//! own Keychain item, and sends it to the server on the launch pipe. `org-office` never makes,
+//! stores, loads or deletes a key: `Office::create`, `open` and `discard` are GIVEN one, so a
+//! server started by anyone but the host has none and cannot open the databases.
 
-use std::error::Error;
 use std::fmt;
+use std::sync::Arc;
 
-use crate::ulid;
-
-#[cfg(any(test, feature = "dev-keys"))]
-pub use self::in_memory::InMemoryKeys;
-
-// A release build (no debug assertions) must not carry in-memory keys, even if some crate
-// in the workspace turns the feature on and Cargo unifies it into the server's build.
-#[cfg(all(feature = "dev-keys", not(debug_assertions)))]
-compile_error!("the `dev-keys` feature (InMemoryKeys) must not be enabled in release builds");
+use org_proto::DbKey;
 
 /// A 256-bit database key. `Debug` never prints it, and there is no `Display`.
-/// Its memory is not wiped on drop; the key is needed for as long as the office runs.
-#[derive(Clone, PartialEq, Eq)]
-pub struct Key([u8; 32]);
+///
+/// It is the host's [`DbKey`] (zeroed when dropped), shared by reference count: the store keeps
+/// one copy for its pool of read connections for as long as the office runs, and the memory is
+/// wiped when the last holder drops. Cloning shares that one copy; nothing else copies the bytes
+/// but the connection's key statement, which is wiped as soon as it has run.
+#[derive(Clone)]
+pub struct Key(Arc<DbKey>);
 
 impl Key {
+    /// Takes the key the host sent. Best effort: the caller's `DbKey` is consumed, but a Rust move
+    /// is a bitwise copy, so a stack frame the key passed through may keep the bytes until it is
+    /// reused; the heap copy shared by the stores is the one that is wiped when the last holder
+    /// drops.
+    pub fn from_db_key(key: DbKey) -> Self {
+        Self(Arc::new(key))
+    }
+
+    /// A key from raw bytes, for tests (the host makes the real ones).
+    #[cfg(test)]
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
-        Self(bytes)
+        Self::from_db_key(DbKey::from_bytes(bytes))
     }
 
-    /// A fresh random key.
-    pub fn generate() -> std::io::Result<Self> {
-        ulid::random_bytes().map(Self)
-    }
-
-    pub fn as_bytes(&self) -> &[u8; 32] {
-        &self.0
+    pub(crate) fn as_bytes(&self) -> &[u8; 32] {
+        self.0.expose_bytes()
     }
 }
+
+impl PartialEq for Key {
+    /// Constant-time (the `DbKey`'s own).
+    fn eq(&self, other: &Self) -> bool {
+        *self.0 == *other.0
+    }
+}
+
+impl Eq for Key {}
 
 impl fmt::Debug for Key {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("Key(<redacted>)")
-    }
-}
-
-pub type KeyError = Box<dyn Error + Send + Sync>;
-
-/// Where an office's key lives between runs. A dumb store: the office decides when to
-/// create a key (only `Office::create` does), so a provider never invents one.
-///
-/// Errors must not contain the key.
-pub trait KeyProvider {
-    /// The key saved for `office_id`, or `None` if there is none.
-    fn load(&self, office_id: &str) -> Result<Option<Key>, KeyError>;
-
-    /// Saves `key` for `office_id`. Must not return `Ok` until the key is durable: the
-    /// office creates its database only after this succeeds. Must never replace a key that
-    /// already exists for the id (fail instead): the office checks first, but two offices may race.
-    fn store(&self, office_id: &str, key: &Key) -> Result<(), KeyError>;
-
-    /// Removes the key saved for `office_id`; having none is not an error. Only a failed
-    /// `Office::create` and `Office::discard` call it, for a key no database holds data under.
-    fn delete(&self, office_id: &str) -> Result<(), KeyError>;
-}
-
-#[cfg(any(test, feature = "dev-keys"))]
-mod in_memory {
-    use std::collections::HashMap;
-    use std::sync::Mutex;
-
-    use super::{Key, KeyError, KeyProvider};
-
-    /// Keeps keys in memory only. **For tests and dev**: nothing survives the process, so a
-    /// database it encrypted can't be reopened by a later process, unless built with
-    /// [`InMemoryKeys::fixed`]. Not compiled into release builds (see the module docs).
-    #[derive(Default)]
-    pub struct InMemoryKeys {
-        fixed: Option<Key>,
-        saved: Mutex<HashMap<String, Key>>,
-    }
-
-    impl InMemoryKeys {
-        pub fn new() -> Self {
-            Self::default()
-        }
-
-        /// Answers `key` for every office, so separate processes agree. Never use it for real data.
-        /// It holds a key for every office id, so `Office::create` refuses to use it
-        /// (`KeyExists`); it is for opening a database already encrypted with `key`.
-        pub fn fixed(key: Key) -> Self {
-            Self {
-                fixed: Some(key),
-                saved: Mutex::default(),
-            }
-        }
-
-        fn saved(&self) -> std::sync::MutexGuard<'_, HashMap<String, Key>> {
-            self.saved
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-        }
-    }
-
-    impl KeyProvider for InMemoryKeys {
-        fn load(&self, office_id: &str) -> Result<Option<Key>, KeyError> {
-            Ok(self.saved().get(office_id).cloned().or(self.fixed.clone()))
-        }
-
-        fn store(&self, office_id: &str, key: &Key) -> Result<(), KeyError> {
-            let mut saved = self.saved();
-            if saved.contains_key(office_id) {
-                return Err("a key for this office already exists".into());
-            }
-            saved.insert(office_id.to_owned(), key.clone());
-            Ok(())
-        }
-
-        fn delete(&self, office_id: &str) -> Result<(), KeyError> {
-            self.saved().remove(office_id);
-            Ok(())
-        }
     }
 }
 
@@ -133,29 +65,14 @@ mod tests {
     }
 
     #[test]
-    fn generated_keys_differ() {
-        assert_ne!(Key::generate().unwrap(), Key::generate().unwrap());
-    }
-
-    #[test]
-    fn in_memory_keys_round_trip_and_fixed_answers_everywhere() {
-        let keys = InMemoryKeys::new();
-        assert!(keys.load("a").unwrap().is_none());
-        keys.store("a", &Key::from_bytes([1; 32])).unwrap();
-        assert_eq!(keys.load("a").unwrap(), Some(Key::from_bytes([1; 32])));
-        assert!(keys.load("b").unwrap().is_none());
-
-        // Never replaces: a second store for the same id fails and the first key stays.
-        assert!(keys.store("a", &Key::from_bytes([2; 32])).is_err());
-        assert_eq!(keys.load("a").unwrap(), Some(Key::from_bytes([1; 32])));
-        keys.delete("a").unwrap();
-        assert!(keys.load("a").unwrap().is_none());
-        keys.delete("a").unwrap(); // having none is fine
-
-        let fixed = InMemoryKeys::fixed(Key::from_bytes([7; 32]));
-        assert_eq!(
-            fixed.load("anything").unwrap(),
-            Some(Key::from_bytes([7; 32]))
-        );
+    fn keys_compare_by_value_and_clones_share_one_copy() {
+        let key = Key::from_bytes([1; 32]);
+        assert_eq!(key, key.clone());
+        assert_ne!(key, Key::from_bytes([2; 32]));
+        assert_eq!(key.as_bytes(), &[1; 32]);
+        assert_eq!(Arc::strong_count(&key.0), 1);
+        let shared = key.clone();
+        assert_eq!(Arc::strong_count(&key.0), 2);
+        drop(shared);
     }
 }

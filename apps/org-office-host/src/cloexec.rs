@@ -12,8 +12,10 @@
 //! `O_CLOEXEC` could leak into a server spawned at that moment. The host can't change how the
 //! framework opens its files; `org-supervise` closes that gap along with the rest.
 //!
-//! This goes away once servers are spawned through `org-supervise`'s `posix_spawn` with
-//! `POSIX_SPAWN_CLOEXEC_DEFAULT`, which closes every fd the child isn't given.
+//! (2026-11-08) The host now spawns its servers itself with `posix_spawn` and
+//! `POSIX_SPAWN_CLOEXEC_DEFAULT` (`spawn`), which gives the child only its three pipes, so
+//! neither a half-made fd nor one the Security framework opened can reach it. The lock is kept
+//! anyway, as defence in depth, until it is removed deliberately.
 
 use std::sync::Mutex;
 
