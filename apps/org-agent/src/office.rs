@@ -13,6 +13,7 @@
 //! Bodies and meta are printed only by the commands whose output shows them (`read`, `wait`),
 //! never in a notice or an error.
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::env;
 use std::time::{Duration, Instant};
@@ -24,7 +25,7 @@ use org_proto::msg::{
     self, HeaderPage, Message, MessageHeader, MsgInbox, MsgInboxParams, MsgRead, MsgReadParams,
     MsgSend, MsgSendParams, MsgWait, MsgWaitParams, KIND_MSG, MAX_PAGE_LIMIT, MAX_WAIT_MS,
 };
-use org_proto::{ErrorCode, MemberKind};
+use org_proto::{Call, ErrorCode, MemberKind};
 use org_spool::{
     generate_ulid, is_interrupted, DirectoryCard, InboxItem, InboxQuery, MessagePriority, Outgoing,
     RefEntry, TeamEntry, ENVELOPE_VERSION, INBOX_SUMMARY_DEFAULT_LIMIT,
@@ -129,7 +130,7 @@ pub(crate) fn route(member: &str, office_flag: Option<&str>) -> Result<Route, Fa
     };
     let from_env = env::var(OFFICE_ENV).ok().filter(|id| !id.is_empty());
     let chosen = office_flag.or(from_env.as_deref());
-    decide(find_office(&home, chosen), |office_id| {
+    decide(find_office(&home, chosen), member, |office_id| {
         open_as(&home, office_id, member)
     })
     .map_err(|why| why.into_failure(member))
@@ -166,13 +167,14 @@ impl NoRoute {
 /// The routing decision: the office found (or not), then what opening it gave.
 fn decide(
     found: Result<Option<String>, FindOfficeError>,
+    member: &str,
     open: impl FnOnce(&str) -> Result<(Client, msg::MsgBindResult), OpenError>,
 ) -> Result<Route, NoRoute> {
     let Some(office_id) = found.map_err(NoRoute::Find)? else {
         return Ok(Route::NoOffice);
     };
     match open(&office_id) {
-        Ok((client, _)) => Ok(Route::Office(Office { client })),
+        Ok((client, _)) => Ok(Route::Office(Office::new(client, office_id, member))),
         Err(OpenError::Unreachable(reason)) => {
             Ok(Route::Unreachable(Unreachable { office_id, reason }))
         }
@@ -181,8 +183,18 @@ fn decide(
 }
 
 /// A connection to the agent's office, bound as the agent.
+///
+/// The office checks the binding again before every call, and unbinds a connection whose member
+/// was moved out, made office-run, offboarded or removed (its calls then answer `not_bound`).
+/// Every call here therefore binds again once on `not_bound` and retries (a `send` with the same
+/// id, which the office dedups); if the office won't bind the agent again, or unbinds it again,
+/// the command fails saying so.
 pub(crate) struct Office {
     client: Client,
+    office_id: String,
+    member: String,
+    /// Whether this command has already bound again once.
+    rebound: Cell<bool>,
 }
 
 /// How a `wait` through the office ended.
@@ -193,8 +205,56 @@ pub(crate) enum Waited {
 }
 
 impl Office {
+    fn new(client: Client, office_id: String, member: &str) -> Self {
+        Office {
+            client,
+            office_id,
+            member: member.to_owned(),
+            rebound: Cell::new(false),
+        }
+    }
+
+    /// Calls `C`, binding again once if the office answers `not_bound`.
+    fn call<C: Call>(&self, params: &C::Params) -> Result<C::Result, Failure> {
+        loop {
+            match self.client.call::<C>(params) {
+                Err(error) if is_not_bound(&error) => self.bind_again()?,
+                outcome => return outcome.map_err(|e| Failure::from_office(&e)),
+            }
+        }
+    }
+
+    /// After a `not_bound`: binds again, once per command. A refusal, or a second `not_bound`,
+    /// ends the command with a message that says what happened.
+    fn bind_again(&self) -> Result<(), Failure> {
+        let lost = format!(
+            "office {} unbound '{}' during the command",
+            self.office_id, self.member
+        );
+        if self.rebound.replace(true) {
+            return Err(Failure::new(
+                EXIT_USAGE,
+                format!("{lost}, again after it bound again; try once more"),
+            ));
+        }
+        match self.client.bind_member(&self.member) {
+            Ok(bound) if bound.office_id == self.office_id => Ok(()),
+            Ok(_) => Err(Failure::new(
+                EXIT_IO,
+                format!("{lost}, and the server on its socket is another office"),
+            )),
+            Err(error) => Err(Failure::new(
+                match &error {
+                    ClientError::Api(_) => exit_code(&error),
+                    _ => EXIT_IO,
+                },
+                format!("{lost}, and won't bind it again: {error}"),
+            )),
+        }
+    }
+
     /// `msg send`: the new message's id.
-    pub(crate) fn send(&self, to: &str, outgoing: Outgoing) -> Result<String, ClientError> {
+    pub(crate) fn send(&self, to: &str, outgoing: Outgoing) -> Result<String, Failure> {
         let Outgoing {
             subject,
             body,
@@ -208,7 +268,8 @@ impl Office {
                 .and_then(|p| p.as_str())
                 .and_then(|p| MessagePriority::parse(p).ok())
         });
-        let sent = self.client.call::<MsgSend>(&MsgSendParams {
+        // One id for the message, so a retry after binding again is the same send.
+        let sent = self.call::<MsgSend>(&MsgSendParams {
             id: generate_ulid(),
             to: to.to_owned(),
             kind: KIND_MSG.to_owned(),
@@ -223,14 +284,14 @@ impl Office {
 
     /// `msg inbox`: every page, oldest first and cut to the limit, as the spool lists it.
     /// Headers only: the office's inbox carries no bodies.
-    pub(crate) fn inbox(&self, query: &InboxQuery) -> Result<Vec<InboxItem>, ClientError> {
+    pub(crate) fn inbox(&self, query: &InboxQuery) -> Result<Vec<InboxItem>, Failure> {
         let mut headers = Vec::new();
         let mut cursor = None;
         loop {
             let HeaderPage {
                 headers: page,
                 next_cursor,
-            } = self.client.call::<MsgInbox>(&MsgInboxParams {
+            } = self.call::<MsgInbox>(&MsgInboxParams {
                 include_all: query.include_all,
                 from: query.from.clone(),
                 thread_id: query.thread.clone(),
@@ -261,8 +322,8 @@ impl Office {
 
     /// `msg read <id>` or `msg read --next` (`id` `None`): the message, marked read; `None`
     /// when `--next` finds the inbox empty.
-    pub(crate) fn read(&self, id: Option<&str>) -> Result<Option<Message>, ClientError> {
-        let read = self.client.call::<MsgRead>(&MsgReadParams {
+    pub(crate) fn read(&self, id: Option<&str>) -> Result<Option<Message>, Failure> {
+        let read = self.call::<MsgRead>(&MsgReadParams {
             id: id.map(str::to_owned),
         })?;
         Ok(read.message)
@@ -275,7 +336,7 @@ impl Office {
         from: Option<&str>,
         urgent_only: bool,
         timeout: Duration,
-    ) -> Result<Waited, ClientError> {
+    ) -> Result<Waited, Failure> {
         let deadline = Instant::now().checked_add(timeout);
         loop {
             let left = deadline.map_or(timeout, |d| d.saturating_duration_since(Instant::now()));
@@ -292,7 +353,15 @@ impl Office {
             ) else {
                 return Ok(Waited::Interrupted);
             };
-            if let Some(message) = answer?.message {
+            let answer = match answer {
+                // Bound again: wait on for what is left.
+                Err(error) if is_not_bound(&error) => {
+                    self.bind_again()?;
+                    continue;
+                }
+                other => other.map_err(|e| Failure::from_office(&e))?,
+            };
+            if let Some(message) = answer.message {
                 return Ok(Waited::Message(Box::new(message)));
             }
             if slice >= left {
@@ -302,10 +371,14 @@ impl Office {
     }
 
     /// `who`: the directory cards, in the spool's card shape.
-    pub(crate) fn who(&self, params: &WhoParams) -> Result<Vec<DirectoryCard>, ClientError> {
-        let result = self.client.call::<Who>(params)?;
+    pub(crate) fn who(&self, params: &WhoParams) -> Result<Vec<DirectoryCard>, Failure> {
+        let result = self.call::<Who>(params)?;
         Ok(result.members.iter().map(card).collect())
     }
+}
+
+fn is_not_bound(error: &ClientError) -> bool {
+    matches!(error, ClientError::Api(e) if e.code == ErrorCode::NotBound)
 }
 
 /// `who`'s params from the CLI's flags: `--kind owner` (the spool's) is the office's
@@ -459,10 +532,11 @@ fn card(card: &directory::DirectoryCard) -> DirectoryCard {
 
 #[cfg(test)]
 mod tests {
-    use std::io;
+    use std::io::{self, Write};
+    use std::sync::mpsc;
 
-    use org_proto::msg::{MessageLifecycleState, MsgBindResult};
-    use org_proto::ApiError;
+    use org_proto::msg::{MessageLifecycleState, MsgBind, MsgBindResult};
+    use org_proto::{ApiError, Request, Response};
     use org_spool::Envelope;
 
     use super::*;
@@ -501,7 +575,9 @@ mod tests {
 
     #[test]
     fn no_office_on_this_mac_is_the_spool_and_nothing_is_opened() {
-        let route = decide(Ok(None), |_| panic!("opened an office that isn't there"));
+        let route = decide(Ok(None), "pixel", |_| {
+            panic!("opened an office that isn't there")
+        });
         assert!(matches!(route, Ok(Route::NoOffice)));
     }
 
@@ -509,7 +585,7 @@ mod tests {
     fn a_reachable_office_is_the_office() {
         let (_dir, client) = a_client();
         let mut asked = None;
-        let route = decide(Ok(Some("O1".into())), |id| {
+        let route = decide(Ok(Some("O1".into())), "pixel", |id| {
             asked = Some(id.to_owned());
             Ok((client, bound()))
         });
@@ -519,7 +595,7 @@ mod tests {
 
     #[test]
     fn an_office_that_does_not_answer_falls_back_and_says_why_without_a_body() {
-        let route = decide(Ok(Some("O1".into())), |_| {
+        let route = decide(Ok(Some("O1".into())), "pixel", |_| {
             Err(OpenError::Unreachable(not_running()))
         });
         let Ok(Route::Unreachable(why)) = route else {
@@ -533,7 +609,7 @@ mod tests {
 
     #[test]
     fn an_office_that_refuses_the_bind_is_a_failure_not_a_fall_back() {
-        let route = decide(Ok(Some("O1".into())), |_| {
+        let route = decide(Ok(Some("O1".into())), "pixel", |_| {
             Err(OpenError::Refused(api(ErrorCode::NotAuthorized)))
         });
         let Err(why) = route else {
@@ -547,7 +623,7 @@ mod tests {
             "{text}"
         );
         // A refusal that isn't the office's answer (e.g. another protocol version) is exit 4.
-        let other = decide(Ok(Some("O1".into())), |_| {
+        let other = decide(Ok(Some("O1".into())), "pixel", |_| {
             Err(OpenError::Refused(ClientError::VersionMismatch {
                 client: 1,
                 server: 2,
@@ -560,11 +636,138 @@ mod tests {
     fn several_offices_and_none_chosen_is_a_usage_error_naming_the_way_out() {
         let route = decide(
             Err(FindOfficeError::Ambiguous(vec!["A1".into(), "B1".into()])),
+            "pixel",
             |_| panic!("guessed an office"),
         );
         let failure = route.err().unwrap().into_failure("pixel");
         assert_eq!(failure.code, EXIT_USAGE);
         assert!(failure.message.unwrap().contains("ORG_OFFICE"));
+    }
+
+    /// What the scripted office answers to each request, in order.
+    type Answer = Box<dyn FnOnce(&Request) -> Response + Send>;
+
+    fn not_bound() -> Answer {
+        Box::new(|r: &Request| Response::error(r.id, ApiError::new(ErrorCode::NotBound, "bind")))
+    }
+
+    fn bind_ok() -> Answer {
+        Box::new(|r: &Request| Response::ok::<MsgBind>(r.id, &bound()).unwrap())
+    }
+
+    /// An `Office` on a socket that answers each request with the next of `answers`, and the
+    /// requests it got.
+    fn scripted(answers: Vec<Answer>) -> (tempfile::TempDir, Office, mpsc::Receiver<Request>) {
+        let dir = tempfile::Builder::new()
+            .prefix("oas")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let path = dir.path().join("s.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let (seen, got) = mpsc::channel();
+        std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = io::BufReader::new(stream.try_clone().unwrap());
+            for answer in answers {
+                let Ok(Some(line)) = org_proto::frame::read_line(&mut reader) else {
+                    return;
+                };
+                let request: Request = serde_json::from_slice(&line).unwrap();
+                let mut reply = serde_json::to_vec(&answer(&request)).unwrap();
+                reply.push(b'\n');
+                // Recorded before the answer goes, so the caller sees every request.
+                let _ = seen.send(request);
+                (&stream).write_all(&reply).unwrap();
+            }
+            let _ = org_proto::frame::read_line(&mut reader);
+        });
+        let client = Client::connect(&path).unwrap();
+        (dir, Office::new(client, "O1".into(), "pixel"), got)
+    }
+
+    fn methods(got: &mpsc::Receiver<Request>) -> Vec<Request> {
+        got.try_iter().collect()
+    }
+
+    #[test]
+    fn a_call_answered_not_bound_binds_again_once_and_is_retried() {
+        let page: Answer = Box::new(|r: &Request| {
+            Response::ok::<MsgInbox>(
+                r.id,
+                &HeaderPage {
+                    headers: vec![header()],
+                    next_cursor: None,
+                },
+            )
+            .unwrap()
+        });
+        let (_dir, office, got) = scripted(vec![not_bound(), bind_ok(), page]);
+        let items = office.inbox(&InboxQuery::default()).unwrap();
+        assert_eq!(items.len(), 1);
+        let requests = methods(&got);
+        let names: Vec<&str> = requests.iter().map(|r| r.method.as_str()).collect();
+        assert_eq!(names, ["msg.inbox", "msg.bind", "msg.inbox"]);
+        assert_eq!(requests[1].params, serde_json::json!({"member": "pixel"}));
+    }
+
+    #[test]
+    fn a_send_retried_after_binding_again_keeps_its_id() {
+        let sent: Answer = Box::new(|r: &Request| {
+            let id = r.params["id"].as_str().unwrap().to_owned();
+            Response::ok::<MsgSend>(
+                r.id,
+                &msg::SendResult {
+                    id,
+                    thread_id: "T".into(),
+                    local_seq: 1,
+                    origin_seq: 1,
+                },
+            )
+            .unwrap()
+        });
+        let (_dir, office, got) = scripted(vec![not_bound(), bind_ok(), sent]);
+        let id = office
+            .send(
+                "nova",
+                Outgoing {
+                    body: "b".into(),
+                    ..Outgoing::default()
+                },
+            )
+            .unwrap();
+        let requests = methods(&got);
+        assert_eq!(requests[0].method, "msg.send");
+        assert_eq!(requests[2].method, "msg.send");
+        assert_eq!(requests[0].params["id"], requests[2].params["id"]);
+        assert_eq!(requests[2].params["id"], id.as_str());
+    }
+
+    #[test]
+    fn an_office_that_will_not_bind_the_agent_again_ends_the_command_saying_so() {
+        let refused: Answer = Box::new(|r: &Request| {
+            Response::error(
+                r.id,
+                ApiError::new(ErrorCode::NotAuthorized, "not authorized"),
+            )
+        });
+        let (_dir, office, _got) = scripted(vec![not_bound(), refused]);
+        let failure = office.read(None).unwrap_err();
+        assert_eq!(failure.code, EXIT_USAGE);
+        let text = failure.message.unwrap();
+        assert!(text.contains("office O1 unbound 'pixel'"), "{text}");
+        assert!(
+            text.contains("won't bind it again: not authorized"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn unbound_again_after_binding_again_is_not_retried_forever() {
+        let (_dir, office, got) = scripted(vec![not_bound(), bind_ok(), not_bound()]);
+        let failure = office.who(&WhoParams::default()).unwrap_err();
+        assert_eq!(failure.code, EXIT_USAGE);
+        assert!(failure.message.unwrap().contains("again"));
+        assert_eq!(methods(&got).len(), 3);
     }
 
     #[test]

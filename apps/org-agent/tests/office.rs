@@ -25,7 +25,8 @@ use org_office_launch::{
 };
 use org_proto::location::office_socket_path;
 use org_proto::org::{
-    AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams,
+    AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams, MemberOffboard,
+    MemberOffboardParams,
 };
 use org_proto::{AppToken, OfficeRole};
 use serde_json::Value;
@@ -56,6 +57,10 @@ fn main() {
         (
             "wait_times_out_and_a_person_can_interrupt_it",
             wait_times_out_and_a_person_can_interrupt_it,
+        ),
+        (
+            "an_agent_offboarded_during_a_wait_is_told_and_not_left_waiting",
+            an_agent_offboarded_during_a_wait_is_told_and_not_left_waiting,
         ),
         (
             "send_falls_back_to_the_spool_when_the_office_is_down",
@@ -590,6 +595,56 @@ fn wait_times_out_and_a_person_can_interrupt_it() {
     let ended = waiting.wait_with_output().unwrap();
     assert_eq!(ended.status.code(), Some(130));
     assert!(started.elapsed() < Duration::from_secs(5));
+}
+
+fn an_agent_offboarded_during_a_wait_is_told_and_not_left_waiting() {
+    let world = World::new();
+    let _server = world.office();
+    let waiting = world
+        .agent("nova", &["msg", "wait", "--timeout", "3s"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(800));
+    let app = Client::connect(world.socket()).unwrap();
+    app.bind_app(token()).unwrap();
+    app.call::<MemberOffboard>(&MemberOffboardParams {
+        command_id: command_id(9),
+        member_id: NOVA.into(),
+        expected_version: 1,
+    })
+    .unwrap();
+
+    // The held wait ends no later than its timeout. Today the office re-checks a binding only
+    // when the next call arrives, so it times out (2); if it ends held waits on offboarding, it
+    // answers not_bound, org-agent binds again, is refused, and says so (1).
+    let started = Instant::now();
+    let ended = waiting.wait_with_output().unwrap();
+    assert!(started.elapsed() < Duration::from_secs(10));
+    let ended: Run = ended.into();
+    match ended.code {
+        2 => assert!(ended.stderr.contains("timed out"), "{}", ended.stderr),
+        1 => assert!(
+            ended
+                .stderr
+                .contains(&format!("office {OFFICE} unbound 'nova'"))
+                && ended.stderr.contains("won't bind it again"),
+            "{}",
+            ended.stderr
+        ),
+        other => panic!("exit {other}: {}", ended.stderr),
+    }
+
+    // Its next command is refused at the bind, clearly, and nothing falls back to the spool.
+    let next = world.run("nova", &["msg", "inbox"]);
+    assert_eq!(next.code, 1, "{}", next.stderr);
+    assert!(
+        next.stderr.contains("did not let 'nova' in"),
+        "{}",
+        next.stderr
+    );
+    assert!(next.stdout.is_empty());
 }
 
 fn send_falls_back_to_the_spool_when_the_office_is_down() {
