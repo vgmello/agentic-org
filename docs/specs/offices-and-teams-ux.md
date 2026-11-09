@@ -227,7 +227,7 @@ The app lives in the menu bar (ADR-0001). The icon is a monochrome template imag
 
 **Rules**
 
-- *(rev 11)* **New request… ⌥⌘N** opens the capture panel (`feature-requests-ux.md` §1.1). While captures wait on this Mac for the office, a row says "n requests waiting to send"; clicking it opens Work › Requests, and the row goes away once they're sent.
+- *(rev 11)* **New request… ⌥⌘N** opens the capture panel (`feature-requests-ux.md` §1.1). While captures wait on this Mac for the office, a row says "n requests waiting to send"; clicking it opens Work › Requests, where they're listed first under Waiting to send (`feature-requests-ux.md` §2), and the row goes away once they're sent.
 
 - Organizations are sorted A–Z (stable, for muscle memory); the current one has a checkmark. ⌘1–⌘9 follow that order.
 - Offices are indented under their organization: HQ first, then this Mac's other offices, then the rest A–Z. Each shows "· This Mac" when it runs here. More than 5 offices: the first 5, then "4 more offices…".
