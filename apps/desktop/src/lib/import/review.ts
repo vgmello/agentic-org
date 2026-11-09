@@ -1,6 +1,6 @@
 // What the review screen does with the rows and teams, as plain functions (so it is tested without the screen).
 
-import { handleProblem, hasNoMessages, isValidHandle, missingOf, type Row } from './rows';
+import { handleProblem, hasNoMessages, isValidHandle, missingOf, OWNER, type Row } from './rows';
 import type { TeamDraft } from './teams';
 import type { Scan } from './types';
 
@@ -75,4 +75,27 @@ export function removeTeam(drafts: TeamDraft[], rows: Row[], teamKey: string): {
 export function setParent(drafts: TeamDraft[], teamKey: string, parentKey: string | undefined): TeamDraft[] {
 	if (parentKey && (parentKey === teamKey || below(drafts, teamKey).has(parentKey))) return drafts;
 	return drafts.map((d) => (d.key === teamKey ? { ...d, parentKey } : d));
+}
+
+/** Whether a row stays in the import (one still to be filled in will be by the time it runs): not skipped, not a person's name, not offboarded. */
+export const staying = (r: Row): boolean => r.choice !== 'skip' && r.existingKind !== 'person' && !r.existingOffboarded;
+
+/**
+ * After a change, drop what points at nothing: a manager who is no longer part of the import reports to the owner instead, and
+ * a team's lead who left it (or the import) leads nothing. A lead may sit in a team below the one they lead (the file puts them
+ * there, and the executor adds them to the team they lead).
+ */
+export function normalize(rows: Row[], drafts: TeamDraft[]): { rows: Row[]; drafts: TeamDraft[] } {
+	const parts = new Set(rows.filter(staying).map((r) => r.key));
+	const fixed = rows.map((r) => (r.managerKey !== OWNER && !parts.has(r.managerKey) ? { ...r, managerKey: OWNER } : r));
+	const byKey = new Map(fixed.map((r) => [r.key, r]));
+	return {
+		rows: fixed,
+		drafts: drafts.map((d) => {
+			if (!d.leadKey) return d;
+			const lead = byKey.get(d.leadKey);
+			const inside = lead?.teamKey && (key(lead.teamKey) === d.key || below(drafts, d.key).has(key(lead.teamKey)));
+			return lead && staying(lead) && inside ? d : { ...d, leadKey: undefined };
+		})
+	};
 }

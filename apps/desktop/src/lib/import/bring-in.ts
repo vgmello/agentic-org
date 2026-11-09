@@ -31,8 +31,23 @@ export interface BringInResult {
 	projects: number;
 	/** Of the agents made this time, how many came in Paused. */
 	paused: number;
+	/** The messaging names of the agents made this time (to highlight on the chart). */
+	made: string[];
 	/** Everything that went wrong, each with what was being done. Empty: it all worked. */
 	failures: StepResult[];
+}
+
+/** What several tries of one import did together: the counts and agents add up, and the failures are the last try's. */
+export function addResults(before: BringInResult | undefined, next: BringInResult): BringInResult {
+	if (!before) return next;
+	return {
+		agents: before.agents + next.agents,
+		teams: before.teams + next.teams,
+		projects: before.projects + next.projects,
+		paused: before.paused + next.paused,
+		made: [...before.made, ...next.made],
+		failures: next.failures
+	};
 }
 
 const lower = (s: string) => s.trim().toLowerCase();
@@ -71,7 +86,7 @@ export function bringIn(session: OrgSession, input: BringInInput): Promise<Bring
  */
 async function execute(session: OrgSession, input: BringInInput): Promise<BringInResult> {
 	const say = input.onProgress ?? (() => undefined);
-	const result: BringInResult = { agents: 0, teams: 0, projects: 0, paused: 0, failures: [] };
+	const result: BringInResult = { agents: 0, teams: 0, projects: 0, paused: 0, made: [], failures: [] };
 	const ledger = input.ledger.load();
 	const keep = () => input.ledger.save(ledger);
 	const taking = input.rows.filter(takesPart);
@@ -162,6 +177,7 @@ async function execute(session: OrgSession, input: BringInInput): Promise<BringI
 		ledger.agents[handle] = { id: done.memberId, created: true, linked: false };
 		keep();
 		result.agents += 1;
+		result.made.push(row.messagingName);
 		if (row.choice === 'paused') result.paused += 1;
 	}
 

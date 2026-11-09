@@ -5,8 +5,8 @@
 	import { runtimeLabel } from '$lib/org/agents';
 	import type { AgentRuntime } from '$lib/proto';
 	import type { HintNotes } from '$lib/import/hints';
-	import { addTeam, filterRows, FILTERS, patchRow, removeTeam, rowNote, setParent, type RowFilter } from '$lib/import/review';
-	import { chooseRole, chooseTitle, OWNER, roleWords, takesPart, type Row } from '$lib/import/rows';
+	import { addTeam, filterRows, FILTERS, normalize, patchRow, removeTeam, rowNote, setParent, staying, type RowFilter } from '$lib/import/review';
+	import { chooseRole, chooseTitle, OWNER, roleWords, type Row } from '$lib/import/rows';
 	import { teamsToCreate, withDefaultManagers, type ProjectDraft, type TeamDraft } from '$lib/import/teams';
 	import type { HrAgent, Scan } from '$lib/import/types';
 
@@ -22,7 +22,7 @@
 		organization,
 		hintsFile,
 		hintsNotes,
-		hintsError,
+		hintsFailure,
 		alreadyThere,
 		busy,
 		onchoosehints
@@ -39,7 +39,8 @@
 		/** The team hints file in use (its name) and what it could not place. */
 		hintsFile: string | undefined;
 		hintsNotes: HintNotes | undefined;
-		hintsError: string | undefined;
+		/** A file the owner tried that could not be read (the earlier good one, if any, stays in use). */
+		hintsFailure: { file: string; reason: string } | undefined;
 		/** Names of planned teams that the organization already has (they are left as they are). */
 		alreadyThere: string[];
 		busy: boolean;
@@ -59,16 +60,20 @@
 	const RUNTIMES = ['claude_code', 'codex', 'antigravity'] as const;
 	const runtimeValue = (r: Row) => (typeof r.runtime === 'string' ? r.runtime : '');
 	// Anyone staying in the import can lead (one still to be filled in will be by the time it runs).
-	const leadChoices = (team: TeamDraft) => rows.filter((r) => r.choice !== 'skip' && r.existingKind !== 'person' && !r.existingOffboarded && r.teamKey?.trim().toLowerCase() === team.key);
+	const leadChoices = (team: TeamDraft) => rows.filter((r) => staying(r) && r.teamKey?.trim().toLowerCase() === team.key);
 
-	const setRole = (r: Row, role: string) => (rows = patchRow(rows, r.key, (x) => (role ? chooseRole(x, role) : { ...x, role: undefined, roleSuggested: false })));
-	const setTitle = (r: Row, title: string) => (rows = patchRow(rows, r.key, (x) => chooseTitle(x, title, roles)));
-	const setRuntime = (r: Row, value: string) => (rows = patchRow(rows, r.key, { runtime: (value || undefined) as AgentRuntime | undefined }));
+	const setRole = (r: Row, role: string) => ((rows = patchRow(rows, r.key, (x) => (role ? chooseRole(x, role) : { ...x, role: undefined, roleSuggested: false }))), refresh());
+	const setTitle = (r: Row, title: string) => ((rows = patchRow(rows, r.key, (x) => chooseTitle(x, title, roles))), refresh());
+	const setRuntime = (r: Row, value: string) => ((rows = patchRow(rows, r.key, { runtime: (value || undefined) as AgentRuntime | undefined })), refresh());
 	// The default manager follows the teams until the owner sets one by hand.
-	const refresh = () => (rows = withDefaultManagers(rows, drafts));
+	function refresh() {
+		const fixed = normalize(rows, drafts);
+		drafts = fixed.drafts;
+		rows = withDefaultManagers(fixed.rows, drafts);
+	}
 	const setTeam = (r: Row, key: string) => ((rows = patchRow(rows, r.key, { teamKey: key || undefined })), refresh());
 	const setManager = (r: Row, key: string) => (rows = patchRow(rows, r.key, { managerKey: key || OWNER, managerSet: true }));
-	const setChoice = (r: Row, choice: string) => (rows = patchRow(rows, r.key, { choice: choice as Row['choice'] }));
+	const setChoice = (r: Row, choice: string) => ((rows = patchRow(rows, r.key, { choice: choice as Row['choice'] })), refresh());
 	const setHandle = (r: Row, name: string) => (rows = patchRow(rows, r.key, { messagingName: name.trim() }));
 	const rename = (d: TeamDraft, name: string) => (drafts = drafts.map((x) => (x.key === d.key ? { ...x, name: name.trim() || x.name } : x)));
 	const setLead = (d: TeamDraft, lead: string) => ((drafts = drafts.map((x) => (x.key === d.key ? { ...x, leadKey: lead || undefined } : x))), refresh());
@@ -82,7 +87,7 @@
 		drafts = addTeam(drafts, newTeamName);
 		newTeamName = '';
 	}
-	const managers = $derived(rows.filter(takesPart));
+	const managers = $derived(rows.filter(staying));
 	const needsName = (r: Row) => !!rowNote(r, scan, organization) && rowNote(r, scan, organization)!.tone === 'bad';
 </script>
 
@@ -185,7 +190,7 @@
 			<Button type="button" variant="outline" size="sm" disabled={busy} onclick={() => (editingTeams = !editingTeams)} aria-expanded={editingTeams}>{editingTeams ? 'Done' : 'Edit…'}</Button>
 		</div>
 		{#each alreadyThere as t (t)}<p class="text-gray-300" data-testid="team-already">{t} is already in {organization}: left as it is.</p>{/each}
-		{#if hintsError}<p class="text-amber-200" role="status">Couldn't read the team hints: {hintsError} The import goes on without them.</p>{/if}
+		{#if hintsFailure}<p class="text-amber-200" role="status">Couldn't read {hintsFailure.file}: {hintsFailure.reason}</p>{/if}
 		{#if hintsNotes}
 			{#each hintsNotes.parents as p (p)}<p class="text-amber-200">Parent not found: {p}</p>{/each}
 			{#each hintsNotes.leads as l (l)}<p class="text-amber-200">Lead not found: {l}</p>{/each}

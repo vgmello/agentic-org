@@ -6,9 +6,10 @@
 	import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '$lib/components/ui/dialog';
 	import BringInReview from '$lib/components/BringInReview.svelte';
 	import { importApi } from '$lib/import/api';
-	import { bringIn, type BringInResult } from '$lib/import/bring-in';
+	import { addResults, bringIn, type BringInResult } from '$lib/import/bring-in';
 	import { applyHints, type HintNotes } from '$lib/import/hints';
 	import { browserLedger } from '$lib/import/ledger';
+	import { normalize } from '$lib/import/review';
 	import { buildRows, counts, type Row } from '$lib/import/rows';
 	import { suggestProject, suggestTeams, whatHappens, withDefaultManagers, type ProjectDraft, type TeamDraft } from '$lib/import/teams';
 	import type { Defaults, Hints, HrAgent, Scan } from '$lib/import/types';
@@ -48,6 +49,10 @@
 	let scanning = $state(false);
 	let scanFailure = $state<string | undefined>();
 	let hints = $state<Hints | undefined>();
+	// A hints file the owner tried that could not be read; the earlier good one (if any) stays in use.
+	let hintsFailure = $state<{ file: string; reason: string } | undefined>();
+	// Each scan or file read carries a number: a slower, older one that finishes late is ignored.
+	let latest = 0;
 
 	let rows = $state<Row[]>([]);
 	let drafts = $state<TeamDraft[]>([]);
@@ -57,8 +62,11 @@
 	let hintNotes = $state<HintNotes | undefined>();
 
 	let progress = $state('');
+	// What every try of this import did together (a Try again adds to it), and the last try's problem.
 	let result = $state<BringInResult | undefined>();
 	let crashed = $state<string | undefined>();
+	let ran = false;
+	let reported = false;
 	let busy = $derived(step === 'running');
 
 	$effect(() => {
@@ -67,15 +75,23 @@
 	});
 
 	async function start() {
+		latest += 1;
 		step = 'sources';
 		scan = undefined;
 		scanFailure = undefined;
+		scanning = false;
 		hints = undefined;
 		hintsPath = undefined;
+		hintsFailure = undefined;
 		result = undefined;
 		crashed = undefined;
+		ran = false;
+		reported = false;
 		try {
-			defaults = await importApi.defaults();
+			const mine = latest;
+			const found = await importApi.defaults();
+			if (mine !== latest) return;
+			defaults = found;
 			hrDir = defaults.hr;
 			spoolDir = defaults.messaging;
 			if (hrDir || spoolDir) await rescan();
@@ -85,31 +101,61 @@
 	}
 
 	async function rescan() {
+		const mine = ++latest;
+		scan = undefined; // a failed read must not leave the last folder's answer to be reviewed
 		scanning = true;
 		scanFailure = undefined;
 		try {
-			scan = await importApi.scan(hrDir, spoolDir);
+			const read = await importApi.scan(hrDir, spoolDir);
+			if (mine === latest) scan = read;
 		} catch (e) {
-			scanFailure = toAppError(e).message;
+			if (mine === latest) scanFailure = toAppError(e).message;
 		} finally {
-			scanning = false;
+			if (mine === latest) scanning = false;
 		}
 	}
 
 	async function choose(which: 'hr' | 'spool') {
-		const picked = await importApi.pickFolder(which === 'hr' ? 'Choose the HR workspace' : 'Choose the messaging folder');
-		if (!picked) return;
-		if (which === 'hr') hrDir = picked;
-		else spoolDir = picked;
-		await rescan();
+		try {
+			const picked = await importApi.pickFolder(which === 'hr' ? 'Choose the HR workspace' : 'Choose the messaging folder');
+			if (!picked) return;
+			if (which === 'hr') hrDir = picked;
+			else spoolDir = picked;
+			await rescan();
+		} catch (e) {
+			scanFailure = toAppError(e).message;
+		}
 	}
 
 	async function chooseHints() {
-		const picked = await importApi.pickFile('Choose the team hints file (teams.toml)');
-		if (!picked) return;
-		hintsPath = picked;
-		hints = await importApi.readHints(picked).catch((e) => ({ path: picked, error: toAppError(e).message, teams: [] }));
-		if (step === 'review') build();
+		try {
+			const picked = await importApi.pickFile('Choose the team hints file (teams.toml)');
+			if (!picked) return;
+			const mine = ++latest;
+			const read = await importApi.readHints(picked).catch((e): Hints => ({ path: picked, error: toAppError(e).message, teams: [] }));
+			if (mine !== latest) return;
+			if (read.error) {
+				hintsFailure = { file: fileName(picked) ?? picked, reason: read.error };
+				return;
+			}
+			hintsFailure = undefined;
+			hintsPath = picked;
+			hints = read;
+			if (step === 'review') applyLate(read);
+		} catch (e) {
+			hintsFailure = { file: 'the team hints file', reason: toAppError(e).message };
+		}
+	}
+
+	/** Hints chosen after the review is open: put on the rows as they are now, so what the owner chose stays. */
+	function applyLate(read: Hints) {
+		const fitted = applyHints(rows, read, drafts);
+		drafts = fitted.drafts;
+		hintNotes = fitted.notes;
+		const fixed = normalize(fitted.rows, drafts);
+		drafts = fixed.drafts;
+		rows = withDefaultManagers(fixed.rows, drafts);
+		project = suggestProject(rows, drafts) ?? project;
 	}
 
 	const fileName = (path: string | undefined) => path?.split('/').filter(Boolean).at(-1);
@@ -145,8 +191,9 @@
 		if (busy || c.ready === 0) return;
 		step = 'running';
 		crashed = undefined;
+		ran = true;
 		try {
-			result = await bringIn(session, {
+			const again = await bringIn(session, {
 				rows,
 				drafts,
 				project: projectOn ? project : undefined,
@@ -155,9 +202,9 @@
 				ledger: browserLedger(organizationId),
 				onProgress: (text) => (progress = text)
 			});
+			result = addResults(result, again);
 		} catch (e) {
 			crashed = toAppError(e).message;
-			result = undefined;
 		}
 		step = 'done';
 	}
@@ -165,19 +212,31 @@
 	const summary = $derived.by(() => {
 		if (!result) return '';
 		const plural = (n: number, one: string) => `${n} ${n === 1 ? one : `${one}s`}`;
-		const parts = [plural(result.agents, 'agent'), plural(result.teams, 'team'), plural(result.projects, 'project')];
-		const text = `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}.`;
+		const text = `${[plural(result.agents, 'agent'), plural(result.teams, 'team'), plural(result.projects, 'project')].join(', ')}.`;
 		return result.paused > 0 ? `${text} ${plural(result.paused, 'agent')} paused.` : text;
 	});
-	const nothingNew = $derived(!!result && result.agents + result.teams + result.projects === 0 && result.failures.length === 0);
+	const nothingNew = $derived(!!result && result.agents + result.teams + result.projects === 0 && result.failures.length === 0 && !crashed);
+
+	/** Tell the page what happened, once, however the dialog is closed (its buttons, Escape, the X or a click outside). */
+	function report() {
+		if (reported || !ran) return;
+		reported = true;
+		ondone({ done: result, handles: result?.made ?? [] });
+	}
 
 	function close() {
 		open = false;
-		ondone({ done: result, handles: rows.map((r) => r.messagingName) });
+		report();
+	}
+
+	function onOpenChange(next: boolean) {
+		if (next) return;
+		if (busy) open = true;
+		else report();
 	}
 </script>
 
-<Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
+<Dialog bind:open {onOpenChange}>
 	<DialogContent class="max-h-[90vh] w-full overflow-y-auto sm:max-w-[min(96vw,88rem)]" data-testid="bring-in">
 		<DialogHeader>
 			<DialogTitle>Bring in an existing team</DialogTitle>
@@ -185,7 +244,7 @@
 				{#if step === 'sources'}Where is your team today? Scanning only reads: it writes nothing.
 				{:else if step === 'review'}Review {rows.length} {rows.length === 1 ? 'agent' : 'agents'}. Nothing is created until you press Bring in.
 				{:else if step === 'running'}{progress || 'Starting…'}
-				{:else}Done.{/if}
+				{:else if crashed}Stopped.{:else if result && result.failures.length > 0}Not everything went through.{:else}Done.{/if}
 			</DialogDescription>
 		</DialogHeader>
 
@@ -205,7 +264,7 @@
 								<p class="text-sm/6 text-gray-300">Found {names.length} {names.length === 1 ? 'name' : 'names'}{scan.hr && !scan.hr.error ? `, ${notInHr} not in the HR workspace` : ''}</p>
 							{/if}
 						</div>
-						<Button type="button" variant="outline" size="sm" disabled={scanning} onclick={() => choose(source.id as 'hr' | 'spool')}>Change…</Button>
+						<Button type="button" variant="outline" size="sm" disabled={scanning} aria-label="Change the {source.title} folder" onclick={() => choose(source.id as 'hr' | 'spool')}>Change…</Button>
 					</div>
 				{/each}
 				<div class="flex flex-wrap items-start gap-x-3 gap-y-1 rounded-lg bg-white/5 p-3 outline-1 -outline-offset-1 outline-white/10" data-testid="hints-source">
@@ -213,13 +272,13 @@
 						<p class="font-medium text-white">Team hints <span class="font-normal text-gray-400">(optional)</span></p>
 						{#if hintsPath}
 							<p class="font-mono text-xs/5 text-gray-400 [overflow-wrap:anywhere]">{hintsPath}</p>
-							{#if hints?.error}<p class="mt-1 text-sm/6 text-amber-200" role="status">Couldn't read {fileName(hintsPath)}: {hints.error} The import goes on without it.</p>
-							{:else if hints}<p class="text-sm/6 text-gray-300">{hints.teams.length} {hints.teams.length === 1 ? 'team' : 'teams'} in {fileName(hintsPath)}</p>{/if}
+							{#if hints}<p class="text-sm/6 text-gray-300">{hints.teams.length} {hints.teams.length === 1 ? 'team' : 'teams'} in {fileName(hintsPath)}</p>{/if}
 						{:else}
 							<p class="text-sm/6 text-gray-400">A teams.toml that says who is in which team.</p>
 						{/if}
+						{#if hintsFailure}<p class="mt-1 text-sm/6 text-amber-200" role="status">Couldn't read {hintsFailure.file}: {hintsFailure.reason} The import goes on without it.</p>{/if}
 					</div>
-					<Button type="button" variant="outline" size="sm" disabled={scanning} onclick={chooseHints}>{hintsPath ? 'Change…' : 'Choose…'}</Button>
+					<Button type="button" variant="outline" size="sm" disabled={scanning} aria-label={hintsPath ? 'Change the team hints file' : 'Choose a team hints file'} onclick={chooseHints}>{hintsPath ? 'Change…' : 'Choose…'}</Button>
 				</div>
 				{#if scanning}<p class="flex items-center gap-x-2 text-sm/6 text-gray-300" role="status"><LoaderCircle class="size-4 animate-spin" aria-hidden="true" /> Reading…</p>{/if}
 				{#if scanFailure}<p class="text-sm/6 text-red-300" role="alert">{scanFailure}</p>{/if}
@@ -240,9 +299,9 @@
 				{offboarded}
 				roles={roleFiles}
 				{organization}
-				hintsFile={hints && !hints.error ? fileName(hintsPath) : undefined}
-				hintsNotes={hints && !hints.error ? hintNotes : undefined}
-				hintsError={hints?.error}
+				hintsFile={hints ? fileName(hintsPath) : undefined}
+				hintsNotes={hints ? hintNotes : undefined}
+				{hintsFailure}
 				alreadyThere={drafts.filter((d) => snapshot.teams.some((t) => t.name.trim().toLowerCase() === d.name.trim().toLowerCase())).map((d) => d.name)}
 				{busy}
 				onchoosehints={chooseHints}

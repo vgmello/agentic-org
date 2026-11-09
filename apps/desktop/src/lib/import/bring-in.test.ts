@@ -3,7 +3,7 @@ import { createMockOrg, type MockStorage } from '$lib/org/api';
 import type { OrgSession } from '$lib/org/session';
 import { sessionFor } from '$lib/org/session';
 import type { Member } from '$lib/proto';
-import { bringIn, type BringInInput } from './bring-in';
+import { addResults, bringIn, type BringInInput } from './bring-in';
 import { applyHints } from './hints';
 import { memoryLedger, type LedgerStore } from './ledger';
 import { SAMPLE_HINTS, SAMPLE_SCAN } from './mock';
@@ -292,6 +292,40 @@ describe('a refusal a retry cannot change', () => {
 		expect(retry.failures).toEqual([]);
 		const { member } = await find(w.s);
 		expect(member('ac-software-engineer-remy').reports_to_member_id).toBe(member('ac-staff-engineer-ada').id);
+	});
+
+	it('settles a not_found when the member or the manager really is gone', async () => {
+		const w = world();
+		const s: OrgSession = {
+			snapshot: () => w.s.snapshot(),
+			command: async (c) => {
+				if (c.method === 'member.set_reports_to') {
+					// Remy's manager is offboarded just before the line is set: HQ answers not_found, and the fresh look agrees.
+					const snap = await w.s.snapshot();
+					if (snap.members.find((m) => m.id === c.params.member_id)?.name === 'Remy') {
+						const ada = snap.members.find((m) => m.agent?.messaging_name === 'ac-staff-engineer-ada')!;
+						await w.s.command({ method: 'member.remove', params: { member_id: ada.id, expected_version: ada.version } });
+						return Promise.reject({ source: 'api', code: 'not_found', message: 'gone' });
+					}
+				}
+				return w.s.command(c);
+			}
+		};
+		const first = await run(w, reviewed(), s);
+		expect(first.failures.filter((f) => f.what.includes('Remy'))).toHaveLength(1);
+		const again = await run(w, reviewed(), s);
+		expect(again.failures.filter((f) => f.what.includes('Remy'))).toEqual([]);
+	});
+
+	it('adds up the tries of one import and reports the agents each made', async () => {
+		const w = world();
+		const first = await run(w, (() => { const r = reviewed(); r.rows.find((x) => x.name === 'reviewer')!.choice = 'skip'; return r; })());
+		expect(first.made).toHaveLength(9);
+		expect(first.made).not.toContain('reviewer');
+		const second = await run(w);
+		expect(second.made).toEqual(['reviewer']);
+		expect(addResults(first, second)).toMatchObject({ agents: 10, teams: 6, failures: [] });
+		expect(addResults(undefined, second)).toBe(second);
 	});
 
 	it('leaves a team the owner already had as it is, lead and all, on this run and the ones after it', async () => {

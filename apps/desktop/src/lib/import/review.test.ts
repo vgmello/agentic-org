@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { addTeam, below, filterRows, patchRow, removeTeam, rowNote, setParent } from './review';
+import { addTeam, below, filterRows, normalize, patchRow, removeTeam, rowNote, setParent } from './review';
 import { SAMPLE_SCAN } from './mock';
-import { buildRows } from './rows';
+import { applyHints } from './hints';
+import { SAMPLE_HINTS } from './mock';
+import { buildRows, type Row } from './rows';
+import { suggestTeams } from './teams';
 import type { TeamDraft } from './teams';
 
 const { rows } = buildRows(SAMPLE_SCAN, { exclude: ['sample'] });
@@ -60,5 +63,36 @@ describe('editing the teams', () => {
 		expect(setParent(drafts, 'app', 'app')).toBe(drafts);
 		expect(setParent(drafts, 'ui', 'engineering').find((d) => d.key === 'ui')?.parentKey).toBe('engineering');
 		expect(setParent(drafts, 'ui', undefined).find((d) => d.key === 'ui')?.parentKey).toBeUndefined();
+	});
+});
+
+describe('what points at nothing after a change', () => {
+	const filled = (): { rows: Row[]; drafts: TeamDraft[] } => {
+		const { rows: all } = buildRows(SAMPLE_SCAN, { exclude: ['sample'] });
+		for (const r of all) if (!r.runtime) Object.assign(r, { role: 'software engineer', title: 'Software Engineer', runtime: 'codex' });
+		const f = applyHints(all, SAMPLE_HINTS, suggestTeams(all));
+		return { rows: f.rows, drafts: f.drafts };
+	};
+
+	it('sends the people who reported to a skipped manager to the owner', () => {
+		const { rows: r, drafts } = filled();
+		const withLines = r.map((x) => (x.name === 'server-dev' ? { ...x, managerKey: 'ac-staff-engineer-ada' } : x));
+		const skipped = patchRow(withLines, 'ac-staff-engineer-ada', { choice: 'skip' });
+		expect(normalize(skipped, drafts).rows.find((x) => x.name === 'server-dev')!.managerKey).toBe('owner');
+	});
+
+	it('leaves a team with no lead when the lead is skipped or moved out of it', () => {
+		const { rows: r, drafts } = filled();
+		expect(drafts.find((d) => d.key === 'app')!.leadKey).toBe('app-frontend-dev');
+		const skipped = patchRow(r, 'app-frontend-dev', { choice: 'skip' });
+		expect(normalize(skipped, drafts).drafts.find((d) => d.key === 'app')!.leadKey).toBeUndefined();
+		const moved = patchRow(r, 'app-frontend-dev', { teamKey: 'office' });
+		expect(normalize(moved, drafts).drafts.find((d) => d.key === 'app')!.leadKey).toBeUndefined();
+	});
+
+	it('keeps a lead who sits in a team below the one they lead (the file puts them there)', () => {
+		const { rows: r, drafts } = filled();
+		const ada = patchRow(r, 'ac-staff-engineer-ada', { teamKey: 'app' });
+		expect(normalize(ada, drafts).drafts.find((d) => d.key === 'engineering')!.leadKey).toBe('ac-staff-engineer-ada');
 	});
 });

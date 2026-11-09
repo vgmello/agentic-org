@@ -19,7 +19,7 @@ async function scanToReview(page: Page, hints = false) {
 	await expect(dialog(page).getByTestId('bring-in-sources')).toContainText('Found 9 names, 5 not in the HR workspace');
 	await expect(dialog(page).getByTestId('hints-source')).toContainText('A teams.toml that says who is in which team.');
 	await shot(page, 'bring-in-sources');
-	if (hints) await dialog(page).getByTestId('hints-source').getByRole('button', { name: 'Choose…' }).click();
+	if (hints) await dialog(page).getByRole('button', { name: 'Choose a team hints file' }).click();
 	await dialog(page).getByRole('button', { name: 'Scan' }).click();
 	await expect(dialog(page).getByTestId('bring-in-review')).toBeVisible();
 }
@@ -75,7 +75,7 @@ test('IMP-7: Bring in creates the team, highlights it on the chart, and a second
 	}
 	await expect(dialog(page).getByRole('button', { name: /^Bring in 10 agents$/ })).toBeVisible();
 	await dialog(page).getByRole('button', { name: /^Bring in 10 agents$/ }).click();
-	await expect(dialog(page).getByTestId('bring-in-done')).toContainText('10 agents, 6 teams and 1 project.', { timeout: 30_000 });
+	await expect(dialog(page).getByTestId('bring-in-done')).toContainText('10 agents, 6 teams, 1 project.', { timeout: 30_000 });
 	await expect(dialog(page).getByRole('button', { name: 'View Activity' })).toBeVisible();
 	await shot(page, 'bring-in-done');
 	await dialog(page).getByRole('button', { name: 'View org chart' }).click();
@@ -88,4 +88,30 @@ test('IMP-7: Bring in creates the team, highlights it on the chart, and a second
 	await expect(dialog(page).getByTestId('import-note').first()).toContainText('Already in Agentic Consulting.');
 	await expect(dialog(page).getByTestId('team-already').first()).toContainText('is already in Agentic Consulting: left as it is.');
 	await expect(dialog(page).getByRole('button', { name: /^Bring in 0 agents$/ })).toBeDisabled();
+});
+
+test('IMP-7: closing the Done screen by Escape still shows what came in, and only the agents made this time are tagged', async ({ page }) => {
+	await openEmptyChart(page);
+	await scanToReview(page, true);
+	for (const name of ['server-dev', 'app-frontend-dev', 'codex-dev', 'agy-senior-dev', 'reviewer']) {
+		await dialog(page).getByLabel(`Role for ${name}`).selectOption('software engineer');
+		await dialog(page).getByLabel(`Runtime for ${name}`).selectOption('codex');
+	}
+	await dialog(page).getByLabel('Bring in reviewer').selectOption('skip');
+	await dialog(page).getByRole('button', { name: /^Bring in 9 agents$/ }).click();
+	await expect(dialog(page).getByTestId('bring-in-done')).toContainText('9 agents', { timeout: 30_000 });
+	await page.keyboard.press('Escape');
+	await expect(dialog(page)).toHaveCount(0);
+	await expect(page.locator('[data-member-tile][title^="ada"]')).toContainText('New');
+	// A second import brings in the one that was left out: only it is tagged.
+	await page.getByRole('button', { name: 'Bring in a team…' }).click();
+	await dialog(page).getByRole('button', { name: 'Choose a team hints file' }).click();
+	await dialog(page).getByRole('button', { name: 'Scan' }).click();
+	await dialog(page).getByLabel('Role for reviewer').selectOption('software engineer');
+	await dialog(page).getByLabel('Runtime for reviewer').selectOption('codex');
+	await dialog(page).getByRole('button', { name: /^Bring in 1 agent$/ }).click();
+	await expect(dialog(page).getByTestId('bring-in-done')).toContainText('1 agent', { timeout: 30_000 });
+	await dialog(page).getByRole('button', { name: 'View org chart' }).click();
+	await expect(page.locator('[data-member-tile][title^="reviewer"]')).toContainText('New');
+	await expect(page.locator('[data-member-tile]').filter({ hasText: 'New' })).toHaveCount(1);
 });
