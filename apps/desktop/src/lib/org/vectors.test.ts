@@ -9,7 +9,7 @@ import { sampleOrg } from './sample';
 type Step = { method: string; params: Record<string, unknown> };
 // The clock and the one office the shared cases use (the Rust runner uses the same).
 const ctx: Ctx = { now: '2026-11-08T12:00:00.000Z', offices: ['office-1'] };
-const cmd = (step: Step, n: number): OrgCommand => ({ method: step.method, params: { command_id: `c-${n}`, ...step.params } }) as OrgCommand;
+const cmd = (step: Step, n: number): OrgCommand => ({ method: step.method, params: { command_id: `01ARZ3NDEKTSV4RRFFQ69G5F${String(n).padStart(2, '0')}`, ...step.params } }) as OrgCommand;
 
 describe('shared organization command cases', () => {
 	it.each(vectors.cases as { name: string; setup?: unknown[]; command: unknown; expect: string; after?: unknown[] }[])('$name', ({ setup, command, expect: outcome, after }) => {

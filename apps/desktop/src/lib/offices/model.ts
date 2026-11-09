@@ -168,7 +168,7 @@ const REASON_COPY: Record<OfficeStatusReason, string> = {
 	restarts_exhausted: "It kept stopping, so it won't restart on its own",
 	storage_error: "It can't read or write its data on this Mac",
 	in_use: 'Its data is still in use by another Agentic Org process',
-	key_missing: "Its data key is missing from this Mac's Keychain, so its data can't be opened",
+	key_missing: "This office's key isn't available on this Mac, so its data can't be opened",
 	stopped_by_owner: 'You stopped it',
 	unsupported_version: "Parts of Agentic Org on this Mac don't match. Update or reinstall Agentic Org, then log out and back in.",
 	invalid_request: "It couldn't start because of an internal error",

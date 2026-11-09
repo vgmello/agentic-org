@@ -945,7 +945,7 @@ mod tests {
 
     fn command(method: &str, params: serde_json::Value) -> OrgCommand {
         let mut params = params;
-        params["command_id"] = serde_json::json!("c1");
+        params["command_id"] = serde_json::json!(crate::org_command::test_command_id("c1"));
         serde_json::from_value(serde_json::json!({"method": method, "params": params})).unwrap()
     }
 

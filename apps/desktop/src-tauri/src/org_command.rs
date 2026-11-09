@@ -109,6 +109,23 @@ impl OrgCommand {
     }
 }
 
+/// A command id for a test: the tag made into a ULID in its canonical form (26 uppercase Crockford characters, the first 0 to 7),
+/// the same tag always giving the same id and different tags different ones.
+#[cfg(test)]
+pub fn test_command_id(tag: &str) -> String {
+    const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+    let mut hash: u128 = 0x6c62_272e_07bb_0142_62b8_2175_6295_c58d;
+    for byte in tag.bytes() {
+        hash ^= u128::from(byte);
+        hash = hash.wrapping_mul(0x0000_0000_0100_0000_0000_0000_0000_013b);
+    }
+    let mut id = String::from("01ARZ3NDEK");
+    for i in 0..16 {
+        id.push(char::from(CROCKFORD[((hash >> (i * 5)) & 31) as usize]));
+    }
+    id
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

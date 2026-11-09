@@ -55,6 +55,7 @@ describe('TSK-4 order and TSK-10 priority words', () => {
 describe('references, moves and checklists', () => {
 	it('writes T-12, or Pending with the short id before HQ numbers it', () => {
 		expect(taskRef(task(12))).toBe('T-12');
+		expect(taskRef(task(12), 'chk')).toBe('chk-T-12');
 		expect(taskRef(task(1, { number: undefined, short_id: '3k9f2x' }))).toBe('Pending · 3k9f2x');
 	});
 	it('offers the moves the state machine allows', () => {
