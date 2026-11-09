@@ -17,6 +17,7 @@ mod bounded;
 pub mod fdswap;
 mod follow;
 mod keys;
+mod msg_calls;
 mod serve;
 mod signals;
 mod zeroed;
@@ -252,6 +253,14 @@ fn serve_office(
     // Stop signals are handled only from here: before this the default disposition applies, so a
     // server waiting for its first line or for the office lock can still be terminated.
     signals::install();
+    // No message events yet: `message.received` for subscribers arrives with the events slice.
+    let mailbox = match office.mailbox(Arc::new(org_mailbox::NoMessageEvents)) {
+        Ok(mailbox) => Arc::new(mailbox),
+        Err(e) => {
+            let _ = std::fs::remove_file(&socket);
+            return fail_with(&mut control, &e);
+        }
+    };
     let shared = Arc::new(serve::Shared::new(
         &info,
         &socket,
@@ -270,6 +279,8 @@ fn serve_office(
                 })
             },
             feed: Box::new(OfficeFeed(Arc::clone(&office))),
+            mailbox,
+            directory: Arc::new(office.member_directory()),
             submit: {
                 let office = Arc::clone(&office);
                 Box::new(move |command| {
