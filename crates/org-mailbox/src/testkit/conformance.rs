@@ -420,6 +420,58 @@ pub fn store_commit_refuses_a_second_delivery_failed(backend: impl OpenBackend) 
     assert!(commit(&store, other).inserted);
 }
 
+/// `find_reply_for_ask(ask, responder)` finds the earliest reply to `ask` addressed to its
+/// asker, from `responder` or the office's own `delivery_failed` notice. A third party's
+/// reply to the asker and the responder's reply to someone else don't count; an unknown ask
+/// is `None`.
+pub fn store_find_reply_for_ask(backend: impl OpenBackend) {
+    let store = open_store(&backend);
+    let reply = |n: u32, from: &str, to: &str, ask: u32| {
+        let mut reply = new_message(n, from, to, MessagePriority::Normal);
+        let header = &mut reply.message.header;
+        header.reply_to = Some(msg_id(ask));
+        header.thread_id = msg_id(ask);
+        reply
+    };
+    let found = |ask: u32, responder: &str| {
+        store
+            .find_reply_for_ask(&msg_id(ask), responder)
+            .expect("find_reply_for_ask")
+            .map(|stored| stored.message.header.id)
+    };
+    // Pat asks Ada.
+    commit(&store, expired_request(1, PAT_ID, ADA_ID));
+    assert_eq!(found(1, ADA_ID), None, "no reply yet");
+    // Remy answers Pat, and Ada answers Remy: neither tells Pat what Ada did.
+    commit(&store, reply(2, REMY_ID, PAT_ID, 1));
+    commit(&store, reply(3, ADA_ID, REMY_ID, 1));
+    assert_eq!(
+        found(1, ADA_ID),
+        None,
+        "a third party's reply, or one to another member"
+    );
+    // Ada answers Pat, twice: the earliest is the answer.
+    commit(&store, reply(4, ADA_ID, PAT_ID, 1));
+    commit(&store, reply(5, ADA_ID, PAT_ID, 1));
+    assert_eq!(found(1, ADA_ID), Some(msg_id(4)));
+    // Asked about another responder, Remy's reply to Pat is the answer.
+    assert_eq!(found(1, REMY_ID), Some(msg_id(2)));
+
+    // Pat asks Ada again; the office tells Pat the ask expired.
+    commit(&store, expired_request(6, PAT_ID, ADA_ID));
+    let mut notice = reply(7, OFFICE_SENDER, PAT_ID, 6);
+    let header = &mut notice.message.header;
+    header.kind = KIND_DELIVERY_FAILED.into();
+    header.priority = MessagePriority::High;
+    header.urgent = is_urgent(KIND_DELIVERY_FAILED, MessagePriority::High);
+    commit(&store, notice);
+    assert_eq!(found(6, ADA_ID), Some(msg_id(7)), "the office's notice");
+
+    // An ask that doesn't exist, even with a reply naming it.
+    commit(&store, reply(8, ADA_ID, PAT_ID, 99));
+    assert_eq!(found(99, ADA_ID), None, "an unknown ask");
+}
+
 /// A message committed Read (an ask reply claimed before commit) is never unread.
 pub fn store_initial_read_is_never_unread(backend: impl OpenBackend) {
     let store = open_store(&backend);
@@ -1869,6 +1921,7 @@ macro_rules! mailbox_conformance_tests {
             store_commit_allocates_sequence_and_origin,
             store_commit_replay_and_conflict,
             store_commit_refuses_a_second_delivery_failed,
+            store_find_reply_for_ask,
             store_initial_read_is_never_unread,
             store_peek_is_read_only_and_oldest_first,
             store_peek_reports_expired_without_deleting,
