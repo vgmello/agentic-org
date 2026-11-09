@@ -1,0 +1,161 @@
+<script lang="ts">
+	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
+	import CloudOff from '@lucide/svelte/icons/cloud-off';
+	import FileText from '@lucide/svelte/icons/file-text';
+	import Lock from '@lucide/svelte/icons/lock';
+	import PowerOff from '@lucide/svelte/icons/power-off';
+	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
+	import ProcessBadges, { KIND_ICON, KIND_WORD } from '$lib/components/ProcessBadges.svelte';
+	import ProcessSheet from '$lib/components/ProcessSheet.svelte';
+	import { Badge } from '$lib/components/ui/badge';
+	import { parsePlace, placeKey, viewOf, type Place } from '$lib/processes/view';
+	import { sampleWorld, type ProcessWorld } from '$lib/processes/world';
+	import type { Entry, TurnedOff } from '$lib/processes/types';
+
+	// Until HQ serves processes this screen reads the sample organization's files (Sample data). `?handbook=down` shows the
+	// unreachable-handbook state, `?processes=empty` the empty one.
+	let world = $state<ProcessWorld | undefined>();
+	onMount(() => {
+		const timer = setTimeout(() => (world = sampleWorld()), 250);
+		return () => clearTimeout(timer);
+	});
+	const handbookDown = $derived(page.url.searchParams.get('handbook') === 'down');
+	const empty = $derived(page.url.searchParams.get('processes') === 'empty');
+
+	const place = $derived<Place>(parsePlace(page.url.searchParams.get('place')));
+	const view = $derived(world ? viewOf(empty ? { ...world, docs: [] } : world, place) : undefined);
+	function choose(value: string) {
+		const next = new URL(page.url);
+		if (value === 'organization') next.searchParams.delete('place');
+		else next.searchParams.set('place', value);
+		void goto(next, { replaceState: true, keepFocus: true, noScroll: true });
+	}
+
+	const hhmm = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+	let sheetOpen = $state(false);
+	let shownEntry = $state<Entry | undefined>();
+	let shownOff = $state<TurnedOff | undefined>();
+	function openEntry(entry: Entry) {
+		shownEntry = entry;
+		shownOff = undefined;
+		sheetOpen = true;
+	}
+	function openOff(off: TurnedOff) {
+		shownEntry = undefined;
+		shownOff = off;
+		sheetOpen = true;
+	}
+
+	const SOURCE_WORD = { organization: 'Organization', team: 'Team', project: 'Project', agent: 'Agent' } as const;
+	/** "Organization v3 · override of Organization v1" in words for a row. */
+	const SKELETON = [0, 1, 2, 3];
+</script>
+
+<svelte:head><title>Processes · Agentic Org</title></svelte:head>
+
+<div class="space-y-5 px-8 py-6">
+	<div class="flex flex-wrap items-start justify-between gap-3">
+		<div class="space-y-1">
+			<h2 class="text-base/7 font-semibold text-white">{view?.title ?? 'Processes'}</h2>
+			<p class="max-w-2xl text-sm/6 text-gray-400">{view?.subtitle ?? 'How agents work, written down and inherited.'}</p>
+			<p class="flex items-center gap-x-2 text-xs/5 text-gray-400" data-testid="sample-data-note"><Badge variant="secondary">Sample data</Badge> An invented organization's processes, not yours.</p>
+		</div>
+		{#if world}
+			<label class="flex items-center gap-x-2 text-sm/6 text-gray-300">
+				Show
+				<select aria-label="Show processes for" value={placeKey(place)} onchange={(e) => choose(e.currentTarget.value)} class="rounded-md bg-gray-800 px-2 py-1.5 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
+					<option value="organization">Organization</option>
+					<optgroup label="Team">{#each world.teams as t (t.id)}<option value={`team:${t.id}`}>{t.name}</option>{/each}</optgroup>
+					<optgroup label="Project">{#each world.projects as p (p.key)}<option value={`project:${p.key}`}>{p.name}</option>{/each}</optgroup>
+					<optgroup label="Agent">{#each world.agents as a (a.id)}<option value={`agent:${a.id}`}>{a.name}</option>{/each}</optgroup>
+				</select>
+			</label>
+		{/if}
+	</div>
+
+	{#if handbookDown && world}
+		<p class="flex items-center gap-x-2 rounded-lg bg-amber-400/10 px-3 py-2 text-sm/6 text-amber-200 outline-1 -outline-offset-1 outline-amber-400/20" role="status" data-testid="handbook-down">
+			<CloudOff class="size-4 shrink-0" aria-hidden="true" /> Can't reach the handbook. Showing the last copy from {hhmm(world.handbookCopyAt)}.
+		</p>
+	{/if}
+
+	{#if !view}
+		<ul class="space-y-2" aria-label="Loading processes" data-testid="processes-loading">
+			{#each SKELETON as i (i)}<li class="h-14 animate-pulse rounded-lg bg-white/5"></li>{/each}
+		</ul>
+	{:else}
+		{#if view.rule}
+			<p class="text-sm/6 text-gray-300" data-testid="branch-rule">One open branch per agent: <span class="font-medium text-white">{view.rule.text}</span></p>
+		{/if}
+
+		{#each view.set.conflicts as c (c.key)}
+			<p class="flex items-start gap-x-2 rounded-lg bg-amber-400/10 px-3 py-2 text-sm/6 text-amber-200 outline-1 -outline-offset-1 outline-amber-400/20" data-testid="conflict">
+				<TriangleAlert class="mt-1 size-4 shrink-0" aria-hidden="true" />
+				<span><span class="font-mono">{c.key}</span>: {c.teams.join(' and ')} disagree. {c.applies}.</span>
+			</p>
+		{/each}
+
+		{#if view.set.entries.length === 0 && view.set.turnedOff.length === 0 && view.set.problems.length === 0}
+			<div class="flex flex-col items-center px-8 py-16 text-center" data-testid="no-processes">
+				<span class="flex size-12 items-center justify-center rounded-full bg-white/5 text-gray-300"><FileText class="size-6" aria-hidden="true" /></span>
+				<h3 class="mt-4 text-base/7 font-semibold text-white">No processes yet</h3>
+				<p class="mt-1 max-w-sm text-sm/6 text-gray-400">Write down how your agents work. Start with how changes get reviewed and merged.</p>
+			</div>
+		{:else}
+			<ul class="divide-y divide-white/5 rounded-lg bg-white/5 outline-1 -outline-offset-1 outline-white/10" aria-label="Processes" data-testid="process-list">
+				{#each view.set.entries as entry (entry.key + entry.doc.id)}
+					{@const KindIcon = entry.kind === 'inherited' ? undefined : KIND_ICON[entry.kind]}
+					<li data-testid="process-row" data-key={entry.key}>
+						<button type="button" class="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-indigo-400" onclick={() => openEntry(entry)}>
+							<span class="min-w-0 flex-1">
+								<span class="block font-semibold text-white [overflow-wrap:anywhere]">{entry.doc.name}</span>
+								<span class="block text-xs/5 text-gray-400">{entry.doc.summary}</span>
+							</span>
+							<span class="flex flex-wrap items-center gap-2">
+								<ProcessBadges level={entry.source} version={entry.doc.version} label={entry.source === 'organization' || entry.source === 'agent' ? undefined : `${SOURCE_WORD[entry.source]} ${entry.scopeName ?? ''}`.trim()} />
+								{#if KindIcon}<span class="inline-flex items-center gap-x-1 text-xs/5 text-gray-300" data-testid="kind"><KindIcon class="size-3.5" aria-hidden="true" /> {KIND_WORD[entry.kind]}{entry.kind === 'override' && entry.doc.overrides ? ` of ${entry.doc.overrides.key}@${entry.doc.overrides.version}` : ''}{entry.kind === 'addition' ? ' (added here)' : ''}</span>{/if}
+								{#if entry.sealed}<span class="inline-flex items-center gap-x-1 text-xs/5 text-amber-200" data-testid="sealed"><Lock class="size-3.5" aria-hidden="true" /> {entry.sealedNote ?? 'Sealed'}</span>{/if}
+								{#if entry.drift}<span class="inline-flex items-center gap-x-1 text-xs/5 text-amber-200" data-testid="drift" aria-label={`Parent changed: ${entry.drift.parentName} is now v${entry.drift.parentVersion}`}><TriangleAlert class="size-3.5" aria-hidden="true" /> Parent changed: {entry.drift.parentName} is now v{entry.drift.parentVersion}</span>{/if}
+								{#if view.agent}
+									{@const read = view.agent.reads[entry.key]}
+									<span class="text-xs/5 text-gray-400" data-testid="read">{read ? `Read v${read.version} at ${hhmm(read.at)}${read.docId !== entry.doc.id || read.version !== entry.doc.version ? ` · now v${entry.doc.version}` : ''}` : 'Not read yet'}</span>
+								{/if}
+								{#if entry.driftUnknown}<span class="text-xs/5 text-gray-400" data-testid="drift-unknown">Parent changes unknown</span>{/if}
+							</span>
+						</button>
+					</li>
+				{/each}
+				{#each view.set.turnedOff as off (off.key + off.doc.id)}
+					<li data-testid="turned-off-row" data-key={off.key}>
+						<button type="button" class="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-indigo-400" onclick={() => openOff(off)}>
+							<span class="min-w-0 flex-1 font-semibold text-gray-300 [overflow-wrap:anywhere]">{off.name}</span>
+							<span class="inline-flex items-center gap-x-1 text-xs/5 text-gray-300"><PowerOff class="size-3.5" aria-hidden="true" /> Turned off{off.scopeName ? ` for ${off.scopeName}` : ''}: {off.reason}</span>
+						</button>
+					</li>
+				{/each}
+			</ul>
+
+			{#if view.set.problems.length > 0}
+				<section aria-labelledby="problems-title" class="space-y-2">
+					<h3 id="problems-title" class="text-sm/6 font-semibold text-white">Needs attention</h3>
+					<ul class="space-y-2">
+						{#each view.set.problems as p (p.doc.id + p.kind)}
+							<li class="flex items-start gap-x-2 rounded-lg bg-red-500/10 px-3 py-2 text-sm/6 text-red-200 outline-1 -outline-offset-1 outline-red-400/20" data-testid="problem" data-kind={p.kind}>
+								<TriangleAlert class="mt-1 size-4 shrink-0" aria-hidden="true" />
+								<span class="[overflow-wrap:anywhere]"><span class="font-medium">{p.doc.name}</span>: {p.text}</span>
+							</li>
+						{/each}
+					</ul>
+				</section>
+			{/if}
+		{/if}
+
+		{#if view.agent && !view.noCurrentWork}
+			<p class="text-xs/5 text-gray-400">Reads are recorded when the agent starts a task or wakes.</p>
+		{/if}
+	{/if}
+</div>
+
+<ProcessSheet bind:open={sheetOpen} entry={shownEntry} off={shownOff} />
