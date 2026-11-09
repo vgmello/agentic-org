@@ -22,10 +22,17 @@ pub(crate) fn encode_ulid(time_ms: u64, random: [u8; 10]) -> String {
         .collect()
 }
 
-/// The id of the `delivery_failed` notice for `original`: its time part is the original's
-/// deadline (`expires_at`; else the original id's own time), its random part the first 10
-/// bytes of `sha256("delivery_failed:" + original id)`. One original, one notice id.
-pub(crate) fn delivery_failed_id(original: &MessageHeader) -> String {
+/// The id of the `delivery_failed` notice for `original` at the office of `incarnation`:
+/// its time part is the original's deadline (`expires_at`; else the original id's own
+/// time), its random part the first 10 bytes of
+/// `sha256("delivery_failed:" + incarnation + ":" + original id)`. One original, one notice
+/// id per office incarnation.
+///
+/// The incarnation is never sent to clients, so a member can't compute the id and send its
+/// own message under it first (which would make the office think the asker was told).
+/// Callers still check that the row at the id is the notice (the Mailbox's
+/// `is_notice_for`), since an id that leaks or is guessed must not count as told.
+pub(crate) fn delivery_failed_id(original: &MessageHeader, incarnation: &str) -> String {
     let time_ms = original
         .expires_at
         .as_deref()
@@ -34,6 +41,8 @@ pub(crate) fn delivery_failed_id(original: &MessageHeader) -> String {
         .unwrap_or(0);
     let digest = Sha256::new()
         .chain_update(b"delivery_failed:")
+        .chain_update(incarnation.as_bytes())
+        .chain_update(b":")
         .chain_update(original.id.as_bytes())
         .finalize();
     let mut random = [0; 10];
@@ -75,24 +84,52 @@ mod tests {
         }
     }
 
+    const INCARNATION: &str = "01JCINCARNATION00000000000";
+
     #[test]
     fn delivery_failed_id_is_deterministic_and_timed_at_the_deadline() {
         let deadline = "2026-11-08T12:02:00.000Z";
         let original = request("01JCMSG0000000000000000001", Some(deadline));
-        let id = delivery_failed_id(&original);
-        assert_eq!(id, delivery_failed_id(&original.clone()));
+        let id = delivery_failed_id(&original, INCARNATION);
+        assert_eq!(id, delivery_failed_id(&original.clone(), INCARNATION));
         assert_eq!(ulid_time_ms(&id), parse_utc(deadline));
-        let digest = Sha256::digest(b"delivery_failed:01JCMSG0000000000000000001");
+        let digest = Sha256::digest(
+            b"delivery_failed:01JCINCARNATION00000000000:01JCMSG0000000000000000001",
+        );
         let mut random = [0; 10];
         random.copy_from_slice(&digest[..10]);
         assert_eq!(id, encode_ulid(parse_utc(deadline).unwrap(), random));
         let other = request("01JCMSG0000000000000000002", Some(deadline));
-        assert_ne!(delivery_failed_id(&other), id);
+        assert_ne!(delivery_failed_id(&other, INCARNATION), id);
         // No deadline: the original id's own time.
         let undated = request("01ARZ3NDEKTSV4RRFFQ69G5FAV", None);
         assert_eq!(
-            ulid_time_ms(&delivery_failed_id(&undated)),
+            ulid_time_ms(&delivery_failed_id(&undated, INCARNATION)),
             Some(1_469_922_850_259)
+        );
+    }
+
+    /// Without the office's incarnation the id can't be computed from the original alone:
+    /// another incarnation, or none, gives another id.
+    #[test]
+    fn delivery_failed_id_is_keyed_by_the_office_incarnation() {
+        let original = request(
+            "01JCMSG0000000000000000001",
+            Some("2026-11-08T12:02:00.000Z"),
+        );
+        let id = delivery_failed_id(&original, INCARNATION);
+        assert_ne!(
+            delivery_failed_id(&original, "01JCINCARNATION00000000001"),
+            id
+        );
+        assert_ne!(delivery_failed_id(&original, ""), id);
+        let digest = Sha256::digest(b"delivery_failed:01JCMSG0000000000000000001");
+        let mut unkeyed = [0; 10];
+        unkeyed.copy_from_slice(&digest[..10]);
+        assert_ne!(
+            encode_ulid(ulid_time_ms(&id).unwrap(), unkeyed),
+            id,
+            "the unkeyed id of earlier builds"
         );
     }
 

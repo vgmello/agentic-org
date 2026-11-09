@@ -315,12 +315,18 @@ impl Mailbox {
                             // Already expired: make sure the asker was told. A notice an
                             // earlier expiry failed to commit is committed now (found by its
                             // deterministic id on the read path first, so the writer is used
-                            // only when it's missing).
+                            // only when it's missing). Only the notice itself counts: any
+                            // other row under its id means the asker wasn't told.
                             MessageLifecycleState::Expired
-                                if self
+                                if !self
                                     .store
-                                    .get_message(&delivery_failed_id(header))?
-                                    .is_none() =>
+                                    .get_message(&delivery_failed_id(
+                                        header,
+                                        &self.office.incarnation,
+                                    ))?
+                                    .is_some_and(|row| {
+                                        is_notice_for(&row.message.header, header)
+                                    }) =>
                             {
                                 self.notify_expired(header, &now)?
                             }
@@ -692,7 +698,9 @@ impl Mailbox {
     /// Commits the `delivery_failed` notice for an expired request to its sender, when the
     /// sender is a member who may still receive. Its id and content are deterministic, so a
     /// second expiry of the same request replays the first commit (`inserted: false`) and
-    /// publishes nothing. It commits at this office, as slice 1's local/HQ messaging does:
+    /// publishes nothing. A row already at the id that isn't this request's notice
+    /// ([`is_notice_for`]) is a `StorageError`: the sender wasn't told, so it never passes
+    /// for success. It commits at this office, as slice 1's local/HQ messaging does:
     /// routing a notice to a sender another office owns comes with cross-office routing.
     fn notify_expired(&self, original: &MessageHeader, now: &str) -> Result<(), MailboxError> {
         if original.from_member_id == OFFICE_SENDER || original.kind == KIND_DELIVERY_FAILED {
@@ -705,7 +713,7 @@ impl Mailbox {
         if sender.id != original.from_member_id || !can_message(&sender) {
             return Ok(());
         }
-        let id = delivery_failed_id(original);
+        let id = delivery_failed_id(original, &self.office.incarnation);
         let body = format!(
             "Your request to {} expired before they acted on it.",
             original.to_display_name
@@ -731,7 +739,7 @@ impl Mailbox {
             &meta,
         )?;
         let header = MessageHeader {
-            id,
+            id: id.clone(),
             thread_id: original.thread_id.clone(),
             reply_to: Some(original.id.clone()),
             from_member_id: OFFICE_SENDER.into(),
@@ -766,10 +774,19 @@ impl Mailbox {
             initial_state: MessageLifecycleState::Unread,
         }) {
             Ok(outcome) => outcome,
-            // Another notice already holds the id: the sender was told.
-            Err(StoreError::AlreadyExists) => return Ok(()),
+            // The id is taken by a row with other content: the sender was told only if that
+            // row is this request's notice (an earlier one, e.g. under an old display name).
+            Err(StoreError::AlreadyExists) => {
+                return match self.store.get_message(&id)? {
+                    Some(row) if is_notice_for(&row.message.header, original) => Ok(()),
+                    _ => Err(MailboxError::StorageError),
+                };
+            }
             Err(error) => return Err(error.into()),
         };
+        if !is_notice_for(&outcome.message.message.header, original) {
+            return Err(MailboxError::StorageError);
+        }
         if outcome.inserted {
             let header = &outcome.message.message.header;
             self.waiters.notify(&header.to_member_id);
@@ -847,6 +864,16 @@ impl Mailbox {
             .map(|(member, _)| Some(member.id))
             .ok_or(MailboxError::NotFound)
     }
+}
+
+/// Whether `row` is the office's `delivery_failed` notice for `original`: from the office,
+/// of that kind, replying to `original` and addressed to its sender. Whatever else sits
+/// under the notice's id (a member's message sent there first) doesn't tell the sender.
+fn is_notice_for(row: &MessageHeader, original: &MessageHeader) -> bool {
+    row.from_member_id == OFFICE_SENDER
+        && row.kind == KIND_DELIVERY_FAILED
+        && row.reply_to.as_deref() == Some(original.id.as_str())
+        && row.to_member_id == original.from_member_id
 }
 
 /// Whether a failed `delivery_failed` notice fails the call that expired the request.
@@ -1050,5 +1077,62 @@ mod tests {
         assert_eq!(stored.snoozed_until.as_deref(), Some(deadline.as_str()));
         let timers = lock(&mailbox.snoozes);
         assert_eq!(timers.next_for(ADA_ID), Some(epoch_ms(NOW_MS + 2_000)));
+    }
+
+    /// Expiring a request twice commits one notice: the second commit is a replay
+    /// (`inserted: false`), and one with other content (the recipient renamed since) finds
+    /// the first notice under the id. Both count as told.
+    #[test]
+    fn expiring_twice_commits_exactly_one_notice() {
+        use crate::testkit::conformance::{commit, expired_request};
+
+        let store = Arc::new(InMemoryStore::new());
+        let events = Arc::new(crate::testkit::fixture::RecordingEvents::default());
+        let mailbox = Mailbox::with_triage(
+            store.clone(),
+            store.clone(),
+            Arc::new(InMemoryDirectory::new(members(), POSITION)),
+            identity(),
+            Arc::new(ManualClock::new(NOW_MS)),
+            events.clone(),
+        )
+        .unwrap();
+        let mut ask = expired_request(1, PAT_ID, ADA_ID);
+        ask.message.header.to_display_name = ADA_NAME.into();
+        commit(&*store, ask);
+        let request = store
+            .get_message(&msg_id(1))
+            .unwrap()
+            .unwrap()
+            .message
+            .header;
+
+        assert_eq!(mailbox.notify_expired(&request, NOW_UTC), Ok(()));
+        assert_eq!(mailbox.notify_expired(&request, NOW_UTC), Ok(()));
+        let renamed = MessageHeader {
+            to_display_name: "Ada L.".into(),
+            ..request.clone()
+        };
+        assert_eq!(mailbox.notify_expired(&renamed, NOW_UTC), Ok(()));
+
+        let notices: Vec<_> = store
+            .list_headers(HeaderQuery {
+                scope: HeaderScope::Inbox(PAT_ID.into()),
+                from_member_id: None,
+                thread_id: None,
+                unread_only: false,
+                include_snoozed: true,
+                cursor: None,
+                limit: 100,
+            })
+            .unwrap()
+            .headers
+            .into_iter()
+            .filter(|header| header.kind == KIND_DELIVERY_FAILED)
+            .collect();
+        assert_eq!(notices.len(), 1);
+        assert_eq!(notices[0].id, delivery_failed_id(&request, INCARNATION));
+        assert!(is_notice_for(&notices[0], &request));
+        assert_eq!(events.delivery_failed().len(), 1);
     }
 }
