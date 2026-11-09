@@ -64,7 +64,12 @@ fn open_store(backend: &impl OpenBackend) -> impl MessageStore + Send + Sync {
 }
 
 /// A local message from `from` to `to`, as the Mailbox would commit it.
-fn new_message(n: u32, from: &str, to: &str, priority: MessagePriority) -> NewStoredMessage {
+pub(crate) fn new_message(
+    n: u32,
+    from: &str,
+    to: &str,
+    priority: MessagePriority,
+) -> NewStoredMessage {
     let id = msg_id(n);
     let body = format!("body {n}");
     let meta = Meta::new();
@@ -110,7 +115,7 @@ fn new_message(n: u32, from: &str, to: &str, priority: MessagePriority) -> NewSt
 }
 
 /// An expired request to `to`, its deadline an hour before [`NOW_UTC`].
-fn expired_request(n: u32, from: &str, to: &str) -> NewStoredMessage {
+pub(crate) fn expired_request(n: u32, from: &str, to: &str) -> NewStoredMessage {
     let mut request = new_message(n, from, to, MessagePriority::Urgent);
     let header = &mut request.message.header;
     header.kind = KIND_REQUEST.into();
@@ -120,11 +125,11 @@ fn expired_request(n: u32, from: &str, to: &str) -> NewStoredMessage {
     request
 }
 
-fn commit(store: &impl MessageStore, msg: NewStoredMessage) -> CommitMessageOutcome {
+pub(crate) fn commit(store: &impl MessageStore, msg: NewStoredMessage) -> CommitMessageOutcome {
     store.commit_message(msg).expect("commit_message")
 }
 
-fn inbox_query(member: &str, unread_only: bool, limit: u32) -> HeaderQuery {
+pub(crate) fn inbox_query(member: &str, unread_only: bool, limit: u32) -> HeaderQuery {
     HeaderQuery {
         scope: HeaderScope::Inbox(member.into()),
         from_member_id: None,
@@ -136,14 +141,14 @@ fn inbox_query(member: &str, unread_only: bool, limit: u32) -> HeaderQuery {
     }
 }
 
-fn ids(page: &HeaderPage) -> Vec<String> {
+pub(crate) fn ids(page: &HeaderPage) -> Vec<String> {
     page.headers
         .iter()
         .map(|header| header.id.clone())
         .collect()
 }
 
-fn state_of(store: &impl MessageStore, id: &str) -> State {
+pub(crate) fn state_of(store: &impl MessageStore, id: &str) -> State {
     store
         .get_message(id)
         .expect("get_message")
@@ -153,7 +158,7 @@ fn state_of(store: &impl MessageStore, id: &str) -> State {
         .state
 }
 
-fn peek(store: &impl MessageStore, member: &str) -> PeekUnreadOutcome {
+pub(crate) fn peek(store: &impl MessageStore, member: &str) -> PeekUnreadOutcome {
     store
         .peek_next_unread(member, None, false, NOW_UTC)
         .expect("peek_next_unread")

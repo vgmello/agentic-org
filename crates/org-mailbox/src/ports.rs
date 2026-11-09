@@ -89,10 +89,45 @@ pub trait MessageStore {
     ) -> Result<Option<StoredMessage>, StoreError>;
 }
 
-/// Triage: local state transitions, snooze release and the snooze timer seed.
+/// Triage: local state transitions, snooze release and the snooze timer seed. Every call is
+/// one atomic step; an `Ok` from a call that changes state gives the same guarantee as
+/// [`MessageStore::commit_message`] (durable and visible to every connection), because the
+/// Mailbox wakes waiters right after it. The conformance cases are the testkit's
+/// `triage_conformance_tests!`.
 pub trait TriageStore {
+    /// Change one message's lifecycle state at its owning office; returns its header after the
+    /// change. `StoreError::NotFound` when `change.id` doesn't exist or isn't addressed to
+    /// `change.to_member_id`. The allowed transitions, by target `change.state`:
+    ///
+    /// - `Snoozed`, from `unread`, `read` or `snoozed`: back into the unread index, with
+    ///   exactly one of `snoozed_until` and `snooze_after_task` set (both or neither is
+    ///   `InvalidTransition`); `snooze_note = reason`, `triage_gen += 1`, and the message
+    ///   counts as triaged from now on (`triaged_at = now_utc`). Re-snoozing always applies,
+    ///   bumping `triage_gen` again.
+    /// - `Done`, from `unread`, `read` or `snoozed`: leaves the unread index (its snooze
+    ///   cleared); `reason` is the done note.
+    /// - `Read`, from `unread` or `snoozed`: leaves the unread index (its snooze cleared);
+    ///   `read_at = now_utc`.
+    /// - `Unread`, from `read`: back into the unread index, `read_at` cleared. Also from
+    ///   `unread`, to set `expired_waiting_person` (a set flag is kept: `false` never clears
+    ///   it). The flag is read only with this target.
+    /// - `Expired`, from `unread` or `snoozed`: leaves the unread index (its snooze cleared).
+    ///
+    /// The same `Read`, `Done` or `Expired` again is idempotent: the header comes back
+    /// unchanged. Any other pair is
+    /// `StoreError::InvalidTransition`: nothing leaves `done`, `expired` or `dead_letter`, and
+    /// `DeadLetter` and `Unknown` are never targets here (dead-lettering is a later slice).
     fn update_state_local(&self, change: LocalStateTransition)
         -> Result<MessageHeader, StoreError>;
+    /// In one atomic step, for `to_member_id`: release every time snooze with
+    /// `snoozed_until <= now_utc` (to `unread`, `triage_gen += 1`, reason `Due`) and, with
+    /// `after_task`, every after-task snooze too (reason `AfterTask`); and select every open
+    /// (unread, unsnoozed) message, reason `New` when `after_task` is set or the message is
+    /// urgent, `Sweep` when it was never triaged (never snoozed) and its `created_at` is
+    /// before `sweep_before_utc`, and otherwise not returned. `urgent_only` filters only the
+    /// returned list to urgent messages: due snoozes are released whatever it says. Each
+    /// candidate carries its header after the release. No limit and no ordering guarantee.
+    /// Expiry is not its job: an overdue request comes back as it is.
     fn check_notify(
         &self,
         to_member_id: &str,
@@ -101,6 +136,8 @@ pub trait TriageStore {
         sweep_before_utc: &str,
         now_utc: &str,
     ) -> Result<Vec<NotifyCandidate>, StoreError>;
+    /// Every time-based snooze in the unread index, to seed the Mailbox's snooze timers.
+    /// After-task snoozes aren't timers and aren't listed.
     fn list_active_snooze_deadlines(&self) -> Result<Vec<SnoozeDeadline>, StoreError>;
 }
 
