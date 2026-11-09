@@ -185,7 +185,8 @@ impl Call for OrganizationList {
 /// They are hints with no replay: take `msg.inbox` and `who` for the state, and the
 /// events for the changes. If a subscriber falls too far behind, the office ends its
 /// subscription by closing the connection, which looks like any other dropped connection (no
-/// reason is sent). So after every reconnect a client re-lists what it shows (an app-bound one
+/// reason is sent). So after ANY end of a subscription (it fell behind, a re-bind, a dropped
+/// connection) a client re-lists what it shows (an app-bound one
 /// with `msg.list`, `msg.threads` and `msg.human_needs_you`, and `who`; `msg.inbox` is for a
 /// member binding), takes `org.snapshot` only when a resume answers `snapshot_required`, and
 /// subscribes again. A presence event still waiting out its gap when a subscription ends is
