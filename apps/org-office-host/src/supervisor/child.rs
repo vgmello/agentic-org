@@ -1,5 +1,6 @@
-//! One `org-office-server` process: spawning it with its pipes, reading its control lines,
-//! copying its stderr to the office's log, and stopping it.
+//! One `org-office-server` process: spawning it with its pipes, handing it its secrets on its key
+//! socket (`handoff`), reading its control lines, copying its stderr to the office's log, and
+//! stopping it.
 
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
@@ -11,13 +12,14 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use org_office_launch::{
-    read_server_event, write_host_line, CreateOffice, HostLine, ServerEvent, CREATE_FLAG,
-    DISCARD_FLAG, OFFICE_FLAG,
+    read_server_event, write_host_message, CreateOffice, DiscardOffice, HostMessage, KeySocketId,
+    ServerEvent, StartOffice, CREATE_FLAG, DISCARD_FLAG, OFFICE_FLAG,
 };
 use org_proto::location::OFFICE_HOME_ENV;
-use org_proto::{AppToken, DbKey, APP_TOKEN_BYTES, DB_KEY_BYTES};
+use org_proto::{AppToken, DbKey, OfficeRole, APP_TOKEN_BYTES, DB_KEY_BYTES};
 
 use crate::cloexec::SPAWN_LOCK;
+use crate::handoff::{HandOff, KeySocket, Secrets};
 use crate::host_log;
 use crate::logs::RotatingLog;
 use crate::server_check::ServerCheck;
@@ -50,7 +52,7 @@ pub(crate) enum Signal {
 
 /// The environment a server gets, besides `ORG_OFFICE_HOME`: only these of the host's own, so
 /// nothing else in the login session reaches it (the development key folder included: servers
-/// never touch a key store, they get their key on the first line). SQLCipher needs only the
+/// never touch a key store, they get their key on the key hand-off). SQLCipher needs only the
 /// user's identity and home; `TMPDIR` is the user's temporary folder.
 const PASSED_ENV: [&str; 6] = ["HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LANG"];
 
@@ -59,8 +61,11 @@ const PASSED_ENV: [&str; 6] = ["HOME", "USER", "LOGNAME", "PATH", "TMPDIR", "LAN
 pub(crate) struct Spawner {
     pub(crate) program: PathBuf,
     pub(crate) home: PathBuf,
-    /// Who may get a first line: every child is checked before it's written (`server_check`).
+    /// Who may get a first line and a key: every child is checked before it's resumed and its
+    /// line written, and the connection its key goes on at accept (`server_check`).
     pub(crate) check: Arc<ServerCheck>,
+    /// How long a server has, from its first line, to take its secrets (`handoff`).
+    pub(crate) hand_off_timeout: Duration,
 }
 
 /// Why a server wasn't started.
@@ -71,6 +76,10 @@ pub(crate) enum SpawnError {
     /// It was spawned, but isn't the signed office server (or no server may be started): it
     /// was killed and reaped, and got nothing (`server_check`).
     Untrusted(String),
+    /// It passed the check, but its key hand-off didn't happen (no connection in time, a peer
+    /// that isn't the admitted server, or an error): it was killed and reaped, and got nothing
+    /// (`handoff`).
+    HandOff(String),
 }
 
 impl std::fmt::Display for SpawnError {
@@ -78,6 +87,7 @@ impl std::fmt::Display for SpawnError {
         match self {
             SpawnError::Io(e) => write!(f, "{e}"),
             SpawnError::Untrusted(why) => write!(f, "refused to start it: {why}"),
+            SpawnError::HandOff(why) => write!(f, "its key hand-off failed: {why}"),
         }
     }
 }
@@ -92,43 +102,102 @@ impl From<SpawnError> for io::Error {
     fn from(e: SpawnError) -> Self {
         match e {
             SpawnError::Io(e) => e,
-            SpawnError::Untrusted(_) => io::Error::other(e.to_string()),
+            SpawnError::Untrusted(_) | SpawnError::HandOff(_) => io::Error::other(e.to_string()),
         }
     }
 }
 
-/// Which server to start, with what its first line carries. Every first line is written with
-/// `write_host_line`, which borrows the secrets (never copies them) and zeroes its encoded line.
+/// Which server to start, with what its first line and its hand-off carry. The first line holds
+/// no secret: the spawn's key socket id and, for a create, the new office's details. The secrets
+/// go only on the hand-off (`handoff`), which borrows them (never copies them) and zeroes its
+/// encoded line.
 #[derive(Clone, Copy)]
 pub(crate) enum Mode<'a> {
-    /// Create an office: its first line is this create message (the new office's app token and
-    /// database key).
-    Create(&'a CreateLine),
-    /// Serve the office with this id: its first line is a start with the office's app token for
-    /// this host run and its database key from the key store.
+    /// Create an office: its first line is this create's message; its hand-off, the new office's
+    /// app token and database key.
+    Create(&'a CreateRequest),
+    /// Serve the office with this id: its first line is a start; its hand-off, the office's app
+    /// token for this host run and its database key from the key store.
     Office(&'a str, &'a AppToken, &'a DbKey),
-    /// Remove an unfinished office, then exit: its first line is a discard with the office's
-    /// database key, or `null` when the host has none.
-    Discard(&'a str, Option<&'a DbKey>),
+    /// Remove an unfinished office, then exit: its first line is a discard; its hand-off, an app
+    /// token (a discard serves no client, so a throwaway one) and the office's database key, or
+    /// `null` when the host has none.
+    Discard(&'a str, &'a AppToken, Option<&'a DbKey>),
 }
 
-/// The `--create` first line: the new office's create message, holding its app token for this
-/// host run and its database key.
-///
-/// It is kept as the message itself, built once, because the message owns its secrets and
-/// neither [`AppToken`] nor [`DbKey`] is `Clone`: writing it never copies them, and dropping it
-/// zeroes them. It lives on the heap (a `Box`), so moving it moves a pointer, not the secrets.
-/// Building it still leaves the usual stack copies behind (see `AppToken`'s docs).
-pub(crate) struct CreateLine(Box<CreateOffice>);
+impl<'a> Mode<'a> {
+    fn args(&self) -> Vec<&'a OsStr> {
+        match *self {
+            Mode::Create(_) => vec![OsStr::new(CREATE_FLAG)],
+            Mode::Office(id, ..) => vec![OsStr::new(OFFICE_FLAG), OsStr::new(id)],
+            Mode::Discard(id, ..) => vec![OsStr::new(DISCARD_FLAG), OsStr::new(id)],
+        }
+    }
 
-impl CreateLine {
-    pub(crate) fn new(create: CreateOffice) -> Self {
-        Self(Box::new(create))
+    /// The first line, naming the spawn's key socket.
+    fn first_line(&self, key_socket_id: &KeySocketId) -> HostMessage {
+        let key_socket_id = key_socket_id.clone();
+        match self {
+            Mode::Create(create) => HostMessage::Create(create.message(key_socket_id)),
+            Mode::Office(..) => HostMessage::Start(StartOffice { key_socket_id }),
+            Mode::Discard(..) => HostMessage::Discard(DiscardOffice { key_socket_id }),
+        }
+    }
+
+    /// What the hand-off carries, borrowed.
+    fn secrets(&self) -> Secrets<'a> {
+        match *self {
+            Mode::Create(create) => Secrets {
+                app_token: &create.0.app_token,
+                db_key: Some(&create.0.db_key),
+            },
+            Mode::Office(_, app_token, db_key) => Secrets {
+                app_token,
+                db_key: Some(db_key),
+            },
+            Mode::Discard(_, app_token, db_key) => Secrets { app_token, db_key },
+        }
+    }
+}
+
+/// What a new office is: everything its create message carries but the key socket, which is the
+/// spawn's own. None of it is secret.
+#[derive(Debug, Clone)]
+pub(crate) struct NewOffice {
+    pub(crate) org_id: String,
+    pub(crate) org_name: String,
+    pub(crate) office_id: String,
+    pub(crate) office_name: String,
+    pub(crate) role: OfficeRole,
+}
+
+/// A `--create` run's request: the new office, and its app token for this host run and its
+/// database key, which its hand-off carries.
+///
+/// It is built once and owns the secrets, because neither [`AppToken`] nor [`DbKey`] is `Clone`:
+/// handing them off never copies them, and dropping it zeroes them. It lives on the heap (a
+/// `Box`), so moving it moves a pointer, not the secrets. Building it still leaves the usual stack
+/// copies behind (see `AppToken`'s docs).
+pub(crate) struct CreateRequest(Box<CreateParts>);
+
+struct CreateParts {
+    office: NewOffice,
+    app_token: AppToken,
+    db_key: DbKey,
+}
+
+impl CreateRequest {
+    pub(crate) fn new(office: NewOffice, app_token: AppToken, db_key: DbKey) -> Self {
+        Self(Box::new(CreateParts {
+            office,
+            app_token,
+            db_key,
+        }))
     }
 
     /// The id of the office it creates.
     pub(crate) fn office_id(&self) -> &str {
-        &self.0.office_id
+        &self.0.office.office_id
     }
 
     /// The new office's database key, for the key store. Never copy it.
@@ -136,8 +205,21 @@ impl CreateLine {
         &self.0.db_key
     }
 
-    /// Zeroes the database key in place, once the first line is written (or can't be): from then
-    /// on only the key store holds it.
+    /// The create message for the spawn whose key socket is `key_socket_id`.
+    fn message(&self, key_socket_id: KeySocketId) -> CreateOffice {
+        let office = &self.0.office;
+        CreateOffice {
+            org_id: office.org_id.clone(),
+            org_name: office.org_name.clone(),
+            office_id: office.office_id.clone(),
+            office_name: office.office_name.clone(),
+            role: office.role,
+            key_socket_id,
+        }
+    }
+
+    /// Zeroes the database key in place, once the hand-off is done (or can't be): from then on
+    /// only the key store holds it.
     pub(crate) fn drop_key(&mut self) {
         // Replaced in place, leaving zeros; the old key is zeroed as it drops.
         drop(std::mem::replace(
@@ -168,12 +250,17 @@ pub(crate) struct RunningChild {
 
 impl Spawner {
     /// Starts a server. Its control lines go to `signals` tagged with `generation`; its stderr
-    /// goes to `log`. Its first line (per [`Mode`]) is written at once, once it passed the check.
+    /// goes to `log`. Once it passed the check, its first line (per [`Mode`]) is written, and
+    /// its secrets are handed over on its key socket (`handoff`) before this returns.
     ///
     /// It is started suspended (`spawn::spawn_suspended`), so not one instruction of its image
-    /// runs before the check (`server_check`) unless another process resumes it (the residual
-    /// risk in `spawn`'s docs): a child that fails is killed still suspended, having got
-    /// nothing. One that passes is resumed, and its token checked again right before the line.
+    /// runs before the check (`server_check`) unless another process resumes it: a child that
+    /// fails is killed still suspended, having got nothing. One that passes is resumed, and its
+    /// token checked again. Only then is its key socket bound (`handoff`), right before its first
+    /// line, so no connection can predate the admission; it is unlinked before this returns,
+    /// whatever happens. The one connection to it must come from the admitted image, or nothing
+    /// is sent and the child is killed ([`SpawnError::HandOff`]). A child that exits before it
+    /// connects got nothing; it is returned, and its exit reported as usual.
     pub(crate) fn spawn(
         &self,
         mode: Mode<'_>,
@@ -185,11 +272,7 @@ impl Spawner {
             host_log::log(&format!("didn't start an office server: {why}"));
             SpawnError::Untrusted(why)
         })?;
-        let args: Vec<&OsStr> = match mode {
-            Mode::Create(_) => vec![OsStr::new(CREATE_FLAG)],
-            Mode::Office(id, ..) => vec![OsStr::new(OFFICE_FLAG), OsStr::new(id)],
-            Mode::Discard(id, _) => vec![OsStr::new(DISCARD_FLAG), OsStr::new(id)],
-        };
+        let args = mode.args();
         let mut env: Vec<(OsString, OsString)> = PASSED_ENV
             .iter()
             .filter_map(|name| std::env::var_os(name).map(|value| ((*name).into(), value)))
@@ -207,8 +290,12 @@ impl Spawner {
             stderr,
         } = spawned;
         let pid = process.id();
-        // Suspended: check the image, before any of it has run.
-        let admitted = match self.check.admit(pid) {
+        // Suspended: check the image, before any of it has run, and who may take its key.
+        let admitted = self
+            .check
+            .admit(pid)
+            .and_then(|admitted| Ok((admitted, self.check.peer_rule(admitted, pid)?)));
+        let (admitted, rule) = match admitted {
             Ok(admitted) => admitted,
             Err(why) => {
                 process.kill();
@@ -241,30 +328,65 @@ impl Spawner {
             running.kill();
             return Err(SpawnError::Untrusted(why));
         }
-        running.write_first_line(mode);
-        Ok(running)
+        // Only now, with the image admitted and unchanged, does its key socket exist: nothing
+        // could connect to it before (a pre-exec image that was resumed early and kept a
+        // connection would otherwise look like the genuine server once it exec'd it). Unlinked
+        // when dropped, on every path out of here. The server connects only after reading its
+        // first line, so binding first can't deadlock.
+        let key_socket = match KeySocket::bind(&self.home) {
+            Ok(key_socket) => key_socket,
+            Err(e) => {
+                let why = format!("couldn't make its key socket: {e}");
+                host_log::log(&format!(
+                    "office server {pid}: {why}; it was stopped and got nothing"
+                ));
+                running.kill();
+                return Err(SpawnError::HandOff(why));
+            }
+        };
+        let key_socket_id = key_socket.id().clone();
+        running.write_first_line(mode, &key_socket_id);
+        // The server connects once it has read its line.
+        let handed = key_socket.hand_off(
+            &rule,
+            self.hand_off_timeout,
+            || running.has_exited(),
+            mode.secrets(),
+        );
+        match handed {
+            Ok(HandOff::Sent) => Ok(running),
+            Ok(HandOff::Exited) => {
+                host_log::log(&format!(
+                    "office server {pid} exited before its hand-off on key socket \
+                     {key_socket_id} completed; it got nothing"
+                ));
+                Ok(running)
+            }
+            Err(why) => {
+                host_log::log(&format!(
+                    "office server {pid}, key socket {key_socket_id}: {why}; it was stopped and \
+                     got nothing"
+                ));
+                running.kill();
+                Err(SpawnError::HandOff(why))
+            }
+        }
     }
 }
 
 impl RunningChild {
     /// The first line on a new server's control pipe, the one place that writes it: `--create`
-    /// gets the create message, `--office` the start message (the app token and the database
-    /// key), `--discard` the discard message (the database key or `null`). `write_host_line`
-    /// zeroes its encoded copy of the line.
-    fn write_first_line(&mut self, mode: Mode<'_>) {
+    /// gets the create message, `--office` the start message, `--discard` the discard message,
+    /// each naming the spawn's key socket. It holds no secret.
+    fn write_first_line(&mut self, mode: Mode<'_>, key_socket_id: &KeySocketId) {
         let pid = self.process.id();
         let Some(stdin) = self.stdin.as_mut() else {
             return;
         };
-        let line = match mode {
-            Mode::Create(CreateLine(create)) => HostLine::Create(create),
-            Mode::Office(_, app_token, db_key) => HostLine::Start { app_token, db_key },
-            Mode::Discard(_, db_key) => HostLine::Discard { db_key },
-        };
-        let written = write_host_line(stdin, &line);
-        // A child that dies at once makes this fail with a broken pipe; its stdout then closes
-        // and that is reported as a crash, so the error itself adds nothing. The error never
-        // holds a secret: it is an I/O error or a fixed message.
+        let written = write_host_message(stdin, &mode.first_line(key_socket_id));
+        // A child that dies at once makes this fail with a broken pipe; the hand-off then sees
+        // its exit, and its stdout closing is reported as a crash, so the error itself adds
+        // nothing.
         if let Err(e) = written {
             host_log::log(&format!("couldn't write to office server {pid}: {e}"));
         }

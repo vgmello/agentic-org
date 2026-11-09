@@ -1,7 +1,7 @@
-//! Who is at the other end of a connection on `host.sock`, as the kernel reports it: its uid,
-//! and on macOS its audit token, its pid and its executable's path; what the host noted when it
-//! accepted the connection, and where each request was in the stream. `app_auth` decides what
-//! these allow; the listener records them.
+//! Who is at the other end of a connection on `host.sock` (or a key socket, `handoff`), as the
+//! kernel reports it: its uid, and on macOS its audit token, its pid and its executable's path;
+//! what the host noted when it accepted the connection, and where each request was in the stream.
+//! `app_auth` decides what these allow; the listener records them.
 
 #[cfg(debug_assertions)]
 use std::ffi::OsStr;
@@ -126,8 +126,9 @@ pub(crate) fn audit_token(stream: &UnixStream) -> io::Result<[u8; AUDIT_TOKEN_BY
     Ok(token)
 }
 
-/// The peer's pid (for the debug-only fallback; a pid can be reused, an audit token can't).
-#[cfg(all(target_os = "macos", debug_assertions))]
+/// The peer's pid (for the debug-only fallbacks, and the tests' hand-off rule; a pid can be
+/// reused, an audit token can't).
+#[cfg(all(target_os = "macos", any(debug_assertions, test)))]
 pub(crate) fn pid(stream: &UnixStream) -> io::Result<libc::pid_t> {
     let mut pid: libc::pid_t = 0;
     let mut len = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
@@ -159,6 +160,103 @@ pub(crate) fn executable(pid: libc::pid_t) -> io::Result<PathBuf> {
     }
     buf.truncate(n as usize);
     Ok(PathBuf::from(OsStr::from_bytes(&buf)))
+}
+
+/// Tests only: a connection to `path` made by **another process**, then passed to this one with
+/// `SCM_RIGHTS`, the way a helper could hand a connection to the process the host admitted. A
+/// forked child connects, sends the descriptor over a socket pair and exits; this process
+/// receives it without touching the connection itself. Returns it and the child's pid.
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) fn connection_made_elsewhere(
+    path: &std::path::Path,
+) -> io::Result<(std::os::fd::OwnedFd, libc::pid_t)> {
+    use std::os::fd::FromRawFd;
+    use std::os::unix::ffi::OsStrExt;
+
+    let (ours, theirs) = UnixStream::pair()?;
+    // Everything the child uses is made before the fork: after it, the child calls only
+    // async-signal-safe functions (this process has other threads) and allocates nothing.
+    // SAFETY: an all-zero `sockaddr_un` is a valid value.
+    let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    let bytes = path.as_os_str().as_bytes();
+    if bytes.len() >= addr.sun_path.len() {
+        return Err(io::Error::other("path too long"));
+    }
+    for (slot, &b) in addr.sun_path.iter_mut().zip(bytes) {
+        *slot = b as libc::c_char;
+    }
+    addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
+    let addr_len = std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t;
+    addr.sun_len = addr_len as u8;
+    let fd_len = std::mem::size_of::<libc::c_int>() as u32;
+    // SAFETY: CMSG_SPACE only computes a size.
+    let space = unsafe { libc::CMSG_SPACE(fd_len) } as usize;
+    let mut control = vec![0u8; space];
+    let mut byte = [0u8; 1];
+    let mut iov = libc::iovec {
+        iov_base: byte.as_mut_ptr().cast(),
+        iov_len: 1,
+    };
+    // SAFETY: an all-zero `msghdr` is a valid value; its pointers are set below, to memory that
+    // outlives every use.
+    let mut msg: libc::msghdr = unsafe { std::mem::zeroed() };
+    msg.msg_iov = &mut iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = control.as_mut_ptr().cast();
+    msg.msg_controllen = space as libc::socklen_t;
+    let theirs_fd = theirs.as_raw_fd();
+
+    // SAFETY: the child runs only async-signal-safe calls (socket, connect, sendmsg, _exit) on
+    // memory made before the fork, then exits without returning or unwinding.
+    let pid = unsafe { libc::fork() };
+    if pid == 0 {
+        // SAFETY: as above; `msg` points at `iov`, `byte` and `control`, which are this
+        // process's own copies after the fork.
+        unsafe {
+            let s = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
+            if s < 0 || libc::connect(s, (&addr as *const libc::sockaddr_un).cast(), addr_len) != 0
+            {
+                libc::_exit(1);
+            }
+            let cmsg = libc::CMSG_FIRSTHDR(&msg);
+            (*cmsg).cmsg_level = libc::SOL_SOCKET;
+            (*cmsg).cmsg_type = libc::SCM_RIGHTS;
+            (*cmsg).cmsg_len = libc::CMSG_LEN(fd_len) as libc::socklen_t;
+            std::ptr::write_unaligned(libc::CMSG_DATA(cmsg).cast::<libc::c_int>(), s);
+            if libc::sendmsg(theirs_fd, &msg, 0) != 1 {
+                libc::_exit(2);
+            }
+            libc::_exit(0);
+        }
+    }
+    if pid < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut status = 0;
+    // SAFETY: our own child, and a valid out-pointer.
+    if unsafe { libc::waitpid(pid, &mut status, 0) } != pid || status != 0 {
+        return Err(io::Error::other(format!(
+            "the connecting child failed ({status})"
+        )));
+    }
+    drop(theirs);
+    control.fill(0);
+    // SAFETY: `msg` still points at `iov`, `byte` and `control`, all alive; recvmsg writes at
+    // most their sizes.
+    let n = unsafe { libc::recvmsg(ours.as_raw_fd(), &mut msg, 0) };
+    if n != 1 {
+        return Err(io::Error::other("no descriptor arrived"));
+    }
+    // SAFETY: `msg` was filled by recvmsg; the header, if any, lies within `control`.
+    let fd = unsafe {
+        let cmsg = libc::CMSG_FIRSTHDR(&msg);
+        if cmsg.is_null() || (*cmsg).cmsg_type != libc::SCM_RIGHTS {
+            return Err(io::Error::other("no descriptor arrived"));
+        }
+        std::ptr::read_unaligned(libc::CMSG_DATA(cmsg).cast::<libc::c_int>())
+    };
+    // SAFETY: a descriptor SCM_RIGHTS just gave this process, owned by nothing else.
+    Ok((unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) }, pid))
 }
 
 #[cfg(all(test, target_os = "macos"))]

@@ -21,7 +21,7 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use org_office_launch::{office_dir, CreateOffice, FailCode, OfficeFile, OFFICE_FILE_NAME};
+use org_office_launch::{office_dir, FailCode, OfficeFile, OFFICE_FILE_NAME};
 use org_proto::{
     ApiError, AppToken, ErrorCode, OfficeInfo, OfficeStatus, OfficeStatusChanged,
     OfficeStatusChangedData, OfficeStatusReason, Organization, OrganizationCreated,
@@ -35,8 +35,8 @@ use crate::host_log;
 use crate::ids;
 use crate::secrets;
 use crate::supervisor::{
-    CreateOutcome, CreateStartError, DiscardOutcome, OfficeState, RestartOutcome, StatusObserver,
-    Supervisor,
+    CreateOutcome, CreateRequest, CreateStartError, DiscardOutcome, NewOffice, OfficeState,
+    RestartOutcome, StatusObserver, Supervisor,
 };
 use crate::sync::lock;
 use crate::timings::Timings;
@@ -656,18 +656,21 @@ pub(crate) fn discard_unfinished(home: &Path, supervisor: &Supervisor, office_id
     }
 }
 
-/// The create message for `plan`, with a fresh app token (the office's for this host run) and a
+/// The create request for `plan`, with a fresh app token (the office's for this host run) and a
 /// fresh database key (the office's for good, stored before its server starts).
-fn create_message(plan: &CreatePlan) -> io::Result<CreateOffice> {
-    Ok(CreateOffice {
+fn create_message(plan: &CreatePlan) -> io::Result<CreateRequest> {
+    let office = NewOffice {
         org_id: plan.org_id.clone(),
         org_name: plan.org_name.clone(),
         office_id: plan.office_id.clone(),
         office_name: plan.office_name.clone(),
         role: plan.role,
-        app_token: secrets::generate_app_token()?,
-        db_key: secrets::generate_db_key()?,
-    })
+    };
+    Ok(CreateRequest::new(
+        office,
+        secrets::generate_app_token()?,
+        secrets::generate_db_key()?,
+    ))
 }
 
 /// A create slot, freed when dropped.
@@ -756,6 +759,9 @@ mod tests {
         )
         .unwrap();
         fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+        // The owner-only `run/` the host makes at startup, where key sockets go.
+        fs::create_dir(home.join("run")).unwrap();
+        fs::set_permissions(home.join("run"), fs::Permissions::from_mode(0o700)).unwrap();
         let supervisor = Supervisor::new(SupervisorConfig {
             program: script,
             home: home.to_path_buf(),

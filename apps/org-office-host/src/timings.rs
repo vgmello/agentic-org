@@ -29,6 +29,9 @@ pub struct Timings {
     /// free create slot, then answers `unavailable` ("too many creates in progress"). One budget
     /// for both waits.
     pub create_wait: Duration,
+    /// How long a started server has, from its first line, to connect to its key socket and take
+    /// its secrets (`handoff`) before it's killed (`storage_error`). Agreed: 10 s.
+    pub hand_off_timeout: Duration,
     /// How often a server's exit is checked directly, besides its control pipe closing (which a
     /// descendant holding its stdout would delay).
     pub exit_poll: Duration,
@@ -47,6 +50,7 @@ impl Default for Timings {
             shutdown_grace: Duration::from_secs(10),
             discard_timeout: Duration::from_secs(30),
             create_wait: Duration::from_secs(30),
+            hand_off_timeout: Duration::from_secs(10),
             exit_poll: Duration::from_secs(1),
         }
     }

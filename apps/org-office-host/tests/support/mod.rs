@@ -36,6 +36,7 @@ pub fn fast_timings() -> Timings {
         shutdown_grace: Duration::from_secs(5),
         discard_timeout: Duration::from_secs(10),
         create_wait: Duration::from_secs(10),
+        hand_off_timeout: Duration::from_secs(10),
         exit_poll: Duration::from_millis(100),
     }
 }
@@ -295,6 +296,82 @@ impl TestHome {
         self.log_fields("env", key)
             .iter()
             .map(|f| f[3].split(',').map(str::to_owned).collect())
+            .collect()
+    }
+
+    /// The first lines the fake's runs for `key` got, as they were (they hold no secret).
+    pub fn first_lines(&self, key: &str) -> Vec<String> {
+        self.log_fields("first-line", key)
+            .iter()
+            .map(|f| f[3..].join(" "))
+            .collect()
+    }
+
+    /// The mode (octal, e.g. `140600`) and owner check (`ours` or `not-ours`) of the key socket
+    /// each of the fake's runs for `key` saw before it connected.
+    pub fn key_socket_modes(&self, key: &str) -> Vec<(String, String)> {
+        self.log_fields("key-socket", key)
+            .iter()
+            .map(|f| (f[3].clone(), f[4].clone()))
+            .collect()
+    }
+
+    /// What the fake's extra connections for `key` got (`helper` or `second`, and the bytes read,
+    /// or `connect-failed`), in order.
+    pub fn other_connections(&self, key: &str) -> Vec<(String, String)> {
+        self.log_fields("other-connection", key)
+            .iter()
+            .map(|f| (f[3].clone(), f[4].clone()))
+            .collect()
+    }
+
+    /// The pids that didn't get their hand-off line (the host closed the connection first).
+    pub fn hand_off_eofs(&self, key: &str) -> Vec<u32> {
+        self.log_fields("hand-off-eof", key)
+            .iter()
+            .map(|f| f[2].parse().unwrap())
+            .collect()
+    }
+
+    /// The key socket files in `run/` now.
+    pub fn key_sockets(&self) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(self.path().join("run"))
+            .map(|entries| {
+                entries
+                    .map(|e| e.unwrap().file_name().into_string().unwrap())
+                    .filter(|name| name.starts_with("k-"))
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    }
+
+    /// What each run's fd hygiene noted (e.g. `exception-ports-reset`), in order.
+    pub fn fd_hygiene_notes(&self) -> Vec<String> {
+        fs::read_to_string(self.path().join("fake.log"))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| l.strip_prefix("fd-hygiene "))
+            .filter_map(|rest| rest.split(' ').nth(1).map(str::to_owned))
+            .collect()
+    }
+
+    /// The fds above 2 each run for `key` found open when it started (before its fd hygiene).
+    pub fn inherited_fds(&self, key: &str) -> Vec<String> {
+        self.log_fields("fds", key)
+            .iter()
+            .map(|f| f[3].clone())
+            .collect()
+    }
+
+    /// Why each run that refused its inherited descriptors (fd hygiene) refused.
+    pub fn fd_hygiene_refusals(&self) -> Vec<String> {
+        fs::read_to_string(self.path().join("fake.log"))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| l.strip_prefix("fd-hygiene-refused "))
+            .map(str::to_owned)
             .collect()
     }
 

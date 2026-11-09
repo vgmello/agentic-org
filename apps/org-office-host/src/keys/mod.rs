@@ -1,9 +1,10 @@
 //! Key custody: where the host keeps every office's database key.
 //!
 //! The host creates each office's key (`secrets::generate_db_key`), stores it here before the
-//! office's first `--create`, loads it before every `--office` and `--discard`, and sends it on
-//! the first line of the launch pipe (`org-office-launch`). Its servers never touch a key store.
-//! A key is in the host's memory only from its creation or load until that first line is written.
+//! office's first `--create`, loads it before every `--office` and `--discard`, and hands it to
+//! the admitted server on the spawn's key socket (`handoff`, `org-office-launch`), never on the
+//! launch pipe. Its servers never touch a key store. A key is in the host's memory only from its
+//! creation or load until that hand-off is done (or can't be).
 //!
 //! [`KeyStore`] is the host's own abstraction: the supervisor depends on it, never on a
 //! particular store. The stores:

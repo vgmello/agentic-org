@@ -6,7 +6,8 @@
 //! Every start loads the office's database key from the key store first. A missing item, or one
 //! that isn't a key, starts no server: the office is `unavailable`/`key_missing`, the same as a
 //! server reporting `key_missing`, and `office.restart` loads it again. Any other key store error
-//! is a `storage_error`, retried with backoff. The key is dropped once its line is written.
+//! is a `storage_error`, retried with backoff. The key is dropped once its hand-off is done (or
+//! can't be).
 
 use std::collections::VecDeque;
 use std::path::Path;
@@ -196,7 +197,7 @@ impl OfficeRunner {
         let spawned = self
             .spawner
             .spawn(mode, *generation, self.sender.clone(), self.log.clone());
-        // The line is written (or can't be): only the key store holds the key from here on.
+        // The hand-off is done (or can't be): only the key store holds the key from here on.
         drop(key);
         *generation += 1;
         match spawned {
@@ -211,11 +212,14 @@ impl OfficeRunner {
                     "couldn't start the server of office {}: {e}",
                     self.office_id
                 ));
-                // A server that isn't the signed one (`server_check`) is a storage error: not
-                // fatal, retried with backoff (a wrong program isn't fixed by itself, so the
-                // give-up rule ends it), and it never got the key.
+                // A server that isn't the signed one (`server_check`), or whose key hand-off
+                // failed (`handoff`), is a storage error: not fatal, retried with backoff (a wrong
+                // program isn't fixed by itself, so the give-up rule ends it), and it never got
+                // the key.
                 let reason = match e {
-                    SpawnError::Untrusted(_) => OfficeStatusReason::StorageError,
+                    SpawnError::Untrusted(_) | SpawnError::HandOff(_) => {
+                        OfficeStatusReason::StorageError
+                    }
                     SpawnError::Io(_) => OfficeStatusReason::Crashed,
                 };
                 Ending::Ended {

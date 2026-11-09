@@ -2,12 +2,12 @@
 //!
 //! The host makes a fresh app token for each office every time it starts (and for an office it
 //! creates) and keeps it only in memory, in that office's supervision: it reaches the office's
-//! server in the first line of the control pipe, on every start within this host run, and never
-//! a file, argv, the environment or a log. See `supervisor::child`.
+//! server only on the key hand-off (`handoff`), on every start within this host run, and never
+//! the control pipe, a file, argv, the environment or a log. See `supervisor::child`.
 //!
 //! The host makes an office's database key once, when it creates the office, and stores it in its
 //! key store (`keys`) before the office's server starts. It is in the host's memory only from its
-//! creation (or a load from the store) until the first line that carries it is written.
+//! creation (or a load from the store) until the hand-off that carries it is done.
 
 use std::fs::File;
 use std::io::{self, Read};
@@ -19,8 +19,8 @@ pub(crate) fn generate_app_token() -> io::Result<AppToken> {
     random(AppToken::from_bytes)
 }
 
-/// A fresh database key: 32 bytes from `/dev/urandom`. It goes straight into the create message,
-/// which the host keeps in a `Box` (`supervisor::child::CreateLine`).
+/// A fresh database key: 32 bytes from `/dev/urandom`. It goes straight into the create request,
+/// which the host keeps in a `Box` (`supervisor::child::CreateRequest`).
 pub(crate) fn generate_db_key() -> io::Result<DbKey> {
     random(DbKey::from_bytes)
 }
