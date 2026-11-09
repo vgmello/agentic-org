@@ -191,11 +191,14 @@ fn office_run() -> bool {
 
 /// For `who` with no identity, which can't ask the office (it needs a binding) and would use
 /// the spool: refused for an agent the office runs, which never uses the spool.
-pub(crate) fn who_without_identity_allowed() -> Result<(), Failure> {
+pub(crate) fn who_without_identity_allowed(why: &str) -> Result<(), Failure> {
     if office_run() {
         return Err(Failure::new(
             EXIT_OFFICE_UNAVAILABLE,
-            "who needs an identity ($ORG_AGENT or --as) to ask the office; an agent the office runs doesn't use the local spool",
+            format!(
+                "who can't ask the office without a valid identity ({}); an agent the office runs doesn't use the local spool",
+                sanitize_inline_text(why, 200)
+            ),
         ));
     }
     Ok(())

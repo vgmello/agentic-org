@@ -740,8 +740,8 @@ fn run(args: Vec<String>) -> Result<u8, CliError> {
 
             // Through the office when there is one, as the caller (it needs a binding). With
             // no identity, the spool, as before.
-            if let Ok(me) = resolve_identity(as_agent.as_deref()) {
-                match office::route(&me, office_flag.as_deref())? {
+            match resolve_identity(as_agent.as_deref()) {
+                Ok(me) => match office::route(&me, office_flag.as_deref())? {
                     Route::Office(office) => {
                         let params = office::who_params(
                             target.as_deref(),
@@ -755,9 +755,9 @@ fn run(args: Vec<String>) -> Result<u8, CliError> {
                     }
                     Route::Unreachable(why) => eprintln!("{}", why.spool_notice()),
                     Route::NoOffice => {}
-                }
-            } else {
-                office::who_without_identity_allowed()?;
+                },
+                Err(CliError::Usage(why)) => office::who_without_identity_allowed(&why)?,
+                Err(other) => return Err(other),
             }
             let spool = Spool::open_from_env()?;
             if let Some(member_query) = target {

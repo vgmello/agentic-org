@@ -751,7 +751,11 @@ fn an_office_run_agent_never_falls_back_to_the_spool() {
         .unwrap()
         .into();
     assert_eq!(who.code, 5, "{}", who.stderr);
-    assert!(who.stderr.contains("needs an identity"), "{}", who.stderr);
+    assert!(
+        who.stderr.contains("without a valid identity"),
+        "{}",
+        who.stderr
+    );
     assert!(!spool.exists(), "the spool was opened");
 
     // Its office named but not running: exit 5, nothing spooled.
@@ -781,4 +785,18 @@ fn an_office_run_agent_never_falls_back_to_the_spool() {
         "{}",
         homeless.stderr
     );
+    assert!(!spool.exists(), "the spool was opened");
+
+    // An office-run agent with no absolute office home and no office named: exit 5, no spool.
+    let lost: Run = world
+        .agent("nova", &["msg", "inbox"])
+        .env_remove("ORG_OFFICE_HOME")
+        .env("HOME", "relative")
+        .env("ORG_SESSION_TOKEN", "t")
+        .output()
+        .unwrap()
+        .into();
+    assert_eq!(lost.code, 5, "{}", lost.stderr);
+    assert!(lost.stderr.contains("absolute path"), "{}", lost.stderr);
+    assert!(!spool.exists(), "the spool was opened");
 }
