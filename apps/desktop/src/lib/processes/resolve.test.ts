@@ -162,7 +162,7 @@ describe('PROC-5 private processes only add', () => {
 		const base = docs.filter((d) => d.location.level !== 'agent');
 		const mine = (over: Partial<ProcessDoc>): ProcessDoc => ({ ...docs[2], id: `doc-p-${over.key}`, level: 'agent', scope: 'noor', location: { level: 'agent', scope: 'noor' }, ...over });
 		const set = resolve({ docs: [...base, mine({ key: 'a', name: 'A', overrides: { key: 'weekly-status', version: 1 } }), mine({ key: 'b', name: 'B', status: 'off' })], teams: SAMPLE_TEAMS, agentId: 'noor' });
-		expect(set.problems.map((p) => p.text)).toEqual(["Private processes only add: they can't override a process.", "Private processes only add: they can't turn off a process."]);
+		expect(set.problems.map((p) => p.text)).toEqual(["Private processes only add: A can't override a process.", "Private processes only add: B can't turn off a process."]);
 	});
 
 	it('another agent’s private processes are not in the set', () => {

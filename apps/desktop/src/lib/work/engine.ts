@@ -11,6 +11,17 @@ import type {
 	BugTriage,
 	BugUpdate,
 	BugVerify,
+	RequestAccept,
+	RequestApprove,
+	RequestAskChanges,
+	RequestCreate,
+	RequestDecline,
+	RequestMerge,
+	RequestOutcome,
+	RequestRoute,
+	RequestScope,
+	RequestUpdate,
+	RoutedBy,
 	WorkLinkCall,
 	WorkUnlink,
 	ApiErrorCode,
@@ -27,6 +38,10 @@ import type {
 	WorkPosition
 } from '$lib/proto';
 import { WORK_LIMITS } from '$lib/proto';
+import { applyRequest } from './requests';
+import { emptyCounts, fail, idText, itemAt, longText, oneLine, shortId, steps, touch } from './support';
+
+export { emptyCounts };
 
 export interface StoredTask {
 	summary: WorkItemSummary;
@@ -45,7 +60,16 @@ export interface StoredTask {
 	checklist: ChecklistStep[];
 	watchers: string[];
 	/** Links this item makes (`fixes`: a task to the bug it fixes). */
-	links?: { id: string; kind: 'fixes'; to: string; created_by: string; created_at: string }[];
+	links?: { id: string; kind: 'fixes' | 'from_request'; to: string; created_by: string; created_at: string }[];
+	/** Requests: the original words, why this scoper, how it was routed, and how it ended. */
+	text?: string;
+	route_reason?: string;
+	routed_by?: RoutedBy;
+	outcome?: RequestOutcome;
+	merged_into?: string;
+	decline_reason?: string;
+	/** Requests: the notes on it (asked changes, a merged request's words). */
+	comments?: { id: string; body: string; by: string; at: string }[];
 }
 
 export interface WorkState {
@@ -83,6 +107,15 @@ export type WorkCall =
 	| ({ method: 'bug.verify' } & BugVerify)
 	| ({ method: 'bug.close' } & BugClose)
 	| ({ method: 'bug.reopen' } & BugReopen)
+	| ({ method: 'request.create' } & RequestCreate)
+	| ({ method: 'request.update' } & RequestUpdate)
+	| ({ method: 'request.route' } & RequestRoute)
+	| ({ method: 'request.accept' } & RequestAccept)
+	| ({ method: 'request.scope' } & RequestScope)
+	| ({ method: 'request.ask_changes' } & RequestAskChanges)
+	| ({ method: 'request.approve' } & RequestApprove)
+	| ({ method: 'request.decline' } & RequestDecline)
+	| ({ method: 'request.merge' } & RequestMerge)
 	| ({ method: 'work.link' } & WorkLinkCall)
 	| ({ method: 'work.unlink' } & WorkUnlink)
 	| { method: 'checklist.add'; change_id: string; item_id: string; steps: NewStep[]; after_step_id?: string }
@@ -90,22 +123,6 @@ export type WorkCall =
 	| { method: 'checklist.edit'; change_id: string; step_id: string; expected_version: number; text?: string; required?: boolean }
 	| { method: 'checklist.remove'; change_id: string; step_id: string; expected_version: number }
 	| { method: 'work.delete'; change_id: string; item_id: string; expected_version: number };
-
-const fail = (code: ApiErrorCode, message: string): never => {
-	const error: AppError = { source: 'api', code, message };
-	throw error;
-};
-
-const oneLine = (text: string | undefined, max: number, what: string): string => {
-	const t = (text ?? '').trim();
-	if (t === '' || /[\r\n]/.test(t)) fail('invalid_request', `${what} must be one line of text.`);
-	if ([...t].length > max) fail('invalid_request', `${what} can be at most ${max} characters.`);
-	return t;
-};
-const longText = (text: string, max: number, what: string): string => {
-	if ([...text].length > max) fail('invalid_request', `${what} can be at most ${max} characters.`);
-	return text;
-};
 
 const SEVERITY_IDS: readonly string[] = ['critical', 'major', 'minor', 'trivial'];
 /** The free text of a bug report: up to 10,000 characters; a required text can't be empty. */
@@ -115,16 +132,8 @@ const bugText = (text: string | undefined, what: string, required: boolean): str
 	return longText(t, WORK_LIMITS.text, what);
 };
 
-const shortId = (id: string) => id.slice(-6).toLowerCase();
-
-export const emptyCounts = (steps: ChecklistStep[]) => ({
-	total: steps.length,
-	done: steps.filter((s) => s.done).length,
-	required_left: steps.filter((s) => s.required && !s.done).length
-});
-
 function find(state: WorkState, id: string): StoredTask {
-	const item = state.items[id];
+	const item = itemAt(state, id);
 	if (!item || item.summary.deleted) fail('not_found', 'That item is not here.');
 	return item;
 }
@@ -169,17 +178,10 @@ function followFixTasks(state: WorkState, bug: StoredTask, now: string, changed:
 	if (!changed.includes(bug)) changed.push(bug);
 }
 
-function touch(state: WorkState, item: StoredTask, now: string) {
-	item.summary.version += 1;
-	item.summary.updated_at = now;
-	item.summary.checklist = emptyCounts(item.checklist);
-	state.seq += 1;
-}
-
 function addFixLink(state: WorkState, task: StoredTask, linkId: string, bugId: string, changed: StoredTask[], now: string, actor: string) {
 	if (typeof linkId !== 'string' || linkId === '' || linkId.length > 128) fail('invalid_request', 'link_id must be a text of 1 to 128 characters.');
 	if (typeof bugId !== 'string') fail('not_found', 'That bug is not here.');
-	const bug = state.items[bugId];
+	const bug = itemAt(state, bugId);
 	if (!bug || bug.summary.deleted || bug.summary.kind !== 'bug') fail('not_found', 'That bug is not here.');
 	if (bug.summary.project_id !== task.summary.project_id) fail('invalid_request', 'A fix task and its bug must be in the same project.');
 	if (Object.values(state.items).some((i) => i.links?.some((l) => l.id === linkId))) fail('already_exists', 'That link already exists.');
@@ -191,26 +193,16 @@ function addFixLink(state: WorkState, task: StoredTask, linkId: string, bugId: s
 	if (!changed.includes(bug)) changed.push(bug);
 }
 
-function steps(list: NewStep[], existing: ChecklistStep[]): ChecklistStep[] {
-	if (list.length < 1 || existing.length + list.length > WORK_LIMITS.maxSteps) fail('invalid_request', `A checklist can have at most ${WORK_LIMITS.maxSteps} steps.`);
-	const seen = new Set(existing.map((s) => s.id));
-	return list.map((s) => {
-		if (seen.has(s.step_id)) fail('already_exists', 'That step is already there.');
-		seen.add(s.step_id);
-		return { id: s.step_id, text: oneLine(s.text, WORK_LIMITS.stepText, 'A step'), required: s.required, done: false, version: 1 };
-	});
-}
-
 /** Apply one call. Returns the new state and the answer; throws an `AppError` and changes nothing when refused. */
 export function applyWork(state: WorkState, call: WorkCall, ctx: WorkContext): { state: WorkState; accepted: WorkAccepted } {
-	const kept = state.answers[call.change_id];
+	const kept = typeof call.change_id === 'string' && Object.hasOwn(state.answers, call.change_id) ? state.answers[call.change_id] : undefined;
 	if (kept) {
 		if (kept.call !== JSON.stringify(call)) fail('invalid_request', 'That change id was used for a different change.');
 		return { state, accepted: kept.accepted };
 	}
 	for (const [what, value] of [['change_id', call.change_id], ['item_id', 'item_id' in call ? call.item_id : undefined], ['step_id', 'step_id' in call ? call.step_id : undefined]] as const) {
 		const needed = what === 'change_id' || (what === 'item_id' && 'item_id' in call) || (what === 'step_id' && 'step_id' in call);
-		if (needed && (typeof value !== 'string' || value === '' || value.length > 128)) fail('invalid_request', `${what} must be a text of 1 to 128 characters.`);
+		if (needed) idText(value, what);
 	}
 	if ('priority' in call && call.priority !== undefined && !['urgent', 'high', 'normal', 'low'].includes(call.priority)) fail('invalid_request', 'The priority must be urgent, high, normal or low.');
 	if (call.method === 'task.set_status' && call.resolution !== undefined && !['completed', 'cancelled'].includes(call.resolution)) fail('invalid_request', 'A task resolution is completed or cancelled.');
@@ -223,7 +215,7 @@ export function applyWork(state: WorkState, call: WorkCall, ctx: WorkContext): {
 		case 'task.create': {
 			const project = ctx.projects.find((p) => p.id === call.project_id) ?? fail('not_found', 'That project is not here.');
 			if (project.archived) fail('invalid_request', 'That project is archived.');
-			if (next.items[call.item_id]) fail('already_exists', 'That item already exists.');
+			if (itemAt(next, call.item_id)) fail('already_exists', 'That item already exists.');
 			const title = oneLine(call.title, WORK_LIMITS.title, 'The title');
 			if (call.team_id && !project.teamIds.includes(call.team_id)) fail('invalid_request', "That team isn't one of the project's teams.");
 			if (call.assignee_id && !ctx.members.includes(call.assignee_id)) fail('unknown_recipient', 'That member cannot be assigned.');
@@ -353,7 +345,7 @@ export function applyWork(state: WorkState, call: WorkCall, ctx: WorkContext): {
 			const title = oneLine(call.title, WORK_LIMITS.title, 'The title');
 			const happened = bugText(call.what_happened, 'What happened', true);
 			if (!SEVERITY_IDS.includes(call.severity)) fail('invalid_request', 'Pick a severity: critical, major, minor or trivial.');
-			if (next.items[call.item_id]) fail('already_exists', 'That item already exists.');
+			if (itemAt(next, call.item_id)) fail('already_exists', 'That item already exists.');
 			const areaId = call.area_id ?? project.areas?.find((a) => a.general && !a.deleted)?.id;
 			if (call.area_id && !project.areas?.some((a) => a.id === call.area_id && !a.deleted)) fail('invalid_request', "That area isn't one of the project's areas.");
 			const key = `b:${call.project_id}`;
@@ -507,7 +499,7 @@ export function applyWork(state: WorkState, call: WorkCall, ctx: WorkContext): {
 			const s = item.summary;
 			if (!['new', 'triaged', 'in_progress', 'fixed'].includes(s.status)) fail('invalid_request', `A bug that is ${s.status.replace('_', ' ')} can't be closed.`);
 			if (call.duplicate_of !== undefined) {
-				const original = next.items[call.duplicate_of];
+				const original = itemAt(next, call.duplicate_of);
 				if (!original || original.summary.deleted || original.summary.kind !== 'bug') fail('not_found', 'That original bug is not here.');
 				if (original.summary.id === s.id || original.summary.project_id !== s.project_id) fail('invalid_request', 'The original must be another bug in the same project.');
 				if (original.summary.status === 'closed' && original.summary.resolution === 'duplicate') fail('invalid_request', 'That bug is itself closed as a duplicate.');
@@ -543,6 +535,17 @@ export function applyWork(state: WorkState, call: WorkCall, ctx: WorkContext): {
 			changed.push(item);
 			break;
 		}
+		case 'request.create':
+		case 'request.update':
+		case 'request.route':
+		case 'request.accept':
+		case 'request.scope':
+		case 'request.ask_changes':
+		case 'request.approve':
+		case 'request.decline':
+		case 'request.merge':
+			applyRequest(next, call, ctx, changed);
+			break;
 		case 'work.link': {
 			if (call.kind !== 'fixes') fail('invalid_request', 'Only fix links are supported for now.');
 			if (call.to.type !== 'item') return fail('invalid_request', 'A fix link points at a bug.');
@@ -559,6 +562,7 @@ export function applyWork(state: WorkState, call: WorkCall, ctx: WorkContext): {
 			const owner = Object.values(next.items).find((i) => i.links?.some((l) => l.id === call.link_id));
 			if (!owner) fail('not_found', 'That link is not here.');
 			const link = owner!.links!.find((l) => l.id === call.link_id)!;
+			if (link.kind === 'from_request') fail('invalid_request', "A from_request link can't be removed.");
 			owner!.links = owner!.links!.filter((l) => l.id !== call.link_id);
 			owner!.summary.fixes = owner!.summary.fixes.filter((b) => b !== link.to);
 			const bug = next.items[link.to];
@@ -571,6 +575,7 @@ export function applyWork(state: WorkState, call: WorkCall, ctx: WorkContext): {
 		}
 		case 'checklist.add': {
 			const item = find(next, call.item_id);
+			if (item.summary.kind === 'request') fail('invalid_request', "A request doesn't have a checklist.");
 			const added = steps(call.steps, item.checklist);
 			const at = call.after_step_id ? item.checklist.findIndex((c) => c.id === call.after_step_id) + 1 : item.checklist.length;
 			if (call.after_step_id && at === 0) fail('not_found', 'That step is not here.');
@@ -690,6 +695,12 @@ export function itemOf(s: WorkState, id: string, now: string): WorkItem {
 		steps: item.steps,
 		environment: item.environment,
 		closed_reason: item.closed_reason,
+		text: item.text,
+		route_reason: item.route_reason,
+		routed_by: item.routed_by,
+		outcome: item.outcome,
+		merged_into: item.merged_into,
+		decline_reason: item.decline_reason,
 		done_anyway_detail: item.done_anyway,
 		checklist: item.checklist,
 		links: linksOf(s, id, false),
