@@ -830,6 +830,28 @@ pub fn triage_check_notify_exclusions_and_boundaries(backend: impl OpenTriageBac
         .any(|deadline| deadline.id == msg_id(9)));
 }
 
+/// A time snooze whose `snoozed_until` can't be read is released as due by the next
+/// check_notify, whatever `now` is, rather than stranded. A store that refuses to write such
+/// a snooze through `update_state_local` has nothing to release, and the case checks nothing.
+pub fn triage_check_notify_releases_an_unreadable_snooze_as_due(backend: impl OpenTriageBackend) {
+    let store = open_store(&backend);
+    unread(&store, 1);
+    if store
+        .update_state_local(snooze_until(1, "not a time", None))
+        .is_err()
+    {
+        return;
+    }
+    assert_eq!(header_of(&store, 1).state, State::Snoozed);
+    assert_eq!(
+        notify(&store, false, false, NOW_UTC, NOW_UTC),
+        [(msg_id(1), NotifyReason::Due)]
+    );
+    let header = header_of(&store, 1);
+    assert_eq!((header.state, header.triage_gen), (State::Unread, 2));
+    assert_eq!(header.snoozed_until, None);
+}
+
 /// check_notify is one atomic step: concurrent checks release a due snooze once (one `Due`
 /// in all, `triage_gen` bumped once).
 pub fn triage_check_notify_releases_once_under_concurrency(backend: impl OpenTriageBackend) {
@@ -2005,6 +2027,7 @@ macro_rules! triage_conformance_tests {
             triage_reason_is_only_the_snooze_or_done_note,
             triage_check_notify_reasons_filters_and_releases,
             triage_check_notify_exclusions_and_boundaries,
+            triage_check_notify_releases_an_unreadable_snooze_as_due,
             triage_check_notify_releases_once_under_concurrency,
             triage_list_active_snooze_deadlines,
             mailbox_defer_hides_until_due_then_a_held_wait_gets_it,

@@ -86,7 +86,12 @@ pub trait MessageStore {
     /// `now_utc >= expires_at + min(ttl_ms / 4, 2000)` ms (a missing `ttl_ms` counts as 0),
     /// a message with no `expires_at` never expires, and one whose `expires_at` can't be
     /// read has. A person's ask flagged `expired_waiting_person` is never expired: it stays
-    /// deliverable as an ordinary unread message.
+    /// deliverable as an ordinary unread message. An unreadable `now_utc` counts every
+    /// deadline as passed: each unflagged message with an `expires_at` is expired, and only
+    /// messages without one can come back as the message.
+    ///
+    /// `from_member_id` and `urgent_only` filter `expired_ids` as well as the message: only
+    /// expired messages from that sender, or urgent ones, are reported.
     fn peek_next_unread(
         &self,
         to_member_id: &str,
@@ -169,6 +174,8 @@ pub trait TriageStore {
     /// before `sweep_before_utc`, and otherwise not returned. `urgent_only` filters only the
     /// returned list to urgent messages: due snoozes are released whatever it says. Each
     /// candidate carries its header after the release. No limit and no ordering guarantee.
+    /// A time snooze whose `snoozed_until` can't be read is released as due (reason `Due`)
+    /// rather than stranded.
     /// Expiry is not its job: an overdue request comes back as it is.
     ///
     /// It takes no sync metadata: each release keeps the state row's stored

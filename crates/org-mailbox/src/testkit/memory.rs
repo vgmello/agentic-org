@@ -397,8 +397,9 @@ impl TriageStore for InMemoryStore {
                 continue;
             }
             let reason = if header.state == State::Snoozed {
-                // This store's own choice, not the port's contract: an unreadable time is
-                // released rather than stranded.
+                // An unreadable `snoozed_until` is released as due rather than stranded, as
+                // the port's contract has it. An unreadable `now` releases every time snooze
+                // too: that part is this store's own choice.
                 let due = header.snoozed_until.as_deref().is_some_and(|until| {
                     match (parse_utc(until), now) {
                         (Some(until), Some(now)) => until <= now,
