@@ -89,7 +89,7 @@ Research for [`docs/design/agent-memory.md`](../design/agent-memory.md). It answ
 
 ## 6. What this means for Agentic Org
 
-1. Keep the runtimes' own memory off (Claude's already is; turn off Codex memories and Antigravity's knowledge items explicitly) and give every agent **one office-managed memory**, rendered into each runtime's instructions. One store also lets an agent change runtime and keep its memory.
+1. Keep the runtimes' own memory off (Claude's already is; turn off Codex memories and Antigravity's knowledge items explicitly) and give every agent **one office-managed memory**: the owner-approved part rendered into each runtime's instructions, the rest delivered as fenced data. One store also lets an agent change runtime and keep its memory.
 2. Split memory by **trust**: what the owner approved can be instructions; what the agent wrote is data, fenced and labeled, and never steers the next session's instructions.
 3. Split memory by **type** (CoALA): identity, semantic notes, episodic journal, procedural playbooks (this repo already has private processes for those), working handoffs.
 4. Load an **index**, not the store. Hard budgets per section.
