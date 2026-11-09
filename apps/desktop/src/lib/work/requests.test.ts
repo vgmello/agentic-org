@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyWork, emptyWork, itemOf, summaries, type WorkCall, type WorkContext, type WorkState } from './engine';
+import { activityOf, applyWork, emptyWork, itemOf, summaries, type WorkCall, type WorkContext, type WorkState } from './engine';
 import type { RequestOutcome } from '$lib/proto';
 
 const ctx: WorkContext = {
@@ -26,6 +26,8 @@ const refused = (fn: () => unknown) => {
 };
 const created = (state: WorkState, n: number, extra: object = {}) => run(state, { method: 'request.create', item_id: id(n), text: `Request ${n}`, ...extra }).state;
 const at = (state: WorkState, n: number) => state.items[id(n)];
+/** The notes on a request: (who, what) of each comment in its activity. */
+const notes = (state: WorkState, n: number) => activityOf(state, id(n)).flatMap((e) => (e.change.type === 'comment' ? [[e.actor_id, e.change.body]] : []));
 const v = (state: WorkState, n: number) => at(state, n).summary.version;
 const outcome = (extra: Partial<RequestOutcome> = {}): RequestOutcome => ({
 	docs: [],
@@ -35,6 +37,11 @@ const outcome = (extra: Partial<RequestOutcome> = {}): RequestOutcome => ({
 	],
 	...extra
 });
+/** The way the app asks for changes: the note is written as a comment, then the call names it. */
+const askChanges = (state: WorkState, n: number, note: string, comment: number) => {
+	const noted = run(state, { method: 'work.comment', item_id: id(n), comment_id: id(comment), body: note }).state;
+	return run(noted, { method: 'request.ask_changes', item_id: id(n), expected_version: v(state, n), comment_id: id(comment), note }).state;
+};
 const scoped = (state: WorkState, n: number, extra: Partial<RequestOutcome> = {}) => {
 	let s = run(state, { method: 'request.accept', item_id: id(n), expected_version: v(state, n) }).state;
 	s = run(s, { method: 'request.scope', item_id: id(n), expected_version: v(s, n), outcome: outcome(extra) }).state;
@@ -98,11 +105,33 @@ describe('REQ creating requests', () => {
 		expect(refused(() => run(gone, { method: 'request.accept', item_id: id(1), expected_version: 3 })).code).toBe('not_found');
 	});
 
+	it('a task checklist step whose text is not text is refused, not a crash', () => {
+		const add = (steps: unknown) => run(run(emptyWork(), { method: 'task.create', item_id: id(1), project_id: 'p1', title: 'T' }).state, { method: 'checklist.add', item_id: id(1), steps });
+		expect(refused(() => add([{ step_id: 'a', text: 5, required: false }])).code).toBe('invalid_request');
+	});
+
 	it('keeps accepting the checklists tasks always took: no required flag, any step id, and only wrong shapes refused', () => {
 		const add = (steps: unknown) => run(run(emptyWork(), { method: 'task.create', item_id: id(1), project_id: 'p1', title: 'T' }).state, { method: 'checklist.add', item_id: id(1), steps });
 		expect(() => add([{ step_id: '', text: 'No flag' }])).not.toThrow();
 		expect(() => add([{ step_id: 'x'.repeat(129), text: 'Long id', required: false }])).not.toThrow();
 		for (const bad of ['abc', [null], [{ step_id: 5, text: 'x', required: true }], [{ step_id: 'a', text: 'x', required: 'yes' }]]) expect(refused(() => add(bad)).code).toBe('invalid_request');
+	});
+
+	it('trims as the office does: a trailing NEL goes, a leading byte order mark stays', () => {
+		expect(at(created(emptyWork(), 1, { text: 'abc\u0085' }), 1).summary.title).toBe('abc');
+		expect(at(created(emptyWork(), 1, { title: 'abc\u0085' }), 1).summary.title).toBe('abc');
+		expect(at(created(emptyWork(), 1, { title: '\ufeffabc' }), 1).summary.title).toBe('\ufeffabc');
+		expect(itemOf(created(emptyWork(), 1, { text: '\ufeffabc' }), id(1), ctx.now).text).toBe('\ufeffabc');
+	});
+
+	it('a decline reason and the steps an approval makes are one line, in the office rule; a step text must be text', () => {
+		const s = scoped(created(emptyWork(), 1, { project_id: 'p1' }), 1);
+		expect(refused(() => run(s, { method: 'request.decline', item_id: id(1), expected_version: v(s, 1), reason: 'a\nb' })).code).toBe('invalid_request');
+		const approve = (step: object) => () => run(s, { method: 'request.approve', item_id: id(1), expected_version: v(s, 1), tasks: [{ ...approvedTasks(1)[0], checklist: [{ step_id: id(34), required: false, ...step }] }] });
+		expect(refused(approve({ text: 'a\tb' })).code).toBe('invalid_request');
+		expect(refused(approve({ text: 'a\u202eb' })).code).toBe('invalid_request');
+		expect(refused(approve({ text: 5 })).code).toBe('invalid_request');
+		expect(approve({ text: 'fine' })).not.toThrow();
 	});
 
 	it('leaves the text rules of tasks and bugs as the Rust twin has them', () => {
@@ -178,9 +207,9 @@ describe('REQ the lifecycle', () => {
 		expect(full.summary.status).toBe('scoped');
 		expect(full.outcome?.draft_tasks.map((d) => d.title)).toEqual(['First', 'Second']);
 		expect(full.outcome?.estimate).toEqual({ effort: '3 days', cost_usd_cents_min: 4000, cost_usd_cents_max: 7000 });
-		s = run(s, { method: 'request.ask_changes', item_id: id(1), expected_version: v(s, 1), comment_id: id(30), note: 'Split the second task.' }).state;
+		s = askChanges(s, 1, 'Split the second task.', 30);
 		expect(at(s, 1).summary.status).toBe('scoping');
-		expect(at(s, 1).comments?.map((c) => c.body)).toEqual(['Split the second task.']);
+		expect(activityOf(s, id(1)).at(-1)).toMatchObject({ actor_id: 'owner', change: { type: 'status_changed', from: 'scoped', to: 'scoping', reason: 'Split the second task.' } });
 	});
 
 	it('only moves that the state allows: each wrong state is refused with the state named', () => {
@@ -231,7 +260,7 @@ describe('REQ the lifecycle', () => {
 		let s = run(emptyWork(), { method: 'request.create', item_id: id(1), text: 'Eden words' }, { ...ctx, actor: 'eden' }).state;
 		s = created(s, 2);
 		s = run(s, { method: 'request.merge', item_id: id(1), expected_version: 1, into: id(2), comment_id: id(30) }, { ...ctx, actor: 'ada' }).state;
-		expect(at(s, 2).comments?.map((c) => [c.by, c.body])).toEqual([['ada', 'Eden words']]);
+		expect(notes(s, 2)).toEqual([['ada', 'Eden words']]);
 	});
 
 	it('a request that ended stops its clock: its time figures stay where it ended', () => {
@@ -476,7 +505,7 @@ describe('REQ declining and merging', () => {
 		s = created(s, 2, { text: 'Dark mode for the docs reader' });
 		s = run(s, { method: 'request.merge', item_id: id(1), expected_version: v(s, 1), into: id(2), comment_id: id(31) }, { ...ctx, actor: 'ada' }).state;
 		expect([at(s, 1).summary.status, itemOf(s, id(1), ctx.now).merged_into]).toEqual(['merged', id(2)]);
-		expect(at(s, 2).comments?.map((c) => c.body)).toEqual(['Dark mode please']);
+		expect(notes(s, 2).map(([, body]) => body)).toEqual(['Dark mode please']);
 		expect(at(s, 2).watchers).toEqual(['owner', 'eden']);
 		expect(at(s, 2).summary.version).toBe(2);
 	});
@@ -484,7 +513,7 @@ describe('REQ declining and merging', () => {
 	it('cuts a long quoted request and says where it continues', () => {
 		let s = created(created(emptyWork(), 1, { text: 'y'.repeat(12_000) }), 2);
 		s = run(s, { method: 'request.merge', item_id: id(1), expected_version: v(s, 1), into: id(2), comment_id: id(31) }).state;
-		const body = at(s, 2).comments![0].body;
+		const body = notes(s, 2)[0][1] as string;
 		const marker = '\n(continued in REQ-1)';
 		expect(body).toBe(`${'y'.repeat(10_000 - marker.length)}${marker}`);
 		expect([...body]).toHaveLength(10_000);
@@ -528,5 +557,138 @@ describe('REQ updating', () => {
 	it('never edits the original words', () => {
 		const s = run(created(emptyWork(), 1, { text: 'As typed' }), { method: 'request.update', item_id: id(1), expected_version: 1, title: 'Other' }).state;
 		expect(itemOf(s, id(1), ctx.now).text).toBe('As typed');
+	});
+});
+
+describe('REQ activity', () => {
+	it('records declining with its reason, merging on both requests, and approving with the tasks it made', () => {
+		let s = created(created(created(emptyWork(), 1, { project_id: 'p1' }), 2), 3);
+		s = run(s, { method: 'request.decline', item_id: id(2), expected_version: 1, reason: 'Not now' }).state;
+		s = run(s, { method: 'request.merge', item_id: id(3), expected_version: 1, into: id(1), comment_id: id(30) }).state;
+		expect(story(s, 2).at(-1)).toEqual([2, 'owner', 'status_changed', 'new>declined:Not now']);
+		expect(story(s, 3).at(-1)).toEqual([2, 'owner', 'status_changed', 'new>merged:Merged into REQ-1']);
+		expect(story(s, 1).at(-1)).toEqual([2, 'owner', 'comment', 'Request 3']);
+		const ready = scoped(s, 1);
+		const approved = run(ready, { method: 'request.approve', item_id: id(1), expected_version: v(ready, 1), tasks: approvedTasks(1) }).state;
+		expect(story(approved, 1).at(-1)?.slice(2)).toEqual(['status_changed', 'scoped>approved']);
+		expect(story(approved, 90)).toEqual([[1, 'owner', 'created', '']]);
+	});
+
+	it('the feed is a copy: changing what was read changes nothing', () => {
+		const s = askChanges(scoped(created(created(emptyWork(), 1), 2), 1), 1, 'n', 30);
+		const feed = activityOf(s, id(1));
+		feed.length = 0;
+		expect(activityOf(s, id(1)).length).toBeGreaterThan(0);
+	});
+
+	const story = (state: WorkState, n: number) =>
+		activityOf(state, id(n)).map((e) => [
+			e.version,
+			e.actor_id,
+			e.change.type,
+			e.change.type === 'status_changed'
+				? `${e.change.from}>${e.change.to}${e.change.reason ? `:${e.change.reason}` : ''}`
+				: e.change.type === 'comment'
+					? e.change.body
+					: e.change.type === 'routed'
+						? `${e.change.from}>${e.change.to} ${e.change.scoper_from ?? '-'}>${e.change.scoper_to ?? '-'}${e.change.reason ? ` (${e.change.reason})` : ''}${e.change.routed_by ? ` by ${e.change.routed_by}` : ''}`
+						: e.change.type === 'fields_changed'
+							? e.change.fields.map((f) => `${f.field}:${f.from ?? '-'}>${f.to ?? '-'}`).join('+')
+							: ''
+		]);
+
+	it('tells what happened to a request, in order: one event per call, at the version that call made', () => {
+		let s = created(emptyWork(), 1, { scoper_id: 'eden', route_reason: 'designer', routed_by: 'rule' });
+		s = run(s, { method: 'request.update', item_id: id(1), expected_version: 1, title: 'Renamed', project_id: 'p1' }).state;
+		s = run(s, { method: 'request.route', item_id: id(1), expected_version: 2, scoper_id: 'ada', route_reason: 'protocol', routed_by: 'person' }).state;
+		s = run(s, { method: 'request.accept', item_id: id(1), expected_version: 3 }, { ...ctx, actor: 'ada' }).state;
+		s = run(s, { method: 'request.scope', item_id: id(1), expected_version: 4, outcome: outcome() }, { ...ctx, actor: 'ada' }).state;
+		s = askChanges(s, 1, 'Daily or weekly?', 30);
+		expect(story(s, 1)).toEqual([
+			[1, 'owner', 'created', ''],
+			[2, 'owner', 'fields_changed', 'title:Request 1>Renamed+project_id:->p1'],
+			[3, 'owner', 'routed', 'routed>routed eden>ada (protocol) by person'],
+			[4, 'ada', 'routed', 'routed>scoping ada>ada'],
+			[5, 'ada', 'status_changed', 'scoping>scoped'],
+			[6, 'owner', 'comment', 'Daily or weekly?'],
+			[7, 'owner', 'status_changed', 'scoped>scoping:Daily or weekly?']
+		]);
+	});
+
+	it('a route from Not routed and taking it back are each one routed event, and routing again to the same scoper is one too', () => {
+		let s = created(emptyWork(), 1);
+		s = run(s, { method: 'request.route', item_id: id(1), expected_version: 1, scoper_id: 'eden' }).state;
+		s = run(s, { method: 'request.route', item_id: id(1), expected_version: 2, scoper_id: 'eden', route_reason: 'again' }).state;
+		s = run(s, { method: 'request.route', item_id: id(1), expected_version: 3 }).state;
+		expect(story(s, 1).slice(1)).toEqual([
+			[2, 'owner', 'routed', 'new>routed ->eden'],
+			[3, 'owner', 'routed', 'routed>routed eden>eden (again)'],
+			[4, 'owner', 'routed', 'routed>new eden>-']
+		]);
+	});
+
+	it('updating to what it already is still records the fields the call set, as the office does', () => {
+		let s = created(emptyWork(), 1, { project_id: 'p1' });
+		s = run(s, { method: 'request.update', item_id: id(1), expected_version: 1, title: 'Request 1', project_id: 'p1' }).state;
+		expect(story(s, 1)).toEqual([
+			[1, 'owner', 'created', ''],
+			[2, 'owner', 'fields_changed', 'title:Request 1>Request 1+project_id:p1>p1']
+		]);
+	});
+
+	it('every version of a request has exactly one event, across a whole story, on every item it touches', () => {
+		let s = created(created(created(emptyWork(), 1, { scoper_id: 'eden', project_id: 'p1' }), 2), 3);
+		s = scoped(s, 1);
+		s = askChanges(s, 1, 'n', 30);
+		s = run(s, { method: 'request.merge', item_id: id(3), expected_version: 1, into: id(1), comment_id: id(31) }).state;
+		s = run(s, { method: 'request.decline', item_id: id(2), expected_version: 1, reason: 'no' }).state;
+		s = run(s, { method: 'request.route', item_id: id(1), expected_version: v(s, 1), scoper_id: 'ada' }).state;
+		for (const key of Object.keys(s.items)) {
+			const versions = activityOf(s, key).map((e) => e.version);
+			expect(versions, key).toEqual(Array.from({ length: s.items[key].summary.version }, (_, i) => i + 1));
+		}
+	});
+
+	it('asking for changes names an existing comment on this request: none, or one on another request, is not found', () => {
+		const s = scoped(scoped(created(created(emptyWork(), 1), 2), 1), 2);
+		const ask = (state: WorkState, n: number, comment: number) => () => run(state, { method: 'request.ask_changes', item_id: id(n), expected_version: v(state, n), comment_id: id(comment), note: 'n' });
+		expect(refused(ask(s, 1, 30)).code).toBe('not_found');
+		const noted = run(s, { method: 'work.comment', item_id: id(2), comment_id: id(30), body: 'n' }).state;
+		expect(refused(ask(noted, 1, 30)).code).toBe('not_found');
+		expect(() => ask(noted, 2, 30)()).not.toThrow();
+	});
+
+	it('a comment on a deleted request is not found', () => {
+		const s = run(created(emptyWork(), 1), { method: 'work.delete', item_id: id(1), expected_version: 1 }).state;
+		expect(refused(() => run(s, { method: 'work.comment', item_id: id(1), comment_id: id(30), body: 'hi' })).code).toBe('not_found');
+	});
+
+	it('a comment is a note on the request, one event at its own version, and it never makes a change about to be sent stale', () => {
+		const s = scoped(created(emptyWork(), 1), 1);
+		const before = v(s, 1);
+		const noted = run(s, { method: 'work.comment', item_id: id(1), comment_id: id(30), body: 'A question', watch: true }, { ...ctx, actor: 'eden' }).state;
+		expect(v(noted, 1)).toBe(before + 1);
+		expect(story(noted, 1).at(-1)).toEqual([before + 1, 'eden', 'comment', 'A question']);
+		expect(at(noted, 1).watchers).toContain('eden');
+		// A decision made on the version read before the comment still goes through; one after a real change does not.
+		expect(() => run(noted, { method: 'request.decline', item_id: id(1), expected_version: before, reason: 'no' })).not.toThrow();
+		const moved = run(noted, { method: 'request.update', item_id: id(1), expected_version: before + 1, title: 'New' }).state;
+		expect(refused(() => run(moved, { method: 'request.decline', item_id: id(1), expected_version: before, reason: 'no' })).code).toBe('conflict');
+	});
+
+	it('refuses a comment with no body, a reused id, an item that is not there or not a request, or a kind it does not keep', () => {
+		const s = run(created(emptyWork(), 1), { method: 'task.create', item_id: id(2), project_id: 'p1', title: 'T' }).state;
+		const note = (extra: object) => () => run(s, { method: 'work.comment', item_id: id(1), comment_id: id(30), body: 'ok', ...extra });
+		expect(refused(note({ body: '  ' })).code).toBe('invalid_request');
+		expect(refused(note({ body: 'a\u0007b' })).code).toBe('invalid_request');
+		expect(refused(note({ body: 'x'.repeat(10_001) })).code).toBe('invalid_request');
+		expect(refused(note({ item_id: 'nope' })).code).toBe('not_found');
+		expect(refused(note({ item_id: 'constructor' })).code).toBe('not_found');
+		expect(refused(note({ item_id: id(2) })).code).toBe('invalid_request');
+		expect(refused(note({ comment_kind: 'question' })).code).toBe('invalid_request');
+		expect(refused(note({ watch: 'yes' })).code).toBe('invalid_request');
+		const noted = note({})().state;
+		expect(refused(() => run(noted, { method: 'work.comment', item_id: id(1), comment_id: id(30), body: 'again' })).code).toBe('already_exists');
+		expect(refused(() => run(noted, { method: 'request.merge', item_id: id(1), expected_version: v(noted, 1), into: id(1), comment_id: id(30) })).code).toBe('invalid_request');
 	});
 });

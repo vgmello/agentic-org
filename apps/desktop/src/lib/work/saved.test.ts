@@ -54,4 +54,11 @@ describe('saved filters and defaults', () => {
 		expect(needsYou([item('t', { status: 'blocked', assignee_id: 'sam' })], ME)).toBe(0);
 		expect(needsYou([item('b', { kind: 'bug', status: 'new', deleted: true })], ME)).toBe(0);
 	});
+	it('a scoped request waits for the owner, a request in any other state does not, and the Requests tab has no filters', () => {
+		const req = (status: WorkItemSummary['status'], over: Partial<WorkItemSummary> = {}) => item(`r-${status}`, { kind: 'request', status, ...over });
+		expect(needsYou([req('scoped')], ME)).toBe(1);
+		expect(needsYou([req('new'), req('routed'), req('scoping'), req('approved'), req('declined'), req('merged'), req('scoped', { deleted: true })], ME)).toBe(0);
+		expect(savedFilters('requests', ME)).toEqual([]);
+		expect(defaultFilter('requests', items, ME)).toBe('');
+	});
 });

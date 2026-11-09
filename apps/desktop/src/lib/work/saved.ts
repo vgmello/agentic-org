@@ -1,7 +1,7 @@
 // The cross-project Work screen's saved filters and what needs the owner (work-items-ux §11; U8).
 import type { WorkItemSummary } from '$lib/proto';
 
-export type WorkTab = 'tasks' | 'bugs';
+export type WorkTab = 'tasks' | 'bugs' | 'requests';
 
 export interface SavedFilter {
 	id: string;
@@ -16,6 +16,8 @@ const openBug = (i: WorkItemSummary) => isBug(i) && i.status !== 'closed';
 
 /** The saved filters of a tab, with "me" being the owner. Counts come from `countOf`. */
 export function savedFilters(tab: WorkTab, me: string): SavedFilter[] {
+	// The Requests tab has its own queue, not filters.
+	if (tab === 'requests') return [];
 	if (tab === 'tasks')
 		return [
 			{ id: 'mine', label: 'Assigned to me', test: (i) => openTask(i) && i.assignee_id === me },
@@ -40,11 +42,12 @@ export const countOf = (items: WorkItemSummary[], filter: SavedFilter): number =
 export function defaultFilter(tab: WorkTab, items: WorkItemSummary[], me: string): string {
 	const filters = savedFilters(tab, me);
 	const has = (id: string) => countOf(items, filters.find((f) => f.id === id)!) > 0;
+	if (tab === 'requests') return '';
 	if (tab === 'bugs') return has('triage') ? 'triage' : 'serious';
 	return has('blocked') ? 'blocked' : 'all';
 }
 
-/** What needs the owner: bugs to triage + bugs to verify + blocked tasks assigned to them (the nav badge, U8). */
+/** What needs the owner: bugs to triage + bugs to verify + blocked tasks assigned to them + scoped requests to approve (the nav badge, U8). */
 export function needsYou(items: WorkItemSummary[], me: string): number {
-	return items.filter((i) => !i.deleted && ((isBug(i) && (i.status === 'new' || i.status === 'fixed')) || (isTask(i) && i.status === 'blocked' && i.assignee_id === me))).length;
+	return items.filter((i) => !i.deleted && ((isBug(i) && (i.status === 'new' || i.status === 'fixed')) || (isTask(i) && i.status === 'blocked' && i.assignee_id === me) || (i.kind === 'request' && i.status === 'scoped'))).length;
 }
