@@ -71,6 +71,8 @@ export interface StoredTask {
 	decline_reason?: string;
 	/** Requests: what happened to it, oldest first (`work.activity`). */
 	events?: WorkEvent[];
+	/** Requests: the ids of the notes a call cited (ask changes), so one is never used twice. */
+	commentIds?: string[];
 }
 
 export interface WorkState {

@@ -76,7 +76,7 @@
 
 <div class="space-y-5 px-8 py-6">
 	<div class="flex flex-wrap items-center justify-between gap-3">
-		<p class="text-sm/6 text-gray-400">Tasks and bugs across every project. <Badge variant="secondary">Sample data</Badge></p>
+		<p class="text-sm/6 text-gray-400">{tab === 'requests' ? 'Requests across every project.' : 'Tasks and bugs across every project.'} <Badge variant="secondary">Sample data</Badge></p>
 		<p class="text-sm/6 {waiting > 0 ? 'font-semibold text-amber-200' : 'text-gray-400'}" data-testid="needs-you">{waiting === 0 ? 'Nothing needs you.' : `${waiting} ${waiting === 1 ? 'item needs' : 'items need'} you`}</p>
 	</div>
 
@@ -84,12 +84,15 @@
 		{#each [['tasks', 'Tasks'], ['bugs', 'Bugs']] as const as [id, name] (id)}
 			<button type="button" role="tab" aria-selected={tab === id} onclick={() => pick(id)} class="px-3 py-2 text-sm/6 focus-visible:outline-2 focus-visible:outline-indigo-400 {tab === id ? 'border-b-2 border-indigo-400 font-semibold text-white' : 'text-gray-300 hover:text-white'}">{name}</button>
 		{/each}
+		{#each ['Debt'] as name (name)}
+			<span role="tab" aria-selected="false" aria-disabled="true" title="Available in a later release" class="cursor-not-allowed px-3 py-2 text-sm/6 text-gray-500">{name}</span>
+		{/each}
 		{#if requestsOn}
 			<button type="button" role="tab" aria-selected={tab === 'requests'} onclick={() => pick('requests')} class="px-3 py-2 text-sm/6 focus-visible:outline-2 focus-visible:outline-indigo-400 {tab === 'requests' ? 'border-b-2 border-indigo-400 font-semibold text-white' : 'text-gray-300 hover:text-white'}">Requests{#if requestsWaiting > 0}<span class="ml-1.5 rounded-full bg-amber-500/20 px-1.5 text-xs/5 text-amber-200" data-testid="requests-badge">{requestsWaiting}</span>{/if}</button>
 		{/if}
-		{#each requestsOn ? ['Debt'] : ['Debt', 'Requests'] as name (name)}
-			<span role="tab" aria-selected="false" aria-disabled="true" title="Available in a later release" class="cursor-not-allowed px-3 py-2 text-sm/6 text-gray-500">{name}</span>
-		{/each}
+		{#if !requestsOn}
+			<span role="tab" aria-selected="false" aria-disabled="true" title="Available in a later release" class="cursor-not-allowed px-3 py-2 text-sm/6 text-gray-500">Requests</span>
+		{/if}
 	</div>
 
 	{#if loadError}

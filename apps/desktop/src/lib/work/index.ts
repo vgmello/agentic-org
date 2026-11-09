@@ -11,7 +11,7 @@ const mock: MockWorkApi | undefined = inTauri() ? undefined : createMockWork(org
 export const workApi = mock ?? tauriWork;
 
 // A browser test acts as another member, as an agent would: `window.__mockWorkAs(organizationId, memberId, call)`.
-if (mock && typeof window !== 'undefined') (window as unknown as { __mockWorkAs: MockWorkApi['commandAs'] }).__mockWorkAs = mock.commandAs;
+if (mock && import.meta.env.DEV && typeof window !== 'undefined') (window as unknown as { __mockWorkAs: MockWorkApi['commandAs'] }).__mockWorkAs = mock.commandAs;
 
 /** A call without its change id, which `sender` adds (one fresh ULID per call). */
 export type WorkDraft = WorkCall extends infer C ? (C extends unknown ? Omit<C, 'change_id'> : never) : never;

@@ -166,7 +166,23 @@ export interface ActivityLine {
 	note?: string;
 }
 
-const FIELD_WORD: Record<string, string> = { title: 'title', request_kind: 'kind', project_id: 'project' };
+const FIELD_WORD = new Map([
+	['title', 'title'],
+	['request_kind', 'kind'],
+	['project_id', 'project']
+]);
+
+const text = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
+
+/** The fields of a `fields_changed` event as objects, whatever an older or newer office wrote: a bare name counts as a field, the rest is dropped. */
+function fieldsOf(value: unknown): { field: string; from?: unknown; to?: unknown }[] {
+	if (!Array.isArray(value)) return [];
+	return value.flatMap((f): { field: string; from?: unknown; to?: unknown }[] => {
+		if (typeof f === 'string') return [{ field: f }];
+		if (typeof f === 'object' && f !== null && typeof (f as { field?: unknown }).field === 'string') return [f as { field: string; from?: unknown; to?: unknown }];
+		return [];
+	});
+}
 
 /**
  * A request's conversation and history (§3): who did what, in plain words, oldest first. `me` is the owner, who reads
@@ -175,26 +191,33 @@ const FIELD_WORD: Record<string, string> = { title: 'title', request_kind: 'kind
 export function activityLines(events: WorkEvent[], snapshot: OrgSnapshot, me: string): ActivityLine[] {
 	const who = (id: string | undefined) => (id === me ? 'You' : id ? nameOf(snapshot, id) : 'The office');
 	const whom = (id: string | undefined) => (id === me ? 'you' : nameOf(snapshot, id));
+	/** "sent this to B", "moved this from A to B", "took this back". */
+	const sentence = (by: string, from: string | undefined, to: string | undefined) => (from && to && from !== to ? `${by} moved this from ${whom(from)} to ${whom(to)}` : to ? `${by} sent this to ${whom(to)}` : `${by} took this back`);
 	return events.flatMap((e): ActivityLine[] => {
 		const c = e.change;
 		const by = who(e.actor_id);
 		switch (c.type) {
 			case 'created':
 				return [{ at: e.at, text: `${by} raised this` }];
-			case 'assigned':
-				return [{ at: e.at, text: c.from && c.to ? `${by} moved this from ${whom(c.from)} to ${whom(c.to)}` : c.to ? `${by} sent this to ${whom(c.to)}` : `${by} took this back` }];
+			case 'routed': {
+				const out: ActivityLine[] = [];
+				// Someone else's request taken up: both who it was with and that it was accepted.
+				if (c.scoper_from && c.scoper_to && c.scoper_from !== c.scoper_to && c.to === 'scoping') out.push({ at: e.at, text: `${by} moved this from ${whom(c.scoper_from)} to ${whom(c.scoper_to)}` });
+				out.push({ at: e.at, text: c.to === 'scoping' ? `${by} accepted it` : sentence(by, c.scoper_from, c.scoper_to), note: c.to === 'scoping' ? undefined : c.reason });
+				return out;
+			}
 			case 'comment':
 				return [{ at: e.at, text: `${by} wrote`, note: c.body }];
-			case 'fields_changed':
-				return [{ at: e.at, text: `${by} changed the ${c.fields.map((f) => FIELD_WORD[f] ?? f).join(' and ')}` }];
+			case 'fields_changed': {
+				const names = fieldsOf(c.fields).map((f) => (FIELD_WORD.get(f.field) ?? f.field));
+				return [{ at: e.at, text: names.length > 0 ? `${by} changed the ${names.join(' and ')}` : `${by} changed it` }];
+			}
 			case 'status_changed': {
-				if (c.to === 'scoping') return c.from === 'scoped' ? [] : [{ at: e.at, text: `${by} accepted it` }];
+				if (c.to === 'scoping') return c.from === 'scoped' ? [{ at: e.at, text: `${by} asked for changes`, note: c.reason }] : [{ at: e.at, text: `${by} accepted it` }];
 				if (c.to === 'scoped') return [{ at: e.at, text: `${by} scoped it` }];
 				if (c.to === 'approved') return [{ at: e.at, text: `${by} approved it` }];
 				if (c.to === 'declined') return [{ at: e.at, text: `${by} declined it`, note: c.reason }];
 				if (c.to === 'merged') return [{ at: e.at, text: `${by} merged it`, note: c.reason }];
-				// Back to routed or not routed: the line about who it was sent to already says it.
-				if (c.to === 'routed' || c.to === 'new') return [];
 				return [{ at: e.at, text: `${by} changed it` }];
 			}
 			default:

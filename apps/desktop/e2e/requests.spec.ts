@@ -58,6 +58,9 @@ test('RQS-7: with no requests the queue says so, and Requests is a pill of Work'
 	await queue(page);
 	await expect(page.getByTestId('no-requests')).toBeVisible();
 	await expect(page.getByRole('tab', { name: 'Debt' })).toHaveAttribute('aria-disabled', 'true');
+	// The pills run Tasks, Bugs, Debt, Requests.
+	await expect(page.getByRole('tab')).toHaveText([/^Tasks/, /^Bugs/, /^Debt/, /^Requests/]);
+	await expect(page.getByText('Requests across every project.')).toBeVisible();
 });
 
 test('RQS-2/3/5: the words are enough, the route is suggested by rule with a reason and can be changed, and it lands With agents', async ({ page }) => {
@@ -286,6 +289,9 @@ test('RQS-9: a draft that names a team the chosen project does not have is creat
 	await sheet.getByRole('button', { name: /^Approve and create 2 tasks/ }).click();
 	await sheet.getByLabel('Which project?').selectOption({ label: 'Atlas' });
 	await expect(sheet.getByTestId('drafts-dropped')).toContainText("1 draft names a team or person that doesn't apply there");
+	// It says which task loses what.
+	await expect(sheet.getByTestId('draft-without-team')).toHaveCount(1);
+	await expect(sheet.getByRole('listitem').filter({ hasText: 'loses its team' }).getByLabel('Task 2 title')).toBeVisible();
 	await sheet.getByRole('button', { name: 'Create 2 tasks' }).click();
 	await expect(sheet.getByTestId('request-state')).toHaveText('Approved');
 	await expect(sheet.getByTestId('request-tasks')).toContainText('Tasks created · 0 of 2 done');
@@ -303,4 +309,38 @@ test('the route a person picks on the page is recorded as theirs, not the rule\'
 	// The reason of the pick is kept, and it is not called the rule's.
 	await expect(sheet.getByTestId('route-reason')).toContainText('Sent because:');
 	await expect(sheet.getByTestId('route-reason')).not.toContainText('suggested by rule');
+});
+
+test('RQS-5: a route the rule suggested and was left alone is recorded as the rule\'s; one the owner picked is theirs', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await capture(page, 'Left to the rule'); // the first suggestion, untouched
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	await dialog.getByLabel('What do you need?').fill('Picked by me');
+	await dialog.getByRole('radio').nth(1).check();
+	await dialog.getByRole('button', { name: /^Send to / }).click();
+	await expect(dialog).toBeHidden();
+	await page.getByRole('button', { name: 'Left to the rule' }).click();
+	await expect(page.getByRole('dialog').getByTestId('route-reason')).toContainText('(suggested by rule)');
+	await page.keyboard.press('Escape');
+	await page.getByRole('button', { name: 'Picked by me' }).click();
+	await expect(page.getByRole('dialog').getByTestId('route-reason')).toContainText('Sent because:');
+	await expect(page.getByRole('dialog').getByTestId('route-reason')).not.toContainText('suggested by rule');
+});
+
+test('closing a page with a step half done and opening another request starts that one clean', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await capture(page, 'First idea', { button: /^Just save$/ });
+	await capture(page, 'Second idea', { button: /^Just save$/ });
+	await page.getByRole('button', { name: 'First idea' }).click();
+	const sheet = page.getByRole('dialog');
+	await sheet.getByRole('button', { name: 'Decline…' }).click();
+	await sheet.getByLabel('Why').fill('half typed');
+	await page.keyboard.press('Escape');
+	await page.getByRole('button', { name: 'Second idea' }).click();
+	await expect(sheet.getByTestId('request-words')).toHaveText('Second idea');
+	await expect(sheet.getByTestId('request-step')).toHaveCount(0);
+	await expect(sheet.getByTestId('request-actions')).toBeVisible();
 });

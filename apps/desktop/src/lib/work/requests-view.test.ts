@@ -103,21 +103,22 @@ describe('RQS-5 who to suggest without the copilot', () => {
 });
 
 describe('REQ the conversation', () => {
-	const ev = (change: WorkEvent['change'], actor = 'owner', version = 1): WorkEvent => ({ target_id: 'r', version, at: '2026-11-09T10:00:00.000Z', actor_id: actor, auto: false, change });
+	const ev = (change: WorkEvent['change'], actor = 'owner', version = 1): WorkEvent => ({ target_id: 'r', version, at: '2026-11-09T10:00:00.000Z', actor_id: actor, org_position: { epoch: 0, seq: 0 }, change });
 	const lines = (events: WorkEvent[]) => activityLines(events, snapshot, 'owner').map((l) => [l.text, l.note]);
+	const routed = (over: Partial<Extract<WorkEvent['change'], { type: 'routed' }>>, actor = 'owner') => ev({ type: 'routed', from: 'new', to: 'routed', ...over }, actor);
 
 	it('reads each kind of event as a sentence, with you as You', () => {
 		expect(
 			lines([
 				ev({ type: 'created' }),
-				ev({ type: 'assigned', to: 'eden' }),
-				ev({ type: 'assigned', from: 'eden', to: 'ada' }),
-				ev({ type: 'assigned', from: 'ada' }),
-				ev({ type: 'fields_changed', fields: ['title', 'project_id'] }),
-				ev({ type: 'status_changed', from: 'routed', to: 'scoping' }, 'ada'),
+				routed({ scoper_to: 'eden', reason: 'designer: a new capability for users' }),
+				routed({ from: 'routed', scoper_from: 'eden', scoper_to: 'ada' }),
+				routed({ from: 'routed', to: 'new', scoper_from: 'ada' }),
+				ev({ type: 'fields_changed', fields: [{ field: 'title', from: 'a', to: 'b' }, { field: 'project_id', to: 'p1' }] }),
+				routed({ from: 'routed', to: 'scoping', scoper_from: 'ada', scoper_to: 'ada' }, 'ada'),
 				ev({ type: 'status_changed', from: 'scoping', to: 'scoped' }, 'ada'),
-				ev({ type: 'comment', comment_id: 'c', body: 'Daily or weekly?', comment_kind: 'note' }, 'ada'),
-				ev({ type: 'status_changed', from: 'scoped', to: 'scoping' }),
+				ev({ type: 'status_changed', from: 'scoped', to: 'scoping', reason: 'Daily or weekly?' }),
+				ev({ type: 'comment', comment_id: 'c', body: 'Dark mode please', comment_kind: 'note' }),
 				ev({ type: 'status_changed', from: 'scoped', to: 'approved' }),
 				ev({ type: 'status_changed', from: 'new', to: 'declined', reason: 'Not now' }),
 				ev({ type: 'status_changed', from: 'new', to: 'merged', reason: 'Merged into REQ-4' }),
@@ -125,13 +126,14 @@ describe('REQ the conversation', () => {
 			])
 		).toEqual([
 			['You raised this', undefined],
-			['You sent this to Eden', undefined],
+			['You sent this to Eden', 'designer: a new capability for users'],
 			['You moved this from Eden to ada', undefined],
 			['You took this back', undefined],
 			['You changed the title and project', undefined],
 			['ada accepted it', undefined],
 			['ada scoped it', undefined],
-			['ada wrote', 'Daily or weekly?'],
+			['You asked for changes', 'Daily or weekly?'],
+			['You wrote', 'Dark mode please'],
 			['You approved it', undefined],
 			['You declined it', 'Not now'],
 			['You merged it', 'Merged into REQ-4'],
@@ -139,15 +141,35 @@ describe('REQ the conversation', () => {
 		]);
 	});
 
-	it('says nothing more when a status move only follows a route, so a reroute reads as one line', () => {
-		expect(lines([ev({ type: 'assigned', to: 'eden' }), ev({ type: 'status_changed', from: 'new', to: 'routed' }), ev({ type: 'assigned', from: 'eden' }), ev({ type: 'status_changed', from: 'routed', to: 'new' })])).toEqual([
-			['You sent this to Eden', undefined],
-			['You took this back', undefined]
+	it('taking up a request that was with someone else says both: it moved to you, and you accepted it', () => {
+		expect(lines([routed({ from: 'routed', to: 'scoping', scoper_from: 'eden', scoper_to: 'owner' })])).toEqual([
+			['You moved this from Eden to you', undefined],
+			['You accepted it', undefined]
 		]);
 	});
 
+	it('sending a request to the person it is already with still reads as sent to them', () => {
+		expect(lines([routed({ from: 'routed', scoper_from: 'eden', scoper_to: 'eden', reason: 'again' })])).toEqual([['You sent this to Eden', 'again']]);
+	});
+
+	it('reads fields of any shape, old or new, without crashing or naming what it should not', () => {
+		const odd = (fields: unknown) => ev({ type: 'fields_changed', fields: fields as never });
+		expect(lines([odd(['title', 'project_id']), odd([null, 5, { nope: 1 }]), odd(undefined), odd('x'), odd([{ field: 'constructor' }, { field: 'toString' }, { field: '__proto__' }])])).toEqual([
+			['You changed the title and project', undefined],
+			['You changed it', undefined],
+			['You changed it', undefined],
+			['You changed it', undefined],
+			['You changed the constructor and toString and __proto__', undefined]
+		]);
+	});
+
+	it('never reads real FieldChange objects as [object Object]', () => {
+		const text = activityLines([ev({ type: 'fields_changed', fields: [{ field: 'title', from: 'a', to: 'b' }, { field: 'request_kind', to: 'technical' }] })], snapshot, 'owner').map((l) => l.text);
+		expect(text).toEqual(['You changed the title and kind']);
+	});
+
 	it('says "you" when the owner is the one moved to, and names someone who left', () => {
-		expect(lines([ev({ type: 'assigned', from: 'ada', to: 'owner' }, 'ada'), ev({ type: 'assigned', to: 'gone' }, 'ada')])).toEqual([
+		expect(lines([routed({ from: 'routed', scoper_from: 'ada', scoper_to: 'owner' }, 'ada'), routed({ scoper_to: 'gone' }, 'ada')])).toEqual([
 			['ada moved this from ada to you', undefined],
 			['ada sent this to Someone who left', undefined]
 		]);

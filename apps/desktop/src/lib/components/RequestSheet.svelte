@@ -53,6 +53,8 @@
 
 	// Each load takes a number: an answer that arrives after a newer load began (another request was opened) is dropped.
 	let loads = 0;
+	// Each time the sheet opens it gets a new number: a call made before is not this sheet's to answer to.
+	let sheet = 0;
 	async function load() {
 		if (!requestId) return;
 		const mine = ++loads;
@@ -75,6 +77,7 @@
 				note = target = into = projectId = '';
 				drafts = [];
 				busy = false;
+				sheet += 1;
 				void load().then(() => start && item && OPEN_STATUSES.includes(item.summary.status) && begin(start));
 			});
 		}
@@ -84,20 +87,23 @@
 		if (busy) return false;
 		busy = true;
 		error = undefined;
-		const forRequest = requestId;
+		const mine = sheet;
 		try {
 			await send(draft);
-			// The sheet may have moved on to another request while this was sent: only tell about it.
-			if (forRequest === requestId) await load();
+			// The sheet may have been closed and opened again, even for the same request, while this was sent: what it shows
+			// is read again either way (a load for another request is dropped), but busy and errors are only this sheet's.
+			await load();
 			onchanged(message);
-			return forRequest === requestId;
+			return mine === sheet;
 		} catch (e) {
 			const err = toAppError(e);
+			// A failure of a call made for a request the sheet has left says nothing about the one it shows now.
+			if (mine !== sheet) return false;
 			error = err.message;
 			if (err.source === 'api' && err.code === 'conflict') await load();
 			return false;
 		} finally {
-			busy = false;
+			if (mine === sheet) busy = false;
 		}
 	}
 
@@ -267,6 +273,8 @@
 									<li class="flex items-center gap-x-2">
 										<input type="checkbox" bind:checked={d.keep} aria-label="Create task {i + 1}" />
 										<Input bind:value={d.title} disabled={!d.keep} aria-label="Task {i + 1} title" autocomplete="off" />
+										{#if d.keep && d.title.trim() !== '' && !teamStands(d.draft.team_id)}<span class="shrink-0 text-xs/5 text-gray-400" data-testid="draft-without-team">loses its team</span>{/if}
+										{#if d.keep && d.title.trim() !== '' && !assigneeStands(d.draft.assignee_id)}<span class="shrink-0 text-xs/5 text-gray-400" data-testid="draft-without-person">loses its assignee</span>{/if}
 									</li>
 								{/each}
 							</ul>

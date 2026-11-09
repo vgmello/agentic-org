@@ -1,7 +1,7 @@
 // The mock office's rules for feature requests (ada's W7 design §1.5, §1.10, §4.7): one state machine, New → Routed →
 // Scoping → Scoped → Approved, or Declined / Merged from any open state. Like the rest of the mock engine these are
 // pure functions over a plain state; the real office decides the same things with the same words.
-import type { DocRef, DraftTask, Estimate, FeatureOutcome, ItemStatus, RequestOutcome, WorkEventKind, WorkItemSummary } from '$lib/proto';
+import type { DocRef, DraftTask, Estimate, FeatureOutcome, FieldChange, ItemStatus, RequestOutcome, WorkEventKind, WorkItemSummary } from '$lib/proto';
 import { REQUEST_LIMITS, WORK_LIMITS } from '$lib/proto';
 import type { StoredTask, WorkCall, WorkContext, WorkState } from './engine';
 import { emptyCounts, fail, idText, itemAt, officeLine, officeText, shortId, steps, touch } from './support';
@@ -56,10 +56,23 @@ function scoperOf(ctx: WorkContext, id: string | undefined): string | undefined 
 	if (!ctx.members.includes(id)) fail('unknown_recipient', 'That member cannot scope this.');
 	return id;
 }
-const commentExists = (state: WorkState, id: string) => Object.values(state.items).some((i) => i.events?.some((e) => e.change.type === 'comment' && e.change.comment_id === id));
+const commentExists = (state: WorkState, id: string) => Object.values(state.items).some((i) => i.commentIds?.includes(id) || i.events?.some((e) => e.change.type === 'comment' && e.change.comment_id === id));
 /** Writes what a call did to `item` into its activity, at the version the call made (call after `touch`). */
 const record = (item: StoredTask, ctx: WorkContext, change: WorkEventKind) => {
-	(item.events ??= []).push({ target_id: item.summary.id, version: item.summary.version, at: ctx.now, actor_id: ctx.actor, auto: false, change });
+	(item.events ??= []).push({ target_id: item.summary.id, version: item.summary.version, at: ctx.now, actor_id: ctx.actor, org_position: { epoch: 0, seq: 0 }, change });
+};
+/** The one `routed` event of a route or an accept: the status and who scopes it, before and after, and why (ada's ruling on W7 §2.3). */
+const routed = (item: StoredTask, ctx: WorkContext, before: { status: ItemStatus; scoper?: string }, why: boolean) => {
+	record(item, ctx, {
+		type: 'routed',
+		from: before.status,
+		to: item.summary.status,
+		...(before.scoper ? { scoper_from: before.scoper } : {}),
+		...(item.summary.assignee_id ? { scoper_to: item.summary.assignee_id } : {}),
+		// Why and by whom belong to a route; an accept only says who took it up.
+		...(why && item.route_reason ? { reason: item.route_reason } : {}),
+		...(why && item.routed_by ? { routed_by: item.routed_by } : {})
+	});
 };
 const statusMove = (item: StoredTask, ctx: WorkContext, from: ItemStatus, reason?: string) => {
 	if (item.summary.status !== from) record(item, ctx, { type: 'status_changed', from, to: item.summary.status, ...(reason ? { reason } : {}) });
@@ -180,7 +193,6 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 			state.items[call.item_id] = item;
 			state.seq += 1;
 			record(item, ctx, { type: 'created' });
-			if (scoper) record(item, ctx, { type: 'assigned', to: scoper });
 			changed.push(item);
 			return;
 		}
@@ -190,7 +202,7 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 			mustBeOpen(item, OPEN_REQUEST, 'changed');
 			if (call.project_id !== undefined && call.clear_project) fail('invalid_request', 'Give a project or clear it, not both.');
 			if (call.title === undefined && call.request_kind === undefined && call.project_id === undefined && !call.clear_project) fail('invalid_request', 'Nothing to change.');
-			const fields = [call.title !== undefined && 'title', call.request_kind !== undefined && 'request_kind', (call.project_id !== undefined || call.clear_project) && 'project_id'].filter((f): f is string => !!f);
+			const was = { title: item.summary.title, kind: item.summary.request_kind, project: item.summary.project_id };
 			if (call.title !== undefined) item.summary.title = officeLine(call.title, WORK_LIMITS.title, 'The title');
 			if (call.request_kind !== undefined) {
 				knownKind(call.request_kind);
@@ -201,8 +213,15 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 				item.summary.project_id = call.project_id;
 			}
 			if (call.clear_project) item.summary.project_id = undefined;
-			touch(state, item, now);
-			record(item, ctx, { type: 'fields_changed', fields });
+			const fields: FieldChange[] = [];
+			if (item.summary.title !== was.title) fields.push({ field: 'title', from: was.title, to: item.summary.title });
+			if (item.summary.request_kind !== was.kind) fields.push({ field: 'request_kind', ...(was.kind ? { from: was.kind } : {}), to: item.summary.request_kind });
+			if (item.summary.project_id !== was.project) fields.push({ field: 'project_id', ...(was.project ? { from: was.project } : {}), ...(item.summary.project_id ? { to: item.summary.project_id } : {}) });
+			// Setting what it already is changes nothing: no new version, no event.
+			if (fields.length > 0) {
+				touch(state, item, now);
+				record(item, ctx, { type: 'fields_changed', fields });
+			}
 			changed.push(item);
 			return;
 		}
@@ -220,8 +239,7 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 			// Sending it to someone makes it Routed again for them; sending it nowhere makes it Not routed.
 			item.summary.status = scoper ? 'routed' : 'new';
 			touch(state, item, now);
-			if (before.scoper !== scoper) record(item, ctx, { type: 'assigned', ...(before.scoper ? { from: before.scoper } : {}), ...(scoper ? { to: scoper } : {}) });
-			statusMove(item, ctx, before.status as ItemStatus);
+			routed(item, ctx, before, true);
 			changed.push(item);
 			return;
 		}
@@ -234,8 +252,7 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 			item.summary.assignee_id = actor;
 			item.summary.status = 'scoping';
 			touch(state, item, now);
-			if (was.scoper !== actor) record(item, ctx, { type: 'assigned', ...(was.scoper ? { from: was.scoper } : {}), to: actor });
-			statusMove(item, ctx, was.status);
+			routed(item, ctx, was, false);
 			changed.push(item);
 			return;
 		}
@@ -261,8 +278,9 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 			if (commentExists(state, commentId)) fail('already_exists', 'That comment already exists.');
 			item.summary.status = 'scoping';
 			touch(state, item, now);
-			record(item, ctx, { type: 'comment', comment_id: commentId, body: note, comment_kind: 'note' });
-			statusMove(item, ctx, 'scoped');
+			(item.commentIds ??= []).push(commentId);
+			// One event: the move back to scoping, with the note as its reason (ada's ruling on W7 §2.3).
+			statusMove(item, ctx, 'scoped', note);
 			changed.push(item);
 			return;
 		}
