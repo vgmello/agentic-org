@@ -153,7 +153,8 @@ pub enum SpoolSendError {
     /// The office isn't a finished office of this Mac: no real folder, or one without its
     /// `office.json` (an unfinished create, which the host discards).
     NoSuchOffice,
-    /// Not a plain id, or a send that doesn't fit (over [`MAX_SPOOLED_BYTES`]).
+    /// A send the office's ingest would refuse (a field over its limit, a kind, priority, id
+    /// or name it doesn't take), or one over [`MAX_SPOOLED_BYTES`].
     Invalid(&'static str),
     /// A spool folder that isn't a real folder (e.g. a symlink): refused.
     NotAFolder(PathBuf),
@@ -186,8 +187,7 @@ impl From<io::Error> for SpoolSendError {
 /// file `0600`, created new, never through a symlink), flushed with `F_FULLFSYNC`, moved into
 /// `spool/new/<id>.json` in one step (never replacing a file already there), then `new/`
 /// flushed. The office must be a finished office of this Mac (its folder holds its
-/// `office.json`): this never creates an office. A send the office's ingest would refuse (a
-/// field over its limit, `office` as the recipient) is refused here. Returns the file's path. The office's folder must
+/// `office.json`). A send the office's ingest would refuse is refused here. Returns the file's path. The office's folder must
 /// exist: this never creates an office.
 pub fn spool_send(home: &Path, send: &SpooledSend) -> Result<PathBuf, SpoolSendError> {
     if !is_plain_id(&send.id) {
@@ -239,8 +239,8 @@ pub fn spool_send(home: &Path, send: &SpooledSend) -> Result<PathBuf, SpoolSendE
     Ok(placed)
 }
 
-/// Moves `from` to `to` in one step, refusing to replace a file already at `to` (macOS
-/// `renamex_np` with `RENAME_EXCL`); elsewhere a plain rename (`to` is a fresh ULID's name).
+/// Moves `from` to `to`, never replacing a file already at `to`: in one step on macOS
+/// (`renamex_np` with `RENAME_EXCL`), as a link then an unlink elsewhere.
 fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
     #[cfg(target_os = "macos")]
     {
@@ -259,30 +259,54 @@ fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        fs::rename(from, to)
+        // A link fails if `to` exists; then the staged name goes (the caller removes it on error).
+        fs::hard_link(from, to)?;
+        fs::remove_file(from)
     }
 }
 
-/// The office's ingest applies every `msg.send` rule to a spooled send (`SpooledSend`): refuse
-/// here what it would refuse there, so a message is never reported queued and then dead-lettered.
+/// The office's ingest applies every `msg.send` rule to a spooled send (`SpooledSend`), plus
+/// rules on `from`. Refuse here what can be told without the office (the limits, kinds,
+/// priority, ids and reserved names), so a send is never reported queued and then
+/// dead-lettered for one of those. (Whether the members exist only the office can tell.)
 fn check_ingestible(send: &SpooledSend) -> Result<(), SpoolSendError> {
     use org_proto::msg::{
-        json_string_len, MAX_BODY_BYTES, MAX_HANDLE_BYTES, MAX_META_BYTES, MAX_SUBJECT_BYTES,
-        OFFICE_SENDER,
+        json_string_len, MessagePriority, KIND_DELIVERY_FAILED, KIND_REQUEST, MAX_BODY_BYTES,
+        MAX_HANDLE_BYTES, MAX_ID_BYTES, MAX_META_BYTES, MAX_SUBJECT_BYTES, OFFICE_SENDER,
     };
+    let invalid = |why| Err(SpoolSendError::Invalid(why));
+    if org_proto::ulid_time_ms(&send.id).is_none() {
+        return invalid("the message id isn't a ULID");
+    }
+    if send.kind.is_empty()
+        || json_string_len(&send.kind) > MAX_ID_BYTES
+        || send.kind == KIND_REQUEST
+        || send.kind == KIND_DELIVERY_FAILED
+    {
+        return invalid("that kind can't be spooled");
+    }
+    if !matches!(
+        send.priority,
+        MessagePriority::Normal | MessagePriority::High | MessagePriority::Urgent
+    ) {
+        return invalid("unknown priority");
+    }
     if json_string_len(&send.body) > MAX_BODY_BYTES {
-        return Err(SpoolSendError::Invalid(
-            "the body is too large (256 KiB at most)",
-        ));
+        return invalid("the body is too large (256 KiB at most)");
     }
     if send
         .subject
         .as_deref()
         .is_some_and(|s| json_string_len(s) > MAX_SUBJECT_BYTES)
     {
-        return Err(SpoolSendError::Invalid(
-            "the subject is too large (1 KiB at most)",
-        ));
+        return invalid("the subject is too large (1 KiB at most)");
+    }
+    if send
+        .reply_to
+        .as_deref()
+        .is_some_and(|r| json_string_len(r) > MAX_ID_BYTES)
+    {
+        return invalid("reply_to is too long");
     }
     let meta_bytes = if send.meta.is_empty() {
         0
@@ -292,21 +316,28 @@ fn check_ingestible(send: &SpooledSend) -> Result<(), SpoolSendError> {
             .len()
     };
     if meta_bytes > MAX_META_BYTES {
-        return Err(SpoolSendError::Invalid(
-            "the meta is too large (64 KiB at most)",
-        ));
+        return invalid("the meta is too large (64 KiB at most)");
     }
     for who in [&send.to, &send.from] {
         if json_string_len(who) > MAX_HANDLE_BYTES {
-            return Err(SpoolSendError::Invalid("a member name is too long"));
+            return invalid("a member name is too long");
         }
     }
-    if send
-        .to
-        .trim_matches(|c: char| matches!(c, ' ' | '\t' | '\n' | '\x0c' | '\r'))
-        .eq_ignore_ascii_case(OFFICE_SENDER)
+    // Members are compared trimmed of ASCII whitespace, as the office does.
+    let to = send.to.trim_ascii();
+    if to.is_empty() {
+        return invalid("no recipient");
+    }
+    if to.eq_ignore_ascii_case(OFFICE_SENDER) {
+        return invalid("'office' isn't a recipient");
+    }
+    // Ingest takes a spooled send only from an agent: never from the office or the owner.
+    let from = send.from.trim_ascii();
+    if from.is_empty()
+        || from.eq_ignore_ascii_case(OFFICE_SENDER)
+        || from.eq_ignore_ascii_case(org_proto::OWNER_HANDLE)
     {
-        return Err(SpoolSendError::Invalid("'office' isn't a recipient"));
+        return invalid("that sender can't spool a message");
     }
     Ok(())
 }
@@ -518,8 +549,11 @@ mod tests {
             assert_eq!(mode(&office.join(dir)), 0o700, "{dir}");
         }
         assert_eq!(fs::read_dir(office.join("spool/tmp")).unwrap().count(), 0);
-        // The same id again is refused rather than overwritten (create_new).
+        // The same id again is refused, never replacing the waiting send or leaving a copy.
         assert!(spool_send(&home, &spooled(A, MSG, "again")).is_err());
+        let still: SpooledSend = serde_json::from_slice(&fs::read(&placed).unwrap()).unwrap();
+        assert_eq!(still.body, "hello");
+        assert_eq!(fs::read_dir(office.join("spool/tmp")).unwrap().count(), 0);
     }
 
     #[test]
@@ -572,12 +606,36 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("subject"));
-        let mut office = spooled(A, "01MSG0000000000000000000A3", "x");
-        office.to = " Office ".into();
+        let refused = |change: &dyn Fn(&mut SpooledSend)| {
+            let mut send = spooled(A, "01MSG0000000000000000000A3", "x");
+            change(&mut send);
+            matches!(spool_send(&home, &send), Err(SpoolSendError::Invalid(_)))
+        };
+        assert!(refused(&|s| s.to = " Office ".into()));
+        assert!(refused(&|s| s.to = String::new()));
+        assert!(refused(&|s| s.to = " \t".into()));
+        assert!(refused(&|s| s.to = "n".repeat(300)));
+        assert!(refused(&|s| s.from = "owner".into()));
+        assert!(refused(&|s| s.from = "office".into()));
+        assert!(refused(&|s| s.kind = "request".into()));
+        assert!(refused(&|s| s.kind = String::new()));
+        assert!(refused(
+            &|s| s.priority = org_proto::msg::MessagePriority::Unknown
+        ));
+        assert!(refused(&|s| s.reply_to = Some("r".repeat(200))));
+        assert!(refused(&|s| {
+            s.meta
+                .insert("k".into(), serde_json::json!("m".repeat(70 * 1024)));
+        }));
+        // An id that is plain but not a ULID.
         assert!(matches!(
-            spool_send(&home, &office),
+            spool_send(&home, &spooled(A, "NOTAULID", "x")),
             Err(SpoolSendError::Invalid(_))
         ));
+        // Nothing refused left anything behind.
+        let spool = home.join(OFFICES_DIR_NAME).join(A).join("spool");
+        assert_eq!(fs::read_dir(spool.join("new")).unwrap().count(), 1);
+        assert_eq!(fs::read_dir(spool.join("tmp")).unwrap().count(), 0);
     }
 
     #[test]
