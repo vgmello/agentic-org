@@ -279,8 +279,8 @@ It reuses `org-copilot`'s runtime port (`claude -p` or `codex exec`, tool-less),
 
 ## 8. Session boundaries and context pressure
 - **Checkpoints** (§4.3) at every switch, pause, max time and task end. The checkpoint wording ("Record where you are, then stop.") becomes the prompt to run `memory checkpoint` (A-M9).
-- **Context pressure.** The office already reads each turn's usage. When a session's input tokens pass 70% of the model's window (per runtime and model, a setting), at the next turn boundary the office sends a checkpoint turn, ends the run as `rolled_over` (a new run outcome, A-M9) and starts a fresh session with the charter and the brief.
-- **A runtime's own compaction happens anyway** in a long single turn. When the office sees it (a new normalized `SessionEvent::Compacted` in `org-runtime`, A-M10: Claude reports compaction in its stream; for Codex, whose `thread/compact/start` is a request, and for Antigravity, S0 finds what's observable), it re-sends the charter and the brief as a message.
+- **Context pressure.** The office already reads each turn's usage. When a session's input tokens pass 70% of the model's window (per runtime and model, a setting), at the next turn boundary the office sends a checkpoint turn, ends the run as `rolled_over` (a new run outcome, A-M9) and starts a fresh session with the effective role and the brief.
+- **A runtime's own compaction happens anyway** in a long single turn. When the office sees it (a new normalized `SessionEvent::Compacted` in `org-runtime`, A-M10: Claude reports compaction in its stream; for Codex, whose `thread/compact/start` is a request, and for Antigravity, S0 finds what's observable), it re-sends the effective role and the brief as a message.
 - **Fresh starts** (the 7-day window passed, a resume failed, a roll-over): the effective role in the instructions, the brief with the session's handoff in the first wake prompt.
 
 ## 9. People in the loop (the app; Eden to spec)
