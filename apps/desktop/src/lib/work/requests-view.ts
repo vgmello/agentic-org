@@ -154,7 +154,7 @@ export function suggestScopers(snapshot: OrgSnapshot, kind: Exclude<RequestKind,
 		add(engineers, (m) => `${title(m)}: knows how it fits together`);
 		add(designers, (m) => `${title(m)}: shapes how it works for users`);
 	}
-	add(agents, (m) => `${title(m)}`);
+	add(agents, (m) => `${title(m)}: another agent who can take it`);
 	return picks;
 }
 

@@ -187,9 +187,12 @@
 				{#if outcome}
 					<section class="space-y-2 text-sm/6" aria-labelledby="req-outcome" data-testid="request-outcome">
 						<h3 id="req-outcome" class="font-semibold text-white">Outcome</h3>
-						{#if outcome.feature && outcome.feature.type !== 'unknown'}<p class="text-gray-200">{outcome.feature.type === 'new' ? 'A new feature' : 'Adds to a feature'}</p>{/if}
+						{#if outcome.feature && outcome.feature.type !== 'unknown'}<p class="text-gray-200">{outcome.feature.type === 'new' ? `A new feature: ${s.title}` : 'Adds to an existing feature'}</p>{/if}
 						{#if outcome.docs.length > 0}<p class="text-gray-300">Docs: {outcome.docs.map((d) => d.doc_key).join(', ')}</p>{/if}
 						{#if estimate}<p class="text-gray-200" data-testid="request-estimate">Estimate: {estimate}</p>{/if}
+						{#if made.length > 0}
+							<p class="text-gray-300" data-testid="proposed-as-approved">Proposed: {outcome.draft_tasks.length} {outcome.draft_tasks.length === 1 ? 'task' : 'tasks'} (the ones you approved are below).</p>
+						{:else}
 						<ul class="divide-y divide-white/5 rounded-lg bg-white/5 outline-1 -outline-offset-1 outline-white/10" aria-label="Proposed tasks">
 							{#each outcome.draft_tasks as d, i (i)}
 								<li class="px-3 py-2 text-gray-200 [overflow-wrap:anywhere]" data-testid="draft-task">{d.title}{#if d.assignee_id}<span class="text-gray-400"> · {nameOf(snapshot, d.assignee_id)}</span>{/if}</li>
@@ -197,6 +200,7 @@
 								<li class="px-3 py-2 text-gray-400">No tasks proposed.</li>
 							{/each}
 						</ul>
+						{/if}
 					</section>
 				{/if}
 
@@ -234,8 +238,9 @@
 							<Button size="sm" variant="outline" onclick={() => begin('changes')}>Ask for changes…</Button>
 						{/if}
 						{#if s.status !== 'scoped'}<Button size="sm" variant="outline" onclick={() => begin('route')}>{s.status === 'new' ? 'Route…' : 'Change who scopes it…'}</Button>{/if}
-						<Button size="sm" variant="outline" onclick={() => begin('merge')} disabled={others.length === 0} title={others.length === 0 ? 'There is no other open request to merge into.' : undefined}>Merge into…</Button>
+						<Button size="sm" variant="outline" onclick={() => begin('merge')} disabled={others.length === 0} aria-describedby={others.length === 0 ? 'req-no-merge' : undefined}>Merge into…</Button>
 						<Button size="sm" variant="outline" onclick={() => begin('decline')}>Decline…</Button>
+						{#if others.length === 0}<p id="req-no-merge" class="basis-full text-xs/5 text-gray-400" data-testid="no-merge">No other open requests to merge into.</p>{/if}
 					</div>
 				{:else if step}
 					<section class="space-y-2 rounded-lg bg-white/5 p-3 outline-1 -outline-offset-1 outline-white/10" data-testid="request-step">

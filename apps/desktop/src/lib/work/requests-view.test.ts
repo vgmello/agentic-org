@@ -96,6 +96,8 @@ describe('RQS-5 who to suggest without the copilot', () => {
 		expect(all.map((s) => s.member.id)).not.toContain('owner');
 		expect(new Set(all.map((s) => s.member.id)).size).toBe(all.length);
 		expect(all[0].why).toBe('product designer: a new capability for users');
+		expect(all.every((s) => /: .+/.test(s.why))).toBe(true);
+		expect(suggestScopers(snapshot, 'question', undefined).at(-1)?.why).toBe('developer: another agent who can take it');
 		expect(suggestScopers({ ...snapshot, members: [snapshot.members[0]] }, 'feature', undefined)).toEqual([]);
 	});
 });

@@ -70,10 +70,14 @@ test('RQS-2/3/5: the words are enough, the route is suggested by rule with a rea
 	const radios = dialog.getByRole('radio');
 	await expect(radios.first()).toBeChecked();
 	await shot(page, 'request-capture');
-	// Changing the choice drops "Suggested by rule" and keeps the kind and project as they were.
-	await dialog.getByRole('radio', { name: /Don't send it yet/ }).check();
+	// Every suggestion says why, and changing the choice drops "Suggested by rule".
+	// The last radio is Someone else; the others are suggestions.
+	const suggested = (await radios.count()) - 1;
+	for (let i = 0; i < suggested; i++) await expect(radios.nth(i).locator('xpath=ancestor::label')).toContainText(/, .+: .+/);
+	await expect(dialog.getByRole('radio', { name: /Don't send/ })).toHaveCount(0);
+	await dialog.getByRole('radio').nth(1).check();
 	await expect(dialog.getByTestId('by-rule')).toHaveCount(0);
-	await expect(dialog.getByRole('button', { name: 'Save', exact: true })).toBeVisible();
+	await expect(dialog.getByRole('button', { name: /^Send to / })).toBeVisible();
 	await dialog.getByRole('radio').first().check();
 	await dialog.getByRole('button', { name: /^Send to/ }).click();
 	await expect(dialog).toBeHidden();
@@ -119,6 +123,10 @@ test('RQS-9/14: scoped by an agent it needs you; Approve asks for a project, let
 	const sheet = page.getByRole('dialog');
 	await expect(sheet.getByTestId('request-estimate')).toHaveText('Estimate: 2 days · ≈ $40–70');
 	await expect(sheet.getByTestId('draft-task')).toHaveText(['Design the flow', 'Build the screen']);
+	await expect(sheet.getByTestId('request-outcome')).toContainText('A new feature: Costs per project');
+	// With one open request there is nothing to merge into, and the page says so.
+	await expect(sheet.getByRole('button', { name: 'Merge into…' })).toBeDisabled();
+	await expect(sheet.getByTestId('no-merge')).toHaveText('No other open requests to merge into.');
 	// Scoped: approve, ask for changes, merge or decline; the route is not changed once it is scoped.
 	await expect(sheet.getByRole('button', { name: /^(Route|Change who scopes it)/ })).toHaveCount(0);
 	await shot(page, 'request-scoped');
@@ -135,6 +143,9 @@ test('RQS-9/14: scoped by an agent it needs you; Approve asks for a project, let
 	await expect(sheet.getByTestId('request-state')).toHaveText('Approved');
 	await expect(sheet.getByTestId('request-tasks')).toContainText('Tasks created · 0 of 2 done');
 	await expect(sheet.getByTestId('request-tasks')).toContainText('Build the costs screen');
+	// The proposed list is not repeated once the tasks exist.
+	await expect(sheet.getByTestId('proposed-as-approved')).toHaveText('Proposed: 2 tasks (the ones you approved are below).');
+	await expect(sheet.getByTestId('draft-task')).toHaveCount(0);
 	await expect(sheet.getByTestId('request-history')).toContainText('You approved it');
 	await shot(page, 'request-approved');
 	await page.keyboard.press('Escape');

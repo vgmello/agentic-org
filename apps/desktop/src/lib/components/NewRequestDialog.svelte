@@ -38,7 +38,7 @@
 	let text = $state('');
 	let kind = $state<Kind>('feature');
 	let projectId = $state('');
-	// What the owner chose for who scopes it: a suggestion's member id, 'other' (with `other`), or 'none' (Just save); undefined: the first suggestion.
+	// What the owner chose for who scopes it: a suggestion's member id, 'other' (with `other`), or undefined: the first suggestion. (Just save is the way to queue it unrouted.)
 	let picked = $state<string | undefined>();
 	let other = $state('');
 	let touched = $state(false);
@@ -72,7 +72,7 @@
 	const suggestions = $derived(suggestScopers(snapshot, kind, projectId || undefined));
 	const agents = $derived(snapshot.members.filter((m) => m.kind === 'agent' && !isFormer(m)));
 	// A pick that the suggestions no longer hold (the kind or project changed) is not a pick any more.
-	const pickStands = $derived(picked === 'other' || picked === 'none' || suggestions.some((s) => s.member.id === picked));
+	const pickStands = $derived(picked === 'other' || suggestions.some((s) => s.member.id === picked));
 	const choice = $derived((pickStands ? picked : undefined) ?? suggestions[0]?.member.id ?? 'none');
 	const scoperId = $derived(choice === 'none' ? undefined : choice === 'other' ? other || undefined : choice);
 	const suggestion = $derived(suggestions.find((s) => s.member.id === scoperId));
@@ -188,10 +188,6 @@
 							{#each agents as a (a.id)}<option value={a.id}>{a.name}{a.agent?.status === 'paused' ? ' (paused)' : ''}</option>{/each}
 						</select>
 					</span>
-				</label>
-				<label class="flex items-start gap-2 text-sm/6 text-gray-200">
-					<input type="radio" name="scoper" value="none" checked={choice === 'none'} onchange={() => ((picked = 'none'), (confirmed = false))} class="mt-1.5" />
-					<span>Don't send it yet (save it to route later)</span>
 				</label>
 			</fieldset>
 
