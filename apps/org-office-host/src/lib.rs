@@ -18,14 +18,22 @@
 //!
 //! `main.rs` only parses arguments, waits for a shutdown signal and calls [`Host`].
 
-// A release-profile build with debug assertions on would ship every development path (see
-// build.rs): refuse it, whatever turned them on (the profile, `-C debug-assertions`, `-C
-// opt-level=0`).
-#[cfg(all(release_profile, debug_assertions))]
+// A release-profile build (or any build for the app bundle, `ORG_BUNDLE=1`) with debug
+// assertions on would ship every development path (see build.rs): refuse it, whatever turned
+// them on (the profile, `-C debug-assertions`, `-C opt-level=0`). rustdoc compiles with debug
+// assertions on whatever the profile, so documentation and doctests are exempt: they ship nothing.
+// (`doc` and `doctest` are set only by rustdoc; passing `--cfg doc` to rustc on purpose would
+// bypass this, which takes intent, not a mistake.)
+#[cfg(all(
+    any(release_profile, bundle_build),
+    debug_assertions,
+    not(doc),
+    not(doctest)
+))]
 compile_error!(
-    "org-office-host: refusing a release build with debug assertions on: it would ship the \
-     host's development paths (dev keys, no server signature check, the unsigned development \
-     app, the trust-changing arguments). Build release without debug assertions, or build debug."
+    "org-office-host: refusing a release or app-bundle build with debug assertions on: it would \
+     ship the host's development paths (dev keys, no server signature check, the unsigned \
+     development app, the trust-changing arguments). Build it without debug assertions."
 );
 
 mod app_auth;

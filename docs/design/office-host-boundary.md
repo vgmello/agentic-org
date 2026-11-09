@@ -276,7 +276,7 @@ first line is `invalid_request`.
     `com.apple.security.get-task-allow`, `com.apple.security.cs.allow-dyld-environment-variables` or
     `com.apple.security.cs.disable-library-validation`: a host other code can get into would give
     every key away. (amended 2026-11-08: review L5) A release-profile build with debug assertions on
-    (the profile, `-C debug-assertions` or `-C opt-level=0`) fails to compile (`build.rs` marks release-profile builds and `lib.rs` has a `compile_error!` for that cfg with `debug_assertions`): it would ship every development
+    (the profile, `-C debug-assertions` or `-C opt-level=0`) fails to compile (`build.rs` marks release-profile builds and `lib.rs` has a `compile_error!` for that cfg with `debug_assertions`); so does any build for the app bundle (`ORG_BUNDLE=1`, which the bundling must set) with debug assertions on, whatever its profile (`ORG_BUNDLE` must be unset or exactly `1`; documentation and doctest builds are exempt, since they ship nothing): it would ship every development
     path.
   - **Release prerequisite** (ada): verify the `keychain-access-groups` entitlement on the first signed
     build. If it needs a provisioning profile, the host ships as a helper app bundle
