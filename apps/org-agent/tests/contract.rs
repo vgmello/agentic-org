@@ -1257,16 +1257,28 @@ fn org_relay_symlink_behaves_like_v1_old_org_relay() {
 }
 
 #[test]
-fn office_is_accepted_and_ignored_by_read_and_whoami() {
+fn office_is_ignored_by_whoami_and_names_the_office_for_read() {
     let env = setup("office");
     let r = env.run(ME, &["whoami", "--office", "hq"]);
     assert_eq!((r.code, r.stdout.as_str()), (0, ME), "{}", r.stderr);
     assert_eq!(env.run(ME, &["whoami", "--office"]).code, 1);
     assert_eq!(env.run(ME, &["whoami", "extra"]).code, 1);
     let id = env.send(PEER, ME, &["hello"]);
-    let r = env.run(ME, &["msg", "read", &id, "--office", "hq"]);
+    // Without --office, read uses the spool.
+    let r = env.run(ME, &["msg", "read", &id]);
     assert_eq!(r.code, 0, "{}", r.stderr);
     assert!(r.stdout.contains("hello"));
+    // --office names the office (the cutover's opt-in): one that isn't on this Mac is exit 1,
+    // and the spool isn't touched instead.
+    let id = env.send(PEER, ME, &["again"]);
+    let r = env.run(ME, &["msg", "read", &id, "--office", "hq"]);
+    assert_eq!(r.code, 1, "{}", r.stderr);
+    assert!(
+        r.stderr.contains("office hq isn't on this Mac"),
+        "{}",
+        r.stderr
+    );
+    assert!(env.run(ME, &["msg", "read", &id]).stdout.contains("again"));
     assert_eq!(env.run(ME, &["msg", "read", "--next", "--office"]).code, 1);
 }
 
@@ -1581,4 +1593,73 @@ fn any_msg_command_marks_the_caller_online_in_who() {
     // An unregistered --as never gets an inbox just by running commands.
     env.run("nobody-yet", &["msg", "inbox"]);
     assert!(!env.root.join("spool/inbox/nobody-yet").exists());
+}
+
+/// An agent the office runs (`ORG_SESSION_TOKEN` set) never uses the local spool (ADR-0003
+/// §2.1.4): every command that would open it exits 5, and no spool is created.
+#[test]
+fn an_office_run_agent_never_opens_the_local_spool() {
+    let env = TempOrgHome::new("office_run");
+    let id = "01MSG0000000000000000000A1";
+    let commands: &[&[&str]] = &[
+        &["who"],
+        &["who", "nova"],
+        &["status"],
+        &["status", "on", "it"],
+        &["status", "--clear"],
+        &["profile", "set", "--name", "Me"],
+        &["msg", "register"],
+        &["msg", "deregister", "nova"],
+        &["msg", "send", "--to", "nova", "hi"],
+        &["msg", "ask", "--to", "nova", "--timeout", "1s", "hi"],
+        &["msg", "reply", id, "hi"],
+        &["msg", "defer", id, "--until", "1h"],
+        &["msg", "done", id],
+        &["msg", "notify"],
+        &["msg", "due"],
+        &["msg", "inbox"],
+        &["msg", "read", "--next"],
+        &["msg", "wait", "--timeout", "1s"],
+        &["relay", "status"],
+        &["relay", "run", "--once"],
+    ];
+    for args in commands {
+        let run: common::Run = TempOrgHome::command(&env.root, ME, args)
+            .env("ORG_SESSION_TOKEN", "t")
+            .output()
+            .unwrap()
+            .into();
+        assert_eq!(run.code, 5, "{args:?}: {}", run.stderr);
+        assert!(
+            run.stderr.contains("ORG_SESSION_TOKEN") || run.stderr.contains("office runs"),
+            "{args:?}: {}",
+            run.stderr
+        );
+        assert!(
+            !env.root.join("spool").exists(),
+            "{args:?} opened the spool"
+        );
+    }
+    // The org-relay name too.
+    let bin_dir = env.root.join("bin");
+    fs::create_dir_all(&bin_dir).unwrap();
+    let relay = bin_dir.join("org-relay");
+    std::os::unix::fs::symlink(common::org_agent_bin(), &relay).unwrap();
+    let run: common::Run = std::process::Command::new(&relay)
+        .args(["status"])
+        .env("ORG_HOME", &env.root)
+        .env("HOME", &env.root)
+        .env("ORG_SESSION_TOKEN", "t")
+        .output()
+        .unwrap()
+        .into();
+    assert_eq!(run.code, 5, "{}", run.stderr);
+    assert!(!env.root.join("spool").exists());
+    // whoami opens no spool, so it still answers.
+    let whoami: common::Run = TempOrgHome::command(&env.root, ME, &["whoami"])
+        .env("ORG_SESSION_TOKEN", "t")
+        .output()
+        .unwrap()
+        .into();
+    assert_eq!(whoami.code, 0, "{}", whoami.stderr);
 }
