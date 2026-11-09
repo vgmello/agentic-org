@@ -3,14 +3,17 @@
 //!
 //! The server is the real one: this test binary, started with `ORG_AGENT_TEST_OFFICE_SERVER`
 //! set, runs exactly what `org-office-server`'s `main` runs (its library). It is driven the way
-//! the host drives it (`apps/org-office-server/tests/launch.rs`): the office's database key is a
-//! fixed test key on the launch line, so no Keychain is involved. Every home is a temporary
+//! the host drives it (`apps/org-office-server/tests/launch.rs`): the office's database key and the
+//! app token are a fixed test key and token handed over a one-shot key socket (the key hand-off),
+//! so no Keychain is involved. Every home is a temporary
 //! folder: the office home (`ORG_OFFICE_HOME`) and the agents' `HOME` and `ORG_HOME` (their
 //! spool), so nothing here can reach `~/.agency` or a real office.
 //!
 //! Its own `main` (`harness = false`), because the server writes control lines on stdout.
 
 use std::io::BufReader;
+use std::os::unix::fs::PermissionsExt;
+use std::os::unix::net::UnixListener;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Output, Stdio};
@@ -19,7 +22,8 @@ use std::time::{Duration, Instant};
 
 use org_client::Client;
 use org_office_launch::{
-    read_server_event, write_host_message, CreateOffice, HostMessage, ServerEvent,
+    key_socket_path, read_server_event, write_hand_off, write_host_message, CreateOffice,
+    HostMessage, KeySocketId, ServerEvent,
 };
 use org_proto::location::office_socket_path;
 use org_proto::org::{
@@ -174,6 +178,10 @@ impl TestArgs {
 
 /// The office server, exactly as `org-office-server`'s `main` runs it.
 fn serve() -> ! {
+    // First of all, as `main` does.
+    if let Err(refusal) = org_office_server::hygiene::run() {
+        org_office_server::hygiene::refuse(refusal);
+    }
     let control = match org_office_server::fdswap::take_control_pipe() {
         Ok(control) => control,
         Err(error) => {
@@ -184,6 +192,33 @@ fn serve() -> ! {
     org_office_server::install_panic_hook();
     let args: Vec<String> = std::env::args().skip(1).collect();
     std::process::exit(org_office_server::run(&args, control));
+}
+
+/// Binds the key socket `id` (owner-only, as the host does), and serves its one connection: the
+/// hand-off line with the test token and key, then the socket is unlinked and the connection
+/// closed. The thread gives up after a while if nobody connects.
+fn serve_key_socket(home: &std::path::Path, id: &KeySocketId) {
+    let path = key_socket_path(home, id);
+    let listener = UnixListener::bind(&path).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    std::thread::spawn(move || {
+        let until = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < until {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let _ = stream.set_nonblocking(false);
+                let _ = write_hand_off(&mut stream, &token(), Some(&DbKey::from_bytes([0xB3; 32])));
+                // As the host does: stop writing, keep the connection until the server closes.
+                let _ = stream.shutdown(std::net::Shutdown::Write);
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+                let mut sink = [0u8; 64];
+                while matches!(std::io::Read::read(&mut stream, &mut sink), Ok(n) if n > 0) {}
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let _ = std::fs::remove_file(&path);
+    });
 }
 
 /// A temporary office home and agents' home, under /tmp (socket paths are short).
@@ -224,10 +259,15 @@ impl World {
             .env("HOME", &self.user)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            // The server's log must be a pipe, as the host gives it (a fd-hygiene rule).
+            .stderr(Stdio::piped())
             .spawn()
             .unwrap();
         let stdout = child.stdout.take().unwrap();
+        let mut log = child.stderr.take().unwrap();
+        std::thread::spawn(move || {
+            let _ = std::io::copy(&mut log, &mut std::io::sink());
+        });
         let (tx, events) = mpsc::channel();
         std::thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
@@ -242,6 +282,10 @@ impl World {
             child,
             events,
         };
+        // The host's part of the key hand-off: a one-shot socket, bound before the first line,
+        // that writes the app token and the key to the one connection.
+        let key_socket_id = KeySocketId::generate_from([0xA5; 8]);
+        serve_key_socket(&self.home, &key_socket_id);
         write_host_message(
             server.stdin.as_mut().unwrap(),
             &HostMessage::Create(CreateOffice {
@@ -250,8 +294,7 @@ impl World {
                 office_id: OFFICE.into(),
                 office_name: "HQ".into(),
                 role: OfficeRole::Hq,
-                app_token: token(),
-                db_key: DbKey::from_bytes([0xB3; 32]),
+                key_socket_id,
             }),
         )
         .unwrap();

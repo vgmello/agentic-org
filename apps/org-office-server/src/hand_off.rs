@@ -22,6 +22,7 @@ use org_office_launch::{
 use org_proto::frame::FrameError;
 use org_proto::location::check_socket_path;
 
+use crate::peer::PeerRule;
 use crate::zeroed::ZeroedReader;
 
 /// How long the connect and the read may take together.
@@ -36,7 +37,7 @@ pub(crate) fn receive(
     id: &KeySocketId,
     expected: FirstLine,
 ) -> Result<HandOff, LaunchError> {
-    receive_within(home, id, expected, DEADLINE)
+    receive_within(home, id, expected, DEADLINE, PeerRule::Host)
 }
 
 fn receive_within(
@@ -44,6 +45,7 @@ fn receive_within(
     id: &KeySocketId,
     expected: FirstLine,
     deadline: Duration,
+    rule: PeerRule,
 ) -> Result<HandOff, LaunchError> {
     let path = key_socket_path(home, id);
     if check_socket_path(&path).is_err() {
@@ -52,6 +54,14 @@ fn receive_within(
     check_socket_file(&path)?;
     let until = Instant::now() + deadline;
     let fd = connect(&path, until).map_err(|e| LaunchError::Frame(FrameError::Io(e)))?;
+    // Who is listening, checked NOW: the host writes the line and closes at once, and after the
+    // peer has closed the kernel no longer answers (`ENOTCONN`). A swapped socket is a listener
+    // of another process, and nothing is read from it.
+    if !crate::peer::admits(fd.as_raw_fd(), rule) {
+        return Err(LaunchError::Invalid(
+            "the key socket is not the host's listener",
+        ));
+    }
     // A small buffer we control; it is wiped when the reader goes, and the connection closes
     // with it.
     let mut reader = ZeroedReader::new(Polled { fd, until });
@@ -213,7 +223,7 @@ impl Read for Polled {
 #[cfg(test)]
 mod tests {
     use std::io::Write;
-    use std::os::unix::net::UnixListener;
+    use std::os::unix::net::{UnixListener, UnixStream};
 
     use org_office_launch::write_hand_off;
     use org_proto::{AppToken, DbKey};
@@ -227,6 +237,11 @@ mod tests {
         dir
     }
 
+    /// The tests play the host in-process: its pid is this process's.
+    fn in_process() -> PeerRule {
+        PeerRule::Pid(std::process::id() as libc::pid_t)
+    }
+
     fn id(n: u8) -> KeySocketId {
         KeySocketId::generate_from([n; 8])
     }
@@ -236,6 +251,16 @@ mod tests {
         let listener = UnixListener::bind(&path).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         listener
+    }
+
+    /// What the host does after it has written the line: stop writing, and keep the connection
+    /// open until the server closes its end (bounded), so the server can still ask the kernel who
+    /// the peer is. Then it closes.
+    fn finish_like_the_host(stream: &mut UnixStream) {
+        let _ = stream.shutdown(std::net::Shutdown::Write);
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+        let mut sink = [0u8; 64];
+        while matches!(std::io::Read::read(stream, &mut sink), Ok(n) if n > 0) {}
     }
 
     fn token() -> AppToken {
@@ -253,10 +278,17 @@ mod tests {
             let host = std::thread::spawn(move || {
                 let (mut stream, _) = listener.accept().unwrap();
                 write_hand_off(&mut stream, &token(), Some(&DbKey::from_bytes([9; 32]))).unwrap();
+                finish_like_the_host(&mut stream);
                 // Closed at once, with the line unread.
             });
-            let got = receive_within(home.path(), &id, FirstLine::Start, Duration::from_secs(5))
-                .unwrap_or_else(|e| panic!("round {n}: {e}"));
+            let got = receive_within(
+                home.path(),
+                &id,
+                FirstLine::Start,
+                Duration::from_secs(5),
+                in_process(),
+            )
+            .unwrap_or_else(|e| panic!("round {n}: {e}"));
             assert!(got.db_key.is_some());
             host.join().unwrap();
         }
@@ -271,7 +303,8 @@ mod tests {
                     home.path(),
                     id,
                     FirstLine::Start,
-                    Duration::from_millis(300)
+                    Duration::from_millis(300),
+                    in_process()
                 ),
                 Err(LaunchError::Invalid(_))
             )
@@ -321,6 +354,7 @@ mod tests {
             &silent,
             FirstLine::Start,
             Duration::from_millis(300),
+            in_process(),
         )
         .unwrap_err();
         assert!(!err.is_host_gone(), "{err}");
@@ -334,8 +368,14 @@ mod tests {
         let gone = id(2);
         let listener = listen(home.path(), &gone);
         let host = std::thread::spawn(move || drop(listener.accept().unwrap()));
-        let err = receive_within(home.path(), &gone, FirstLine::Start, Duration::from_secs(5))
-            .unwrap_err();
+        let err = receive_within(
+            home.path(),
+            &gone,
+            FirstLine::Start,
+            Duration::from_secs(5),
+            in_process(),
+        )
+        .unwrap_err();
         assert!(err.is_host_gone(), "{err}");
         host.join().unwrap();
     }
@@ -344,7 +384,9 @@ mod tests {
     fn the_log_category_names_what_failed_without_the_errors_text() {
         let home = home();
         let word = |id: &KeySocketId, wait: Duration| {
-            category(&receive_within(home.path(), id, FirstLine::Start, wait).unwrap_err())
+            category(
+                &receive_within(home.path(), id, FirstLine::Start, wait, in_process()).unwrap_err(),
+            )
         };
         assert_eq!(word(&id(1), Duration::from_millis(100)), "refused");
         let silent = id(2);
@@ -370,6 +412,49 @@ mod tests {
     }
 
     #[test]
+    fn a_listener_that_is_not_the_host_is_refused_before_anything_is_read() {
+        // The tests' listener is this process, not the parent that started it: under the host
+        // rule it is a stranger, and the hand-off it would write is never read.
+        let home = home();
+        let id = id(1);
+        let listener = listen(home.path(), &id);
+        let host = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let _ = write_hand_off(&mut stream, &token(), Some(&DbKey::from_bytes([9; 32])));
+            finish_like_the_host(&mut stream);
+        });
+        let err = receive_within(
+            home.path(),
+            &id,
+            FirstLine::Start,
+            Duration::from_secs(5),
+            PeerRule::Host,
+        )
+        .unwrap_err();
+        assert!(matches!(err, LaunchError::Invalid(_)), "{err}");
+        assert_eq!(category(&err), "refused");
+        // Another pid is a stranger too.
+        let other = id_for_other_pid();
+        let listener = listen(home.path(), &other);
+        let host2 = std::thread::spawn(move || drop(listener.accept()));
+        let err = receive_within(
+            home.path(),
+            &other,
+            FirstLine::Start,
+            Duration::from_secs(5),
+            PeerRule::Pid(std::process::id() as libc::pid_t + 1),
+        )
+        .unwrap_err();
+        assert!(matches!(err, LaunchError::Invalid(_)), "{err}");
+        let _ = host.join();
+        let _ = host2.join();
+    }
+
+    fn id_for_other_pid() -> KeySocketId {
+        id(77)
+    }
+
+    #[test]
     fn nothing_listening_on_a_socket_file_is_an_error_not_a_hang() {
         // A stale socket file nobody listens on: the connect is refused at once.
         let home = home();
@@ -380,6 +465,7 @@ mod tests {
             &stale,
             FirstLine::Start,
             Duration::from_secs(5),
+            in_process(),
         )
         .unwrap_err();
         assert!(!err.is_host_gone());
@@ -405,7 +491,13 @@ mod tests {
 
         let long = Path::new("/").join("x".repeat(200));
         assert!(matches!(
-            receive_within(&long, &id, FirstLine::Start, Duration::from_millis(100)),
+            receive_within(
+                &long,
+                &id,
+                FirstLine::Start,
+                Duration::from_millis(100),
+                in_process()
+            ),
             Err(LaunchError::Invalid(_))
         ));
     }
@@ -421,9 +513,16 @@ mod tests {
             // allowed to fail.
             write_hand_off(&mut stream, &token(), Some(&DbKey::from_bytes([9; 32]))).unwrap();
             let _ = stream.write_all(b"{\"extra\":true}\n");
+            finish_like_the_host(&mut stream);
         });
-        let got =
-            receive_within(home.path(), &id, FirstLine::Start, Duration::from_secs(5)).unwrap();
+        let got = receive_within(
+            home.path(),
+            &id,
+            FirstLine::Start,
+            Duration::from_secs(5),
+            in_process(),
+        )
+        .unwrap();
         assert!(got.db_key.is_some());
         host.join().unwrap();
     }

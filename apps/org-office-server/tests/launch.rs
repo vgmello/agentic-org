@@ -132,6 +132,14 @@ fn serve_key_socket(home: &Path, id: &KeySocketId, host: Host) {
                     match host {
                         Host::HandOff(key) => {
                             let _ = write_hand_off(&mut stream, &token(), key.as_ref());
+                            // As the host does: stop writing and keep the connection until the
+                            // server closes its end, so it can still ask who the peer is.
+                            let _ = stream.shutdown(std::net::Shutdown::Write);
+                            let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+                            let mut sink = [0u8; 64];
+                            while matches!(std::io::Read::read(&mut stream, &mut sink), Ok(n) if n > 0)
+                            {
+                            }
                         }
                         Host::Bytes(bytes) => {
                             let _ = stream.write_all(&bytes);
@@ -646,7 +654,7 @@ fn a_create_whose_socket_path_cannot_exist_fails_before_anything_is_stored() {
         .env("ORG_OFFICE_HOME", &long)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     let mut stdin = child.stdin.take().unwrap();
@@ -1681,4 +1689,143 @@ fn the_app_is_told_live_of_a_message_and_of_a_status_line_through_the_real_offic
     assert_eq!(presence.data["status"], "Wiring events");
     // The events share the connection's numbering.
     assert_eq!(presence.seq, received.seq + 1);
+}
+
+// ---- fd hygiene ----------------------------------------------------------------------------
+
+/// Spawns the server with the given stdio, as a host or a wrapper might.
+fn spawn_with(
+    world: &World,
+    args: &[&str],
+    stdin: Stdio,
+    stdout: Stdio,
+    stderr: Stdio,
+) -> std::process::Child {
+    Command::new(env!("CARGO_BIN_EXE_org-office-server"))
+        .args(args)
+        .env("ORG_OFFICE_HOME", &world.home)
+        .stdin(stdin)
+        .stdout(stdout)
+        .stderr(stderr)
+        .spawn()
+        .unwrap()
+}
+
+#[test]
+fn a_server_whose_stdio_is_not_all_pipes_refuses_to_start_silently_with_status_78() {
+    let world = World::new();
+    for (what, stdin, stdout, stderr) in [
+        ("stdin", Stdio::null(), Stdio::piped(), Stdio::piped()),
+        ("stdout", Stdio::piped(), Stdio::null(), Stdio::piped()),
+        ("stderr", Stdio::piped(), Stdio::piped(), Stdio::null()),
+    ] {
+        let piped_out = matches!(what, "stdin" | "stderr");
+        let mut child = spawn_with(&world, &["--office", OFFICE], stdin, stdout, stderr);
+        let mut out = String::new();
+        if piped_out {
+            std::io::Read::read_to_string(child.stdout.as_mut().unwrap(), &mut out).unwrap();
+        }
+        let status = child.wait().unwrap();
+        assert_eq!(status.code(), Some(78), "{what}: {status:?}");
+        // Not even a `failed` line, and nothing on the log.
+        assert!(out.is_empty(), "{what}: {out}");
+        let mut log = String::new();
+        if let Some(stderr) = child.stderr.as_mut() {
+            std::io::Read::read_to_string(stderr, &mut log).unwrap();
+        }
+        assert!(log.is_empty(), "{what}: {log}");
+        drop(child.stdin.take());
+    }
+    // Nothing was made.
+    assert!(!world.folder(OFFICE).exists());
+}
+
+#[test]
+fn a_descriptor_the_server_inherits_is_closed_before_it_reads_its_first_line() {
+    use std::os::fd::{FromRawFd, OwnedFd};
+    use std::os::unix::process::CommandExt;
+    let world = World::new();
+    // A pipe whose write end the child inherits (not close-on-exec). It is the test's way to
+    // see the child's copy go: reading the other end ends only when every write end is closed.
+    let mut fds = [0 as libc::c_int; 2];
+    // SAFETY: `pipe` fills two descriptors.
+    assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+    // SAFETY: both were just made and belong to this test.
+    let (read_end, write_end) =
+        unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
+    let mut command = Command::new(env!("CARGO_BIN_EXE_org-office-server"));
+    command
+        .args(["--office", OFFICE])
+        .env("ORG_OFFICE_HOME", &world.home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let keep = fds[1];
+    // SAFETY: runs between fork and exec in the child; it only clears close-on-exec on a
+    // descriptor number (`fcntl` is async-signal-safe).
+    unsafe {
+        command.pre_exec(move || {
+            libc::fcntl(keep, libc::F_SETFD, 0);
+            Ok(())
+        });
+    }
+    let mut child = command.spawn().unwrap();
+    drop(write_end);
+    // The server is waiting for its first line, having done its hygiene. Its copy of the write end
+    // must be gone: the read ends (EOF) soon.
+    let mut file = std::fs::File::from(read_end);
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut byte = [0u8; 1];
+        let _ = tx.send(std::io::Read::read(&mut file, &mut byte).map(|n| n == 0));
+    });
+    let closed = rx.recv_timeout(WAIT).expect("the read never ended");
+    assert!(closed.unwrap(), "EOF: no write end is left open");
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[test]
+fn a_hygiene_failure_does_no_io_on_a_socket_it_did_not_make() {
+    use std::io::Read;
+    use std::os::unix::net::UnixStream;
+    // On Darwin a read, a write or a connect on a socket (even a failed one) makes the caller the
+    // peer an eavesdropper's `LOCAL_PEERTOKEN` shows. So a server whose stdio holds a socket
+    // touches none of them while it refuses: it says nothing anywhere and exits 78.
+    let world = World::new();
+    for which in 0..3 {
+        let (theirs, mut ours) = UnixStream::pair().unwrap();
+        if which == 0 {
+            // What a socket on stdin is sent stays unsent back: the server never answers it.
+            std::io::Write::write_all(&mut ours, b"{\"v\":3}\n").unwrap();
+        }
+        let socket = || Stdio::from(std::os::fd::OwnedFd::from(theirs.try_clone().unwrap()));
+        let (stdin, stdout, stderr) = match which {
+            0 => (socket(), Stdio::piped(), Stdio::piped()),
+            1 => (Stdio::piped(), socket(), Stdio::piped()),
+            _ => (Stdio::piped(), Stdio::piped(), socket()),
+        };
+        drop(theirs);
+        let mut child = spawn_with(&world, &["--office", OFFICE], stdin, stdout, stderr);
+        let status = child.wait().unwrap();
+        assert_eq!(status.code(), Some(78), "fd {which}: {status:?}");
+        let mut heard = Vec::new();
+        ours.read_to_end(&mut heard).unwrap();
+        assert!(
+            heard.is_empty(),
+            "fd {which}: written to the socket: {heard:?}"
+        );
+        for pipe in [
+            child.stdout.take().map(|p| Box::new(p) as Box<dyn Read>),
+            child.stderr.take().map(|p| Box::new(p) as Box<dyn Read>),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let mut rest = Vec::new();
+            let mut pipe = pipe;
+            pipe.read_to_end(&mut rest).unwrap();
+            assert!(rest.is_empty(), "fd {which}: a line on a pipe: {rest:?}");
+        }
+    }
 }

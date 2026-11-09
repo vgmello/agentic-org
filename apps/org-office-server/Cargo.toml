@@ -22,6 +22,10 @@ org-office-launch = { path = "../../crates/org-office-launch" }
 libc.workspace = true
 serde.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework.workspace = true
+core-foundation.workspace = true
+
 [dev-dependencies]
 org-mailbox = { path = "../../crates/org-mailbox", features = ["testkit"] }
 org-client = { path = "../../crates/org-client" }

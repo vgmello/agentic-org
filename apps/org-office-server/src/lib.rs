@@ -17,11 +17,14 @@
 #![deny(unsafe_code)]
 
 mod bounded;
+mod codesign;
 pub mod fdswap;
 mod follow;
 mod hand_off;
+pub mod hygiene;
 mod live;
 mod msg_calls;
+mod peer;
 mod serve;
 mod signals;
 mod zeroed;
