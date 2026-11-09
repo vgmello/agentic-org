@@ -55,7 +55,7 @@ describe('PROC-3/PROC-6 a shared project’s conflict', () => {
 	it('two teams that both override the same key: the organization’s version applies and the conflict is listed', () => {
 		const set = run('bea');
 		expect(entry(set, 'code-review')).toMatchObject({ source: 'organization' });
-		expect(set.conflicts).toEqual([expect.objectContaining({ key: 'code-review', teams: ['Web', 'Design'], applies: "The organization's version applies until the project decides" })]);
+		expect(set.conflicts).toEqual([expect.objectContaining({ key: 'code-review', teams: ['Design', 'Web'], applies: "The organization's version applies until the project decides" })]);
 	});
 
 	it('with no organization version neither override applies', () => {

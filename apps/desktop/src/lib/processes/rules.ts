@@ -1,7 +1,9 @@
 // The rules around the effective set that the screens state in words: the one open branch rule (spec §4), who approves a
 // change at each level (decision 8, PROC-11), and the refusal of a second branch. Pure.
 
-import type { EffectiveSet, Level, ProcessDoc, TeamRef } from './types';
+import type { ApprovalContext, EffectiveSet, Level, ProcessDoc } from './types';
+
+export type { ApprovalContext };
 
 /** The organization's first process: it carries the one open branch rule. */
 export const BRANCH_KEY = 'branch-and-merge';
@@ -20,11 +22,11 @@ export interface RuleState {
  */
 export function branchRule(set: EffectiveSet | undefined, projectName: string): RuleState {
 	const off = set?.turnedOff.find((t) => t.key === BRANCH_KEY);
-	if (!off) return { on: true, text: 'On' };
-	const { author, approvedBy } = off.doc;
-	// An approval counts only when the author is known and someone else approved: the rule fails closed.
-	if (approvedBy && author && approvedBy !== author) return { on: false, text: `Turned off for ${off.scopeName ?? projectName}: ${off.reason}` };
-	return { on: true, text: `On · turning it off needs approval by someone other than its author (${author ?? 'unknown'})`, ...(author ? { selfApprovedBy: author } : {}) };
+	if (off) return { on: false, text: `Turned off for ${off.scopeName ?? projectName}: ${off.reason}` };
+	// A turning-off that does not count is not in force (the set keeps the process): say why.
+	const pending = set?.entries.find((e) => e.key === BRANCH_KEY)?.chain.find((l) => l.outcome === 'not_applied' && l.doc.status === 'off');
+	if (pending) return { on: true, text: `On · turning it off needs approval by someone other than its author (${pending.doc.author ?? 'unknown'})`, ...(pending.doc.author ? { selfApprovedBy: pending.doc.author } : {}) };
+	return { on: true, text: 'On' };
 }
 
 export interface Refusal {
@@ -40,13 +42,6 @@ export function oneBranchRefusal(branch: string, stage: string | undefined, targ
 /** What a lead sees in Needs you: "River can't start chk-T-18: task/chk-T-17-… isn't merged (waiting for review)." */
 export function leadRefusalLine(agent: string, target: string, branch: string, stage: string | undefined): string {
 	return `${agent} can't start ${target}: ${branch} isn't merged${stage ? ` (${stage})` : ' yet'}.`;
-}
-
-export interface ApprovalContext {
-	ownerId: string;
-	teams: TeamRef[];
-	/** The leads of the project's teams (a shared project has one per team). */
-	projectLeads: string[];
 }
 
 export const NOT_BY_AUTHOR = 'Another approver or the owner must approve this.';

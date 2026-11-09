@@ -174,3 +174,86 @@ describe('the layers say what happened to a file', () => {
 		]);
 	});
 });
+
+describe('a sealed turning-off still seals (design rules 2 and 3)', () => {
+	it('a sealed team off refuses a sub-team’s override and a project’s file', () => {
+		const set = run([team('eng', { overridable: false, status: 'off', reason: 'no' }), team('ui'), proj('p')], ['ui']);
+		expect(set.problems.filter((p) => p.kind === 'sealed_refused').map((p) => p.doc.level)).toEqual(['team', 'project']);
+		expect(set.turnedOff).toEqual([expect.objectContaining({ scopeName: 'Eng' })]);
+	});
+
+	it('two clashing sealed offs still seal', () => {
+		const set = run([team('plat', { overridable: false, status: 'off' }), team('plat', { overridable: false, status: 'off' }), proj('p')], ['plat']);
+		expect(set.problems.some((p) => p.kind === 'sealed_refused' && p.doc.level === 'project')).toBe(true);
+	});
+
+	it('among two seals the first by team id that is not an off applies meanwhile', () => {
+		const set = run([team('des', { overridable: false, status: 'off', reason: 'x' }), team('plat', { overridable: false })], ['des', 'plat']);
+		expect(win(set)).toMatchObject({ source: 'team', scopeName: 'Plat' });
+	});
+});
+
+describe('PROC-4/PROC-14 a turning-off of branch-and-merge that does not count', () => {
+	const off = (over: Partial<ProcessDoc> = {}) => proj('p', { key: 'branch-and-merge', name: 'Branch, review and merge (P)', status: 'off', reason: 'we are one agent', author: 'hana', approvedBy: 'hana', ...over });
+	const base = () => org({ key: 'branch-and-merge', name: 'Branch, review and merge', checklist: [{ text: 'The lead’s go', required: true }] });
+
+	it('does not remove the process: the organization’s stays in the set, with the reason in its chain', () => {
+		const set = run([base(), off()], []);
+		expect(set.turnedOff).toEqual([]);
+		const e = win(set, 'branch-and-merge')!;
+		expect(e.doc.level).toBe('organization');
+		expect(e.chain.map((l) => [l.level, l.outcome])).toEqual([['organization', 'applies'], ['project', 'not_applied']]);
+		expect(e.chain[1].note).toBe('Turning it off needs approval by someone other than its author (hana).');
+	});
+
+	it('does count when someone else approved it, and the process leaves the set', () => {
+		const set = run([base(), off({ approvedBy: 'you' })], []);
+		expect(win(set, 'branch-and-merge')).toBeUndefined();
+		expect(set.turnedOff).toHaveLength(1);
+	});
+
+	it('does not count with an unknown author, or with an approver who may not approve at that level', () => {
+		expect(run([base(), off({ author: undefined })], []).turnedOff).toEqual([]);
+		const ctx = { ownerId: 'you', teams: TEAMS, projectLeads: ['noor'] };
+		const stranger = resolve({ docs: [base(), off({ approvedBy: 'random-agent' })], teams: TEAMS, project: P([]), approval: ctx });
+		expect(stranger.turnedOff).toEqual([]);
+		const lead = resolve({ docs: [base(), off({ approvedBy: 'noor' })], teams: TEAMS, project: P([]), approval: ctx });
+		expect(lead.turnedOff).toHaveLength(1);
+	});
+});
+
+describe('a sibling never silently cancels a seal whose file is left out', () => {
+	it('a team’s unreadable sealed file with a sibling’s override on a shared project is a conflict, not a win for the sibling', () => {
+		const set = run([team('plat', { overridable: false, problems: [{ field: 'version', message: 'x' }] }), team('des')], ['plat', 'des']);
+		expect(set.conflicts).toEqual([expect.objectContaining({ key: 'x', teams: ['Des', 'Plat'] })]);
+		expect(win(set)).toBeUndefined();
+		const withOrg = run([org(), team('plat', { overridable: false, problems: [{ field: 'version', message: 'x' }] }), team('des')], ['plat', 'des']);
+		expect(win(withOrg)).toMatchObject({ source: 'organization' });
+	});
+});
+
+describe('PROC-16 an unknown status', () => {
+	it('is "Details not recognized", naming status, not a silent omission', () => {
+		const set = run([team('plat', { status: 'weird' as never })], ['plat']);
+		expect(set.problems).toEqual([expect.objectContaining({ kind: 'invalid', text: 'Details not recognized: status.' })]);
+	});
+});
+
+describe('the output does not depend on the order of the input', () => {
+	it('conflicts, their teams and the problems come out the same either way', () => {
+		const files = [
+			org(),
+			team('plat'),
+			team('des'),
+			team('plat', { key: 'q', status: 'weird' as never }),
+			team('des', { key: 'r', status: 'weird' as never }),
+			proj('p', { key: 'z', problems: [{ field: 'summary', message: 'x' }] })
+		];
+		const a = run(files, ['plat', 'des']);
+		const b = run([...files].reverse(), ['des', 'plat']);
+		expect(a.conflicts).toEqual(b.conflicts);
+		expect(a.problems.map((p) => [p.key, p.doc.id])).toEqual(b.problems.map((p) => [p.key, p.doc.id]));
+		expect(a.entries.map((e) => e.chain.map((l) => l.doc.id))).toEqual(b.entries.map((e) => e.chain.map((l) => l.doc.id)));
+	});
+});
+

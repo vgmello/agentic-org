@@ -8,8 +8,10 @@
 // A draft or retired file is simply left out: work in progress is not a problem to report.
 
 import type { Drift, EffectiveSet, Entry, EntryKind, Layer, Level, Problem, ProcessDoc, ResolveInput, TeamRef, TurnedOff } from './types';
+import { BRANCH_KEY, cannotApprove } from './rules';
 import { LEVEL_LABEL } from './types';
 
+const STATUSES: string[] = ['draft', 'active', 'off', 'retired'];
 const LEVELS: Level[] = ['organization', 'team', 'project', 'agent'];
 const sameScope = (a: string | undefined, b: string | undefined) => (a ?? '') === (b ?? '');
 /** A plain code-unit order: the same on every machine. */
@@ -17,7 +19,7 @@ const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 /** A file whose front matter is unreadable, or whose level and scope differ from where it lives, or that is a draft or retired. */
 function classify(doc: ProcessDoc): 'valid' | 'invalid' | 'mismatch' | 'inactive' {
-	if (doc.problems && doc.problems.length > 0) return 'invalid';
+	if ((doc.problems && doc.problems.length > 0) || !STATUSES.includes(doc.status)) return 'invalid';
 	if (doc.level !== doc.location.level || !sameScope(doc.scope, doc.location.scope)) return 'mismatch';
 	return doc.status === 'active' || doc.status === 'off' ? 'valid' : 'inactive';
 }
@@ -63,7 +65,7 @@ export function resolve(input: ResolveInput): EffectiveSet {
 	// 1. Valid files only. The others are listed with their problem, and a sealed one still seals its key.
 	for (const doc of candidates) {
 		const kind = kinds.get(doc)!;
-		if (kind === 'invalid') problem('invalid', doc, `Details not recognized: ${doc.problems!.map((p) => p.field).join(', ')}.`);
+		if (kind === 'invalid') problem('invalid', doc, `Details not recognized: ${(doc.problems?.length ? doc.problems.map((p) => p.field) : ['status']).join(', ')}.`);
 		else if (kind === 'mismatch') problem('mismatch', doc, "Details not recognized: its level or scope doesn't match where the file lives.");
 	}
 	const valid = candidates.filter((d) => kinds.get(d) === 'valid');
@@ -87,7 +89,8 @@ export function resolve(input: ResolveInput): EffectiveSet {
 
 	// Seals: org files, and team files of each chain (they bind that team, its sub-teams and their projects). A sealed file that is
 	// left out (too broken to read, in a clash) still seals.
-	const sealing = [...live.filter((d) => !d.overridable && d.status === 'active'), ...candidates.filter((d) => failsClosed(d, kinds.get(d)!)), ...[...clashing].filter((d) => !d.overridable && d.status === 'active')];
+	// Any sealed file that is not a draft or retired seals, a turning-off included (a sealed process can't be overridden or turned off).
+	const sealing = [...live.filter((d) => !d.overridable), ...candidates.filter((d) => failsClosed(d, kinds.get(d)!)), ...[...clashing].filter((d) => !d.overridable)];
 	const orgSeal = (key: string) => sealing.find((d) => d.location.level === 'organization' && d.key === key);
 	const teamSeal = (key: string, teamId: string) => sealing.find((d) => d.location.level === 'team' && d.location.scope === teamId && d.key === key);
 
@@ -121,31 +124,38 @@ export function resolve(input: ResolveInput): EffectiveSet {
 		return winners;
 	});
 
-	// 5. Combine the chains. One distinct winner applies; two or more are a conflict.
+	// 5. Combine the chains. One distinct winner applies; two or more are a conflict. A chain whose nearest file for a key is a seal
+	// that could not be read (left out) counts as a sealed winner that cannot apply: a sibling's file never silently cancels it.
+	const deadSeal = (chain: TeamRef[], key: string): ProcessDoc | undefined => [...chain].reverse().map((t) => teamSeal(key, t.id)).find((d) => !!d && !live.includes(d));
 	const teamResult = new Map<string, ProcessDoc>();
 	const conflictKeys = new Set<string>();
-	for (const key of new Set(chainWinners.flatMap((w) => [...w.keys()]))) {
-		const winners = [...new Set(chainWinners.flatMap((w) => (w.has(key) ? [w.get(key)!] : [])))];
-		if (winners.length === 1) {
+	const allKeys = new Set([...chainWinners.flatMap((w) => [...w.keys()]), ...chains.flatMap((c) => [...new Set(sealing.filter((d) => d.location.level === 'team' && c.some((t) => t.id === d.location.scope)).map((d) => d.key))])]);
+	for (const key of [...allKeys].sort(cmp)) {
+		const winners = [...new Set(chainWinners.flatMap((w) => (w.has(key) ? [w.get(key)!] : [])))].sort((a, b) => cmp(a.location.scope ?? '', b.location.scope ?? '') || cmp(a.id, b.id));
+		const dead = chains.map((c) => deadSeal(c, key)).filter((d): d is ProcessDoc => !!d);
+		if (winners.length === 1 && dead.length === 0) {
 			teamResult.set(key, winners[0]);
 			continue;
 		}
+		if (winners.length === 0) continue; // only an unreadable seal: nothing from the teams applies, and the key stays sealed below
 		conflictKeys.add(key);
-		const teamsInvolved = winners.map((d) => scopeName('team', d.location.scope) ?? 'a team');
+		const teamsInvolved = [...new Set([...winners, ...dead].sort((a, b) => cmp(a.location.scope ?? '', b.location.scope ?? '') || cmp(a.id, b.id)).map((d) => scopeName('team', d.location.scope) ?? 'a team'))];
 		const sealed = winners.filter((d) => !d.overridable);
 		const org = orgDocs.get(key);
 		const byTeamId = (a: ProcessDoc, b: ProcessDoc) => cmp(a.location.scope ?? '', b.location.scope ?? '') || cmp(a.id, b.id);
 		let meanwhile: ProcessDoc | undefined;
-		if (sealed.length > 0) {
+		if (sealed.length > 0 || dead.length > 0) {
 			// Sealed by a team: it applies meanwhile (two different seals: the organization's version, else the first by team id that is not an off).
-			meanwhile = sealed.length === 1 ? sealed[0] : (org ?? [...sealed].sort(byTeamId).find((d) => d.status !== 'off') ?? [...sealed].sort(byTeamId)[0]);
+			const live1 = dead.length === 0 && sealed.length === 1 ? sealed[0] : undefined;
+			meanwhile = live1 ?? org ?? (dead.length === 0 ? ([...sealed].sort(byTeamId).find((d) => d.status !== 'off') ?? [...sealed].sort(byTeamId)[0]) : undefined);
 		} else meanwhile = org;
 		if (meanwhile && meanwhile.location.level === 'team') teamResult.set(key, meanwhile);
+		const sealer = sealed[0] ?? dead[0];
 		const applies = !meanwhile
 			? 'Neither team’s version applies until the project decides'
 			: meanwhile.location.level === 'organization'
 				? "The organization's version applies until the project decides"
-				: `Sealed by ${scopeName('team', meanwhile.location.scope)}; applies until the project decides`;
+				: `Sealed by ${scopeName('team', (sealer ?? meanwhile).location.scope)}; applies until the project decides`;
 		set.conflicts.push({ key, teams: teamsInvolved, applies, ...(meanwhile ? { doc: meanwhile } : {}) });
 	}
 	const teamSealOnProject = (key: string) => chains.flatMap((chain) => chain.map((t) => teamSeal(key, t.id))).find(Boolean);
@@ -166,9 +176,18 @@ export function resolve(input: ResolveInput): EffectiveSet {
 	set.conflicts = conflicts.filter((c) => !projectDocs.has(c.key));
 
 	// What each key resolves to, and 7. a surviving "off" removes it.
+	// A turning-off of the one open branch rule's process counts only when someone other than its author, and an approver of the level,
+	// approved it: otherwise it is not in force (the process stays, and the rule stays on).
+	const unapprovedOff = new Map<ProcessDoc, string>();
+	const approvedOff = (doc: ProcessDoc) =>
+		!!doc.author && !!doc.approvedBy && doc.approvedBy !== doc.author && (!input.approval || cannotApprove(doc.location, doc.author, doc.approvedBy, input.approval) === undefined);
 	const winners = new Map<string, ProcessDoc>();
 	for (const key of new Set([...orgDocs.keys(), ...teamResult.keys(), ...projectDocs.keys()])) {
-		const win = projectDocs.get(key) ?? teamResult.get(key) ?? orgDocs.get(key);
+		let win = projectDocs.get(key) ?? teamResult.get(key) ?? orgDocs.get(key);
+		while (win && win.key === BRANCH_KEY && win.status === 'off' && !approvedOff(win)) {
+			unapprovedOff.set(win, `Turning it off needs approval by someone other than its author (${win.author ?? 'unknown'}).`);
+			win = chainParent.get(win);
+		}
 		if (win) winners.set(key, win);
 	}
 
@@ -188,7 +207,7 @@ export function resolve(input: ResolveInput): EffectiveSet {
 	const layersOf = (key: string, win: ProcessDoc | undefined): Layer[] =>
 		candidates
 			.filter((d) => d.key === key)
-			.sort((a, b) => LEVELS.indexOf(a.location.level) - LEVELS.indexOf(b.location.level) || (chainIndex.get(a) ?? 0) - (chainIndex.get(b) ?? 0))
+			.sort((a, b) => LEVELS.indexOf(a.location.level) - LEVELS.indexOf(b.location.level) || (chainIndex.get(a) ?? 0) - (chainIndex.get(b) ?? 0) || cmp(a.location.scope ?? '', b.location.scope ?? '') || cmp(a.id, b.id))
 			.map((doc): Layer => {
 				const kind = kinds.get(doc)!;
 				const name = whereOf(doc);
@@ -198,6 +217,7 @@ export function resolve(input: ResolveInput): EffectiveSet {
 				if (clashing.has(doc)) return { ...base, outcome: 'left_out', note: 'Left out: another file uses the same key here.' };
 				if (refused.has(doc)) return { ...base, outcome: 'refused', note: refused.get(doc) };
 				if (privateProblem.has(doc)) return { ...base, outcome: 'not_applied', note: privateProblem.get(doc) };
+				if (unapprovedOff.has(doc)) return { ...base, outcome: 'not_applied', note: unapprovedOff.get(doc) };
 				if (doc === win) return doc.status === 'off' ? { ...base, outcome: 'turned_off', note: `Turned off: ${doc.reason ?? ''}` } : { ...base, outcome: 'applies' };
 				const conflict = set.conflicts.find((c) => c.key === key);
 				if (conflict && doc.location.level === 'team') return { ...base, outcome: 'conflict', note: `${name ?? 'This team'}'s version conflicts with another team's. ${conflict.applies}.` };
@@ -241,6 +261,8 @@ export function resolve(input: ResolveInput): EffectiveSet {
 	for (const doc of live.filter((d) => d.location.level === 'agent' && !privateProblem.has(d))) entries.push({ key: doc.key, doc, kind: 'addition', source: 'agent', ...(agentId ? { scopeName: agentId } : {}), sealed: false, chain: layersOf(doc.key, doc) });
 
 	const byName = (a: { name: string; key: string }, b: { name: string; key: string }) => cmp(a.name.toLowerCase(), b.name.toLowerCase()) || cmp(a.key, b.key);
+	set.conflicts.sort((a, b) => cmp(a.key, b.key));
+	set.problems.sort((a, b) => cmp(a.key, b.key) || LEVELS.indexOf(a.doc.location.level) - LEVELS.indexOf(b.doc.location.level) || cmp(a.doc.location.scope ?? '', b.doc.location.scope ?? '') || cmp(a.doc.id, b.doc.id) || cmp(a.kind, b.kind));
 	set.entries = entries.sort((a, b) => byName({ name: a.doc.name, key: a.key }, { name: b.doc.name, key: b.key }));
 	set.turnedOff = turnedOff.sort((a, b) => byName(a, b));
 	return set;

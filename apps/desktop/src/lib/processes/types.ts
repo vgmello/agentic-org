@@ -85,6 +85,8 @@ export interface ResolveInput {
 	project?: ProjectRef;
 	/** The agent, whose private processes join the set. */
 	agentId?: string;
+	/** Who may approve at each level: when given, a turning-off of the one open branch rule counts only if its approver is one of them. */
+	approval?: ApprovalContext;
 }
 
 /** What happened to one level's file of a process, for `process why` (PROC-8). */
@@ -163,4 +165,12 @@ export interface EffectiveSet {
 	turnedOff: TurnedOff[];
 	conflicts: Conflict[];
 	problems: Problem[];
+}
+
+/** Who may approve a change to a process (rules.ts `approversOf` reads it). */
+export interface ApprovalContext {
+	ownerId: string;
+	teams: TeamRef[];
+	/** The leads of the project's teams (a shared project has one per team). */
+	projectLeads: string[];
 }

@@ -21,7 +21,9 @@ describe('PROC-14 the one open branch rule', () => {
 	});
 
 	it('stays on, and says why, when the turning-off was approved by its own author', () => {
-		const rule = branchRule(setFor('onb'), 'Onboarding kit');
+		const set = setFor('onb');
+		expect(set.entries.map((e) => e.key)).toContain('branch-and-merge'); // the process is still in force
+		const rule = branchRule(set, 'Onboarding kit');
 		expect(rule.on).toBe(true);
 		expect(rule.text).toBe('On · turning it off needs approval by someone other than its author (hana)');
 		expect(rule.selfApprovedBy).toBe('hana');
