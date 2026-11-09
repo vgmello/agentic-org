@@ -1,5 +1,14 @@
 # Agentic Org
 
+**V1 direction changed 2026-11-09:** the target is a standalone Rust server
+on macOS/Linux serving the browser application from HQ. Tauri is deferred to v2.
+See the [server design](docs/design/standalone-server.md) and [deletion inventory](docs/design/standalone-server-removal-inventory.md).
+This documentation change specifies the pivot; the source described below is the
+inspected pre-pivot implementation. Its Tauri/bundle commands are historical
+development instructions, not installation instructions for the new v1. Do not
+claim the new CLI, HTTP server or remote sync exists until implemented. No migration
+of the undeployed desktop app or its data is required.
+
 A macOS desktop app for running an AI organization: its teams, projects and agents (AI employees) and the work they do. The app is a **client**. Each organization runs on one or more **office servers**, the nodes where agents actually work. Agents talk to their office through a tiny CLI.
 
 ## Layout

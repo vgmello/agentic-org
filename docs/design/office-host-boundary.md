@@ -1,5 +1,20 @@
 # org-office-host ↔ org-office-server: the boundary (phase 1, HQ only)
 
+**Standalone-v1 precedence (2026-11-09):**
+[standalone-server.md](standalone-server.md) and
+[ADR-0005](../adr/0005-standalone-server-v1.md) amend this boundary for a named
+macOS/Linux instance. The catalog, locks, private launch channels, office process
+ownership, key custody and child cleanup remain. `<home>` is now the selected
+instance's persisted data root, with short instance-scoped socket paths. Service
+names, credential namespaces and orphan-key sweeps cannot affect another instance.
+
+The app-only `office.app_token`/signed-Tauri-client contract, bundle-relative helper
+location, one pinned account-wide home and SMAppService installation are retired
+as v1 public contracts. Replace them with browser principal authorization and
+verified standalone helper/platform adapters; do not bypass their security
+invariants. The detailed phase-1 protocol below documents the inspected code until
+the implementation changes it. No old desktop caller requires compatibility.
+
 Status: **approved by ada** 2026-11-08, and **agreed by River** (the host) **and server-dev** (the server), `--discard` included. Updated for ADR-0003 §2.1 (the app token on every start) and the code review of `org-office-launch` (rev 2, 2026-11-08). Amended by ada 2026-11-08 for the boundary review (adopt vs discard, `not_ready` at startup, the give-up count, the status-reason mapping, the stdin and `--discard` wording, `org-supervise`). Amended by ada 2026-11-08 for key custody (the host creates and holds every office's database key; launch version 2). It implements
 `docs/design/offices-hq-and-satellites.md` ("Processes on one Mac") and the `org-proto` host calls.
 

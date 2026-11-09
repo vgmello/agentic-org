@@ -2,7 +2,7 @@
 kind: spec
 title: "Capture requests and route them to whoever should scope them (UX)"
 status: for-review
-revision: 3
+revision: 4
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-09"
@@ -12,6 +12,13 @@ builds_on: [work-items-ux, decisions-and-tech-debt-ux, agent-run-modes-ux]
 ---
 
 # Spec · Capture requests and route them to whoever should scope them (UX)
+
+**Revision 4 (2026-11-09): browser capture for standalone v1.**
+Native/global capture and the menu-bar outbox move to v2 with Tauri. V1 retains
+New request inside the authenticated HQ application. A browser draft is not a
+durably saved request until HQ acknowledges it. RQS-1 and RQS-17 are revised below;
+the request/scoping/approval lifecycle remains. See
+[server-installation-and-access-ux.md](server-installation-and-access-ux.md).
 
 Extends `work-items-ux.md` (Work, tasks), `decisions-and-tech-debt-ux.md` (specs, designs, guidance), `agent-run-modes-ux.md` (waking agents) and the smart-features candidates.
 
@@ -25,7 +32,7 @@ Extends `work-items-ux.md` (Work, tasks), `decisions-and-tech-debt-ux.md` (specs
 
 ## 0. Decisions
 
-1. **One shortcut, anywhere: ⌥⌘N, "New request".** It works system-wide (from the menu bar too), even with the app's window closed, and opens a small capture panel. The shortcut can be changed in Settings. Inside the app, ⌘K › "New request" does the same.
+1. **New request inside the browser application.** A visible action and an in-page command palette open the capture dialog for the selected authorized organization. System-wide shortcuts, native floating windows and menu-bar capture are v2.
 2. **Capturing asks for nothing but the text.** Type (or dictate: macOS dictation works in the field) and press ⌘Enter. Everything else (project, kind, who scopes it) is suggested and can be changed, or left for later.
 3. **A request is not a task.** Its lifecycle: **New → Routed → With <agent> (scoping) → Scoped → Approved** (it becomes tasks), or **Declined · Merged into REQ-n**. **Routed** means sent to an agent that hasn't accepted it yet: "Sent to Eden · not accepted yet". When the agent accepts it (`request.accept`), it reads "Eden is scoping". *(rev 2)* Numbered org-wide, `REQ-12`, because a request may not belong to a project yet.
 4. **Routing is a suggestion with reasons, never a silent decision.** The panel shows the suggested agent and two alternatives, each with one line of why ("Eden, product designer: a new user-facing flow"). The owner picks one, types `@name`, or chooses **Just save** to queue it unrouted.
@@ -61,22 +68,22 @@ Extends `work-items-ux.md` (Work, tasks), `decisions-and-tech-debt-ux.md` (specs
 
 ### 1.1 Capture details *(rev 3)*
 
-- **The panel** is a small floating window at the top third of the screen the pointer is on, above other apps. Pressing the shortcut again while it's open brings it forward with the text kept. It captures into the organization selected in the menu bar; with more than one, the panel's title reads "New request · <organization> ▾" and can be switched before sending. Every control has a label, Tab moves through them in order, and Esc follows the draft rule above (§1).
+- **The panel** is an accessible dialog inside the HQ page. It captures into the selected authorized organization, named in the title. Reopening keeps an unsent draft in the current page. It does not overlay other applications or install a global shortcut.
 - **@name routing:** only at the very start of the text. Typing `@` there opens a completion list of agents (display name, handle, role and status; only agents scope requests), filtered as you type; ↑↓ move, Enter or Tab picks, Esc closes the list. Picking chooses who scopes it, as choosing them in the list would; **Send** then routes it to them, and the `@handle` is removed from the saved text. An `@` anywhere else is just text. An unknown handle shows "No one called @<handle>. Pick someone from the list or remove it." and Send is disabled until it's fixed.
-- **Message instead** sends the text as an ordinary message (not a request; `chat-ux.md`) to the member chosen above or named with `@`. With nobody chosen it's disabled with "Choose who to message." While the office can't be reached it's disabled with "Messages can't be sent until the office is back. Send it as a request instead (it's kept on this Mac)." The confirmation reads "Message sent to Eden · Open in Chat".
+- **Message instead** sends the text as an ordinary message (not a request; `chat-ux.md`) to the member chosen above or named with `@`. With nobody chosen it's disabled with "Choose who to message." While the office can't be reached it's disabled with "HQ cannot be reached. This text is unsaved; copy it or retry when connected." The confirmation reads "Message sent to Eden · Open in Chat".
 - **The bug hint** sits under the text field and appears when the text reads like a bug: from the copilot when it's on, otherwise from words such as "broken", "crash", "error", "doesn't work", "fails", "bug". It reads "This sounds like a bug. **Report a bug instead** · Not a bug". **Report a bug instead** opens Report a bug (`work-items-ux.md` §4) with the text in What happened and the chosen project (when none is chosen, Report a bug asks for the project first; the area starts on General). **Not a bug** hides the hint for this capture.
 - **Similar requests** appear under the text after a pause in typing: up to 2 requests not yet scoped (New, Routed or being scoped) whose words match ("Looks like REQ-9: Dark mode for the docs reader"), each with **Add to REQ-9**, which adds the text to that request as a comment, closes the panel and confirms "Added to REQ-9". They match the title and the request's own text (the text once `work.list` has a text filter, A76; titles only until then).
 - **Attachments** (pasted images) are hidden until their storage is designed (deferred, A76); the panel then accepts a pasted image as an attachment.
 - **The confirmation** after Send, Just save or Add to: a small banner where the panel was, for about 3 s, "REQ-12 sent to Eden · Open" (or "REQ-12 saved", "Added to REQ-9"), then it fades. It never takes focus.
-- **When the office can't be reached** (stopped, or the Mac is offline): the panel still opens, and Send or Just save keeps the request on this Mac with "Saved on this Mac. It gets a number and is sent when the office is back." It's sent, and routed as chosen, when the office is back; the menu-bar menu shows "1 request waiting to send" until then. Nothing typed is ever lost. (This is the one exception to "writes are off while the office is stopped", `work-items-ux.md` §12.)
-- **Settings › Shortcuts:** a row "New request ⌥⌘N" with **Change…** (press the new keys; when another app or the system already uses them: "⌥⌘N is used by another app. Choose another shortcut."), **Reset** and **Turn off**. The menu-bar menu has **New request… ⌥⌘N** (`offices-and-teams-ux.md` §4).
+- **HQ unreachable:** retain text in the open page with an unsaved label and Copy draft. Send/Just save cannot report success without durable HQ acknowledgment. Closing/refreshing the page has no promised draft persistence; no background outbox is required.
+- **Shortcuts:** in-page commands only in v1. Native shortcut settings are deferred to v2.
 
 ## 2. Flow 2 · The queue (Work › Requests)
 
 Work gets a fourth pill: **Tasks | Bugs | Debt | Requests**. Each project's Overview has a **Requests** tile (n open), which opens Work › Requests filtered to that project *(rev 3)*.
 
 ```
- Requests          [Open ▾] [Anyone ▾] [All projects ▾]  [Search]        [New request ⌥⌘N]
+ Requests          [Open ▾] [Anyone ▾] [All projects ▾]  [Search]        [New request]
  NEEDS YOU · 2
    REQ-13  Costs per project                     Scoped by Eden · FEAT-0009 · ≈ $40–70  [Review]
    REQ-15  Weekly digest by email                Eden asks: "Daily or weekly?"       [Answer]
@@ -90,11 +97,11 @@ Work gets a fourth pill: **Tasks | Bugs | Debt | Requests**. Each project's Over
    REQ-14  Quick capture of feature requests     → FEAT-0007 · 4 of 6 tasks done
 ```
 
-- **Groups:** *(rev 3)* Waiting to send (captures kept on this Mac while the office couldn't be reached, §1.1, shown first and only while there are any: the first line of the text, "Saved on this Mac · will go to Eden", and **Discard**; they become real requests, with numbers, once sent) · Needs you (scoped and waiting for approval, or a question for the owner) · With agents (Routed, not accepted yet, and being scoped) · Not routed · Approved (collapsed) · Declined and merged (collapsed).
+- **Groups:** Needs you (scoped or waiting for an owner answer), With agents (Routed or accepted), Not routed, Approved, and Declined and merged. Browser drafts are not durable request rows and have no request number.
 - **Needs you** items also appear in the owner's Home › Needs you.
 - **Row:** number · title (the first line of the text, or a title the agent gave it) · state in words · who · age · the next action.
 - **Filters and search** *(rev 3)*: **State ▾** (Open, the default: New, Routed, being scoped or Scoped · Needs you · With agents · Not routed · Approved · Declined and merged · All) · **People ▾** (Anyone · Raised by me · Raised by <member> · Scoped by <member>) · **Project ▾** (All projects · No project · each project). **Search** matches the number (`REQ-12`, matched by the app on the number itself), the title and the text (the text once ada adds a text filter to `work.list`, A76; until then, titles only). The filters are remembered.
-- **States** *(rev 3)*: loading (skeleton rows) · empty ("No requests yet. Capture one when something comes to mind: write what you need and choose who scopes it.") · no match ("No requests match. **Clear filters**") · can't load ("Can't load requests." with **Retry**) · the office stopped (the last list stays readable; actions are off with the reason, and capture still works, §1.1).
+- **States** *(rev 3)*: loading (skeleton rows) · empty ("No requests yet. Capture one when something comes to mind: write what you need and choose who scopes it.") · no match ("No requests match. **Clear filters**") · can't load ("Can't load requests." with **Retry**) · the office stopped (the last list stays readable; actions are off with the reason, and unsent capture text remains visibly unsaved, §1.1).
 
 ## 3. Flow 3 · A request's page
 
@@ -113,13 +120,13 @@ Work gets a fourth pill: **Tasks | Bugs | Debt | Requests**. Each project's Over
 | The agent reroutes it | The owner sees "Eden sent REQ-12 to ada: 'mostly the office protocol'" in the request and Activity. No approval is needed for a reroute. |
 | No answer from the scoping agent (on call, failed wakes) | After the run-mode failure rules, Needs you shows "REQ-12 is stuck with Eden", with **Change…**. |
 | Duplicate of a request not yet scoped | While typing, up to 2 similar requests not yet scoped show ("Looks like REQ-9: Dark mode…"), with **Add to REQ-9** (appends the text as a comment). |
-| Owner offline / app closed | The shortcut still opens the capture panel (the app runs in the menu bar). Saving keeps it on this Mac until the office is back, then sends and routes it (§1.1) *(rev 3)*. |
+| HQ unreachable / browser closed | Open-page text remains visibly unsaved while disconnected. Closing the browser provides no background capture service. Native capture is v2. |
 
 ## 5. UX acceptance criteria (RQS)
 
 Criterion ids use **RQS-** so they never collide with request records (`REQ-n`) *(renamed in rev 1a, before any test used them)*.
 
-- RQS-1 · *(rev 3)* ⌥⌘N opens the capture panel from anywhere, with the app window closed, with the text field focused, at the top third of the pointer's screen, for the organization selected in the menu bar (switchable in the title when there are several). Pressing it again brings the open panel forward with its text. Settings › Shortcuts can change it (Change…, Reset, Turn off), and when another app already uses it, says so and asks for another. The menu-bar menu has New request… ⌥⌘N.
+- RQS-1 · *(rev 4)* New request opens an accessible in-page dialog from HQ navigation or the browser application command palette. No native/global shortcut, tray or separate capture window is required.
 - RQS-2 · ⌘Enter with only text saves a request. Project, kind and route are suggested and editable, and none is required.
 - RQS-3 · The panel shows a suggested agent and two alternatives, each with a one-line reason, and the owner can pick another, type @name or Just save.
 - RQS-4 · *(rev 3)* Typing @ at the start of the text opens an agent completion (keyboard: ↑↓, Enter or Tab, Esc); picking chooses who scopes it (Send routes it to them) and removes the handle from the text, and an unknown handle disables Send with the reason. Message instead sends the text as an ordinary message to the chosen member, is disabled with "Choose who to message." when nobody is chosen, and with the reason while the office can't be reached, and confirms "Message sent to <name> · Open in Chat".
@@ -135,17 +142,17 @@ Criterion ids use **RQS-** so they never collide with request records (`REQ-n`) 
 - RQS-14 · *(new, rev 2)* A routed request shows "Sent to <agent> · not accepted yet" until that agent accepts it, then "<agent> is scoping". Rerouting it makes it Routed again for the new agent.
 - RQS-15 · *(new, rev 3)* The queue filters by state (Open by default), people (raised by, scoped by) and project, searches the number, the title and the text (the text once `work.list` has a text filter, A76; titles only until then), remembers the filters, and shows loading, empty, no match (Clear filters), can't load (Retry) and office-stopped states. The project's Requests tile opens the queue filtered to that project.
 - RQS-16 · *(new, rev 3)* A task created from a request shows From "REQ-n · <title>" in its side column, linking to the request. Merge into… and Decline… are offered only in open states.
-- RQS-17 · *(new, rev 3)* With the office unreachable, the capture panel still saves: the request is kept on this Mac ("Saved on this Mac. It gets a number and is sent when the office is back."), the menu-bar menu shows how many are waiting, the queue shows them first under Waiting to send (with Discard), and each is sent and routed as chosen when the office is back.
+- RQS-17 · *(rev 4)* With HQ unreachable, retain unsent text in the open page and label it unsaved, with Copy draft. Saved/numbered requests require a durable HQ acknowledgment. V1 has no native/background browser outbox; a lost response to a submitted request is resolved by its operation ID.
 - RQS-18 · *(new, rev 3)* After Send, Just save or Add to, a banner confirms for about 3 s ("REQ-12 sent to Eden · Open") without taking focus. Attachments are hidden until the office can store them.
 
 ## 6. Open questions
 
 **For ada and codex-dev**
 - ~~A29~~ · *Resolved (ada):* a request is a work-item kind on the shared core (REQ-n, a state machine, a thread of messages). Approved creates the linked tasks in one command. codex-dev's W7 model covers it. Plan row W16: codex-dev (model), Remy (CLI), app-frontend-dev (UI).
-- ~~A30~~ · *Resolved (ada):* the Tauri global-shortcut plugin in the menu-bar app. It's configurable, and if another app owns the shortcut, Settings shows "⌥⌘N is used by another app. Choose another shortcut." (RQS-1).
+- A30 · Superseded for v1 by the 2026-11-09 pivot. The global-shortcut plugin/native capture is v2; in-page capture follows RQS-1.
 - ~~C22~~ · *Resolved (ada):* smart feature #16, with the rule fallback when no runtime is set up.
 
-- A76 · *Resolved in part (ada, 2026-11-09):* similar requests match the title and the request's own text (no outcomes for now): a simple word match on the mock, a text filter on `work.list`, which ada adds to the contract (not there yet: today `work.list`'s `query` matches titles only). Attachments stay hidden until their storage is designed (deferred). Still open: the app keeping a capture on this Mac while the office can't be reached, then sending it (§1.1, RQS-17).
+- A76 · *Resolved in part (ada, 2026-11-09):* similar requests match the title and the request's own text (no outcomes for now): a simple word match on the mock, a text filter on `work.list`, which ada adds to the contract (not there yet: today `work.list`'s `query` matches titles only). Attachments stay hidden until their storage is designed (deferred). The former native offline outbox is retired from v1 by revision 4; browser draft behavior follows RQS-17.
 
 **For the user**
 - ~~U21~~ · *Resolved (the user, 2026-11-08): as recommended.* ⌥⌘N as the default shortcut (⌘N is New in many apps, and ⌥⌘N is rarely taken)? And is an approval step before tasks are created what you want (my recommendation), or should a scoped request become tasks straight away?

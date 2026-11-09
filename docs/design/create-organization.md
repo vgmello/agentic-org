@@ -1,31 +1,53 @@
-# Flow: Create organization (phase 1)
+# Design: create an organization through standalone HQ
 
-Status: **draft**. ada writes it with the app agent and the server agent, and they refine it before building.
+Status: **proposed implementation**, 2026-11-09, following the owner's v1 pivot.
+Owner: ada. Replaces the undeployed Tauri/SMAppService creation flow; there is no
+old-app import or compatibility path. See [ADR-0005](../adr/0005-standalone-server-v1.md)
+and [server setup requirements](../specs/server-installation-and-access-ux.md).
 
-## Goal
-On a Mac with nothing set up, the owner opens Agentic Org, creates an organization, and lands in the app shell connected to the organization's HQ office on this machine.
+## Setup and ownership
 
-## The flow
-1. **First launch:** two choices, **Create organization** and **Open organization**. Open has two paths: open an organization this Mac already has (it lists them), or join an organization from another machine with an invitation link (offices design, phase 3).
-2. **Create:** the owner enters the organization's name (and later a description). The app shows where its office will run: "This Mac".
-3. **Start the host:** the app makes sure the host (`org-office-host`, bundled inside it) is **registered as a login service**, starts it if needed, and connects through `org-client` (`hello`, a version check). The host starts each office's server.
-4. **Create:** the app calls `organization.create { name }`. The host starts a new office server with `--create`, and that server creates the HQ office: its own key, its databases and `office.json`. Once the server reports the office created, the host returns the organization with that office. A create that fails is cleaned up and returned to the app as an error.
-5. **Done:** the app shows the shell (sidebar, an empty agents list, "Hire your first agent") and remembers the organization, so the next launch opens straight into it. The menu-bar dropdown lists organizations first, each with its offices under it.
+Standalone setup selects `default` or an explicitly named instance. A new HQ setup
+establishes owner credentials before exposing administration. It can create the
+first organization using the same domain operation as the authenticated HTTP API.
+A satellite setup instead enrolls an office in an existing organization. Opening
+HQ in a browser performs neither installation nor enrollment.
 
-## API (`org-proto` v1, revised 2026-11-08 for the office model in `offices-hq-and-satellites.md`; the crate's docs are the reference)
-The app talks to this Mac's **host** (`org-office-host`) for these calls. Each office then has its own server.
-- `hello() → { api_version, server_version, host: "This Mac" }`. An office server's `hello` also carries `office: { organization_name, office }`.
-- `organization.create({ name }) → Organization { id, name, created_at, offices: [its HQ office] }`. It starts a `--create` server on this Mac, which creates the organization's HQ office. It succeeds once the server reports the office created (its key, databases and `office.json` durable); the HQ office's `status` then says whether it's serving (`starting`, `active`, `unavailable`). A create that fails is cleaned up and returned as an error. (errors: `invalid_name`, `already_exists`, `storage_error`). The name is trimmed, 1 to 64 characters, with no control characters, and unique (ignoring case) among this Mac's organizations. The host checks the name and its uniqueness, and returns `already_exists` for a clash. It reserves the name under its catalog mutex, counting names reserved by creates still in flight, so two creates with the same name can't both pass; the mutex covers only that check, not the server start. The `--create` server validates the name again. If the server crashes after `office.json` is durable but before it reports "created", the office exists: the host treats `office.json` as the marker, so `organization.create` succeeds, and the HQ office's `status` shows `starting` until the restarted server is ready.
-- `organization.list() → { organizations: Organization[] }`: every organization with an office on this Mac, each with its offices here (id, role, host, endpoint, status).
-- `office.list() → { offices: OfficeInfo[] }`: every office on this Mac and its socket.
-- `office.app_token({ office_id }) → { app_token }`: the office's `app_token` (ADR-0003 §2.1), 32 random bytes as 64 lowercase hex. On `host.sock` only, and the caller must pass the peer code-signature check. (errors: `not_authorized` if the check failed, `not_found` for an unknown office, `unavailable` if the office isn't running)
-- `subscribe() → {}`, after which the host pushes events, starting with `organization.created`
-- Any request can also fail with `invalid_request` or `unknown_method`. Organization and office ids are opaque strings (ULIDs); request ids are numbers. `created_at` is RFC 3339 UTC.
+## Create flow
 
-## States to design
-Login service not registered · login service not approved by the user (System Settings) · host or HQ office starting · host unreachable · HQ office failed to start · name invalid · organization already exists · created.
+1. An authorized owner chooses **Create organization** and enters the name. The
+   browser shows which HQ instance will store it. No local path picker appears.
+2. The request carries an operation ID and the proposed organization details.
+   Server authorization and validation run before provisioning.
+3. The instance reserves the normalized name and IDs under its catalog lock, then
+   performs slow provisioning outside that lock. Creation is idempotent by
+   operation ID; concurrent requests cannot create duplicate names or identities.
+4. The host creates the office key and starts its HQ worker through the private
+   launch contract. The worker owns its folder, databases and durable `office.json`
+   marker. Preserve the existing adopt-versus-discard rules after a crash.
+5. Return a durable result containing organization/office IDs and readiness. The
+   browser opens the organization, showing Starting until its office is ready.
+   If the response is lost, retry or look up the same operation instead of creating
+   a second organization. A saved organization may be stopped/unavailable; that is
+   distinct from a failed create.
 
-## Open questions
-1. Where an organization's data lives on disk (proposal: `~/Library/Application Support/agentic.org/organizations/<id>/`, holding the workspace and index).
-2. Whether creating an organization also sets up HR and the role catalogue right away, or later.
-3. Can one server host several organizations? (Proposal: yes, and the app's dropdown shows server → organizations. The API already allows it via `organization.list`; waiting on the user.)
+The server provisions agent homes and the built-in HR flow through their existing
+domain contracts. The new organization begins without imported HR/spool records.
+Owner/team/role/hiring behavior remains in the corresponding specs.
+
+## Reads and failures
+
+HQ lists only organizations the browser principal may access. Last-selected
+organization is a UI preference; it contains no privileged office token. Unknown
+or unauthorized organization IDs do not expose metadata. Invalid name, duplicate
+name, unavailable key store, failed worker, storage error and temporary starting
+state have distinct actionable responses. Status/event reconnect follows the
+standalone server's snapshot/cursor contract. Service start/repair belongs to the
+local CLI and works even if the HTTP server is stopped.
+
+## Verification
+
+Test repeated/lost create responses, competing name reservations, interruption
+before and after the durable office marker, unavailable credentials, unauthorized
+browser access and create success followed by worker failure. Use disposable roots;
+never import or reset a user's existing organization as a test fixture.

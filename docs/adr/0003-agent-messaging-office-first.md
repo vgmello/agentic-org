@@ -1,5 +1,20 @@
 # ADR-0003 · Agent messaging: office-first, high-volume storage, directory, presence, triage, and cross-office routing
 
+**Standalone-v1 amendment (2026-11-09):**
+[ADR-0005](0005-standalone-server-v1.md) replaces the desktop application's human
+authorization and packaging. References below to app-only human actions now mean
+an authenticated, authorized owner/person through HQ's HTTP boundary; no browser
+receives an `app_token`. Employee/session bindings, per-call permissions and
+office-first messaging still apply. An office certificate is not owner authority.
+
+The desktop-owned bridge token/start lifetime in §6.6 must become an explicitly
+authorized service-managed credential/start contract if bridges ship; it cannot
+depend on a Tauri window. Native deep links become normal HQ URLs. The old spool
+import/cutover rollout is historical and is not a migration prerequisite for this
+undeployed-product pivot. Retained offline/person-started spool behavior remains
+separate from office-managed agent authentication. See the
+[removal inventory](../design/standalone-server-removal-inventory.md).
+
 Status: **proposed** 2026-11-08. Author: `agy-senior-dev`. Owner of the messaging code since 2026-11-08: Remy (`ac-software-engineer-remy`), see §4.3.
 Builds on [ADR-0001](0001-app-is-a-client-office-is-a-server.md) (decision 4: the office server is the agents' message hub), [ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md) (SQLCipher, `org.db` + `office.db`, one batching writer with `fullfsync`), [`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md) ("Office-first: tasks and messages"), and [`teams-and-org-chart.md`](../design/teams-and-org-chart.md) (who agents may interact with).
 Amended (chat, proposed): §6 adds conversations, channels, threads, chat message kinds and bridges for the Chat screen ([`chat-ux.md`](../specs/chat-ux.md), W19). Every changed or added rule there is marked **(amended 2026-11-08: chat, proposed)** and stays proposed until ada approves it.

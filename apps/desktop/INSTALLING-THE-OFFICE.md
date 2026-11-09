@@ -1,5 +1,14 @@
 # The office host in the app bundle
 
+**V1 direction changed 2026-11-09:** the target is a standalone Rust server
+on macOS/Linux serving the browser application from HQ. Tauri is deferred to v2.
+See the [server design](../../docs/design/standalone-server.md) and [deletion inventory](../../docs/design/standalone-server-removal-inventory.md).
+This documentation change specifies the pivot; the source described below is the
+inspected pre-pivot implementation. Its Tauri/bundle commands are historical
+development instructions, not installation instructions for the new v1. Do not
+claim the new CLI, HTTP server or remote sync exists until implemented. No migration
+of the undeployed desktop app or its data is required.
+
 The app ships the office host and the office server inside its bundle. The host runs as a macOS **login service**
 (a LaunchAgent registered with `SMAppService`), so it starts with the Mac and keeps running when the app is closed.
 

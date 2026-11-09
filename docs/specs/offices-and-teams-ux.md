@@ -2,7 +2,7 @@
 kind: spec
 title: "Offices, organizations and teams (UX)"
 status: for-review
-revision: 11
+revision: 12
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-09"
@@ -12,6 +12,14 @@ builds_on: []
 ---
 
 # Spec · Offices, organizations and teams (UX)
+
+**Revision 12 (2026-11-09): standalone server pivot.**
+[server-installation-and-access-ux.md](server-installation-and-access-ux.md) supplies
+the v1 installation/access requirements. The browser's machine is not an office.
+MENU-1 through MENU-6 are retired from v1 (native shell deferred to v2), OPEN/JOIN
+and OFC criteria below are revised for HQ HTTP access and CLI enrollment. Existing
+team, people, reporting and owner semantics remain. Old changelog entries record
+history and do not reintroduce the desktop flows.
 
 Requested by ada for the user.
 
@@ -23,7 +31,7 @@ Requested by ada for the user.
 
 **Revision 11 (2026-11-09): the menu has New request.** The menu-bar menu gains **New request… ⌥⌘N** and, while captures wait for the office, "n requests waiting to send" (`feature-requests-ux.md` §1.1). No criteria changed here; see RQS-1, RQS-17.
 
-**Revision 10 (2026-11-08): key custody wording (ada).** With key custody (the host holds the office keys, River's `river/host-keys`, not yet on `v1`; until it merges, ADR-0002 and `office-host-boundary.md` still describe the Keychain model, and ada updates them), `key_missing` covers both a key that isn't there and a key that doesn't open the databases. The new copy is right under both models. Its copy no longer names the Keychain: "This office's key isn't available on this Mac, so its data can't be opened" (§3.3). The action is unchanged. No criteria changed.
+**Revision 10 (2026-11-08): key custody wording (ada).** With key custody (the host holds the office keys, River's `river/host-keys`, not yet on `v1`; until it merges, ADR-0002 and `office-host-boundary.md` still describe the Keychain model, and ada updates them), `key_missing` covers both a key that isn't there and a key that doesn't open the databases. The new copy is right under both models. Its copy no longer names the Keychain: "This office's key isn't available on <office machine / instance>, so its data can't be opened" (§3.3). The action is unchanged. No criteria changed.
 
 **Revision 9 (2026-11-08): host capabilities (A50).** The host's `hello` lists its capabilities, and that list replaces version comparison for status events and restart. Without `office.status_changed` the app shows "Status unknown" (as in rev 8). Without `office.restart` the restart button is hidden and "Update Agentic Org to restart offices from here" shows, besides the refusals for `unsupported_version` and `invalid_request` (§3.3). `HelloResult.capabilities` is on v1 (`crates/org-proto/src/calls.rs`, with `capability::OFFICE_RESTART`, `OFFICE_STATUS_CHANGED` and `HelloResult::supports`; ada, merged at `b9f1198`). **Criteria rewritten (same ID):** OFC-11, OFC-12 *(rev 9)*.
 
@@ -68,19 +76,19 @@ Requested by ada for the user.
 
 ## 0. Decisions in this spec
 
-1. **One list, two places.** The menu-bar dropdown and the in-app organization switcher show the same thing: organizations first, each with its offices underneath. The menu bar only informs and switches; repairs happen in the app window.
+1. **HQ organization navigation.** The in-page switcher lists authorized organizations and their offices. The native menu is deferred to v2.
 2. **Switching organization never asks for confirmation.** Offices run under the login service, so nothing stops when you switch. The only prompt is for unsaved input ("Discard the new team?").
 3. **The UI says "HQ" and "office", never "satellite".** HQ gets a badge; every other office is just an office. (`satellite` stays the engineering term.) The user is OK with this for now and may revisit it.
-4. **"This Mac"** replaces "This computer" everywhere (macOS only, and the create screen already says it).
-5. **The menu bar works without the window.** A join request waiting at HQ and agents that need you appear at the top of the menu, so the owner never has to open the app to notice them.
-6. **Joining is two screens, then a wait:** paste → confirm (nothing is sent before Confirm) → waiting with the check code → copying data → done.
+4. **Locations identify the service machine or instance.** Support macOS and Linux; never label the browser machine as the executing office.
+5. **Services run without a browser.** Pending joins and agents needing attention appear in HQ Needs you; native background notifications are v2.
+6. **Enrollment uses target-machine setup:** validate invitation, confirm destination/execution consent, await HQ approval, synchronize and report readiness.
 7. **The invitation link is shown once.** HQ keeps only the public half of the invitation key, so the app can't show the link again. The screen says so, and "New link" replaces it (cancelling the old one).
-8. **The check code is never copyable on the joining Mac,** and the approve dialog at HQ says "only type a code you can see on that computer's screen yourself". That keeps the code doing its job: proving the owner sees the joining Mac. The code is stable (it comes from the invitation and the joining Mac's key), so it never changes under the owner's eyes.
+8. **The check code identifies the joining request/key.** The CLI displays it on the joining machine; the owner verifies it through a trusted session to that machine. Do not treat terminal copy prevention as a security guarantee.
 9. **Check-code input is one text field**, not one box per character (screen readers, paste, password managers). Case, spaces and dashes are ignored.
 10. **Org chart** is one nav item with three pill tabs: **Teams | People | Reporting lines**. Offices has its own nav item (bottom group, above Settings).
 11. **There are only teams.** No guilds, no divisions, no labels. A team that owns teams simply shows "3 teams".
 12. **Every edit has a non-drag path** (menu, dialog, keyboard). Drag-to-move and drag-to-change-manager are shortcuts, never the only way.
-13. **Changes made on an office that can't reach HQ show as Pending** (dashed outline, "Pending" badge) and **Blocked** if HQ rejects an earlier one, with Retry or Discard. Nothing pretends to be saved before HQ commits it. This holds in all three chart views.
+13. **Office outboxes report Pending and Blocked.** HQ shows their known outcomes. A disconnected browser marks its view stale and its own unsubmitted text unsaved; it does not become a satellite outbox.
 14. **Agents and people never look alike**, and the difference is never color only (§7.0).
 15. **The owner is shown once, above the chart**, never inside it, except as the root of Reporting lines, where everyone ultimately reports to them.
 16. **Reporting lines and teams are independent.** Leading a team doesn't make you anyone's manager, and the UI says so where people would assume it.
@@ -92,7 +100,7 @@ Requested by ada for the user.
 | Agentic Org | The app | agentic.org (in copy), Agency |
 | Office | Where an organization's agents run and its data is kept. One organization has one or more. | Server, node, satellite, machine |
 | HQ | The organization's first office. It keeps the records and approves new offices. | Primary, master, main server |
-| This Mac | The Mac the app is running on | This computer, localhost |
+| This instance | The selected server instance, independent of the browser machine | This Mac, localhost |
 | Invitation link | The one-time link that lets another computer join as an office | Token, enrollment, invite code |
 | Check code | The short code a joining computer shows, typed at HQ to approve it | PIN, OTP, verification token |
 | Team | A group of agents and people. A team can be part of another team. | Department, division, guild, squad |
@@ -127,43 +135,38 @@ Status colors reuse the existing tokens: green = online, blue = starting, gray =
 
 ## 3. Status vocabulary
 
-### 3.1 Office status (one at a time, from the viewing Mac's point of view)
+### 3.1 Office status (one at a time, from HQ, with reported location and freshness)
 
 | Label | Icon (Lucide) | Color | When | Secondary text |
 | --- | --- | --- | --- | --- |
 | Online | `circle` filled | green | The office runs and is in sync with HQ (HQ itself: it runs) | — |
-| Starting | `loader` | blue | An office on this Mac is starting | — |
-| Offline | `circle` outline | gray | Another computer's office isn't connected to HQ (never an office on this Mac) *(rev 8)* | "last seen 2 h ago" |
-| Unreachable | `wifi-off` | red | Seen from an office that can't reach HQ: the HQ row | "last synced 10 min ago" |
-| Stopped | `circle-x` | red | An office on this Mac isn't running: `offline` or `unavailable` *(rev 8)* | the reason from §3.3, in plain words |
-| Update needed | `circle-arrow-up` | amber | The office's app is too old for the organization's level | "needs Agentic Org 1.4 or later" |
+| Starting | `loader` | blue | Its owning instance reports the office starting | — |
+| Offline | `circle` outline | gray | The office is disconnected from HQ; its current execution state is not confirmed | "last seen 2 h ago" |
+| Unreachable | `wifi-off` | red | HQ cannot be reached by the browser or the joining CLI | "last synced 10 min ago" |
+| Stopped | `circle-x` | red | Its owning instance confirms the office is stopped/unavailable | the reason from §3.3, in plain words |
+| Update needed | `circle-arrow-up` | amber | The office's server is too old for the organization's level | "needs Agentic Org 1.4 or later" |
 | Invited | `mail` | gray | An invitation link exists and hasn't been used | "expires in 21 h" |
 | Wants to join | `bell-ring` | amber (needs you) | A computer used the link and waits for its check code at HQ | "from 192.168.1.44 · 2 min ago" |
-| Waiting for approval | `hourglass` | amber | This Mac's own pending join | "type the code at HQ" |
+| Waiting for approval | `hourglass` | amber | The selected joining office awaits HQ approval | "type the code at HQ" |
 | Unknown | `circle-help` | gray | The app has no live status for it, or the status is `unknown` or missing (never shown as healthy) *(rev 6, rev 8)* | "Status unknown" |
 
 **From the wire to the label** *(rev 8)*. `OfficeInfo.status` shows as one label:
 
 - `active` → **Online**. `starting` → **Starting**. `update_needed` → **Update needed**. `pending` (invited, not joined yet) → **Invited**.
-- `offline` or `unavailable`, for an office on this Mac → **Stopped**, with §3.3's reason as secondary text. The two look the same; the reason and its action say what differs.
-- **Offline** is only for another computer's office that isn't connected to HQ. An office on this Mac never shows as Offline.
+- `offline` or `unavailable`, for an office whose local instance reports it stopped → **Stopped**, with §3.3's reason as secondary text. The two look the same; the reason and its action say what differs.
+- **Offline** means an office is not connected to HQ. Distinguish this from a locally confirmed Stopped state and from Unknown when evidence is unavailable.
 - `unknown`, or no status at all → **Unknown** ("Status unknown").
 
-### 3.2 Organization availability (menu and Open organization screen)
+### 3.2 Organization availability in the browser
 
-An organization is **unavailable** only when the app can't read it on this Mac at all. It's greyed, with the reason and, in the window, a fix.
-
-| Reason (exact copy) | Fix offered in the window |
-| --- | --- |
-| "Its office on this Mac stopped", followed by the reason's copy from §3.3. It covers every reason, and a missing one, except `key_missing` and `storage_error`, which use "Can't open its data" below *(rev 8)* | The action for that reason from §3.3 (**Restart office** for most; **Check for updates** for `unsupported_version`) · Copy details |
-| "Offices aren't running. Allow Agentic Org in Login Items" (all organizations) | **Open Login Items settings** |
-| "Needs a newer version of Agentic Org" | **Check for updates** |
-| "Can't open its data", followed by §3.3's copy. Only for `key_missing` and `storage_error` *(rev 8)* | The action from §3.3 (**Try again** for `key_missing`, **Restart office** for `storage_error`) · Copy details |
-| "This Mac was removed from the organization" | **Delete its copy from this Mac** |
-| "Waiting for approval at HQ" | **Show check code** · Cancel join |
-| "Joining… copying data (40%)" | (progress only) |
-
-**Not unavailable:** a Mac whose office can't reach HQ (it opens with a banner and queues changes, §6.5), and an office too old to sync (it opens read-only with "Update needed").
+The browser can open an organization when HQ can authenticate the owner and serve
+that organization's data. A stopped satellite does not make HQ's synchronized
+view unavailable. Its last-seen time and unavailable live controls remain visible.
+If HQ cannot be reached, an open page says Updates paused and marks cached data
+stale. If HQ's storage/key is unavailable, show the specific reason and local
+diagnostic action. The browser cannot open OS Login Items or start a stopped daemon.
+Joining/approval/synchronization states belong to the target office and can be
+inspected through setup/status or HQ when reachable.
 
 ### 3.3 Why an office stopped (rev 6)
 
@@ -176,16 +179,16 @@ Shown as the Stopped row's secondary text and at the top of its details, with th
 | `crashed` | "It stopped unexpectedly", then "Restarting in 20 s" when a restart is pending | **Restart office** · Copy details *(rev 8)* |
 | `start_timeout` | "It didn't start in time" | **Restart office** · Copy details |
 | `restarts_exhausted` | "It kept stopping, so it won't restart on its own" | **Restart office** · Copy details |
-| `storage_error` | "It can't read or write its data on this Mac" (also used when the Keychain doesn't allow access, `office-host-boundary.md`) | **Restart office** · Copy details *(rev 8)* |
+| `storage_error` | "It can't read or write its data on <office machine / instance>" (also used when the Keychain doesn't allow access, `office-host-boundary.md`) | **Restart office** · Copy details *(rev 8)* |
 | `in_use` | "Its data is still in use by another Agentic Org process. Trying again in N s" (N from `next_restart_at`) *(rev 8)* | **Restart office** · Copy details (the host also retries by itself) *(rev 8)* |
-| `key_missing` | "This office's key isn't available on this Mac, so its data can't be opened" *(rev 10)* (the databases exist, and no key that opens them is available on this Mac: missing, or not the right one) | **Try again** (`office.restart`, which asks for the key again and returns straight to this reason if it still isn't available) · Copy details. The button says Try again, never Restart. |
+| `key_missing` | "This office's key isn't available on <office machine / instance>, so its data can't be opened" *(rev 10)* (the databases exist, and no key that opens them is available to the owning instance: missing, or not the right one) | **Try again** (`office.restart`, which asks for the key again and returns straight to this reason if it still isn't available) · Copy details. The button says Try again, never Restart. |
 | `stopped_by_owner` | "You stopped it" | **Start office** (`office.restart`). Phase 1 has no stop call, so this appears only once one exists. |
-| `unsupported_version` | "Parts of Agentic Org on this Mac don't match. Update or reinstall Agentic Org, then log out and back in." *(rev 8)* | **Check for updates** · Copy details. No Restart: the contract refuses it. |
+| `unsupported_version` | "The release components on <office machine / instance> don't match. Run diagnostics and repair the selected instance there." *(rev 8)* | **Show local CLI repair instructions** · Copy details. No office restart until the instance release is repaired. |
 | `invalid_request` | "It couldn't start because of an internal error" | Copy details (to send to support). No Restart: the contract refuses it. |
 | `unknown` (a reason this version doesn't know, from a newer host) | "It stopped for a reason this version doesn't know" | **Restart office** · Copy details |
 | No `status_reason` (the host doesn't know why) *(rev 8)* | "It isn't running" | **Restart office** · Copy details |
 
-- **Restart office** calls `office.restart`. While it runs: "Restarting…" with a spinner, then the live status. `office.restart` covers Restart office, Try again and Start office (ada). The contract refuses a restart only for `unsupported_version` and `invalid_request`, so only those two rows go without it; every other reason, and a missing one, offers it *(rev 8)*. A host whose `hello` doesn't list the capability `office.restart` (A50) gets no restart button on any row (Restart office, Try again, Start office), and the row shows "Update Agentic Org to restart offices from here" instead, as for `unknown_method` *(rev 9)*.
+- **Restart office** submits an authorized HQ operation, routed to the owning instance's `office.restart` capability. It is available only while that instance can receive it; otherwise show its local CLI repair instructions. While it runs: "Restarting…" with a spinner, then the live status. `office.restart` covers Restart office, Try again and Start office (ada). The contract refuses a restart only for `unsupported_version` and `invalid_request`, so only those two rows go without it; every other reason, and a missing one, offers it *(rev 8)*. A host whose `hello` doesn't list the capability `office.restart` (A50) gets no restart button on any row (Restart office, Try again, Start office), and the row shows "Update Agentic Org to restart offices from here" instead, as for `unknown_method` *(rev 9)*.
 - **What `office.restart` answers, and what the app does** *(rev 8)*. The row always shows the office's `status_reason`, not the call's error code.
   - Accepted: keep the spinner until the live status arrives.
   - `conflict` (the office is already starting or running, e.g. a double click or the host's own countdown got there first): no error. Keep the spinner until the live status arrives (Starting, then Online).
@@ -196,166 +199,29 @@ Shown as the Stopped row's secondary text and at the top of its details, with th
   - `unavailable` (the office's reason is `unsupported_version` or `invalid_request`; it can arrive if the reason changed after the row was drawn): show that reason's row from the table.
 - **Copy details** copies the office name, id, status, reason, the time and the app version. It never includes keys or tokens.
 
-## 4. Flow 1 · Menu-bar dropdown
+## 4. Native menu (deferred to v2)
 
-The app lives in the menu bar (ADR-0001). The icon is a monochrome template image. It gains a small dot when anything needs the owner (a join request, an agent that needs you, unplaced agents), so state is never color-only: the menu's first rows say what it is.
+There is no v1 menu-bar application, Dock presence, native notification, global
+capture shortcut or desktop window. Relevant alerts appear in HQ's browser UI.
+The in-page organization switcher lists organizations authorized by that HQ.
 
-```
-┌────────────────────────────────────────────────────┐
-│ Studio Mac wants to join Lumen Labs…               │  ← needs-you rows, only when present
-│ 2 agents need you in Lumen Labs…                   │
-├────────────────────────────────────────────────────┤
-│ ✓ Lumen Labs                                   ⌘1  │  ← current organization (checkmark)
-│      HQ · This Mac                  ● Online       │
-│      Studio Mac                     ● Online       │
-│      Build box                      ○ Offline · 2h │
-│   Side Project                                 ⌘2  │
-│      Office · This Mac              ● Online       │
-│      HQ · hq-mac.local              ⚠ Unreachable  │
-│   Old Org                                          │  ← disabled (greyed)
-│      Needs a newer version of Agentic Org          │  ← disabled reason line
-├────────────────────────────────────────────────────┤
-│ New request…                                  ⌥⌘N  │
-│ 1 request waiting to send                          │  ← only while captures wait
-│ Open Agentic Org                               ⌘O  │
-│ Open or join organization…                         │
-│ Create organization…                               │
-├────────────────────────────────────────────────────┤
-│ Quit Agentic Org                               ⌘Q  │
-└────────────────────────────────────────────────────┘
-```
+## 5. Open organization and enroll an office
 
-**Rules**
+An authenticated browser opens an organization available from HQ and can remember
+the last selection. Its own machine does not need Agentic Org installed. A browser
+cannot start a stopped local daemon; setup/start/status are local CLI operations.
 
-- *(rev 11)* **New request… ⌥⌘N** opens the capture panel (`feature-requests-ux.md` §1.1). While captures wait on this Mac for the office, a row says "n requests waiting to send"; clicking it opens Work › Requests, where they're listed first under Waiting to send (`feature-requests-ux.md` §2), and the row goes away once they're sent.
+Enrollment happens on the target machine through standalone setup. The CLI checks
+the invitation, displays the destination/office identity and execution consent,
+then submits the join proof. HQ's browser shows the pending office and check-code
+approval. Closing the browser does not cancel a join; restarting setup resumes
+the same pending request/key. Identity mismatch, expiry, rejection, incompatible
+versions and connectivity failures have distinct explanations and repair actions.
 
-- Organizations are sorted A–Z (stable, for muscle memory); the current one has a checkmark. ⌘1–⌘9 follow that order.
-- Offices are indented under their organization: HQ first, then this Mac's other offices, then the rest A–Z. Each shows "· This Mac" when it runs here. More than 5 offices: the first 5, then "4 more offices…".
-- **Click an organization** → the window opens (or comes forward) on it. No confirmation (decision 2).
-- **Click an office** → the window opens that organization's Offices screen with that office's details open.
-- **Click a needs-you row** → the window opens on the item (the approve dialog, or the Needs-you inbox).
-- An unavailable organization is disabled with its reason on the line below; its offices aren't listed. The fix is in **Open or join organization…** (decision 1).
-- **No organizations yet:** the list area shows one disabled line, "No organizations on this Mac yet", above Create and Open.
-- **Host not running** (the login service is off): one disabled line at the top, "Offices aren't running", and "Open Login Items settings…" below it.
-- **Quit Agentic Org:** the first time, a one-time notice in the window: "Your offices and agents keep running after you quit. Open Agentic Org from the menu bar to see them."
-
-**In-app switcher** (sidebar footer): organization initials tile · name · current office ("HQ · This Mac") · chevron. It opens a Tailwind dropdown with the same list as the menu, plus **Manage offices** and **Open or join organization…**. Keyboard: ↑/↓, Enter, Esc.
-
-## 5. Flow 2 · Open organization and join
-
-**When it shows:** first launch; when the last-opened organization is unavailable; from "Open or join organization…". Otherwise the app opens straight into the last organization.
-
-### 5.1 Open organization
-
-```
- Open organization
- Pick an organization on this Mac, or join one with an invitation link.
-
- ON THIS MAC
- ┌──────────────────────────────────────────────────────────────────────────┐
- │ [LL] Lumen Labs               HQ on this Mac          ● Online    Open › │
- │      4 agents · 3 offices · opened today                                 │
- ├──────────────────────────────────────────────────────────────────────────┤
- │ [SP] Side Project             Office · HQ at hq-mac   ⚠ Unreachable Open › │
- │      Changes wait on this Mac until HQ is back                           │
- ├──────────────────────────────────────────────────────────────────────────┤
- │ [OO] Old Org (greyed)   Needs a newer version of Agentic Org  [Check for updates] │
- └──────────────────────────────────────────────────────────────────────────┘
-
- JOIN AN ORGANIZATION
- Paste the invitation link from HQ (Offices › Add office › Another computer).
- ┌──────────────────────────────────────────────────┐ ┌───────┐ ┌──────────┐
- │ agenticorg://join#…                              │ │ Paste │ │ Continue │
- └──────────────────────────────────────────────────┘ └───────┘ └──────────┘
-
- [+ Create organization]
-```
-
-- Rows are a stacked list; the whole row opens the organization. Unavailable rows show their fix button instead of "Open".
-- **Empty (first launch):** two cards, as built today, **Create organization** and **Open organization** (ADR-0001, `docs/design/create-organization.md`), both enabled. Open organization lists the organizations on this Mac and offers **Join organization** ("Join an organization you already run, with an invitation link from its HQ"), which opens the paste field (the join flow, phase 3).
-- The app **never reads the clipboard on its own.** "Paste" (and ⌘V in the field) does.
-- Opening an `agenticorg://join#…` link brings the window forward on this screen with the field filled and goes straight to Confirm (§5.2). It never joins by itself.
-
-**Paste validation** (local, instant, nothing is sent):
-
-| Case | Inline message under the field |
-| --- | --- |
-| Not a link or token | "This isn't an Agentic Org invitation link. It starts with agenticorg://join#." |
-| Damaged (cut off, edited) | "This link is incomplete. Copy it again from HQ." |
-| Expired | "This invitation expired at 14:02 today. Ask HQ for a new link." |
-| From a newer app | "This link needs a newer version of Agentic Org." **Check for updates** |
-| For an organization this Mac already belongs to (same id) | "This Mac is already in Lumen Labs." **Open Lumen Labs** |
-
-### 5.2 Confirm (nothing has been sent yet)
-
-```
- ← Back
- Join Lumen Labs?
-
- ┌ Organization ─────────────────────────────────────────────┐
- │ Lumen Labs                                id …7K2Q9F      │
- │ This Mac joins as   Studio Mac                            │
- │ HQ                  HQ · hq-mac.local:7443, 192.168.1.20  │
- │ Invitation          expires in 23 h                       │
- └───────────────────────────────────────────────────────────┘
-
- ┃ ⚠ Joining lets Lumen Labs run its agents on this Mac.
- ┃   In this version, agents run as you: they can read and change your
- ┃   files, use your apps and network, and act on your behalf. This Mac
- ┃   keeps an encrypted copy of the organization's records and stays in
- ┃   sync with HQ. Only join organizations you run yourself.
-
- ┃ ⚠ You already have a different organization called Lumen Labs    ← only on a name match
- ┃   on this Mac (id …A3M8, HQ on this Mac, created 7 Nov). This link is for
- ┃   another one (id …7K2Q9F). If you meant to add an office to yours,
- ┃   don't continue: create the link from yours.
- ┃   ☐ I understand this is a different organization
-
-                                     [Cancel]  [Join Lumen Labs]
-```
-
-- The organization's name is the title. The id's last 6 characters show beside it, and in the name-match warning both ids are shown, so the two are tellable apart.
-- The office name comes from the link and isn't editable here (rename later in Offices).
-- **Name match:** the primary button stays disabled until the checkbox is ticked. Matching ignores case and surrounding spaces.
-- The first warning always shows. Its wording is ada's (A1, resolved): agents run as the user until v2. The copy says "In this version" rather than naming v2, so it stays true without promising a date; when v2 changes it, this warning changes with it.
-
-### 5.3 Waiting for approval
-
-```
- Joining Lumen Labs
- ✓ Connected to HQ at hq-mac.local
- ✓ Checked HQ's identity
- ◌ Waiting for approval at HQ
-
- ┌───────────────────────────────────┐
- │      Check code                   │
- │        K7QP  4MZT                 │   (mono, 32 px, letter-spaced, not selectable)
- └───────────────────────────────────┘
- On HQ's Mac, open Agentic Org. It shows "Studio Mac wants to join".
- Type this code there to approve.
- This Mac: Studio Mac · 192.168.1.44  (HQ shows the same address)
-
- The invitation expires in 23 h.               [Cancel join]
-```
-
-- **The code:** 8 characters in Crockford base32 (digits and uppercase letters without I, L, O and U), shown in two groups of four. It isn't selectable or copyable (decision 8). VoiceOver reads it character by character ("K, 7, Q, P, 4, M, Z, T").
-- **The code is stable:** it comes from the invitation and this Mac's key, so a reconnect, a closed window or a restart shows the same code. There is no "code changed" state.
-- The window can be closed. The organization then shows in the menu and Open screen as "Waiting for approval at HQ", with **Show check code**.
-
-**Then:** "Approved. Copying Lumen Labs' records… 12 of 40 MB" (a progress bar) → "Studio Mac is now an office of Lumen Labs." **Open Lumen Labs**.
-
-**Errors** (each replaces the step it failed at, with the next action):
-
-| Case | Copy | Actions |
-| --- | --- | --- |
-| HQ unreachable at every address | "Can't reach HQ at hq-mac.local:7443 or 192.168.1.20. HQ's Mac must be awake and on a network this Mac can reach." | **Try again** · **Enter HQ's address…** (safe: HQ is checked by identity, not address) |
-| HQ's identity doesn't match (red) | "The computer at hq-mac.local isn't Lumen Labs' HQ. Nothing was sent. Check the address with HQ before trying again." | Try again · Cancel |
-| Declined at HQ | "HQ declined this join, and the invitation is cancelled." | Close |
-| Three wrong codes at HQ | "HQ cancelled this invitation after 3 wrong codes. Ask HQ for a new link." | Close |
-| Invitation used, cancelled or expired (HQ says) | "This invitation was already used." / "…was cancelled at HQ." / "…expired." + "Ask HQ for a new link." | Close |
-| Too many attempts | "Too many attempts from this Mac. Try again in 5 minutes." | (countdown) |
-| HQ needs a newer app here | "Lumen Labs' HQ runs a newer version. Update Agentic Org to join." | **Check for updates** |
-| Copy interrupted | "Copying stopped at 60%. It continues when HQ is reachable." | Try now |
+Same-machine office provisioning must still prove office identity. Display locations
+relative to HQ/the selected instance, never infer them from the browser's hostname.
+Status and snapshots carry freshness; a disconnected browser says Updates paused.
+See SRV-7 through SRV-12 for the network/authorization behavior.
 
 ## 6. Flow 3 · Offices and Add office
 
@@ -369,72 +235,45 @@ The app lives in the menu bar (ADR-0001). The icon is a monochrome template imag
  ┌───────────────────────────────────────────────────────────────────────────────┐
  │ ! Laptop wants to join · from 192.168.1.44 · 2 min ago      [Review and approve] │  ← highlighted row
  ├───────────────────────────────────────────────────────────────────────────────┤
- │ [HQ] Main office        This Mac (you're here)       ● Online     4 agents   ⋯ │
+ │ [HQ] Main office        HQ instance                 ● Online     4 agents   ⋯ │
  │      Studio Mac         from 192.168.1.31            ● Online     2 agents   ⋯ │
  │      Build box          last seen 2 h ago            ○ Offline    1 agent    ⋯ │
- │      Office 2           This Mac                     ● Online     0 agents   ⋯ │
+ │      Office 2           HQ instance                     ● Online     0 agents   ⋯ │
  │      Laptop             invitation · expires in 21 h ✉ Invited     [Cancel]  ⋯ │
  ├───────────────────────────────────────────────────────────────────────────────┤
  │ ! 2 unplaced agents · from a removed office                   [Place or offboard] │  ← only when any
  └───────────────────────────────────────────────────────────────────────────────┘
- Shown from this Mac. Statuses update live.
+ Shown from HQ. Statuses include last-seen information.
 ```
 
-- Order: join requests, HQ, this Mac's offices, other offices A–Z, invitations, then unplaced agents.
-- **A row opens a slide-over** with a description list: name (**Rename**), role (HQ / Office), where (This Mac, or where it last connected from), status, last seen, sync ("Up to date" or "Catching up: 34 changes"), Agentic Org version, agents placed here, projects it follows. Actions: **Rename** · **Remove office…** (not on HQ) · later, **Make this HQ…** (phase 4, hidden until then).
+- Order: join requests, HQ, offices on the HQ instance, other offices A–Z, invitations, then unplaced agents.
+- **A row opens a slide-over** with a description list: name (**Rename**), role (HQ / Office), where (the service machine/instance, with last-seen address where appropriate), status, last seen, sync ("Up to date" or "Catching up: 34 changes"), Agentic Org version, agents placed here, projects it follows. Actions: **Rename** · **Remove office…** (not on HQ) · later, **Make this HQ…** (phase 4, hidden until then).
 - **Version holding back a feature:** when HQ can't raise the organization level, a quiet note above the list: "Build box runs an older version of Agentic Org, so new features wait until it updates." It links to the row.
-- **Empty is impossible** (HQ always exists). With HQ alone, a one-line hint under the list: "Add an office to run agents on another Mac, or to keep a copy of the records there."
+- **Empty is impossible** (HQ always exists). With HQ alone, a one-line hint under the list: "Add an office to run agents on another machine, or to keep a copy of the records there."
 - **Loading:** skeleton rows. **Live:** statuses update in place; a row that changes status doesn't move.
-- **Row label for screen readers** *(rev 6, rev 8, OFC-13)*: "Main office, HQ, This Mac, Online, 6 agents. Opens details." For Stopped it adds the reason, with a restart in a form that doesn't tick: "…, Stopped: it stopped unexpectedly, restarting shortly, …", or "restarting at 10:42" when the restart is a minute or more away. The visible countdown updates no more often than every 10 s. A status change of an office on this Mac is announced through a polite live region ("Office 2 stopped: it stopped unexpectedly", "Office 2 is online").
-- **Phase 1** *(rev 6, from the build)*: **Add office** is shown disabled with "Available in a later release." While the data is invented, a **Sample data** badge says so. A status the app can't confirm shows as **Unknown** (§3.1), never as healthy.
-- **HQ-only actions** (A5, resolved): **Add office**, **Review and approve** and **Remove office…** happen in the app on HQ's Mac. On any other office, Add office is disabled with "Add offices from HQ's Mac (Main office)", and a join request shows read-only with "Approve on HQ's Mac (Main office)".
+- **Row label for screen readers** *(rev 6, rev 8, OFC-13)*: "Main office, HQ, HQ instance, Online, 6 agents. Opens details." For Stopped it adds the reason, with a restart in a form that doesn't tick: "…, Stopped: it stopped unexpectedly, restarting shortly, …", or "restarting at 10:42" when the restart is a minute or more away. The visible countdown updates no more often than every 10 s. A status change confirmed by its owning instance is announced through a polite live region ("Office 2 stopped: it stopped unexpectedly", "Office 2 is online").
+- **Historical build note** *(rev 6; not the standalone-v1 acceptance target)*: **Add office** is shown disabled with "Available in a later release." While the data is invented, a **Sample data** badge says so. A status the app can't confirm shows as **Unknown** (§3.1), never as healthy.
+- **HQ-only actions:** Add office, Review and approve and Remove office are available to an authorized owner through HQ from any browser. Unauthorized sessions cannot invoke or discover privileged operations.
 
-### 6.2 Add office (slide-over, HQ's Mac only)
+### 6.2 Add office (authorized HQ owner)
 
-**Step 1 · Where**
+Enter a unique office name and choose **On this instance** or **On another
+machine/instance**. The first uses authenticated local provisioning and records
+office identity. Show Creating, Synchronizing and Ready separately; a failure is
+visible with its specific reason and an idempotent retry.
 
-```
- Add office
- Name     [ Studio Mac                ]
- Where will it run?
- (•) Another computer
-     You'll get a one-time link to open on that computer. You approve it here.
- ( ) This Mac
-     A separate office on this Mac, with its own copy and agents. Ready in seconds.
-                                                    [Cancel]  [Continue]
-```
+For another machine/instance, generate a one-time invitation and show the CLI
+setup instructions. The secret is shown once, with Copy invitation and an expiry;
+it is not placed in shell arguments or ordinary logs. Setup on the destination
+accepts it through a protected input and displays the check code. HQ's owner
+approves that request here. Replacing an invitation cancels the previous one.
+Expiry/rejection shows New invitation and Remove; a reused setup resumes its
+pending request instead of creating a duplicate office. No desktop URL handler or
+browser folder picker is required.
 
-- Name: required, 1–64 characters, unique among the organization's offices ("There's already an office called Studio Mac.").
-- **This Mac** → "Creating Office 2…" (inline steps: Creating · Copying records · Starting) → the slide-over closes, the row appears Online and is briefly highlighted. Failure: "Office 2 couldn't start: <reason>." **Try again** · Copy details. The registry entry stays as Stopped, so nothing half-made is hidden.
+### 6.3 Approve a join (through an authorized HQ browser session)
 
-**Step 2 · Another computer: the link**
-
-```
- Invite Studio Mac
- Link expires in  [ 24 hours ▾ ]   (1 hour · 4 hours · 24 hours)
-                                         [Create invitation link]
- ─────────────────────────────────────────────
- ┌──────────────────────────────────────────────┐
- │ agenticorg://join#AQEBgK3…f9Q                 │ [Copy link]
- └──────────────────────────────────────────────┘
- ┃ ⚠ This link is shown only once. Treat it like a password: send it
- ┃   privately (AirDrop, a direct message), not in a shared channel.
- ┃   Anyone who has it can ask to join until it's used, cancelled or expires.
-
- Next, on Studio Mac:
- 1. Install Agentic Org.
- 2. Choose Join organization and paste the link.
- 3. Studio Mac shows a check code. You'll type it here to approve.
-                                                    [Done]
-```
-
-- **Copy link** → the button reads "Copied" for 2 s. The link field is read-only and fully selectable.
-- **Done or closing** → the row shows **Invited · expires in 24 h**. Its menu has **Cancel invitation** and **New link** ("New link cancels the current one. Continue?").
-- Expiry → the row reads "Invitation expired" with **New link** and **Remove**.
-
-### 6.3 Approve a join (on HQ's Mac only)
-
-Triggers: a native notification ("Studio Mac wants to join Lumen Labs. Type its check code to approve."), the menu's needs-you row, the Needs-you inbox, and the highlighted Offices row. Every one opens this dialog.
+Triggers: the HQ Needs-you inbox and highlighted Offices row. Each opens this accessible dialog; native notifications and menu rows are deferred to v2.
 
 ```
  ┌──────────────────────────────────────────────────────────┐
@@ -457,20 +296,24 @@ Triggers: a native notification ("Studio Mac wants to join Lumen Labs. Type its 
 - **Approved:** the row moves to the office list as "Starting · copying records", then Online. Toast: "Studio Mac joined Lumen Labs."
 - **Two requests on one link** (shouldn't happen, but HQ may see a retry from a new address): both are listed. Approving one declines the rest.
 
-### 6.4 Remove office (on HQ's Mac only)
+### 6.4 Remove office (through an authorized HQ browser session)
 
 Modal, red icon. "Remove Studio Mac from Lumen Labs? It can't sync again. Its 2 agents stop running there and become unplaced: you choose a new office for each, or offboard them. HQ takes back their 5 tasks. If Studio Mac is offline, it keeps its copy until it next connects, then deletes it. To add it again, send a new invitation." Primary: **Remove Studio Mac** (red).
 
 **After removal** (A4, resolved): the agents are **Unplaced**. They keep their teams, reporting lines and history, but don't run. They show:
-- as a needs-you item and menu row: "2 agents are unplaced in Lumen Labs…", until each is placed or offboarded;
+- as a needs-you item: "2 agents are unplaced in Lumen Labs…", until each is placed or offboarded;
 - in the Offices list's last row, **Place or offboard**, which opens a list of them, each with **Place…** (office picker, the agent profile's placement flow) and **Offboard…** (the HR flow);
 - in the org chart with an **Unplaced** tag, and under **Office: Unplaced** in the office filter.
 
-### 6.5 Working from an office that can't reach HQ
+### 6.5 HQ connectivity and office outboxes
 
-- Banner (yellow) on every screen: "Can't reach HQ (Main office) · last synced 10 min ago. You can keep working. Changes to the organization wait on this Mac and are sent when HQ is back. **3 waiting**". "3 waiting" opens **Changes waiting for HQ** (a slide-over list: what, when, status).
-- Pending changes show on their objects with a dashed outline and a **Pending** badge. They aren't in the copy yet.
-- **Blocked** (HQ rejected one, so later ones are held): the banner turns red: "HQ rejected a change: Move Checkout under Growth (Growth is under Checkout now). 2 later changes are held." Each blocked change has **Retry** (as a new change) and **Discard**.
+An open browser with a lost HQ connection shows Updates paused and stale data.
+It cannot save new organization changes until HQ acknowledges them. A satellite's
+local agents retain the existing command/message outboxes; HQ displays their
+Pending or Blocked outcomes when known. Retry/discard of a blocked office command
+is authorized and uses the office protocol's operation IDs. This is distinct from
+an unsaved browser draft. Local work and shutdown supervision continue without a
+browser connection.
 
 ## 7. Flow 4 · Org chart: Teams, People and Reporting lines
 
@@ -705,40 +548,40 @@ Two directions, same result:
 ## 8. UX acceptance criteria
 
 **Menu bar (MENU)**
-- MENU-1 · The dropdown lists organizations A–Z, each followed by its offices, indented, with HQ first and a status label on every office.
-- MENU-2 · The current organization has a checkmark. Clicking another organization switches the window to it without a confirmation.
-- MENU-3 · An unavailable organization is disabled, its reason shows on the next line, and its offices aren't listed.
-- MENU-4 · A pending join request and agents that need you appear as the first rows, and the menu-bar icon shows a dot while any exist.
-- MENU-5 · Clicking an office opens that organization's Offices screen with the office's details open.
-- MENU-6 · The in-app switcher lists the same organizations, offices, statuses and reasons as the menu.
+- MENU-1 · Retired from v1 in rev 12. The optional native shell is v2; this ID is not reused.
+- MENU-2 · Retired from v1 in rev 12. The optional native shell is v2; this ID is not reused.
+- MENU-3 · Retired from v1 in rev 12. The optional native shell is v2; this ID is not reused.
+- MENU-4 · Retired from v1 in rev 12. The optional native shell is v2; this ID is not reused.
+- MENU-5 · Retired from v1 in rev 12. The optional native shell is v2; this ID is not reused.
+- MENU-6 · Retired from v1 in rev 12. The optional native shell is v2; this ID is not reused.
 
 **Open organization and join (OPEN, JOIN)**
-- OPEN-1 · On launch, the app opens the last-opened organization, or this screen if it's unavailable or there is none.
-- OPEN-2 · Each organization on this Mac shows its offices on this Mac and their status; an unavailable one shows its reason and its fix action (§3.2).
-- OPEN-3 · The app never reads the clipboard without Paste or ⌘V.
-- JOIN-1 · A pasted or opened link is checked locally; each invalid case shows its message from §5.1, and nothing is sent.
-- JOIN-2 · Nothing is sent to HQ before **Join <organization>** on the confirm screen. Opening a link only fills the screen.
-- JOIN-3 · *(rev 2)* The confirm screen shows the organization's name and short id, this office's name, HQ's addresses, the expiry and the warning that agents run as you and can read and change your files, use your apps and network, and act on your behalf.
-- JOIN-4 · If the name matches an organization on this Mac with another id, the warning shows both ids, and Join stays disabled until the checkbox is ticked.
-- JOIN-5 · While waiting, the check code shows in groups of four, can't be selected or copied, and is read character by character by VoiceOver.
-- JOIN-6 · Closing the window while waiting keeps the join; the organization shows "Waiting for approval at HQ" with **Show check code**.
-- JOIN-7 · Every error in §5.3 shows its copy and actions; an identity mismatch says nothing was sent.
-- JOIN-8 · *(new, rev 2)* The check code is 8 Crockford base32 characters, and the same code shows after a reconnect, a closed window or a restart.
+- OPEN-1 · *(rev 12)* After authentication, open the last authorized organization for this HQ, or its organization list. This preference does not create a local office.
+- OPEN-2 · *(rev 12)* List authorized organizations served by HQ and their offices, with location and freshness. No browser-machine filesystem or local-office discovery is required.
+- OPEN-3 · *(rev 12)* The browser and setup never read the clipboard without an explicit user action.
+- JOIN-1 · *(rev 12)* Standalone setup validates invitation syntax and expiry before a network join, with a specific error for invalid input.
+- JOIN-2 · *(rev 12)* Enrollment requires explicit destination/execution consent in the wizard or automation inputs. A browser URL never silently enrolls a machine.
+- JOIN-3 · *(rev 12)* Setup shows organization/office identity, HQ addresses and expiry, and explains that agents run under the configured service user with its permitted access.
+- JOIN-4 · *(rev 12)* A familiar organization name with a different identity is flagged; setup cannot silently replace an existing instance or office.
+- JOIN-5 · *(rev 12)* The joining CLI displays the check code accessibly; HQ requires the owner to verify that code before approval.
+- JOIN-6 · *(rev 12)* Closing the browser does not cancel enrollment. Setup/status can show the existing pending request and its check code again.
+- JOIN-7 · *(rev 12)* Identity mismatch, expiry, rejection, unsupported version and connectivity failures have specific errors; no failure is reported as an active office.
+- JOIN-8 · *(rev 12)* The check code identifies the same persisted invitation/request key across reconnects and setup restarts; a second setup cannot create a duplicate office.
 
 **Offices (OFC)**
-- OFC-1 · The Offices screen lists join requests, HQ, this Mac's offices, other offices and invitations, in that order, with status and secondary text from §3.1.
-- OFC-2 · Add office › This Mac creates and starts the office with no link or approval; a failure leaves the row as Stopped with its reason.
+- OFC-1 · *(rev 12)* HQ lists pending joins, HQ and satellites, with names, locations, status and last-seen/sync information. Browser location does not alter the office classification.
+- OFC-2 · *(rev 12)* Adding an office on the same instance uses authenticated provisioning and office identity checks. It is idempotent and failures remain visible without duplicate offices.
 - OFC-3 · Add office › Another computer shows the link once, with Copy link and the "shown only once" warning; closing leaves an **Invited** row with Cancel invitation and New link.
 - OFC-4 · New link cancels the previous link after a confirmation.
-- OFC-5 · A join request raises a native notification, a menu row, a Needs-you item and a highlighted row, and each opens the approve dialog.
+- OFC-5 · *(rev 12)* A pending join appears in HQ Needs you and the Offices list and opens the approval dialog. Native notification/menu requirements are deferred to v2.
 - OFC-6 · *(rev 2)* Approve is enabled only when the typed code has 8 characters; case, spaces and dashes are ignored, and O, I and L are read as 0, 1 and 1; a wrong code shows the mismatch message with the tries left, and the third wrong code cancels the invitation.
-- OFC-7 · *(rev 2)* Add office, the approve dialog and Remove office are available only in the app on HQ's Mac; other offices show Add office disabled with the reason and the request read-only with "Approve on HQ's Mac".
+- OFC-7 · *(rev 12)* An authorized owner may add, approve or remove an office through HQ from any browser. Unauthorized clients cannot discover or invoke those actions.
 - OFC-8 · *(rev 2)* Remove office names the office, its agents (which become unplaced), their tasks and the offline case before removing.
-- OFC-9 · On an office that can't reach HQ, the banner shows last sync and the waiting count; changes show Pending; a rejection shows Blocked with Retry and Discard; HQ-only actions are disabled with the reason.
+- OFC-9 · *(rev 12)* HQ shows an unreachable satellite with last-seen/sync state. A browser disconnected from HQ shows stale data and Updates paused; it does not become an offline satellite or claim drafts are saved. Office outbox outcomes are shown when HQ has them.
 - OFC-10 · *(new, rev 2)* After an office is removed, its agents show as Unplaced (Offices list, org chart tag, office filter), with Place… and Offboard… for each, and a needs-you item until every one is handled.
-- OFC-11 · *(rev 9)* A Stopped office shows its reason in plain words (§3.3) as secondary text and in its details, with the action for that reason. Restart office isn't offered where the contract refuses it (`unsupported_version`, `invalid_request`), or when the host's `hello` doesn't list the capability `office.restart` (A50), which shows "Update Agentic Org to restart offices from here" instead; for `key_missing` the action is Try again, where restart is offered.
-- OFC-12 · *(rev 9)* Office status updates live from the host, and the host's capability list in `hello` (A50), not a version comparison, decides whether it can. When the app has no live status, the row says "Status unknown" and never shows a stale Online. A host whose `hello` doesn't list the capability `office.status_changed` (A50) counts as not live, so its offices show "Status unknown"; a current host that sends no event simply has nothing new.
-- OFC-13 · *(rev 8)* Each status has its icon and word from §3.1. A row's accessible label includes the name, HQ, where it runs, the status (and reason) and the agent count, says it opens details, and gives a pending restart in a form that doesn't tick ("restarting shortly" or "restarting at 10:42"). The visible countdown updates no more often than every 10 s, and a status change of an office on this Mac is announced through a polite live region.
+- OFC-11 · *(rev 12)* Stopped/unavailable offices show the reason and an authorized remedy. An office restart is offered only when its owning instance can receive and perform it; starting a stopped daemon requires local lifecycle control.
+- OFC-12 · *(rev 12)* Office status arrives through the authenticated HQ HTTP/event contract with capability and freshness information. Missing or stale live status is Unknown, never stale Online.
+- OFC-13 · *(rev 12)* Each status has an icon and text, with office name, role, location, reason and agent count available to assistive technology. Countdown announcements do not tick, and changes use a polite live region.
 
 **Org chart: Teams (TEAM)**
 - TEAM-1 · *(rev 2)* The Teams view draws the ownership tree from the organization root; each card shows its name, the lead or "No lead", an Agents row and a People row with avatars and counts, its sub-team count and its projects.
@@ -779,7 +622,7 @@ Two directions, same result:
 - OWNER-2 · The owner is never offered as a team member or lead, and their quick view has no Remove, Add to team or Change manager action.
 - OWNER-3 · The owner is first in every "Reports to" picker and in every recipient and assignee picker agents' work uses, and is the root of Reporting lines.
 
-**Retired:** GUILD-1, GUILD-2 (rev 2: there are no guilds). Not reused.
+**Retired:** GUILD-1, GUILD-2 (rev 2); MENU-1 through MENU-6 from v1 (rev 12). IDs are not reused.
 
 ## 9. Open questions
 

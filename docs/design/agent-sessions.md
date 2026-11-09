@@ -1,5 +1,20 @@
 # Design: agent sessions (the office runs the agents)
 
+**Standalone-v1 amendment (2026-11-09):**
+[standalone-server.md](standalone-server.md) changes deployment and access, not
+employee ownership or process supervision. All office/home/runtime paths resolve
+within a selected instance; agents receive explicit office/session identity and
+use the matching `org-agent` helper. Browser lifetime does not own a session.
+
+Tauri session panels, native terminal launch and desktop credential handoffs are
+outside v1. Browser status/log inspection goes through authenticated HQ operations
+and the owning office. Interactive takeover is an explicitly authorized local CLI
+operation on that office's machine unless a separate browser-terminal contract is
+approved; retain stop/resume exclusivity and permission checks. Existing host
+Keychain and macOS sandbox assumptions need the platform validation required by
+the standalone design before claiming Linux runtime support. Earlier employee
+supervision/delegation/process requirements continue to apply.
+
 Status: **proposed, rev 3.4** (ada, 2026-11-08), from the user's request:
 - start Claude Code, Codex and Antigravity agents
 - pass them their instructions
