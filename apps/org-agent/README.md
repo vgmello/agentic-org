@@ -75,13 +75,13 @@ the only office with an `office.json` in the office home (`$ORG_OFFICE_HOME`, el
 exit 1, never the spool), then makes the call. It asks the host nothing.
 
 - **No office on this Mac:** the spool, quietly, as before.
-- **The office doesn't answer** (nothing listening after about 0.4 s of retries, or no answer to
-  `hello`/`msg.bind` within 3 s): `send` queues in the local spool as before, with a stderr
+- **The office doesn't answer** (nothing listening after about 0.4 s of retries, no answer to
+  `hello`/`msg.bind` within 3 s, or it says it isn't ready yet): `send` queues in the local spool as before, with a stderr
   notice and `"queued": true` in `--json`; `inbox`, `read`, `wait` and `who` say so on stderr
   and show the local spool. With `$ORG_SESSION_TOKEN` set (an agent the office runs) it is exit
   5 instead: those agents never use the spool.
 - **The office unbinds the agent mid-command** (`not_bound`): it binds again once and retries
-  (a send keeps its id); if that fails, exit 1 saying so.
+  (a send keeps its id); if that fails, it exits saying so (1 for a refusal, 4 or 5 otherwise).
 - Exit codes follow ADR-0003 §2.6: the office's `unknown_recipient` is 3, `timeout` 2,
   `unavailable`/`not_ready` 5, its other refusals 1, anything else 4. A send that got no answer
   says it may or may not have been delivered, with its id.

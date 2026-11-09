@@ -18,12 +18,13 @@ use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::time::{Duration, Instant};
 
-use org_client::agent::{find_office, open_as, FindOfficeError, OpenError};
+use org_client::agent::{find_office, open_as, FindOfficeError, OpenError, SETUP_TIMEOUT};
 use org_client::{Client, ClientError};
 use org_proto::directory::{self, Who, WhoParams};
 use org_proto::msg::{
-    self, HeaderPage, Message, MessageHeader, MsgInbox, MsgInboxParams, MsgRead, MsgReadParams,
-    MsgSend, MsgSendParams, MsgWait, MsgWaitParams, KIND_MSG, MAX_PAGE_LIMIT, MAX_WAIT_MS,
+    self, HeaderPage, Message, MessageHeader, MsgBind, MsgBindParams, MsgInbox, MsgInboxParams,
+    MsgRead, MsgReadParams, MsgSend, MsgSendParams, MsgWait, MsgWaitParams, KIND_MSG,
+    MAX_PAGE_LIMIT, MAX_WAIT_MS,
 };
 use org_proto::{Call, ErrorCode, MemberKind};
 use org_spool::{
@@ -71,9 +72,13 @@ impl Failure {
         Failure {
             code: exit_code(error),
             message: Some(sanitize_inline_text(&error.to_string(), 300)),
+            // A `Protocol` error is an answer that didn't decode: the call may have gone through.
             unanswered: matches!(
                 error,
-                ClientError::Timeout | ClientError::Disconnected | ClientError::Io(_)
+                ClientError::Timeout
+                    | ClientError::Disconnected
+                    | ClientError::Io(_)
+                    | ClientError::Protocol(_)
             ),
         }
     }
@@ -124,7 +129,8 @@ impl Unreachable {
     pub(crate) fn queued_notice(&self) -> String {
         format!(
             "org-agent: office {} is not reachable ({}); the message is queued in the local spool",
-            self.office_id, self.reason
+            self.office_id,
+            clean(&self.reason)
         )
     }
 
@@ -132,7 +138,8 @@ impl Unreachable {
     pub(crate) fn not_queued_notice(&self) -> String {
         format!(
             "org-agent: office {} is not reachable ({}), and the local spool did not take the message",
-            self.office_id, self.reason
+            self.office_id,
+            clean(&self.reason)
         )
     }
 
@@ -140,7 +147,8 @@ impl Unreachable {
     pub(crate) fn spool_notice(&self) -> String {
         format!(
             "org-agent: office {} is not reachable ({}); showing the local spool instead",
-            self.office_id, self.reason
+            self.office_id,
+            clean(&self.reason)
         )
     }
 }
@@ -150,17 +158,36 @@ impl Unreachable {
 /// asked for that isn't a plain id, or several offices and none asked for, are failures, never a
 /// fall back: the spool would only hide them.
 pub(crate) fn route(member: &str, office_flag: Option<&str>) -> Result<Route, Failure> {
-    let Some(home) = org_proto::location::default_office_home() else {
-        return Ok(Route::NoOffice);
-    };
     let from_env = env::var(OFFICE_ENV).ok().filter(|id| !id.is_empty());
     let chosen = office_flag.or(from_env.as_deref());
+    let Some(home) = org_proto::location::default_office_home() else {
+        if let Some(id) = chosen {
+            return Err(Failure::new(
+                EXIT_USAGE,
+                format!(
+                    "office {} was asked for, but neither ORG_OFFICE_HOME nor HOME is an absolute path",
+                    sanitize_inline_text(id, 80)
+                ),
+            ));
+        }
+        return no_spool_when_office_run(Route::NoOffice, office_run());
+    };
     let route = decide(find_office(&home, chosen), member, |office_id| {
         open_as(&home, office_id, member)
     })
     .map_err(|why| why.into_failure(member))?;
-    let office_run = env::var_os(SESSION_TOKEN_ENV).is_some_and(|t| !t.is_empty());
-    no_spool_when_office_run(route, office_run)
+    no_spool_when_office_run(route, office_run())
+}
+
+/// Whether this agent is run by its office (`ORG_SESSION_TOKEN` set).
+fn office_run() -> bool {
+    env::var_os(SESSION_TOKEN_ENV).is_some_and(|t| !t.is_empty())
+}
+
+/// For a command about to use the spool without routing (e.g. `who` with no identity): refused
+/// for an agent the office runs, which never uses the spool.
+pub(crate) fn spool_allowed() -> Result<(), Failure> {
+    no_spool_when_office_run(Route::NoOffice, office_run()).map(|_| ())
 }
 
 /// An office-run agent (`ORG_SESSION_TOKEN` set) never falls back to the spool: its office
@@ -177,7 +204,8 @@ fn no_spool_when_office_run(route: Route, office_run: bool) -> Result<Route, Fai
             EXIT_OFFICE_UNAVAILABLE,
             format!(
                 "office {} is not reachable ({}); an agent the office runs doesn't use the local spool",
-                why.office_id, why.reason
+                why.office_id,
+                clean(&why.reason)
             ),
         )),
         other => Ok(other),
@@ -204,14 +232,20 @@ impl NoRoute {
                 {
                     Failure::new(
                         EXIT_OFFICE_UNAVAILABLE,
-                        format!("office {office_id} is not ready: {error}"),
+                        format!("office {office_id} is not ready: {}", clean(&error)),
                     )
                 }
                 ClientError::Api(_) => Failure::new(
                     exit_code(&error),
-                    format!("office {office_id} did not let '{member}' in: {error}"),
+                    format!(
+                        "office {office_id} did not let '{member}' in: {}",
+                        clean(&error)
+                    ),
                 ),
-                _ => Failure::new(EXIT_IO, format!("can't use office {office_id}: {error}")),
+                _ => Failure::new(
+                    EXIT_IO,
+                    format!("can't use office {office_id}: {}", clean(&error)),
+                ),
             },
         }
     }
@@ -269,6 +303,15 @@ impl Office {
 
     /// Calls `C`, binding again once if the office answers `not_bound`.
     fn call<C: Call>(&self, params: &C::Params) -> Result<C::Result, Failure> {
+        self.call_within::<C>(params, org_client::default_timeout(C::METHOD))
+    }
+
+    /// [`Office::call`] with a timeout of its own.
+    fn call_within<C: Call>(
+        &self,
+        params: &C::Params,
+        timeout: Duration,
+    ) -> Result<C::Result, Failure> {
         loop {
             // A person's Ctrl-C (the handler only sets a flag) ends the command between calls.
             if is_interrupted() {
@@ -278,7 +321,7 @@ impl Office {
                     unanswered: false,
                 });
             }
-            match self.client.call::<C>(params) {
+            match self.client.call_with_timeout::<C>(params, timeout) {
                 Err(error) if is_not_bound(&error) => self.bind_again()?,
                 outcome => return outcome.map_err(|e| Failure::from_office(&e)),
             }
@@ -298,7 +341,14 @@ impl Office {
                 format!("{lost}, again after it bound again; try once more"),
             ));
         }
-        match self.client.bind_member(&self.member) {
+        let bound = self.client.call_with_timeout::<MsgBind>(
+            &MsgBindParams {
+                member: Some(self.member.clone()),
+                app_token: None,
+            },
+            SETUP_TIMEOUT,
+        );
+        match bound {
             Ok(bound) if bound.office_id == self.office_id => Ok(()),
             Ok(_) => Err(Failure::new(
                 EXIT_IO,
@@ -309,7 +359,7 @@ impl Office {
                     ClientError::Api(_) => exit_code(&error),
                     _ => EXIT_IO,
                 },
-                format!("{lost}, and won't bind it again: {error}"),
+                format!("{lost}, and won't bind it again: {}", clean(&error)),
             )),
         }
     }
@@ -392,7 +442,8 @@ impl Office {
     /// Who is who, to show members by handle (what agents address each other by, as the spool's
     /// names were) instead of by member id. Only for display: if `who` fails, ids are shown.
     fn handles(&self) -> Handles {
-        match self.call::<Who>(&WhoParams::default()) {
+        // Short: it only decorates output that is ready (a `read` has already marked it read).
+        match self.call_within::<Who>(&WhoParams::default(), SETUP_TIMEOUT) {
             Ok(who) => Handles(
                 who.members
                     .into_iter()
@@ -476,6 +527,11 @@ fn unknown_outcome(failure: Failure, id: &str) -> Failure {
             "{why}; message {id} may or may not have been delivered: check before sending it again"
         ),
     )
+}
+
+/// An error's text as one clean line: an office's words are its own, not ours.
+fn clean(error: &ClientError) -> String {
+    sanitize_inline_text(&error.to_string(), 300)
 }
 
 fn is_not_bound(error: &ClientError) -> bool {

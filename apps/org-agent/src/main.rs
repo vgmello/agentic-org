@@ -756,6 +756,8 @@ fn run(args: Vec<String>) -> Result<u8, CliError> {
                     Route::Unreachable(why) => eprintln!("{}", why.spool_notice()),
                     Route::NoOffice => {}
                 }
+            } else {
+                office::spool_allowed()?;
             }
             let spool = Spool::open_from_env()?;
             if let Some(member_query) = target {

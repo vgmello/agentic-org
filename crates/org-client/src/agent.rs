@@ -140,7 +140,8 @@ fn effective_uid() -> u32 {
 #[derive(Debug)]
 pub enum OpenError {
     /// The office didn't answer: nothing listens on its socket (after [`CONNECT_RETRY`]), the
-    /// socket isn't one, or the connection failed or closed before the bind was answered.
+    /// socket isn't one, the connection failed or closed before the bind was answered, or the
+    /// office said it isn't ready yet (`not_ready`, `unavailable`).
     /// Nothing was asked of the office, so a caller may safely fall back (e.g. spool a send).
     Unreachable(ClientError),
     /// The office answered and said no (a refused bind, another protocol version, an answer
@@ -168,6 +169,15 @@ impl OpenError {
             | ClientError::Timeout
             | ClientError::Disconnected
             | ClientError::OfficeNotReachable => OpenError::Unreachable(error),
+            // Starting up or too busy to take the connection: nothing was asked of it yet.
+            ClientError::Api(ref api)
+                if matches!(
+                    api.code,
+                    org_proto::ErrorCode::Unavailable | org_proto::ErrorCode::NotReady
+                ) =>
+            {
+                OpenError::Unreachable(error)
+            }
             other => OpenError::Refused(other),
         }
     }
@@ -397,6 +407,24 @@ mod tests {
         assert!(matches!(
             open_as(&home, A, "pixel"),
             Err(OpenError::Unreachable(ClientError::OfficeNotReachable))
+        ));
+    }
+
+    #[test]
+    fn an_office_not_ready_yet_is_unreachable_and_a_refusal_is_refused() {
+        use org_proto::{ApiError, ErrorCode};
+        for code in [ErrorCode::NotReady, ErrorCode::Unavailable] {
+            assert!(matches!(
+                OpenError::from_setup(ClientError::Api(ApiError::new(code, "starting"))),
+                OpenError::Unreachable(_)
+            ));
+        }
+        assert!(matches!(
+            OpenError::from_setup(ClientError::Api(ApiError::new(
+                ErrorCode::NotAuthorized,
+                "no"
+            ))),
+            OpenError::Refused(_)
         ));
     }
 
