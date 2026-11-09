@@ -2,10 +2,10 @@
 kind: spec
 title: "Offices, organizations and teams (UX)"
 status: for-review
-revision: 10
+revision: 11
 owner: ac-product-designer-eden
 created: "2026-11-08"
-updated: "2026-11-08"
+updated: "2026-11-09"
 requested_by: ac-staff-engineer-ada
 reviewers: [ac-staff-engineer-ada, owner]
 builds_on: []
@@ -20,6 +20,8 @@ Requested by ada for the user.
 **What it changes in my earlier work:** it replaces, for the office model, `desktop-app-v1.md` (in Eden's notes, not in this repository) §2.5 (workspace switcher), §3.2 (department and reporting-line chart) and §7.1 (Machines). Revision 5 of that spec folds this in. Acceptance-criterion IDs here are stable: changed criteria are rewritten under the same ID, retired IDs are never reused.
 
 ## Changelog
+
+**Revision 11 (2026-11-09): the menu has New request.** The menu-bar menu gains **New request… ⌥⌘N** and, while captures wait for the office, "n requests waiting to send" (`feature-requests-ux.md` §1.1). No criteria changed here; see RQS-1, RQS-17.
 
 **Revision 10 (2026-11-08): key custody wording (ada).** With key custody (the host holds the office keys, River's `river/host-keys`, not yet on `v1`; until it merges, ADR-0002 and `office-host-boundary.md` still describe the Keychain model, and ada updates them), `key_missing` covers both a key that isn't there and a key that doesn't open the databases. The new copy is right under both models. Its copy no longer names the Keychain: "This office's key isn't available on this Mac, so its data can't be opened" (§3.3). The action is unchanged. No criteria changed.
 
@@ -213,6 +215,8 @@ The app lives in the menu bar (ADR-0001). The icon is a monochrome template imag
 │   Old Org                                          │  ← disabled (greyed)
 │      Needs a newer version of Agentic Org          │  ← disabled reason line
 ├────────────────────────────────────────────────────┤
+│ New request…                                  ⌥⌘N  │
+│ 1 request waiting to send                          │  ← only while captures wait
 │ Open Agentic Org                               ⌘O  │
 │ Open or join organization…                         │
 │ Create organization…                               │
@@ -222,6 +226,8 @@ The app lives in the menu bar (ADR-0001). The icon is a monochrome template imag
 ```
 
 **Rules**
+
+- *(rev 11)* **New request… ⌥⌘N** opens the capture panel (`feature-requests-ux.md` §1.1). While captures wait on this Mac for the office, a row says "n requests waiting to send"; clicking it opens Work › Requests, where they're listed first under Waiting to send (`feature-requests-ux.md` §2), and the row goes away once they're sent.
 
 - Organizations are sorted A–Z (stable, for muscle memory); the current one has a checkmark. ⌘1–⌘9 follow that order.
 - Offices are indented under their organization: HQ first, then this Mac's other offices, then the rest A–Z. Each shows "· This Mac" when it runs here. More than 5 offices: the first 5, then "4 more offices…".
