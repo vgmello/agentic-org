@@ -722,8 +722,10 @@ A `question` with `asks` = the owner starts a **waiting on the owner** span on t
 Each request call records one event on the request (§2.3) (amended 2026-11-09: request events):
 - `request.create`: `Created`; the initial routing is part of the created item's state.
 - `request.route` and `request.accept`: `Routed { from, to, scoper_from?, scoper_to?, reason?, routed_by? }`. A route or re-route has `to: routed`; an unroute has no `scoper_to` and `to: new`; an accept has `scoper_to` = the caller and `to: scoping`.
-- `request.ask_changes`: `StatusChanged { from: scoped, to: scoping, reason: note }`.
+- `request.update`: `FieldsChanged`.
+- `request.ask_changes`: `StatusChanged { from: scoped, to: scoping, reason: note }`, and nothing else. The comment it names was already recorded by its own `work.comment` call (its own `Comment` event); `ask_changes` doesn't record it again.
 - `request.scope`, `request.approve`, `request.decline`, `request.merge`: `StatusChanged`, with `resolution` / `reason` where relevant.
+- For aspects (§2.3) and time in status (§6), `Routed` changes the status and the scoper. A re-route (`from == to`) still changes the scoper, so it isn't a no-op.
 
 `ApprovedTask { item_id, link_id, title, description?, definition_of_done?, assignee_id?, team_id?, priority?, checklist? }`: the drafts as the owner edited them (RQS-9). `request.approve` creates them all or none, each with a `from_request` link and, when the outcome names a feature, its `feature_id`; the feature becomes `planned`.
 
