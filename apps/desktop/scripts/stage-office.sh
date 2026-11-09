@@ -10,11 +10,13 @@ out="$here/../src-tauri/office-bin"
 cd "$workspace"
 for package in org-office-host org-office-server; do
   if ! cargo metadata --no-deps --format-version 1 | grep -q "\"name\":\"$package\""; then
-    echo "stage-office: $package isn't in this workspace. The host lives on river/office-host until it is merged." >&2
+    echo "stage-office: $package isn't in this workspace (apps/$package on v1). Update your branch from origin/v1." >&2
     exit 1
   fi
 done
 
+# NOTE: until a signed build exists (Developer ID, the keychain access group and entitlement the host needs for its key custody),
+# the bundled release host refuses to start. Development runs the host by hand instead: see docs/runbooks/local-hq.md.
 cargo build --release -p org-office-host -p org-office-server
 
 rm -rf "$out"

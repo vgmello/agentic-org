@@ -178,10 +178,20 @@ impl Call for Who {
 ///
 /// The text is trimmed and must be a single line with no control characters, at most
 /// [`STATUS_MAX_CHARS`] characters and [`STATUS_MAX_BYTES`] UTF-8 bytes. Text that trims to
-/// empty clears the line, like `text: None`.
+/// empty clears the line, like `text: None`, and so does a `ttl_ms` of 0.
 ///
-/// Errors: `too_large` (`text` over a limit), `invalid_request` (control characters or line
-/// breaks, or `ttl_ms` over [`MAX_STATUS_TTL_MS`]), `not_bound` (unbound, or bound
+/// A line also holds no character that hides text or reorders it: the Unicode line and
+/// paragraph separators (U+2028, U+2029), the zero-width space (U+200B), the bidirectional
+/// embeddings, overrides and isolates (U+202A-202E, U+2066-2069), the word joiner and invisible
+/// operators (U+2060-2064), the deprecated formatting characters (U+206A-206F), the byte order
+/// mark (U+FEFF), the invisible fillers (U+115F, U+1160, U+180E, U+3164, U+FFA0), the
+/// interlinear annotation marks (U+FFF9-FFFB), the tag block (U+E0000-E007F) and the variation
+/// selectors supplement (U+E0100-E01EF). The zero-width joiner and non-joiner and
+/// the left-to-right and right-to-left marks are allowed: emoji sequences and Persian, Indic
+/// and mixed-direction text need them.
+///
+/// Errors: `too_large` (`text` over a limit), `invalid_request` (control characters, line
+/// breaks or hidden-text characters, or `ttl_ms` over [`MAX_STATUS_TTL_MS`]), `not_bound` (unbound, or bound
 /// app-wide), `not_authorized` (bound as a person or the owner), `storage_error`.
 pub struct StatusSet;
 
@@ -191,7 +201,7 @@ pub struct StatusSetParams {
     /// The new line; omitted, or empty after trimming, clears it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
-    /// How long it lasts. Omitted: [`DEFAULT_STATUS_TTL_MS`].
+    /// How long it lasts. Omitted: [`DEFAULT_STATUS_TTL_MS`]. 0 clears the line.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ttl_ms: Option<u64>,
 }

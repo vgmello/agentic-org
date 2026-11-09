@@ -4,7 +4,7 @@ const MIN = 60_000;
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 
-/** "1 d 4 h", "3 h", "5 min", "0": the two largest units that apply (work-items-ux §9.2). */
+/** "1 d 4 h", "3 h", "5 min", "0 min": the two largest units that apply (work-items-ux §9.2). */
 export function span(ms: number): string {
 	if (ms >= DAY) {
 		const h = Math.floor((ms % DAY) / HOUR);
@@ -15,7 +15,7 @@ export function span(ms: number): string {
 		return m > 0 ? `${Math.floor(ms / HOUR)} h ${m} min` : `${Math.floor(ms / HOUR)} h`;
 	}
 	if (ms >= MIN) return `${Math.floor(ms / MIN)} min`;
-	return ms > 0 ? '<1 min' : '0';
+	return ms > 0 ? '<1 min' : '0 min';
 }
 
 /**

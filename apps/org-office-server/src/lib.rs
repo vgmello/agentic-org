@@ -4,19 +4,21 @@
 //! ```text
 //! org-office-server --create        # first stdin line: the create message; makes the office, serves it
 //! org-office-server --office <id>   # first stdin line: the start message; serves the office
-//! org-office-server --discard <id>  # removes an unfinished create; reads no line
+//! org-office-server --discard <id>  # first stdin line: the discard message (the key or null); removes an unfinished create
 //! ```
 //! stdout carries only [`ServerEvent`] lines (`created`, `ready`, `discarded`, `failed`), logs go
 //! to stderr, and EOF on stdin means the host is gone: the server closes its databases and exits 0.
 //! The office, its folder, lock, key and databases are `org_office::Office`; this crate is the
-//! process around it: the control pipe, the Keychain, the socket.
+//! process around it: the control pipe (which carries the app token and the database key the
+//! host holds), the socket. The server never touches a Keychain.
 
 #![deny(unsafe_code)]
 
 mod bounded;
 pub mod fdswap;
 mod follow;
-mod keys;
+mod live;
+mod msg_calls;
 mod serve;
 mod signals;
 mod zeroed;
@@ -27,7 +29,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use org_office::{NewOffice, Office, OfficeError};
+use org_office::{Key, NewOffice, Office, OfficeError};
 use org_office_launch::{
     office_dir, read_first_host_message, write_server_event, FailCode, FirstLine, HostMessage,
     OfficeFile, ServerEvent, CREATE_FLAG, DISCARD_FLAG, OFFICE_FLAG,
@@ -73,40 +75,52 @@ pub fn run(args: &[String], mut control: ControlPipe) -> i32 {
     let Some(home) = default_office_home() else {
         return fail(&mut control, FailCode::InvalidRequest, "no office home");
     };
-    let keys = match keys::provider() {
-        Ok(keys) => keys,
-        Err(why) => return fail(&mut control, FailCode::StorageError, &why),
-    };
     match mode {
-        Mode::Discard(id) => discard(&mut control, &home, &id, &*keys),
-        Mode::Create => create_and_serve(control, &home, &*keys),
-        Mode::Serve(id) => open_and_serve(control, &home, &id, &*keys),
+        Mode::Discard(id) => discard(control, &home, &id),
+        Mode::Create => create_and_serve(control, &home),
+        Mode::Serve(id) => open_and_serve(control, &home, &id),
     }
 }
 
-fn discard(
-    control: &mut ControlPipe,
-    home: &Path,
-    id: &str,
-    keys: &dyn org_office::KeyProvider,
-) -> i32 {
-    let Some(folder) = office_dir(home, id) else {
-        return fail(control, FailCode::InvalidRequest, "not a plain office id");
+/// `--discard`: the first line carries the office's key, or null when the host holds none. The
+/// key is the host's and is never made, stored or deleted here.
+fn discard(mut control: ControlPipe, home: &Path, id: &str) -> i32 {
+    let (message, _from_host) = match first_line(&mut control, FirstLine::Discard) {
+        Ok(first) => first,
+        Err(code) => return code,
     };
-    match Office::discard(folder, id, keys) {
+    let HostMessage::Discard(discard) = message else {
+        return fail(
+            &mut control,
+            FailCode::InvalidRequest,
+            "not a discard message",
+        );
+    };
+    let key = discard.db_key.map(Key::from_db_key);
+    let Some(folder) = office_dir(home, id) else {
+        return fail(
+            &mut control,
+            FailCode::InvalidRequest,
+            "not a plain office id",
+        );
+    };
+    match Office::discard(folder, id, key.as_ref()) {
         Ok(()) => {
-            emit(control, &ServerEvent::Discarded);
+            emit(&mut control, &ServerEvent::Discarded);
             0
         }
-        Err(e) => fail_with(control, &e),
+        // The contract: a discard that cannot check the databases reports `storage_error`, not
+        // `key_missing` (a person looks; the host never retries it on its own).
+        Err(OfficeError::KeyMissing) => fail(
+            &mut control,
+            FailCode::StorageError,
+            "the key given does not open the databases",
+        ),
+        Err(e) => fail_with(&mut control, &e),
     }
 }
 
-fn create_and_serve(
-    mut control: ControlPipe,
-    home: &Path,
-    keys: &dyn org_office::KeyProvider,
-) -> i32 {
+fn create_and_serve(mut control: ControlPipe, home: &Path) -> i32 {
     let (message, from_host) = match first_line(&mut control, FirstLine::Create) {
         Ok(first) => first,
         Err(code) => return code,
@@ -151,7 +165,8 @@ fn create_and_serve(
         org_id: create.org_id.clone(),
         org_name: create.org_name.clone(),
     };
-    let office = match Office::create(folder, &new, keys) {
+    // The host made the key and saved it before this line; the office only receives it.
+    let office = match Office::create(folder, &new, Key::from_db_key(create.db_key)) {
         Ok(office) => office,
         Err(e) => return fail_with(&mut control, &e),
     };
@@ -169,12 +184,7 @@ fn create_and_serve(
     serve_office(control, from_host, home, office, create.app_token)
 }
 
-fn open_and_serve(
-    mut control: ControlPipe,
-    home: &Path,
-    id: &str,
-    keys: &dyn org_office::KeyProvider,
-) -> i32 {
+fn open_and_serve(mut control: ControlPipe, home: &Path, id: &str) -> i32 {
     let (message, from_host) = match first_line(&mut control, FirstLine::Start) {
         Ok(first) => first,
         Err(code) => return code,
@@ -196,7 +206,7 @@ fn open_and_serve(
     if let Err(message) = socket_path(home, id) {
         return fail(&mut control, FailCode::InvalidRequest, message);
     }
-    let office = match Office::open(folder, keys) {
+    let office = match Office::open(folder, Key::from_db_key(start.db_key)) {
         Ok(office) => office,
         Err(e) => return fail_with(&mut control, &e),
     };
@@ -213,7 +223,7 @@ fn first_line(control: &mut ControlPipe, expected: FirstLine) -> Result<(HostMes
             "cannot read the control pipe",
         )
     })?;
-    // A small buffer we control, since the line carries the app token.
+    // A small buffer we control, since the line carries the app token and the database key.
     let mut reader = zeroed::ZeroedReader::new(from_host);
     match read_first_host_message(&mut reader, expected) {
         Ok(Some(message)) => Ok((message, reader.take_inner())),
@@ -252,6 +262,15 @@ fn serve_office(
     // Stop signals are handled only from here: before this the default disposition applies, so a
     // server waiting for its first line or for the office lock can still be terminated.
     signals::install();
+    // Live events (messages, status lines) for subscribers; a publish wakes the followers.
+    let live = live_events(&office);
+    let mailbox = match office.mailbox(live.clone()) {
+        Ok(mailbox) => Arc::new(mailbox),
+        Err(e) => {
+            let _ = std::fs::remove_file(&socket);
+            return fail_with(&mut control, &e);
+        }
+    };
     let shared = Arc::new(serve::Shared::new(
         &info,
         &socket,
@@ -263,13 +282,44 @@ fn serve_office(
             who: {
                 let office = Arc::clone(&office);
                 Box::new(move |params| {
-                    // Nothing reports presence yet (agents bind with messaging): all offline.
+                    // Nothing reports presence yet: all offline, with the status lines set.
                     office
-                        .who(params, &org_office::directory::NothingLive)
+                        .who_with_status(params)
                         .map_err(|e| logged("who", &e))
                 })
             },
+            status: {
+                let office = Arc::clone(&office);
+                let live = Arc::clone(&live);
+                // One status call at a time for a member, so the events go out in the order the
+                // lines were set (two calls of one agent could otherwise publish out of commit
+                // order). Other members' calls do not wait for each other.
+                let turns = std::sync::Mutex::new(std::collections::HashMap::<
+                    String,
+                    Arc<std::sync::Mutex<()>>,
+                >::new());
+                Box::new(move |member, params| {
+                    let turn = Arc::clone(
+                        turns
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .entry(member.to_owned())
+                            .or_default(),
+                    );
+                    let _turn = turn.lock().unwrap_or_else(|p| p.into_inner());
+                    let answer = office
+                        .set_status(member, params)
+                        .map_err(|e| logged("status", &e))?;
+                    if let Ok(set) = &answer {
+                        live.publish_presence(org_office::presence_after_status(member, set));
+                    }
+                    Ok(answer)
+                })
+            },
+            live: Arc::clone(&live),
             feed: Box::new(OfficeFeed(Arc::clone(&office))),
+            mailbox,
+            directory: Arc::new(office.member_directory()),
             submit: {
                 let office = Arc::clone(&office);
                 Box::new(move |command| {
@@ -351,6 +401,15 @@ fn log_causes(error: &OfficeError) {
     }
 }
 
+/// The live events of this office: a publish wakes the followers asleep on the office's change
+/// signal, so a hint goes out at once and not at the end of their idle poll.
+fn live_events(office: &Arc<Office>) -> Arc<live::LiveEvents> {
+    let office = Arc::clone(office);
+    Arc::new(live::LiveEvents::new(Box::new(move || {
+        office.wake_followers();
+    })))
+}
+
 /// The office's log, for `subscribe`.
 struct OfficeFeed(Arc<Office>);
 
@@ -420,9 +479,7 @@ fn fail_with(control: &mut ControlPipe, error: &OfficeError) -> i32 {
 fn fail_code(error: &OfficeError) -> FailCode {
     match error {
         OfficeError::InvalidName(_) => FailCode::InvalidName,
-        OfficeError::OfficeExists | OfficeError::AlreadyExists | OfficeError::KeyExists => {
-            FailCode::AlreadyExists
-        }
+        OfficeError::OfficeExists | OfficeError::AlreadyExists => FailCode::AlreadyExists,
         OfficeError::KeyMissing => FailCode::KeyMissing,
         OfficeError::InUse => FailCode::InUse,
         // `NotFound` on `--office`: serving an office that does not exist is a bad argument.
@@ -445,6 +502,38 @@ mod tests {
     }
 
     #[test]
+    fn a_publish_on_the_live_events_wakes_the_offices_followers() {
+        // The production wiring: publishing moves the office's change token, which is what a
+        // follower asleep in `wait_for_org_change` is waiting on.
+        let dir = tempfile::Builder::new().prefix("lv").tempdir().unwrap();
+        let office = Arc::new(
+            Office::create(
+                dir.path().join("offices").join("OFFICE1"),
+                &NewOffice {
+                    office_id: "OFFICE1".into(),
+                    office_name: "HQ".into(),
+                    role: org_office::OfficeRole::Hq,
+                    org_id: "ORG1".into(),
+                    org_name: "Acme".into(),
+                },
+                Key::from_db_key(org_proto::DbKey::from_bytes([4; 32])),
+            )
+            .unwrap(),
+        );
+        let live = live_events(&office);
+        let before = office.org_change_token();
+        live.publish_presence(org_proto::directory::MemberPresenceChangedData {
+            member_id: "M".into(),
+            presence: org_proto::directory::MemberPresence::Offline,
+            last_seen_at: "2026-11-09T12:00:00.000Z".into(),
+            status: None,
+            status_expires_at: None,
+            current_task_id: None,
+        });
+        assert_ne!(office.org_change_token(), before);
+    }
+
+    #[test]
     fn every_office_error_has_its_code() {
         use org_office::NameError;
         let storage = || OfficeError::Storage("disk".into());
@@ -455,7 +544,6 @@ mod tests {
             ),
             (OfficeError::OfficeExists, FailCode::AlreadyExists),
             (OfficeError::AlreadyExists, FailCode::AlreadyExists),
-            (OfficeError::KeyExists, FailCode::AlreadyExists),
             (OfficeError::KeyMissing, FailCode::KeyMissing),
             (OfficeError::InUse, FailCode::InUse),
             (OfficeError::Invalid("x"), FailCode::StorageError),

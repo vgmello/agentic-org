@@ -3966,6 +3966,120 @@
      }
     }
    ]
+  },
+  {
+   "name": "project.create: a task/ branch",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "integration_branch": "task/x"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.create: a docs/ branch in other capitals",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "integration_branch": "Docs/readme"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.create: a merged/ branch under refs/heads/",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "integration_branch": "refs/heads/merged/old"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.create: an archive/ branch under heads/",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "integration_branch": "heads/ARCHIVE/old"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.create: a branch that only looks like a reserved one",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "integration_branch": "tasks/x"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "project.create: an ordinary branch",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "integration_branch": "feature/x"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "project.update: a task/ branch",
+   "command": {
+    "method": "project.update",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 1,
+     "integration_branch": "task/x"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.update: a heads/docs/ branch",
+   "command": {
+    "method": "project.update",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 1,
+     "integration_branch": "heads/docs/x"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.update: an ordinary branch",
+   "command": {
+    "method": "project.update",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 1,
+     "integration_branch": "release"
+    }
+   },
+   "expect": "ok"
   }
  ]
 }

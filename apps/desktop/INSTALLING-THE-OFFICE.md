@@ -37,7 +37,14 @@ bun run install:dev      # stage host + server, tauri build, ad-hoc sign, copy t
 ```
 
 `scripts/stage-office.sh` builds `org-office-host` and `org-office-server` (release) into `src-tauri/office-bin/`
-(gitignored). It stops with a message while the host is not in this workspace (it lives on `river/office-host`).
+(gitignored). It stops with a message if the host is not in this workspace (`apps/org-office-host` on v1: update your branch).
+
+**A bundle built this way does not start its host until it is signed properly.** The release host keeps the office's keys in the
+Mac's keychain and refuses to start without the keychain access group and entitlement of a signed build (key custody, ADR-0002).
+Until a Developer ID build exists, development runs the host by hand: follow `docs/runbooks/local-hq.md` (coming with the
+host's key custody), and use the app with `AGENTIC_ORG_OFFICE=mock` when no host is running. The helper binaries must be signed
+with these identifiers when bundling: `org-office-server` = `com.ellosoft.agentic-org.org-office-server`, `org-office-host` =
+`com.ellosoft.agentic-org.org-office-host` (the release host checks them), with the same team, Developer ID and hardened runtime as the app.
 
 With ad-hoc signing there is no stable identity: macOS asks for approval again after each rebuild, and Keychain items the
 host stores belong to that build. **With a Developer ID** (ADR-0002, code signing): sign `org-office-host` and

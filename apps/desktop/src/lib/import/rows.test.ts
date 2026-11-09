@@ -242,4 +242,9 @@ describe('what HQ would refuse in HR’s text', () => {
 		expect(row).toMatchObject({ existingMemberId: 'm1', existingOffboarded: true });
 		expect(takesPart(row)).toBe(false);
 	});
+
+	it('takes control characters out of a typed title', () => {
+		const row = chooseTitle({ ...rowsOf().rows.find((r) => r.name === 'server-dev')! }, 'Staff\u0007 Engineer\n', SAMPLE_SCAN.hr!.roles);
+		expect(row.title).toBe('Staff  Engineer');
+	});
 });
