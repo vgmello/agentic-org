@@ -22,7 +22,7 @@ use org_office_launch::{
 use org_proto::frame::FrameError;
 use org_proto::location::check_socket_path;
 
-use crate::peer::PeerRule;
+use crate::peer::{Admission, PeerRule};
 use crate::zeroed::ZeroedReader;
 
 /// How long the connect and the read may take together.
@@ -57,11 +57,7 @@ fn receive_within(
     // Who is listening, checked NOW: the host writes the line and closes at once, and after the
     // peer has closed the kernel no longer answers (`ENOTCONN`). A swapped socket is a listener
     // of another process, and nothing is read from it.
-    if !crate::peer::admits(fd.as_raw_fd(), rule) {
-        return Err(LaunchError::Invalid(
-            "the key socket is not the host's listener",
-        ));
-    }
+    require(crate::peer::admits(fd.as_raw_fd(), rule))?;
     // A small buffer we control; it is wiped when the reader goes, and the connection closes
     // with it.
     let mut reader = ZeroedReader::new(Polled { fd, until });
@@ -79,6 +75,21 @@ pub(crate) fn category(error: &LaunchError) -> &'static str {
         LaunchError::Frame(FrameError::Io(e)) if e.kind() == io::ErrorKind::TimedOut => "deadline",
         LaunchError::Frame(FrameError::Io(_)) => "connect or read",
         LaunchError::Frame(_) => "line",
+    }
+}
+
+/// What the peer check allows: only the host. A definite stranger is refused for good
+/// (`invalid_request`); a peer the kernel would not describe (it has already closed) is a
+/// `storage_error`: nothing was read, and the host can start again.
+fn require(admission: Admission) -> Result<(), LaunchError> {
+    match admission {
+        Admission::Admitted => Ok(()),
+        Admission::Stranger => Err(LaunchError::Invalid(
+            "the key socket is not the host's listener",
+        )),
+        Admission::Unknown => Err(LaunchError::Frame(FrameError::Io(io::Error::from(
+            io::ErrorKind::NotConnected,
+        )))),
     }
 }
 
@@ -452,6 +463,58 @@ mod tests {
 
     fn id_for_other_pid() -> KeySocketId {
         id(77)
+    }
+
+    #[test]
+    fn a_stranger_is_refused_for_good_and_a_peer_that_cannot_be_asked_can_be_retried() {
+        assert!(require(Admission::Admitted).is_ok());
+        let stranger = require(Admission::Stranger).unwrap_err();
+        assert!(matches!(stranger, LaunchError::Invalid(_)));
+        assert_eq!(
+            stranger.fail_code(),
+            org_office_launch::FailCode::InvalidRequest
+        );
+        let unknown = require(Admission::Unknown).unwrap_err();
+        assert_eq!(
+            unknown.fail_code(),
+            org_office_launch::FailCode::StorageError
+        );
+        // Not "host gone": that is a silent exit 0, and here a launch did not finish.
+        assert!(!unknown.is_host_gone());
+    }
+
+    #[test]
+    fn the_connection_is_close_on_exec_above_fd_2_and_the_reader_does_not_duplicate_it() {
+        // The host checks at accept that the admitted pid holds exactly one close-on-exec
+        // descriptor on the connection (counted by socket, which only it can do from outside).
+        // This side's part: the connection is made close-on-exec, above fd 2, and goes through
+        // the reader as the same descriptor, never duplicated, and closes when the reader goes.
+        // (Other tests run in this process, so only this descriptor is looked at, never a count.)
+        let home = home();
+        let id = id(1);
+        let _listener = listen(home.path(), &id);
+        let path = key_socket_path(home.path(), &id);
+        let fd = connect(&path, Instant::now() + Duration::from_secs(5)).unwrap();
+        let raw = fd.as_raw_fd();
+        assert!(raw > 2, "not fd 0-2");
+        let cloexec = |fd: i32| {
+            // SAFETY: `fcntl` queries on a descriptor number.
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+            flags >= 0 && flags & libc::FD_CLOEXEC != 0
+        };
+        assert!(cloexec(raw), "close-on-exec");
+        let mut reader = ZeroedReader::new(Polled {
+            fd,
+            until: Instant::now() + Duration::from_secs(1),
+        });
+        let polled = reader.take_inner();
+        assert_eq!(
+            polled.fd.as_raw_fd(),
+            raw,
+            "the same descriptor, not a copy"
+        );
+        assert!(cloexec(raw));
+        assert!(crate::hygiene::open_fds().unwrap().contains(&raw));
     }
 
     #[test]

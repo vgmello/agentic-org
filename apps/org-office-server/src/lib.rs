@@ -16,6 +16,16 @@
 
 #![deny(unsafe_code)]
 
+// A release build carries the production peer check; the debug one (the parent's pid) must never
+// ship. See `build.rs`.
+#[cfg(all(
+    any(release_profile, bundle_build),
+    debug_assertions,
+    not(doc),
+    not(doctest)
+))]
+compile_error!("a release or bundle build of org-office-server must not have debug assertions on");
+
 mod bounded;
 mod codesign;
 pub mod fdswap;

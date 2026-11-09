@@ -41,42 +41,68 @@ pub(crate) enum PeerRule {
     Pid(libc::pid_t),
 }
 
+/// What the check found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Admission {
+    /// The peer is the host.
+    Admitted,
+    /// The peer was seen and is not the host.
+    Stranger,
+    /// The kernel would not say (the peer has already closed: `ENOTCONN`). Nothing was read;
+    /// the launch can be tried again.
+    Unknown,
+}
+
 /// Whether the peer of the connected socket `fd` is allowed under `rule`. Fails closed. What the
 /// kernel says about the peer (its pid, its audit token, its uid) is taken FIRST and all at once:
 /// the host may close at any moment, after which the kernel no longer answers; the slower checks
 /// (the code signature) are made on what was saved.
-pub(crate) fn admits(fd: RawFd, rule: PeerRule) -> bool {
+pub(crate) fn admits(fd: RawFd, rule: PeerRule) -> Admission {
     let pid = peer_pid(fd);
     #[cfg(target_os = "macos")]
     let token = peer_token(fd);
-    let user_ok = same_user(fd);
-    // SAFETY: `getppid` has no preconditions.
-    let parent = unsafe { libc::getppid() };
-    match rule {
+    let user = peer_uid(fd);
+    let Some(pid) = pid else {
+        return Admission::Unknown;
+    };
+    let Some(user) = user else {
+        return Admission::Unknown;
+    };
+    // SAFETY: `geteuid` and `getppid` have no preconditions.
+    let (me, parent) = unsafe { (libc::geteuid(), libc::getppid()) };
+    let user_ok = user == me;
+    let admitted = match rule {
         #[cfg(test)]
-        PeerRule::Pid(expected) => user_ok && pid == Some(expected),
+        PeerRule::Pid(expected) => user_ok && pid == expected,
         // The host started this server: it is the parent, in debug builds as in release.
-        PeerRule::Host if cfg!(debug_assertions) => user_ok && pid == Some(parent),
+        PeerRule::Host if cfg!(debug_assertions) => user_ok && pid == parent,
         PeerRule::Host => {
             #[cfg(target_os = "macos")]
             {
-                user_ok && pid == Some(parent) && release_host(token)
+                // The audit token must have been readable too.
+                let Some(token) = token else {
+                    return Admission::Unknown;
+                };
+                user_ok && pid == parent && release_host(token)
             }
             #[cfg(not(target_os = "macos"))]
             {
                 false
             }
         }
+    };
+    if admitted {
+        Admission::Admitted
+    } else {
+        Admission::Stranger
     }
 }
 
-/// Whether the peer's uid is this process's.
-fn same_user(fd: RawFd) -> bool {
+/// The peer's uid (`getpeereid`), if the kernel says.
+fn peer_uid(fd: RawFd) -> Option<libc::uid_t> {
     let (mut uid, mut gid): (libc::uid_t, libc::gid_t) = (0, 0);
     // SAFETY: a socket descriptor and two valid out-values.
-    let rc = unsafe { libc::getpeereid(fd, &mut uid, &mut gid) };
-    // SAFETY: `geteuid` has no preconditions.
-    rc == 0 && uid == unsafe { libc::geteuid() }
+    (unsafe { libc::getpeereid(fd, &mut uid, &mut gid) } == 0).then_some(uid)
 }
 
 /// The pid of the process at the other end (`LOCAL_PEERPID`).
@@ -123,11 +149,11 @@ fn peer_token(fd: RawFd) -> Option<crate::codesign::AuditToken> {
 
 /// The release rule on the audit token already taken: see the module docs.
 #[cfg(target_os = "macos")]
-fn release_host(token: Option<crate::codesign::AuditToken>) -> bool {
+fn release_host(token: crate::codesign::AuditToken) -> bool {
     use crate::codesign::{
         developer_id_requirement, hardened_and_clean, own_signing, satisfies_hardened,
     };
-    let (Some(team), Some(token)) = (TEAM_ID, token) else {
+    let Some(team) = TEAM_ID else {
         return false;
     };
     // This server's own signature must carry the team and be hardened and clean.
@@ -154,22 +180,47 @@ mod tests {
         let (ours, _theirs) = UnixStream::pair().unwrap();
         let me = std::process::id() as libc::pid_t;
         // A socket pair's peer is this very process.
-        assert!(admits(ours.as_raw_fd(), PeerRule::Pid(me)));
-        assert!(!admits(ours.as_raw_fd(), PeerRule::Pid(me + 1)));
-        assert!(!admits(ours.as_raw_fd(), PeerRule::Pid(1)));
+        assert_eq!(
+            admits(ours.as_raw_fd(), PeerRule::Pid(me)),
+            Admission::Admitted
+        );
+        assert_eq!(
+            admits(ours.as_raw_fd(), PeerRule::Pid(me + 1)),
+            Admission::Stranger
+        );
+        assert_eq!(
+            admits(ours.as_raw_fd(), PeerRule::Pid(1)),
+            Admission::Stranger
+        );
     }
 
     #[test]
     fn in_a_test_build_the_host_rule_wants_the_parent_and_this_peer_is_not_it() {
         let (ours, _theirs) = UnixStream::pair().unwrap();
         // The peer is this process, not its parent.
-        assert!(!admits(ours.as_raw_fd(), PeerRule::Host));
+        assert_eq!(
+            admits(ours.as_raw_fd(), PeerRule::Host),
+            Admission::Stranger
+        );
     }
 
     #[test]
     fn a_closed_or_non_socket_descriptor_is_not_admitted() {
         let file = std::fs::File::open("/dev/null").unwrap();
-        assert!(!admits(file.as_raw_fd(), PeerRule::Pid(1)));
-        assert!(!admits(-1, PeerRule::Host));
+        assert_eq!(
+            admits(file.as_raw_fd(), PeerRule::Pid(1)),
+            Admission::Unknown
+        );
+        assert_eq!(admits(-1, PeerRule::Host), Admission::Unknown);
+    }
+
+    #[test]
+    fn a_peer_that_has_closed_cannot_be_asked_and_is_unknown_not_a_stranger() {
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        drop(theirs);
+        assert_eq!(
+            admits(ours.as_raw_fd(), PeerRule::Pid(1)),
+            Admission::Unknown
+        );
     }
 }

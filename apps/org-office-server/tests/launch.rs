@@ -1800,21 +1800,34 @@ fn a_hygiene_failure_does_no_io_on_a_socket_it_did_not_make() {
             std::io::Write::write_all(&mut ours, b"{\"v\":3}\n").unwrap();
         }
         let socket = || Stdio::from(std::os::fd::OwnedFd::from(theirs.try_clone().unwrap()));
+        // Who last used the connection, as the kernel says (this is what a zero-length read or
+        // write would move, and bytes cannot show).
+        let toucher = || peer_pid_of(&ours);
+        let before = toucher();
         let (stdin, stdout, stderr) = match which {
             0 => (socket(), Stdio::piped(), Stdio::piped()),
             1 => (Stdio::piped(), socket(), Stdio::piped()),
             _ => (Stdio::piped(), Stdio::piped(), socket()),
         };
-        drop(theirs);
+        let _keep_alive = theirs;
         let mut child = spawn_with(&world, &["--office", OFFICE], stdin, stdout, stderr);
         let status = child.wait().unwrap();
         assert_eq!(status.code(), Some(78), "fd {which}: {status:?}");
-        let mut heard = Vec::new();
-        ours.read_to_end(&mut heard).unwrap();
-        assert!(
-            heard.is_empty(),
-            "fd {which}: written to the socket: {heard:?}"
+        assert_eq!(
+            toucher(),
+            before,
+            "fd {which}: the server touched the socket"
         );
+        // Nothing was written back. (The test still holds the other end, so the read must not
+        // wait for an end of file.)
+        ours.set_nonblocking(true).unwrap();
+        let mut heard = [0u8; 64];
+        match std::io::Read::read(&mut ours, &mut heard) {
+            Ok(0) => {}
+            Ok(n) => panic!("fd {which}: written to the socket: {:?}", &heard[..n]),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(e) => panic!("fd {which}: {e}"),
+        }
         for pipe in [
             child.stdout.take().map(|p| Box::new(p) as Box<dyn Read>),
             child.stderr.take().map(|p| Box::new(p) as Box<dyn Read>),
@@ -1828,4 +1841,23 @@ fn a_hygiene_failure_does_no_io_on_a_socket_it_did_not_make() {
             assert!(rest.is_empty(), "fd {which}: a line on a pipe: {rest:?}");
         }
     }
+}
+
+/// The pid the kernel reports for the other end of `stream`: the process that last used it
+/// (`LOCAL_PEERPID`).
+fn peer_pid_of(stream: &std::os::unix::net::UnixStream) -> Option<i32> {
+    use std::os::fd::AsRawFd;
+    let mut pid: libc::pid_t = 0;
+    let mut len = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
+    // SAFETY: a valid socket fd and an out-value of `len` bytes that outlives the call.
+    let rc = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_LOCAL,
+            libc::LOCAL_PEERPID,
+            (&mut pid as *mut libc::pid_t).cast(),
+            &mut len,
+        )
+    };
+    (rc == 0).then_some(pid)
 }

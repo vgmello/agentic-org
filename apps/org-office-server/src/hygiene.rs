@@ -1,5 +1,8 @@
 //! The server's fd hygiene (`org-office-launch`, "Descriptors"): its first act in `main`, before
-//! any thread or child exists. The key hand-off relies on it: the server must touch no socket it
+//! any thread or child exists. ("First" means from `main` on: system libraries run before it. For
+//! one, libobjc honours `OBJC_*` variables of the environment the pre-exec image chose and may
+//! write to fd 2 before `main`; that is a residual the release gate closes, not something this
+//! code can.) The key hand-off relies on it: the server must touch no socket it
 //! did not create itself, and no exception port left by the image that exec'd it may be handed its
 //! task.
 //!
@@ -43,8 +46,8 @@ impl Refusal {
 /// `org_office_launch::EXIT_LAUNCH_DESCRIPTORS_REFUSED`; use that once it is on this branch.)
 pub const SILENT_REFUSAL_STATUS: i32 = 78;
 
-/// Refuses to start: exits with [`SILENT_REFUSAL_STATUS`] and does NO I/O on any inherited
-/// descriptor, not even a `failed` line on a pipe. (On Darwin a read, a write or a connect on a
+/// Refuses to start: exits with [`SILENT_REFUSAL_STATUS`] and, from `main` on, does NO I/O on any
+/// inherited descriptor, not even a `failed` line on a pipe. (On Darwin a read, a write or a connect on a
 /// socket, even a failed or empty one, makes the caller the peer an eavesdropper's
 /// `LOCAL_PEERTOKEN` shows; a socket an early resumer put on fd 0-2 would otherwise get the
 /// server as its peer and, through the host's hand-off, the secrets.)
@@ -323,8 +326,32 @@ mod tests {
             assert_eq!(rc, 0, "set {mask:#x}");
             assert!(!task_ports(mask).is_empty(), "the kernel reports {mask:#x}");
         }
+        // The corpse-notify mask too, where the kernel takes it from a task.
+        // SAFETY: this task's own port and a port right made above.
+        let corpse = unsafe {
+            task_set_exception_ports(
+                mach_task_self_,
+                EXC_MASK_CORPSE_NOTIFY,
+                port,
+                EXCEPTION_DEFAULT,
+                THREAD_STATE_NONE,
+            )
+        };
+        let corpse_set = corpse == 0;
+        if corpse_set {
+            assert!(!task_ports(EXC_MASK_CORPSE_NOTIFY).is_empty());
+        } else {
+            assert_eq!(
+                corpse, KERN_INVALID_ARGUMENT,
+                "the kernel does not take it here"
+            );
+        }
         assert_eq!(reset_exception_ports(), Ok(()));
         assert!(task_ports(0x2).is_empty(), "bad access is reset");
         assert!(task_ports(EXC_MASK_CRASH).is_empty(), "crash is reset");
+        assert!(
+            task_ports(EXC_MASK_CORPSE_NOTIFY).is_empty(),
+            "corpse notify is reset"
+        );
     }
 }
