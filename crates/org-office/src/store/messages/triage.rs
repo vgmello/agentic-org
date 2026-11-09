@@ -239,7 +239,7 @@ pub(crate) fn list_active_snooze_deadlines(
     let mut statement = db
         .prepare(
             "SELECT u.id, u.to_member_id, u.snoozed_until FROM msg_unread u
-         JOIN msg_state s ON s.id = u.id WHERE s.state = 'snoozed' AND u.snoozed_until IS NOT NULL",
+         WHERE u.snoozed_until IS NOT NULL",
         )
         .map_err(storage)?;
     let rows = statement
