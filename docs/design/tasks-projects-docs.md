@@ -194,7 +194,7 @@ Derived, never stored: the **suggested triager** (the area lead, else the area t
 | `routed`, `new` | `scoping` | `request.accept` | anyone | the **caller** becomes the scoper |
 | `routed`, `scoping` | `new` | `request.route { scoper_id: none }` | anyone | back to "Not routed" |
 | `routed`, `scoping` | `scoped` | `request.scope { outcome }` | anyone | outcome required |
-| `scoped` | `scoping` | `request.ask_changes { note }` | anyone | note required (a comment) |
+| `scoped` | `scoping` | `request.ask_changes { comment_id, note }` | anyone | note required; `comment_id` names an existing comment on the request (§4.7) |
 | `scoped` | `approved` | `request.approve { tasks }` | **app only** | the project must be set and not archived (a request without a project: the app's **Approve** asks for one and sends `request.update { project_id }` first); creates the tasks atomically (§2.4); the feature's doc gains `requests: [REQ-n]` and the request's text quoted under Notes (RQS-11, a doc-write effect) |
 | `new`, `routed`, `scoping`, `scoped` | `declined` | `request.decline { reason }` | anyone | reason required |
 | same | `merged` | `request.merge { into }` | anyone | `into`: another open request, not this one; a comment on `into` quotes this request's text (cut to 10,000 characters, with "continued in REQ-n" when cut) and its creator becomes a watcher |
@@ -599,7 +599,7 @@ pub enum WorkEventKind {
     Reopened { note: Option<String> },
     Routed { from: ItemStatus, to: ItemStatus, scoper_from: Option<String>, scoper_to: Option<String>,
              reason: Option<String>, routed_by: Option<RoutedBy> },  // (amended 2026-11-09: request events)
-                                                    // request.route (unroute: scoper_to None, to: new) and request.accept (§4.7)
+                                                    // request.route (unroute: scoper_to None, to: new) and request.accept; aspects: status + scoper_id (§4.7)
     Linked { link: Link }, Unlinked { link_id: String },
     Comment { comment_id: String, body: String, comment_kind: CommentKind,
               asks: Option<String>, answers: Option<String>,
@@ -714,7 +714,7 @@ A `question` with `asks` = the owner starts a **waiting on the owner** span on t
 | `request.route` | `item_id`, `expected_version`, `scoper_id?` (absent: unrouted), `route_reason?`, `routed_by?` | `not_found`, `invalid_request` (wrong state), `unknown_recipient`, `conflict` |
 | `request.accept` | `item_id`, `expected_version` | `not_found`, `invalid_request`, `conflict` |
 | `request.scope` | `item_id`, `expected_version`, `outcome: RequestOutcome` | `not_found` (feature, doc's project), `invalid_request` (wrong state; a draft over limits; more than 50 drafts), `conflict` |
-| `request.ask_changes` | `item_id`, `expected_version`, `comment_id`, `note` | `not_found`, `invalid_request`, `conflict` |
+| `request.ask_changes` | `item_id`, `expected_version`, `comment_id` (an existing comment on this request, made by `work.comment` first), `note` | `not_found` (also: no such comment on this request), `invalid_request`, `conflict` |
 | `request.approve` (**app only**) | `item_id`, `expected_version`, `tasks: Vec<ApprovedTask>` (1–50) | `not_authorized`, `not_found`, `invalid_request` (wrong state; no project; a task over limits), `unknown_recipient`, `conflict`, `already_exists` |
 | `request.decline` | `item_id`, `expected_version`, `reason` | `not_found`, `invalid_request`, `conflict` |
 | `request.merge` | `item_id`, `expected_version`, `into` (a request id), `comment_id` | `not_found`, `invalid_request` (itself; `into` not open), `conflict` |
@@ -725,7 +725,7 @@ Each request call records one event on the request (§2.3) (amended 2026-11-09: 
 - `request.update`: `FieldsChanged`.
 - `request.ask_changes`: `StatusChanged { from: scoped, to: scoping, reason: note }`, and nothing else. The comment it names was already recorded by its own `work.comment` call (its own `Comment` event); `ask_changes` doesn't record it again.
 - `request.scope`, `request.approve`, `request.decline`, `request.merge`: `StatusChanged`, with `resolution` / `reason` where relevant.
-- For aspects (§2.3) and time in status (§6), `Routed` changes the status and the scoper. A re-route (`from == to`) still changes the scoper, so it isn't a no-op.
+- For aspects (§2.3), `Routed` counts as writing both `status` and the `scoper_id` field, even when `from == to` or the scoper is unchanged; it's never a no-op. For cycle time (§6), an accept (`Routed` into `scoping`) starts the round like a status change would.
 
 `ApprovedTask { item_id, link_id, title, description?, definition_of_done?, assignee_id?, team_id?, priority?, checklist? }`: the drafts as the owner edited them (RQS-9). `request.approve` creates them all or none, each with a `from_request` link and, when the outcome names a feature, its `feature_id`; the feature becomes `planned`.
 
@@ -868,7 +868,7 @@ Everything comes from the item's events (`at`, the owning office's clamped clock
 
 1. **Rounds.** A round opens at `Created` or at a reopen (`StatusChanged` out of a terminal status, `Reopened`) and closes at the next transition into a terminal status: task `done`; bug `closed`; request `approved`, `declined` or `merged`. A bug's verification wait is part of its round (Fixed isn't terminal). `rounds` = the number of rounds.
 2. **Lead time** = the sum of each round's length; the last round, if open, runs to `as_of` (now), and `open` is true ("so far").
-3. **Cycle time** = the sum, over rounds that started, of (round end or now) − (the round's start), where a round's **start** is its first transition into `in_progress` (tasks and bugs; a bug fixed by hand without passing through In progress starts at that `fixed`), or a request's `scoping`. `None` when no round started.
+3. **Cycle time** = the sum, over rounds that started, of (round end or now) − (the round's start), where a round's **start** is its first transition into `in_progress` (tasks and bugs; a bug fixed by hand without passing through In progress starts at that `fixed`), or a request's `scoping` (a `Routed` or `StatusChanged` into it, §4.7). `None` when no round started.
 4. **The split.** Every instant of every round belongs to exactly one bucket, by this precedence:
    1. **working**: at least one session attributed to the item is active (`WorkingStarted` / `WorkingStopped` events, keyed by session). Only when working time is tracked for the item (point 5);
    2. **waiting on the owner**: at least one open waiting span (point 6), or a bug in `fixed` whose reporter is the owner (the verify request is the owner's; FIX-4 sends it to the owner's Needs you only then), or a request in `scoped` (waiting for approval);
