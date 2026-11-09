@@ -27,7 +27,7 @@
 //!
 //! 5. The same code object's signing information (`SecCodeCopySigningInformation`) must show the
 //!    hardened runtime and none of the entitlements that let another process or library reach
-//!    into it ([`REJECTED_ENTITLEMENTS`]).
+//!    into it ([`code_signing::REJECTED_ENTITLEMENTS`]).
 //! 6. After the decision, checks 2 and 3 are made again, so nothing that happened while it was
 //!    taken slips through.
 //!
@@ -52,6 +52,8 @@ pub const APP_BUNDLE_ID: &str = "com.ellosoft.agentic-org";
 
 pub(crate) use crate::peer::AuditToken;
 
+use crate::code_signing::{self, developer_id_requirement};
+
 /// What the policy needs to know about a caller. The real one asks the kernel and the Security
 /// framework about a connection; tests use fakes.
 pub(crate) trait Peer {
@@ -66,7 +68,7 @@ pub(crate) trait Peer {
     /// The caller's audit token now.
     fn current_token(&self) -> Option<AuditToken>;
     /// Whether the process `token` names satisfies the designated requirement `requirement`
-    /// and runs hardened code (see [`hardened_and_clean`]).
+    /// and runs hardened code (see [`code_signing::hardened_and_clean`]).
     fn satisfies(&self, token: &AuditToken, requirement: &str) -> bool;
     /// The caller's uid (the development fallback).
     #[cfg(debug_assertions)]
@@ -207,9 +209,9 @@ impl AppPolicy {
                 "office.app_token and office.restart accept the app satisfying: {requirement}"
             )),
             None => lines.push(
-                "no app team id configured: office.app_token and office.restart accept no signed \
-                 app"
-                .to_owned(),
+                "WARNING: no app team id (a release build takes it from ORG_APP_TEAM_ID when it's \
+                 built): office.app_token and office.restart accept no signed app"
+                    .to_owned(),
             ),
         }
         #[cfg(debug_assertions)]
@@ -231,78 +233,10 @@ fn is_executable_file(path: &Path) -> bool {
     std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
-/// The app's designated requirement. The bundle id must be a reverse-DNS name (ASCII letters,
-/// digits, `.` and `-`) and the team id exactly 10 uppercase ASCII letters or digits, so neither
-/// can change the requirement's meaning.
+/// The app's designated requirement: its bundle id, signed with the team's Developer ID
+/// (see [`developer_id_requirement`]).
 pub(crate) fn designated_requirement(bundle_id: &str, team_id: &str) -> Result<String, String> {
-    let bundle_ok = !bundle_id.is_empty()
-        && bundle_id.len() <= 255
-        && !bundle_id.starts_with(['.', '-'])
-        && bundle_id
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-');
-    if !bundle_ok {
-        return Err(format!("the app bundle id {bundle_id:?} isn't well formed"));
-    }
-    let team_ok = team_id.len() == 10
-        && team_id
-            .bytes()
-            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit());
-    if !team_ok {
-        return Err(format!(
-            "the app team id {team_id:?} isn't 10 uppercase letters or digits"
-        ));
-    }
-    Ok(format!(
-        "identifier \"{bundle_id}\" and anchor apple generic and {DEVELOPER_ID} and \
-         certificate leaf[subject.OU] = \"{team_id}\""
-    ))
-}
-
-/// The Developer ID markers: the signing certificate is a Developer ID Application certificate
-/// (leaf extension 1.2.840.113635.100.6.1.13) issued by the Developer ID intermediate
-/// (1.2.840.113635.100.6.2.6). So only the app's notarizable Developer ID signature passes, not
-/// a development or distribution certificate of the same team.
-const DEVELOPER_ID: &str = "certificate 1[field.1.2.840.113635.100.6.2.6] exists and \
-                            certificate leaf[field.1.2.840.113635.100.6.1.13] exists";
-
-/// The code-signature flag of the hardened runtime (`kSecCodeSignatureRuntime`).
-pub(crate) const HARDENED_RUNTIME: u32 = 0x0001_0000;
-
-/// Entitlements that let another process or library reach into the app (a debugger, injected
-/// libraries, `DYLD_*` variables): an app with any of them could be made to hand its app token
-/// over, so it isn't trusted with one.
-pub(crate) const REJECTED_ENTITLEMENTS: [&str; 3] = [
-    "com.apple.security.get-task-allow",
-    "com.apple.security.cs.allow-dyld-environment-variables",
-    "com.apple.security.cs.disable-library-validation",
-];
-
-/// What the host reads from a caller's signing information.
-#[derive(Debug, Default)]
-pub(crate) struct Signing {
-    /// The code-signature flags (`kSecCodeInfoFlags`), if present.
-    pub(crate) flags: Option<u32>,
-    /// The entitlements (`kSecCodeInfoEntitlementsDict`): each key with its value when it's a
-    /// boolean (`None` for any other kind of value). `None` when the code has no entitlements.
-    pub(crate) entitlements: Option<Vec<(String, Option<bool>)>>,
-}
-
-/// Whether signed code may get an app token: it runs with the hardened runtime and has none of
-/// the [`REJECTED_ENTITLEMENTS`] (one that's present with any value but `false` counts). Missing
-/// flags fail closed.
-pub(crate) fn hardened_and_clean(signing: &Signing) -> bool {
-    let Some(flags) = signing.flags else {
-        return false;
-    };
-    if flags & HARDENED_RUNTIME == 0 {
-        return false;
-    }
-    !signing
-        .entitlements
-        .iter()
-        .flatten()
-        .any(|(key, value)| REJECTED_ENTITLEMENTS.contains(&key.as_str()) && *value != Some(false))
+    developer_id_requirement(bundle_id, team_id)
 }
 
 /// The caller on a `host.sock` connection, as the kernel and the Security framework see it.
@@ -338,9 +272,7 @@ impl Peer for SocketPeer<'_> {
 
     fn satisfies(&self, token: &AuditToken, requirement: &str) -> bool {
         // The requirement and the hardening checked on the same code object.
-        guest_code(token).is_some_and(|code| {
-            meets(&code, requirement) && signing(&code).is_some_and(|s| hardened_and_clean(&s))
-        })
+        code_signing::satisfies_hardened(token, requirement)
     }
 
     #[cfg(debug_assertions)]
@@ -354,115 +286,6 @@ impl Peer for SocketPeer<'_> {
             .and_then(crate::peer::executable)
             .ok()
     }
-}
-
-/// The code object of the process `token` names. `None` on any error, including a token whose
-/// process has exited or `exec`ed since.
-#[cfg(target_os = "macos")]
-fn guest_code(token: &AuditToken) -> Option<security_framework::os::macos::code_signing::SecCode> {
-    use core_foundation::base::TCFType;
-    use core_foundation::data::CFData;
-    use security_framework::os::macos::code_signing::{Flags, GuestAttributes, SecCode};
-
-    let token = CFData::from_buffer(token);
-    let mut attributes = GuestAttributes::new();
-    attributes.set_audit_token(token.as_concrete_TypeRef());
-    SecCode::copy_guest_with_attribues(None, &attributes, Flags::NONE).ok()
-}
-
-/// Whether `code` is valid and satisfies `requirement`. Fails closed.
-#[cfg(target_os = "macos")]
-fn meets(code: &security_framework::os::macos::code_signing::SecCode, requirement: &str) -> bool {
-    use security_framework::os::macos::code_signing::{Flags, SecRequirement};
-    use std::str::FromStr;
-
-    SecRequirement::from_str(requirement)
-        .is_ok_and(|requirement| code.check_validity(Flags::NONE, &requirement).is_ok())
-}
-
-/// Whether the process `token` names satisfies `requirement` (no hardening check: what the
-/// plumbing test can show on an unsigned-by-Developer-ID test binary).
-#[cfg(all(target_os = "macos", test))]
-fn code_satisfies(token: &AuditToken, requirement: &str) -> bool {
-    guest_code(token).is_some_and(|code| meets(&code, requirement))
-}
-
-/// `code`'s signing information: its flags and entitlements (`SecCodeCopySigningInformation`).
-/// `None` on any error.
-#[cfg(target_os = "macos")]
-fn signing(code: &security_framework::os::macos::code_signing::SecCode) -> Option<Signing> {
-    use core_foundation::base::{CFType, TCFType};
-    use core_foundation::boolean::CFBoolean;
-    use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
-    use core_foundation::number::CFNumber;
-    use core_foundation::string::{CFString, CFStringRef};
-
-    #[link(name = "Security", kind = "framework")]
-    extern "C" {
-        fn SecCodeCopySigningInformation(
-            code: *const std::ffi::c_void,
-            flags: u32,
-            information: *mut CFDictionaryRef,
-        ) -> i32;
-        static kSecCodeInfoFlags: CFStringRef;
-        static kSecCodeInfoEntitlementsDict: CFStringRef;
-    }
-    /// `kSecCSSigningInformation | kSecCSRequirementInformation`.
-    const INFORMATION: u32 = (1 << 1) | (1 << 2);
-
-    let mut information: CFDictionaryRef = std::ptr::null();
-    // SAFETY: a valid code object (a SecCode is accepted where a SecStaticCode is expected), and
-    // an out-pointer the call fills with a dictionary we then own (create rule).
-    let status = unsafe {
-        SecCodeCopySigningInformation(
-            code.as_concrete_TypeRef().cast(),
-            INFORMATION,
-            &mut information,
-        )
-    };
-    if status != 0 || information.is_null() {
-        return None;
-    }
-    // SAFETY: a dictionary the call created for us.
-    let information: CFDictionary<CFString, CFType> =
-        unsafe { CFDictionary::wrap_under_create_rule(information) };
-    // SAFETY: framework constants, valid for the process's life.
-    let (flags_key, entitlements_key) = unsafe {
-        (
-            CFString::wrap_under_get_rule(kSecCodeInfoFlags),
-            CFString::wrap_under_get_rule(kSecCodeInfoEntitlementsDict),
-        )
-    };
-    let flags = information
-        .find(&flags_key)
-        .and_then(|value| value.downcast::<CFNumber>())
-        .and_then(|number| number.to_i64())
-        .and_then(|number| u32::try_from(number).ok());
-    let entitlements = information
-        .find(&entitlements_key)
-        .and_then(|value| value.downcast::<CFDictionary>())
-        .map(|dictionary| {
-            // SAFETY: an entitlements dictionary maps strings to property-list values.
-            let dictionary: CFDictionary<CFString, CFType> =
-                unsafe { CFDictionary::wrap_under_get_rule(dictionary.as_concrete_TypeRef()) };
-            let (keys, values) = dictionary.get_keys_and_values();
-            keys.into_iter()
-                .zip(values)
-                .map(|(key, value)| {
-                    // SAFETY: the keys and values of the dictionary, retained by it.
-                    let key = unsafe { CFString::wrap_under_get_rule(key.cast()) };
-                    let value = unsafe { CFType::wrap_under_get_rule(value) };
-                    (
-                        key.to_string(),
-                        value.downcast::<CFBoolean>().map(bool::from),
-                    )
-                })
-                .collect()
-        });
-    Some(Signing {
-        flags,
-        entitlements,
-    })
 }
 
 #[cfg(test)]
@@ -677,61 +500,6 @@ mod tests {
         }
     }
 
-    fn entitlements(pairs: &[(&str, Option<bool>)]) -> Option<Vec<(String, Option<bool>)>> {
-        Some(pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect())
-    }
-
-    #[test]
-    fn only_hardened_code_without_the_rejected_entitlements_passes() {
-        let hardened = Some(HARDENED_RUNTIME | 0x2);
-        let ok = |flags, entitlements| {
-            hardened_and_clean(&Signing {
-                flags,
-                entitlements,
-            })
-        };
-        assert!(ok(hardened, None));
-        assert!(ok(
-            hardened,
-            entitlements(&[
-                ("com.apple.security.network.client", Some(true)),
-                ("com.apple.security.get-task-allow", Some(false)),
-            ])
-        ));
-        // No hardened runtime, or no flags at all.
-        assert!(!ok(Some(0x2), None));
-        assert!(!ok(None, None));
-        // Each rejected entitlement, set true or with a value that isn't a boolean.
-        for key in REJECTED_ENTITLEMENTS {
-            assert!(!ok(hardened, entitlements(&[(key, Some(true))])), "{key}");
-            assert!(!ok(hardened, entitlements(&[(key, None)])), "{key}");
-        }
-    }
-
-    /// The real signing information of this test binary matches what `codesign` reports, and
-    /// it isn't hardened (a linker or ad-hoc signature): so the extraction works, and the
-    /// decision says no for it. (No Developer ID-signed, hardened binary is at hand for the
-    /// other answer; the decision itself is tested on synthetic information above.)
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn the_signing_information_of_this_process_is_read_as_codesign_shows_it() {
-        let Some(expected) = own_codesign_field("flags=") else {
-            eprintln!("skipped: this test binary has no code signature");
-            return;
-        };
-        let expected = u32::from_str_radix(
-            expected.split('(').next().unwrap().trim_start_matches("0x"),
-            16,
-        )
-        .unwrap();
-        let (a, _b) = std::os::unix::net::UnixStream::pair().unwrap();
-        let token = crate::peer::audit_token(&a).unwrap();
-        let code = guest_code(&token).expect("this process's code object");
-        let info = signing(&code).expect("its signing information");
-        assert_eq!(info.flags, Some(expected));
-        assert!(!hardened_and_clean(&info));
-    }
-
     /// `nothing_after_request` on a real socket: true only while nothing waits past the
     /// request, in the reader's buffer or on the socket.
     #[cfg(target_os = "macos")]
@@ -827,21 +595,21 @@ mod tests {
     fn the_signature_check_accepts_what_this_process_satisfies_and_nothing_else() {
         let (a, _b) = std::os::unix::net::UnixStream::pair().unwrap();
         let token = crate::peer::audit_token(&a).unwrap();
-        let Some(identifier) = own_signing_identifier() else {
+        let Some(identifier) = code_signing::own_codesign_field("Identifier=") else {
             // An unsigned test binary (no linker signature, e.g. on Intel): nothing to accept.
             eprintln!("skipped: this test binary has no code signature");
             return;
         };
         assert!(
-            code_satisfies(&token, &format!("identifier \"{identifier}\"")),
+            code_signing::code_satisfies(&token, &format!("identifier \"{identifier}\"")),
             "{identifier}"
         );
-        assert!(!code_satisfies(
+        assert!(!code_signing::code_satisfies(
             &token,
             &format!("identifier \"{identifier}.not\"")
         ));
         let requirement = designated_requirement(APP_BUNDLE_ID, "AB12CD34EF").unwrap();
-        assert!(!code_satisfies(&token, &requirement));
+        assert!(!code_signing::code_satisfies(&token, &requirement));
         // Through the policy, as the host takes it: refused (not the app).
         let peer = SocketPeer {
             stream: &a,
@@ -879,28 +647,5 @@ mod tests {
         assert!(!peer(9).sent_after_accept());
         assert!(peer(10).sent_after_accept());
         assert!(peer(42).sent_after_accept());
-    }
-
-    /// This test binary's signing identifier, as `codesign` reports it (`None` if unsigned).
-    #[cfg(target_os = "macos")]
-    fn own_signing_identifier() -> Option<String> {
-        own_codesign_field("Identifier=")
-    }
-
-    /// A field of `codesign -dv`'s report on this test binary (`None` if unsigned).
-    #[cfg(target_os = "macos")]
-    fn own_codesign_field(prefix: &str) -> Option<String> {
-        let out = std::process::Command::new("/usr/bin/codesign")
-            .arg("-dv")
-            .arg(std::env::current_exe().ok()?)
-            .output()
-            .ok()?;
-        String::from_utf8_lossy(&out.stderr)
-            .lines()
-            .find_map(|line| {
-                line.split_whitespace()
-                    .find_map(|word| word.strip_prefix(prefix))
-                    .map(str::to_owned)
-            })
     }
 }

@@ -419,7 +419,7 @@ impl SecretLine {
 
 impl Drop for SecretLine {
     fn drop(&mut self) {
-        crate::app_token::zero(&mut self.0);
+        crate::secrets::zero(&mut self.0);
     }
 }
 
@@ -473,7 +473,7 @@ impl Connection {
 
     /// Closes the socket both ways, which ends the connection's threads.
     pub(crate) fn close(&self) {
-        let _ = self.stream.shutdown(std::net::Shutdown::Both);
+        shut_down(&self.stream);
     }
 
     fn finish(&self) {
@@ -494,6 +494,15 @@ impl crate::broadcast::Subscriber for Connection {
     }
 }
 
+/// Shuts a socket down both ways: writing first, then reading, each on its own. Not
+/// `Shutdown::Both`: on macOS that fails (`ENOTCONN`) once the client has shut down its own
+/// writing, and then shuts nothing down, so a client that half-closed and reads to EOF would
+/// wait forever (the socket stays open while anything holds a copy of it).
+fn shut_down(stream: &UnixStream) {
+    let _ = stream.shutdown(std::net::Shutdown::Write);
+    let _ = stream.shutdown(std::net::Shutdown::Read);
+}
+
 /// The writer: writes queued messages until [`Outbound::Close`], until every sender is gone,
 /// or until a write fails (then it closes the socket, which also ends the reader).
 fn write_loop(stream: &UnixStream, queue: Receiver<Outbound>) {
@@ -510,7 +519,7 @@ fn write_loop(stream: &UnixStream, queue: Receiver<Outbound>) {
                     io::Write::write_all(&mut socket, &line.0)
                 });
                 if written.is_err() {
-                    let _ = stream.shutdown(std::net::Shutdown::Both);
+                    shut_down(stream);
                     return;
                 }
                 continue;
@@ -529,7 +538,7 @@ fn write_loop(stream: &UnixStream, queue: Receiver<Outbound>) {
         };
         if let Err(e) = written {
             if e.closes_stream() {
-                let _ = stream.shutdown(std::net::Shutdown::Both);
+                shut_down(stream);
                 return;
             }
         }
@@ -641,6 +650,24 @@ mod tests {
         );
     }
 
+    /// S1: a client that half-closes after its requests gets their answers, then EOF.
+    #[test]
+    fn a_half_closed_connection_is_answered_then_closed() {
+        use std::io::Read;
+        let dir = short_tempdir();
+        let (_listener, path) = start(dir.path(), crate::home::euid());
+        let mut stream = connect(&path);
+        stream
+            .write_all(b"{\"id\":1,\"method\":\"hello\"}\n")
+            .unwrap();
+        stream.shutdown(std::net::Shutdown::Write).unwrap();
+        let mut all = String::new();
+        stream
+            .read_to_string(&mut all)
+            .expect("EOF within the read timeout");
+        assert_eq!(all.lines().count(), 1, "{all}");
+    }
+
     #[test]
     fn connections_beyond_the_cap_are_closed() {
         let dir = short_tempdir();
@@ -704,6 +731,87 @@ mod tests {
         );
         // The early one began before N0; the later one at it.
         assert!(seen[0].1 < seen[0].2 && seen[1].1 >= seen[1].2);
+    }
+
+    /// A handler whose `app` calls (inline when `inline_app`) wait until the client has written
+    /// its next line, then note how many bytes are waiting on the socket. Its other calls note
+    /// that they ran.
+    struct Probe {
+        inline_app: bool,
+        started: Mutex<mpsc::Sender<()>>,
+        next_written: Mutex<mpsc::Receiver<()>>,
+        next_handled: (Mutex<bool>, Condvar),
+        waiting: Mutex<Option<u64>>,
+    }
+
+    impl Handler for Probe {
+        fn inline(&self, request: &Request) -> bool {
+            self.inline_app && request.method == "app"
+        }
+
+        fn handle(&self, request: Request, connection: &Arc<Connection>, _received: Received) {
+            let (handled, changed) = &self.next_handled;
+            if request.method != "app" {
+                *lock(handled) = true;
+                changed.notify_all();
+                return;
+            }
+            lock(&self.started).send(()).unwrap();
+            lock(&self.next_written).recv().unwrap();
+            // A reader that isn't held back reads the next line and runs it at once: give it
+            // the time to.
+            let guard = lock(handled);
+            drop(
+                changed
+                    .wait_timeout_while(guard, Duration::from_millis(500), |handled| !*handled)
+                    .unwrap(),
+            );
+            *lock(&self.waiting) = Some(crate::peer::bytes_waiting(connection.socket()).unwrap());
+        }
+    }
+
+    /// How many bytes were waiting on the socket while an `app` call was handled, once the
+    /// client had written its next line.
+    fn bytes_waiting_during_an_app_call(inline_app: bool) -> u64 {
+        let (client, server) = UnixStream::pair().unwrap();
+        let (started, has_started) = mpsc::channel();
+        let (written, next_written) = mpsc::channel();
+        let probe = Arc::new(Probe {
+            inline_app,
+            started: Mutex::new(started),
+            next_written: Mutex::new(next_written),
+            next_handled: (Mutex::new(false), Condvar::new()),
+            waiting: Mutex::new(None),
+        });
+        let accepted = Accepted::sample(&server);
+        let (connection, queue) = Connection::new(server.try_clone().unwrap(), accepted);
+        let handler: Arc<dyn Handler> = probe.clone();
+        let serving = thread::spawn(move || serve(server, connection, queue, handler, 4));
+        (&client)
+            .write_all(b"{\"id\":1,\"method\":\"app\"}\n")
+            .unwrap();
+        // The reader has read the call (alone: nothing else was written yet).
+        has_started.recv_timeout(Duration::from_secs(5)).unwrap();
+        (&client)
+            .write_all(b"{\"id\":2,\"method\":\"next\"}\n")
+            .unwrap();
+        written.send(()).unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+        serving.join().unwrap();
+        let waiting = lock(&probe.waiting).expect("the app call ran");
+        waiting
+    }
+
+    /// L1: the calls `Handler::inline` picks (the app-only calls) run on the connection's
+    /// reader thread, which reads nothing more until they're answered: a line the client wrote
+    /// meanwhile is still waiting on the socket, which is what their check (`app_auth`,
+    /// "nothing after the request") relies on. A call run on its own thread lets the reader read
+    /// on, so nothing is waiting.
+    #[test]
+    fn an_inline_call_runs_before_anything_more_is_read() {
+        let next_line = b"{\"id\":2,\"method\":\"next\"}\n".len() as u64;
+        assert_eq!(bytes_waiting_during_an_app_call(true), next_line);
+        assert_eq!(bytes_waiting_during_an_app_call(false), 0);
     }
 
     #[test]

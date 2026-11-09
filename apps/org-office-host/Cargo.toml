@@ -31,7 +31,10 @@ serde_json.workspace = true
 libc.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# The Data Protection keychain (the release key store, `src/keys/keychain.rs`) needs the
+# workspace's `OSX_10_15` feature on both.
 security-framework.workspace = true
+security-framework-sys.workspace = true
 core-foundation.workspace = true
 
 [dev-dependencies]

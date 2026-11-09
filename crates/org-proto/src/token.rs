@@ -31,8 +31,9 @@
 //! [`AppToken::from_bytes`] (zero it yourself), the raw line a token was read from, the encoded
 //! output of a serialization and any reader or writer buffer it passed through, serde_json's
 //! scratch buffer (escaped strings, `from_reader`), serde's buffering for `flatten` and tagged or
-//! untagged enums, any other `serde_json::Value` hop, and stack slots left behind by moves. To
-//! keep copies few, decode it with `serde_json::from_slice` from a line buffer you zero
+//! untagged enums, and any other `serde_json::Value` hop. The bytes themselves live on the heap
+//! (a `Box`), and decoding fills them in place, so moving a token or a key moves only a pointer
+//! and leaves no copy of the bytes behind. To keep copies few, decode it with `serde_json::from_slice` from a line buffer you zero
 //! afterwards, into a plain struct field.
 //! Never log or `Debug`-print anything that holds it in raw form (an envelope, a `Value`, a line),
 //! and never use it as a map key or an enum tag (serde echoes those in errors).
@@ -64,14 +65,14 @@ pub const DB_KEY_BYTES: usize = SECRET_BYTES;
 /// let token = org_proto::AppToken::from_bytes([0; org_proto::APP_TOKEN_BYTES]);
 /// let _copy = token.clone();
 /// ```
-pub struct AppToken([u8; APP_TOKEN_BYTES]);
+pub struct AppToken(Box<[u8; APP_TOKEN_BYTES]>);
 
 impl AppToken {
     /// Wrap 32 random bytes. The caller makes them with a secure random source (e.g.
     /// `/dev/urandom`) and zeroes its own array afterwards: this only zeroes its own copy. This
     /// crate does no I/O.
     pub fn from_bytes(bytes: [u8; APP_TOKEN_BYTES]) -> Self {
-        AppToken(bytes)
+        AppToken(Box::new(bytes))
     }
 
     #[cfg(test)]
@@ -89,9 +90,18 @@ impl PartialEq for AppToken {
 
 impl Eq for AppToken {}
 
+impl AppToken {
+    /// Zero the bytes in place (what `Drop` does; tests call it to check the bytes).
+    fn wipe(&mut self) {
+        #[cfg(test)]
+        tests::WIPES.with(|wipes| wipes.set(wipes.get() + 1));
+        zero(&mut *self.0);
+    }
+}
+
 impl Drop for AppToken {
     fn drop(&mut self) {
-        zero(&mut self.0);
+        self.wipe();
     }
 }
 
@@ -131,7 +141,7 @@ impl Secret for AppToken {
     const BAD: &'static str = BAD_TOKEN;
 
     fn zeroed() -> Self {
-        AppToken([0u8; SECRET_BYTES])
+        AppToken(Box::new([0u8; SECRET_BYTES]))
     }
     fn bytes_mut(&mut self) -> &mut [u8; SECRET_BYTES] {
         &mut self.0
@@ -163,17 +173,18 @@ impl Secret for AppToken {
 /// let key = org_proto::DbKey::from_bytes([0; org_proto::DB_KEY_BYTES]);
 /// let _copy = key.clone();
 /// ```
-pub struct DbKey([u8; DB_KEY_BYTES]);
+pub struct DbKey(Box<[u8; DB_KEY_BYTES]>);
 
 impl DbKey {
     /// Wrap 32 random bytes. The caller makes them with a secure random source and zeroes its
     /// own array afterwards: this only zeroes its own copy. This crate does no I/O.
     pub fn from_bytes(bytes: [u8; DB_KEY_BYTES]) -> Self {
-        DbKey(bytes)
+        DbKey(Box::new(bytes))
     }
 
-    /// The raw key, for the host's key store and the server's SQLCipher. Don't copy the bytes
-    /// beyond their immediate use: borrow them for the one call that needs them.
+    /// The raw key, only for storing it in the host's key store and for keying SQLCipher,
+    /// nothing else. Don't copy the bytes beyond their immediate use: borrow them for the one
+    /// call that needs them.
     /// `*key.expose_bytes()` copies the array, and any copy (or a hex form made for SQLCipher's
     /// `x'…'` key syntax) is the caller's to zero. Never log or format it.
     pub fn expose_bytes(&self) -> &[u8; DB_KEY_BYTES] {
@@ -190,9 +201,18 @@ impl PartialEq for DbKey {
 
 impl Eq for DbKey {}
 
+impl DbKey {
+    /// Zero the bytes in place (what `Drop` does; tests call it to check the bytes).
+    fn wipe(&mut self) {
+        #[cfg(test)]
+        tests::WIPES.with(|wipes| wipes.set(wipes.get() + 1));
+        zero(&mut *self.0);
+    }
+}
+
 impl Drop for DbKey {
     fn drop(&mut self) {
-        zero(&mut self.0);
+        self.wipe();
     }
 }
 
@@ -223,7 +243,7 @@ impl Secret for DbKey {
     const BAD: &'static str = BAD_DB_KEY;
 
     fn zeroed() -> Self {
-        DbKey([0u8; SECRET_BYTES])
+        DbKey(Box::new([0u8; SECRET_BYTES]))
     }
     fn bytes_mut(&mut self) -> &mut [u8; SECRET_BYTES] {
         &mut self.0
@@ -344,6 +364,28 @@ fn zero(bytes: &mut [u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    thread_local! {
+        /// How many times `wipe` ran on this thread (tests run in parallel, one per thread).
+        pub(super) static WIPES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    /// L3c: dropping a token or a key runs `wipe`, once each.
+    #[test]
+    fn dropping_a_token_or_a_key_wipes_it() {
+        let wipes = || WIPES.with(std::cell::Cell::get);
+        let before = wipes();
+        drop(AppToken::from_bytes([0xa5; APP_TOKEN_BYTES]));
+        assert_eq!(wipes(), before + 1);
+        drop(DbKey::from_bytes([0x5a; DB_KEY_BYTES]));
+        assert_eq!(wipes(), before + 2);
+        // Moved, not copied: one wipe, when the one value is dropped.
+        let key = DbKey::from_bytes([1; DB_KEY_BYTES]);
+        let moved = key;
+        assert_eq!(wipes(), before + 2);
+        drop(moved);
+        assert_eq!(wipes(), before + 3);
+    }
 
     fn token() -> AppToken {
         let mut bytes = [0u8; APP_TOKEN_BYTES];
@@ -563,15 +605,13 @@ mod tests {
         assert!(err.contains(BAD_TOKEN) && !err.contains("314159"), "{err}");
     }
 
-    // Test-only: reading the bytes after `Drop` has run needs `ManuallyDrop::drop`, which is
-    // unsafe. The library's only unsafe code is still `zero`.
+    /// `Drop` calls `wipe` (the bytes are on the heap and freed after it, so they can't be read
+    /// after a real drop).
     #[test]
-    #[allow(unsafe_code)]
     fn drop_zeroes_the_token() {
-        let mut t = std::mem::ManuallyDrop::new(AppToken::from_bytes([0xa5; APP_TOKEN_BYTES]));
-        // SAFETY: dropped once and never used as a token again; only its bytes are read.
-        unsafe { std::mem::ManuallyDrop::drop(&mut t) };
-        assert_eq!(t.0, [0u8; APP_TOKEN_BYTES]);
+        let mut t = AppToken::from_bytes([0xa5; APP_TOKEN_BYTES]);
+        t.wipe();
+        assert_eq!(*t.0, [0u8; APP_TOKEN_BYTES]);
     }
 
     fn db_key() -> DbKey {
@@ -657,14 +697,12 @@ mod tests {
         }
     }
 
-    // Test-only, as for the app token.
+    /// As for the app token: `Drop` calls `wipe`.
     #[test]
-    #[allow(unsafe_code)]
     fn drop_zeroes_the_db_key() {
-        let mut k = std::mem::ManuallyDrop::new(DbKey::from_bytes([0x5a; DB_KEY_BYTES]));
-        // SAFETY: dropped once and never used as a key again; only its bytes are read.
-        unsafe { std::mem::ManuallyDrop::drop(&mut k) };
-        assert_eq!(k.0, [0u8; DB_KEY_BYTES]);
+        let mut k = DbKey::from_bytes([0x5a; DB_KEY_BYTES]);
+        k.wipe();
+        assert_eq!(*k.0, [0u8; DB_KEY_BYTES]);
     }
 
     #[test]

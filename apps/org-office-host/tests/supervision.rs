@@ -1,5 +1,9 @@
 //! Supervision, startup and shutdown, against the fake office server.
 
+// Every host here keeps its offices' keys in a development key folder, which only debug builds
+// have (a release host uses the Keychain, which tests never touch): debug builds only.
+#![cfg(debug_assertions)]
+
 mod support;
 
 use std::fs::{self, OpenOptions};
@@ -258,7 +262,8 @@ fn a_home_too_long_for_its_sockets_refuses_to_start() {
     let base = home.path();
     let pad = 103 - 22 - base.as_os_str().len();
     let long = base.join("x".repeat(pad));
-    let config = org_office_host::Config::new(&long, support::fake_server());
+    let mut config = org_office_host::Config::new(&long, support::fake_server());
+    config.dev_key_dir = Some(home.keys_dir());
     match Host::start(config) {
         Err(e @ HostError::SocketPathTooLong { .. }) => {
             assert!(e.to_string().contains("macOS allows at most 103"), "{e}");

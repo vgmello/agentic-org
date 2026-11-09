@@ -1,8 +1,8 @@
 //! A fake `org-office-server` for `org-office-host`'s tests. **Never shipped:** it is built
 //! only with the `test-support` feature, which only the host's own tests turn on.
 //!
-//! It follows the launch protocol (`org-office-launch`) without SQLCipher or the Keychain, and
-//! does what the test scripted. The script is `<ORG_OFFICE_HOME>/fake-script.json`:
+//! It follows the launch protocol (`org-office-launch`, version 2) without SQLCipher or a key
+//! store, and does what the test scripted. The script is `<ORG_OFFICE_HOME>/fake-script.json`:
 //! ```json
 //! {"create": [{"do": "fail", "code": "invalid_name"}, {"do": "ready"}],
 //!  "01ABC…": {"do": "crash"}}
@@ -27,26 +27,32 @@
 //!   differ from the create message: `office_id`, `org_id`, `org_name`, `office_name` or `role`.
 //!
 //! Its first stdin line must match its flag, as the contract says: a `create` message with
-//! `--create`, a `start` message with `--office`. A malformed or other line is refused with
-//! `failed: invalid_request` (a broken pipe with `storage_error`), before any scripted step. EOF
-//! before the first line means the host is gone: it exits 0 without a line.
-//! It never logs the app token: it records only a fingerprint of it (the 64-bit FNV-1a hash of
-//! its 32 bytes, as 16 hex digits), in `fake.log` and, unless `stderr_bytes` is set, on stderr
-//! (so in the office's log), so tests can tell tokens apart without seeing them.
+//! `--create`, a `start` message with `--office`, a `discard` message with `--discard`. A
+//! malformed or other line is refused with `failed: invalid_request` (a broken pipe with
+//! `storage_error`), before any scripted step (for `--discard`, before its step too). EOF before
+//! the first line means the host is gone: it exits 0 without a line.
+//! It never logs a secret: for the app token and the database key it records only a fingerprint
+//! (the 64-bit FNV-1a hash of the 32 bytes, as 16 hex digits), in `fake.log` and, unless
+//! `stderr_bytes` is set, the token's on stderr (so in the office's log), so tests can tell
+//! secrets apart without seeing them.
 //!
 //! On `--create` it makes the office folder and holds `office.lock` before anything else (so a
-//! failure or crash leaves an unfinished folder, like a real server could), and writes
-//! `office.json` last. `ready` binds a real socket that answers `hello`. `--discard <id>` takes
-//! the office lock (with the usual wait), refuses a folder holding `office.json`
-//! (`already_exists`), removes the folder and reports `discarded` (`fail`, `crash` and `hang`
-//! work there too).
+//! failure or crash leaves an unfinished folder, like a real server could), then writes a `db`
+//! file (its stand-in for the databases, holding no secret), and writes `office.json` last.
+//! `ready` binds a real socket that answers `hello`. `--discard <id>` takes the office lock
+//! (with the usual wait), refuses a folder holding `office.json` (`already_exists`), refuses a
+//! folder with a `db` file when its line has no key (`storage_error`, as a real server can't
+//! check databases without their key), removes the folder and reports `discarded` (`fail`,
+//! `crash` and `hang` work there too).
 //!
 //! It records what it does in `<home>/fake.log`, one line each:
 //! `start <key> <pid> <run> <unix ms>`, `token <key> <pid> <fingerprint>`,
-//! `env <key> <pid> <its environment variables' names>`, `fds <key> <pid> <inherited fds above 2, or ->`, `first-line-refused <key> <pid>`, `eof-before-first-line <key> <pid>`, `eof-exit <key> <pid>`,
-//! `eof-ignored <key> <pid>`, and `leak <key> <pid> <where>` if something that looks like a token
-//! (64 lowercase hex digits) reached it where none may: its `argv`, an `env:<NAME>` variable, or a
-//! `--discard`'s `stdin`.
+//! `dbkey <key> <pid> <fingerprint or null>` (`dbkey discard <pid> <fingerprint or null> <id>`
+//! for `--discard`), `env <key> <pid> <its environment variables' names>`,
+//! `fds <key> <pid> <inherited fds above 2, or ->`, `first-line-refused <key> <pid>`,
+//! `eof-before-first-line <key> <pid>`, `eof-exit <key> <pid>`, `eof-ignored <key> <pid>`, and
+//! `leak <key> <pid> <where>` if something that looks like a secret (64 lowercase hex digits)
+//! reached it where none may: its `argv` or an `env:<NAME>` variable.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
@@ -65,10 +71,14 @@ use org_office_launch::{
 use org_proto::frame;
 use org_proto::location::{office_socket_path, OFFICE_HOME_ENV};
 use org_proto::{
-    ApiError, AppToken, ErrorCode, Hello, HelloResult, OfficeHello, OfficeInfo, OfficeStatus,
-    Request, Response,
+    ApiError, AppToken, DbKey, ErrorCode, Hello, HelloResult, OfficeHello, OfficeInfo,
+    OfficeStatus, Request, Response,
 };
+use serde::Serialize;
 use serde_json::Value;
+
+/// The fake's stand-in for an office's databases, in its folder.
+const DB_FILE_NAME: &str = "db";
 
 const CRASH: i32 = 3;
 
@@ -158,6 +168,7 @@ fn main() {
                 _ => refuse_first_line(&home, &key, FailCode::InvalidRequest),
             };
             note_token(&home, &key, &step, &create.app_token);
+            note_db_key(&home, &key, Some(&create.db_key), "");
             let create_id = create.office_id.clone();
             let dir = office_dir(&home, &create.office_id).unwrap_or_else(|| {
                 fail(FailCode::InvalidRequest);
@@ -166,6 +177,9 @@ fn main() {
                 fail(FailCode::AlreadyExists);
             }
             let lock = take_lock(&dir);
+            if fs::write(dir.join(DB_FILE_NAME), b"the fake's databases").is_err() {
+                fail(FailCode::StorageError);
+            }
             let reported = |field: &str, sent: String| {
                 step.report
                     .get(field)
@@ -215,7 +229,10 @@ fn main() {
         }
         Some(id) => {
             match first_line(&home, &key, &mut stdin) {
-                HostMessage::Start(start) => note_token(&home, &key, &step, &start.app_token),
+                HostMessage::Start(start) => {
+                    note_token(&home, &key, &step, &start.app_token);
+                    note_db_key(&home, &key, Some(&start.db_key), "");
+                }
                 _ => refuse_first_line(&home, &key, FailCode::InvalidRequest),
             }
             let dir = office_dir(&home, &id).unwrap_or_else(|| fail(FailCode::InvalidRequest));
@@ -302,18 +319,6 @@ fn inherited_fds() -> String {
     }
 }
 
-/// Whether stdin becomes readable (data or EOF) within `wait`.
-fn stdin_has_data(wait: Duration) -> bool {
-    let mut fd = libc::pollfd {
-        fd: 0,
-        events: libc::POLLIN,
-        revents: 0,
-    };
-    let ms = libc::c_int::try_from(wait.as_millis()).unwrap_or(libc::c_int::MAX);
-    // SAFETY: polls one valid pollfd for the given time.
-    unsafe { libc::poll(&mut fd, 1, ms) > 0 }
-}
-
 /// The first stdin line. An unreadable one is refused here; the caller checks that its op
 /// matches the flag. EOF before it means the host is gone: exit 0 without a line.
 fn first_line(home: &Path, key: &str, stdin: &mut impl BufRead) -> HostMessage {
@@ -354,12 +359,22 @@ fn note_token(home: &Path, key: &str, step: &Step, token: &AppToken) {
     }
 }
 
-/// The 64-bit FNV-1a hash of the token's 32 bytes, as 16 hex digits: tells tokens apart
-/// without revealing them. The token's only way out is its serialization (64 hex digits),
-/// decoded here from a buffer that is zeroed afterwards.
-fn fingerprint(token: &AppToken) -> String {
+/// Records the database key's fingerprint (never the key), or `null`, in `fake.log`. `more` is
+/// appended (the office id, for a discard).
+fn note_db_key(home: &Path, key: &str, db_key: Option<&DbKey>, more: &str) {
+    let fingerprint = db_key.map_or_else(|| "null".to_owned(), fingerprint);
+    record(
+        home,
+        format!("dbkey {key} {} {fingerprint} {more}", std::process::id()).trim_end(),
+    );
+}
+
+/// The 64-bit FNV-1a hash of a secret's 32 bytes, as 16 hex digits: tells secrets apart
+/// without revealing them. Its only way out is its serialization (64 hex digits), decoded here
+/// from a buffer that is zeroed afterwards.
+fn fingerprint(secret: &impl Serialize) -> String {
     let mut json = Vec::with_capacity(128); // big enough never to reallocate
-    serde_json::to_writer(&mut json, token).expect("a token serializes");
+    serde_json::to_writer(&mut json, secret).expect("a secret serializes");
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for pair in json[1..json.len() - 1].chunks(2) {
         let byte = (nibble(pair[0]) << 4) | nibble(pair[1]);
@@ -380,18 +395,23 @@ fn nibble(hex: u8) -> u8 {
     }
 }
 
-/// `--discard <id>`: removes an unfinished office's folder, then exits.
+/// `--discard <id>`: removes an unfinished office's folder, then exits. Without a key it
+/// refuses a folder holding databases (`db`).
 fn discard_office(home: &Path, id: &str, step: &Step, key: &str, stdin: &mut impl BufRead) -> ! {
-    // The host sends `--discard` no line: anything on stdin within a moment is a leak.
-    if stdin_has_data(Duration::from_millis(100)) && stdin.fill_buf().is_ok_and(|b| !b.is_empty()) {
-        record(home, &format!("leak {key} {} stdin", std::process::id()));
-    }
+    let db_key = match first_line(home, key, stdin) {
+        HostMessage::Discard(discard) => discard.db_key,
+        _ => refuse_first_line(home, key, FailCode::InvalidRequest),
+    };
+    note_db_key(home, key, db_key.as_ref(), id);
     let dir = office_dir(home, id).unwrap_or_else(|| fail(FailCode::InvalidRequest));
     act_before(step, home, key, stdin);
     if dir.exists() {
         let lock = take_lock(&dir);
         if dir.join(OFFICE_FILE_NAME).exists() {
             fail(FailCode::AlreadyExists);
+        }
+        if db_key.is_none() && dir.join(DB_FILE_NAME).exists() {
+            fail(FailCode::StorageError);
         }
         if fs::remove_dir_all(&dir).is_err() {
             fail(FailCode::StorageError);
