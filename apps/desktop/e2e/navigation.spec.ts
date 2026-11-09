@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
 
-const SECTIONS = ['Chat', 'Agents', 'Org chart', 'Projects', 'Work', 'Sessions', 'Activity', 'Offices', 'Settings'];
+const SECTIONS = ['Chat', 'Agents', 'Org chart', 'Projects', 'Work', 'Sessions', 'Activity', 'Processes', 'Offices', 'Settings'];
 const slug = (name: string) => name.toLowerCase().replace(' ', '-');
 
 test.beforeEach(async ({ page }) => {
