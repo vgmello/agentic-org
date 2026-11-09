@@ -6,7 +6,9 @@ Fast, zero-runtime CLI for agent-to-agent messaging, directory lookup (`who`), s
 
 One binary is both CLIs: install `org-agent` and create an `org-relay` symlink to it, which
 replaces v1-old's separate `org-relay` (same commands, output, `org-relay:` error prefix and
-exit codes: `--help` works without a spool, a usage error exits 1, any spool error exits 4):
+exit codes: `--help` works without a spool, a usage error exits 1, any spool error exits 4; with
+`$ORG_SESSION_TOKEN` set, every command but `--help` exits 5, since an agent the office runs never
+uses the local spool):
 
 ```bash
 cargo build --release -p org-agent

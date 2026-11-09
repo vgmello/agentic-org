@@ -1270,9 +1270,9 @@ fn local_spool(as_agent: Option<&str>) -> Result<Spool, CliError> {
     Ok(spool)
 }
 
-/// `msg send`: through the office named; into that office's spool when it doesn't answer (then
-/// `--json` adds `"queued": true` and stderr says so, ADR-0003 §3.5); with no office named, the
-/// local spool as before.
+/// `msg send`: through the office named; refused (exit 5) when it doesn't answer, until the
+/// office ingests its spool (then queued there, `--json` adding `"queued": true`, ADR-0003
+/// §3.5); with no office named, the local spool as before.
 fn msg_send(sub_args: &[String], as_agent: Option<&str>, json_flag: bool) -> Result<u8, CliError> {
     let from = resolve_identity(as_agent)?;
     let parsed = parse_outgoing(sub_args, OutgoingKind::Send)?;
@@ -1291,7 +1291,7 @@ fn msg_send(sub_args: &[String], as_agent: Option<&str>, json_flag: bool) -> Res
                 println!("{id}");
             }
         }
-        // Into the office's own spool, for it to ingest when it's back (ADR-0003 §3.5).
+        // Refused until the office ingests its spool; then queued there (ADR-0003 §3.5).
         Route::Unreachable(why) => {
             let id = why.send_while_down(&from, &to, msg)?;
             if json_flag {

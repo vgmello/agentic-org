@@ -10,9 +10,10 @@
 //!
 //! - **Office named and reachable:** connect, `msg.bind` as the agent (no token: an agent run by
 //!   hand), then the call. Its errors are the office's.
-//! - **Office named but not reachable:** [`Route::Unreachable`]. `send` writes the message into
-//!   that office's own spool (`<office>/spool/new/`, ADR-0003 §3.5) for the office to ingest, so
-//!   no message is lost; the read side says so on stderr and shows the local spool.
+//! - **Office named but not reachable:** [`Route::Unreachable`]. `send` is refused (exit 5,
+//!   nothing sent) until the office ingests its spool; with [`OFFICE_SPOOL_INGEST`] on, it is
+//!   queued in that office's own spool (`<office>/spool/new/`, ADR-0003 §3.5). The read side says
+//!   so on stderr and shows the local spool.
 //!
 //! Bodies and meta are printed only by the commands whose output shows them (`read`, `wait`),
 //! never in a notice or an error.
