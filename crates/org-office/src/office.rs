@@ -47,13 +47,15 @@ const OFFICE_ENTRIES: [&str; 11] = [
 ];
 
 /// `office.db`: its identity (`meta`), from version 2 the message tables and from version 3 the
-/// members' status lines. An older file gets the tables it lacks when it is opened.
+/// members' status lines. Version 4 persists triage history outside the unread index.
+/// An older file gets the tables it lacks when it is opened.
 pub(crate) const OFFICE_SCHEMA: Schema = Schema {
-    version: 3,
+    version: 4,
     create: |tx| {
         tx.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;")?;
         messages::create_tables(tx)?;
-        status::create_table(tx)
+        status::create_table(tx)?;
+        messages::create_triage_schema(tx)
     },
     upgrade: |tx, from| {
         if from < 2 {
@@ -61,6 +63,9 @@ pub(crate) const OFFICE_SCHEMA: Schema = Schema {
         }
         if from < 3 {
             status::create_table(tx)?;
+        }
+        if from < 4 {
+            messages::create_triage_schema(tx)?;
         }
         Ok(())
     },

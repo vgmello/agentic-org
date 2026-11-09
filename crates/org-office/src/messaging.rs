@@ -1,15 +1,16 @@
 //! The office's side of the messaging ports (`org_mailbox`): [`OfficeMessageStore`] implements
-//! `MessageStore` over `office.db`'s message tables, and [`OfficeDirectory`] implements
+//! `MessageStore` and `TriageStore` over `office.db`'s message tables, and [`OfficeDirectory`] implements
 //! `MemberDirectory` over `org.db`. They are separate databases: no transaction spans both.
 //! The SQL is in `store::messages`; this file only maps its results to the ports' types.
 
 use std::sync::Arc;
 
 use org_mailbox::{
-    CommitMessageOutcome, HeaderQuery, Mailbox, MemberDirectory, MessageEvents, MessageStore,
-    NewStoredMessage, OfficeIdentity, PeekUnreadOutcome, StoreError, StoredMessage, SystemClock,
+    CommitMessageOutcome, HeaderQuery, LocalStateTransition, Mailbox, MemberDirectory,
+    MessageEvents, MessageStore, NewStoredMessage, NotifyCandidate, OfficeIdentity,
+    PeekUnreadOutcome, SnoozeDeadline, StoreError, StoredMessage, SystemClock, TriageStore,
 };
-use org_proto::msg::HeaderPage;
+use org_proto::msg::{HeaderPage, MessageHeader};
 use org_proto::{Member, Position};
 
 use crate::directory::resolve_member;
@@ -24,7 +25,7 @@ fn failure(error: OfficeError) -> StoreError {
     StoreError::new(error)
 }
 
-/// `MessageStore` over this office's `office.db`.
+/// `MessageStore` and `TriageStore` over this office's `office.db`.
 #[derive(Clone)]
 pub struct OfficeMessageStore(Arc<Office>);
 
@@ -53,13 +54,15 @@ impl Office {
             incarnation,
             is_hq: matches!(self.info().role, OfficeRole::Hq),
         };
-        Ok(Mailbox::new(
+        Mailbox::with_triage(
+            Arc::new(self.message_store()),
             Arc::new(self.message_store()),
             Arc::new(self.member_directory()),
             identity,
             Arc::new(SystemClock),
             events,
-        ))
+        )
+        .map_err(OfficeError::storage)
     }
 
     /// The members of this office's organization, as the mailbox's directory port.
@@ -130,6 +133,44 @@ impl MessageStore for OfficeMessageStore {
         self.0
             .local_store()
             .read(|db| messages::find_reply_for_ask(db, ask_id, responder_id))
+            .map_err(failure)
+    }
+}
+
+impl TriageStore for OfficeMessageStore {
+    fn update_state_local(
+        &self,
+        change: LocalStateTransition,
+    ) -> Result<MessageHeader, StoreError> {
+        messages::write(self.0.local_store(), move |db| {
+            messages::update_state_local(db, &change)
+        })
+        .map_err(failure)?
+    }
+
+    fn check_notify(
+        &self,
+        to_member_id: &str,
+        after_task: bool,
+        urgent_only: bool,
+        sweep_before_utc: &str,
+        now_utc: &str,
+    ) -> Result<Vec<NotifyCandidate>, StoreError> {
+        let (member, sweep, now) = (
+            to_member_id.to_owned(),
+            sweep_before_utc.to_owned(),
+            now_utc.to_owned(),
+        );
+        messages::write(self.0.local_store(), move |db| {
+            messages::check_notify(db, &member, after_task, urgent_only, &sweep, &now).map(Ok)
+        })
+        .map_err(failure)?
+    }
+
+    fn list_active_snooze_deadlines(&self) -> Result<Vec<SnoozeDeadline>, StoreError> {
+        self.0
+            .local_store()
+            .read(messages::list_active_snooze_deadlines)
             .map_err(failure)
     }
 }
@@ -266,7 +307,31 @@ mod tests {
         )
     }
 
+    impl TriageStore for Sql {
+        fn update_state_local(
+            &self,
+            change: LocalStateTransition,
+        ) -> Result<MessageHeader, StoreError> {
+            self.store.update_state_local(change)
+        }
+        fn check_notify(
+            &self,
+            member: &str,
+            after_task: bool,
+            urgent_only: bool,
+            sweep: &str,
+            now: &str,
+        ) -> Result<Vec<NotifyCandidate>, StoreError> {
+            self.store
+                .check_notify(member, after_task, urgent_only, sweep, now)
+        }
+        fn list_active_snooze_deadlines(&self) -> Result<Vec<SnoozeDeadline>, StoreError> {
+            self.store.list_active_snooze_deadlines()
+        }
+    }
+
     org_mailbox::mailbox_conformance_tests!(open_sql);
+    org_mailbox::triage_conformance_tests!(open_sql);
 
     // ---- what is SQL's own ---------------------------------------------------------------------
 
@@ -415,7 +480,7 @@ mod tests {
             ),
             6
         );
-        assert_eq!(count(&office, "PRAGMA user_version"), 3);
+        assert_eq!(count(&office, "PRAGMA user_version"), 4);
         assert_eq!(
             count(
                 &office,

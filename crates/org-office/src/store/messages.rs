@@ -11,6 +11,11 @@
 //! **Bodies and meta are stored as given** (raw UTF-8 text and compact JSON, `compression = 0`):
 //! the database is already encrypted, and a compressed form belongs with the sync work.
 
+mod triage;
+pub(crate) use triage::{
+    check_notify, create_triage_schema, list_active_snooze_deadlines, update_state_local,
+};
+
 use std::collections::BTreeSet;
 
 use org_mailbox::{
@@ -213,7 +218,11 @@ fn stored_from(row: &Row<'_>, with_body: bool) -> rusqlite::Result<StoredMessage
                 triage_gen: number(24)? as u64,
                 snoozed_until: optional(25)?,
                 snooze_after_task: number(26)? != 0,
-                snooze_note: optional(27)?,
+                snooze_note: if matches!(state_of(&text(23)?), State::Unread | State::Snoozed) {
+                    optional(27)?
+                } else {
+                    None
+                },
                 read_at: optional(28)?,
                 expired_waiting_person: number(22)? & FLAG_EXPIRED_WAITING_PERSON != 0,
             },
