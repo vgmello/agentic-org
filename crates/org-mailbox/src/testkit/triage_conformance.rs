@@ -830,6 +830,46 @@ pub fn triage_check_notify_exclusions_and_boundaries(backend: impl OpenTriageBac
         .any(|deadline| deadline.id == msg_id(9)));
 }
 
+/// check_notify returns each message at most once: a snooze released in the call carries
+/// its release reason even when the message is urgent or `after_task` is set, and is never
+/// also returned as `New`.
+pub fn triage_check_notify_returns_a_release_once_with_its_reason(backend: impl OpenTriageBackend) {
+    let store = open_store(&backend);
+    for n in 1..=3 {
+        commit(
+            &store,
+            new_message(n, PAT_ID, ADA_ID, MessagePriority::Urgent),
+        );
+    }
+    let now = at(120_000);
+    apply(&store, snooze_until(1, &at(60_000), None));
+    assert_eq!(
+        notify(&store, false, false, NOW_UTC, &now),
+        [
+            (msg_id(1), NotifyReason::Due),
+            (msg_id(2), NotifyReason::New),
+            (msg_id(3), NotifyReason::New),
+        ],
+        "a due urgent snooze comes back once, as Due"
+    );
+
+    apply(&store, snooze_until(2, &at(60_000), None));
+    apply(&store, snooze_after_task(3));
+    assert_eq!(
+        notify(&store, true, false, NOW_UTC, &now),
+        [
+            (msg_id(1), NotifyReason::New),
+            (msg_id(2), NotifyReason::Due),
+            (msg_id(3), NotifyReason::AfterTask),
+        ],
+        "at a break, a due urgent snooze comes back once as Due, an after-task one once as \
+         AfterTask"
+    );
+    for n in 1..=3 {
+        assert_eq!(header_of(&store, n).state, State::Unread, "message {n}");
+    }
+}
+
 /// A time snooze whose `snoozed_until` can't be read is released as due by the next
 /// check_notify, whatever `now` is, rather than stranded. A store that refuses to write such
 /// a snooze through `update_state_local` has nothing to release, and the case checks nothing.
@@ -2027,6 +2067,7 @@ macro_rules! triage_conformance_tests {
             triage_reason_is_only_the_snooze_or_done_note,
             triage_check_notify_reasons_filters_and_releases,
             triage_check_notify_exclusions_and_boundaries,
+            triage_check_notify_returns_a_release_once_with_its_reason,
             triage_check_notify_releases_an_unreadable_snooze_as_due,
             triage_check_notify_releases_once_under_concurrency,
             triage_list_active_snooze_deadlines,

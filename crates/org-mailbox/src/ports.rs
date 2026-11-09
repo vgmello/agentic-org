@@ -174,6 +174,9 @@ pub trait TriageStore {
     /// before `sweep_before_utc`, and otherwise not returned. `urgent_only` filters only the
     /// returned list to urgent messages: due snoozes are released whatever it says. Each
     /// candidate carries its header after the release. No limit and no ordering guarantee.
+    /// Each message comes back at most once per call: a message released in this call
+    /// carries its release reason (`Due`, or `AfterTask`) even when it is urgent or
+    /// `after_task` is set, and is never also returned as `New`.
     /// A time snooze whose `snoozed_until` can't be read is released as due (reason `Due`)
     /// rather than stranded.
     /// Expiry is not its job: an overdue request comes back as it is.
