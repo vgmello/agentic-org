@@ -122,9 +122,12 @@ export function createMockOrg(
 	let queue: Promise<unknown> = Promise.resolve();
 	const listeners = new Set<(notice: OrgFeedNotice) => void>();
 	const liveNow = new Map<string, boolean>();
+	// A test makes the next command of these methods fail once (the office went away): `window.__mockOrgFailNext('team.set_lead')`.
+	const failNext = new Set<string>();
 
 	async function run(organizationId: string, input: OrgCommandInput | OrgCommand): Promise<CommandAccepted> {
 		const command = ready(input);
+		if (failNext.delete(command.method)) throw { source: 'api', code: 'unavailable', message: 'The office went away.' } satisfies AppError;
 		const id = command.params.command_id;
 		const print = fingerprint(command);
 		const { key, store, state } = await load(organizationId); // not_found first, as in the Rust mock
@@ -189,7 +192,8 @@ export function createMockOrg(
 		}
 	};
 	if (typeof window !== 'undefined') {
-		const hooks = window as unknown as { __mockOrgChange: OrgApi['command']; __mockOrgLive: (organizationId: string, live: boolean) => void };
+		const hooks = window as unknown as { __mockOrgChange: OrgApi['command']; __mockOrgLive: (organizationId: string, live: boolean) => void; __mockOrgFailNext: (method: string) => void };
+		hooks.__mockOrgFailNext = (method) => void failNext.add(method);
 		hooks.__mockOrgChange = api.command;
 		// A test makes the live feed drop (or come back): `window.__mockOrgLive(organizationId, false)`.
 		hooks.__mockOrgLive = (organization_id, live) => {

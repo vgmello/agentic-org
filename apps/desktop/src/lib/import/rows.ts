@@ -30,12 +30,16 @@ export interface Row {
 	teamKey?: string;
 	/** Who it reports to: another row's key, or `owner`. */
 	managerKey: string;
+	/** The owner chose the manager by hand: the default (the top team's lead) no longer follows the team. */
+	managerSet?: boolean;
 	choice: Choice;
 	/** The member already in the organization with this messaging name ("Already in <org>"): an agent, or a person whose name it is. */
 	existingMemberId?: string;
 	existingKind?: 'agent' | 'person';
 	/** That agent was offboarded: its name stays reserved, and it is no longer part of the team. */
 	existingOffboarded?: boolean;
+	/** An earlier import made this agent and the owner has since removed it: it stays removed unless the owner asks for it again. */
+	removedEarlier?: boolean;
 }
 
 export interface Review {
@@ -109,7 +113,7 @@ export function buildRows(scan: Scan, { exclude = [], members = [] }: { exclude?
 }
 
 /** HR can say A reports to B and B to A; HQ refuses a cycle. The row that closes it reports to the owner instead. */
-function breakCycles(rows: Row[]): void {
+export function breakCycles(rows: Row[]): void {
 	const byKey = new Map(rows.map((r) => [r.key, r]));
 	for (const row of rows) {
 		const seen = new Set<string>([row.key]);
@@ -136,7 +140,7 @@ const clip = (text: string): string => {
 // eslint-disable-next-line no-control-regex
 const CONTROLS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g;
 /** HR text without control characters (HQ refuses them) and trimmed the way HQ trims. */
-const plain = (text: string | undefined): string => trimWhiteSpace((text ?? '').replace(CONTROLS, ' '));
+export const plain = (text: string | undefined): string => trimWhiteSpace((text ?? '').replace(CONTROLS, ' '));
 /** A display name HQ will take: plain, and not longer than an organization name (64 characters). */
 const cleanName = (name: string | undefined): string => [...plain(name)].slice(0, 64).join('');
 
@@ -185,13 +189,13 @@ export function missingOf(row: Row): ('role' | 'runtime' | 'name')[] {
 }
 
 /** Whether a row takes part in the import: chosen, complete, and not a person's name. It may already be in (an agent from an earlier try). */
-export const takesPart = (row: Row): boolean => row.choice !== 'skip' && row.existingKind !== 'person' && !row.existingOffboarded && missingOf(row).length === 0;
+export const takesPart = (row: Row): boolean => row.choice !== 'skip' && row.existingKind !== 'person' && !row.existingOffboarded && !row.removedEarlier && missingOf(row).length === 0;
 
 /** Whether a row will be brought in as it is: chosen, not already in, and nothing missing. */
-export const isReady = (row: Row): boolean => row.choice !== 'skip' && !row.existingMemberId && missingOf(row).length === 0;
+export const isReady = (row: Row): boolean => row.choice !== 'skip' && !row.existingMemberId && !row.removedEarlier && missingOf(row).length === 0;
 
 /** Whether the row still has to be filled in to be brought in. */
-export const needsDetails = (row: Row): boolean => row.choice !== 'skip' && !row.existingMemberId && missingOf(row).length > 0;
+export const needsDetails = (row: Row): boolean => row.choice !== 'skip' && !row.existingMemberId && !row.removedEarlier && missingOf(row).length > 0;
 
 /** An HR-only agent has no messaging inbox: say so and let the owner pick (Active · Paused · Skip). */
 export const hasNoMessages = (row: Row, scan: Scan): boolean => row.source === 'hr' && !!scan.messaging && !scan.messaging.error;
@@ -230,9 +234,9 @@ export function chooseRole(row: Row, role: string): Row {
 
 /** "Custom title…": the title is the owner's own, and an empty role gets the catalog's best match for it, marked Suggested. */
 export function chooseTitle(row: Row, title: string, roles: string[]): Row {
-	const next: Row = { ...row, title };
+	const next: Row = { ...row, title: plain(title) };
 	if (!next.role?.trim()) {
-		const suggested = suggestRole(title, roles);
+		const suggested = suggestRole(next.title ?? '', roles);
 		if (suggested) return { ...next, role: suggested, roleSuggested: true };
 	}
 	return next;
