@@ -10,10 +10,12 @@ use crate::{
 /// A read-only port into org.db, at the office's applied position. Returns the stored
 /// member with its status, unfiltered: the Mailbox applies the policy (a paused agent may
 /// bind and receive; an offboarded or Unknown-status one is refused). Resolution order:
-/// "owner" (ignoring case) first, then an exact id, then a handle ignoring case (an
-/// agent's messaging_name or a non-owner person's name). Display names never resolve and
-/// "office" never resolves. Two members with one handle is a storage error. The Mailbox
-/// passes the reference already trimmed of ASCII whitespace.
+/// "owner" (ignoring ASCII case) first, then an exact id, then a handle ignoring case (an
+/// agent's messaging_name or a non-owner person's trimmed name). Handles fold case by
+/// Unicode lower case (`str::to_lowercase`, as org-office keys them), not ASCII-only:
+/// SQLite's `lower()` and `NOCASE` don't match "Émile" to "émile". Display names never
+/// resolve and "office" never resolves. Two members with one handle is a storage error.
+/// The Mailbox passes the reference already trimmed of ASCII whitespace.
 pub trait MemberDirectory {
     fn resolve_member(&self, id_or_handle: &str) -> Result<Option<(Member, Position)>, StoreError>;
 }
@@ -43,12 +45,16 @@ pub trait MessageStore {
     /// commit passes `origin_seq: None`; the store allocates `local_seq` and `origin_seq`
     /// in the same transaction from the office's local counter (>= 1, increasing in commit
     /// order). An initially Read message never enters the unread index.
+    ///
+    /// `Ok` means durable and visible to every connection: a batching writer must not
+    /// return before its COMMIT. The Mailbox wakes waiters as soon as this returns (§2.2).
     fn commit_message(&self, msg: NewStoredMessage) -> Result<CommitMessageOutcome, StoreError>;
     /// Atomically claim and mark read `id`, or with no `id` the oldest unsnoozed unread
     /// message, for `to_member_id`. `None` when `id` isn't addressed to the member, or with
     /// no `id` when nothing is unread. The claim sets `read_at` to exactly `now_utc`; an
     /// already read `id` comes back unchanged, keeping its earlier `read_at`. Concurrent
-    /// claims of one message succeed once.
+    /// claims of one message succeed once: with no `id`, the store selects the message and
+    /// marks it in ONE writer transaction, never choosing it from a reader's snapshot.
     fn claim_read(
         &self,
         to_member_id: &str,
@@ -57,6 +63,8 @@ pub trait MessageStore {
     ) -> Result<Option<StoredMessage>, StoreError>;
     /// The oldest unexpired, unsnoozed unread message, without marking it read, plus the
     /// ids of expired unread messages passed over. Read-only: changes and deletes nothing.
+    /// Each call reads a fresh snapshot, never a long-lived read transaction, so a waiter
+    /// woken by a commit sees that commit (§2.2).
     fn peek_next_unread(
         &self,
         to_member_id: &str,
@@ -64,8 +72,10 @@ pub trait MessageStore {
         urgent_only: bool,
         now_utc: &str,
     ) -> Result<PeekUnreadOutcome, StoreError>;
+    /// Like every read here, from a fresh snapshot.
     fn get_message(&self, id: &str) -> Result<Option<StoredMessage>, StoreError>;
-    /// One page of headers, newest first by `local_seq`, without reading bodies.
+    /// One page of headers, newest first by `local_seq`, without reading bodies, from a
+    /// fresh snapshot.
     fn list_headers(&self, query: HeaderQuery) -> Result<HeaderPage, StoreError>;
     fn find_reply_for_ask(
         &self,

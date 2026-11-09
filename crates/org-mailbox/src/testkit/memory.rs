@@ -39,8 +39,14 @@ impl InMemoryDirectory {
 }
 
 impl MemberDirectory for InMemoryDirectory {
+    /// Resolves agents and people as org-office's directory does (members of an unknown kind
+    /// never resolve by handle here): the reference is trimmed of ASCII whitespace,
+    /// `owner` and `office` compare ignoring ASCII case, an id compares exactly, and handles
+    /// compare by Unicode lower case (`str::to_lowercase`; a person's name is trimmed first,
+    /// as its stored key is). Unlike org-office, two owners is a storage error here.
     fn resolve_member(&self, reference: &str) -> Result<Option<(Member, Position)>, StoreError> {
         let state = lock(&self.0);
+        let reference = reference.trim_ascii();
         if reference.eq_ignore_ascii_case(OFFICE_SENDER) {
             return Ok(None);
         }
@@ -49,16 +55,16 @@ impl MemberDirectory for InMemoryDirectory {
         } else if let Some(member) = state.0.iter().find(|member| member.id == reference) {
             vec![member]
         } else {
+            let key = reference.to_lowercase();
             state
                 .0
                 .iter()
                 .filter(|member| match member.kind {
-                    MemberKind::Agent => member.agent.as_ref().is_some_and(|profile| {
-                        profile.messaging_name.eq_ignore_ascii_case(reference)
-                    }),
-                    MemberKind::Person => {
-                        !member.owner && member.name.eq_ignore_ascii_case(reference)
-                    }
+                    MemberKind::Agent => member
+                        .agent
+                        .as_ref()
+                        .is_some_and(|profile| profile.messaging_name.to_lowercase() == key),
+                    MemberKind::Person => !member.owner && member.name.trim().to_lowercase() == key,
                     _ => false,
                 })
                 .collect()

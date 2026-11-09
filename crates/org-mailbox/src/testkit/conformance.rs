@@ -6,6 +6,14 @@
 //! the ports' contracts (ADR-0003 §4.3, as amended by the store split); the `mailbox_*` cases
 //! run the slice-1 Mailbox (send, inbox, read, wait) over the backend, including the §2.2
 //! register-before-commit race and cancellation.
+//!
+//! **Run it against the production shape.** For a SQL store that means a file-backed WAL
+//! database, the real batching writer, and a read pool of two or more connections separate
+//! from the writer (thread-bound or small, so a thread's next read reuses its connection),
+//! with the production statement cache: prepared statements used and reset exactly as
+//! production does, since an unreset statement holds a stale read transaction open. With one
+//! shared connection the visibility and snapshot claim cases pass vacuously: every read then
+//! sees the writer's latest state.
 
 use std::sync::{Arc, Barrier, Mutex, Weak};
 use std::thread;
@@ -483,7 +491,11 @@ pub fn store_claim_read_is_once_under_concurrency(backend: impl OpenBackend) {
                 scope.spawn(|| {
                     barrier.wait();
                     let mut mine = Vec::new();
-                    while let Some(stored) = store.claim_read(ADA_ID, None, NOW_UTC).unwrap() {
+                    // Bounded: a backend that keeps returning a message fails, never spins.
+                    for _ in 0..=5 {
+                        let Some(stored) = store.claim_read(ADA_ID, None, NOW_UTC).unwrap() else {
+                            break;
+                        };
                         mine.push(stored.message.header.id);
                     }
                     mine
@@ -498,6 +510,184 @@ pub fn store_claim_read_is_once_under_concurrency(backend: impl OpenBackend) {
     let mut sorted = claimed.clone();
     sorted.sort();
     assert_eq!(sorted, (1..=5).map(msg_id).collect::<Vec<_>>());
+}
+
+/// A reader that peeked, then lost the oldest message to another claimer, must claim the
+/// next one: `claim_read(None)` never answers `None` while an unread message remains. A
+/// store that selects on the reader's stale snapshot and then loses its guarded update
+/// (`... WHERE state = 'unread'` touching 0 rows) fails here.
+pub fn store_claim_read_after_a_lost_race_takes_the_next(backend: impl OpenBackend) {
+    let store = open_store(&backend);
+    commit(
+        &store,
+        new_message(1, PAT_ID, ADA_ID, MessagePriority::Normal),
+    );
+    commit(
+        &store,
+        new_message(2, PAT_ID, ADA_ID, MessagePriority::Normal),
+    );
+    enum Step {
+        Peek,
+        Claim,
+    }
+    thread::scope(|scope| {
+        // Owned inside the scope, so a failed assertion ends reader A instead of stranding it.
+        let (ask, asked) = std::sync::mpsc::channel::<Step>();
+        let (answer, answers) = std::sync::mpsc::channel::<Option<String>>();
+        let store = &store;
+        // Reader A: one long-lived thread, as a pooled or thread-bound connection would be.
+        // The case bites only if A's claim reuses the connection A's peek used.
+        scope.spawn(move || {
+            while let Ok(step) = asked.recv() {
+                let seen = match step {
+                    Step::Peek => peek(store, ADA_ID).message,
+                    Step::Claim => store.claim_read(ADA_ID, None, NOW_UTC).unwrap(),
+                };
+                if answer.send(seen.map(|m| m.message.header.id)).is_err() {
+                    break;
+                }
+            }
+        });
+        let timeout = Duration::from_secs(10);
+        ask.send(Step::Peek).unwrap();
+        assert_eq!(answers.recv_timeout(timeout).unwrap(), Some(msg_id(1)));
+        // B claims message 1 between A's peek and A's claim.
+        let taken = store.claim_read(ADA_ID, None, NOW_UTC).unwrap().unwrap();
+        assert_eq!(taken.message.header.id, msg_id(1));
+        ask.send(Step::Claim).unwrap();
+        assert_eq!(
+            answers.recv_timeout(timeout).unwrap(),
+            Some(msg_id(2)),
+            "claim_read(None) answered without message 2 while it was unread"
+        );
+    });
+    assert_eq!(store.claim_read(ADA_ID, None, NOW_UTC).unwrap(), None);
+}
+
+/// A commit that returned `Ok` is visible at once to a reader on another, long-lived
+/// thread (as a pooled or thread-bound connection would be), and so is a claim: reads use a
+/// fresh snapshot, never a long-lived read transaction (§2.2).
+pub fn store_commits_and_claims_are_visible_to_other_readers(backend: impl OpenBackend) {
+    let store = open_store(&backend);
+    type Seen = (Option<String>, bool, Vec<String>);
+    thread::scope(|scope| {
+        // Owned inside the scope: if an assertion fails, `ask` drops while unwinding and
+        // the reader thread ends, instead of the scope waiting on it forever.
+        let (ask, asked) = std::sync::mpsc::channel::<Option<u32>>();
+        let (answer, answers) = std::sync::mpsc::channel::<Seen>();
+        let store = &store;
+        scope.spawn(move || {
+            // One reader thread for the whole case; it reads before every commit too.
+            while let Ok(Some(round)) = asked.recv() {
+                let peeked = peek(store, ADA_ID).message.map(|m| m.message.header.id);
+                let got = store.get_message(&msg_id(round)).unwrap().is_some();
+                let unread = ids(&store.list_headers(inbox_query(ADA_ID, true, 100)).unwrap());
+                answer.send((peeked, got, unread)).unwrap();
+            }
+        });
+        for round in 1..=5 {
+            ask.send(Some(round)).unwrap();
+            assert_eq!(
+                answers.recv().unwrap(),
+                (None, false, vec![]),
+                "round {round}"
+            );
+            commit(
+                store,
+                new_message(round, PAT_ID, ADA_ID, MessagePriority::Normal),
+            );
+            ask.send(Some(round)).unwrap();
+            assert_eq!(
+                answers.recv().unwrap(),
+                (Some(msg_id(round)), true, vec![msg_id(round)]),
+                "the reader must see the commit that just returned (round {round})"
+            );
+            let claimed = store.claim_read(ADA_ID, None, NOW_UTC).unwrap().unwrap();
+            assert_eq!(claimed.message.header.id, msg_id(round));
+        }
+        ask.send(Some(5)).unwrap();
+        assert_eq!(answers.recv().unwrap(), (None, true, vec![]));
+        ask.send(None).unwrap();
+    });
+}
+
+/// `claim_read(None)` selects and marks in one writer transaction: claimers that have been
+/// reading (and could hold stale snapshots) race each other and a writer still committing,
+/// and every message is claimed exactly once.
+pub fn store_claim_read_selects_and_marks_atomically(backend: impl OpenBackend) {
+    let store = open_store(&backend);
+    for n in 1..=30 {
+        commit(
+            &store,
+            new_message(n, PAT_ID, ADA_ID, MessagePriority::Normal),
+        );
+    }
+    let first = store.claim_read(ADA_ID, None, NOW_UTC).unwrap().unwrap();
+    assert_eq!(first.message.header.id, msg_id(1));
+    let barrier = Barrier::new(7);
+    let mut claimed: Vec<String> = thread::scope(|scope| {
+        let store = &store;
+        let barrier = &barrier;
+        let producer = scope.spawn(move || {
+            barrier.wait();
+            for n in 31..=60 {
+                commit(
+                    store,
+                    new_message(n, PAT_ID, ADA_ID, MessagePriority::Normal),
+                );
+            }
+        });
+        let claimers: Vec<_> = (0..6)
+            .map(|_| {
+                scope.spawn(move || {
+                    // Read first, so a backend that claims from a reader's snapshot has one.
+                    // Fail only after the barrier, so neither an error nor a panic in the
+                    // backend can strand the other threads waiting at it.
+                    let warmed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        store.peek_next_unread(ADA_ID, None, false, NOW_UTC)
+                    }));
+                    barrier.wait();
+                    let warmed = match warmed {
+                        Ok(result) => result.expect("peek_next_unread"),
+                        Err(panic) => std::panic::resume_unwind(panic),
+                    };
+                    assert!(warmed.message.is_some(), "peek sees the unread messages");
+                    let mut mine = Vec::new();
+                    for _ in 0..200 {
+                        match store.claim_read(ADA_ID, None, NOW_UTC).unwrap() {
+                            Some(stored) => {
+                                assert_eq!(stored.message.header.state, State::Read);
+                                mine.push(stored.message.header.id);
+                            }
+                            None => thread::yield_now(),
+                        }
+                        let _ = peek(store, ADA_ID);
+                    }
+                    mine
+                })
+            })
+            .collect();
+        producer.join().unwrap();
+        claimers
+            .into_iter()
+            .flat_map(|c| c.join().unwrap())
+            .collect()
+    });
+    // Bounded: a backend that keeps returning a message fails below, never spins.
+    for _ in 0..=60 {
+        let Some(stored) = store.claim_read(ADA_ID, None, NOW_UTC).unwrap() else {
+            break;
+        };
+        claimed.push(stored.message.header.id);
+    }
+    claimed.push(first.message.header.id);
+    claimed.sort();
+    assert_eq!(
+        claimed,
+        (1..=60).map(msg_id).collect::<Vec<_>>(),
+        "every message is claimed exactly once"
+    );
+    assert_eq!(peek(&store, ADA_ID).message, None);
 }
 
 /// Headers come newest first by `local_seq`, page by cursor without gaps or repeats, and
@@ -609,6 +799,26 @@ pub fn directory_resolution_order(backend: impl OpenBackend) {
     for nobody in ["office", "OFFICE", "nobody", ""] {
         assert_eq!(resolve(&directory, nobody), None);
     }
+}
+
+/// Handles fold case by Unicode lower case (`str::to_lowercase`), as org-office keys them:
+/// "Émile" is found as "émile" and "ÉMILE", by the directory and through send.
+pub fn directory_handles_fold_unicode_case(backend: impl OpenBackend) {
+    let (_, directory) = backend.open(&members(), POSITION);
+    for spelling in ["\u{c9}mile", "\u{e9}mile", "\u{c9}MILE", "\u{e9}MILE"] {
+        assert_eq!(
+            resolve(&directory, spelling).as_deref(),
+            Some(EMILE_ID),
+            "{spelling}"
+        );
+    }
+    assert_eq!(resolve(&directory, "emile"), None, "an accent is not case");
+
+    let office = office(&backend);
+    assert_eq!(
+        recipient(&office, 1, "  \u{e9}MILE\t").as_deref(),
+        Ok(EMILE_ID)
+    );
 }
 
 /// The directory returns members with their stored status, whatever it is.
@@ -1148,12 +1358,12 @@ pub fn mailbox_concurrent_reads_claim_once(backend: impl OpenBackend) {
                 scope.spawn(|| {
                     barrier.wait();
                     let mut mine = Vec::new();
-                    while let Some(message) = office
-                        .mailbox
-                        .read(ADA_ID, MsgReadParams::default())
-                        .unwrap()
-                        .message
-                    {
+                    // Bounded: an inbox that keeps returning a message fails, never spins.
+                    for _ in 0..=4 {
+                        let read = office.mailbox.read(ADA_ID, MsgReadParams::default());
+                        let Some(message) = read.unwrap().message else {
+                            break;
+                        };
                         mine.push(message.header.id);
                     }
                     mine
@@ -1220,21 +1430,23 @@ pub fn mailbox_wait_returns_unread_without_claiming(backend: impl OpenBackend) {
 /// the message is delivered once (one event, one inbox row, one successful claim).
 pub fn mailbox_wait_registered_before_commit_delivers_once(backend: impl OpenBackend) {
     let office = office(&backend);
+    // Send only after the waiter's first check found nothing, so it must be woken.
+    let (checked, first_check) = std::sync::mpsc::channel();
+    *office.store.after_peek.lock().unwrap() = Some(Box::new(move || {
+        let _ = checked.send(());
+    }));
     let mailbox = office.mailbox.clone();
     let (_handle, cancel) = cancellation_pair();
-    let started = Instant::now();
     let waiter =
-        thread::spawn(move || mailbox.wait(ADA_ID, wait_params(30_000), far_deadline(), &cancel));
-    eventually("the waiter to register", || {
-        office.mailbox.held_waits() == 1
-    });
+        thread::spawn(move || mailbox.wait(ADA_ID, wait_params(5_000), far_deadline(), &cancel));
+    first_check
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the waiter checks the inbox");
+    assert_eq!(office.mailbox.held_waits(), 1);
     send(&office.mailbox, PAT_ID, 1, ADA_HANDLE).unwrap();
     let waited = waiter.join().unwrap().unwrap();
+    // Woken by the commit: a lost wake-up returns None at the 5 s timeout and fails here.
     assert_eq!(waited.message.unwrap().header.id, msg_id(1));
-    assert!(
-        started.elapsed() < Duration::from_secs(20),
-        "woken by the commit"
-    );
     assert_eq!(office.mailbox.held_waits(), 0);
     assert_eq!(office.events.received(), [msg_id(1)]);
     assert_eq!(unread_inbox(&office.mailbox, ADA_ID), [msg_id(1)]);
@@ -1251,6 +1463,48 @@ pub fn mailbox_wait_registered_before_commit_delivers_once(backend: impl OpenBac
             .message,
         None
     );
+}
+
+/// One commit wakes ALL of the member's held waits, and each returns the message; a wait
+/// for another member stays held.
+pub fn mailbox_wait_one_commit_wakes_every_waiter(backend: impl OpenBackend) {
+    let office = office(&backend);
+    let (_handle, cancel) = cancellation_pair();
+    let (other_handle, other_cancel) = cancellation_pair();
+    let other = {
+        let mailbox = office.mailbox.clone();
+        thread::spawn(move || {
+            mailbox.wait(REMY_ID, wait_params(30_000), far_deadline(), &other_cancel)
+        })
+    };
+    let waiters: Vec<_> = (0..3)
+        .map(|_| {
+            let mailbox = office.mailbox.clone();
+            let cancel = cancel.clone();
+            thread::spawn(move || mailbox.wait(ADA_ID, wait_params(5_000), far_deadline(), &cancel))
+        })
+        .collect();
+    eventually("all four waiters to register", || {
+        office.mailbox.held_waits() == 4
+    });
+    send(&office.mailbox, PAT_ID, 1, ADA_HANDLE).unwrap();
+    for waiter in waiters {
+        let waited = waiter.join().unwrap().unwrap();
+        assert_eq!(
+            waited.message.map(|message| message.header.id),
+            Some(msg_id(1)),
+            "every waiter of the recipient is woken by the one commit"
+        );
+    }
+    assert_eq!(
+        office.mailbox.held_waits(),
+        1,
+        "the other member's wait stays held"
+    );
+    drop(other_handle);
+    assert_eq!(other.join().unwrap(), Err(MailboxError::NotBound));
+    assert_eq!(office.mailbox.held_waits(), 0);
+    assert_eq!(office.events.received(), [msg_id(1)]);
 }
 
 /// §2.2: a commit that lands after the wait's check found nothing, but before it blocks,
@@ -1294,36 +1548,48 @@ pub fn mailbox_wait_deadline(backend: impl OpenBackend) {
     assert!(elapsed >= Duration::from_millis(50), "{elapsed:?}");
     assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
 
+    // The caller's deadline beats a longer timeout_ms. A wait that ignored it would block
+    // the full FALLBACK_MS and fail the bound below, so a broken backend fails in seconds.
+    const FALLBACK_MS: u64 = 8_000;
+    let bound = Duration::from_millis(FALLBACK_MS / 2);
     let started = Instant::now();
     let deadline = Instant::now() + Duration::from_millis(50);
     let waited = mailbox
-        .wait(ADA_ID, wait_params(MAX_WAIT_MS), deadline, &cancel)
+        .wait(ADA_ID, wait_params(FALLBACK_MS), deadline, &cancel)
         .unwrap();
     assert_eq!(waited.message, None);
     assert!(started.elapsed() >= Duration::from_millis(50));
-    assert!(started.elapsed() < Duration::from_secs(5));
+    assert!(
+        started.elapsed() < bound,
+        "the caller's deadline was ignored"
+    );
 
     let passed = Instant::now();
     let started = Instant::now();
     assert_eq!(
         mailbox
-            .wait(ADA_ID, wait_params(MAX_WAIT_MS), passed, &cancel)
+            .wait(ADA_ID, wait_params(FALLBACK_MS), passed, &cancel)
             .unwrap()
             .message,
         None
     );
-    assert!(started.elapsed() < Duration::from_secs(5));
+    assert!(
+        started.elapsed() < bound,
+        "a passed deadline must not block"
+    );
     send(mailbox, PAT_ID, 1, ADA_HANDLE).unwrap();
+    let started = Instant::now();
     let waited = mailbox
-        .wait(ADA_ID, wait_params(MAX_WAIT_MS), passed, &cancel)
+        .wait(ADA_ID, wait_params(FALLBACK_MS), passed, &cancel)
         .unwrap();
     assert_eq!(waited.message.unwrap().header.id, msg_id(1));
+    assert!(started.elapsed() < bound);
 
     assert_eq!(
         mailbox.wait(
             ADA_ID,
             wait_params(MAX_WAIT_MS + 1),
-            far_deadline(),
+            Instant::now(),
             &cancel
         ),
         Err(MailboxError::InvalidRequest)
@@ -1391,7 +1657,7 @@ pub fn mailbox_wait_commit_racing_cancel(backend: impl OpenBackend) {
         let (handle, cancel) = cancellation_pair();
         let mailbox = office.mailbox.clone();
         let waiter = thread::spawn(move || {
-            mailbox.wait(ADA_ID, wait_params(10_000), far_deadline(), &cancel)
+            mailbox.wait(ADA_ID, wait_params(5_000), far_deadline(), &cancel)
         });
         let mailbox = office.mailbox.clone();
         let sender = thread::spawn(move || send(&mailbox, PAT_ID, n, ADA_HANDLE));
@@ -1457,9 +1723,13 @@ macro_rules! mailbox_conformance_tests {
             store_peek_reports_expired_without_deleting,
             store_claim_read_order_and_ownership,
             store_claim_read_is_once_under_concurrency,
+            store_commits_and_claims_are_visible_to_other_readers,
+            store_claim_read_after_a_lost_race_takes_the_next,
+            store_claim_read_selects_and_marks_atomically,
             store_list_headers_order_paging_and_filters,
             directory_resolution_order,
             directory_returns_status_unfiltered,
+            directory_handles_fold_unicode_case,
             mailbox_send_commits_with_origin,
             mailbox_send_replay_and_conflict,
             mailbox_send_concurrent_replay_publishes_once,
@@ -1473,6 +1743,7 @@ macro_rules! mailbox_conformance_tests {
             mailbox_concurrent_reads_claim_once,
             mailbox_wait_returns_unread_without_claiming,
             mailbox_wait_registered_before_commit_delivers_once,
+            mailbox_wait_one_commit_wakes_every_waiter,
             mailbox_wait_commit_between_check_and_block,
             mailbox_wait_deadline,
             mailbox_wait_cancel_removes_waiter,

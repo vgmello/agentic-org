@@ -282,7 +282,7 @@ To keep `inbox`, `notify`, `wait`, `read --next`, and UI thread views sub-millis
 1. **`msg.wait { timeout_ms, from?, urgent_only? }`:**
    - **Step 1 (Register):** Inserts an inbox waiter handle into `WaiterRegistry`.
    - **Step 2 (Check):** Releases any due time-based snoozes (`snoozed_until <= now_utc`) and queries `peek_next_unread` for the oldest unsnoozed unread message for `to_member_id` (matching `from` and `urgent_only` if given).
-     - If `peek_next_unread` encounters rows with `adjusted_expires_at + skew_bound <= now_utc`, it skips them and enqueues `update_state_local(..., Expired)` so they are cleaned out of `msg_unread`.
+     - If `peek_next_unread` encounters rows with `adjusted_expires_at + skew_bound <= now_utc`, it skips them and enqueues `update_state_local(..., Expired)` so they are cleaned out of `msg_unread`. (amended 2026-11-08: store split, ada) `peek_next_unread` itself is read-only (§4.3): it skips them and reports them as `expired_ids`, and the Mailbox enqueues the `update_state_local(..., Expired)` through `TriageStore`.
    - **Step 3 (Complete or block):** If a matching unread message is found (or if a concurrent `Mailbox` commit completed the waiter handle during Step 2), removes the waiter handle and returns that message immediately **without** marking it read. Otherwise, blocks on the waiter handle until woken by `Mailbox` or until `timeout_ms` elapses (returning `null`, which makes `org-agent msg wait` exit `2`).
 2. **Claim-before-commit on `msg.ask` replies (zero double-wake window, `M-C`):**
    - **Step 1 (Register ask waiter):** `Mailbox::ask` registers a reply waiter for `(ask.id, recipient_member_id)` in `WaiterRegistry` **before** calling `store.commit_message` (or `store.find_reply_for_ask` on an idempotent re-ask).
@@ -662,7 +662,7 @@ apps/org-office-server (server-dev) ─▶ crates/org-office (server-dev) ─┤
 | :--- | :--- | :--- | :--- | :--- |
 | `crates/org-proto` | `ada` | Client ↔ Office wire & spool contract | `serde`, `serde_json` (`Ce = 2`) | `~0.15` (Stable contract) |
 | `crates/org-sync-proto` | `ada` | Office ↔ HQ sync & runtime contract | `org-proto`, `serde`, `serde_json` (`Ce = 3`) | `~0.25` (Stable contract) |
-| `crates/org-mailbox` | Remy (`ac-software-engineer-remy`) | Pure messaging & triage/snooze domain (`WaiterRegistry` + snooze timer heap, `sha2` canonical `content_hash`, `flate2` compression + bounded decompression, `notify` formatter + session dedup, idempotent `ask`, dead-letter rules) over `MemberDirectory` + `MessageStore` traits | `org-proto`, `org-sync-proto`, `flate2`, `sha2` (`Ce = 4`, **no SQLite**) | `~0.40` (Domain capability) |
+| `crates/org-mailbox` | Remy (`ac-software-engineer-remy`) | Pure messaging & triage/snooze domain (`WaiterRegistry` + snooze timer heap, `sha2` canonical `content_hash`, `flate2` compression + bounded decompression, `notify` formatter + session dedup, idempotent `ask`, dead-letter rules) over `MemberDirectory` + `MessageStore` traits | `org-proto`, `org-sync-proto`, `flate2`, `sha2` (`Ce = 4`, **no SQLite**). (amended 2026-11-08: store split, ada) Today (slice 1): `org-proto`, `serde_json`, `sha2` (`Ce = 3`); `org-sync-proto` and `flate2` come with sync and compression | `~0.40` (Domain capability) |
 | `crates/org-spool` | Remy (`ac-software-engineer-remy`) | Crash-safe local spool (`tmp` + `F_FULLFSYNC` + `rename` into `new`, `O_NOFOLLOW | O_NONBLOCK` regular-file ingest; powers Phase A CLI and Phase B offline fallback) | `org-proto`, `serde`, `serde_json` (`Ce = 3`) | `~0.35` (Platform primitive) |
 | `apps/org-agent` | Remy (`ac-software-engineer-remy`) | Fast stateless CLI (`who`, `status`, `msg` with `defer`/`done`/`notify`/`due`) | `org-client`, `org-spool`, `org-proto` (`Ce = 3`) | `1.00` (Edge binary) |
 | `crates/org-office` (`store.rs`) | `server-dev` | Owns `who` / `status.set` runtime capability and implements `MemberDirectory` + `MessageStore` ((amended 2026-11-08: store split, ada) and `TriageStore`, `SyncStore`, `ThreadStore`) inside `store.rs` on the single batching SQLCipher writer and read pool | Owns `rusqlite` / SQLCipher | Domain + Store |
@@ -679,6 +679,8 @@ pub trait MemberDirectory {
     /// Display names aren't accepted. There's no `AmbiguousName`: two members with one handle is a storage error.
     /// (amended 2026-11-08: agent sessions rev 3.2, ada) "owner" is checked before ids, and an exact id match beats a handle. The owner resolves only as "owner":
     /// its display name isn't a handle. "office" is reserved and never resolves to a member.
+    /// (amended 2026-11-08: store split, ada) "Ignoring case" means Unicode lower case (Rust's `str::to_lowercase`, as org-office keys handles),
+    /// not ASCII-only folding: SQLite's `lower()` and `COLLATE NOCASE` would miss "Émile" as "émile". The org-mailbox conformance suite checks it.
     fn resolve_member(&self, id_or_handle: &str) -> Result<Option<(Member, Position)>, StoreError>;
 }
 
@@ -701,6 +703,14 @@ pub trait SessionAuth {
 // wait) needs only `MessageStore` and `MemberDirectory`; triage, sync and threads come later.
 // Two databases: `MemberDirectory` reads org.db and these four read and write office.db. No
 // transaction spans both, and the Mailbox never assumes one does.
+// (amended 2026-11-08: store split, ada) What §2.2 relies on: a `commit_message` that returns
+// `Ok` is durable and visible to every connection (a batching writer replies only after its
+// COMMIT), because the Mailbox wakes waiters right after it returns; every read
+// (`peek_next_unread`, `get_message`, `list_headers`) reads a fresh snapshot, never a long-lived
+// read transaction, so a woken waiter sees the commit that woke it; and `claim_read` selects and
+// marks in one writer transaction, never choosing its message from a reader's snapshot. These are
+// slice 1's calls; `TriageStore::update_state_local`, after which §2.2 also wakes waiters, gives
+// the same commit guarantee as `commit_message`.
 
 /// (amended 2026-11-08: store split, ada) Delivery: commit, claim, peek and look up messages.
 pub trait MessageStore {
@@ -714,6 +724,8 @@ pub trait MessageStore {
     /// counter (≥ 1, strictly increasing in commit order); a synced commit passes its origin's.
     /// The same `id` with a different sender or `content_hash` is `StoreError::AlreadyExists`;
     /// a matching replay returns the first commit with `inserted: false`.
+    /// (amended 2026-11-08: store split, ada) `Ok` means durable and visible to every connection:
+    /// a batching writer must not return before its COMMIT.
     fn commit_message(&self, msg: NewStoredMessage) -> Result<CommitMessageOutcome, StoreError>;
 
     /// Atomically claim and mark read a specific message `id` or the oldest unsnoozed unread for `to_member_id`,
@@ -721,18 +733,22 @@ pub trait MessageStore {
     /// (amended 2026-11-08: store split, ada) `None` when `id` isn't addressed to `to_member_id`, or with no
     /// `id` when nothing is unread. A claim sets `read_at` to exactly `now_utc`; claiming an already read `id`
     /// returns it unchanged, with its earlier `read_at`. Concurrent claims of one message succeed once.
+    /// (amended 2026-11-08: store split, ada) With no `id`, it selects the oldest unread and marks it in ONE
+    /// writer transaction; it never picks the message from a reader's (possibly stale) snapshot.
     fn claim_read(&self, to_member_id: &str, id: Option<&str>, now_utc: &str) -> Result<Option<StoredMessage>, StoreError>;
 
     /// Query oldest non-expired, unsnoozed unread message for `to_member_id` (optionally filtered by `from_member_id`
     /// and `urgent_only`) without marking read. Also returns any expired unread IDs encountered.
     /// (amended 2026-11-08: store split, ada) Read-only: it changes and deletes nothing. The Mailbox
     /// decides what to do with `expired_ids` (through `TriageStore`).
+    /// (amended 2026-11-08: store split, ada) It reads a fresh snapshot each call, never a long-lived read
+    /// transaction, so a waiter woken by a commit sees that commit.
     fn peek_next_unread(&self, to_member_id: &str, from_member_id: Option<&str>, urgent_only: bool, now_utc: &str) -> Result<PeekUnreadOutcome, StoreError>;
 
     /// Look up an existing message by ID (for `msg.get`, `msg.reply` recipient check, or idempotent `msg.ask`).
     fn get_message(&self, id: &str) -> Result<Option<StoredMessage>, StoreError>;
 
-    /// Paginate headers (`msg.inbox`, `msg.list`, `msg.human_needs_you`) by `local_seq DESC` without reading `msg_bodies`.
+    /// (amended 2026-11-08: store split, ada) Paginate headers (`msg.inbox`, `msg.list`, `msg.human_needs_you`) by `local_seq DESC` without reading `msg_bodies` (threads moved to `ThreadStore::list_threads`).
     fn list_headers(&self, query: HeaderQuery) -> Result<HeaderPage, StoreError>;
 
     /// Find a reply (`reply_to == ask_id` and `from_member_id == responder_id`) or `delivery_failed` for `ask_id`.
