@@ -2,8 +2,9 @@
 //! and [`DbKey`], an office's database key.
 //!
 //! The host makes a fresh token for each office every time it starts and keeps it only in
-//! memory. It passes it to the office's server over the startup pipe and gives it to the app over
-//! `host.sock` after checking the app's code signature. It never reaches a file, argv, the
+//! memory. It hands it to the office's server over that server's one-shot key socket (the launch
+//! protocol's key hand-off, `org-office-launch`: never on stdin or any inherited descriptor) and
+//! gives it to the app over `host.sock` after checking the app's code signature. It never reaches a file, argv, the
 //! environment or a log.
 //!
 //! On the wire it is 64 lowercase hex digits. This type keeps it from leaking by accident:
@@ -17,8 +18,9 @@
 //! It decodes from JSON only (it uses `deserialize_any`, which needs a self-describing format).
 //!
 //! [`DbKey`], an office's database key, gets the same treatment (see its docs). It travels only
-//! on the launch pipe from the host to the office's server (`org-office-launch`), never on a
-//! socket. It lives here, next to the app token, so the two share one implementation of their
+//! from the host to the office's server in the launch protocol's key hand-off (`org-office-launch`:
+//! a one-shot socket the server connects to, whose peer the host checks), never on the server's
+//! stdin or any inherited descriptor, and never on `host.sock` or an office socket. It lives here, next to the app token, so the two share one implementation of their
 //! guards (`org-office-launch` re-exports it).
 //!
 //! Zeroing is defence in depth, not a guarantee that no copy of the token is left in memory. The
@@ -151,8 +153,8 @@ impl Secret for AppToken {
 /// An office's database key: the 32-byte raw key of its SQLCipher databases.
 ///
 /// The host creates each office's key from a secure random source, stores it in its own key
-/// store, and sends it to the office's server on the launch pipe (`org-office-launch`) on every
-/// create, start and discard. The server never creates, stores or deletes one. It never reaches
+/// store, and hands it to the office's server in the launch protocol's key hand-off
+/// (`org-office-launch`) on every create, start and discard. The server never creates, stores or deletes one. It never reaches
 /// argv, the environment, a log or the office's folder.
 ///
 /// It has the same guards as [`AppToken`]:
