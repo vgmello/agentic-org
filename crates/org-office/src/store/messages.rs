@@ -28,6 +28,7 @@ use crate::error::OfficeError;
 use crate::store::Store;
 
 const SEQUENCE_KEY: &str = "message_sequence";
+const INCARNATION_KEY: &str = "incarnation";
 /// `msg_headers.flags`: an ask to a person whose deadline passed (it stays unread).
 const FLAG_EXPIRED_WAITING_PERSON: i64 = 8;
 
@@ -263,6 +264,31 @@ pub(crate) fn write<R: Send + 'static>(
     mut work: impl FnMut(&Connection) -> Result<Result<R, StoreError>, OfficeError> + Send + 'static,
 ) -> Result<Result<R, StoreError>, OfficeError> {
     store.write(move |db| Ok((work(db)?, None)))
+}
+
+/// This office.db's incarnation: a ULID made the first time it is asked for and kept in `meta`.
+/// A message's origin is (office, incarnation, origin_seq). The value lives inside the file, so a
+/// restore from a backup brings the old one back: whoever restores must make a new one (that
+/// is the restore tool's job, not this function's). Runs on the writer.
+pub(crate) fn incarnation(db: &Connection) -> Result<String, OfficeError> {
+    let existing: Option<String> = db
+        .query_row(
+            "SELECT value FROM meta WHERE key = ?1",
+            [INCARNATION_KEY],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(storage)?;
+    if let Some(existing) = existing {
+        return Ok(existing);
+    }
+    let made = crate::ulid::generate().map_err(OfficeError::storage)?;
+    db.execute(
+        "INSERT INTO meta (key, value) VALUES (?1, ?2)",
+        (INCARNATION_KEY, &made),
+    )
+    .map_err(storage)?;
+    Ok(made)
 }
 
 /// The next `local_seq` (>= 1, increasing in commit order).

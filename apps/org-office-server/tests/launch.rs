@@ -1018,3 +1018,117 @@ fn who_lists_the_directory_with_cards_for_the_app_and_not_for_an_unbound_connect
     drop(client);
     assert!(run.host_goes_away().success());
 }
+
+#[test]
+fn an_agent_and_the_owner_message_each_other_through_the_real_office_and_it_survives_a_restart() {
+    use org_proto::msg::{
+        MsgBind, MsgBindParams, MsgInbox, MsgInboxParams, MsgRead, MsgReadParams, MsgSend,
+        MsgSendParams, MsgWait, MsgWaitParams, KIND_MSG,
+    };
+    use org_proto::org::{
+        AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams,
+    };
+    let world = World::new();
+    let mut first = create(&world);
+    let app = Client::connect(socket(&world)).unwrap();
+    bind(&app, token()).unwrap();
+    let agent_id = "AGENT00000000000000000000A".to_owned();
+    app.call::<MemberAddAgent>(&MemberAddAgentParams {
+        command_id: command_id(1),
+        member_id: agent_id.clone(),
+        name: "Pixel".into(),
+        office_id: OFFICE.into(),
+        profile: AgentProfile {
+            role: "engineer".into(),
+            title: "Engineer".into(),
+            focus: None,
+            runtime: AgentRuntime::ClaudeCode,
+            model: None,
+            run_mode: None,
+            schedule: None,
+            home: None,
+            messaging_name: "pixel".into(),
+            status: AgentStatus::Active,
+            offboarded_at: None,
+        },
+    })
+    .unwrap();
+
+    // The agent binds with no token, the owner with the app's.
+    let bind_as = |client: &Client, member: &str, app_token: Option<AppToken>| {
+        client
+            .call::<MsgBind>(&MsgBindParams {
+                member: Some(member.into()),
+                app_token,
+            })
+            .unwrap()
+    };
+    let agent = Client::connect(socket(&world)).unwrap();
+    assert_eq!(
+        bind_as(&agent, "pixel", None).member_id,
+        Some(agent_id.clone())
+    );
+    let owner = Client::connect(socket(&world)).unwrap();
+    let owner_id = bind_as(&owner, "owner", Some(token())).member_id.unwrap();
+
+    let send = |client: &Client, n: u8, to: &str, body: &str| {
+        client
+            .call::<MsgSend>(&MsgSendParams {
+                id: command_id(n),
+                to: to.into(),
+                kind: KIND_MSG.into(),
+                priority: None,
+                subject: Some("hello".into()),
+                body: body.into(),
+                meta: Default::default(),
+                reply_to: None,
+            })
+            .unwrap()
+    };
+    let inbox = MsgInboxParams {
+        include_all: true,
+        from: None,
+        thread_id: None,
+        cursor: None,
+        limit: None,
+    };
+    send(&agent, 10, "owner", "from the agent");
+    let seen = owner.call::<MsgInbox>(&inbox).unwrap();
+    assert_eq!(seen.headers.len(), 1);
+    assert_eq!(seen.headers[0].from_member_id, agent_id);
+    assert_eq!(seen.headers[0].to_member_id, owner_id);
+    let read = owner.call::<MsgRead>(&MsgReadParams { id: None }).unwrap();
+    assert_eq!(read.message.unwrap().body, "from the agent");
+
+    // The owner's message wakes the agent's held wait.
+    let waiting = {
+        let agent = Client::connect(socket(&world)).unwrap();
+        bind_as(&agent, "pixel", None);
+        std::thread::spawn(move || {
+            agent
+                .call::<MsgWait>(&MsgWaitParams {
+                    timeout_ms: 30_000,
+                    from: None,
+                    urgent_only: false,
+                })
+                .unwrap()
+        })
+    };
+    std::thread::sleep(Duration::from_millis(300));
+    send(&owner, 11, "pixel", "from the owner");
+    let woken = waiting.join().unwrap();
+    assert_eq!(woken.message.unwrap().body, "from the owner");
+
+    // A restart keeps both messages, and the agent binds again.
+    drop((app, agent, owner));
+    assert!(first.host_goes_away().success());
+    let mut again = world.spawn(&["--office", OFFICE]);
+    again.send(&start_message());
+    assert!(matches!(again.event(), ServerEvent::Ready { .. }));
+    let agent = Client::connect(socket(&world)).unwrap();
+    bind_as(&agent, "pixel", None);
+    let all = agent.call::<MsgInbox>(&inbox).unwrap();
+    assert_eq!(all.headers.len(), 1);
+    assert_eq!(all.headers[0].from_member_id, owner_id);
+    assert!(again.host_goes_away().success());
+}

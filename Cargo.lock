@@ -2253,6 +2253,7 @@ dependencies = [
  "core-foundation",
  "libc",
  "org-client",
+ "org-mailbox",
  "org-office",
  "org-office-launch",
  "org-proto",
