@@ -1,7 +1,7 @@
 import type { OrgApi } from '$lib/org/api';
 import { isFormer } from '$lib/org/model';
-import type { WorkAccepted, WorkItem, WorkItemSummary, WorkPosition } from '$lib/proto';
-import { applyWork, emptyWork, itemOf, positionOf, summaries, type WorkCall, type WorkContext, type WorkState } from './engine';
+import type { WorkAccepted, WorkEvent, WorkItem, WorkItemSummary, WorkPosition } from '$lib/proto';
+import { activityOf, applyWork, emptyWork, itemOf, positionOf, summaries, type WorkCall, type WorkContext, type WorkState } from './engine';
 
 /**
  * What the work screens need from an office: `work.snapshot`, `work.get` and the item calls. The calls are
@@ -14,6 +14,15 @@ export interface WorkApi {
 	get(organizationId: string, itemId: string): Promise<WorkItem>;
 	/** Rejects with the error the office gave (an `AppError` with source `api`). */
 	command(organizationId: string, call: WorkCall): Promise<WorkAccepted>;
+	/** `work.activity`: what happened to one item, oldest first. */
+	activity(organizationId: string, itemId: string): Promise<WorkEvent[]>;
+	/** Whether this office keeps feature requests yet (the Rust shell's mock office does not). */
+	readonly requests: boolean;
+}
+
+/** The browser mock also lets a test act as another member, as an agent working through the CLI would. */
+export interface MockWorkApi extends WorkApi {
+	commandAs(organizationId: string, actor: string, call: WorkCall): Promise<WorkAccepted>;
 }
 
 export interface MockWorkStorage {
@@ -26,7 +35,7 @@ const key = (organizationId: string) => `agentic-org.mock.work.${organizationId}
 export function createMockWork(
 	org: Pick<OrgApi, 'view'>,
 	{ storage = globalThis.localStorage as MockWorkStorage | undefined, now = () => new Date().toISOString() }: { storage?: MockWorkStorage; now?: () => string } = {}
-): WorkApi {
+): MockWorkApi {
 	const memory = new Map<string, WorkState>();
 	const load = (organizationId: string): WorkState => {
 		const held = memory.get(organizationId);
@@ -55,12 +64,12 @@ export function createMockWork(
 			// kept in memory only
 		}
 	};
-	const context = async (organizationId: string): Promise<WorkContext> => {
+	const context = async (organizationId: string, actor?: string): Promise<WorkContext> => {
 		const { snapshot } = await org.view(organizationId);
 		const owner = snapshot.members.find((m) => m.owner);
 		return {
 			now: now(),
-			actor: owner?.id ?? 'owner',
+			actor: actor ?? owner?.id ?? 'owner',
 			projects: (snapshot.projects ?? []).map((p) => ({
 				id: p.id,
 				teamIds: (snapshot.project_teams ?? []).filter((l) => l.project_id === p.id).map((l) => l.team_id),
@@ -71,7 +80,13 @@ export function createMockWork(
 			members: snapshot.members.filter((m) => !isFormer(m)).map((m) => m.id)
 		};
 	};
+	const apply = async (organizationId: string, call: WorkCall, actor?: string) => {
+		const { state, accepted } = applyWork(load(organizationId), call, await context(organizationId, actor));
+		save(organizationId, state);
+		return accepted;
+	};
 	return {
+		requests: true,
 		async snapshot(organizationId, projectId, closedSince) {
 			const state = load(organizationId);
 			return { position: positionOf(state), items: summaries(state, projectId, closedSince) };
@@ -79,10 +94,8 @@ export function createMockWork(
 		async get(organizationId, itemId) {
 			return itemOf(load(organizationId), itemId, now());
 		},
-		async command(organizationId, call) {
-			const { state, accepted } = applyWork(load(organizationId), call, await context(organizationId));
-			save(organizationId, state);
-			return accepted;
-		}
+		activity: async (organizationId, itemId) => activityOf(load(organizationId), itemId),
+		command: (organizationId, call) => apply(organizationId, call),
+		commandAs: (organizationId, actor, call) => apply(organizationId, call, actor)
 	};
 }

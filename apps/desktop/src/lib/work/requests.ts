@@ -1,7 +1,7 @@
 // The mock office's rules for feature requests (ada's W7 design §1.5, §1.10, §4.7): one state machine, New → Routed →
 // Scoping → Scoped → Approved, or Declined / Merged from any open state. Like the rest of the mock engine these are
 // pure functions over a plain state; the real office decides the same things with the same words.
-import type { DocRef, DraftTask, Estimate, FeatureOutcome, ItemStatus, RequestOutcome, WorkItemSummary } from '$lib/proto';
+import type { DocRef, DraftTask, Estimate, FeatureOutcome, ItemStatus, RequestOutcome, WorkEventKind, WorkItemSummary } from '$lib/proto';
 import { REQUEST_LIMITS, WORK_LIMITS } from '$lib/proto';
 import type { StoredTask, WorkCall, WorkContext, WorkState } from './engine';
 import { emptyCounts, fail, idText, itemAt, officeLine, officeText, shortId, steps, touch } from './support';
@@ -18,7 +18,7 @@ const ROUTED_BY: readonly string[] = ['person', 'rule', 'copilot'];
 /** A bound of the mock only: the design gives no limit on an outcome's docs, only its 128 KiB. */
 const MOCK_MAX_DOCS = 50;
 
-/** The org-wide counter of request numbers: `REQ-n`, never reused (design §2.8). */
+/** The org-wide counter of request numbers: `REQ-n`, never reused (design §2.6). */
 const COUNTER = 'req:';
 
 function requestOf(state: WorkState, id: unknown): StoredTask {
@@ -56,9 +56,13 @@ function scoperOf(ctx: WorkContext, id: string | undefined): string | undefined 
 	if (!ctx.members.includes(id)) fail('unknown_recipient', 'That member cannot scope this.');
 	return id;
 }
-const noteOn = (item: StoredTask, id: string, body: string, by: string, at: string, state: WorkState) => {
-	if (Object.values(state.items).some((i) => i.comments?.some((c) => c.id === id))) fail('already_exists', 'That comment already exists.');
-	(item.comments ??= []).push({ id, body, by, at });
+const commentExists = (state: WorkState, id: string) => Object.values(state.items).some((i) => i.events?.some((e) => e.change.type === 'comment' && e.change.comment_id === id));
+/** Writes what a call did to `item` into its activity, at the version the call made (call after `touch`). */
+const record = (item: StoredTask, ctx: WorkContext, change: WorkEventKind) => {
+	(item.events ??= []).push({ target_id: item.summary.id, version: item.summary.version, at: ctx.now, actor_id: ctx.actor, auto: false, change });
+};
+const statusMove = (item: StoredTask, ctx: WorkContext, from: ItemStatus, reason?: string) => {
+	if (item.summary.status !== from) record(item, ctx, { type: 'status_changed', from, to: item.summary.status, ...(reason ? { reason } : {}) });
 };
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -175,6 +179,8 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 			};
 			state.items[call.item_id] = item;
 			state.seq += 1;
+			record(item, ctx, { type: 'created' });
+			if (scoper) record(item, ctx, { type: 'assigned', to: scoper });
 			changed.push(item);
 			return;
 		}
@@ -184,6 +190,7 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 			mustBeOpen(item, OPEN_REQUEST, 'changed');
 			if (call.project_id !== undefined && call.clear_project) fail('invalid_request', 'Give a project or clear it, not both.');
 			if (call.title === undefined && call.request_kind === undefined && call.project_id === undefined && !call.clear_project) fail('invalid_request', 'Nothing to change.');
+			const fields = [call.title !== undefined && 'title', call.request_kind !== undefined && 'request_kind', (call.project_id !== undefined || call.clear_project) && 'project_id'].filter((f): f is string => !!f);
 			if (call.title !== undefined) item.summary.title = officeLine(call.title, WORK_LIMITS.title, 'The title');
 			if (call.request_kind !== undefined) {
 				knownKind(call.request_kind);
@@ -195,6 +202,7 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 			}
 			if (call.clear_project) item.summary.project_id = undefined;
 			touch(state, item, now);
+			record(item, ctx, { type: 'fields_changed', fields });
 			changed.push(item);
 			return;
 		}
@@ -205,12 +213,15 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 			mustBeOpen(item, call.scoper_id === undefined ? ['routed', 'scoping'] : ['new', 'routed', 'scoping'], call.scoper_id === undefined ? 'taken back' : 'sent to someone else');
 			knownRoutedBy(call.routed_by);
 			const scoper = scoperOf(ctx, call.scoper_id);
+			const before = { status: item.summary.status, scoper: item.summary.assignee_id };
 			item.route_reason = reasonFor(call.route_reason, scoper);
 			item.routed_by = scoper ? call.routed_by : undefined;
 			item.summary.assignee_id = scoper;
 			// Sending it to someone makes it Routed again for them; sending it nowhere makes it Not routed.
 			item.summary.status = scoper ? 'routed' : 'new';
 			touch(state, item, now);
+			if (before.scoper !== scoper) record(item, ctx, { type: 'assigned', ...(before.scoper ? { from: before.scoper } : {}), ...(scoper ? { to: scoper } : {}) });
+			statusMove(item, ctx, before.status as ItemStatus);
 			changed.push(item);
 			return;
 		}
@@ -219,9 +230,12 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 			versioned(item, call.expected_version);
 			mustBeOpen(item, ['new', 'routed'], 'accepted');
 			// The caller becomes the scoper.
+			const was = { status: item.summary.status, scoper: item.summary.assignee_id };
 			item.summary.assignee_id = actor;
 			item.summary.status = 'scoping';
 			touch(state, item, now);
+			if (was.scoper !== actor) record(item, ctx, { type: 'assigned', ...(was.scoper ? { from: was.scoper } : {}), to: actor });
+			statusMove(item, ctx, was.status);
 			changed.push(item);
 			return;
 		}
@@ -231,8 +245,10 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 			mustBeOpen(item, ['routed', 'scoping'], 'scoped');
 			const project = item.summary.project_id ? ctx.projects.find((p) => p.id === item.summary.project_id) : undefined;
 			item.outcome = checkedOutcome(call.outcome, project, ctx);
+			const was = item.summary.status;
 			item.summary.status = 'scoped';
 			touch(state, item, now);
+			statusMove(item, ctx, was);
 			changed.push(item);
 			return;
 		}
@@ -241,9 +257,12 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 			versioned(item, call.expected_version);
 			mustBeOpen(item, ['scoped'], 'sent back for changes');
 			const note = officeText(call.note, WORK_LIMITS.text, 'The note');
-			noteOn(item, idText(call.comment_id, 'comment_id'), note, actor, now, state);
+			const commentId = idText(call.comment_id, 'comment_id');
+			if (commentExists(state, commentId)) fail('already_exists', 'That comment already exists.');
 			item.summary.status = 'scoping';
 			touch(state, item, now);
+			record(item, ctx, { type: 'comment', comment_id: commentId, body: note, comment_kind: 'note' });
+			statusMove(item, ctx, 'scoped');
 			changed.push(item);
 			return;
 		}
@@ -270,7 +289,7 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 				if (t.priority !== undefined && !PRIORITIES.includes(t.priority)) fail('invalid_request', 'The priority must be urgent, high, normal or low.');
 				if (t.team_id && !project.teamIds.includes(t.team_id)) fail('invalid_request', "That team isn't one of the project's teams.");
 				if (t.assignee_id && !ctx.members.includes(t.assignee_id)) fail('unknown_recipient', 'That member cannot be assigned.');
-				const checklist = t.checklist?.length ? steps(t.checklist, []) : [];
+				const checklist = t.checklist?.length ? steps(t.checklist, [], officeLine) : [];
 				const number = (state.next[projectId!] ?? 0) + 1;
 				state.next[projectId!] = number;
 				const summary: WorkItemSummary = {
@@ -312,11 +331,13 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 			for (const task of made) {
 				state.items[task.summary.id] = task;
 				state.seq += 1;
+				record(task, ctx, { type: 'created' });
 				changed.push(task);
 			}
 			item.summary.status = 'approved';
 			item.done_at = now;
 			touch(state, item, now);
+			statusMove(item, ctx, 'scoped');
 			changed.unshift(item);
 			return;
 		}
@@ -324,10 +345,12 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 			const item = requestOf(state, call.item_id);
 			versioned(item, call.expected_version);
 			mustBeOpen(item, OPEN_REQUEST, 'declined');
-			item.decline_reason = officeText(call.reason, REQUEST_LIMITS.declineReason, 'The reason');
+			item.decline_reason = officeLine(call.reason, REQUEST_LIMITS.declineReason, 'The reason');
+			const was = item.summary.status;
 			item.summary.status = 'declined';
 			item.done_at = now;
 			touch(state, item, now);
+			statusMove(item, ctx, was, item.decline_reason);
 			changed.push(item);
 			return;
 		}
@@ -343,13 +366,16 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 			const words = item.text ?? '';
 			const marker = `\n(continued in REQ-${item.summary.number})`;
 			const quoted = [...words].length > WORK_LIMITS.text ? `${[...words].slice(0, WORK_LIMITS.text - [...marker].length).join('')}${marker}` : words;
-			noteOn(target, id, quoted, actor, now, state);
+			if (commentExists(state, id)) fail('already_exists', 'That comment already exists.');
 			if (!target.watchers.includes(item.summary.created_by)) target.watchers.push(item.summary.created_by);
 			item.merged_into = target.summary.id;
+			const was = item.summary.status;
 			item.summary.status = 'merged';
 			item.done_at = now;
 			touch(state, item, now);
+			statusMove(item, ctx, was, `Merged into REQ-${target.summary.number}`);
 			touch(state, target, now);
+			record(target, ctx, { type: 'comment', comment_id: id, body: quoted, comment_kind: 'note', watch: false });
 			changed.push(item, target);
 			return;
 		}

@@ -486,3 +486,26 @@ export interface RequestMerge {
 }
 
 export const REQUEST_LIMITS = { text: 20_000, routeReason: 500, declineReason: 1_000, draftDescription: 2_000, drafts: 50, effort: 200 } as const;
+
+// ---- Activity (§4.3 `work.activity`): the events of one item ---------------------------------------------------------
+
+/** What an event changed: the kinds a request's page shows. Other kinds decode as `unknown` ("changed"). */
+export type WorkEventKind =
+	| { type: 'created' }
+	| { type: 'fields_changed'; fields: string[] }
+	| { type: 'status_changed'; from: ItemStatus; to: ItemStatus; resolution?: Resolution; reason?: string }
+	| { type: 'assigned'; from?: string; to?: string }
+	| { type: 'comment'; comment_id: string; body: string; comment_kind: CommentKind; asks?: string; answers?: string; watch?: boolean }
+	| { type: 'unknown' };
+
+/** A committed change to one item. Together an item's events are its activity feed. */
+export interface WorkEvent {
+	target_id: string;
+	/** The version this event made. */
+	version: number;
+	at: string;
+	/** The bound member that made the change. */
+	actor_id?: string;
+	auto: boolean;
+	change: WorkEventKind;
+}

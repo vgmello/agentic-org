@@ -34,6 +34,7 @@ import type {
 	TimeFigures,
 	WorkAccepted,
 	WorkItem,
+	WorkEvent,
 	WorkItemSummary,
 	WorkPosition
 } from '$lib/proto';
@@ -68,8 +69,8 @@ export interface StoredTask {
 	outcome?: RequestOutcome;
 	merged_into?: string;
 	decline_reason?: string;
-	/** Requests: the notes on it (asked changes, a merged request's words). */
-	comments?: { id: string; body: string; by: string; at: string }[];
+	/** Requests: what happened to it, oldest first (`work.activity`). */
+	events?: WorkEvent[];
 }
 
 export interface WorkState {
@@ -711,4 +712,9 @@ export function itemOf(s: WorkState, id: string, now: string): WorkItem {
 		watchers: item.watchers,
 		time: timeOf(item, now)
 	});
+}
+
+/** The events of one request, oldest first (`work.activity`). Other kinds keep none yet. */
+export function activityOf(s: WorkState, id: string): WorkEvent[] {
+	return structuredClone(find(s, id).events ?? []);
 }
