@@ -111,8 +111,8 @@ office lists headers only); `--thread` is the thread's root id; an unknown `--fr
 `who <member>` applies `--team`/`--kind` too. `ask`, `reply`, `defer`, `done`, `notify`, `due`,
 `status` and `profile` still use the spool.
 
-`tests/office.rs` runs all this against a real office server (temporary homes, test keys):
-`cargo test -p org-agent --features office-tests`.
+`tests/office.rs` runs all this against a real office server (temporary homes, a test key on
+the launch line); `cargo test -p org-agent` runs it.
 
 ## Directory and presence
 

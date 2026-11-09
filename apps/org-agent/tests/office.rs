@@ -2,15 +2,13 @@
 //! through the office, and `send` falls back to the local spool when the office is down.
 //!
 //! The server is the real one: this test binary, started with `ORG_AGENT_TEST_OFFICE_SERVER`
-//! set, runs exactly what `org-office-server`'s `main` runs (its library, built with `dev-keys`, so
-//! keys are files in a temporary folder and no test touches a real Keychain). It is driven the
-//! way the host drives it (`apps/org-office-server/tests/launch.rs`). Every home is a temporary
-//! folder: the office home (`ORG_OFFICE_HOME`), the key folder (`ORG_OFFICE_DEV_KEY_DIR`) and the
-//! agents' `HOME` and `ORG_HOME` (their spool), so nothing here can reach `~/.agency` or a real
-//! office.
+//! set, runs exactly what `org-office-server`'s `main` runs (its library). It is driven the way
+//! the host drives it (`apps/org-office-server/tests/launch.rs`): the office's database key is a
+//! fixed test key on the launch line, so no Keychain is involved. Every home is a temporary
+//! folder: the office home (`ORG_OFFICE_HOME`) and the agents' `HOME` and `ORG_HOME` (their
+//! spool), so nothing here can reach `~/.agency` or a real office.
 //!
 //! Its own `main` (`harness = false`), because the server writes control lines on stdout.
-//! Run it with `cargo test -p org-agent --features office-tests`.
 
 use std::io::BufReader;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -28,7 +26,7 @@ use org_proto::org::{
     AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams, MemberOffboard,
     MemberOffboardParams,
 };
-use org_proto::{AppToken, OfficeRole};
+use org_proto::{AppToken, DbKey, OfficeRole};
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -123,11 +121,10 @@ fn serve() -> ! {
     std::process::exit(org_office_server::run(&args, control));
 }
 
-/// A temporary office home, key folder and agents' home, under /tmp (socket paths are short).
+/// A temporary office home and agents' home, under /tmp (socket paths are short).
 struct World {
     _dir: TempDir,
     home: PathBuf,
-    keys: PathBuf,
     user: PathBuf,
 }
 
@@ -138,7 +135,6 @@ impl World {
             .tempdir_in("/tmp")
             .unwrap();
         let home = dir.path().join("h");
-        let keys = dir.path().join("k");
         let user = dir.path().join("u");
         for folder in [home.join("offices"), home.join("run"), user.clone()] {
             std::fs::create_dir_all(folder).unwrap();
@@ -146,7 +142,6 @@ impl World {
         Self {
             _dir: dir,
             home,
-            keys,
             user,
         }
     }
@@ -161,7 +156,6 @@ impl World {
             .arg("--create")
             .env(SERVER_ENV, "1")
             .env("ORG_OFFICE_HOME", &self.home)
-            .env("ORG_OFFICE_DEV_KEY_DIR", &self.keys)
             .env("HOME", &self.user)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -192,6 +186,7 @@ impl World {
                 office_name: "HQ".into(),
                 role: OfficeRole::Hq,
                 app_token: token(),
+                db_key: DbKey::from_bytes([0xB3; 32]),
             }),
         )
         .unwrap();
