@@ -5,8 +5,8 @@
 use std::collections::HashMap;
 
 use org_proto::directory::{
-    MemberPresence, StatusSetParams, StatusSetResult, WhoParams, WhoResult, DEFAULT_STATUS_TTL_MS,
-    MAX_STATUS_TTL_MS, STATUS_MAX_BYTES, STATUS_MAX_CHARS,
+    MemberPresence, MemberPresenceChangedData, StatusSetParams, StatusSetResult, WhoParams,
+    WhoResult, DEFAULT_STATUS_TTL_MS, MAX_STATUS_TTL_MS, STATUS_MAX_BYTES, STATUS_MAX_CHARS,
 };
 use org_proto::{ApiError, ErrorCode};
 
@@ -90,6 +90,21 @@ struct StoredLines(HashMap<String, MemberRuntime>);
 impl RuntimeView for StoredLines {
     fn runtime_of(&self, member_id: &str) -> Option<MemberRuntime> {
         self.0.get(member_id).cloned()
+    }
+}
+
+/// The `member.presence_changed` data for a member whose status line was just set or cleared
+/// (`set` is what `status.set` answered). Presence itself is not reported yet, so the member
+/// reads as offline beside its line. `last_seen_at` is now: the member just called the office, so
+/// it was alive a moment ago (`who` has no last-seen time to compare with yet).
+pub fn presence_after_status(member_id: &str, set: &StatusSetResult) -> MemberPresenceChangedData {
+    MemberPresenceChangedData {
+        member_id: member_id.to_owned(),
+        presence: MemberPresence::Offline,
+        last_seen_at: time::now_rfc3339(),
+        status: set.status.clone(),
+        status_expires_at: set.expires_at.clone(),
+        current_task_id: None,
     }
 }
 
@@ -318,6 +333,26 @@ mod tests {
         let member = owner_id(&office);
         office.set_status(&member, &text("back")).unwrap().unwrap();
         assert_eq!(card_status(&office).as_deref(), Some("back"));
+    }
+
+    #[test]
+    fn waking_the_followers_ends_their_wait_without_a_commit() {
+        let dir = TempDir::new().unwrap();
+        let office = std::sync::Arc::new(office(&dir));
+        let seen = office.org_change_token();
+        let waiter = {
+            let office = std::sync::Arc::clone(&office);
+            std::thread::spawn(move || {
+                let started = std::time::Instant::now();
+                let token = office.wait_for_org_change(seen, std::time::Duration::from_secs(20));
+                (token, started.elapsed())
+            })
+        };
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        office.wake_followers();
+        let (token, took) = waiter.join().unwrap();
+        assert_ne!(token, seen, "the token moved");
+        assert!(took < std::time::Duration::from_secs(5), "{took:?}");
     }
 
     #[test]
