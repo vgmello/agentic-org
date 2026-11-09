@@ -544,6 +544,74 @@ pub fn store_claim_read_is_once_under_concurrency(backend: impl OpenBackend) {
     assert_eq!(sorted, (1..=5).map(msg_id).collect::<Vec<_>>());
 }
 
+/// K barrier-synced claimers each claim once from at least K unread messages: every claim
+/// gets a message (`Some`), the ids are pairwise distinct, and each is now read. A store
+/// whose concurrent claims can lose (answer `None` while messages remain) or double-claim
+/// fails here.
+pub fn store_claim_read_k_barrier_claimers_all_get_distinct(backend: impl OpenBackend) {
+    const K: usize = 8;
+    let store = open_store(&backend);
+    for n in 1..=K as u32 + 2 {
+        commit(
+            &store,
+            new_message(n, PAT_ID, ADA_ID, MessagePriority::Normal),
+        );
+    }
+    let barrier = Barrier::new(K);
+    let claimed: Vec<Option<String>> = thread::scope(|scope| {
+        let workers: Vec<_> = (0..K)
+            .map(|_| {
+                scope.spawn(|| {
+                    // Read first, so a backend that claims from a reader's snapshot has one.
+                    // Fail only after the barrier, so neither an error nor a panic in the
+                    // backend can strand the other threads waiting at it. One claim each:
+                    // bounded, never a spin.
+                    let warmed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        store.peek_next_unread(ADA_ID, None, false, NOW_UTC)
+                    }));
+                    barrier.wait();
+                    match warmed {
+                        Ok(result) => drop(result.expect("peek_next_unread")),
+                        Err(panic) => std::panic::resume_unwind(panic),
+                    }
+                    let stored = store.claim_read(ADA_ID, None, NOW_UTC).unwrap()?;
+                    assert_eq!(stored.message.header.state, State::Read);
+                    Some(stored.message.header.id)
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect()
+    });
+    let claimed: Vec<String> = claimed
+        .into_iter()
+        .map(|id| id.expect("every claimer gets a message while enough are unread"))
+        .collect();
+    let mut distinct = claimed.clone();
+    distinct.sort();
+    distinct.dedup();
+    assert_eq!(
+        distinct.len(),
+        K,
+        "claims are pairwise distinct: {claimed:?}"
+    );
+    for id in &claimed {
+        assert_eq!(state_of(&store, id), State::Read);
+    }
+    let mut everything = distinct;
+    everything.extend(ids(&store
+        .list_headers(inbox_query(ADA_ID, true, 100))
+        .unwrap()));
+    everything.sort();
+    assert_eq!(
+        everything,
+        (1..=K as u32 + 2).map(msg_id).collect::<Vec<_>>(),
+        "the claimed and the still unread messages are disjoint and are every message"
+    );
+}
+
 /// A reader that peeked, then lost the oldest message to another claimer, must claim the
 /// next one: `claim_read(None)` never answers `None` while an unread message remains. A
 /// store that selects on the reader's stale snapshot and then loses its guarded update
@@ -1756,6 +1824,7 @@ macro_rules! mailbox_conformance_tests {
             store_peek_caps_expired_ids_oldest_first,
             store_claim_read_order_and_ownership,
             store_claim_read_is_once_under_concurrency,
+            store_claim_read_k_barrier_claimers_all_get_distinct,
             store_commits_and_claims_are_visible_to_other_readers,
             store_claim_read_after_a_lost_race_takes_the_next,
             store_claim_read_selects_and_marks_atomically,
