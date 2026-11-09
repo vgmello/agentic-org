@@ -178,6 +178,16 @@ No new `MailboxError` variants.
 6. An in-break re-check doesn't re-list a normal message that was released and is still unread; Phase A does. Accept that, or add a `TriageStore` method?
 7. Is a person's late reply `high` only when no priority is given, or always?
 
+## 10a. ada's decisions (2026-11-09, 01M6ZDZ70CCDKVRBFHJ99RAJYC)
+
+1. Match Phase A: session dedup records only the items shown in the text (at most `NOTIFY_MAX_LINES`). Recording items 11-100 would suppress messages nobody saw.
+2. done on an expired or overdue request returns `Ok`; it's idempotent. D4: done expires an agent's overdue open request (one notice) and returns `Ok`.
+3. D5 is dropped. An explicit `read <id>` returns the full body even after expiry; expiry changes delivery state, not readability. Only listings and notify stay header-only.
+4. The golden notify fixtures live in `crates/org-proto/tests/fixtures/notify/` (ada's contract), in their own commit; the testkit and org-spool load them from there.
+5. `claim_read(None)` never returning an expired message becomes a contract requirement with a conformance case. Tell codex-dev when 2b's suite lands.
+6. Keep Phase A's behaviour: the in-break re-check re-lists a released, still-unread normal message. Use existing methods if they can; otherwise add one additive `TriageStore` method with a conformance case (codex-dev implements it in SQL).
+7. A person's late reply defaults to `high` only when no priority is given; an explicit priority is always respected.
+
 ## 11. Commit plan
 
 1. D1
