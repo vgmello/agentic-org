@@ -23,6 +23,7 @@ export type Resolution = 'completed' | 'cancelled' | 'verified' | 'duplicate' | 
 export type Priority = 'urgent' | 'high' | 'normal' | 'low' | 'unknown';
 export type Severity = 'critical' | 'major' | 'minor' | 'trivial' | 'unknown';
 export type RequestKind = 'feature' | 'change' | 'technical' | 'question' | 'unknown';
+export type RoutedBy = 'person' | 'rule' | 'copilot' | 'unknown';
 export type LinkKind = 'fixes' | 'part_of' | 'from_request' | 'reported_from' | 'relates_to' | 'pays_back' | 'unknown';
 export type LinkTarget = { type: 'item'; item_id: string } | { type: 'doc'; project_id: string; doc_key: string };
 export type CommentKind = 'note' | 'question' | 'answer' | 'unknown';
@@ -134,6 +135,15 @@ export interface WorkItem {
 	environment?: string;
 	closed_reason?: string;
 	text?: string;
+	/** Request: why this scoper (at most 500 characters). */
+	route_reason?: string;
+	routed_by?: RoutedBy;
+	/** Request: set when scoped. */
+	outcome?: RequestOutcome;
+	/** Request: set exactly when merged. */
+	merged_into?: string;
+	/** Request: set exactly when declined. */
+	decline_reason?: string;
 	checklist: ChecklistStep[];
 	links: WorkLink[];
 	backlinks: WorkLink[];
@@ -349,3 +359,130 @@ export type WaitReason =
 	| { type: 'triage' }
 	| { type: 'decision'; doc_key: string }
 	| { type: 'unknown' };
+
+
+// ---- Request calls (§4.7, P3) ---------------------------------------------------------------------------------------
+
+export type FeatureOutcome = { type: 'new'; feature_id: string } | { type: 'extends'; feature_id: string } | { type: 'unknown' };
+
+export interface DocRef {
+	project_id: string;
+	doc_key: string;
+}
+
+/** A task a scoped request proposes. At most 50 per outcome. */
+export interface DraftTask {
+	draft_id: string;
+	title: string;
+	description?: string;
+	assignee_id?: string;
+	team_id?: string;
+	priority?: Priority;
+}
+
+export interface Estimate {
+	effort?: string;
+	cost_usd_cents_min?: number;
+	cost_usd_cents_max?: number;
+}
+
+export interface RequestOutcome {
+	feature?: FeatureOutcome;
+	docs: DocRef[];
+	draft_tasks: DraftTask[];
+	estimate?: Estimate;
+}
+
+/** A draft as the owner edited it (RQS-9). */
+export interface ApprovedTask {
+	item_id: string;
+	link_id: string;
+	title: string;
+	description?: string;
+	definition_of_done?: string;
+	assignee_id?: string;
+	team_id?: string;
+	priority?: Priority;
+	checklist?: NewStep[];
+}
+
+export interface RequestCreate {
+	change_id: string;
+	item_id: string;
+	/** The original words: 1 to 20,000 characters, never edited. */
+	text: string;
+	/** Defaults to the first line of the text, cut to 120 characters. */
+	title?: string;
+	request_kind?: Exclude<RequestKind, 'unknown'>;
+	project_id?: string;
+	scoper_id?: string;
+	route_reason?: string;
+	routed_by?: Exclude<RoutedBy, 'unknown'>;
+}
+
+export interface RequestUpdate {
+	change_id: string;
+	item_id: string;
+	expected_version: number;
+	title?: string;
+	request_kind?: Exclude<RequestKind, 'unknown'>;
+	project_id?: string;
+	clear_project?: boolean;
+}
+
+export interface RequestRoute {
+	change_id: string;
+	item_id: string;
+	expected_version: number;
+	/** Absent: back to Not routed. */
+	scoper_id?: string;
+	route_reason?: string;
+	routed_by?: Exclude<RoutedBy, 'unknown'>;
+}
+
+export interface RequestAccept {
+	change_id: string;
+	item_id: string;
+	expected_version: number;
+}
+
+export interface RequestScope {
+	change_id: string;
+	item_id: string;
+	expected_version: number;
+	outcome: RequestOutcome;
+}
+
+export interface RequestAskChanges {
+	change_id: string;
+	item_id: string;
+	expected_version: number;
+	comment_id: string;
+	note: string;
+}
+
+/** App only: it commits the organization to work. */
+export interface RequestApprove {
+	change_id: string;
+	item_id: string;
+	expected_version: number;
+	/** 1 to 50. */
+	tasks: ApprovedTask[];
+}
+
+export interface RequestDecline {
+	change_id: string;
+	item_id: string;
+	expected_version: number;
+	reason: string;
+}
+
+export interface RequestMerge {
+	change_id: string;
+	item_id: string;
+	expected_version: number;
+	into: string;
+	comment_id: string;
+}
+
+export const REQUEST_LIMITS = { text: 20_000, routeReason: 500, declineReason: 1_000, draftDescription: 2_000, drafts: 50, effort: 200 } as const;
