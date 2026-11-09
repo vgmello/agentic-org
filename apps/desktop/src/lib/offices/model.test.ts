@@ -147,7 +147,7 @@ describe('OFC-11..13 why an office stopped', () => {
 	it('gives each reason its words, and "It isn’t running" when the host does not know why', () => {
 		expect(whyStopped(stopped('crashed'), NOW)).toBe('It stopped unexpectedly');
 		expect(whyStopped(stopped('start_timeout', undefined, 'unavailable'), NOW)).toBe("It didn't start in time");
-		expect(whyStopped(stopped('key_missing', undefined, 'unavailable'), NOW)).toContain('data key is missing');
+		expect(whyStopped(stopped('key_missing', undefined, 'unavailable'), NOW)).toContain('key isn\'t available on this Mac');
 		expect(whyStopped(stopped('stopped_by_owner', undefined, 'unavailable'), NOW)).toBe('You stopped it');
 		expect(whyStopped(stopped(undefined, undefined, 'unavailable'), NOW)).toBe("It isn't running");
 	});

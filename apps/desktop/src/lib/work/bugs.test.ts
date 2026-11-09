@@ -32,6 +32,8 @@ const bug = (n: number, over: Partial<WorkItemSummary> = {}): WorkItemSummary =>
 describe('words', () => {
 	it('writes B-7 or Pending, severity and how a bug closed', () => {
 		expect(bugRef(bug(7))).toBe('B-7');
+		expect(bugRef(bug(7), 'chk')).toBe('chk-B-7');
+		expect(bugRef(bug(1, { number: undefined, short_id: 'abc123' }), 'chk')).toBe('Pending · abc123');
 		expect(bugRef(bug(1, { number: undefined, short_id: 'abc123' }))).toBe('Pending · abc123');
 		expect(severityWord('critical')).toBe('Critical');
 		expect(severityWord(undefined)).toBe('Severity not set');

@@ -158,8 +158,8 @@ describe('Done and time', () => {
 		s = applyWork(s, { method: 'task.update', change_id: cid(), item_id: id(1), expected_version: 3, title: 'One!' }, at('2026-11-07T00:00:00.000Z')).state;
 		const t = itemOf(s, id(1), '2026-11-08T00:00:00.000Z').time;
 		expect([t.lead_ms, t.cycle_ms, t.open]).toEqual([3 * 3600_000, 2 * 3600_000, false]);
-		expect(timeBlock(t)).toBe("Lead time 3 h · waiting on you 0 · blocked 0 · the rest 3 h (working time isn't tracked yet)");
-		expect(timeBlock({ ...t, open: true, lead_ms: 28 * 3600_000, waiting_on_owner_ms: 3 * 3600_000, rest_ms: 25 * 3600_000 })).toBe("Lead time 1 d 4 h so far · waiting on you 3 h · blocked 0 · the rest 1 d 1 h (working time isn't tracked yet)");
+		expect(timeBlock(t)).toBe("Lead time 3 h · waiting on you 0 min · blocked 0 min · the rest 3 h (working time isn't tracked yet)");
+		expect(timeBlock({ ...t, open: true, lead_ms: 28 * 3600_000, waiting_on_owner_ms: 3 * 3600_000, rest_ms: 25 * 3600_000 })).toBe("Lead time 1 d 4 h so far · waiting on you 3 h · blocked 0 min · the rest 1 d 1 h (working time isn't tracked yet)");
 		expect(summaries(s, 'p1', '2026-11-01T02:00:00.000Z')).toHaveLength(1);
 		expect(summaries(s, 'p1', '2026-11-01T04:00:00.000Z')).toHaveLength(0);
 		expect(summaries(s, 'p1')).toHaveLength(1);

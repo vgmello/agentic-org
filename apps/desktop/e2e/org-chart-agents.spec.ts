@@ -119,8 +119,10 @@ test('RUN-1: How it runs changes the mode; a scheduled agent needs a schedule; n
 	await dialog.getByRole('radio', { name: /^Scheduled/ }).check();
 	await expect(dialog.getByTestId('run-limits')).toContainText('back to sleep after 5 minutes');
 	await expect(dialog.getByRole('button', { name: 'Save' })).toBeDisabled(); // a schedule is needed
+	await expect(dialog.getByTestId('run-spec-help')).toHaveText('Add when it runs to save.'); // and it says so
 	await shot(page, 'how-it-runs');
 	await dialog.getByLabel('When', { exact: true }).fill('weekdays at 9');
+	await expect(dialog.getByTestId('run-spec-help')).toHaveCount(0);
 	await dialog.getByLabel('Time zone', { exact: true }).fill('Europe/Lisbon');
 	await dialog.getByRole('button', { name: 'Save' }).click();
 	await expect(page.getByText('Saved Sam Okafor.')).toBeVisible();
@@ -327,4 +329,24 @@ test('LIVE: a change that lands while the user is navigating does not cancel the
 		[organizationId]
 	);
 	await expect(page).toHaveURL(/\/agents/);
+});
+
+test('LIVE-8: when live updates stop the shell says so with the time shown, and Retry brings them back', async ({ page }) => {
+	await openChart(page);
+	const organizationId = await page.evaluate(() => {
+		const saved = JSON.parse(localStorage.getItem('agentic-org.mock.connections') ?? '[]') as { organization: { id: string } }[];
+		return saved[saved.length - 1].organization.id;
+	});
+	const live = (isLive: boolean) =>
+		page.evaluate(([id, on]) => (window as unknown as { __mockOrgLive: (o: string, l: boolean) => void }).__mockOrgLive(id as string, on as boolean), [organizationId, isLive]);
+	await expect(page.getByTestId('live-paused')).toHaveCount(0);
+	await live(false);
+	const banner = page.getByTestId('live-paused');
+	await expect(banner).toContainText('Live updates paused. Showing');
+	await expect(banner).toContainText(/Showing what was loaded at \d{2}:\d{2}\./);
+	await shot(page, 'live-paused');
+	await banner.getByRole('button', { name: 'Retry' }).click();
+	await expect(banner.getByRole('button', { name: 'Retrying…' })).toBeDisabled();
+	await expect(banner).toHaveCount(0); // the feed is back
+	await shot(page, 'live-resumed');
 });

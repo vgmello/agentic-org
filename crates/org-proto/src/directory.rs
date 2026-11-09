@@ -78,6 +78,9 @@ pub struct MemberRef {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OfficeRef {
     pub id: String,
+    /// The office's display name. For an office other than the one answering, it is the
+    /// office's id until the organization carries office names (the registry, offices design
+    /// phase 2); show it as is.
     pub name: String,
 }
 

@@ -327,6 +327,13 @@ fn check_new_member_id(id: &str) -> Outcome<()> {
 /// An id that is not an id (empty, long, with control characters) can never name anything, so it is
 /// refused before the organization is looked at.
 fn well_formed(command: &OrgCommand) -> Outcome<()> {
+    // A command id is a ULID in its canonical form (HQ keeps each answer under it); the other ids are only shaped.
+    if org_proto::ulid_time_ms(command.command_id()).is_none() {
+        return err(
+            ErrorCode::InvalidRequest,
+            "The command id isn't a valid ULID.",
+        );
+    }
     if ids_of(command).into_iter().any(bad_id) {
         return err(
             ErrorCode::InvalidRequest,
@@ -1231,7 +1238,7 @@ mod tests {
 
     fn cmd(method: &str, params: serde_json::Value) -> OrgCommand {
         let mut params = params;
-        params["command_id"] = json!(format!("c-{}", method));
+        params["command_id"] = json!(crate::org_command::test_command_id(&format!("c-{method}")));
         serde_json::from_value(json!({ "method": method, "params": params })).unwrap()
     }
 
@@ -1243,7 +1250,9 @@ mod tests {
         params: serde_json::Value,
     ) -> Result<Vec<OrgChange>, ApiError> {
         let mut params = params;
-        params["command_id"] = json!(format!("{method}-{n}"));
+        params["command_id"] = json!(crate::org_command::test_command_id(&format!(
+            "{method}-{n}"
+        )));
         let command: OrgCommand =
             serde_json::from_value(json!({ "method": method, "params": params })).unwrap();
         apply(&mut hq.snapshot, &command)
@@ -1263,12 +1272,12 @@ mod tests {
     #[test]
     fn commands_read_from_the_wire_by_method_and_unknown_methods_are_refused() {
         let ok: Result<OrgCommand, _> = serde_json::from_value(
-            json!({"method": "team.create", "params": {"command_id": "c", "team_id": "t", "name": "Ops"}}),
+            json!({"method": "team.create", "params": {"command_id": crate::org_command::test_command_id("c"), "team_id": "t", "name": "Ops"}}),
         );
         assert!(matches!(ok, Ok(OrgCommand::TeamCreate(_))));
         for bad in [
-            json!({"method": "organization.delete", "params": {"command_id": "c"}}),
-            json!({"method": "member.add_agent", "params": {"command_id": "c"}}),
+            json!({"method": "organization.delete", "params": {"command_id": crate::org_command::test_command_id("c")}}),
+            json!({"method": "member.add_agent", "params": {"command_id": crate::org_command::test_command_id("c")}}),
             json!({"method": "team.create", "params": {"team_id": "t", "name": "Ops"}}),
             json!({"params": {}}),
         ] {
@@ -2061,7 +2070,10 @@ mod tests {
         let data = changed.unwrap();
         assert_eq!(
             (data.command_id.as_str(), data.position.seq),
-            ("c-team.create", 2)
+            (
+                crate::org_command::test_command_id("c-team.create").as_str(),
+                2
+            )
         );
         let (again, changed) = h.handle(&c);
         assert_eq!(again.unwrap(), first);
@@ -2108,13 +2120,13 @@ mod tests {
             serde_json::from_str(include_str!("../../test-vectors/org-commands.json")).unwrap();
         let build = |step: &serde_json::Value, n: usize| -> OrgCommand {
             let mut params = step["params"].clone();
-            params["command_id"] = json!(format!("c-{n}"));
+            params["command_id"] = json!(format!("01ARZ3NDEKTSV4RRFFQ69G5F{n:02}"));
             serde_json::from_value(json!({"method": step["method"], "params": params})).unwrap()
         };
         let cases = vectors["cases"].as_array().unwrap();
         assert_eq!(
             cases.len(),
-            243,
+            252,
             "a case was lost or added: update this count"
         );
         for case in cases {
@@ -2188,7 +2200,7 @@ mod tests {
         assert!(h.handle(&a).0.is_ok());
         // Same command_id, another command: not answered with the first one's answer.
         let mut other = json!({"team_id": "qa", "name": "QA"});
-        other["command_id"] = json!("c-team.create");
+        other["command_id"] = json!(crate::org_command::test_command_id("c-team.create"));
         let b: OrgCommand =
             serde_json::from_value(json!({"method": "team.create", "params": other})).unwrap();
         assert_eq!(h.handle(&b).0.unwrap_err().code, ErrorCode::InvalidRequest);
@@ -2239,14 +2251,16 @@ mod tests {
             json!({"team_id": "ops", "name": "Ops", "owner_team_id": "later"}),
         );
         let mut again = serde_json::to_value(again).unwrap();
-        again["params"]["command_id"] = json!("fresh");
+        again["params"]["command_id"] = json!(crate::org_command::test_command_id("fresh"));
         let again: OrgCommand = serde_json::from_value(again).unwrap();
         assert!(h.handle(&again).0.is_ok());
     }
 
     fn run_handled(h: &mut Hq, method: &str, n: u32, params: serde_json::Value) {
         let mut params = params;
-        params["command_id"] = json!(format!("h-{method}-{n}"));
+        params["command_id"] = json!(crate::org_command::test_command_id(&format!(
+            "h-{method}-{n}"
+        )));
         let c: OrgCommand =
             serde_json::from_value(json!({"method": method, "params": params})).unwrap();
         assert!(h.handle(&c).0.is_ok());
@@ -2338,9 +2352,10 @@ mod tests {
                 .count(),
             1
         );
-        assert!(serde_json::to_string(&loaded)
-            .unwrap()
-            .contains(r#""order":["c-team.create"]"#));
+        assert!(serde_json::to_string(&loaded).unwrap().contains(&format!(
+            r#""order":["{}"]"#,
+            crate::org_command::test_command_id("c-team.create")
+        )));
         assert!(!serde_json::to_string(&loaded)
             .unwrap()
             .contains("team.create\\\"}"));

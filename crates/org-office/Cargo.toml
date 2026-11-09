@@ -8,11 +8,13 @@ publish.workspace = true
 
 [dependencies]
 org-proto = { path = "../org-proto" }
+org-mailbox = { path = "../org-mailbox" }
 rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 
 [dev-dependencies]
+org-mailbox = { path = "../org-mailbox", features = ["testkit"] }
 serde_json.workspace = true
 tempfile.workspace = true

@@ -5,6 +5,7 @@
 //! every build, so the shell can be run and shown end to end. It is wired in one place (`run`).
 
 mod connections;
+mod import_scan;
 mod login_item;
 mod menu_model;
 mod mock;
@@ -344,6 +345,123 @@ where
         .map_err(|e| CommandError::local("internal", e.to_string()))?
 }
 
+/// The usual places an existing team lives in, found or not (prefills "Bring in an existing team"). A folder found
+/// here may then be scanned.
+#[tauri::command]
+async fn import_defaults(
+    app: tauri::AppHandle,
+    granted: State<'_, Arc<import_scan::Granted>>,
+) -> Result<import_scan::Defaults, CommandError> {
+    let home = app
+        .path()
+        .home_dir()
+        .map_err(|e| CommandError::local("internal", e.to_string()))?;
+    // `USER` is not set for an app started outside a shell: the home folder's name is the next best.
+    let user = std::env::var("USER")
+        .ok()
+        .filter(|u| !u.is_empty())
+        .or_else(|| home.file_name().map(|n| n.to_string_lossy().into_owned()));
+    let granted = Arc::clone(&granted);
+    blocking(move || {
+        let found = import_scan::defaults(&home, user);
+        for path in found.hr.iter().chain(found.messaging.iter()) {
+            granted.grant(path);
+        }
+        Ok(found)
+    })
+    .await
+}
+
+/// Read the HR workspace and the messaging spool the owner chose (or the app found). Read-only; a source that can't be
+/// read says why. Only a folder the app handed out (`import_defaults`, `import_pick_folder`) is read: the webview can't
+/// use this to look anywhere else.
+#[tauri::command]
+async fn import_scan(
+    granted: State<'_, Arc<import_scan::Granted>>,
+    hr_dir: Option<String>,
+    spool_dir: Option<String>,
+) -> Result<import_scan::Scan, CommandError> {
+    let granted = Arc::clone(&granted);
+    blocking(move || {
+        import_scan::scan_granted(&granted, hr_dir.as_deref(), spool_dir.as_deref()).map_err(|_| {
+            CommandError::local(
+                "invalid_request",
+                "That folder wasn't chosen here: pick it again.",
+            )
+        })
+    })
+    .await
+}
+
+/// Read the optional team hints file the owner picked (`import_pick_file`). A file that can't be used says why.
+#[tauri::command]
+async fn import_read_hints(
+    granted: State<'_, Arc<import_scan::Granted>>,
+    path: String,
+) -> Result<import_scan::Hints, CommandError> {
+    let granted = Arc::clone(&granted);
+    blocking(move || {
+        import_scan::read_hints_granted(&granted, &path).map_err(|_| {
+            CommandError::local(
+                "invalid_request",
+                "That file wasn't chosen here: pick it again.",
+            )
+        })
+    })
+    .await
+}
+
+/// Ask the owner for a file with the system's file picker. `None`: they cancelled. The file picked may be read as hints.
+#[tauri::command]
+async fn import_pick_file(
+    app: tauri::AppHandle,
+    granted: State<'_, Arc<import_scan::Granted>>,
+    title: String,
+) -> Result<Option<String>, CommandError> {
+    use tauri_plugin_dialog::DialogExt;
+    let granted = Arc::clone(&granted);
+    blocking(move || {
+        let picked = app
+            .dialog()
+            .file()
+            .set_title(title)
+            .add_filter("Team hints", &["toml"])
+            .blocking_pick_file()
+            .and_then(|picked| picked.into_path().ok())
+            .map(|path| path.to_string_lossy().into_owned());
+        if let Some(path) = &picked {
+            granted.grant(path);
+        }
+        Ok(picked)
+    })
+    .await
+}
+
+/// Ask the owner for a folder with the system's folder picker. `None`: they cancelled. The folder picked may be scanned.
+#[tauri::command]
+async fn import_pick_folder(
+    app: tauri::AppHandle,
+    granted: State<'_, Arc<import_scan::Granted>>,
+    title: String,
+) -> Result<Option<String>, CommandError> {
+    use tauri_plugin_dialog::DialogExt;
+    let granted = Arc::clone(&granted);
+    blocking(move || {
+        let picked = app
+            .dialog()
+            .file()
+            .set_title(title)
+            .blocking_pick_folder()
+            .and_then(|picked| picked.into_path().ok())
+            .map(|path| path.to_string_lossy().into_owned());
+        if let Some(path) = &picked {
+            granted.grant(path);
+        }
+        Ok(picked)
+    })
+    .await
+}
+
 #[tauri::command]
 async fn office_ensure_running(
     state: State<'_, Arc<AppState>>,
@@ -364,6 +482,25 @@ async fn organizations_peek(
 ) -> Result<Vec<Organization>, CommandError> {
     let state = Arc::clone(&state);
     blocking(move || state.peek_organizations()).await
+}
+
+/// Whether the organization's live feed is subscribed now, for a screen that was not listening when that changed.
+#[tauri::command]
+async fn org_live(
+    state: State<'_, Arc<AppState>>,
+    organization_id: String,
+) -> Result<Option<bool>, CommandError> {
+    Ok(state.office.org_live(&organization_id))
+}
+
+/// "Live updates paused" has a Retry: the organization's feed connects now, not at its next try. Answers at once.
+#[tauri::command]
+async fn org_live_retry(
+    state: State<'_, Arc<AppState>>,
+    organization_id: String,
+) -> Result<(), CommandError> {
+    state.office.retry_org_feed(&organization_id);
+    Ok(())
 }
 
 #[tauri::command]
@@ -609,6 +746,7 @@ fn mock_office(data: &std::path::Path) -> (Arc<dyn OfficeConnection>, std::path:
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // The mock's connections live apart from anything the real office remembers, so choosing the real
             // office never opens a fake organization (and the other way round).
@@ -626,7 +764,7 @@ pub fn run() {
             }));
             let handle = app.handle().clone();
             office.set_org_sink(Arc::new(move |update| {
-                let _ = handle.emit("org-changed", &update);
+                let _ = handle.emit("org-feed", &update);
             }));
             app.manage(Arc::new(AppState {
                 office,
@@ -638,6 +776,7 @@ pub fn run() {
             let dock = tray::DockPreference::load(data);
             tray::apply_dock(app.handle(), dock.shown());
             app.manage(dock);
+            app.manage(Arc::new(import_scan::Granted::default()));
             app.manage::<Arc<dyn LoginService>>(Arc::from(login_item::system_in(&data_for_login)));
             tray::create(app.handle())?;
             Ok(())
@@ -659,6 +798,13 @@ pub fn run() {
             organization_open,
             org_snapshot,
             org_command,
+            org_live_retry,
+            org_live,
+            import_defaults,
+            import_scan,
+            import_pick_folder,
+            import_pick_file,
+            import_read_hints,
             connections_list,
             work_snapshot,
             work_get,
@@ -727,7 +873,7 @@ mod tests {
         let (state, dir) = state_with(vec![hosted("a", "Alpha")]);
         let command: OrgCommand = serde_json::from_value(serde_json::json!({
             "method": "team.create",
-            "params": {"command_id": "C1", "team_id": "ops", "name": "Ops"}
+            "params": {"command_id": org_command::test_command_id("C1"), "team_id": "ops", "name": "Ops"}
         }))
         .unwrap();
         let err = state.org_command("a", &command).unwrap_err();
@@ -745,7 +891,7 @@ mod tests {
                 "a",
                 &serde_json::from_value(serde_json::json!({
                     "method": "team.delete",
-                    "params": {"command_id": "C2", "team_id": "nope", "expected_version": 1}
+                    "params": {"command_id": org_command::test_command_id("C2"), "team_id": "nope", "expected_version": 1}
                 }))
                 .unwrap(),
             )
@@ -863,7 +1009,7 @@ mod tests {
         assert_eq!(off.unregister_calls.load(Ordering::SeqCst), 1);
     }
 
-    const COMMANDS: [&str; 17] = [
+    const COMMANDS: [&str; 24] = [
         "office_ensure_running",
         "office_ping",
         "office_restart",
@@ -873,6 +1019,13 @@ mod tests {
         "organization_open",
         "org_snapshot",
         "org_command",
+        "org_live_retry",
+        "org_live",
+        "import_defaults",
+        "import_scan",
+        "import_pick_folder",
+        "import_pick_file",
+        "import_read_hints",
         "connections_list",
         "work_snapshot",
         "work_get",
@@ -903,6 +1056,7 @@ mod tests {
         from_ui.extend(quoted(include_str!("../../src/lib/org/tauri.ts")));
         from_ui.extend(quoted(include_str!("../../src/lib/work/tauri.ts")));
         from_ui.extend(quoted(include_str!("../../src/lib/open-external.ts")));
+        from_ui.extend(quoted(include_str!("../../src/lib/import/tauri.ts")));
         let mut from_build = quoted(include_str!("../build.rs"));
         let mut declared: Vec<String> = COMMANDS.iter().map(|c| c.to_string()).collect();
         from_ui.sort();

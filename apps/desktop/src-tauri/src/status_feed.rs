@@ -33,7 +33,7 @@ pub fn follow(home: &Path, stop: &AtomicBool, emit: &dyn Fn(StatusUpdate)) {
     let mut pacer = Pacer::new();
     while !stop.load(Ordering::SeqCst) {
         let up_for = follow_once(home, stop, emit).ok();
-        wait(pacer.next(up_for), stop);
+        wait(pacer.next(up_for), stop, &AtomicBool::new(false));
     }
 }
 

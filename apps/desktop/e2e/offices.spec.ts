@@ -197,7 +197,7 @@ test('OFC-11: a stopped office says why, in its row and in its details, with Cop
 
 test('OFC-11: other reasons have their words; no reason reads "It isn’t running"', async ({ page }) => {
 	await openOffices(page, 'key_missing');
-	await expect(rows(page).first()).toContainText("Its data key is missing from this Mac's Keychain");
+	await expect(rows(page).first()).toContainText("This office's key isn't available on this Mac");
 	const other = await page.context().newPage();
 	await visit(other, '/create?office=unknown');
 	await other.getByLabel('Organization name').fill('Beta');

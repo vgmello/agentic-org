@@ -154,11 +154,17 @@ export interface Position {
 	seq: number;
 }
 
-/** The shell's live feed (`org-changed`): the organization changed, and its log is now at `position`. */
+/** The organization changed, and its log is now at `position`. */
 export interface OrgChangedNotice {
 	organization_id: string;
 	position: Position;
 }
+
+/**
+ * What the shell's live feed sends (`org-feed`): a change, or whether the feed is subscribed. While `live` is
+ * false the screens are not being kept up to date.
+ */
+export type OrgFeedNotice = ({ kind: 'changed' } & OrgChangedNotice) | { kind: 'live'; organization_id: string; live: boolean };
 
 /** A team. Teams own teams (a tree). Optional lead: a member of the team. */
 export interface Team {

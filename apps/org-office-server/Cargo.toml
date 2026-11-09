@@ -17,11 +17,13 @@ path = "tests/launch.rs"
 [dependencies]
 org-proto = { path = "../../crates/org-proto" }
 org-office = { path = "../../crates/org-office" }
+org-mailbox = { path = "../../crates/org-mailbox" }
 org-office-launch = { path = "../../crates/org-office-launch" }
 libc.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
+org-mailbox = { path = "../../crates/org-mailbox", features = ["testkit"] }
 org-client = { path = "../../crates/org-client" }
 tempfile.workspace = true
 serde_json.workspace = true

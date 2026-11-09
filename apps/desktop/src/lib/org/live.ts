@@ -1,4 +1,5 @@
 import type { OrgChangedNotice, Position } from '$lib/proto';
+import { liveState } from './live-state.svelte';
 
 /** Whether `a` is after `b` in the organization's log: `(epoch, seq)`, compared in that order. */
 export const isAfter = (a: Position, b: Position): boolean => a.epoch > b.epoch || (a.epoch === b.epoch && a.seq > b.seq);
@@ -10,6 +11,7 @@ const shown = new Map<string, Position>();
 const heard = new Map<string, Position>();
 const reloaders = new Map<string, () => Promise<unknown>>();
 const running = new Set<string>();
+
 
 const behind = (organizationId: string): boolean => {
 	const seen = shown.get(organizationId);
@@ -50,6 +52,7 @@ function catchUp(organizationId: string): void {
 /** A screen loaded the organization's structure at this position (always the latest load: a restored office may be at an earlier one). */
 export function noteShown(organizationId: string, position: Position): void {
 	shown.set(organizationId, position);
+	liveState.loadedAt[organizationId] = new Date();
 	// A change told while this was loading is not shown yet.
 	if (behind(organizationId)) catchUp(organizationId);
 }

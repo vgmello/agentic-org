@@ -69,7 +69,7 @@ For (agent A, project P): **O**, the organization's; **T**, for each team linked
 With no current work, it's **O ⊕ G** (PROC-2). The home session uses the current task (`work.set_current`), a task session its task. No repository means an empty J.
 
 ### 3.2 Rules, in order (`org_process::resolve`, pure)
-1. **Valid files only.** Invalid front matter, a level or scope mismatch, `draft` or `retired`: left out, with a problem.
+1. **Valid files only.** Invalid front matter or a level or scope mismatch: left out, with a problem. A `draft` or `retired` file is left out silently: it is a normal state, not a problem (amended 2026-11-09: ada, from the Processes screens' review).
 2. **Key clash.** Two files with one key at one (level, scope): both left out, with the clash problem (PROC-1). Seals fail closed: if a file left out for invalid front matter, a mismatch or a clash is sealed (or can't be read far enough to tell), the key stays sealed below. `draft` and `retired` files never seal.
 3. **Seals inside a chain.** A file that overrides or turns off a key sealed by the organization, or by a team above it in its own chain, is refused, with the sealing level (PROC-3). A project file is refused if the organization sealed the key, or a team seal binds it and rule 5 finds no team-level conflict on the key (that check runs after rule 5). Otherwise this runs first, so a refused file never makes a conflict. The write path refuses these too (§5).
 4. **Fold each team chain**, outermost first, the nearer team winning.

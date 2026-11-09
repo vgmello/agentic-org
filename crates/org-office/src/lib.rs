@@ -11,8 +11,10 @@
 //! organization's rules (`rules`) speak the wire contract's types (`org_proto::org`), because
 //! a satellite replays the very changes HQ logged.
 
+pub mod directory;
 mod error;
 mod key;
+mod messaging;
 mod model;
 mod office;
 mod office_file;
@@ -24,5 +26,6 @@ mod ulid;
 
 pub use error::{NameError, OfficeError};
 pub use key::Key;
+pub use messaging::{OfficeDirectory, OfficeMessageStore};
 pub use model::{NewOffice, OfficeInfo, OfficeRole};
 pub use office::{Office, LOCK_WAIT};

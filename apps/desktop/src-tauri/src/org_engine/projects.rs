@@ -91,6 +91,13 @@ fn check_branch(text: &str) -> Outcome<()> {
     if text.trim().is_empty() || text.chars().count() > 255 || text.chars().any(char::is_control) {
         return err(ErrorCode::InvalidRequest, "That isn't a branch name.");
     }
+    // The branches HQ keeps for its own work (task/, docs/, merged/, archive/) can't be a project's integration branch.
+    if org_proto::has_reserved_branch_prefix(text) {
+        return err(
+            ErrorCode::InvalidRequest,
+            "That branch name is kept for HQ's own work. Choose another.",
+        );
+    }
     Ok(())
 }
 

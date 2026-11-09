@@ -11,6 +11,7 @@
 //! connections (WAL lets them run beside the writer), so many concurrent callers never see
 //! `SQLITE_BUSY`.
 
+pub(crate) mod messages;
 pub(crate) mod org;
 
 use std::any::Any;
@@ -53,6 +54,9 @@ type Attempt = dyn FnMut(&Connection) -> Result<Option<Undo>, OfficeError> + Sen
 pub(crate) struct Schema {
     pub(crate) version: i64,
     pub(crate) create: fn(&rusqlite::Transaction<'_>) -> rusqlite::Result<()>,
+    /// Brings a database made at an older version (the argument) up to `version`, in the same
+    /// transaction that sets `user_version`. Only called for a version below `version`.
+    pub(crate) upgrade: fn(&rusqlite::Transaction<'_>, i64) -> rusqlite::Result<()>,
 }
 
 /// Whether `Store::open` may make the database, or must find one already there.
@@ -561,6 +565,10 @@ fn migrate(db: &mut Connection, schema: &Schema) -> Result<(), OfficeError> {
         (schema.create)(&tx).map_err(OfficeError::storage)?;
         tx.pragma_update(None, "user_version", schema.version)
             .map_err(OfficeError::storage)?;
+    } else if version < schema.version {
+        (schema.upgrade)(&tx, version).map_err(OfficeError::storage)?;
+        tx.pragma_update(None, "user_version", schema.version)
+            .map_err(OfficeError::storage)?;
     }
     tx.commit().map_err(OfficeError::storage)
 }
@@ -588,6 +596,7 @@ mod tests {
     /// A small registry schema: the engine's tests need some table to write to.
     const REGISTRY: Schema = Schema {
         version: SCHEMA_VERSION,
+        upgrade: |_, _| Ok(()),
         create: |tx| {
             tx.execute_batch(
                 "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;

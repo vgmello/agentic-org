@@ -792,7 +792,7 @@ pub(crate) fn ending_relations(
 }
 
 /// Whether `member` is an agent that was offboarded: a record that is history.
-fn is_offboarded(member: &Member) -> bool {
+pub(crate) fn is_offboarded(member: &Member) -> bool {
     member
         .agent
         .as_ref()

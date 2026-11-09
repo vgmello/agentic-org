@@ -2,7 +2,7 @@
 kind: spec
 title: "Dogfood run: the walkthrough and what counts as passing"
 status: for-review
-revision: 1
+revision: 3
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-08"
@@ -16,6 +16,10 @@ builds_on: [our-org-in-the-app, offices-and-teams-ux, work-items-ux, agent-run-m
 The script for `our-org-in-the-app.md`'s success test, for ada to turn into the end-to-end checklist. Builds on `our-org-in-the-app.md` (the flows and criteria), `offices-and-teams-ux.md` (offices, status), `work-items-ux.md` (tasks) and `agent-run-modes-ux.md` (pause, how it runs).
 
 ## Changelog
+
+**Revision 3 (2026-11-08):** step 1.4 expects no reporting-line edits: with our team hints, the messaging-only agents default to ada (`our-org-in-the-app.md` rev 15, IMP-11).
+
+**Revision 2 (2026-11-08):** step 1.1 picks our team hints file, so the six teams of `our-org-in-the-app.md` §2 are prefilled (rev 13, IMP-10).
 
 **Revision 1 (2026-11-08):** first version, from ada's list of what's left (8 Nov).
 
@@ -32,6 +36,7 @@ The success test (`our-org-in-the-app.md`): in the real app on this Mac, with no
 **Setup:**
 - A clean build of `v1` on this Mac, with no sample data. The run fails at once if anything shows "Sample data".
 - A **new** organization, "Agentic Consulting" (U10), created in the app. Never the development organization.
+- Our team hints file: `knowledge/dogfood/teams.toml` in Eden's home in the agents repo (`projects/ac/agents/ac-product-designer-eden/`), with the six teams of `our-org-in-the-app.md` §2.
 - The HR workspace (`~/projects/agentic-consulting/agents`) and the messaging spool as they are today. The **import** reads them and must not change them. Agents keep working, so their own changes (their home folders, the messages they send) don't count. Before step 1, note what only the import could touch: in the agents repo, the HR records (`projects/*/agents/*/agent.json`) and the role files (`hr/roles/`), with the current commit as the snapshot point; and the registered messaging names and inboxes in the messaging store in use (the spool before Phase B's cutover, the office after it). The agents commit to that repo all the time, so the repo's last commit isn't a check. Compare at 1.7. Step 3 changes them on purpose: each throwaway hire registers a messaging name, gets a home folder (in a scratch folder, outside the agents repo) and maybe a new role file. Those are expected.
 - Agents keep running as usual during the run. Nobody is stopped for it.
 - A stopwatch for step 1, and a note of the time at each step.
@@ -42,10 +47,10 @@ The success test (`our-org-in-the-app.md`): in the real app on this Mac, with no
 
 | # | Do | Check | Pass when |
 | --- | --- | --- | --- |
-| 1.1 | Start the stopwatch. After **Create organization**, choose **Bring in an existing team**. | Both sources are prefilled (`our-org-in-the-app.md` §4) and **Scan** is offered (IMP-1). | Both folders found without typing a path. |
+| 1.1 | Start the stopwatch. After **Create organization**, choose **Bring in an existing team**, then the **Team hints** row's **Choose…** › our `teams.toml` (setup). | The HR workspace and messaging are prefilled (`our-org-in-the-app.md` §4), the hints file is accepted, and **Scan** is offered (IMP-1, IMP-10). | Both folders found without typing a path. |
 | 1.2 | **Scan**. | One row per agent, merged by name, with its sources: ada, Eden, River and Remy "HR + messaging"; server-dev, app-frontend-dev, agy-senior-dev, codex-dev and reviewer "messaging only"; Riley "HR only" with "No messages from Riley yet" (IMP-2, IMP-4). The HR toolkit's own agent isn't a row (§2a), and neither is the owner's own inbox (`vgmello`): the owner is already in the organization. | All 10 listed once, sources right, nothing written yet (the import-only snapshot unchanged). |
 | 1.3 | Fill role and runtime for the messaging-only rows (server-dev Codex, codex-dev Codex, agy-senior-dev Antigravity; app-frontend-dev and reviewer as the user says, A14). | **Bring in** counts only complete rows (IMP-3). | The count rises as rows are completed. |
-| 1.4 | Check the suggested teams, leads, reporting lines and project against `our-org-in-the-app.md` §2. Edit where needed. | Engineering (ada) with App, Office, Agent tooling, Quality; Design (Eden); ada → owner, Eden → owner, Engineering → ada; project Agentic Org (`ac`), shared (IMP-5). "What happens" names the counts and says nothing changes in HR or messaging (IMP-6). | Matches §2 before Bring in. Edits are allowed (the messaging-only agents' managers default to the owner, so at least five need ada), and their time counts toward the 5 minutes. |
+| 1.4 | Check the suggested teams, leads, reporting lines and project against `our-org-in-the-app.md` §2. Edit where needed. | Engineering (ada) with App, Office, Agent tooling, Quality; Design (Eden); ada → owner, Eden → owner, Engineering → ada; project Agentic Org (`ac`), shared (IMP-5). "What happens" names the counts and says nothing changes in HR or messaging (IMP-6). | Matches §2 before Bring in. With our team hints, no reporting-line edits should be needed: the messaging-only agents default to ada, the lead of Engineering (IMP-11). Edits are allowed, and their time counts toward the 5 minutes. |
 | 1.5 | **Bring in**. Stop the stopwatch at **Done**. | Progress in words, then the org chart with the new members highlighted and the summary (IMP-7). | **Under 5 minutes** from 1.1. The summary says "10 agents, 6 teams, 1 project." with no "agents paused" line (Riley comes in Active and shows Offline, U13). Every agent in its team, under its manager. |
 | 1.6 | Open three quick views: ada, codex-dev and Riley. | Runtime, messaging name, office and status show; codex-dev says "Runs on Codex"; Riley is Offline, not Paused (PROF-1, U13). | All three right, and no field blank: a missing value reads plainly (§5). "Runtime not set" is a fail here. Riley has no messaging inbox, so its messaging name may read as not set, which passes. |
 | 1.7 | Compare the import-only snapshot with now: `git log <snapshot>.. -- 'projects/*/agents/*/agent.json' hr/roles` and a diff of those files in the agents repo, and the registered names and inboxes in the messaging store in use. | The import changed no HR record or role file and registered no name or inbox. | No difference in those paths. Changes from the agents' own work elsewhere don't count. |

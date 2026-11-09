@@ -2,15 +2,18 @@ use std::fs::{self, File, TryLockError};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use crate::directory::{self, RuntimeView, ThisOffice};
 use crate::error::OfficeError;
 use crate::key::Key;
 use crate::model::{NewOffice, OfficeInfo};
 use crate::office_file::{self, is_plain_id};
 use crate::private_fs::{absolute, private_dir, private_file, tighten_dir};
 use crate::rules::OrgCommand;
+use org_proto::directory::{WhoParams, WhoResult};
 use org_proto::org::{CommandAccepted, OrgChangedData, OrgSnapshot, Position};
 use org_proto::ApiError;
 
+use crate::store::messages;
 use crate::store::org as org_db;
 use crate::store::{Opening, Schema, Store};
 use crate::time;
@@ -43,12 +46,19 @@ const OFFICE_ENTRIES: [&str; 11] = [
     "office.db",
 ];
 
-/// `office.db`: the office's own data. For now just its identity; work items, messages and
-/// sessions arrive with their slices.
+/// `office.db`: its identity (`meta`), and from version 2 the message tables. A version 1 file
+/// (made before messaging) gets the tables when it is opened.
 const OFFICE_SCHEMA: Schema = Schema {
-    version: 1,
+    version: 2,
     create: |tx| {
-        tx.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;")
+        tx.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;")?;
+        messages::create_tables(tx)
+    },
+    upgrade: |tx, from| {
+        if from < 2 {
+            messages::create_tables(tx)?;
+        }
+        Ok(())
     },
 };
 
@@ -100,7 +110,6 @@ pub struct Office {
     changes: ChangeSignal,
     // Databases close (and checkpoint) before the lock is released: fields drop in order.
     org: Store,
-    #[allow(dead_code)] // the office's own data arrives with work items and messaging
     local: Store,
     _lock: File,
 }
@@ -347,6 +356,28 @@ impl Office {
         self.org.read(org_db::snapshot)
     }
 
+    /// `who`: the directory cards matching `params`, from one consistent read of the organization
+    /// and the runtime data (`runtime`: presence, status lines). `Err(ApiError)` inside the `Ok`
+    /// is the caller's mistake (see [`crate::directory::who`]); the outer error is the storage's.
+    pub fn who(
+        &self,
+        params: &WhoParams,
+        runtime: &dyn RuntimeView,
+    ) -> Result<Result<WhoResult, ApiError>, OfficeError> {
+        let snapshot = self.org_snapshot()?;
+        let office = ThisOffice {
+            id: &self.info.office_id,
+            name: &self.info.office_name,
+        };
+        Ok(directory::who(
+            &snapshot,
+            office,
+            &time::now_rfc3339(),
+            runtime,
+            params,
+        ))
+    }
+
     /// Runs one organization command on this office (HQ): the rules decide, and the changes
     /// are logged and applied in one transaction. A retry with the same `command_id` gets the
     /// same answer. `Err(ApiError)` inside the `Ok` is the rules' refusal; the outer error is
@@ -396,6 +427,34 @@ impl Office {
     /// and returns the current token.
     pub fn wait_for_org_change(&self, seen: u64, timeout: Duration) -> u64 {
         self.changes.wait(seen, timeout)
+    }
+
+    /// `office.db`, where the office's own data lives (messages).
+    pub(crate) fn local_store(&self) -> &Store {
+        &self.local
+    }
+
+    /// `org.db`, the organization's data.
+    pub(crate) fn org_store(&self) -> &Store {
+        &self.org
+    }
+
+    /// Test seam: replaces the organization's members with `members`, as an organization applied
+    /// up to `position` (the members are written raw, as a damaged or foreign organization could
+    /// hold them).
+    #[cfg(test)]
+    pub(crate) fn seed_organization_for_test(
+        &self,
+        members: &[org_proto::Member],
+        position: Position,
+    ) {
+        let members = members.to_vec();
+        self.org
+            .write(move |db| {
+                org_db::seed_for_test(db, &members, position)?;
+                Ok(((), None))
+            })
+            .expect("the organization could not be seeded");
     }
 
     /// What `office.json` records about this office.
