@@ -679,6 +679,8 @@ pub trait MemberDirectory {
     /// Display names aren't accepted. There's no `AmbiguousName`: two members with one handle is a storage error.
     /// (amended 2026-11-08: agent sessions rev 3.2, ada) "owner" is checked before ids, and an exact id match beats a handle. The owner resolves only as "owner":
     /// its display name isn't a handle. "office" is reserved and never resolves to a member.
+    /// (amended 2026-11-08: store split, ada) "Ignoring case" means Unicode lower case (Rust's `str::to_lowercase`, as org-office keys handles),
+    /// not ASCII-only folding: SQLite's `lower()` and `COLLATE NOCASE` would miss "Émile" as "émile". The org-mailbox conformance suite checks it.
     fn resolve_member(&self, id_or_handle: &str) -> Result<Option<(Member, Position)>, StoreError>;
 }
 
@@ -706,7 +708,9 @@ pub trait SessionAuth {
 // COMMIT), because the Mailbox wakes waiters right after it returns; every read
 // (`peek_next_unread`, `get_message`, `list_headers`) reads a fresh snapshot, never a long-lived
 // read transaction, so a woken waiter sees the commit that woke it; and `claim_read` selects and
-// marks in one writer transaction, never choosing its message from a reader's snapshot.
+// marks in one writer transaction, never choosing its message from a reader's snapshot. These are
+// slice 1's calls; `TriageStore::update_state_local`, after which §2.2 also wakes waiters, gives
+// the same commit guarantee as `commit_message`.
 
 /// (amended 2026-11-08: store split, ada) Delivery: commit, claim, peek and look up messages.
 pub trait MessageStore {
