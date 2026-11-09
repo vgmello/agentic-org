@@ -1,20 +1,36 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use org_proto::msg::{
-    is_urgent, json_string_len, HeaderPage, Message, MessageHeader, MessageLifecycleState,
-    MessagePriority, MessageReceivedData, MessageStateChangedData, MsgInboxParams, MsgReadParams,
-    MsgReadResult, MsgSendParams, MsgWaitParams, MsgWaitResult, SendResult, DEFAULT_PAGE_LIMIT,
+    is_urgent, json_string_len, DeliveryFailedReason, HeaderPage, Message,
+    MessageDeliveryFailedData, MessageHeader, MessageLifecycleState, MessagePriority,
+    MessageReceivedData, MessageStateChangedData, Meta, MsgDeferParams, MsgDeferResult,
+    MsgDoneParams, MsgDoneResult, MsgInboxParams, MsgReadParams, MsgReadResult, MsgSendParams,
+    MsgWaitParams, MsgWaitResult, NotifyReason, SendResult, SnoozeTarget, DEFAULT_PAGE_LIMIT,
     KIND_DELIVERY_FAILED, KIND_REQUEST, MAX_BODY_BYTES, MAX_HANDLE_BYTES, MAX_ID_BYTES,
-    MAX_META_BYTES, MAX_PAGE_LIMIT, MAX_SUBJECT_BYTES, MAX_WAIT_MS, OFFICE_SENDER,
+    MAX_META_BYTES, MAX_NOTE_BYTES, MAX_PAGE_LIMIT, MAX_SUBJECT_BYTES, MAX_WAIT_MS, OFFICE_SENDER,
 };
 use org_proto::{ulid_time_ms, AgentStatus, Member, MemberKind, Position};
 
+use crate::ids::delivery_failed_id;
+use crate::snoozes::SnoozeTimers;
 use crate::waiters::{WaitOutcome, WaiterRegistry};
 use crate::{
-    content_hash, format_utc, Cancellation, Clock, HeaderQuery, HeaderScope, MailboxError,
-    MemberDirectory, MessageEvent, MessageEvents, MessageStore, NewStoredMessage, StoredMessage,
+    content_hash, format_utc, parse_utc, past_deadline, Cancellation, Clock, HeaderQuery,
+    HeaderScope, LocalStateTransition, MailboxError, MemberDirectory, MessageEvent, MessageEvents,
+    MessageStore, NewStoredMessage, StoreError, StoredMessage, TriageStore, MAX_EXPIRED_IDS,
 };
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    // Protected operations only change bookkeeping and never invoke user code.
+    mutex.lock().unwrap_or_else(|error| error.into_inner())
+}
+
+/// The `delivery_failed` notice's subject: fixed text, never the original's content.
+const EXPIRED_SUBJECT: &str = "Request expired";
+
+/// The most extra peeks one `wait` makes before blocking (see `wait`).
+const MAX_RECHECKS: u32 = 10;
 
 #[derive(Debug, Clone)]
 pub struct OfficeIdentity {
@@ -27,11 +43,15 @@ pub struct OfficeIdentity {
 /// from request JSON. Database calls never run while a registry lock is held.
 pub struct Mailbox {
     store: Arc<dyn MessageStore + Send + Sync>,
+    /// `None` for a Mailbox made with [`Mailbox::new`]: triage calls are `unavailable`.
+    triage: Option<Arc<dyn TriageStore + Send + Sync>>,
     directory: Arc<dyn MemberDirectory + Send + Sync>,
     office: OfficeIdentity,
     clock: Arc<dyn Clock>,
     events: Arc<dyn MessageEvents>,
     waiters: WaiterRegistry,
+    /// Never locked across a store call.
+    snoozes: Mutex<SnoozeTimers>,
 }
 
 impl Mailbox {
@@ -44,12 +64,37 @@ impl Mailbox {
     ) -> Self {
         Self {
             store,
+            triage: None,
             directory,
             office,
             clock,
             events,
             waiters: WaiterRegistry::default(),
+            snoozes: Mutex::new(SnoozeTimers::default()),
         }
+    }
+
+    /// A Mailbox with triage (`defer`, `done`, snooze release and expiry), its snooze timers
+    /// seeded from the store's active time snoozes (ADR-0003 §2.2, `L-a`). `store` and
+    /// `triage` are normally the same office.db store.
+    pub fn with_triage(
+        store: Arc<dyn MessageStore + Send + Sync>,
+        triage: Arc<dyn TriageStore + Send + Sync>,
+        directory: Arc<dyn MemberDirectory + Send + Sync>,
+        office: OfficeIdentity,
+        clock: Arc<dyn Clock>,
+        events: Arc<dyn MessageEvents>,
+    ) -> Result<Self, MailboxError> {
+        let mut timers = SnoozeTimers::default();
+        for deadline in triage.list_active_snooze_deadlines()? {
+            // An unreadable deadline is due at once: the next wait hands it to check_notify.
+            let at_ms = parse_utc(&deadline.at_utc).map_or(0, epoch_ms);
+            timers.insert(at_ms, &deadline.to_member_id, &deadline.id);
+        }
+        let mut mailbox = Self::new(store, directory, office, clock, events);
+        mailbox.triage = Some(triage);
+        mailbox.snoozes = Mutex::new(timers);
+        Ok(mailbox)
     }
 
     pub fn send(
@@ -228,9 +273,66 @@ impl Mailbox {
         bound_member_id: &str,
         params: MsgReadParams,
     ) -> Result<MsgReadResult, MailboxError> {
-        self.bound_member(bound_member_id)?;
+        let (member, position) = self.bound_member(bound_member_id)?;
         optional_size(params.id.as_deref(), MAX_ID_BYTES)?;
-        let now = self.now_utc()?;
+        let now_ms = self.clock.now_ms();
+        let now = format_utc(now_ms).ok_or(MailboxError::StorageError)?;
+        if self.triage.is_some() {
+            match params.id.as_deref() {
+                // An agent's request past its deadline is expired, never read (§3.3.2).
+                Some(id) if member.kind == MemberKind::Agent => {
+                    let request = self.store.get_message(id)?.filter(|stored| {
+                        let header = &stored.message.header;
+                        header.to_member_id == bound_member_id && header.kind == KIND_REQUEST
+                    });
+                    if let Some(request) = request {
+                        let header = &request.message.header;
+                        match header.state {
+                            MessageLifecycleState::Unread | MessageLifecycleState::Snoozed
+                                if past_deadline(header, now_ms) =>
+                            {
+                                if self
+                                    .expire(&member, position, id, &now, NoticeFailure::Fail)?
+                                    .is_some()
+                                {
+                                    let stored = self
+                                        .store
+                                        .get_message(id)?
+                                        .ok_or(MailboxError::NotFound)?;
+                                    return Ok(MsgReadResult {
+                                        message: Some(stored.message),
+                                    });
+                                }
+                            }
+                            // Already expired: make sure the asker was told. A notice an
+                            // earlier expiry failed to commit is committed now (found by its
+                            // deterministic id on the read path first, so the writer is used
+                            // only when it's missing).
+                            MessageLifecycleState::Expired
+                                if self
+                                    .store
+                                    .get_message(&delivery_failed_id(header))?
+                                    .is_none() =>
+                            {
+                                self.notify_expired(header, &now)?
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Some(_) => {}
+                None => {
+                    // As wait does: release due snoozes, then expire what peek passes over.
+                    self.release_due_snoozes(bound_member_id, now_ms, &now)?;
+                    let peek = self
+                        .store
+                        .peek_next_unread(bound_member_id, None, false, &now)?;
+                    for id in &peek.expired_ids {
+                        self.expire(&member, position, id, &now, NoticeFailure::Ignore)?;
+                    }
+                }
+            }
+        }
         let stored = self
             .store
             .claim_read(bound_member_id, params.id.as_deref(), &now)?;
@@ -246,19 +348,7 @@ impl Mailbox {
             if header.state == MessageLifecycleState::Read
                 && header.read_at.as_deref() == Some(now.as_str())
             {
-                self.events
-                    .publish(MessageEvent::StateChanged(MessageStateChangedData {
-                        id: header.id.clone(),
-                        thread_id: header.thread_id.clone(),
-                        to_member_id: header.to_member_id.clone(),
-                        state: header.state,
-                        triage_gen: header.triage_gen,
-                        snoozed_until: header.snoozed_until.clone(),
-                        snooze_after_task: header.snooze_after_task,
-                        reason: None,
-                        expired_waiting_person: header.expired_waiting_person,
-                        updated_at: now.clone(),
-                    }));
+                self.publish_state(header, None, &now);
             }
         }
         Ok(MsgReadResult {
@@ -291,41 +381,412 @@ impl Mailbox {
         }
         let registration = self.waiters.register(bound_member_id)?;
         cancellation.attach(&registration);
+        // Peeks again before blocking, at most MAX_RECHECKS times per block (so a store that
+        // keeps reporting the same ids can't spin the wait): after flagging a person's overdue
+        // ask, which is no longer passed over, or after expiring a full batch of
+        // MAX_EXPIRED_IDS, behind which more may wait.
+        let mut rechecks = 0;
         loop {
             if cancellation.is_cancelled() {
                 return Err(MailboxError::NotBound);
             }
             let observed = registration.generation();
-            self.bound_member(bound_member_id)?;
+            let (member, position) = self.bound_member(bound_member_id)?;
+            let now_ms = self.clock.now_ms();
+            let now = format_utc(now_ms).ok_or(MailboxError::StorageError)?;
+            self.release_due_snoozes(bound_member_id, now_ms, &now)?;
             let peek = self.store.peek_next_unread(
                 bound_member_id,
                 from.as_deref(),
                 params.urgent_only,
-                &self.now_utc()?,
+                &now,
             )?;
             if cancellation.is_cancelled() {
                 return Err(MailboxError::NotBound);
             }
-            // peek.expired_ids is ignored in slice 1: send can't create expiring messages,
-            // so none can expire. Acting on them (update_state_local(Expired) through
-            // TriageStore) is a follow-up; peek itself never deletes or changes anything.
+            // peek itself never changes anything; the Mailbox expires what it passed over
+            // (needs triage; without it they stay as they are, as in slice 1).
+            let mut flagged = false;
+            for id in &peek.expired_ids {
+                let expired = self.expire(&member, position, id, &now, NoticeFailure::Ignore)?;
+                flagged |= expired.is_some_and(|header| header.expired_waiting_person);
+            }
+            // A just-flagged ask may be older than the message peek found: peek again, so
+            // the oldest comes first.
+            let full_batch = self.triage.is_some() && peek.expired_ids.len() >= MAX_EXPIRED_IDS;
+            let recheck = flagged || (full_batch && peek.message.is_none());
+            if recheck && rechecks < MAX_RECHECKS {
+                rechecks += 1;
+                continue;
+            }
             if let Some(message) = peek.message {
                 return Ok(MsgWaitResult {
                     message: Some(message.message),
                 });
             }
-            match registration.wait(observed, deadline, cancellation) {
+            rechecks = 0;
+            // Block until the request's deadline or the member's next snooze deadline,
+            // whichever is first. A snooze deadline loops round (release, then peek). The
+            // wall clock is read again, after this round's store calls.
+            let next_snooze = lock(&self.snoozes).next_for(bound_member_id);
+            let block_until = next_snooze
+                .and_then(|at_ms| {
+                    let ahead = at_ms.saturating_sub(epoch_ms(self.clock.now_ms())).max(0);
+                    Instant::now().checked_add(Duration::from_millis(ahead.unsigned_abs()))
+                })
+                .map_or(deadline, |snooze| snooze.min(deadline));
+            match registration.wait(observed, block_until, cancellation) {
                 WaitOutcome::Cancelled => return Err(MailboxError::NotBound),
-                WaitOutcome::Deadline => return Ok(MsgWaitResult { message: None }),
-                WaitOutcome::Notified => {}
+                WaitOutcome::Deadline if Instant::now() >= deadline => {
+                    return Ok(MsgWaitResult { message: None })
+                }
+                WaitOutcome::Deadline | WaitOutcome::Notified => {}
             }
         }
+    }
+
+    /// `msg.defer`: snooze a message addressed to the bound member until a time or its next
+    /// break (ADR-0003 §2.3). It leaves the default inbox and every wait until it's due, and
+    /// its `triage_gen` goes up. A time snooze gets a timer, so a held wait returns it when
+    /// it comes due.
+    pub fn defer(
+        &self,
+        bound_member_id: &str,
+        params: MsgDeferParams,
+    ) -> Result<MsgDeferResult, MailboxError> {
+        let (_, position) = self.bound_member(bound_member_id)?;
+        let triage = self.triage()?;
+        size(&params.id, MAX_ID_BYTES)?;
+        optional_size(params.note.as_deref(), MAX_NOTE_BYTES)?;
+        let now_ms = self.clock.now_ms();
+        let now = format_utc(now_ms).ok_or(MailboxError::StorageError)?;
+        let (snoozed_until, snooze_after_task) = match params.until {
+            SnoozeTarget::Until { at } => {
+                // parse_utc reads only canonical 24-byte timestamps, so `at` is bounded.
+                if !parse_utc(&at).is_some_and(|at_ms| at_ms > now_ms) {
+                    return Err(MailboxError::InvalidRequest);
+                }
+                (Some(at), false)
+            }
+            SnoozeTarget::AfterTask => (None, true),
+            _ => return Err(MailboxError::InvalidRequest),
+        };
+        let header = triage.update_state_local(LocalStateTransition {
+            snoozed_until,
+            snooze_after_task,
+            reason: params.note,
+            ..self.transition(
+                &params.id,
+                bound_member_id,
+                MessageLifecycleState::Snoozed,
+                position,
+                &now,
+            )
+        })?;
+        {
+            let mut timers = lock(&self.snoozes);
+            match header.snoozed_until.as_deref() {
+                Some(at) => timers.insert(
+                    parse_utc(at).map_or(0, epoch_ms),
+                    bound_member_id,
+                    &header.id,
+                ),
+                None => timers.remove(&header.id),
+            }
+        }
+        // A held wait recomputes its bound with the new timer.
+        self.waiters.notify(bound_member_id);
+        self.publish_state(&header, header.snooze_note.clone(), &now);
+        Ok(MsgDeferResult {
+            id: header.id,
+            triage_gen: header.triage_gen,
+            snoozed_until: header.snoozed_until,
+            snooze_after_task: header.snooze_after_task,
+            snooze_note: header.snooze_note,
+        })
+    }
+
+    /// `msg.done`: close a message addressed to the bound member without replying. It never
+    /// resurfaces. Done again is accepted (the store keeps the first close); `resolved_at`
+    /// is this call's time, and its `state_changed` carries this call's note.
+    pub fn done(
+        &self,
+        bound_member_id: &str,
+        params: MsgDoneParams,
+    ) -> Result<MsgDoneResult, MailboxError> {
+        let (_, position) = self.bound_member(bound_member_id)?;
+        let triage = self.triage()?;
+        size(&params.id, MAX_ID_BYTES)?;
+        optional_size(params.note.as_deref(), MAX_NOTE_BYTES)?;
+        let now = self.now_utc()?;
+        let header = triage.update_state_local(LocalStateTransition {
+            reason: params.note.clone(),
+            ..self.transition(
+                &params.id,
+                bound_member_id,
+                MessageLifecycleState::Done,
+                position,
+                &now,
+            )
+        })?;
+        lock(&self.snoozes).remove(&header.id);
+        self.waiters.notify(bound_member_id);
+        self.publish_state(&header, params.note, &now);
+        Ok(MsgDoneResult {
+            id: header.id,
+            resolved_at: now,
+        })
     }
 
     /// Held `wait` registrations right now. Diagnostics and tests: a cancelled, finished or
     /// timed-out wait leaves none behind.
     pub fn held_waits(&self) -> usize {
         self.waiters.len()
+    }
+
+    fn triage(&self) -> Result<&(dyn TriageStore + Send + Sync), MailboxError> {
+        self.triage.as_deref().ok_or(MailboxError::Unavailable)
+    }
+
+    /// A local transition of `id` (addressed to `member_id`) to `state`, with no snooze,
+    /// reason or flag.
+    fn transition(
+        &self,
+        id: &str,
+        member_id: &str,
+        state: MessageLifecycleState,
+        position: Position,
+        now: &str,
+    ) -> LocalStateTransition {
+        LocalStateTransition {
+            id: id.to_owned(),
+            to_member_id: member_id.to_owned(),
+            state,
+            snoozed_until: None,
+            snooze_after_task: false,
+            reason: None,
+            now_utc: now.to_owned(),
+            owner_office_id: self.office.office_id.clone(),
+            origin_incarnation: self.office.incarnation.clone(),
+            org_position: position,
+            expired_waiting_person: false,
+        }
+    }
+
+    /// Releases the member's due time snoozes (§2.2) through `check_notify`, before a wait
+    /// peeks. Only when the timers say one is due, and only with triage.
+    fn release_due_snoozes(
+        &self,
+        member: &str,
+        now_ms: u64,
+        now: &str,
+    ) -> Result<(), MailboxError> {
+        let Some(triage) = self.triage.as_deref() else {
+            return Ok(());
+        };
+        let due = lock(&self.snoozes).take_due(member, epoch_ms(now_ms));
+        if due.is_empty() {
+            return Ok(());
+        }
+        // Sweep nothing (the epoch): only the releases matter here, not what is listed.
+        let sweep_before = format_utc(0).ok_or(MailboxError::StorageError)?;
+        let candidates = match triage.check_notify(member, false, false, &sweep_before, now) {
+            Ok(candidates) => candidates,
+            Err(error) => {
+                let mut timers = lock(&self.snoozes);
+                for (at_ms, id) in due {
+                    timers.restore(at_ms, member, &id);
+                }
+                return Err(error.into());
+            }
+        };
+        // The due timers were taken above; a released message's timer is not removed here,
+        // since a defer since check_notify may have set a new one.
+        let released: Vec<_> = candidates
+            .into_iter()
+            .filter(|candidate| candidate.reason == NotifyReason::Due)
+            .collect();
+        if !released.is_empty() {
+            self.waiters.notify(member);
+        }
+        for candidate in &released {
+            self.publish_state(&candidate.header, None, now);
+        }
+        Ok(())
+    }
+
+    /// Acts on a message past its deadline, addressed to `recipient` (with triage; without
+    /// it, nothing). An agent's is expired, and for a request its sender gets one
+    /// `delivery_failed` (ADR-0003 §3.2 item 3, §3.3.2). A person's or the owner's ask never
+    /// expires: it stays unread, flagged `expired_waiting_person`. `None` when someone acted
+    /// first (`InvalidTransition` or `NotFound`), else the header after the change.
+    ///
+    /// The notice is committed after the transition, so a request someone answered or closed
+    /// first is never reported. With `NoticeFailure::Ignore` (wait, and read with no id, whose
+    /// caller is not the party at fault) a failed notice doesn't fail the call; the request
+    /// stays expired without its notice until a read of it by id retries it (known gap: the
+    /// store's transition and the notice aren't one transaction yet).
+    fn expire(
+        &self,
+        recipient: &Member,
+        position: Position,
+        id: &str,
+        now: &str,
+        on_notice_failure: NoticeFailure,
+    ) -> Result<Option<MessageHeader>, MailboxError> {
+        let Some(triage) = self.triage.as_deref() else {
+            return Ok(None);
+        };
+        let person = recipient.kind == MemberKind::Person;
+        let change = LocalStateTransition {
+            expired_waiting_person: person,
+            ..self.transition(
+                id,
+                &recipient.id,
+                if person {
+                    MessageLifecycleState::Unread
+                } else {
+                    MessageLifecycleState::Expired
+                },
+                position,
+                now,
+            )
+        };
+        let header = match triage.update_state_local(change) {
+            Ok(header) => header,
+            Err(StoreError::InvalidTransition | StoreError::NotFound) => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        self.publish_state(&header, None, now);
+        if header.state == MessageLifecycleState::Expired {
+            // An expired message has no snooze; a person's flagged ask keeps whatever it has.
+            lock(&self.snoozes).remove(&header.id);
+            if header.kind == KIND_REQUEST {
+                let notified = self.notify_expired(&header, now);
+                if on_notice_failure == NoticeFailure::Fail {
+                    notified?;
+                }
+            }
+        }
+        Ok(Some(header))
+    }
+
+    /// Commits the `delivery_failed` notice for an expired request to its sender, when the
+    /// sender is a member who may still receive. Its id and content are deterministic, so a
+    /// second expiry of the same request replays the first commit (`inserted: false`) and
+    /// publishes nothing. It commits at this office, as slice 1's local/HQ messaging does:
+    /// routing a notice to a sender another office owns comes with cross-office routing.
+    fn notify_expired(&self, original: &MessageHeader, now: &str) -> Result<(), MailboxError> {
+        if original.from_member_id == OFFICE_SENDER || original.kind == KIND_DELIVERY_FAILED {
+            return Ok(());
+        }
+        let Some((sender, position)) = self.directory.resolve_member(&original.from_member_id)?
+        else {
+            return Ok(());
+        };
+        if sender.id != original.from_member_id || !can_message(&sender) {
+            return Ok(());
+        }
+        let id = delivery_failed_id(original);
+        let body = format!(
+            "Your request to {} expired before they acted on it.",
+            original.to_display_name
+        );
+        let mut meta = Meta::new();
+        meta.insert("recipient_id".into(), original.to_member_id.clone().into());
+        meta.insert(
+            "recipient_name".into(),
+            original.to_display_name.clone().into(),
+        );
+        meta.insert("reason".into(), "expired".into());
+        let meta_bytes = serde_json::to_vec(&meta)
+            .map_err(|_| MailboxError::StorageError)?
+            .len();
+        let priority = MessagePriority::High;
+        let hash = content_hash(
+            &sender.id,
+            KIND_DELIVERY_FAILED,
+            priority,
+            Some(EXPIRED_SUBJECT),
+            Some(&original.id),
+            &body,
+            &meta,
+        )?;
+        let header = MessageHeader {
+            id,
+            thread_id: original.thread_id.clone(),
+            reply_to: Some(original.id.clone()),
+            from_member_id: OFFICE_SENDER.into(),
+            from_display_name: OFFICE_SENDER.into(),
+            to_member_id: sender.id,
+            to_display_name: sender.name,
+            kind: KIND_DELIVERY_FAILED.into(),
+            priority,
+            urgent: is_urgent(KIND_DELIVERY_FAILED, priority),
+            subject: Some(EXPIRED_SUBJECT.into()),
+            created_at: now.to_owned(),
+            expires_at: None,
+            ttl_ms: None,
+            body_bytes: json_string_len(&body) as u64,
+            meta_bytes: meta_bytes as u64,
+            local_seq: 0,
+            state: MessageLifecycleState::Unread,
+            triage_gen: 0,
+            snoozed_until: None,
+            snooze_after_task: false,
+            snooze_note: None,
+            read_at: None,
+            expired_waiting_person: false,
+        };
+        let outcome = match self.store.commit_message(NewStoredMessage {
+            message: Message { header, body, meta },
+            origin_office_id: self.office.office_id.clone(),
+            origin_incarnation: self.office.incarnation.clone(),
+            origin_seq: None,
+            org_position: position,
+            content_hash: hash,
+            initial_state: MessageLifecycleState::Unread,
+        }) {
+            Ok(outcome) => outcome,
+            // Another notice already holds the id: the sender was told.
+            Err(StoreError::AlreadyExists) => return Ok(()),
+            Err(error) => return Err(error.into()),
+        };
+        if outcome.inserted {
+            let header = &outcome.message.message.header;
+            self.waiters.notify(&header.to_member_id);
+            self.events
+                .publish(MessageEvent::Received(Box::new(MessageReceivedData {
+                    header: header.clone(),
+                })));
+            self.events
+                .publish(MessageEvent::DeliveryFailed(MessageDeliveryFailedData {
+                    id: header.id.clone(),
+                    original_id: original.id.clone(),
+                    thread_id: original.thread_id.clone(),
+                    from_member_id: original.from_member_id.clone(),
+                    recipient_id: original.to_member_id.clone(),
+                    recipient_name: original.to_display_name.clone(),
+                    reason: DeliveryFailedReason::Expired,
+                }));
+        }
+        Ok(())
+    }
+
+    fn publish_state(&self, header: &MessageHeader, reason: Option<String>, now: &str) {
+        self.events
+            .publish(MessageEvent::StateChanged(MessageStateChangedData {
+                id: header.id.clone(),
+                thread_id: header.thread_id.clone(),
+                to_member_id: header.to_member_id.clone(),
+                state: header.state,
+                triage_gen: header.triage_gen,
+                snoozed_until: header.snoozed_until.clone(),
+                snooze_after_task: header.snooze_after_task,
+                reason,
+                expired_waiting_person: header.expired_waiting_person,
+                updated_at: now.to_owned(),
+            }));
     }
 
     fn now_utc(&self) -> Result<String, MailboxError> {
@@ -368,6 +829,18 @@ impl Mailbox {
             .map(|(member, _)| Some(member.id))
             .ok_or(MailboxError::NotFound)
     }
+}
+
+/// Whether a failed `delivery_failed` notice fails the call that expired the request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NoticeFailure {
+    Fail,
+    Ignore,
+}
+
+/// Wall-clock epoch milliseconds as the snooze timers key them.
+fn epoch_ms(ms: u64) -> i64 {
+    i64::try_from(ms).unwrap_or(i64::MAX)
 }
 
 fn can_message(member: &Member) -> bool {

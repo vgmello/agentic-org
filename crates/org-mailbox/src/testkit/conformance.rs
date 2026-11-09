@@ -31,7 +31,7 @@ use super::fixture::*;
 use crate::{
     cancellation_pair, content_hash, format_utc, CommitMessageOutcome, HeaderQuery, HeaderScope,
     Mailbox, MailboxError, MemberDirectory, MessageStore, NewStoredMessage, OfficeIdentity,
-    PeekUnreadOutcome, StoreError, StoredMessage,
+    PeekUnreadOutcome, StoreError, StoredMessage, MAX_EXPIRED_IDS,
 };
 
 /// Opens a fresh, empty backend whose directory holds `members` at `position`. Any
@@ -64,7 +64,12 @@ fn open_store(backend: &impl OpenBackend) -> impl MessageStore + Send + Sync {
 }
 
 /// A local message from `from` to `to`, as the Mailbox would commit it.
-fn new_message(n: u32, from: &str, to: &str, priority: MessagePriority) -> NewStoredMessage {
+pub(crate) fn new_message(
+    n: u32,
+    from: &str,
+    to: &str,
+    priority: MessagePriority,
+) -> NewStoredMessage {
     let id = msg_id(n);
     let body = format!("body {n}");
     let meta = Meta::new();
@@ -109,11 +114,22 @@ fn new_message(n: u32, from: &str, to: &str, priority: MessagePriority) -> NewSt
     }
 }
 
-fn commit(store: &impl MessageStore, msg: NewStoredMessage) -> CommitMessageOutcome {
+/// An expired request to `to`, its deadline an hour before [`NOW_UTC`].
+pub(crate) fn expired_request(n: u32, from: &str, to: &str) -> NewStoredMessage {
+    let mut request = new_message(n, from, to, MessagePriority::Urgent);
+    let header = &mut request.message.header;
+    header.kind = KIND_REQUEST.into();
+    header.urgent = true;
+    header.ttl_ms = Some(60_000);
+    header.expires_at = format_utc(NOW_MS - 3_600_000);
+    request
+}
+
+pub(crate) fn commit(store: &impl MessageStore, msg: NewStoredMessage) -> CommitMessageOutcome {
     store.commit_message(msg).expect("commit_message")
 }
 
-fn inbox_query(member: &str, unread_only: bool, limit: u32) -> HeaderQuery {
+pub(crate) fn inbox_query(member: &str, unread_only: bool, limit: u32) -> HeaderQuery {
     HeaderQuery {
         scope: HeaderScope::Inbox(member.into()),
         from_member_id: None,
@@ -125,14 +141,14 @@ fn inbox_query(member: &str, unread_only: bool, limit: u32) -> HeaderQuery {
     }
 }
 
-fn ids(page: &HeaderPage) -> Vec<String> {
+pub(crate) fn ids(page: &HeaderPage) -> Vec<String> {
     page.headers
         .iter()
         .map(|header| header.id.clone())
         .collect()
 }
 
-fn state_of(store: &impl MessageStore, id: &str) -> State {
+pub(crate) fn state_of(store: &impl MessageStore, id: &str) -> State {
     store
         .get_message(id)
         .expect("get_message")
@@ -142,7 +158,7 @@ fn state_of(store: &impl MessageStore, id: &str) -> State {
         .state
 }
 
-fn peek(store: &impl MessageStore, member: &str) -> PeekUnreadOutcome {
+pub(crate) fn peek(store: &impl MessageStore, member: &str) -> PeekUnreadOutcome {
     store
         .peek_next_unread(member, None, false, NOW_UTC)
         .expect("peek_next_unread")
@@ -248,7 +264,7 @@ fn office<B: OpenBackend>(backend: &B) -> Office<B::Store> {
     }
 }
 
-fn send_params(n: u32, to: &str) -> MsgSendParams {
+pub(crate) fn send_params(n: u32, to: &str) -> MsgSendParams {
     MsgSendParams {
         id: msg_id(n),
         to: to.into(),
@@ -261,11 +277,16 @@ fn send_params(n: u32, to: &str) -> MsgSendParams {
     }
 }
 
-fn send(mailbox: &Mailbox, from: &str, n: u32, to: &str) -> Result<SendResult, MailboxError> {
+pub(crate) fn send(
+    mailbox: &Mailbox,
+    from: &str,
+    n: u32,
+    to: &str,
+) -> Result<SendResult, MailboxError> {
     mailbox.send(from, send_params(n, to))
 }
 
-fn wait_params(timeout_ms: u64) -> MsgWaitParams {
+pub(crate) fn wait_params(timeout_ms: u64) -> MsgWaitParams {
     MsgWaitParams {
         timeout_ms,
         from: None,
@@ -273,11 +294,11 @@ fn wait_params(timeout_ms: u64) -> MsgWaitParams {
     }
 }
 
-fn far_deadline() -> Instant {
+pub(crate) fn far_deadline() -> Instant {
     Instant::now() + Duration::from_secs(60)
 }
 
-fn unread_inbox(mailbox: &Mailbox, member: &str) -> Vec<String> {
+pub(crate) fn unread_inbox(mailbox: &Mailbox, member: &str) -> Vec<String> {
     let page = mailbox
         .inbox(member, MsgInboxParams::default())
         .expect("inbox");
@@ -285,7 +306,7 @@ fn unread_inbox(mailbox: &Mailbox, member: &str) -> Vec<String> {
 }
 
 /// Polls until `condition` holds, failing after a generous bound (the machine may be loaded).
-fn eventually(what: &str, condition: impl Fn() -> bool) {
+pub(crate) fn eventually(what: &str, condition: impl Fn() -> bool) {
     let until = Instant::now() + Duration::from_secs(10);
     while !condition() {
         assert!(Instant::now() < until, "timed out waiting for {what}");
@@ -410,13 +431,7 @@ pub fn store_peek_is_read_only_and_oldest_first(backend: impl OpenBackend) {
 /// An expired unread message is passed over and reported, never deleted or changed.
 pub fn store_peek_reports_expired_without_deleting(backend: impl OpenBackend) {
     let store = open_store(&backend);
-    let mut request = new_message(1, PAT_ID, ADA_ID, MessagePriority::Urgent);
-    let header = &mut request.message.header;
-    header.kind = KIND_REQUEST.into();
-    header.urgent = true;
-    header.ttl_ms = Some(60_000);
-    header.expires_at = format_utc(NOW_MS - 3_600_000);
-    commit(&store, request);
+    commit(&store, expired_request(1, PAT_ID, ADA_ID));
     commit(
         &store,
         new_message(2, PAT_ID, ADA_ID, MessagePriority::Normal),
@@ -427,6 +442,33 @@ pub fn store_peek_reports_expired_without_deleting(backend: impl OpenBackend) {
         assert_eq!(outcome.expired_ids, [msg_id(1)]);
     }
     assert_eq!(state_of(&store, &msg_id(1)), State::Unread);
+}
+
+/// Peek reports at most [`MAX_EXPIRED_IDS`] expired ids, the oldest first in commit order
+/// (not id order: they are committed in falling id order), and still returns the oldest
+/// unexpired message behind them.
+pub fn store_peek_caps_expired_ids_oldest_first(backend: impl OpenBackend) {
+    let store = open_store(&backend);
+    let expired = MAX_EXPIRED_IDS as u32 + 5;
+    for n in (1..=expired).rev() {
+        commit(&store, expired_request(n, PAT_ID, ADA_ID));
+    }
+    commit(
+        &store,
+        new_message(expired + 1, PAT_ID, ADA_ID, MessagePriority::Normal),
+    );
+    let outcome = peek(&store, ADA_ID);
+    assert_eq!(
+        outcome.message.unwrap().message.header.id,
+        msg_id(expired + 1)
+    );
+    assert_eq!(outcome.expired_ids.len(), MAX_EXPIRED_IDS);
+    assert_eq!(
+        outcome.expired_ids,
+        (6..=expired).rev().map(msg_id).collect::<Vec<_>>(),
+        "the first {MAX_EXPIRED_IDS} committed, ids {expired} down to 6"
+    );
+    assert_eq!(state_of(&store, &msg_id(expired)), State::Unread);
 }
 
 /// Claims go oldest first, only to the recipient, and an already read id comes back
@@ -510,6 +552,74 @@ pub fn store_claim_read_is_once_under_concurrency(backend: impl OpenBackend) {
     let mut sorted = claimed.clone();
     sorted.sort();
     assert_eq!(sorted, (1..=5).map(msg_id).collect::<Vec<_>>());
+}
+
+/// K barrier-synced claimers each claim once from at least K unread messages: every claim
+/// gets a message (`Some`), the ids are pairwise distinct, and each is now read. A store
+/// whose concurrent claims can lose (answer `None` while messages remain) or double-claim
+/// fails here.
+pub fn store_claim_read_k_barrier_claimers_all_get_distinct(backend: impl OpenBackend) {
+    const K: usize = 8;
+    let store = open_store(&backend);
+    for n in 1..=K as u32 + 2 {
+        commit(
+            &store,
+            new_message(n, PAT_ID, ADA_ID, MessagePriority::Normal),
+        );
+    }
+    let barrier = Barrier::new(K);
+    let claimed: Vec<Option<String>> = thread::scope(|scope| {
+        let workers: Vec<_> = (0..K)
+            .map(|_| {
+                scope.spawn(|| {
+                    // Read first, so a backend that claims from a reader's snapshot has one.
+                    // Fail only after the barrier, so neither an error nor a panic in the
+                    // backend can strand the other threads waiting at it. One claim each:
+                    // bounded, never a spin.
+                    let warmed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        store.peek_next_unread(ADA_ID, None, false, NOW_UTC)
+                    }));
+                    barrier.wait();
+                    match warmed {
+                        Ok(result) => drop(result.expect("peek_next_unread")),
+                        Err(panic) => std::panic::resume_unwind(panic),
+                    }
+                    let stored = store.claim_read(ADA_ID, None, NOW_UTC).unwrap()?;
+                    assert_eq!(stored.message.header.state, State::Read);
+                    Some(stored.message.header.id)
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect()
+    });
+    let claimed: Vec<String> = claimed
+        .into_iter()
+        .map(|id| id.expect("every claimer gets a message while enough are unread"))
+        .collect();
+    let mut distinct = claimed.clone();
+    distinct.sort();
+    distinct.dedup();
+    assert_eq!(
+        distinct.len(),
+        K,
+        "claims are pairwise distinct: {claimed:?}"
+    );
+    for id in &claimed {
+        assert_eq!(state_of(&store, id), State::Read);
+    }
+    let mut everything = distinct;
+    everything.extend(ids(&store
+        .list_headers(inbox_query(ADA_ID, true, 100))
+        .unwrap()));
+    everything.sort();
+    assert_eq!(
+        everything,
+        (1..=K as u32 + 2).map(msg_id).collect::<Vec<_>>(),
+        "the claimed and the still unread messages are disjoint and are every message"
+    );
 }
 
 /// A reader that peeked, then lost the oldest message to another claimer, must claim the
@@ -1721,8 +1831,10 @@ macro_rules! mailbox_conformance_tests {
             store_initial_read_is_never_unread,
             store_peek_is_read_only_and_oldest_first,
             store_peek_reports_expired_without_deleting,
+            store_peek_caps_expired_ids_oldest_first,
             store_claim_read_order_and_ownership,
             store_claim_read_is_once_under_concurrency,
+            store_claim_read_k_barrier_claimers_all_get_distinct,
             store_commits_and_claims_are_visible_to_other_readers,
             store_claim_read_after_a_lost_race_takes_the_next,
             store_claim_read_selects_and_marks_atomically,
