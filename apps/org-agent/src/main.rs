@@ -1,7 +1,12 @@
 //! `org-agent`: Fast CLI for agent messaging, directory (`who`), status (`status`),
 //! and message triage (`defer`, `done`, `notify`, `due`) over `org-spool`.
 //!
+//! `msg send | inbox | read | wait` and `who` go through the agent's office when this Mac has
+//! one and it answers (see [`office`]); the spool stays the offline fallback.
+//!
 //! Also supports `org-agent relay <run|status>` and `argv[0]` dispatch when invoked as `org-relay`.
+
+mod office;
 
 use std::collections::BTreeMap;
 use std::env;
@@ -13,9 +18,11 @@ use std::time::{Duration, SystemTime};
 use org_spool::{
     authorize_profile_edit, check_wait_timeout, format_iso8601_utc, json_quote, member_id_arg,
     parse_duration_arg, request_interrupt, resolve_caller, sanitize_inline_text, DirectoryCard,
-    Envelope, InboxQuery, MessagePriority, MetaValue, NotifyOptions, Outgoing, ProfileUpdate,
-    RelayOutcome, Spool, SpoolError,
+    Envelope, InboxItem, InboxQuery, MessagePriority, MetaValue, NotifyOptions, Outgoing,
+    ProfileUpdate, RelayOutcome, Spool, SpoolError, INBOX_MAX_LIMIT,
 };
+
+use office::{Failure, Route, Shown, Waited};
 
 const EXIT_OK: u8 = 0;
 const EXIT_USAGE: u8 = 1;
@@ -47,11 +54,25 @@ fn install_signal_handlers() {
 enum CliError {
     Usage(String),
     Spool(SpoolError),
+    /// From the office path: an exit code and what to say.
+    Failed(Failure),
 }
 
 impl From<SpoolError> for CliError {
     fn from(value: SpoolError) -> Self {
         Self::Spool(value)
+    }
+}
+
+impl From<Failure> for CliError {
+    fn from(value: Failure) -> Self {
+        Self::Failed(value)
+    }
+}
+
+impl From<org_client::ClientError> for CliError {
+    fn from(value: org_client::ClientError) -> Self {
+        Self::Failed(Failure::from_office(&value))
     }
 }
 
@@ -199,6 +220,8 @@ struct OutgoingArgs {
     priority: Option<MessagePriority>,
     body: Option<String>,
     meta: BTreeMap<String, MetaValue>,
+    /// `--office <id>`: which office `send` goes to (`ask` and `reply` still use the spool).
+    office: Option<String>,
     positional: Vec<String>,
 }
 
@@ -251,9 +274,7 @@ fn parse_outgoing(args: &[String], kind: OutgoingKind) -> Result<OutgoingArgs, C
                 let (k, v) = parse_meta_kv(&value()?)?;
                 out.meta.insert(k, v);
             }
-            "--office" => {
-                value()?;
-            }
+            "--office" => out.office = Some(value()?),
             other if other.starts_with('-') && other != "-" => {
                 return Err(CliError::Usage(format!("unknown flag '{other}'")));
             }
@@ -269,27 +290,101 @@ fn print_envelope(env: &Envelope, json: bool) -> Result<(), CliError> {
         let s = env.to_json_string().map_err(CliError::Usage)?;
         println!("{s}");
     } else {
-        // The header stays one line, like the inbox TSV (the subject is untrusted).
-        let subj = env
-            .subject
-            .as_deref()
-            .map(|s| format!(" · {}", sanitize_inline_text(s, 200)))
-            .unwrap_or_default();
-        let reply = env
-            .reply_to
-            .as_deref()
-            .map(|r| format!(" (reply_to: {r})"))
-            .unwrap_or_default();
-        println!(
-            "{} [{}] {} -> {}{}{}\n{}",
-            env.id,
+        print_message_text(
+            &env.id,
             env.kind.as_str(),
-            env.from,
-            env.to,
-            subj,
-            reply,
-            env.body
+            &env.from,
+            &env.to,
+            env.subject.as_deref(),
+            env.reply_to.as_deref(),
+            &env.body,
         );
+    }
+    Ok(())
+}
+
+/// [`print_envelope`] for a message from the office: the same JSON and text.
+fn print_shown(shown: &Shown, json: bool) -> Result<(), CliError> {
+    if json {
+        let s = serde_json::to_string(shown)
+            .map_err(|_| CliError::Usage("the message can't be printed as JSON".into()))?;
+        println!("{s}");
+    } else {
+        print_message_text(
+            &shown.id,
+            &shown.kind,
+            &shown.from,
+            &shown.to,
+            shown.subject.as_deref(),
+            shown.reply_to.as_deref(),
+            &shown.body,
+        );
+    }
+    Ok(())
+}
+
+/// A message as text: one header line, then the body.
+fn print_message_text(
+    id: &str,
+    kind: &str,
+    from: &str,
+    to: &str,
+    subject: Option<&str>,
+    reply_to: Option<&str>,
+    body: &str,
+) {
+    // The header stays one line, like the inbox TSV (the subject is untrusted, and so are
+    // the kind and the addresses an office sends).
+    let clean = |s: &str| sanitize_inline_text(s, 200);
+    let subj = subject
+        .map(|s| format!(" · {}", clean(s)))
+        .unwrap_or_default();
+    let reply = reply_to
+        .map(|r| format!(" (reply_to: {})", clean(r)))
+        .unwrap_or_default();
+    println!(
+        "{} [{}] {} -> {}{}{}\n{}",
+        clean(id),
+        clean(kind),
+        clean(from),
+        clean(to),
+        subj,
+        reply,
+        body
+    );
+}
+
+/// `msg inbox` rows: JSON, or one tab-separated line per message.
+fn print_inbox(items: Vec<InboxItem>, include_all: bool, json: bool) -> Result<(), CliError> {
+    if json {
+        let s = serde_json::to_string(&items)
+            .map_err(|e| CliError::Usage(format!("serialize inbox: {e}")))?;
+        println!("{s}");
+        return Ok(());
+    }
+    for item in items {
+        // Keep the TSV one row per message for the scripts that parse it.
+        let clean = |s: &str| sanitize_inline_text(s, 200);
+        let subj = clean(item.subject.as_deref().unwrap_or("-"));
+        let row = format!(
+            "{}\t{}\t{}\t{}\t{}",
+            clean(&item.id),
+            clean(&item.kind),
+            clean(&item.from),
+            clean(&item.created_at),
+            subj
+        );
+        if include_all {
+            // `--all` mixes unread, snoozed, done and read: two more columns, the status and
+            // (for a snooze) when it's due. Plain `inbox` keeps v1-old's five.
+            let due = match item.status.as_str() {
+                "snoozed" => item.snoozed_until.as_deref().unwrap_or("-"),
+                _ => "-",
+            };
+            println!("{row}\t{}\t{}", clean(&item.status), clean(due));
+        } else {
+            println!("{row}");
+        }
     }
     Ok(())
 }
@@ -386,6 +481,29 @@ fn print_card_row(card: &DirectoryCard) {
         card.role_title.as_deref().map(clean).unwrap_or("-".into()),
         card.status.as_deref().map(clean).unwrap_or("-".into())
     );
+}
+
+/// `who`'s output from the office: one card for `who <member>` (the office answers a member
+/// it doesn't know with `not_found`), else the list.
+fn print_cards(cards: &[DirectoryCard], one: bool, json: bool) -> Result<(), CliError> {
+    let failed = |e: serde_json::Error| CliError::Usage(e.to_string());
+    if one {
+        let card = cards
+            .first()
+            .ok_or_else(|| CliError::Usage("no such member".into()))?;
+        if json {
+            println!("{}", serde_json::to_string(card).map_err(failed)?);
+        } else {
+            print_card(card);
+        }
+    } else if json {
+        println!("{}", serde_json::to_string(cards).map_err(failed)?);
+    } else {
+        for card in cards {
+            print_card_row(card);
+        }
+    }
+    Ok(())
 }
 
 fn print_usage() {
@@ -489,6 +607,13 @@ fn run_org_relay(args: &[String]) -> ExitCode {
             eprintln!("org-relay: {e}");
             ExitCode::from(EXIT_IO)
         }
+        // The relay never talks to an office.
+        Err(CliError::Failed(failure)) => {
+            if let Some(message) = failure.message {
+                eprintln!("org-relay: {message}");
+            }
+            ExitCode::from(failure.code)
+        }
     }
 }
 
@@ -567,10 +692,10 @@ fn run(args: Vec<String>) -> Result<u8, CliError> {
             Ok(EXIT_OK)
         }
         "who" => {
-            let spool = Spool::open_from_env()?;
             let mut team_filter: Option<String> = None;
             let mut kind_filter: Option<String> = None;
             let mut target: Option<String> = None;
+            let mut office_flag: Option<String> = None;
 
             let mut j = 1usize;
             while j < filtered.len() {
@@ -595,9 +720,14 @@ fn run(args: Vec<String>) -> Result<u8, CliError> {
                     }
                     "--office" => {
                         j += 1;
-                        let _ = filtered
-                            .get(j)
-                            .ok_or_else(|| CliError::Usage("missing value for --office".into()))?;
+                        office_flag = Some(
+                            filtered
+                                .get(j)
+                                .ok_or_else(|| {
+                                    CliError::Usage("missing value for --office".into())
+                                })?
+                                .clone(),
+                        );
                     }
                     other if other.starts_with('-') => {
                         return Err(CliError::Usage(format!("unknown flag '{other}'")));
@@ -614,6 +744,26 @@ fn run(args: Vec<String>) -> Result<u8, CliError> {
                 j += 1;
             }
 
+            // Through the office when there is one, as the caller (it needs a binding). With
+            // no identity, the spool, as before.
+            if let Ok(me) = resolve_identity(as_agent.as_deref()) {
+                match office::route(&me, office_flag.as_deref())? {
+                    Route::Office(office) => {
+                        let params = office::who_params(
+                            target.as_deref(),
+                            team_filter.as_deref(),
+                            kind_filter.as_deref(),
+                        )
+                        .map_err(CliError::Usage)?;
+                        let cards = office.who(&params)?;
+                        print_cards(&cards, target.is_some(), json_flag)?;
+                        return Ok(EXIT_OK);
+                    }
+                    Route::Unreachable(why) => eprintln!("{}", why.spool_notice()),
+                    Route::NoOffice => {}
+                }
+            }
+            let spool = Spool::open_from_env()?;
             if let Some(member_query) = target {
                 let card = spool.resolve_directory_member(&member_query)?;
                 if json_flag {
@@ -777,11 +927,16 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
         return Ok(EXIT_OK);
     }
 
-    let spool = Spool::open_from_env()?;
     let sub_args = &args[1..];
-    if let Ok(me) = resolve_identity(as_agent.as_deref()) {
-        spool.touch_last_seen(&me);
+    // Through the office when there is one (each opens the spool only to fall back).
+    match sub {
+        "send" => return msg_send(sub_args, as_agent.as_deref(), json_flag),
+        "inbox" => return msg_inbox(sub_args, as_agent.as_deref(), json_flag),
+        "read" => return msg_read(sub_args, as_agent.as_deref(), json_flag),
+        "wait" => return msg_wait(sub_args, as_agent.as_deref(), json_flag),
+        _ => {}
     }
+    let spool = local_spool(as_agent.as_deref())?;
 
     match sub {
         "register" => {
@@ -836,23 +991,6 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
             Ok(EXIT_OK)
         }
 
-        "send" => {
-            let from = resolve_identity(as_agent.as_deref())?;
-            let parsed = parse_outgoing(sub_args, OutgoingKind::Send)?;
-            let to = parsed
-                .to
-                .clone()
-                .ok_or_else(|| CliError::Usage("send requires --to <agent>".into()))?;
-            let msg = parsed.outgoing(0)?;
-            let env = spool.send(&from, &to, msg)?;
-            if json_flag {
-                println!("{{\"id\":{}}}", json_quote(&env.id));
-            } else {
-                println!("{}", env.id);
-            }
-            Ok(EXIT_OK)
-        }
-
         "ask" => {
             let from = resolve_identity(as_agent.as_deref())?;
             let parsed = parse_outgoing(sub_args, OutgoingKind::Ask)?;
@@ -868,152 +1006,6 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
             } else {
                 // v1-old prints only the answer's body for a plain `ask`.
                 println!("{}", reply.body);
-            }
-            Ok(EXIT_OK)
-        }
-
-        "inbox" => {
-            let me = resolve_identity(as_agent.as_deref())?;
-            let mut include_all = false;
-            let mut summary_only = false;
-            let mut from_filter: Option<String> = None;
-            let mut thread_filter: Option<String> = None;
-            let mut limit: Option<usize> = None;
-
-            let mut j = 0usize;
-            while j < sub_args.len() {
-                match sub_args[j].as_str() {
-                    "--all" => include_all = true,
-                    "--summary" => summary_only = true,
-                    "--from" => {
-                        j += 1;
-                        from_filter = Some(
-                            sub_args
-                                .get(j)
-                                .ok_or_else(|| CliError::Usage("missing value for --from".into()))?
-                                .clone(),
-                        );
-                    }
-                    "--limit" => {
-                        j += 1;
-                        let raw = sub_args
-                            .get(j)
-                            .ok_or_else(|| CliError::Usage("missing value for --limit".into()))?;
-                        limit =
-                            Some(raw.parse::<usize>().map_err(|_| {
-                                CliError::Usage(format!("invalid --limit '{raw}'"))
-                            })?);
-                    }
-                    "--thread" => {
-                        j += 1;
-                        thread_filter = Some(
-                            sub_args
-                                .get(j)
-                                .ok_or_else(|| {
-                                    CliError::Usage("missing value for --thread".into())
-                                })?
-                                .clone(),
-                        );
-                    }
-                    "--office" => {
-                        j += 1;
-                        let _ = sub_args
-                            .get(j)
-                            .ok_or_else(|| CliError::Usage("missing value for --office".into()))?;
-                    }
-                    "--cursor" => {
-                        return Err(CliError::Usage(
-                            "--cursor is not supported by the spool (Phase A); use --limit".into(),
-                        ));
-                    }
-                    other => {
-                        return Err(CliError::Usage(format!("unknown flag '{other}'")));
-                    }
-                }
-                j += 1;
-            }
-
-            let items = spool.inbox(
-                &me,
-                &InboxQuery {
-                    include_all,
-                    summary_only,
-                    from: from_filter,
-                    thread: thread_filter,
-                    limit,
-                },
-            )?;
-
-            if json_flag {
-                let s = serde_json::to_string(&items)
-                    .map_err(|e| CliError::Usage(format!("serialize inbox: {e}")))?;
-                println!("{s}");
-            } else {
-                for item in items {
-                    // Keep the TSV one row per message for the scripts that parse it.
-                    let subj = sanitize_inline_text(item.subject.as_deref().unwrap_or("-"), 200);
-                    let row = format!(
-                        "{}\t{}\t{}\t{}\t{}",
-                        item.id, item.kind, item.from, item.created_at, subj
-                    );
-                    if include_all {
-                        // `--all` mixes unread, snoozed, done and read: two more columns, the
-                        // status and (for a snooze) when it's due. Plain `inbox` keeps
-                        // v1-old's five.
-                        let due = match item.status.as_str() {
-                            "snoozed" => item.snoozed_until.as_deref().unwrap_or("-"),
-                            _ => "-",
-                        };
-                        println!("{row}\t{}\t{due}", item.status);
-                    } else {
-                        println!("{row}");
-                    }
-                }
-            }
-            Ok(EXIT_OK)
-        }
-
-        "read" => {
-            let me = resolve_identity(as_agent.as_deref())?;
-            let mut next = false;
-            let mut id: Option<String> = None;
-
-            let mut args = sub_args.iter();
-            while let Some(arg) = args.next() {
-                match arg.as_str() {
-                    "--next" => next = true,
-                    "--office" => {
-                        args.next()
-                            .ok_or_else(|| CliError::Usage("missing value for --office".into()))?;
-                    }
-                    other if other.starts_with('-') => {
-                        return Err(CliError::Usage(format!("unknown flag '{other}'")));
-                    }
-                    other => {
-                        if id.is_some() {
-                            return Err(CliError::Usage("read takes a single <id>".into()));
-                        }
-                        id = Some(other.to_string());
-                    }
-                }
-            }
-
-            if next && id.is_some() {
-                return Err(CliError::Usage("cannot combine --next with <id>".into()));
-            }
-            if !next && id.is_none() {
-                return Err(CliError::Usage("read requires <id> or --next".into()));
-            }
-
-            if next {
-                if let Some(env) = spool.claim_next(&me)? {
-                    print_envelope(&env, json_flag)?;
-                } else if json_flag {
-                    println!("null");
-                }
-            } else if let Some(target_id) = id {
-                let env = spool.claim(&me, &target_id)?;
-                print_envelope(&env, json_flag)?;
             }
             Ok(EXIT_OK)
         }
@@ -1251,52 +1243,283 @@ fn run_msg(args: &[String], as_agent: Option<String>, json_flag: bool) -> Result
             }
         }
 
-        "wait" => {
-            let me = resolve_identity(as_agent.as_deref())?;
-            let mut timeout = Duration::from_secs(60);
-            let mut from_filter: Option<String> = None;
-            let mut urgent_only = false;
-
-            let mut j = 0usize;
-            while j < sub_args.len() {
-                match sub_args[j].as_str() {
-                    "--timeout" => {
-                        j += 1;
-                        let raw = sub_args
-                            .get(j)
-                            .ok_or_else(|| CliError::Usage("missing value for --timeout".into()))?;
-                        timeout = parse_duration_arg(raw).map_err(CliError::Usage)?;
-                        check_wait_timeout(timeout).map_err(CliError::Usage)?;
-                    }
-                    "--from" => {
-                        j += 1;
-                        from_filter = Some(
-                            sub_args
-                                .get(j)
-                                .ok_or_else(|| CliError::Usage("missing value for --from".into()))?
-                                .clone(),
-                        );
-                    }
-                    "--urgent-only" | "--urgent" => urgent_only = true,
-                    "--office" => {
-                        j += 1;
-                        let _ = sub_args
-                            .get(j)
-                            .ok_or_else(|| CliError::Usage("missing value for --office".into()))?;
-                    }
-                    other => return Err(CliError::Usage(format!("unknown flag '{other}'"))),
-                }
-                j += 1;
-            }
-
-            let env =
-                spool.wait_for_inbox_filtered(&me, from_filter.as_deref(), urgent_only, timeout)?;
-            print_envelope(&env, json_flag)?;
-            Ok(EXIT_OK)
-        }
-
         other => Err(CliError::Usage(format!("unknown msg subcommand '{other}'"))),
     }
+}
+
+/// The local spool, with the caller's presence touched (as every spool `msg` command does).
+fn local_spool(as_agent: Option<&str>) -> Result<Spool, CliError> {
+    let spool = Spool::open_from_env()?;
+    if let Ok(me) = resolve_identity(as_agent) {
+        spool.touch_last_seen(&me);
+    }
+    Ok(spool)
+}
+
+/// `msg send`: through the office; to the spool when there is none, or when it doesn't answer
+/// (then `--json` adds `"queued": true` and stderr says so, ADR-0003 §3.5).
+fn msg_send(sub_args: &[String], as_agent: Option<&str>, json_flag: bool) -> Result<u8, CliError> {
+    let from = resolve_identity(as_agent)?;
+    let parsed = parse_outgoing(sub_args, OutgoingKind::Send)?;
+    let to = parsed
+        .to
+        .clone()
+        .ok_or_else(|| CliError::Usage("send requires --to <agent>".into()))?;
+    let office_flag = parsed.office.clone();
+    let msg = parsed.outgoing(0)?;
+    let queued = match office::route(&from, office_flag.as_deref())? {
+        Route::Office(office) => {
+            let id = office.send(&to, msg)?;
+            if json_flag {
+                println!("{{\"id\":{}}}", json_quote(&id));
+            } else {
+                println!("{id}");
+            }
+            return Ok(EXIT_OK);
+        }
+        Route::Unreachable(why) => {
+            eprintln!("{}", why.queued_notice());
+            true
+        }
+        Route::NoOffice => false,
+    };
+    let env = local_spool(as_agent)?.send(&from, &to, msg)?;
+    if json_flag && queued {
+        println!("{{\"id\":{},\"queued\":true}}", json_quote(&env.id));
+    } else if json_flag {
+        println!("{{\"id\":{}}}", json_quote(&env.id));
+    } else {
+        println!("{}", env.id);
+    }
+    Ok(EXIT_OK)
+}
+
+/// `msg inbox`: through the office (headers only: no body or meta in `--json`), else the
+/// spool's.
+fn msg_inbox(sub_args: &[String], as_agent: Option<&str>, json_flag: bool) -> Result<u8, CliError> {
+    let me = resolve_identity(as_agent)?;
+    let mut include_all = false;
+    let mut summary_only = false;
+    let mut from_filter: Option<String> = None;
+    let mut thread_filter: Option<String> = None;
+    let mut limit: Option<usize> = None;
+    let mut office_flag: Option<String> = None;
+
+    let mut j = 0usize;
+    while j < sub_args.len() {
+        match sub_args[j].as_str() {
+            "--all" => include_all = true,
+            "--summary" => summary_only = true,
+            "--from" => {
+                j += 1;
+                from_filter = Some(
+                    sub_args
+                        .get(j)
+                        .ok_or_else(|| CliError::Usage("missing value for --from".into()))?
+                        .clone(),
+                );
+            }
+            "--limit" => {
+                j += 1;
+                let raw = sub_args
+                    .get(j)
+                    .ok_or_else(|| CliError::Usage("missing value for --limit".into()))?;
+                limit = Some(
+                    raw.parse::<usize>()
+                        .map_err(|_| CliError::Usage(format!("invalid --limit '{raw}'")))?,
+                );
+            }
+            "--thread" => {
+                j += 1;
+                thread_filter = Some(
+                    sub_args
+                        .get(j)
+                        .ok_or_else(|| CliError::Usage("missing value for --thread".into()))?
+                        .clone(),
+                );
+            }
+            "--office" => {
+                j += 1;
+                office_flag = Some(
+                    sub_args
+                        .get(j)
+                        .ok_or_else(|| CliError::Usage("missing value for --office".into()))?
+                        .clone(),
+                );
+            }
+            "--cursor" => {
+                return Err(CliError::Usage(
+                    "--cursor is not supported by the spool (Phase A); use --limit".into(),
+                ));
+            }
+            other => {
+                return Err(CliError::Usage(format!("unknown flag '{other}'")));
+            }
+        }
+        j += 1;
+    }
+    // The spool's rule, checked before either path.
+    if limit.is_some_and(|l| l == 0 || l > INBOX_MAX_LIMIT) {
+        return Err(CliError::Usage(format!(
+            "--limit must be between 1 and {INBOX_MAX_LIMIT}"
+        )));
+    }
+
+    let query = InboxQuery {
+        include_all,
+        summary_only,
+        from: from_filter,
+        thread: thread_filter,
+        limit,
+    };
+    let items = match office::route(&me, office_flag.as_deref())? {
+        Route::Office(office) => office.inbox(&query)?,
+        other => {
+            if let Route::Unreachable(why) = other {
+                eprintln!("{}", why.spool_notice());
+            }
+            local_spool(as_agent)?.inbox(&me, &query)?
+        }
+    };
+    print_inbox(items, include_all, json_flag)?;
+    Ok(EXIT_OK)
+}
+
+/// `msg read`: through the office (it marks the message read there), else the spool.
+fn msg_read(sub_args: &[String], as_agent: Option<&str>, json_flag: bool) -> Result<u8, CliError> {
+    let me = resolve_identity(as_agent)?;
+    let mut next = false;
+    let mut id: Option<String> = None;
+    let mut office_flag: Option<String> = None;
+
+    let mut args = sub_args.iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--next" => next = true,
+            "--office" => {
+                office_flag = Some(
+                    args.next()
+                        .ok_or_else(|| CliError::Usage("missing value for --office".into()))?
+                        .clone(),
+                );
+            }
+            other if other.starts_with('-') => {
+                return Err(CliError::Usage(format!("unknown flag '{other}'")));
+            }
+            other => {
+                if id.is_some() {
+                    return Err(CliError::Usage("read takes a single <id>".into()));
+                }
+                id = Some(other.to_string());
+            }
+        }
+    }
+
+    if next && id.is_some() {
+        return Err(CliError::Usage("cannot combine --next with <id>".into()));
+    }
+    if !next && id.is_none() {
+        return Err(CliError::Usage("read requires <id> or --next".into()));
+    }
+
+    match office::route(&me, office_flag.as_deref())? {
+        Route::Office(office) => {
+            match office.read(id.as_deref())? {
+                Some(message) => print_shown(&Shown::from_message(message), json_flag)?,
+                None if id.is_some() => {
+                    return Err(CliError::Usage("the office returned no message".into()));
+                }
+                None if json_flag => println!("null"),
+                None => {}
+            }
+            return Ok(EXIT_OK);
+        }
+        Route::Unreachable(why) => eprintln!("{}", why.spool_notice()),
+        Route::NoOffice => {}
+    }
+    let spool = local_spool(as_agent)?;
+    if next {
+        if let Some(env) = spool.claim_next(&me)? {
+            print_envelope(&env, json_flag)?;
+        } else if json_flag {
+            println!("null");
+        }
+    } else if let Some(target_id) = id {
+        let env = spool.claim(&me, &target_id)?;
+        print_envelope(&env, json_flag)?;
+    }
+    Ok(EXIT_OK)
+}
+
+/// `msg wait`: through the office (held there, not marked read), else the spool.
+fn msg_wait(sub_args: &[String], as_agent: Option<&str>, json_flag: bool) -> Result<u8, CliError> {
+    let me = resolve_identity(as_agent)?;
+    let mut timeout = Duration::from_secs(60);
+    let mut from_filter: Option<String> = None;
+    let mut urgent_only = false;
+    let mut office_flag: Option<String> = None;
+
+    let mut j = 0usize;
+    while j < sub_args.len() {
+        match sub_args[j].as_str() {
+            "--timeout" => {
+                j += 1;
+                let raw = sub_args
+                    .get(j)
+                    .ok_or_else(|| CliError::Usage("missing value for --timeout".into()))?;
+                timeout = parse_duration_arg(raw).map_err(CliError::Usage)?;
+                check_wait_timeout(timeout).map_err(CliError::Usage)?;
+            }
+            "--from" => {
+                j += 1;
+                from_filter = Some(
+                    sub_args
+                        .get(j)
+                        .ok_or_else(|| CliError::Usage("missing value for --from".into()))?
+                        .clone(),
+                );
+            }
+            "--urgent-only" | "--urgent" => urgent_only = true,
+            "--office" => {
+                j += 1;
+                office_flag = Some(
+                    sub_args
+                        .get(j)
+                        .ok_or_else(|| CliError::Usage("missing value for --office".into()))?
+                        .clone(),
+                );
+            }
+            other => return Err(CliError::Usage(format!("unknown flag '{other}'"))),
+        }
+        j += 1;
+    }
+
+    match office::route(&me, office_flag.as_deref())? {
+        Route::Office(office) => {
+            return match office.wait(from_filter.as_deref(), urgent_only, timeout)? {
+                Waited::Message(message) => {
+                    print_shown(&Shown::from_message(*message), json_flag)?;
+                    Ok(EXIT_OK)
+                }
+                // The spool's wording and exit codes.
+                Waited::TimedOut => Err(CliError::Spool(SpoolError::Timeout(format!(
+                    "timed out after {}ms waiting for message in {me}'s inbox",
+                    timeout.as_millis()
+                )))),
+                Waited::Interrupted => Err(CliError::Spool(SpoolError::Interrupted)),
+            };
+        }
+        Route::Unreachable(why) => eprintln!("{}", why.spool_notice()),
+        Route::NoOffice => {}
+    }
+    let env = local_spool(as_agent)?.wait_for_inbox_filtered(
+        &me,
+        from_filter.as_deref(),
+        urgent_only,
+        timeout,
+    )?;
+    print_envelope(&env, json_flag)?;
+    Ok(EXIT_OK)
 }
 
 fn main() -> ExitCode {
@@ -1335,5 +1558,11 @@ fn main() -> ExitCode {
             ExitCode::from(EXIT_IO)
         }
         Err(CliError::Spool(SpoolError::Interrupted)) => ExitCode::from(EXIT_INTERRUPTED),
+        Err(CliError::Failed(failure)) => {
+            if let Some(message) = failure.message {
+                eprintln!("org-agent: {message}");
+            }
+            ExitCode::from(failure.code)
+        }
     }
 }

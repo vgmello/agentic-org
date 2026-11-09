@@ -7,5 +7,28 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+org-client = { path = "../../crates/org-client" }
+org-proto = { path = "../../crates/org-proto" }
 org-spool = { path = "../../crates/org-spool" }
+serde.workspace = true
 serde_json.workspace = true
+
+[features]
+# Runs tests/office.rs: this CLI against a real office server with test keys instead of the
+# Keychain (the server's library run as a child process, exactly as its binary runs it). Like the
+# server's own launch tests, the workspace commands skip it: run
+# `cargo test -p org-agent --features office-tests`. Debug builds only (dev-keys refuses release).
+office-tests = ["org-office-server/dev-keys"]
+
+[dev-dependencies]
+# Test-only: the real office server for tests/office.rs. Never a dependency of the binary.
+org-office-server = { path = "../org-office-server" }
+org-office-launch = { path = "../../crates/org-office-launch" }
+tempfile.workspace = true
+
+[[test]]
+name = "office"
+path = "tests/office.rs"
+# Its own main: run with ORG_AGENT_TEST_OFFICE_SERVER set, it is the office server.
+harness = false
+required-features = ["office-tests"]

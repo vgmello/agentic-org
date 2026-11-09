@@ -52,9 +52,14 @@ impl TempOrgHome {
 
     pub fn command(root: &Path, as_agent: &str, args: &[&str]) -> Command {
         let mut cmd = Command::new(org_agent_bin());
+        // No office: these tests are about the spool, and must never reach a real office
+        // through an inherited ORG_OFFICE_HOME or ORG_OFFICE (HOME is the temp root, so the
+        // default office home is empty).
         cmd.args(args)
             .env("ORG_HOME", root)
             .env("HOME", root)
+            .env_remove("ORG_OFFICE_HOME")
+            .env_remove("ORG_OFFICE")
             .env("ORG_AGENT", as_agent);
         cmd
     }
@@ -64,6 +69,8 @@ impl TempOrgHome {
             .args(["relay", "run"])
             .env("ORG_HOME", &self.root)
             .env("HOME", &self.root)
+            .env_remove("ORG_OFFICE_HOME")
+            .env_remove("ORG_OFFICE")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
