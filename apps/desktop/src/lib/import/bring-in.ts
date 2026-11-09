@@ -110,6 +110,10 @@ async function execute(session: OrgSession, input: BringInInput): Promise<BringI
 		if (made) {
 			// Made by an earlier run: if the owner has since deleted it, it stays deleted.
 			if (s.teams.some((t) => t.id === made.id)) teamIds.set(draft.key, made.id);
+			else if (!made.led) {
+				made.led = true; // nothing left to owe a team that is gone
+				keep();
+			}
 			continue;
 		}
 		// An owner that isn't among the teams being made (a name the file never defined) is no owner.
@@ -320,10 +324,16 @@ const teamName = (teams: Team[], id: string) => teams.find((t) => t.id === id)?.
  * Whether an earlier run of this import still owes something that bringing in again would do: an agent it made whose team or
  * manager is not done, or a team whose lead is not set. (The review's own count only counts agents still to be made.)
  */
-export function owesWork(ledger: Ledger, rows: Row[], drafts: TeamDraft[]): boolean {
+export function owesWork(ledger: Ledger, rows: Row[], drafts: TeamDraft[], now?: OrgSnapshot): boolean {
 	const taking = rows.filter(takesPart);
 	const waiting = (r: Row) => r.managerKey !== OWNER && rows.some((m) => m.key === r.managerKey && m.choice !== 'skip' && m.existingKind !== 'person' && !m.existingOffboarded && !takesPart(m));
-	const agents = taking.some((r) => ledger.agents[lower(r.messagingName)] && !ledger.agents[lower(r.messagingName)].linked && !waiting(r));
-	const leads = drafts.some((d) => ledger.teams[d.key] && !ledger.teams[d.key].led && d.leadKey && taking.some((r) => r.key === d.leadKey));
+	// What the engine would do: an agent or team that is gone (the owner removed or deleted it) is not owed anything.
+	const liveAgent = (id: string) => !now || isLive(now.members.find((m) => m.id === id));
+	const liveTeam = (id: string) => !now || now.teams.some((t) => t.id === id);
+	const agents = taking.some((r) => {
+		const entry = ledger.agents[lower(r.messagingName)];
+		return !!entry && !entry.linked && liveAgent(entry.id) && !waiting(r);
+	});
+	const leads = drafts.some((d) => ledger.teams[d.key] && !ledger.teams[d.key].led && liveTeam(ledger.teams[d.key].id) && d.leadKey && taking.some((r) => r.key === d.leadKey));
 	return agents || leads;
 }

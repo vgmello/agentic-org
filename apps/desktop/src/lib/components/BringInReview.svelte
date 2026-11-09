@@ -26,6 +26,7 @@
 		alreadyThere,
 		busy,
 		members,
+		onbringback,
 		onchoosehints
 	}: {
 		rows: Row[];
@@ -47,6 +48,8 @@
 		busy: boolean;
 		/** Who is in the organization now (a messaging name given to a row may already be theirs). */
 		members: Member[];
+		/** The owner asks for an agent an earlier import made and they removed. */
+		onbringback: (row: Row) => void;
 		onchoosehints: () => void;
 	} = $props();
 
@@ -125,7 +128,7 @@
 			<tbody class="divide-y divide-white/5">
 				{#each shown as row (row.key)}
 					{@const note = rowNote(row, scan, organization)}
-					{@const settled = !!row.existingMemberId}
+					{@const settled = !!row.existingMemberId || row.removedEarlier}
 					<tr data-testid="import-row" data-row={row.key} class={row.choice === 'skip' ? 'opacity-50' : ''}>
 						<td class="px-3 py-2 align-top">
 							<p class="font-medium text-white [overflow-wrap:anywhere]">{row.name}</p>
@@ -137,6 +140,7 @@
 							{/if}
 							<p class="text-xs/5 text-gray-400">{SOURCES[row.source]}</p>
 							{#if note}<p class="mt-1 max-w-64 text-xs/5 {note.tone === 'bad' ? 'text-red-300' : note.tone === 'warn' ? 'text-amber-200' : 'text-gray-300'}" data-testid="import-note">{note.text}</p>{/if}
+							{#if row.removedEarlier}<Button type="button" variant="outline" size="sm" class="mt-1" disabled={busy} aria-label="Bring {row.name} in again" onclick={() => onbringback(row)}>Bring in again</Button>{/if}
 						</td>
 						<td class="px-3 py-2 align-top">
 							<select aria-label="Role for {row.name}" class={select} value={row.role ?? ''} disabled={busy || settled} onchange={(e) => setRole(row, e.currentTarget.value)}>

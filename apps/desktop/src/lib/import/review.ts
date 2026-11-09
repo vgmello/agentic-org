@@ -1,6 +1,7 @@
 // What the review screen does with the rows and teams, as plain functions (so it is tested without the screen).
 
 import type { Member } from '$lib/proto';
+import type { Ledger } from './ledger';
 import { handleProblem, hasNoMessages, isValidHandle, missingOf, OWNER, type Row } from './rows';
 import type { TeamDraft } from './teams';
 import type { Scan } from './types';
@@ -16,7 +17,7 @@ export const FILTERS: { id: RowFilter; label: string }[] = [
 
 export function filterRows(rows: Row[], filter: RowFilter): Row[] {
 	if (filter === 'all') return rows;
-	const settled = (r: Row) => !!r.existingMemberId || r.existingOffboarded;
+	const settled = (r: Row) => !!r.existingMemberId || r.existingOffboarded || r.removedEarlier;
 	if (filter === 'skipped') return rows.filter((r) => r.choice === 'skip');
 	if (filter === 'needs') return rows.filter((r) => r.choice !== 'skip' && !settled(r) && missingOf(r).length > 0);
 	return rows.filter((r) => r.choice !== 'skip' && !settled(r) && missingOf(r).length === 0);
@@ -28,6 +29,7 @@ export const patchRow = (rows: Row[], key: string, change: Partial<Row> | ((row:
 
 /** What a row says besides its fields: why it can't be brought in as it is, or what the owner should know. */
 export function rowNote(row: Row, scan: Scan, organization: string): { tone: 'info' | 'warn' | 'bad'; text: string } | undefined {
+	if (row.removedEarlier) return { tone: 'warn', text: `An earlier import made ${row.name} and it has since been removed from ${organization}: it stays removed.` };
 	if (row.existingOffboarded) return { tone: 'warn', text: `Offboarded in ${organization}: its name stays reserved.` };
 	if (row.existingKind === 'person') return { tone: 'warn', text: `A person in ${organization} already has this name.` };
 	if (row.existingMemberId) return { tone: 'info', text: `Already in ${organization}.` };
@@ -108,7 +110,7 @@ export function setParent(drafts: TeamDraft[], teamKey: string, parentKey: strin
 }
 
 /** Whether a row stays in the import (one still to be filled in will be by the time it runs): not skipped, not a person's name, not offboarded. */
-export const staying = (r: Row): boolean => r.choice !== 'skip' && r.existingKind !== 'person' && !r.existingOffboarded;
+export const staying = (r: Row): boolean => r.choice !== 'skip' && r.existingKind !== 'person' && !r.existingOffboarded && !r.removedEarlier;
 
 /**
  * After a change, drop what points at nothing: a manager who is no longer part of the import reports to the owner instead, and
@@ -128,4 +130,15 @@ export function normalize(rows: Row[], drafts: TeamDraft[]): { rows: Row[]; draf
 			return lead && staying(lead) && inside ? d : { ...d, leadKey: undefined };
 		})
 	};
+}
+
+/**
+ * Mark the rows whose agent an earlier import made and the owner has since removed (the import never makes one again on its own).
+ * `liveIds` are the members now in the organization.
+ */
+export function markRemoved(rows: Row[], ledger: Ledger, liveIds: ReadonlySet<string>): Row[] {
+	return rows.map((r) => {
+		const entry = ledger.agents[lowerName(r.messagingName)];
+		return entry && !r.existingMemberId && !liveIds.has(entry.id) ? { ...r, removedEarlier: true } : r;
+	});
 }

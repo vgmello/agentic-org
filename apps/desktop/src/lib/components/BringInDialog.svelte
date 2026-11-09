@@ -9,7 +9,7 @@
 	import { addResults, bringIn, owesWork, type BringInResult } from '$lib/import/bring-in';
 	import { applyHints, type HintNotes } from '$lib/import/hints';
 	import { browserLedger } from '$lib/import/ledger';
-	import { normalize } from '$lib/import/review';
+	import { markRemoved, normalize } from '$lib/import/review';
 	import { buildRows, counts, type Row } from '$lib/import/rows';
 	import { suggestProject, suggestTeams, whatHappens, withDefaultManagers, type ProjectDraft, type TeamDraft } from '$lib/import/teams';
 	import type { Defaults, Hints, HrAgent, Scan } from '$lib/import/types';
@@ -185,7 +185,7 @@
 		const base = suggestTeams(review.rows);
 		const fitted = hints ? applyHints(review.rows, hints, base) : { rows: review.rows, drafts: base, notes: undefined };
 		drafts = fitted.drafts;
-		rows = withDefaultManagers(fitted.rows, drafts);
+		rows = withDefaultManagers(markRemoved(fitted.rows, browserLedger(organizationId).load(), new Set(snapshot.members.map((m) => m.id))), drafts);
 		hintNotes = fitted.notes;
 		offboarded = review.offboarded;
 		project = suggestProject(rows, drafts);
@@ -196,8 +196,16 @@
 	const c = $derived(counts(rows));
 	const happens = $derived(whatHappens(rows, drafts, projectOn ? project : undefined, organization));
 	// What an earlier try of this import left owing (it was closed after a failure): bringing in again finishes it.
-	const owed = $derived(step === 'review' && owesWork(browserLedger(organizationId).load(), rows, drafts));
+	const owed = $derived(step === 'review' && owesWork(browserLedger(organizationId).load(), rows, drafts, snapshot));
 	const bringLabel = $derived(c.ready === 0 && owed ? 'Finish bringing in' : `Bring in ${c.ready} ${c.ready === 1 ? 'agent' : 'agents'}${c.needDetails > 0 ? ` · ${c.needDetails} need details` : ''}`);
+	/** The owner wants an agent that an earlier import made and they removed: forget that it was ours, so it is made again. */
+	function bringBack(row: Row) {
+		const store = browserLedger(organizationId);
+		const ledger = store.load();
+		delete ledger.agents[row.messagingName.toLowerCase()];
+		store.save(ledger);
+		rows = rows.map((r) => (r.key === row.key ? { ...r, removedEarlier: false } : r));
+	}
 	const roleFiles = $derived(scan?.hr && !scan.hr.error ? scan.hr.roles : []);
 
 	async function run() {
@@ -319,6 +327,7 @@
 				alreadyThere={drafts.filter((d) => snapshot.teams.some((t) => t.name.trim().toLowerCase() === d.name.trim().toLowerCase())).map((d) => d.name)}
 				{busy}
 				members={snapshot.members}
+				onbringback={bringBack}
 				onchoosehints={chooseHints}
 			/>
 			<p class="text-sm/6 text-gray-300" data-testid="what-happens">{happens}</p>

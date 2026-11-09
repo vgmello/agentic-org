@@ -38,6 +38,8 @@ export interface Row {
 	existingKind?: 'agent' | 'person';
 	/** That agent was offboarded: its name stays reserved, and it is no longer part of the team. */
 	existingOffboarded?: boolean;
+	/** An earlier import made this agent and the owner has since removed it: it stays removed unless the owner asks for it again. */
+	removedEarlier?: boolean;
 }
 
 export interface Review {
@@ -187,13 +189,13 @@ export function missingOf(row: Row): ('role' | 'runtime' | 'name')[] {
 }
 
 /** Whether a row takes part in the import: chosen, complete, and not a person's name. It may already be in (an agent from an earlier try). */
-export const takesPart = (row: Row): boolean => row.choice !== 'skip' && row.existingKind !== 'person' && !row.existingOffboarded && missingOf(row).length === 0;
+export const takesPart = (row: Row): boolean => row.choice !== 'skip' && row.existingKind !== 'person' && !row.existingOffboarded && !row.removedEarlier && missingOf(row).length === 0;
 
 /** Whether a row will be brought in as it is: chosen, not already in, and nothing missing. */
-export const isReady = (row: Row): boolean => row.choice !== 'skip' && !row.existingMemberId && missingOf(row).length === 0;
+export const isReady = (row: Row): boolean => row.choice !== 'skip' && !row.existingMemberId && !row.removedEarlier && missingOf(row).length === 0;
 
 /** Whether the row still has to be filled in to be brought in. */
-export const needsDetails = (row: Row): boolean => row.choice !== 'skip' && !row.existingMemberId && missingOf(row).length > 0;
+export const needsDetails = (row: Row): boolean => row.choice !== 'skip' && !row.existingMemberId && !row.removedEarlier && missingOf(row).length > 0;
 
 /** An HR-only agent has no messaging inbox: say so and let the owner pick (Active · Paused · Skip). */
 export const hasNoMessages = (row: Row, scan: Scan): boolean => row.source === 'hr' && !!scan.messaging && !scan.messaging.error;

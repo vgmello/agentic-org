@@ -4,10 +4,11 @@ import type { OrgSession } from '$lib/org/session';
 import { sessionFor } from '$lib/org/session';
 import type { Member } from '$lib/proto';
 import { addResults, bringIn, owesWork, type BringInInput } from './bring-in';
+import { markRemoved } from './review';
 import { applyHints } from './hints';
 import { memoryLedger, type LedgerStore } from './ledger';
 import { SAMPLE_HINTS, SAMPLE_SCAN } from './mock';
-import { buildRows, chooseRole } from './rows';
+import { buildRows, chooseRole, counts } from './rows';
 import { suggestProject, suggestTeams } from './teams';
 
 const memory = (): MockStorage => {
@@ -490,3 +491,57 @@ describe('a failure is reported once, and what is owed can be finished from a ne
 		expect(member('ac-software-engineer-river').reports_to_member_id).toBe(member('ac-staff-engineer-ada').id);
 	});
 });
+
+describe('what is owed is what the engine would do', () => {
+	const failingLeads = (w: World): OrgSession => ({ snapshot: () => w.s.snapshot(), command: (c) => (c.method === 'team.set_lead' ? Promise.reject({ source: 'api', code: 'unavailable', message: 'gone' }) : w.s.command(c)) });
+
+	it('an agent the ledger holds unlinked is owed, and one waiting on an incomplete manager is not', async () => {
+		const w = world();
+		const { rows, drafts } = reviewed();
+		expect(owesWork({ teams: {}, agents: { 'server-dev': { id: 'x', created: true, linked: false } } }, rows, drafts)).toBe(true);
+		expect(owesWork({ teams: {}, agents: { 'server-dev': { id: 'x', created: true, linked: true } } }, rows, drafts)).toBe(false);
+		const waiting = rows.map((r) => (r.name === 'server-dev' ? { ...r, managerKey: 'ac-staff-engineer-ada' } : r.name === 'ada' ? { ...r, role: undefined } : r));
+		expect(owesWork({ teams: {}, agents: { 'server-dev': { id: 'x', created: true, linked: false } } }, waiting, drafts)).toBe(false);
+		void w;
+	});
+
+	it('a lead is owed when the ledger holds its team unled and the lead stays in the import, not when the lead is skipped', () => {
+		const { rows, drafts } = reviewed();
+		const ledger = { teams: { app: { id: 't', led: false } }, agents: {} };
+		expect(owesWork(ledger, rows, drafts)).toBe(true);
+		expect(owesWork(ledger, rows.map((r) => (r.name === 'app-frontend-dev' ? { ...r, choice: 'skip' as const } : r)), drafts)).toBe(false);
+	});
+
+	it('a team the owner deleted while its lead was owed is not owed any more: the run settles it, and says "nothing new"', async () => {
+		const w = world();
+		await run(w, reviewed(), failingLeads(w));
+		const snap = await w.s.snapshot();
+		for (const t of [...snap.teams].sort((a, b) => (b.owner_team_id ? 1 : 0) - (a.owner_team_id ? 1 : 0))) {
+			const memberships = (await w.s.snapshot()).memberships.filter((m) => m.team_id === t.id);
+			for (const m of memberships) await w.s.command({ method: 'team.remove_member', params: { membership_id: m.id, expected_version: m.version } });
+			const fresh = (await w.s.snapshot()).teams.find((x) => x.id === t.id)!;
+			await w.s.command({ method: 'team.delete', params: { team_id: t.id, expected_version: fresh.version } });
+		}
+		const members = (await w.s.snapshot()).members;
+		const rebuilt = reviewed(members);
+		expect(owesWork(w.ledger.load(), rebuilt.rows, rebuilt.drafts, await w.s.snapshot())).toBe(false);
+		// Even asked without the snapshot, the run settles what it finds gone.
+		expect(await run(w, rebuilt)).toMatchObject({ agents: 0, teams: 0, failures: [] });
+		expect(owesWork(w.ledger.load(), rebuilt.rows, rebuilt.drafts)).toBe(false);
+	});
+
+	it('an agent the owner removed after an earlier import has its own state and is not counted as new', async () => {
+		const w = world();
+		await run(w);
+		const { member } = await find(w.s);
+		const codex = member('codex-dev');
+		await w.s.command({ method: 'member.remove', params: { member_id: codex.id, expected_version: codex.version } });
+		const now = await w.s.snapshot();
+		const rebuilt = reviewed(now.members);
+		const marked = markRemoved(rebuilt.rows, w.ledger.load(), new Set(now.members.map((m) => m.id)));
+		expect(marked.find((r) => r.name === 'codex-dev')).toMatchObject({ removedEarlier: true });
+		expect(marked.filter((r) => r.removedEarlier)).toHaveLength(1);
+		expect(counts(marked)).toMatchObject({ ready: 0 });
+	});
+});
+
