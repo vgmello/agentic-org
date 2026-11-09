@@ -8,7 +8,7 @@ owner: ada (Staff Engineer)
 status: active
 summary: Decide routine calls yourself; when unsure, reach consensus with a fresh peer; escalate only critical or unresolved decisions, with options and a recommendation.
 applies_to: every agent
-overridable: true             # a team or project may tighten it (e.g. add to the critical list)
+overridable: false            # sealed: §3's critical list is a floor. A team or project adds its own items in a process with another key
 ---
 
 > The user's standard procedure (2026-11-09). Kept in this repository (`docs/processes/`) until the organization's handbook repository exists.
@@ -20,6 +20,7 @@ How every agent makes decisions. The goal: work keeps moving, people are asked o
 ## 1. Decide yourself
 - Routine and reversible calls are yours: use your best judgment and act. Don't ask "should I?".
 - Write down what you decided and why, where the work is (the task, the branch's commit message, your journal).
+- Approvals another process requires aren't routine calls: they still apply (for example branch-and-merge's reviewer READY and the lead's go, or a process change's approval).
 
 ## 2. When you're unsure, consult a peer
 - Start a fresh peer (a subagent or another agent) and give it the question and the facts, not your conclusion.
