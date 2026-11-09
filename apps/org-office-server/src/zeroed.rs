@@ -1,5 +1,5 @@
-//! A small buffered reader that wipes its buffer when it is dropped. The first line from the host
-//! carries the app token and the database key, and the launch contract asks the server to read it "unbuffered or
+//! A small buffered reader that wipes its buffer when it is dropped. The key hand-off line carries
+//! the app token and the database key; the launch contract asks the server to read it "unbuffered or
 //! through a small buffer you control": std's `BufReader` frees its buffer without clearing it.
 //! Best effort, like the rest of the zeroing (copies elsewhere remain).
 #![allow(unsafe_code)]
@@ -15,15 +15,15 @@ thread_local! {
     static WIPES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-pub struct ZeroedReader {
-    inner: Option<File>,
+pub struct ZeroedReader<R = File> {
+    inner: Option<R>,
     buf: [u8; SIZE],
     pos: usize,
     cap: usize,
 }
 
-impl ZeroedReader {
-    pub fn new(inner: File) -> Self {
+impl<R> ZeroedReader<R> {
+    pub fn new(inner: R) -> Self {
         Self {
             inner: Some(inner),
             buf: [0; SIZE],
@@ -34,7 +34,7 @@ impl ZeroedReader {
 
     /// Wipes the buffer IN PLACE and gives the file back. It takes `&mut self` on purpose: a
     /// by-value `self` would be moved, leaving the token in the caller's old stack slot.
-    pub fn take_inner(&mut self) -> File {
+    pub fn take_inner(&mut self) -> R {
         self.wipe();
         self.inner.take().expect("the file is only taken here")
     }
@@ -58,7 +58,7 @@ impl ZeroedReader {
     }
 }
 
-impl Read for ZeroedReader {
+impl<R: Read> Read for ZeroedReader<R> {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
         let available = self.fill_buf()?;
         let n = available.len().min(out.len());
@@ -68,7 +68,7 @@ impl Read for ZeroedReader {
     }
 }
 
-impl BufRead for ZeroedReader {
+impl<R: Read> BufRead for ZeroedReader<R> {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
         if self.pos >= self.cap {
             let file = self
@@ -86,7 +86,7 @@ impl BufRead for ZeroedReader {
     }
 }
 
-impl Drop for ZeroedReader {
+impl<R> Drop for ZeroedReader<R> {
     fn drop(&mut self) {
         self.wipe();
     }

@@ -1,18 +1,25 @@
 //! The real `org-office-server` binary, driven the way the host drives it: arguments, the control
-//! pipe on stdin and stdout, and the office socket. The host holds the database key and sends it
-//! on the first line (key custody), so there is no key store here and no test can touch a
-//! Keychain: the server has no Keychain code.
+//! pipe on stdin and stdout, and the office socket. The host holds the database key and the app
+//! token and hands them to the server over a one-shot key socket (the key hand-off), so there is
+//! no key store here and no test can touch a Keychain: the server has no Keychain code. The
+//! tests play the host: they bind that socket, write the hand-off line to the one connection, and
+//! unlink and close it.
 
-use std::io::BufReader;
+use std::io::{BufReader, Write};
+use std::os::unix::fs::PermissionsExt;
+use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use org_client::Client;
 use org_office_launch::{
-    office_dir, read_server_event, write_host_message, CreateOffice, DiscardOffice, FailCode,
-    HostMessage, OfficeFile, ServerEvent, StartOffice,
+    key_socket_path, office_dir, read_server_event, write_hand_off, write_host_message,
+    CreateOffice, DiscardOffice, FailCode, HostMessage, KeySocketId, OfficeFile, ServerEvent,
+    StartOffice,
 };
 use org_proto::location::office_socket_path;
 use org_proto::{AppToken, DbKey, OfficeRole};
@@ -66,6 +73,7 @@ impl World {
             child,
             stdin,
             events,
+            home: self.home.clone(),
         }
     }
 }
@@ -74,10 +82,100 @@ struct Run {
     child: Child,
     stdin: Option<ChildStdin>,
     events: Receiver<ServerEvent>,
+    home: PathBuf,
+}
+
+/// What the hosts the tests play will give each key socket id: the database key (`None` for a
+/// discard with no key). The app token is always [`token`].
+static PENDING: Mutex<Vec<(String, Option<DbKey>)>> = Mutex::new(Vec::new());
+static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+
+/// A fresh key socket id, with the key the hand-off on it will carry.
+fn pending_id(db_key: Option<DbKey>) -> KeySocketId {
+    let n = NEXT_ID.fetch_add(1, Ordering::SeqCst);
+    let mut bytes = [0u8; 8];
+    bytes[..4].copy_from_slice(&std::process::id().to_be_bytes());
+    bytes[4..].copy_from_slice(&(n as u32).to_be_bytes());
+    let id = KeySocketId::generate_from(bytes);
+    PENDING
+        .lock()
+        .unwrap()
+        .push((id.as_str().to_owned(), db_key));
+    id
+}
+
+/// What a test host does with the one connection to its key socket.
+enum Host {
+    /// Writes the hand-off line (the normal host), then unlinks and closes.
+    HandOff(Option<DbKey>),
+    /// Writes these bytes, then unlinks and closes.
+    Bytes(Vec<u8>),
+    /// Closes the connection without a word.
+    Closes,
+    /// Accepts and says nothing, for a while.
+    Silent,
+}
+
+/// Binds the key socket `id` (owner-only, as the host does) and serves its one connection as
+/// `host` does. The thread gives up after a while if nobody connects.
+fn serve_key_socket(home: &Path, id: &KeySocketId, host: Host) {
+    let path = key_socket_path(home, id);
+    let listener = UnixListener::bind(&path).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    std::thread::spawn(move || {
+        let until = std::time::Instant::now() + Duration::from_secs(20);
+        while std::time::Instant::now() < until {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let _ = stream.set_nonblocking(false);
+                    match host {
+                        Host::HandOff(key) => {
+                            let _ = write_hand_off(&mut stream, &token(), key.as_ref());
+                        }
+                        Host::Bytes(bytes) => {
+                            let _ = stream.write_all(&bytes);
+                        }
+                        Host::Closes => {}
+                        Host::Silent => std::thread::sleep(Duration::from_secs(8)),
+                    }
+                    let _ = std::fs::remove_file(&path);
+                    return;
+                }
+                Err(_) => std::thread::sleep(Duration::from_millis(5)),
+            }
+        }
+        let _ = std::fs::remove_file(&path);
+    });
 }
 
 impl Run {
+    /// Sends the first line, after binding the key socket it names the way the host does
+    /// (unless the test made the id without one: such an id is not in `PENDING`).
     fn send(&mut self, message: &HostMessage) {
+        let id = match message {
+            HostMessage::Create(m) => Some(&m.key_socket_id),
+            HostMessage::Start(m) => Some(&m.key_socket_id),
+            HostMessage::Discard(m) => Some(&m.key_socket_id),
+            _ => None,
+        };
+        if let Some(id) = id {
+            let key = {
+                let mut pending = PENDING.lock().unwrap();
+                pending
+                    .iter()
+                    .position(|(known, _)| known == id.as_str())
+                    .map(|at| pending.remove(at).1)
+            };
+            if let Some(key) = key {
+                serve_key_socket(&self.home, id, Host::HandOff(key));
+            }
+        }
+        self.send_line(message);
+    }
+
+    /// Sends the first line only.
+    fn send_line(&mut self, message: &HostMessage) {
         let stdin = self.stdin.as_mut().unwrap();
         write_host_message(stdin, message).unwrap();
     }
@@ -138,8 +236,7 @@ fn create_message() -> HostMessage {
         office_id: OFFICE.into(),
         office_name: "HQ".into(),
         role: OfficeRole::Hq,
-        app_token: token(),
-        db_key: db_key(),
+        key_socket_id: pending_id(Some(db_key())),
     })
 }
 
@@ -149,13 +246,14 @@ fn start_message() -> HostMessage {
 
 fn start_message_with(db_key: DbKey) -> HostMessage {
     HostMessage::Start(StartOffice {
-        app_token: token(),
-        db_key,
+        key_socket_id: pending_id(Some(db_key)),
     })
 }
 
 fn discard_message(db_key: Option<DbKey>) -> HostMessage {
-    HostMessage::Discard(DiscardOffice { db_key })
+    HostMessage::Discard(DiscardOffice {
+        key_socket_id: pending_id(db_key),
+    })
 }
 
 fn socket(world: &World) -> PathBuf {
@@ -1204,4 +1302,230 @@ fn an_agent_and_the_owner_message_each_other_through_the_real_office_and_it_surv
     assert_eq!(all.headers.len(), 1);
     assert_eq!(all.headers[0].from_member_id, owner_id);
     assert!(again.host_goes_away().success());
+}
+
+// ---- the key hand-off ---------------------------------------------------------------------
+
+/// A start message whose key socket the test makes itself (the id is not in `PENDING`).
+fn start_on(id: &KeySocketId) -> HostMessage {
+    HostMessage::Start(StartOffice {
+        key_socket_id: id.clone(),
+    })
+}
+
+fn fresh_id() -> KeySocketId {
+    // Registered with no key, then taken back out: the id is the test's to serve.
+    let id = pending_id(None);
+    PENDING
+        .lock()
+        .unwrap()
+        .retain(|(known, _)| known != id.as_str());
+    id
+}
+
+/// Whether the server made a connection to a listener within a short while.
+fn connected_within(listener: &UnixListener, wait: Duration) -> bool {
+    listener.set_nonblocking(true).unwrap();
+    let until = std::time::Instant::now() + wait;
+    while std::time::Instant::now() < until {
+        if listener.accept().is_ok() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    false
+}
+
+/// Whether the server's stdout ended without another line (the reader thread saw the end).
+fn no_more_events(run: &Run) -> bool {
+    matches!(
+        run.events.recv_timeout(WAIT),
+        Err(mpsc::RecvTimeoutError::Disconnected)
+    )
+}
+
+/// An office that exists, stopped, so a start has something to open.
+fn stopped_office(world: &World) {
+    let mut first = create(world);
+    assert!(first.host_goes_away().success());
+}
+
+#[test]
+fn a_secret_on_the_first_line_is_refused_and_never_echoed() {
+    let world = World::new();
+    stopped_office(&world);
+    let id = fresh_id();
+    let mut run = world.spawn(&["--office", OFFICE]);
+    let line = format!(
+        "{{\"v\":3,\"op\":\"start\",\"key_socket_id\":\"{}\",\"app_token\":\"{}\",\"db_key\":\"{}\"}}\n",
+        id.as_str(),
+        "a7".repeat(32),
+        DB_KEY_HEX.repeat(8)
+    );
+    std::io::Write::write_all(run.stdin.as_mut().unwrap(), line.as_bytes()).unwrap();
+    let ServerEvent::Failed { code, message } = run.event() else {
+        panic!("expected failed")
+    };
+    assert_eq!(code, FailCode::InvalidRequest);
+    assert!(
+        !message.contains(&"a7".repeat(8)) && !message.contains(DB_KEY_HEX),
+        "{message}"
+    );
+    assert!(!run.wait().success());
+    let log = run.stderr();
+    assert!(
+        !log.contains(&"a7".repeat(8)) && !log.contains(DB_KEY_HEX),
+        "{log}"
+    );
+}
+
+#[test]
+fn a_key_socket_that_is_not_the_hosts_is_refused_and_nothing_is_read_from_it() {
+    use std::os::unix::fs::symlink;
+    let world = World::new();
+    stopped_office(&world);
+
+    // Another mode than 0600.
+    for mode in [0o644, 0o666, 0o700] {
+        let id = fresh_id();
+        let path = key_socket_path(&world.home, &id);
+        let listener = UnixListener::bind(&path).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+        let mut run = world.spawn(&["--office", OFFICE]);
+        run.send_line(&start_on(&id));
+        assert_eq!(
+            failed_code(run.event()),
+            FailCode::InvalidRequest,
+            "{mode:o}"
+        );
+        assert!(
+            !connected_within(&listener, Duration::from_millis(300)),
+            "{mode:o}"
+        );
+        assert!(!run.wait().success());
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    // A link to a socket that is otherwise fine.
+    let real_id = fresh_id();
+    let real = key_socket_path(&world.home, &real_id);
+    let listener = UnixListener::bind(&real).unwrap();
+    std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let id = fresh_id();
+    symlink(&real, key_socket_path(&world.home, &id)).unwrap();
+    let mut run = world.spawn(&["--office", OFFICE]);
+    run.send_line(&start_on(&id));
+    assert_eq!(failed_code(run.event()), FailCode::InvalidRequest);
+    assert!(!connected_within(&listener, Duration::from_millis(300)));
+    assert!(!run.wait().success());
+
+    // A plain file, and no file at all.
+    let id = fresh_id();
+    std::fs::write(key_socket_path(&world.home, &id), b"x").unwrap();
+    let mut run = world.spawn(&["--office", OFFICE]);
+    run.send_line(&start_on(&id));
+    assert_eq!(failed_code(run.event()), FailCode::InvalidRequest);
+    assert!(!run.wait().success());
+    let mut run = world.spawn(&["--office", OFFICE]);
+    run.send_line(&start_on(&fresh_id()));
+    assert_eq!(failed_code(run.event()), FailCode::InvalidRequest);
+    assert!(!run.wait().success());
+}
+
+#[test]
+fn a_host_that_goes_before_the_hand_off_is_a_silent_clean_exit_and_makes_nothing() {
+    let world = World::new();
+    // A start, a create and a discard: the host closes the connection without the line.
+    stopped_office(&world);
+    let id = fresh_id();
+    serve_key_socket(&world.home, &id, Host::Closes);
+    let mut run = world.spawn(&["--office", OFFICE]);
+    run.send_line(&start_on(&id));
+    let status = run.wait();
+    assert!(status.success(), "{status:?}");
+    assert!(no_more_events(&run), "no `failed` line");
+
+    let world = World::new();
+    let id = fresh_id();
+    serve_key_socket(&world.home, &id, Host::Closes);
+    let mut run = world.spawn(&["--create"]);
+    run.send_line(&HostMessage::Create(CreateOffice {
+        org_id: ORG.into(),
+        org_name: "Acme".into(),
+        office_id: OFFICE.into(),
+        office_name: "HQ".into(),
+        role: OfficeRole::Hq,
+        key_socket_id: id,
+    }));
+    assert!(run.wait().success());
+    assert!(!world.folder(OFFICE).exists(), "nothing was made");
+}
+
+#[test]
+fn a_hand_off_that_does_not_come_in_time_is_storage_error_and_the_server_stops() {
+    let world = World::new();
+    stopped_office(&world);
+    let id = fresh_id();
+    serve_key_socket(&world.home, &id, Host::Silent);
+    let mut run = world.spawn(&["--office", OFFICE]);
+    let started = std::time::Instant::now();
+    run.send_line(&start_on(&id));
+    assert_eq!(failed_code(run.event()), FailCode::StorageError);
+    let took = started.elapsed();
+    assert!(
+        took >= Duration::from_secs(4) && took < Duration::from_secs(8),
+        "{took:?}"
+    );
+    assert!(!run.wait().success());
+}
+
+#[test]
+fn a_hand_off_that_is_garbage_or_has_no_key_for_a_create_is_refused_in_fixed_words() {
+    let world = World::new();
+    stopped_office(&world);
+    for (what, bytes) in [
+        ("garbage", b"GARBAGE-SECRET not json\n".to_vec()),
+        (
+            "another version",
+            b"{\"v\":2,\"app_token\":\"GARBAGE-SECRET\"}\n".to_vec(),
+        ),
+    ] {
+        let id = fresh_id();
+        serve_key_socket(&world.home, &id, Host::Bytes(bytes));
+        let mut run = world.spawn(&["--office", OFFICE]);
+        run.send_line(&start_on(&id));
+        match run.event() {
+            ServerEvent::Failed { code, message } => {
+                assert!(
+                    matches!(
+                        code,
+                        FailCode::InvalidRequest
+                            | FailCode::UnsupportedVersion
+                            | FailCode::StorageError
+                    ),
+                    "{what}: {code:?}"
+                );
+                assert!(!message.contains("GARBAGE-SECRET"), "{what}: {message}");
+            }
+            other => panic!("{what}: expected failed, got {other:?}"),
+        }
+        assert!(!run.wait().success(), "{what}");
+        assert!(!run.stderr().contains("GARBAGE-SECRET"), "{what}");
+    }
+
+    // A line cut short is a host that went away mid-line: a silent clean exit, as at EOF.
+    let id = fresh_id();
+    serve_key_socket(&world.home, &id, Host::Bytes(b"{\"v\":3".to_vec()));
+    let mut run = world.spawn(&["--office", OFFICE]);
+    run.send_line(&start_on(&id));
+    assert!(run.wait().success());
+    assert!(no_more_events(&run), "no `failed` line");
+
+    // A start with `db_key: null` has no key to open with.
+    let id = fresh_id();
+    serve_key_socket(&world.home, &id, Host::HandOff(None));
+    let mut run = world.spawn(&["--office", OFFICE]);
+    run.send_line(&start_on(&id));
+    assert_eq!(failed_code(run.event()), FailCode::InvalidRequest);
+    assert!(!run.wait().success());
 }

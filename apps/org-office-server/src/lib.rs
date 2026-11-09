@@ -4,19 +4,22 @@
 //! ```text
 //! org-office-server --create        # first stdin line: the create message; makes the office, serves it
 //! org-office-server --office <id>   # first stdin line: the start message; serves the office
-//! org-office-server --discard <id>  # first stdin line: the discard message (the key or null); removes an unfinished create
+//! org-office-server --discard <id>  # first stdin line: the discard message; removes an unfinished create
 //! ```
 //! stdout carries only [`ServerEvent`] lines (`created`, `ready`, `discarded`, `failed`), logs go
 //! to stderr, and EOF on stdin means the host is gone: the server closes its databases and exits 0.
-//! The office, its folder, lock, key and databases are `org_office::Office`; this crate is the
-//! process around it: the control pipe (which carries the app token and the database key the
-//! host holds), the socket. The server never touches a Keychain.
+//! The first line holds no secret: it names a key socket. Right after it, before the office lock or
+//! any database, the server connects to that one-shot socket (`hand_off`) and reads the app token
+//! and the database key the host holds. The office, its folder, lock, key and databases are
+//! `org_office::Office`; this crate is the process around it: the control pipe, the key hand-off,
+//! the socket. The server never touches a Keychain and reads no secret from stdin.
 
 #![deny(unsafe_code)]
 
 mod bounded;
 pub mod fdswap;
 mod follow;
+mod hand_off;
 mod msg_calls;
 mod serve;
 mod signals;
@@ -30,8 +33,8 @@ use std::sync::Arc;
 
 use org_office::{Key, NewOffice, Office, OfficeError};
 use org_office_launch::{
-    office_dir, read_first_host_message, write_server_event, FailCode, FirstLine, HostMessage,
-    OfficeFile, ServerEvent, CREATE_FLAG, DISCARD_FLAG, OFFICE_FLAG,
+    office_dir, read_first_host_message, write_server_event, FailCode, FirstLine, HandOff,
+    HostMessage, KeySocketId, OfficeFile, ServerEvent, CREATE_FLAG, DISCARD_FLAG, OFFICE_FLAG,
 };
 use org_proto::location::{check_socket_path, default_office_home, office_socket_path};
 use org_proto::{AppToken, OfficeRole};
@@ -81,7 +84,7 @@ pub fn run(args: &[String], mut control: ControlPipe) -> i32 {
     }
 }
 
-/// `--discard`: the first line carries the office's key, or null when the host holds none. The
+/// `--discard`: the hand-off carries the office's key, or null when the host holds none. The
 /// key is the host's and is never made, stored or deleted here.
 fn discard(mut control: ControlPipe, home: &Path, id: &str) -> i32 {
     let (message, _from_host) = match first_line(&mut control, FirstLine::Discard) {
@@ -95,7 +98,17 @@ fn discard(mut control: ControlPipe, home: &Path, id: &str) -> i32 {
             "not a discard message",
         );
     };
-    let key = discard.db_key.map(Key::from_db_key);
+    // First of all, before the office lock or any database.
+    let hand_off = match receive_hand_off(
+        &mut control,
+        home,
+        &discard.key_socket_id,
+        FirstLine::Discard,
+    ) {
+        Ok(hand_off) => hand_off,
+        Err(code) => return code,
+    };
+    let key = hand_off.db_key.map(Key::from_db_key);
     let Some(folder) = office_dir(home, id) else {
         return fail(
             &mut control,
@@ -129,6 +142,24 @@ fn create_and_serve(mut control: ControlPipe, home: &Path) -> i32 {
             &mut control,
             FailCode::InvalidRequest,
             "not a create message",
+        );
+    };
+    // First of all, before the office lock or any database: the key and the app token come only
+    // from the hand-off.
+    let hand_off =
+        match receive_hand_off(&mut control, home, &create.key_socket_id, FirstLine::Create) {
+            Ok(hand_off) => hand_off,
+            Err(code) => return code,
+        };
+    let HandOff {
+        app_token,
+        db_key: Some(db_key),
+    } = hand_off
+    else {
+        return fail(
+            &mut control,
+            FailCode::InvalidRequest,
+            "the hand-off has no key",
         );
     };
     if create.role != OfficeRole::Hq {
@@ -165,7 +196,7 @@ fn create_and_serve(mut control: ControlPipe, home: &Path) -> i32 {
         org_name: create.org_name.clone(),
     };
     // The host made the key and saved it before this line; the office only receives it.
-    let office = match Office::create(folder, &new, Key::from_db_key(create.db_key)) {
+    let office = match Office::create(folder, &new, Key::from_db_key(db_key)) {
         Ok(office) => office,
         Err(e) => return fail_with(&mut control, &e),
     };
@@ -180,7 +211,7 @@ fn create_and_serve(mut control: ControlPipe, home: &Path) -> i32 {
     );
     // `office.json` is in place and durable: from here the office is stored, whatever happens.
     emit(&mut control, &ServerEvent::Created { office: file });
-    serve_office(control, from_host, home, office, create.app_token)
+    serve_office(control, from_host, home, office, app_token)
 }
 
 fn open_and_serve(mut control: ControlPipe, home: &Path, id: &str) -> i32 {
@@ -195,6 +226,23 @@ fn open_and_serve(mut control: ControlPipe, home: &Path, id: &str) -> i32 {
             "not a start message",
         );
     };
+    // First of all, before the office lock or any database.
+    let hand_off =
+        match receive_hand_off(&mut control, home, &start.key_socket_id, FirstLine::Start) {
+            Ok(hand_off) => hand_off,
+            Err(code) => return code,
+        };
+    let HandOff {
+        app_token,
+        db_key: Some(db_key),
+    } = hand_off
+    else {
+        return fail(
+            &mut control,
+            FailCode::InvalidRequest,
+            "the hand-off has no key",
+        );
+    };
     let Some(folder) = office_dir(home, id) else {
         return fail(
             &mut control,
@@ -205,11 +253,38 @@ fn open_and_serve(mut control: ControlPipe, home: &Path, id: &str) -> i32 {
     if let Err(message) = socket_path(home, id) {
         return fail(&mut control, FailCode::InvalidRequest, message);
     }
-    let office = match Office::open(folder, Key::from_db_key(start.db_key)) {
+    let office = match Office::open(folder, Key::from_db_key(db_key)) {
         Ok(office) => office,
         Err(e) => return fail_with(&mut control, &e),
     };
-    serve_office(control, from_host, home, office, start.app_token)
+    serve_office(control, from_host, home, office, app_token)
+}
+
+/// Receives the key hand-off over the host's one-shot key socket. `Err(code)` is the exit code to
+/// return: 0 when the host is gone, otherwise a `failed` line has been written, with fixed text
+/// (never the error's own, which could name a path).
+fn receive_hand_off(
+    control: &mut ControlPipe,
+    home: &Path,
+    id: &KeySocketId,
+    expected: FirstLine,
+) -> Result<HandOff, i32> {
+    match hand_off::receive(home, id, expected) {
+        Ok(hand_off) => Ok(hand_off),
+        Err(e) if e.is_host_gone() => Err(0),
+        Err(e) => {
+            let text = match e.fail_code() {
+                FailCode::InvalidRequest => "the key hand-off was refused",
+                _ => "the key hand-off failed",
+            };
+            // A fixed category for the log: what failed, never the error's own text.
+            eprintln!(
+                "org-office-server: key hand-off failed ({})",
+                hand_off::category(&e)
+            );
+            Err(fail(control, e.fail_code(), text))
+        }
+    }
 }
 
 /// Reads the first line from the host. `Err(code)` is the exit code to return: 0 when the host
@@ -222,7 +297,7 @@ fn first_line(control: &mut ControlPipe, expected: FirstLine) -> Result<(HostMes
             "cannot read the control pipe",
         )
     })?;
-    // A small buffer we control, since the line carries the app token and the database key.
+    // A small buffer we control (the first line carries no secret now, but it is read as before).
     let mut reader = zeroed::ZeroedReader::new(from_host);
     match read_first_host_message(&mut reader, expected) {
         Ok(Some(message)) => Ok((message, reader.take_inner())),
