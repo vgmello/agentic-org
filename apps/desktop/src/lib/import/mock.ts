@@ -82,8 +82,9 @@ export const mockImport: ImportApi = {
 	async pickFolder() {
 		return undefined;
 	},
+	/** The browser has no file picker: choosing team hints picks our own team's file. */
 	async pickFile() {
-		return undefined;
+		return HINTS;
 	},
 	async readHints(path) {
 		return path === HINTS ? SAMPLE_HINTS : { path, error: "The file can't be read (No such file).", teams: [] };

@@ -2,7 +2,7 @@
 // teams: a department becomes a top-level team, and the owner shapes the rest (App, Office, ... under Engineering) in the
 // editable preview. Pure.
 
-import { isReady, takesPart, type Row } from './rows';
+import { isReady, OWNER, takesPart, type Row } from './rows';
 
 /** A team to create. `key` is its name in lower case: the same team is the same team whatever its capitals. */
 export interface TeamDraft {
@@ -54,6 +54,37 @@ export function teamsToCreate(rows: Row[], drafts: TeamDraft[]): TeamDraft[] {
 		for (const draft of drafts) if (used.has(draft.key) && draft.parentKey && !used.has(draft.parentKey)) (used.add(draft.parentKey), (grew = true));
 	}
 	return drafts.filter((d) => used.has(d.key));
+}
+
+/**
+ * Who a row reports to when HR does not say: the lead of the top-level team it is in, unless that is the row itself; otherwise the
+ * owner. A row with a reports_to in HR keeps it, and so does one the owner set by hand. Applied once the teams are known (the hints file and the department teams), so the
+ * lines of an organization shaped by its teams need no edits. A circle this could make is cut at the owner.
+ */
+export function withDefaultManagers(rows: Row[], drafts: TeamDraft[]): Row[] {
+	const byKey = new Map(drafts.map((d) => [d.key, d]));
+	const topOf = (teamKey: string): TeamDraft | undefined => {
+		let at = byKey.get(key(teamKey));
+		for (let hops = 0; at?.parentKey && hops <= drafts.length; hops++) at = byKey.get(at.parentKey) ?? at;
+		return at;
+	};
+	const fixed = (row: Row) => !!row.hr?.reports_to?.trim() || !!row.managerSet;
+	// HR's lines and the owner's own stay as they are; every other row starts at the owner and takes its default in turn.
+	const next = new Map(rows.map((r) => [r.key, fixed(r) ? r : { ...r, managerKey: OWNER }]));
+	const reaches = (from: string, target: string): boolean => {
+		for (let at = next.get(from), hops = 0; at && hops <= rows.length; at = next.get(at.managerKey), hops++) {
+			if (at.key === target) return true;
+		}
+		return false;
+	};
+	for (const row of rows) {
+		if (fixed(row) || !row.teamKey) continue;
+		const lead = topOf(row.teamKey)?.leadKey;
+		const leadRow = lead ? next.get(lead) : undefined;
+		// Never to a skipped row, to itself, or to someone whose line already leads back here (HR's line wins, so the default goes).
+		if (leadRow && lead !== row.key && leadRow.choice !== 'skip' && !reaches(lead!, row.key)) next.set(row.key, { ...next.get(row.key)!, managerKey: lead! });
+	}
+	return rows.map((r) => next.get(r.key)!);
 }
 
 /** The project HR knows the agents by (`ac`), shared by the top-level teams that will exist. HR keeps only the code. */

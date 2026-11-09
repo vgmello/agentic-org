@@ -3,11 +3,12 @@ import { createMockOrg, type MockStorage } from '$lib/org/api';
 import type { OrgSession } from '$lib/org/session';
 import { sessionFor } from '$lib/org/session';
 import type { Member } from '$lib/proto';
-import { bringIn, type BringInInput } from './bring-in';
+import { addResults, bringIn, owesWork, type BringInInput } from './bring-in';
+import { markRemoved } from './review';
 import { applyHints } from './hints';
 import { memoryLedger, type LedgerStore } from './ledger';
 import { SAMPLE_HINTS, SAMPLE_SCAN } from './mock';
-import { buildRows, chooseRole } from './rows';
+import { buildRows, chooseRole, counts } from './rows';
 import { suggestProject, suggestTeams } from './teams';
 
 const memory = (): MockStorage => {
@@ -253,6 +254,94 @@ describe('IMP-8 running it again', () => {
 	});
 });
 
+describe('a refusal a retry cannot change', () => {
+	/** `set_reports_to` is refused with `code` for Remy, once or always. */
+	const refusing = (w: World, code: string, always: boolean) => {
+		let left = always ? Infinity : 1;
+		const session: OrgSession = {
+			snapshot: () => w.s.snapshot(),
+			command: (c) => {
+				if (c.method === 'member.set_reports_to' && left > 0) {
+					const asked = c.params.member_id;
+					return w.s.snapshot().then((s) => {
+						if (s.members.find((m) => m.id === asked)?.name !== 'Remy') return w.s.command(c);
+						left -= 1;
+						return Promise.reject({ source: 'api', code, message: `refused: ${code}` });
+					});
+				}
+				return w.s.command(c);
+			}
+		};
+		return session;
+	};
+
+	it('says a cycle once and settles it: the next run has nothing to report', async () => {
+		const w = world();
+		const s = refusing(w, 'cycle', true);
+		const first = await run(w, reviewed(), s);
+		expect(first.failures.map((f) => f.what)).toEqual(['Make Remy report to their manager']);
+		const again = await run(w, reviewed(), s);
+		expect(again).toMatchObject({ agents: 0, teams: 0, failures: [] });
+	});
+
+	it('does not settle a not_found while the member and the manager are both still there: a retry sets the line', async () => {
+		const w = world();
+		const s = refusing(w, 'not_found', false);
+		const first = await run(w, reviewed(), s);
+		expect(first.failures).toHaveLength(1);
+		const retry = await run(w, reviewed(), s);
+		expect(retry.failures).toEqual([]);
+		const { member } = await find(w.s);
+		expect(member('ac-software-engineer-remy').reports_to_member_id).toBe(member('ac-staff-engineer-ada').id);
+	});
+
+	it('settles a not_found when the member or the manager really is gone', async () => {
+		const w = world();
+		const s: OrgSession = {
+			snapshot: () => w.s.snapshot(),
+			command: async (c) => {
+				if (c.method === 'member.set_reports_to') {
+					// Remy's manager is offboarded just before the line is set: HQ answers not_found, and the fresh look agrees.
+					const snap = await w.s.snapshot();
+					if (snap.members.find((m) => m.id === c.params.member_id)?.name === 'Remy') {
+						const ada = snap.members.find((m) => m.agent?.messaging_name === 'ac-staff-engineer-ada')!;
+						await w.s.command({ method: 'member.remove', params: { member_id: ada.id, expected_version: ada.version } });
+						return Promise.reject({ source: 'api', code: 'not_found', message: 'gone' });
+					}
+				}
+				return w.s.command(c);
+			}
+		};
+		const first = await run(w, reviewed(), s);
+		expect(first.failures.filter((f) => f.what.includes('Remy'))).toHaveLength(1);
+		const again = await run(w, reviewed(), s);
+		expect(again.failures.filter((f) => f.what.includes('Remy'))).toEqual([]);
+	});
+
+	it('adds up the tries of one import and reports the agents each made', async () => {
+		const w = world();
+		const first = await run(w, (() => { const r = reviewed(); r.rows.find((x) => x.name === 'reviewer')!.choice = 'skip'; return r; })());
+		expect(first.made).toHaveLength(9);
+		expect(first.made).not.toContain('reviewer');
+		const second = await run(w);
+		expect(second.made).toEqual(['reviewer']);
+		expect(addResults(first, second)).toMatchObject({ agents: 10, teams: 6, failures: [] });
+		expect(addResults(undefined, second)).toBe(second);
+	});
+
+	it('leaves a team the owner already had as it is, lead and all, on this run and the ones after it', async () => {
+		const w = world();
+		// The owner made an empty Engineering before the import.
+		await w.s.command({ method: 'team.create', params: { team_id: 'owner-made-engineering', name: 'Engineering' } });
+		const first = await run(w);
+		expect(first.teams).toBe(5);
+		expect((await find(w.s)).team('Engineering').lead_member_id).toBeUndefined();
+		const second = await run(w);
+		expect(second).toMatchObject({ teams: 0, failures: [] });
+		expect((await find(w.s)).team('Engineering').lead_member_id).toBeUndefined();
+	});
+});
+
 describe('IMP-9 an interrupted import continues where it stopped', () => {
 	it('reports the agent that failed, brings the others in, and Try again adds only what is missing', async () => {
 		const w = world();
@@ -363,3 +452,96 @@ describe('one run at a time', () => {
 		expect(await run(w)).toMatchObject({ agents: 0 });
 	});
 });
+
+describe('a failure is reported once, and what is owed can be finished from a new review', () => {
+	it('reports a membership that failed once, not again from the lead step', async () => {
+		const w = world();
+		const down: OrgSession = { snapshot: () => w.s.snapshot(), command: (c) => (c.method === 'team.add_member' ? Promise.reject({ source: 'api', code: 'unavailable', message: 'gone' }) : w.s.command(c)) };
+		const result = await run(w, reviewed(), down);
+		const whats = result.failures.map((f) => f.what);
+		expect(new Set(whats).size).toBe(whats.length);
+		expect(whats).toContain('Add ada to engineering'.replace('engineering', 'Engineering'));
+	});
+
+	it('knows what an earlier run still owes, so a closed dialog can be finished', async () => {
+		const w = world();
+		let fail = true;
+		const flaky: OrgSession = { snapshot: () => w.s.snapshot(), command: (c) => (fail && c.method === 'team.add_member' ? Promise.reject({ source: 'api', code: 'unavailable', message: 'gone' }) : w.s.command(c)) };
+		expect(owesWork(w.ledger.load(), reviewed().rows, reviewed().drafts)).toBe(false);
+		await run(w, reviewed(), flaky);
+		const rebuilt = reviewed((await w.s.snapshot()).members); // the dialog was closed and opened again: everyone is "Already in"
+		expect(rebuilt.rows.every((r) => r.existingMemberId)).toBe(true);
+		expect(owesWork(w.ledger.load(), rebuilt.rows, rebuilt.drafts)).toBe(true);
+		fail = false;
+		expect(await run(w, rebuilt, flaky)).toMatchObject({ agents: 0, failures: [] });
+		expect(owesWork(w.ledger.load(), rebuilt.rows, rebuilt.drafts)).toBe(false);
+	});
+
+	it('leaves the line of an agent whose manager is still to be filled in for the run that has them', async () => {
+		const w = world();
+		const r = reviewed();
+		// ada is brought in later: not complete now (no role).
+		const late = { ...r, rows: r.rows.map((x) => (x.name === 'ada' ? { ...x, role: undefined } : x)) };
+		const first = await run(w, late);
+		expect(first.failures).toEqual([]);
+		expect((await find(w.s)).member('ac-software-engineer-river').reports_to_member_id).toBeUndefined();
+		const second = await run(w, r);
+		expect(second.failures).toEqual([]);
+		const { member } = await find(w.s);
+		expect(member('ac-software-engineer-river').reports_to_member_id).toBe(member('ac-staff-engineer-ada').id);
+	});
+});
+
+describe('what is owed is what the engine would do', () => {
+	const failingLeads = (w: World): OrgSession => ({ snapshot: () => w.s.snapshot(), command: (c) => (c.method === 'team.set_lead' ? Promise.reject({ source: 'api', code: 'unavailable', message: 'gone' }) : w.s.command(c)) });
+
+	it('an agent the ledger holds unlinked is owed, and one waiting on an incomplete manager is not', async () => {
+		const w = world();
+		const { rows, drafts } = reviewed();
+		expect(owesWork({ teams: {}, agents: { 'server-dev': { id: 'x', created: true, linked: false } } }, rows, drafts)).toBe(true);
+		expect(owesWork({ teams: {}, agents: { 'server-dev': { id: 'x', created: true, linked: true } } }, rows, drafts)).toBe(false);
+		const waiting = rows.map((r) => (r.name === 'server-dev' ? { ...r, managerKey: 'ac-staff-engineer-ada' } : r.name === 'ada' ? { ...r, role: undefined } : r));
+		expect(owesWork({ teams: {}, agents: { 'server-dev': { id: 'x', created: true, linked: false } } }, waiting, drafts)).toBe(false);
+		void w;
+	});
+
+	it('a lead is owed when the ledger holds its team unled and the lead stays in the import, not when the lead is skipped', () => {
+		const { rows, drafts } = reviewed();
+		const ledger = { teams: { app: { id: 't', led: false } }, agents: {} };
+		expect(owesWork(ledger, rows, drafts)).toBe(true);
+		expect(owesWork(ledger, rows.map((r) => (r.name === 'app-frontend-dev' ? { ...r, choice: 'skip' as const } : r)), drafts)).toBe(false);
+	});
+
+	it('a team the owner deleted while its lead was owed is not owed any more: the run settles it, and says "nothing new"', async () => {
+		const w = world();
+		await run(w, reviewed(), failingLeads(w));
+		const snap = await w.s.snapshot();
+		for (const t of [...snap.teams].sort((a, b) => (b.owner_team_id ? 1 : 0) - (a.owner_team_id ? 1 : 0))) {
+			const memberships = (await w.s.snapshot()).memberships.filter((m) => m.team_id === t.id);
+			for (const m of memberships) await w.s.command({ method: 'team.remove_member', params: { membership_id: m.id, expected_version: m.version } });
+			const fresh = (await w.s.snapshot()).teams.find((x) => x.id === t.id)!;
+			await w.s.command({ method: 'team.delete', params: { team_id: t.id, expected_version: fresh.version } });
+		}
+		const members = (await w.s.snapshot()).members;
+		const rebuilt = reviewed(members);
+		expect(owesWork(w.ledger.load(), rebuilt.rows, rebuilt.drafts, await w.s.snapshot())).toBe(false);
+		// Even asked without the snapshot, the run settles what it finds gone.
+		expect(await run(w, rebuilt)).toMatchObject({ agents: 0, teams: 0, failures: [] });
+		expect(owesWork(w.ledger.load(), rebuilt.rows, rebuilt.drafts)).toBe(false);
+	});
+
+	it('an agent the owner removed after an earlier import has its own state and is not counted as new', async () => {
+		const w = world();
+		await run(w);
+		const { member } = await find(w.s);
+		const codex = member('codex-dev');
+		await w.s.command({ method: 'member.remove', params: { member_id: codex.id, expected_version: codex.version } });
+		const now = await w.s.snapshot();
+		const rebuilt = reviewed(now.members);
+		const marked = markRemoved(rebuilt.rows, w.ledger.load(), new Set(now.members.map((m) => m.id)));
+		expect(marked.find((r) => r.name === 'codex-dev')).toMatchObject({ removedEarlier: true });
+		expect(marked.filter((r) => r.removedEarlier)).toHaveLength(1);
+		expect(counts(marked)).toMatchObject({ ready: 0 });
+	});
+});
+
