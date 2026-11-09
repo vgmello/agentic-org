@@ -5,7 +5,8 @@
 //! `message.state_changed`, `member.presence_changed`, see `live`): hints with no replay, and
 //! `member.presence_changed` at most once a second for a member (the latest one waits, and a
 //! waiting one is dropped if the subscription ends first: a client that subscribes again asks
-//! `who`).
+//! `who`). A subscriber that falls more than the live ring behind is disconnected: it re-lists
+//! and subscribes again.
 //!
 //! A subscription belongs to the binding that made it: any later `msg.bind` on the connection
 //! (failed or not) ends it, and the client subscribes again once it is bound. Events go out
@@ -24,7 +25,7 @@ use org_proto::{
     ApiError, ErrorCode, Event, EventKind, OrgChanged, Request, Subscribe, SubscribeParams,
 };
 
-use crate::live::{Live, LiveEvents};
+use crate::live::{Head, Live, LiveEvents};
 
 /// How many log entries are read at a time.
 const PAGE: usize = 100;
@@ -59,7 +60,8 @@ pub trait OrgFeed: Send + Sync {
     fn can_resume_from(&self, after: Position) -> Result<bool, String>;
     /// Up to `limit` commands after `after`, oldest first.
     fn changes_after(&self, after: Position, limit: usize) -> Result<Vec<OrgChangedData>, String>;
-    /// A number that changes when a command commits; read it before reading the log.
+    /// A number that changes when a command commits or a live event is published; read it
+    /// before reading the log.
     fn token(&self) -> u64;
     /// Waits until the token is no longer `seen`, or `timeout`; returns the token.
     fn wait(&self, seen: u64, timeout: Duration) -> u64;
@@ -117,11 +119,11 @@ pub fn begin(
     }
 }
 
-/// Where a pusher starts: after this log position, and after this live event.
+/// Where a pusher starts: after this log position, and after these live events.
 #[derive(Clone, Copy)]
 pub struct Start {
     pub position: Position,
-    pub live: u64,
+    pub live: Head,
 }
 
 /// What a pusher needs of the connection it writes to.
@@ -236,7 +238,8 @@ impl PresenceGate {
 /// event closes the connection: the client reconnects and resumes from the last position it got.
 pub fn push(feed: &dyn OrgFeed, live: &LiveEvents, wire: &Wire<'_>, start: Start) {
     let mut last = start.position;
-    let mut live_cursor = start.live;
+    let mut messages_cursor = start.live.messages;
+    let mut presence_cursor = start.live.presence;
     let mut presence = PresenceGate::new(wire.timing.presence_gap);
     loop {
         if wire.generation.load(Ordering::SeqCst) != wire.mine {
@@ -244,6 +247,10 @@ pub fn push(feed: &dyn OrgFeed, live: &LiveEvents, wire: &Wire<'_>, start: Start
         }
         // Before reading, so a commit while reading wakes the next wait at once.
         let token = feed.token();
+        // The live events published so far were published after their commits (a message needs
+        // its sender and recipient, a status line its member), so the log read below already has
+        // what they refer to. Later ones wait for the next round.
+        let upto = live.head();
         loop {
             let Ok(batch) = feed.changes_after(last, PAGE) else {
                 close(wire.out);
@@ -259,19 +266,30 @@ pub fn push(feed: &dyn OrgFeed, live: &LiveEvents, wire: &Wire<'_>, start: Start
                 last = data.position;
             }
         }
-        let (events, next) = live.since(live_cursor);
-        live_cursor = next;
-        for event in events {
+        let batch = live.since(messages_cursor, upto.messages);
+        if batch.lost {
+            // The subscriber fell more than a ring behind: some hints are gone. Say so the one
+            // way the protocol has, by closing: the client subscribes again and lists again.
+            close(wire.out);
+            return;
+        }
+        messages_cursor = batch.next;
+        for event in batch.events {
             let sent = match event {
                 Live::Received(data) => wire.emit::<MessageReceived>(&data),
                 Live::StateChanged(data) => wire.emit::<MessageStateChanged>(&data),
-                Live::Presence(data) => match presence.offer(data, Instant::now()) {
-                    Some(data) => wire.emit::<MemberPresenceChanged>(&data),
-                    None => true,
-                },
             };
             if !sent {
                 return;
+            }
+        }
+        let (changes, next) = live.presence_since(presence_cursor, upto.presence);
+        presence_cursor = next;
+        for data in changes {
+            if let Some(data) = presence.offer(data, Instant::now()) {
+                if !wire.emit::<MemberPresenceChanged>(&data) {
+                    return;
+                }
             }
         }
         for data in presence.due(Instant::now()) {

@@ -3072,15 +3072,15 @@ mod tests {
         server.join().unwrap();
     }
 
-    fn presence(member: &str, status: &str) -> crate::live::Live {
-        crate::live::Live::Presence(org_proto::directory::MemberPresenceChangedData {
+    fn presence(member: &str, status: &str) -> org_proto::directory::MemberPresenceChangedData {
+        org_proto::directory::MemberPresenceChangedData {
             member_id: member.to_owned(),
             presence: org_proto::directory::MemberPresence::Offline,
             last_seen_at: "2026-11-09T12:00:00.000Z".to_owned(),
             status: Some(status.to_owned()),
             status_expires_at: None,
             current_task_id: None,
-        })
+        }
     }
 
     #[test]
@@ -3104,29 +3104,34 @@ mod tests {
         app.subscribe(None);
 
         let started = std::time::Instant::now();
-        live.publish_live(presence("A", "one"));
-        live.publish_live(presence("A", "two"));
-        live.publish_live(presence("A", "three"));
-        live.publish_live(presence("B", "other"));
-        let mut got = Vec::new();
-        for _ in 0..3 {
-            let (name, data) = next_event(&mut app);
-            assert_eq!(name, "member.presence_changed");
-            got.push((
-                data["member_id"].as_str().unwrap().to_owned(),
-                data["status"].as_str().unwrap().to_owned(),
-                started.elapsed(),
-            ));
-        }
-        // "one" and B's go at once (in order), "two" is overtaken, "three" waits the gap.
-        assert_eq!((got[0].0.as_str(), got[0].1.as_str()), ("A", "one"));
-        assert_eq!((got[1].0.as_str(), got[1].1.as_str()), ("B", "other"));
-        assert_eq!((got[2].0.as_str(), got[2].1.as_str()), ("A", "three"));
-        assert!(got[1].2 < gap / 2, "{:?}", got[1].2);
+        live.publish_presence(presence("A", "one"));
+        let (name, first) = next_event(&mut app);
+        assert_eq!(
+            (name.as_str(), first["status"].as_str()),
+            ("member.presence_changed", Some("one"))
+        );
+        assert!(started.elapsed() < gap / 2, "the first goes at once");
+
+        // Inside A's gap: A's two updates coalesce to the latest and wait; B is not held.
+        live.publish_presence(presence("A", "two"));
+        live.publish_presence(presence("A", "three"));
+        live.publish_presence(presence("B", "other"));
+        let (_, second) = next_event(&mut app);
+        let at_second = started.elapsed();
+        let (_, third) = next_event(&mut app);
+        let at_third = started.elapsed();
+        assert_eq!(
+            (second["member_id"].as_str(), second["status"].as_str()),
+            (Some("B"), Some("other"))
+        );
+        assert!(at_second < gap / 2, "B goes at once: {at_second:?}");
+        assert_eq!(
+            (third["member_id"].as_str(), third["status"].as_str()),
+            (Some("A"), Some("three"))
+        );
         assert!(
-            got[2].2 >= gap,
-            "the held one waited the gap: {:?}",
-            got[2].2
+            at_third >= gap,
+            "A's held one waited out the gap: {at_third:?}"
         );
         assert!(
             app.nothing_within(Duration::from_millis(300)),
@@ -3134,5 +3139,59 @@ mod tests {
         );
         stop.store(true, Ordering::SeqCst);
         server.join().unwrap();
+    }
+
+    #[test]
+    fn a_subscriber_that_fell_more_than_a_ring_behind_is_disconnected_to_list_again() {
+        use std::io::Read;
+        let live = LiveEvents::new(Box::new(|| {}));
+        for n in 0..crate::live::CAPACITY + 5 {
+            live.publish_live(crate::live::Live::StateChanged(
+                org_proto::msg::MessageStateChangedData {
+                    id: format!("M{n}"),
+                    thread_id: "T".into(),
+                    to_member_id: "X".into(),
+                    state: org_proto::msg::MessageLifecycleState::Read,
+                    triage_gen: 0,
+                    snoozed_until: None,
+                    snooze_after_task: false,
+                    reason: None,
+                    expired_waiting_person: false,
+                    updated_at: "2026-11-09T12:00:00.000Z".into(),
+                },
+            ));
+        }
+        // A pusher that starts before the first of them: the earliest are already gone.
+        let (server_end, mut client_end) = UnixStream::pair().unwrap();
+        client_end
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        let out = Mutex::new(server_end);
+        let generation = AtomicU64::new(0);
+        let seq = AtomicU64::new(0);
+        let wire = follow::Wire {
+            out: &out,
+            generation: &generation,
+            mine: 0,
+            seq: &seq,
+            timing: Timing::default(),
+        };
+        let feed = Arc::new(FakeFeed::default());
+        follow::push(
+            &feed,
+            &live,
+            &wire,
+            follow::Start {
+                position: org_proto::org::Position { epoch: 1, seq: 1 },
+                live: crate::live::Head {
+                    messages: 0,
+                    presence: 0,
+                },
+            },
+        );
+        // It returned, having sent nothing and closed the connection.
+        let mut rest = Vec::new();
+        assert_eq!(client_end.read_to_end(&mut rest).unwrap(), 0);
+        assert_eq!(seq.load(Ordering::SeqCst), 0);
     }
 }
