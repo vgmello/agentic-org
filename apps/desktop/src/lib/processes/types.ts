@@ -141,6 +141,8 @@ export interface TurnedOff {
 
 export interface Conflict {
 	key: string;
+	/** The process's name (the organization's, else a team's), to lead the line with. */
+	name: string;
 	/** The teams whose versions disagree. */
 	teams: string[];
 	/** What applies meanwhile, in words. */

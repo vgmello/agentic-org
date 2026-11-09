@@ -34,11 +34,11 @@ test('PROC-9: a team’s override that drifted says Parent changed, with the ver
 test('PROC-4/PROC-3/PROC-6: a project shows what it turned off, a sealed refusal and the shared project’s conflict', async ({ page }) => {
 	await open(page, '?place=project:atl');
 	await expect(page.getByTestId('turned-off-row')).toContainText('Turned off for Atlas: we report daily');
-	await expect(page.getByTestId('problem').filter({ hasText: 'sealed by the organization. You can add a process instead.' })).toBeVisible();
+	await expect(page.getByTestId('problem').filter({ hasText: "Platform's version of Security basics isn't applied: the organization sealed it. You can add a process instead." })).toBeVisible();
 	await expect(page.getByTestId('branch-rule')).toContainText('On');
 	await shot(page, 'processes-project');
 	await visit(page, '/processes?place=project:bea');
-	await expect(page.getByTestId('conflict')).toContainText("code-review: Design and Web disagree. The organization's version applies until the project decides.");
+	await expect(page.getByTestId('conflict')).toContainText("Code review: Design and Web disagree. The organization's version applies until the project decides.");
 	await expect(page.getByTestId('problem').filter({ hasText: 'Two processes use the key `standup` in Beacon. Neither applies until one is renamed.' })).toHaveCount(2);
 	await shot(page, 'processes-conflict');
 });

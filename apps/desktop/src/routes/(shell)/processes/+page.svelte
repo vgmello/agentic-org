@@ -93,7 +93,7 @@
 		{#each view.set.conflicts as c (c.key)}
 			<p class="flex items-start gap-x-2 rounded-lg bg-amber-400/10 px-3 py-2 text-sm/6 text-amber-200 outline-1 -outline-offset-1 outline-amber-400/20" data-testid="conflict">
 				<TriangleAlert class="mt-1 size-4 shrink-0" aria-hidden="true" />
-				<span><span class="font-mono">{c.key}</span>: {c.teams.join(' and ')} disagree. {c.applies}.</span>
+				<span><span class="font-medium">{c.name}</span>: {c.teams.join(' and ')} disagree. {c.applies}.</span>
 			</p>
 		{/each}
 
