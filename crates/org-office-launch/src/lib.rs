@@ -51,9 +51,27 @@
 //!   There is no migration: version 3 changes only the launch lines (`office.json` and the
 //!   host's key store are unchanged), only development builds ever spoke version 2, and the host
 //!   and the server ship together.
-//! - **Descriptors:** no child of a server can read the host's lines or write a control line.
-//!   First thing at startup, before any thread or child starts, the server moves its stdin and
-//!   stdout pipes to new close-on-exec descriptors and reopens 0 and 1 on `/dev/null`. Every
+//! - **Descriptors:** the server touches no socket it didn't create itself, and no child of a
+//!   server can read the host's lines or write a control line. Its **first** act in `main`,
+//!   before any thread starts, is fd hygiene, exactly:
+//!   1. fds 0, 1 and 2 must be pipes (`fstat`, `st_mode & S_IFMT == S_IFIFO`); anything else is
+//!      [`FailCode::InvalidRequest`] (the host always gives three pipes, stderr being the log);
+//!   2. every other open descriptor is closed, found by **listing** them
+//!      (`proc_pidinfo(getpid(), PROC_PIDLISTFDS, …)`, or `/dev/fd`), never by counting up to
+//!      `getdtablesize()`: a parent can lower `RLIMIT_NOFILE` below an fd it leaves open. List
+//!      again afterwards; any fd above 2 still open is fatal;
+//!   3. the exception ports are reset to `MACH_PORT_NULL` (`EXCEPTION_DEFAULT`,
+//!      `THREAD_STATE_NONE`): `thread_set_exception_ports(mach_thread_self(), EXC_MASK_ALL)`
+//!      (`EXC_MASK_ALL` is 0x1bfe); `task_set_exception_ports(mach_task_self(), EXC_MASK_ALL |
+//!      EXC_MASK_CRASH)` (0x1ffe: a crash port left by the pre-exec image would get the server's
+//!      corpse, memory included, after a crash it can cause); and
+//!      `task_set_exception_ports(mach_task_self(), EXC_MASK_CORPSE_NOTIFY)` (0x2000), where the
+//!      only error that may be ignored is `KERN_INVALID_ARGUMENT` (a kernel that doesn't take
+//!      that mask from a task). Any other failure is fatal.
+//!
+//!   The key hand-off depends on it (see below). Then, before any child starts, it moves its
+//!   stdin and stdout pipes to new close-on-exec descriptors and reopens 0 and 1 on `/dev/null`.
+//!   Every
 //!   other descriptor it opens is close-on-exec too: the `office.lock` one above all (a child that
 //!   inherited it would keep the lock after the server died), and the key hand-off connection,
 //!   which it drops right after reading the hand-off line. A child's stdin and stdout are
@@ -89,23 +107,31 @@
 //!
 //! ## The key hand-off
 //! The secrets reach a server only over a connection the server opens itself, after its exec, to
-//! a one-shot socket the host listens on, and only once the host has checked that the connecting
-//! process is the one it admitted. A process that inherited the server's stdin (e.g. a helper
-//! forked before the exec) can read only the first line, which holds no secret, and its own
-//! connection carries the wrong audit token.
+//! a one-shot socket the host listens on, and only once the host has checked that the connection's
+//! peer is the process it admitted. A process that inherited the server's stdin (e.g. a helper
+//! forked before the exec) can read only the first line, which holds no secret.
 //!
-//! 1. **Before the spawn**, the host makes a fresh [`KeySocketId`] from 8 random bytes
-//!    ([`KeySocketId::generate_from`]) and binds a listening Unix socket at [`key_socket_path`],
-//!    `<home>/run/k-<16 hex>.sock` ([`KEY_SOCKET_PREFIX`], [`KEY_SOCKET_SUFFIX`]), mode 0600, in
-//!    the 0700 `run/`. One socket per spawn; the path must pass
-//!    [`org_proto::location::check_socket_path`]. Its name is the longest in `run/` (23 bytes,
-//!    against an office socket's 17), so the host's up-front path check at startup includes a key
-//!    socket's path (e.g. for `KeySocketId::generate_from([0; 8])`). The host also removes
-//!    leftover `k-*.sock` files from an earlier run at startup, and treats a name already taken
-//!    at bind as a reason to make a fresh id. (Office sockets are named by plain ids, which have
-//!    no `-`, so the names never collide.)
-//! 2. The host spawns the server suspended, takes and checks its audit token (admits it), resumes
-//!    it, and writes the first line, which carries the id ([`HostMessage`]).
+//! Why the peer check holds: `LOCAL_PEERTOKEN` and `LOCAL_PEERPID` name the process that last
+//! created, connected, sent or received on the connection (not its creator; `fork`, `exec` and
+//! `SCM_RIGHTS` don't change it), looked up when asked. So the check is sound only because (i)
+//! the socket exists only after the genuine image is admitted (step 1), so no connection to it
+//! can predate the server's exec; and (ii) the server's fd hygiene (its first act, see
+//! "Descriptors") means it never touches a socket it didn't create, so the admitted process can
+//! appear as the peer only of its own connection.
+//!
+//! 1. The host spawns the server suspended, takes and checks its audit token (admits it), resumes
+//!    it and checks the token again. **Only then** does it make a fresh [`KeySocketId`] from 8
+//!    random bytes ([`KeySocketId::generate_from`]) and bind a listening Unix socket at
+//!    [`key_socket_path`], `<home>/run/k-<16 hex>.sock` ([`KEY_SOCKET_PREFIX`],
+//!    [`KEY_SOCKET_SUFFIX`]), mode 0600 before it listens, in the 0700 `run/`. One socket per
+//!    spawn; the path must pass [`org_proto::location::check_socket_path`]. Its name is the
+//!    longest in `run/` (23 bytes, against an office socket's 17), so the host's up-front path
+//!    check at startup includes a key socket's path (e.g. for `KeySocketId::generate_from([0;
+//!    8])`). The host also removes leftover `k-*.sock` files from an earlier run at startup, and
+//!    treats a name already taken at bind as a reason to make a fresh id. (Office sockets are
+//!    named by plain ids, which have no `-`, so the names never collide.)
+//! 2. The host writes the first line, which carries the id ([`HostMessage`]). The server connects
+//!    only after reading it, so binding before the line can't deadlock.
 //! 3. **The server**, right after its first line and before anything else (before the office lock
 //!    or any database, for create, start and discard alike), builds the path itself with
 //!    [`key_socket_path`] from its own office home and the id: it never takes a path from the
@@ -114,7 +140,8 @@
 //!    nothing is read. It connects with a 5 s deadline for the connect and the read.
 //! 4. **The host** accepts exactly one connection, within 10 s. It samples the peer's audit token
 //!    at accept (`LOCAL_PEERTOKEN`); the connection is the admitted server's only if that token
-//!    equals the admitted one in full, pid version included, and the peer has sent nothing. Then
+//!    equals the admitted one in full, pid version included, the code it names still meets the
+//!    server requirement, and the peer has sent nothing. Then
 //!    the host writes the hand-off line ([`write_hand_off`]), unlinks the socket and closes the
 //!    connection, in that order. A second connection is refused and logged. On a timeout or a
 //!    refused peer, the host kills the child, unlinks the socket, writes nothing, and reports
@@ -128,6 +155,31 @@
 //!    [`LaunchError::fail_code`]'s code.
 //!
 //! No build, debug builds included, reads a secret from stdin: the hand-off is the only way in.
+//!
+//! ## Residuals and the release gate
+//! An attacker that resumes the suspended child before the host admits it (its pre-exec image
+//! runs first) can't get the secrets, but it still controls what the genuine server inherits:
+//! - **its launch context:** argv, the environment, the working directory, resource limits. The
+//!   server treats all of it as untrusted and takes only what this contract names, checked;
+//! - **its stdio pipes:** it can dup pipes of its own onto fds 0-2, so the `S_IFIFO` check
+//!   passes, and relay or forge the first line and the control lines. They hold no secret: an
+//!   integrity risk (e.g. a forged `ready` or `failed`), not a secret one;
+//! - **its Mach special ports, above all the bootstrap port:** it can sit in the middle of the
+//!   server's Mach and XPC lookups, and a reply can carry a fileport. If a library turns that into
+//!   an fd and does I/O on it, "the server touches no socket it didn't create" no longer holds.
+//!   The fd hygiene doesn't reset the bootstrap port: the server needs it for system services.
+//!
+//! Also, the list of calls that move a connection's `last_pid` (create, connect, send, receive)
+//! is believed complete, with medium confidence (from the XNU sources, not a documented API).
+//!
+//! **The release gate** (ada, 2026-11-09): before any signed build holds real data, the host's
+//! spawn of the server gets (C) a kernel-enforced launch requirement, public API only
+//! (`NSTask`'s `launchRequirementData`, or its public `posix_spawn`-level equivalent; no SPI),
+//! verified on a signed fixture. Then the kernel refuses to run anything but the signed server in
+//! the child, so the attacker's image is never the first image and none of the residuals above
+//! remain. If (C) can't be done with public API, the fallback is (B): the hand-off over Mach
+//! messages with the audit trailer. The host's dynamic `SecCode` check stays either way.
+//! **Release builds require macOS 14.4 or later.**
 //!
 //! ## An office's folder
 //! `<home>/offices/<office-id>/` ([`office_dir`]), made by the server (owner-only) on

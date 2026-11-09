@@ -6,7 +6,7 @@ use std::io;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
-use org_office_launch::OFFICES_DIR_NAME;
+use org_office_launch::{key_socket_path, KeySocketId, OFFICES_DIR_NAME};
 use org_proto::location::{self, OFFICE_SOCKET_HANDLE_CHARS};
 
 use crate::error::HostError;
@@ -37,13 +37,16 @@ impl Layout {
         }
     }
 
-    /// Every office socket in a home has the same length (12-character handles), so checking
-    /// `host.sock` and one sample office socket up front means no create can fail on it later.
+    /// Every office socket in a home has the same length (12-character handles), and so does
+    /// every key socket (`handoff`, 16 hex characters), so checking `host.sock`, one sample
+    /// office socket and one sample key socket up front means no create or spawn can fail on it
+    /// later. The key socket is the longest: `run/k-<16>.sock` adds 28 bytes to the home.
     pub(crate) fn check_socket_paths(&self) -> Result<(), HostError> {
         let sample_id = "X".repeat(OFFICE_SOCKET_HANDLE_CHARS);
         let sample =
             location::office_socket_path(&self.home, &sample_id).expect("the sample id is plain");
-        for path in [&self.host_socket, &sample] {
+        let key_socket = key_socket_path(&self.home, &KeySocketId::generate_from([0; 8]));
+        for path in [&self.host_socket, &sample, &key_socket] {
             location::check_socket_path(path).map_err(|e| HostError::SocketPathTooLong {
                 path: path.clone(),
                 len: e.len,
@@ -410,10 +413,11 @@ mod tests {
 
     #[test]
     fn socket_paths_are_checked_against_the_macos_limit() {
-        // 103 bytes is the limit; run/<12>.sock adds 22 bytes to the home.
-        let ok = PathBuf::from(format!("/{}", "a".repeat(80)));
+        // 103 bytes is the limit; run/k-<16>.sock adds 28 bytes to the home (run/<12>.sock,
+        // 22).
+        let ok = PathBuf::from(format!("/{}", "a".repeat(74)));
         assert!(Layout::new(&ok).check_socket_paths().is_ok());
-        let long = PathBuf::from(format!("/{}", "a".repeat(81)));
+        let long = PathBuf::from(format!("/{}", "a".repeat(75)));
         match Layout::new(&long).check_socket_paths() {
             Err(HostError::SocketPathTooLong { len, .. }) => assert_eq!(len, 104),
             other => panic!("{other:?}"),

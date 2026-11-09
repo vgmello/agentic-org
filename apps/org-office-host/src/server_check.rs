@@ -1,9 +1,10 @@
 //! Who may get an office's database key: the check of every office server the host starts,
-//! before its first line (which carries the key) is written.
+//! before it is resumed and its first line is written, and of the connection the key is handed
+//! over on (`handoff`).
 //!
 //! The threat: a same-user process runs the signed host from a copy, a symlink or a hard link,
 //! next to its own `org-office-server` (the host starts the server next to its own executable),
-//! and receives every office's key on the first line. So a release host checks each server it
+//! and receives every office's key. So a release host checks each server it
 //! spawns, before that server has run a single instruction: it starts it **suspended**
 //! (`spawn::spawn_suspended`; otherwise the image's first code could start a helper that
 //! inherits stdin, then `exec` the genuine server and pass the check), and checks it by its
@@ -20,21 +21,33 @@
 //!   and certificate leaf[subject.OU] = "<ORG_APP_TEAM_ID>"
 //! ```
 //!
-//! **Residual risk:** another same-user process can resume a suspended child itself before the
-//! host takes its token (stopping or starving the host makes that easy), and so get the check to see the genuine server while its own helper keeps
-//! stdin (see `spawn`'s module docs). Closing that needs the key handed to an authenticated
-//! reader, a contract change; until then this check stops every attack in which nothing resumes the
-//! child before the host takes its token.
+//! **The key never travels on an inherited descriptor.** Another same-user process can resume a
+//! suspended child itself before the host takes its token (stopping or starving the host makes
+//! that easy), let its image fork a helper that keeps stdin, then turn itself into the genuine
+//! server, so the check sees the genuine one (see `spawn`'s module docs). So the check alone
+//! doesn't decide who gets the secrets: the first line on stdin carries none, and the host hands
+//! the app token and the key only over a connection the admitted server opens itself, after its
+//! exec, to a one-shot socket (`handoff`). That connection's peer must be the admitted image:
+//! [`PeerRule`], decided at accept by [`PeerRule::admits`]. In a release build its audit token
+//! (`LOCAL_PEERTOKEN`) must equal the admitted one byte for byte, pid version included, and the
+//! code it names must still satisfy the requirement; a helper forked before the exec carries
+//! another token, and connects as itself. Debug builds check `LOCAL_PEERPID` is the child's pid
+//! and the uid is ours instead. Either way, a peer that has already sent anything is refused.
+//! The peer token names the pid that last used the connection, looked up when asked, so the rule
+//! means something only because the socket is bound after the admission and the server touches
+//! no socket it didn't create (`handoff`'s module docs).
 //!
 //! Only a child that passes is resumed. Right before the first line is written, its audit token
 //! is taken again and must be unchanged, so an `exec` after the check is refused. A child that
 //! fails, or whose token can't be taken, is killed and reaped (still suspended if it failed the
 //! first check, so it never ran), and gets nothing; the start counts as a `storage_error`
-//! (retried with backoff, up to the give-up rule).
+//! (retried with backoff, up to the give-up rule). So does a hand-off whose peer [`PeerRule`]
+//! refuses.
 //!
 //! A release host with no team id compiled in can't check anything, so it starts no server at
-//! all (logged loudly). **Debug builds don't check** (their servers are unsigned development and
-//! test builds), which is logged at startup.
+//! all (logged loudly). **Debug builds don't check signatures** (their servers are unsigned
+//! development and test builds), which is logged at startup; their hand-off still checks the
+//! peer's pid and uid ([`PeerRule::Pid`]).
 
 /// The office server's signing identifier (ADR-0003 §2.1): a release host gives an office's key
 /// only to a server signed with it by the app's team (`server_check`). The bundle must sign
@@ -164,6 +177,115 @@ impl ServerCheck {
     }
 }
 
+/// Who may take a spawn's secrets on its key socket (`handoff`): what the peer of the one
+/// connection the host accepts must be. Made by [`ServerCheck::peer_rule`] from what the
+/// admission returned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PeerRule {
+    /// Release builds: the peer's audit token must be the admitted one, byte for byte (pid
+    /// version included), and the code it names must still satisfy `requirement`.
+    Token {
+        admitted: AuditToken,
+        requirement: String,
+    },
+    /// Debug builds (and tests), which don't check signatures: the peer must be the child
+    /// (`LOCAL_PEERPID`), running as `uid`. A pid can be reused, a token can't: release builds
+    /// never use this.
+    #[cfg(any(debug_assertions, test))]
+    Pid { pid: u32, uid: u32 },
+}
+
+/// What the host read about a hand-off connection's peer as it accepted it: identity first,
+/// then how many bytes it had already sent. `None`: not read (the rule doesn't need it) or
+/// couldn't be read; a fact the rule needs that is `None` refuses the peer.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct PeerSample {
+    pub(crate) token: Option<AuditToken>,
+    pub(crate) pid: Option<u32>,
+    pub(crate) uid: Option<u32>,
+    /// Bytes waiting on the connection (`FIONREAD`): the host reads nothing from the peer, so
+    /// anything sent at all refuses it.
+    pub(crate) waiting: Option<u64>,
+}
+
+impl ServerCheck {
+    /// The rule for the hand-off of child `pid`, admitted as `admitted` (what
+    /// [`ServerCheck::admit`] returned), or why no connection may get its secrets.
+    pub(crate) fn peer_rule(
+        &self,
+        admitted: Option<AuditToken>,
+        pid: u32,
+    ) -> Result<PeerRule, String> {
+        match (self, admitted) {
+            (ServerCheck::Requirement(requirement), Some(admitted)) => Ok(PeerRule::Token {
+                admitted,
+                requirement: requirement.clone(),
+            }),
+            #[cfg(any(debug_assertions, test))]
+            (ServerCheck::Skip, None) => Ok(PeerRule::Pid {
+                pid,
+                uid: crate::home::euid(),
+            }),
+            // A scripted admission names no real token: the debug rule.
+            #[cfg(test)]
+            (ServerCheck::Scripted(_), _) => Ok(PeerRule::Pid {
+                pid,
+                uid: crate::home::euid(),
+            }),
+            _ => {
+                let _ = pid;
+                Err("no rule says who may take this server's key".into())
+            }
+        }
+    }
+}
+
+impl PeerRule {
+    /// Whether the connection `sample` describes may take the secrets.
+    pub(crate) fn admits(&self, sample: &PeerSample) -> Result<(), String> {
+        admits_peer(self, sample, satisfies)
+    }
+}
+
+/// The hand-off decision, pure: `satisfies` checks the code a token names against a requirement,
+/// and is asked only for a token equal to the admitted one.
+fn admits_peer(
+    rule: &PeerRule,
+    sample: &PeerSample,
+    satisfies: impl FnOnce(&AuditToken, &str) -> bool,
+) -> Result<(), String> {
+    match rule {
+        PeerRule::Token {
+            admitted,
+            requirement,
+        } => match sample.token {
+            None => return Err("its audit token couldn't be read".into()),
+            Some(token) if token != *admitted => {
+                return Err("it isn't the admitted server (another audit token)".into())
+            }
+            Some(token) => {
+                if !satisfies(&token, requirement) {
+                    return Err("it no longer satisfies the office server's requirement".into());
+                }
+            }
+        },
+        #[cfg(any(debug_assertions, test))]
+        PeerRule::Pid { pid, uid } => {
+            if sample.pid != Some(*pid) {
+                return Err("it isn't the server the host started (another pid)".into());
+            }
+            if sample.uid != Some(*uid) {
+                return Err("it runs as another user".into());
+            }
+        }
+    }
+    match sample.waiting {
+        Some(0) => Ok(()),
+        Some(_) => Err("it sent something before the key".into()),
+        None => Err("what it sent couldn't be read".into()),
+    }
+}
+
 /// The requirement an office server must satisfy: [`SERVER_SIGNING_ID`] signed with the
 /// Developer ID of team `team_id`.
 pub(crate) fn server_requirement(team_id: &str) -> Result<String, String> {
@@ -281,6 +403,101 @@ mod tests {
         let never = || -> Result<AuditToken, String> { panic!("asked for a token") };
         assert_eq!(admit(&ServerCheck::Skip, never, |_, _| panic!()), Ok(None));
         assert!(admit(&ServerCheck::Refuse, never, |_, _| panic!()).is_err());
+    }
+
+    /// The hand-off's peer: in a release build, only the admitted token, byte for byte, whose
+    /// code still meets the requirement; nothing sent first.
+    #[test]
+    fn a_hand_off_peer_must_carry_the_admitted_token_and_meet_the_requirement() {
+        let admitted = [7u8; 32];
+        let rule = PeerRule::Token {
+            admitted,
+            requirement: "R".into(),
+        };
+        let sample = |token: Option<AuditToken>, waiting: Option<u64>| PeerSample {
+            token,
+            waiting,
+            ..PeerSample::default()
+        };
+        let yes = |t: &AuditToken, r: &str| {
+            assert_eq!((t, r), (&admitted, "R"));
+            true
+        };
+        assert_eq!(
+            admits_peer(&rule, &sample(Some(admitted), Some(0)), yes),
+            Ok(())
+        );
+        // One byte off anywhere (the pid version is word 7) refuses it, and the requirement
+        // isn't even asked.
+        for at in [0, 20, 28, 31] {
+            let mut other = admitted;
+            other[at] ^= 1;
+            let err =
+                admits_peer(&rule, &sample(Some(other), Some(0)), |_, _| panic!()).unwrap_err();
+            assert!(err.contains("another audit token"), "{err}");
+        }
+        // The right token whose code no longer meets the requirement.
+        assert!(admits_peer(&rule, &sample(Some(admitted), Some(0)), |_, _| false).is_err());
+        // No token; a peer that sent something; or one whose bytes can't be counted.
+        assert!(admits_peer(&rule, &sample(None, Some(0)), |_, _| panic!()).is_err());
+        let err = admits_peer(&rule, &sample(Some(admitted), Some(1)), |_, _| true).unwrap_err();
+        assert!(err.contains("sent something"), "{err}");
+        assert!(admits_peer(&rule, &sample(Some(admitted), None), |_, _| true).is_err());
+        // A pid and a uid don't stand in for the token.
+        let by_pid = PeerSample {
+            pid: Some(42),
+            uid: Some(501),
+            waiting: Some(0),
+            ..PeerSample::default()
+        };
+        assert!(admits_peer(&rule, &by_pid, |_, _| true).is_err());
+    }
+
+    /// Debug builds: the child's pid and our uid; nothing sent first.
+    #[test]
+    fn a_debug_hand_off_peer_must_be_the_child_as_this_user() {
+        let rule = PeerRule::Pid { pid: 42, uid: 501 };
+        let sample = |pid, uid, waiting| PeerSample {
+            pid,
+            uid,
+            waiting,
+            ..PeerSample::default()
+        };
+        let never = |_: &AuditToken, _: &str| -> bool { panic!("asked for a signature") };
+        assert_eq!(
+            admits_peer(&rule, &sample(Some(42), Some(501), Some(0)), never),
+            Ok(())
+        );
+        let err = admits_peer(&rule, &sample(Some(43), Some(501), Some(0)), never).unwrap_err();
+        assert!(err.contains("another pid"), "{err}");
+        assert!(admits_peer(&rule, &sample(None, Some(501), Some(0)), never).is_err());
+        assert!(admits_peer(&rule, &sample(Some(42), Some(0), Some(0)), never).is_err());
+        assert!(admits_peer(&rule, &sample(Some(42), None, Some(0)), never).is_err());
+        assert!(admits_peer(&rule, &sample(Some(42), Some(501), Some(3)), never).is_err());
+        assert!(admits_peer(&rule, &sample(Some(42), Some(501), None), never).is_err());
+    }
+
+    #[test]
+    fn the_peer_rule_follows_the_check() {
+        let requirement = ServerCheck::Requirement("R".into());
+        assert_eq!(
+            requirement.peer_rule(Some([7; 32]), 42),
+            Ok(PeerRule::Token {
+                admitted: [7; 32],
+                requirement: "R".into()
+            })
+        );
+        // A release check that admitted no token gives no rule at all.
+        assert!(requirement.peer_rule(None, 42).is_err());
+        assert!(ServerCheck::Refuse.peer_rule(None, 42).is_err());
+        assert_eq!(
+            ServerCheck::Skip.peer_rule(None, 42),
+            Ok(PeerRule::Pid {
+                pid: 42,
+                uid: crate::home::euid()
+            })
+        );
+        assert!(ServerCheck::Skip.peer_rule(Some([7; 32]), 42).is_err());
     }
 
     #[test]

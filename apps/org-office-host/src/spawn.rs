@@ -1,26 +1,29 @@
-//! Starting an office server **suspended**, and the FFI the host's server check needs: the one
-//! module with this unsafe code.
+//! Starting an office server **suspended**, the FFI the host's server check needs, and the
+//! key socket's owner-only listener (`handoff`): the one module with this unsafe code.
 //!
 //! Why suspended: the host must check a server before the server can run any code of its own
 //! (`server_check`). An image the host didn't vet could otherwise, in its first instructions,
 //! start a helper that inherits stdin, then `exec` the genuine signed server: the check would see
-//! the genuine one, and the helper would read the key. So the host spawns every server with
-//! `POSIX_SPAWN_START_SUSPENDED`: the exec is done (the audit token names the image), but not one
-//! instruction of it has run. The host takes its audit token (`task_name_for_pid`, then
-//! `TASK_AUDIT_TOKEN`), checks the code it names, and only then resumes it (`SIGCONT`); a child
-//! that fails is killed while still suspended, so it never ran at all.
+//! the genuine one. So the host spawns every server with `POSIX_SPAWN_START_SUSPENDED`: the exec
+//! is done (the audit token names the image), but not one instruction of it has run. The host
+//! takes its audit token (`task_name_for_pid`, then `TASK_AUDIT_TOKEN`), checks the code it
+//! names, and only then resumes it (`SIGCONT`); a child that fails is killed while still
+//! suspended, so it never ran at all.
 //!
-//! **Residual risk (open, needs a contract change):** a suspended child is resumed by any
-//! `SIGCONT`, and the kernel doesn't check who sends it. A same-user process that resumes the child
-//! before the host has taken its token (stopping or starving the host makes that easy, e.g. a copy
-//! of the host the attacker launched itself) can let its
-//! image fork a helper that keeps stdin and turn itself into the genuine server (`posix_spawn`
-//! with `POSIX_SPAWN_SETEXEC | POSIX_SPAWN_START_SUSPENDED`), and when the host takes the token, its
-//! check sees the genuine server, and the helper reads the key. No check of the child can
-//! tell this from a clean spawn. Closing it needs the key handed to an authenticated reader (e.g.
-//! over a per-spawn socket whose peer audit token must equal the admitted one), which changes the
-//! launch contract and the server. Suspending still stops every attack in which nothing resumes the child before the host takes its
-//! token.
+//! **Suspending isn't enough on its own, so no secret goes on stdin.** A suspended child is
+//! resumed by any `SIGCONT`, and the kernel doesn't check who sends it. A same-user process that
+//! resumes the child before the host has taken its token (stopping or starving the host makes
+//! that easy) can let its image fork a helper that keeps stdin and turn itself into the genuine
+//! server (`posix_spawn` with `POSIX_SPAWN_SETEXEC | POSIX_SPAWN_START_SUSPENDED`): the host's
+//! check then sees the genuine server, and no check of the child can tell this from a clean
+//! spawn. So the helper must find nothing to read: the first line on stdin carries no secret
+//! (launch version 3), and the app token and the key are handed over only on a connection the
+//! admitted server opens itself, after its exec, to a one-shot socket whose peer must be the
+//! admitted image (`handoff`, `server_check::PeerRule`). That socket is bound only after the
+//! admission and the re-check, so the pre-exec image can't have connected to it and handed the
+//! connection to its helper (a connection's peer token follows the pid that last used it, not
+//! the image that made it: see `handoff`). Suspending still means a refused image never runs at
+//! all.
 //!
 //! A host that dies between the spawn and the check leaves the child stopped (it holds no key and
 //! never ran; launchd adopts it). That's a leaked process, not a leak of anything secret.
@@ -33,6 +36,7 @@
 use std::ffi::{CString, OsStr, OsString};
 use std::fs::File;
 use std::io;
+use std::os::unix::net::UnixListener;
 use std::path::Path;
 
 use crate::peer::AuditToken;
@@ -285,6 +289,67 @@ fn check(rc: libc::c_int) -> io::Result<()> {
     }
 }
 
+/// A listening Unix socket at `path`, owner-only (0600) before anyone can connect: it is bound,
+/// then its file is set to 0600, and only then does it listen (a socket that isn't listening
+/// refuses every connection). Its fd is close-on-exec; it is made in two steps, so the caller
+/// holds `cloexec::SPAWN_LOCK`. `path` must not exist and must fit `sockaddr_un` (103 bytes,
+/// `org_proto::location::check_socket_path`). On an error after the bind, the file is removed.
+pub(crate) fn listen_owner_only(path: &Path, backlog: u8) -> io::Result<UnixListener> {
+    use std::os::fd::{FromRawFd, OwnedFd};
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::PermissionsExt;
+
+    // SAFETY: an all-zero `sockaddr_un` is a valid value (an empty path).
+    let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    let bytes = path.as_os_str().as_bytes();
+    // Room for the terminating NUL, which the zeroed array already holds.
+    if bytes.is_empty() || bytes.len() >= addr.sun_path.len() || bytes.contains(&0) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "a socket path must be 1 to 103 bytes, without NUL",
+        ));
+    }
+    for (slot, &b) in addr.sun_path.iter_mut().zip(bytes) {
+        *slot = b as libc::c_char;
+    }
+    addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
+    let len = std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t;
+    #[cfg(target_os = "macos")]
+    {
+        addr.sun_len = len as u8;
+    }
+    // SAFETY: plain socket creation; the result is checked before use.
+    let fd = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0) };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: a fresh descriptor we now own (closed when `owned` drops).
+    let owned = unsafe { OwnedFd::from_raw_fd(fd) };
+    // SAFETY: a valid descriptor; sets only its close-on-exec flag.
+    if unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `addr` is a valid `sockaddr_un` of `len` bytes that outlives the call.
+    let rc = unsafe { libc::bind(fd, (&addr as *const libc::sockaddr_un).cast(), len) };
+    if rc != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let listening = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .and_then(|()| {
+            // SAFETY: a valid, bound socket descriptor.
+            if unsafe { libc::listen(fd, libc::c_int::from(backlog)) } == 0 {
+                Ok(())
+            } else {
+                Err(io::Error::last_os_error())
+            }
+        });
+    if let Err(e) = listening {
+        let _ = std::fs::remove_file(path);
+        return Err(e);
+    }
+    Ok(UnixListener::from(owned))
+}
+
 /// `TASK_AUDIT_TOKEN` (`<mach/task_info.h>`).
 #[cfg(target_os = "macos")]
 const TASK_AUDIT_TOKEN: libc::task_flavor_t = 15;
@@ -447,6 +512,28 @@ mod tests {
         );
         drop(open);
         ls.process.kill();
+    }
+
+    /// The listener is 0600 from the moment it can be connected to, close-on-exec, and accepts.
+    #[test]
+    fn an_owner_only_listener_is_0600_and_close_on_exec() {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("k.sock");
+        let listener = listen_owner_only(&path, 4).unwrap();
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+        assert!(meta.file_type().is_socket());
+        assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        // SAFETY: F_GETFD only reads the flags of an fd this test owns.
+        let flags = unsafe { libc::fcntl(listener.as_raw_fd(), libc::F_GETFD) };
+        assert!(flags >= 0 && flags & libc::FD_CLOEXEC != 0, "{flags}");
+        let _client = std::os::unix::net::UnixStream::connect(&path).unwrap();
+        listener.accept().unwrap();
+        // An existing path, or one too long, is refused.
+        assert!(listen_owner_only(&path, 4).is_err());
+        let long = dir.path().join("x".repeat(110));
+        assert!(listen_owner_only(&long, 4).is_err());
     }
 
     #[test]

@@ -201,7 +201,7 @@ export function resolve(input: ResolveInput): EffectiveSet {
 	if (agentId) {
 		const inherited = new Set(candidates.filter((d) => d.location.level !== 'agent').map((d) => d.key));
 		for (const doc of live.filter((d) => d.location.level === 'agent')) {
-			const text = doc.overrides ? "Private processes only add: they can't override a process." : doc.status === 'off' ? "Private processes only add: they can't turn off a process." : inherited.has(doc.key) ? `Private processes only add: ${doc.name} isn't applied because it changes an inherited process.` : undefined;
+			const text = doc.overrides ? `Private processes only add: ${doc.name} can't override a process.` : doc.status === 'off' ? `Private processes only add: ${doc.name} can't turn off a process.` : inherited.has(doc.key) ? `Private processes only add: ${doc.name} isn't applied because it changes an inherited process.` : undefined;
 			if (text) {
 				privateProblem.set(doc, text);
 				problem('private_only_adds', doc, text);

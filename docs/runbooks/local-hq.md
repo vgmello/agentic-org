@@ -1,25 +1,28 @@
 # Runbook: a real HQ office on this Mac (debug build)
 
-Status: draft (River, 2026-11-08), for ada's switchover from the mock to the real `org-office-host` and an HQ
-`org-office-server`, from **debug builds**, and an end-to-end check. Nothing here is signed or bundled. Each claim
-not checked against a run is marked "(unverified: …)".
+Status: draft (River, 2026-11-08; amended 2026-11-09 after ada's end-to-end dry run, which passed on `v1`
+`06406eb`), for ada's switchover from the mock to the real `org-office-host` and an HQ `org-office-server`, from
+**debug builds**, and an end-to-end check. Both halves of key custody are on `v1` (`19594ef`). Nothing here is signed
+or bundled. Each claim not checked against a run is marked "(unverified: …)".
 
-## 0. Before you start: the tree must hold both halves of key custody
+## 0. Before you start: the tree must hold both halves of key custody, and one launch version
 
-The host side (the tip of `river/host-keys`) and the server side (`server-dev/server-key-custody`, `da54892`) are
-**not in `origin/v1` yet** (2026-11-08). They merge cleanly (`git merge-tree`), but that merge hasn't been built.
-With the host side alone, `org-office-server` still has its own key store: a default build reads and writes the
-**login Keychain** (service `org.agentic.office`) and ignores the key on the launch pipe, and a `--features dev-keys`
-build refuses to start, because the host passes no `ORG_OFFICE_DEV_KEY_DIR` to its servers. Check first:
+Both halves of key custody **are on `origin/v1`** since `19594ef` (the merge of both, 2026-11-08; the branch
+`river/host-keys` is gone, so check by that commit). The host
+and the server must also speak the same launch version: since the key hand-off (launch version 3, #13) the host
+sends no secret on stdin and hands the key over on a per-spawn key socket. A version 3 host with a version 2
+server (or the reverse) leaves every office `unavailable` (`unsupported_version`). Check first:
 
 ```sh
-export REPO=/path/to/checkout   # holds both branches, e.g. v1 after both merges
+export REPO=/path/to/checkout   # e.g. v1, with the key hand-off merged once it is
 cd "$REPO"
-git merge-base --is-ancestor origin/river/host-keys HEAD && git merge-base --is-ancestor da54892 HEAD && echo "both halves: ok"
-test ! -e apps/org-office-server/src/keys.rs && echo "server: keys only from the launch pipe"
+git merge-base --is-ancestor 19594ef HEAD && echo "both halves of key custody: ok"
+test ! -e apps/org-office-server/src/keys.rs && echo "server: keys only from the host"
+grep -q 'pub const LAUNCH_VERSION: u32 = 3;' crates/org-office-launch/src/lib.rs && echo "launch version 3"
 ```
 
-Stop if either line prints nothing.
+Stop if any line prints nothing (the last one only once you run the key hand-off: until both its halves are merged,
+use a tree where host and server are both on version 2, i.e. `v1` at `19594ef` or later without it).
 
 ## 1. One folder for everything dev, apart from a real install
 
@@ -42,8 +45,13 @@ mkdir -p -m 700 "$DEV" "$DEV/bin" "$DEV/logs" "$DEV/keys"
   the host's working directory); **not inside the office home** (checked lexically and canonically). Keys are
   `<dir>/<office id>.key`, 64 hex digits, mode 0600, and the folder is made 0700. Don't share one key folder between
   two homes. Release builds ignore it.
-- Socket paths must fit 103 bytes: `$ORG_OFFICE_HOME/run/<12 chars>.sock`. The host checks this at startup and
-  refuses to start, so a deep home path (e.g. one under a long project folder) fails: keep `$DEV` short.
+- Socket paths must fit 103 bytes. The host checks this at startup and refuses to start, so a deep home path (e.g.
+  one under a long project folder) fails. With launch version 2, the longest is an office socket,
+  `$ORG_OFFICE_HOME/run/<12 chars>.sock`, so `$ORG_OFFICE_HOME` may be at most **81 bytes**. With launch version 3
+  (the key hand-off) the longest is a key socket, `$ORG_OFFICE_HOME/run/k-<16 hex>.sock`, which the host's startup
+  check also covers, so `$ORG_OFFICE_HOME` may be at most **75 bytes** (`echo -n "$ORG_OFFICE_HOME" | wc -c`).
+  Workaround for a long `$DEV`: point a short symlink at it (`ln -s "$DEV" /tmp/aod` and `export
+  DEV=/tmp/aod`). Only the home itself must not be a symlink: a symlinked parent is fine.
 - The home must be a real folder owned by you, **not a symlink** (the host refuses to start on one, as on any home
   it can't make owner-only).
 - Shared with a future real install: the app's data folder for `com.ellosoft.agentic-org` (remembered
@@ -97,7 +105,8 @@ start the host yourself **before** the app. It then answers `hello` and the app 
 ```
 
 Expect the lines `org-office-host: DEVELOPMENT FALLBACK (debug build only): office.app_token and office.restart also
-accept <path> …` and `no orphan-key sweep for …`. If you see `the development fallback is off: …`, the app binary was
+accept <path> …`, `no orphan-key sweep for …` and `org-office-host: debug build: office servers' code signatures
+aren't checked before they get an office's key`. If you see `the development fallback is off: …`, the app binary was
 missing or isn't a file: build it, then restart the host. Stop with Ctrl-C (SIGINT, or SIGTERM): the host closes
 every server's stdin, kills any still running after 10 s, removes `host.sock` and releases `host.lock`.
 
@@ -181,8 +190,9 @@ AGENTIC_ORG_OFFICE=real bun run tauri dev     # ORG_OFFICE_HOME must be exported
 python3 "$DEV/hostcall.py" "$ORG_OFFICE_HOME/host.sock" organization.create '{"name":"Agentic Consulting"}'
 ```
 
-The org then shows under **Organizations on this Mac** on the Welcome screen. Send a create once only: a second
-one answers `already_exists`.
+The answer shows the new HQ with `"status": "starting"`; `office.list` shows it `active` within about 2 s. The org
+then shows under **Organizations on this Mac** on the Welcome screen. Send a create once only: a second one answers
+`already_exists`.
 
 ## 6. Check it works
 
@@ -200,6 +210,35 @@ ps -axo pid,comm | grep -E "org-office|agentic-org"   # the app's path must equa
   `DEVELOPMENT FALLBACK: an app-only call was allowed for the unsigned <path>`. A `not_authorized` there means the
   app's executable isn't exactly `ORG_DEV_APP_PATH`: fix the path, rebuild the host (step 2), copy it, restart it.
 
+## 6b. A headless app: app-only calls without the desktop app
+
+The debug fallback admits, for `office.app_token` and `office.restart`, any process of this user whose executable
+is **exactly** `ORG_DEV_APP_PATH` (as `proc_pidpath` reports it), on a connection where it read `hello`'s answer
+before sending the call and sent nothing after it. Two ways to use it without the app:
+
+- **Run a client from that path:** put the client binary there (e.g. build a small CLI and copy it to
+  `$ORG_DEV_APP_PATH`, after moving the app's binary aside). A script interpreter doesn't work: `proc_pidpath`
+  names the interpreter, not the script.
+- **Or rebuild the host for a CLI:** `export ORG_DEV_APP_PATH=/abs/path/to/the/cli`, rebuild the host (step 2),
+  copy it and restart it. The desktop app is then refused until you rebuild with its path again.
+
+Either way, the client sends `hello`, reads its answer, then `office.app_token {"office_id": "<id>"}`, and binds
+app-wide on the office's socket (`$ORG_OFFICE_HOME/run/<handle>.sock`) with `msg.bind {"app_token": "<64 hex>"}`.
+
+## 6c. Putting agents in the office
+
+As the app (an app-wide `msg.bind`, 6b), on the office socket:
+
+1. `team.create {"team_id": "<new id>", "name": "…"}` (`owner_team_id` to nest it).
+2. `member.add_agent {"member_id": "<new id>", "name": "…", "office_id": "<the HQ id>", "profile": {"role": "…",
+   "title": "…", "runtime": "claude_code", "messaging_name": "<the agent's ORG_AGENT>"}}`: the agent's
+   `messaging_name` must equal the `ORG_AGENT` it runs with.
+3. Run the agent's `org-agent` with `ORG_AGENT=<its messaging_name>` and `ORG_OFFICE=<the HQ id>` (ada's dry run on
+   `v1`; unverified on this branch).
+
+For any dev check, `export ORG_HOME="$DEV/agency"` first, so `org-agent`'s own files (its spool) stay in the dev
+folder, apart from a real install's.
+
 ## 7. Logs
 
 | What | Where |
@@ -213,7 +252,8 @@ ps -axo pid,comm | grep -E "org-office|agentic-org"   # the app's path must equa
 
 1. Quit the app (closing the window only hides it: quit from the menu bar, or Ctrl-C in its terminal).
 2. Stop the host: Ctrl-C (A), or `launchctl bootout gui/$(id -u)/org.agentic.office-host.dev` (B). Its office
-   servers stop with it. Check: `pgrep -fl org-office` prints nothing.
+   servers stop with it. Check: `pgrep -lf "^$DEV/bin/org-office"` prints nothing (a plain `org-office` also matches
+   other agents' command lines).
 3. Remove the dev setup:
 
 ```sh
@@ -234,9 +274,12 @@ security delete-generic-password -s org.agentic.office -a <office id>
 
 ## 9. Known gaps for the switchover
 
-1. **Unmerged:** the host and server halves of key custody (section 0) aren't on `v1`, and their merge hasn't been
-   built or tested.
-2. **No signing:** no Developer ID, no `ORG_APP_TEAM_ID`, no `keychain-access-groups` entitlement. A **release** host
+1. **No signing:** (release builds require **macOS 14.4 or later**, ada 2026-11-09: the pre-release launch
+   requirement on the server's spawn needs it. Until that gate is in, the key hand-off has open residuals: a
+   same-user process that resumes the server early chooses its launch context, its stdio pipes and its Mach
+   special ports (the bootstrap port above all), though it never gets the secrets; see `office-host-boundary.md`,
+   "Only the signed server gets a key".)
+   No Developer ID, no `ORG_APP_TEAM_ID`, no `keychain-access-groups` entitlement. A **release** host
    refuses to start without `ORG_HOST_KEYCHAIN_GROUP` and the matching entitlement, so `bun run install:dev`
    (release host, ad-hoc signed, registered through `SMAppService`) builds a login service that can't start today.
    `stage-office.sh` and `INSTALLING-THE-OFFICE.md` still mention `river/office-host`. A release host also gives an
@@ -247,18 +290,18 @@ security delete-generic-password -s org.agentic.office -a <office id>
    (the host's log says nothing like `refused office server`, and the office becomes active): the check takes
    the suspended child's audit token through `task_name_for_pid`, which the tests could exercise only on Apple's
    own binaries from an unsandboxed test process. If it's refused, every office stays offline.
-3. **The app can't start a dev host:** the registration (`SMAppService.agent`) works only from a bundle and runs the
+2. **The app can't start a dev host:** the registration (`SMAppService.agent`) works only from a bundle and runs the
    bundled release host. A dev run relies on the host from section 3 (unverified: what `SMAppService` reports
    to an unbundled `tauri dev` binary; expect "The office isn't installed" if the host is down).
-4. **Dev-only fallback:** the app-only calls trust an unsigned app by its exact path, a debug-build-only check fixed
+3. **Dev-only fallback:** the app-only calls trust an unsigned app by its exact path, a debug-build-only check fixed
    at compile time. Every change of the path, or of the target folder, needs a host rebuild and restart.
-5. **Orphan-key sweep is off in debug builds** (logged at startup): removing an office folder by hand leaves its
+4. **Orphan-key sweep is off in debug builds** (logged at startup): removing an office folder by hand leaves its
    `<id>.key` in `$DEV/keys`. Release builds sweep at startup, on the account's own office home only: an orphaned
    key is marked first (`<home>/orphan-keys.json`) and deleted only if it's still orphaned at a start 7 or more
    days later.
-6. **The host's own log is stderr only.** The bundled plist has no `StandardErrorPath`, so under launchd it is
+5. **The host's own log is stderr only.** The bundled plist has no `StandardErrorPath`, so under launchd it is
    lost (unverified: launchd discards it). The draft in River's notes says the host logs under `<home>/logs/`, but
    only the office servers do.
-7. **`org-agent` doesn't talk to the host yet** (spool only), and there's no CLI for host calls besides
+6. **`org-agent` doesn't talk to the host yet** (spool only), and there's no CLI for host calls besides
    `hostcall.py` above.
 8. The app's data folder is shared with a future real install (section 1).

@@ -360,7 +360,7 @@ fn servers_get_only_the_allowed_environment() {
     ];
     let runs = home.env_names(A);
     assert!(!runs.is_empty());
-    // The host used its key folder (the server got the office's key on its first line)...
+    // The host used its key folder (the server got the office's key on its hand-off)...
     assert_eq!(
         home.db_key_fingerprints(A),
         [home.stored_key_fingerprint(A).unwrap()]

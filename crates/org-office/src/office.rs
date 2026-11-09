@@ -13,8 +13,8 @@ use org_proto::directory::{WhoParams, WhoResult};
 use org_proto::org::{CommandAccepted, OrgChangedData, OrgSnapshot, Position};
 use org_proto::ApiError;
 
-use crate::store::messages;
 use crate::store::org as org_db;
+use crate::store::{messages, status};
 use crate::store::{Opening, Schema, Store};
 use crate::time;
 use org_proto::OrganizationName;
@@ -46,17 +46,21 @@ const OFFICE_ENTRIES: [&str; 11] = [
     "office.db",
 ];
 
-/// `office.db`: its identity (`meta`), and from version 2 the message tables. A version 1 file
-/// (made before messaging) gets the tables when it is opened.
-const OFFICE_SCHEMA: Schema = Schema {
-    version: 2,
+/// `office.db`: its identity (`meta`), from version 2 the message tables and from version 3 the
+/// members' status lines. An older file gets the tables it lacks when it is opened.
+pub(crate) const OFFICE_SCHEMA: Schema = Schema {
+    version: 3,
     create: |tx| {
         tx.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;")?;
-        messages::create_tables(tx)
+        messages::create_tables(tx)?;
+        status::create_table(tx)
     },
     upgrade: |tx, from| {
         if from < 2 {
             messages::create_tables(tx)?;
+        }
+        if from < 3 {
+            status::create_table(tx)?;
         }
         Ok(())
     },
@@ -417,13 +421,22 @@ impl Office {
         self.org.read(|db| org_db::changes_after(db, after, limit))
     }
 
-    /// A number that changes whenever a command has been committed. Read it BEFORE reading the
+    /// A number that changes whenever a command has been committed or a live event has been
+    /// published (`Office::wake_followers`). Read it BEFORE reading the
     /// log, then [`Office::wait_for_org_change`] with it: a commit in between is not missed.
     pub fn org_change_token(&self) -> u64 {
         self.changes.token()
     }
 
-    /// Waits until the token is no longer `seen` (a command was committed) or `timeout` passes,
+    /// Wakes everything waiting in [`Office::wait_for_org_change`] without a commit, for a live
+    /// event (a message, a status line) that followers should push now. They read the log and
+    /// their live events again; nothing in the log changed.
+    pub fn wake_followers(&self) {
+        self.changes.bump();
+    }
+
+    /// Waits until the token is no longer `seen` (a command was committed, or followers were
+    /// woken) or `timeout` passes,
     /// and returns the current token.
     pub fn wait_for_org_change(&self, seen: u64, timeout: Duration) -> u64 {
         self.changes.wait(seen, timeout)

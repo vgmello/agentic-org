@@ -1,5 +1,5 @@
-//! App tokens (ADR-0003 §2.1) on the control pipe, against the fake office server: one per
-//! office per host run, in the first line of every start, never in a log.
+//! App tokens (ADR-0003 §2.1), against the fake office server: one per office per host run, on
+//! the key hand-off of every start (never on the control pipe), never in a log.
 //!
 //! The tests never see a token: the fake records a fingerprint of each one it gets.
 
@@ -13,9 +13,9 @@ use std::thread;
 use std::time::Duration;
 
 use org_office_host::Host;
-use org_office_launch::{write_host_message, CreateOffice, HostMessage, StartOffice};
+use org_office_launch::{write_host_message, CreateOffice, HostMessage, KeySocketId, StartOffice};
 use org_proto::{
-    AppToken, DbKey, Empty, ErrorCode, OfficeList, OfficeRole, OfficeStatus, OrganizationCreate,
+    Empty, ErrorCode, OfficeList, OfficeRole, OfficeStatus, OrganizationCreate,
     OrganizationCreateParams,
 };
 use serde_json::json;
@@ -156,8 +156,7 @@ fn a_malformed_or_wrong_first_line_makes_the_office_unavailable() {
         office_id: A.into(),
         office_name: "HQ".into(),
         role: OfficeRole::Hq,
-        app_token: AppToken::from_bytes([7; 32]),
-        db_key: DbKey::from_bytes([8; 32]),
+        key_socket_id: KeySocketId::generate_from([7; 8]),
     }));
     let cases = [
         (
@@ -166,7 +165,7 @@ fn a_malformed_or_wrong_first_line_makes_the_office_unavailable() {
         ),
         (
             "unknown-op",
-            r#"printf '{"v":2,"op":"stop"}\n' | "$FAKE" "$@""#.to_owned(),
+            r#"printf '{"v":3,"op":"stop"}\n' | "$FAKE" "$@""#.to_owned(),
         ),
         (
             "create-op",
@@ -196,7 +195,8 @@ fn a_server_whose_stdin_closes_before_its_first_line_exits_and_is_restarted() {
     let home = TestHome::new();
     home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
     let mut config = home.config();
-    config.set_server_program(home.wrapper("no-first-line", r#"exec "$FAKE" "$@" </dev/null"#));
+    // A pipe (the contract requires one) whose writer is already gone.
+    config.set_server_program(home.wrapper("no-first-line", r#"true | "$FAKE" "$@""#));
     let host = Host::start(config).unwrap();
     // The contract: the host is gone, so the server exits 0 without a `failed` line. That
     // isn't fatal: the host restarts it with backoff.
@@ -209,11 +209,31 @@ fn a_server_whose_stdin_closes_before_its_first_line_exits_and_is_restarted() {
     host.shutdown();
 }
 
+/// The contract's fd hygiene: a server whose stdin, stdout or stderr isn't a pipe refuses to
+/// start (`invalid_request`, fatal) and takes no key.
+#[test]
+fn a_server_whose_stdio_isnt_three_pipes_refuses_to_start() {
+    for (name, body) in [
+        ("stdin-file", r#"exec "$FAKE" "$@" </dev/null"#),
+        ("stderr-file", r#"exec "$FAKE" "$@" 2>/dev/null"#),
+    ] {
+        let home = TestHome::new();
+        home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
+        let mut config = home.config();
+        config.set_server_program(home.wrapper(name, body));
+        let host = Host::start(config).unwrap();
+        wait_for(&host, A, OfficeStatus::Unavailable);
+        assert_eq!(home.fd_hygiene_refusals().len(), 1, "{name}");
+        assert!(home.token_fingerprints(A).is_empty(), "{name}");
+        assert!(home.key_socket_modes(A).is_empty(), "{name}");
+        host.shutdown();
+    }
+}
+
 #[test]
 fn a_create_whose_first_line_is_a_start_line_fails() {
     let start = line(&HostMessage::Start(StartOffice {
-        app_token: AppToken::from_bytes([7; 32]),
-        db_key: DbKey::from_bytes([8; 32]),
+        key_socket_id: KeySocketId::generate_from([7; 8]),
     }));
     let home = TestHome::new();
     let mut config = home.config();

@@ -4,14 +4,14 @@
 //!
 //! Each office has an app token for this host run, made when supervision of it starts (or when
 //! it is created) and kept, in memory only, by its supervision: every start of its server within
-//! the run gets the same token in its first line. The next host run makes new ones.
+//! the run gets the same token on its key hand-off (`handoff`). The next host run makes new ones.
 //!
 //! Each office's database key lives in the host's key store ([`KeyStore`], the host's own
 //! abstraction: the supervisor never knows which store it is). A create stores the new key
 //! before its server starts; every start and discard loads it just before the spawn, and drops
-//! it once the first line is written. A start whose key is missing, or whose item isn't a key,
-//! spawns nothing: the office is `unavailable`/`key_missing` until `office.restart`. The supervisor
-//! deletes a key **only** after the office's `--discard` reported `discarded`.
+//! it once the hand-off is done (or can't be). A start whose key is missing, or whose item isn't
+//! a key, spawns nothing: the office is `unavailable`/`key_missing` until `office.restart`. The
+//! supervisor deletes a key **only** after the office's `--discard` reported `discarded`.
 //!
 //! Status per office ([`OfficeState`]): `starting` (spawned, no `ready` yet) → `active`
 //! (`ready`, child alive) → `offline` (exited, a restart pending at `next_restart_at`) →
@@ -32,7 +32,7 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use org_office_launch::{CreateOffice, FailCode, OfficeFile, ServerEvent};
+use org_office_launch::{FailCode, OfficeFile, ServerEvent};
 use org_proto::{AppToken, OfficeStatus, OfficeStatusReason};
 
 use crate::host_log;
@@ -43,7 +43,8 @@ use crate::secrets;
 use crate::server_check::ServerCheck;
 use crate::sync::lock;
 use crate::timings::Timings;
-use child::{CreateLine, Mode, RunningChild, Signal, Spawner};
+pub(crate) use child::{CreateRequest, NewOffice};
+use child::{Mode, RunningChild, Signal, Spawner};
 use office::{Adopted, OfficeRunner};
 use state::{Observer, RestartRequest, SharedState};
 pub(crate) use state::{OfficeState, StatusObserver};
@@ -58,7 +59,7 @@ pub(crate) struct SupervisorConfig {
     pub(crate) timings: Timings,
     /// Where every office's database key is kept.
     pub(crate) keys: Arc<dyn KeyStore>,
-    /// How every server is checked before it gets its first line (`server_check`).
+    /// How every server is checked before it gets its first line and its key (`server_check`).
     pub(crate) server_check: Arc<ServerCheck>,
     /// Whether [`Supervisor::sweep_orphan_keys`] may delete keys (see `keys::sweep_orphans`
     /// for when that's safe).
@@ -145,8 +146,9 @@ impl std::fmt::Display for CreateStartError {
 /// A `--create` run in flight.
 pub(crate) struct PendingCreate<'a> {
     registration: Registration<'a>,
-    /// The create line the server got, kept for the token it holds (its key is already zeroed).
-    line: CreateLine,
+    /// The create request the server got, kept for the token it holds (its key is already
+    /// zeroed).
+    line: CreateRequest,
     child: RunningChild,
     signals: Receiver<Signal>,
     sender: Sender<Signal>,
@@ -206,6 +208,7 @@ impl Supervisor {
             program: config.program.clone(),
             home: config.home.clone(),
             check: Arc::clone(&config.server_check),
+            hand_off_timeout: config.timings.hand_off_timeout,
         };
         Self {
             config,
@@ -293,12 +296,12 @@ impl Supervisor {
         }
     }
 
-    /// Stores `create`'s database key, then starts `org-office-server --create` and sends it
-    /// `create`; the key is zeroed in memory once the line is written. Its app token becomes the
-    /// office's token for this host run if the office is adopted.
+    /// Stores `create`'s database key, then starts `org-office-server --create` and hands it
+    /// `create`'s secrets; the key is zeroed in memory once the hand-off is done (or can't be).
+    /// Its app token becomes the office's token for this host run if the office is adopted.
     pub(crate) fn begin_create(
         &self,
-        create: CreateOffice,
+        create: CreateRequest,
     ) -> Result<PendingCreate<'_>, CreateStartError> {
         let (sender, signals) = mpsc::channel();
         let registration = self
@@ -309,7 +312,7 @@ impl Supervisor {
             .server_check
             .may_spawn()
             .map_err(CreateStartError::NotStarted)?;
-        let mut line = CreateLine::new(create);
+        let mut line = create;
         // Before the spawn: no server ever holds a key the host hasn't stored.
         if let Err(e) = self.config.keys.create(line.office_id(), line.db_key()) {
             return Err(CreateStartError::NotStarted(format!(
@@ -332,11 +335,12 @@ impl Supervisor {
         })
     }
 
-    /// Runs `org-office-server --discard <office_id>` with the office's key (or `null` when
-    /// the key store has none) and waits (up to the discard timeout) for it to report. The
-    /// server takes the office lock, refuses a folder that holds `office.json`, and removes the
-    /// folder. After `discarded`, and only then, the office's key is deleted from the key store.
-    /// A key store that can't be read starts no server ([`DiscardOutcome::KeyUnreadable`]).
+    /// Runs `org-office-server --discard <office_id>`, handing it the office's key (or `null`
+    /// when the key store has none) and a throwaway app token, and waits (up to the discard
+    /// timeout) for it to report. The server takes the office lock, refuses a folder that holds
+    /// `office.json`, and removes the folder. After `discarded`, and only then, the office's key
+    /// is deleted from the key store. A key store that can't be read starts no server
+    /// ([`DiscardOutcome::KeyUnreadable`]).
     pub(crate) fn discard(&self, office_id: &str) -> io::Result<DiscardOutcome> {
         let (sender, signals) = mpsc::channel();
         let _registration = self.register(&sender)?;
@@ -350,14 +354,17 @@ impl Supervisor {
                 return Ok(DiscardOutcome::KeyUnreadable);
             }
         };
+        // A discard serves no client: its hand-off carries a token nobody else ever gets.
+        let token = secrets::generate_app_token()?;
         let spawned = self.spawner.spawn(
-            Mode::Discard(office_id, key.as_ref()),
+            Mode::Discard(office_id, &token, key.as_ref()),
             0,
             sender,
             self.log_for(office_id),
         );
-        // The line is written (or can't be): only the key store holds the key from here on.
+        // The hand-off is done (or can't be): only the key store holds the key from here on.
         drop(key);
+        drop(token);
         let mut child = spawned.map_err(io::Error::from)?;
         let outcome = self.wait_for_discard(office_id, &mut child, &signals);
         if outcome == DiscardOutcome::Discarded {
@@ -673,6 +680,7 @@ mod tests {
 
     use org_office_launch::write_server_event;
     use org_proto::{AppToken, DbKey, OfficeRole};
+    use std::os::unix::fs::DirBuilderExt;
 
     use crate::keys::memory::{Fault, MemoryKeys, Op};
     use crate::peer::AuditToken;
@@ -693,8 +701,11 @@ mod tests {
         let timings = Timings {
             shutdown_grace: Duration::from_millis(200),
             discard_timeout: Duration::from_secs(10),
+            hand_off_timeout: Duration::from_secs(5),
             ..Timings::default()
         };
+        // The owner-only `run/` the host makes at startup, where key sockets go.
+        let _ = fs::DirBuilder::new().mode(0o700).create(dir.join("run"));
         Supervisor::new(SupervisorConfig {
             program,
             home: dir.to_path_buf(),
@@ -715,16 +726,52 @@ mod tests {
         path
     }
 
-    fn create_message(key: DbKey) -> CreateOffice {
-        CreateOffice {
+    /// The server's side of the key hand-off, for these tests' `sh` servers (which can't
+    /// connect to a socket): reads the first line, connects to the key socket it names, reads
+    /// the hand-off line and records in `$ARGV[0]` whether it carried a key (`key`) or `null`;
+    /// then `exec`s `$ARGV[1]`, so the same process (the child the host admitted) goes on.
+    const HAND_OFF_PL: &str = r#"use IO::Socket::UNIX;
+my $first = <STDIN>;
+my ($id) = $first =~ /"key_socket_id":"([0-9a-f]{16})"/ or exit 5;
+my $path = "$ENV{ORG_OFFICE_HOME}/run/k-$id.sock";
+my $s = IO::Socket::UNIX->new(Type => SOCK_STREAM(), Peer => $path) or exit 6;
+my $line = <$s>;
+close $s;
+open(my $f, '>>', $ARGV[0]) or exit 7;
+print $f ($line =~ /"db_key":null/ ? "null
+" : "key
+");
+close $f;
+exec($ARGV[1]) or exit 8;
+"#;
+
+    /// A server that does the key hand-off (recording `key` or `null` in `<dir>/seen`), then
+    /// runs `body` as an `sh` script, as the same process.
+    fn handing_off(dir: &Path, name: &str, body: &str) -> PathBuf {
+        let perl = dir.join("hand-off.pl");
+        fs::write(&perl, HAND_OFF_PL).unwrap();
+        let then = script(dir, &format!("{name}-then"), body);
+        script(
+            dir,
+            name,
+            &format!(
+                "exec /usr/bin/perl '{}' '{}' '{}'",
+                perl.display(),
+                dir.join("seen").display(),
+                then.display()
+            ),
+        )
+    }
+
+    fn create_message(key: DbKey) -> CreateRequest {
+        let office = NewOffice {
             org_id: "01ORG".into(),
             org_name: "Acme".into(),
             office_id: OFFICE.into(),
             office_name: "HQ".into(),
             role: OfficeRole::Hq,
-            app_token: AppToken::from_bytes([1; 32]),
-            db_key: key,
-        }
+        };
+        CreateRequest::new(office, AppToken::from_bytes([1; 32]), key)
     }
 
     #[test]
@@ -740,8 +787,8 @@ mod tests {
         );
         let mut created = Vec::new();
         write_server_event(&mut created, &ServerEvent::Created { office }).unwrap();
-        // A server that reports `created` at once, then keeps running.
-        let program = script(
+        // A server that takes its key, reports `created` at once, then keeps running.
+        let program = handing_off(
             dir.path(),
             "server",
             &format!(
@@ -967,6 +1014,53 @@ mod tests {
         assert!(!ran.exists(), "the child ran");
     }
 
+    /// The key socket is bound only after the admission and the re-check: while they run there
+    /// is nothing in `run/` to connect to, so no connection can predate the admitted image (a
+    /// pre-exec image resumed early can't make one and keep it across its exec). Then the child
+    /// still gets its key.
+    #[test]
+    fn no_key_socket_exists_until_the_child_is_admitted_and_rechecked() {
+        let dir = tempfile::tempdir().unwrap();
+        let program = handing_off(
+            dir.path(),
+            "server",
+            &format!("printf '%s' '{}'", {
+                let mut line = Vec::new();
+                write_server_event(&mut line, &ServerEvent::Discarded).unwrap();
+                String::from_utf8(line).unwrap()
+            }),
+        );
+        let keys = Arc::new(MemoryKeys::default());
+        keys.create(OFFICE, &DbKey::from_bytes([6; 32])).unwrap();
+        let run = dir.path().join("run");
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let at_check = Arc::clone(&seen);
+        let check = scripted(move |step, _| {
+            let sockets: Vec<String> = fs::read_dir(&run)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().into_string().unwrap())
+                .filter(|name| name.starts_with("k-"))
+                .collect();
+            lock(&at_check).push((step, sockets));
+            Ok(Some([1; 32]))
+        });
+        let supervisor = checked_supervisor(dir.path(), program, &keys, check);
+        assert_eq!(
+            supervisor.discard(OFFICE).unwrap(),
+            DiscardOutcome::Discarded
+        );
+        let seen = lock(&seen).clone();
+        assert_eq!(
+            seen,
+            [(Step::Admit, Vec::new()), (Step::Still, Vec::new())],
+            "a key socket existed before the child was admitted and re-checked"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join("seen")).unwrap(),
+            "key\n"
+        );
+    }
+
     /// L3a: a child whose token changed between the admission and its first line (an exec) is
     /// refused at the re-check: it gets no line.
     #[test]
@@ -1062,10 +1156,9 @@ mod tests {
         assert!(!keys.calls().iter().any(|(op, _)| *op == Op::Delete));
     }
 
-    /// A `--discard` server that records its first line's `db_key` (`null` or `key`) and reports
+    /// A `--discard` server that records its hand-off's `db_key` (`null` or `key`) and reports
     /// what `report` says.
     fn discard_server(dir: &Path, report: &str) -> PathBuf {
-        let seen = dir.join("seen");
         let mut line = Vec::new();
         match report {
             "discarded" => write_server_event(&mut line, &ServerEvent::Discarded).unwrap(),
@@ -1078,15 +1171,10 @@ mod tests {
             )
             .unwrap(),
         }
-        script(
+        handing_off(
             dir,
             &format!("server-{report}"),
-            &format!(
-                "read -r first\ncase \"$first\" in *'\"db_key\":null'*) echo null >> '{seen}';; \
-                 *) echo key >> '{seen}';; esac\nprintf '%s' '{}'",
-                String::from_utf8(line).unwrap(),
-                seen = seen.display()
-            ),
+            &format!("printf '%s' '{}'", String::from_utf8(line).unwrap()),
         )
     }
 

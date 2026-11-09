@@ -1,6 +1,7 @@
 //! Key custody against the fake office server: the host creates every office's database key,
-//! stores it before the office's server starts, sends it on the first line of every create,
-//! start and discard, and deletes it only after a discard reports `discarded`.
+//! stores it before the office's server starts, hands it over on the key socket of every create,
+//! start and discard (`handoff.rs` tests the hand-off itself), and deletes it only after a discard
+//! reports `discarded`.
 //!
 //! Every host here keeps its keys in a development key folder next to its test home (never the
 //! Keychain); the tests never see a key in a log: the fake records only fingerprints.

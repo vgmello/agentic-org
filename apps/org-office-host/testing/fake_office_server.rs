@@ -1,7 +1,7 @@
 //! A fake `org-office-server` for `org-office-host`'s tests. **Never shipped:** it is built
 //! only with the `test-support` feature, which only the host's own tests turn on.
 //!
-//! It follows the launch protocol (`org-office-launch`, version 2) without SQLCipher or a key
+//! It follows the launch protocol (`org-office-launch`, version 3) without SQLCipher or a key
 //! store, and does what the test scripted. The script is `<ORG_OFFICE_HOME>/fake-script.json`:
 //! ```json
 //! {"create": [{"do": "fail", "code": "invalid_name"}, {"do": "ready"}],
@@ -25,6 +25,22 @@
 //! - `ready_delay_ms`: wait this long more just before `ready` (after `created`).
 //! - `report` (`--create`): fields of the office it stores and reports in `created` that
 //!   differ from the create message: `office_id`, `org_id`, `org_name`, `office_name` or `role`.
+//! - `hand_off`: how it takes its secrets after its first line. `connect` (default): as the
+//!   contract says. `none`: it never connects (it waits for stdin EOF, then exits 0). `twice`: it
+//!   opens two connections at once and reads the hand-off from the first, then records what the
+//!   second got. `helper`: it doesn't connect itself; a helper process (another pid, so another
+//!   peer) connects and records what it got, and the fake waits for stdin EOF.
+//!
+//! **Fd hygiene first** (the contract): before anything else, it requires fds 0, 1 and 2 to be
+//! pipes (else `invalid_request`, recorded as `fd-hygiene-refused <pid> <why>`), closes every
+//! other open fd, listed by the kernel (after recording them, `fds …`), and resets its thread's
+//! and its task's exception ports, `EXC_CRASH` included (recorded as `fd-hygiene <pid> <note>`).
+//!
+//! **The key hand-off:** right after its first line, before anything else, it builds its key
+//! socket's path from its own office home and the line's `key_socket_id` (`key_socket_path`),
+//! `lstat`s it (a socket, owned by its uid, 0600, not a symlink; otherwise `invalid_request`),
+//! connects, and reads the hand-off line with `read_hand_off`. EOF before the line means the host
+//! closed it: it exits 0. A failed connect or read is `storage_error`.
 //!
 //! Its first stdin line must match its flag, as the contract says: a `create` message with
 //! `--create`, a `start` message with `--office`, a `discard` message with `--discard`. A
@@ -48,15 +64,18 @@
 //! It records what it does in `<home>/fake.log`, one line each:
 //! `start <key> <pid> <run> <unix ms>`, `token <key> <pid> <fingerprint>`,
 //! `dbkey <key> <pid> <fingerprint or null>` (`dbkey discard <pid> <fingerprint or null> <id>`
-//! for `--discard`), `env <key> <pid> <its environment variables' names>`,
+//! for `--discard`), `first-line <key> <pid> <the line as read>` (it holds no secret),
+//! `key-socket <key> <pid> <mode in octal> <ours|not-ours>`, `hand-off-eof <key> <pid>`,
+//! `no-connect <key> <pid>`, `other-connection <key> <pid> <helper|second> <bytes it got, or
+//! connect-failed>`, `env <key> <pid> <its environment variables' names>`,
 //! `fds <key> <pid> <inherited fds above 2, or ->`, `first-line-refused <key> <pid>`,
 //! `eof-before-first-line <key> <pid>`, `eof-exit <key> <pid>`, `eof-ignored <key> <pid>`, and
 //! `leak <key> <pid> <where>` if something that looks like a secret (64 lowercase hex digits)
 //! reached it where none may: its `argv` or an `env:<NAME>` variable.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Write};
-use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+use std::io::{self, BufRead, BufReader, Read, Write};
+use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::exit;
@@ -64,9 +83,9 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use org_office_launch::{
-    office_dir, read_host_message, write_server_event, FailCode, HostMessage, OfficeFile,
-    ServerEvent, CREATE_FLAG, DISCARD_FLAG, OFFICE_FILE_NAME, OFFICE_FLAG, OFFICE_LOCK_FILE_NAME,
-    OFFICE_LOCK_WAIT,
+    key_socket_path, office_dir, read_hand_off, read_host_message, write_server_event, FailCode,
+    FirstLine, HandOff, HostMessage, KeySocketId, OfficeFile, ServerEvent, CREATE_FLAG,
+    DISCARD_FLAG, OFFICE_FILE_NAME, OFFICE_FLAG, OFFICE_LOCK_FILE_NAME, OFFICE_LOCK_WAIT,
 };
 use org_proto::frame;
 use org_proto::location::{office_socket_path, OFFICE_HOME_ENV};
@@ -82,6 +101,12 @@ const DB_FILE_NAME: &str = "db";
 
 const CRASH: i32 = 3;
 
+/// The fake's own argument for its `hand_off: helper` process: `--key-helper <key> <path>`.
+const KEY_HELPER_FLAG: &str = "--key-helper";
+
+/// How long a connection to the key socket may take to connect and answer.
+const HAND_OFF_WAIT: Duration = Duration::from_secs(5);
+
 struct Step {
     action: String,
     code: String,
@@ -94,17 +119,45 @@ struct Step {
     corrupt_office_file: bool,
     orphan_stdout_ms: Option<u64>,
     ready_delay: Duration,
+    hand_off: String,
 }
 
 fn main() {
     // First, before this process opens anything: what it inherited beyond stdin, stdout and
     // stderr (the host must give it nothing else).
     let inherited = inherited_fds();
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let helper = matches!(args.as_slice(), [flag, _, _] if flag == KEY_HELPER_FLAG);
+    // The contract's first act, before any thread (the helper isn't a server).
+    let hygiene = if helper { Ok(Vec::new()) } else { fd_hygiene() };
     let home = match std::env::var_os(OFFICE_HOME_ENV) {
         Some(home) if Path::new(&home).is_absolute() => PathBuf::from(home),
         _ => exit(2),
     };
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let [flag, key, path] = args.as_slice() {
+        if flag == KEY_HELPER_FLAG {
+            let got = other_connection(Path::new(path));
+            record(
+                &home,
+                &format!("other-connection {key} {} helper {got}", std::process::id()),
+            );
+            exit(0);
+        }
+    }
+    match hygiene {
+        Ok(notes) => {
+            for note in notes {
+                record(&home, &format!("fd-hygiene {} {note}", std::process::id()));
+            }
+        }
+        Err(why) => {
+            record(
+                &home,
+                &format!("fd-hygiene-refused {} {why}", std::process::id()),
+            );
+            fail(FailCode::InvalidRequest);
+        }
+    }
     let (office_id, discard) = match args.as_slice() {
         [flag] if flag == CREATE_FLAG => (None, false),
         [flag, id] if flag == OFFICE_FLAG => (Some(id.clone()), false),
@@ -167,8 +220,17 @@ fn main() {
                 HostMessage::Create(create) => create,
                 _ => refuse_first_line(&home, &key, FailCode::InvalidRequest),
             };
-            note_token(&home, &key, &step, &create.app_token);
-            note_db_key(&home, &key, Some(&create.db_key), "");
+            let hand_off = take_hand_off(
+                &home,
+                &key,
+                &step,
+                &create.key_socket_id,
+                FirstLine::Create,
+                &mut stdin,
+            );
+            note_token(&home, &key, &step, &hand_off.app_token);
+            note_db_key(&home, &key, hand_off.db_key.as_ref(), "");
+            drop(hand_off);
             let create_id = create.office_id.clone();
             let dir = office_dir(&home, &create.office_id).unwrap_or_else(|| {
                 fail(FailCode::InvalidRequest);
@@ -230,8 +292,16 @@ fn main() {
         Some(id) => {
             match first_line(&home, &key, &mut stdin) {
                 HostMessage::Start(start) => {
-                    note_token(&home, &key, &step, &start.app_token);
-                    note_db_key(&home, &key, Some(&start.db_key), "");
+                    let hand_off = take_hand_off(
+                        &home,
+                        &key,
+                        &step,
+                        &start.key_socket_id,
+                        FirstLine::Start,
+                        &mut stdin,
+                    );
+                    note_token(&home, &key, &step, &hand_off.app_token);
+                    note_db_key(&home, &key, hand_off.db_key.as_ref(), "");
                 }
                 _ => refuse_first_line(&home, &key, FailCode::InvalidRequest),
             }
@@ -305,6 +375,158 @@ fn has_hex_run(value: &std::ffi::OsStr) -> bool {
     })
 }
 
+/// The contract's fd hygiene, the server's first act: fds 0, 1 and 2 must be pipes; every other
+/// open fd is closed (found by listing them, `proc_pidinfo(PROC_PIDLISTFDS)`, not by counting up
+/// to a limit the parent could have lowered); the thread's exception ports and the task's
+/// (`EXC_CRASH` included, and `EXC_CORPSE_NOTIFY` where the kernel takes it) are reset. So the
+/// only socket it ever touches is the key socket connection it makes itself, and no inherited
+/// exception port can be handed its task. Returns notes to record (one word each), or why it
+/// refused.
+fn fd_hygiene() -> Result<Vec<&'static str>, &'static str> {
+    for fd in 0..3 {
+        // SAFETY: an all-zero `stat` is a valid out-value; fstat writes at most its size.
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        // SAFETY: fstat on an fd number, with a valid out-pointer; fails harmlessly if closed.
+        if unsafe { libc::fstat(fd, &mut st) } != 0 || st.st_mode & libc::S_IFMT != libc::S_IFIFO {
+            return Err(
+                ["stdin-not-a-pipe", "stdout-not-a-pipe", "stderr-not-a-pipe"][fd as usize],
+            );
+        }
+    }
+    for fd in open_fds().ok_or("open-fds-not-listed")? {
+        if fd > 2 {
+            // SAFETY: closes an inherited fd; nothing of this process uses it yet.
+            unsafe { libc::close(fd) };
+        }
+    }
+    if open_fds().is_none_or(|fds| fds.iter().any(|&fd| fd > 2)) {
+        return Err("inherited-fds-not-closed");
+    }
+
+    // `<mach/exception_types.h>`: `EXC_MASK_ALL` (bits 1-9, 11 and 12), `EXC_MASK_CRASH` (bit 10)
+    // and `EXC_MASK_CORPSE_NOTIFY` (bit 13). `EXC_MASK_ALL` leaves out the last two.
+    const EXC_MASK_ALL: u32 = 0x1bfe;
+    const EXC_MASK_CRASH: u32 = 0x400;
+    const EXC_MASK_CORPSE_NOTIFY: u32 = 0x2000;
+    const EXCEPTION_DEFAULT: i32 = 1;
+    const KERN_INVALID_ARGUMENT: libc::kern_return_t = 4;
+    #[cfg(target_arch = "aarch64")]
+    const THREAD_STATE_NONE: i32 = 5;
+    #[cfg(not(target_arch = "aarch64"))]
+    const THREAD_STATE_NONE: i32 = 13;
+    extern "C" {
+        fn task_set_exception_ports(
+            task: libc::mach_port_t,
+            mask: u32,
+            port: libc::mach_port_t,
+            behavior: i32,
+            flavor: i32,
+        ) -> libc::kern_return_t;
+        fn thread_set_exception_ports(
+            thread: libc::mach_port_t,
+            mask: u32,
+            port: libc::mach_port_t,
+            behavior: i32,
+            flavor: i32,
+        ) -> libc::kern_return_t;
+        /// This task's own port (what `mach_task_self()` reads).
+        static mach_task_self_: libc::mach_port_t;
+        fn mach_thread_self() -> libc::mach_port_t;
+        fn mach_port_deallocate(
+            task: libc::mach_port_t,
+            name: libc::mach_port_t,
+        ) -> libc::kern_return_t;
+    }
+    let null = libc::MACH_PORT_NULL as libc::mach_port_t;
+    // SAFETY: sets this task's and this thread's exception ports to none; the ports passed are
+    // this task's own, valid for the calls.
+    let (thread, task, corpse) = unsafe {
+        let task_self = mach_task_self_;
+        let me = mach_thread_self();
+        // The thread call takes `EXC_MASK_ALL` only (`EXC_CRASH` is a task-level exception).
+        let thread = thread_set_exception_ports(
+            me,
+            EXC_MASK_ALL,
+            null,
+            EXCEPTION_DEFAULT,
+            THREAD_STATE_NONE,
+        );
+        mach_port_deallocate(task_self, me);
+        // The task call takes `EXC_CRASH` too: a crash port set by the pre-exec image would get
+        // the server's corpse (and its memory) after a crash it can cause.
+        let task = task_set_exception_ports(
+            task_self,
+            EXC_MASK_ALL | EXC_MASK_CRASH,
+            null,
+            EXCEPTION_DEFAULT,
+            THREAD_STATE_NONE,
+        );
+        let corpse = task_set_exception_ports(
+            task_self,
+            EXC_MASK_CORPSE_NOTIFY,
+            null,
+            EXCEPTION_DEFAULT,
+            THREAD_STATE_NONE,
+        );
+        (thread, task, corpse)
+    };
+    if thread != 0 || task != 0 {
+        return Err("exception-ports-not-reset");
+    }
+    let mut notes = vec!["exception-ports-reset"];
+    match corpse {
+        0 => notes.push("corpse-notify-reset"),
+        // The only error that may be ignored: the kernel doesn't take this mask from a task.
+        KERN_INVALID_ARGUMENT => notes.push("corpse-notify-refused-by-the-kernel"),
+        _ => return Err("corpse-notify-not-reset"),
+    }
+    Ok(notes)
+}
+
+/// This process's open fds, listed by the kernel (`PROC_PIDLISTFDS`), or `None` if it can't say.
+fn open_fds() -> Option<Vec<i32>> {
+    let size = std::mem::size_of::<libc::proc_fdinfo>();
+    // Size the buffer from the kernel's own hint (a call with no buffer), so a kernel that lists
+    // by fd index can't miss a high fd: start from at least that.
+    // SAFETY: a null buffer of size 0 asks only for the size.
+    let hint = unsafe {
+        libc::proc_pidinfo(
+            libc::getpid(),
+            libc::PROC_PIDLISTFDS,
+            0,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    let mut room = usize::try_from(hint)
+        .ok()
+        .map_or(64, |bytes| (bytes / size).max(64));
+    loop {
+        // SAFETY: an all-zero `proc_fdinfo` is a valid value.
+        let mut infos: Vec<libc::proc_fdinfo> = vec![unsafe { std::mem::zeroed() }; room];
+        let bytes = i32::try_from(room * size).ok()?;
+        // SAFETY: a buffer of exactly `bytes` bytes, which outlives the call; it writes at most
+        // that many.
+        let n = unsafe {
+            libc::proc_pidinfo(
+                libc::getpid(),
+                libc::PROC_PIDLISTFDS,
+                0,
+                infos.as_mut_ptr().cast(),
+                bytes,
+            )
+        };
+        if n <= 0 {
+            return None;
+        }
+        let count = usize::try_from(n).ok()? / size;
+        if count < room {
+            return Some(infos[..count].iter().map(|info| info.proc_fd).collect());
+        }
+        room *= 4;
+    }
+}
+
 /// The open fds from 3 to 255, comma-separated (`-` for none).
 fn inherited_fds() -> String {
     let open: Vec<String> = (3..256)
@@ -319,10 +541,27 @@ fn inherited_fds() -> String {
     }
 }
 
-/// The first stdin line. An unreadable one is refused here; the caller checks that its op
-/// matches the flag. EOF before it means the host is gone: exit 0 without a line.
+/// The first stdin line, recorded as it was read (it holds no secret; if it ever did, the tests'
+/// secret checks would find it in `fake.log`). An unreadable one is refused here; the caller
+/// checks that its op matches the flag. EOF before it means the host is gone: exit 0 without a
+/// line.
 fn first_line(home: &Path, key: &str, stdin: &mut impl BufRead) -> HostMessage {
-    match read_host_message(stdin) {
+    let mut raw = Vec::new();
+    let read = stdin
+        .by_ref()
+        .take(org_proto::MAX_FRAME_BYTES as u64 + 1)
+        .read_until(b'\n', &mut raw);
+    if read.is_err() {
+        refuse_first_line(home, key, FailCode::StorageError);
+    }
+    if !raw.is_empty() {
+        let shown = String::from_utf8_lossy(&raw).trim_end().replace(' ', "_");
+        record(
+            home,
+            &format!("first-line {key} {} {shown}", std::process::id()),
+        );
+    }
+    match read_host_message(&mut raw.as_slice()) {
         Ok(Some(message)) => message,
         Ok(None) => {
             record(
@@ -343,6 +582,112 @@ fn refuse_first_line(home: &Path, key: &str, code: FailCode) -> ! {
     fail(code)
 }
 
+/// The key hand-off, right after the first line: see the module docs and the `hand_off` step.
+fn take_hand_off(
+    home: &Path,
+    key: &str,
+    step: &Step,
+    id: &KeySocketId,
+    first: FirstLine,
+    stdin: &mut impl BufRead,
+) -> HandOff {
+    let pid = std::process::id();
+    let path = key_socket_path(home, id);
+    let Ok(meta) = fs::symlink_metadata(&path) else {
+        record(home, &format!("key-socket {key} {pid} missing not-ours"));
+        fail(FailCode::InvalidRequest);
+    };
+    // SAFETY: geteuid has no preconditions and can't fail.
+    let ours = meta.uid() == unsafe { libc::geteuid() };
+    record(
+        home,
+        &format!(
+            "key-socket {key} {pid} {:o} {}",
+            meta.mode(),
+            if ours { "ours" } else { "not-ours" }
+        ),
+    );
+    if !meta.file_type().is_socket() || !ours || meta.permissions().mode() & 0o777 != 0o600 {
+        fail(FailCode::InvalidRequest);
+    }
+    match step.hand_off.as_str() {
+        "none" => {
+            record(home, &format!("no-connect {key} {pid}"));
+            wait_for_eof(step, home, key, stdin);
+            exit(0);
+        }
+        "helper" => {
+            // Waits for the helper: it is refused (or not) before the fake goes on.
+            let _ = std::process::Command::new(
+                std::env::current_exe().unwrap_or_else(|_| fail(FailCode::StorageError)),
+            )
+            .arg(KEY_HELPER_FLAG)
+            .arg(key)
+            .arg(&path)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+            wait_for_eof(step, home, key, stdin);
+            exit(0);
+        }
+        _ => {}
+    }
+    let stream = connect(&path);
+    let second = (step.hand_off == "twice").then(|| UnixStream::connect(&path));
+    let hand_off = read_hand_off(&mut BufReader::new(&stream), first);
+    drop(stream);
+    if let Some(second) = second {
+        let got = match second {
+            Ok(second) => read_to_end_count(second),
+            Err(_) => "connect-failed".to_owned(),
+        };
+        record(home, &format!("other-connection {key} {pid} second {got}"));
+    }
+    match hand_off {
+        Ok(hand_off) => hand_off,
+        Err(e) if e.is_host_gone() => {
+            record(home, &format!("hand-off-eof {key} {pid}"));
+            exit(0);
+        }
+        Err(e) => fail(e.fail_code()),
+    }
+}
+
+/// A connection to the key socket, with the contract's deadline on its reads.
+fn connect(path: &Path) -> UnixStream {
+    let stream = UnixStream::connect(path).unwrap_or_else(|_| fail(FailCode::StorageError));
+    // macOS refuses (EINVAL) a timeout on a socket whose peer already closed, which the host
+    // does as soon as it has written the line: then the line is already here, and the read
+    // can't block.
+    let _ = stream.set_read_timeout(Some(HAND_OFF_WAIT));
+    stream
+}
+
+/// What a connection that isn't the server's own got: the number of bytes until EOF (the bytes
+/// themselves are never kept), or `connect-failed`.
+fn other_connection(path: &Path) -> String {
+    match UnixStream::connect(path) {
+        Ok(stream) => read_to_end_count(stream),
+        Err(_) => "connect-failed".to_owned(),
+    }
+}
+
+fn read_to_end_count(mut stream: UnixStream) -> String {
+    let _ = stream.set_read_timeout(Some(HAND_OFF_WAIT));
+    let mut got = Vec::new();
+    let read = stream.read_to_end(&mut got);
+    let n = got.len();
+    for b in got.iter_mut() {
+        // SAFETY: `b` is a valid, aligned, exclusive reference to a u8.
+        unsafe { std::ptr::write_volatile(b, 0) };
+    }
+    match read {
+        Ok(_) => n.to_string(),
+        Err(_) => format!("{n}-then-error"),
+    }
+}
+
 /// Records the token's fingerprint (never the token) in `fake.log`, and on stderr unless the
 /// step writes its own stderr bytes.
 fn note_token(home: &Path, key: &str, step: &Step, token: &AppToken) {
@@ -354,7 +699,7 @@ fn note_token(home: &Path, key: &str, step: &Step, token: &AppToken) {
     if step.stderr_bytes == 0 {
         let _ = writeln!(
             io::stderr(),
-            "fake office server {key}: got its first line, token fingerprint {fingerprint}"
+            "fake office server {key}: got its hand-off, token fingerprint {fingerprint}"
         );
     }
 }
@@ -398,10 +743,11 @@ fn nibble(hex: u8) -> u8 {
 /// `--discard <id>`: removes an unfinished office's folder, then exits. Without a key it
 /// refuses a folder holding databases (`db`).
 fn discard_office(home: &Path, id: &str, step: &Step, key: &str, stdin: &mut impl BufRead) -> ! {
-    let db_key = match first_line(home, key, stdin) {
-        HostMessage::Discard(discard) => discard.db_key,
+    let socket_id = match first_line(home, key, stdin) {
+        HostMessage::Discard(discard) => discard.key_socket_id,
         _ => refuse_first_line(home, key, FailCode::InvalidRequest),
     };
+    let db_key = take_hand_off(home, key, step, &socket_id, FirstLine::Discard, stdin).db_key;
     note_db_key(home, key, db_key.as_ref(), id);
     let dir = office_dir(home, id).unwrap_or_else(|| fail(FailCode::InvalidRequest));
     act_before(step, home, key, stdin);
@@ -631,6 +977,7 @@ fn step(home: &Path, key: &str, run: u64) -> Step {
                 .and_then(Value::as_u64)
                 .unwrap_or(0),
         ),
+        hand_off: text("hand_off", "connect"),
     }
 }
 

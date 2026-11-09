@@ -20,6 +20,7 @@ mod bounded;
 pub mod fdswap;
 mod follow;
 mod hand_off;
+mod live;
 mod msg_calls;
 mod serve;
 mod signals;
@@ -336,8 +337,9 @@ fn serve_office(
     // Stop signals are handled only from here: before this the default disposition applies, so a
     // server waiting for its first line or for the office lock can still be terminated.
     signals::install();
-    // No message events yet: `message.received` for subscribers arrives with the events slice.
-    let mailbox = match office.mailbox(Arc::new(org_mailbox::NoMessageEvents)) {
+    // Live events (messages, status lines) for subscribers; a publish wakes the followers.
+    let live = live_events(&office);
+    let mailbox = match office.mailbox(live.clone()) {
         Ok(mailbox) => Arc::new(mailbox),
         Err(e) => {
             let _ = std::fs::remove_file(&socket);
@@ -355,12 +357,41 @@ fn serve_office(
             who: {
                 let office = Arc::clone(&office);
                 Box::new(move |params| {
-                    // Nothing reports presence yet (agents bind with messaging): all offline.
+                    // Nothing reports presence yet: all offline, with the status lines set.
                     office
-                        .who(params, &org_office::directory::NothingLive)
+                        .who_with_status(params)
                         .map_err(|e| logged("who", &e))
                 })
             },
+            status: {
+                let office = Arc::clone(&office);
+                let live = Arc::clone(&live);
+                // One status call at a time for a member, so the events go out in the order the
+                // lines were set (two calls of one agent could otherwise publish out of commit
+                // order). Other members' calls do not wait for each other.
+                let turns = std::sync::Mutex::new(std::collections::HashMap::<
+                    String,
+                    Arc<std::sync::Mutex<()>>,
+                >::new());
+                Box::new(move |member, params| {
+                    let turn = Arc::clone(
+                        turns
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .entry(member.to_owned())
+                            .or_default(),
+                    );
+                    let _turn = turn.lock().unwrap_or_else(|p| p.into_inner());
+                    let answer = office
+                        .set_status(member, params)
+                        .map_err(|e| logged("status", &e))?;
+                    if let Ok(set) = &answer {
+                        live.publish_presence(org_office::presence_after_status(member, set));
+                    }
+                    Ok(answer)
+                })
+            },
+            live: Arc::clone(&live),
             feed: Box::new(OfficeFeed(Arc::clone(&office))),
             mailbox,
             directory: Arc::new(office.member_directory()),
@@ -443,6 +474,15 @@ fn log_causes(error: &OfficeError) {
         eprintln!("org-office-server:   caused by: {inner}");
         cause = inner.source();
     }
+}
+
+/// The live events of this office: a publish wakes the followers asleep on the office's change
+/// signal, so a hint goes out at once and not at the end of their idle poll.
+fn live_events(office: &Arc<Office>) -> Arc<live::LiveEvents> {
+    let office = Arc::clone(office);
+    Arc::new(live::LiveEvents::new(Box::new(move || {
+        office.wake_followers();
+    })))
 }
 
 /// The office's log, for `subscribe`.
@@ -534,6 +574,38 @@ mod tests {
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[test]
+    fn a_publish_on_the_live_events_wakes_the_offices_followers() {
+        // The production wiring: publishing moves the office's change token, which is what a
+        // follower asleep in `wait_for_org_change` is waiting on.
+        let dir = tempfile::Builder::new().prefix("lv").tempdir().unwrap();
+        let office = Arc::new(
+            Office::create(
+                dir.path().join("offices").join("OFFICE1"),
+                &NewOffice {
+                    office_id: "OFFICE1".into(),
+                    office_name: "HQ".into(),
+                    role: org_office::OfficeRole::Hq,
+                    org_id: "ORG1".into(),
+                    org_name: "Acme".into(),
+                },
+                Key::from_db_key(org_proto::DbKey::from_bytes([4; 32])),
+            )
+            .unwrap(),
+        );
+        let live = live_events(&office);
+        let before = office.org_change_token();
+        live.publish_presence(org_proto::directory::MemberPresenceChangedData {
+            member_id: "M".into(),
+            presence: org_proto::directory::MemberPresence::Offline,
+            last_seen_at: "2026-11-09T12:00:00.000Z".into(),
+            status: None,
+            status_expires_at: None,
+            current_task_id: None,
+        });
+        assert_ne!(office.org_change_token(), before);
     }
 
     #[test]

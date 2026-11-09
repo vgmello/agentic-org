@@ -4,8 +4,8 @@
 //! The host makes a fresh token for each office every time it starts and keeps it only in
 //! memory. It hands it to the office's server over that server's one-shot key socket (the launch
 //! protocol's key hand-off, `org-office-launch`: never on stdin or any inherited descriptor) and
-//! gives it to the app over `host.sock` after checking the app's code signature. It never reaches a file, argv, the
-//! environment or a log.
+//! gives it to the app over `host.sock` after checking the app's code signature. It never reaches
+//! a file, argv, the environment or a log.
 //!
 //! On the wire it is 64 lowercase hex digits. This type keeps it from leaking by accident:
 //! - `Debug` and `Display` print `<redacted>`.
@@ -20,8 +20,9 @@
 //! [`DbKey`], an office's database key, gets the same treatment (see its docs). It travels only
 //! from the host to the office's server in the launch protocol's key hand-off (`org-office-launch`:
 //! a one-shot socket the server connects to, whose peer the host checks), never on the server's
-//! stdin or any inherited descriptor, and never on `host.sock` or an office socket. It lives here, next to the app token, so the two share one implementation of their
-//! guards (`org-office-launch` re-exports it).
+//! stdin or any inherited descriptor, and never on `host.sock` or an office socket. It lives here,
+//! next to the app token, so the two share one implementation of their guards
+//! (`org-office-launch` re-exports it).
 //!
 //! Zeroing is defence in depth, not a guarantee that no copy of the token is left in memory. The
 //! typed envelopes ([`Request`](crate::Request), [`Response`](crate::Response) and
@@ -35,8 +36,8 @@
 //! scratch buffer (escaped strings, `from_reader`), serde's buffering for `flatten` and tagged or
 //! untagged enums, and any other `serde_json::Value` hop. The bytes themselves live on the heap
 //! (a `Box`), and decoding fills them in place, so moving a token or a key moves only a pointer
-//! and leaves no copy of the bytes behind. To keep copies few, decode it with `serde_json::from_slice` from a line buffer you zero
-//! afterwards, into a plain struct field.
+//! and leaves no copy of the bytes behind. To keep copies few, decode it with
+//! `serde_json::from_slice` from a line buffer you zero afterwards, into a plain struct field.
 //! Never log or `Debug`-print anything that holds it in raw form (an envelope, a `Value`, a line),
 //! and never use it as a map key or an enum tag (serde echoes those in errors).
 
@@ -154,8 +155,8 @@ impl Secret for AppToken {
 ///
 /// The host creates each office's key from a secure random source, stores it in its own key
 /// store, and hands it to the office's server in the launch protocol's key hand-off
-/// (`org-office-launch`) on every create, start and discard. The server never creates, stores or deletes one. It never reaches
-/// argv, the environment, a log or the office's folder.
+/// (`org-office-launch`) on every create, start and discard. The server never creates, stores or
+/// deletes one. It never reaches argv, the environment, a log or the office's folder.
 ///
 /// It has the same guards as [`AppToken`]:
 /// - On the wire it is 64 lowercase hex digits; decode errors never echo the input, and it

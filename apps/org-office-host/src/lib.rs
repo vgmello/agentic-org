@@ -14,7 +14,8 @@
 //!
 //! It holds every office's database key (`keys`): it creates each one, keeps it in its key store
 //! (the Data Protection keychain in release builds, a development folder in debug builds) and
-//! hands it to the office's server on the launch pipe. Its servers never touch a key store.
+//! hands it to the office's admitted server on a one-shot key socket (`handoff`), never on the
+//! launch pipe. Its servers never touch a key store.
 //!
 //! `main.rs` only parses arguments, waits for a shutdown signal and calls [`Host`].
 
@@ -43,6 +44,7 @@ mod clock;
 mod cloexec;
 mod code_signing;
 mod error;
+mod handoff;
 mod home;
 mod host_log;
 mod ids;
@@ -277,9 +279,10 @@ pub struct Host {
 
 impl Host {
     /// Starts the host: chooses its key store, checks the socket paths fit, makes the office
-    /// home owner-only, takes `host.lock`, binds `host.sock`, starts a server for every office in
-    /// the catalog, has the unfinished office folders discarded in the background, and serves
-    /// `host.sock` at once (only `organization.create` waits for the discards).
+    /// home owner-only, takes `host.lock`, removes stale key sockets, binds `host.sock`, starts a
+    /// server for every office in the catalog, has the unfinished office folders discarded in the
+    /// background, and serves `host.sock` at once (only `organization.create` waits for the
+    /// discards).
     pub fn start(config: Config) -> Result<Self, HostError> {
         if !config.home.is_absolute() {
             return Err(HostError::RelativeHome { path: config.home });
@@ -314,6 +317,15 @@ impl Host {
         layout.check_socket_paths()?;
         layout.prepare()?;
         let lock = HostLock::acquire(&layout)?;
+        // Under `host.lock`, before any spawn: a key socket left by a host that died mid-spawn.
+        match handoff::remove_stale_key_sockets(&layout.run) {
+            Ok(removed) => {
+                for id in removed {
+                    host_log::log(&format!("removed stale key socket {id}"));
+                }
+            }
+            Err(e) => host_log::log(&format!("couldn't look for stale key sockets: {e}")),
+        }
         // Decided only by the host that holds the home.
         let sweep_orphans = may_sweep_orphan_keys(&layout.home);
         let server_check =

@@ -1529,3 +1529,156 @@ fn a_hand_off_that_is_garbage_or_has_no_key_for_a_create_is_refused_in_fixed_wor
     assert_eq!(failed_code(run.event()), FailCode::InvalidRequest);
     assert!(!run.wait().success());
 }
+
+#[test]
+fn an_agent_sets_a_status_the_directory_shows_and_it_survives_a_restart() {
+    use org_proto::directory::{StatusSet, StatusSetParams, Who, WhoParams};
+    use org_proto::msg::{MsgBind, MsgBindParams};
+    use org_proto::org::{
+        AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams,
+    };
+    let world = World::new();
+    let mut first = create(&world);
+    let app = Client::connect(socket(&world)).unwrap();
+    bind(&app, token()).unwrap();
+    app.call::<MemberAddAgent>(&MemberAddAgentParams {
+        command_id: command_id(1),
+        member_id: "AGENT00000000000000000000A".into(),
+        name: "Pixel".into(),
+        office_id: OFFICE.into(),
+        profile: AgentProfile {
+            role: "engineer".into(),
+            title: "Engineer".into(),
+            focus: None,
+            runtime: AgentRuntime::ClaudeCode,
+            model: None,
+            run_mode: None,
+            schedule: None,
+            home: None,
+            messaging_name: "pixel".into(),
+            status: AgentStatus::Active,
+            offboarded_at: None,
+        },
+    })
+    .unwrap();
+
+    let agent = Client::connect(socket(&world)).unwrap();
+    agent
+        .call::<MsgBind>(&MsgBindParams {
+            member: Some("pixel".into()),
+            app_token: None,
+        })
+        .unwrap();
+    let set = agent
+        .call::<StatusSet>(&StatusSetParams {
+            text: Some("Wiring the broker".into()),
+            ttl_ms: None,
+        })
+        .unwrap();
+    assert_eq!(set.status.as_deref(), Some("Wiring the broker"));
+
+    let pixel_status = |client: &Client| {
+        let who = client
+            .call::<Who>(&WhoParams {
+                member: Some("pixel".into()),
+                ..WhoParams::default()
+            })
+            .unwrap();
+        who.members[0].status.clone()
+    };
+    assert_eq!(pixel_status(&app).as_deref(), Some("Wiring the broker"));
+    // The app, bound with the token, may not set one.
+    assert_eq!(
+        api_code(
+            app.call::<StatusSet>(&StatusSetParams::default())
+                .unwrap_err()
+        ),
+        org_proto::ErrorCode::NotBound
+    );
+
+    drop((app, agent));
+    assert!(first.host_goes_away().success());
+    let mut again = world.spawn(&["--office", OFFICE]);
+    again.send(&start_message());
+    assert!(matches!(again.event(), ServerEvent::Ready { .. }));
+    let app = Client::connect(socket(&world)).unwrap();
+    bind(&app, token()).unwrap();
+    assert_eq!(pixel_status(&app).as_deref(), Some("Wiring the broker"));
+    assert!(again.host_goes_away().success());
+}
+
+#[test]
+fn the_app_is_told_live_of_a_message_and_of_a_status_line_through_the_real_office() {
+    use org_proto::directory::{StatusSet, StatusSetParams};
+    use org_proto::msg::{MsgBind, MsgBindParams, MsgSend, MsgSendParams, KIND_MSG};
+    use org_proto::org::{
+        AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams,
+    };
+    let world = World::new();
+    let _server = create(&world);
+    let app = Client::connect(socket(&world)).unwrap();
+    bind(&app, token()).unwrap();
+    app.call::<MemberAddAgent>(&MemberAddAgentParams {
+        command_id: command_id(1),
+        member_id: "AGENT00000000000000000000A".into(),
+        name: "Pixel".into(),
+        office_id: OFFICE.into(),
+        profile: AgentProfile {
+            role: "engineer".into(),
+            title: "Engineer".into(),
+            focus: None,
+            runtime: AgentRuntime::ClaudeCode,
+            model: None,
+            run_mode: None,
+            schedule: None,
+            home: None,
+            messaging_name: "pixel".into(),
+            status: AgentStatus::Active,
+            offboarded_at: None,
+        },
+    })
+    .unwrap();
+    let agent = Client::connect(socket(&world)).unwrap();
+    agent
+        .call::<MsgBind>(&MsgBindParams {
+            member: Some("pixel".into()),
+            app_token: None,
+        })
+        .unwrap();
+
+    // The app follows; the org command above is behind it, and only what happens now arrives.
+    let watcher = Client::connect(socket(&world)).unwrap();
+    bind(&watcher, token()).unwrap();
+    let sub = watcher.subscribe().unwrap();
+
+    let sent_id = command_id(10);
+    agent
+        .call::<MsgSend>(&MsgSendParams {
+            id: sent_id.clone(),
+            to: "owner".into(),
+            kind: KIND_MSG.into(),
+            priority: None,
+            subject: Some("hello".into()),
+            body: "SECRET-BODY".into(),
+            meta: Default::default(),
+            reply_to: None,
+        })
+        .unwrap();
+    let received = next_event(&sub);
+    assert_eq!(received.event, "message.received");
+    assert_eq!(received.data["header"]["id"], sent_id);
+    assert!(!received.data.to_string().contains("SECRET-BODY"));
+
+    agent
+        .call::<StatusSet>(&StatusSetParams {
+            text: Some("Wiring events".into()),
+            ttl_ms: None,
+        })
+        .unwrap();
+    let presence = next_event(&sub);
+    assert_eq!(presence.event, "member.presence_changed");
+    assert_eq!(presence.data["member_id"], "AGENT00000000000000000000A");
+    assert_eq!(presence.data["status"], "Wiring events");
+    // The events share the connection's numbering.
+    assert_eq!(presence.seq, received.seq + 1);
+}
