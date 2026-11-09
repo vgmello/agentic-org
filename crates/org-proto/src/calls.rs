@@ -178,6 +178,19 @@ impl Call for OrganizationList {
 /// subscribe (an agent-bound subscriber needs its own event filter first). The **host**
 /// serves it to any same-user connection without a binding (its socket is 0600), for the
 /// office list and `office.status_changed`.
+///
+/// An office server also pushes **live events** that are not in the organization's log, for
+/// what happens after the subscription: `message.received`, `message.state_changed` (headers
+/// only) and `member.presence_changed` (the latest per member, at most once a second for each).
+/// They are hints with no replay: take `msg.inbox` and `who` for the state, and the
+/// events for the changes. If a subscriber falls too far behind, the office ends its
+/// subscription by closing the connection, which looks like any other dropped connection (no
+/// reason is sent). So after ANY end of a subscription (it fell behind, a re-bind, a dropped
+/// connection) a client re-lists what it shows (an app-bound one
+/// with `msg.list`, `msg.threads` and `msg.human_needs_you`, and `who`; `msg.inbox` is for a
+/// member binding), takes `org.snapshot` only when a resume answers `snapshot_required`, and
+/// subscribes again. A presence event still waiting out its gap when a subscription ends is
+/// dropped; a client that subscribes again asks `who`.
 pub struct Subscribe;
 
 /// `subscribe`'s params. `{}` is still valid (live events only).

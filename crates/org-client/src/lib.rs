@@ -34,6 +34,7 @@
 //!
 //! The client is blocking and thread-based, like `org_proto::frame`.
 
+pub mod agent;
 mod error;
 
 use std::collections::HashMap;
@@ -85,6 +86,9 @@ pub fn default_timeout(method: &str) -> Duration {
 /// the queue hold about 256 MiB of text (and its parsed form is larger still). The server is the
 /// user's own office on a 0600 socket, so this is a limit on a bug, not on an attacker.
 const EVENT_QUEUE: usize = 256;
+
+/// How often [`Client::call_unless`] checks whether to give up.
+const STOP_POLL: Duration = Duration::from_millis(50);
 
 /// How long dropping a `Client` waits for its reader thread to end before letting it go.
 const DROP_JOIN_WAIT: Duration = Duration::from_millis(500);
@@ -237,12 +241,24 @@ fn office_socket(office: &OfficeInfo, home: &Path) -> Result<PathBuf, ClientErro
             }
             endpoint
         }
-        None => {
-            location::office_socket_path(home, &office.id).ok_or(ClientError::OfficeNotReachable)?
-        }
+        None => return office_socket_by_id(home, &office.id),
     };
     check_socket_path(&socket).map_err(ClientError::SocketPathTooLong)?;
     check_not_redirected(&run, &socket)?;
+    Ok(socket)
+}
+
+/// Where office `office_id` listens, by the rule in `org_proto::location`, with the same checks
+/// as [`office_socket`]. The id may come from the environment or a file, so a non-plain id has
+/// no socket.
+fn office_socket_by_id(home: &Path, office_id: &str) -> Result<PathBuf, ClientError> {
+    if !home.is_absolute() {
+        return Err(ClientError::NoOfficeHome);
+    }
+    let socket =
+        location::office_socket_path(home, office_id).ok_or(ClientError::OfficeNotReachable)?;
+    check_socket_path(&socket).map_err(ClientError::SocketPathTooLong)?;
+    check_not_redirected(&home.join("run"), &socket)?;
     Ok(socket)
 }
 
@@ -294,6 +310,13 @@ impl Client {
     /// rule in `org_proto::location`. `home` must be absolute.
     pub fn connect_office(office: &OfficeInfo, home: &Path) -> Result<Self, ClientError> {
         Self::connect(office_socket(office, home)?)
+    }
+
+    /// Connects to office `office_id` on this machine by the rule in `org_proto::location`
+    /// (`<home>/run/<handle>.sock`), without asking the host. `home` must be absolute. For a
+    /// client that knows its office's id, such as an agent's CLI (see [`agent`]).
+    pub fn connect_office_id(office_id: &str, home: &Path) -> Result<Self, ClientError> {
+        Self::connect(office_socket_by_id(home, office_id)?)
     }
 
     /// Connects to the server listening on `socket`.
@@ -538,7 +561,12 @@ impl Client {
     /// `hello`, then checks the protocol version. A server of another version is refused:
     /// use this first on every new connection.
     pub fn hello(&self) -> Result<HelloResult, ClientError> {
-        let hello = self.call::<Hello>(&Empty {})?;
+        self.hello_with_timeout(DEFAULT_TIMEOUT)
+    }
+
+    /// [`Client::hello`] with a timeout of your own.
+    pub fn hello_with_timeout(&self, timeout: Duration) -> Result<HelloResult, ClientError> {
+        let hello = self.call_with_timeout::<Hello>(&Empty {}, timeout)?;
         if hello.api_version != API_VERSION {
             return Err(ClientError::VersionMismatch {
                 client: API_VERSION,
@@ -556,6 +584,61 @@ impl Client {
         self.call::<MsgBind>(&MsgBindParams {
             member: None,
             app_token: Some(app_token),
+        })
+    }
+
+    /// `msg.bind` as a member, with no token: how an agent run by hand binds (ADR-0003 M-A).
+    /// `member` is a handle or member id; the result names the member it resolved to. The
+    /// office refuses (`not_authorized`) a member that isn't an active or paused agent placed
+    /// in it, and a person, the owner or an office-run agent, which need a credential. A
+    /// binding belongs to the connection, and a failed bind leaves it unbound.
+    pub fn bind_member(&self, member: &str) -> Result<MsgBindResult, ClientError> {
+        self.bind_member_with_timeout(member, DEFAULT_TIMEOUT)
+    }
+
+    /// [`Client::bind_member`] with a timeout of your own.
+    pub fn bind_member_with_timeout(
+        &self,
+        member: &str,
+        timeout: Duration,
+    ) -> Result<MsgBindResult, ClientError> {
+        self.call_with_timeout::<MsgBind>(
+            &MsgBindParams {
+                member: Some(member.to_owned()),
+                app_token: None,
+            },
+            timeout,
+        )
+    }
+
+    /// [`Client::call_with_timeout`] that gives up early once `stop()` returns true, for a call
+    /// the server holds (`msg.wait`) that a person may want to interrupt. `stop` is checked
+    /// every 50 ms. Giving up closes the connection, which also ends the held call on
+    /// the server; the result is then `None`, and every later call on this client fails with
+    /// [`ClientError::Disconnected`].
+    pub fn call_unless<C: Call>(
+        &self,
+        params: &C::Params,
+        timeout: Duration,
+        stop: impl Fn() -> bool,
+    ) -> Option<Result<C::Result, ClientError>>
+    where
+        C::Params: Sync,
+        C::Result: Send,
+    {
+        std::thread::scope(|scope| {
+            let call = scope.spawn(|| self.call_with_timeout::<C>(params, timeout));
+            loop {
+                if call.is_finished() {
+                    return Some(join_scoped(call));
+                }
+                if stop() {
+                    self.shared.close();
+                    let _ = join_scoped(call);
+                    return None;
+                }
+                std::thread::sleep(STOP_POLL);
+            }
         })
     }
 
@@ -815,6 +898,14 @@ fn read_loop(shared: &Shared, stream: UnixStream) {
     }
 }
 
+/// The scoped thread's result; a panic in it is passed on.
+fn join_scoped<T>(handle: std::thread::ScopedJoinHandle<'_, T>) -> T {
+    match handle.join() {
+        Ok(value) => value,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
         .lock()
@@ -849,6 +940,81 @@ mod tests {
             path,
             _release: release,
         }
+    }
+
+    /// A server that answers one connection's first request with `answer(request)`, then holds
+    /// the connection until the client closes it. Returns the socket and the request it got.
+    fn answering_server(
+        answer: impl FnOnce(&Request) -> Response + Send + 'static,
+    ) -> (tempfile::TempDir, PathBuf, mpsc::Receiver<Request>) {
+        let dir = tempfile::Builder::new().prefix("oc").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let (seen, got) = mpsc::channel();
+        std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+            let line = frame::read_line(&mut reader).unwrap().unwrap();
+            let request: Request = serde_json::from_slice(&line).unwrap();
+            let mut reply = serde_json::to_vec(&answer(&request)).unwrap();
+            reply.push(b'\n');
+            (&stream).write_all(&reply).unwrap();
+            let _ = seen.send(request);
+            // Hold the connection until the client goes.
+            let _ = frame::read_line(&mut reader);
+        });
+        (dir, path, got)
+    }
+
+    #[test]
+    fn bind_member_binds_by_handle_with_no_token() {
+        let (_dir, path, got) = answering_server(|request| {
+            Response::ok::<MsgBind>(
+                request.id,
+                &MsgBindResult {
+                    member_id: Some("M1".into()),
+                    office_id: "O1".into(),
+                },
+            )
+            .unwrap()
+        });
+        let client = Client::connect(&path).unwrap();
+        let bound = client.bind_member("pixel").unwrap();
+        assert_eq!(bound.member_id.as_deref(), Some("M1"));
+        assert_eq!(bound.office_id, "O1");
+        let request = got.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert_eq!(request.method, "msg.bind");
+        assert_eq!(request.params, serde_json::json!({"member": "pixel"}));
+    }
+
+    #[test]
+    fn call_unless_gives_up_a_held_call_when_told_to_and_closes_the_connection() {
+        let server = stuck_server();
+        let client = Client::connect(&server.path).unwrap();
+        let started = Instant::now();
+        let stop_at = started + Duration::from_millis(200);
+        let outcome = client.call_unless::<Hello>(&Empty {}, Duration::from_secs(30), || {
+            Instant::now() >= stop_at
+        });
+        assert!(outcome.is_none(), "{outcome:?}");
+        let took = started.elapsed();
+        assert!(took < Duration::from_secs(5), "{took:?}");
+        let after = client.call_with_timeout::<Hello>(&Empty {}, Duration::from_secs(1));
+        assert!(matches!(after, Err(ClientError::Disconnected)), "{after:?}");
+    }
+
+    #[test]
+    fn call_unless_returns_the_answer_when_it_comes_first() {
+        let (_dir, path, _got) = answering_server(|request| {
+            let hello: HelloResult = serde_json::from_value(serde_json::json!({
+                "api_version": API_VERSION, "server_version": "t", "host": "h"
+            }))
+            .unwrap();
+            Response::ok::<Hello>(request.id, &hello).unwrap()
+        });
+        let client = Client::connect(&path).unwrap();
+        let outcome = client.call_unless::<Hello>(&Empty {}, Duration::from_secs(10), || false);
+        assert_eq!(outcome.unwrap().unwrap().api_version, API_VERSION);
     }
 
     #[test]

@@ -6,7 +6,9 @@ Fast, zero-runtime CLI for agent-to-agent messaging, directory lookup (`who`), s
 
 One binary is both CLIs: install `org-agent` and create an `org-relay` symlink to it, which
 replaces v1-old's separate `org-relay` (same commands, output, `org-relay:` error prefix and
-exit codes: `--help` works without a spool, a usage error exits 1, any spool error exits 4):
+exit codes: `--help` works without a spool, a usage error exits 1, any spool error exits 4; with
+`$ORG_SESSION_TOKEN` set, every command but `--help` exits 5, since an agent the office runs never
+uses the local spool):
 
 ```bash
 cargo build --release -p org-agent
@@ -62,7 +64,55 @@ into `outbox/new/`, as the v1-old CLI does. That is not the `F_FULLFSYNC` + dire
 of ADR-0003 §3.5, which applies to the Phase B offline fallback spool: on macOS a power loss
 right after a send can still lose it.
 
-`--office <id>` is accepted and ignored (Phase A has one spool) by `whoami`, `who`, `status`, and `msg send`, `ask`, `reply`, `read`, `inbox`, `defer`, `done`, `notify`, `due` and `wait`; `profile set` and `msg register` take it as the profile's office (`--office <id[:name]>`), and `msg deregister` and `relay` don't accept it. `msg inbox --cursor` is a usage error (the spool has no sequence numbers; use `--limit`).
+`--office <id>` picks the office for `who`, `msg send`, `read`, `inbox` and `wait` (see "Through the office" below), and is accepted and ignored by `whoami`, `status`, and `msg ask`, `reply`, `defer`, `done`, `notify` and `due`; `profile set` and `msg register` take it as the profile's office (`--office <id[:name]>`), and `msg deregister` and `relay` don't accept it. `msg inbox --cursor` is a usage error (the spool has no sequence numbers; use `--limit`).
+
+## Through the office (Phase B, in progress)
+
+**Opt-in during the cutover.** `msg send`, `msg inbox`, `msg read`, `msg wait` and `who` go
+through an office only when one is named: `--office <id>` or `$ORG_OFFICE`. With neither, they
+use the local spool exactly as before, even on a Mac that has an office. (Once the office serves
+`notify`, `reply`, `defer` and `done`, the default becomes ADR-0003 §2.1's: the only office with
+an `office.json` in the office home.) Agents must be members of the office before they name it.
+A named office that isn't on this Mac (no valid `office.json` for it in the office home, e.g. a
+typo) is exit 1, told before any connection is tried.
+
+**Don't set `ORG_OFFICE` on a working agent yet.** `reply`, `defer`, `done`, `notify` (and so the
+inbox hooks), `ask`, `due`, `status` and `profile` still use the local spool. An agent that names
+its office reads the office's messages but can't reply to, defer or close them, isn't notified of
+them, and doesn't see messages sent to it through the spool. Name the office only once those
+commands move to it.
+
+With an office named, `org-agent` connects to `<office home>/run/<handle>.sock` (the office home is
+`$ORG_OFFICE_HOME`, else `~/Library/Application Support/agentic.org`), binds as `$ORG_AGENT` /
+`--as` with no token (an agent run by hand must be an agent placed in that office; otherwise
+exit 1, never the spool), then makes the call. It asks the host nothing.
+
+- **The office doesn't answer** (nothing listening after about 0.4 s of retries, no answer to
+  `hello`/`msg.bind` within 3 s, or it says it isn't ready yet):
+  - `send` is **refused (exit 5, nothing sent)** until the office ingests its spool. The code
+    to queue it is there behind one switch (`OFFICE_SPOOL_INGEST` in `src/office.rs`), turned on
+    when server-dev's ingest lands: then the message goes into that office's own spool,
+    `<office home>/offices/<id>/spool/new/<id>.json` (ADR-0003 §3.5: `0700` folders, a `0600`
+    file written in `spool/tmp/`, `F_FULLFSYNC`, then moved into `new/`), stderr says so and
+    `--json` adds `"queued": true`.
+  - `inbox`, `read`, `wait` and `who` say so on stderr and show the local spool.
+- **Agents the office runs** (`$ORG_SESSION_TOKEN` set) never use the local spool: every command
+  that would open it exits 5, as does naming no office or an office that is down.
+- **The office unbinds the agent mid-command** (`not_bound`): it binds again once and retries
+  (a send keeps its id); if that fails, it exits saying so (1 for a refusal, 4 or 5 otherwise).
+- Exit codes follow ADR-0003 §2.6: the office's `unknown_recipient` is 3, `timeout` 2,
+  `unavailable`/`not_ready` 5, its other refusals 1, anything else 4. A send that got no answer
+  says it may or may not have been delivered, with its id.
+
+The output keeps the spool's shapes (inbox rows oldest first, the envelope JSON and text of
+`read`/`wait`, `who`'s cards), with these differences: members show by handle (an unknown one
+by member id), and `who` shows member ids; `msg inbox --json` has no `body` or `meta` (the
+office lists headers only); `--thread` is the thread's root id; an unknown `--from` is exit 1;
+`who <member>` applies `--team`/`--kind` too. `ask`, `reply`, `defer`, `done`, `notify`, `due`,
+`status` and `profile` still use the spool.
+
+`tests/office.rs` runs all this against a real office server (temporary homes, a test key on
+the launch line); `cargo test -p org-agent` runs it.
 
 ## Directory and presence
 

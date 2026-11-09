@@ -421,13 +421,22 @@ impl Office {
         self.org.read(|db| org_db::changes_after(db, after, limit))
     }
 
-    /// A number that changes whenever a command has been committed. Read it BEFORE reading the
+    /// A number that changes whenever a command has been committed or a live event has been
+    /// published (`Office::wake_followers`). Read it BEFORE reading the
     /// log, then [`Office::wait_for_org_change`] with it: a commit in between is not missed.
     pub fn org_change_token(&self) -> u64 {
         self.changes.token()
     }
 
-    /// Waits until the token is no longer `seen` (a command was committed) or `timeout` passes,
+    /// Wakes everything waiting in [`Office::wait_for_org_change`] without a commit, for a live
+    /// event (a message, a status line) that followers should push now. They read the log and
+    /// their live events again; nothing in the log changed.
+    pub fn wake_followers(&self) {
+        self.changes.bump();
+    }
+
+    /// Waits until the token is no longer `seen` (a command was committed, or followers were
+    /// woken) or `timeout` passes,
     /// and returns the current token.
     pub fn wait_for_org_change(&self, seen: u64, timeout: Duration) -> u64 {
         self.changes.wait(seen, timeout)
