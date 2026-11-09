@@ -1379,7 +1379,7 @@ mod tests {
 
         assert_eq!(mailbox.notify_expired(&request, NOW_UTC), Ok(()));
         assert_eq!(commits(), 1);
-        assert_eq!(notices(&store.inner), [notice.clone()]);
+        assert_eq!(notices(&store.inner), std::slice::from_ref(&notice));
 
         // Found by the store: no commit.
         assert_eq!(mailbox.notify_expired(&request, NOW_UTC), Ok(()));
@@ -1405,7 +1405,7 @@ mod tests {
         );
         assert_eq!(commits(), 3, "no fallback after the refusal");
 
-        assert_eq!(notices(&store.inner), [notice.clone()]);
+        assert_eq!(notices(&store.inner), std::slice::from_ref(&notice));
         let stored = store.inner.get_message(&notice).unwrap().unwrap();
         assert!(is_notice_for(&stored.message.header, &request));
         assert_eq!(stored.message.header.to_display_name, PAT_HANDLE);
