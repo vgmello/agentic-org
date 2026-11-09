@@ -176,7 +176,7 @@ impl Unreachable {
             }
             Err(error) => {
                 let code = match error {
-                    SpoolSendError::Io(_) => EXIT_IO,
+                    SpoolSendError::Io(_) | SpoolSendError::NotAFolder(_) => EXIT_IO,
                     _ => EXIT_USAGE,
                 };
                 Err(Failure::new(
@@ -258,7 +258,7 @@ fn no_spool_when_office_run(route: Route, office_run: bool) -> Result<Route, Fai
     match route {
         Route::NoOffice if office_run => Err(Failure::new(
             EXIT_OFFICE_UNAVAILABLE,
-            "no office found (set ORG_OFFICE); an agent the office runs doesn't use the local spool",
+            "no office named (set ORG_OFFICE); an agent the office runs doesn't use the local spool",
         )),
         Route::Unreachable(why) if office_run => Err(Failure::new(
             EXIT_OFFICE_UNAVAILABLE,
@@ -881,6 +881,19 @@ mod tests {
         assert!(!text.contains("the body"));
 
         std::fs::create_dir_all(dir.path().join("offices/O1")).unwrap();
+        let office = org_office_launch::OfficeFile::new(
+            "O1",
+            "HQ",
+            org_proto::OfficeRole::Hq,
+            "ORG1",
+            "Acme",
+            "2026-11-09T10:00:00.000Z",
+        );
+        std::fs::write(
+            dir.path().join("offices/O1/office.json"),
+            office.to_vec().unwrap(),
+        )
+        .unwrap();
         let id = why.spool_send("pixel", "nova", outgoing()).unwrap();
         let file = dir.path().join(format!("offices/O1/spool/new/{id}.json"));
         let send: SpooledSend = serde_json::from_slice(&std::fs::read(file).unwrap()).unwrap();

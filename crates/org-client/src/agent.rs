@@ -150,8 +150,8 @@ pub const MAX_SPOOLED_BYTES: usize = 512 * 1024;
 /// Why [`spool_send`] wrote nothing.
 #[derive(Debug)]
 pub enum SpoolSendError {
-    /// The office has no folder on this Mac (or it isn't a real folder): nothing would ingest
-    /// the file, and a folder without `office.json` is one the host discards.
+    /// The office isn't a finished office of this Mac: no real folder, or one without its
+    /// `office.json` (an unfinished create, which the host discards).
     NoSuchOffice,
     /// Not a plain id, or a send that doesn't fit (over [`MAX_SPOOLED_BYTES`]).
     Invalid(&'static str),
@@ -184,14 +184,23 @@ impl From<io::Error> for SpoolSendError {
 /// Writes `send` into the spool of office `send.office_id` in `home`, for the office to ingest
 /// when it next starts (ADR-0003 §3.5): `<office folder>/spool/tmp/<id>.json` (folders `0700`,
 /// file `0600`, created new, never through a symlink), flushed with `F_FULLFSYNC`, moved into
-/// `spool/new/<id>.json` (never replacing a file already there), then `new/` flushed. Returns the file's path. The office's folder must
+/// `spool/new/<id>.json` in one step (never replacing a file already there), then `new/`
+/// flushed. The office must be a finished office of this Mac (its folder holds its
+/// `office.json`): this never creates an office. A send the office's ingest would refuse (a
+/// field over its limit, `office` as the recipient) is refused here. Returns the file's path. The office's folder must
 /// exist: this never creates an office.
 pub fn spool_send(home: &Path, send: &SpooledSend) -> Result<PathBuf, SpoolSendError> {
     if !is_plain_id(&send.id) {
         return Err(SpoolSendError::Invalid("the message id isn't a plain id"));
     }
+    check_ingestible(send)?;
     let office = office_dir(home, &send.office_id).ok_or(SpoolSendError::NoSuchOffice)?;
-    if !real_dir(&office)? {
+    // A finished office of this Mac: a folder without its `office.json` is an unfinished create,
+    // which the host discards (with anything spooled in it).
+    let finished = real_dir(&office)?
+        && read_office_file(&office.join(OFFICE_FILE_NAME))
+            .is_some_and(|file| file.names_folder(&send.office_id));
+    if !finished {
         return Err(SpoolSendError::NoSuchOffice);
     }
     let bytes = serde_json::to_vec(send)
@@ -218,13 +227,88 @@ pub fn spool_send(home: &Path, send: &SpooledSend) -> Result<PathBuf, SpoolSendE
     let written = file.write_all(&bytes).and_then(|()| full_sync(&file));
     drop(file);
     let placed = new.join(&name);
-    // A link, not a rename: it fails if `new/<id>.json` already exists, never replacing a send
-    // that is waiting there.
-    let linked = written.and_then(|()| fs::hard_link(&staged, &placed));
-    let _ = fs::remove_file(&staged);
-    linked?;
-    full_sync(&File::open(&new)?)?;
+    if let Err(error) = written.and_then(|()| rename_new(&staged, &placed)) {
+        let _ = fs::remove_file(&staged);
+        return Err(error.into());
+    }
+    // The send is in place: the office will ingest it. A failed flush of the folder can't undo
+    // that (and saying "not queued" would invite a duplicate), so it is not an error.
+    if let Ok(folder) = File::open(&new) {
+        let _ = full_sync(&folder);
+    }
     Ok(placed)
+}
+
+/// Moves `from` to `to` in one step, refusing to replace a file already at `to` (macOS
+/// `renamex_np` with `RENAME_EXCL`); elsewhere a plain rename (`to` is a fresh ULID's name).
+fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        let c = |p: &Path| {
+            CString::new(p.as_os_str().as_bytes())
+                .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))
+        };
+        let (from, to) = (c(from)?, c(to)?);
+        // SAFETY: both are NUL-terminated paths that live across the call.
+        if unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) } == 0 {
+            return Ok(());
+        }
+        Err(io::Error::last_os_error())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        fs::rename(from, to)
+    }
+}
+
+/// The office's ingest applies every `msg.send` rule to a spooled send (`SpooledSend`): refuse
+/// here what it would refuse there, so a message is never reported queued and then dead-lettered.
+fn check_ingestible(send: &SpooledSend) -> Result<(), SpoolSendError> {
+    use org_proto::msg::{
+        json_string_len, MAX_BODY_BYTES, MAX_HANDLE_BYTES, MAX_META_BYTES, MAX_SUBJECT_BYTES,
+        OFFICE_SENDER,
+    };
+    if json_string_len(&send.body) > MAX_BODY_BYTES {
+        return Err(SpoolSendError::Invalid(
+            "the body is too large (256 KiB at most)",
+        ));
+    }
+    if send
+        .subject
+        .as_deref()
+        .is_some_and(|s| json_string_len(s) > MAX_SUBJECT_BYTES)
+    {
+        return Err(SpoolSendError::Invalid(
+            "the subject is too large (1 KiB at most)",
+        ));
+    }
+    let meta_bytes = if send.meta.is_empty() {
+        0
+    } else {
+        serde_json::to_vec(&send.meta)
+            .map_err(|_| SpoolSendError::Invalid("the meta can't be written"))?
+            .len()
+    };
+    if meta_bytes > MAX_META_BYTES {
+        return Err(SpoolSendError::Invalid(
+            "the meta is too large (64 KiB at most)",
+        ));
+    }
+    for who in [&send.to, &send.from] {
+        if json_string_len(who) > MAX_HANDLE_BYTES {
+            return Err(SpoolSendError::Invalid("a member name is too long"));
+        }
+    }
+    if send
+        .to
+        .trim_matches(|c: char| matches!(c, ' ' | '\t' | '\n' | '\x0c' | '\r'))
+        .eq_ignore_ascii_case(OFFICE_SENDER)
+    {
+        return Err(SpoolSendError::Invalid("'office' isn't a recipient"));
+    }
+    Ok(())
 }
 
 /// Whether `path` is a real folder (not a symlink to one); `false` if it doesn't exist.
@@ -471,13 +555,46 @@ mod tests {
     }
 
     #[test]
-    fn a_send_too_large_to_ingest_is_refused() {
+    fn a_send_the_office_would_not_ingest_is_refused() {
+        use org_proto::msg::{json_string_len, MAX_BODY_BYTES};
         let (_dir, home) = home();
         put(&home, A, A);
-        let huge = "x".repeat(MAX_SPOOLED_BYTES);
+        // A body just over the office's limit (as JSON), though the file would fit 512 KiB.
+        let over = "x".repeat(MAX_BODY_BYTES - 1);
+        assert_eq!(json_string_len(&over), MAX_BODY_BYTES + 1);
+        let refused = spool_send(&home, &spooled(A, MSG, &over)).unwrap_err();
+        assert!(refused.to_string().contains("body"), "{refused}");
+        let at = "x".repeat(MAX_BODY_BYTES - 2);
+        spool_send(&home, &spooled(A, MSG, &at)).unwrap();
+        let mut subject = spooled(A, "01MSG0000000000000000000A2", "x");
+        subject.subject = Some("s".repeat(2000));
+        assert!(spool_send(&home, &subject)
+            .unwrap_err()
+            .to_string()
+            .contains("subject"));
+        let mut office = spooled(A, "01MSG0000000000000000000A3", "x");
+        office.to = " Office ".into();
         assert!(matches!(
-            spool_send(&home, &spooled(A, MSG, &huge)),
+            spool_send(&home, &office),
             Err(SpoolSendError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn an_unfinished_office_folder_takes_no_spooled_send() {
+        let (_dir, home) = home();
+        let folder = home.join(OFFICES_DIR_NAME).join(A);
+        fs::create_dir_all(&folder).unwrap();
+        assert!(matches!(
+            spool_send(&home, &spooled(A, MSG, "x")),
+            Err(SpoolSendError::NoSuchOffice)
+        ));
+        assert!(!folder.join("spool").exists());
+        // An office.json for another office doesn't count either.
+        fs::write(folder.join(OFFICE_FILE_NAME), office_file(B)).unwrap();
+        assert!(matches!(
+            spool_send(&home, &spooled(A, MSG, "x")),
+            Err(SpoolSendError::NoSuchOffice)
         ));
     }
 
