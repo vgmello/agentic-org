@@ -24,12 +24,15 @@
 	});
 	const handbookDown = $derived(page.url.searchParams.get('handbook') === 'down');
 	const empty = $derived(page.url.searchParams.get('processes') === 'empty');
+	// `?processes=copied`: a process file copied with git, so two files share a doc id.
+	const copied = $derived(page.url.searchParams.get('processes') === 'copied');
 
 	const asked = $derived(parsePlace(page.url.searchParams.get('place')));
 	// A stale or mistyped place falls back to the organization, and says so.
 	const resolved = $derived(world ? knownPlace(world, asked) : { place: asked, missing: false });
 	const place = $derived(resolved.place);
-	const view = $derived(world ? viewOf(empty ? { ...world, docs: [] } : world, place) : undefined);
+	const shownWorld = $derived(world ? (empty ? { ...world, docs: [] } : copied ? { ...world, docs: world.docs.map((d) => (d.key === 'standup' ? { ...d, id: 'doc-copied' } : d)) } : world) : undefined);
+	const view = $derived(shownWorld ? viewOf(shownWorld, place) : undefined);
 	function choose(value: string) {
 		const next = new URL(page.url);
 		if (value === 'organization') next.searchParams.delete('place');
@@ -148,10 +151,10 @@
 				<section aria-labelledby="problems-title" class="space-y-2">
 					<h3 id="problems-title" class="text-sm/6 font-semibold text-white">Needs attention</h3>
 					<ul class="space-y-2">
-						{#each view.set.problems as p (p.doc.id + p.kind)}
+						{#each view.set.problems as p, i (i)}
 							<li class="flex items-start gap-x-2 rounded-lg bg-red-500/10 px-3 py-2 text-sm/6 text-red-200 outline-1 -outline-offset-1 outline-red-400/20" data-testid="problem" data-kind={p.kind}>
 								<TriangleAlert class="mt-1 size-4 shrink-0" aria-hidden="true" />
-								<span class="[overflow-wrap:anywhere]"><span class="font-medium">{p.doc.name}</span>: {p.text}</span>
+								<span class="[overflow-wrap:anywhere]">{#if p.kind === 'invalid' || p.kind === 'mismatch' || p.kind === 'clash'}<span class="font-medium">{p.doc.name}</span>: {/if}{p.text}</span>
 							</li>
 						{/each}
 					</ul>

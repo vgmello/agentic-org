@@ -49,9 +49,8 @@ describe('the places the Processes screen can show', () => {
 		expect(knownPlace(world, { kind: 'agent', id: 'noor' })).toEqual({ place: { kind: 'agent', id: 'noor' }, missing: false });
 	});
 
-	it('says nothing about the one open branch rule where the set has no branch-and-merge', () => {
-		const none = viewOf({ ...world, docs: [] }, { kind: 'project', key: 'atl' });
-		expect(none.rule).toBeUndefined();
-		expect(viewOf(world, { kind: 'project', key: 'atl' }).rule).toBeDefined();
+	it('the one open branch rule is on where a project has no branch-and-merge in its set (missing, clashed or invalid leaves it on)', () => {
+		expect(viewOf({ ...world, docs: [] }, { kind: 'project', key: 'atl' }).rule).toEqual({ on: true, text: 'On' });
+		expect(viewOf({ ...world, docs: [] }, { kind: 'team', id: 'web' }).rule).toBeUndefined(); // a team has no project of its own
 	});
 });

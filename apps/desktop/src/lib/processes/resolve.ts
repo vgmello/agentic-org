@@ -260,7 +260,7 @@ export function resolve(input: ResolveInput): EffectiveSet {
 	for (const [key, doc] of winners) {
 		if (doc.status === 'off') {
 			const name = whereOf(doc);
-			turnedOff.push({ key, name: doc.name, level: doc.location.level, ...(name ? { scopeName: name } : {}), reason: doc.reason ?? '', doc });
+			turnedOff.push({ key, chain: layersOf(key, doc), name: doc.name, level: doc.location.level, ...(name ? { scopeName: name } : {}), reason: doc.reason ?? '', doc });
 		} else entries.push(entryOf(key, doc));
 	}
 	for (const doc of live.filter((d) => d.location.level === 'agent' && !privateProblem.has(d))) entries.push({ key: doc.key, doc, kind: 'addition', source: 'agent', ...(agentId ? { scopeName: agentId } : {}), sealed: false, chain: layersOf(doc.key, doc) });

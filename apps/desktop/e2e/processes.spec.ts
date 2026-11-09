@@ -103,9 +103,24 @@ test('a place that is not there falls back to the organization and says so', asy
 	await expect(page.getByLabel('Show processes for')).toHaveValue('organization');
 });
 
-test('an organization with no processes shows no branch rule line', async ({ page }) => {
+test('PROC-14: the rule is on for a project even when its process is missing', async ({ page }) => {
 	await open(page, '?place=project:atl&processes=empty');
 	await expect(page.getByTestId('no-processes')).toBeVisible();
-	await expect(page.getByTestId('branch-rule')).toHaveCount(0);
+	await expect(page.getByTestId('branch-rule')).toHaveText('One open branch per agent: On');
 });
 
+
+test('PROC-1: two files copied with git (one doc id, one key) both show their problem and the screen still renders', async ({ page }) => {
+	await open(page, '?place=project:bea&processes=copied');
+	await expect(page.getByTestId('problem').filter({ hasText: 'Two processes use the key `standup` in Beacon.' })).toHaveCount(2);
+	await expect(page.getByTestId('conflict')).toBeVisible();
+});
+
+test('PROC-8: a turned-off process opens with its why chain too', async ({ page }) => {
+	await open(page, '?place=project:atl');
+	await page.getByTestId('turned-off-row').click();
+	const sheet = page.getByRole('dialog');
+	await expect(sheet.getByTestId('off-why')).toContainText('Turned off for Atlas: we report daily.');
+	await expect(sheet.getByTestId('why-layer')).toHaveCount(2);
+	await expect(sheet.getByTestId('why-layer').nth(1)).toContainText('Turned off');
+});

@@ -2,7 +2,7 @@
 // and the rows' words. Pure.
 
 import { resolve } from './resolve';
-import { BRANCH_KEY, branchRule, type RuleState } from './rules';
+import { branchRule, type RuleState } from './rules';
 import type { AgentRef, ProcessWorld } from './world';
 import type { EffectiveSet, ProjectRef } from './types';
 
@@ -38,11 +38,8 @@ export function knownPlace(world: ProcessWorld, place: Place): { place: Place; m
 	return found ? { place, missing: false } : { place: { kind: 'organization' }, missing: true };
 }
 
-/** The one open branch rule's line, only where its process is part of the set (with none, there is nothing to say about it). */
-const ruleOf = (set: EffectiveSet, project: string): { rule?: RuleState } => {
-	const present = set.entries.some((e) => e.key === BRANCH_KEY) || set.turnedOff.some((t) => t.key === BRANCH_KEY);
-	return present ? { rule: branchRule(set, project) } : {};
-};
+/** The one open branch rule's line: on unless an approved turning-off is in force, also when its process is missing, clashed or invalid. */
+const ruleOf = (set: EffectiveSet, project: string): { rule: RuleState } => ({ rule: branchRule(set, project) });
 
 export function viewOf(world: ProcessWorld, place: Place): PlaceView {
 	const base = { docs: world.docs, teams: world.teams };

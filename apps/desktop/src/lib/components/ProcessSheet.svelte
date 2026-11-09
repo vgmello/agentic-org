@@ -11,7 +11,7 @@
 	/** One process: its text, its facts and "why": the layers that had its key and what happened to each (PROC-8). */
 	let { open = $bindable(false), entry, off }: { open: boolean; entry?: Entry; off?: TurnedOff } = $props();
 	const doc = $derived<ProcessDoc | undefined>(entry?.doc ?? off?.doc);
-	const chain = $derived<Layer[]>(entry?.chain ?? []);
+	const chain = $derived<Layer[]>(entry?.chain ?? off?.chain ?? []);
 	const OUTCOME: Record<Layer['outcome'], string> = {
 		applies: 'Applies',
 		overridden: 'Overridden',
@@ -47,7 +47,7 @@
 				{#if off}
 					<p class="rounded-md bg-white/5 p-2 text-gray-200 outline-1 -outline-offset-1 outline-white/10" data-testid="off-why">Turned off{off.scopeName ? ` for ${off.scopeName}` : ''}: {off.reason}. The process it turns off stays as written at the level above.</p>
 				{/if}
-				{#if entry}
+				{#if chain.length > 0}
 					<section aria-labelledby="why-title" data-testid="why">
 						<h3 id="why-title" class="font-semibold text-white">Why it reads this way</h3>
 						<ol class="mt-2 space-y-2">

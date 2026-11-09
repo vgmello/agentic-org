@@ -132,6 +132,8 @@ export interface Entry {
 
 export interface TurnedOff {
 	key: string;
+	/** The layers that had this key, highest first, and what happened to each. */
+	chain: Layer[];
 	name: string;
 	level: Level;
 	scopeName?: string;
@@ -158,7 +160,7 @@ export interface Problem {
 	doc: ProcessDoc;
 	/** In the spec's words. */
 	text: string;
-	/** The other file of a clash. */
+	/** The other file of a clash, or the file whose seal refused this one. */
 	other?: ProcessDoc;
 }
 
