@@ -110,7 +110,8 @@ pub trait TriageStore {
     ///   `read_at = now_utc`.
     /// - `Unread`, from `read`: back into the unread index, `read_at` cleared. Also from
     ///   `unread`, to set `expired_waiting_person` (a set flag is kept: `false` never clears
-    ///   it). The flag is read only with this target.
+    ///   it). The flag is read only with this target, and only from `unread`: `read` to
+    ///   `unread` with it set is `InvalidTransition` (a message read meanwhile stays read).
     /// - `Expired`, from `unread` or `snoozed`: leaves the unread index (its snooze cleared).
     ///
     /// The same `Read`, `Done` or `Expired` again is idempotent: the header comes back

@@ -1,8 +1,8 @@
 use std::fmt;
 
 use org_proto::msg::{
-    Message, MessageHeader, MessageLifecycleState, MessageReceivedData, MessageStateChangedData,
-    NotifyReason, ThreadCursor,
+    Message, MessageDeliveryFailedData, MessageHeader, MessageLifecycleState, MessageReceivedData,
+    MessageStateChangedData, NotifyReason, ThreadCursor,
 };
 use org_proto::Position;
 
@@ -165,6 +165,8 @@ pub enum BindTarget<'a> {
 pub enum MessageEvent {
     Received(Box<MessageReceivedData>),
     StateChanged(MessageStateChangedData),
+    /// Published with the `Received` of the `delivery_failed` notice it describes.
+    DeliveryFailed(MessageDeliveryFailedData),
 }
 
 #[cfg(test)]

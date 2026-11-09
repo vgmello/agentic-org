@@ -2,17 +2,21 @@
 //! Database implementations and socket authorization stay outside this crate.
 #![deny(unsafe_code)]
 
+mod deadline;
 mod error;
 mod hash;
+mod ids;
 mod mailbox;
 mod model;
 mod ports;
+mod snoozes;
 mod time;
 mod waiters;
 
 #[cfg(any(test, feature = "testkit"))]
 pub mod testkit;
 
+pub use deadline::past_deadline;
 pub use error::{AuthError, MailboxError, StoreError};
 pub use hash::content_hash;
 pub use mailbox::{Mailbox, OfficeIdentity};

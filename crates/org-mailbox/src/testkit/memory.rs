@@ -8,7 +8,7 @@ use org_proto::msg::{
 use org_proto::{Member, MemberKind, Position, OWNER_HANDLE};
 
 use crate::{
-    parse_utc, CommitMessageOutcome, HeaderQuery, HeaderScope, LocalStateTransition,
+    parse_utc, past_deadline, CommitMessageOutcome, HeaderQuery, HeaderScope, LocalStateTransition,
     MemberDirectory, MessageStore, NewStoredMessage, NotifyCandidate, PeekUnreadOutcome,
     SnoozeDeadline, StoreError, StoredMessage, TriageStore, MAX_EXPIRED_IDS,
 };
@@ -345,6 +345,10 @@ impl TriageStore for InMemoryStore {
                 header.state = change.state;
                 clear_snooze(header);
             }
+            // The flag is set only on an unread message: never reopen a read one for it.
+            (State::Read, State::Unread) if change.expired_waiting_person => {
+                return Err(StoreError::InvalidTransition)
+            }
             (State::Read | State::Unread, State::Unread) => {
                 header.state = State::Unread;
                 header.read_at = None;
@@ -454,18 +458,14 @@ fn open(header: &MessageHeader) -> bool {
     header.state == State::Unread && !snoozed(header)
 }
 
-/// Past its deadline plus the bounded skew grace (a quarter of the ttl, at most 2 s).
+/// Past its deadline plus the bounded skew grace ([`past_deadline`]), unless it's a person's
+/// ask flagged `expired_waiting_person`. An unreadable `now` counts a deadline as passed.
 fn expired(header: &MessageHeader, now: &str) -> bool {
-    if header.expired_waiting_person {
-        return false;
-    }
-    let Some(expires_at) = header.expires_at.as_deref() else {
-        return false;
-    };
-    let (Some(deadline), Some(now)) = (parse_utc(expires_at), parse_utc(now)) else {
-        return true;
-    };
-    now >= deadline.saturating_add((header.ttl_ms.unwrap_or(0) / 4).min(2000))
+    !header.expired_waiting_person
+        && match parse_utc(now) {
+            Some(now) => past_deadline(header, now),
+            None => header.expires_at.is_some(),
+        }
 }
 
 #[cfg(test)]

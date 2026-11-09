@@ -3,22 +3,32 @@
 //! [`crate::triage_conformance_tests!`], separately from [`crate::mailbox_conformance_tests!`]:
 //! a backend opts in once it implements [`TriageStore`].
 //!
-//! The `triage_*` cases check the [`TriageStore`] contract (its doc comments are the spec).
+//! The `triage_*` cases check the [`TriageStore`] contract (its doc comments are the spec);
+//! the `mailbox_*` cases run the Mailbox's triage (`defer`, `done`, snooze timers, expiry and
+//! `delivery_failed`) over the backend, with [`crate::Mailbox::with_triage`].
 //! Run them against the production shape, as the module docs of
 //! [`super::conformance`] say.
 
-use std::sync::Barrier;
+use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use org_proto::msg::{
-    MessageHeader, MessageLifecycleState as State, MessagePriority, NotifyReason,
+    DeliveryFailedReason, HeaderPage, MessageHeader, MessageLifecycleState as State,
+    MessagePriority, MsgDeferParams, MsgDoneParams, MsgInboxParams, MsgReadParams, MsgWaitResult,
+    NotifyReason, SnoozeTarget, KIND_DELIVERY_FAILED, MAX_ID_BYTES, MAX_NOTE_BYTES, OFFICE_SENDER,
 };
-use org_proto::{Member, Position};
+use org_proto::{ulid_time_ms, Member, Position};
 
-use super::conformance::{commit, expired_request, ids, inbox_query, new_message, peek, state_of};
+use super::conformance::{
+    commit, eventually, expired_request, far_deadline, ids, inbox_query, new_message, peek, send,
+    state_of, unread_inbox, wait_params,
+};
 use super::fixture::*;
 use crate::{
-    format_utc, LocalStateTransition, MemberDirectory, MessageStore, SnoozeDeadline, StoreError,
+    cancellation_pair, format_utc, parse_utc, CommitMessageOutcome, HeaderQuery,
+    LocalStateTransition, Mailbox, MailboxError, MemberDirectory, MessageStore, NewStoredMessage,
+    NotifyCandidate, OfficeIdentity, PeekUnreadOutcome, SnoozeDeadline, StoreError, StoredMessage,
     TriageStore,
 };
 
@@ -355,6 +365,18 @@ pub fn triage_unread_transitions(backend: impl OpenTriageBackend) {
         apply(&store, keep).expired_waiting_person,
         "false never clears the flag"
     );
+    // Only an unread message is flagged: a read one is never reopened for it.
+    unread(&store, 4);
+    apply(&store, change(4, State::Read));
+    let reopen = LocalStateTransition {
+        expired_waiting_person: true,
+        ..change(4, State::Unread)
+    };
+    assert!(matches!(
+        refused(&store, reopen),
+        StoreError::InvalidTransition
+    ));
+    assert_eq!(state_of(&store, &msg_id(4)), State::Read);
 
     unread(&store, 3);
     apply(&store, snooze_after_task(3));
@@ -749,6 +771,704 @@ pub fn triage_list_active_snooze_deadlines(backend: impl OpenTriageBackend) {
     );
 }
 
+// ---------------------------------------------------------------------------------------
+// Mailbox triage over the backend
+// ---------------------------------------------------------------------------------------
+
+/// A Mailbox with triage over the backend, at HQ, with a manual clock and recorded events.
+struct TriageOffice<S> {
+    mailbox: Arc<Mailbox>,
+    store: Arc<S>,
+    events: Arc<RecordingEvents>,
+    clock: Arc<ManualClock>,
+}
+
+fn identity() -> OfficeIdentity {
+    OfficeIdentity {
+        office_id: OFFICE_ID.into(),
+        incarnation: INCARNATION.into(),
+        is_hq: true,
+    }
+}
+
+fn office_over<S, D>(store: S, directory: D) -> TriageOffice<S>
+where
+    S: MessageStore + TriageStore + Send + Sync + 'static,
+    D: MemberDirectory + Send + Sync + 'static,
+{
+    let store = Arc::new(store);
+    let events = Arc::new(RecordingEvents::default());
+    let clock = Arc::new(ManualClock::new(NOW_MS));
+    let mailbox = Mailbox::with_triage(
+        store.clone(),
+        store.clone(),
+        Arc::new(directory),
+        identity(),
+        clock.clone(),
+        events.clone(),
+    )
+    .expect("with_triage");
+    TriageOffice {
+        mailbox: Arc::new(mailbox),
+        store,
+        events,
+        clock,
+    }
+}
+
+fn triage_office<B: OpenTriageBackend>(backend: &B) -> TriageOffice<B::Store> {
+    let (store, directory) = backend.open(&members(), POSITION);
+    office_over(store, directory)
+}
+
+fn defer_until(n: u32, until: &str, note: Option<&str>) -> MsgDeferParams {
+    MsgDeferParams {
+        id: msg_id(n),
+        until: SnoozeTarget::Until { at: until.into() },
+        note: note.map(Into::into),
+    }
+}
+
+fn done_params(n: u32, note: Option<&str>) -> MsgDoneParams {
+    MsgDoneParams {
+        id: msg_id(n),
+        note: note.map(Into::into),
+    }
+}
+
+fn wait_now(mailbox: &Mailbox, member: &str) -> Option<String> {
+    let (_handle, cancel) = cancellation_pair();
+    mailbox
+        .wait(member, wait_params(0), far_deadline(), &cancel)
+        .expect("wait")
+        .message
+        .map(|message| message.header.id)
+}
+
+fn read_next(mailbox: &Mailbox, member: &str) -> Option<String> {
+    mailbox
+        .read(member, MsgReadParams::default())
+        .expect("read")
+        .message
+        .map(|message| message.header.id)
+}
+
+/// Holds a wait for `member` (5 s) on another thread, until it is registered and blocked.
+fn held_wait(
+    office: &TriageOffice<impl Send + Sync + 'static>,
+    member: &'static str,
+) -> thread::JoinHandle<(Result<MsgWaitResult, MailboxError>, Duration)> {
+    let mailbox = office.mailbox.clone();
+    let worker = thread::spawn(move || {
+        let (_handle, cancel) = cancellation_pair();
+        let started = Instant::now();
+        let result = mailbox.wait(member, wait_params(5_000), far_deadline(), &cancel);
+        (result, started.elapsed())
+    });
+    eventually("the wait to register", || office.mailbox.held_waits() == 1);
+    // Let it reach its block (a wait still checking would pass anyway, by its first peek).
+    thread::sleep(Duration::from_millis(50));
+    worker
+}
+
+/// `msg.defer` with a time hides the message from the default inbox, from wait and from
+/// read until it's due, then a held wait returns it with no new commit: the snooze timer,
+/// not a commit, wakes it. A timer that fires before the clock reaches the deadline loops
+/// round; the wait still ends only at its own timeout.
+pub fn mailbox_defer_hides_until_due_then_a_held_wait_gets_it(backend: impl OpenTriageBackend) {
+    let office = triage_office(&backend);
+    let mailbox = &office.mailbox;
+    send(mailbox, PAT_ID, 1, ADA_HANDLE).unwrap();
+    let until = at(250);
+    let deferred = mailbox
+        .defer(ADA_ID, defer_until(1, &until, Some("after the build")))
+        .unwrap();
+    assert_eq!(deferred.id, msg_id(1));
+    assert_eq!(deferred.triage_gen, 1);
+    assert_eq!(deferred.snoozed_until.as_deref(), Some(until.as_str()));
+    assert!(!deferred.snooze_after_task);
+    assert_eq!(deferred.snooze_note.as_deref(), Some("after the build"));
+    assert!(unread_inbox(mailbox, ADA_ID).is_empty());
+    let all = mailbox
+        .inbox(
+            ADA_ID,
+            MsgInboxParams {
+                include_all: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(all.headers[0].state, State::Snoozed);
+    assert_eq!(wait_now(mailbox, ADA_ID), None);
+    assert_eq!(read_next(mailbox, ADA_ID), None);
+    let changed = office.events.state_changes();
+    assert_eq!(changed.len(), 1);
+    assert_eq!(
+        (changed[0].state, changed[0].reason.as_deref()),
+        (State::Snoozed, Some("after the build"))
+    );
+
+    // The wall clock hasn't moved: the timer fires (after ~250 ms) but nothing is due, so the
+    // wait goes on to its own timeout rather than returning early.
+    let (_handle, cancel) = cancellation_pair();
+    let started = Instant::now();
+    let waited = mailbox
+        .wait(ADA_ID, wait_params(600), far_deadline(), &cancel)
+        .unwrap();
+    assert_eq!(waited.message, None);
+    assert!(started.elapsed() >= Duration::from_millis(600));
+
+    let worker = held_wait(&office, ADA_ID);
+    office.clock.set(NOW_MS + 250);
+    let (result, elapsed) = worker.join().unwrap();
+    let message = result.unwrap().message.expect("the due snooze is returned");
+    assert_eq!(message.header.id, msg_id(1));
+    assert_eq!(message.header.state, State::Unread);
+    assert_eq!(message.header.triage_gen, 2);
+    assert!(
+        elapsed < Duration::from_secs(4),
+        "woken by the timer: {elapsed:?}"
+    );
+    assert_eq!(office.events.received(), [msg_id(1)], "no new commit");
+    let released = office.events.state_changes();
+    assert_eq!(released.len(), 2);
+    assert_eq!(
+        (released[1].state, released[1].triage_gen),
+        (State::Unread, 2)
+    );
+    assert_eq!(unread_inbox(mailbox, ADA_ID), [msg_id(1)]);
+    assert_eq!(office.mailbox.held_waits(), 0);
+}
+
+/// A defer while a wait is held wakes it to take up the new timer: a message read and then
+/// deferred comes back to the held wait when due, long before the wait's own timeout.
+pub fn mailbox_defer_wakes_a_held_wait_to_take_its_timer(backend: impl OpenTriageBackend) {
+    let office = triage_office(&backend);
+    send(&office.mailbox, PAT_ID, 1, ADA_HANDLE).unwrap();
+    assert_eq!(read_next(&office.mailbox, ADA_ID), Some(msg_id(1)));
+    let worker = held_wait(&office, ADA_ID);
+    // From read: deferring puts it back, snoozed (§2.3).
+    office
+        .mailbox
+        .defer(ADA_ID, defer_until(1, &at(250), None))
+        .unwrap();
+    office.clock.set(NOW_MS + 250);
+    let (result, elapsed) = worker.join().unwrap();
+    assert_eq!(
+        result.unwrap().message.map(|message| message.header.id),
+        Some(msg_id(1))
+    );
+    assert!(elapsed < Duration::from_secs(4), "{elapsed:?}");
+}
+
+/// The snooze timers are seeded from the store: a time snooze made before this Mailbox
+/// existed still comes back to a held wait.
+pub fn mailbox_with_triage_seeds_snooze_timers(backend: impl OpenTriageBackend) {
+    let (store, directory) = backend.open(&members(), POSITION);
+    unread(&store, 1);
+    apply(&store, snooze_until(1, &at(250), None));
+    let office = office_over(store, directory);
+    let worker = held_wait(&office, ADA_ID);
+    office.clock.set(NOW_MS + 250);
+    let (result, elapsed) = worker.join().unwrap();
+    assert_eq!(
+        result.unwrap().message.map(|message| message.header.id),
+        Some(msg_id(1))
+    );
+    assert!(elapsed < Duration::from_secs(4), "{elapsed:?}");
+}
+
+/// An after-task snooze isn't a timer: it never comes back on time, to wait or read.
+pub fn mailbox_after_task_snooze_never_fires_on_time(backend: impl OpenTriageBackend) {
+    let office = triage_office(&backend);
+    send(&office.mailbox, PAT_ID, 1, ADA_HANDLE).unwrap();
+    let deferred = office
+        .mailbox
+        .defer(
+            ADA_ID,
+            MsgDeferParams {
+                id: msg_id(1),
+                until: SnoozeTarget::AfterTask,
+                note: None,
+            },
+        )
+        .unwrap();
+    assert!(deferred.snooze_after_task);
+    assert_eq!(deferred.snoozed_until, None);
+    office.clock.set(NOW_MS + 86_400_000);
+    let (_handle, cancel) = cancellation_pair();
+    let waited = office
+        .mailbox
+        .wait(ADA_ID, wait_params(100), far_deadline(), &cancel)
+        .unwrap();
+    assert_eq!(waited.message, None);
+    assert_eq!(read_next(&office.mailbox, ADA_ID), None);
+    assert!(unread_inbox(&office.mailbox, ADA_ID).is_empty());
+    assert_eq!(state_of(&*office.store, &msg_id(1)), State::Snoozed);
+}
+
+/// `msg.done` closes a message (unread, read or snoozed) for good: it never resurfaces, even
+/// when its snooze would have come due; done again is accepted; a done message can't be
+/// deferred.
+pub fn mailbox_done_never_resurfaces(backend: impl OpenTriageBackend) {
+    let office = triage_office(&backend);
+    let mailbox = &office.mailbox;
+    send(mailbox, PAT_ID, 1, ADA_HANDLE).unwrap();
+    send(mailbox, PAT_ID, 2, ADA_HANDLE).unwrap();
+    mailbox
+        .defer(ADA_ID, defer_until(2, &at(250), None))
+        .unwrap();
+    let done = mailbox
+        .done(ADA_ID, done_params(1, Some("answered in chat")))
+        .unwrap();
+    assert_eq!(
+        (done.id.as_str(), done.resolved_at.as_str()),
+        (msg_id(1).as_str(), NOW_UTC)
+    );
+    mailbox.done(ADA_ID, done_params(2, None)).unwrap();
+    let changed = office.events.state_changes();
+    let closed = changed.iter().find(|data| data.id == msg_id(1)).unwrap();
+    assert_eq!(
+        (closed.state, closed.reason.as_deref()),
+        (State::Done, Some("answered in chat"))
+    );
+
+    office.clock.set(NOW_MS + 3_600_000);
+    let (_handle, cancel) = cancellation_pair();
+    let waited = mailbox
+        .wait(ADA_ID, wait_params(300), far_deadline(), &cancel)
+        .unwrap();
+    assert_eq!(waited.message, None, "a done snooze never fires");
+    assert_eq!(read_next(mailbox, ADA_ID), None);
+    assert!(unread_inbox(mailbox, ADA_ID).is_empty());
+    for n in [1, 2] {
+        assert_eq!(state_of(&*office.store, &msg_id(n)), State::Done);
+    }
+    assert!(
+        mailbox.done(ADA_ID, done_params(1, None)).is_ok(),
+        "done again"
+    );
+    assert_eq!(
+        mailbox.defer(ADA_ID, defer_until(1, &at(7_200_000), None)),
+        Err(MailboxError::InvalidRequest)
+    );
+    assert_eq!(state_of(&*office.store, &msg_id(1)), State::Done);
+}
+
+/// defer and done refuse what msg.rs refuses: an oversized id or note is `too_large`; a past,
+/// present, unreadable or unknown target is `invalid_request`; another member's message or an
+/// unknown id is `not_found`; an unbound member is `not_bound`. A Mailbox without triage
+/// answers `unavailable`. Nothing refused changes the message.
+pub fn mailbox_defer_and_done_validation(backend: impl OpenTriageBackend) {
+    let office = triage_office(&backend);
+    let mailbox = &office.mailbox;
+    send(mailbox, PAT_ID, 1, ADA_HANDLE).unwrap();
+    send(mailbox, ADA_ID, 2, REMY_HANDLE).unwrap();
+    // json_string_len counts the quotes: a string of len - 2 bytes fits exactly.
+    let over = |limit: usize| "x".repeat(limit - 1);
+    let later = at(60_000);
+    use MailboxError::{InvalidRequest, NotBound, NotFound, TooLarge};
+    let defers = [
+        (
+            MsgDeferParams {
+                id: over(MAX_ID_BYTES),
+                ..defer_until(1, &later, None)
+            },
+            TooLarge,
+        ),
+        (
+            defer_until(1, &later, Some(&over(MAX_NOTE_BYTES))),
+            TooLarge,
+        ),
+        (defer_until(1, NOW_UTC, None), InvalidRequest),
+        (defer_until(1, &at(-1), None), InvalidRequest),
+        (defer_until(1, "tomorrow", None), InvalidRequest),
+        (defer_until(1, "2026-11-08T13:00:00Z", None), InvalidRequest),
+        (
+            MsgDeferParams {
+                id: msg_id(1),
+                until: SnoozeTarget::Unknown,
+                note: None,
+            },
+            InvalidRequest,
+        ),
+        (defer_until(2, &later, None), NotFound),
+        (defer_until(9, &later, None), NotFound),
+    ];
+    for (params, error) in defers {
+        assert_eq!(
+            mailbox.defer(ADA_ID, params.clone()),
+            Err(error),
+            "{params:?}"
+        );
+    }
+    assert_eq!(
+        mailbox.defer(GONE_ID, defer_until(1, &later, None)),
+        Err(NotBound)
+    );
+    assert_eq!(
+        mailbox.done(ADA_ID, done_params(1, Some(&over(MAX_NOTE_BYTES)))),
+        Err(TooLarge)
+    );
+    assert_eq!(
+        mailbox.done(
+            ADA_ID,
+            MsgDoneParams {
+                id: over(MAX_ID_BYTES),
+                note: None
+            }
+        ),
+        Err(TooLarge)
+    );
+    assert_eq!(mailbox.done(ADA_ID, done_params(2, None)), Err(NotFound));
+    assert_eq!(mailbox.done(ADA_ID, done_params(9, None)), Err(NotFound));
+    assert_eq!(mailbox.done(GONE_ID, done_params(1, None)), Err(NotBound));
+    let header = header_of(&*office.store, 1);
+    assert_eq!((header.state, header.triage_gen), (State::Unread, 0));
+    assert!(office.events.state_changes().is_empty());
+
+    // At the note limit it applies.
+    let at_limit = "n".repeat(MAX_NOTE_BYTES - 2);
+    mailbox
+        .defer(ADA_ID, defer_until(1, &later, Some(&at_limit)))
+        .unwrap();
+
+    let (store, directory) = backend.open(&members(), POSITION);
+    let plain = Mailbox::new(
+        Arc::new(store),
+        Arc::new(directory),
+        identity(),
+        Arc::new(ManualClock::new(NOW_MS)),
+        Arc::new(RecordingEvents::default()),
+    );
+    send(&plain, PAT_ID, 1, ADA_HANDLE).unwrap();
+    assert_eq!(
+        plain.defer(ADA_ID, defer_until(1, &later, None)),
+        Err(MailboxError::Unavailable)
+    );
+    assert_eq!(
+        plain.done(ADA_ID, done_params(1, None)),
+        Err(MailboxError::Unavailable)
+    );
+}
+
+/// A store whose peek keeps reporting every id it once reported as expired, as a second
+/// worker that raced the first, or a peek from an older snapshot, would: the Mailbox's
+/// expiry must stay idempotent.
+struct StalePeek<S> {
+    inner: S,
+    reported: Mutex<Vec<String>>,
+}
+
+impl<S: MessageStore> MessageStore for StalePeek<S> {
+    fn commit_message(&self, msg: NewStoredMessage) -> Result<CommitMessageOutcome, StoreError> {
+        self.inner.commit_message(msg)
+    }
+    fn claim_read(
+        &self,
+        to_member_id: &str,
+        id: Option<&str>,
+        now_utc: &str,
+    ) -> Result<Option<StoredMessage>, StoreError> {
+        self.inner.claim_read(to_member_id, id, now_utc)
+    }
+    fn peek_next_unread(
+        &self,
+        to_member_id: &str,
+        from_member_id: Option<&str>,
+        urgent_only: bool,
+        now_utc: &str,
+    ) -> Result<PeekUnreadOutcome, StoreError> {
+        let mut outcome =
+            self.inner
+                .peek_next_unread(to_member_id, from_member_id, urgent_only, now_utc)?;
+        let mut reported = self
+            .reported
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        for id in &outcome.expired_ids {
+            if !reported.contains(id) {
+                reported.push(id.clone());
+            }
+        }
+        outcome.expired_ids = reported.clone();
+        Ok(outcome)
+    }
+    fn get_message(&self, id: &str) -> Result<Option<StoredMessage>, StoreError> {
+        self.inner.get_message(id)
+    }
+    fn list_headers(&self, query: HeaderQuery) -> Result<HeaderPage, StoreError> {
+        self.inner.list_headers(query)
+    }
+    fn find_reply_for_ask(
+        &self,
+        ask_id: &str,
+        responder_id: &str,
+    ) -> Result<Option<StoredMessage>, StoreError> {
+        self.inner.find_reply_for_ask(ask_id, responder_id)
+    }
+}
+
+impl<S: TriageStore> TriageStore for StalePeek<S> {
+    fn update_state_local(
+        &self,
+        change: LocalStateTransition,
+    ) -> Result<MessageHeader, StoreError> {
+        self.inner.update_state_local(change)
+    }
+    fn check_notify(
+        &self,
+        to_member_id: &str,
+        after_task: bool,
+        urgent_only: bool,
+        sweep_before_utc: &str,
+        now_utc: &str,
+    ) -> Result<Vec<NotifyCandidate>, StoreError> {
+        self.inner.check_notify(
+            to_member_id,
+            after_task,
+            urgent_only,
+            sweep_before_utc,
+            now_utc,
+        )
+    }
+    fn list_active_snooze_deadlines(&self) -> Result<Vec<SnoozeDeadline>, StoreError> {
+        self.inner.list_active_snooze_deadlines()
+    }
+}
+
+/// The asker's `delivery_failed` for `ask`, checked against ADR-0003 §3.2 item 3.
+fn expect_notice(store: &impl MessageStore, ask: u32, asker: &str, asker_name: &str) -> String {
+    let notice = store
+        .find_reply_for_ask(&msg_id(ask), ADA_ID)
+        .unwrap()
+        .expect("the asker got a delivery_failed");
+    let request = store
+        .get_message(&msg_id(ask))
+        .unwrap()
+        .unwrap()
+        .message
+        .header;
+    let header = &notice.message.header;
+    assert_eq!(header.from_member_id, OFFICE_SENDER);
+    assert_eq!(header.to_member_id, asker);
+    assert_eq!(header.to_display_name, asker_name);
+    assert_eq!(header.kind, KIND_DELIVERY_FAILED);
+    assert_eq!(header.priority, MessagePriority::High);
+    assert!(header.urgent);
+    assert_eq!(header.reply_to.as_deref(), Some(msg_id(ask).as_str()));
+    assert_eq!(header.thread_id, request.thread_id);
+    assert_eq!(header.state, State::Unread);
+    assert_eq!(header.expires_at, None);
+    // A ULID timed at the request's deadline: the same request always gets the same id.
+    assert_eq!(
+        ulid_time_ms(&header.id),
+        request.expires_at.as_deref().and_then(parse_utc)
+    );
+    let meta = &notice.message.meta;
+    assert_eq!(meta["recipient_id"], ADA_ID);
+    assert_eq!(meta["recipient_name"], ADA_NAME);
+    assert_eq!(meta["reason"], "expired");
+    let original_body = store
+        .get_message(&msg_id(ask))
+        .unwrap()
+        .unwrap()
+        .message
+        .body;
+    assert!(
+        !notice.message.body.contains(&original_body),
+        "the notice holds no message content"
+    );
+    header.id.clone()
+}
+
+/// An agent's request past its deadline, passed over by wait, is expired, and its asker gets
+/// exactly one `delivery_failed` (message, `message.received` and `message.delivery_failed`)
+/// even when the expiry runs again; the notice wakes the asker's wait.
+pub fn mailbox_wait_expires_an_agent_request_and_tells_the_asker_once(
+    backend: impl OpenTriageBackend,
+) {
+    let (store, directory) = backend.open(&members(), POSITION);
+    let office = office_over(
+        StalePeek {
+            inner: store,
+            reported: Mutex::new(Vec::new()),
+        },
+        directory,
+    );
+    let mut ask = expired_request(1, PAT_ID, ADA_ID);
+    ask.message.header.to_display_name = ADA_NAME.into();
+    commit(&*office.store, ask);
+    send(&office.mailbox, PAT_ID, 2, ADA_HANDLE).unwrap();
+    // The asker is waiting: the notice must wake it.
+    let asker = held_wait(&office, PAT_ID);
+
+    assert_eq!(wait_now(&office.mailbox, ADA_ID), Some(msg_id(2)));
+    let (woken, elapsed) = asker.join().unwrap();
+    assert!(
+        elapsed < Duration::from_secs(4),
+        "woken by the notice: {elapsed:?}"
+    );
+    let woken = woken
+        .unwrap()
+        .message
+        .expect("the asker's wait gets the notice");
+    assert_eq!(woken.header.kind, KIND_DELIVERY_FAILED);
+    assert_eq!(state_of(&*office.store, &msg_id(1)), State::Expired);
+    let notice = expect_notice(&*office.store, 1, PAT_ID, PAT_HANDLE);
+    let failed = office.events.delivery_failed();
+    assert_eq!(failed.len(), 1);
+    let data = &failed[0];
+    assert_eq!(data.id, notice);
+    assert_eq!(data.original_id, msg_id(1));
+    assert_eq!(data.from_member_id, PAT_ID);
+    assert_eq!(
+        (data.recipient_id.as_str(), data.recipient_name.as_str()),
+        (ADA_ID, ADA_NAME)
+    );
+    assert_eq!(data.reason, DeliveryFailedReason::Expired);
+    assert!(office
+        .events
+        .state_changes()
+        .iter()
+        .any(|data| data.id == msg_id(1) && data.state == State::Expired));
+
+    // Again (the stale peek reports the request again): no second notice or event.
+    assert_eq!(wait_now(&office.mailbox, ADA_ID), Some(msg_id(2)));
+    assert_eq!(read_next(&office.mailbox, ADA_ID), Some(msg_id(2)));
+    assert_eq!(office.events.delivery_failed().len(), 1);
+    assert_eq!(
+        office
+            .events
+            .received()
+            .iter()
+            .filter(|id| **id == notice)
+            .count(),
+        1
+    );
+    assert_eq!(
+        unread_inbox(&office.mailbox, PAT_ID),
+        std::slice::from_ref(&notice)
+    );
+    assert_eq!(wait_now(&office.mailbox, PAT_ID), Some(notice));
+}
+
+/// An ask to a person never expires: wait flags it `expired_waiting_person` and returns it,
+/// and no one is told. A request from a sender who can no longer receive (offboarded) is
+/// expired without a notice.
+pub fn mailbox_expiry_spares_persons_and_unmessageable_senders(backend: impl OpenTriageBackend) {
+    let office = triage_office(&backend);
+    let mut to_person = expired_request(1, ADA_ID, PAT_ID);
+    to_person.message.header.to_display_name = PAT_HANDLE.into();
+    commit(&*office.store, to_person);
+    let waited = {
+        let (_handle, cancel) = cancellation_pair();
+        office
+            .mailbox
+            .wait(PAT_ID, wait_params(0), far_deadline(), &cancel)
+            .unwrap()
+            .message
+            .expect("a person's overdue ask is still theirs to answer")
+    };
+    assert_eq!(waited.header.id, msg_id(1));
+    assert_eq!(waited.header.state, State::Unread);
+    assert!(waited.header.expired_waiting_person);
+    assert!(office
+        .events
+        .state_changes()
+        .iter()
+        .any(|data| data.id == msg_id(1) && data.expired_waiting_person));
+    assert_eq!(read_next(&office.mailbox, PAT_ID), Some(msg_id(1)));
+    // read with no id flags one too, then claims it.
+    commit(&*office.store, expired_request(3, ADA_ID, PAT_ID));
+    assert_eq!(read_next(&office.mailbox, PAT_ID), Some(msg_id(3)));
+    assert!(header_of(&*office.store, 3).expired_waiting_person);
+
+    commit(&*office.store, expired_request(2, GONE_ID, ADA_ID));
+    assert_eq!(wait_now(&office.mailbox, ADA_ID), None);
+    assert_eq!(state_of(&*office.store, &msg_id(2)), State::Expired);
+    assert!(office.events.delivery_failed().is_empty());
+    assert!(office.events.received().is_empty());
+}
+
+/// Reading an agent's overdue request by id expires it (and tells the asker) instead of
+/// reading it; one still inside the skew grace is read. Reading the next message expires
+/// what it passes over first.
+pub fn mailbox_read_expires_an_overdue_request(backend: impl OpenTriageBackend) {
+    let office = triage_office(&backend);
+    let mailbox = &office.mailbox;
+    let mut overdue = expired_request(1, PAT_ID, ADA_ID);
+    overdue.message.header.to_display_name = ADA_NAME.into();
+    commit(&*office.store, overdue);
+    let read_id = |n: u32| {
+        mailbox
+            .read(
+                ADA_ID,
+                MsgReadParams {
+                    id: Some(msg_id(n)),
+                },
+            )
+            .unwrap()
+            .message
+            .expect("addressed to Ada")
+            .header
+    };
+    let header = read_id(1);
+    assert_eq!(header.state, State::Expired);
+    assert_eq!(header.read_at, None);
+    expect_notice(&*office.store, 1, PAT_ID, PAT_HANDLE);
+    assert_eq!(read_id(1).state, State::Expired, "again: still expired");
+    assert_eq!(office.events.delivery_failed().len(), 1);
+
+    // 1 s past a 60 s ask's deadline: inside the 2 s skew grace, so still live.
+    let mut live = expired_request(2, PAT_ID, ADA_ID);
+    live.message.header.expires_at = Some(at(-1_000));
+    commit(&*office.store, live);
+    let header = read_id(2);
+    assert_eq!(header.state, State::Read);
+    assert_eq!(header.read_at.as_deref(), Some(NOW_UTC));
+
+    let mut passed = expired_request(3, PAT_ID, ADA_ID);
+    passed.message.header.to_display_name = ADA_NAME.into();
+    commit(&*office.store, passed);
+    send(mailbox, PAT_ID, 4, ADA_HANDLE).unwrap();
+    assert_eq!(read_next(mailbox, ADA_ID), Some(msg_id(4)));
+    assert_eq!(state_of(&*office.store, &msg_id(3)), State::Expired);
+    expect_notice(&*office.store, 3, PAT_ID, PAT_HANDLE);
+    assert_eq!(office.events.delivery_failed().len(), 2);
+
+    // Expired without its notice (an earlier expiry failed after the transition): reading
+    // it commits the notice, once.
+    let mut orphan = expired_request(5, PAT_ID, ADA_ID);
+    orphan.message.header.to_display_name = ADA_NAME.into();
+    commit(&*office.store, orphan);
+    apply(&*office.store, change(5, State::Expired));
+    assert_eq!(read_id(5).state, State::Expired);
+    expect_notice(&*office.store, 5, PAT_ID, PAT_HANDLE);
+    assert_eq!(read_id(5).state, State::Expired);
+    assert_eq!(office.events.delivery_failed().len(), 3);
+}
+
+/// More expired requests than one peek reports ([`crate::MAX_EXPIRED_IDS`]): one wait expires
+/// them all before it blocks, and each asker is told.
+pub fn mailbox_wait_expires_more_than_one_batch(backend: impl OpenTriageBackend) {
+    let office = triage_office(&backend);
+    let count = crate::MAX_EXPIRED_IDS as u32 + 5;
+    for n in 1..=count {
+        commit(&*office.store, expired_request(n, PAT_ID, ADA_ID));
+    }
+    assert_eq!(wait_now(&office.mailbox, ADA_ID), None);
+    for n in 1..=count {
+        assert_eq!(
+            state_of(&*office.store, &msg_id(n)),
+            State::Expired,
+            "request {n}"
+        );
+    }
+    assert_eq!(office.events.delivery_failed().len(), count as usize);
+    assert!(peek(&*office.store, ADA_ID).expired_ids.is_empty());
+}
+
 /// Every case, by name: what [`crate::triage_conformance_tests!`] runs.
 #[doc(hidden)]
 #[macro_export]
@@ -790,6 +1510,16 @@ macro_rules! triage_conformance_tests {
             triage_check_notify_exclusions_and_boundaries,
             triage_check_notify_releases_once_under_concurrency,
             triage_list_active_snooze_deadlines,
+            mailbox_defer_hides_until_due_then_a_held_wait_gets_it,
+            mailbox_defer_wakes_a_held_wait_to_take_its_timer,
+            mailbox_with_triage_seeds_snooze_timers,
+            mailbox_after_task_snooze_never_fires_on_time,
+            mailbox_done_never_resurfaces,
+            mailbox_defer_and_done_validation,
+            mailbox_wait_expires_an_agent_request_and_tells_the_asker_once,
+            mailbox_expiry_spares_persons_and_unmessageable_senders,
+            mailbox_read_expires_an_overdue_request,
+            mailbox_wait_expires_more_than_one_batch,
         }
     };
 }

@@ -264,7 +264,7 @@ fn office<B: OpenBackend>(backend: &B) -> Office<B::Store> {
     }
 }
 
-fn send_params(n: u32, to: &str) -> MsgSendParams {
+pub(crate) fn send_params(n: u32, to: &str) -> MsgSendParams {
     MsgSendParams {
         id: msg_id(n),
         to: to.into(),
@@ -277,11 +277,16 @@ fn send_params(n: u32, to: &str) -> MsgSendParams {
     }
 }
 
-fn send(mailbox: &Mailbox, from: &str, n: u32, to: &str) -> Result<SendResult, MailboxError> {
+pub(crate) fn send(
+    mailbox: &Mailbox,
+    from: &str,
+    n: u32,
+    to: &str,
+) -> Result<SendResult, MailboxError> {
     mailbox.send(from, send_params(n, to))
 }
 
-fn wait_params(timeout_ms: u64) -> MsgWaitParams {
+pub(crate) fn wait_params(timeout_ms: u64) -> MsgWaitParams {
     MsgWaitParams {
         timeout_ms,
         from: None,
@@ -289,11 +294,11 @@ fn wait_params(timeout_ms: u64) -> MsgWaitParams {
     }
 }
 
-fn far_deadline() -> Instant {
+pub(crate) fn far_deadline() -> Instant {
     Instant::now() + Duration::from_secs(60)
 }
 
-fn unread_inbox(mailbox: &Mailbox, member: &str) -> Vec<String> {
+pub(crate) fn unread_inbox(mailbox: &Mailbox, member: &str) -> Vec<String> {
     let page = mailbox
         .inbox(member, MsgInboxParams::default())
         .expect("inbox");
@@ -301,7 +306,7 @@ fn unread_inbox(mailbox: &Mailbox, member: &str) -> Vec<String> {
 }
 
 /// Polls until `condition` holds, failing after a generous bound (the machine may be loaded).
-fn eventually(what: &str, condition: impl Fn() -> bool) {
+pub(crate) fn eventually(what: &str, condition: impl Fn() -> bool) {
     let until = Instant::now() + Duration::from_secs(10);
     while !condition() {
         assert!(Instant::now() < until, "timed out waiting for {what}");
