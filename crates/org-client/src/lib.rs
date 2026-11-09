@@ -593,10 +593,22 @@ impl Client {
     /// in it, and a person, the owner or an office-run agent, which need a credential. A
     /// binding belongs to the connection, and a failed bind leaves it unbound.
     pub fn bind_member(&self, member: &str) -> Result<MsgBindResult, ClientError> {
-        self.call::<MsgBind>(&MsgBindParams {
-            member: Some(member.to_owned()),
-            app_token: None,
-        })
+        self.bind_member_with_timeout(member, DEFAULT_TIMEOUT)
+    }
+
+    /// [`Client::bind_member`] with a timeout of your own.
+    pub fn bind_member_with_timeout(
+        &self,
+        member: &str,
+        timeout: Duration,
+    ) -> Result<MsgBindResult, ClientError> {
+        self.call_with_timeout::<MsgBind>(
+            &MsgBindParams {
+                member: Some(member.to_owned()),
+                app_token: None,
+            },
+            timeout,
+        )
     }
 
     /// [`Client::call_with_timeout`] that gives up early once `stop()` returns true, for a call

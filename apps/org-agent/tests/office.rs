@@ -70,6 +70,10 @@ fn main() {
             "with_no_office_on_this_mac_the_spool_is_used_quietly",
             with_no_office_on_this_mac_the_spool_is_used_quietly,
         ),
+        (
+            "an_office_run_agent_never_falls_back_to_the_spool",
+            an_office_run_agent_never_falls_back_to_the_spool,
+        ),
     ];
     let filter: Option<String> = std::env::args().skip(1).find(|a| !a.starts_with('-'));
     let mut passed = 0;
@@ -732,4 +736,49 @@ fn with_no_office_on_this_mac_the_spool_is_used_quietly() {
     let named: Run = named.into();
     let named = named.ok();
     assert!(named.stderr.contains("not reachable"), "{}", named.stderr);
+}
+
+fn an_office_run_agent_never_falls_back_to_the_spool() {
+    let world = World::new();
+    let spool = world.user.join("spool");
+
+    // who with no identity can't ask the office, and an office-run agent never uses the spool.
+    let who: Run = world
+        .agent("nova", &["who"])
+        .env_remove("ORG_AGENT")
+        .env("ORG_SESSION_TOKEN", "t")
+        .output()
+        .unwrap()
+        .into();
+    assert_eq!(who.code, 5, "{}", who.stderr);
+    assert!(who.stderr.contains("needs an identity"), "{}", who.stderr);
+    assert!(!spool.exists(), "the spool was opened");
+
+    // Its office named but not running: exit 5, nothing spooled.
+    let sent: Run = world
+        .agent("pixel", &["msg", "send", "--to", "nova", "hi"])
+        .env("ORG_OFFICE", OFFICE)
+        .env("ORG_SESSION_TOKEN", "t")
+        .output()
+        .unwrap()
+        .into();
+    assert_eq!(sent.code, 5, "{}", sent.stderr);
+    assert!(world.spooled().is_empty());
+    assert!(!spool.exists(), "the spool was opened");
+
+    // An office asked for with no absolute office home is a usage error, not the spool.
+    let homeless: Run = world
+        .agent("nova", &["msg", "inbox"])
+        .env_remove("ORG_OFFICE_HOME")
+        .env("HOME", "relative")
+        .env("ORG_OFFICE", OFFICE)
+        .output()
+        .unwrap()
+        .into();
+    assert_eq!(homeless.code, 1, "{}", homeless.stderr);
+    assert!(
+        homeless.stderr.contains("absolute path"),
+        "{}",
+        homeless.stderr
+    );
 }

@@ -22,9 +22,8 @@ use org_client::agent::{find_office, open_as, FindOfficeError, OpenError, SETUP_
 use org_client::{Client, ClientError};
 use org_proto::directory::{self, Who, WhoParams};
 use org_proto::msg::{
-    self, HeaderPage, Message, MessageHeader, MsgBind, MsgBindParams, MsgInbox, MsgInboxParams,
-    MsgRead, MsgReadParams, MsgSend, MsgSendParams, MsgWait, MsgWaitParams, KIND_MSG,
-    MAX_PAGE_LIMIT, MAX_WAIT_MS,
+    self, HeaderPage, Message, MessageHeader, MsgInbox, MsgInboxParams, MsgRead, MsgReadParams,
+    MsgSend, MsgSendParams, MsgWait, MsgWaitParams, KIND_MSG, MAX_PAGE_LIMIT, MAX_WAIT_MS,
 };
 use org_proto::{Call, ErrorCode, MemberKind};
 use org_spool::{
@@ -170,7 +169,13 @@ pub(crate) fn route(member: &str, office_flag: Option<&str>) -> Result<Route, Fa
                 ),
             ));
         }
-        return no_spool_when_office_run(Route::NoOffice, office_run());
+        if office_run() {
+            return Err(Failure::new(
+                EXIT_OFFICE_UNAVAILABLE,
+                "neither ORG_OFFICE_HOME nor HOME is an absolute path, so the office can't be found; an agent the office runs doesn't use the local spool",
+            ));
+        }
+        return Ok(Route::NoOffice);
     };
     let route = decide(find_office(&home, chosen), member, |office_id| {
         open_as(&home, office_id, member)
@@ -184,10 +189,16 @@ fn office_run() -> bool {
     env::var_os(SESSION_TOKEN_ENV).is_some_and(|t| !t.is_empty())
 }
 
-/// For a command about to use the spool without routing (e.g. `who` with no identity): refused
-/// for an agent the office runs, which never uses the spool.
-pub(crate) fn spool_allowed() -> Result<(), Failure> {
-    no_spool_when_office_run(Route::NoOffice, office_run()).map(|_| ())
+/// For `who` with no identity, which can't ask the office (it needs a binding) and would use
+/// the spool: refused for an agent the office runs, which never uses the spool.
+pub(crate) fn who_without_identity_allowed() -> Result<(), Failure> {
+    if office_run() {
+        return Err(Failure::new(
+            EXIT_OFFICE_UNAVAILABLE,
+            "who needs an identity ($ORG_AGENT or --as) to ask the office; an agent the office runs doesn't use the local spool",
+        ));
+    }
+    Ok(())
 }
 
 /// An office-run agent (`ORG_SESSION_TOKEN` set) never falls back to the spool: its office
@@ -227,6 +238,7 @@ impl NoRoute {
         match self {
             NoRoute::Find(error) => Failure::new(EXIT_USAGE, error.to_string()),
             NoRoute::Refused { office_id, error } => match &error {
+                // Defensive: `open_as` counts these as unreachable today.
                 ClientError::Api(api)
                     if matches!(api.code, ErrorCode::Unavailable | ErrorCode::NotReady) =>
                 {
@@ -238,7 +250,8 @@ impl NoRoute {
                 ClientError::Api(_) => Failure::new(
                     exit_code(&error),
                     format!(
-                        "office {office_id} did not let '{member}' in: {}",
+                        "office {office_id} did not let '{}' in: {}",
+                        sanitize_inline_text(member, 80),
                         clean(&error)
                     ),
                 ),
@@ -333,7 +346,8 @@ impl Office {
     fn bind_again(&self) -> Result<(), Failure> {
         let lost = format!(
             "office {} unbound '{}' during the command",
-            self.office_id, self.member
+            self.office_id,
+            sanitize_inline_text(&self.member, 80)
         );
         if self.rebound.replace(true) {
             return Err(Failure::new(
@@ -341,14 +355,10 @@ impl Office {
                 format!("{lost}, again after it bound again; try once more"),
             ));
         }
-        let bound = self.client.call_with_timeout::<MsgBind>(
-            &MsgBindParams {
-                member: Some(self.member.clone()),
-                app_token: None,
-            },
-            SETUP_TIMEOUT,
-        );
-        match bound {
+        match self
+            .client
+            .bind_member_with_timeout(&self.member, SETUP_TIMEOUT)
+        {
             Ok(bound) if bound.office_id == self.office_id => Ok(()),
             Ok(_) => Err(Failure::new(
                 EXIT_IO,

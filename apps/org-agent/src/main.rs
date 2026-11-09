@@ -757,7 +757,7 @@ fn run(args: Vec<String>) -> Result<u8, CliError> {
                     Route::NoOffice => {}
                 }
             } else {
-                office::spool_allowed()?;
+                office::who_without_identity_allowed()?;
             }
             let spool = Spool::open_from_env()?;
             if let Some(member_query) = target {

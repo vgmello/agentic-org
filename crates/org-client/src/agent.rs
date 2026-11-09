@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 use org_office_launch::{
     is_plain_id, OfficeFile, MAX_OFFICE_FILE_BYTES, OFFICES_DIR_NAME, OFFICE_FILE_NAME,
 };
-use org_proto::msg::{MsgBind, MsgBindParams, MsgBindResult};
+use org_proto::msg::MsgBindResult;
 
 use crate::{Client, ClientError};
 
@@ -200,13 +200,7 @@ pub fn open_as(
         return Err(OpenError::Refused(another_office()));
     }
     let bound = client
-        .call_with_timeout::<MsgBind>(
-            &MsgBindParams {
-                member: Some(member.to_owned()),
-                app_token: None,
-            },
-            SETUP_TIMEOUT,
-        )
+        .bind_member_with_timeout(member, SETUP_TIMEOUT)
         .map_err(OpenError::from_setup)?;
     if bound.office_id != office_id {
         return Err(OpenError::Refused(another_office()));
