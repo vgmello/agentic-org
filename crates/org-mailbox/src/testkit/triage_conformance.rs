@@ -1650,57 +1650,223 @@ pub fn mailbox_a_failed_notice_does_not_fail_the_recipient(backend: impl OpenTri
     assert_eq!(again.header.state, State::Expired);
 }
 
-/// A member who sends a message under a request's `delivery_failed` id first (as if the id
-/// leaked) doesn't make the office think the asker was told: expiring the request by a read
-/// fails with `storage_error` instead of passing for success, every later read retries (and
-/// fails the same way), a wait that expires one isn't failed for it, and no notice event is
-/// published.
-pub fn mailbox_a_squatted_notice_id_does_not_count_as_told(backend: impl OpenTriageBackend) {
+/// The ids of the `delivery_failed` notices replying to `msg_id(ask)` in Pat's inbox.
+fn notices_for(store: &impl MessageStore, ask: u32) -> Vec<String> {
+    store
+        .list_headers(inbox_query(PAT_ID, false, 100))
+        .unwrap()
+        .headers
+        .into_iter()
+        .filter(|header| {
+            header.kind == KIND_DELIVERY_FAILED
+                && header.reply_to.as_deref() == Some(msg_id(ask).as_str())
+        })
+        .map(|header| header.id)
+        .collect()
+}
+
+/// Commits `msg_id(n)`, an expired request from Pat to Ada, then has Ada send a message of
+/// her own under its `delivery_failed` id (as if the id leaked).
+fn squatted_request(office: &TriageOffice<impl MessageStore>, n: u32) {
+    let mut ask = expired_request(n, PAT_ID, ADA_ID);
+    ask.message.header.to_display_name = ADA_NAME.into();
+    commit(&*office.store, ask);
+    let notice_id = crate::ids::delivery_failed_id(&header_of(&*office.store, n), INCARNATION);
+    let squat = MsgSendParams {
+        id: notice_id,
+        to: PAT_HANDLE.into(),
+        kind: KIND_MSG.into(),
+        priority: None,
+        subject: None,
+        body: "not a notice".into(),
+        meta: Meta::new(),
+        reply_to: None,
+    };
+    office.mailbox.send(ADA_ID, squat).unwrap();
+}
+
+/// A member who sends a message under a request's `delivery_failed` id first doesn't stop
+/// the asker being told: the notice is committed under the fallback id, by a read of the
+/// request by id (which succeeds) as by a wait, and the squatted row isn't taken for it.
+pub fn mailbox_a_squatted_notice_id_is_told_via_the_fallback(backend: impl OpenTriageBackend) {
     let office = triage_office(&backend);
     let mailbox = &office.mailbox;
     for n in [1, 2] {
-        let mut ask = expired_request(n, PAT_ID, ADA_ID);
-        ask.message.header.to_display_name = ADA_NAME.into();
-        commit(&*office.store, ask);
-        let notice_id = crate::ids::delivery_failed_id(&header_of(&*office.store, n), INCARNATION);
-        let squat = MsgSendParams {
-            id: notice_id,
-            to: PAT_HANDLE.into(),
-            kind: KIND_MSG.into(),
-            priority: None,
-            subject: None,
-            body: "not a notice".into(),
-            meta: Meta::new(),
-            reply_to: None,
-        };
-        mailbox.send(ADA_ID, squat).unwrap();
+        squatted_request(&office, n);
     }
     let by_id = |n: u32| {
-        mailbox.read(
-            ADA_ID,
-            MsgReadParams {
-                id: Some(msg_id(n)),
-            },
-        )
+        mailbox
+            .read(
+                ADA_ID,
+                MsgReadParams {
+                    id: Some(msg_id(n)),
+                },
+            )
+            .unwrap()
+            .message
+            .expect("addressed to Ada")
+            .header
     };
-    assert_eq!(by_id(1), Err(MailboxError::StorageError));
-    assert_eq!(state_of(&*office.store, &msg_id(1)), State::Expired);
+    let fallback = |n: u32| crate::ids::delivery_failed_fallback_id(&msg_id(n), NOW_UTC);
+    assert_eq!(by_id(1).state, State::Expired);
+    assert_eq!(notices_for(&*office.store, 1), [fallback(1)]);
     assert_eq!(
-        by_id(1),
-        Err(MailboxError::StorageError),
-        "a later read retries the notice"
+        by_id(1).state,
+        State::Expired,
+        "a later read commits nothing"
     );
-    // wait's caller isn't at fault: the request is expired and the wait goes on.
+    assert_eq!(notices_for(&*office.store, 1), [fallback(1)]);
     assert_eq!(wait_now(mailbox, ADA_ID), None);
     assert_eq!(state_of(&*office.store, &msg_id(2)), State::Expired);
-    assert_eq!(by_id(2), Err(MailboxError::StorageError));
-    assert!(office.events.delivery_failed().is_empty());
+    assert_eq!(notices_for(&*office.store, 2), [fallback(2)]);
     for n in [1, 2] {
-        assert_eq!(
-            office.store.find_reply_for_ask(&msg_id(n), ADA_ID).unwrap(),
-            None
-        );
+        let told = office
+            .store
+            .find_reply_for_ask(&msg_id(n), ADA_ID)
+            .unwrap()
+            .expect("the asker was told");
+        assert_eq!(told.message.header.id, fallback(n));
+        assert_eq!(told.message.header.from_member_id, OFFICE_SENDER);
     }
+    let failed: Vec<_> = office
+        .events
+        .delivery_failed()
+        .into_iter()
+        .map(|data| (data.id, data.original_id))
+        .collect();
+    assert_eq!(failed, [(fallback(1), msg_id(1)), (fallback(2), msg_id(2))]);
+}
+
+/// The squatted case through wait: the asker gets exactly one `delivery_failed`, under the
+/// fallback id, with its `message.received` and `message.delivery_failed` published once,
+/// and reading the request by id afterwards commits no other.
+pub fn mailbox_squatted_notice_tells_the_asker_exactly_once(backend: impl OpenTriageBackend) {
+    let office = triage_office(&backend);
+    squatted_request(&office, 1);
+    let fallback = crate::ids::delivery_failed_fallback_id(&msg_id(1), NOW_UTC);
+
+    assert_eq!(wait_now(&office.mailbox, ADA_ID), None);
+    assert_eq!(state_of(&*office.store, &msg_id(1)), State::Expired);
+    for _ in 0..2 {
+        office.clock.set(NOW_MS + 1_000);
+        let read = office
+            .mailbox
+            .read(
+                ADA_ID,
+                MsgReadParams {
+                    id: Some(msg_id(1)),
+                },
+            )
+            .unwrap()
+            .message
+            .unwrap();
+        assert_eq!(read.header.state, State::Expired);
+    }
+    assert_eq!(
+        notices_for(&*office.store, 1),
+        std::slice::from_ref(&fallback)
+    );
+    let failed = office.events.delivery_failed();
+    assert_eq!(failed.len(), 1);
+    assert_eq!(failed[0].id, fallback);
+    assert_eq!(
+        office
+            .events
+            .received()
+            .iter()
+            .filter(|id| **id == fallback)
+            .count(),
+        1
+    );
+    assert!(unread_inbox(&office.mailbox, PAT_ID).contains(&fallback));
+}
+
+/// office.db restored: the office's incarnation, and with it the notice's first id, changes.
+/// A request that already got its notice isn't notified again: reading it by id under the
+/// new incarnation commits nothing and doesn't fail.
+pub fn mailbox_a_restored_office_does_not_notify_again(backend: impl OpenTriageBackend) {
+    let (store, directory) = backend.open(&members(), POSITION);
+    let store = Arc::new(store);
+    let directory = Arc::new(directory);
+    let clock = Arc::new(ManualClock::new(NOW_MS));
+    let mailbox = |incarnation: &str, events: &Arc<RecordingEvents>| {
+        Mailbox::with_triage(
+            store.clone(),
+            store.clone(),
+            directory.clone(),
+            OfficeIdentity {
+                incarnation: incarnation.into(),
+                ..identity()
+            },
+            clock.clone(),
+            events.clone(),
+        )
+        .unwrap()
+    };
+    let before_events = Arc::new(RecordingEvents::default());
+    let before = mailbox(INCARNATION, &before_events);
+    let mut ask = expired_request(1, PAT_ID, ADA_ID);
+    ask.message.header.to_display_name = ADA_NAME.into();
+    commit(&*store, ask);
+    assert_eq!(wait_now(&before, ADA_ID), None);
+    let notice = expect_notice(&*store, 1, PAT_ID, PAT_HANDLE);
+    assert_eq!(before_events.delivery_failed().len(), 1);
+
+    let after_events = Arc::new(RecordingEvents::default());
+    let after = mailbox("01JCRESTORED00000000000000", &after_events);
+    clock.set(NOW_MS + 60_000);
+    for _ in 0..2 {
+        let read = after
+            .read(
+                ADA_ID,
+                MsgReadParams {
+                    id: Some(msg_id(1)),
+                },
+            )
+            .expect("no storage_error after a restore")
+            .message
+            .unwrap();
+        assert_eq!(read.header.state, State::Expired);
+    }
+    assert_eq!(notices_for(&*store, 1), [notice]);
+    assert!(after_events.delivery_failed().is_empty());
+    assert!(after_events.received().is_empty());
+}
+
+/// A request the responder already answered isn't reported when it then expires: the asker
+/// has the answer, so no `delivery_failed` is committed, by the expiry or by a later read.
+pub fn mailbox_an_answered_request_expires_without_a_notice(backend: impl OpenTriageBackend) {
+    let office = triage_office(&backend);
+    commit(&*office.store, expired_request(1, PAT_ID, ADA_ID));
+    let mut reply = new_message(2, ADA_ID, PAT_ID, MessagePriority::Normal);
+    reply.message.header.reply_to = Some(msg_id(1));
+    reply.message.header.thread_id = msg_id(1);
+    commit(&*office.store, reply);
+
+    assert_eq!(wait_now(&office.mailbox, ADA_ID), None);
+    assert_eq!(state_of(&*office.store, &msg_id(1)), State::Expired);
+    let read = office
+        .mailbox
+        .read(
+            ADA_ID,
+            MsgReadParams {
+                id: Some(msg_id(1)),
+            },
+        )
+        .unwrap()
+        .message
+        .unwrap();
+    assert_eq!(read.header.state, State::Expired);
+    assert!(notices_for(&*office.store, 1).is_empty());
+    assert!(office.events.delivery_failed().is_empty());
+    assert_eq!(
+        office
+            .store
+            .find_reply_for_ask(&msg_id(1), ADA_ID)
+            .unwrap()
+            .map(|reply| reply.message.header.id),
+        Some(msg_id(2))
+    );
 }
 
 /// read with no id releases due snoozes first, as wait does.
@@ -1851,7 +2017,10 @@ macro_rules! triage_conformance_tests {
             mailbox_read_expires_an_overdue_request,
             mailbox_wait_expires_more_than_one_batch,
             mailbox_a_failed_notice_does_not_fail_the_recipient,
-            mailbox_a_squatted_notice_id_does_not_count_as_told,
+            mailbox_a_squatted_notice_id_is_told_via_the_fallback,
+            mailbox_squatted_notice_tells_the_asker_exactly_once,
+            mailbox_a_restored_office_does_not_notify_again,
+            mailbox_an_answered_request_expires_without_a_notice,
             mailbox_read_releases_due_snoozes,
         }
     };

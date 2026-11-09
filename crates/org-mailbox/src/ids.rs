@@ -22,16 +22,20 @@ pub(crate) fn encode_ulid(time_ms: u64, random: [u8; 10]) -> String {
         .collect()
 }
 
-/// The id of the `delivery_failed` notice for `original` at the office of `incarnation`:
-/// its time part is the original's deadline (`expires_at`; else the original id's own
-/// time), its random part the first 10 bytes of
-/// `sha256("delivery_failed:" + incarnation + ":" + original id)`. One original, one notice
-/// id per office incarnation.
+/// The id the `delivery_failed` notice for `original` is first committed under, at the
+/// office of `incarnation`: its time part is the original's deadline (`expires_at`; else the
+/// original id's own time), its random part the first 10 bytes of
+/// `sha256("delivery_failed:" + incarnation + ":" + original id)`. One original, one id per
+/// office incarnation, so a retried or racing expiry replays the same commit.
 ///
-/// The incarnation is never sent to clients, so a member can't compute the id and send its
-/// own message under it first (which would make the office think the asker was told).
-/// Callers still check that the row at the id is the notice (the Mailbox's
-/// `is_notice_for`), since an id that leaks or is guessed must not count as told.
+/// The id doesn't decide whether the asker was told: after a restore of office.db the
+/// incarnation changes and so does the id. The Mailbox asks the store instead
+/// (`MessageStore::find_reply_for_ask`: a reply from the responder or a notice already
+/// committed) and commits only when there is neither. The incarnation is never sent to
+/// clients, so a member can't easily compute the id and send its own message under it
+/// first; one that does anyway (the id leaked or was guessed) doesn't stop the notice: the
+/// Mailbox checks the row it got is the notice and otherwise commits it under
+/// [`delivery_failed_fallback_id`].
 pub(crate) fn delivery_failed_id(original: &MessageHeader, incarnation: &str) -> String {
     let time_ms = original
         .expires_at
@@ -48,6 +52,22 @@ pub(crate) fn delivery_failed_id(original: &MessageHeader, incarnation: &str) ->
     let mut random = [0; 10];
     random.copy_from_slice(&digest[..10]);
     encode_ulid(time_ms, random)
+}
+
+/// The id of the `delivery_failed` notice for `original_id` when its first id
+/// ([`delivery_failed_id`]) is held by a row that isn't the notice: its time part is the
+/// time of `now_utc` (the expiry's `now`; 0 if unreadable), its random part the first 10 bytes of
+/// `sha256("delivery_failed:fallback:" + original id + ":" + now_utc)`.
+pub(crate) fn delivery_failed_fallback_id(original_id: &str, now_utc: &str) -> String {
+    let digest = Sha256::new()
+        .chain_update(b"delivery_failed:fallback:")
+        .chain_update(original_id.as_bytes())
+        .chain_update(b":")
+        .chain_update(now_utc.as_bytes())
+        .finalize();
+    let mut random = [0; 10];
+    random.copy_from_slice(&digest[..10]);
+    encode_ulid(parse_utc(now_utc).unwrap_or(0), random)
 }
 
 #[cfg(test)]
@@ -131,6 +151,31 @@ mod tests {
             id,
             "the unkeyed id of earlier builds"
         );
+    }
+
+    #[test]
+    fn delivery_failed_fallback_id_is_timed_now_and_keyed_by_original_and_now() {
+        let now = "2026-11-08T13:00:00.000Z";
+        let original = "01JCMSG0000000000000000001";
+        let id = delivery_failed_fallback_id(original, now);
+        assert_eq!(ulid_time_ms(&id), parse_utc(now));
+        let digest = Sha256::digest(
+            b"delivery_failed:fallback:01JCMSG0000000000000000001:2026-11-08T13:00:00.000Z",
+        );
+        let mut random = [0; 10];
+        random.copy_from_slice(&digest[..10]);
+        assert_eq!(id, encode_ulid(parse_utc(now).unwrap(), random));
+        assert_eq!(delivery_failed_fallback_id(original, now), id);
+        assert_ne!(
+            delivery_failed_fallback_id("01JCMSG0000000000000000002", now),
+            id
+        );
+        assert_ne!(
+            delivery_failed_fallback_id(original, "2026-11-08T13:00:00.001Z"),
+            id
+        );
+        let deadline = request(original, Some("2026-11-08T12:02:00.000Z"));
+        assert_ne!(delivery_failed_id(&deadline, INCARNATION), id);
     }
 
     #[test]

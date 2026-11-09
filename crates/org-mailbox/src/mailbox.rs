@@ -12,13 +12,14 @@ use org_proto::msg::{
 };
 use org_proto::{ulid_time_ms, AgentStatus, Member, MemberKind, Position};
 
-use crate::ids::delivery_failed_id;
+use crate::ids::{delivery_failed_fallback_id, delivery_failed_id};
 use crate::snoozes::SnoozeTimers;
 use crate::waiters::{WaitOutcome, WaiterRegistry};
 use crate::{
-    content_hash, format_utc, parse_utc, past_deadline, Cancellation, Clock, HeaderQuery,
-    HeaderScope, LocalStateTransition, MailboxError, MemberDirectory, MessageEvent, MessageEvents,
-    MessageStore, NewStoredMessage, StoreError, StoredMessage, TriageStore, MAX_EXPIRED_IDS,
+    content_hash, format_utc, parse_utc, past_deadline, Cancellation, Clock, CommitMessageOutcome,
+    HeaderQuery, HeaderScope, LocalStateTransition, MailboxError, MemberDirectory, MessageEvent,
+    MessageEvents, MessageStore, NewStoredMessage, StoreError, StoredMessage, TriageStore,
+    MAX_EXPIRED_IDS,
 };
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -313,21 +314,12 @@ impl Mailbox {
                                 }
                             }
                             // Already expired: make sure the asker was told. A notice an
-                            // earlier expiry failed to commit is committed now (found by its
-                            // deterministic id on the read path first, so the writer is used
-                            // only when it's missing). Only the notice itself counts: any
-                            // other row under its id means the asker wasn't told.
-                            MessageLifecycleState::Expired
-                                if !self
-                                    .store
-                                    .get_message(&delivery_failed_id(
-                                        header,
-                                        &self.office.incarnation,
-                                    ))?
-                                    .is_some_and(|row| {
-                                        is_notice_for(&row.message.header, header)
-                                    }) =>
-                            {
+                            // earlier expiry failed to commit is committed now. Whether the
+                            // asker has an answer or a notice is asked of the store on the
+                            // read path first (not by the notice's id, which changes with the
+                            // office incarnation), so the writer is used only when neither
+                            // exists.
+                            MessageLifecycleState::Expired if !self.answered_or_told(header)? => {
                                 self.notify_expired(header, &now)?
                             }
                             _ => {}
@@ -695,15 +687,36 @@ impl Mailbox {
         Ok(Some(header))
     }
 
+    /// Whether the asker of `original` already has an answer from its recipient or the
+    /// office's `delivery_failed` notice ([`MessageStore::find_reply_for_ask`]). Either way
+    /// the asker needs no (other) notice.
+    fn answered_or_told(&self, original: &MessageHeader) -> Result<bool, MailboxError> {
+        Ok(self
+            .store
+            .find_reply_for_ask(&original.id, &original.to_member_id)?
+            .is_some())
+    }
+
     /// Commits the `delivery_failed` notice for an expired request to its sender, when the
-    /// sender is a member who may still receive. Its id and content are deterministic, so a
-    /// second expiry of the same request replays the first commit (`inserted: false`) and
-    /// publishes nothing. A row already at the id that isn't this request's notice
-    /// ([`is_notice_for`]) is a `StorageError`: the sender wasn't told, so it never passes
-    /// for success. It commits at this office, as slice 1's local/HQ messaging does:
-    /// routing a notice to a sender another office owns comes with cross-office routing.
+    /// sender is a member who may still receive, unless the sender already has an answer from
+    /// the recipient or a notice ([`Self::answered_or_told`], asked of the store: never
+    /// decided by the notice's id, which changes when office.db is restored and the
+    /// incarnation with it). So a request gets one notice, and an answered one none.
+    ///
+    /// The notice is committed under [`delivery_failed_id`] first: a racing expiry of the
+    /// same request replays the same commit (`inserted: false`) and publishes nothing. When
+    /// that id is taken by a row that isn't the notice ([`is_notice_for`]: a member sent a
+    /// message there first) or by other content, the store is asked again (a racing expiry
+    /// may have committed the notice meanwhile), and if the sender still has neither, the
+    /// notice is committed once more under [`delivery_failed_fallback_id`]. If that fails
+    /// too, the error is returned. It commits at this office, as slice 1's local/HQ
+    /// messaging does: routing a notice to a sender another office owns comes with
+    /// cross-office routing.
     fn notify_expired(&self, original: &MessageHeader, now: &str) -> Result<(), MailboxError> {
         if original.from_member_id == OFFICE_SENDER || original.kind == KIND_DELIVERY_FAILED {
+            return Ok(());
+        }
+        if self.answered_or_told(original)? {
             return Ok(());
         }
         let Some((sender, position)) = self.directory.resolve_member(&original.from_member_id)?
@@ -713,7 +726,54 @@ impl Mailbox {
         if sender.id != original.from_member_id || !can_message(&sender) {
             return Ok(());
         }
-        let id = delivery_failed_id(original, &self.office.incarnation);
+        let notice = self.expired_notice(
+            original,
+            sender,
+            position,
+            delivery_failed_id(original, &self.office.incarnation),
+            now,
+        )?;
+        match self.store.commit_message(notice.clone()) {
+            Ok(outcome) if is_notice_for(&outcome.message.message.header, original) => {
+                self.announce_notice(&outcome, original);
+                return Ok(());
+            }
+            // The id is held by a row that isn't the notice, or by other content (an earlier
+            // notice under an old display name, which the check below then finds).
+            Ok(_) | Err(StoreError::AlreadyExists) => {}
+            Err(error) => return Err(error.into()),
+        }
+        if self.answered_or_told(original)? {
+            return Ok(());
+        }
+        let fallback = NewStoredMessage {
+            message: Message {
+                header: MessageHeader {
+                    id: delivery_failed_fallback_id(&original.id, now),
+                    ..notice.message.header
+                },
+                ..notice.message
+            },
+            ..notice
+        };
+        let outcome = self.store.commit_message(fallback)?;
+        if !is_notice_for(&outcome.message.message.header, original) {
+            return Err(MailboxError::StorageError);
+        }
+        self.announce_notice(&outcome, original);
+        Ok(())
+    }
+
+    /// The `delivery_failed` notice for `original`, to its sender, under `id`. It holds no
+    /// content of the original: fixed text and the recipient's id and name.
+    fn expired_notice(
+        &self,
+        original: &MessageHeader,
+        sender: Member,
+        position: Position,
+        id: String,
+        now: &str,
+    ) -> Result<NewStoredMessage, MailboxError> {
         let body = format!(
             "Your request to {} expired before they acted on it.",
             original.to_display_name
@@ -739,7 +799,7 @@ impl Mailbox {
             &meta,
         )?;
         let header = MessageHeader {
-            id: id.clone(),
+            id,
             thread_id: original.thread_id.clone(),
             reply_to: Some(original.id.clone()),
             from_member_id: OFFICE_SENDER.into(),
@@ -764,7 +824,7 @@ impl Mailbox {
             read_at: None,
             expired_waiting_person: false,
         };
-        let outcome = match self.store.commit_message(NewStoredMessage {
+        Ok(NewStoredMessage {
             message: Message { header, body, meta },
             origin_office_id: self.office.office_id.clone(),
             origin_incarnation: self.office.incarnation.clone(),
@@ -772,40 +832,31 @@ impl Mailbox {
             org_position: position,
             content_hash: hash,
             initial_state: MessageLifecycleState::Unread,
-        }) {
-            Ok(outcome) => outcome,
-            // The id is taken by a row with other content: the sender was told only if that
-            // row is this request's notice (an earlier one, e.g. under an old display name).
-            Err(StoreError::AlreadyExists) => {
-                return match self.store.get_message(&id)? {
-                    Some(row) if is_notice_for(&row.message.header, original) => Ok(()),
-                    _ => Err(MailboxError::StorageError),
-                };
-            }
-            Err(error) => return Err(error.into()),
-        };
-        if !is_notice_for(&outcome.message.message.header, original) {
-            return Err(MailboxError::StorageError);
+        })
+    }
+
+    /// Wakes the asker and publishes the notice's events, when this commit inserted it (a
+    /// replay publishes nothing).
+    fn announce_notice(&self, outcome: &CommitMessageOutcome, original: &MessageHeader) {
+        if !outcome.inserted {
+            return;
         }
-        if outcome.inserted {
-            let header = &outcome.message.message.header;
-            self.waiters.notify(&header.to_member_id);
-            self.events
-                .publish(MessageEvent::Received(Box::new(MessageReceivedData {
-                    header: header.clone(),
-                })));
-            self.events
-                .publish(MessageEvent::DeliveryFailed(MessageDeliveryFailedData {
-                    id: header.id.clone(),
-                    original_id: original.id.clone(),
-                    thread_id: original.thread_id.clone(),
-                    from_member_id: original.from_member_id.clone(),
-                    recipient_id: original.to_member_id.clone(),
-                    recipient_name: original.to_display_name.clone(),
-                    reason: DeliveryFailedReason::Expired,
-                }));
-        }
-        Ok(())
+        let header = &outcome.message.message.header;
+        self.waiters.notify(&header.to_member_id);
+        self.events
+            .publish(MessageEvent::Received(Box::new(MessageReceivedData {
+                header: header.clone(),
+            })));
+        self.events
+            .publish(MessageEvent::DeliveryFailed(MessageDeliveryFailedData {
+                id: header.id.clone(),
+                original_id: original.id.clone(),
+                thread_id: original.thread_id.clone(),
+                from_member_id: original.from_member_id.clone(),
+                recipient_id: original.to_member_id.clone(),
+                recipient_name: original.to_display_name.clone(),
+                reason: DeliveryFailedReason::Expired,
+            }));
     }
 
     /// Publishes `message.state_changed` for a header a triage call returned. A repeated
@@ -1088,9 +1139,9 @@ mod tests {
         assert_eq!(timers.next_for(ADA_ID), Some(epoch_ms(NOW_MS + 2_000)));
     }
 
-    /// Expiring a request twice commits one notice: the second commit is a replay
-    /// (`inserted: false`), and one with other content (the recipient renamed since) finds
-    /// the first notice under the id. Both count as told.
+    /// Expiring a request twice commits one notice: the second finds the first through the
+    /// store (`find_reply_for_ask`) and commits nothing, as does one with other content (the
+    /// recipient renamed since). Both count as told.
     #[test]
     fn expiring_twice_commits_exactly_one_notice() {
         use crate::testkit::conformance::{commit, expired_request};
