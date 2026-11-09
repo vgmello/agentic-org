@@ -597,6 +597,9 @@ pub enum WorkEventKind {
     Triaged { area_id: String, severity: Severity, priority: Priority, assignee_id: Option<String> },
     Verified { outcome: VerifyOutcome, by_reporter: bool, note: Option<String> },
     Reopened { note: Option<String> },
+    Routed { from: ItemStatus, to: ItemStatus, scoper_from: Option<String>, scoper_to: Option<String>,
+             reason: Option<String>, routed_by: Option<RoutedBy> },  // (amended 2026-11-09: request events)
+                                                    // request.route (unroute: scoper_to None, to: new) and request.accept (§4.7)
     Linked { link: Link }, Unlinked { link_id: String },
     Comment { comment_id: String, body: String, comment_kind: CommentKind,
               asks: Option<String>, answers: Option<String>,
@@ -715,6 +718,12 @@ A `question` with `asks` = the owner starts a **waiting on the owner** span on t
 | `request.approve` (**app only**) | `item_id`, `expected_version`, `tasks: Vec<ApprovedTask>` (1–50) | `not_authorized`, `not_found`, `invalid_request` (wrong state; no project; a task over limits), `unknown_recipient`, `conflict`, `already_exists` |
 | `request.decline` | `item_id`, `expected_version`, `reason` | `not_found`, `invalid_request`, `conflict` |
 | `request.merge` | `item_id`, `expected_version`, `into` (a request id), `comment_id` | `not_found`, `invalid_request` (itself; `into` not open), `conflict` |
+
+Each request call records one event on the request (§2.3) (amended 2026-11-09: request events):
+- `request.create`: `Created`; the initial routing is part of the created item's state.
+- `request.route` and `request.accept`: `Routed { from, to, scoper_from?, scoper_to?, reason?, routed_by? }`. A re-route has `to: routed`; an unroute has no `scoper_to` and `to: new`; an accept has `scoper_to` = the caller and `to: scoping`.
+- `request.ask_changes`: `StatusChanged { from: scoped, to: scoping, reason: note }`.
+- `request.scope`, `request.approve`, `request.decline`, `request.merge`: `StatusChanged`, with `resolution` / `reason` where relevant.
 
 `ApprovedTask { item_id, link_id, title, description?, definition_of_done?, assignee_id?, team_id?, priority?, checklist? }`: the drafts as the owner edited them (RQS-9). `request.approve` creates them all or none, each with a `from_request` link and, when the outcome names a feature, its `feature_id`; the feature becomes `planned`.
 
