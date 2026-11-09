@@ -70,12 +70,6 @@ impl From<Failure> for CliError {
     }
 }
 
-impl From<org_client::ClientError> for CliError {
-    fn from(value: org_client::ClientError) -> Self {
-        Self::Failed(Failure::from_office(&value))
-    }
-}
-
 fn run_relay_loop(spool: &Spool, once: bool) -> Result<u8, CliError> {
     match spool.run_relay(once)? {
         RelayOutcome::AlreadyRunning => {
@@ -426,7 +420,7 @@ fn print_card(card: &DirectoryCard) {
     } else {
         card.kind.clone()
     };
-    println!("id:          {}", card.id);
+    println!("id:          {}", clean(&card.id));
     println!("name:        {}", clean(&card.name));
     println!("kind:        {}", clean(&kind));
     println!(
@@ -460,7 +454,7 @@ fn print_card(card: &DirectoryCard) {
         card.presence,
         card.last_seen_at
             .as_deref()
-            .map(|t| format!(" (last seen {t})"))
+            .map(|t| format!(" (last seen {})", clean(t)))
             .unwrap_or_default()
     );
     println!(
@@ -474,7 +468,7 @@ fn print_card_row(card: &DirectoryCard) {
     let clean = |s: &str| sanitize_inline_text(s, 140);
     println!(
         "{}\t{}\t{}\t{}\t{}\t{}",
-        card.id,
+        clean(&card.id),
         clean(&card.name),
         clean(&card.kind),
         card.presence,
@@ -511,21 +505,21 @@ fn print_usage() {
         "\
 Usage:
   org-agent whoami [--as <agent>] [--json]
-  org-agent who    [<member>] [--team <team>] [--kind agent|person|owner] [--json]
+  org-agent who    [<member>] [--team <team>] [--kind agent|person|owner] [--office <id>] [--json]
   org-agent status [<text> | --clear] [--ttl 8h] [--as <agent>] [--json]
   org-agent profile set [<id>] [--name <n>] [--kind agent|person] [--owner] [--role <r>] [--team <id[:name[:title]]>] [--reports-to <id[:name]>] [--office <id[:name]>] [--as <agent>] [--json]
   org-agent msg register [<agent>] [--name <n>] [--kind agent|person] [--role <r>] [--team <t>] [--reports-to <r>] [--as <agent>] [--json]
   org-agent msg deregister <agent> [--json]
-  org-agent msg send   --to <agent> [--subject <s>] [--priority normal|high|urgent] [--meta k=v] [--as <agent>] [--json] <body | ->
+  org-agent msg send   --to <agent> [--subject <s>] [--priority normal|high|urgent] [--meta k=v] [--office <id>] [--as <agent>] [--json] <body | ->
   org-agent msg ask    --to <agent> [--timeout 120s] [--subject <s>] [--priority high|urgent] [--meta k=v] [--as <agent>] [--json] <body | ->
   org-agent msg reply  <id> [--subject <s>] [--priority normal|high|urgent] [--meta k=v] [--as <agent>] [--json] [--body <body> | <body | ->]
   org-agent msg defer  <id> --until <30m|2h|after-task|ISO> [--note <text>] [--as <agent>] [--json]
   org-agent msg done   <id> [--note <text>] [--as <agent>] [--json]
   org-agent msg notify [--session <id>] [--after-task] [--urgent-only] [--sweep-after 5m] [--format text|json] [--as <agent>]
   org-agent msg due    [--after-task] [--urgent-only] [--sweep-after 5m] [--as <agent>]   (JSON, exit 0)
-  org-agent msg inbox  [--all] [--summary] [--from <agent>] [--thread <id>] [--limit <n>] [--as <agent>] [--json]
-  org-agent msg read   <id> | --next [--as <agent>] [--json]
-  org-agent msg wait   [--timeout 60s] [--from <agent>] [--urgent-only] [--as <agent>] [--json]
+  org-agent msg inbox  [--all] [--summary] [--from <agent>] [--thread <id>] [--limit <n>] [--office <id>] [--as <agent>] [--json]
+  org-agent msg read   <id> | --next [--office <id>] [--as <agent>] [--json]
+  org-agent msg wait   [--timeout 60s] [--from <agent>] [--urgent-only] [--office <id>] [--as <agent>] [--json]
   org-agent relay <run [--once] | status [--json]>"
     );
 }
@@ -1267,7 +1261,7 @@ fn msg_send(sub_args: &[String], as_agent: Option<&str>, json_flag: bool) -> Res
         .ok_or_else(|| CliError::Usage("send requires --to <agent>".into()))?;
     let office_flag = parsed.office.clone();
     let msg = parsed.outgoing(0)?;
-    let queued = match office::route(&from, office_flag.as_deref())? {
+    let unreachable = match office::route(&from, office_flag.as_deref())? {
         Route::Office(office) => {
             let id = office.send(&to, msg)?;
             if json_flag {
@@ -1277,14 +1271,19 @@ fn msg_send(sub_args: &[String], as_agent: Option<&str>, json_flag: bool) -> Res
             }
             return Ok(EXIT_OK);
         }
-        Route::Unreachable(why) => {
-            eprintln!("{}", why.queued_notice());
-            true
-        }
-        Route::NoOffice => false,
+        Route::Unreachable(why) => Some(why),
+        Route::NoOffice => None,
     };
-    let env = local_spool(as_agent)?.send(&from, &to, msg)?;
-    if json_flag && queued {
+    let spooled = local_spool(as_agent).and_then(|spool| Ok(spool.send(&from, &to, msg)?));
+    // The notice says "queued" only once the spool has the message.
+    if let Some(why) = &unreachable {
+        match &spooled {
+            Ok(_) => eprintln!("{}", why.queued_notice()),
+            Err(_) => eprintln!("{}", why.not_queued_notice()),
+        }
+    }
+    let env = spooled?;
+    if json_flag && unreachable.is_some() {
         println!("{{\"id\":{},\"queued\":true}}", json_quote(&env.id));
     } else if json_flag {
         println!("{{\"id\":{}}}", json_quote(&env.id));

@@ -32,13 +32,16 @@ use org_spool::{
 };
 use serde::Serialize;
 
-use crate::{EXIT_IO, EXIT_TIMEOUT, EXIT_UNKNOWN_RECIPIENT, EXIT_USAGE};
+use crate::{EXIT_INTERRUPTED, EXIT_IO, EXIT_TIMEOUT, EXIT_UNKNOWN_RECIPIENT, EXIT_USAGE};
 
 /// The exit code for an office that is busy or not ready (`unavailable`; ADR-0003 §2.6).
 const EXIT_OFFICE_UNAVAILABLE: u8 = 5;
 
 /// The variable that names the agent's office (ADR-0003 §2.1); `--office` wins over it.
 const OFFICE_ENV: &str = "ORG_OFFICE";
+
+/// Set for an agent the office runs (ADR-0003 §2.1.4). Such an agent never uses the spool.
+const SESSION_TOKEN_ENV: &str = "ORG_SESSION_TOKEN";
 
 /// How much longer than the wait itself a `msg.wait` call may take to be answered.
 const WAIT_ANSWER_MARGIN: Duration = Duration::from_secs(10);
@@ -111,6 +114,14 @@ impl Unreachable {
         )
     }
 
+    /// The stderr line when the spool refused the send too (its own error follows).
+    pub(crate) fn not_queued_notice(&self) -> String {
+        format!(
+            "org-agent: office {} is not reachable ({}), and the local spool did not take the message",
+            self.office_id, self.reason
+        )
+    }
+
     /// The stderr line when the read side shows the local spool instead.
     pub(crate) fn spool_notice(&self) -> String {
         format!(
@@ -130,10 +141,28 @@ pub(crate) fn route(member: &str, office_flag: Option<&str>) -> Result<Route, Fa
     };
     let from_env = env::var(OFFICE_ENV).ok().filter(|id| !id.is_empty());
     let chosen = office_flag.or(from_env.as_deref());
-    decide(find_office(&home, chosen), member, |office_id| {
+    let route = decide(find_office(&home, chosen), member, |office_id| {
         open_as(&home, office_id, member)
     })
-    .map_err(|why| why.into_failure(member))
+    .map_err(|why| why.into_failure(member))?;
+    let office_run = env::var_os(SESSION_TOKEN_ENV).is_some_and(|t| !t.is_empty());
+    no_spool_when_office_run(route, office_run)
+}
+
+/// An office-run agent (`ORG_SESSION_TOKEN` set) never falls back to the spool: its office
+/// not answering is exit 5 (ADR-0003 §2.1.4, §2.6). Office-run agents can't bind through this
+/// CLI yet (the session token isn't in the contract), so this only keeps them off the spool.
+fn no_spool_when_office_run(route: Route, office_run: bool) -> Result<Route, Failure> {
+    match route {
+        Route::Unreachable(why) if office_run => Err(Failure::new(
+            EXIT_OFFICE_UNAVAILABLE,
+            format!(
+                "office {} is not reachable ({}); an agent the office runs doesn't use the local spool",
+                why.office_id, why.reason
+            ),
+        )),
+        other => Ok(other),
+    }
 }
 
 /// Why [`decide`] found no route.
@@ -150,16 +179,21 @@ impl NoRoute {
     fn into_failure(self, member: &str) -> Failure {
         match self {
             NoRoute::Find(error) => Failure::new(EXIT_USAGE, error.to_string()),
-            NoRoute::Refused { office_id, error } => {
-                let code = match &error {
-                    ClientError::Api(_) => exit_code(&error),
-                    _ => EXIT_IO,
-                };
-                Failure::new(
-                    code,
+            NoRoute::Refused { office_id, error } => match &error {
+                ClientError::Api(api)
+                    if matches!(api.code, ErrorCode::Unavailable | ErrorCode::NotReady) =>
+                {
+                    Failure::new(
+                        EXIT_OFFICE_UNAVAILABLE,
+                        format!("office {office_id} is not ready: {error}"),
+                    )
+                }
+                ClientError::Api(_) => Failure::new(
+                    exit_code(&error),
                     format!("office {office_id} did not let '{member}' in: {error}"),
-                )
-            }
+                ),
+                _ => Failure::new(EXIT_IO, format!("can't use office {office_id}: {error}")),
+            },
         }
     }
 }
@@ -217,6 +251,13 @@ impl Office {
     /// Calls `C`, binding again once if the office answers `not_bound`.
     fn call<C: Call>(&self, params: &C::Params) -> Result<C::Result, Failure> {
         loop {
+            // A person's Ctrl-C (the handler only sets a flag) ends the command between calls.
+            if is_interrupted() {
+                return Err(Failure {
+                    code: EXIT_INTERRUPTED,
+                    message: None,
+                });
+            }
             match self.client.call::<C>(params) {
                 Err(error) if is_not_bound(&error) => self.bind_again()?,
                 outcome => return outcome.map_err(|e| Failure::from_office(&e)),
@@ -269,16 +310,19 @@ impl Office {
                 .and_then(|p| MessagePriority::parse(p).ok())
         });
         // One id for the message, so a retry after binding again is the same send.
-        let sent = self.call::<MsgSend>(&MsgSendParams {
-            id: generate_ulid(),
-            to: to.to_owned(),
-            kind: KIND_MSG.to_owned(),
-            priority: priority.map(proto_priority),
-            subject,
-            body,
-            meta,
-            reply_to: None,
-        })?;
+        let id = generate_ulid();
+        let sent = self
+            .call::<MsgSend>(&MsgSendParams {
+                id: id.clone(),
+                to: to.to_owned(),
+                kind: KIND_MSG.to_owned(),
+                priority: priority.map(proto_priority),
+                subject,
+                body,
+                meta,
+                reply_to: None,
+            })
+            .map_err(|failure| unknown_outcome(failure, &id))?;
         Ok(sent.id)
     }
 
@@ -377,6 +421,21 @@ impl Office {
     }
 }
 
+/// A send whose call failed without an answer from the office (exit 4): it may have been
+/// delivered, so say so, with its id, rather than invite a second copy.
+fn unknown_outcome(failure: Failure, id: &str) -> Failure {
+    if failure.code != EXIT_IO {
+        return failure;
+    }
+    let why = failure.message.unwrap_or_default();
+    Failure::new(
+        EXIT_IO,
+        format!(
+            "{why}; message {id} may or may not have been delivered: check before sending it again"
+        ),
+    )
+}
+
 fn is_not_bound(error: &ClientError) -> bool {
     matches!(error, ClientError::Api(e) if e.code == ErrorCode::NotBound)
 }
@@ -453,7 +512,9 @@ fn inbox_item(header: &MessageHeader) -> InboxItem {
 
 /// A message as `read` and `wait` print it: the fields and order of the spool's envelope
 /// (`org_spool::Envelope`), so `--json` reads the same either way.
-#[derive(Debug, Serialize)]
+///
+/// No `Debug`: it holds a body and meta, which never go to a log.
+#[derive(Serialize)]
 pub(crate) struct Shown {
     pub v: u32,
     pub id: String,
@@ -630,6 +691,62 @@ mod tests {
             }))
         });
         assert_eq!(other.err().unwrap().into_failure("pixel").code, EXIT_IO);
+    }
+
+    #[test]
+    fn an_office_run_agent_never_falls_back_to_the_spool() {
+        let unreachable = || {
+            Route::Unreachable(Unreachable {
+                office_id: "O1".into(),
+                reason: not_running(),
+            })
+        };
+        let failure = no_spool_when_office_run(unreachable(), true).err().unwrap();
+        assert_eq!(failure.code, EXIT_OFFICE_UNAVAILABLE);
+        assert!(failure
+            .message
+            .unwrap()
+            .contains("doesn't use the local spool"));
+        assert!(matches!(
+            no_spool_when_office_run(unreachable(), false),
+            Ok(Route::Unreachable(_))
+        ));
+        assert!(matches!(
+            no_spool_when_office_run(Route::NoOffice, true),
+            Ok(Route::NoOffice)
+        ));
+    }
+
+    #[test]
+    fn a_bind_the_office_did_not_refuse_is_not_worded_as_a_refusal() {
+        let failure = |error| {
+            NoRoute::Refused {
+                office_id: "O1".into(),
+                error,
+            }
+            .into_failure("pixel")
+        };
+        let starting = failure(api(ErrorCode::NotReady));
+        assert_eq!(starting.code, EXIT_OFFICE_UNAVAILABLE);
+        assert!(starting.message.unwrap().contains("office O1 is not ready"));
+        let version = failure(ClientError::VersionMismatch {
+            client: 1,
+            server: 2,
+        });
+        assert_eq!(version.code, EXIT_IO);
+        assert!(version.message.unwrap().starts_with("can't use office O1"));
+    }
+
+    #[test]
+    fn a_send_that_got_no_answer_says_it_may_have_been_delivered() {
+        let lost = unknown_outcome(Failure::from_office(&ClientError::Disconnected), "01ID");
+        assert_eq!(lost.code, EXIT_IO);
+        assert!(lost
+            .message
+            .unwrap()
+            .contains("message 01ID may or may not have been delivered"));
+        let refused = unknown_outcome(Failure::from_office(&api(ErrorCode::TooLarge)), "01ID");
+        assert_eq!(refused.message.as_deref(), Some("fixed words"));
     }
 
     #[test]

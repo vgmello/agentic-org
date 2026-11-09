@@ -683,6 +683,19 @@ fn send_falls_back_to_the_spool_when_the_office_is_down() {
     assert_eq!(spooled.len(), 1);
     assert!(spooled[0].ends_with(format!("{id}.json")), "{spooled:?}");
 
+    // A recipient the spool doesn't know: the spool refuses it (exit 3), and nothing claims it
+    // was queued.
+    let refused = world.run("pixel", &["msg", "send", "--to", "stranger", secret]);
+    assert_eq!(refused.code, 3, "{}", refused.stderr);
+    assert!(
+        refused.stderr.contains("did not take the message"),
+        "{}",
+        refused.stderr
+    );
+    assert!(!refused.stderr.contains("queued in"), "{}", refused.stderr);
+    assert!(!refused.stderr.contains(secret));
+    assert_eq!(world.spooled().len(), 1);
+
     // The read side says the office isn't reachable and shows the local spool, as before.
     world.run("nova", &["relay", "run", "--once"]).ok();
     let inbox = world.run("nova", &["msg", "inbox", "--json"]).ok();
