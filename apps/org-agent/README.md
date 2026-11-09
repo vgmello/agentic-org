@@ -73,6 +73,8 @@ through an office only when one is named: `--office <id>` or `$ORG_OFFICE`. With
 use the local spool exactly as before, even on a Mac that has an office. (Once the office serves
 `notify`, `reply`, `defer` and `done`, the default becomes ADR-0003 §2.1's: the only office with
 an `office.json` in the office home.) Agents must be members of the office before they name it.
+A named office that isn't on this Mac (no valid `office.json` for it in the office home, e.g. a
+typo) is exit 1, told before any connection is tried.
 
 **Don't set `ORG_OFFICE` on a working agent yet.** `reply`, `defer`, `done`, `notify` (and so the
 inbox hooks), `ask`, `due`, `status` and `profile` still use the local spool. An agent that names

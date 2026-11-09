@@ -63,8 +63,8 @@ fn main() {
             an_agent_offboarded_during_a_wait_is_told_and_not_left_waiting,
         ),
         (
-            "send_falls_back_to_the_spool_when_the_office_is_down",
-            send_falls_back_to_the_spool_when_the_office_is_down,
+            "a_send_to_an_office_that_is_down_is_refused_until_ingest",
+            a_send_to_an_office_that_is_down_is_refused_until_ingest,
         ),
         (
             "an_office_not_named_is_not_used",
@@ -512,6 +512,34 @@ fn office_errors_keep_their_exit_codes_and_never_show_a_body() {
     );
     assert_eq!(bad.code, 1);
     assert!(world.spooled().is_empty());
+
+    // An office id with no office.json here (a typo) is told at once (exit 1), before any
+    // connection: it isn't "unreachable", and nothing is sent or spooled.
+    for args in [
+        &[
+            "msg",
+            "send",
+            "--office",
+            "01OFFICE00000000000000XX9",
+            "--to",
+            "nova",
+            secret,
+        ][..],
+        &["msg", "inbox", "--office", "01OFFICE00000000000000XX9"][..],
+    ] {
+        let typo = world.run("pixel", args);
+        assert_eq!(typo.code, 1, "{args:?}: {}", typo.stderr);
+        assert!(
+            typo.stderr
+                .contains("office 01OFFICE00000000000000XX9 isn't on this Mac"),
+            "{}",
+            typo.stderr
+        );
+        assert!(!typo.stderr.contains("not reachable"), "{}", typo.stderr);
+        assert!(!typo.stderr.contains(secret));
+    }
+    assert!(world.spooled().is_empty());
+    assert!(world.office_spooled().is_empty());
 }
 
 fn wait_wakes_on_a_send() {
@@ -674,7 +702,7 @@ fn an_agent_offboarded_during_a_wait_is_told_and_not_left_waiting() {
     assert!(next.stdout.is_empty());
 }
 
-fn send_falls_back_to_the_spool_when_the_office_is_down() {
+fn a_send_to_an_office_that_is_down_is_refused_until_ingest() {
     let world = World::new();
     let mut server = world.office();
     server.stop();
@@ -765,12 +793,11 @@ fn with_no_office_on_this_mac_the_spool_is_used_quietly() {
     assert_eq!(who.stderr, "");
     assert!(who.json().is_array(), "{}", who.stdout);
     assert_eq!(world.run_unnamed("nova", &["msg", "inbox"]).ok().stderr, "");
-    // Named but not on this Mac: unreachable, so the send is refused (exit 5), and no office
-    // folder is made.
+    // Named but not on this Mac: told so (exit 1), and no office folder is made.
     let named = world.run("pixel", &["msg", "send", "--to", "nova", "hi"]);
-    assert_eq!(named.code, 5, "{}", named.stderr);
+    assert_eq!(named.code, 1, "{}", named.stderr);
     assert!(
-        named.stderr.contains("nothing was sent"),
+        named.stderr.contains("isn't on this Mac"),
         "{}",
         named.stderr
     );
@@ -811,6 +838,8 @@ fn an_office_run_agent_never_falls_back_to_the_spool() {
     assert!(!spool.exists(), "the spool was opened");
 
     // Its office named but not running: exit 5, nothing spooled.
+    let mut server = world.office();
+    server.stop();
     let sent: Run = world
         .agent("pixel", &["msg", "send", "--to", "nova", "hi"])
         .env("ORG_OFFICE", OFFICE)

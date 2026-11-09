@@ -43,6 +43,9 @@ const MAX_PAUSE: Duration = Duration::from_millis(200);
 pub enum FindOfficeError {
     /// The office asked for isn't a plain id (1 to 64 ASCII letters and digits).
     NotAPlainId,
+    /// The office asked for has no valid `office.json` in this Mac's office home (a typo, or an
+    /// office of another Mac).
+    NotOnThisMac(String),
     /// More than one office on this Mac has an `office.json`, and none was asked for. Their
     /// ids, sorted.
     Ambiguous(Vec<String>),
@@ -56,6 +59,7 @@ impl fmt::Display for FindOfficeError {
             FindOfficeError::NotAPlainId => {
                 write!(f, "the office id must be 1 to 64 ASCII letters and digits")
             }
+            FindOfficeError::NotOnThisMac(id) => write!(f, "office {id} isn't on this Mac"),
             FindOfficeError::Ambiguous(ids) => write!(
                 f,
                 "{} offices are on this Mac ({}); set ORG_OFFICE or pass --office <id>",
@@ -69,18 +73,27 @@ impl fmt::Display for FindOfficeError {
 
 impl std::error::Error for FindOfficeError {}
 
-/// The office to talk to: `chosen` (from `--office` or `ORG_OFFICE`) if given, else the only
-/// office in `<home>/offices/` with a valid `office.json` that names its folder. `None` when no
+/// The office to talk to: `chosen` (from `--office` or `ORG_OFFICE`) if given and it is an
+/// office of this Mac, else the only office in `<home>/offices/` with a valid `office.json` that
+/// names its folder. `None` when no
 /// office was asked for and there is none: the Mac has no office (yet).
 ///
 /// Folders without an `office.json` (an unfinished create), with one that is unreadable,
 /// invalid, a symlink, not owned by this user, or for another office, are not offices.
 pub fn find_office(home: &Path, chosen: Option<&str>) -> Result<Option<String>, FindOfficeError> {
     if let Some(id) = chosen {
-        return if is_plain_id(id) {
+        if !is_plain_id(id) {
+            return Err(FindOfficeError::NotAPlainId);
+        }
+        // A named office must be one of this Mac's (a typo is told, not tried as a socket).
+        let folder = home.join(OFFICES_DIR_NAME).join(id);
+        let is_office = fs::symlink_metadata(&folder).is_ok_and(|m| m.file_type().is_dir())
+            && read_office_file(&folder.join(OFFICE_FILE_NAME))
+                .is_some_and(|office| office.names_folder(id));
+        return if is_office {
             Ok(Some(id.to_owned()))
         } else {
-            Err(FindOfficeError::NotAPlainId)
+            Err(FindOfficeError::NotOnThisMac(id.to_owned()))
         };
     }
     let offices = match fs::read_dir(home.join(OFFICES_DIR_NAME)) {
@@ -695,8 +708,21 @@ mod tests {
         put(&home, A, A);
         put(&home, B, B);
         assert_eq!(find_office(&home, Some(B)).unwrap(), Some(B.to_owned()));
-        // Asked for by id, it needn't have an office.json here: its socket decides.
-        assert_eq!(find_office(&home, Some("X1")).unwrap(), Some("X1".into()));
+        // Asked for by id, it must be an office of this Mac: a typo is told.
+        match find_office(&home, Some("X1")) {
+            Err(FindOfficeError::NotOnThisMac(id)) => assert_eq!(id, "X1"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            find_office(&home, Some("X1")).unwrap_err().to_string(),
+            "office X1 isn't on this Mac"
+        );
+        // A folder without office.json (an unfinished create) isn't one either.
+        fs::create_dir_all(home.join(OFFICES_DIR_NAME).join("X2")).unwrap();
+        assert!(matches!(
+            find_office(&home, Some("X2")),
+            Err(FindOfficeError::NotOnThisMac(_))
+        ));
         for bad in ["", "../x", "a/b", "a.b", &"a".repeat(65)] {
             assert!(
                 matches!(

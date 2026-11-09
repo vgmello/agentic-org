@@ -1257,16 +1257,28 @@ fn org_relay_symlink_behaves_like_v1_old_org_relay() {
 }
 
 #[test]
-fn office_is_accepted_and_ignored_by_read_and_whoami() {
+fn office_is_ignored_by_whoami_and_names_the_office_for_read() {
     let env = setup("office");
     let r = env.run(ME, &["whoami", "--office", "hq"]);
     assert_eq!((r.code, r.stdout.as_str()), (0, ME), "{}", r.stderr);
     assert_eq!(env.run(ME, &["whoami", "--office"]).code, 1);
     assert_eq!(env.run(ME, &["whoami", "extra"]).code, 1);
     let id = env.send(PEER, ME, &["hello"]);
-    let r = env.run(ME, &["msg", "read", &id, "--office", "hq"]);
+    // Without --office, read uses the spool.
+    let r = env.run(ME, &["msg", "read", &id]);
     assert_eq!(r.code, 0, "{}", r.stderr);
     assert!(r.stdout.contains("hello"));
+    // --office names the office (the cutover's opt-in): one that isn't on this Mac is exit 1,
+    // and the spool isn't touched instead.
+    let id = env.send(PEER, ME, &["again"]);
+    let r = env.run(ME, &["msg", "read", &id, "--office", "hq"]);
+    assert_eq!(r.code, 1, "{}", r.stderr);
+    assert!(
+        r.stderr.contains("office hq isn't on this Mac"),
+        "{}",
+        r.stderr
+    );
+    assert!(env.run(ME, &["msg", "read", &id]).stdout.contains("again"));
     assert_eq!(env.run(ME, &["msg", "read", "--next", "--office"]).code, 1);
 }
 

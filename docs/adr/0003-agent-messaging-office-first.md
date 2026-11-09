@@ -465,12 +465,12 @@ org-agent msg wait   [--timeout 60s] [--from <member>] [--urgent-only] [--office
 
 | Exit Code | Meaning | `org-proto` Error Codes / Conditions |
 | :--- | :--- | :--- |
-| `0` | Success (`read --next` on empty inbox prints `null` in `--json` and exits `0`; `notify` when nothing is due exits `0`) | `ok: true` (or offline spool queued on `send`) |
+| `0` | Success (`read --next` on empty inbox prints `null` in `--json` and exits `0`; `notify` when nothing is due exits `0`) | `ok: true` (or offline spool queued on `send`). (amended 2026-11-09: cutover, see §3.5 item 3) During the cutover, `inbox`, `read`, `wait` and `who` with a named office that doesn't answer fall back to the local spool and exit `0`. |
 | `1` | Usage, validation, or authorization error | `invalid_request`, `invalid_name`, `too_large`, `already_exists`, `not_found`, `not_bound`, and (amended 2026-11-08: agent sessions rev 3, ada) `not_authorized`, `conflict` and `held` |
 | `2` | Timeout waiting for message or reply | `timeout` (or `msg.wait` returning `null` at deadline) |
 | `3` | Unknown recipient | `unknown_recipient` |
 | `4` | Storage or protocol error (including any future error code that decodes as `ErrorCode::Unknown` on an older CLI) | `storage_error`, `unknown_method`, `unknown`, frame decode error |
-| `5` | Office server unavailable | Socket connect failure on `ask`, `reply`, `defer`, `done`, `notify`, `due`, `wait`, `read`, `inbox`, `who`, `status`; (amended 2026-11-08: agent sessions rev 3, ada) the `unavailable` error code; and a `send` that can't reach the office when `ORG_SESSION_TOKEN` is set (office-run agents don't spool) |
+| `5` | Office server unavailable | Socket connect failure on `ask`, `reply`, `defer`, `done`, `notify`, `due`, `wait`, `read`, `inbox`, `who`, `status`; (amended 2026-11-08: agent sessions rev 3, ada) the `unavailable` error code; and a `send` that can't reach the office when `ORG_SESSION_TOKEN` is set (office-run agents don't spool). (amended 2026-11-09: cutover, see §3.5 item 3) During the cutover, a `send` to a named office that doesn't answer exits `5` and sends nothing, until the office ingests its spool; and every command that would open the local spool exits `5` when `ORG_SESSION_TOKEN` is set. |
 | `10` | Normal (non-urgent) messages need triage (`msg notify` only) | `msg notify` found $>0$ actionable normal messages and $0$ urgent messages |
 | `11` | Urgent messages need triage (`msg notify` only) | `msg notify` found $>0$ actionable urgent messages |
 | `130` | Interrupted | `SIGINT` / `SIGTERM` |
