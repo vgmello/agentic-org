@@ -11,8 +11,8 @@ export const PRIORITIES: { id: Exclude<Priority, 'unknown'>; label: string }[] =
 ];
 const RANK: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
 
-/** "T-12", or "Pending · 3k9f2x" while HQ has not numbered it. */
-export const taskRef = (t: WorkItemSummary): string => (t.number ? `T-${t.number}` : `Pending · ${t.short_id}`);
+/** "T-12" (or "chk-T-12" where items of several projects are listed), or "Pending · 3k9f2x" while HQ has not numbered it. */
+export const taskRef = (t: WorkItemSummary, projectKey?: string): string => (t.number ? `${projectKey ? `${projectKey}-` : ''}T-${t.number}` : `Pending · ${t.short_id}`);
 
 /** Priority is shown only when it isn't Normal (TSK-10): its word, or nothing. */
 export const priorityWord = (p: Priority | undefined): string | undefined => (p && p !== 'normal' && p !== 'unknown' ? (PRIORITIES.find((x) => x.id === p)?.label ?? undefined) : undefined);

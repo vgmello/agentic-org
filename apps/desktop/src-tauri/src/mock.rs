@@ -786,7 +786,7 @@ mod tests {
     fn create_team(id: &str, command_id: &str) -> OrgCommand {
         serde_json::from_value(serde_json::json!({
             "method": "team.create",
-            "params": {"command_id": command_id, "team_id": id, "name": id}
+            "params": {"command_id": crate::org_command::test_command_id(command_id), "team_id": id, "name": id}
         }))
         .unwrap()
     }

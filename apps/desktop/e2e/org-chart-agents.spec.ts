@@ -119,8 +119,10 @@ test('RUN-1: How it runs changes the mode; a scheduled agent needs a schedule; n
 	await dialog.getByRole('radio', { name: /^Scheduled/ }).check();
 	await expect(dialog.getByTestId('run-limits')).toContainText('back to sleep after 5 minutes');
 	await expect(dialog.getByRole('button', { name: 'Save' })).toBeDisabled(); // a schedule is needed
+	await expect(dialog.getByTestId('run-spec-help')).toHaveText('Add when it runs to save.'); // and it says so
 	await shot(page, 'how-it-runs');
 	await dialog.getByLabel('When', { exact: true }).fill('weekdays at 9');
+	await expect(dialog.getByTestId('run-spec-help')).toHaveCount(0);
 	await dialog.getByLabel('Time zone', { exact: true }).fill('Europe/Lisbon');
 	await dialog.getByRole('button', { name: 'Save' }).click();
 	await expect(page.getByText('Saved Sam Okafor.')).toBeVisible();

@@ -11,8 +11,8 @@ const RANK: Record<string, number> = { critical: 0, major: 1, minor: 2, trivial:
 
 export const severityWord = (s: Severity | undefined): string => SEVERITIES.find((x) => x.id === s)?.label ?? 'Severity not set';
 
-/** "B-7", or "Pending · 3k9f2x" while HQ has not numbered it. */
-export const bugRef = (b: WorkItemSummary): string => (b.number ? `B-${b.number}` : `Pending · ${b.short_id}`);
+/** "B-7" (or "chk-B-7" where items of several projects are listed), or "Pending · 3k9f2x" while HQ has not numbered it. */
+export const bugRef = (b: WorkItemSummary, projectKey?: string): string => (b.number ? `${projectKey ? `${projectKey}-` : ''}B-${b.number}` : `Pending · ${b.short_id}`);
 
 export const BUG_STATUS_LABEL: Record<string, string> = { new: 'New', triaged: 'Triaged', in_progress: 'In progress', fixed: 'Fixed', closed: 'Closed' };
 

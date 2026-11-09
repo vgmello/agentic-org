@@ -107,7 +107,8 @@
 				<div class="grid gap-3 rounded-lg bg-white/5 p-3 outline-1 -outline-offset-1 outline-white/10">
 					<div class="space-y-2">
 						<Label for="run-spec">When</Label>
-						<Input id="run-spec" bind:value={spec} disabled={busy} autocomplete="off" placeholder="Weekdays at 9, every 30 minutes…" />
+						<Input id="run-spec" bind:value={spec} disabled={busy} autocomplete="off" placeholder="Weekdays at 9, every 30 minutes…" aria-describedby={spec.trim() === '' ? 'run-spec-help' : undefined} />
+						{#if spec.trim() === ''}<p id="run-spec-help" class="text-xs/5 text-gray-400" data-testid="run-spec-help">Add when it runs to save.</p>{/if}
 					</div>
 					<div class="space-y-2">
 						<Label for="run-zone">Time zone</Label>

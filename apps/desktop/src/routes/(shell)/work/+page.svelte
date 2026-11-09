@@ -18,6 +18,7 @@
 	const snapshot = $derived(data.snapshot);
 	const me = $derived(snapshot.members.find((m) => m.owner)?.id ?? 'owner');
 	const send = $derived(sender(organizationId));
+	const projectKey = (id: string | undefined) => (snapshot.projects ?? []).find((p) => p.id === id)?.key || undefined;
 	const projectName = (id: string | undefined) => (snapshot.projects ?? []).find((p) => p.id === id)?.name ?? 'No project';
 
 	let items = $state<WorkItemSummary[] | undefined>();
@@ -110,7 +111,7 @@
 						<tbody class="divide-y divide-white/5 text-gray-200">
 							{#each shown as item (item.id)}
 								<tr data-testid="work-row" data-item={item.id}>
-									<td class="px-4 py-2 text-gray-400">{item.kind === 'bug' ? bugRef(item) : taskRef(item)}</td>
+									<td class="px-4 py-2 text-gray-400">{item.kind === 'bug' ? bugRef(item, projectKey(item.project_id)) : taskRef(item, projectKey(item.project_id))}</td>
 									<th scope="row" class="px-4 py-2 font-normal"><button type="button" class="text-left font-semibold text-white hover:underline focus-visible:outline-2 focus-visible:outline-indigo-400 [overflow-wrap:anywhere]" onclick={() => (item.kind === 'bug' ? ((bugId = item.id), (bugOpen = true)) : ((taskId = item.id), (taskOpen = true)))}>{item.title}</button></th>
 									<td class="px-4 py-2" data-testid="work-project">{projectName(item.project_id)}</td>
 									<td class="px-4 py-2">{item.kind === 'bug' ? severityWord(item.severity) : (priorityWord(item.priority) ?? '')}</td>

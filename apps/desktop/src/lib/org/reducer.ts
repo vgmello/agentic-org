@@ -60,6 +60,9 @@ const ID_MAX = 64;
 const AGENT_TEXT_MAX = 200;
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
+/** A command id is a ULID in its canonical form: 26 uppercase Crockford characters, the first 0 to 7 (HQ keeps each answer under it). */
+const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
+export const badCommandId = (id: string | undefined) => id !== undefined && !ULID.test(id);
 export const badId = (id: string | undefined) => id !== undefined && (id === '' || [...id].length > ID_MAX || CONTROL.test(id));
 const badText = (t: string | undefined) => t !== undefined && (trimWhiteSpace(t) === '' || [...t].length > AGENT_TEXT_MAX || CONTROL.test(t));
 
@@ -68,6 +71,7 @@ export function wellFormed(c: OrgCommand) {
 	const p = c.params as Record<string, unknown>;
 	const idKeys = ['command_id', 'team_id', 'owner_team_id', 'lead_member_id', 'membership_id', 'new_membership_id', 'to_team_id', 'member_id', 'reports_to_member_id', 'project_team_id', 'project_id', 'office_id', 'area_id', 'general_area_id', 'areas_to_team_id'];
 	const nested = Array.isArray(p.teams) ? (p.teams as { project_team_id?: string; team_id?: string }[]).flatMap((t) => [t.project_team_id, t.team_id]) : [];
+	if (badCommandId(p.command_id as string | undefined)) fail('invalid_request', "The command id isn't a valid ULID.");
 	if (idKeys.some((k) => badId(p[k] as string | undefined)) || nested.some((id) => badId(id))) fail('invalid_request', "An id in that request isn't valid.");
 }
 
@@ -241,8 +245,23 @@ function checkedAreaName(raw: string): string {
 function checkDescription(text: string) {
 	if ([...text].length > DESCRIPTION_MAX || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/.test(text)) fail('invalid_request', `A description can be at most ${DESCRIPTION_MAX} characters, without control characters.`);
 }
+/** The branches HQ keeps for its own work (org-proto `RESERVED_BRANCH_PREFIXES`). */
+const RESERVED_BRANCH_PREFIXES = ['task/', 'docs/', 'merged/', 'archive/'];
+
+/**
+ * Whether `name` starts with a reserved prefix, ignoring ASCII case, looking through one leading `refs/heads/` or `heads/`
+ * (org-proto `has_reserved_branch_prefix`).
+ */
+export function hasReservedBranchPrefix(name: string): boolean {
+	const ascii = name.replace(/[A-Z]/g, (c) => c.toLowerCase()); // ASCII only: other letters are left as they are
+	const bare = ['refs/heads/', 'heads/'].find((lead) => ascii.startsWith(lead));
+	const rest = bare ? ascii.slice(bare.length) : ascii;
+	return RESERVED_BRANCH_PREFIXES.some((prefix) => rest.startsWith(prefix));
+}
+
 function checkBranch(text: string) {
 	if (trimWhiteSpace(text) === '' || [...text].length > 255 || CONTROL.test(text)) fail('invalid_request', "That isn't a branch name.");
+	if (hasReservedBranchPrefix(text)) fail('invalid_request', "That branch name is kept for HQ's own work. Choose another.");
 }
 
 /** A lead must be a live, non-owner member of the area's team (shared by `area.create` and `area.set_lead`). */
