@@ -380,6 +380,46 @@ pub fn store_commit_replay_and_conflict(backend: impl OpenBackend) {
     assert_eq!(store.get_message(&msg_id(1)).unwrap(), Some(first.message));
 }
 
+/// A request gets at most one `delivery_failed` notice: a second one replying to the same
+/// request, under another id, is refused and writes nothing. Any error passes (a SQL store
+/// reports its unique index as a storage error), as long as the first notice is the only one.
+pub fn store_commit_refuses_a_second_delivery_failed(backend: impl OpenBackend) {
+    let store = open_store(&backend);
+    commit(&store, expired_request(1, PAT_ID, ADA_ID));
+    let notice = |n: u32| {
+        let mut notice = new_message(n, OFFICE_SENDER, PAT_ID, MessagePriority::High);
+        let header = &mut notice.message.header;
+        header.kind = KIND_DELIVERY_FAILED.into();
+        header.urgent = is_urgent(KIND_DELIVERY_FAILED, MessagePriority::High);
+        header.reply_to = Some(msg_id(1));
+        header.thread_id = msg_id(1);
+        notice
+    };
+    let first = commit(&store, notice(2));
+    assert!(first.inserted);
+    assert!(store.commit_message(notice(3)).is_err());
+    assert_eq!(store.get_message(&msg_id(3)).unwrap(), None);
+    let notices: Vec<_> = store
+        .list_headers(inbox_query(PAT_ID, false, 100))
+        .unwrap()
+        .headers
+        .into_iter()
+        .filter(|header| {
+            header.kind == KIND_DELIVERY_FAILED && header.reply_to.as_deref() == Some(&msg_id(1))
+        })
+        .map(|header| header.id)
+        .collect();
+    assert_eq!(notices, [msg_id(2)]);
+    // The first notice still replays.
+    assert!(!commit(&store, notice(2)).inserted);
+    // A notice for another request is its own.
+    commit(&store, expired_request(4, PAT_ID, ADA_ID));
+    let mut other = notice(5);
+    other.message.header.reply_to = Some(msg_id(4));
+    other.message.header.thread_id = msg_id(4);
+    assert!(commit(&store, other).inserted);
+}
+
 /// A message committed Read (an ask reply claimed before commit) is never unread.
 pub fn store_initial_read_is_never_unread(backend: impl OpenBackend) {
     let store = open_store(&backend);
@@ -1828,6 +1868,7 @@ macro_rules! mailbox_conformance_tests {
             $open;
             store_commit_allocates_sequence_and_origin,
             store_commit_replay_and_conflict,
+            store_commit_refuses_a_second_delivery_failed,
             store_initial_read_is_never_unread,
             store_peek_is_read_only_and_oldest_first,
             store_peek_reports_expired_without_deleting,

@@ -135,6 +135,18 @@ impl MessageStore for InMemoryStore {
                 });
             }
         }
+        // One `delivery_failed` per request, as org-office's unique index on `reply_to` for
+        // that kind has it: a second one under another id is refused and writes nothing.
+        let header = &new.message.header;
+        if header.kind == KIND_DELIVERY_FAILED
+            && header.reply_to.is_some()
+            && data.rows.values().any(|stored| {
+                let existing = &stored.message.header;
+                existing.kind == KIND_DELIVERY_FAILED && existing.reply_to == header.reply_to
+            })
+        {
+            return Err(StoreError::AlreadyExists);
+        }
         let sequence = data
             .sequence
             .checked_add(1)
