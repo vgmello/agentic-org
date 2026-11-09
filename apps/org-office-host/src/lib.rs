@@ -18,6 +18,16 @@
 //!
 //! `main.rs` only parses arguments, waits for a shutdown signal and calls [`Host`].
 
+// A release-profile build with debug assertions on would ship every development path (see
+// build.rs): refuse it, whatever turned them on (the profile, `-C debug-assertions`, `-C
+// opt-level=0`).
+#[cfg(all(release_profile, debug_assertions))]
+compile_error!(
+    "org-office-host: refusing a release build with debug assertions on: it would ship the \
+     host's development paths (dev keys, no server signature check, the unsigned development \
+     app, the trust-changing arguments). Build release without debug assertions, or build debug."
+);
+
 mod app_auth;
 mod broadcast;
 mod catalog;
@@ -281,18 +291,17 @@ impl Host {
         let dev_key_dir = config.dev_key_dir.as_deref();
         #[cfg(not(debug_assertions))]
         let dev_key_dir = None;
-        let keys = keys::store_for(
-            dev_key_dir,
-            &config.home,
-            code_signing::own_keychain_access_groups,
-        )
-        .map_err(|e| match e {
-            keys::StoreError::NoDevKeyDir => HostError::NoDevKeyDir,
-            keys::StoreError::NoKeychainGroup => HostError::NoKeychainGroup,
-            keys::StoreError::KeychainGroupNotEntitled { group } => {
-                HostError::KeychainGroupNotEntitled { group }
-            }
-        })?;
+        let keys =
+            keys::store_for(dev_key_dir, &config.home, code_signing::own_signing).map_err(|e| {
+                match e {
+                    keys::StoreError::NoDevKeyDir => HostError::NoDevKeyDir,
+                    keys::StoreError::NoKeychainGroup => HostError::NoKeychainGroup,
+                    keys::StoreError::KeychainGroupNotEntitled { group } => {
+                        HostError::KeychainGroupNotEntitled { group }
+                    }
+                    keys::StoreError::NotHardened => HostError::NotHardened,
+                }
+            })?;
         let layout = Layout::new(&config.home);
         layout.check_socket_paths()?;
         layout.prepare()?;

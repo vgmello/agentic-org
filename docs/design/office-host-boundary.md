@@ -226,8 +226,13 @@ first line is `invalid_request`.
     still orphaned at a host start 7 or more days later. An item whose folder comes back is unmarked.
     A record it can't read means no deletions that run (it starts over), and a clock before 2026 skips the sweep. Both steps are logged, with ids only.
     If anything it must look at can't be read (`offices/`, `offices/.refused/`, any `office.json`
-    there, or the key store's list), it doesn't sweep at all, and logs a WARNING at every start until
-    that's fixed: one unreadable `office.json` stops all orphan deletion.
+    there, an office's folder, or the key store's list), it doesn't sweep at all, and logs a WARNING
+    at every start until that's fixed: one unreadable `office.json` stops all orphan deletion. A
+    folder that can't be checked is never counted as an orphan. (amended 2026-11-08: review L1, ada)
+    It also marks and deletes nothing, with a WARNING, when `offices/` is empty or unreadable while
+    the key store holds keys, or when more than half of the keys would be orphans at once: a home
+    moved, restored or re-created elsewhere makes every key look orphaned, and 7 days later the
+    sweep would otherwise delete them all.
   - **The release home is pinned:** a release host refuses to start unless the shared home rule
     (`ORG_OFFICE_HOME`, then `HOME`) resolves to the account's home,
     `<home dir>/Library/Application Support/agentic.org`, with the home dir taken from the user
@@ -262,8 +267,17 @@ first line is `invalid_request`.
   - **This Mac only** (the user's decision): keys never leave it. A "move this office" export, protected
     by the owner's recovery code, comes later as a feature.
   - **Release trust inputs are compiled in:** the team id, the bundle id, the Keychain access group,
-    the server's path relative to the bundle, and the office-home rules. Release builds refuse `--home`,
-    `--server-bin` and `--app-team-id`; debug builds keep them.
+    and the office-home rules. The server is the `org-office-server` next to the host's own
+    executable (canonical path), and is admitted only if it passes the signature check. Release
+    builds refuse `--home`, `--server-bin` and `--app-team-id`; debug builds keep them. (amended
+    2026-11-08: review M1) At startup a release host also reads its own signing information once
+    and refuses to start unless its Keychain access group is in its `keychain-access-groups`
+    entitlement **and** it runs with the hardened runtime and without
+    `com.apple.security.get-task-allow`, `com.apple.security.cs.allow-dyld-environment-variables` or
+    `com.apple.security.cs.disable-library-validation`: a host other code can get into would give
+    every key away. (amended 2026-11-08: review L5) A release-profile build with debug assertions on
+    (the profile, `-C debug-assertions` or `-C opt-level=0`) fails to compile (`build.rs` marks release-profile builds and `lib.rs` has a `compile_error!` for that cfg with `debug_assertions`): it would ship every development
+    path.
   - **Release prerequisite** (ada): verify the `keychain-access-groups` entitlement on the first signed
     build. If it needs a provisioning profile, the host ships as a helper app bundle
     (`Contents/Library/LoginItems/…`). The legacy-ACL fallback is used only if the Data Protection
@@ -290,8 +304,9 @@ first line is `invalid_request`.
   `subscribe`), and (amended 2026-11-08: key custody) `keys` (the key store: the Data Protection
   keychain in release builds, the dev-keys files in debug builds).
 - The supervisor takes the server program's path as config (default: the `org-office-server` next to
-  the host binary in the app bundle; release builds use only the path compiled in, relative to the
-  bundle, see Key custody). The host's tests use a **fake office server** (a test helper binary
+  the host binary in the app bundle; a release build uses only that one, next to the host's own
+  executable (canonical path), and admits it only if it passes the signature check, see Key
+  custody). The host's tests use a **fake office server** (a test helper binary
   that follows section 3), so the host is tested without SQLCipher or the Keychain (its keys go to the
   dev-keys files or an in-memory store), and doesn't wait for server-dev's work to land. The fake must never ship: it's an example or a dev-only bin the bundle never picks up.
 - The host doesn't depend on `org-office` (no SQLCipher in the login service) or on

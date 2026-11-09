@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+# The build script relies on cargo setting `CARGO_CFG_DEBUG_ASSERTIONS` from the profile (1.93).
 
 [features]
 # Builds `fake-office-server`, the stand-in office server the tests drive. Only the tests turn

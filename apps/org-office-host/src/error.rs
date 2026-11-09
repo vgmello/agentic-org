@@ -30,6 +30,10 @@ pub enum HostError {
     /// `keychain-access-groups` entitlement (or the host isn't signed with one), so the
     /// Keychain would refuse every key.
     KeychainGroupNotEntitled { group: String },
+    /// A release build's own code signature can't be read, or it isn't signed with the hardened
+    /// runtime, or is entitled to let other code into it (a debugger, injected libraries, `DYLD_*`
+    /// variables), so any same-user process could read the offices' keys out of it.
+    NotHardened,
     Io {
         context: &'static str,
         source: io::Error,
@@ -78,6 +82,13 @@ impl fmt::Display for HostError {
                 "this build has no Keychain access group for the offices' keys: build it with \
                  ORG_HOST_KEYCHAIN_GROUP set to the group in its keychain-access-groups \
                  entitlement",
+            ),
+            HostError::NotHardened => f.write_str(
+                "this build's code signature can't be read, or it isn't signed with the hardened \
+                 runtime, or it is entitled to let other \
+                 code into it (get-task-allow, allow-dyld-environment-variables or \
+                 disable-library-validation), so another process could read the offices' keys \
+                 out of it: sign the host hardened, without those entitlements",
             ),
             HostError::KeychainGroupNotEntitled { group } => write!(
                 f,

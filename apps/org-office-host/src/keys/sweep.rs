@@ -34,8 +34,9 @@
 //! (`may_sweep_orphan_keys`: release builds, on the account's own office home).
 //!
 //! It fails safe: if the store can't list, or `find_orphans` can't tell (e.g. an `office.json`
-//! it can't read), nothing is marked, unmarked or deleted, and a WARNING is logged at every
-//! start until it's fixed. Every mark, unmark and deletion is logged, with ids only.
+//! it can't read) or won't (an empty `offices/`, or more than half of the keys orphaned at once:
+//! see `catalog::orphans`), nothing is marked, unmarked or deleted, and a WARNING is logged at
+//! every start until it's fixed. Every mark, unmark and deletion is logged, with ids only.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};

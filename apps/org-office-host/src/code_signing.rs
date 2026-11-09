@@ -255,18 +255,18 @@ fn parse_signing(
     })
 }
 
-/// The Keychain access groups this process's own code is entitled to
-/// (`keychain-access-groups`, from its signing information through `SecCodeCopySelf`). `None`
-/// when it can't be read, the process is unsigned, or the entitlement is missing or malformed.
-/// An unsigned test binary has none, so the live answer can only be seen on a signed build.
+/// This process's own signing information (through `SecCodeCopySelf`): its flags (the
+/// hardened runtime) and its entitlements (`keychain-access-groups` among them). `None` when it
+/// can't be read. An unsigned test binary has no hardened runtime and no access groups, so the
+/// live answer a release host needs can only be seen on a signed build.
 #[cfg(target_os = "macos")]
-pub(crate) fn own_keychain_access_groups() -> Option<Vec<String>> {
+pub(crate) fn own_signing() -> Option<Signing> {
     use security_framework::os::macos::code_signing::{Flags, SecCode};
-    signing(&SecCode::for_self(Flags::NONE).ok()?)?.keychain_access_groups
+    signing(&SecCode::for_self(Flags::NONE).ok()?)
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn own_keychain_access_groups() -> Option<Vec<String>> {
+pub(crate) fn own_signing() -> Option<Signing> {
     None
 }
 

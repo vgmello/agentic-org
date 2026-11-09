@@ -361,33 +361,63 @@ fn has_office_file(dir: &Path) -> bool {
 /// it can't tell (for the orphan-key sweep, `keys::sweep_orphans`). An office has something
 /// left when a folder is named after it in `offices/` or `offices/.refused/` (`<id>` or
 /// `<id>-<unix ms>`), or when an `office.json` in any folder there names it (a folder renamed by
-/// hand, moved aside at startup with its data). Everything must be readable, an `office.json`
-/// included, or it can't tell: a key is never taken for an orphan for a folder not looked at.
+/// hand, moved aside at startup with its data).
+///
+/// It refuses to answer (so nothing is marked or deleted) whenever the answer could be wrong:
+/// - anything it must look at can't be read: `offices/`, `offices/.refused/`, any `office.json`
+///   there, or an office's folder (one that can't be checked is never taken for an orphan);
+/// - `offices/` is empty while there are keys: the home was likely moved, restored or re-created
+///   elsewhere, and every key would look orphaned;
+/// - more than half of the keys would be orphans at once (ada): the same mistake, partly.
 pub(crate) fn orphans(home: &Path, ids: &[String]) -> Result<Vec<String>, String> {
+    orphans_in(home, ids, |path| match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e),
+    })
+}
+
+/// [`orphans`], with `exists` saying whether an office's folder is there.
+fn orphans_in(
+    home: &Path,
+    ids: &[String],
+    exists: impl Fn(&Path) -> io::Result<bool>,
+) -> Result<Vec<String>, String> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
     let offices = home.join(OFFICES_DIR_NAME);
-    // Everything readable, or no answer: a key is never taken for an orphan for a folder not
-    // looked at.
     let mut claimed = folders_in(&offices, false).map_err(|e| e.to_string())?;
+    // `.refused/`, `.DS_Store` and the like aren't offices.
+    if claimed.iter().all(|(name, _)| name.starts_with('.')) {
+        return Err(format!(
+            "offices/ is empty while the key store holds {} key(s): the office home may have \
+             been moved, restored or re-created elsewhere",
+            ids.len()
+        ));
+    }
     claimed.extend(folders_in(&offices.join(REFUSED_DIR_NAME), true).map_err(|e| e.to_string())?);
     let folder_names: Vec<&String> = claimed.iter().map(|(name, _)| name).collect();
     let named: HashSet<&String> = claimed.iter().filter_map(|(_, id)| id.as_ref()).collect();
     let mut orphans = Vec::new();
     for id in ids {
-        let id = id.clone();
-        match fs::symlink_metadata(offices.join(&id)) {
-            Ok(_) => continue,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => {
-                host_log::log(&format!(
-                    "kept the key of office {id}: its folder can't be checked: {e}"
-                ));
-                continue;
-            }
+        match exists(&offices.join(id)) {
+            Ok(true) => continue,
+            Ok(false) => {}
+            Err(e) => return Err(format!("the folder of office {id} can't be checked: {e}")),
         }
-        if named.contains(&id) || folder_names.iter().any(|name| is_refused_as(name, &id)) {
+        if named.contains(id) || folder_names.iter().any(|name| is_refused_as(name, id)) {
             continue;
         }
-        orphans.push(id);
+        orphans.push(id.clone());
+    }
+    if orphans.len() * 2 > ids.len() {
+        return Err(format!(
+            "{} of the {} keys would be orphans at once (more than half): the office home may \
+             not be the one these keys belong to",
+            orphans.len(),
+            ids.len()
+        ));
     }
     Ok(orphans)
 }
@@ -423,9 +453,14 @@ fn folders_in(dir: &Path, may_be_missing: bool) -> io::Result<Vec<(String, Optio
 fn office_id_in(file: &Path) -> io::Result<Option<String>> {
     match read_office_file(file) {
         Ok(office) => Ok(office.map(|office| office.office_id)),
-        // A plain file where a folder was expected has no office.json.
-        Err(_) if file.parent().is_some_and(|folder| !folder.is_dir()) => Ok(None),
-        Err(why) => Err(io::Error::other(format!("{}: {why}", file.display()))),
+        // A plain file where a folder was expected has no office.json. (A folder that can't
+        // even be looked at is an error, never "no office.json".)
+        Err(why) => match file.parent().map(fs::metadata) {
+            Some(Ok(meta)) if !meta.is_dir() => Ok(None),
+            // A dangling symlink: nothing there.
+            Some(Err(e)) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+            _ => Err(io::Error::other(format!("{}: {why}", file.display()))),
+        },
     }
 }
 
@@ -714,6 +749,115 @@ mod tests {
         );
         assert!(locked_stored);
         assert_eq!(unfinished, ["UNFINISHED"]);
+    }
+
+    fn orphan_ids(list: &[&str]) -> Vec<String> {
+        list.iter().map(|id| (*id).to_owned()).collect()
+    }
+
+    /// A home whose `offices/` holds a folder for each of `live`.
+    fn home_with(live: &[&str]) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join(OFFICES_DIR_NAME)).unwrap();
+        for id in live {
+            fs::create_dir_all(dir.path().join(OFFICES_DIR_NAME).join(id)).unwrap();
+        }
+        dir
+    }
+
+    /// L1: a home that was moved, restored or re-created elsewhere makes every key look
+    /// orphaned: an empty (or missing) `offices/` with keys present is no answer at all.
+    #[test]
+    fn an_empty_offices_folder_with_keys_marks_nothing() {
+        let ids = orphan_ids(&["01A", "01B"]);
+        let empty = home_with(&[]);
+        let err = orphans(empty.path(), &ids).unwrap_err();
+        assert!(err.contains("offices/ is empty"), "{err}");
+        let missing = tempfile::tempdir().unwrap();
+        assert!(orphans(missing.path(), &ids).is_err());
+        // No keys: nothing to say, and nothing refused.
+        assert_eq!(orphans(empty.path(), &[]), Ok(Vec::new()));
+    }
+
+    /// L1 (ada): more than half of the keys orphaned at once is no answer; half or less is.
+    #[test]
+    fn more_than_half_orphaned_marks_nothing_and_half_or_less_is_answered() {
+        let home = home_with(&["01A", "01B"]);
+        let three = orphan_ids(&["01A", "01X", "01Y"]);
+        let err = orphans(home.path(), &three).unwrap_err();
+        assert!(err.contains("more than half"), "{err}");
+        let half = orphan_ids(&["01A", "01X"]);
+        assert_eq!(orphans(home.path(), &half), Ok(orphan_ids(&["01X"])));
+        let less = orphan_ids(&["01A", "01B", "01X"]);
+        assert_eq!(orphans(home.path(), &less), Ok(orphan_ids(&["01X"])));
+    }
+
+    /// L3b: an office folder that can't be checked is never taken for an orphan, and stops the
+    /// sweep.
+    #[test]
+    fn a_folder_that_cant_be_checked_stops_the_sweep() {
+        let home = home_with(&["01A", "01B", "01C"]);
+        let ids = orphan_ids(&["01A", "01B", "01C", "01X"]);
+        let probe = |path: &Path| {
+            if path.ends_with("01X") {
+                Err(io::Error::from(io::ErrorKind::PermissionDenied))
+            } else {
+                Ok(path.exists())
+            }
+        };
+        let err = orphans_in(home.path(), &ids, probe).unwrap_err();
+        assert!(
+            err.contains("01X") && err.contains("can't be checked"),
+            "{err}"
+        );
+        // And for real: a folder of offices/ that can't be looked into is an error, never "no
+        // office.json" (not as root, whom permissions don't stop).
+        if crate::home::euid() == 0 {
+            return;
+        }
+        let locked = home.path().join(OFFICES_DIR_NAME).join("01C");
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+        let swept = orphans(home.path(), &ids);
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(swept.is_err(), "{swept:?}");
+    }
+
+    /// A folder whose `office.json` can't be looked for (its parent isn't searchable) is an
+    /// error, never "no office.json"; a plain file or a dangling link where a folder was
+    /// expected has none.
+    #[test]
+    fn an_office_json_that_cant_be_looked_for_is_an_error() {
+        let home = home_with(&["01A"]);
+        let offices = home.path().join(OFFICES_DIR_NAME);
+        fs::write(offices.join("plain"), b"x").unwrap();
+        std::os::unix::fs::symlink(offices.join("nowhere"), offices.join("dangling")).unwrap();
+        assert_eq!(
+            office_id_in(&offices.join("plain").join(OFFICE_FILE_NAME)).unwrap(),
+            None
+        );
+        assert_eq!(
+            office_id_in(&offices.join("dangling").join(OFFICE_FILE_NAME)).unwrap(),
+            None
+        );
+        // Not as root, whom permissions don't stop.
+        if crate::home::euid() == 0 {
+            return;
+        }
+        fs::set_permissions(&offices, fs::Permissions::from_mode(0o600)).unwrap();
+        let looked = office_id_in(&offices.join("01A").join(OFFICE_FILE_NAME));
+        fs::set_permissions(&offices, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(looked.is_err(), "{looked:?}");
+    }
+
+    /// Hidden entries (`.refused/`, `.DS_Store`) don't make an empty `offices/` a live one.
+    #[test]
+    fn hidden_entries_dont_make_offices_non_empty() {
+        let home = home_with(&[]);
+        let offices = home.path().join(OFFICES_DIR_NAME);
+        fs::write(offices.join(".DS_Store"), b"").unwrap();
+        fs::create_dir(offices.join(REFUSED_DIR_NAME)).unwrap();
+        let err = orphans(home.path(), &orphan_ids(&["01A"])).unwrap_err();
+        assert!(err.contains("offices/ is empty"), "{err}");
     }
 
     #[test]

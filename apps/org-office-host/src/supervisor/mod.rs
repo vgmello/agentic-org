@@ -675,6 +675,8 @@ mod tests {
     use org_proto::{AppToken, DbKey, OfficeRole};
 
     use crate::keys::memory::{Fault, MemoryKeys, Op};
+    use crate::peer::AuditToken;
+    use crate::server_check::{Scripted, Step};
 
     const OFFICE: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
 
@@ -924,6 +926,66 @@ mod tests {
         );
         refusing.shutdown();
         assert!(!ran.exists(), "a server was started without a team id");
+    }
+
+    /// A check scripted by the test: `admit` and `still` answer as `script` says.
+    fn scripted(
+        script: impl Fn(Step, u32) -> Result<Option<AuditToken>, String> + Send + Sync + 'static,
+    ) -> ServerCheck {
+        ServerCheck::Scripted(Scripted(Arc::new(script)))
+    }
+
+    /// L2: the check runs while the child is still suspended: at the admission, the child is
+    /// stopped (`ps` state `T`, the kernel's `SSTOP`), so not one instruction of its image has
+    /// run, and once refused it never does.
+    #[test]
+    fn the_check_runs_while_the_child_is_still_suspended() {
+        let dir = tempfile::tempdir().unwrap();
+        let ran = dir.path().join("ran");
+        let program = script(dir.path(), "server", &format!("touch '{}'", ran.display()));
+        let keys = Arc::new(MemoryKeys::default());
+        let states = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = Arc::clone(&states);
+        let check = scripted(move |step, pid| {
+            assert_eq!(step, Step::Admit);
+            let out = std::process::Command::new("/bin/ps")
+                .args(["-o", "state=", "-p", &pid.to_string()])
+                .output()
+                .unwrap();
+            lock(&seen).push(String::from_utf8_lossy(&out.stdout).trim().to_owned());
+            Err("refused by the test".into())
+        });
+        let supervisor = checked_supervisor(dir.path(), program, &keys, check);
+        assert!(supervisor.discard(OFFICE).is_err());
+        let states = lock(&states).clone();
+        assert_eq!(states.len(), 1, "{states:?}");
+        assert!(
+            states[0].starts_with('T'),
+            "not stopped at the check: {states:?}"
+        );
+        thread::sleep(Duration::from_millis(200));
+        assert!(!ran.exists(), "the child ran");
+    }
+
+    /// L3a: a child whose token changed between the admission and its first line (an exec) is
+    /// refused at the re-check: it gets no line.
+    #[test]
+    fn a_child_whose_token_changed_before_its_line_gets_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let got = dir.path().join("got");
+        let program = script(dir.path(), "server", &format!("cat > '{}'", got.display()));
+        let keys = Arc::new(MemoryKeys::default());
+        keys.create(OFFICE, &DbKey::from_bytes([6; 32])).unwrap();
+        let check = scripted(|step, _| match step {
+            Step::Admit => Ok(Some([1; 32])),
+            Step::Still => Ok(Some([2; 32])),
+        });
+        let supervisor = checked_supervisor(dir.path(), program, &keys, check);
+        let err = supervisor.discard(OFFICE).unwrap_err();
+        assert!(err.to_string().contains("changed"), "{err}");
+        thread::sleep(Duration::from_millis(200));
+        assert_eq!(fs::read(&got).unwrap_or_default(), b"", "it got a line");
+        assert!(keys.has(OFFICE));
     }
 
     #[test]

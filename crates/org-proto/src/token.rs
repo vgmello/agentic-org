@@ -93,6 +93,8 @@ impl Eq for AppToken {}
 impl AppToken {
     /// Zero the bytes in place (what `Drop` does; tests call it to check the bytes).
     fn wipe(&mut self) {
+        #[cfg(test)]
+        tests::WIPES.with(|wipes| wipes.set(wipes.get() + 1));
         zero(&mut *self.0);
     }
 }
@@ -202,6 +204,8 @@ impl Eq for DbKey {}
 impl DbKey {
     /// Zero the bytes in place (what `Drop` does; tests call it to check the bytes).
     fn wipe(&mut self) {
+        #[cfg(test)]
+        tests::WIPES.with(|wipes| wipes.set(wipes.get() + 1));
         zero(&mut *self.0);
     }
 }
@@ -360,6 +364,28 @@ fn zero(bytes: &mut [u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    thread_local! {
+        /// How many times `wipe` ran on this thread (tests run in parallel, one per thread).
+        pub(super) static WIPES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    /// L3c: dropping a token or a key runs `wipe`, once each.
+    #[test]
+    fn dropping_a_token_or_a_key_wipes_it() {
+        let wipes = || WIPES.with(std::cell::Cell::get);
+        let before = wipes();
+        drop(AppToken::from_bytes([0xa5; APP_TOKEN_BYTES]));
+        assert_eq!(wipes(), before + 1);
+        drop(DbKey::from_bytes([0x5a; DB_KEY_BYTES]));
+        assert_eq!(wipes(), before + 2);
+        // Moved, not copied: one wipe, when the one value is dropped.
+        let key = DbKey::from_bytes([1; DB_KEY_BYTES]);
+        let moved = key;
+        assert_eq!(wipes(), before + 2);
+        drop(moved);
+        assert_eq!(wipes(), before + 3);
+    }
 
     fn token() -> AppToken {
         let mut bytes = [0u8; APP_TOKEN_BYTES];

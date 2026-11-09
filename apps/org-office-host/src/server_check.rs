@@ -53,7 +53,44 @@ pub(crate) enum ServerCheck {
     Requirement(String),
     /// No team id: no server may be started.
     Refuse,
+    /// Tests only: the admission and the re-check's token come from the test.
+    #[cfg(test)]
+    Scripted(Scripted),
 }
+
+/// Which step a [`Scripted`] check is asked for.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Step {
+    /// [`ServerCheck::admit`]: the admitted token (`None`: not checked), or a refusal.
+    Admit,
+    /// [`ServerCheck::still`]: the child's token now.
+    Still,
+}
+
+/// A test's stand-in for the live check: called with the step and the child's pid.
+#[cfg(test)]
+#[derive(Clone)]
+pub(crate) struct Scripted(
+    pub(crate) std::sync::Arc<dyn Fn(Step, u32) -> Result<Option<AuditToken>, String> + Send + Sync>,
+);
+
+#[cfg(test)]
+impl std::fmt::Debug for Scripted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Scripted")
+    }
+}
+
+#[cfg(test)]
+impl PartialEq for Scripted {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+#[cfg(test)]
+impl Eq for Scripted {}
 
 impl ServerCheck {
     /// The check for a build (`debug`) whose app team id is `team_id`. A team id that isn't well
@@ -82,6 +119,8 @@ impl ServerCheck {
                                     no office server's signature can be checked: no office \
                                     server will be started"
                 .to_owned(),
+            #[cfg(test)]
+            ServerCheck::Scripted(_) => "scripted (tests)".to_owned(),
         }
     }
 
@@ -92,21 +131,35 @@ impl ServerCheck {
                 Err("this build has no app team id to check servers with".into())
             }
             ServerCheck::Skip | ServerCheck::Requirement(_) => Ok(()),
+            #[cfg(test)]
+            ServerCheck::Scripted(_) => Ok(()),
         }
     }
 
     /// After the spawn of child `pid`: its audit token if it may get a key (`None`: not
     /// checked, a debug build), or why not.
     pub(crate) fn admit(&self, pid: u32) -> Result<Option<AuditToken>, String> {
+        #[cfg(test)]
+        if let ServerCheck::Scripted(scripted) = self {
+            return (scripted.0)(Step::Admit, pid);
+        }
         admit(self, || token_of(pid), satisfies)
     }
 
     /// Right before child `pid`'s first line: whether it is still the image `admitted` (what
     /// [`ServerCheck::admit`] returned).
     pub(crate) fn still(&self, pid: u32, admitted: Option<AuditToken>) -> Result<(), String> {
+        let now = || {
+            #[cfg(test)]
+            if let ServerCheck::Scripted(scripted) = self {
+                return (scripted.0)(Step::Still, pid)
+                    .and_then(|token| token.ok_or_else(|| "no token".to_owned()));
+            }
+            token_of(pid)
+        };
         match admitted {
             None => Ok(()),
-            Some(admitted) => unchanged(admitted, token_of(pid)),
+            Some(admitted) => unchanged(admitted, now()),
         }
     }
 }
@@ -127,6 +180,8 @@ fn admit(
     match check {
         ServerCheck::Skip => Ok(None),
         ServerCheck::Refuse => Err("this build has no app team id to check servers with".into()),
+        #[cfg(test)]
+        ServerCheck::Scripted(_) => Err("a scripted check isn't decided here".into()),
         ServerCheck::Requirement(requirement) => {
             let token = token().map_err(|why| format!("its audit token: {why}"))?;
             if satisfies(&token, requirement) {

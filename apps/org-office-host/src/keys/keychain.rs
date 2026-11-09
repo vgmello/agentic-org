@@ -64,21 +64,21 @@ impl Keychain {
         }
     }
 
-    /// The query for office `office_id`'s item: its class, service and account, in this access
-    /// group, in the Data Protection keychain.
+    /// The query for office `office_id`'s item, for `load` and `delete`: exactly
+    /// [`query_attributes`] (which the tests check), as the `passwords` API takes it.
     fn options(&self, office_id: &str) -> PasswordOptions {
-        let mut options = PasswordOptions::new_generic_password(SERVICE, office_id);
-        options.use_protected_keychain();
-        options.set_access_group(&self.group);
-        options
+        #[allow(deprecated)] // the field is the query itself; it is built here in one place
+        PasswordOptions {
+            query: query_attributes(office_id, &self.group),
+        }
     }
 }
 
-/// The attributes of office `office_id`'s item in access group `group`, without its data: a
-/// generic password, [`SERVICE`], account = the office id, the Data Protection keychain, the access
-/// group, readable after the first unlock on this device only, and not synchronizable. Pure: it
-/// builds Core Foundation values and never calls the Keychain.
-pub(crate) fn item_attributes(office_id: &str, group: &str) -> Vec<(CFString, CFType)> {
+/// The query that finds office `office_id`'s item in access group `group` (for `load` and
+/// `delete`): a generic password, [`SERVICE`], account = the office id, in the Data Protection
+/// keychain and the access group. Pure: it builds Core Foundation values and never calls the
+/// Keychain.
+pub(crate) fn query_attributes(office_id: &str, group: &str) -> Vec<(CFString, CFType)> {
     // SAFETY: every `kSec…` here is an immutable CFString constant that Security.framework
     // exports for the life of the process; `wrap_under_get_rule` retains it.
     unsafe {
@@ -104,16 +104,29 @@ pub(crate) fn item_attributes(office_id: &str, group: &str) -> Vec<(CFString, CF
                 constant(kSecAttrAccessGroup),
                 CFString::new(group).into_CFType(),
             ),
-            (
-                constant(kSecAttrAccessible),
-                constant(kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly).into_CFType(),
-            ),
-            (
-                constant(kSecAttrSynchronizable),
-                CFBoolean::false_value().into_CFType(),
-            ),
         ]
     }
+}
+
+/// The attributes of office `office_id`'s item in access group `group`, without its data: a
+/// generic password, [`SERVICE`], account = the office id, the Data Protection keychain, the access
+/// group, readable after the first unlock on this device only, and not synchronizable. Pure: it
+/// builds Core Foundation values and never calls the Keychain.
+pub(crate) fn item_attributes(office_id: &str, group: &str) -> Vec<(CFString, CFType)> {
+    let mut attributes = query_attributes(office_id, group);
+    // SAFETY: as in `query_attributes`.
+    unsafe {
+        let constant = |name: CFStringRef| CFString::wrap_under_get_rule(name);
+        attributes.push((
+            constant(kSecAttrAccessible),
+            constant(kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly).into_CFType(),
+        ));
+        attributes.push((
+            constant(kSecAttrSynchronizable),
+            CFBoolean::false_value().into_CFType(),
+        ));
+    }
+    attributes
 }
 
 impl KeyStore for Keychain {
@@ -273,6 +286,36 @@ mod tests {
             value(&attributes, unsafe { kSecAttrSynchronizable }),
             CFBoolean::false_value().into_CFType()
         );
+    }
+
+    /// L3d: `load` and `delete` look the item up by its class, service and account, in the Data
+    /// Protection keychain and the access group, and nothing else (no data, no accessibility).
+    #[test]
+    fn the_load_and_delete_query_is_this_offices_item_in_the_group() {
+        let query = query_attributes(A, GROUP);
+        assert_eq!(query.len(), 5);
+        let class = value(&query, unsafe { kSecClass });
+        assert_eq!(string(&class), unsafe {
+            CFString::wrap_under_get_rule(kSecClassGenericPassword).to_string()
+        });
+        assert_eq!(string(&value(&query, unsafe { kSecAttrService })), SERVICE);
+        assert_eq!(string(&value(&query, unsafe { kSecAttrAccount })), A);
+        assert_eq!(
+            string(&value(&query, unsafe { kSecAttrAccessGroup })),
+            GROUP
+        );
+        assert_eq!(
+            value(&query, unsafe { kSecUseDataProtectionKeychain }),
+            CFBoolean::true_value().into_CFType()
+        );
+        // And it's the query `load` and `delete` send.
+        #[allow(deprecated)]
+        let sent = Keychain::new(GROUP).options(A).query;
+        let keys = |pairs: &[(CFString, CFType)]| -> Vec<String> {
+            pairs.iter().map(|(key, _)| key.to_string()).collect()
+        };
+        assert_eq!(keys(&sent), keys(&query));
+        assert!(sent.iter().zip(&query).all(|(a, b)| a.1 == b.1));
     }
 
     #[test]

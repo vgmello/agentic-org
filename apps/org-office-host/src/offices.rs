@@ -830,9 +830,17 @@ mod tests {
         for sweep in [false, true] {
             let dir = tempfile::tempdir().unwrap();
             let home = dir.path();
-            fs::create_dir_all(home.join("offices").join(OFFICE)).unwrap();
+            // Two orphans beside three live offices (more than half orphaned isn't swept).
+            const LIVE: [&str; 3] = [
+                OFFICE,
+                "01LIVEBLIVEBLIVEBLIVEBLIVE",
+                "01LIVECLIVECLIVECLIVECLIVE",
+            ];
             let keys = Arc::new(MemoryKeys::default());
-            for id in [OFFICE, ORPHAN, NEW_ORPHAN] {
+            for id in LIVE {
+                fs::create_dir_all(home.join("offices").join(id)).unwrap();
+            }
+            for id in LIVE.into_iter().chain([ORPHAN, NEW_ORPHAN]) {
                 keys.create(id, &DbKey::from_bytes([1; 32])).unwrap();
             }
             // ORPHAN was marked long ago; NEW_ORPHAN never was.
