@@ -20,6 +20,7 @@ mod office;
 mod office_file;
 mod private_fs;
 pub mod rules;
+mod status;
 mod store;
 mod time;
 mod ulid;

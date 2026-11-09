@@ -280,10 +280,18 @@ fn serve_office(
             who: {
                 let office = Arc::clone(&office);
                 Box::new(move |params| {
-                    // Nothing reports presence yet (agents bind with messaging): all offline.
+                    // Nothing reports presence yet: all offline, with the status lines set.
                     office
-                        .who(params, &org_office::directory::NothingLive)
+                        .who_with_status(params)
                         .map_err(|e| logged("who", &e))
+                })
+            },
+            status: {
+                let office = Arc::clone(&office);
+                Box::new(move |member, params| {
+                    office
+                        .set_status(member, params)
+                        .map_err(|e| logged("status", &e))
                 })
             },
             feed: Box::new(OfficeFeed(Arc::clone(&office))),
