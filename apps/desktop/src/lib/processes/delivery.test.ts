@@ -31,6 +31,14 @@ describe('PROC-7 what an agent is handed', () => {
 	});
 });
 
+describe('a process key that is also an object property name', () => {
+	it('is not a read, so the start line does not say "v undefined"', () => {
+		const odd = resolve({ docs: [{ ...docs[0], id: 'doc-ctor', key: 'constructor', name: 'Constructor' }], teams: [], agentId: 'kai' });
+		expect(startLine(odd, {})).toContain('Constructor (new, v3)');
+		expect(changedSince(odd, {})).toHaveLength(1);
+	});
+});
+
 describe('PROC-12 moments and checklists', () => {
 	it('a moment’s prompts come from the set, and only while the moment is On', () => {
 		expect(momentPrompts(set, 'starting_task', true)).toEqual([{ name: 'Branch, review and merge', text: 'Check that your open branch is merged before you start new work.' }]);

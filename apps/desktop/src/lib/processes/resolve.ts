@@ -65,8 +65,8 @@ export function resolve(input: ResolveInput): EffectiveSet {
 	// 1. Valid files only. The others are listed with their problem, and a sealed one still seals its key.
 	for (const doc of candidates) {
 		const kind = kinds.get(doc)!;
-		if (kind === 'invalid') problem('invalid', doc, `Details not recognized: ${(doc.problems?.length ? doc.problems.map((p) => p.field) : ['status']).join(', ')}.`);
-		else if (kind === 'mismatch') problem('mismatch', doc, "Details not recognized: its level or scope doesn't match where the file lives.");
+		if (kind === 'invalid') problem('invalid', doc, `Details not recognized (${(doc.problems?.length ? doc.problems.map((p) => p.field) : ['status']).join(', ')}).`);
+		else if (kind === 'mismatch') problem('mismatch', doc, "Details not recognized (level or scope): they don't match where the file lives.");
 	}
 	const valid = candidates.filter((d) => kinds.get(d) === 'valid');
 
@@ -98,9 +98,10 @@ export function resolve(input: ResolveInput): EffectiveSet {
 	const refused = new Map<ProcessDoc, string>();
 	const refuse = (doc: ProcessDoc, by: ProcessDoc) => {
 		const who = by.location.level === 'organization' ? 'the organization' : (scopeName('team', by.location.scope) ?? 'a team');
-		const text = `${doc.name} is sealed by ${who}. You can add a process instead.`;
+		// Said once, naming who tried: "Platform's version of Security basics isn't applied: the organization sealed it."
+		const text = `${whereOf(doc) ? `${whereOf(doc)}'s` : 'Its'} version of ${by.name} isn't applied: ${who} sealed it. You can add a process instead.`;
 		refused.set(doc, text);
-		problem('sealed_refused', doc, text);
+		problem('sealed_refused', doc, text, by);
 	};
 	const orgDocs = new Map(live.filter((d) => d.location.level === 'organization').map((d) => [d.key, d]));
 	/** The file that applies for a key from the layers above `doc`: its parent, for kind and drift. */
@@ -158,7 +159,7 @@ export function resolve(input: ResolveInput): EffectiveSet {
 			: meanwhile.location.level === 'organization'
 				? "The organization's version applies until the project decides"
 				: `Sealed by ${scopeName('team', (sealer ?? meanwhile).location.scope)}; applies until the project decides`;
-		set.conflicts.push({ key, teams: teamsInvolved, applies, ...(meanwhile ? { doc: meanwhile } : {}) });
+		set.conflicts.push({ key, name: (org ?? winners[0] ?? dead[0]).name, teams: teamsInvolved, applies, ...(meanwhile ? { doc: meanwhile } : {}) });
 	}
 	const teamSealOnProject = (key: string) => chains.flatMap((chain) => chain.map((t) => teamSeal(key, t.id))).find(Boolean);
 
@@ -259,7 +260,7 @@ export function resolve(input: ResolveInput): EffectiveSet {
 	for (const [key, doc] of winners) {
 		if (doc.status === 'off') {
 			const name = whereOf(doc);
-			turnedOff.push({ key, name: doc.name, level: doc.location.level, ...(name ? { scopeName: name } : {}), reason: doc.reason ?? '', doc });
+			turnedOff.push({ key, chain: layersOf(key, doc), name: doc.name, level: doc.location.level, ...(name ? { scopeName: name } : {}), reason: doc.reason ?? '', doc });
 		} else entries.push(entryOf(key, doc));
 	}
 	for (const doc of live.filter((d) => d.location.level === 'agent' && !privateProblem.has(d))) entries.push({ key: doc.key, doc, kind: 'addition', source: 'agent', ...(agentId ? { scopeName: agentId } : {}), sealed: false, chain: layersOf(doc.key, doc) });
