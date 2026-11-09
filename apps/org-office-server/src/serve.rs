@@ -361,6 +361,15 @@ fn serve_connection(stream: UnixStream, shared: &Shared) {
         // A line the framing refuses (too long, not JSON) ends the connection: the stream is out
         // of step and nothing in it can be trusted.
         while let Ok(Some(request)) = frame::read_message::<Request>(&mut reader) {
+            // The member this connection acts as is checked on every call, not only at bind.
+            if let Some(member) = binding.member() {
+                if !request.is::<MsgBind>() && !still_bindable(shared, member) {
+                    binding = Binding::Anonymous;
+                    generation.fetch_add(1, Ordering::SeqCst);
+                    subscribed = false;
+                    held.cancel_all();
+                }
+            }
             if request.is::<MsgBind>() {
                 generation.fetch_add(1, Ordering::SeqCst);
                 subscribed = false;
@@ -653,25 +662,10 @@ fn bind_member(
             "this office cannot bind this member",
         )
     };
-    let found = match shared.ports.directory.resolve_member(handle) {
-        Ok(Some((found, _))) => found,
-        _ => return Err(refused()),
+    let Some(found) = bindable(shared, handle) else {
+        return Err(refused());
     };
-    let is_person = match found.kind {
-        MemberKind::Person => true,
-        MemberKind::Agent => {
-            let here = found.office_id.as_deref() == Some(shared.office_id.as_str());
-            let may_bind = found.agent.as_ref().is_some_and(|profile| {
-                matches!(profile.status, AgentStatus::Active | AgentStatus::Paused)
-                    && profile.run_mode.is_none()
-            });
-            if !(here && may_bind) {
-                return Err(refused());
-            }
-            false
-        }
-        _ => return Err(refused()),
-    };
+    let is_person = found.kind == MemberKind::Person;
     // Step 3: the credentials.
     if is_person {
         match app_token {
@@ -693,6 +687,33 @@ fn bind_member(
         },
         Some(member_id),
     ))
+}
+
+/// The member `handle` names if a connection may act as it: a person or the owner, or an agent
+/// of this office that is active or paused and not office-run (an office-run agent needs a session
+/// token, which this office does not issue yet). `None` for anything else and for a lookup that
+/// fails: it fails closed. Used at bind and again on every later call of the connection.
+fn bindable(shared: &Shared, handle: &str) -> Option<org_proto::Member> {
+    let (found, _) = shared.ports.directory.resolve_member(handle).ok()??;
+    let may = match found.kind {
+        MemberKind::Person => true,
+        MemberKind::Agent => {
+            found.office_id.as_deref() == Some(shared.office_id.as_str())
+                && found.agent.as_ref().is_some_and(|profile| {
+                    matches!(profile.status, AgentStatus::Active | AgentStatus::Paused)
+                        && profile.run_mode.is_none()
+                })
+        }
+        _ => false,
+    };
+    may.then_some(found)
+}
+
+/// Whether a connection bound as member `id` may still act as it. The bind's rules are not
+/// checked once: an agent the owner has since made office-run, offboarded or removed must bind
+/// again (and then fails the same rules).
+fn still_bindable(shared: &Shared, id: &str) -> bool {
+    bindable(shared, id).is_some_and(|member| member.id == id)
 }
 
 fn bind_error(id: u64, code: ErrorCode, message: &str) -> Response {
@@ -2282,6 +2303,83 @@ mod tests {
         directory.remove(ADA_ID, POSITION);
         assert_eq!(
             code_of(client.call::<MsgInbox>(&inbox_params())),
+            ErrorCode::NotBound
+        );
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_connection_is_unbound_when_its_member_stops_being_bindable() {
+        use org_mailbox::testkit::fixture::{members, POSITION};
+        use org_proto::{AgentStatus, RunMode};
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (_mailbox, directory, stop, server) = messaging_server_with_directory(&path);
+        let ada = || members().into_iter().find(|m| m.id == ADA_ID).unwrap();
+        let wait = MsgWaitParams {
+            timeout_ms: 30_000,
+            from: None,
+            urgent_only: false,
+        };
+
+        // Made office-run after it bound: every call is `not_bound`, `who` and the snapshot
+        // included, and its held wait ends.
+        for change in 0..3 {
+            let mut client = Client::bound_as(&path, "ada");
+            let held = client.call_later::<org_proto::msg::MsgWait>(&wait);
+            until("a wait is held", || _mailbox.held_waits() > 0);
+            let mut changed = ada();
+            match change {
+                0 => changed.agent.as_mut().unwrap().run_mode = Some(RunMode::OnCall),
+                1 => changed.agent.as_mut().unwrap().status = AgentStatus::Offboarded,
+                _ => directory.remove(ADA_ID, POSITION),
+            }
+            if change < 2 {
+                directory.upsert(changed, POSITION);
+            }
+            let who = client.call_later::<org_proto::directory::Who>(&Default::default());
+            let inbox = client.call_later::<MsgInbox>(&inbox_params());
+            // Three answers, in whatever order: all `not_bound`, the held wait's included.
+            let mut got = std::collections::BTreeMap::new();
+            for _ in 0..3 {
+                let answer = client.answer();
+                got.insert(answer.id, code_of(answer.outcome));
+            }
+            assert_eq!(
+                got,
+                [
+                    (held, ErrorCode::NotBound),
+                    (who, ErrorCode::NotBound),
+                    (inbox, ErrorCode::NotBound)
+                ]
+                .into_iter()
+                .collect(),
+                "change {change}"
+            );
+            // It stays unbound until it binds again, which fails the same rules.
+            assert_eq!(
+                code_of(client.bind(Some("ada"), None)),
+                ErrorCode::NotAuthorized
+            );
+            directory.upsert(ada(), POSITION);
+        }
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_removed_members_id_that_is_another_members_handle_does_not_keep_the_connection_bound() {
+        use org_mailbox::testkit::fixture::POSITION;
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (_mailbox, directory, stop, server) = messaging_server_with_directory(&path);
+        // The fixture's shadow agent has pat's id as its handle: once pat is gone, pat's id
+        // names the shadow, who is bindable but not pat.
+        let mut client = Client::bound_as(&path, "pat");
+        directory.remove(PAT_ID, POSITION);
+        assert_eq!(
+            code_of(who_ask(&mut client, serde_json::json!({}))),
             ErrorCode::NotBound
         );
         stop.store(true, Ordering::SeqCst);
