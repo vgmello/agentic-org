@@ -66,20 +66,27 @@ right after a send can still lose it.
 
 ## Through the office (Phase B, in progress)
 
-`msg send`, `msg inbox`, `msg read`, `msg wait` and `who` go through the agent's office when
-this Mac has one (ADR-0003 §2.1): the office named by `--office <id>` or `$ORG_OFFICE`, else
-the only office with an `office.json` in the office home (`$ORG_OFFICE_HOME`, else
-`~/Library/Application Support/agentic.org`). Several offices and none named is a usage error
-(exit 1). `org-agent` connects to `<office home>/run/<handle>.sock`, binds as `$ORG_AGENT` /
+**Opt-in during the cutover.** `msg send`, `msg inbox`, `msg read`, `msg wait` and `who` go
+through an office only when one is named: `--office <id>` or `$ORG_OFFICE`. With neither, they
+use the local spool exactly as before, even on a Mac that has an office. (Once the office serves
+`notify`, `reply`, `defer` and `done`, the default becomes ADR-0003 §2.1's: the only office with
+an `office.json` in the office home.) Agents must be members of the office before they name it.
+
+With an office named, `org-agent` connects to `<office home>/run/<handle>.sock` (the office home is
+`$ORG_OFFICE_HOME`, else `~/Library/Application Support/agentic.org`), binds as `$ORG_AGENT` /
 `--as` with no token (an agent run by hand must be an agent placed in that office; otherwise
 exit 1, never the spool), then makes the call. It asks the host nothing.
 
-- **No office on this Mac:** the spool, quietly, as before.
 - **The office doesn't answer** (nothing listening after about 0.4 s of retries, no answer to
-  `hello`/`msg.bind` within 3 s, or it says it isn't ready yet): `send` queues in the local spool as before, with a stderr
-  notice and `"queued": true` in `--json`; `inbox`, `read`, `wait` and `who` say so on stderr
-  and show the local spool. With `$ORG_SESSION_TOKEN` set (an agent the office runs) it is exit
-  5 instead: those agents never use the spool.
+  `hello`/`msg.bind` within 3 s, or it says it isn't ready yet):
+  - `send` writes the message into **that office's own spool**,
+    `<office home>/offices/<id>/spool/new/<id>.json` (ADR-0003 §3.5: `0700` folders, a `0600`
+    file written in `spool/tmp/`, `F_FULLFSYNC`, then moved into `new/`), for the office to
+    ingest when it starts. stderr says so and `--json` adds `"queued": true`. An office with no
+    folder on this Mac is an error (exit 1): nothing would ingest it.
+  - `inbox`, `read`, `wait` and `who` say so on stderr and show the local spool.
+  - With `$ORG_SESSION_TOKEN` set (an agent the office runs) it is exit 5 instead, and so is
+    naming no office: those agents never use either spool.
 - **The office unbinds the agent mid-command** (`not_bound`): it binds again once and retries
   (a send keeps its id); if that fails, it exits saying so (1 for a refusal, 4 or 5 otherwise).
 - Exit codes follow ADR-0003 §2.6: the office's `unknown_recipient` is 3, `timeout` 2,

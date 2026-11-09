@@ -2,13 +2,17 @@
 //! command goes ([`route`]), the calls, and the office's answers in the shapes this CLI has always
 //! printed, so scripts and the inbox hooks read them the same way.
 //!
-//! - **Office found and reachable:** connect, `msg.bind` as the agent (no token: an agent run by
+//! **Opt-in during the cutover:** the office is used only when one is named (`--office` or
+//! `ORG_OFFICE`). With none named, [`Route::NoOffice`]: the local spool (`~/.agency/spool`),
+//! quietly, exactly as before, even if this Mac has an office. The default becomes ADR-0003
+//! §2.1's (the only `office.json`) once the office serves `notify`, `reply`, `defer` and `done`:
+//! pass `None` to [`find_office`] instead of returning early in [`route`].
+//!
+//! - **Office named and reachable:** connect, `msg.bind` as the agent (no token: an agent run by
 //!   hand), then the call. Its errors are the office's.
-//! - **Office found but not reachable:** [`Route::Unreachable`]. `send` falls back to the local
-//!   spool, as before, so no message is lost; the read side says so on stderr and shows the
-//!   local spool.
-//! - **No office on this Mac** (none asked for, no `office.json`): [`Route::NoOffice`], the
-//!   spool, quietly, as before.
+//! - **Office named but not reachable:** [`Route::Unreachable`]. `send` writes the message into
+//!   that office's own spool (`<office>/spool/new/`, ADR-0003 §3.5) for the office to ingest, so
+//!   no message is lost; the read side says so on stderr and shows the local spool.
 //!
 //! Bodies and meta are printed only by the commands whose output shows them (`read`, `wait`),
 //! never in a notice or an error.
@@ -16,19 +20,24 @@
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};
 use std::env;
-use std::time::{Duration, Instant};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime};
 
-use org_client::agent::{find_office, open_as, FindOfficeError, OpenError, SETUP_TIMEOUT};
+use org_client::agent::{
+    find_office, open_as, spool_send, FindOfficeError, OpenError, SpoolSendError, SETUP_TIMEOUT,
+};
 use org_client::{Client, ClientError};
 use org_proto::directory::{self, Who, WhoParams};
 use org_proto::msg::{
     self, HeaderPage, Message, MessageHeader, MsgInbox, MsgInboxParams, MsgRead, MsgReadParams,
-    MsgSend, MsgSendParams, MsgWait, MsgWaitParams, KIND_MSG, MAX_PAGE_LIMIT, MAX_WAIT_MS,
+    MsgSend, MsgSendParams, MsgWait, MsgWaitParams, SpooledSend, KIND_MSG, MAX_PAGE_LIMIT,
+    MAX_WAIT_MS, SPOOL_VERSION,
 };
 use org_proto::{Call, ErrorCode, MemberKind};
 use org_spool::{
-    generate_ulid, is_interrupted, sanitize_inline_text, DirectoryCard, InboxItem, InboxQuery,
-    MessagePriority, Outgoing, RefEntry, TeamEntry, ENVELOPE_VERSION, INBOX_SUMMARY_DEFAULT_LIMIT,
+    format_iso8601_utc, generate_ulid, is_interrupted, sanitize_inline_text, DirectoryCard,
+    InboxItem, InboxQuery, MessagePriority, Outgoing, RefEntry, TeamEntry, ENVELOPE_VERSION,
+    INBOX_SUMMARY_DEFAULT_LIMIT,
 };
 use serde::Serialize;
 
@@ -121,25 +130,66 @@ pub(crate) enum Route {
 pub(crate) struct Unreachable {
     office_id: String,
     reason: ClientError,
+    /// The office home, where the office's spool is.
+    home: PathBuf,
 }
 
 impl Unreachable {
-    /// The stderr line when a send is spooled instead.
-    pub(crate) fn queued_notice(&self) -> String {
-        format!(
-            "org-agent: office {} is not reachable ({}); the message is queued in the local spool",
-            self.office_id,
-            clean(&self.reason)
-        )
-    }
-
-    /// The stderr line when the spool refused the send too (its own error follows).
-    pub(crate) fn not_queued_notice(&self) -> String {
-        format!(
-            "org-agent: office {} is not reachable ({}), and the local spool did not take the message",
-            self.office_id,
-            clean(&self.reason)
-        )
+    /// `msg send` while the office is down: the message goes into the office's own spool, for
+    /// the office to ingest when it starts (ADR-0003 §3.5). The message's id, and stderr says
+    /// it was queued; if the office's spool won't take it, a failure saying so.
+    pub(crate) fn spool_send(
+        &self,
+        from: &str,
+        to: &str,
+        outgoing: Outgoing,
+    ) -> Result<String, Failure> {
+        let priority = priority_of(&outgoing).unwrap_or(msg::MessagePriority::Normal);
+        let Outgoing {
+            subject,
+            body,
+            meta,
+            ..
+        } = outgoing;
+        let send = SpooledSend {
+            v: SPOOL_VERSION,
+            office_id: self.office_id.clone(),
+            from: from.to_owned(),
+            id: generate_ulid(),
+            to: to.to_owned(),
+            kind: KIND_MSG.to_owned(),
+            priority,
+            subject,
+            body,
+            meta,
+            reply_to: None,
+            created_at: format_iso8601_utc(SystemTime::now()),
+        };
+        match spool_send(&self.home, &send) {
+            Ok(_) => {
+                eprintln!(
+                    "org-agent: office {} is not reachable ({}); the message is queued in its spool for when it's back",
+                    self.office_id,
+                    clean(&self.reason)
+                );
+                Ok(send.id)
+            }
+            Err(error) => {
+                let code = match error {
+                    SpoolSendError::Io(_) => EXIT_IO,
+                    _ => EXIT_USAGE,
+                };
+                Err(Failure::new(
+                    code,
+                    format!(
+                        "office {} is not reachable ({}), and its spool did not take the message: {}",
+                        self.office_id,
+                        clean(&self.reason),
+                        sanitize_inline_text(&error.to_string(), 300)
+                    ),
+                ))
+            }
+        }
     }
 
     /// The stderr line when the read side shows the local spool instead.
@@ -152,34 +202,30 @@ impl Unreachable {
     }
 }
 
-/// The office for `member`, from `office_flag` (`--office`), else `ORG_OFFICE`, else the only
-/// office on this Mac (ADR-0003 §2.1). An office that answers but refuses the bind, an office
-/// asked for that isn't a plain id, or several offices and none asked for, are failures, never a
-/// fall back: the spool would only hide them.
+/// The office for `member`, from `office_flag` (`--office`), else `ORG_OFFICE`; none named is
+/// [`Route::NoOffice`] during the cutover (see the module docs). An office that answers but
+/// refuses the bind, or an office named that isn't a plain id, are failures, never a fall back:
+/// the spool would only hide them.
 pub(crate) fn route(member: &str, office_flag: Option<&str>) -> Result<Route, Failure> {
     let from_env = env::var(OFFICE_ENV).ok().filter(|id| !id.is_empty());
-    let chosen = office_flag.or(from_env.as_deref());
-    let Some(home) = org_proto::location::default_office_home() else {
-        if let Some(id) = chosen {
-            return Err(Failure::new(
-                EXIT_USAGE,
-                format!(
-                    "office {} was asked for, but neither ORG_OFFICE_HOME nor HOME is an absolute path",
-                    sanitize_inline_text(id, 80)
-                ),
-            ));
-        }
-        if office_run() {
-            return Err(Failure::new(
-                EXIT_OFFICE_UNAVAILABLE,
-                "neither ORG_OFFICE_HOME nor HOME is an absolute path, so the office can't be found; an agent the office runs doesn't use the local spool",
-            ));
-        }
-        return Ok(Route::NoOffice);
+    let Some(chosen) = office_flag.or(from_env.as_deref()) else {
+        return no_spool_when_office_run(Route::NoOffice, office_run());
     };
-    let route = decide(find_office(&home, chosen), member, |office_id| {
-        open_as(&home, office_id, member)
-    })
+    let Some(home) = org_proto::location::default_office_home() else {
+        return Err(Failure::new(
+            EXIT_USAGE,
+            format!(
+                "office {} was asked for, but neither ORG_OFFICE_HOME nor HOME is an absolute path",
+                sanitize_inline_text(chosen, 80)
+            ),
+        ));
+    };
+    let route = decide(
+        find_office(&home, Some(chosen)),
+        &home,
+        member,
+        |office_id| open_as(&home, office_id, member),
+    )
     .map_err(|why| why.into_failure(member))?;
     no_spool_when_office_run(route, office_run())
 }
@@ -270,6 +316,7 @@ impl NoRoute {
 /// The routing decision: the office found (or not), then what opening it gave.
 fn decide(
     found: Result<Option<String>, FindOfficeError>,
+    home: &Path,
     member: &str,
     open: impl FnOnce(&str) -> Result<(Client, msg::MsgBindResult), OpenError>,
 ) -> Result<Route, NoRoute> {
@@ -278,9 +325,11 @@ fn decide(
     };
     match open(&office_id) {
         Ok((client, _)) => Ok(Route::Office(Office::new(client, office_id, member))),
-        Err(OpenError::Unreachable(reason)) => {
-            Ok(Route::Unreachable(Unreachable { office_id, reason }))
-        }
+        Err(OpenError::Unreachable(reason)) => Ok(Route::Unreachable(Unreachable {
+            office_id,
+            reason,
+            home: home.to_path_buf(),
+        })),
         Err(OpenError::Refused(error)) => Err(NoRoute::Refused { office_id, error }),
     }
 }
@@ -385,13 +434,9 @@ impl Office {
             meta,
             priority,
         } = outgoing;
-        // `--meta priority=...` set the priority on the spool (it carries priority in meta);
-        // the office takes it as a field. `--priority` wins.
-        let priority = priority.or_else(|| {
-            meta.get("priority")
-                .and_then(|p| p.as_str())
-                .and_then(|p| MessagePriority::parse(p).ok())
-        });
+        let priority = priority
+            .or_else(|| meta_priority(&meta))
+            .map(proto_priority);
         // One id for the message, so a retry after binding again is the same send.
         let id = generate_ulid();
         let sent = self
@@ -399,7 +444,7 @@ impl Office {
                 id: id.clone(),
                 to: to.to_owned(),
                 kind: KIND_MSG.to_owned(),
-                priority: priority.map(proto_priority),
+                priority,
                 subject,
                 body,
                 meta,
@@ -579,6 +624,22 @@ pub(crate) fn who_params(
         }
     }
     Ok(params)
+}
+
+/// `--meta priority=...` set the priority on the spool (it carries priority in meta); the office
+/// takes it as a field. `--priority` wins.
+fn meta_priority(meta: &BTreeMap<String, serde_json::Value>) -> Option<MessagePriority> {
+    meta.get("priority")
+        .and_then(|p| p.as_str())
+        .and_then(|p| MessagePriority::parse(p).ok())
+}
+
+/// A send's priority for the office, from `--priority` or `--meta priority=...`.
+fn priority_of(outgoing: &Outgoing) -> Option<msg::MessagePriority> {
+    outgoing
+        .priority
+        .or_else(|| meta_priority(&outgoing.meta))
+        .map(proto_priority)
 }
 
 fn proto_priority(priority: MessagePriority) -> msg::MessagePriority {
@@ -761,7 +822,7 @@ mod tests {
 
     #[test]
     fn no_office_on_this_mac_is_the_spool_and_nothing_is_opened() {
-        let route = decide(Ok(None), "pixel", |_| {
+        let route = decide(Ok(None), Path::new("/h"), "pixel", |_| {
             panic!("opened an office that isn't there")
         });
         assert!(matches!(route, Ok(Route::NoOffice)));
@@ -771,7 +832,7 @@ mod tests {
     fn a_reachable_office_is_the_office() {
         let (_dir, client) = a_client();
         let mut asked = None;
-        let route = decide(Ok(Some("O1".into())), "pixel", |id| {
+        let route = decide(Ok(Some("O1".into())), Path::new("/h"), "pixel", |id| {
             asked = Some(id.to_owned());
             Ok((client, bound()))
         });
@@ -781,21 +842,60 @@ mod tests {
 
     #[test]
     fn an_office_that_does_not_answer_falls_back_and_says_why_without_a_body() {
-        let route = decide(Ok(Some("O1".into())), "pixel", |_| {
+        let route = decide(Ok(Some("O1".into())), Path::new("/h"), "pixel", |_| {
             Err(OpenError::Unreachable(not_running()))
         });
         let Ok(Route::Unreachable(why)) = route else {
             panic!("expected a fall back");
         };
-        let queued = why.queued_notice();
-        assert!(queued.contains("office O1 is not reachable"), "{queued}");
-        assert!(queued.contains("queued in the local spool"), "{queued}");
-        assert!(why.spool_notice().contains("showing the local spool"));
+        let notice = why.spool_notice();
+        assert!(notice.contains("office O1 is not reachable"), "{notice}");
+        assert!(notice.contains("showing the local spool"), "{notice}");
+    }
+
+    #[test]
+    fn a_send_to_an_office_that_is_down_goes_into_its_own_spool() {
+        let dir = tempfile::Builder::new()
+            .prefix("oau")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let why = Unreachable {
+            office_id: "O1".into(),
+            reason: not_running(),
+            home: dir.path().to_path_buf(),
+        };
+        let outgoing = || Outgoing {
+            subject: Some("s".into()),
+            body: "the body".into(),
+            meta: BTreeMap::from([("priority".to_owned(), serde_json::json!("high"))]),
+            priority: None,
+        };
+        // No such office on this Mac: refused, saying why (and never the body).
+        let failure = why.spool_send("pixel", "nova", outgoing()).unwrap_err();
+        assert_eq!(failure.code, EXIT_USAGE);
+        let text = failure.message.unwrap();
+        assert!(
+            text.contains("its spool did not take the message"),
+            "{text}"
+        );
+        assert!(!text.contains("the body"));
+
+        std::fs::create_dir_all(dir.path().join("offices/O1")).unwrap();
+        let id = why.spool_send("pixel", "nova", outgoing()).unwrap();
+        let file = dir.path().join(format!("offices/O1/spool/new/{id}.json"));
+        let send: SpooledSend = serde_json::from_slice(&std::fs::read(file).unwrap()).unwrap();
+        assert_eq!(send.office_id, "O1");
+        assert_eq!(send.from, "pixel");
+        assert_eq!(send.to, "nova");
+        assert_eq!(send.kind, KIND_MSG);
+        assert_eq!(send.priority, msg::MessagePriority::High);
+        assert_eq!(send.body, "the body");
+        assert_eq!(send.subject.as_deref(), Some("s"));
     }
 
     #[test]
     fn an_office_that_refuses_the_bind_is_a_failure_not_a_fall_back() {
-        let route = decide(Ok(Some("O1".into())), "pixel", |_| {
+        let route = decide(Ok(Some("O1".into())), Path::new("/h"), "pixel", |_| {
             Err(OpenError::Refused(api(ErrorCode::NotAuthorized)))
         });
         let Err(why) = route else {
@@ -809,7 +909,7 @@ mod tests {
             "{text}"
         );
         // A refusal that isn't the office's answer (e.g. another protocol version) is exit 4.
-        let other = decide(Ok(Some("O1".into())), "pixel", |_| {
+        let other = decide(Ok(Some("O1".into())), Path::new("/h"), "pixel", |_| {
             Err(OpenError::Refused(ClientError::VersionMismatch {
                 client: 1,
                 server: 2,
@@ -824,6 +924,7 @@ mod tests {
             Route::Unreachable(Unreachable {
                 office_id: "O1".into(),
                 reason: not_running(),
+                home: PathBuf::from("/h"),
             })
         };
         let failure = no_spool_when_office_run(unreachable(), true).err().unwrap();
@@ -885,6 +986,7 @@ mod tests {
     fn several_offices_and_none_chosen_is_a_usage_error_naming_the_way_out() {
         let route = decide(
             Err(FindOfficeError::Ambiguous(vec!["A1".into(), "B1".into()])),
+            Path::new("/h"),
             "pixel",
             |_| panic!("guessed an office"),
         );

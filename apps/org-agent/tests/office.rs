@@ -67,6 +67,10 @@ fn main() {
             send_falls_back_to_the_spool_when_the_office_is_down,
         ),
         (
+            "an_office_not_named_is_not_used",
+            an_office_not_named_is_not_used,
+        ),
+        (
             "with_no_office_on_this_mac_the_spool_is_used_quietly",
             with_no_office_on_this_mac_the_spool_is_used_quietly,
         ),
@@ -221,7 +225,8 @@ impl World {
         server
     }
 
-    /// `org-agent <args>` as `agent`, with every home in this world and no office named.
+    /// `org-agent <args>` as `agent`, with every home in this world and the office named
+    /// (`ORG_OFFICE`: during the cutover the office is used only when named).
     fn agent(&self, agent: &str, args: &[&str]) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_org-agent"));
         command
@@ -230,7 +235,7 @@ impl World {
             .env("HOME", &self.user)
             .env("ORG_HOME", &self.user)
             .env("ORG_AGENT", agent)
-            .env_remove("ORG_OFFICE")
+            .env("ORG_OFFICE", OFFICE)
             .env_remove("ORG_SESSION_TOKEN")
             .stdin(Stdio::null());
         command
@@ -240,7 +245,24 @@ impl World {
         self.agent(agent, args).output().unwrap().into()
     }
 
-    /// The files waiting in the spool's outbox.
+    /// `org-agent <args>` as `agent` with no office named.
+    fn run_unnamed(&self, agent: &str, args: &[&str]) -> Run {
+        self.agent(agent, args)
+            .env_remove("ORG_OFFICE")
+            .output()
+            .unwrap()
+            .into()
+    }
+
+    /// The sends waiting in the office's own spool (ADR-0003 §3.5).
+    fn office_spooled(&self) -> Vec<PathBuf> {
+        match std::fs::read_dir(self.home.join("offices").join(OFFICE).join("spool/new")) {
+            Ok(entries) => entries.map(|e| e.unwrap().path()).collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// The files waiting in the local spool's outbox.
     fn spooled(&self) -> Vec<PathBuf> {
         match std::fs::read_dir(self.user.join("spool/outbox/new")) {
             Ok(entries) => entries.map(|e| e.unwrap().path()).collect(),
@@ -655,14 +677,25 @@ fn an_agent_offboarded_during_a_wait_is_told_and_not_left_waiting() {
 fn send_falls_back_to_the_spool_when_the_office_is_down() {
     let world = World::new();
     let mut server = world.office();
-    // The spool needs nova registered to accept a send for it (Phase A's rule).
-    world.run("nova", &["msg", "register", "nova"]).ok();
     server.stop();
 
+    // Into the office's own spool (ADR-0003 §3.5), not the local one.
     let secret = "kept for later";
     let started = Instant::now();
     let sent = world
-        .run("pixel", &["msg", "send", "--to", "nova", "--json", secret])
+        .run(
+            "pixel",
+            &[
+                "msg",
+                "send",
+                "--to",
+                "nova",
+                "--priority",
+                "high",
+                "--json",
+                secret,
+            ],
+        )
         .ok();
     assert!(
         started.elapsed() < Duration::from_secs(5),
@@ -679,49 +712,64 @@ fn send_falls_back_to_the_spool_when_the_office_is_down() {
         sent.stderr
     );
     assert!(
-        sent.stderr.contains("queued in the local spool"),
+        sent.stderr.contains("queued in its spool"),
         "{}",
         sent.stderr
     );
     assert!(!sent.stderr.contains(secret));
-    let spooled = world.spooled();
+    assert!(world.spooled().is_empty(), "it went to the local spool");
+    let spooled = world.office_spooled();
     assert_eq!(spooled.len(), 1);
     assert!(spooled[0].ends_with(format!("{id}.json")), "{spooled:?}");
-
-    // A recipient the spool doesn't know: the spool refuses it (exit 3), and nothing claims it
-    // was queued.
-    let refused = world.run("pixel", &["msg", "send", "--to", "stranger", secret]);
-    assert_eq!(refused.code, 3, "{}", refused.stderr);
-    assert!(
-        refused.stderr.contains("did not take the message"),
-        "{}",
-        refused.stderr
-    );
-    assert!(!refused.stderr.contains("queued in"), "{}", refused.stderr);
-    assert!(!refused.stderr.contains(secret));
-    assert_eq!(world.spooled().len(), 1);
+    let send: org_proto::msg::SpooledSend =
+        serde_json::from_slice(&std::fs::read(&spooled[0]).unwrap()).unwrap();
+    assert_eq!(send.office_id, OFFICE);
+    assert_eq!(send.from, "pixel");
+    assert_eq!(send.to, "nova");
+    assert_eq!(send.body, secret);
+    assert_eq!(send.priority, org_proto::msg::MessagePriority::High);
 
     // The read side says the office isn't reachable and shows the local spool, as before.
-    world.run("nova", &["relay", "run", "--once"]).ok();
     let inbox = world.run("nova", &["msg", "inbox", "--json"]).ok();
     assert!(
         inbox.stderr.contains("showing the local spool"),
         "{}",
         inbox.stderr
     );
-    let rows = inbox.json();
-    assert_eq!(rows[0]["id"], id);
-    assert_eq!(rows[0]["body"], secret);
-    let read = world.run("nova", &["msg", "read", "--next"]).ok();
-    assert!(read.stdout.ends_with(secret));
-    assert!(read.stderr.contains("not reachable"));
+    assert_eq!(inbox.stdout, "[]");
+    let read = world.run("nova", &["msg", "read", "--next", "--json"]).ok();
+    assert!(read.stderr.contains("not reachable"), "{}", read.stderr);
+    assert_eq!(read.stdout, "null");
+}
+
+fn an_office_not_named_is_not_used() {
+    let world = World::new();
+    let _server = world.office();
+    // Running, with its office.json, but not named: the local spool, quietly, as before.
+    world.run_unnamed("nova", &["msg", "register", "nova"]).ok();
+    let sent = world
+        .run_unnamed("pixel", &["msg", "send", "--to", "nova", "--json", "hi"])
+        .ok();
+    assert_eq!(sent.stderr, "");
+    assert!(sent.json().get("queued").is_none());
+    assert_eq!(world.spooled().len(), 1);
+    let inbox = world.run_unnamed("nova", &["msg", "inbox", "--json"]).ok();
+    assert_eq!(inbox.stderr, "");
+    // Named, the office has nothing for nova: the send didn't go there.
+    assert_eq!(
+        world.run("nova", &["msg", "inbox", "--json"]).ok().stdout,
+        "[]"
+    );
+    // A hand-run agent the office doesn't know isn't refused when it names no office.
+    let stranger = world.run_unnamed("ghost", &["msg", "inbox"]).ok();
+    assert_eq!(stranger.stderr, "");
 }
 
 fn with_no_office_on_this_mac_the_spool_is_used_quietly() {
     let world = World::new();
-    world.run("nova", &["msg", "register", "nova"]).ok();
+    world.run_unnamed("nova", &["msg", "register", "nova"]).ok();
     let sent = world
-        .run("pixel", &["msg", "send", "--to", "nova", "--json", "hi"])
+        .run_unnamed("pixel", &["msg", "send", "--to", "nova", "--json", "hi"])
         .ok();
     assert_eq!(sent.stderr, "");
     assert!(sent.json().get("queued").is_none());
@@ -730,22 +778,25 @@ fn with_no_office_on_this_mac_the_spool_is_used_quietly() {
     let who: Run = world
         .agent("pixel", &["who", "--json"])
         .env_remove("ORG_AGENT")
+        .env_remove("ORG_OFFICE")
         .output()
         .unwrap()
         .into();
     let who = who.ok();
     assert_eq!(who.stderr, "");
     assert!(who.json().is_array(), "{}", who.stdout);
-    assert_eq!(world.run("nova", &["msg", "inbox"]).ok().stderr, "");
-    // Named but missing, the office is unreachable rather than absent.
-    let named = world
-        .agent("pixel", &["msg", "send", "--to", "nova", "hi"])
-        .env("ORG_OFFICE", OFFICE)
-        .output()
-        .unwrap();
-    let named: Run = named.into();
-    let named = named.ok();
+    assert_eq!(world.run_unnamed("nova", &["msg", "inbox"]).ok().stderr, "");
+    // Named but not on this Mac: unreachable, and with no office folder its spool can't take
+    // the message, so the send fails saying so (exit 1) rather than make an office folder.
+    let named = world.run("pixel", &["msg", "send", "--to", "nova", "hi"]);
+    assert_eq!(named.code, 1, "{}", named.stderr);
     assert!(named.stderr.contains("not reachable"), "{}", named.stderr);
+    assert!(
+        named.stderr.contains("its spool did not take the message"),
+        "{}",
+        named.stderr
+    );
+    assert!(!world.home.join("offices").join(OFFICE).exists());
 }
 
 fn an_office_run_agent_never_falls_back_to_the_spool() {
@@ -810,16 +861,17 @@ fn an_office_run_agent_never_falls_back_to_the_spool() {
     );
     assert!(!spool.exists(), "the spool was opened");
 
-    // An office-run agent with no absolute office home and no office named: exit 5, no spool.
+    // An office-run agent with no office named: exit 5, no spool.
     let lost: Run = world
         .agent("nova", &["msg", "inbox"])
         .env_remove("ORG_OFFICE_HOME")
         .env("HOME", "relative")
+        .env_remove("ORG_OFFICE")
         .env("ORG_SESSION_TOKEN", "t")
         .output()
         .unwrap()
         .into();
     assert_eq!(lost.code, 5, "{}", lost.stderr);
-    assert!(lost.stderr.contains("absolute path"), "{}", lost.stderr);
+    assert!(lost.stderr.contains("set ORG_OFFICE"), "{}", lost.stderr);
     assert!(!spool.exists(), "the spool was opened");
 }

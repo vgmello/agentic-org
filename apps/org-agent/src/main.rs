@@ -1252,8 +1252,9 @@ fn local_spool(as_agent: Option<&str>) -> Result<Spool, CliError> {
     Ok(spool)
 }
 
-/// `msg send`: through the office; to the spool when there is none, or when it doesn't answer
-/// (then `--json` adds `"queued": true` and stderr says so, ADR-0003 §3.5).
+/// `msg send`: through the office named; into that office's spool when it doesn't answer (then
+/// `--json` adds `"queued": true` and stderr says so, ADR-0003 §3.5); with no office named, the
+/// local spool as before.
 fn msg_send(sub_args: &[String], as_agent: Option<&str>, json_flag: bool) -> Result<u8, CliError> {
     let from = resolve_identity(as_agent)?;
     let parsed = parse_outgoing(sub_args, OutgoingKind::Send)?;
@@ -1263,7 +1264,7 @@ fn msg_send(sub_args: &[String], as_agent: Option<&str>, json_flag: bool) -> Res
         .ok_or_else(|| CliError::Usage("send requires --to <agent>".into()))?;
     let office_flag = parsed.office.clone();
     let msg = parsed.outgoing(0)?;
-    let unreachable = match office::route(&from, office_flag.as_deref())? {
+    match office::route(&from, office_flag.as_deref())? {
         Route::Office(office) => {
             let id = office.send(&to, msg)?;
             if json_flag {
@@ -1271,26 +1272,25 @@ fn msg_send(sub_args: &[String], as_agent: Option<&str>, json_flag: bool) -> Res
             } else {
                 println!("{id}");
             }
-            return Ok(EXIT_OK);
         }
-        Route::Unreachable(why) => Some(why),
-        Route::NoOffice => None,
-    };
-    let spooled = local_spool(as_agent).and_then(|spool| Ok(spool.send(&from, &to, msg)?));
-    // The notice says "queued" only once the spool has the message.
-    if let Some(why) = &unreachable {
-        match &spooled {
-            Ok(_) => eprintln!("{}", why.queued_notice()),
-            Err(_) => eprintln!("{}", why.not_queued_notice()),
+        // Into the office's own spool, for it to ingest when it's back (ADR-0003 §3.5).
+        Route::Unreachable(why) => {
+            let id = why.spool_send(&from, &to, msg)?;
+            if json_flag {
+                println!("{{\"id\":{},\"queued\":true}}", json_quote(&id));
+            } else {
+                println!("{id}");
+            }
         }
-    }
-    let env = spooled?;
-    if json_flag && unreachable.is_some() {
-        println!("{{\"id\":{},\"queued\":true}}", json_quote(&env.id));
-    } else if json_flag {
-        println!("{{\"id\":{}}}", json_quote(&env.id));
-    } else {
-        println!("{}", env.id);
+        // No office named: the local spool, exactly as before.
+        Route::NoOffice => {
+            let env = local_spool(as_agent)?.send(&from, &to, msg)?;
+            if json_flag {
+                println!("{{\"id\":{}}}", json_quote(&env.id));
+            } else {
+                println!("{}", env.id);
+            }
+        }
     }
     Ok(EXIT_OK)
 }

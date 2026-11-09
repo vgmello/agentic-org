@@ -4,6 +4,8 @@
 //! - [`find_office`] picks the office deterministically: the one asked for (`--office` or
 //!   `ORG_OFFICE`), else the only office on this Mac with an `office.json`. It never guesses from
 //!   which sockets happen to be open, and it asks the host nothing.
+//! - [`spool_send`] writes a send for an office that isn't reachable into that office's own spool
+//!   (ADR-0003 §3.5), for the office to ingest when it starts.
 //! - [`open_as`] connects to that office's socket (retrying for up to [`CONNECT_RETRY`] while
 //!   the server may be restarting), checks the protocol version, and binds as the member with no
 //!   token (an agent run by hand, ADR-0003 M-A). Its error says whether the office was
@@ -11,16 +13,16 @@
 //!   [`OpenError::Refused`].
 
 use std::fmt;
-use std::fs::{self, OpenOptions};
-use std::io::{self, Read};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
-use std::path::Path;
+use std::fs::{self, DirBuilder, File, OpenOptions};
+use std::io::{self, Read, Write};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use org_office_launch::{
-    is_plain_id, OfficeFile, MAX_OFFICE_FILE_BYTES, OFFICES_DIR_NAME, OFFICE_FILE_NAME,
+    is_plain_id, office_dir, OfficeFile, MAX_OFFICE_FILE_BYTES, OFFICES_DIR_NAME, OFFICE_FILE_NAME,
 };
-use org_proto::msg::MsgBindResult;
+use org_proto::msg::{MsgBindResult, SpooledSend};
 
 use crate::{Client, ClientError};
 
@@ -136,6 +138,135 @@ fn effective_uid() -> u32 {
     unsafe { libc::geteuid() }
 }
 
+/// The office spool's folders, in the office's folder (ADR-0003 §3.5): a send is written in
+/// `spool/tmp/` and renamed into `spool/new/<id>.json`, where the office ingests it.
+pub const SPOOL_DIR_NAME: &str = "spool";
+const SPOOL_TMP: &str = "tmp";
+const SPOOL_NEW: &str = "new";
+
+/// The largest spooled send the office ingests (ADR-0003 §3.5, `M4`).
+pub const MAX_SPOOLED_BYTES: usize = 512 * 1024;
+
+/// Why [`spool_send`] wrote nothing.
+#[derive(Debug)]
+pub enum SpoolSendError {
+    /// The office has no folder on this Mac (or it isn't a real folder): nothing would ingest
+    /// the file, and a folder without `office.json` is one the host discards.
+    NoSuchOffice,
+    /// Not a plain id, or a send that doesn't fit (over [`MAX_SPOOLED_BYTES`]).
+    Invalid(&'static str),
+    /// A spool folder that isn't a real folder (e.g. a symlink): refused.
+    NotAFolder(PathBuf),
+    Io(io::Error),
+}
+
+impl fmt::Display for SpoolSendError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SpoolSendError::NoSuchOffice => write!(f, "that office isn't on this Mac"),
+            SpoolSendError::Invalid(why) => write!(f, "{why}"),
+            SpoolSendError::NotAFolder(path) => {
+                write!(f, "{} isn't a plain folder", path.display())
+            }
+            SpoolSendError::Io(e) => write!(f, "can't write to the office's spool: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for SpoolSendError {}
+
+impl From<io::Error> for SpoolSendError {
+    fn from(error: io::Error) -> Self {
+        SpoolSendError::Io(error)
+    }
+}
+
+/// Writes `send` into the spool of office `send.office_id` in `home`, for the office to ingest
+/// when it next starts (ADR-0003 §3.5): `<office folder>/spool/tmp/<id>.json` (folders `0700`,
+/// file `0600`, created new, never through a symlink), flushed with `F_FULLFSYNC`, moved into
+/// `spool/new/<id>.json` (never replacing a file already there), then `new/` flushed. Returns the file's path. The office's folder must
+/// exist: this never creates an office.
+pub fn spool_send(home: &Path, send: &SpooledSend) -> Result<PathBuf, SpoolSendError> {
+    if !is_plain_id(&send.id) {
+        return Err(SpoolSendError::Invalid("the message id isn't a plain id"));
+    }
+    let office = office_dir(home, &send.office_id).ok_or(SpoolSendError::NoSuchOffice)?;
+    if !real_dir(&office)? {
+        return Err(SpoolSendError::NoSuchOffice);
+    }
+    let bytes = serde_json::to_vec(send)
+        .map_err(|_| SpoolSendError::Invalid("the message can't be written"))?;
+    if bytes.len() > MAX_SPOOLED_BYTES {
+        return Err(SpoolSendError::Invalid(
+            "the message is too large to spool (512 KiB at most)",
+        ));
+    }
+    let spool = office.join(SPOOL_DIR_NAME);
+    let tmp = spool.join(SPOOL_TMP);
+    let new = spool.join(SPOOL_NEW);
+    for dir in [&spool, &tmp, &new] {
+        owner_only_dir(dir)?;
+    }
+    let name = format!("{}.json", send.id);
+    let staged = tmp.join(&name);
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&staged)?;
+    let written = file.write_all(&bytes).and_then(|()| full_sync(&file));
+    drop(file);
+    let placed = new.join(&name);
+    // A link, not a rename: it fails if `new/<id>.json` already exists, never replacing a send
+    // that is waiting there.
+    let linked = written.and_then(|()| fs::hard_link(&staged, &placed));
+    let _ = fs::remove_file(&staged);
+    linked?;
+    full_sync(&File::open(&new)?)?;
+    Ok(placed)
+}
+
+/// Whether `path` is a real folder (not a symlink to one); `false` if it doesn't exist.
+fn real_dir(path: &Path) -> Result<bool, SpoolSendError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(metadata.file_type().is_dir()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Makes `dir` (`0700`) if it's missing; refuses anything there that isn't a real folder of
+/// this user, and makes it owner-only.
+fn owner_only_dir(dir: &Path) -> Result<(), SpoolSendError> {
+    match DirBuilder::new().mode(0o700).create(dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(e) => return Err(e.into()),
+    }
+    let metadata = fs::symlink_metadata(dir)?;
+    if !metadata.file_type().is_dir() || metadata.uid() != effective_uid() {
+        return Err(SpoolSendError::NotAFolder(dir.to_path_buf()));
+    }
+    if metadata.permissions().mode() & 0o077 != 0 {
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+/// Flushes `file` to the disk itself (`F_FULLFSYNC` on macOS; `fsync` elsewhere).
+fn full_sync(file: &File) -> io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::fd::AsRawFd;
+        // SAFETY: `fcntl` with F_FULLFSYNC only flushes the descriptor `file` owns.
+        if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_FULLFSYNC) } == 0 {
+            return Ok(());
+        }
+    }
+    file.sync_all()
+}
+
 /// Why [`open_as`] gave no connection.
 #[derive(Debug)]
 pub enum OpenError {
@@ -230,7 +361,7 @@ fn connect_retrying(office_id: &str, home: &Path, budget: Duration) -> Result<Cl
 
 #[cfg(test)]
 mod tests {
-    use std::os::unix::fs::symlink;
+    use std::os::unix::fs::{symlink, PermissionsExt};
     use std::path::PathBuf;
 
     use org_proto::OfficeRole;
@@ -267,6 +398,87 @@ mod tests {
         let dir = home.join(OFFICES_DIR_NAME).join(folder);
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join(OFFICE_FILE_NAME), office_file(id)).unwrap();
+    }
+
+    fn spooled(office_id: &str, id: &str, body: &str) -> SpooledSend {
+        SpooledSend {
+            v: org_proto::msg::SPOOL_VERSION,
+            office_id: office_id.into(),
+            from: "pixel".into(),
+            id: id.into(),
+            to: "nova".into(),
+            kind: org_proto::msg::KIND_MSG.into(),
+            priority: org_proto::msg::MessagePriority::Normal,
+            subject: None,
+            body: body.into(),
+            meta: Default::default(),
+            reply_to: None,
+            created_at: "2026-11-09T10:00:00.000Z".into(),
+        }
+    }
+
+    const MSG: &str = "01MSG0000000000000000000A1";
+
+    #[test]
+    fn a_spooled_send_lands_in_the_offices_spool_owner_only() {
+        let (_dir, home) = home();
+        put(&home, A, A);
+        let placed = spool_send(&home, &spooled(A, MSG, "hello")).unwrap();
+        let office = home.join(OFFICES_DIR_NAME).join(A);
+        assert_eq!(placed, office.join("spool/new").join(format!("{MSG}.json")));
+        let read: SpooledSend = serde_json::from_slice(&fs::read(&placed).unwrap()).unwrap();
+        assert_eq!(read, spooled(A, MSG, "hello"));
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&placed), 0o600);
+        for dir in ["spool", "spool/tmp", "spool/new"] {
+            assert_eq!(mode(&office.join(dir)), 0o700, "{dir}");
+        }
+        assert_eq!(fs::read_dir(office.join("spool/tmp")).unwrap().count(), 0);
+        // The same id again is refused rather than overwritten (create_new).
+        assert!(spool_send(&home, &spooled(A, MSG, "again")).is_err());
+    }
+
+    #[test]
+    fn spooling_never_creates_an_office_or_follows_a_symlink() {
+        let (_dir, home) = home();
+        assert!(matches!(
+            spool_send(&home, &spooled(A, MSG, "x")),
+            Err(SpoolSendError::NoSuchOffice)
+        ));
+        assert!(!home.join(OFFICES_DIR_NAME).join(A).exists());
+        assert!(matches!(
+            spool_send(&home, &spooled("../x", MSG, "x")),
+            Err(SpoolSendError::NoSuchOffice)
+        ));
+        assert!(matches!(
+            spool_send(&home, &spooled(A, "../../evil", "x")),
+            Err(SpoolSendError::Invalid(_))
+        ));
+        // A spool folder that is a symlink elsewhere is refused, and nothing lands there.
+        put(&home, A, A);
+        let elsewhere = home.join("elsewhere");
+        fs::create_dir_all(&elsewhere).unwrap();
+        symlink(
+            &elsewhere,
+            home.join(OFFICES_DIR_NAME).join(A).join("spool"),
+        )
+        .unwrap();
+        assert!(matches!(
+            spool_send(&home, &spooled(A, MSG, "x")),
+            Err(SpoolSendError::NotAFolder(_))
+        ));
+        assert_eq!(fs::read_dir(&elsewhere).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_send_too_large_to_ingest_is_refused() {
+        let (_dir, home) = home();
+        put(&home, A, A);
+        let huge = "x".repeat(MAX_SPOOLED_BYTES);
+        assert!(matches!(
+            spool_send(&home, &spooled(A, MSG, &huge)),
+            Err(SpoolSendError::Invalid(_))
+        ));
     }
 
     #[test]
