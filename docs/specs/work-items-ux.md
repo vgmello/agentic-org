@@ -2,10 +2,10 @@
 kind: spec
 title: "Work items: tasks, bugs and project docs (UX)"
 status: for-review
-revision: 8
+revision: 9
 owner: ac-product-designer-eden
 created: "2026-11-08"
-updated: "2026-11-08"
+updated: "2026-11-09"
 requested_by: ac-staff-engineer-ada
 reviewers: [codex-dev, ac-staff-engineer-ada, owner]
 builds_on: [offices-and-teams-ux]
@@ -22,6 +22,8 @@ Phase 1 workstream W7 (UX), with codex-dev (model and library) · Builds on `off
 **Acceptance-criterion IDs** are new prefixes (PRJ, TSK, BUG, TRI, FIX, AREA, DOC, WORK) so they never collide with v1's PROJ and TASKS. They're stable from this revision: changed criteria are rewritten under the same ID, retired IDs are never reused.
 
 ## Changelog
+
+**Revision 9 (2026-11-09): from a request.** A task created from a request shows **From** "REQ-12 · <title>" in its side column (`feature-requests-ux.md` §3, RQS-16). No criteria changed here.
 
 **Revision 8 (2026-11-08): processes.** A new task gets the project's default checklist plus the checklists of the project's processes, not private ones (`processes-ux.md` decision 9, §9.1). **Criteria rewritten (same ID):** CHK-8 *(rev 8)*.
 
@@ -378,7 +380,7 @@ Triage is the step from **New** to **Triaged**: confirm the area and severity, s
   - Only while the ADR is proposed and is the task's blocker does that span count as waiting on you (§9.2).
 - **List:** a table with the same columns as v1 §3.10 (status, number, priority, title, assignee, team, fixes, goal, updated), grouped by status, Blocked first.
 - **New task** (slide-over): Title * (1–120) · Assignee (optional; the owner first) · Team (the project's teams; prefilled when there's one) · Feature (optional, the project's features; prefilled when started from a feature) · Priority (Normal) · Description (Markdown) · Definition of done (one or two sentences: the goal the agent works to) · Fixes (bug picker; prefilled from Create fix task) · **Start now** for an agent with no session running (v1 §3.7 rule: never typed into a running session). **Create task**. Toast "Task T-17 created and given to River."
-- **Task page:** like the bug page. Main column: description, definition of done, activity. Side column: status, priority, assignee, team, fixes (bugs, with severity), branch and worktree (W4: "Worktree: ~/…/chk-T-17, branch task/chk-T-17-coupon-edge-cases"), commits, docs, **Open session** / **Start a session on this task**.
+- **Task page:** like the bug page. Main column: description, definition of done, activity. Side column: status, priority, assignee, team, fixes (bugs, with severity), branch and worktree (W4: "Worktree: ~/…/chk-T-17, branch task/chk-T-17-coupon-edge-cases"), commits, docs, **From** (the request it came from, "REQ-12 · <title>", *rev 9*), **Open session** / **Start a session on this task**.
 - **States:** board loading (columns with skeleton cards) · no tasks: "No tasks in checkout yet." **New task** · no matches: **Clear filters** · move refused by the office (e.g. a Done task whose worktree has uncommitted changes, C7: the card springs back and the message says why) · someone moved it first (the card animates to its new column, and a toast says "River moved T-17 to In progress").
 
 ### 9.1 Checklists (rev 4)
