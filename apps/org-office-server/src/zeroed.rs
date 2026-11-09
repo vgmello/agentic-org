@@ -1,5 +1,5 @@
 //! A small buffered reader that wipes its buffer when it is dropped. The first line from the host
-//! carries the app token, and the launch contract asks the server to read it "unbuffered or
+//! carries the app token and the database key, and the launch contract asks the server to read it "unbuffered or
 //! through a small buffer you control": std's `BufReader` frees its buffer without clearing it.
 //! Best effort, like the rest of the zeroing (copies elsewhere remain).
 #![allow(unsafe_code)]

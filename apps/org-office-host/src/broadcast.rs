@@ -85,3 +85,67 @@ impl Broadcast {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{mpsc, Arc};
+    use std::thread;
+    use std::time::Duration;
+
+    /// An event whose data is a state's version.
+    struct Version;
+
+    impl EventKind for Version {
+        const NAME: &'static str = "version";
+        type Data = u64;
+    }
+
+    /// Records the versions it's sent, in order.
+    #[derive(Default)]
+    struct Recorder(Mutex<Vec<u64>>);
+
+    impl Subscriber for Recorder {
+        fn send_event(&self, _name: &str, data: Value) {
+            lock(&self.0).push(data.as_u64().unwrap());
+        }
+    }
+
+    /// L2: an event's data is read under the broadcast lock, so an event is never older than
+    /// one queued before it. Deterministic: right after the data closure reads the state (v1),
+    /// a hook changes it to v2 and publishes that from another thread, then waits for that
+    /// publish to finish. With the data read under the lock, that publish can't finish until
+    /// this one is queued, so the order is [1, 2]. Were the data read before the lock (the bug
+    /// this catches), v2 would be queued first and the stale v1 after it: [2, 1].
+    #[test]
+    fn event_data_is_read_under_the_lock_so_events_never_go_back_in_time() {
+        let broadcast = Arc::new(Broadcast::default());
+        let recorder = Arc::new(Recorder::default());
+        let subscriber: Weak<dyn Subscriber> = Arc::downgrade(&recorder) as Weak<Recorder>;
+        broadcast.subscribe(subscriber, || true);
+        let state = Arc::new(AtomicU64::new(1));
+        let (published, newer_published) = mpsc::channel();
+        let mut newer = None;
+        broadcast.publish::<Version>(|| {
+            // Under the lock, without depending on timing (`try_lock` doesn't block).
+            assert!(
+                broadcast.subscribers.try_lock().is_err(),
+                "the event's data is read outside the broadcast lock"
+            );
+            let seen = state.load(Ordering::SeqCst);
+            // The hook: the state changes right after this read, and the change is announced.
+            let (broadcast, state) = (Arc::clone(&broadcast), Arc::clone(&state));
+            newer = Some(thread::spawn(move || {
+                state.store(2, Ordering::SeqCst);
+                broadcast.publish::<Version>(|| Some(state.load(Ordering::SeqCst)));
+                let _ = published.send(());
+            }));
+            // As long as that publish could take (it can't finish while the lock is held).
+            let _ = newer_published.recv_timeout(Duration::from_millis(100));
+            Some(seen)
+        });
+        newer.unwrap().join().unwrap();
+        assert_eq!(*lock(&recorder.0), [1, 2]);
+    }
+}

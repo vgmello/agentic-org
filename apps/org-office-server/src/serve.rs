@@ -21,7 +21,9 @@ use crate::follow::{self, OrgFeed, Timing};
 use crate::msg_calls;
 use org_mailbox::{cancellation_pair, CancelHandle, Mailbox, MemberDirectory};
 use org_office::rules::OrgCommand;
-use org_proto::directory::{Who, WhoParams, WhoResult};
+use org_proto::directory::{
+    StatusSet, StatusSetParams, StatusSetResult, Who, WhoParams, WhoResult,
+};
 use org_proto::frame;
 use org_proto::msg::{
     json_string_len, MsgBind, MsgBindParams, MsgBindResult, MsgWait, MAX_HANDLE_BYTES,
@@ -47,11 +49,20 @@ pub type SubmitFn =
 pub type WhoFn =
     Box<dyn Fn(&WhoParams) -> Result<Result<WhoResult, ApiError>, String> + Send + Sync>;
 
+/// Sets or clears the given member's status line (the office's `set_status`): the result, the
+/// caller's mistake, or why it could not answer at all (storage).
+pub type StatusFn = Box<
+    dyn Fn(&str, &StatusSetParams) -> Result<Result<StatusSetResult, ApiError>, String>
+        + Send
+        + Sync,
+>;
+
 /// What the connections ask of the office.
 pub struct OfficePorts {
     pub snapshot: SnapshotFn,
     pub submit: SubmitFn,
     pub who: WhoFn,
+    pub status: StatusFn,
     /// The log, for `subscribe`.
     pub feed: Box<dyn OrgFeed>,
     /// Messaging: what `msg.send`, `msg.inbox`, `msg.read` and `msg.wait` run on.
@@ -513,6 +524,9 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
     if request.is::<Who>() {
         return who(request, shared, binding);
     }
+    if request.is::<StatusSet>() {
+        return status_set(request, shared, binding);
+    }
     if request.is::<Hello>() {
         return Response::ok::<Hello>(request.id, &shared.hello)
             .unwrap_or_else(|_| internal(request.id));
@@ -576,6 +590,46 @@ fn who(request: &Request, shared: &Shared, binding: &Binding) -> Response {
     match (shared.ports.who)(&params) {
         Ok(Ok(result)) => {
             Response::ok::<Who>(request.id, &result).unwrap_or_else(|_| internal(request.id))
+        }
+        Ok(Err(refusal)) => Response::error(request.id, refusal),
+        Err(_) => internal(request.id),
+    }
+}
+
+/// `status.set`: an agent-bound connection's own status line. The member is the binding's, never
+/// the call's. Unbound or app-wide is `not_bound`; a person or the owner (bound with the app
+/// token) is `not_authorized`. The binding is checked before the params are read.
+fn status_set(request: &Request, shared: &Shared, binding: &Binding) -> Response {
+    let member = match binding {
+        Binding::Member {
+            id,
+            with_app_token: false,
+        } => id,
+        Binding::Member { .. } => {
+            return bind_error(
+                request.id,
+                ErrorCode::NotAuthorized,
+                "only an agent sets its status",
+            )
+        }
+        Binding::Anonymous | Binding::App => {
+            return bind_error(
+                request.id,
+                ErrorCode::NotBound,
+                "bind as an agent to set a status",
+            )
+        }
+    };
+    let Ok(params) = request.params::<StatusSet>() else {
+        return bind_error(
+            request.id,
+            ErrorCode::InvalidRequest,
+            "the params of `status.set` are not valid",
+        );
+    };
+    match (shared.ports.status)(member, &params) {
+        Ok(Ok(result)) => {
+            Response::ok::<StatusSet>(request.id, &result).unwrap_or_else(|_| internal(request.id))
         }
         Ok(Err(refusal)) => Response::error(request.id, refusal),
         Err(_) => internal(request.id),
@@ -763,6 +817,7 @@ mod tests {
             snapshot,
             submit: Box::new(|_| Err("none".to_owned())),
             who: Box::new(|_| Err("none".to_owned())),
+            status: Box::new(|_, _| Err("none".to_owned())),
             feed: Box::new(Arc::new(FakeFeed::default())),
             mailbox,
             directory,
@@ -1121,6 +1176,7 @@ mod tests {
                     answer()
                 }),
                 who: Box::new(|_| Err("none".to_owned())),
+                status: Box::new(|_, _| Err("none".to_owned())),
                 feed: Box::new(Arc::new(FakeFeed::default())),
                 mailbox,
                 directory,
@@ -1543,6 +1599,7 @@ mod tests {
                     snapshot: Box::new(|| Err("none".to_owned())),
                     submit: Box::new(|_| Err("none".to_owned())),
                     who: Box::new(|_| Err("none".to_owned())),
+                    status: Box::new(|_, _| Err("none".to_owned())),
                     feed: Box::new(Arc::clone(&feed)),
                     mailbox,
                     directory,
@@ -1997,6 +2054,7 @@ mod tests {
                     counter.fetch_add(1, Ordering::SeqCst);
                     answer(params)
                 }),
+                status: Box::new(|_, _| Err("none".to_owned())),
                 feed: Box::new(Arc::new(FakeFeed::default())),
                 mailbox,
                 directory,
@@ -2094,6 +2152,7 @@ mod tests {
     use org_mailbox::testkit::fixture::{
         msg_id, ADA_ID, FAR_HANDLE, GONE_HANDLE, ODD_HANDLE, OFFICE_ID, OWNER_ID, PAT_ID, REMY_ID,
     };
+    use org_proto::directory::StatusSet;
     use org_proto::msg::{
         MsgInbox, MsgInboxParams, MsgRead, MsgReadParams, MsgSend, MsgSendParams, MsgWaitParams,
         KIND_MSG,
@@ -2705,6 +2764,130 @@ mod tests {
         assert_eq!(answer.id, extra);
         assert_eq!(code_of(answer.outcome), ErrorCode::Unavailable);
         assert_eq!(mailbox.held_waits(), MAX_HELD);
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    // ---- status.set ------------------------------------------------------------------------
+
+    type StatusLog = Arc<Mutex<Vec<(String, StatusSetParams)>>>;
+
+    /// A server whose `status.set` records who asked and echoes the text back.
+    fn status_server(path: &Path) -> (StatusLog, Arc<AtomicBool>, std::thread::JoinHandle<()>) {
+        let log: StatusLog = Arc::default();
+        let (mailbox, directory) = messaging();
+        let mut ports = ports(Box::new(|| Err("none".to_owned())));
+        ports.mailbox = mailbox;
+        ports.directory = directory;
+        let recorded = Arc::clone(&log);
+        ports.status = Box::new(move |member, params| {
+            recorded
+                .lock()
+                .unwrap()
+                .push((member.to_owned(), params.clone()));
+            match params.text.as_deref() {
+                Some("storage") => Err("disk on fire at /secret/path".to_owned()),
+                Some("refuse") => Ok(Err(ApiError::new(ErrorCode::TooLarge, "too long"))),
+                text => Ok(Ok(StatusSetResult {
+                    status: text.map(str::to_owned),
+                    expires_at: text.map(|_| "2026-11-08T20:00:00.000Z".to_owned()),
+                })),
+            }
+        });
+        let shared = Arc::new(Shared::new(&test_info(), path, ports, token()));
+        let (stop, server) = start(path, &shared);
+        (log, stop, server)
+    }
+
+    fn status_params(text: &str) -> StatusSetParams {
+        StatusSetParams {
+            text: Some(text.to_owned()),
+            ttl_ms: None,
+        }
+    }
+
+    #[test]
+    fn an_agent_sets_its_own_status_and_the_member_is_the_binding_not_the_call() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (log, stop, server) = status_server(&path);
+        let mut ada = Client::bound_as(&path, "ada");
+        let org_proto::Outcome::Result(value) = ada.call::<StatusSet>(&status_params("Drafting"))
+        else {
+            panic!("an agent sets its status")
+        };
+        assert_eq!(value["status"], "Drafting");
+        // A `member` in the call is not read.
+        let forged = ada.ask(|id| Request {
+            id,
+            method: "status.set".to_owned(),
+            params: serde_json::json!({"text": "Hijack", "member": PAT_ID, "member_id": PAT_ID}),
+        });
+        let _ = forged;
+        let seen: Vec<String> = log.lock().unwrap().iter().map(|(m, _)| m.clone()).collect();
+        assert!(
+            !seen.is_empty() && seen.iter().all(|m| m == ADA_ID),
+            "{seen:?}"
+        );
+        // A refusal keeps its code; a storage failure is a fixed text.
+        assert_eq!(
+            code_of(ada.call::<StatusSet>(&status_params("refuse"))),
+            ErrorCode::TooLarge
+        );
+        let org_proto::Outcome::Error(error) = ada.call::<StatusSet>(&status_params("storage"))
+        else {
+            panic!("storage fails")
+        };
+        assert_eq!(error.code, ErrorCode::StorageError);
+        assert!(!error.message.contains("secret"), "{}", error.message);
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn only_an_agent_bound_connection_may_set_a_status_and_the_binding_is_checked_before_the_params(
+    ) {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (log, stop, server) = status_server(&path);
+        let garbage = |client: &mut Client| {
+            code_of(client.ask(|id| Request {
+                id,
+                method: "status.set".to_owned(),
+                params: serde_json::json!({"text": ["not a string"]}),
+            }))
+        };
+        let mut client = Client::connect(&path);
+        // Unbound and app-wide: not_bound, whatever the params.
+        assert_eq!(garbage(&mut client), ErrorCode::NotBound);
+        client.bind(None, Some(token()));
+        assert_eq!(garbage(&mut client), ErrorCode::NotBound);
+        assert_eq!(
+            code_of(client.call::<StatusSet>(&status_params("x"))),
+            ErrorCode::NotBound
+        );
+        // A person or the owner bound with the token: not_authorized.
+        for who in ["pat", "owner"] {
+            client.bind(Some(who), Some(token()));
+            assert_eq!(garbage(&mut client), ErrorCode::NotAuthorized, "{who}");
+            assert_eq!(
+                code_of(client.call::<StatusSet>(&status_params("x"))),
+                ErrorCode::NotAuthorized,
+                "{who}"
+            );
+        }
+        // An agent with garbage params: invalid_request in fixed words.
+        client.bind(Some("ada"), None);
+        let org_proto::Outcome::Error(error) = client.ask(|id| Request {
+            id,
+            method: "status.set".to_owned(),
+            params: serde_json::json!({"text": ["SECRET-STATUS"]}),
+        }) else {
+            panic!("a refusal")
+        };
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert!(!error.message.contains("SECRET"), "{}", error.message);
+        assert!(log.lock().unwrap().is_empty(), "nothing reached the office");
         stop.store(true, Ordering::SeqCst);
         server.join().unwrap();
     }
