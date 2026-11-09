@@ -37,7 +37,9 @@ pub trait SessionAuth {
 
 // The ADR-0003 §4.3 storage ports (amended 2026-11-08: store split). Four capability
 // traits over office.db, with no default methods: each caller depends only on what it
-// calls. All calls are synchronous; the Mailbox holds none of its locks across them.
+// calls. All calls are synchronous; the Mailbox holds none of its registry locks across
+// them (it holds one lock, which only orders its own triage writes, across an
+// `update_state_local`, so a slow call there delays other local triage writes).
 // Implementations own transaction atomicity and their database timeouts. office.db and
 // org.db (MemberDirectory) are separate databases: no transaction spans both.
 
