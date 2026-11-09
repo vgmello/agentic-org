@@ -10,10 +10,12 @@ use crate::{
 /// A read-only port into org.db, at the office's applied position. Returns the stored
 /// member with its status, unfiltered: the Mailbox applies the policy (a paused agent may
 /// bind and receive; an offboarded or Unknown-status one is refused). Resolution order:
-/// "owner" (ignoring case) first, then an exact id, then a handle ignoring case (an
-/// agent's messaging_name or a non-owner person's name). Display names never resolve and
-/// "office" never resolves. Two members with one handle is a storage error. The Mailbox
-/// passes the reference already trimmed of ASCII whitespace.
+/// "owner" (ignoring ASCII case) first, then an exact id, then a handle ignoring case (an
+/// agent's messaging_name or a non-owner person's trimmed name). Handles fold case by
+/// Unicode lower case (`str::to_lowercase`, as org-office keys them), not ASCII-only:
+/// SQLite's `lower()` and `NOCASE` don't match "Émile" to "émile". Display names never
+/// resolve and "office" never resolves. Two members with one handle is a storage error.
+/// The Mailbox passes the reference already trimmed of ASCII whitespace.
 pub trait MemberDirectory {
     fn resolve_member(&self, id_or_handle: &str) -> Result<Option<(Member, Position)>, StoreError>;
 }

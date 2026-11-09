@@ -39,7 +39,8 @@ impl InMemoryDirectory {
 }
 
 impl MemberDirectory for InMemoryDirectory {
-    /// Resolves as org-office's directory does: the reference is trimmed of ASCII whitespace,
+    /// Resolves agents and people as org-office's directory does (members of an unknown kind
+    /// never resolve by handle here): the reference is trimmed of ASCII whitespace,
     /// `owner` and `office` compare ignoring ASCII case, an id compares exactly, and handles
     /// compare by Unicode lower case (`str::to_lowercase`; a person's name is trimmed first,
     /// as its stored key is).
