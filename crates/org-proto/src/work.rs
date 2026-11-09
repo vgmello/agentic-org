@@ -842,8 +842,8 @@ pub enum WorkEventKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         note: Option<String>,
     },
-    /// A request's scoper changed, with its status, in one event (phase 3). Recorded by
-    /// `request.route`: a re-route (`scoper_to` the new scoper, `to: routed`) or an unroute
+    /// A request's scoper changed, with its status, in one event. Recorded by `request.route`:
+    /// a route or re-route (`scoper_to` the new scoper, `to: routed`) or an unroute
     /// (`scoper_to` absent, `to: new`); and by `request.accept` (`scoper_to` the caller,
     /// `to: scoping`). `scoper_from` is the scoper before (absent: none), `reason` the
     /// `route_reason`. Added 2026-11-09 (phase 3).

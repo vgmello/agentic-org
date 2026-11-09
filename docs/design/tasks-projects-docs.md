@@ -721,7 +721,7 @@ A `question` with `asks` = the owner starts a **waiting on the owner** span on t
 
 Each request call records one event on the request (§2.3) (amended 2026-11-09: request events):
 - `request.create`: `Created`; the initial routing is part of the created item's state.
-- `request.route` and `request.accept`: `Routed { from, to, scoper_from?, scoper_to?, reason?, routed_by? }`. A re-route has `to: routed`; an unroute has no `scoper_to` and `to: new`; an accept has `scoper_to` = the caller and `to: scoping`.
+- `request.route` and `request.accept`: `Routed { from, to, scoper_from?, scoper_to?, reason?, routed_by? }`. A route or re-route has `to: routed`; an unroute has no `scoper_to` and `to: new`; an accept has `scoper_to` = the caller and `to: scoping`.
 - `request.ask_changes`: `StatusChanged { from: scoped, to: scoping, reason: note }`.
 - `request.scope`, `request.approve`, `request.decline`, `request.merge`: `StatusChanged`, with `resolution` / `reason` where relevant.
 
