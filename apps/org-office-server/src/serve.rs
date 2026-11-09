@@ -1,7 +1,9 @@
 //! The office's socket: JSON lines (`org_proto::frame`), one thread per connection. It answers
-//! `hello`, `org.snapshot`, `msg.bind` (app-wide only), `subscribe` and the organization
-//! commands, which only the app's connection may send; every other method is `unknown_method`. When the server
-//! stops, every connection is closed and its thread joined BEFORE the office is, so no thread
+//! `hello`, `org.snapshot`, `msg.bind`, `who`, `msg.send` / `msg.inbox` / `msg.read` /
+//! `msg.wait`, `subscribe` and the organization commands, which only an app-bound connection may
+//! send; every other method is `unknown_method`. A `msg.wait` is held on a thread of its own
+//! (at most [`MAX_HELD`] per connection), so the connection keeps answering meanwhile. When the
+//! server stops, every connection is closed and its thread joined BEFORE the office is, so no thread
 //! touches a database that is closing.
 
 use std::collections::HashMap;
@@ -16,11 +18,17 @@ use std::time::Duration;
 
 use crate::bounded;
 use crate::follow::{self, OrgFeed, Timing};
+use crate::msg_calls;
+use org_mailbox::{cancellation_pair, CancelHandle, Mailbox, MemberDirectory};
 use org_office::rules::OrgCommand;
 use org_proto::directory::{Who, WhoParams, WhoResult};
 use org_proto::frame;
-use org_proto::msg::{MsgBind, MsgBindParams, MsgBindResult, MAX_HANDLE_BYTES, OFFICE_SENDER};
+use org_proto::msg::{
+    json_string_len, MsgBind, MsgBindParams, MsgBindResult, MsgWait, MAX_HANDLE_BYTES,
+    OFFICE_SENDER,
+};
 use org_proto::org::{CommandAccepted, TeamCreate};
+use org_proto::{AgentStatus, MemberKind};
 use org_proto::{
     ApiError, AppToken, ErrorCode, Hello, HelloResult, OfficeHello, OfficeInfo, OfficeRole,
     OfficeStatus, OrgSnapshot, OrgSnapshotCall, Request, Response,
@@ -46,26 +54,113 @@ pub struct OfficePorts {
     pub who: WhoFn,
     /// The log, for `subscribe`.
     pub feed: Box<dyn OrgFeed>,
+    /// Messaging: what `msg.send`, `msg.inbox`, `msg.read` and `msg.wait` run on.
+    pub mailbox: Arc<Mailbox>,
+    /// Who a `msg.bind` names.
+    pub directory: Arc<dyn MemberDirectory + Send + Sync>,
 }
 
-/// Who a connection is, as far as the socket knows. Only the app is told apart so far: a client
-/// that has not bound with the office's `app_token` is anonymous.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// Who a connection is, as far as the socket knows.
+#[derive(Clone, PartialEq, Eq, Debug)]
 enum Binding {
+    /// Not bound, or the last bind failed.
     Anonymous,
+    /// Bound app-wide with the office's `app_token`, as no member.
     App,
+    /// Bound as a member: `id` is the member's canonical id; `with_app_token` when a person or
+    /// the owner bound with the `app_token` (an agent binds without one).
+    Member { id: String, with_app_token: bool },
 }
 
 impl Binding {
-    /// Whether the connection is bound with the `app_token` (the app, or later a person or the
-    /// owner bound with it): the only kind that may send organization commands.
-    fn is_app_bound(self) -> bool {
-        self == Binding::App
+    /// Whether the connection is bound with the `app_token` (the app, or a person or the owner
+    /// bound with it): the only kind that may send organization commands.
+    fn is_app_bound(&self) -> bool {
+        matches!(
+            self,
+            Binding::App
+                | Binding::Member {
+                    with_app_token: true,
+                    ..
+                }
+        )
     }
 
     /// Whether the connection is bound at all.
-    fn is_bound(self) -> bool {
-        self != Binding::Anonymous
+    fn is_bound(&self) -> bool {
+        *self != Binding::Anonymous
+    }
+
+    /// The member the connection acts as, if it is bound as one.
+    fn member(&self) -> Option<&str> {
+        match self {
+            Binding::Member { id, .. } => Some(id),
+            _ => None,
+        }
+    }
+}
+
+/// Most `msg.wait` calls held at once on one connection; more get `unavailable`.
+pub(crate) const MAX_HELD: usize = org_proto::msg::MAX_HELD_CALLS_PER_CONNECTION;
+
+/// The held calls of a connection, so a re-bind or the end of the connection can end them.
+#[derive(Default)]
+struct Held {
+    next: Mutex<(u64, HashMap<u64, CancelHandle>)>,
+}
+
+impl Held {
+    /// Room for one more: its number and a way to cancel it, or `None` when `MAX_HELD` are held.
+    fn start(&self, cancel: CancelHandle) -> Option<u64> {
+        let mut state = self.next.lock().unwrap_or_else(|p| p.into_inner());
+        if state.1.len() >= MAX_HELD {
+            return None;
+        }
+        state.0 += 1;
+        let number = state.0;
+        state.1.insert(number, cancel);
+        Some(number)
+    }
+
+    fn finish(&self, number: u64) {
+        self.next
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .1
+            .remove(&number);
+    }
+
+    /// Ends every held call (each answers `not_bound`; one that had already chosen a message may
+    /// still answer with it, under its own id, before or after the bind's answer: the contract
+    /// fixes no order) and gives their places back at once, so
+    /// a client that binds again can wait again. The cancelled calls are already ending; their
+    /// threads are bounded by the write deadline of the answer they still send.
+    fn cancel_all(&self) {
+        let ended = std::mem::take(&mut self.next.lock().unwrap_or_else(|p| p.into_inner()).1);
+        for handle in ended.values() {
+            handle.cancel();
+        }
+    }
+}
+
+/// Ends the held calls when the connection's thread stops for any reason, a panic included:
+/// `thread::scope` joins the held calls' threads first, and they would otherwise wait out their
+/// timeouts.
+struct CancelOnDrop<'a>(&'a Held);
+
+impl Drop for CancelOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.cancel_all();
+    }
+}
+
+/// A held call's place, given back however its thread ends (a panic included) and only after its
+/// answer is written, so a client that does not read cannot make threads pile up past the cap.
+struct Place<'a>(&'a Held, u64);
+
+impl Drop for Place<'_> {
+    fn drop(&mut self) {
+        self.0.finish(self.1);
     }
 }
 
@@ -251,9 +346,12 @@ fn serve_connection(stream: UnixStream, shared: &Shared) {
     let generation = AtomicU64::new(0);
     // The events sent on this connection, whichever subscription sent them.
     let sent = AtomicU64::new(0);
+    // The held `msg.wait` calls: each has a thread of its own, joined when the connection ends.
+    let held = Held::default();
     // The subscription's thread is joined when the connection ends: it reads the office, which
     // must not be closing.
     std::thread::scope(|scope| {
+        let _end_held_calls = CancelOnDrop(&held);
         let mut reader = BufReader::new(stream);
         let mut binding = Binding::Anonymous;
         let mut subscribed = false;
@@ -266,6 +364,60 @@ fn serve_connection(stream: UnixStream, shared: &Shared) {
             if request.is::<MsgBind>() {
                 generation.fetch_add(1, Ordering::SeqCst);
                 subscribed = false;
+                // A bind, failed or not, ends the held calls of the binding before it.
+                held.cancel_all();
+            }
+            if request.is::<MsgWait>() {
+                match msg_calls::begin_wait(&request, binding.member()) {
+                    Ok(wait) => {
+                        let (cancel, cancellation) = cancellation_pair();
+                        let Some(number) = held.start(cancel) else {
+                            let busy = Response::error(
+                                request.id,
+                                ApiError::new(
+                                    ErrorCode::Unavailable,
+                                    "too many calls are held on this connection",
+                                ),
+                            );
+                            if !send(&out, request.id, &busy, shared.timing) {
+                                break;
+                            }
+                            continue;
+                        };
+                        let (out, held, mailbox, timing) =
+                            (&out, &held, &shared.ports.mailbox, shared.timing);
+                        let id = request.id;
+                        let started = std::thread::Builder::new()
+                            .name("org-office-wait".into())
+                            .spawn_scoped(scope, move || {
+                                let _place = Place(held, number);
+                                // A panic in the mailbox answers this call alone.
+                                let answer =
+                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                        msg_calls::finish_wait(id, mailbox, wait, &cancellation)
+                                    }))
+                                    .unwrap_or_else(|_| internal(id));
+                                send(out, id, &answer, timing);
+                            });
+                        if started.is_err() {
+                            held.finish(number);
+                            let busy = Response::error(
+                                request.id,
+                                ApiError::new(ErrorCode::Unavailable, "the office is busy"),
+                            );
+                            if !send(out, request.id, &busy, timing) {
+                                break;
+                            }
+                        }
+                        continue;
+                    }
+                    Err(refusal) => {
+                        if !send(&out, request.id, &refusal, shared.timing) {
+                            break;
+                        }
+                        continue;
+                    }
+                }
             }
             let response = if request.is::<org_proto::Subscribe>() {
                 match follow::begin(
@@ -279,7 +431,7 @@ fn serve_connection(stream: UnixStream, shared: &Shared) {
                         let answer =
                             Response::ok::<org_proto::Subscribe>(request.id, &org_proto::Empty {})
                                 .unwrap_or_else(|_| internal(request.id));
-                        if !send(&out, &request, &answer, shared.timing) {
+                        if !send(&out, request.id, &answer, shared.timing) {
                             break;
                         }
                         subscribed = true;
@@ -300,7 +452,7 @@ fn serve_connection(stream: UnixStream, shared: &Shared) {
             } else {
                 answer(&request, shared, &mut binding)
             };
-            if !send(&out, &request, &response, shared.timing) {
+            if !send(&out, request.id, &response, shared.timing) {
                 break;
             }
         }
@@ -309,14 +461,14 @@ fn serve_connection(stream: UnixStream, shared: &Shared) {
 }
 
 /// Writes `response` to the client; `false` when the connection is gone.
-fn send(out: &Mutex<UnixStream>, request: &Request, response: &Response, timing: Timing) -> bool {
+fn send(out: &Mutex<UnixStream>, id: u64, response: &Response, timing: Timing) -> bool {
     let stream = out.lock().unwrap_or_else(|p| p.into_inner());
     match bounded::write_message(&stream, response, timing.write) {
         Ok(()) => true,
         // The answer does not fit in a frame (nothing was written): say so, and carry on.
         Err(frame::FrameError::TooLargeToSend) => {
             let error = Response::error(
-                request.id,
+                id,
                 ApiError::new(ErrorCode::StorageError, "the answer is too large to send"),
             );
             bounded::write_message(&stream, &error, timing.write).is_ok()
@@ -358,6 +510,9 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
     }
     if request.is::<MsgBind>() {
         return bind_connection(request, shared, binding);
+    }
+    if let Some(response) = msg_calls::answer(request, &shared.ports.mailbox, binding.member()) {
+        return response;
     }
     // An organization command: read to tell it from an unknown method, but the caller is checked
     // BEFORE anything else is said about it (a bad param is not told to an anonymous client).
@@ -418,10 +573,8 @@ fn who(request: &Request, shared: &Shared, binding: &Binding) -> Response {
     }
 }
 
-/// `msg.bind`, app-wide only for now: with the office's `app_token` and no member. Binding as a
-/// member is messaging's and arrives with it; until then every member bind fails closed
-/// (`not_authorized`, the contract's answer to a lookup that fails) after the contract's
-/// input-only checks. Each call replaces the previous binding, and a
+/// `msg.bind`, in the contract's order (`org_proto::msg::MsgBind`): the input alone, then the
+/// member, then the credentials; it fails closed. Each call replaces the previous binding, and a
 /// failed one leaves the connection unbound.
 fn bind_connection(request: &Request, shared: &Shared, binding: &mut Binding) -> Response {
     *binding = Binding::Anonymous;
@@ -430,42 +583,116 @@ fn bind_connection(request: &Request, shared: &Shared, binding: &mut Binding) ->
         Err(_) => return bind_error(request.id, ErrorCode::InvalidRequest, "bad msg.bind params"),
     };
     let MsgBindParams { member, app_token } = params;
-    // The contract's step 1, which needs no member lookup (`org_proto::msg::MsgBind`).
-    if let Some(member) = &member {
-        if member.len() > MAX_HANDLE_BYTES {
-            return bind_error(request.id, ErrorCode::TooLarge, "the member is too long");
+    let bound = match member {
+        Some(member) => bind_member(request.id, shared, &member, app_token),
+        None => bind_app(request.id, shared, app_token),
+    };
+    match bound {
+        Ok((now, member_id)) => {
+            *binding = now;
+            let result = MsgBindResult {
+                member_id,
+                office_id: shared.office_id.clone(),
+            };
+            Response::ok::<MsgBind>(request.id, &result).unwrap_or_else(|_| internal(request.id))
         }
-        if org_office::directory::trim_address(member).eq_ignore_ascii_case(OFFICE_SENDER) {
-            return bind_error(
-                request.id,
-                ErrorCode::InvalidRequest,
-                "a connection cannot bind as the office",
-            );
-        }
-        // Step 2: this office cannot resolve members yet (messaging's), which the contract
-        // treats as a failed lookup: it fails closed, whatever else the call sends.
-        return bind_error(
-            request.id,
-            ErrorCode::NotAuthorized,
-            "this office cannot bind this member",
-        );
+        Err(refusal) => refusal,
     }
+}
+
+/// App-wide: the `app_token` and no member.
+fn bind_app(
+    id: u64,
+    shared: &Shared,
+    app_token: Option<AppToken>,
+) -> Result<(Binding, Option<String>), Response> {
     let Some(token) = app_token else {
-        return bind_error(
-            request.id,
+        return Err(bind_error(
+            id,
             ErrorCode::InvalidRequest,
             "bind with an app_token",
-        );
+        ));
     };
     if token != shared.app_token {
-        return bind_error(request.id, ErrorCode::NotAuthorized, "wrong app token");
+        return Err(bind_error(id, ErrorCode::NotAuthorized, "wrong app token"));
     }
-    *binding = Binding::App;
-    let result = MsgBindResult {
-        member_id: None,
-        office_id: shared.office_id.clone(),
+    Ok((Binding::App, None))
+}
+
+/// As a member: an agent of this office that may message (no token), or a person or the owner
+/// (with the `app_token`). An office-run agent needs a session token, which this office does not
+/// issue yet: it cannot be bound.
+fn bind_member(
+    id: u64,
+    shared: &Shared,
+    member: &str,
+    app_token: Option<AppToken>,
+) -> Result<(Binding, Option<String>), Response> {
+    // Step 1, which needs no lookup.
+    if json_string_len(member) > MAX_HANDLE_BYTES {
+        return Err(bind_error(
+            id,
+            ErrorCode::TooLarge,
+            "the member is too long",
+        ));
+    }
+    let handle = org_office::directory::trim_address(member);
+    if handle.eq_ignore_ascii_case(OFFICE_SENDER) {
+        return Err(bind_error(
+            id,
+            ErrorCode::InvalidRequest,
+            "a connection cannot bind as the office",
+        ));
+    }
+    // Step 2: the member. A lookup that fails, an unknown member and one that cannot message are
+    // all `not_authorized`, and say no more.
+    let refused = || {
+        bind_error(
+            id,
+            ErrorCode::NotAuthorized,
+            "this office cannot bind this member",
+        )
     };
-    Response::ok::<MsgBind>(request.id, &result).unwrap_or_else(|_| internal(request.id))
+    let found = match shared.ports.directory.resolve_member(handle) {
+        Ok(Some((found, _))) => found,
+        _ => return Err(refused()),
+    };
+    let is_person = match found.kind {
+        MemberKind::Person => true,
+        MemberKind::Agent => {
+            let here = found.office_id.as_deref() == Some(shared.office_id.as_str());
+            let may_bind = found.agent.as_ref().is_some_and(|profile| {
+                matches!(profile.status, AgentStatus::Active | AgentStatus::Paused)
+                    && profile.run_mode.is_none()
+            });
+            if !(here && may_bind) {
+                return Err(refused());
+            }
+            false
+        }
+        _ => return Err(refused()),
+    };
+    // Step 3: the credentials.
+    if is_person {
+        match app_token {
+            Some(token) if token == shared.app_token => {}
+            _ => return Err(refused()),
+        }
+    } else if app_token.is_some() {
+        return Err(bind_error(
+            id,
+            ErrorCode::InvalidRequest,
+            "an agent binds without an app_token",
+        ));
+    }
+    let member_id = found.id;
+    Ok((
+        Binding::Member {
+            id: member_id.clone(),
+            with_app_token: is_person,
+        },
+        Some(member_id),
+    ))
 }
 
 fn bind_error(id: u64, code: ErrorCode, message: &str) -> Response {
@@ -500,7 +727,7 @@ mod tests {
 
     fn test_info() -> org_office::OfficeInfo {
         org_office::OfficeInfo {
-            office_id: "OFFICE1".into(),
+            office_id: org_mailbox::testkit::fixture::OFFICE_ID.into(),
             office_name: "HQ".into(),
             role: org_office::OfficeRole::Hq,
             org_id: "ORG1".into(),
@@ -510,12 +737,38 @@ mod tests {
     }
 
     fn ports(snapshot: SnapshotFn) -> OfficePorts {
+        let (mailbox, directory) = messaging();
         OfficePorts {
             snapshot,
             submit: Box::new(|_| Err("none".to_owned())),
             who: Box::new(|_| Err("none".to_owned())),
             feed: Box::new(Arc::new(FakeFeed::default())),
+            mailbox,
+            directory,
         }
+    }
+
+    /// A mailbox and its directory over the testkit's in-memory store and the fixture members
+    /// (ada and remy are agents, pat a person, plus the owner), at the fixture's time.
+    fn messaging() -> (Arc<Mailbox>, Arc<org_mailbox::testkit::InMemoryDirectory>) {
+        use org_mailbox::testkit::fixture::{
+            members, ManualClock, INCARNATION, NOW_MS, OFFICE_ID, POSITION,
+        };
+        use org_mailbox::testkit::{InMemoryDirectory, InMemoryStore};
+        use org_mailbox::{NoMessageEvents, OfficeIdentity};
+        let directory = Arc::new(InMemoryDirectory::new(members(), POSITION));
+        let mailbox = Mailbox::new(
+            Arc::new(InMemoryStore::new()),
+            directory.clone(),
+            OfficeIdentity {
+                office_id: OFFICE_ID.to_owned(),
+                incarnation: INCARNATION.to_owned(),
+                is_hq: true,
+            },
+            Arc::new(ManualClock::new(NOW_MS)),
+            Arc::new(NoMessageEvents),
+        );
+        (Arc::new(mailbox), directory)
     }
 
     /// A log the test appends to: `push` is a commit. The genesis is at (1, 1).
@@ -836,6 +1089,7 @@ mod tests {
     ) {
         let submitted = Arc::new(AtomicUsize::new(0));
         let counter = Arc::clone(&submitted);
+        let (mailbox, directory) = messaging();
         let shared = Arc::new(Shared::new(
             &test_info(),
             path,
@@ -847,6 +1101,8 @@ mod tests {
                 }),
                 who: Box::new(|_| Err("none".to_owned())),
                 feed: Box::new(Arc::new(FakeFeed::default())),
+                mailbox,
+                directory,
             },
             token(),
         ));
@@ -1014,7 +1270,7 @@ mod tests {
         let org_proto::Outcome::Result(value) = bound else {
             panic!("{bound:?}")
         };
-        assert_eq!(value["office_id"], "OFFICE1");
+        assert_eq!(value["office_id"], org_mailbox::testkit::fixture::OFFICE_ID);
         assert!(value.get("member_id").is_none());
         let org_proto::Outcome::Result(accepted) = client.team_create() else {
             panic!("the bound app's command was refused")
@@ -1079,7 +1335,7 @@ mod tests {
         assert_eq!(code_of(client.team_create()), ErrorCode::NotAuthorized);
         client.bind(None, Some(token()));
         assert_eq!(
-            code_of(client.bind(Some("owner"), Some(token()))),
+            code_of(client.bind(Some("nobody"), Some(token()))),
             ErrorCode::NotAuthorized
         );
         // The input-only checks come first: the office is never a member, and a member over
@@ -1097,7 +1353,13 @@ mod tests {
         let long = "x".repeat(MAX_HANDLE_BYTES + 1);
         assert_eq!(code_of(client.bind(Some(&long), None)), ErrorCode::TooLarge);
         assert_eq!(code_of(client.team_create()), ErrorCode::NotAuthorized);
-        let longest = "x".repeat(MAX_HANDLE_BYTES);
+        // The limit is on the JSON-encoded string, its quotes included.
+        let barely_too_long = "x".repeat(MAX_HANDLE_BYTES - 1);
+        assert_eq!(
+            code_of(client.bind(Some(&barely_too_long), None)),
+            ErrorCode::TooLarge
+        );
+        let longest = "x".repeat(MAX_HANDLE_BYTES - 2);
         assert_eq!(
             code_of(client.bind(Some(&longest), None)),
             ErrorCode::NotAuthorized
@@ -1251,6 +1513,7 @@ mod tests {
         timing: Timing,
     ) -> (Arc<FakeFeed>, Arc<AtomicBool>, std::thread::JoinHandle<()>) {
         let feed = Arc::new(FakeFeed::default());
+        let (mailbox, directory) = messaging();
         let shared = Arc::new(
             Shared::new(
                 &test_info(),
@@ -1260,6 +1523,8 @@ mod tests {
                     submit: Box::new(|_| Err("none".to_owned())),
                     who: Box::new(|_| Err("none".to_owned())),
                     feed: Box::new(Arc::clone(&feed)),
+                    mailbox,
+                    directory,
                 },
                 token(),
             )
@@ -1700,6 +1965,7 @@ mod tests {
     ) {
         let asked = Arc::new(AtomicUsize::new(0));
         let counter = Arc::clone(&asked);
+        let (mailbox, directory) = messaging();
         let shared = Arc::new(Shared::new(
             &test_info(),
             path,
@@ -1711,6 +1977,8 @@ mod tests {
                     answer(params)
                 }),
                 feed: Box::new(Arc::new(FakeFeed::default())),
+                mailbox,
+                directory,
             },
             token(),
         ));
@@ -1796,6 +2064,549 @@ mod tests {
         };
         assert_eq!(error.code, ErrorCode::StorageError);
         assert!(!error.message.contains("secret"), "{}", error.message);
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    // ---- messaging: member binds and the msg.* calls ---------------------------------------
+
+    use org_mailbox::testkit::fixture::{
+        msg_id, ADA_ID, FAR_HANDLE, GONE_HANDLE, ODD_HANDLE, OFFICE_ID, OWNER_ID, PAT_ID, REMY_ID,
+    };
+    use org_proto::msg::{
+        MsgInbox, MsgInboxParams, MsgRead, MsgReadParams, MsgSend, MsgSendParams, MsgWaitParams,
+        KIND_MSG,
+    };
+
+    /// A server over the fixture members that accepts any organization command, and the mailbox
+    /// it runs on.
+    fn messaging_server(
+        path: &Path,
+    ) -> (Arc<Mailbox>, Arc<AtomicBool>, std::thread::JoinHandle<()>) {
+        let (mailbox, _, stop, server) = messaging_server_with_directory(path);
+        (mailbox, stop, server)
+    }
+
+    /// The same, with the directory the test may change under the server.
+    fn messaging_server_with_directory(
+        path: &Path,
+    ) -> (
+        Arc<Mailbox>,
+        Arc<org_mailbox::testkit::InMemoryDirectory>,
+        Arc<AtomicBool>,
+        std::thread::JoinHandle<()>,
+    ) {
+        let (mailbox, directory) = messaging();
+        let mut ports = ports(Box::new(|| Err("none".to_owned())));
+        ports.submit = Box::new(|_| committed());
+        ports.mailbox = Arc::clone(&mailbox);
+        ports.directory = directory.clone();
+        let shared = Arc::new(Shared::new(&test_info(), path, ports, token()));
+        let (stop, server) = start(path, &shared);
+        (mailbox, directory, stop, server)
+    }
+
+    /// Waits for `condition`, and fails (instead of hanging the suite) if it never comes.
+    fn until(what: &str, condition: impl Fn() -> bool) {
+        let limit = std::time::Instant::now() + Duration::from_secs(20);
+        while !condition() {
+            assert!(std::time::Instant::now() < limit, "never happened: {what}");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    fn send_params(n: u32, to: &str, body: &str) -> MsgSendParams {
+        MsgSendParams {
+            id: msg_id(n),
+            to: to.to_owned(),
+            kind: KIND_MSG.to_owned(),
+            priority: None,
+            subject: None,
+            body: body.to_owned(),
+            meta: Default::default(),
+            reply_to: None,
+        }
+    }
+
+    fn inbox_params() -> MsgInboxParams {
+        MsgInboxParams {
+            include_all: false,
+            from: None,
+            thread_id: None,
+            cursor: None,
+            limit: None,
+        }
+    }
+
+    impl Client {
+        fn call<C: org_proto::Call>(&mut self, params: &C::Params) -> org_proto::Outcome {
+            self.ask(|id| Request::new::<C>(id, params).unwrap())
+        }
+
+        /// Sends a call without waiting for its answer; the id it will answer with.
+        fn call_later<C: org_proto::Call>(&mut self, params: &C::Params) -> u64 {
+            self.next += 1;
+            frame::write_message(
+                &mut self.stream,
+                &Request::new::<C>(self.next, params).unwrap(),
+            )
+            .unwrap();
+            self.next
+        }
+
+        /// The next answer, whichever call it is for.
+        fn answer(&mut self) -> Response {
+            frame::read_message::<Response>(&mut self.reader)
+                .unwrap()
+                .expect("the connection ended")
+        }
+
+        fn bound_as(path: &Path, member: &str) -> Self {
+            let mut client = Client::connect(path);
+            let token = (member == "pat" || member == "owner").then(token);
+            assert!(
+                matches!(
+                    client.bind(Some(member), token),
+                    org_proto::Outcome::Result(_)
+                ),
+                "{member} binds"
+            );
+            client
+        }
+    }
+
+    #[test]
+    fn an_agent_binds_without_a_token_by_handle_or_id_and_is_told_who_it_is() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (_mailbox, stop, server) = messaging_server(&path);
+        let mut client = Client::connect(&path);
+        for name in ["ada", "ADA", " ada ", ADA_ID] {
+            let org_proto::Outcome::Result(value) = client.bind(Some(name), None) else {
+                panic!("{name} should bind")
+            };
+            assert_eq!(value["member_id"], ADA_ID, "{name}");
+            assert_eq!(value["office_id"], OFFICE_ID);
+        }
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_bind_that_the_contract_refuses_says_which_way_and_leaves_the_connection_unbound() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (_mailbox, stop, server) = messaging_server(&path);
+        let mut client = Client::connect(&path);
+        let unbound = |client: &mut Client| {
+            code_of(client.call::<MsgInbox>(&inbox_params())) == ErrorCode::NotBound
+        };
+
+        // An agent with a token is a mistake in the call, not a refusal of the member.
+        assert_eq!(
+            code_of(client.bind(Some("ada"), Some(token()))),
+            ErrorCode::InvalidRequest
+        );
+        assert!(unbound(&mut client));
+        // Every `not_authorized` bind of a member says the same words, so the text tells a
+        // person's handle from an unknown one no more than the code does.
+        let text_of = |outcome| match outcome {
+            org_proto::Outcome::Error(e) => e.message,
+            other => panic!("expected an error, got {other:?}"),
+        };
+        assert_eq!(
+            text_of(client.bind(Some("pat"), None)),
+            text_of(client.bind(Some("nobody"), None))
+        );
+        // A person or the owner needs the token: none, or a wrong one.
+        for who in ["pat", "owner"] {
+            assert_eq!(
+                code_of(client.bind(Some(who), None)),
+                ErrorCode::NotAuthorized,
+                "{who}"
+            );
+            let wrong = AppToken::from_bytes([8; org_proto::APP_TOKEN_BYTES]);
+            assert_eq!(
+                code_of(client.bind(Some(who), Some(wrong))),
+                ErrorCode::NotAuthorized,
+                "{who}"
+            );
+            assert!(unbound(&mut client));
+        }
+        // An unknown member, an offboarded or unknown-status agent, and one of another office
+        // fail closed, the same way.
+        for name in ["nobody", GONE_HANDLE, ODD_HANDLE, FAR_HANDLE, "", "   "] {
+            assert_eq!(
+                code_of(client.bind(Some(name), None)),
+                ErrorCode::NotAuthorized,
+                "{name:?}"
+            );
+            assert!(unbound(&mut client), "{name:?}");
+        }
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn an_office_run_agent_cannot_bind_yet_and_a_member_removed_after_binding_is_not_bound() {
+        use org_mailbox::testkit::fixture::{members, POSITION};
+        use org_proto::RunMode;
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (_mailbox, directory, stop, server) = messaging_server_with_directory(&path);
+        let mut client = Client::connect(&path);
+
+        // An agent with a run mode (`Unknown` included) is office-run and needs a session token,
+        // which this office does not issue yet: it fails closed.
+        let mut run = members().into_iter().find(|m| m.id == ADA_ID).unwrap();
+        for mode in [RunMode::AlwaysOn, RunMode::OnCall, RunMode::Unknown] {
+            run.agent.as_mut().unwrap().run_mode = Some(mode);
+            directory.upsert(run.clone(), POSITION);
+            assert_eq!(
+                code_of(client.bind(Some("ada"), None)),
+                ErrorCode::NotAuthorized,
+                "{mode:?}"
+            );
+        }
+        run.agent.as_mut().unwrap().run_mode = None;
+        directory.upsert(run, POSITION);
+        assert!(matches!(
+            client.bind(Some("ada"), None),
+            org_proto::Outcome::Result(_)
+        ));
+        assert!(matches!(
+            client.call::<MsgInbox>(&inbox_params()),
+            org_proto::Outcome::Result(_)
+        ));
+        // Moved out of the organization after it bound: its next call is `not_bound`.
+        directory.remove(ADA_ID, POSITION);
+        assert_eq!(
+            code_of(client.call::<MsgInbox>(&inbox_params())),
+            ErrorCode::NotBound
+        );
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_person_bound_with_the_token_acts_as_that_person_and_may_send_organization_commands() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (_mailbox, stop, server) = messaging_server(&path);
+        let mut client = Client::connect(&path);
+        let org_proto::Outcome::Result(value) = client.bind(Some("owner"), Some(token())) else {
+            panic!("the owner binds with the token")
+        };
+        assert_eq!(value["member_id"], OWNER_ID);
+        assert!(matches!(
+            client.team_create(),
+            org_proto::Outcome::Result(_)
+        ));
+        // An agent is not app-bound.
+        client.bind(Some("ada"), None);
+        assert_eq!(code_of(client.team_create()), ErrorCode::NotAuthorized);
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_message_goes_from_the_bound_member_to_the_other_and_reads_once() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (_mailbox, stop, server) = messaging_server(&path);
+        let mut ada = Client::bound_as(&path, "ada");
+        let mut remy = Client::bound_as(&path, "remy");
+
+        let org_proto::Outcome::Result(sent) = ada.call::<MsgSend>(&send_params(1, "remy", "hi"))
+        else {
+            panic!("the send is accepted")
+        };
+        assert_eq!(sent["id"], msg_id(1));
+        // The sender sees nothing in its own inbox; the recipient sees the header.
+        let org_proto::Outcome::Result(own) = ada.call::<MsgInbox>(&inbox_params()) else {
+            panic!("inbox")
+        };
+        assert_eq!(own["headers"].as_array().unwrap().len(), 0);
+        let org_proto::Outcome::Result(theirs) = remy.call::<MsgInbox>(&inbox_params()) else {
+            panic!("inbox")
+        };
+        assert_eq!(theirs["headers"][0]["from_member_id"], ADA_ID);
+        assert_eq!(theirs["headers"][0]["to_member_id"], REMY_ID);
+
+        let read = MsgReadParams { id: None };
+        let org_proto::Outcome::Result(got) = remy.call::<MsgRead>(&read) else {
+            panic!("read")
+        };
+        assert_eq!(got["message"]["body"], "hi");
+        let org_proto::Outcome::Result(again) = remy.call::<MsgRead>(&read) else {
+            panic!("read")
+        };
+        assert!(again["message"].is_null() || again.get("message").is_none());
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn who_a_call_acts_as_is_the_binding_and_never_a_field_of_the_call() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (_mailbox, stop, server) = messaging_server(&path);
+        let mut ada = Client::bound_as(&path, "ada");
+        // A `from` in the params is not read: the decoder refuses unknown fields or ignores
+        // them, and the message is ada's either way.
+        let forged = Request {
+            id: 0,
+            method: "msg.send".to_owned(),
+            params: serde_json::json!({
+                "id": msg_id(2), "to": "remy", "kind": "msg", "body": "x",
+                "from": "pat", "from_member_id": PAT_ID
+            }),
+        };
+        let sent = ada.ask(|id| Request { id, ..forged });
+        let mut remy = Client::bound_as(&path, "remy");
+        let org_proto::Outcome::Result(theirs) = remy.call::<MsgInbox>(&inbox_params()) else {
+            panic!("inbox")
+        };
+        let headers = theirs["headers"].as_array().unwrap();
+        match sent {
+            // Accepted: the extra fields were not read, and the message is ada's.
+            org_proto::Outcome::Result(_) => {
+                assert_eq!(headers.len(), 1);
+                assert_eq!(headers[0]["from_member_id"], ADA_ID);
+            }
+            // Refused: nothing was sent.
+            org_proto::Outcome::Error(e) => {
+                assert_eq!(e.code, ErrorCode::InvalidRequest);
+                assert!(headers.is_empty());
+            }
+        }
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn messaging_needs_a_member_binding_and_an_app_wide_one_is_not_a_member() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (_mailbox, stop, server) = messaging_server(&path);
+        let mut client = Client::connect(&path);
+        let wait = MsgWaitParams {
+            timeout_ms: 10,
+            from: None,
+            urgent_only: false,
+        };
+        let calls = |client: &mut Client| {
+            [
+                code_of(client.call::<MsgSend>(&send_params(3, "remy", "x"))),
+                code_of(client.call::<MsgInbox>(&inbox_params())),
+                code_of(client.call::<MsgRead>(&MsgReadParams { id: None })),
+                code_of(client.call::<org_proto::msg::MsgWait>(&wait)),
+            ]
+        };
+        assert_eq!(calls(&mut client), [ErrorCode::NotBound; 4]);
+        client.bind(None, Some(token()));
+        assert_eq!(calls(&mut client), [ErrorCode::NotBound; 4]);
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_bad_param_is_told_in_fixed_words_that_do_not_echo_the_body() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (_mailbox, stop, server) = messaging_server(&path);
+        let mut ada = Client::bound_as(&path, "ada");
+        let org_proto::Outcome::Error(error) = ada.ask(|id| Request {
+            id,
+            method: "msg.send".to_owned(),
+            params: serde_json::json!({
+                "id": msg_id(4), "to": "remy", "kind": "msg", "body": "x",
+                "priority": "SECRET-BODY"
+            }),
+        }) else {
+            panic!("a refusal")
+        };
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert!(!error.message.contains("SECRET"), "{}", error.message);
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_held_wait_is_answered_when_a_message_arrives_while_the_connection_keeps_answering() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (mailbox, stop, server) = messaging_server(&path);
+        let mut remy = Client::bound_as(&path, "remy");
+        let mut ada = Client::bound_as(&path, "ada");
+        let wait = MsgWaitParams {
+            timeout_ms: 30_000,
+            from: None,
+            urgent_only: false,
+        };
+        let held = remy.call_later::<org_proto::msg::MsgWait>(&wait);
+        // The wait is registered before anything is sent to it.
+        until("a wait is held", || mailbox.held_waits() > 0);
+        // The same connection still answers.
+        assert!(matches!(
+            remy.call::<MsgInbox>(&inbox_params()),
+            org_proto::Outcome::Result(_)
+        ));
+        ada.call::<MsgSend>(&send_params(5, "remy", "wake up"));
+        let answer = remy.answer();
+        assert_eq!(answer.id, held);
+        let org_proto::Outcome::Result(value) = answer.outcome else {
+            panic!("the wait ends with the message")
+        };
+        assert_eq!(value["message"]["body"], "wake up");
+        assert_eq!(mailbox.held_waits(), 0);
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_bind_ends_the_held_wait_of_the_binding_before_it_with_not_bound() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (mailbox, stop, server) = messaging_server(&path);
+        let mut remy = Client::bound_as(&path, "remy");
+        let wait = MsgWaitParams {
+            timeout_ms: 30_000,
+            from: None,
+            urgent_only: false,
+        };
+        let held = remy.call_later::<org_proto::msg::MsgWait>(&wait);
+        until("a wait is held", || mailbox.held_waits() > 0);
+        // A failed bind counts too.
+        let rebind = remy.call_later::<MsgBind>(&MsgBindParams {
+            member: Some("nobody".into()),
+            app_token: None,
+        });
+        let mut answers = [remy.answer(), remy.answer()];
+        answers.sort_by_key(|answer| answer.id);
+        assert_eq!(answers[0].id, held);
+        assert_eq!(code_of(answers[0].outcome.clone()), ErrorCode::NotBound);
+        assert_eq!(answers[1].id, rebind);
+        assert_eq!(
+            code_of(answers[1].outcome.clone()),
+            ErrorCode::NotAuthorized
+        );
+        assert_eq!(mailbox.held_waits(), 0);
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_connection_that_closes_with_waits_held_leaves_none_behind_and_the_server_stops() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (mailbox, stop, server) = messaging_server(&path);
+        let mut remy = Client::bound_as(&path, "remy");
+        let wait = MsgWaitParams {
+            timeout_ms: 30_000,
+            from: None,
+            urgent_only: false,
+        };
+        remy.call_later::<org_proto::msg::MsgWait>(&wait);
+        remy.call_later::<org_proto::msg::MsgWait>(&wait);
+        until("two waits are held", || mailbox.held_waits() >= 2);
+        drop(remy);
+        until("no wait is held", || mailbox.held_waits() == 0);
+        // And one still held when the server stops does not keep it from stopping.
+        let mut again = Client::bound_as(&path, "remy");
+        again.call_later::<org_proto::msg::MsgWait>(&wait);
+        until("a wait is held", || mailbox.held_waits() > 0);
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+        assert_eq!(mailbox.held_waits(), 0);
+    }
+
+    #[test]
+    fn rebinding_gives_the_held_places_back_at_once() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (mailbox, stop, server) = messaging_server(&path);
+        let mut remy = Client::bound_as(&path, "remy");
+        let wait = MsgWaitParams {
+            timeout_ms: 30_000,
+            from: None,
+            urgent_only: false,
+        };
+        for _ in 0..MAX_HELD {
+            remy.call_later::<org_proto::msg::MsgWait>(&wait);
+        }
+        until("all are held", || mailbox.held_waits() >= MAX_HELD);
+        // Bind again and wait at once: the places of the cancelled calls are free already.
+        let rebind = remy.call_later::<MsgBind>(&MsgBindParams {
+            member: Some("remy".into()),
+            app_token: None,
+        });
+        let fresh = remy.call_later::<org_proto::msg::MsgWait>(&wait);
+        let mut ended = 0;
+        let mut rebound = false;
+        while ended < MAX_HELD || !rebound {
+            let answer = remy.answer();
+            if answer.id == rebind {
+                rebound = true;
+            } else {
+                assert_ne!(answer.id, fresh, "the new wait is held, not answered");
+                assert_eq!(code_of(answer.outcome), ErrorCode::NotBound);
+                ended += 1;
+            }
+        }
+        until("only the new wait is held", || mailbox.held_waits() == 1);
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn the_places_of_held_calls_are_counted_freed_and_cancelled_with_their_guard() {
+        let held = Held::default();
+        let mut cancellations = Vec::new();
+        for _ in 0..MAX_HELD {
+            let (handle, cancellation) = cancellation_pair();
+            cancellations.push(cancellation);
+            assert!(held.start(handle).is_some());
+        }
+        let (handle, _extra) = cancellation_pair();
+        assert!(held.start(handle).is_none(), "the cap");
+        {
+            // The guard ends them all, as when the connection's thread panics.
+            let _guard = CancelOnDrop(&held);
+        }
+        assert!(cancellations.iter().all(|c| c.is_cancelled()));
+        let (handle, _fresh) = cancellation_pair();
+        let number = held.start(handle).expect("the places are free again");
+        {
+            let _place = Place(&held, number);
+        }
+        // A place given back is taken again.
+        for _ in 0..MAX_HELD {
+            let (handle, _) = cancellation_pair();
+            assert!(held.start(handle).is_some());
+        }
+    }
+
+    #[test]
+    fn at_most_sixteen_waits_are_held_on_a_connection() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (mailbox, stop, server) = messaging_server(&path);
+        let mut remy = Client::bound_as(&path, "remy");
+        let wait = MsgWaitParams {
+            timeout_ms: 30_000,
+            from: None,
+            urgent_only: false,
+        };
+        for _ in 0..MAX_HELD {
+            remy.call_later::<org_proto::msg::MsgWait>(&wait);
+        }
+        until("all are held", || mailbox.held_waits() >= MAX_HELD);
+        let extra = remy.call_later::<org_proto::msg::MsgWait>(&wait);
+        let answer = remy.answer();
+        assert_eq!(answer.id, extra);
+        assert_eq!(code_of(answer.outcome), ErrorCode::Unavailable);
+        assert_eq!(mailbox.held_waits(), MAX_HELD);
         stop.store(true, Ordering::SeqCst);
         server.join().unwrap();
     }
