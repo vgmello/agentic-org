@@ -19,7 +19,8 @@ use crate::rules::{is_offboarded, name_key};
 use crate::time;
 
 /// What the office knows about one member right now. Runtime data, never in the organization's
-/// log: it is lost when the office stops.
+/// log. Presence is lost when the office stops; a status line is kept in `office.db` until it
+/// lapses.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemberRuntime {
     pub presence: MemberPresence,

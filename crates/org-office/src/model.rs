@@ -12,7 +12,7 @@ pub enum OfficeRole {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewOffice {
     /// A plain id (ASCII letters and digits, 1 to 64), made by the host. The office folder and
-    /// the Keychain key are named by it.
+    /// host's key for it are named by it.
     pub office_id: String,
     pub office_name: String,
     pub role: OfficeRole,

@@ -261,3 +261,79 @@ fn ok<C: Call>(id: u64, result: &C::Result) -> Response {
         )
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    use org_proto::{
+        Empty, OfficeAppTokenParams, OfficeList, OfficeRestartParams, OrganizationCreateParams,
+    };
+
+    use crate::catalog::Catalog;
+    use crate::keys::memory::MemoryKeys;
+    use crate::supervisor::{Supervisor, SupervisorConfig};
+    use crate::timings::Timings;
+
+    fn service(home: &Path) -> Service {
+        let supervisor = Supervisor::new(SupervisorConfig {
+            program: home.join("no-such-server"),
+            home: home.to_path_buf(),
+            logs_dir: home.join("logs"),
+            log_max_bytes: 1024,
+            timings: Timings::default(),
+            keys: Arc::new(MemoryKeys::default()),
+            server_check: Arc::new(crate::server_check::ServerCheck::Skip),
+            sweep_orphans: false,
+        });
+        let broadcast = Arc::new(Broadcast::default());
+        let offices = Offices::start(
+            home,
+            Catalog::default(),
+            Vec::new(),
+            supervisor,
+            Arc::clone(&broadcast),
+            &Timings::default(),
+        );
+        let app = AppPolicy::new(crate::app_auth::APP_BUNDLE_ID, None).unwrap();
+        Service::new(offices, broadcast, app)
+    }
+
+    /// L1, the other half: exactly the app-only calls run inline (see the listener's
+    /// `an_inline_call_runs_before_anything_more_is_read`).
+    #[test]
+    fn only_the_app_only_calls_run_inline() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = service(dir.path());
+        let id = "01AAAAAAAAAAAAAAAAAAAAAAAA".to_owned();
+        let inline = [
+            Request::new::<OfficeAppToken>(
+                1,
+                &OfficeAppTokenParams {
+                    office_id: id.clone(),
+                },
+            )
+            .unwrap(),
+            Request::new::<OfficeRestart>(1, &OfficeRestartParams { office_id: id }).unwrap(),
+        ];
+        for request in &inline {
+            assert!(service.inline(request), "{}", request.method);
+        }
+        let threaded = [
+            Request::new::<Hello>(1, &Empty {}).unwrap(),
+            Request::new::<OfficeList>(1, &Empty {}).unwrap(),
+            Request::new::<OrganizationCreate>(
+                1,
+                &OrganizationCreateParams {
+                    name: "Acme".into(),
+                },
+            )
+            .unwrap(),
+        ];
+        for request in &threaded {
+            assert!(!service.inline(request), "{}", request.method);
+        }
+        service.offices.shutdown();
+    }
+}

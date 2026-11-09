@@ -86,7 +86,7 @@ describe('PROC-3 sealed processes', () => {
 		const set = run('atl');
 		expect(entry(set, 'security-basics')).toMatchObject({ source: 'organization', sealed: true });
 		const refused = set.problems.find((p) => p.kind === 'sealed_refused');
-		expect(refused?.text).toBe('Security basics (Platform) is sealed by the organization. You can add a process instead.');
+		expect(refused?.text).toBe("Platform's version of Security basics isn't applied: the organization sealed it. You can add a process instead.");
 		expect(entry(set, 'security-basics')!.chain.map((l) => l.outcome)).toEqual(['applies', 'refused']);
 	});
 
@@ -124,7 +124,7 @@ describe('PROC-4 a lower level turns a process off', () => {
 describe('PROC-1/PROC-16 problems in the files', () => {
 	it('a file with unreadable front matter is listed with its field and left out of the set', () => {
 		const design = resolve({ docs, teams: SAMPLE_TEAMS, project: { key: 'des1', name: 'Design one', teamIds: ['design'] } });
-		expect(design.problems.find((p) => p.kind === 'invalid')).toMatchObject({ key: 'design-handoff', text: 'Details not recognized: overridable.' });
+		expect(design.problems.find((p) => p.kind === 'invalid')).toMatchObject({ key: 'design-handoff', text: 'Details not recognized (overridable).' });
 		expect(names(design)).not.toContain('design-handoff');
 	});
 
@@ -162,7 +162,7 @@ describe('PROC-5 private processes only add', () => {
 		const base = docs.filter((d) => d.location.level !== 'agent');
 		const mine = (over: Partial<ProcessDoc>): ProcessDoc => ({ ...docs[2], id: `doc-p-${over.key}`, level: 'agent', scope: 'noor', location: { level: 'agent', scope: 'noor' }, ...over });
 		const set = resolve({ docs: [...base, mine({ key: 'a', name: 'A', overrides: { key: 'weekly-status', version: 1 } }), mine({ key: 'b', name: 'B', status: 'off' })], teams: SAMPLE_TEAMS, agentId: 'noor' });
-		expect(set.problems.map((p) => p.text)).toEqual(["Private processes only add: they can't override a process.", "Private processes only add: they can't turn off a process."]);
+		expect(set.problems.map((p) => p.text)).toEqual(["Private processes only add: A can't override a process.", "Private processes only add: B can't turn off a process."]);
 	});
 
 	it('another agent’s private processes are not in the set', () => {

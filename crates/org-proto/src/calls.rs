@@ -178,6 +178,19 @@ impl Call for OrganizationList {
 /// subscribe (an agent-bound subscriber needs its own event filter first). The **host**
 /// serves it to any same-user connection without a binding (its socket is 0600), for the
 /// office list and `office.status_changed`.
+///
+/// An office server also pushes **live events** that are not in the organization's log, for
+/// what happens after the subscription: `message.received`, `message.state_changed` (headers
+/// only) and `member.presence_changed` (the latest per member, at most once a second for each).
+/// They are hints with no replay: take `msg.inbox` and `who` for the state, and the
+/// events for the changes. If a subscriber falls too far behind, the office ends its
+/// subscription by closing the connection, which looks like any other dropped connection (no
+/// reason is sent). So after ANY end of a subscription (it fell behind, a re-bind, a dropped
+/// connection) a client re-lists what it shows (an app-bound one
+/// with `msg.list`, `msg.threads` and `msg.human_needs_you`, and `who`; `msg.inbox` is for a
+/// member binding), takes `org.snapshot` only when a resume answers `snapshot_required`, and
+/// subscribes again. A presence event still waiting out its gap when a subscription ends is
+/// dropped; a client that subscribes again asks `who`.
 pub struct Subscribe;
 
 /// `subscribe`'s params. `{}` is still valid (live events only).
@@ -239,13 +252,12 @@ impl Call for OfficeList {
 ///
 /// The result is a secret: never log it, or the response line that carries it.
 ///
-/// An app-only call is accepted only on a connection whose client sent it after reading `hello`'s
-/// answer. Bytes already buffered when the host accepted the connection are refused with
-/// `not_authorized`, so never pipeline an app-only call before `hello`'s answer.
-/// First thing in the app's main, before any output or threads: fstat fds 0-2 and dup2
-/// `/dev/null` over any that is a socket; the app never reads or writes an fd it didn't open.
-/// After sending an app-only call, the client sends nothing else on that connection until its
-/// answer arrives.
+/// The client rule: a client reads `hello`'s answer before sending an app-only call, and sends
+/// nothing else on that connection until its answer arrives. First thing in the app's main,
+/// before any output or threads: fstat fds 0-2 and dup2 `/dev/null` over any that is a socket;
+/// the app never reads or writes an fd it didn't open.
+/// The host check: the host accepts an app-only call only if it arrived after the connection's
+/// accept was sampled and nothing follows its request line (otherwise `not_authorized`).
 pub struct OfficeAppToken;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -299,13 +311,12 @@ impl Call for OfficeAppToken {
 /// this call answers `unknown_method`. Show the office's `status_reason`, not this call's
 /// error code: the code says only why the call failed.
 ///
-/// An app-only call is accepted only on a connection whose client sent it after reading `hello`'s
-/// answer. Bytes already buffered when the host accepted the connection are refused with
-/// `not_authorized`, so never pipeline an app-only call before `hello`'s answer.
-/// First thing in the app's main, before any output or threads: fstat fds 0-2 and dup2
-/// `/dev/null` over any that is a socket; the app never reads or writes an fd it didn't open.
-/// After sending an app-only call, the client sends nothing else on that connection until its
-/// answer arrives.
+/// The client rule: a client reads `hello`'s answer before sending an app-only call, and sends
+/// nothing else on that connection until its answer arrives. First thing in the app's main,
+/// before any output or threads: fstat fds 0-2 and dup2 `/dev/null` over any that is a socket;
+/// the app never reads or writes an fd it didn't open.
+/// The host check: the host accepts an app-only call only if it arrived after the connection's
+/// accept was sampled and nothing follows its request line (otherwise `not_authorized`).
 pub struct OfficeRestart;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

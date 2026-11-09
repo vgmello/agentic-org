@@ -12,8 +12,11 @@ export function sourceShort(entry: Pick<Entry, 'source' | 'scopeName' | 'doc'>):
 /** What an agent last read of a key: the doc and version. */
 export type Reads = Record<string, { docId: string; version: number }>;
 
+/** A process's last read: an own property only (a key such as `constructor` is not a read). */
+export const readOf = (reads: Reads, key: string) => (Object.hasOwn(reads, key) ? reads[key] : undefined);
+
 /** The processes whose winning file is not the one the agent last read (a new version, a new winner and a conflict fallback all count). */
-export const changedSince = (set: EffectiveSet, reads: Reads): Entry[] => set.entries.filter((e) => reads[e.key]?.docId !== e.doc.id || reads[e.key]?.version !== e.doc.version);
+export const changedSince = (set: EffectiveSet, reads: Reads): Entry[] => set.entries.filter((e) => readOf(reads, e.key)?.docId !== e.doc.id || readOf(reads, e.key)?.version !== e.doc.version);
 
 /**
  * "Your processes for chk-T-17: Branch, review and merge (org v3), Code review (Checkout v2). Changed since you last read: Branch,
@@ -27,7 +30,7 @@ export function startLine(set: EffectiveSet, reads: Reads, taskRef?: string): st
 	const changed = changedSince(set, reads);
 	if (changed.length === 0) return head;
 	const words = changed.map((e) => {
-		const read = reads[e.key];
+		const read = readOf(reads, e.key);
 		return read ? `${e.doc.name} v${read.version} → v${e.doc.version}` : `${e.doc.name} (new, v${e.doc.version})`;
 	});
 	return `${head} Changed since you last read: ${words.join(', ')}.`;

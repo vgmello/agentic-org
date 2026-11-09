@@ -2179,14 +2179,22 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 name = "org-agent"
 version = "0.0.0"
 dependencies = [
+ "org-client",
+ "org-office-launch",
+ "org-office-server",
+ "org-proto",
  "org-spool",
+ "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
 name = "org-client"
 version = "0.0.0"
 dependencies = [
+ "libc",
+ "org-office-launch",
  "org-proto",
  "serde_json",
  "tempfile",
@@ -2232,6 +2240,7 @@ dependencies = [
  "org-office-launch",
  "org-proto",
  "security-framework",
+ "security-framework-sys",
  "serde",
  "serde_json",
  "tempfile",
@@ -2250,14 +2259,12 @@ dependencies = [
 name = "org-office-server"
 version = "0.0.0"
 dependencies = [
- "core-foundation",
  "libc",
  "org-client",
  "org-mailbox",
  "org-office",
  "org-office-launch",
  "org-proto",
- "security-framework",
  "serde",
  "serde_json",
  "tempfile",
