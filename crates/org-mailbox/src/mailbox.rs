@@ -708,8 +708,15 @@ impl Mailbox {
     /// that id is taken by a row that isn't the notice ([`is_notice_for`]: a member sent a
     /// message there first) or by other content, the store is asked again (a racing expiry
     /// may have committed the notice meanwhile), and if the sender still has neither, the
-    /// notice is committed once more under [`delivery_failed_fallback_id`]. If that fails
-    /// too, the error is returned. It commits at this office, as slice 1's local/HQ
+    /// notice is committed once more under [`delivery_failed_fallback_id`].
+    ///
+    /// A store keeps at most one `delivery_failed` per request
+    /// ([`MessageStore::commit_message`]), and refuses a second with any error (a SQL unique
+    /// index reports a storage error, not `AlreadyExists`). So after any failed commit, of
+    /// either id, the store is asked once more ([`Self::told_after_failure`]): two expiries
+    /// racing each other to the fallback, or one landing its notice while this one commits,
+    /// leave the asker told, and that is success. Only when the asker still has neither is
+    /// the commit's error returned. It commits at this office, as slice 1's local/HQ
     /// messaging does: routing a notice to a sender another office owns comes with
     /// cross-office routing.
     fn notify_expired(&self, original: &MessageHeader, now: &str) -> Result<(), MailboxError> {
@@ -741,7 +748,7 @@ impl Mailbox {
             // The id is held by a row that isn't the notice, or by other content (an earlier
             // notice under an old display name, which the check below then finds).
             Ok(_) | Err(StoreError::AlreadyExists) => {}
-            Err(error) => return Err(error.into()),
+            Err(error) => return self.told_after_failure(original, error),
         }
         if self.answered_or_told(original)? {
             return Ok(());
@@ -756,12 +763,29 @@ impl Mailbox {
             },
             ..notice
         };
-        let outcome = self.store.commit_message(fallback)?;
+        let outcome = match self.store.commit_message(fallback) {
+            Ok(outcome) => outcome,
+            Err(error) => return self.told_after_failure(original, error),
+        };
         if !is_notice_for(&outcome.message.message.header, original) {
             return Err(MailboxError::StorageError);
         }
         self.announce_notice(&outcome, original);
         Ok(())
+    }
+
+    /// After a failed commit of `original`'s notice: `Ok` when the asker has been told or
+    /// answered meanwhile (another expiry's notice took the request's one `delivery_failed`),
+    /// else the commit's `error`. A failed re-check leaves the commit's error standing.
+    fn told_after_failure(
+        &self,
+        original: &MessageHeader,
+        error: StoreError,
+    ) -> Result<(), MailboxError> {
+        match self.answered_or_told(original) {
+            Ok(true) => Ok(()),
+            Ok(false) | Err(_) => Err(error.into()),
+        }
     }
 
     /// The `delivery_failed` notice for `original`, to its sender, under `id`. It holds no
@@ -988,7 +1012,7 @@ fn send_result(stored: &StoredMessage) -> SendResult {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{mpsc, Barrier};
     use std::thread;
 
@@ -1039,6 +1063,201 @@ mod tests {
         fn list_active_snooze_deadlines(&self) -> Result<Vec<SnoozeDeadline>, StoreError> {
             self.inner.list_active_snooze_deadlines()
         }
+    }
+
+    /// A message store over an [`InMemoryStore`] that races the Mailbox's notice commits. Its
+    /// `fail_commit`th `commit_message` call (from 1) fails with the given error after landing
+    /// another expiry's notice first (the same notice under [`RACING_NOTICE`]), and its next
+    /// `blind_finds` `find_reply_for_ask` calls answer `None`, as if no notice had landed yet.
+    #[derive(Default)]
+    struct RacingStore {
+        inner: InMemoryStore,
+        commits: AtomicUsize,
+        fail_commit: Mutex<Option<(usize, StoreError)>>,
+        blind_finds: Mutex<usize>,
+    }
+
+    /// The id another expiry's notice lands under in [`RacingStore`].
+    const RACING_NOTICE: &str = "01JCRACINGNOTICE0000000000";
+
+    impl MessageStore for RacingStore {
+        fn commit_message(
+            &self,
+            msg: NewStoredMessage,
+        ) -> Result<CommitMessageOutcome, StoreError> {
+            let call = self.commits.fetch_add(1, Ordering::SeqCst) + 1;
+            let failure = {
+                let mut fail = lock(&self.fail_commit);
+                match fail.take() {
+                    Some((at, error)) if at == call => Some(error),
+                    other => {
+                        *fail = other;
+                        None
+                    }
+                }
+            };
+            let Some(error) = failure else {
+                return self.inner.commit_message(msg);
+            };
+            let racing = NewStoredMessage {
+                message: Message {
+                    header: MessageHeader {
+                        id: RACING_NOTICE.into(),
+                        ..msg.message.header
+                    },
+                    ..msg.message
+                },
+                ..msg
+            };
+            assert!(
+                self.inner
+                    .commit_message(racing)
+                    .expect("the racing notice")
+                    .inserted
+            );
+            Err(error)
+        }
+        fn claim_read(
+            &self,
+            to_member_id: &str,
+            id: Option<&str>,
+            now_utc: &str,
+        ) -> Result<Option<StoredMessage>, StoreError> {
+            self.inner.claim_read(to_member_id, id, now_utc)
+        }
+        fn peek_next_unread(
+            &self,
+            to_member_id: &str,
+            from_member_id: Option<&str>,
+            urgent_only: bool,
+            now_utc: &str,
+        ) -> Result<crate::PeekUnreadOutcome, StoreError> {
+            self.inner
+                .peek_next_unread(to_member_id, from_member_id, urgent_only, now_utc)
+        }
+        fn get_message(&self, id: &str) -> Result<Option<StoredMessage>, StoreError> {
+            self.inner.get_message(id)
+        }
+        fn list_headers(&self, query: HeaderQuery) -> Result<HeaderPage, StoreError> {
+            self.inner.list_headers(query)
+        }
+        fn find_reply_for_ask(
+            &self,
+            ask_id: &str,
+            responder_id: &str,
+        ) -> Result<Option<StoredMessage>, StoreError> {
+            {
+                let mut blind = lock(&self.blind_finds);
+                if *blind > 0 {
+                    *blind -= 1;
+                    return Ok(None);
+                }
+            }
+            self.inner.find_reply_for_ask(ask_id, responder_id)
+        }
+    }
+
+    /// A Mailbox (no triage) over `store`, recording its events.
+    fn racing_mailbox(store: &Arc<RacingStore>, events: &Arc<RecordingEvents>) -> Mailbox {
+        Mailbox::new(
+            store.clone(),
+            Arc::new(InMemoryDirectory::new(members(), POSITION)),
+            identity(),
+            Arc::new(ManualClock::new(NOW_MS)),
+            events.clone(),
+        )
+    }
+
+    /// Commits `msg_id(1)`, an expired request from Pat to Ada, and returns its header.
+    fn expired_ask(store: &impl MessageStore) -> MessageHeader {
+        use crate::testkit::conformance::{commit, expired_request};
+
+        let mut ask = expired_request(1, PAT_ID, ADA_ID);
+        ask.message.header.to_display_name = ADA_NAME.into();
+        commit(store, ask);
+        store
+            .get_message(&msg_id(1))
+            .unwrap()
+            .unwrap()
+            .message
+            .header
+    }
+
+    /// The ids of the `delivery_failed` notices in Pat's inbox replying to `msg_id(1)`.
+    fn notices(store: &impl MessageStore) -> Vec<String> {
+        store
+            .list_headers(HeaderQuery {
+                scope: HeaderScope::Inbox(PAT_ID.into()),
+                from_member_id: None,
+                thread_id: None,
+                unread_only: false,
+                include_snoozed: true,
+                cursor: None,
+                limit: 100,
+            })
+            .unwrap()
+            .headers
+            .into_iter()
+            .filter(|header| {
+                header.kind == KIND_DELIVERY_FAILED
+                    && header.reply_to.as_deref() == Some(msg_id(1).as_str())
+            })
+            .map(|header| header.id)
+            .collect()
+    }
+
+    /// A notice commit that fails after another expiry's notice landed leaves the asker told:
+    /// `Ok`, with exactly that one notice, and nothing published by the loser. That is two
+    /// expiries racing to the fallback (SQL's unique index fails the second with a storage
+    /// error, the memory store with `AlreadyExists`), or a first-id commit losing that way.
+    #[test]
+    fn a_notice_commit_failing_after_another_notice_landed_is_told() {
+        use crate::testkit::conformance::{commit, new_message};
+
+        let errors: [fn() -> StoreError; 2] = [
+            || StoreError::new("UNIQUE constraint failed: msg_headers.reply_to"),
+            || StoreError::AlreadyExists,
+        ];
+        // (the failing commit, whether the first id is squatted so the fallback is tried)
+        for (failing, squatted) in [(2, true), (1, false)] {
+            for error in errors {
+                let store = Arc::new(RacingStore::default());
+                let events = Arc::new(RecordingEvents::default());
+                let mailbox = racing_mailbox(&store, &events);
+                let request = expired_ask(&store.inner);
+                if squatted {
+                    let mut squat = new_message(2, REMY_ID, PAT_ID, MessagePriority::Normal);
+                    squat.message.header.id = delivery_failed_id(&request, INCARNATION);
+                    commit(&store.inner, squat);
+                }
+                *lock(&store.fail_commit) = Some((failing, error()));
+
+                assert_eq!(
+                    mailbox.notify_expired(&request, NOW_UTC),
+                    Ok(()),
+                    "commit {failing} failed after the racing notice landed"
+                );
+                assert_eq!(store.commits.load(Ordering::SeqCst), failing);
+                assert_eq!(notices(&store.inner), [RACING_NOTICE]);
+                assert!(events.delivery_failed().is_empty());
+            }
+        }
+    }
+
+    /// Without another notice, a failed commit is still an error.
+    #[test]
+    fn a_failed_notice_commit_without_another_notice_fails() {
+        let store = Arc::new(RacingStore::default());
+        let mailbox = racing_mailbox(&store, &Arc::new(RecordingEvents::default()));
+        let request = expired_ask(&store.inner);
+        // The commit fails (landing its racing notice first), but the asker never shows up as
+        // told: every check misses it.
+        *lock(&store.fail_commit) = Some((1, StoreError::new("disk I/O error")));
+        *lock(&store.blind_finds) = usize::MAX;
+        assert_eq!(
+            mailbox.notify_expired(&request, NOW_UTC),
+            Err(MailboxError::StorageError)
+        );
     }
 
     fn identity() -> OfficeIdentity {

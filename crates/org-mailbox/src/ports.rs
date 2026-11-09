@@ -51,6 +51,13 @@ pub trait MessageStore {
     /// in the same transaction from the office's local counter (>= 1, increasing in commit
     /// order). An initially Read message never enters the unread index.
     ///
+    /// At most one `delivery_failed` per `reply_to`: a second one (another id, replying to a
+    /// request that already has one) is refused and nothing is written. The reference store
+    /// refuses it with `StoreError::AlreadyExists`, but any `StoreError` is allowed, because a
+    /// SQL unique index reports a storage error. The Mailbox treats any failed notice commit
+    /// followed by a re-check that finds the asker told
+    /// ([`Self::find_reply_for_ask`]) as success.
+    ///
     /// `Ok` means durable and visible to every connection: a batching writer must not
     /// return before its COMMIT. The Mailbox wakes waiters as soon as this returns (§2.2).
     fn commit_message(&self, msg: NewStoredMessage) -> Result<CommitMessageOutcome, StoreError>;
