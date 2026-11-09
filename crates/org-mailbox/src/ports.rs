@@ -73,6 +73,13 @@ pub trait MessageStore {
     /// call reports the rest. Read-only: changes and deletes nothing. Each call reads a
     /// fresh snapshot, never a long-lived read transaction, so a waiter woken by a commit
     /// sees that commit (§2.2).
+    ///
+    /// "Expired" is exactly: [`crate::past_deadline`] holds for the header at `now_utc` (in
+    /// epoch milliseconds), and the message isn't flagged `expired_waiting_person`. That is,
+    /// `now_utc >= expires_at + min(ttl_ms / 4, 2000)` ms (a missing `ttl_ms` counts as 0),
+    /// a message with no `expires_at` never expires, and one whose `expires_at` can't be
+    /// read has. A person's ask flagged `expired_waiting_person` is never expired: it stays
+    /// deliverable as an ordinary unread message.
     fn peek_next_unread(
         &self,
         to_member_id: &str,
@@ -85,6 +92,11 @@ pub trait MessageStore {
     /// One page of headers, newest first by `local_seq`, without reading bodies, from a
     /// fresh snapshot.
     fn list_headers(&self, query: HeaderQuery) -> Result<HeaderPage, StoreError>;
+    /// The earliest (by `local_seq`) message replying to `ask_id` and addressed to whoever
+    /// asked: a reply from `responder_id`, or the office's own `delivery_failed` notice.
+    /// `None` when `ask_id` doesn't exist. The Mailbox commits a `delivery_failed` for an
+    /// expired request only while this is `None`: the asker has neither an answer nor a
+    /// notice.
     fn find_reply_for_ask(
         &self,
         ask_id: &str,
