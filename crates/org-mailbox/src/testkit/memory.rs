@@ -8,7 +8,7 @@ use org_proto::{Member, MemberKind, Position, OWNER_HANDLE};
 
 use crate::{
     parse_utc, CommitMessageOutcome, HeaderQuery, HeaderScope, MemberDirectory, MessageStore,
-    NewStoredMessage, PeekUnreadOutcome, StoreError, StoredMessage,
+    NewStoredMessage, PeekUnreadOutcome, StoreError, StoredMessage, MAX_EXPIRED_IDS,
 };
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -217,6 +217,7 @@ impl MessageStore for InMemoryStore {
             .iter()
             .filter(|stored| expired(&stored.message.header, now))
             .map(|stored| stored.message.header.id.clone())
+            .take(MAX_EXPIRED_IDS)
             .collect();
         let message = matching
             .into_iter()

@@ -7,6 +7,9 @@ use crate::{
     PeerToken, SnoozeDeadline, StoreError, StoredMessage, SyncedMessageState, ThreadQuery,
 };
 
+/// The most expired ids one `peek_next_unread` reports ([`PeekUnreadOutcome::expired_ids`]).
+pub const MAX_EXPIRED_IDS: usize = 100;
+
 /// A read-only port into org.db, at the office's applied position. Returns the stored
 /// member with its status, unfiltered: the Mailbox applies the policy (a paused agent may
 /// bind and receive; an offboarded or Unknown-status one is refused). Resolution order:
@@ -62,9 +65,11 @@ pub trait MessageStore {
         now_utc: &str,
     ) -> Result<Option<StoredMessage>, StoreError>;
     /// The oldest unexpired, unsnoozed unread message, without marking it read, plus the
-    /// ids of expired unread messages passed over. Read-only: changes and deletes nothing.
-    /// Each call reads a fresh snapshot, never a long-lived read transaction, so a waiter
-    /// woken by a commit sees that commit (§2.2).
+    /// ids of the expired open unread messages: at most [`MAX_EXPIRED_IDS`], the oldest
+    /// first (commit order), so the ids one call reports, and the batch the caller expires,
+    /// stay bounded however many requests expired; once the caller expires them, the next
+    /// call reports the rest. Read-only: changes and deletes nothing. Each call reads a fresh snapshot, never a long-lived read
+    /// transaction, so a waiter woken by a commit sees that commit (§2.2).
     fn peek_next_unread(
         &self,
         to_member_id: &str,

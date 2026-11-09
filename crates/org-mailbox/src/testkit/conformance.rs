@@ -31,7 +31,7 @@ use super::fixture::*;
 use crate::{
     cancellation_pair, content_hash, format_utc, CommitMessageOutcome, HeaderQuery, HeaderScope,
     Mailbox, MailboxError, MemberDirectory, MessageStore, NewStoredMessage, OfficeIdentity,
-    PeekUnreadOutcome, StoreError, StoredMessage,
+    PeekUnreadOutcome, StoreError, StoredMessage, MAX_EXPIRED_IDS,
 };
 
 /// Opens a fresh, empty backend whose directory holds `members` at `position`. Any
@@ -107,6 +107,17 @@ fn new_message(n: u32, from: &str, to: &str, priority: MessagePriority) -> NewSt
         content_hash: hash,
         initial_state: State::Unread,
     }
+}
+
+/// An expired request to `to`, its deadline an hour before [`NOW_UTC`].
+fn expired_request(n: u32, from: &str, to: &str) -> NewStoredMessage {
+    let mut request = new_message(n, from, to, MessagePriority::Urgent);
+    let header = &mut request.message.header;
+    header.kind = KIND_REQUEST.into();
+    header.urgent = true;
+    header.ttl_ms = Some(60_000);
+    header.expires_at = format_utc(NOW_MS - 3_600_000);
+    request
 }
 
 fn commit(store: &impl MessageStore, msg: NewStoredMessage) -> CommitMessageOutcome {
@@ -410,13 +421,7 @@ pub fn store_peek_is_read_only_and_oldest_first(backend: impl OpenBackend) {
 /// An expired unread message is passed over and reported, never deleted or changed.
 pub fn store_peek_reports_expired_without_deleting(backend: impl OpenBackend) {
     let store = open_store(&backend);
-    let mut request = new_message(1, PAT_ID, ADA_ID, MessagePriority::Urgent);
-    let header = &mut request.message.header;
-    header.kind = KIND_REQUEST.into();
-    header.urgent = true;
-    header.ttl_ms = Some(60_000);
-    header.expires_at = format_utc(NOW_MS - 3_600_000);
-    commit(&store, request);
+    commit(&store, expired_request(1, PAT_ID, ADA_ID));
     commit(
         &store,
         new_message(2, PAT_ID, ADA_ID, MessagePriority::Normal),
@@ -427,6 +432,33 @@ pub fn store_peek_reports_expired_without_deleting(backend: impl OpenBackend) {
         assert_eq!(outcome.expired_ids, [msg_id(1)]);
     }
     assert_eq!(state_of(&store, &msg_id(1)), State::Unread);
+}
+
+/// Peek reports at most [`MAX_EXPIRED_IDS`] expired ids, the oldest first in commit order
+/// (not id order: they are committed in falling id order), and still returns the oldest
+/// unexpired message behind them.
+pub fn store_peek_caps_expired_ids_oldest_first(backend: impl OpenBackend) {
+    let store = open_store(&backend);
+    let expired = MAX_EXPIRED_IDS as u32 + 5;
+    for n in (1..=expired).rev() {
+        commit(&store, expired_request(n, PAT_ID, ADA_ID));
+    }
+    commit(
+        &store,
+        new_message(expired + 1, PAT_ID, ADA_ID, MessagePriority::Normal),
+    );
+    let outcome = peek(&store, ADA_ID);
+    assert_eq!(
+        outcome.message.unwrap().message.header.id,
+        msg_id(expired + 1)
+    );
+    assert_eq!(outcome.expired_ids.len(), MAX_EXPIRED_IDS);
+    assert_eq!(
+        outcome.expired_ids,
+        (6..=expired).rev().map(msg_id).collect::<Vec<_>>(),
+        "the first {MAX_EXPIRED_IDS} committed, ids {expired} down to 6"
+    );
+    assert_eq!(state_of(&store, &msg_id(expired)), State::Unread);
 }
 
 /// Claims go oldest first, only to the recipient, and an already read id comes back
@@ -1721,6 +1753,7 @@ macro_rules! mailbox_conformance_tests {
             store_initial_read_is_never_unread,
             store_peek_is_read_only_and_oldest_first,
             store_peek_reports_expired_without_deleting,
+            store_peek_caps_expired_ids_oldest_first,
             store_claim_read_order_and_ownership,
             store_claim_read_is_once_under_concurrency,
             store_commits_and_claims_are_visible_to_other_readers,

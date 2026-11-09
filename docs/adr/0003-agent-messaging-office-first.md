@@ -282,7 +282,7 @@ To keep `inbox`, `notify`, `wait`, `read --next`, and UI thread views sub-millis
 1. **`msg.wait { timeout_ms, from?, urgent_only? }`:**
    - **Step 1 (Register):** Inserts an inbox waiter handle into `WaiterRegistry`.
    - **Step 2 (Check):** Releases any due time-based snoozes (`snoozed_until <= now_utc`) and queries `peek_next_unread` for the oldest unsnoozed unread message for `to_member_id` (matching `from` and `urgent_only` if given).
-     - If `peek_next_unread` encounters rows with `adjusted_expires_at + skew_bound <= now_utc`, it skips them and enqueues `update_state_local(..., Expired)` so they are cleaned out of `msg_unread`. (amended 2026-11-08: store split, ada) `peek_next_unread` itself is read-only (§4.3): it skips them and reports them as `expired_ids`, and the Mailbox enqueues the `update_state_local(..., Expired)` through `TriageStore`.
+     - If `peek_next_unread` encounters rows with `adjusted_expires_at + skew_bound <= now_utc`, it skips them and enqueues `update_state_local(..., Expired)` so they are cleaned out of `msg_unread`. (amended 2026-11-08: store split, ada) `peek_next_unread` itself is read-only (§4.3): it skips them and reports them as `expired_ids`, and the Mailbox enqueues the `update_state_local(..., Expired)` through `TriageStore`. (amended 2026-11-09: slice 2, Remy) `expired_ids` holds at most `MAX_EXPIRED_IDS` (100) ids, the oldest first in commit order, so one check stays bounded however many requests expired; the Mailbox expires those and the next check reports the rest.
    - **Step 3 (Complete or block):** If a matching unread message is found (or if a concurrent `Mailbox` commit completed the waiter handle during Step 2), removes the waiter handle and returns that message immediately **without** marking it read. Otherwise, blocks on the waiter handle until woken by `Mailbox` or until `timeout_ms` elapses (returning `null`, which makes `org-agent msg wait` exit `2`).
 2. **Claim-before-commit on `msg.ask` replies (zero double-wake window, `M-C`):**
    - **Step 1 (Register ask waiter):** `Mailbox::ask` registers a reply waiter for `(ask.id, recipient_member_id)` in `WaiterRegistry` **before** calling `store.commit_message` (or `store.find_reply_for_ask` on an idempotent re-ask).
@@ -741,6 +741,8 @@ pub trait MessageStore {
     /// and `urgent_only`) without marking read. Also returns any expired unread IDs encountered.
     /// (amended 2026-11-08: store split, ada) Read-only: it changes and deletes nothing. The Mailbox
     /// decides what to do with `expired_ids` (through `TriageStore`).
+    /// (amended 2026-11-09: slice 2, Remy) `expired_ids` holds at most `MAX_EXPIRED_IDS` (100) ids,
+    /// the oldest first (commit order); the next call reports the rest once the Mailbox has expired these.
     /// (amended 2026-11-08: store split, ada) It reads a fresh snapshot each call, never a long-lived read
     /// transaction, so a waiter woken by a commit sees that commit.
     fn peek_next_unread(&self, to_member_id: &str, from_member_id: Option<&str>, urgent_only: bool, now_utc: &str) -> Result<PeekUnreadOutcome, StoreError>;

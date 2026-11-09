@@ -19,7 +19,7 @@ pub use mailbox::{Mailbox, OfficeIdentity};
 pub use model::*;
 pub use ports::{
     MemberDirectory, MessageEvents, MessageStore, NoMessageEvents, SessionAuth, SyncStore,
-    ThreadStore, TriageStore,
+    ThreadStore, TriageStore, MAX_EXPIRED_IDS,
 };
 pub use time::{format_utc, parse_utc, Clock, SystemClock};
 pub use waiters::{cancellation_pair, CancelHandle, Cancellation};

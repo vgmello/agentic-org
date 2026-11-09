@@ -86,6 +86,7 @@ pub struct SnoozeDeadline {
 #[derive(Debug, Clone, Default)]
 pub struct PeekUnreadOutcome {
     pub message: Option<StoredMessage>,
+    /// At most [`crate::MAX_EXPIRED_IDS`], oldest first (commit order).
     pub expired_ids: Vec<String>,
 }
 
