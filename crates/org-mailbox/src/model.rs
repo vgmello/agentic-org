@@ -50,10 +50,16 @@ pub struct LocalStateTransition {
     pub state: MessageLifecycleState,
     pub snoozed_until: Option<String>,
     pub snooze_after_task: bool,
+    /// `Snoozed`: the snooze note. `Done`: the done note. Ignored for every other state.
     pub reason: Option<String>,
     pub now_utc: String,
+    /// The office making the change (the Mailbox passes its own). Written onto the
+    /// message's state row: the acting office becomes the state's owner.
     pub owner_office_id: String,
+    /// That office's incarnation, written onto the state row with the change.
     pub origin_incarnation: String,
+    /// The org position the change was made at (the caller's, from the directory), written
+    /// onto the state row with the change.
     pub org_position: Position,
     /// With `Unread`: flags an ask to a person or the owner whose deadline passed (it stays
     /// unread). Ignored with every other state.

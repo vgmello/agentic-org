@@ -808,6 +808,10 @@ impl Mailbox {
         Ok(())
     }
 
+    /// Publishes `message.state_changed` for a header a triage call returned. A repeated
+    /// `Done` or `Expired` returns `Ok` with the header unchanged, and the Mailbox can't tell
+    /// a repeat from a change (a known limit), so a repeat publishes again. Events are
+    /// idempotent state, so that is harmless.
     fn publish_state(&self, header: &MessageHeader, reason: Option<String>, now: &str) {
         self.events
             .publish(MessageEvent::StateChanged(MessageStateChangedData {

@@ -104,11 +104,12 @@ pub trait TriageStore {
     ///
     /// - `Snoozed`, from `unread`, `read` or `snoozed`: back into the unread index, with
     ///   exactly one of `snoozed_until` and `snooze_after_task` set (both or neither is
-    ///   `InvalidTransition`); `snooze_note = reason`, `triage_gen += 1`, and the message
+    ///   `InvalidTransition`); `snooze_note = reason`, `read_at` cleared (a read message
+    ///   deferred is unread again when it comes back), `triage_gen += 1`, and the message
     ///   counts as triaged from now on (`triaged_at = now_utc`). Re-snoozing always applies,
     ///   bumping `triage_gen` again.
     /// - `Done`, from `unread`, `read` or `snoozed`: leaves the unread index (its snooze
-    ///   cleared); `reason` is the done note.
+    ///   cleared); `reason` is the done note (on the state row; no port reads it back).
     /// - `Read`, from `unread` or `snoozed`: leaves the unread index (its snooze cleared);
     ///   `read_at = now_utc`.
     /// - `Unread`, from `read`: back into the unread index, `read_at` cleared. Also from
@@ -118,10 +119,26 @@ pub trait TriageStore {
     ///   `InvalidTransition` (a message read meanwhile stays read).
     /// - `Expired`, from `unread` or `snoozed`: leaves the unread index (its snooze cleared).
     ///
-    /// The same `Read`, `Done` or `Expired` again is idempotent: the header comes back
-    /// unchanged. Any other pair is
+    /// The same `Read`, `Done` or `Expired` again is idempotent: `Ok` with the header
+    /// unchanged (a known limit: the caller can't tell a repeat from a change, so the
+    /// Mailbox publishes a `state_changed` for each). Any other pair is
     /// `StoreError::InvalidTransition`: nothing leaves `done`, `expired` or `dead_letter`, and
     /// `DeadLetter` and `Unknown` are never targets here (dead-lettering is a later slice).
+    ///
+    /// Across every target:
+    ///
+    /// - `triage_gen` goes up by exactly 1 on every `Snoozed` (re-snoozes included) and on
+    ///   each release by [`Self::check_notify`]. `Done`, `Read`, `Expired` and `Unread` leave
+    ///   it unchanged.
+    /// - `expired_waiting_person`, once set, survives every later transition (and every
+    ///   release and claim): nothing clears it.
+    /// - `reason` is the `snooze_note` for `Snoozed` and the done note for `Done`, and is
+    ///   ignored for every other target.
+    ///
+    /// Sync metadata isn't on the header and no port reads it back. The store writes the
+    /// change's `owner_office_id`, `origin_incarnation` and `org_position` onto the message's
+    /// state row (`msg_state`), so the acting office becomes the state's owner, and stamps
+    /// the change as a local edit with the next local sequence.
     fn update_state_local(&self, change: LocalStateTransition)
         -> Result<MessageHeader, StoreError>;
     /// In one atomic step, for `to_member_id`: release every time snooze with
@@ -133,6 +150,10 @@ pub trait TriageStore {
     /// returned list to urgent messages: due snoozes are released whatever it says. Each
     /// candidate carries its header after the release. No limit and no ordering guarantee.
     /// Expiry is not its job: an overdue request comes back as it is.
+    ///
+    /// It takes no sync metadata: each release keeps the state row's stored
+    /// `owner_office_id`, `origin_incarnation` and `org_position`, and is stamped as a local
+    /// edit with the next local sequence, as [`Self::update_state_local`]'s changes are.
     fn check_notify(
         &self,
         to_member_id: &str,
