@@ -123,6 +123,104 @@ pub fn defaults(home: &Path, user: Option<String>) -> Defaults {
     }
 }
 
+/// One team of a hints file, as the owner wrote it: `[teams.<key>]` with `name`, `parent`, `lead` and `members` (messaging
+/// names or HR ids). Nothing is checked here against the agents found: the review does that and lists what isn't found.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HintTeam {
+    #[serde(skip_deserializing)]
+    pub key: String,
+    pub name: Option<String>,
+    pub parent: Option<String>,
+    pub lead: Option<String>,
+    pub members: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct Hints {
+    pub path: String,
+    /// Why the file could not be used (the import goes on without it).
+    pub error: Option<String>,
+    pub teams: Vec<HintTeam>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct HintsFile {
+    teams: std::collections::BTreeMap<String, HintTeam>,
+}
+
+const MAX_HINT_TEAMS: usize = 200;
+
+/// Read the team hints file the owner chose. A file that can't be read, or isn't what it should be, says why.
+pub fn read_hints(path: &Path) -> Hints {
+    let mut out = Hints {
+        path: path_text(path),
+        ..Hints::default()
+    };
+    match read_small_file(path, true, "a teams file").and_then(|text| {
+        toml::from_str::<HintsFile>(&text).map_err(|_| "isn't a readable teams file".to_string())
+    }) {
+        Ok(file) => {
+            if file.teams.len() > MAX_HINT_TEAMS {
+                out.error = Some("More teams than this import reads.".into());
+                return out;
+            }
+            out.teams = file
+                .teams
+                .into_iter()
+                .map(|(key, mut team)| {
+                    team.key = key;
+                    team.members.truncate(MAX_ENTRIES);
+                    team
+                })
+                .collect();
+        }
+        Err(why) => out.error = Some(format!("The file {why}.")),
+    }
+    out
+}
+
+/// `read_hints` for a file named by the webview: it must be one the app handed out (the picker's).
+pub fn read_hints_granted(granted: &Granted, path: &str) -> Result<Hints, NotGranted> {
+    granted
+        .allows(path)
+        .then(|| read_hints(Path::new(path)))
+        .ok_or(NotGranted)
+}
+
+/// A small text file, opened without blocking and checked on the open handle (so what was checked is what is read): a
+/// plain file, not larger than `MAX_FILE_BYTES`. `follow_links` is false inside a workspace (nothing leads out of it) and true
+/// for a file the owner chose themselves. `what` names it in the errors ("an agent record", "a teams file").
+fn read_small_file(path: &Path, follow_links: bool, what: &str) -> Result<String, String> {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+    let flags = libc::O_NONBLOCK | if follow_links { 0 } else { libc::O_NOFOLLOW };
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(flags)
+        .open(path)
+        .map_err(|e| format!("can't be read ({e})"))?;
+    let meta = file
+        .metadata()
+        .map_err(|e| format!("can't be read ({e})"))?;
+    if !meta.is_file() {
+        return Err("isn't a plain file".into());
+    }
+    let too_large = || format!("is too large to be {what}");
+    if meta.len() > MAX_FILE_BYTES {
+        return Err(too_large());
+    }
+    let mut text = String::new();
+    file.take(MAX_FILE_BYTES + 1)
+        .read_to_string(&mut text)
+        .map_err(|e| format!("can't be read ({e})"))?;
+    if text.len() as u64 > MAX_FILE_BYTES {
+        return Err(too_large());
+    }
+    Ok(text)
+}
+
 /// A real directory: a symbolic link to one is not (inside the chosen folder, nothing is followed out of it).
 fn plain_dir(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|m| m.is_dir())
@@ -229,31 +327,7 @@ struct Notes {
 
 /// The agent record at `record`, or why it can't be read.
 fn read_agent(record: &Path, root: &Path) -> Result<HrAgent, String> {
-    use std::io::Read;
-    use std::os::unix::fs::OpenOptionsExt;
-    // Opened without following a link and without blocking (a named pipe would otherwise hang the scan), then checked
-    // on the open handle: what was checked is what is read.
-    let file = fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-        .open(record)
-        .map_err(|e| format!("can't be read ({e})"))?;
-    let meta = file
-        .metadata()
-        .map_err(|e| format!("can't be read ({e})"))?;
-    if !meta.is_file() {
-        return Err("not a plain file".into());
-    }
-    if meta.len() > MAX_FILE_BYTES {
-        return Err("too large to be an agent record".into());
-    }
-    let mut text = String::new();
-    file.take(MAX_FILE_BYTES + 1)
-        .read_to_string(&mut text)
-        .map_err(|e| format!("can't be read ({e})"))?;
-    if text.len() as u64 > MAX_FILE_BYTES {
-        return Err("too large to be an agent record".into());
-    }
+    let text = read_small_file(record, false, "an agent record")?;
     let mut agent: HrAgent =
         serde_json::from_str(&text).map_err(|_| "isn't a readable agent record".to_string())?;
     if agent.id.trim().is_empty() {
@@ -639,5 +713,105 @@ mod tests {
         assert!(!granted.allows("/Users/me"));
         assert!(!granted.allows("."));
         assert!(!granted.allows("/Users/me/agents/../.ssh"));
+    }
+
+    #[test]
+    fn it_reads_a_teams_file_and_says_why_when_it_cannot() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("teams.toml");
+        write(
+            &file,
+            r#"
+            # hints
+            [teams.engineering]
+            name = "Engineering"
+            lead = "ada"
+            members = ["ada"]
+            [teams.app]
+            name = "App"
+            parent = "engineering"
+            lead = "app-frontend-dev"
+            members = ["app-frontend-dev", "riley"]
+            "#,
+        );
+        let hints = read_hints(&file);
+        assert_eq!(hints.error, None);
+        let keys: Vec<_> = hints.teams.iter().map(|t| t.key.as_str()).collect();
+        assert_eq!(keys, ["app", "engineering"]);
+        assert_eq!(hints.teams[0].parent.as_deref(), Some("engineering"));
+        assert_eq!(hints.teams[0].members, ["app-frontend-dev", "riley"]);
+        write(
+            &dir.path().join("bad.toml"),
+            "[teams.x
+name=",
+        );
+        assert!(read_hints(&dir.path().join("bad.toml"))
+            .error
+            .unwrap()
+            .contains("isn't a readable teams file"));
+        assert!(read_hints(&dir.path().join("missing.toml"))
+            .error
+            .unwrap()
+            .contains("can't be read"));
+        assert!(read_hints(dir.path())
+            .error
+            .unwrap()
+            .contains("isn't a plain file"));
+        write(
+            &dir.path().join("huge.toml"),
+            &format!("# {}", "x".repeat(70_000)),
+        );
+        assert!(read_hints(&dir.path().join("huge.toml"))
+            .error
+            .unwrap()
+            .contains("too large"));
+        // A named pipe is not a teams file, and does not hang the read.
+        let pipe = dir.path().join("pipe.toml");
+        assert!(std::process::Command::new("mkfifo")
+            .arg(&pipe)
+            .status()
+            .unwrap()
+            .success());
+        assert!(read_hints(&pipe)
+            .error
+            .unwrap()
+            .contains("isn't a plain file"));
+        // A link to a real file is fine: the owner chose it.
+        std::os::unix::fs::symlink(&file, dir.path().join("link.toml")).unwrap();
+        assert_eq!(read_hints(&dir.path().join("link.toml")).teams.len(), 2);
+        // A file with no teams at all is a file with no hints, not an error.
+        write(&dir.path().join("empty.toml"), "# nothing\n");
+        assert_eq!(
+            read_hints(&dir.path().join("empty.toml")),
+            Hints {
+                path: path_text(&dir.path().join("empty.toml")),
+                error: None,
+                teams: vec![]
+            }
+        );
+    }
+
+    #[test]
+    fn a_hints_file_is_read_only_when_the_app_handed_it_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("teams.toml");
+        write(&file, "[teams.a]\nname = \"A\"\n");
+        let granted = Granted::default();
+        assert_eq!(
+            read_hints_granted(&granted, &path_text(&file)),
+            Err(NotGranted)
+        );
+        granted.grant(&path_text(&file));
+        assert_eq!(
+            read_hints_granted(&granted, &path_text(&file))
+                .unwrap()
+                .teams
+                .len(),
+            1
+        );
+        assert_eq!(
+            read_hints_granted(&granted, &path_text(&dir.path().join("x/../teams.toml"))),
+            Err(NotGranted)
+        );
     }
 }

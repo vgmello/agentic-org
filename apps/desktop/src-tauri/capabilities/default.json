@@ -23,6 +23,8 @@
     "allow-import-defaults",
     "allow-import-scan",
     "allow-import-pick-folder",
+    "allow-import-pick-file",
+    "allow-import-read-hints",
     "allow-work-snapshot",
     "allow-work-get",
     "allow-work-command",

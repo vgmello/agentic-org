@@ -17,6 +17,8 @@ fn main() {
             "import_defaults",
             "import_scan",
             "import_pick_folder",
+            "import_pick_file",
+            "import_read_hints",
             "connections_list",
             "work_snapshot",
             "work_get",
