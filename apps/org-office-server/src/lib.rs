@@ -291,11 +291,22 @@ fn serve_office(
             status: {
                 let office = Arc::clone(&office);
                 let live = Arc::clone(&live);
-                // One status call at a time, so the events go out in the order the lines were
-                // set (two calls of one agent could otherwise publish out of commit order).
-                let one_at_a_time = std::sync::Mutex::new(());
+                // One status call at a time for a member, so the events go out in the order the
+                // lines were set (two calls of one agent could otherwise publish out of commit
+                // order). Other members' calls do not wait for each other.
+                let turns = std::sync::Mutex::new(std::collections::HashMap::<
+                    String,
+                    Arc<std::sync::Mutex<()>>,
+                >::new());
                 Box::new(move |member, params| {
-                    let _turn = one_at_a_time.lock().unwrap_or_else(|p| p.into_inner());
+                    let turn = Arc::clone(
+                        turns
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .entry(member.to_owned())
+                            .or_default(),
+                    );
+                    let _turn = turn.lock().unwrap_or_else(|p| p.into_inner());
                     let answer = office
                         .set_status(member, params)
                         .map_err(|e| logged("status", &e))?;

@@ -184,9 +184,12 @@ impl Call for OrganizationList {
 /// only) and `member.presence_changed` (the latest per member, at most once a second for each).
 /// They are hints with no replay: take `msg.inbox` and `who` for the state, and the
 /// events for the changes. If a subscriber falls too far behind, the office ends its
-/// subscription (it closes the connection); the client re-lists (`org.snapshot`, `msg.inbox`,
-/// `who`) and subscribes again. A presence event still waiting out its gap when a subscription
-/// ends is dropped; a client that subscribes again asks `who`.
+/// subscription by closing the connection, which looks like any other dropped connection (no
+/// reason is sent). So after every reconnect a client re-lists what it shows (an app-bound one
+/// with `msg.list`, `msg.threads` and `msg.human_needs_you`, and `who`; `msg.inbox` is for a
+/// member binding), takes `org.snapshot` only when a resume answers `snapshot_required`, and
+/// subscribes again. A presence event still waiting out its gap when a subscription ends is
+/// dropped; a client that subscribes again asks `who`.
 pub struct Subscribe;
 
 /// `subscribe`'s params. `{}` is still valid (live events only).

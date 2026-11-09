@@ -266,6 +266,10 @@ mod tests {
         assert!(late.lost, "the first ten are gone");
         assert_eq!(late.events.len(), CAPACITY);
         assert_eq!(late.events[0], state("10"));
+        // Exactly one evicted: the reader's next event (11) is still there, but 10 is gone only
+        // for a reader at 9.
+        assert!(live.since(9, head.messages).lost);
+        assert!(!live.since(10, head.messages).lost);
         // One that is just inside the ring lost nothing.
         let ok = live.since(10, head.messages);
         assert!(!ok.lost);
