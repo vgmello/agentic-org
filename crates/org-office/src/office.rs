@@ -13,8 +13,8 @@ use org_proto::directory::{WhoParams, WhoResult};
 use org_proto::org::{CommandAccepted, OrgChangedData, OrgSnapshot, Position};
 use org_proto::ApiError;
 
-use crate::store::messages;
 use crate::store::org as org_db;
+use crate::store::{messages, status};
 use crate::store::{Opening, Schema, Store};
 use crate::time;
 use org_proto::OrganizationName;
@@ -46,17 +46,21 @@ const OFFICE_ENTRIES: [&str; 11] = [
     "office.db",
 ];
 
-/// `office.db`: its identity (`meta`), and from version 2 the message tables. A version 1 file
-/// (made before messaging) gets the tables when it is opened.
-const OFFICE_SCHEMA: Schema = Schema {
-    version: 2,
+/// `office.db`: its identity (`meta`), from version 2 the message tables and from version 3 the
+/// members' status lines. An older file gets the tables it lacks when it is opened.
+pub(crate) const OFFICE_SCHEMA: Schema = Schema {
+    version: 3,
     create: |tx| {
         tx.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;")?;
-        messages::create_tables(tx)
+        messages::create_tables(tx)?;
+        status::create_table(tx)
     },
     upgrade: |tx, from| {
         if from < 2 {
             messages::create_tables(tx)?;
+        }
+        if from < 3 {
+            status::create_table(tx)?;
         }
         Ok(())
     },

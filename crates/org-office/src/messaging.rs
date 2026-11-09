@@ -415,7 +415,14 @@ mod tests {
             ),
             6
         );
-        assert_eq!(count(&office, "PRAGMA user_version"), 2);
+        assert_eq!(count(&office, "PRAGMA user_version"), 3);
+        assert_eq!(
+            count(
+                &office,
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'member_status'"
+            ),
+            1
+        );
         // ...and it works: the identity it had is kept, and a message commits.
         let stored = office
             .message_store()
