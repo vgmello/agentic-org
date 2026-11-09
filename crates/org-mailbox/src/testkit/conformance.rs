@@ -581,10 +581,16 @@ pub fn store_claim_read_selects_and_marks_atomically(backend: impl OpenBackend) 
             .map(|_| {
                 scope.spawn(move || {
                     // Read first, so a backend that claims from a reader's snapshot has one.
-                    // Assert after the barrier, so a failure can't strand the other threads.
-                    let warmed = store.peek_next_unread(ADA_ID, None, false, NOW_UTC);
+                    // Fail only after the barrier, so neither an error nor a panic in the
+                    // backend can strand the other threads waiting at it.
+                    let warmed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        store.peek_next_unread(ADA_ID, None, false, NOW_UTC)
+                    }));
                     barrier.wait();
-                    let warmed = warmed.expect("peek_next_unread");
+                    let warmed = match warmed {
+                        Ok(result) => result.expect("peek_next_unread"),
+                        Err(panic) => std::panic::resume_unwind(panic),
+                    };
                     assert!(warmed.message.is_some(), "peek sees the unread messages");
                     let mut mine = Vec::new();
                     for _ in 0..200 {
@@ -1364,13 +1370,19 @@ pub fn mailbox_wait_returns_unread_without_claiming(backend: impl OpenBackend) {
 /// the message is delivered once (one event, one inbox row, one successful claim).
 pub fn mailbox_wait_registered_before_commit_delivers_once(backend: impl OpenBackend) {
     let office = office(&backend);
+    // Send only after the waiter's first check found nothing, so it must be woken.
+    let (checked, first_check) = std::sync::mpsc::channel();
+    *office.store.after_peek.lock().unwrap() = Some(Box::new(move || {
+        let _ = checked.send(());
+    }));
     let mailbox = office.mailbox.clone();
     let (_handle, cancel) = cancellation_pair();
     let waiter =
         thread::spawn(move || mailbox.wait(ADA_ID, wait_params(5_000), far_deadline(), &cancel));
-    eventually("the waiter to register", || {
-        office.mailbox.held_waits() == 1
-    });
+    first_check
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the waiter checks the inbox");
+    assert_eq!(office.mailbox.held_waits(), 1);
     send(&office.mailbox, PAT_ID, 1, ADA_HANDLE).unwrap();
     let waited = waiter.join().unwrap().unwrap();
     // Woken by the commit: a lost wake-up returns None at the 5 s timeout and fails here.
@@ -1402,7 +1414,7 @@ pub fn mailbox_wait_one_commit_wakes_every_waiter(backend: impl OpenBackend) {
     let other = {
         let mailbox = office.mailbox.clone();
         thread::spawn(move || {
-            mailbox.wait(REMY_ID, wait_params(5_000), far_deadline(), &other_cancel)
+            mailbox.wait(REMY_ID, wait_params(30_000), far_deadline(), &other_cancel)
         })
     };
     let waiters: Vec<_> = (0..3)

@@ -43,7 +43,7 @@ impl MemberDirectory for InMemoryDirectory {
     /// never resolve by handle here): the reference is trimmed of ASCII whitespace,
     /// `owner` and `office` compare ignoring ASCII case, an id compares exactly, and handles
     /// compare by Unicode lower case (`str::to_lowercase`; a person's name is trimmed first,
-    /// as its stored key is).
+    /// as its stored key is). Unlike org-office, two owners is a storage error here.
     fn resolve_member(&self, reference: &str) -> Result<Option<(Member, Position)>, StoreError> {
         let state = lock(&self.0);
         let reference = reference.trim_ascii();
