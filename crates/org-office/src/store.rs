@@ -515,11 +515,19 @@ fn connect(
     if cipher_version.is_none() {
         return Err(failure("this SQLite build has no encryption (SQLCipher)"));
     }
-    // The first real read fails here if the key is wrong or the file isn't ours.
+    // The first real read fails here if the key is wrong or the file isn't ours: SQLite says
+    // "not a database", which is the key given not opening the databases.
     db.query_row("SELECT count(*) FROM sqlite_master", (), |row| {
         row.get::<_, i64>(0)
     })
-    .map_err(OfficeError::storage)?;
+    .map_err(|e| match e {
+        rusqlite::Error::SqliteFailure(failure, _)
+            if failure.code == rusqlite::ErrorCode::NotADatabase =>
+        {
+            OfficeError::KeyMissing
+        }
+        other => OfficeError::storage(other),
+    })?;
     if checkpoint_on_close {
         // The key works: the last connection to close may checkpoint, as it should.
         db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, false)
@@ -919,11 +927,15 @@ mod tests {
         let dir = TempDir::new().unwrap();
         drop(open_in(&dir));
         let path = dir.path().join("office.db");
+        // A key that does not open the database is `KeyMissing`, which is what the host is told
+        // ("the databases exist but their key doesn't"), never a plain storage fault.
         assert!(matches!(
             open_store(&path, &Key::from_bytes([8; 32]), Opening::New),
-            Err(OfficeError::Storage(_))
+            Err(OfficeError::KeyMissing)
         ));
 
+        // A plain (unencrypted) SQLite file is not ours either: SQLCipher cannot read it with
+        // any key.
         let plain = dir.path().join("plain.db");
         Connection::open(&plain)
             .unwrap()
@@ -931,7 +943,7 @@ mod tests {
             .unwrap();
         assert!(matches!(
             open_store(&plain, &key(), Opening::New),
-            Err(OfficeError::Storage(_))
+            Err(OfficeError::KeyMissing)
         ));
     }
 

@@ -7,8 +7,10 @@
 //! in debug builds only (`cargo test` without `--release`). The code-signature path needs a signed
 //! app and is covered by `app_auth`'s unit tests.
 
-// The tests that need the development fallback are compiled out of release builds.
-#![cfg_attr(not(debug_assertions), allow(unused_imports, dead_code))]
+// Every host here keeps its offices' keys in a development key folder, which only debug builds
+// have (a release host uses the Keychain, which tests never touch): debug builds only. Many
+// tests also need the development fallback, which only debug builds have.
+#![cfg(debug_assertions)]
 
 mod support;
 
@@ -95,7 +97,7 @@ fn the_app_gets_the_token_its_office_was_started_with() {
     wait_for_state(host.socket_path(), A, OfficeStatus::Active, None);
     let token = app_token(host.socket_path(), A).unwrap();
     assert_eq!(home.token_fingerprints(A), [fingerprint(&token)]);
-    home.assert_no_token_in_logs();
+    home.assert_no_secret_in_home();
     host.shutdown();
 }
 

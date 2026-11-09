@@ -19,6 +19,21 @@ pub enum HostError {
     SocketInTheWay { path: PathBuf },
     /// The app's identity (bundle id, team id, development path) isn't well formed.
     InvalidAppIdentity { why: String },
+    /// A debug build has no usable development key folder (`Config::dev_key_dir`, an absolute
+    /// path outside the office home), so it has nowhere to keep the offices' keys. Debug builds
+    /// never use the Keychain.
+    NoDevKeyDir,
+    /// A release build was compiled without its Keychain access group
+    /// (`ORG_HOST_KEYCHAIN_GROUP`), so it has nowhere to keep the offices' keys.
+    NoKeychainGroup,
+    /// A release build's Keychain access group isn't in the host's own
+    /// `keychain-access-groups` entitlement (or the host isn't signed with one), so the
+    /// Keychain would refuse every key.
+    KeychainGroupNotEntitled { group: String },
+    /// A release build's own code signature can't be read, or it isn't signed with the hardened
+    /// runtime, or is entitled to let other code into it (a debugger, injected libraries, `DYLD_*`
+    /// variables), so any same-user process could read the offices' keys out of it.
+    NotHardened,
     Io {
         context: &'static str,
         source: io::Error,
@@ -58,6 +73,29 @@ impl fmt::Display for HostError {
                 path.display()
             ),
             HostError::InvalidAppIdentity { why } => write!(f, "{why}"),
+            HostError::NoDevKeyDir => f.write_str(
+                "a debug build keeps the offices' keys in a development folder, and none was \
+                 given: set ORG_OFFICE_DEV_KEY_DIR to an absolute path outside the office home \
+                 (debug builds never use the Keychain)",
+            ),
+            HostError::NoKeychainGroup => f.write_str(
+                "this build has no Keychain access group for the offices' keys: build it with \
+                 ORG_HOST_KEYCHAIN_GROUP set to the group in its keychain-access-groups \
+                 entitlement",
+            ),
+            HostError::NotHardened => f.write_str(
+                "this build's code signature can't be read, or it isn't signed with the hardened \
+                 runtime, or it is entitled to let other \
+                 code into it (get-task-allow, allow-dyld-environment-variables or \
+                 disable-library-validation), so another process could read the offices' keys \
+                 out of it: sign the host hardened, without those entitlements",
+            ),
+            HostError::KeychainGroupNotEntitled { group } => write!(
+                f,
+                "this build keeps the offices' keys in the Keychain access group {group}, but \
+                 its code signature doesn't list that group in its keychain-access-groups \
+                 entitlement: sign the host with it"
+            ),
             HostError::Io { context, source } => write!(f, "{context}: {source}"),
         }
     }

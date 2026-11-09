@@ -1,6 +1,7 @@
 //! The real `org-office-server` binary, driven the way the host drives it: arguments, the control
-//! pipe on stdin and stdout, and the office socket. Built with `dev-keys`, so keys are files in a
-//! temporary folder and no test ever touches a real Keychain.
+//! pipe on stdin and stdout, and the office socket. The host holds the database key and sends it
+//! on the first line (key custody), so there is no key store here and no test can touch a
+//! Keychain: the server has no Keychain code.
 
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
@@ -10,22 +11,21 @@ use std::time::Duration;
 
 use org_client::Client;
 use org_office_launch::{
-    office_dir, read_server_event, write_host_message, CreateOffice, FailCode, HostMessage,
-    OfficeFile, ServerEvent, StartOffice,
+    office_dir, read_server_event, write_host_message, CreateOffice, DiscardOffice, FailCode,
+    HostMessage, OfficeFile, ServerEvent, StartOffice,
 };
 use org_proto::location::office_socket_path;
-use org_proto::{AppToken, OfficeRole};
+use org_proto::{AppToken, DbKey, OfficeRole};
 use tempfile::TempDir;
 
 const OFFICE: &str = "01OFFICE00000000000000HQ1";
 const ORG: &str = "01ORG0000000000000000ACME1";
 const WAIT: Duration = Duration::from_secs(30);
 
-/// A temporary office home and key folder.
+/// A temporary office home.
 struct World {
     _dir: TempDir,
     home: PathBuf,
-    keys: PathBuf,
 }
 
 impl World {
@@ -33,29 +33,19 @@ impl World {
         // A short path: unix socket paths are limited to ~100 bytes.
         let dir = tempfile::Builder::new().prefix("oo").tempdir().unwrap();
         let home = dir.path().join("h");
-        let keys = dir.path().join("k");
         std::fs::create_dir_all(home.join("offices")).unwrap();
         std::fs::create_dir_all(home.join("run")).unwrap();
-        Self {
-            _dir: dir,
-            home,
-            keys,
-        }
+        Self { _dir: dir, home }
     }
 
     fn folder(&self, id: &str) -> PathBuf {
         office_dir(&self.home, id).unwrap()
     }
 
-    fn key_file(&self, id: &str) -> PathBuf {
-        self.keys.join(format!("{id}.key"))
-    }
-
     fn spawn(&self, args: &[&str]) -> Run {
         let mut child = Command::new(env!("CARGO_BIN_EXE_org-office-server"))
             .args(args)
             .env("ORG_OFFICE_HOME", &self.home)
-            .env("ORG_OFFICE_DEV_KEY_DIR", &self.keys)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -133,6 +123,14 @@ fn token() -> AppToken {
     AppToken::from_bytes([0xA7; 32])
 }
 
+/// The database key the host would hold for the office.
+fn db_key() -> DbKey {
+    DbKey::from_bytes([0xB3; 32])
+}
+
+/// The key as the line carries it, to look for in logs.
+const DB_KEY_HEX: &str = "b3b3b3b3";
+
 fn create_message() -> HostMessage {
     HostMessage::Create(CreateOffice {
         org_id: ORG.into(),
@@ -141,11 +139,23 @@ fn create_message() -> HostMessage {
         office_name: "HQ".into(),
         role: OfficeRole::Hq,
         app_token: token(),
+        db_key: db_key(),
     })
 }
 
 fn start_message() -> HostMessage {
-    HostMessage::Start(StartOffice { app_token: token() })
+    start_message_with(db_key())
+}
+
+fn start_message_with(db_key: DbKey) -> HostMessage {
+    HostMessage::Start(StartOffice {
+        app_token: token(),
+        db_key,
+    })
+}
+
+fn discard_message(db_key: Option<DbKey>) -> HostMessage {
+    HostMessage::Discard(DiscardOffice { db_key })
 }
 
 fn socket(world: &World) -> PathBuf {
@@ -205,7 +215,6 @@ fn create_stores_the_office_serves_hello_and_exits_clean_when_the_host_goes() {
         (stored.office_id.as_str(), stored.org_name.as_str()),
         (OFFICE, "Acme")
     );
-    assert!(world.key_file(OFFICE).exists(), "the key was made");
 
     let status = run.host_goes_away();
     assert!(status.success(), "{status:?}");
@@ -213,7 +222,7 @@ fn create_stores_the_office_serves_hello_and_exits_clean_when_the_host_goes() {
 }
 
 #[test]
-fn a_restart_serves_the_same_office_with_its_key() {
+fn a_restart_with_the_same_key_serves_the_same_office() {
     let world = World::new();
     let mut first = create(&world);
     assert!(first.host_goes_away().success());
@@ -230,13 +239,16 @@ fn creating_an_office_that_exists_is_already_exists_and_changes_nothing() {
     let world = World::new();
     let mut first = create(&world);
     assert!(first.host_goes_away().success());
-    let key_before = std::fs::read(world.key_file(OFFICE)).unwrap();
+    let org_before = std::fs::read(world.folder(OFFICE).join("org.db")).unwrap();
 
     let mut second = world.spawn(&["--create"]);
     second.send(&create_message());
     assert_eq!(failed_code(second.event()), FailCode::AlreadyExists);
     assert!(!second.wait().success());
-    assert_eq!(std::fs::read(world.key_file(OFFICE)).unwrap(), key_before);
+    assert_eq!(
+        std::fs::read(world.folder(OFFICE).join("org.db")).unwrap(),
+        org_before
+    );
     assert!(world.folder(OFFICE).join("office.json").exists());
 }
 
@@ -251,7 +263,6 @@ fn a_bad_name_is_invalid_name_and_leaves_nothing() {
     run.send(&HostMessage::Create(create));
     assert_eq!(failed_code(run.event()), FailCode::InvalidName);
     assert!(!run.wait().success());
-    assert!(!world.key_file(OFFICE).exists());
     assert!(!world.folder(OFFICE).join("office.json").exists());
 }
 
@@ -274,6 +285,24 @@ fn the_first_line_must_match_the_flag() {
     assert_eq!(failed_code(run.event()), FailCode::InvalidRequest);
     assert!(!run.wait().success());
 
+    // The discard line belongs to --discard alone, and --discard takes no other.
+    let mut run = world.spawn(&["--create"]);
+    run.send(&discard_message(None));
+    assert_eq!(failed_code(run.event()), FailCode::InvalidRequest);
+    assert!(!run.wait().success());
+    let mut run = world.spawn(&["--office", OFFICE]);
+    run.send(&discard_message(Some(db_key())));
+    assert_eq!(failed_code(run.event()), FailCode::InvalidRequest);
+    assert!(!run.wait().success());
+    std::fs::create_dir_all(world.folder("UNFINISHED1")).unwrap();
+    for message in [create_message(), start_message()] {
+        let mut run = world.spawn(&["--discard", "UNFINISHED1"]);
+        run.send(&message);
+        assert_eq!(failed_code(run.event()), FailCode::InvalidRequest);
+        assert!(!run.wait().success());
+    }
+    assert!(world.folder("UNFINISHED1").exists(), "a wrong line deleted");
+
     // Wrong arguments.
     let mut run = world.spawn(&["--serve"]);
     assert_eq!(failed_code(run.event()), FailCode::InvalidRequest);
@@ -290,41 +319,106 @@ fn the_host_going_away_before_the_first_line_is_a_clean_exit_with_no_line() {
 }
 
 #[test]
-fn discard_removes_an_unfinished_create_and_its_key_and_only_that() {
+fn discard_removes_an_unfinished_create_and_only_that() {
     let world = World::new();
-    // An unfinished create: a folder with the lock file and a key, no office.json.
-    std::fs::create_dir_all(world.folder("UNFINISHED1")).unwrap();
-    std::fs::create_dir_all(&world.keys).unwrap();
-    std::fs::write(world.key_file("UNFINISHED1"), "11".repeat(32)).unwrap();
+    // An unfinished create: a folder with the lock file, no office.json, no database. The host
+    // may hold a key for it or not; either way nothing is there to check.
+    for key in [None, Some(db_key())] {
+        std::fs::create_dir_all(world.folder("UNFINISHED1")).unwrap();
+        let mut run = world.spawn(&["--discard", "UNFINISHED1"]);
+        run.send(&discard_message(key));
+        assert!(matches!(run.event(), ServerEvent::Discarded));
+        assert!(run.wait().success());
+        assert!(!world.folder("UNFINISHED1").exists());
+    }
 
-    let mut run = world.spawn(&["--discard", "UNFINISHED1"]);
-    assert!(matches!(run.event(), ServerEvent::Discarded));
-    assert!(run.wait().success());
-    assert!(!world.folder("UNFINISHED1").exists());
-    assert!(!world.key_file("UNFINISHED1").exists());
-
-    // A finished office is refused and untouched.
+    // A finished office is refused and untouched, with a key or without.
     let mut first = create(&world);
     assert!(first.host_goes_away().success());
-    let mut run = world.spawn(&["--discard", OFFICE]);
-    assert_eq!(failed_code(run.event()), FailCode::AlreadyExists);
-    assert!(!run.wait().success());
-    assert!(world.folder(OFFICE).join("office.json").exists());
-    assert!(world.key_file(OFFICE).exists());
+    for key in [None, Some(db_key())] {
+        let mut run = world.spawn(&["--discard", OFFICE]);
+        run.send(&discard_message(key));
+        assert_eq!(failed_code(run.event()), FailCode::AlreadyExists);
+        assert!(!run.wait().success());
+        assert!(world.folder(OFFICE).join("office.json").exists());
+    }
 }
 
 #[test]
-fn a_lost_key_is_key_missing_and_nothing_is_made() {
+fn discard_that_cannot_check_the_databases_is_storage_error_and_deletes_nothing() {
     let world = World::new();
     let mut first = create(&world);
     assert!(first.host_goes_away().success());
-    std::fs::remove_file(world.key_file(OFFICE)).unwrap();
+    // Lose office.json, as a crash or a person might: the databases are all that is left.
+    std::fs::remove_file(world.folder(OFFICE).join("office.json")).unwrap();
+
+    // No key: the databases cannot be looked into. A key that does not open them: the same,
+    // reported as `storage_error` for a discard (never `key_missing`, which the host would
+    // read as its own missing item). With the right key the organization is found: refused.
+    for (key, code) in [
+        (None, FailCode::StorageError),
+        (Some(DbKey::from_bytes([0xC4; 32])), FailCode::StorageError),
+        (Some(db_key()), FailCode::AlreadyExists),
+    ] {
+        let mut run = world.spawn(&["--discard", OFFICE]);
+        run.send(&discard_message(key));
+        assert_eq!(failed_code(run.event()), code);
+        assert!(!run.wait().success());
+        assert!(
+            world.folder(OFFICE).join("org.db").exists(),
+            "a database was deleted"
+        );
+        assert!(
+            !run.stderr().contains(DB_KEY_HEX),
+            "the key reached the log of a failed discard"
+        );
+    }
+}
+
+#[test]
+fn a_key_that_does_not_open_the_databases_is_key_missing_and_nothing_changes() {
+    let world = World::new();
+    let mut first = create(&world);
+    assert!(first.host_goes_away().success());
+    let org_before = std::fs::read(world.folder(OFFICE).join("org.db")).unwrap();
+    let office_before = std::fs::read(world.folder(OFFICE).join("office.db")).unwrap();
 
     let mut run = world.spawn(&["--office", OFFICE]);
-    run.send(&start_message());
+    run.send(&start_message_with(DbKey::from_bytes([0xC4; 32])));
     assert_eq!(failed_code(run.event()), FailCode::KeyMissing);
     assert!(!run.wait().success());
-    assert!(!world.key_file(OFFICE).exists(), "a key was made");
+    let log = run.stderr();
+    assert!(!log.contains(DB_KEY_HEX), "the key reached the log");
+    assert!(!log.contains("c4c4c4c4"), "the wrong key reached the log");
+
+    assert_eq!(
+        std::fs::read(world.folder(OFFICE).join("org.db")).unwrap(),
+        org_before
+    );
+    assert_eq!(
+        std::fs::read(world.folder(OFFICE).join("office.db")).unwrap(),
+        office_before
+    );
+    // The right key still opens it: the refusal changed nothing.
+    let mut again = world.spawn(&["--office", OFFICE]);
+    again.send(&start_message());
+    assert!(matches!(again.event(), ServerEvent::Ready { .. }));
+    assert!(again.host_goes_away().success());
+}
+
+#[test]
+fn a_server_given_no_key_line_does_nothing() {
+    // The host going away before the first line is a clean exit for every mode, discard too.
+    let world = World::new();
+    std::fs::create_dir_all(world.folder("UNFINISHED1")).unwrap();
+    let mut run = world.spawn(&["--discard", "UNFINISHED1"]);
+    let status = run.host_goes_away();
+    assert!(status.success(), "{status:?}");
+    assert!(run.events.recv_timeout(Duration::from_millis(200)).is_err());
+    assert!(
+        world.folder("UNFINISHED1").exists(),
+        "it deleted without a line"
+    );
 }
 
 fn signal(run: &Run, signal: libc::c_int) {
@@ -368,7 +462,6 @@ fn a_server_still_waiting_for_its_first_line_can_be_terminated() {
         std::thread::sleep(Duration::from_millis(100));
     };
     assert!(!status.success(), "{status:?}");
-    assert!(!world.key_file(OFFICE).exists());
 }
 
 #[test]
@@ -450,11 +543,9 @@ fn a_create_whose_socket_path_cannot_exist_fails_before_anything_is_stored() {
     let long = dir.path().join("x".repeat(90));
     std::fs::create_dir_all(long.join("offices")).unwrap();
     std::fs::create_dir_all(long.join("run")).unwrap();
-    let keys = dir.path().join("k");
     let mut child = Command::new(env!("CARGO_BIN_EXE_org-office-server"))
         .arg("--create")
         .env("ORG_OFFICE_HOME", &long)
-        .env("ORG_OFFICE_DEV_KEY_DIR", &keys)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -470,14 +561,10 @@ fn a_create_whose_socket_path_cannot_exist_fails_before_anything_is_stored() {
         !office_dir(&long, OFFICE).unwrap().exists(),
         "an office was stored"
     );
-    assert!(
-        !keys.join(format!("{OFFICE}.key")).exists(),
-        "a key was made"
-    );
 }
 
 #[test]
-fn the_token_never_reaches_the_log_and_fds_0_and_1_are_dev_null() {
+fn the_token_and_the_key_never_reach_the_log_and_fds_0_and_1_are_dev_null() {
     let world = World::new();
     let mut run = create(&world);
     let pid = run.child.id();
@@ -497,6 +584,10 @@ fn the_token_never_reaches_the_log_and_fds_0_and_1_are_dev_null() {
     assert!(run.host_goes_away().success());
     let log = run.stderr();
     assert!(!log.contains("a7a7a7a7"), "the app token reached the log");
+    assert!(
+        !log.contains(DB_KEY_HEX),
+        "the database key reached the log"
+    );
 }
 
 #[test]
@@ -506,6 +597,7 @@ fn a_folder_that_is_not_what_an_office_makes_is_storage_error_not_invalid_reques
     std::fs::create_dir_all(world.folder("UNFINISHED1")).unwrap();
     std::fs::write(world.folder("UNFINISHED1").join("notes.txt"), b"not ours").unwrap();
     let mut run = world.spawn(&["--discard", "UNFINISHED1"]);
+    run.send(&discard_message(None));
     assert_eq!(failed_code(run.event()), FailCode::StorageError);
     assert_eq!(run.wait().code(), Some(1));
     assert!(
@@ -527,26 +619,7 @@ fn a_name_that_is_not_trimmed_is_refused_not_quietly_trimmed() {
         run.send(&HostMessage::Create(create));
         assert_eq!(failed_code(run.event()), FailCode::InvalidName);
         assert!(!run.wait().success());
-        assert!(!world.key_file(OFFICE).exists());
     }
-}
-
-#[test]
-fn a_dev_keys_build_without_a_key_folder_refuses_to_start_instead_of_using_the_keychain() {
-    let world = World::new();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_org-office-server"))
-        .args(["--office", OFFICE])
-        .env("ORG_OFFICE_HOME", &world.home)
-        .env_remove("ORG_OFFICE_DEV_KEY_DIR")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    let mut reader = BufReader::new(child.stdout.take().unwrap());
-    let event = read_server_event(&mut reader).unwrap().unwrap();
-    assert_eq!(failed_code(event), FailCode::StorageError);
-    assert_eq!(child.wait().unwrap().code(), Some(1));
 }
 
 #[test]

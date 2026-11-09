@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use crate::directory::{self, RuntimeView, ThisOffice};
 use crate::error::OfficeError;
-use crate::key::{Key, KeyProvider};
+use crate::key::Key;
 use crate::model::{NewOffice, OfficeInfo};
 use crate::office_file::{self, is_plain_id};
 use crate::private_fs::{absolute, private_dir, private_file, tighten_dir};
@@ -100,8 +100,8 @@ impl ChangeSignal {
 ///                "this office is finished" marker the host reads
 /// ```
 ///
-/// The key is made by `create` and kept by the [`KeyProvider`] under the office id. Safe to
-/// share across threads. The office owns the rules (the lock, the folder, the order things
+/// The key is the host's: it is given to `create`, `open` and `discard`, and never made, stored or
+/// deleted here (see [`Key`]). Safe to share across threads. The office owns the rules (the lock, the folder, the order things
 /// are made in); `Store` owns the database engine.
 pub struct Office {
     folder: PathBuf,
@@ -126,28 +126,28 @@ impl std::fmt::Debug for Office {
 
 impl Office {
     /// Creates a new office in `folder` (`<home>/offices/<office-id>`, whose name must be the
-    /// office id) and opens it. **The only path that makes a key** (ADR-0002): the key is saved
-    /// with `keys` before any database exists, so a crash can't leave data without its key.
+    /// office id) and opens it with `key`, **which the host made and holds** (ADR-0002, key
+    /// custody): the office never makes, stores or deletes a key. The host saves the key before
+    /// it asks for the create, so a crash can't leave data without its key.
     ///
     /// The order is: lock the folder; look at it once (anything of an office already there is
-    /// `OfficeExists`; a key already saved for the id is `KeyExists`; nothing is ever reused
-    /// or replaced); make the key; make both databases; make `workspace/`; commit the
-    /// organization; write `office.json` last. A create that fails removes what it made and
-    /// the key it saved (once saved), so the id can be created again. A crash part-way leaves a folder
+    /// `OfficeExists`; nothing is ever reused or replaced); make both databases; make
+    /// `workspace/`; commit the organization; write `office.json` last. A create that fails
+    /// removes what it made, so the id can be created again. A crash part-way leaves a folder
     /// without `office.json`, an unfinished create for `discard`.
     pub fn create(
         folder: impl Into<PathBuf>,
         new: &NewOffice,
-        keys: &dyn KeyProvider,
+        key: Key,
     ) -> Result<Self, OfficeError> {
-        Self::create_waiting(folder, new, keys, LOCK_WAIT)
+        Self::create_waiting(folder, new, key, LOCK_WAIT)
     }
 
     /// [`Office::create`] with a chosen lock wait.
     pub fn create_waiting(
         folder: impl Into<PathBuf>,
         new: &NewOffice,
-        keys: &dyn KeyProvider,
+        key: Key,
         lock_wait: Duration,
     ) -> Result<Self, OfficeError> {
         let info = OfficeInfo {
@@ -180,18 +180,6 @@ impl Office {
                 return Err(OfficeError::OfficeExists);
             }
         }
-        if keys
-            .load(&info.office_id)
-            .map_err(OfficeError::Storage)?
-            .is_some()
-        {
-            return Err(OfficeError::KeyExists);
-        }
-        let key = Key::generate().map_err(OfficeError::storage)?;
-        // A failure here may have saved the key anyway; it is left for `discard`, since a
-        // delete could remove another office's key if the store failed for "exists".
-        keys.store(&info.office_id, &key)
-            .map_err(OfficeError::Storage)?;
 
         match build(&folder, &key, &info) {
             Ok((org, local)) => Ok(Self {
@@ -206,29 +194,25 @@ impl Office {
                 // Still under the lock. The databases closed when `build` failed. Every entry
                 // removed is one this create made (none existed before, checked above); the
                 // lock FILE stays, since another process may be waiting on it.
-                // The key goes only once its databases are gone: a database whose key is gone
-                // can never be checked or discarded again.
-                if remove_entries(&folder).is_ok() {
-                    let _ = keys.delete(&info.office_id);
-                }
+                let _ = remove_entries(&folder);
                 drop(lock);
                 Err(error)
             }
         }
     }
 
-    /// Opens the finished office in `folder` with the key `keys` holds for it. **Never makes
-    /// a key or a database** (it takes the folder's lock, which makes `office.lock` if there is
-    /// none, and nothing else): no `office.json` is `NotFound`; one that names another
-    /// office is `Invalid`; a missing key is `KeyMissing` (fatal), never replaced.
-    pub fn open(folder: impl Into<PathBuf>, keys: &dyn KeyProvider) -> Result<Self, OfficeError> {
-        Self::open_waiting(folder, keys, LOCK_WAIT)
+    /// Opens the finished office in `folder` with `key` (the host's). **Never makes a database**
+    /// (it takes the folder's lock, which makes `office.lock` if there is none, and nothing
+    /// else): no `office.json` is `NotFound`; one that names another office is `Invalid`; a key
+    /// that does not open the databases is `KeyMissing` (fatal, never retried).
+    pub fn open(folder: impl Into<PathBuf>, key: Key) -> Result<Self, OfficeError> {
+        Self::open_waiting(folder, key, LOCK_WAIT)
     }
 
     /// [`Office::open`] with a chosen lock wait.
     pub fn open_waiting(
         folder: impl Into<PathBuf>,
-        keys: &dyn KeyProvider,
+        key: Key,
         lock_wait: Duration,
     ) -> Result<Self, OfficeError> {
         let folder = plain_folder(folder.into())?;
@@ -245,10 +229,6 @@ impl Office {
         let lock = lock_folder(&folder, lock_wait)?;
         let info = office_file::read(&folder)?.ok_or(OfficeError::NotFound)?;
         check_named_by(&folder, &info.office_id)?;
-        let key = keys
-            .load(&info.office_id)
-            .map_err(OfficeError::Storage)?
-            .ok_or(OfficeError::KeyMissing)?;
 
         let org = Store::open(
             &folder.join(ORG_DB),
@@ -280,31 +260,33 @@ impl Office {
         })
     }
 
-    /// Removes an UNFINISHED create (`org-office-server --discard`): the folder and the key
-    /// the failed create may have left. When the folder exists it takes its lock (a missing folder
-    /// takes none and makes none), and **refuses** anything
+    /// Removes an UNFINISHED create (`org-office-server --discard`): the folder a failed create
+    /// may have left. The key is the host's and is not touched here. When the folder exists it
+    /// takes its lock (a missing folder takes none and makes none), and **refuses** anything
     /// that could be a real office, so one is never destroyed automatically:
     /// - a folder with `office.json`, or whose `org.db` holds a committed organization, is
     ///   `OfficeExists`;
-    /// - databases it cannot check (the key is missing, the keychain refuses, SQLCipher
-    ///   fails) are an error (`Storage`), and nothing is deleted.
+    /// - databases it cannot check (no `key` was given, the key does not open them, SQLCipher
+    ///   fails) are an error (`Storage`, or `KeyMissing` for a key that does not open them), and
+    ///   nothing is deleted. With no `key`, only a folder with NO database file is removed.
     ///
     /// A refused discard removes nothing an office made (it may leave `office.lock`, and checking a
-    /// database may leave an empty log and index file beside it, which SQLite ignores). A folder that is not there is fine (its orphan key is
-    /// still removed); one that is a link, or holds anything an office does not make, is `Invalid`.
+    /// database may leave an empty log and index file beside it, which SQLite ignores). A folder
+    /// that is not there is fine; one that is a link, or holds anything an office does not make,
+    /// is `Invalid`.
     pub fn discard(
         folder: impl Into<PathBuf>,
         office_id: &str,
-        keys: &dyn KeyProvider,
+        key: Option<&Key>,
     ) -> Result<(), OfficeError> {
-        Self::discard_waiting(folder, office_id, keys, LOCK_WAIT)
+        Self::discard_waiting(folder, office_id, key, LOCK_WAIT)
     }
 
     /// [`Office::discard`] with a chosen lock wait.
     pub fn discard_waiting(
         folder: impl Into<PathBuf>,
         office_id: &str,
-        keys: &dyn KeyProvider,
+        key: Option<&Key>,
         lock_wait: Duration,
     ) -> Result<(), OfficeError> {
         if !is_plain_id(office_id) {
@@ -314,12 +296,11 @@ impl Office {
         }
         let folder = plain_folder(folder.into())?;
         check_named_by(&folder, office_id)?;
-        // No folder means no unfinished create to remove: take no lock and make nothing; only
-        // the key a failed create may have left is removed (the host serializes creates and
-        // discards of one office id).
+        // No folder means no unfinished create to remove: take no lock and make nothing (the
+        // host serializes creates and discards of one office id).
         check_not_a_link(&folder)?;
         if !exists(&folder)? {
-            return keys.delete(office_id).map_err(OfficeError::Storage);
+            return Ok(());
         }
         let _lock = lock_folder(&folder, lock_wait)?;
 
@@ -333,14 +314,11 @@ impl Office {
         }
         if any_database {
             // Anything we cannot check is refused: a real office must never be destroyed.
-            let key = keys
-                .load(office_id)
-                .map_err(OfficeError::Storage)?
-                .ok_or_else(|| {
-                    OfficeError::storage(std::io::Error::other(
-                        "cannot check the databases: their key is missing",
-                    ))
-                })?;
+            let key = key.ok_or_else(|| {
+                OfficeError::storage(std::io::Error::other(
+                    "cannot check the databases: no key was given",
+                ))
+            })?;
             if !holds_data(&org_db)? && holds_data(&folder.join("org.db-wal"))? {
                 // SQLite deletes a log that sits beside an empty main file on the first read.
                 return Err(OfficeError::storage(std::io::Error::other(
@@ -350,19 +328,26 @@ impl Office {
             if holds_data(&org_db)? {
                 // "Committed" means the log has an entry (the genesis): the organization is
                 // whole. Anything less is an unfinished create.
-                let committed = Store::inspect(&org_db, &key, org_db::is_committed)?;
+                let committed = Store::inspect(&org_db, key, org_db::is_committed)?;
                 if committed {
                     return Err(OfficeError::OfficeExists);
                 }
             }
+            // office.db is checked the same way, so a key that opens nothing never has more
+            // power to delete than no key: the key must open every database that holds data.
+            let office_db = folder.join(OFFICE_DB);
+            if !holds_data(&office_db)? && holds_data(&folder.join("office.db-wal"))? {
+                return Err(OfficeError::storage(std::io::Error::other(
+                    "office.db is empty but its log is not: not looking",
+                )));
+            }
+            if holds_data(&office_db)? {
+                Store::inspect(&office_db, key, |_| Ok(()))?;
+            }
         }
         // Nothing here is a finished office. Empty the folder (all but the lock file), then
-        // delete the key, then remove the lock file and the folder, so the lock is held until
-        // the end. If the key cannot be deleted (or we crash before), the folder holds nothing
-        // the key was for and a retry finishes; databases whose key is gone, which a retry
-        // would have to refuse, are never left.
+        // remove the lock file and the folder, so the lock is held until the end.
         empty_folder_but_the_lock(&folder, &mut |_| {})?;
-        keys.delete(office_id).map_err(OfficeError::Storage)?;
         remove_the_empty_folder(&folder)
     }
 
@@ -682,6 +667,12 @@ fn removal_rank(name: &str) -> u8 {
 
 /// Removal of what a failed `create` made (never the lock file); an error means some is left.
 fn remove_entries(folder: &Path) -> std::io::Result<()> {
+    #[cfg(test)]
+    ON_STEP.with(|hook| {
+        if let Some(hook) = hook.borrow().as_ref() {
+            hook(folder, "cleanup");
+        }
+    });
     #[cfg(test)]
     if FAIL_CLEANUP.with(std::cell::Cell::get) {
         return Err(std::io::Error::other("injected cleanup failure"));

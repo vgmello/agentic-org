@@ -6,13 +6,6 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
-[features]
-# A key store in plain files (`ORG_OFFICE_DEV_KEY_DIR`) instead of the Keychain, so tests and dev
-# runs never touch a real Keychain. Off by default and never in a release build: it turns on
-# `org-office/dev-keys`, which refuses to compile without debug assertions. Release and CI jobs
-# name their feature sets explicitly (never `--all-features`).
-dev-keys = ["org-office/dev-keys"]
-
 [[bin]]
 name = "org-office-server"
 path = "src/main.rs"
@@ -20,7 +13,6 @@ path = "src/main.rs"
 [[test]]
 name = "launch"
 path = "tests/launch.rs"
-required-features = ["dev-keys"]
 
 [dependencies]
 org-proto = { path = "../../crates/org-proto" }
@@ -29,10 +21,6 @@ org-mailbox = { path = "../../crates/org-mailbox" }
 org-office-launch = { path = "../../crates/org-office-launch" }
 libc.workspace = true
 serde.workspace = true
-
-[target.'cfg(target_os = "macos")'.dependencies]
-security-framework.workspace = true
-core-foundation.workspace = true
 
 [dev-dependencies]
 org-mailbox = { path = "../../crates/org-mailbox", features = ["testkit"] }

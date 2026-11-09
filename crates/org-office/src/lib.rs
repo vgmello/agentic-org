@@ -25,9 +25,7 @@ mod time;
 mod ulid;
 
 pub use error::{NameError, OfficeError};
-#[cfg(any(test, feature = "dev-keys"))]
-pub use key::InMemoryKeys;
-pub use key::{Key, KeyError, KeyProvider};
+pub use key::Key;
 pub use messaging::{OfficeDirectory, OfficeMessageStore};
 pub use model::{NewOffice, OfficeInfo, OfficeRole};
 pub use office::{Office, LOCK_WAIT};
