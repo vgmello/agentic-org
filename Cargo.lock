@@ -2187,6 +2187,8 @@ dependencies = [
 name = "org-client"
 version = "0.0.0"
 dependencies = [
+ "libc",
+ "org-office-launch",
  "org-proto",
  "serde_json",
  "tempfile",
