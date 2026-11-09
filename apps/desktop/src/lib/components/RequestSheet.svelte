@@ -49,6 +49,8 @@
 	let into = $state('');
 	let projectId = $state('');
 	// The drafts as the owner edits them before they become tasks (RQS-9): the ones kept, with their words.
+	// The note of an ask for changes that was written but not yet cited: a retry names it again instead of writing it twice.
+	let cited = $state<{ id: string; note: string } | undefined>();
 	let drafts = $state<{ draft: DraftTask; title: string; keep: boolean }[]>([]);
 
 	// Each load takes a number: an answer that arrives after a newer load began (another request was opened) is dropped.
@@ -76,6 +78,7 @@
 				step = undefined;
 				note = target = into = projectId = '';
 				drafts = [];
+				cited = undefined;
 				busy = false;
 				sheet += 1;
 				void load().then(() => start && item && OPEN_STATUSES.includes(item.summary.status) && begin(start));
@@ -83,13 +86,13 @@
 		}
 	});
 
-	async function act(draft: WorkDraft, message?: string): Promise<boolean> {
+	async function act(draft: WorkDraft | WorkDraft[], message?: string): Promise<boolean> {
 		if (busy) return false;
 		busy = true;
 		error = undefined;
 		const mine = sheet;
 		try {
-			await send(draft);
+			for (const one of Array.isArray(draft) ? draft : [draft]) await send(one);
 			// The sheet may have been closed and opened again, even for the same request, while this was sent: what it shows
 			// is read again either way (a load for another request is dropped), but busy and errors are only this sheet's.
 			await load();
@@ -147,7 +150,17 @@
 		if (step === 'route') {
 			const pick = suggestions.find((x) => x.member.id === target);
 			ok = await act({ method: 'request.route', item_id: s.id, expected_version: v, scoper_id: target || undefined, route_reason: pick?.why, routed_by: target ? 'person' : undefined }, target ? `${requestRef(s)} sent to ${nameOf(snapshot, target)}.` : `${requestRef(s)} taken back.`);
-		} else if (step === 'changes') ok = await act({ method: 'request.ask_changes', item_id: s.id, expected_version: v, comment_id: newId(), note }, `${requestRef(s)} sent back for changes.`);
+		} else if (step === 'changes') {
+			// The note is written as a comment first; asking for changes then names it.
+			// If the call after it failed, the comment stays and a retry with the same words cites it again rather than writing another.
+			if (cited?.note !== note) {
+				const comment = newId();
+				if (!(await act({ method: 'work.comment', item_id: s.id, comment_id: comment, body: note }))) return;
+				cited = { id: comment, note };
+			}
+			ok = await act({ method: 'request.ask_changes', item_id: s.id, expected_version: v, comment_id: cited!.id, note }, `${requestRef(s)} sent back for changes.`);
+			if (ok) cited = undefined;
+		}
 		else if (step === 'decline') ok = await act({ method: 'request.decline', item_id: s.id, expected_version: v, reason: note }, `${requestRef(s)} declined.`);
 		else if (step === 'merge') ok = await act({ method: 'request.merge', item_id: s.id, expected_version: v, into, comment_id: newId() }, `${requestRef(s)} merged.`);
 		else if (step === 'approve') {

@@ -28,9 +28,12 @@ function requestOf(state: WorkState, id: unknown): StoredTask {
 	return item;
 }
 const versioned = (item: StoredTask, version: number) => {
-	// A version above the current one was never served (design §2.3). The mock's version is per item, not per field.
+	// A version above the current one was never served (design §2.3).
 	if (version > item.summary.version) fail('invalid_request', 'That version of the request does not exist yet.');
-	if (item.summary.version !== version) fail('conflict', 'This changed since you opened it. Reload to see the latest.');
+	if (item.summary.version === version) return;
+	// A comment writes no field, so it never makes a change someone was about to send stale (§2.3: conflicts are per field).
+	const since = (item.events ?? []).filter((e) => e.version > version);
+	if (since.length === 0 || !since.every((e) => e.change.type === 'comment')) fail('conflict', 'This changed since you opened it. Reload to see the latest.');
 };
 const mustBeOpen = (item: StoredTask, allowed: readonly ItemStatus[], what: string) => {
 	if (!allowed.includes(item.summary.status)) fail('invalid_request', `A request that is ${item.summary.status} can't be ${what}.`);
@@ -56,7 +59,7 @@ function scoperOf(ctx: WorkContext, id: string | undefined): string | undefined 
 	if (!ctx.members.includes(id)) fail('unknown_recipient', 'That member cannot scope this.');
 	return id;
 }
-const commentExists = (state: WorkState, id: string) => Object.values(state.items).some((i) => i.commentIds?.includes(id) || i.events?.some((e) => e.change.type === 'comment' && e.change.comment_id === id));
+const commentExists = (state: WorkState, id: string) => Object.values(state.items).some((i) => i.events?.some((e) => e.change.type === 'comment' && e.change.comment_id === id));
 /** Writes what a call did to `item` into its activity, at the version the call made (call after `touch`). */
 const record = (item: StoredTask, ctx: WorkContext, change: WorkEventKind) => {
 	(item.events ??= []).push({ target_id: item.summary.id, version: item.summary.version, at: ctx.now, actor_id: ctx.actor, org_position: { epoch: 0, seq: 0 }, change });
@@ -213,15 +216,13 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 				item.summary.project_id = call.project_id;
 			}
 			if (call.clear_project) item.summary.project_id = undefined;
+			// One FieldsChanged naming every field the call sets, as the office's task.update does, even when a value is the same.
 			const fields: FieldChange[] = [];
-			if (item.summary.title !== was.title) fields.push({ field: 'title', from: was.title, to: item.summary.title });
-			if (item.summary.request_kind !== was.kind) fields.push({ field: 'request_kind', ...(was.kind ? { from: was.kind } : {}), to: item.summary.request_kind });
-			if (item.summary.project_id !== was.project) fields.push({ field: 'project_id', ...(was.project ? { from: was.project } : {}), ...(item.summary.project_id ? { to: item.summary.project_id } : {}) });
-			// Setting what it already is changes nothing: no new version, no event.
-			if (fields.length > 0) {
-				touch(state, item, now);
-				record(item, ctx, { type: 'fields_changed', fields });
-			}
+			if (call.title !== undefined) fields.push({ field: 'title', from: was.title, to: item.summary.title });
+			if (call.request_kind !== undefined) fields.push({ field: 'request_kind', ...(was.kind ? { from: was.kind } : {}), to: item.summary.request_kind });
+			if (call.project_id !== undefined || call.clear_project) fields.push({ field: 'project_id', ...(was.project ? { from: was.project } : {}), ...(item.summary.project_id ? { to: item.summary.project_id } : {}) });
+			touch(state, item, now);
+			record(item, ctx, { type: 'fields_changed', fields });
 			changed.push(item);
 			return;
 		}
@@ -274,11 +275,11 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 			versioned(item, call.expected_version);
 			mustBeOpen(item, ['scoped'], 'sent back for changes');
 			const note = officeText(call.note, WORK_LIMITS.text, 'The note');
+			// The note was written by its own `work.comment` call: this names it (an existing comment on this request).
 			const commentId = idText(call.comment_id, 'comment_id');
-			if (commentExists(state, commentId)) fail('already_exists', 'That comment already exists.');
+			if (!item.events?.some((e) => e.change.type === 'comment' && e.change.comment_id === commentId)) fail('not_found', 'That comment is not on this request.');
 			item.summary.status = 'scoping';
 			touch(state, item, now);
-			(item.commentIds ??= []).push(commentId);
 			// One event: the move back to scoping, with the note as its reason (ada's ruling on W7 §2.3).
 			statusMove(item, ctx, 'scoped', note);
 			changed.push(item);
@@ -398,4 +399,21 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 			return;
 		}
 	}
+}
+
+/** `work.comment`: a note on an item, one Comment event at its own version. Questions, answers and asks come with the office. */
+export function applyComment(state: WorkState, call: Extract<WorkCall, { method: 'work.comment' }>, ctx: WorkContext, changed: StoredTask[]): void {
+	const item = itemAt(state, call.item_id);
+	if (!item || item.summary.deleted) fail('not_found', 'That item is not here.');
+	// Tasks and bugs keep no activity in the mock yet, and a note would make a pending edit of theirs stale.
+	if (item!.summary.kind !== 'request') fail('invalid_request', 'Notes on tasks and bugs come later.');
+	const commentId = idText(call.comment_id, 'comment_id');
+	if (call.comment_kind !== undefined && call.comment_kind !== 'note') fail('invalid_request', 'Only plain notes are kept here for now.');
+	if (call.watch !== undefined && typeof call.watch !== 'boolean') fail('invalid_request', 'watch must be true or false.');
+	const body = officeText(call.body, WORK_LIMITS.text, 'The note');
+	if (commentExists(state, commentId)) fail('already_exists', 'That comment already exists.');
+	if (call.watch && !item!.watchers.includes(ctx.actor)) item!.watchers.push(ctx.actor);
+	touch(state, item!, ctx.now);
+	record(item!, ctx, { type: 'comment', comment_id: commentId, body, comment_kind: 'note', ...(call.watch ? { watch: true } : {}) });
+	changed.push(item!);
 }

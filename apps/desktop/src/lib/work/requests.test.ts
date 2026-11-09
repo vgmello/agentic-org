@@ -37,6 +37,11 @@ const outcome = (extra: Partial<RequestOutcome> = {}): RequestOutcome => ({
 	],
 	...extra
 });
+/** The way the app asks for changes: the note is written as a comment, then the call names it. */
+const askChanges = (state: WorkState, n: number, note: string, comment: number) => {
+	const noted = run(state, { method: 'work.comment', item_id: id(n), comment_id: id(comment), body: note }).state;
+	return run(noted, { method: 'request.ask_changes', item_id: id(n), expected_version: v(state, n), comment_id: id(comment), note }).state;
+};
 const scoped = (state: WorkState, n: number, extra: Partial<RequestOutcome> = {}) => {
 	let s = run(state, { method: 'request.accept', item_id: id(n), expected_version: v(state, n) }).state;
 	s = run(s, { method: 'request.scope', item_id: id(n), expected_version: v(s, n), outcome: outcome(extra) }).state;
@@ -202,7 +207,7 @@ describe('REQ the lifecycle', () => {
 		expect(full.summary.status).toBe('scoped');
 		expect(full.outcome?.draft_tasks.map((d) => d.title)).toEqual(['First', 'Second']);
 		expect(full.outcome?.estimate).toEqual({ effort: '3 days', cost_usd_cents_min: 4000, cost_usd_cents_max: 7000 });
-		s = run(s, { method: 'request.ask_changes', item_id: id(1), expected_version: v(s, 1), comment_id: id(30), note: 'Split the second task.' }).state;
+		s = askChanges(s, 1, 'Split the second task.', 30);
 		expect(at(s, 1).summary.status).toBe('scoping');
 		expect(activityOf(s, id(1)).at(-1)).toMatchObject({ actor_id: 'owner', change: { type: 'status_changed', from: 'scoped', to: 'scoping', reason: 'Split the second task.' } });
 	});
@@ -569,13 +574,11 @@ describe('REQ activity', () => {
 		expect(story(approved, 90)).toEqual([[1, 'owner', 'created', '']]);
 	});
 
-	it('a request with a repeated comment id is refused in ask changes and in merge, and the feed reads as a copy', () => {
-		const s = scoped(created(created(emptyWork(), 1), 2), 1);
-		const noted = run(s, { method: 'request.ask_changes', item_id: id(1), expected_version: v(s, 1), comment_id: id(30), note: 'n' }).state;
-		expect(refused(() => run(noted, { method: 'request.merge', item_id: id(2), expected_version: 1, into: id(1), comment_id: id(30) })).code).toBe('already_exists');
-		const feed = activityOf(noted, id(1));
+	it('the feed is a copy: changing what was read changes nothing', () => {
+		const s = askChanges(scoped(created(created(emptyWork(), 1), 2), 1), 1, 'n', 30);
+		const feed = activityOf(s, id(1));
 		feed.length = 0;
-		expect(activityOf(noted, id(1)).length).toBeGreaterThan(0);
+		expect(activityOf(s, id(1)).length).toBeGreaterThan(0);
 	});
 
 	const story = (state: WorkState, n: number) =>
@@ -600,14 +603,15 @@ describe('REQ activity', () => {
 		s = run(s, { method: 'request.route', item_id: id(1), expected_version: 2, scoper_id: 'ada', route_reason: 'protocol', routed_by: 'person' }).state;
 		s = run(s, { method: 'request.accept', item_id: id(1), expected_version: 3 }, { ...ctx, actor: 'ada' }).state;
 		s = run(s, { method: 'request.scope', item_id: id(1), expected_version: 4, outcome: outcome() }, { ...ctx, actor: 'ada' }).state;
-		s = run(s, { method: 'request.ask_changes', item_id: id(1), expected_version: 5, comment_id: id(30), note: 'Daily or weekly?' }).state;
+		s = askChanges(s, 1, 'Daily or weekly?', 30);
 		expect(story(s, 1)).toEqual([
 			[1, 'owner', 'created', ''],
 			[2, 'owner', 'fields_changed', 'title:Request 1>Renamed+project_id:->p1'],
 			[3, 'owner', 'routed', 'routed>routed eden>ada (protocol) by person'],
 			[4, 'ada', 'routed', 'routed>scoping ada>ada'],
 			[5, 'ada', 'status_changed', 'scoping>scoped'],
-			[6, 'owner', 'status_changed', 'scoped>scoping:Daily or weekly?']
+			[6, 'owner', 'comment', 'Daily or weekly?'],
+			[7, 'owner', 'status_changed', 'scoped>scoping:Daily or weekly?']
 		]);
 	});
 
@@ -623,17 +627,19 @@ describe('REQ activity', () => {
 		]);
 	});
 
-	it('updating to what it already is changes nothing: no version, no event', () => {
+	it('updating to what it already is still records the fields the call set, as the office does', () => {
 		let s = created(emptyWork(), 1, { project_id: 'p1' });
 		s = run(s, { method: 'request.update', item_id: id(1), expected_version: 1, title: 'Request 1', project_id: 'p1' }).state;
-		expect(v(s, 1)).toBe(1);
-		expect(story(s, 1)).toEqual([[1, 'owner', 'created', '']]);
+		expect(story(s, 1)).toEqual([
+			[1, 'owner', 'created', ''],
+			[2, 'owner', 'fields_changed', 'title:Request 1>Request 1+project_id:p1>p1']
+		]);
 	});
 
 	it('every version of a request has exactly one event, across a whole story, on every item it touches', () => {
 		let s = created(created(created(emptyWork(), 1, { scoper_id: 'eden', project_id: 'p1' }), 2), 3);
 		s = scoped(s, 1);
-		s = run(s, { method: 'request.ask_changes', item_id: id(1), expected_version: v(s, 1), comment_id: id(30), note: 'n' }).state;
+		s = askChanges(s, 1, 'n', 30);
 		s = run(s, { method: 'request.merge', item_id: id(3), expected_version: 1, into: id(1), comment_id: id(31) }).state;
 		s = run(s, { method: 'request.decline', item_id: id(2), expected_version: 1, reason: 'no' }).state;
 		s = run(s, { method: 'request.route', item_id: id(1), expected_version: v(s, 1), scoper_id: 'ada' }).state;
@@ -643,11 +649,46 @@ describe('REQ activity', () => {
 		}
 	});
 
-	it('a note cited by ask changes can not be cited again, here or by a merge', () => {
-		const s = scoped(created(created(emptyWork(), 1), 2), 1);
-		const noted = run(s, { method: 'request.ask_changes', item_id: id(1), expected_version: v(s, 1), comment_id: id(30), note: 'n' }).state;
-		const again = run(noted, { method: 'request.scope', item_id: id(1), expected_version: v(noted, 1), outcome: outcome() }).state;
-		expect(refused(() => run(again, { method: 'request.ask_changes', item_id: id(1), expected_version: v(again, 1), comment_id: id(30), note: 'n' })).code).toBe('already_exists');
-		expect(refused(() => run(noted, { method: 'request.merge', item_id: id(2), expected_version: 1, into: id(1), comment_id: id(30) })).code).toBe('already_exists');
+	it('asking for changes names an existing comment on this request: none, or one on another request, is not found', () => {
+		const s = scoped(scoped(created(created(emptyWork(), 1), 2), 1), 2);
+		const ask = (state: WorkState, n: number, comment: number) => () => run(state, { method: 'request.ask_changes', item_id: id(n), expected_version: v(state, n), comment_id: id(comment), note: 'n' });
+		expect(refused(ask(s, 1, 30)).code).toBe('not_found');
+		const noted = run(s, { method: 'work.comment', item_id: id(2), comment_id: id(30), body: 'n' }).state;
+		expect(refused(ask(noted, 1, 30)).code).toBe('not_found');
+		expect(() => ask(noted, 2, 30)()).not.toThrow();
+	});
+
+	it('a comment on a deleted request is not found', () => {
+		const s = run(created(emptyWork(), 1), { method: 'work.delete', item_id: id(1), expected_version: 1 }).state;
+		expect(refused(() => run(s, { method: 'work.comment', item_id: id(1), comment_id: id(30), body: 'hi' })).code).toBe('not_found');
+	});
+
+	it('a comment is a note on the request, one event at its own version, and it never makes a change about to be sent stale', () => {
+		const s = scoped(created(emptyWork(), 1), 1);
+		const before = v(s, 1);
+		const noted = run(s, { method: 'work.comment', item_id: id(1), comment_id: id(30), body: 'A question', watch: true }, { ...ctx, actor: 'eden' }).state;
+		expect(v(noted, 1)).toBe(before + 1);
+		expect(story(noted, 1).at(-1)).toEqual([before + 1, 'eden', 'comment', 'A question']);
+		expect(at(noted, 1).watchers).toContain('eden');
+		// A decision made on the version read before the comment still goes through; one after a real change does not.
+		expect(() => run(noted, { method: 'request.decline', item_id: id(1), expected_version: before, reason: 'no' })).not.toThrow();
+		const moved = run(noted, { method: 'request.update', item_id: id(1), expected_version: before + 1, title: 'New' }).state;
+		expect(refused(() => run(moved, { method: 'request.decline', item_id: id(1), expected_version: before, reason: 'no' })).code).toBe('conflict');
+	});
+
+	it('refuses a comment with no body, a reused id, an item that is not there or not a request, or a kind it does not keep', () => {
+		const s = run(created(emptyWork(), 1), { method: 'task.create', item_id: id(2), project_id: 'p1', title: 'T' }).state;
+		const note = (extra: object) => () => run(s, { method: 'work.comment', item_id: id(1), comment_id: id(30), body: 'ok', ...extra });
+		expect(refused(note({ body: '  ' })).code).toBe('invalid_request');
+		expect(refused(note({ body: 'a\u0007b' })).code).toBe('invalid_request');
+		expect(refused(note({ body: 'x'.repeat(10_001) })).code).toBe('invalid_request');
+		expect(refused(note({ item_id: 'nope' })).code).toBe('not_found');
+		expect(refused(note({ item_id: 'constructor' })).code).toBe('not_found');
+		expect(refused(note({ item_id: id(2) })).code).toBe('invalid_request');
+		expect(refused(note({ comment_kind: 'question' })).code).toBe('invalid_request');
+		expect(refused(note({ watch: 'yes' })).code).toBe('invalid_request');
+		const noted = note({})().state;
+		expect(refused(() => run(noted, { method: 'work.comment', item_id: id(1), comment_id: id(30), body: 'again' })).code).toBe('already_exists');
+		expect(refused(() => run(noted, { method: 'request.merge', item_id: id(1), expected_version: v(noted, 1), into: id(1), comment_id: id(30) })).code).toBe('invalid_request');
 	});
 });

@@ -174,6 +174,9 @@ test('RQS-10: asking for changes sends it back to the agent with the note; decli
 	await sheet.getByRole('button', { name: 'Send back' }).click();
 	await expect(sheet.getByTestId('request-state')).toHaveText(/ is scoping$/);
 	await expect(sheet.getByTestId('request-history')).toContainText('Daily or weekly?');
+	// The note is shown once, on the asked-for-changes line.
+	await expect(sheet.getByTestId('request-history').getByText('Daily or weekly?')).toHaveCount(1);
+	await expect(sheet.getByTestId('request-history')).toContainText('You asked for changes');
 	await sheet.getByRole('button', { name: 'Decline…' }).click();
 	await expect(sheet.getByRole('button', { name: 'Decline', exact: true })).toBeDisabled();
 	await sheet.getByLabel('Why').fill('Out of scope for now');

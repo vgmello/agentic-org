@@ -24,6 +24,7 @@ import type {
 	RoutedBy,
 	WorkLinkCall,
 	WorkUnlink,
+	WorkCommentCall,
 	ApiErrorCode,
 	ChecklistStep,
 	NewStep,
@@ -39,7 +40,7 @@ import type {
 	WorkPosition
 } from '$lib/proto';
 import { WORK_LIMITS } from '$lib/proto';
-import { applyRequest } from './requests';
+import { applyComment, applyRequest } from './requests';
 import { emptyCounts, fail, idText, itemAt, longText, oneLine, shortId, steps, touch } from './support';
 
 export { emptyCounts };
@@ -71,8 +72,6 @@ export interface StoredTask {
 	decline_reason?: string;
 	/** Requests: what happened to it, oldest first (`work.activity`). */
 	events?: WorkEvent[];
-	/** Requests: the ids of the notes a call cited (ask changes), so one is never used twice. */
-	commentIds?: string[];
 }
 
 export interface WorkState {
@@ -121,6 +120,7 @@ export type WorkCall =
 	| ({ method: 'request.merge' } & RequestMerge)
 	| ({ method: 'work.link' } & WorkLinkCall)
 	| ({ method: 'work.unlink' } & WorkUnlink)
+	| ({ method: 'work.comment' } & WorkCommentCall)
 	| { method: 'checklist.add'; change_id: string; item_id: string; steps: NewStep[]; after_step_id?: string }
 	| { method: 'checklist.check'; change_id: string; step_id: string; done: boolean }
 	| { method: 'checklist.edit'; change_id: string; step_id: string; expected_version: number; text?: string; required?: boolean }
@@ -561,6 +561,9 @@ export function applyWork(state: WorkState, call: WorkCall, ctx: WorkContext): {
 			followFixTasks(next, next.items[bugId], now, changed, { kind: 'linked', taskStatus: task.summary.status });
 			break;
 		}
+		case 'work.comment':
+			applyComment(next, call, ctx, changed);
+			break;
 		case 'work.unlink': {
 			const owner = Object.values(next.items).find((i) => i.links?.some((l) => l.id === call.link_id));
 			if (!owner) fail('not_found', 'That link is not here.');

@@ -193,7 +193,21 @@ export function activityLines(events: WorkEvent[], snapshot: OrgSnapshot, me: st
 	const whom = (id: string | undefined) => (id === me ? 'you' : nameOf(snapshot, id));
 	/** "sent this to B", "moved this from A to B", "took this back". */
 	const sentence = (by: string, from: string | undefined, to: string | undefined) => (from && to && from !== to ? `${by} moved this from ${whom(from)} to ${whom(to)}` : to ? `${by} sent this to ${whom(to)}` : `${by} took this back`);
-	return events.flatMap((e): ActivityLine[] => {
+	// The note an ask for changes cites was written by its own comment just before; the "asked for changes" line carries it,
+	// so that one comment (the nearest before it, by the same member, with the same words) is left out. Others stay.
+	const cited = new Set<number>();
+	events.forEach((e, i) => {
+		const c = e.change;
+		if (c.type !== 'status_changed' || c.from !== 'scoped' || c.to !== 'scoping' || !c.reason) return;
+		for (let j = i - 1; j >= 0; j--) {
+			const earlier = events[j];
+			if (!cited.has(j) && earlier.actor_id === e.actor_id && earlier.change.type === 'comment' && earlier.change.body === c.reason) {
+				cited.add(j);
+				return;
+			}
+		}
+	});
+	return events.flatMap((e, i): ActivityLine[] => {
 		const c = e.change;
 		const by = who(e.actor_id);
 		switch (c.type) {
@@ -207,7 +221,7 @@ export function activityLines(events: WorkEvent[], snapshot: OrgSnapshot, me: st
 				return out;
 			}
 			case 'comment':
-				return [{ at: e.at, text: `${by} wrote`, note: c.body }];
+				return cited.has(i) ? [] : [{ at: e.at, text: `${by} wrote`, note: c.body }];
 			case 'fields_changed': {
 				const names = fieldsOf(c.fields).map((f) => (FIELD_WORD.get(f.field) ?? f.field));
 				return [{ at: e.at, text: names.length > 0 ? `${by} changed the ${names.join(' and ')}` : `${by} changed it` }];

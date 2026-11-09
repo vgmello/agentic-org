@@ -349,6 +349,18 @@ export interface WorkUnlink {
 	link_id: string;
 }
 
+/** `work.comment`: a note on any item. The mock keeps plain notes only (no question, answer or asks yet). */
+export interface WorkCommentCall {
+	change_id: string;
+	item_id: string;
+	comment_id: string;
+	/** 1 to 10,000 characters. */
+	body: string;
+	comment_kind?: Exclude<CommentKind, 'unknown'>;
+	/** The commenter also watches the item. */
+	watch?: boolean;
+}
+
 export const SEVERITIES = ['critical', 'major', 'minor', 'trivial'] as const;
 
 

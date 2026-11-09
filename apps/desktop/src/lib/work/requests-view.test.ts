@@ -141,6 +141,34 @@ describe('REQ the conversation', () => {
 		]);
 	});
 
+	it('the note an ask for changes cites is shown once, on the "asked for changes" line, not also as "wrote"', () => {
+		expect(
+			lines([
+				ev({ type: 'comment', comment_id: 'c1', body: 'Daily or weekly?', comment_kind: 'note' }),
+				ev({ type: 'status_changed', from: 'scoped', to: 'scoping', reason: 'Daily or weekly?' }),
+				ev({ type: 'comment', comment_id: 'c2', body: 'Daily or weekly?', comment_kind: 'note' }, 'ada'),
+				ev({ type: 'comment', comment_id: 'c3', body: 'A different note', comment_kind: 'note' })
+			])
+		).toEqual([
+			['You asked for changes', 'Daily or weekly?'],
+			['ada wrote', 'Daily or weekly?'],
+			['You wrote', 'A different note']
+		]);
+	});
+
+	it('hides only the comment an ask for changes cites: the nearest one before it, not an earlier one with the same words', () => {
+		expect(
+			lines([
+				ev({ type: 'comment', comment_id: 'c1', body: 'x', comment_kind: 'note' }),
+				ev({ type: 'comment', comment_id: 'c2', body: 'x', comment_kind: 'note' }),
+				ev({ type: 'status_changed', from: 'scoped', to: 'scoping', reason: 'x' })
+			])
+		).toEqual([
+			['You wrote', 'x'],
+			['You asked for changes', 'x']
+		]);
+	});
+
 	it('taking up a request that was with someone else says both: it moved to you, and you accepted it', () => {
 		expect(lines([routed({ from: 'routed', to: 'scoping', scoper_from: 'eden', scoper_to: 'owner' })])).toEqual([
 			['You moved this from Eden to you', undefined],
