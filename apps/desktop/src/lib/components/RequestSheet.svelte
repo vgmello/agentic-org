@@ -148,8 +148,7 @@
 		if (!s) return;
 		let ok = false;
 		if (step === 'route') {
-			const pick = suggestions.find((x) => x.member.id === target);
-			ok = await act({ method: 'request.route', item_id: s.id, expected_version: v, scoper_id: target || undefined, route_reason: pick?.why, routed_by: target ? 'person' : undefined }, target ? `${requestRef(s)} sent to ${nameOf(snapshot, target)}.` : `${requestRef(s)} taken back.`);
+			ok = await act({ method: 'request.route', item_id: s.id, expected_version: v, scoper_id: target || undefined, routed_by: target ? 'person' : undefined }, target ? `${requestRef(s)} sent to ${nameOf(snapshot, target)}.` : `${requestRef(s)} taken back.`);
 		} else if (step === 'changes') {
 			// The note is written as a comment first; asking for changes then names it.
 			// If the call after it failed, the comment stays and a retry with the same words cites it again rather than writing another.

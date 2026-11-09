@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Member, OrgSnapshot, WorkEvent, WorkItemSummary } from '$lib/proto';
-import { activityLines, ageWord, estimateWords, groupOf, groupRequests, nextAction, requestRef, requestsNeedingYou, stateWords, suggestScopers } from './requests-view';
+import { activityLines, ageWord, atName, filterActive, filterRequests, handleFor, NO_FILTER, similarRequests, withHandle, estimateWords, groupOf, groupRequests, nextAction, requestRef, requestsNeedingYou, stateWords, suggestScopers } from './requests-view';
 
 const member = (id: string, name: string, title: string, extra: Partial<Member['agent']> = {}, kind: Member['kind'] = 'agent'): Member => ({
 	id,
@@ -201,5 +201,124 @@ describe('REQ the conversation', () => {
 			['ada moved this from ada to you', undefined],
 			['ada sent this to Someone who left', undefined]
 		]);
+	});
+});
+
+describe('RQS-4 @name routing', () => {
+	const team = {
+		...snapshot,
+		members: [
+			...snapshot.members,
+			member('ac-product-designer-juno', 'Juno Park', 'Product designer', { messaging_name: 'ac-product-designer-juno' }),
+			member('juno-two', 'Juno Reyes', 'Developer', { messaging_name: 'juno-reyes' })
+		]
+	} as unknown as OrgSnapshot;
+	const at = (text: string) => atName(text, team);
+	const who = (text: string) => {
+		const a = at(text);
+		return a?.kind === 'exact' ? a.member.id : a ? a.matches.map((m) => m.id) : undefined;
+	};
+
+	it('takes a messaging name, a display name as a slug, or a first name only one agent has', () => {
+		expect(who('@ac-product-designer-juno Let me capture requests')).toBe('ac-product-designer-juno');
+		expect(who('@juno-reyes please')).toBe('juno-two');
+		expect(who('@Eden costs per project')).toBe('eden');
+		expect(who('  @ada')).toBe('ada');
+	});
+
+	it('a first name two agents share is not a pick: both are offered', () => {
+		expect(who('@juno do it')).toEqual(['ac-product-designer-juno', 'juno-two']);
+	});
+
+	it('offers the agents a half-typed handle could become, and none for a stranger', () => {
+		expect(who('@ed')).toEqual(['eden']);
+		expect(who('@')).toEqual(['eden', 'ada', 'riley', 'quinn', 'ac-product-designer-juno']);
+		expect(who('@zzz')).toBeUndefined();
+	});
+
+	it('is only for the start of the words: an @ later, an email, or no @ is not a route', () => {
+		expect([at('ask @eden later'), at('write to eden@example.com'), at('plain words')]).toEqual([undefined, undefined, undefined]);
+	});
+
+	it('never offers a former agent, and never a person', () => {
+		expect(who('@old')).toBeUndefined();
+		expect(who('@sam')).toBeUndefined();
+	});
+
+	it('takes the handle up to punctuation and accents, and refuses @@', () => {
+		expect([who('@Eden: costs per project'), who('@eden, please'), who('@eden.'), who('@Éden'), who('@@eden')]).toEqual(['eden', 'eden', 'eden', 'eden', undefined]);
+	});
+
+	it('a handle with $ in it is put in as typed, not as a replacement pattern', () => {
+		const odd = member('x', "A$&B$'C", 'Developer', { messaging_name: undefined as unknown as string });
+		expect(withHandle('@x rest', odd)).toBe("@a$&b$'c rest");
+	});
+
+	it('replaces the handle at the start with the messaging name and leaves the rest as typed', () => {
+		const juno = team.members.find((m) => m.id === 'ac-product-designer-juno')!;
+		expect(withHandle('@jun make it work @ada', juno)).toBe('@ac-product-designer-juno make it work @ada');
+		expect(withHandle('  @jun x', juno)).toBe('  @ac-product-designer-juno x');
+		expect(handleFor(juno)).toBe('ac-product-designer-juno');
+	});
+});
+
+describe('RQS-13 similar requests', () => {
+	const items = [
+		req('new', { id: 'a', number: 9, title: 'Dark mode for the docs reader' }),
+		req('scoping', { id: 'b', number: 10, title: 'Checklists on tasks' }),
+		req('approved', { id: 'c', number: 11, title: 'Dark mode everywhere' }),
+		req('new', { id: 'd', number: 12, title: 'Export a feature as PDF', deleted: true }),
+		{ ...req('new', { id: 't', number: 13, title: 'Dark mode task' }), kind: 'task' } as WorkItemSummary
+	];
+
+	it('finds open requests that share meaningful words, best first, and never closed ones or other kinds', () => {
+		expect(similarRequests('I want a dark mode for reading the docs', items).map((i) => i.id)).toEqual(['a']);
+		expect(similarRequests('Checklists for tasks please', items).map((i) => i.id)).toEqual(['b']);
+	});
+
+	it('needs two shared words, or all the words of a short request, and offers at most two', () => {
+		expect(similarRequests('something about the docs', items)).toEqual([]);
+		expect(similarRequests('dark mode', [req('new', { id: 'x', title: 'Dark mode' })]).map((i) => i.id)).toEqual(['x']);
+		// One shared word is not enough, even for a one-word title.
+		expect(similarRequests('please export everything now', [req('new', { id: 'y', title: 'Export' })])).toEqual([]);
+		// The @handle at the start is not part of the words.
+		expect(similarRequests('@ac-product-designer-eden please', [req('new', { id: 'z', title: 'Product designer onboarding' })])).toEqual([]);
+		const many = Array.from({ length: 5 }, (_, n) => req('new', { id: `m${n}`, number: n + 1, title: 'Weekly digest by email' }));
+		expect(similarRequests('a weekly digest by email', many)).toHaveLength(2);
+		expect(similarRequests('x', items)).toEqual([]);
+	});
+});
+
+describe('RQS-7 the queue filters', () => {
+	const items = [
+		req('new', { id: 'a', number: 1, title: 'Dark mode', project_id: 'p1' }),
+		req('routed', { id: 'b', number: 2, title: 'Weekly digest', assignee_id: 'eden' }),
+		req('scoped', { id: 'c', number: 3, title: 'Costs per project', assignee_id: 'eden', project_id: 'p1' }),
+		req('approved', { id: 'd', number: 4, title: 'Checklists', assignee_id: 'ada' })
+	];
+	const ids = (f: Partial<typeof NO_FILTER>) => filterRequests(items, { ...NO_FILTER, ...f }).map((i) => i.id);
+
+	it('shows everything with no filter, and only what is still going when Open', () => {
+		expect(ids({})).toEqual(['a', 'b', 'c', 'd']);
+		expect(ids({ state: 'open' })).toEqual(['a', 'b', 'c']);
+	});
+
+	it('filters by who scopes it (or nobody) and by project (or none)', () => {
+		expect(ids({ who: 'eden' })).toEqual(['b', 'c']);
+		expect(ids({ who: 'none' })).toEqual(['a']);
+		expect(ids({ project: 'p1' })).toEqual(['a', 'c']);
+		expect(ids({ project: 'none' })).toEqual(['b', 'd']);
+	});
+
+	it('searches the title and the reference, every word must match, without case', () => {
+		expect(ids({ query: 'COSTS' })).toEqual(['c']);
+		expect(ids({ query: 'req-2' })).toEqual(['b']);
+		expect(ids({ query: 'digest weekly' })).toEqual(['b']);
+		expect(ids({ query: 'digest costs' })).toEqual([]);
+		expect(ids({ query: '   ' })).toEqual(['a', 'b', 'c', 'd']);
+	});
+
+	it('knows when a filter is on', () => {
+		expect([filterActive(NO_FILTER), filterActive({ ...NO_FILTER, state: 'open' }), filterActive({ ...NO_FILTER, who: 'x' }), filterActive({ ...NO_FILTER, query: ' a ' }), filterActive({ ...NO_FILTER, query: '  ' })]).toEqual([false, true, true, true, false]);
 	});
 });

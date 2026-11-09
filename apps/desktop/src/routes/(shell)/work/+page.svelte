@@ -9,6 +9,7 @@
 	import { Badge } from '$lib/components/ui/badge';
 	import { toAppError } from '$lib/office/api';
 	import type { WorkItemSummary } from '$lib/proto';
+	import { sender as chatSender } from '$lib/chat';
 	import { sender, workApi } from '$lib/work';
 	import { requestsNeedingYou } from '$lib/work/requests-view';
 	import { BUG_STATUS_LABEL, bugRef, severityWord } from '$lib/work/bugs';
@@ -22,6 +23,12 @@
 	const snapshot = $derived(data.snapshot);
 	const me = $derived(snapshot.members.find((m) => m.owner)?.id ?? 'owner');
 	const send = $derived(sender(organizationId));
+	/** The words of a request sent as an ordinary message to a member instead: their direct message, then the message (RQS-4). */
+	async function message(memberId: string, text: string) {
+		const chat = chatSender(organizationId);
+		const dm = await chat({ method: 'dm.open', members: [memberId] });
+		await chat({ method: 'msg.send', conversation_id: dm.conversation_id!, kind: 'msg', body: text });
+	}
 	const projectKey = (id: string | undefined) => (snapshot.projects ?? []).find((p) => p.id === id)?.key || undefined;
 	const projectName = (id: string | undefined) => (snapshot.projects ?? []).find((p) => p.id === id)?.name ?? 'No project';
 
@@ -148,7 +155,7 @@
 	{/if}
 </div>
 
-<NewRequestDialog bind:open={newRequestOpen} {snapshot} {send} ondone={({ ref, sentTo }) => (toast.success(sentTo ? `${ref} sent to ${sentTo}.` : `${ref} saved.`), void load())} />
+<NewRequestDialog bind:open={newRequestOpen} {snapshot} items={items ?? []} {send} {message} ondone={({ ref, sentTo }) => (toast.success(sentTo ? `${ref} sent to ${sentTo}.` : `${ref} saved.`), void load())} onadded={(ref) => (toast.success(`Added to ${ref}.`), void load())} onmessaged={(to) => toast.success(`Message sent to ${to}.`)} />
 <RequestSheet bind:open={requestOpen} {organizationId} {requestId} start={requestStart} {snapshot} items={items ?? []} {send} onchanged={(message) => (message && toast.success(message), void load())} />
 <TaskSheet bind:open={taskOpen} {organizationId} {taskId} {snapshot} {send} onchanged={() => void load()} />
 <BugSheet bind:open={bugOpen} {organizationId} {bugId} {snapshot} areas={areasOf(bugProject)} bugs={bugsOf(bugProject)} items={items ?? []} {send} onchanged={() => void load()} />

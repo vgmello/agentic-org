@@ -239,3 +239,95 @@ export function activityLines(events: WorkEvent[], snapshot: OrgSnapshot, me: st
 		}
 	});
 }
+
+// ---- capture: @name routing and similar requests (§1) ----------------------------------------------------------------
+
+/** Lower case without accents, so `@Éden` finds Eden. */
+const plain = (text: string) => text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+const handleOf = (m: Member) => plain(m.agent?.messaging_name ?? '');
+/** A display name as a handle: "Juno Park" is `juno-park`. */
+const slugOf = (name: string) => plain(name).trim().replace(/\s+/g, '-');
+/** `@handle` at the start of the words: letters, numbers, `-` and `_` only, so `@eden:` and `@eden,` still name Eden; `@@x` names nobody. */
+const AT = /^(\s*)@(?!@)([\p{L}\p{N}_-]*)/u;
+
+export type AtName = { kind: 'exact'; member: Member; token: string } | { kind: 'partial'; matches: Member[]; token: string };
+
+/**
+ * Starting the words with `@` and a handle sends the request straight to that agent (decision 5): the messaging name
+ * (`@ac-product-designer-eden`), the display name as a slug (`@juno-park`) or a first name (`@juno`) when only one agent
+ * has it. While the handle is still being typed, the agents it could become are offered. The words themselves are never
+ * changed.
+ */
+export function atName(text: string, snapshot: OrgSnapshot): AtName | undefined {
+	const found = AT.exec(text);
+	if (!found) return undefined;
+	const token = plain(found[2]);
+	const agents = snapshot.members.filter((m) => m.kind === 'agent' && !isFormer(m));
+	const keys = (m: Member) => [handleOf(m), slugOf(m.name), slugOf(m.name).split('-')[0]].filter(Boolean);
+	if (token === '') return { kind: 'partial', matches: agents.slice(0, 5), token };
+	const exact = agents.filter((m) => keys(m).includes(token));
+	// A full handle or slug wins; a first name only when nobody else shares it.
+	const strong = exact.filter((m) => handleOf(m) === token || slugOf(m.name) === token);
+	if (strong.length === 1) return { kind: 'exact', member: strong[0], token };
+	if (strong.length === 0 && exact.length === 1) return { kind: 'exact', member: exact[0], token };
+	const matches = agents.filter((m) => keys(m).some((k) => k.startsWith(token)) || plain(m.name).split(/\s+/).some((p) => p.startsWith(token)));
+	return matches.length > 0 ? { kind: 'partial', matches: matches.slice(0, 5), token } : undefined;
+}
+
+/** What the handle in `@handle` is replaced by when a match is chosen: the messaging name, which is always unique. */
+export const handleFor = (m: Member): string => m.agent?.messaging_name ?? slugOf(m.name);
+
+/** The words with their `@token` at the start replaced by `@handle`. */
+export const withHandle = (text: string, m: Member): string => text.replace(AT, (_, space: string) => `${space}@${handleFor(m)}`);
+
+const STOP = new Set(['the', 'and', 'for', 'with', 'that', 'this', 'let', 'want', 'need', 'make', 'when', 'what', 'from', 'into', 'have', 'would', 'should', 'could', 'about', 'there', 'their', 'them', 'than', 'then', 'also', 'just', 'like', 'some', 'more', 'every', 'each', 'only', 'your', 'our', 'can', 'are', 'was', 'were', 'but', 'not', 'all', 'any', 'its']);
+const wordsOf = (text: string): Set<string> => new Set((text.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).filter((w) => !STOP.has(w)));
+
+/**
+ * Up to two open requests that read like these words (§4, RQS-13): at least two meaningful words in common, so "Add to
+ * REQ-9" can offer to append instead of starting another. A leading `@handle` is not part of the words.
+ */
+export function similarRequests(text: string, items: WorkItemSummary[], limit = 2): WorkItemSummary[] {
+	const mine = wordsOf(text.replace(AT, '$1'));
+	if (mine.size < 2) return [];
+	return items
+		.filter((i) => i.kind === 'request' && !i.deleted && OPEN_STATUSES.includes(i.status))
+		.map((i) => {
+			const theirs = wordsOf(i.title);
+			let shared = 0;
+			for (const w of theirs) if (mine.has(w)) shared += 1;
+			return { i, shared, ratio: theirs.size === 0 ? 0 : shared / theirs.size };
+		})
+		.filter((c) => c.shared >= 2)
+		.sort((a, b) => b.shared - a.shared || b.ratio - a.ratio || (b.i.number ?? 0) - (a.i.number ?? 0))
+		.slice(0, limit)
+		.map((c) => c.i);
+}
+
+// ---- the queue's filters and search (§2) -------------------------------------------------------------------------------
+
+export interface RequestFilter {
+	/** Open: what is still going (not approved, declined or merged). */
+	state: 'all' | 'open';
+	/** Who scopes it: a member id, `none` for not routed, or any. */
+	who: string;
+	/** A project id, `none` for no project, or any. */
+	project: string;
+	query: string;
+}
+
+export const NO_FILTER: RequestFilter = { state: 'all', who: '', project: '', query: '' };
+
+export const filterActive = (f: RequestFilter): boolean => f.state !== 'all' || f.who !== '' || f.project !== '' || f.query.trim() !== '';
+
+/** The requests that pass the filters: the words of the search must all be in the title or the reference. */
+export function filterRequests(items: WorkItemSummary[], f: RequestFilter): WorkItemSummary[] {
+	const terms = f.query.toLowerCase().split(/\s+/).filter(Boolean);
+	return items.filter((i) => {
+		if (f.state === 'open' && !OPEN_STATUSES.includes(i.status)) return false;
+		if (f.who === 'none' ? !!i.assignee_id : f.who !== '' && i.assignee_id !== f.who) return false;
+		if (f.project === 'none' ? !!i.project_id : f.project !== '' && i.project_id !== f.project) return false;
+		const hay = `${requestRef(i)} ${i.title}`.toLowerCase();
+		return terms.every((t) => hay.includes(t));
+	});
+}

@@ -309,9 +309,8 @@ test('the route a person picks on the page is recorded as theirs, not the rule\'
 	await sheet.getByLabel('Who scopes it').selectOption({ index: 1 });
 	await sheet.getByRole('button', { name: 'Send', exact: true }).click();
 	await expect(sheet.getByTestId('request-state')).toContainText('not accepted yet');
-	// The reason of the pick is kept, and it is not called the rule's.
-	await expect(sheet.getByTestId('route-reason')).toContainText('Sent because:');
-	await expect(sheet.getByTestId('route-reason')).not.toContainText('suggested by rule');
+	// A person's pick carries no rule reason.
+	await expect(sheet.getByTestId('route-reason')).toHaveCount(0);
 });
 
 test('RQS-5: a route the rule suggested and was left alone is recorded as the rule\'s; one the owner picked is theirs', async ({ page }) => {
@@ -328,8 +327,8 @@ test('RQS-5: a route the rule suggested and was left alone is recorded as the ru
 	await expect(page.getByRole('dialog').getByTestId('route-reason')).toContainText('(suggested by rule)');
 	await page.keyboard.press('Escape');
 	await page.getByRole('button', { name: 'Picked by me' }).click();
-	await expect(page.getByRole('dialog').getByTestId('route-reason')).toContainText('Sent because:');
-	await expect(page.getByRole('dialog').getByTestId('route-reason')).not.toContainText('suggested by rule');
+	// A route the person picked carries no rule reason and is not called the rule's.
+	await expect(page.getByRole('dialog').getByTestId('route-reason')).toHaveCount(0);
 });
 
 test('closing a page with a step half done and opening another request starts that one clean', async ({ page }) => {
@@ -346,4 +345,165 @@ test('closing a page with a step half done and opening another request starts th
 	await expect(sheet.getByTestId('request-words')).toHaveText('Second idea');
 	await expect(sheet.getByTestId('request-step')).toHaveCount(0);
 	await expect(sheet.getByTestId('request-actions')).toBeVisible();
+});
+
+test('RQS-4: words that start with @ and a handle go to that agent: the handle is completed from the names, and the route says so', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	await dialog.getByLabel('What do you need?').fill('@');
+	await expect(dialog.getByTestId('at-matches').getByRole('button')).not.toHaveCount(0);
+	await dialog.getByLabel('What do you need?').fill('@sa');
+	await dialog.getByTestId('at-matches').getByRole('button', { name: /Sam Okafor/ }).click();
+	await expect(dialog.getByLabel('What do you need?')).toHaveValue(/^@\S+$/);
+	await dialog.getByLabel('What do you need?').pressSequentially(' fix the build time');
+	await expect(dialog.getByTestId('by-at')).toContainText('You wrote @');
+	await expect(dialog.getByRole('radio', { name: /Sam Okafor/ })).toBeChecked();
+	await expect(dialog.getByRole('button', { name: 'Send to Sam Okafor' })).toBeVisible();
+	await shot(page, 'request-at-name');
+	await dialog.getByRole('button', { name: 'Send to Sam Okafor' }).click();
+	await expect(dialog).toBeHidden();
+	await expect(page.locator('[data-group=with_agents]').getByTestId('request-words-state')).toHaveText('Sent to Sam Okafor · not accepted yet');
+	// Picking someone else in the list wins over the @name.
+	await page.getByTestId('new-request').click();
+	await dialog.getByLabel('What do you need?').fill('@sam another one');
+	await dialog.getByRole('radio').nth(1).check();
+	await expect(dialog.getByTestId('by-at')).toHaveCount(0);
+	await expect(dialog.getByRole('button', { name: /^Send to / })).not.toHaveText('Send to Sam Okafor');
+});
+
+test('RQS-4: Message instead sends the words to the agent as an ordinary message and makes no request', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	await dialog.getByLabel('What do you need?').fill('Quick question: is the build cache shared?');
+	await dialog.getByRole('button', { name: 'Message instead' }).click();
+	await expect(dialog).toBeHidden();
+	await expect(page.getByText(/^Message sent to /)).toBeVisible();
+	await expect(page.getByTestId('no-requests')).toBeVisible();
+	// It is in the agent's direct message, which the first suggestion (Juno Park) now has.
+	// (The chat's mock office lives in the page, so go there by the sidebar, not by loading the address.)
+	await page.getByRole('link', { name: 'Chat', exact: true }).click();
+	await page.getByText('Juno Park', { exact: true }).first().click();
+	await expect(page.getByText('Quick question: is the build cache shared?').first()).toBeVisible();
+});
+
+test('RQS-13: while typing, open requests that read alike are offered, and Add to REQ-n puts the words there instead', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await capture(page, 'Dark mode for the docs reader', { button: /^Just save$/ });
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	await dialog.getByLabel('What do you need?').fill('I would like a dark mode when reading the docs');
+	await expect(dialog.getByTestId('similar')).toContainText('Looks like REQ-1: Dark mode for the docs reader');
+	await dialog.getByRole('button', { name: 'Add to REQ-1' }).click();
+	await expect(dialog).toBeHidden();
+	await expect(page.getByText('Added to REQ-1.')).toBeVisible();
+	await expect(page.getByTestId('request-row')).toHaveCount(1); // no new request
+	await page.getByRole('button', { name: 'Dark mode for the docs reader' }).click();
+	await expect(page.getByRole('dialog').getByTestId('request-history')).toContainText('I would like a dark mode when reading the docs');
+	// Words that read like nothing offer nothing.
+	await page.keyboard.press('Escape');
+	await page.getByTestId('new-request').click();
+	await dialog.getByLabel('What do you need?').fill('Export the whole organization chart as a PDF file');
+	await expect(dialog.getByTestId('similar')).toHaveCount(0);
+});
+
+test('RQS-7: the queue can be filtered by state, who scopes it and project, and searched', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await expect(page.getByTestId('request-filters')).toHaveCount(0); // nothing to filter yet
+	await capture(page, 'Dark mode for the docs reader', { button: /^Just save$/, project: 'Atlas' });
+	await capture(page, 'Weekly digest by email');
+	await capture(page, 'Checklists on tasks', { button: /^Just save$/ });
+	const rows = page.getByTestId('request-row');
+	await expect(rows).toHaveCount(3);
+	await expect(page.getByTestId('request-count')).toHaveText('3 requests');
+	await page.getByLabel('Search requests').fill('digest');
+	await expect(rows).toHaveCount(1);
+	await expect(page.getByTestId('request-count')).toHaveText('1 of 3');
+	await page.getByRole('button', { name: 'Clear', exact: true }).click();
+	await expect(rows).toHaveCount(3);
+	await page.getByLabel('Who scopes it').selectOption({ label: 'Not routed' });
+	await expect(rows).toHaveCount(2);
+	await page.getByLabel('Project').selectOption({ label: 'Atlas' });
+	await expect(rows).toHaveCount(1);
+	await expect(rows.first()).toContainText('Dark mode');
+	await page.getByLabel('Search requests').fill('nothing like this');
+	await expect(page.getByTestId('no-request-match')).toBeVisible();
+	await page.getByTestId('no-request-match').getByRole('button', { name: 'Clear the filters' }).click();
+	await expect(rows).toHaveCount(3);
+	await page.getByLabel('State').selectOption('open');
+	await expect(rows).toHaveCount(3);
+});
+
+test('RQS-9: a task an approval made says which request it came from', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await capture(page, 'Costs per project', { project: 'Atlas' });
+	await agentScopes(page, 'Costs per project');
+	await visit(page, '/work');
+	await page.getByRole('tab', { name: /^Requests/ }).click();
+	await page.getByRole('button', { name: /^Review REQ-1/ }).click();
+	const sheet = page.getByRole('dialog');
+	await sheet.getByRole('button', { name: /^Approve and create 2 tasks/ }).click();
+	await sheet.getByRole('button', { name: 'Create 2 tasks' }).click();
+	await expect(sheet.getByTestId('request-state')).toHaveText('Approved');
+	await page.keyboard.press('Escape');
+	await page.getByRole('tab', { name: 'Tasks' }).click();
+	await page.getByRole('button', { name: 'Design the flow' }).click();
+	await expect(page.getByRole('dialog').getByTestId('task-from-request')).toHaveText('From REQ-1 · Costs per project');
+});
+
+test('RQS-4: an @name to an agent the rule also suggests is the person\'s route (no rule reason), punctuation after it is fine, and typing it after a pick wins', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	await dialog.getByLabel('What do you need?').fill('Something for later');
+	// A pick made first does not stand once an @name is typed after it.
+	await dialog.getByRole('radio').nth(1).check();
+	await dialog.getByLabel('What do you need?').fill('@pax: please look at this');
+	await expect(dialog.getByTestId('by-at')).toContainText('You wrote @pax');
+	await expect(dialog.getByRole('button', { name: /^Send to Pax Moreau/ })).toBeVisible();
+	await dialog.getByRole('button', { name: /^Send to Pax Moreau/ }).click();
+	await expect(dialog).toBeHidden();
+	await page.getByRole('button', { name: /^@pax: please/ }).click();
+	const sheet = page.getByRole('dialog');
+	await expect(sheet.getByTestId('request-state')).toContainText('Sent to Pax Moreau');
+	await expect(sheet.getByTestId('route-reason')).toHaveCount(0); // not the rule's reason, and not called the rule's
+});
+
+test('RQS-13: words too long to be a note can not be added to a request, and say so', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await capture(page, 'Dark mode for the docs reader', { button: /^Just save$/ });
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	await dialog.getByLabel('What do you need?').fill(`I want a dark mode for the docs. ${'More detail. '.repeat(800)}`);
+	const add = dialog.getByRole('button', { name: 'Add to REQ-1' });
+	await expect(add).toBeDisabled();
+	await expect(add).toHaveAttribute('title', /at most/);
+});
+
+test('RQS-7: a search whose only match has ended opens the group it is in', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await capture(page, 'Costs per project');
+	await agentScopes(page, 'Costs per project');
+	await visit(page, '/work');
+	await page.getByRole('tab', { name: /^Requests/ }).click();
+	await page.getByRole('button', { name: /^Review REQ-1/ }).click();
+	const sheet = page.getByRole('dialog');
+	await sheet.getByRole('button', { name: /^Approve and create 2 tasks/ }).click();
+	await sheet.getByLabel('Which project?').selectOption({ label: 'Atlas' });
+	await sheet.getByRole('button', { name: 'Create 2 tasks' }).click();
+	await page.keyboard.press('Escape');
+	await capture(page, 'Another one', { button: /^Just save$/ });
+	await expect(page.locator('[data-group=approved]')).toHaveJSProperty('open', false);
+	await page.getByLabel('Search requests').fill('costs');
+	await expect(page.locator('[data-group=approved]')).toHaveJSProperty('open', true);
+	await expect(page.locator('[data-group=approved]').getByTestId('request-row')).toBeVisible();
 });
