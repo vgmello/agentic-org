@@ -536,6 +536,83 @@ pub fn store_peek_reports_expired_without_deleting(backend: impl OpenBackend) {
     assert_eq!(state_of(&store, &msg_id(1)), State::Unread);
 }
 
+/// `msg_id(n)`, a normal (not urgent) message from `from` to Ada whose `expires_at` is
+/// `offset_ms` after [`NOW_UTC`] (an hour back is past its deadline and grace).
+fn with_deadline(n: u32, from: &str, offset_ms: i64) -> NewStoredMessage {
+    let mut message = new_message(n, from, ADA_ID, MessagePriority::Normal);
+    let header = &mut message.message.header;
+    header.ttl_ms = Some(60_000);
+    header.expires_at = format_utc(NOW_MS.checked_add_signed(offset_ms).unwrap());
+    message
+}
+
+/// `from_member_id` and `urgent_only` filter `expired_ids` as well as the message.
+pub fn store_peek_filters_expired_ids(backend: impl OpenBackend) {
+    let store = open_store(&backend);
+    commit(&store, expired_request(1, PAT_ID, ADA_ID));
+    commit(&store, expired_request(2, OWNER_ID, ADA_ID));
+    commit(&store, with_deadline(3, PAT_ID, -3_600_000));
+    commit(
+        &store,
+        new_message(4, PAT_ID, ADA_ID, MessagePriority::Normal),
+    );
+    let peek_with = |from: Option<&str>, urgent_only: bool| {
+        let outcome = store
+            .peek_next_unread(ADA_ID, from, urgent_only, NOW_UTC)
+            .expect("peek_next_unread");
+        (
+            outcome.message.map(|stored| stored.message.header.id),
+            outcome.expired_ids,
+        )
+    };
+    assert_eq!(
+        peek_with(None, false),
+        (Some(msg_id(4)), vec![msg_id(1), msg_id(2), msg_id(3)])
+    );
+    assert_eq!(
+        peek_with(Some(PAT_ID), false),
+        (Some(msg_id(4)), vec![msg_id(1), msg_id(3)]),
+        "only the sender's expired messages"
+    );
+    assert_eq!(peek_with(Some(OWNER_ID), false), (None, vec![msg_id(2)]));
+    assert_eq!(
+        peek_with(None, true),
+        (None, vec![msg_id(1), msg_id(2)]),
+        "only urgent expired messages"
+    );
+    assert_eq!(peek_with(Some(PAT_ID), true), (None, vec![msg_id(1)]));
+    assert_eq!(peek_with(Some(REMY_ID), false), (None, vec![]));
+}
+
+/// An unreadable `now_utc` counts every deadline as passed: each message with an
+/// `expires_at`, however far off, is expired, and only one without can be the message.
+pub fn store_peek_unreadable_now_passes_every_deadline(backend: impl OpenBackend) {
+    let store = open_store(&backend);
+    commit(&store, with_deadline(1, PAT_ID, 3_600_000));
+    commit(
+        &store,
+        new_message(2, PAT_ID, ADA_ID, MessagePriority::Normal),
+    );
+    let outcome = peek(&store, ADA_ID);
+    assert_eq!(
+        outcome.message.map(|stored| stored.message.header.id),
+        Some(msg_id(1)),
+        "not yet expired at a readable now"
+    );
+    assert!(outcome.expired_ids.is_empty());
+    let outcome = store
+        .peek_next_unread(ADA_ID, None, false, "not a time")
+        .expect("peek_next_unread");
+    assert_eq!(
+        outcome.message.map(|stored| stored.message.header.id),
+        Some(msg_id(2))
+    );
+    assert_eq!(outcome.expired_ids, [msg_id(1)]);
+    for n in 1..=2 {
+        assert_eq!(state_of(&store, &msg_id(n)), State::Unread);
+    }
+}
+
 /// Peek reports at most [`MAX_EXPIRED_IDS`] expired ids, the oldest first in commit order
 /// (not id order: they are committed in falling id order), and still returns the oldest
 /// unexpired message behind them.
@@ -1925,6 +2002,8 @@ macro_rules! mailbox_conformance_tests {
             store_initial_read_is_never_unread,
             store_peek_is_read_only_and_oldest_first,
             store_peek_reports_expired_without_deleting,
+            store_peek_filters_expired_ids,
+            store_peek_unreadable_now_passes_every_deadline,
             store_peek_caps_expired_ids_oldest_first,
             store_claim_read_order_and_ownership,
             store_claim_read_is_once_under_concurrency,
