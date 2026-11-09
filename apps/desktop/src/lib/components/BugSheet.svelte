@@ -194,7 +194,8 @@
 							<li class="px-3 py-2 text-sm/6 text-gray-400">No fix task yet.</li>
 						{/each}
 					</ul>
-					{#if s.status !== 'closed'}<Button size="sm" variant="outline" disabled={busy} onclick={createFixTask}>Create a fix task</Button>{/if}
+					{#if s.status !== 'closed' && s.status !== 'fixed'}<Button size="sm" variant="outline" disabled={busy} onclick={createFixTask}>Create a fix task</Button>{/if}
+					{#if s.status === 'fixed'}<p class="text-xs/5 text-gray-400" data-testid="fixed-no-fix-task">It's marked fixed. Send it back first to create another fix task.</p>{/if}
 					{#if fixTasks.length > 0 && fixTasks.every((t) => t.status === 'done' && t.resolution === 'cancelled') && s.status !== 'closed'}<p class="text-xs/5 text-amber-200">All its fix tasks were cancelled. Create a fix task, or close the bug.</p>{/if}
 				</section>
 

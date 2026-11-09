@@ -873,7 +873,7 @@ mod tests {
         let (state, dir) = state_with(vec![hosted("a", "Alpha")]);
         let command: OrgCommand = serde_json::from_value(serde_json::json!({
             "method": "team.create",
-            "params": {"command_id": "C1", "team_id": "ops", "name": "Ops"}
+            "params": {"command_id": org_command::test_command_id("C1"), "team_id": "ops", "name": "Ops"}
         }))
         .unwrap();
         let err = state.org_command("a", &command).unwrap_err();
@@ -891,7 +891,7 @@ mod tests {
                 "a",
                 &serde_json::from_value(serde_json::json!({
                     "method": "team.delete",
-                    "params": {"command_id": "C2", "team_id": "nope", "expected_version": 1}
+                    "params": {"command_id": org_command::test_command_id("C2"), "team_id": "nope", "expected_version": 1}
                 }))
                 .unwrap(),
             )
