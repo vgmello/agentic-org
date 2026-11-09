@@ -648,6 +648,29 @@ mod tests {
     }
 
     #[test]
+    fn claiming_the_next_message_skips_an_expired_ask_and_leaves_it_unread() {
+        let dir = TempDir::new().unwrap();
+        let office = office_in(&dir, &InMemoryKeys::new());
+        let store = office.message_store();
+        let mut ask = message(1, ADA, PAT, None, "");
+        ask.message.header.expires_at = Some("2026-11-08T12:00:10.000Z".into());
+        ask.message.header.ttl_ms = Some(4000);
+        let expired_id = ask.message.header.id.clone();
+        let live = message(2, ADA, PAT, None, "");
+        let live_id = live.message.header.id.clone();
+        store.commit_message(ask).unwrap();
+        store.commit_message(live).unwrap();
+
+        let claimed = store
+            .claim_read(PAT, None, "2026-11-08T12:00:20.000Z")
+            .unwrap()
+            .unwrap();
+        assert_eq!(claimed.message.header.id, live_id);
+        let left = store.get_message(&expired_id).unwrap().unwrap();
+        assert_eq!(left.message.header.state, State::Unread);
+    }
+
+    #[test]
     fn a_message_committed_as_read_has_the_time_it_was_made_as_its_read_time() {
         let dir = TempDir::new().unwrap();
         let office = office_in(&dir, &InMemoryKeys::new());

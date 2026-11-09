@@ -551,13 +551,7 @@ pub(crate) fn claim_read(
             )
             .optional()
             .map_err(storage)?,
-        None => {
-            let candidates = open_unread(db, member, None, false)?;
-            candidates
-                .into_iter()
-                .find(|stored| !expired(&stored.message.header, now))
-                .map(|stored| stored.message.header.id)
-        }
+        None => first_unexpired_open(db, member, now)?,
     };
     let Some(id) = id else { return Ok(Ok(None)) };
     let Some(mut stored) = load(db, &id)? else {
@@ -590,23 +584,46 @@ fn open_unread(
     from: Option<&str>,
     urgent_only: bool,
 ) -> Result<Vec<StoredMessage>, OfficeError> {
-    let mut statement = db
-        .prepare(&format!(
-            "{} JOIN msg_unread u ON u.id = h.id
-             WHERE u.to_member_id = ?1 AND s.state = 'unread'
-               AND u.snoozed_until IS NULL AND u.snooze_after_task = 0
-               AND (?2 IS NULL OR h.from_member_id = ?2)
-               AND (?3 = 0 OR u.urgent = 1)
-             ORDER BY u.local_seq",
-            select_headers()
-        ))
-        .map_err(storage)?;
+    let mut statement = db.prepare(&open_unread_sql()).map_err(storage)?;
     let rows = statement
         .query_map(params![member, from, urgent_only], |row| {
             stored_from(row, false)
         })
         .map_err(storage)?;
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(storage)
+}
+
+/// The id of the oldest open message that is not expired. It stops at the first one, so a claim
+/// (which runs on the writer) does not read a whole backlog.
+fn first_unexpired_open(
+    db: &Connection,
+    member: &str,
+    now: &str,
+) -> Result<Option<String>, OfficeError> {
+    let mut statement = db.prepare(&open_unread_sql()).map_err(storage)?;
+    let mut rows = statement
+        .query(params![member, None::<&str>, false])
+        .map_err(storage)?;
+    while let Some(row) = rows.next().map_err(storage)? {
+        let header = stored_from(row, false).map_err(storage)?.message.header;
+        if !expired(&header, now) {
+            return Ok(Some(header.id));
+        }
+    }
+    Ok(None)
+}
+
+/// `?1` member, `?2` sender or NULL, `?3` urgent only; oldest first.
+fn open_unread_sql() -> String {
+    format!(
+        "{} JOIN msg_unread u ON u.id = h.id
+         WHERE u.to_member_id = ?1 AND s.state = 'unread'
+           AND u.snoozed_until IS NULL AND u.snooze_after_task = 0
+           AND (?2 IS NULL OR h.from_member_id = ?2)
+           AND (?3 = 0 OR u.urgent = 1)
+         ORDER BY u.local_seq",
+        select_headers()
+    )
 }
 
 /// The oldest unexpired open message, without marking it read, plus the ids of the expired ones
