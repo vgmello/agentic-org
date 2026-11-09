@@ -247,11 +247,11 @@ pub fn triage_snooze_transitions(backend: impl OpenTriageBackend) {
     assert_eq!((header.state, header.triage_gen), (State::Unread, 0));
 }
 
-/// Done (from unread, read or snoozed) leaves the unread index for good; done again is
-/// idempotent; nothing leaves done.
+/// Done (from unread, read or snoozed) leaves the unread index for good, clearing the
+/// snooze and its note and keeping `read_at`; done again is idempotent; nothing leaves done.
 pub fn triage_done_transitions(backend: impl OpenTriageBackend) {
     let store = open_store(&backend);
-    for n in 1..=3 {
+    for n in 1..=4 {
         unread(&store, n);
     }
     store
@@ -259,15 +259,32 @@ pub fn triage_done_transitions(backend: impl OpenTriageBackend) {
         .unwrap()
         .unwrap();
     apply(&store, snooze_until(3, &at(60_000), Some("later")));
-    for n in 1..=3 {
+    apply(
+        &store,
+        LocalStateTransition {
+            reason: Some("after this".into()),
+            ..snooze_after_task(4)
+        },
+    );
+    for n in 1..=4 {
         let done = LocalStateTransition {
             reason: Some("handled".into()),
             ..change(n, State::Done)
         };
         let header = apply(&store, done);
         assert_eq!(header.state, State::Done, "message {n}");
-        assert_eq!(header.snoozed_until, None);
-        assert!(!header.snooze_after_task);
+        assert_eq!(header.snoozed_until, None, "message {n}");
+        assert!(!header.snooze_after_task, "message {n}");
+        assert_eq!(
+            header.snooze_note, None,
+            "message {n}: done cleared the note"
+        );
+        let read_at = (n == 2).then_some(NOW_UTC);
+        assert_eq!(
+            header.read_at.as_deref(),
+            read_at,
+            "message {n}: read_at kept"
+        );
         assert_eq!(header, header_of(&store, n));
     }
     assert_eq!(peek(&store, ADA_ID).message, None);
@@ -295,28 +312,46 @@ pub fn triage_done_transitions(backend: impl OpenTriageBackend) {
     );
 }
 
-/// Read (from unread or snoozed) leaves the unread index and stamps `read_at`; read again
-/// is idempotent, keeping the first `read_at`.
+/// Read (from unread or snoozed) leaves the unread index, clearing the snooze and its note,
+/// and stamps `read_at`; read again is idempotent, keeping the first `read_at`.
 pub fn triage_read_transitions(backend: impl OpenTriageBackend) {
     let store = open_store(&backend);
-    unread(&store, 1);
-    unread(&store, 2);
+    for n in 1..=3 {
+        unread(&store, n);
+    }
     let header = apply(&store, change(1, State::Read));
     assert_eq!(header.state, State::Read);
     assert_eq!(header.read_at.as_deref(), Some(NOW_UTC));
 
-    apply(&store, snooze_after_task(2));
-    let later = at(5_000);
-    let header = apply(
+    apply(
         &store,
         LocalStateTransition {
-            now_utc: later.clone(),
-            ..change(2, State::Read)
+            reason: Some("after this".into()),
+            ..snooze_after_task(2)
         },
     );
-    assert_eq!(header.state, State::Read);
-    assert_eq!(header.read_at.as_deref(), Some(later.as_str()));
-    assert!(!header.snooze_after_task, "reading cleared the snooze");
+    apply(&store, snooze_until(3, &at(60_000), Some("later")));
+    let later = at(5_000);
+    for n in 2..=3 {
+        let header = apply(
+            &store,
+            LocalStateTransition {
+                now_utc: later.clone(),
+                ..change(n, State::Read)
+            },
+        );
+        assert_eq!(header.state, State::Read, "message {n}");
+        assert_eq!(header.read_at.as_deref(), Some(later.as_str()));
+        assert!(
+            !header.snooze_after_task,
+            "message {n}: reading cleared the snooze"
+        );
+        assert_eq!(header.snoozed_until, None, "message {n}");
+        assert_eq!(
+            header.snooze_note, None,
+            "message {n}: reading cleared the note"
+        );
+    }
     assert!(unread_ids(&store).is_empty());
 
     let before = header_of(&store, 1);
@@ -401,21 +436,39 @@ pub fn triage_unread_transitions(backend: impl OpenTriageBackend) {
     ));
 }
 
-/// Expired (from unread or snoozed) leaves the unread index; expired again is idempotent; a
-/// read message can't expire and nothing leaves expired.
+/// Expired (from unread or snoozed) leaves the unread index, clearing the snooze and its
+/// note; expired again is idempotent; a read message can't expire (and keeps its `read_at`)
+/// and nothing leaves expired.
 pub fn triage_expired_transitions(backend: impl OpenTriageBackend) {
     let store = open_store(&backend);
     commit(&store, expired_request(1, PAT_ID, ADA_ID));
     commit(&store, expired_request(2, PAT_ID, ADA_ID));
     unread(&store, 3);
+    commit(&store, expired_request(4, PAT_ID, ADA_ID));
+    apply(
+        &store,
+        LocalStateTransition {
+            reason: Some("after this".into()),
+            ..snooze_after_task(4)
+        },
+    );
     assert_eq!(peek(&store, ADA_ID).expired_ids, [msg_id(1), msg_id(2)]);
 
     let header = apply(&store, change(1, State::Expired));
     assert_eq!(header.state, State::Expired);
-    apply(&store, snooze_until(2, &at(60_000), None));
-    let header = apply(&store, change(2, State::Expired));
-    assert_eq!(header.state, State::Expired);
-    assert_eq!(header.snoozed_until, None);
+    assert_eq!(header.read_at, None);
+    apply(&store, snooze_until(2, &at(60_000), Some("later")));
+    for n in [2, 4] {
+        let header = apply(&store, change(n, State::Expired));
+        assert_eq!(header.state, State::Expired, "message {n}");
+        assert_eq!(header.snoozed_until, None, "message {n}");
+        assert!(!header.snooze_after_task, "message {n}");
+        assert_eq!(
+            header.snooze_note, None,
+            "message {n}: expiring cleared the note"
+        );
+        assert_eq!(header.read_at, None, "message {n}");
+    }
     let outcome = peek(&store, ADA_ID);
     assert!(
         outcome.expired_ids.is_empty(),
@@ -443,7 +496,9 @@ pub fn triage_expired_transitions(backend: impl OpenTriageBackend) {
         refused(&store, change(3, State::Expired)),
         StoreError::InvalidTransition
     ));
-    assert_eq!(state_of(&store, &msg_id(3)), State::Read);
+    let header = header_of(&store, 3);
+    assert_eq!(header.state, State::Read);
+    assert_eq!(header.read_at.as_deref(), Some(NOW_UTC), "read_at kept");
 }
 
 /// `triage_gen` goes up by exactly 1 on every snooze (re-snoozes included) and on each

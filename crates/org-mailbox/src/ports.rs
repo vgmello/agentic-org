@@ -161,6 +161,9 @@ pub trait TriageStore {
     ///   release and claim): nothing clears it.
     /// - `reason` is the `snooze_note` for `Snoozed` and the done note for `Done`, and is
     ///   ignored for every other target.
+    /// - `Done`, `Read` and `Expired` clear `snoozed_until`, `snooze_after_task` and
+    ///   `snooze_note`. `Done` and `Expired` keep `read_at`: a read message marked done still
+    ///   says when it was read (and a read message can't expire, so it keeps its `read_at`).
     ///
     /// Sync metadata isn't on the header and no port reads it back. The store writes the
     /// change's `owner_office_id`, `origin_incarnation` and `org_position` onto the message's
