@@ -1358,60 +1358,58 @@ mod tests {
         assert_eq!(timers.next_for(ADA_ID), Some(epoch_ms(NOW_MS + 2_000)));
     }
 
-    /// Expiring a request twice commits one notice: the second finds the first through the
-    /// store (`find_reply_for_ask`) and commits nothing, as does one with other content (the
-    /// recipient renamed since). Both count as told.
+    /// Expiring a request more than once commits one notice and announces it once:
+    ///
+    /// - a later expiry finds the notice through the store (`find_reply_for_ask`) and makes
+    ///   no commit at all;
+    /// - one racing the first, whose check doesn't see the notice yet, commits under the same
+    ///   first id and gets the replay (`inserted: false`), so it publishes nothing;
+    /// - one racing it with other content (the recipient renamed since) is refused
+    ///   (`AlreadyExists`), asks the store again, finds the notice and tries no fallback.
+    ///
+    /// Each counts as told.
     #[test]
     fn expiring_twice_commits_exactly_one_notice() {
-        use crate::testkit::conformance::{commit, expired_request};
-
-        let store = Arc::new(InMemoryStore::new());
-        let events = Arc::new(crate::testkit::fixture::RecordingEvents::default());
-        let mailbox = Mailbox::with_triage(
-            store.clone(),
-            store.clone(),
-            Arc::new(InMemoryDirectory::new(members(), POSITION)),
-            identity(),
-            Arc::new(ManualClock::new(NOW_MS)),
-            events.clone(),
-        )
-        .unwrap();
-        let mut ask = expired_request(1, PAT_ID, ADA_ID);
-        ask.message.header.to_display_name = ADA_NAME.into();
-        commit(&*store, ask);
-        let request = store
-            .get_message(&msg_id(1))
-            .unwrap()
-            .unwrap()
-            .message
-            .header;
+        let store = Arc::new(RacingStore::default());
+        let events = Arc::new(RecordingEvents::default());
+        let mailbox = racing_mailbox(&store, &events);
+        let request = expired_ask(&store.inner);
+        let commits = || store.commits.load(Ordering::SeqCst);
+        let notice = delivery_failed_id(&request, INCARNATION);
 
         assert_eq!(mailbox.notify_expired(&request, NOW_UTC), Ok(()));
+        assert_eq!(commits(), 1);
+        assert_eq!(notices(&store.inner), [notice.clone()]);
+
+        // Found by the store: no commit.
         assert_eq!(mailbox.notify_expired(&request, NOW_UTC), Ok(()));
+        assert_eq!(commits(), 1);
+
+        // Racing, same content: the replay of the first id.
+        *lock(&store.blind_finds) = 1;
+        assert_eq!(mailbox.notify_expired(&request, NOW_UTC), Ok(()));
+        assert_eq!(*lock(&store.blind_finds), 0, "the check missed the notice");
+        assert_eq!(commits(), 2, "committed again under the first id");
+
+        // Racing, other content: refused, then found on the second check.
         let renamed = MessageHeader {
             to_display_name: "Ada L.".into(),
             ..request.clone()
         };
+        *lock(&store.blind_finds) = 1;
         assert_eq!(mailbox.notify_expired(&renamed, NOW_UTC), Ok(()));
+        assert_eq!(
+            *lock(&store.blind_finds),
+            0,
+            "the first check missed the notice"
+        );
+        assert_eq!(commits(), 3, "no fallback after the refusal");
 
-        let notices: Vec<_> = store
-            .list_headers(HeaderQuery {
-                scope: HeaderScope::Inbox(PAT_ID.into()),
-                from_member_id: None,
-                thread_id: None,
-                unread_only: false,
-                include_snoozed: true,
-                cursor: None,
-                limit: 100,
-            })
-            .unwrap()
-            .headers
-            .into_iter()
-            .filter(|header| header.kind == KIND_DELIVERY_FAILED)
-            .collect();
-        assert_eq!(notices.len(), 1);
-        assert_eq!(notices[0].id, delivery_failed_id(&request, INCARNATION));
-        assert!(is_notice_for(&notices[0], &request));
+        assert_eq!(notices(&store.inner), [notice.clone()]);
+        let stored = store.inner.get_message(&notice).unwrap().unwrap();
+        assert!(is_notice_for(&stored.message.header, &request));
+        assert_eq!(stored.message.header.to_display_name, PAT_HANDLE);
+        assert_eq!(events.received(), [notice]);
         assert_eq!(events.delivery_failed().len(), 1);
     }
 }
