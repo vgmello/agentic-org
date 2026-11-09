@@ -361,7 +361,7 @@ export type WaitReason =
 	| { type: 'unknown' };
 
 
-// ---- Request calls (§4.5, P3) ---------------------------------------------------------------------------------------
+// ---- Request calls (§4.7, P3) ---------------------------------------------------------------------------------------
 
 export type FeatureOutcome = { type: 'new'; feature_id: string } | { type: 'extends'; feature_id: string } | { type: 'unknown' };
 
@@ -485,4 +485,4 @@ export interface RequestMerge {
 	comment_id: string;
 }
 
-export const REQUEST_LIMITS = { text: 20_000, routeReason: 500, declineReason: 1_000, draftDescription: 2_000, drafts: 50, docs: 50, effort: 200 } as const;
+export const REQUEST_LIMITS = { text: 20_000, routeReason: 500, declineReason: 1_000, draftDescription: 2_000, drafts: 50, effort: 200 } as const;

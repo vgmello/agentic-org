@@ -640,6 +640,9 @@ export function applyWork(state: WorkState, call: WorkCall, ctx: WorkContext): {
 	return { state: next, accepted };
 }
 
+/** The statuses that end an item: a task's done, a bug's closed, a request's approved, declined or merged. */
+const FINISHED: readonly string[] = ['done', 'closed', 'approved', 'declined', 'merged'];
+
 export const positionOf = (s: WorkState): WorkPosition => ({ incarnation: s.incarnation, seq: s.seq });
 
 /**
@@ -649,7 +652,7 @@ export const positionOf = (s: WorkState): WorkPosition => ({ incarnation: s.inca
 export const summaries = (s: WorkState, projectId?: string, closedSince?: string): WorkItemSummary[] =>
 	Object.values(s.items)
 		.filter((i) => !i.summary.deleted && (projectId === undefined || i.summary.project_id === projectId))
-		.filter((i) => (i.summary.status !== 'done' && i.summary.status !== 'closed') || closedSince === undefined || (i.done_at ?? i.summary.updated_at) >= closedSince)
+		.filter((i) => !FINISHED.includes(i.summary.status) || closedSince === undefined || (i.done_at ?? i.summary.updated_at) >= closedSince)
 		.map((i) => i.summary)
 		.sort((a, b) => (a.number ?? 0) - (b.number ?? 0));
 
@@ -660,7 +663,7 @@ const timeOf = (item: StoredTask, now: string): TimeFigures => ({
 	waiting_on_owner_ms: 0,
 	blocked_ms: 0,
 	rest_ms: Math.max(0, Date.parse(item.done_at ?? now) - Date.parse(item.summary.created_at)),
-	open: item.summary.kind === 'bug' ? item.summary.status !== 'closed' : item.summary.status !== 'done',
+	open: !FINISHED.includes(item.summary.status),
 	rounds: 1 + item.summary.reopen_count,
 	as_of: now
 });

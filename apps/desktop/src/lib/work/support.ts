@@ -9,23 +9,41 @@ export function fail(code: ApiErrorCode, message: string): never {
 	throw error;
 }
 
-// Control characters (design §2.3): none in a one-line field; a long text allows only a line feed and a tab.
-const CONTROL = /[\u0000-\u001f\u007f]/;
-const LONG_CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f]/;
-
-export const oneLine = (text: unknown, max: number, what: string): string => {
-	if (text !== undefined && typeof text !== 'string') return fail('invalid_request', `${what} must be text.`);
+export const oneLine = (text: string | undefined, max: number, what: string): string => {
 	const t = (text ?? '').trim();
-	if (t === '' || CONTROL.test(t)) fail('invalid_request', `${what} must be one line of text.`);
+	if (t === '' || /[\r\n]/.test(t)) fail('invalid_request', `${what} must be one line of text.`);
 	if ([...t].length > max) fail('invalid_request', `${what} can be at most ${max} characters.`);
 	return t;
 };
-export const longText = (text: unknown, max: number, what: string): string => {
-	if (typeof text !== 'string') return fail('invalid_request', `${what} must be text.`);
-	if (LONG_CONTROL.test(text)) fail('invalid_request', `${what} can't have control characters.`);
+export const longText = (text: string, max: number, what: string): string => {
 	if ([...text].length > max) fail('invalid_request', `${what} can be at most ${max} characters.`);
 	return text;
 };
+
+// The office's own text rules (org-work text.rs, design §2.1), which the request calls follow: trimmed; no control
+// characters, line or paragraph separators or bidirectional formatting in a one-line field; a long text allows only a
+// line feed and a tab (Windows line ends read as line feeds). Task and bug text keeps the looser rules above, which the
+// Rust twin of this engine shares.
+const BIDI = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
+const ONE_LINE_BAD = /[\p{Cc}\u2028\u2029]/u;
+const LONG_BAD = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/u;
+
+export function officeLine(text: unknown, max: number, what: string): string {
+	if (typeof text !== 'string') return fail('invalid_request', `${what} must be text.`);
+	const t = text.trim();
+	if (t === '') return fail('invalid_request', `${what} can't be empty.`);
+	if (ONE_LINE_BAD.test(t) || BIDI.test(t)) return fail('invalid_request', `${what} must be one line of plain text.`);
+	if ([...t].length > max) return fail('invalid_request', `${what} can be at most ${max} characters.`);
+	return t;
+}
+export function officeText(text: unknown, max: number, what: string): string {
+	if (typeof text !== 'string') return fail('invalid_request', `${what} must be text.`);
+	const t = text.replaceAll('\r\n', '\n').trim();
+	if (t === '') return fail('invalid_request', `${what} can't be empty.`);
+	if (LONG_BAD.test(t) || BIDI.test(t)) return fail('invalid_request', `${what} can't have control characters other than new lines and tabs.`);
+	if ([...t].length > max) return fail('invalid_request', `${what} can be at most ${max} characters.`);
+	return t;
+}
 
 export const shortId = (id: string) => id.slice(-6).toLowerCase();
 
@@ -43,6 +61,8 @@ export function touch(state: WorkState, item: StoredTask, now: string) {
 }
 
 export function steps(list: NewStep[], existing: ChecklistStep[]): ChecklistStep[] {
+	// Only a list of the wrong shape is refused here (it used to crash); what the steps hold is judged as before.
+	if (!Array.isArray(list) || !list.every((s) => typeof s === 'object' && s !== null && typeof s.step_id === 'string' && (s.required === undefined || typeof s.required === 'boolean'))) fail('invalid_request', 'A checklist is a list of steps, each with an id, text and required or not.');
 	if (list.length < 1 || existing.length + list.length > WORK_LIMITS.maxSteps) fail('invalid_request', `A checklist can have at most ${WORK_LIMITS.maxSteps} steps.`);
 	const seen = new Set(existing.map((s) => s.id));
 	return list.map((s) => {

@@ -1,10 +1,10 @@
-// The mock office's rules for feature requests (ada's W7 design §1.5, §2.2, §4.5): one state machine, New → Routed →
+// The mock office's rules for feature requests (ada's W7 design §1.5, §1.10, §4.7): one state machine, New → Routed →
 // Scoping → Scoped → Approved, or Declined / Merged from any open state. Like the rest of the mock engine these are
 // pure functions over a plain state; the real office decides the same things with the same words.
 import type { DocRef, DraftTask, Estimate, FeatureOutcome, ItemStatus, RequestOutcome, WorkItemSummary } from '$lib/proto';
 import { REQUEST_LIMITS, WORK_LIMITS } from '$lib/proto';
 import type { StoredTask, WorkCall, WorkContext, WorkState } from './engine';
-import { emptyCounts, fail, idText, itemAt, longText, oneLine, shortId, steps, touch } from './support';
+import { emptyCounts, fail, idText, itemAt, officeLine, officeText, shortId, steps, touch } from './support';
 
 export type RequestCall = Extract<WorkCall, { method: `request.${string}` }>;
 
@@ -14,6 +14,9 @@ export const OPEN_REQUEST: readonly ItemStatus[] = ['new', 'routed', 'scoping', 
 const PRIORITIES: readonly string[] = ['urgent', 'high', 'normal', 'low'];
 const KINDS: readonly string[] = ['feature', 'change', 'technical', 'question'];
 const ROUTED_BY: readonly string[] = ['person', 'rule', 'copilot'];
+
+/** A bound of the mock only: the design gives no limit on an outcome's docs, only its 128 KiB. */
+const MOCK_MAX_DOCS = 50;
 
 /** The org-wide counter of request numbers: `REQ-n`, never reused (design §2.8). */
 const COUNTER = 'req:';
@@ -25,20 +28,17 @@ function requestOf(state: WorkState, id: unknown): StoredTask {
 	return item;
 }
 const versioned = (item: StoredTask, version: number) => {
+	// A version above the current one was never served (design §2.3). The mock's version is per item, not per field.
+	if (version > item.summary.version) fail('invalid_request', 'That version of the request does not exist yet.');
 	if (item.summary.version !== version) fail('conflict', 'This changed since you opened it. Reload to see the latest.');
 };
 const mustBeOpen = (item: StoredTask, allowed: readonly ItemStatus[], what: string) => {
 	if (!allowed.includes(item.summary.status)) fail('invalid_request', `A request that is ${item.summary.status} can't be ${what}.`);
 };
-const requiredText = (text: unknown, max: number, what: string): string => {
-	const t = typeof text === 'string' ? text.trim() : '';
-	if (t === '') return fail('invalid_request', `${what} can't be empty.`);
-	return longText(t, max, what);
-};
 const reasonFor = (text: string | undefined, scoper: string | undefined): string | undefined => {
 	if (text === undefined) return undefined;
 	if (!scoper) fail('invalid_request', 'A reason goes with someone to route it to.');
-	return oneLine(text, REQUEST_LIMITS.routeReason, 'The reason');
+	return officeLine(text, REQUEST_LIMITS.routeReason, 'The reason');
 };
 const knownKind = (kind: string | undefined) => {
 	if (kind !== undefined && !KINDS.includes(kind)) fail('invalid_request', 'A request is a feature, change, technical or question.');
@@ -76,8 +76,8 @@ function checkedOutcome(outcome: RequestOutcome, project: WorkContext['projects'
 		const draftId = idText(d.draft_id, 'A draft id');
 		if (seen.has(draftId)) fail('already_exists', 'Two drafts have the same id.');
 		seen.add(draftId);
-		const clean: DraftTask = { draft_id: draftId, title: oneLine(d.title, WORK_LIMITS.title, 'A draft title') };
-		if (d.description !== undefined) clean.description = longText(d.description, REQUEST_LIMITS.draftDescription, 'A draft description');
+		const clean: DraftTask = { draft_id: draftId, title: officeLine(d.title, WORK_LIMITS.title, 'A draft title') };
+		if (d.description !== undefined) clean.description = officeText(d.description, REQUEST_LIMITS.draftDescription, 'A draft description');
 		if (d.priority !== undefined) {
 			if (!PRIORITIES.includes(d.priority)) fail('invalid_request', 'The priority must be urgent, high, normal or low.');
 			clean.priority = d.priority;
@@ -105,12 +105,12 @@ function checkedOutcome(outcome: RequestOutcome, project: WorkContext['projects'
 		for (const cents of [lo, hi]) if (cents !== undefined && (!Number.isSafeInteger(cents) || cents < 0)) fail('invalid_request', 'A cost is a whole number of cents.');
 		if (lo !== undefined && hi !== undefined && lo > hi) fail('invalid_request', 'The lowest cost is above the highest.');
 		estimate = {};
-		if (effort !== undefined) estimate.effort = oneLine(effort, REQUEST_LIMITS.effort, 'The effort');
+		if (effort !== undefined) estimate.effort = officeLine(effort, REQUEST_LIMITS.effort, 'The effort');
 		if (lo !== undefined) estimate.cost_usd_cents_min = lo;
 		if (hi !== undefined) estimate.cost_usd_cents_max = hi;
 	}
 	const rawDocs = listOf(outcome.docs, 'The docs');
-	if (rawDocs.length > REQUEST_LIMITS.docs) fail('invalid_request', `An outcome can link at most ${REQUEST_LIMITS.docs} docs.`);
+	if (rawDocs.length > MOCK_MAX_DOCS) fail('invalid_request', `An outcome can link at most ${MOCK_MAX_DOCS} docs.`);
 	const docs: DocRef[] = rawDocs.map((raw) => {
 		if (!isObject(raw)) return fail('invalid_request', 'A doc must be an object.');
 		const doc = raw as unknown as DocRef;
@@ -132,9 +132,9 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 		case 'request.create': {
 			idText(call.item_id, 'item_id');
 			if (itemAt(state, call.item_id)) fail('already_exists', 'That item already exists.');
-			const text = requiredText(call.text, REQUEST_LIMITS.text, 'The request');
-			// Untitled: the first line of the words, cut to the title's length.
-			const title = call.title !== undefined ? oneLine(call.title, WORK_LIMITS.title, 'The title') : [...text.split(/\r\n|[\r\n]/)[0].trim()].slice(0, WORK_LIMITS.title).join('').trim();
+			const text = officeText(call.text, REQUEST_LIMITS.text, 'The request');
+			// Untitled: the first line of the words, cut to the title's length (a tab or other control reads as a space).
+			const title = call.title !== undefined ? officeLine(call.title, WORK_LIMITS.title, 'The title') : [...text.split('\n')[0].replace(/[\p{Cc}\u2028\u2029]/gu, ' ').trim()].slice(0, WORK_LIMITS.title).join('').trim();
 			knownKind(call.request_kind);
 			knownRoutedBy(call.routed_by);
 			if (call.project_id !== undefined) projectOf(ctx, call.project_id);
@@ -184,7 +184,7 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 			mustBeOpen(item, OPEN_REQUEST, 'changed');
 			if (call.project_id !== undefined && call.clear_project) fail('invalid_request', 'Give a project or clear it, not both.');
 			if (call.title === undefined && call.request_kind === undefined && call.project_id === undefined && !call.clear_project) fail('invalid_request', 'Nothing to change.');
-			if (call.title !== undefined) item.summary.title = oneLine(call.title, WORK_LIMITS.title, 'The title');
+			if (call.title !== undefined) item.summary.title = officeLine(call.title, WORK_LIMITS.title, 'The title');
 			if (call.request_kind !== undefined) {
 				knownKind(call.request_kind);
 				item.summary.request_kind = call.request_kind;
@@ -201,7 +201,8 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 		case 'request.route': {
 			const item = requestOf(state, call.item_id);
 			versioned(item, call.expected_version);
-			mustBeOpen(item, ['new', 'routed', 'scoping'], 'sent to someone else');
+			// Sending it nowhere only undoes a route; a New request is already Not routed.
+			mustBeOpen(item, call.scoper_id === undefined ? ['routed', 'scoping'] : ['new', 'routed', 'scoping'], call.scoper_id === undefined ? 'taken back' : 'sent to someone else');
 			knownRoutedBy(call.routed_by);
 			const scoper = scoperOf(ctx, call.scoper_id);
 			item.route_reason = reasonFor(call.route_reason, scoper);
@@ -239,7 +240,7 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 			const item = requestOf(state, call.item_id);
 			versioned(item, call.expected_version);
 			mustBeOpen(item, ['scoped'], 'sent back for changes');
-			const note = requiredText(call.note, WORK_LIMITS.text, 'The note');
+			const note = officeText(call.note, WORK_LIMITS.text, 'The note');
 			noteOn(item, idText(call.comment_id, 'comment_id'), note, actor, now, state);
 			item.summary.status = 'scoping';
 			touch(state, item, now);
@@ -265,7 +266,7 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 				if (itemAt(state, t.item_id) || made.some((m) => m.summary.id === t.item_id)) fail('already_exists', 'That item already exists.');
 				if (links.has(t.link_id)) fail('already_exists', 'That link already exists.');
 				links.add(t.link_id);
-				const title = oneLine(t.title, WORK_LIMITS.title, 'A task title');
+				const title = officeLine(t.title, WORK_LIMITS.title, 'A task title');
 				if (t.priority !== undefined && !PRIORITIES.includes(t.priority)) fail('invalid_request', 'The priority must be urgent, high, normal or low.');
 				if (t.team_id && !project.teamIds.includes(t.team_id)) fail('invalid_request', "That team isn't one of the project's teams.");
 				if (t.assignee_id && !ctx.members.includes(t.assignee_id)) fail('unknown_recipient', 'That member cannot be assigned.');
@@ -300,8 +301,8 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 				};
 				const task: StoredTask = {
 					summary,
-					description: t.description ? longText(t.description, WORK_LIMITS.description, 'The description') : undefined,
-					definition_of_done: t.definition_of_done ? longText(t.definition_of_done, WORK_LIMITS.definitionOfDone, 'The definition of done') : undefined,
+					description: t.description ? officeText(t.description, WORK_LIMITS.description, 'The description') : undefined,
+					definition_of_done: t.definition_of_done ? officeText(t.definition_of_done, WORK_LIMITS.definitionOfDone, 'The definition of done') : undefined,
 					checklist,
 					watchers: [actor],
 					links: [{ id: t.link_id, kind: 'from_request', to: item.summary.id, created_by: actor, created_at: now }]
@@ -314,6 +315,7 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 				changed.push(task);
 			}
 			item.summary.status = 'approved';
+			item.done_at = now;
 			touch(state, item, now);
 			changed.unshift(item);
 			return;
@@ -322,8 +324,9 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 			const item = requestOf(state, call.item_id);
 			versioned(item, call.expected_version);
 			mustBeOpen(item, OPEN_REQUEST, 'declined');
-			item.decline_reason = requiredText(call.reason, REQUEST_LIMITS.declineReason, 'The reason');
+			item.decline_reason = officeText(call.reason, REQUEST_LIMITS.declineReason, 'The reason');
 			item.summary.status = 'declined';
+			item.done_at = now;
 			touch(state, item, now);
 			changed.push(item);
 			return;
@@ -340,10 +343,11 @@ export function applyRequest(state: WorkState, call: RequestCall, ctx: WorkConte
 			const words = item.text ?? '';
 			const marker = `\n(continued in REQ-${item.summary.number})`;
 			const quoted = [...words].length > WORK_LIMITS.text ? `${[...words].slice(0, WORK_LIMITS.text - [...marker].length).join('')}${marker}` : words;
-			noteOn(target, id, quoted, item.summary.created_by, now, state);
+			noteOn(target, id, quoted, actor, now, state);
 			if (!target.watchers.includes(item.summary.created_by)) target.watchers.push(item.summary.created_by);
 			item.merged_into = target.summary.id;
 			item.summary.status = 'merged';
+			item.done_at = now;
 			touch(state, item, now);
 			touch(state, target, now);
 			changed.push(item, target);

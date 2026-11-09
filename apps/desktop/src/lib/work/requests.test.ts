@@ -68,6 +68,48 @@ describe('REQ creating requests', () => {
 		for (const title of ['x\u0007y', 'x\ty']) expect(refused(() => created(emptyWork(), 1, { title })).code).toBe('invalid_request');
 	});
 
+	it('follows the office text rules: Windows line ends read as new lines, and separators, bidi and C1 controls are refused', () => {
+		expect(itemOf(created(emptyWork(), 1, { text: 'a\r\nb' }), id(1), ctx.now).text).toBe('a\nb');
+		expect(at(created(emptyWork(), 1, { text: 'a\tb\nmore' }), 1).summary.title).toBe('a b');
+		for (const bad of ['a\u2028b', 'a\u202eb', 'a\u0085b']) expect(refused(() => created(emptyWork(), 1, { title: bad })).code).toBe('invalid_request');
+		for (const bad of ['a\u202eb', 'a\u0085b']) expect(refused(() => created(emptyWork(), 1, { text: bad })).code).toBe('invalid_request');
+		// A line separator is fine inside a long text, as in the office.
+		expect(() => created(emptyWork(), 1, { text: 'a\u2028b' })).not.toThrow();
+	});
+
+	it('the default title reads a line or paragraph separator as a space; an explicit one is refused', () => {
+		expect(at(created(emptyWork(), 1, { text: 'a\u2028b\u2029c rest' }), 1).summary.title).toBe('a b c rest');
+	});
+
+	it('refuses the bidirectional marks and isolates, limits, and over-long ids', () => {
+		for (const mark of ['\u200e', '\u200f', '\u202a', '\u2066', '\u2069']) expect(refused(() => created(emptyWork(), 1, { title: `a${mark}b` })).code).toBe('invalid_request');
+		expect(refused(() => created(emptyWork(), 1, { item_id: 'x'.repeat(129) })).code).toBe('invalid_request');
+		expect(() => created(emptyWork(), 1, { item_id: 'x'.repeat(128) })).not.toThrow();
+		expect(refused(() => scoped(created(emptyWork(), 1), 1, { estimate: { effort: 'x'.repeat(201) } })).code).toBe('invalid_request');
+		expect(() => scoped(created(emptyWork(), 1), 1, { estimate: { effort: 'x'.repeat(200) } })).not.toThrow();
+		expect(refused(() => scoped(created(emptyWork(), 1), 1, { feature: { type: 'bogus', feature_id: 'f' } as unknown as RequestOutcome['feature'] })).code).toBe('invalid_request');
+	});
+
+	it('a deleted request is not there, and taking a routed request back forgets who suggested the route', () => {
+		const s = created(emptyWork(), 1, { scoper_id: 'eden', routed_by: 'copilot', route_reason: 'designer' });
+		const back = run(s, { method: 'request.route', item_id: id(1), expected_version: 1 }).state;
+		expect(itemOf(back, id(1), ctx.now)).toMatchObject({ route_reason: undefined, routed_by: undefined });
+		const gone = run(back, { method: 'work.delete', item_id: id(1), expected_version: 2 }).state;
+		expect(refused(() => run(gone, { method: 'request.accept', item_id: id(1), expected_version: 3 })).code).toBe('not_found');
+	});
+
+	it('keeps accepting the checklists tasks always took: no required flag, any step id, and only wrong shapes refused', () => {
+		const add = (steps: unknown) => run(run(emptyWork(), { method: 'task.create', item_id: id(1), project_id: 'p1', title: 'T' }).state, { method: 'checklist.add', item_id: id(1), steps });
+		expect(() => add([{ step_id: '', text: 'No flag' }])).not.toThrow();
+		expect(() => add([{ step_id: 'x'.repeat(129), text: 'Long id', required: false }])).not.toThrow();
+		for (const bad of ['abc', [null], [{ step_id: 5, text: 'x', required: true }], [{ step_id: 'a', text: 'x', required: 'yes' }]]) expect(refused(() => add(bad)).code).toBe('invalid_request');
+	});
+
+	it('leaves the text rules of tasks and bugs as the Rust twin has them', () => {
+		const s = run(emptyWork(), { method: 'task.create', item_id: id(1), project_id: 'p1', title: 'a\tb', description: 'x\r\ny' }).state;
+		expect([at(s, 1).summary.title, at(s, 1).description]).toEqual(['a\tb', 'x\r\ny']);
+	});
+
 	it('refuses fields of the wrong type with a refusal, not a crash', () => {
 		const s = created(emptyWork(), 1);
 		for (const extra of [{ title: 5 }, { route_reason: 5, scoper_id: 'eden' }, { text: 5 }]) expect(refused(() => created(emptyWork(), 2, extra)).code).toBe('invalid_request');
@@ -171,11 +213,58 @@ describe('REQ the lifecycle', () => {
 		expect(refused(() => run(done, { method: 'request.ask_changes', item_id: id(1), expected_version: v(done, 1), comment_id: id(33), note: '  ' })).code).toBe('invalid_request');
 	});
 
-	it('a stale version is a conflict, checked before the state', () => {
+	it('an old version is a conflict, one above the current is invalid, and a missing item is not found', () => {
 		const s = created(emptyWork(), 1);
-		expect(refused(() => run(s, { method: 'request.accept', item_id: id(1), expected_version: 7 })).code).toBe('conflict');
+		const moved = run(s, { method: 'request.update', item_id: id(1), expected_version: 1, title: 'Again' }).state;
+		expect(refused(() => run(moved, { method: 'request.accept', item_id: id(1), expected_version: 1 })).code).toBe('conflict');
+		expect(refused(() => run(s, { method: 'request.accept', item_id: id(1), expected_version: 7 })).code).toBe('invalid_request');
 		expect(refused(() => run(s, { method: 'request.accept', item_id: 'nope', expected_version: 1 })).code).toBe('not_found');
-		expect(refused(() => run(s, { method: 'request.accept', item_id: id(1), expected_version: 0 })).code).toBe('conflict');
+	});
+
+	it('taking a request back to Not routed is only for one that is routed or scoping', () => {
+		const fresh = created(emptyWork(), 1);
+		expect(refused(() => run(fresh, { method: 'request.route', item_id: id(1), expected_version: 1 })).code).toBe('invalid_request');
+		expect(v(fresh, 1)).toBe(1);
+	});
+
+	it('the merge note is the caller\'s, not the merged request creator\'s', () => {
+		let s = run(emptyWork(), { method: 'request.create', item_id: id(1), text: 'Eden words' }, { ...ctx, actor: 'eden' }).state;
+		s = created(s, 2);
+		s = run(s, { method: 'request.merge', item_id: id(1), expected_version: 1, into: id(2), comment_id: id(30) }, { ...ctx, actor: 'ada' }).state;
+		expect(at(s, 2).comments?.map((c) => [c.by, c.body])).toEqual([['ada', 'Eden words']]);
+	});
+
+	it('a request that ended stops its clock: its time figures stay where it ended', () => {
+		const ended = (call: object, setup: (s: WorkState) => WorkState = (s) => s) => {
+			const s = run(setup(created(created(emptyWork(), 1, { project_id: 'p1' }), 2)), { item_id: id(1), expected_version: 1, ...call }).state;
+			const at1 = itemOf(s, id(1), '2026-11-08T11:00:00.000Z').time;
+			const later = itemOf(s, id(1), '2027-11-08T11:00:00.000Z').time;
+			return [at1.open, at1.lead_ms, later.lead_ms, later.rest_ms];
+		};
+		expect(ended({ method: 'request.decline', reason: 'no' })).toEqual([false, 0, 0, 0]);
+		expect(ended({ method: 'request.merge', into: id(2), comment_id: id(30) })).toEqual([false, 0, 0, 0]);
+		const ready = (s: WorkState) => scoped(s, 1);
+		const approved = run(ready(created(emptyWork(), 1, { project_id: 'p1' })), { method: 'request.approve', item_id: id(1), expected_version: 3, tasks: approvedTasks(1) }).state;
+		expect(itemOf(approved, id(1), '2027-11-08T11:00:00.000Z').time).toMatchObject({ open: false, lead_ms: 0 });
+	});
+
+	it('every way a request ends leaves a closed-since snapshot', () => {
+		const base = created(created(created(emptyWork(), 1, { project_id: 'p1' }), 2), 3);
+		const declined = run(base, { method: 'request.decline', item_id: id(2), expected_version: 1, reason: 'no' }).state;
+		const merged = run(declined, { method: 'request.merge', item_id: id(3), expected_version: 1, into: id(1), comment_id: id(30) }).state;
+		const ready = scoped(merged, 1);
+		const approved = run(ready, { method: 'request.approve', item_id: id(1), expected_version: v(ready, 1), tasks: approvedTasks(1) }).state;
+		expect(summaries(approved, undefined, '2027-01-01T00:00:00.000Z').filter((r) => r.kind === 'request')).toEqual([]);
+		expect(summaries(approved).filter((r) => r.kind === 'request')).toHaveLength(3);
+	});
+
+	it('requests that ended are closed in time figures and in a closed-since snapshot', () => {
+		const declined = run(created(emptyWork(), 1), { method: 'request.decline', item_id: id(1), expected_version: 1, reason: 'no' }).state;
+		const open = created(declined, 2);
+		expect(itemOf(declined, id(1), ctx.now).time.open).toBe(false);
+		expect(itemOf(open, id(2), ctx.now).time.open).toBe(true);
+		expect(summaries(open, undefined, '2026-11-09T00:00:00.000Z').map((r) => r.id)).toEqual([id(2)]);
+		expect(summaries(open).map((r) => r.id)).toEqual([id(1), id(2)]);
 	});
 
 	it('a request call on a task or a bug is refused, and a task or checklist call on a request is too', () => {
@@ -292,6 +381,8 @@ describe('REQ the outcome', () => {
 		expect(refused(() => run(accepted, { method: 'request.scope', item_id: id(1), expected_version: 2, outcome: null })).code).toBe('invalid_request');
 		const s = scoped(created(emptyWork(), 1, { project_id: 'p1' }), 1);
 		expect(refused(() => run(s, { method: 'request.approve', item_id: id(1), expected_version: v(s, 1), tasks: [null] })).code).toBe('invalid_request');
+		for (const checklist of ['abc', [null], [{ step_id: 5, text: 'x', required: true }], [{ step_id: id(34), text: 'x', required: 'yes' }]])
+			expect(refused(() => run(s, { method: 'request.approve', item_id: id(1), expected_version: v(s, 1), tasks: [{ ...approvedTasks(1)[0], checklist }] })).code).toBe('invalid_request');
 	});
 
 	it('links a doc of an archived project: archiving only stops new items', () => {
