@@ -117,6 +117,68 @@ impl Binding {
 /// Most `msg.wait` calls held at once on one connection; more get `unavailable`.
 pub(crate) const MAX_HELD: usize = org_proto::msg::MAX_HELD_CALLS_PER_CONNECTION;
 
+/// What other threads may do to a connection: end its held calls and its subscription. The
+/// watcher does it when the connection's member stops being bindable, without waiting for the
+/// connection's next call.
+#[derive(Default)]
+struct Control {
+    held: Held,
+    /// Moves on whenever the connection's binding changes or the reader ends, which stops the
+    /// events of the binding before it.
+    generation: AtomicU64,
+    /// Set by the watcher when it has ended this connection's held calls and subscription
+    /// because its member can no longer be bound: the connection thread then treats the
+    /// connection as unbound before its next call, so its own state (`subscribed`, the binding)
+    /// matches.
+    revoked: std::sync::atomic::AtomicBool,
+}
+
+/// The member-bound connections, by connection number: who each acts as, and how to reach it.
+type Bound = Mutex<HashMap<u64, (String, Arc<Control>)>>;
+
+/// Keeps `conn`'s entry in [`Bound`] equal to the member it acts as. Called whenever its binding
+/// may have changed; removes the entry when the connection is not bound as a member, and when
+/// the connection ends.
+struct Registration<'a> {
+    bound: &'a Bound,
+    conn: u64,
+    control: Arc<Control>,
+    member: Option<String>,
+}
+
+impl Registration<'_> {
+    /// `true` when the connection is newly registered as `member`: it may have become unbindable
+    /// before the watcher could see it, so the caller looks once.
+    fn sync(&mut self, member: Option<&str>) -> bool {
+        if self.member.as_deref() == member {
+            return false;
+        }
+        let mut bound = self.bound.lock().unwrap_or_else(|p| p.into_inner());
+        // Under the lock the watcher acts under: a decision about the member this connection
+        // had must not unbind the one it has now.
+        self.control.revoked.store(false, Ordering::SeqCst);
+        match member {
+            Some(member) => {
+                bound.insert(self.conn, (member.to_owned(), Arc::clone(&self.control)));
+            }
+            None => {
+                bound.remove(&self.conn);
+            }
+        }
+        self.member = member.map(str::to_owned);
+        member.is_some()
+    }
+}
+
+impl Drop for Registration<'_> {
+    fn drop(&mut self) {
+        self.bound
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&self.conn);
+    }
+}
+
 /// The held calls of a connection, so a re-bind or the end of the connection can end them.
 #[derive(Default)]
 struct Held {
@@ -189,6 +251,8 @@ pub struct Shared {
     /// The app's token, given to the server on the launch pipe. Zeroed when `Shared` drops.
     app_token: AppToken,
     timing: Timing,
+    /// The connections bound as a member, for the watcher.
+    bound: Bound,
 }
 
 impl Shared {
@@ -211,6 +275,7 @@ impl Shared {
             ports,
             app_token,
             timing: Timing::default(),
+            bound: Mutex::default(),
             // Part 1 implements only what every server of this api_version has: no capabilities.
             hello: HelloResult::office(
                 env!("CARGO_PKG_VERSION"),
@@ -261,6 +326,15 @@ pub fn bind(path: &Path) -> std::io::Result<UnixListener> {
 /// Accepts connections until `stop` says to quit, then closes every connection and waits for
 /// its thread, so nothing is still reading the office when the caller closes it.
 pub fn run(listener: &UnixListener, shared: &Arc<Shared>, stop: &dyn Fn() -> bool) {
+    // Ends the held calls of a connection whose member stops being bindable, at once.
+    let watching = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let watcher = {
+        let (shared, watching) = (Arc::clone(shared), Arc::clone(&watching));
+        std::thread::Builder::new()
+            .name("org-office-watch".into())
+            .spawn(move || watch(&shared, &watching))
+            .ok()
+    };
     let live = Arc::new(AtomicUsize::new(0));
     // A handle on each connection, to close it at shutdown.
     let open: Arc<Mutex<HashMap<u64, UnixStream>>> = Arc::default();
@@ -299,7 +373,7 @@ pub fn run(listener: &UnixListener, shared: &Arc<Shared>, stop: &dyn Fn() -> boo
                         let _slot = slot;
                         let _registered = registered;
                         let _ = stream.set_nonblocking(false);
-                        serve_connection(stream, &shared);
+                        serve_connection(stream, &shared, id);
                     })
                 {
                     threads.retain(|t| !t.is_finished());
@@ -321,6 +395,76 @@ pub fn run(listener: &UnixListener, shared: &Arc<Shared>, stop: &dyn Fn() -> boo
     for thread in threads {
         let _ = thread.join();
     }
+    watching.store(false, Ordering::SeqCst);
+    if let Some(watcher) = watcher {
+        let _ = watcher.join();
+    }
+}
+
+/// Whenever the organization's log has moved (and the first time), looks at each member-bound
+/// connection's member: one that is no longer bindable (offboarded, made office-run, removed) has
+/// its held `msg.wait` calls ended with `not_bound` and its subscription ended, without waiting
+/// for the connection's next call. (That next call is answered as unbound.) A lookup that fails
+/// ends nothing. Organization changes are what can unbind a member, so a quiet log costs one
+/// cheap head read per tick.
+fn watch(shared: &Shared, watching: &std::sync::atomic::AtomicBool) {
+    let mut last_head = None;
+    while watching.load(Ordering::SeqCst) {
+        // Before looking, so a change while looking wakes the wait below at once.
+        let token = shared.ports.feed.token();
+        let head = shared.ports.feed.head().ok();
+        if head.is_none() || head != last_head {
+            // A panic in a lookup must not end the watching for good.
+            let pass = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| revoke(shared)));
+            match pass {
+                // Settled: this head is done with.
+                Ok(false) => last_head = head,
+                // A lookup could not answer: look again on the next tick.
+                Ok(true) => {}
+                Err(_) => {
+                    eprintln!("org-office-server: the member watcher failed once; it carries on");
+                }
+            }
+        }
+        shared.ports.feed.wait(token, shared.timing.idle);
+    }
+}
+
+/// One pass of the watcher. `true` when a lookup could not answer, so the pass must be repeated.
+fn revoke(shared: &Shared) -> bool {
+    let mut undecided = false;
+    let members: std::collections::HashSet<String> = shared
+        .bound
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .values()
+        .map(|(member, _)| member.clone())
+        .collect();
+    // One lookup per member, however many connections it has.
+    for member in members {
+        match lookup(shared, &member) {
+            Lookup::Failed => {
+                undecided = true;
+                continue;
+            }
+            Lookup::Bindable(found) if found.id == member => continue,
+            Lookup::Bindable(_) | Lookup::Not => {}
+        }
+        // Confirmed under the registry's lock, on the connections that STILL act as this member:
+        // one that bound as someone else, or bound again after the member was restored, is left
+        // alone.
+        let bound = shared.bound.lock().unwrap_or_else(|p| p.into_inner());
+        if !is_gone(shared, &member) {
+            continue;
+        }
+        for (_, control) in bound.values().filter(|(m, _)| *m == member) {
+            // `revoked` first: a wait that starts after the cancel below sees it.
+            control.revoked.store(true, Ordering::SeqCst);
+            control.generation.fetch_add(1, Ordering::SeqCst);
+            control.held.cancel_all();
+        }
+    }
+    undecided
 }
 
 /// A connection's entry in the registry; dropping it removes the entry (and so the extra handle
@@ -348,24 +492,29 @@ impl Drop for Slot {
     }
 }
 
-fn serve_connection(stream: UnixStream, shared: &Shared) {
+fn serve_connection(stream: UnixStream, shared: &Shared, conn: u64) {
     let Ok(out) = stream.try_clone() else {
         return;
     };
     // One writer at a time: answers and pushed events never interleave. Every frame has a
     // deadline (`bounded`), so a client that does not read cannot hold the thread.
     let out = Mutex::new(out);
-    // Moves on whenever the connection's binding changes or the reader ends, which stops the
-    // events of the binding before it.
-    let generation = AtomicU64::new(0);
+    // What the watcher may do to this connection, and its place in the registry.
+    let control = Arc::new(Control::default());
+    let generation = &control.generation;
+    let held = &control.held;
+    let mut registration = Registration {
+        bound: &shared.bound,
+        conn,
+        control: Arc::clone(&control),
+        member: None,
+    };
     // The events sent on this connection, whichever subscription sent them.
     let sent = AtomicU64::new(0);
-    // The held `msg.wait` calls: each has a thread of its own, joined when the connection ends.
-    let held = Held::default();
     // The subscription's thread is joined when the connection ends: it reads the office, which
     // must not be closing.
     std::thread::scope(|scope| {
-        let _end_held_calls = CancelOnDrop(&held);
+        let _end_held_calls = CancelOnDrop(held);
         let mut reader = BufReader::new(stream);
         let mut binding = Binding::Anonymous;
         let mut subscribed = false;
@@ -375,10 +524,13 @@ fn serve_connection(stream: UnixStream, shared: &Shared) {
         // A line the framing refuses (too long, not JSON) ends the connection: the stream is out
         // of step and nothing in it can be trusted.
         while let Ok(Some(request)) = frame::read_message::<Request>(&mut reader) {
-            // The member this connection acts as is checked on every call, not only at bind.
+            // The member this connection acts as is checked on every call, not only at bind, and
+            // the watcher may have ended the connection's held calls already.
+            let revoked = control.revoked.swap(false, Ordering::SeqCst);
             if let Some(member) = binding.member() {
-                if !request.is::<MsgBind>() && !still_bindable(shared, member) {
+                if !request.is::<MsgBind>() && (revoked || !still_bindable(shared, member)) {
                     binding = Binding::Anonymous;
+                    registration.sync(None);
                     generation.fetch_add(1, Ordering::SeqCst);
                     subscribed = false;
                     held.cancel_all();
@@ -407,6 +559,11 @@ fn serve_connection(stream: UnixStream, shared: &Shared) {
                             }
                             continue;
                         };
+                        // The watcher sets `revoked` before it cancels, so a wait that began
+                        // after its cancel still finds the flag and ends at once.
+                        if control.revoked.load(Ordering::SeqCst) {
+                            held.cancel_all();
+                        }
                         let (out, held, mailbox, timing) =
                             (&out, &held, &shared.ports.mailbox, shared.timing);
                         let id = request.id;
@@ -455,6 +612,9 @@ fn serve_connection(stream: UnixStream, shared: &Shared) {
                             position,
                             live: shared.ports.live.head(),
                         };
+                        // The generation this subscription belongs to, taken before the answer
+                        // goes out: a watcher's bump after this ends it.
+                        let mine = generation.load(Ordering::SeqCst);
                         // The answer first, then the events.
                         let answer =
                             Response::ok::<org_proto::Subscribe>(request.id, &org_proto::Empty {})
@@ -466,11 +626,10 @@ fn serve_connection(stream: UnixStream, shared: &Shared) {
                         if let Some(old) = pusher.take() {
                             let _ = old.join();
                         }
-                        let mine = generation.load(Ordering::SeqCst);
                         let (feed, live) = (&*shared.ports.feed, &*shared.ports.live);
                         let wire = follow::Wire {
                             out: &out,
-                            generation: &generation,
+                            generation,
                             mine,
                             seq: &sent,
                             timing: shared.timing,
@@ -483,6 +642,19 @@ fn serve_connection(stream: UnixStream, shared: &Shared) {
             } else {
                 answer(&request, shared, &mut binding)
             };
+            // The watcher finds this connection by the member it now acts as. Registered before
+            // the answer goes out, so a client that has its bind's answer is already watched.
+            if registration.sync(binding.member()) {
+                // Registered after the member may already have gone: the watcher cannot have
+                // seen this entry, so look once.
+                if let Some(member) = binding.member() {
+                    if is_gone(shared, member) {
+                        control.held.cancel_all();
+                        control.generation.fetch_add(1, Ordering::SeqCst);
+                        control.revoked.store(true, Ordering::SeqCst);
+                    }
+                }
+            }
             if !send(&out, request.id, &response, shared.timing) {
                 break;
             }
@@ -759,7 +931,28 @@ fn bind_member(
 /// token, which this office does not issue yet). `None` for anything else and for a lookup that
 /// fails: it fails closed. Used at bind and again on every later call of the connection.
 fn bindable(shared: &Shared, handle: &str) -> Option<org_proto::Member> {
-    let (found, _) = shared.ports.directory.resolve_member(handle).ok()??;
+    match lookup(shared, handle) {
+        Lookup::Bindable(member) => Some(*member),
+        Lookup::Not | Lookup::Failed => None,
+    }
+}
+
+/// What a look at a member found.
+enum Lookup {
+    Bindable(Box<org_proto::Member>),
+    /// The member is there to see and may not be bound (or is not there).
+    Not,
+    /// The directory could not say. A bind or a call fails closed on it; the watcher does not
+    /// end a connection on it (the next look, or the connection's next call, decides).
+    Failed,
+}
+
+fn lookup(shared: &Shared, handle: &str) -> Lookup {
+    let found = match shared.ports.directory.resolve_member(handle) {
+        Ok(Some((found, _))) => found,
+        Ok(None) => return Lookup::Not,
+        Err(_) => return Lookup::Failed,
+    };
     let may = match found.kind {
         MemberKind::Person => true,
         MemberKind::Agent => {
@@ -771,7 +964,11 @@ fn bindable(shared: &Shared, handle: &str) -> Option<org_proto::Member> {
         }
         _ => false,
     };
-    may.then_some(found)
+    if may {
+        Lookup::Bindable(Box::new(found))
+    } else {
+        Lookup::Not
+    }
 }
 
 /// Whether a connection bound as member `id` may still act as it. The bind's rules are not
@@ -779,6 +976,16 @@ fn bindable(shared: &Shared, handle: &str) -> Option<org_proto::Member> {
 /// again (and then fails the same rules).
 fn still_bindable(shared: &Shared, id: &str) -> bool {
     bindable(shared, id).is_some_and(|member| member.id == id)
+}
+
+/// Whether the member `id` is certainly no longer bindable. A directory that could not answer is
+/// not certain.
+fn is_gone(shared: &Shared, id: &str) -> bool {
+    match lookup(shared, id) {
+        Lookup::Bindable(member) => member.id != id,
+        Lookup::Not => true,
+        Lookup::Failed => false,
+    }
 }
 
 fn bind_error(id: u64, code: ErrorCode, message: &str) -> Response {
@@ -1267,6 +1474,16 @@ mod tests {
             frame::read_message::<serde_json::Value>(&mut self.reader)
                 .unwrap()
                 .expect("the connection ended")
+        }
+
+        /// The next message if one arrives within `wait`.
+        fn message_within(&mut self, wait: Duration) -> Option<serde_json::Value> {
+            self.stream.set_read_timeout(Some(wait)).unwrap();
+            let got = frame::read_message::<serde_json::Value>(&mut self.reader);
+            self.stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            got.ok().flatten()
         }
 
         /// Nothing arrives within `wait`.
@@ -3193,5 +3410,302 @@ mod tests {
         let mut rest = Vec::new();
         assert_eq!(client_end.read_to_end(&mut rest).unwrap(), 0);
         assert_eq!(seq.load(Ordering::SeqCst), 0);
+    }
+
+    // ---- the watcher: a member that stops being bindable loses its held calls at once ------
+
+    /// A server for the watcher tests: the mailbox, the directory the test changes, the feed it
+    /// wakes, the live events, and how to stop it.
+    type UnbindServer = (
+        Arc<Mailbox>,
+        Arc<org_mailbox::testkit::InMemoryDirectory>,
+        Arc<FakeFeed>,
+        Arc<LiveEvents>,
+        Arc<AtomicBool>,
+        std::thread::JoinHandle<()>,
+    );
+
+    /// A server whose followers and watcher sleep `idle` unless woken: the test changes the
+    /// directory under it, then wakes the feed as an organization change does.
+    fn unbind_server(path: &Path) -> UnbindServer {
+        let feed = Arc::new(FakeFeed::default());
+        let live = {
+            let feed = Arc::clone(&feed);
+            Arc::new(LiveEvents::new(Box::new(move || feed.wake())))
+        };
+        let (mailbox, directory) = messaging_with(Arc::clone(&live));
+        let mut ports = ports(Box::new(|| Err("none".to_owned())));
+        ports.mailbox = Arc::clone(&mailbox);
+        ports.directory = directory.clone();
+        ports.live = Arc::clone(&live);
+        ports.feed = Box::new(Arc::clone(&feed));
+        let timing = Timing {
+            idle: Duration::from_secs(3),
+            ..Timing::default()
+        };
+        let shared = Arc::new(Shared::new(&test_info(), path, ports, token()).with_timing(timing));
+        let (stop, server) = start(path, &shared);
+        (mailbox, directory, feed, live, stop, server)
+    }
+
+    fn wait_params() -> MsgWaitParams {
+        MsgWaitParams {
+            timeout_ms: 30_000,
+            from: None,
+            urgent_only: false,
+        }
+    }
+
+    #[test]
+    fn a_held_wait_ends_not_bound_at_once_when_its_member_is_offboarded_made_office_run_or_removed()
+    {
+        use org_mailbox::testkit::fixture::{members, POSITION};
+        use org_proto::{AgentStatus, RunMode};
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (mailbox, directory, feed, _live, stop, server) = unbind_server(&path);
+        let ada = || members().into_iter().find(|m| m.id == ADA_ID).unwrap();
+        for change in 0..3 {
+            let mut idle_connection = Client::bound_as(&path, "ada");
+            let held = idle_connection.call_later::<org_proto::msg::MsgWait>(&wait_params());
+            // Another member's wait, which must stay.
+            let mut remy = Client::bound_as(&path, "remy");
+            remy.call_later::<org_proto::msg::MsgWait>(&wait_params());
+            until("both waits are held", || mailbox.held_waits() >= 2);
+
+            let mut changed = ada();
+            match change {
+                0 => changed.agent.as_mut().unwrap().status = AgentStatus::Offboarded,
+                1 => changed.agent.as_mut().unwrap().run_mode = Some(RunMode::OnCall),
+                _ => directory.remove(ADA_ID, POSITION),
+            }
+            if change < 2 {
+                directory.upsert(changed, POSITION);
+            }
+            let started = std::time::Instant::now();
+            // The organization changed: the idle connection sends nothing, and still hears.
+            feed.push(11 + change as u64);
+            let answer = idle_connection.answer();
+            assert_eq!(answer.id, held, "change {change}");
+            assert_eq!(
+                code_of(answer.outcome),
+                ErrorCode::NotBound,
+                "change {change}"
+            );
+            assert!(
+                started.elapsed() < Duration::from_secs(2),
+                "{:?}",
+                started.elapsed()
+            );
+            // Remy's wait is still held.
+            std::thread::sleep(Duration::from_millis(150));
+            assert_eq!(mailbox.held_waits(), 1, "change {change}");
+            drop(remy);
+            until("remy's wait is gone with its connection", || {
+                mailbox.held_waits() == 0
+            });
+            directory.upsert(ada(), POSITION);
+        }
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_connection_that_bound_as_someone_else_since_is_left_alone() {
+        use org_mailbox::testkit::fixture::{members, POSITION};
+        use org_proto::AgentStatus;
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (mailbox, directory, feed, _live, stop, server) = unbind_server(&path);
+        let mut client = Client::bound_as(&path, "ada");
+        // It acts as remy now; ada is no longer its member.
+        client.bind(Some("remy"), None);
+        client.call_later::<org_proto::msg::MsgWait>(&wait_params());
+        until("remy's wait is held", || mailbox.held_waits() == 1);
+        let mut ada = members().into_iter().find(|m| m.id == ADA_ID).unwrap();
+        ada.agent.as_mut().unwrap().status = AgentStatus::Offboarded;
+        directory.upsert(ada, POSITION);
+        feed.push(12);
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(mailbox.held_waits(), 1, "remy's wait was not touched");
+        stop.store(true, Ordering::SeqCst);
+        drop(client);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_subscription_ends_when_its_person_stops_being_bindable() {
+        use org_mailbox::testkit::fixture::POSITION;
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let (_mailbox, directory, feed, live, stop, server) = unbind_server(&path);
+        let mut ada = Client::bound_as(&path, "ada");
+        // pat, bound with the token, follows.
+        let mut pat = Client::connect(&path);
+        assert!(matches!(
+            pat.bind(Some("pat"), Some(token())),
+            org_proto::Outcome::Result(_)
+        ));
+        assert!(matches!(pat.subscribe(None), org_proto::Outcome::Result(_)));
+        ada.call::<MsgSend>(&send_params(70, "remy", "seen"));
+        assert_eq!(next_event(&mut pat).0, "message.received");
+
+        directory.remove(PAT_ID, POSITION);
+        feed.push(13);
+        std::thread::sleep(Duration::from_millis(300));
+        // Whatever happens now is not pushed to pat.
+        ada.call::<MsgSend>(&send_params(71, "remy", "unseen"));
+        live.publish_presence(org_proto::directory::MemberPresenceChangedData {
+            member_id: "X".into(),
+            presence: org_proto::directory::MemberPresence::Offline,
+            last_seen_at: "2026-11-09T12:00:00.000Z".into(),
+            status: None,
+            status_expires_at: None,
+            current_task_id: None,
+        });
+        // The organization change that removed pat may still be pushed to it (it was committed
+        // before the subscription ended); nothing of what happened after is.
+        while let Some(message) = pat.message_within(Duration::from_millis(500)) {
+            assert_eq!(message["event"], "org.changed", "{message}");
+        }
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+    }
+
+    /// A directory that can be made to fail, over the testkit's in-memory one.
+    struct FlakyDirectory {
+        inner: Arc<org_mailbox::testkit::InMemoryDirectory>,
+        failing: AtomicBool,
+    }
+
+    impl MemberDirectory for FlakyDirectory {
+        fn resolve_member(
+            &self,
+            id_or_handle: &str,
+        ) -> Result<Option<(org_proto::Member, org_proto::Position)>, org_mailbox::StoreError>
+        {
+            if self.failing.load(Ordering::SeqCst) {
+                return Err(org_mailbox::StoreError::new("the directory is down"));
+            }
+            self.inner.resolve_member(id_or_handle)
+        }
+    }
+
+    #[test]
+    fn a_directory_that_fails_does_not_end_a_connection_but_a_removal_does_and_the_state_follows() {
+        use org_mailbox::testkit::fixture::POSITION;
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let feed = Arc::new(FakeFeed::default());
+        let live = {
+            let feed = Arc::clone(&feed);
+            Arc::new(LiveEvents::new(Box::new(move || feed.wake())))
+        };
+        let (mailbox, memory) = messaging_with(Arc::clone(&live));
+        let flaky = Arc::new(FlakyDirectory {
+            inner: Arc::clone(&memory),
+            failing: AtomicBool::new(false),
+        });
+        let mut ports = ports(Box::new(|| Err("none".to_owned())));
+        ports.mailbox = Arc::clone(&mailbox);
+        ports.directory = flaky.clone();
+        ports.live = Arc::clone(&live);
+        ports.feed = Box::new(Arc::clone(&feed));
+        let timing = Timing {
+            idle: Duration::from_secs(3),
+            ..Timing::default()
+        };
+        let shared =
+            Arc::new(Shared::new(&test_info(), path.as_path(), ports, token()).with_timing(timing));
+        let (stop, server) = start(&path, &shared);
+
+        // The directory is down for a moment: nothing is ended.
+        let mut pat = Client::connect(&path);
+        pat.bind(Some("pat"), Some(token()));
+        pat.subscribe(None);
+        let mut ada = Client::bound_as(&path, "ada");
+        ada.call_later::<org_proto::msg::MsgWait>(&wait_params());
+        until("a wait is held", || mailbox.held_waits() == 1);
+        flaky.failing.store(true, Ordering::SeqCst);
+        feed.push(21);
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(mailbox.held_waits(), 1, "a failed lookup ends nothing");
+
+        // pat is removed and restored inside one watcher pass window: the watcher ended the
+        // subscription, and the connection's own state follows (it is unbound, not "already
+        // subscribed").
+        flaky.failing.store(false, Ordering::SeqCst);
+        let pat_member = memory
+            .resolve_member(PAT_ID)
+            .unwrap()
+            .map(|(member, _)| member)
+            .unwrap();
+        memory.remove(PAT_ID, POSITION);
+        feed.push(22);
+        std::thread::sleep(Duration::from_millis(800));
+        memory.upsert(pat_member, POSITION);
+        // The org.changed events of the two pushes may be on the wire: they are not the answer.
+        while pat.message_within(Duration::from_millis(300)).is_some() {}
+        assert_eq!(
+            code_of(pat.subscribe(None)),
+            ErrorCode::NotAuthorized,
+            "unbound by the watcher, not still 'subscribed'"
+        );
+        stop.store(true, Ordering::SeqCst);
+        drop((pat, ada));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_pass_that_could_not_decide_is_repeated_on_a_quiet_log() {
+        use org_mailbox::testkit::fixture::POSITION;
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let feed = Arc::new(FakeFeed::default());
+        let live = {
+            let feed = Arc::clone(&feed);
+            Arc::new(LiveEvents::new(Box::new(move || feed.wake())))
+        };
+        let (mailbox, memory) = messaging_with(Arc::clone(&live));
+        let flaky = Arc::new(FlakyDirectory {
+            inner: Arc::clone(&memory),
+            failing: AtomicBool::new(false),
+        });
+        let mut ports = ports(Box::new(|| Err("none".to_owned())));
+        ports.mailbox = Arc::clone(&mailbox);
+        ports.directory = flaky.clone();
+        ports.live = Arc::clone(&live);
+        ports.feed = Box::new(Arc::clone(&feed));
+        // A short idle: the retry comes without any commit.
+        let timing = Timing {
+            idle: Duration::from_millis(100),
+            ..Timing::default()
+        };
+        let shared =
+            Arc::new(Shared::new(&test_info(), path.as_path(), ports, token()).with_timing(timing));
+        let (stop, server) = start(&path, &shared);
+
+        let mut ada = Client::bound_as(&path, "ada");
+        let held = ada.call_later::<org_proto::msg::MsgWait>(&wait_params());
+        until("a wait is held", || mailbox.held_waits() == 1);
+        // Ada is removed in the same breath as the directory fails: the one pass for this commit
+        // cannot decide.
+        memory.remove(ADA_ID, POSITION);
+        flaky.failing.store(true, Ordering::SeqCst);
+        feed.push(31);
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(
+            mailbox.held_waits(),
+            1,
+            "nothing is ended while it cannot tell"
+        );
+        // The directory is back; no new commit. The watcher looks again by itself.
+        flaky.failing.store(false, Ordering::SeqCst);
+        let answer = ada.answer();
+        assert_eq!(answer.id, held);
+        assert_eq!(code_of(answer.outcome), ErrorCode::NotBound);
+        stop.store(true, Ordering::SeqCst);
+        drop(ada);
+        server.join().unwrap();
     }
 }

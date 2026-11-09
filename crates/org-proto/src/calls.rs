@@ -182,7 +182,7 @@ impl Call for OrganizationList {
 /// An office server also pushes **live events** that are not in the organization's log, for
 /// what happens after the subscription: `message.received`, `message.state_changed` (headers
 /// only) and `member.presence_changed` (the latest per member, at most once a second for each).
-/// They are hints with no replay: take `msg.inbox` and `who` for the state, and the
+/// They are hints with no replay: take the listing calls below and `who` for the state, and the
 /// events for the changes. If a subscriber falls too far behind, the office ends its
 /// subscription by closing the connection, which looks like any other dropped connection (no
 /// reason is sent). So after ANY end of a subscription (it fell behind, a re-bind, a dropped
