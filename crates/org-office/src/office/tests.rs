@@ -145,8 +145,8 @@ fn both_databases_are_encrypted_with_the_one_key() {
     }
     // The same key opens both.
     let key = keys.load(ID).unwrap().unwrap();
-    for file in ["org.db", "office.db"] {
-        Store::open(&folder.join(file), &key, Opening::Existing, &org_db::SCHEMA).unwrap();
+    for (file, schema) in [("org.db", &org_db::SCHEMA), ("office.db", &OFFICE_SCHEMA)] {
+        Store::open(&folder.join(file), &key, Opening::Existing, schema).unwrap();
     }
 }
 
@@ -701,13 +701,12 @@ fn a_loose_folder_is_tightened_by_create() {
 
 #[test]
 fn open_checks_that_each_database_belongs_to_the_office() {
-    for file in ["org.db", "office.db"] {
+    for (file, schema) in [("org.db", &org_db::SCHEMA), ("office.db", &OFFICE_SCHEMA)] {
         let (dir, keys, office) = made();
         let folder = folder_of(&dir, ID);
         drop(office);
         let key = keys.load(ID).unwrap().unwrap();
-        let store =
-            Store::open(&folder.join(file), &key, Opening::Existing, &org_db::SCHEMA).unwrap();
+        let store = Store::open(&folder.join(file), &key, Opening::Existing, schema).unwrap();
         store
             .write(|db| {
                 db.execute(

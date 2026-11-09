@@ -13,6 +13,7 @@ use org_proto::directory::{WhoParams, WhoResult};
 use org_proto::org::{CommandAccepted, OrgChangedData, OrgSnapshot, Position};
 use org_proto::ApiError;
 
+use crate::store::messages;
 use crate::store::org as org_db;
 use crate::store::{Opening, Schema, Store};
 use crate::time;
@@ -45,12 +46,19 @@ const OFFICE_ENTRIES: [&str; 11] = [
     "office.db",
 ];
 
-/// `office.db`: the office's own data. For now just its identity; work items, messages and
-/// sessions arrive with their slices.
+/// `office.db`: its identity (`meta`), and from version 2 the message tables. A version 1 file
+/// (made before messaging) gets the tables when it is opened.
 const OFFICE_SCHEMA: Schema = Schema {
-    version: 1,
+    version: 2,
     create: |tx| {
-        tx.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;")
+        tx.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;")?;
+        messages::create_tables(tx)
+    },
+    upgrade: |tx, from| {
+        if from < 2 {
+            messages::create_tables(tx)?;
+        }
+        Ok(())
     },
 };
 
@@ -102,7 +110,6 @@ pub struct Office {
     changes: ChangeSignal,
     // Databases close (and checkpoint) before the lock is released: fields drop in order.
     org: Store,
-    #[allow(dead_code)] // the office's own data arrives with work items and messaging
     local: Store,
     _lock: File,
 }
@@ -435,6 +442,34 @@ impl Office {
     /// and returns the current token.
     pub fn wait_for_org_change(&self, seen: u64, timeout: Duration) -> u64 {
         self.changes.wait(seen, timeout)
+    }
+
+    /// `office.db`, where the office's own data lives (messages).
+    pub(crate) fn local_store(&self) -> &Store {
+        &self.local
+    }
+
+    /// `org.db`, the organization's data.
+    pub(crate) fn org_store(&self) -> &Store {
+        &self.org
+    }
+
+    /// Test seam: replaces the organization's members with `members`, as an organization applied
+    /// up to `position` (the members are written raw, as a damaged or foreign organization could
+    /// hold them).
+    #[cfg(test)]
+    pub(crate) fn seed_organization_for_test(
+        &self,
+        members: &[org_proto::Member],
+        position: Position,
+    ) {
+        let members = members.to_vec();
+        self.org
+            .write(move |db| {
+                org_db::seed_for_test(db, &members, position)?;
+                Ok(((), None))
+            })
+            .expect("the organization could not be seeded");
     }
 
     /// What `office.json` records about this office.

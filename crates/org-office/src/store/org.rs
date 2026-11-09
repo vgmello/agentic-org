@@ -38,6 +38,7 @@ const EPOCH: u64 = 1;
 
 pub(crate) const SCHEMA: Schema = Schema {
     version: 1,
+    upgrade: |_, _| Ok(()),
     create: |tx| {
         tx.execute_batch(
             "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
@@ -595,6 +596,30 @@ pub(crate) fn changes_after(
 /// The position of the last log entry; `NotFound` for an empty log (an unfinished create).
 pub(crate) fn head(db: &Connection) -> Result<Position, OfficeError> {
     last_position(db)?.ok_or(OfficeError::NotFound)
+}
+
+/// Test seam: the organization as `members` (and nothing else) applied up to `position`.
+#[cfg(test)]
+pub(crate) fn seed_for_test(
+    db: &Connection,
+    members: &[Member],
+    position: Position,
+) -> Result<(), OfficeError> {
+    db.execute_batch(
+        "DELETE FROM memberships; DELETE FROM teams; DELETE FROM members; DELETE FROM events;",
+    )
+    .map_err(OfficeError::storage)?;
+    let mut state = OrgSql(db);
+    for member in members {
+        state.put_member(member);
+    }
+    db.execute(
+        "INSERT INTO events (epoch, seq, kind, command_id, at, body)
+         VALUES (?1, ?2, 'org.changed', 'seed', '2026-11-08T12:00:00.000Z', '[]')",
+        (position.epoch as i64, position.seq as i64),
+    )
+    .map_err(OfficeError::storage)?;
+    Ok(())
 }
 
 /// Whether the organization is committed: the log has an entry, or (an `org.db` from before the

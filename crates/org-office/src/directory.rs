@@ -100,7 +100,12 @@ pub fn resolve_member<'a>(
 ) -> Result<Option<&'a Member>, AmbiguousHandle> {
     let wanted = trim_address(id_or_handle);
     if wanted.eq_ignore_ascii_case(OWNER_HANDLE) {
-        return Ok(snapshot.members.iter().find(|m| m.owner));
+        // Two owners cannot be told apart: fail closed rather than pick one.
+        let mut owners = snapshot.members.iter().filter(|m| m.owner);
+        return match (owners.next(), owners.next()) {
+            (found, None) => Ok(found),
+            (_, Some(_)) => Err(AmbiguousHandle),
+        };
     }
     if wanted.eq_ignore_ascii_case(OFFICE_HANDLE) {
         return Ok(None);
@@ -892,6 +897,16 @@ mod tests {
             }),
             Err(ErrorCode::InvalidRequest)
         );
+    }
+
+    #[test]
+    fn two_owners_fail_closed_instead_of_picking_one() {
+        let mut snapshot = org();
+        snapshot.members.push(Member {
+            id: id("OWNER2"),
+            ..owner()
+        });
+        assert_eq!(resolve_member(&snapshot, "owner"), Err(AmbiguousHandle));
     }
 
     #[test]

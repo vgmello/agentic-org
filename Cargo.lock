@@ -2213,6 +2213,7 @@ dependencies = [
 name = "org-office"
 version = "0.0.0"
 dependencies = [
+ "org-mailbox",
  "org-proto",
  "rusqlite",
  "serde",
