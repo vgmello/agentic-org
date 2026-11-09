@@ -2201,6 +2201,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "org-mailbox"
+version = "0.0.0"
+dependencies = [
+ "org-proto",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "org-office"
 version = "0.0.0"
 dependencies = [
