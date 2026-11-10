@@ -549,18 +549,29 @@ impl Client {
     /// and the caller then closes the connection, healthy or not. Callers must be ready to
     /// reconnect.
     fn settle(&self, state: &AtomicU8) -> bool {
+        self.settle_with(state, Instant::now, || {
+            std::thread::sleep(Duration::from_millis(1));
+        })
+    }
+
+    fn settle_with(
+        &self,
+        state: &AtomicU8,
+        mut now: impl FnMut() -> Instant,
+        mut wait_for_writer: impl FnMut(),
+    ) -> bool {
         match state.compare_exchange(QUEUED, ABANDONED, Ordering::SeqCst, Ordering::SeqCst) {
             Ok(_) | Err(ABANDONED) => return true,
             Err(WRITING) => {}
             Err(_) => return false, // written
         }
-        let give_up_at = Instant::now() + WRITE_GRACE;
-        while Instant::now() < give_up_at {
-            let now = state.load(Ordering::SeqCst);
-            if now != WRITING || self.shared.closed.load(Ordering::SeqCst) {
-                return now == ABANDONED;
+        let give_up_at = now() + WRITE_GRACE;
+        while now() < give_up_at {
+            let progress = state.load(Ordering::SeqCst);
+            if progress != WRITING || self.shared.closed.load(Ordering::SeqCst) {
+                return progress == ABANDONED;
             }
-            std::thread::sleep(Duration::from_millis(1));
+            wait_for_writer();
         }
         if state.load(Ordering::SeqCst) == WRITING {
             self.shared.close();
@@ -825,9 +836,21 @@ fn write_before(
     bytes: &[u8],
     deadline: Instant,
 ) -> std::io::Result<Written> {
+    write_before_with(stream, bytes, deadline, Instant::now, |stream, timeout| {
+        stream.set_write_timeout(Some(timeout))
+    })
+}
+
+fn write_before_with<W: Write>(
+    stream: &mut W,
+    bytes: &[u8],
+    deadline: Instant,
+    mut now: impl FnMut() -> Instant,
+    mut configure_timeout: impl FnMut(&mut W, Duration) -> std::io::Result<()>,
+) -> std::io::Result<Written> {
     let mut rest = bytes;
     while !rest.is_empty() {
-        let remaining = deadline.saturating_duration_since(Instant::now());
+        let remaining = deadline.saturating_duration_since(now());
         if remaining.is_zero() && rest.len() == bytes.len() {
             return Ok(Written::NotStarted);
         }
@@ -835,7 +858,7 @@ fn write_before(
         // given up here, which closes the connection (part of the request is on the wire).
         // This does not wait for a caller to notice: a caller whose call was answered early
         // (a server may answer before it has read the whole request) never will.
-        if remaining.is_zero() && Instant::now() >= deadline + WRITE_GRACE {
+        if remaining.is_zero() && now() >= deadline + WRITE_GRACE {
             return Err(ErrorKind::TimedOut.into());
         }
         // Past the deadline, keep going in short steps; the check above (or the caller, in
@@ -845,7 +868,7 @@ fn write_before(
         } else {
             remaining
         };
-        stream.set_write_timeout(Some(step))?;
+        configure_timeout(stream, step)?;
         match stream.write(rest) {
             Ok(0) => return Err(ErrorKind::WriteZero.into()),
             Ok(n) => rest = &rest[n..],
@@ -1205,5 +1228,155 @@ mod tests {
         // ...and the next call is refused rather than sent with an id the peer may misread.
         let next = client.call_with_timeout::<Hello>(&Empty {}, Duration::from_millis(50));
         assert!(matches!(next, Err(ClientError::Protocol(_))), "{next:?}");
+    }
+    // Script the kernel write's result and clock progress without threads or sleeps.
+    struct ScriptedWrite<F>(F);
+
+    impl<F: FnMut(&[u8]) -> std::io::Result<usize>> Write for ScriptedWrite<F> {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            (self.0)(bytes)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_mid_write_finished_inside_caller_grace_keeps_the_connection_usable() {
+        let (_dir, path, _got) = answering_server(|request| {
+            Response::ok::<Hello>(request.id, &HelloResult::host("t", "h")).unwrap()
+        });
+        let client = Client::connect(path).unwrap();
+        let state = AtomicU8::new(WRITING);
+        let deadline = Instant::now();
+        let clock = std::cell::Cell::new(deadline);
+        let withdrew = client.settle_with(
+            &state,
+            || clock.get(),
+            || {
+                assert_eq!(
+                    state.load(Ordering::SeqCst),
+                    WRITING,
+                    "waited after completion"
+                );
+                clock.set(deadline + WRITE_GRACE / 2);
+                state.store(WRITTEN, Ordering::SeqCst);
+            },
+        );
+        assert!(!withdrew);
+        assert_eq!(client.hello().unwrap().server_version, "t");
+    }
+
+    #[test]
+    fn a_mid_write_pending_at_caller_grace_expiry_closes_the_connection() {
+        let server = stuck_server();
+        let client = Client::connect(&server.path).unwrap();
+        let state = AtomicU8::new(WRITING);
+        let deadline = Instant::now();
+        let clock = std::cell::Cell::new(deadline);
+        assert!(!client.settle_with(
+            &state,
+            || clock.get(),
+            || {
+                assert_eq!(clock.get(), deadline, "waited beyond grace expiry");
+                clock.set(clock.get() + WRITE_GRACE);
+            }
+        ));
+        assert_eq!(clock.get(), deadline + WRITE_GRACE);
+        assert!(matches!(client.hello(), Err(ClientError::Disconnected)));
+    }
+
+    #[test]
+    fn a_partial_write_can_finish_after_deadline_inside_writer_grace() {
+        let started = Instant::now();
+        let deadline = started + Duration::from_millis(1);
+        let clock = std::cell::Cell::new(started);
+        let mut sent = Vec::new();
+        let mut calls = 0;
+        let mut writer = ScriptedWrite(|bytes: &[u8]| {
+            calls += 1;
+            assert!(calls <= 2, "wrote after completing the frame");
+            let count = if calls == 1 { 1 } else { bytes.len() };
+            sent.extend_from_slice(&bytes[..count]);
+            clock.set(deadline + WRITE_GRACE / 2);
+            Ok(count)
+        });
+        let result = write_before_with(
+            &mut writer,
+            b"frame\n",
+            deadline,
+            || clock.get(),
+            |_, _| Ok(()),
+        )
+        .unwrap();
+        assert!(matches!(result, Written::Whole));
+        assert_eq!(sent, b"frame\n");
+        assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn a_partial_write_stops_at_writer_grace_expiry() {
+        let started = Instant::now();
+        let deadline = started + Duration::from_millis(1);
+        let clock = std::cell::Cell::new(started);
+        let mut sent = Vec::new();
+        let mut writer = ScriptedWrite(|bytes: &[u8]| {
+            assert!(
+                sent.is_empty(),
+                "no write is allowed at or beyond grace expiry"
+            );
+            sent.push(bytes[0]);
+            clock.set(deadline + WRITE_GRACE);
+            Ok(1)
+        });
+        let error = write_before_with(
+            &mut writer,
+            b"frame\n",
+            deadline,
+            || clock.get(),
+            |_, _| Ok(()),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.kind(), ErrorKind::TimedOut);
+        assert_eq!(sent, b"f");
+    }
+
+    #[test]
+    fn a_request_expired_before_its_first_write_is_never_sent() {
+        let deadline = Instant::now();
+        let mut writer = ScriptedWrite(|_: &[u8]| panic!("expired request was written"));
+        let result = write_before_with(
+            &mut writer,
+            b"frame\n",
+            deadline,
+            || deadline,
+            |_, _| panic!("expired request configured a write"),
+        )
+        .unwrap();
+        assert!(matches!(result, Written::NotStarted));
+    }
+
+    #[test]
+    fn write_timeout_configuration_errors_are_not_retried_as_write_errors() {
+        let started = Instant::now();
+        let deadline = started + Duration::from_secs(1);
+        let mut writer =
+            ScriptedWrite(|_: &[u8]| panic!("write despite failed timeout configuration"));
+        let mut configurations = 0;
+        let error = write_before_with(
+            &mut writer,
+            b"frame\n",
+            deadline,
+            || started,
+            |_, _| {
+                configurations += 1;
+                assert_eq!(configurations, 1, "retried timeout configuration failure");
+                Err(ErrorKind::WouldBlock.into())
+            },
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.kind(), ErrorKind::WouldBlock);
     }
 }

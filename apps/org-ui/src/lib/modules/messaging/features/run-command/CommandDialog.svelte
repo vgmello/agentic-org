@@ -4,7 +4,7 @@
 	import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
-	import type { CommandForm } from '$lib/chat/commands';
+	import type { CommandForm } from '$lib/modules/messaging/commands';
 	import { Badge } from '$lib/components/ui/badge';
 
 	/** What a slash command or Turn into… opens (CHAT-9). UI only: it fills the form and says what it would do. */

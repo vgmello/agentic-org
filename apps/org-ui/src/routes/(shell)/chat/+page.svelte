@@ -4,20 +4,24 @@
 	import { toast } from 'svelte-sonner';
 	import Search from '@lucide/svelte/icons/search';
 	import Users from '@lucide/svelte/icons/users';
-	import AskCard from '$lib/components/chat/AskCard.svelte';
-	import ChannelDialog from '$lib/components/chat/ChannelDialog.svelte';
-	import ChatSidebar from '$lib/components/chat/ChatSidebar.svelte';
-	import CommandDialog from '$lib/components/chat/CommandDialog.svelte';
-	import Composer from '$lib/components/chat/Composer.svelte';
-	import MembersPanel from '$lib/components/chat/MembersPanel.svelte';
-	import MessageRow from '$lib/components/chat/MessageRow.svelte';
-	import NewMessageDialog from '$lib/components/chat/NewMessageDialog.svelte';
-	import ThreadPanel from '$lib/components/chat/ThreadPanel.svelte';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
-	import { chatApi, sender } from '$lib/chat';
-	import { commandForm, turnForm, type CommandEnv, type CommandForm } from '$lib/chat/commands';
+	// D-F14a: temporary route composition root; Jules's F1-02 factory cutover removes this exception.
+	import { chatApi, sender } from '$lib/modules/messaging/legacy-api';
 	import {
+		ChatSidebar,
+		NewMessageDialog,
+		Composer,
+		MessageRow,
+		ThreadPanel,
+		AskCard,
+		ChannelDialog,
+		MembersPanel,
+		CommandDialog,
+		commandForm,
+		turnForm,
+		type CommandEnv,
+		type CommandForm,
 		chatContext,
 		composerState,
 		conversationView,
@@ -34,8 +38,8 @@
 		typingWords,
 		unreadIn,
 		type ChatView
-	} from '$lib/chat/model';
-	import type { ChatCall, ChatMessage, ChatSnapshot, Conversation, MuteMode, Reaction } from '$lib/chat/types';
+	} from '$lib/modules/messaging';
+	import type { ChatCall, ChatMessage, ChatSnapshot, Conversation, MuteMode, Reaction } from '$lib/modules/messaging';
 	import { newId } from '$lib/org/commands';
 	import { toAppError } from '$lib/office/api';
 

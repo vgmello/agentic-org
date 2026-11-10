@@ -33,8 +33,9 @@ test('loading screenshots preserve an in-progress finite animation without waiti
 
 
 test('named screenshots wait for a finite transition to finish before capture', async ({ page }) => {
+	test.setTimeout(15_000);
 	await page.setContent(`
-		<style>@keyframes appear { from { opacity: .2; } to { opacity: 1; } } #panel { animation: appear 400ms; }</style>
+		<style>@keyframes appear { from { opacity: .2; } to { opacity: 1; } } #panel { animation: appear 3s; }</style>
 		<div id="panel">Finished panel</div>
 	`);
 	expect(await page.evaluate(() => document.getAnimations().length)).toBe(1);
