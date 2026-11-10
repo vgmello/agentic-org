@@ -7,6 +7,9 @@
 
 pub mod assets;
 pub mod blocking;
+mod origin;
 pub mod path;
 pub mod tls;
 pub mod transport;
+
+pub use origin::ConfiguredOrigin;

@@ -11,6 +11,13 @@ use tokio_rustls::rustls;
 const GUARD: Duration = Duration::from_secs(10);
 const REQUEST: &[u8] = b"GET / HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n";
 
+type TestHandler =
+    fn(Request<Incoming>) -> std::future::Ready<Result<Response<Full<Bytes>>, Infallible>>;
+
+fn fail_initialize() -> (TestHandler, std::future::Ready<()>) {
+    panic!("invalid service must not initialize")
+}
+
 struct Running {
     address: SocketAddr,
     stop: Option<oneshot::Sender<()>>,
@@ -23,13 +30,19 @@ impl Running {
     fn start(mode: ListenMode, limits: HttpLimits) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
+        let scheme = if matches!(&mode, ListenMode::Https(_)) {
+            "https"
+        } else {
+            "http"
+        };
+        let origin = ConfiguredOrigin::parse(&format!("{scheme}://{address}")).unwrap();
         let (stop, stopped) = oneshot::channel();
         let (ready, initialized) = mpsc::channel();
         let (done, completed) = mpsc::channel();
         let calls = Arc::new(AtomicUsize::new(0));
         let observed = Arc::clone(&calls);
         let thread = thread::spawn(move || {
-            let result = run_http(listener, mode, limits, move || {
+            let result = run_http(listener, mode, origin, limits, move || {
                 ready.send(()).unwrap();
                 let handler = move |_request: Request<Incoming>| {
                     observed.fetch_add(1, Ordering::AcqRel);
@@ -113,10 +126,13 @@ fn body(response: &[u8]) -> &[u8] {
 #[test]
 fn factory_runs_inside_the_runtime_and_an_existing_listener_serves_http1() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin =
+        ConfiguredOrigin::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
     let (observed, initialized) = mpsc::channel();
     run_http(
         listener,
         ListenMode::HttpLoopback,
+        origin,
         HttpLimits::default(),
         move || {
             assert!(tokio::runtime::Handle::try_current().is_ok());
@@ -275,22 +291,53 @@ fn non_tls_clients_on_https_are_bounded_without_reaching_application_code() {
 
 #[test]
 fn invalid_limits_and_non_loopback_plaintext_are_refused_before_initialization() {
-    type TestHandler =
-        fn(Request<Incoming>) -> std::future::Ready<Result<Response<Full<Bytes>>, Infallible>>;
-    fn fail_initialize() -> (TestHandler, std::future::Ready<()>) {
-        panic!("invalid service must not initialize")
-    }
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin =
+        ConfiguredOrigin::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
     let limits = HttpLimits {
         connections: 0,
         ..HttpLimits::default()
     };
     assert!(
-        matches!(run_http(listener, ListenMode::HttpLoopback, limits, fail_initialize), Err(error) if error.kind() == io::ErrorKind::InvalidInput)
+        matches!(run_http(listener, ListenMode::HttpLoopback, origin, limits, fail_initialize), Err(error) if error.kind() == io::ErrorKind::InvalidInput)
     );
     let listener = TcpListener::bind("0.0.0.0:0").unwrap();
+    let origin = ConfiguredOrigin::parse(&format!(
+        "http://127.0.0.1:{}",
+        listener.local_addr().unwrap().port()
+    ))
+    .unwrap();
     assert!(
-        matches!(run_http(listener, ListenMode::HttpLoopback, HttpLimits::default(), fail_initialize), Err(error) if error.kind() == io::ErrorKind::PermissionDenied)
+        matches!(run_http(listener, ListenMode::HttpLoopback, origin, HttpLimits::default(), fail_initialize), Err(error) if error.kind() == io::ErrorKind::PermissionDenied)
+    );
+}
+
+#[test]
+fn loopback_origin_aliases_or_a_different_port_are_refused_before_initialization() {
+    for host in [
+        "localhost",
+        "LOCALHOST.",
+        "x.localhost",
+        "[::1]",
+        "127.0.0.2",
+    ] {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = ConfiguredOrigin::parse(&format!(
+            "http://{host}:{}",
+            listener.local_addr().unwrap().port()
+        ))
+        .unwrap();
+        assert!(
+            matches!(run_http(listener, ListenMode::HttpLoopback, origin, HttpLimits::default(), fail_initialize), Err(error) if error.kind() == io::ErrorKind::PermissionDenied),
+            "{host}"
+        );
+    }
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let different = if port == 65535 { port - 1 } else { port + 1 };
+    let origin = ConfiguredOrigin::parse(&format!("http://127.0.0.1:{different}")).unwrap();
+    assert!(
+        matches!(run_http(listener, ListenMode::HttpLoopback, origin, HttpLimits::default(), fail_initialize), Err(error) if error.kind() == io::ErrorKind::PermissionDenied)
     );
 }
 

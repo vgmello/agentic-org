@@ -21,6 +21,7 @@ use tokio_rustls::TlsAcceptor;
 
 use super::write_stall::WriteStall;
 use crate::tls::TlsCertificates;
+use crate::ConfiguredOrigin;
 
 #[derive(Clone)]
 pub enum ListenMode {
@@ -85,6 +86,7 @@ impl HttpLimits {
 pub fn run_http<H, F, S>(
     listener: TcpListener,
     mode: ListenMode,
+    origin: ConfiguredOrigin,
     limits: HttpLimits,
     initialize: impl FnOnce() -> (H, S),
 ) -> io::Result<()>
@@ -94,10 +96,14 @@ where
     S: Future<Output = ()>,
 {
     limits.validate()?;
-    if matches!(mode, ListenMode::HttpLoopback) && !listener.local_addr()?.ip().is_loopback() {
+    if matches!(mode, ListenMode::HttpLoopback) {
+        origin
+            .validate_http_loopback(listener.local_addr()?)
+            .map_err(|message| io::Error::new(io::ErrorKind::PermissionDenied, message))?;
+    } else if !origin.is_https() {
         return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "HTTP requires a loopback listener",
+            io::ErrorKind::InvalidInput,
+            "HTTPS listener requires an HTTPS origin",
         ));
     }
     listener.set_nonblocking(true)?;
