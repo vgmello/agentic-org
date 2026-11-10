@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use org_proto::org::{AgentProfile, Member, MemberKind, Membership, ProjectTeam, Team};
 
-use super::view::{OrgView, OrgWrite};
+use crate::organization::{OrgView, OrgWrite};
 
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct MemState {
