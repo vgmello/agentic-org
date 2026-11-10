@@ -232,16 +232,21 @@
 		void deliver(pending[pending.length - 1]);
 		return true;
 	}
-	async function deliver(p: Pending) {
+	async function deliver(p: Pending, retry = false) {
+		const origin = retry ? document.activeElement : null;
+		const place = focusPlace();
+		let deliveredId: string | undefined;
 		p.status = 'sending';
 		try {
-			await chatApi.command(organizationId, { method: 'msg.send', change_id: p.change_id, conversation_id: p.conversation_id, kind: 'msg', body: p.body, attachments: p.attachments.length ? p.attachments : undefined } satisfies ChatCall);
+			const accepted = await chatApi.command(organizationId, { method: 'msg.send', change_id: p.change_id, conversation_id: p.conversation_id, kind: 'msg', body: p.body, attachments: p.attachments.length ? p.attachments : undefined } satisfies ChatCall);
+			deliveredId = accepted.id;
 			pending = pending.filter((x) => x.key !== p.key);
 			await load();
 		} catch (e) {
 			p.status = 'failed';
 			p.error = toAppError(e).message;
 		}
+		if (origin) await restoreFocus(origin, place, () => document.querySelector<HTMLElement>(`[data-id="${CSS.escape(deliveredId ?? `pending-${p.key}`)}"]`));
 	}
 
 	// ---- message actions -----------------------------------------------------------------------
@@ -251,11 +256,23 @@
 	const muteIn = (conversation_id: string, member_id: string, mode: MuteMode) => void act({ method: 'chat.mute', conversation_id, member_id, mode }, mode === 'none' ? `${nameOf(ctx, member_id)} is back.` : mode === 'muted' ? `${nameOf(ctx, member_id)} is muted here. Their messages still reach Activity.` : `${nameOf(ctx, member_id)} is on a daily digest here.`);
 	const mute = (m: ChatMessage, mode: MuteMode) => muteIn(m.conversation_id, m.from, mode);
 	const turn = (m: ChatMessage, into: 'bug' | 'request' | 'task') => openForm(turnForm(into, m, env));
+	// Restore only focus lost by this update; never pull it from a control the owner moved to.
+	const focusPlace = () => `${view.type}:${viewId ?? ''}:${threadRoot ?? ''}`;
+	async function restoreFocus(origin: Element | null, place: string, target: () => HTMLElement | null) {
+		await tick();
+		if (!origin || place !== focusPlace() || (document.activeElement !== document.body && document.activeElement !== origin)) return;
+		(target() ?? listEl)?.focus({ preventScroll: true });
+	}
 	async function answer(m: ChatMessage, a: { option_id?: string; text?: string }) {
 		if (!officeRunning) throw new Error("The office isn't running. Restart it from Offices.");
+		const origin = document.activeElement;
+		const place = focusPlace();
 		await send({ method: 'chat.answer', ask_id: m.id, ...a });
 		await load();
 		toast.success(`Answer sent to ${nameOf(ctx, m.from)}.`);
+		await restoreFocus(origin, place, () => view.type === 'needs'
+			? document.querySelector<HTMLElement>('[data-testid="needs-you-list"] [data-testid="ask-card"] button, [data-testid="nothing-needs-you"]')
+			: document.querySelector<HTMLElement>(`[data-ask-id="${CSS.escape(m.id)}"]`));
 	}
 	async function accept(m: ChatMessage) {
 		if (!officeRunning) throw new Error("The office isn't running. Restart it from Offices.");
@@ -343,7 +360,7 @@
 				<p class="border-b border-white/10 bg-amber-400/10 px-5 py-2 text-sm/6 text-amber-100" data-testid="office-down">Read-only from the last copy. The office isn't running.</p>
 			{/if}
 
-			<div bind:this={listEl} class="min-h-0 flex-1 overflow-y-auto px-3 py-3" data-testid="message-list" role="log" aria-label="Messages" aria-live="polite" aria-relevant="additions text">
+			<div bind:this={listEl} class="min-h-0 flex-1 overflow-y-auto px-3 py-3" data-testid="message-list" tabindex="-1" role="log" aria-label="Messages" aria-live="polite" aria-relevant="additions text">
 				{#if searching}
 					<div class="px-2 pb-3">
 						<p class="text-sm/6 text-gray-300" data-testid="search-count">{results.length} {results.length === 1 ? 'result' : 'results'}</p>
@@ -371,7 +388,7 @@
 								<button type="button" class="px-1 text-xs/5 font-semibold text-indigo-300 hover:text-indigo-200" onclick={() => openMessage(m)}>Open in conversation</button>
 							</div>
 						{:else}
-							<p class="px-2 py-8 text-center text-sm/6 text-gray-400" data-testid="nothing-needs-you">Nothing needs you.</p>
+							<p class="px-2 py-8 text-center text-sm/6 text-gray-400" data-testid="nothing-needs-you" tabindex="-1">Nothing needs you.</p>
 						{/each}
 					</div>
 				{:else if view.type === 'mentions'}
@@ -436,7 +453,7 @@
 						</div>
 					{/if}
 					{#each pendingHere as p (p.key)}
-						<MessageRow message={pendingMessage(p)} {ctx} {chatState} {now} delivery={{ status: p.status, error: p.error }} onretry={() => void deliver(p)} ondismiss={() => (pending = pending.filter((x) => x.key !== p.key))} />
+						<MessageRow message={pendingMessage(p)} {ctx} {chatState} {now} delivery={{ status: p.status, error: p.error }} onretry={() => void deliver(p, true)} ondismiss={() => (pending = pending.filter((x) => x.key !== p.key))} />
 					{/each}
 				{/if}
 			</div>

@@ -77,3 +77,40 @@ test('CHAT-7/8 BUG-42: incoming conversation and thread replies are in polite me
  await expect(replies).toContainText('An accessible thread reply');
  await shot(page, 'chat-announced-thread-reply');
 });
+
+for (const action of ['option', 'reply', 'reject'] as const) {
+ test(`CHAT-5 BUG-43: keyboard focus remains useful after ${action}`, async ({page}) => {
+  await open(page);
+  const card = page.getByTestId('ask-card').filter({hasText:action === 'reject' ? 'Publish the 0.2' : 'Block bug reports'});
+  if (action !== 'option') {
+   await card.getByRole('button',{name:action==='reject'?'Reject…':'Reply…'}).click();
+   await card.getByRole('textbox').fill('Please wait for the audit.');
+  }
+  const button = card.getByRole('button',{name:action==='option'?'Yes, block':action==='reject'?'Reject':'Send reply',exact:true});
+  await button.focus();
+  await button.press('Enter');
+  await expect(card).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).not.toBe('BODY');
+  const focused = page.locator(':focus');
+  await expect(page.getByTestId('needs-you-list')).toContainText('asks you');
+  await expect(focused).toHaveRole('button');
+  await shot(page, `chat-focus-${action}`);
+  // Answer the final card: focus lands on the empty result rather than the document.
+  const remaining = page.getByTestId('ask-card');
+  const answer = remaining.getByRole('button',{name:action==='reject'?'Yes, block':'Approve',exact:true});
+  await answer.focus(); await answer.press('Enter');
+  await expect(page.getByTestId('nothing-needs-you')).toBeFocused();
+ });
+}
+
+test('CHAT-14 BUG-43: keyboard Retry focuses the delivered message', async ({page}) => {
+ await open(page, '?chat=fail'); await go(page, 'general');
+ await page.getByTestId('composer').fill('Retry focus target');
+ await page.getByTestId('composer').press('Control+Enter');
+ const retry = page.getByRole('button',{name:'Retry',exact:true});
+ await expect(retry).toBeVisible(); await retry.focus(); await retry.press('Enter');
+ await expect(page.getByTestId('not-delivered')).toHaveCount(0);
+ const delivered=page.getByTestId('message').filter({hasText:'Retry focus target'});
+ await expect(delivered).toHaveCount(1); await expect(delivered).toBeFocused();
+ await shot(page, 'chat-focus-delivered');
+});
