@@ -18,11 +18,14 @@
 	// The offices as the host last listed them; until it has, the ones saved with the connection.
 	let reported = $state<OfficeInfo[] | undefined>();
 	let reportedFor = '';
-	// A peek started before a newer refresh or status push must not replace its result.
+	// A relevant push or organization change invalidates pending reads. Only successful reads supersede older reads.
 	let statusRevision = 0;
+	let refreshSequence = 0;
+	let successfulRefresh = 0;
 	$effect(() => {
 		if (reportedFor !== data.connection.organization.id) {
 			reportedFor = data.connection.organization.id;
+			statusRevision += 1;
 			reported = undefined;
 		}
 	});
@@ -74,10 +77,15 @@
 	 */
 	async function refreshOffices() {
 		const id = data.connection.organization.id;
-		const revision = ++statusRevision;
+		const revision = statusRevision;
+		const request = ++refreshSequence;
 		try {
 			const found = (await officeApi.peekOrganizations()).find((o) => o.id === id);
-			if (found && id === data.connection.organization.id && revision === statusRevision) reported = found.offices;
+			if (id === data.connection.organization.id && revision === statusRevision && request > successfulRefresh) {
+				// A successful empty result also fences older reads, preserving the absence it reported.
+				successfulRefresh = request;
+				if (found) reported = found.offices;
+			}
 		} catch {
 			// The next tick tries again; the probe already says whether the host answers.
 		}
