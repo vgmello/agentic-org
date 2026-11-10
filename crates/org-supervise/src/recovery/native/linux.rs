@@ -104,7 +104,10 @@ impl NativeRecovery {
         } else {
             read_mark(&pin.directory, deadline)?
         };
-        if !pin.stat.zombie && exited(&pin.fd, Instant::now())? {
+        // A zombie thread-group leader can still have live workers. Only the
+        // process pidfd certifies exit of the whole group.
+        let exited = exited(&pin.fd, Instant::now())?;
+        if exited && !pin.stat.zombie {
             return Ok(None);
         }
         Ok(Some((
@@ -116,7 +119,7 @@ impl NativeRecovery {
                 session: pin.stat.session,
                 uid: credentials.uid[0],
                 credentials_safe,
-                zombie: pin.stat.zombie,
+                zombie: exited,
                 mark,
             },
             pin,
@@ -236,7 +239,10 @@ impl RecoveryProcesses for NativeRecovery {
                 return Err(invalid("pinned process start identity changed"));
             }
             if stat.zombie {
-                return Ok(false);
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "recovery cannot verify credentials and mark for an exited thread-group leader",
+                ));
             }
             let mark = read_mark(&pin.directory, deadline)?;
             let direct = matches!(
@@ -260,11 +266,12 @@ impl RecoveryProcesses for NativeRecovery {
                     "recovery target credentials are unsafe",
                 ));
             }
-            Ok(true)
+            Ok(())
         })();
-        if exited(&pin.fd, Instant::now())? || !verified? {
+        if exited(&pin.fd, Instant::now())? {
             return Ok(SignalOutcome::Gone);
         }
+        verified?;
         check_time(deadline)?;
         match send(
             &pin.fd,
@@ -299,7 +306,7 @@ impl RecoveryProcesses for NativeRecovery {
         let Some(pin) = self.pin(identity.pid, read_deadline)? else {
             return Ok(true);
         };
-        if pin.stat.started.to_string() != identity.started || pin.stat.zombie {
+        if pin.stat.started.to_string() != identity.started {
             return Ok(true);
         }
         exited(&pin.fd, deadline)
@@ -589,9 +596,12 @@ fn exited(fd: &OwnedFd, deadline: Instant) -> io::Result<bool> {
     };
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
-        let millis = remaining.as_millis().min(i32::MAX as u128) as libc::c_int;
-        // SAFETY: one valid poll slot for a held pidfd and a finite timeout.
-        let result = unsafe { libc::poll(&mut slot, 1, millis) };
+        let timeout = libc::timespec {
+            tv_sec: remaining.as_secs().min(libc::time_t::MAX as u64) as libc::time_t,
+            tv_nsec: remaining.subsec_nanos() as _,
+        };
+        // SAFETY: one valid slot for a held pidfd, a finite timeout and no signal mask.
+        let result = unsafe { libc::ppoll(&mut slot, 1, &timeout, std::ptr::null()) };
         if result < 0 {
             let err = io::Error::last_os_error();
             if err.kind() == io::ErrorKind::Interrupted && Instant::now() < deadline {
@@ -605,7 +615,7 @@ fn exited(fd: &OwnedFd, deadline: Instant) -> io::Result<bool> {
             }
             return Err(io::Error::other("unexpected pidfd poll event"));
         }
-        if remaining < Duration::from_millis(1) || Instant::now() >= deadline {
+        if Instant::now() >= deadline {
             return Ok(false);
         }
     }

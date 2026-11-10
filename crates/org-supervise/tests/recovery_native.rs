@@ -122,9 +122,9 @@ fn hold_fixture() {
     let Ok(mode) = std::env::var("ORG_TEST_CASE") else {
         return;
     };
-    let mark = std::env::var("ORG_SESSION_MARK").unwrap();
-    let root = std::env::current_dir().unwrap();
     let _nested = if mode == "delegate" {
+        let mark = std::env::var("ORG_SESSION_MARK").unwrap();
+        let root = std::env::current_dir().unwrap();
         let (nested, _) = fixture(&root, &mark, "hold");
         let id = nested.identity();
         println!("RECOVERY_READY {} {} {}", id.pid, id.started, id.boot);
@@ -205,4 +205,300 @@ fn native_recovery_refuses_a_reused_non_child_identity_and_scans_detached_tools(
     assert!(row.0.inventory().iter().any(|entry| entry.identity == tool));
     assert!(native.wait_exited(&tool, Instant::now()).unwrap());
     assert!(owner.try_exit().unwrap().is_some());
+}
+
+#[cfg(target_os = "linux")]
+#[used]
+#[unsafe(link_section = ".init_array")]
+static LEADER_EXIT_FIXTURE: extern "C" fn() = start_leader_exit_fixture;
+
+#[cfg(target_os = "linux")]
+extern "C" fn start_leader_exit_fixture() {
+    // SAFETY: the loader has initialized libc and the test harness has yet to start.
+    let mode = unsafe { libc::getenv(c"ORG_TEST_CASE".as_ptr()) };
+    if mode.is_null()
+        // SAFETY: a successful getenv returns a NUL-terminated string.
+        || unsafe { std::ffi::CStr::from_ptr(mode) } != c"leader-exit"
+    {
+        return;
+    }
+    let mut worker = std::mem::MaybeUninit::<libc::pthread_t>::uninit();
+    // SAFETY: a correctly sized output slot, default attributes and a C entry point.
+    if unsafe {
+        libc::pthread_create(
+            worker.as_mut_ptr(),
+            std::ptr::null(),
+            hold_worker,
+            std::ptr::null_mut(),
+        )
+    } != 0
+    {
+        // SAFETY: terminate this disposable test child on fixture initialization failure.
+        unsafe { libc::_exit(125) };
+    }
+    // SAFETY: exit only the calling thread. The worker keeps this process alive.
+    unsafe {
+        libc::syscall(libc::SYS_exit, 0i32);
+        libc::_exit(125);
+    }
+}
+
+#[cfg(target_os = "linux")]
+extern "C" fn hold_worker(_: *mut libc::c_void) -> *mut libc::c_void {
+    let ready = b"RECOVERY_READY\n";
+    // SAFETY: the fixture owns its stdout pipe. Bound its lifetime even on test failure.
+    unsafe {
+        libc::write(libc::STDOUT_FILENO, ready.as_ptr().cast(), ready.len());
+        libc::sleep(20);
+        libc::_exit(0);
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn native_recovery_keeps_a_record_when_a_zombie_leader_has_live_workers() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut child, _) = fixture(root.path(), &unique_mark(), "leader-exit");
+    let identity = child.identity().clone();
+    let stat_path = format!("/proc/{}/stat", identity.pid);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let stat = std::fs::read_to_string(&stat_path).unwrap();
+        if stat.rsplit_once(") ").unwrap().1.starts_with("Z ") {
+            break;
+        }
+        assert!(Instant::now() < deadline, "main thread did not exit");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(child.try_exit().unwrap().is_none(), "worker is still live");
+
+    let mut row =
+        Row(RecoveryRecord::new(identity.mark.clone(), Some(identity.clone()), vec![]).unwrap());
+    let mut native = NativeRecovery::new().unwrap();
+    let exact = ProcessIdentity {
+        pid: identity.pid,
+        started: identity.started,
+        boot: identity.boot,
+    };
+    let exited_before_capture = native.wait_exited(&exact, Instant::now()).unwrap();
+    let result = recover_record(
+        &mut row,
+        &(),
+        &mut native,
+        Instant::now() + Duration::from_secs(5),
+    );
+    assert!(result.is_err(), "recovery issued Gone for a live worker");
+    assert!(!exited_before_capture, "unpinned wait used thread exit");
+    assert!(!native.wait_exited(&exact, Instant::now()).unwrap());
+    let submillisecond = Instant::now() + Duration::from_micros(750);
+    assert!(!native.wait_exited(&exact, submillisecond).unwrap());
+    assert!(Instant::now() >= submillisecond);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn native_capture_reports_an_exited_unreaped_child_as_zombie() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut child, _) = fixture(root.path(), &unique_mark(), "hold");
+    let exact = ProcessIdentity {
+        pid: child.identity().pid,
+        started: child.identity().started.clone(),
+        boot: child.identity().boot.clone(),
+    };
+    let mut native = NativeRecovery::new().unwrap();
+    // SAFETY: this is the test's owned unreaped child.
+    assert_eq!(
+        unsafe { libc::kill(exact.pid as libc::pid_t, libc::SIGTERM) },
+        0
+    );
+    assert!(native
+        .wait_exited(&exact, Instant::now() + Duration::from_secs(5))
+        .unwrap());
+    let rows = native
+        .snapshot(Instant::now() + Duration::from_secs(5))
+        .unwrap();
+    assert!(rows
+        .iter()
+        .any(|row| row.identity.as_ref() == Some(&exact) && row.zombie));
+    assert!(child.try_exit().unwrap().is_some());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn hold_mutated_argv_fixture() {
+    unsafe extern "C" {
+        fn _NSGetArgv() -> *mut *mut *mut libc::c_char;
+    }
+    // SAFETY: _NSGetArgv provides this process's live argv vector and string.
+    let argv_zero = unsafe { **_NSGetArgv() };
+    if unsafe { std::ffi::CStr::from_ptr(argv_zero) } != c"ABC" {
+        return;
+    }
+    // SAFETY: the fixture launched with the writable three-byte argv[0] "ABC".
+    // The test harness has already parsed its arguments.
+    unsafe { argv_zero.add(1).write(0) };
+    println!("RECOVERY_READY");
+    io::stdout().flush().unwrap();
+    std::thread::sleep(Duration::from_secs(20));
+}
+
+#[cfg(target_os = "macos")]
+fn mac_fixture_mark(
+    program: &Path,
+    arguments: &[&std::ffi::CStr],
+    environment: &[&std::ffi::CStr],
+    wait_for_ready: bool,
+) -> org_supervise::recovery::MarkEvidence {
+    use std::ffi::CString;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::ffi::OsStrExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let cwd = CString::new(directory.path().as_os_str().as_bytes()).unwrap();
+    let program = CString::new(program.as_os_str().as_bytes()).unwrap();
+    let strings = |items: &[&std::ffi::CStr]| {
+        items
+            .iter()
+            .map(|item| item.as_ptr().cast_mut())
+            .chain(std::iter::once(std::ptr::null_mut()))
+            .collect::<Vec<_>>()
+    };
+    let mut argv = strings(arguments);
+    let mut envp = strings(environment);
+    let (stdout, writer) = io::pipe().unwrap();
+    let mut actions = std::ptr::null_mut();
+    let mut pid = 0;
+    // SAFETY: valid action pointer, open stdout fd and NUL-terminated path
+    // and argument/environment arrays. The raw vectors preserve empty argv[0]
+    // and duplicate environment entries for these fixtures.
+    let spawn = unsafe {
+        assert_eq!(libc::posix_spawn_file_actions_init(&mut actions), 0);
+        assert_eq!(
+            libc::posix_spawn_file_actions_addchdir_np(&mut actions, cwd.as_ptr()),
+            0
+        );
+        assert_eq!(
+            libc::posix_spawn_file_actions_adddup2(
+                &mut actions,
+                writer.as_raw_fd(),
+                libc::STDOUT_FILENO,
+            ),
+            0
+        );
+        let result = libc::posix_spawn(
+            &mut pid,
+            program.as_ptr(),
+            &actions,
+            std::ptr::null(),
+            argv.as_mut_ptr(),
+            envp.as_mut_ptr(),
+        );
+        libc::posix_spawn_file_actions_destroy(&mut actions);
+        result
+    };
+    assert_eq!(spawn, 0);
+    drop(writer);
+    let ready = if wait_for_ready {
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let found = BufReader::new(stdout)
+                .lines()
+                .map_while(Result::ok)
+                .any(|line| line == "RECOVERY_READY");
+            let _ = sender.send(found);
+        });
+        receiver.recv_timeout(Duration::from_secs(5)) == Ok(true)
+    } else {
+        true
+    };
+    let capture = NativeRecovery::new()
+        .and_then(|mut native| native.snapshot(Instant::now() + Duration::from_secs(5)));
+    // SAFETY: this test alone owns and reaps the fixture. Reap after capture.
+    let reaped = unsafe {
+        libc::kill(pid, libc::SIGKILL);
+        loop {
+            let reaped = libc::waitpid(pid, std::ptr::null_mut(), 0);
+            if reaped == pid || io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
+                break reaped;
+            }
+        }
+    };
+    assert_eq!(reaped, pid);
+    assert!(ready, "macOS fixture did not report readiness");
+    capture
+        .unwrap()
+        .into_iter()
+        .find(|row| row.pid == pid as u32)
+        .expect("live macOS fixture")
+        .mark
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn native_capture_documents_the_mutated_argv_trust_boundary() {
+    use org_supervise::recovery::MarkEvidence;
+    let mark = unique_mark();
+    let argument = std::ffi::CString::new(format!("ORG_SESSION_MARK={mark}")).unwrap();
+    let observed = mac_fixture_mark(
+        &std::env::current_exe().unwrap(),
+        &[
+            c"ABC",
+            c"--exact",
+            c"hold_mutated_argv_fixture",
+            c"--nocapture",
+            c"--skip",
+            &argument,
+        ],
+        &[],
+        true,
+    );
+    // The child deliberately moved a known exact mark from argv into the region
+    // inferred as environment from the saved argc. The adapter cannot tell.
+    assert_eq!(observed, MarkEvidence::Present(mark));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn native_capture_quarantines_empty_argv_zero_and_restricted_processes() {
+    use org_supervise::recovery::MarkEvidence;
+    let mark = std::ffi::CString::new(format!("ORG_SESSION_MARK={}", unique_mark())).unwrap();
+    let conflicting =
+        std::ffi::CString::new(format!("ORG_SESSION_MARK={}", unique_mark())).unwrap();
+    assert_eq!(
+        mac_fixture_mark(
+            &std::env::current_exe().unwrap(),
+            &[c"", c"--exact", c"hold_fixture", c"--nocapture"],
+            &[c"ORG_TEST_CASE=hold", &mark],
+            true,
+        ),
+        MarkEvidence::Unreadable,
+    );
+    // XNU's restricted-process redaction can reveal just the first conflicting
+    // entry when argv[0] is empty. Both forms must be quarantined.
+    for argv_zero in [c"", c"sleep"] {
+        assert_eq!(
+            mac_fixture_mark(
+                Path::new("/bin/sleep"),
+                &[argv_zero, c"20"],
+                &[&mark, &conflicting],
+                false,
+            ),
+            MarkEvidence::Unreadable,
+        );
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn native_capture_accepts_identical_duplicate_environment_marks() {
+    use org_supervise::recovery::MarkEvidence;
+    let mark = unique_mark();
+    let entry = std::ffi::CString::new(format!("ORG_SESSION_MARK={mark}")).unwrap();
+    let observed = mac_fixture_mark(
+        &std::env::current_exe().unwrap(),
+        &[c"fixture", c"--exact", c"hold_fixture", c"--nocapture"],
+        &[c"ORG_TEST_CASE=hold", &entry, &entry],
+        true,
+    );
+    assert_eq!(observed, MarkEvidence::Present(mark));
 }

@@ -469,7 +469,9 @@ fn native_mark(bytes: &[u8]) -> MarkEvidence {
     let Some(value) = marks.next() else {
         return MarkEvidence::Absent;
     };
-    if marks.next().is_some() {
+    // Identical entries are valid mark evidence on macOS. Conflicting values
+    // are ambiguous, and Linux continues to reject duplicate entries.
+    if marks.any(|duplicate| cfg!(target_os = "linux") || duplicate != value) {
         return MarkEvidence::Unreadable;
     }
     let Ok(value) = std::str::from_utf8(value) else {

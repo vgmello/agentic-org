@@ -143,12 +143,19 @@ On Linux, the adapter checks the procfs PID namespace and opens pidfds before
 capturing process identity. It retains those descriptors through a scan, checks
 credentials and environment evidence again before signaling, and uses
 `pidfd_send_signal` for the individual process. Unsupported or denied pidfd
-operations fail recovery. Exit polling leaves status available to the owner.
+operations fail recovery. A zombie group leader with live worker threads
+remains unresolved if its mark is unreadable. The pidfd reports exit of the
+whole thread group and leaves status available to the owner.
 
 On macOS, the adapter reads start identity and credentials through libproc and
-reads the mark from a bounded `KERN_PROCARGS2` record. Parent links compare both
-identities around the PPID observation. Individual signals follow an immediate
-identity and credential check, with a direct mark check for directly marked targets.
+reads the mark from a bounded `KERN_PROCARGS2` record. Restricted or incomplete
+records are unreadable under S0. Identical duplicate marks count as one mark.
+Parent links compare both identities around the PPID observation. Individual
+signals follow an immediate identity and credential check, with a direct mark
+check for directly marked targets. XNU combines the saved argument count with
+current stack strings. Recovery assumes cooperating same-UID processes. A
+process that already knows the exact mark can deliberately rewrite its argv
+bytes to make an argument appear in the environment region.
 An unowned process can still exit and have its PID reused between that final check
 and `kill`. Kqueue wakes exit observation, and the adapter confirms the identity
 again without reaping. Processes that clear their environment and double-fork

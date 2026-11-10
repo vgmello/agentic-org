@@ -17,6 +17,19 @@ const PROC_FLAG_PSUGID: u32 = 0x2000;
 const MAX_LISTED_PIDS: usize = 131_072;
 const MAX_ARG_BYTES: usize = 2 * 1024 * 1024;
 
+// XNU sys/codesign.h and kern/cs_blobs.h. CS_RESTRICT controls PROCARGS2 redaction.
+const CS_OPS_STATUS: libc::c_uint = 0;
+const CS_RESTRICT: u32 = 0x0000_0800;
+
+unsafe extern "C" {
+    fn csops(
+        pid: libc::pid_t,
+        ops: libc::c_uint,
+        address: *mut libc::c_void,
+        size: usize,
+    ) -> libc::c_int;
+}
+
 /// Native macOS recovery operations. Signals recheck start identity and credentials,
 /// and directly marked targets also require the exact current mark. For non-child
 /// processes, macOS can still recycle a PID between the final check and `kill`.
@@ -76,16 +89,13 @@ impl NativeRecovery {
 
     fn mark(&self, info: &libc::proc_bsdinfo, deadline: Instant) -> io::Result<MarkEvidence> {
         check_time(deadline)?;
-        if info.pbi_flags & PROC_FLAG_LP64 == 0 {
+        let pid = info.pbi_pid as libc::pid_t;
+        if info.pbi_flags & PROC_FLAG_LP64 == 0 || !unrestricted(pid) {
             return Ok(MarkEvidence::Unreadable);
         }
         let mut bytes = vec![0; self.arg_max + std::mem::size_of::<i32>()];
         let mut count = bytes.len();
-        let mut oid = [
-            libc::CTL_KERN,
-            libc::KERN_PROCARGS2,
-            info.pbi_pid as libc::pid_t,
-        ];
+        let mut oid = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid];
         // SAFETY: valid OID and allocated output buffer, with no write input.
         let result = unsafe {
             libc::sysctl(
@@ -98,7 +108,7 @@ impl NativeRecovery {
             )
         };
         check_time(deadline)?;
-        if result != 0 || count >= bytes.len() {
+        if result != 0 || count >= bytes.len() || !unrestricted(pid) {
             return Ok(MarkEvidence::Unreadable);
         }
         Ok(procargs_mark(&bytes[..count]))
@@ -167,7 +177,7 @@ impl RecoveryProcesses for NativeRecovery {
             if pid <= 1 || pid as u32 == self.context.pid {
                 continue;
             }
-            let Some(before) = bsd_info(pid as u32)? else {
+            let Some(before) = snapshot_info(pid as u32)? else {
                 continue;
             };
             if before.pbi_ruid != self.context.uid {
@@ -181,7 +191,7 @@ impl RecoveryProcesses for NativeRecovery {
             };
             // SAFETY: getsid reads a session hint for a positive PID. Errors are not authority.
             let session = u32::try_from(unsafe { libc::getsid(pid) }).unwrap_or(0);
-            let Some(after) = bsd_info(pid as u32)? else {
+            let Some(after) = snapshot_info(pid as u32)? else {
                 continue;
             };
             if !same_identity(&before, &after) || after.pbi_ruid != self.context.uid {
@@ -220,9 +230,9 @@ impl RecoveryProcesses for NativeRecovery {
                 continue;
             }
             let (Some(parent_before), Some(child), Some(parent_after)) = (
-                bsd_info(parent_pid)?,
-                bsd_info(row.pid)?,
-                bsd_info(parent_pid)?,
+                snapshot_info(parent_pid)?,
+                snapshot_info(row.pid)?,
+                snapshot_info(parent_pid)?,
             ) else {
                 continue;
             };
@@ -354,6 +364,15 @@ impl RecoveryProcesses for NativeRecovery {
     }
 }
 
+fn snapshot_info(pid: u32) -> io::Result<Option<libc::proc_bsdinfo>> {
+    match bsd_info(pid) {
+        // Real-UID enumeration also includes setuid processes. Skip inaccessible
+        // rows here; an exact recorded identity is still checked by wait_exited.
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => Ok(None),
+        result => result,
+    }
+}
+
 fn bsd_info(pid: u32) -> io::Result<Option<libc::proc_bsdinfo>> {
     let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
     let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
@@ -362,7 +381,7 @@ fn bsd_info(pid: u32) -> io::Result<Option<libc::proc_bsdinfo>> {
         libc::proc_pidinfo(
             pid as libc::pid_t,
             libc::PROC_PIDTBSDINFO,
-            0,
+            1, // Include zombies that have not been reaped.
             info.as_mut_ptr().cast(),
             size,
         )
@@ -435,12 +454,26 @@ fn check_time(deadline: Instant) -> io::Result<()> {
     }
 }
 
+fn unrestricted(pid: libc::pid_t) -> bool {
+    let mut flags = 0u32;
+    // SAFETY: CS_OPS_STATUS writes one u32 to the correctly sized output slot.
+    let status = unsafe {
+        csops(
+            pid,
+            CS_OPS_STATUS,
+            (&mut flags as *mut u32).cast(),
+            std::mem::size_of_val(&flags),
+        )
+    };
+    status == 0 && flags & CS_RESTRICT == 0
+}
+
 fn procargs_mark(bytes: &[u8]) -> MarkEvidence {
     let Some((header, payload)) = bytes.split_at_checked(std::mem::size_of::<i32>()) else {
         return MarkEvidence::Unreadable;
     };
     let argc = i32::from_ne_bytes(header.try_into().unwrap());
-    if argc <= 0 {
+    if argc <= 0 || !payload.len().is_multiple_of(8) || payload.last() != Some(&0) {
         return MarkEvidence::Unreadable;
     }
     let Some(path_end) = payload.iter().position(|b| *b == 0).filter(|end| *end > 0) else {
@@ -448,7 +481,8 @@ fn procargs_mark(bytes: &[u8]) -> MarkEvidence {
     };
     // XNU aligns the argument vector strings after the saved executable path.
     // PROCARGS2 strips a 16-byte executable_path= prefix, preserving alignment.
-    // Skip just that padding, so empty arguments still count as argv entries.
+    // Skip just that padding. XNU may partially redact captures with empty
+    // argv[0]. Subsequent empty arguments still count toward argc.
     let args_start = (path_end + 1).next_multiple_of(8);
     let Some(padding) = payload.get(path_end..args_start) else {
         return MarkEvidence::Unreadable;
@@ -457,16 +491,22 @@ fn procargs_mark(bytes: &[u8]) -> MarkEvidence {
         return MarkEvidence::Unreadable;
     }
     let mut rest = &payload[args_start..];
+    if rest.first().is_none_or(|byte| *byte == 0) {
+        return MarkEvidence::Unreadable;
+    }
     for _ in 0..argc {
         let Some(end) = rest.iter().position(|b| *b == 0) else {
             return MarkEvidence::Unreadable;
         };
         rest = &rest[end + 1..];
     }
-    // Restricted processes can have their environment omitted entirely by XNU.
+    // A complete launch image includes strings after argv, even with an empty env.
     if rest.iter().all(|b| *b == 0) {
         return MarkEvidence::Unreadable;
     }
+    // The kernel supplies the launch argc and reads the current stack strings.
+    // Deliberate same-UID argv mutation can forge the boundary if the process
+    // already knows the exact mark. Recovery trusts cooperating same-UID code.
     native_mark(rest)
 }
 
@@ -475,19 +515,43 @@ mod tests {
     use super::procargs_mark;
     use crate::recovery::MarkEvidence;
 
-    #[test]
-    fn procargs_mark_ignores_argv_and_counts_an_empty_argv_zero() {
-        let mut bytes = 2i32.to_ne_bytes().to_vec();
+    fn capture(argc: i32, entries: &[u8]) -> Vec<u8> {
+        let mut bytes = argc.to_ne_bytes().to_vec();
         let path = b"/tmp/tool\0";
         bytes.extend_from_slice(path);
         bytes.resize(4 + path.len().next_multiple_of(8), 0);
-        bytes.extend_from_slice(b"\0ORG_SESSION_MARK=argument\0");
-        let argv_end = bytes.len();
-        bytes.extend_from_slice(b"ORG_SESSION_MARK=environment\0");
+        bytes.extend_from_slice(entries);
+        bytes.resize(4 + (bytes.len() - 4).next_multiple_of(8), 0);
+        bytes
+    }
+
+    #[test]
+    fn procargs_mark_ignores_argv_and_counts_later_empty_arguments() {
+        let bytes = capture(
+            3,
+            b"tool\0\0ORG_SESSION_MARK=argument\0ORG_SESSION_MARK=environment\0",
+        );
         assert_eq!(
             procargs_mark(&bytes),
             MarkEvidence::Present("environment".into())
         );
-        assert_eq!(procargs_mark(&bytes[..argv_end]), MarkEvidence::Unreadable);
+        let unrelated = capture(1, b"tool\0PREFIX_ORG_SESSION_MARK=prefix\0");
+        assert_eq!(procargs_mark(&unrelated), MarkEvidence::Absent);
+    }
+
+    #[test]
+    fn procargs_mark_quarantines_incomplete_or_conflicting_captures() {
+        let empty_argv_zero = capture(1, b"\0ORG_SESSION_MARK=mark\0");
+        let invalid_argc = capture(100, b"tool\0ORG_SESSION_MARK=mark\0");
+        let conflicting = capture(1, b"tool\0ORG_SESSION_MARK=a\0ORG_SESSION_MARK=b\0");
+        let valid = capture(1, b"tool\0ORG_SESSION_MARK=mark\0");
+        for bad in [
+            &empty_argv_zero,
+            &invalid_argc,
+            &conflicting,
+            &valid[..valid.len() - 1],
+        ] {
+            assert_eq!(procargs_mark(bad), MarkEvidence::Unreadable);
+        }
     }
 }
