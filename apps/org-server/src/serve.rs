@@ -7,7 +7,6 @@
 //! touches a database that is closing.
 
 use std::collections::HashMap;
-use std::io::BufReader;
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
@@ -326,6 +325,7 @@ pub fn bind(path: &Path) -> std::io::Result<UnixListener> {
 /// Accepts connections until `stop` says to quit, then closes every connection and waits for
 /// its thread, so nothing is still reading the office when the caller closes it.
 pub fn run(listener: &UnixListener, shared: &Arc<Shared>, stop: &dyn Fn() -> bool) {
+    let stopping = Arc::new(std::sync::atomic::AtomicBool::new(false));
     // Ends the held calls of a connection whose member stops being bindable, at once.
     let watching = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let watcher = {
@@ -358,6 +358,7 @@ pub fn run(listener: &UnixListener, shared: &Arc<Shared>, stop: &dyn Fn() -> boo
                     .unwrap_or_else(|p| p.into_inner())
                     .insert(id, handle);
                 let shared = Arc::clone(shared);
+                let stopping = Arc::clone(&stopping);
                 let slot = Slot(Arc::clone(&live));
                 let registered = Registered {
                     registry: Arc::clone(&open),
@@ -373,7 +374,7 @@ pub fn run(listener: &UnixListener, shared: &Arc<Shared>, stop: &dyn Fn() -> boo
                         let _slot = slot;
                         let _registered = registered;
                         let _ = stream.set_nonblocking(false);
-                        serve_connection(stream, &shared, id);
+                        serve_connection(stream, &shared, id, &stopping);
                     })
                 {
                     threads.retain(|t| !t.is_finished());
@@ -388,7 +389,9 @@ pub fn run(listener: &UnixListener, shared: &Arc<Shared>, stop: &dyn Fn() -> boo
             Err(_) => std::thread::sleep(Duration::from_millis(20)),
         }
     }
-    // Stop: close every connection (which ends its blocked read), then wait for the threads.
+    // The tick also observes stop if a platform shutdown misses its reader wakeup.
+    stopping.store(true, Ordering::SeqCst);
+    // Stop: close every connection, then wait for the threads.
     for stream in open.lock().unwrap_or_else(|p| p.into_inner()).values() {
         let _ = stream.shutdown(std::net::Shutdown::Both);
     }
@@ -492,7 +495,30 @@ impl Drop for Slot {
     }
 }
 
-fn serve_connection(stream: UnixStream, shared: &Shared, conn: u64) {
+fn serve_connection(
+    stream: UnixStream,
+    shared: &Shared,
+    conn: u64,
+    stopping: &std::sync::atomic::AtomicBool,
+) {
+    serve_connection_with_poll(
+        stream,
+        shared,
+        conn,
+        stopping,
+        org_socket::READ_TICK,
+        org_socket::poll_readable,
+    );
+}
+
+fn serve_connection_with_poll(
+    stream: UnixStream,
+    shared: &Shared,
+    conn: u64,
+    stopping: &std::sync::atomic::AtomicBool,
+    tick: Duration,
+    poll: impl FnMut(std::os::fd::RawFd, Duration) -> std::io::Result<bool>,
+) {
     let Ok(out) = stream.try_clone() else {
         return;
     };
@@ -515,7 +541,12 @@ fn serve_connection(stream: UnixStream, shared: &Shared, conn: u64) {
     // must not be closing.
     std::thread::scope(|scope| {
         let _end_held_calls = CancelOnDrop(held);
-        let mut reader = BufReader::new(stream);
+        let mut reader = org_socket::Ticked::with_poll(
+            stream,
+            tick,
+            || stopping.load(Ordering::SeqCst) || control.revoked.load(Ordering::SeqCst),
+            poll,
+        );
         let mut binding = Binding::Anonymous;
         let mut subscribed = false;
         // The last subscription's thread: a new one waits for it, so a client that binds and
@@ -1001,9 +1032,56 @@ fn internal(id: u64) -> Response {
 
 #[cfg(test)]
 mod tests {
+    use std::io::BufReader;
     use std::sync::atomic::AtomicBool;
 
     use super::*;
+
+    #[test]
+    fn ticked_reader_repolls_a_missed_eof_at_the_server_call_site() {
+        let (stream, peer) = UnixStream::pair().unwrap();
+        drop(peer);
+        let shared = shared(Path::new("/unused-test-socket"));
+        let polls = std::cell::Cell::new(0);
+        serve_connection_with_poll(
+            stream,
+            &shared,
+            1,
+            &AtomicBool::new(false),
+            org_socket::READ_TICK,
+            |fd, _| {
+                polls.set(polls.get() + 1);
+                if polls.get() == 1 {
+                    Ok(false)
+                } else {
+                    org_socket::poll_readable(fd, Duration::from_millis(1))
+                }
+            },
+        );
+        assert_eq!(polls.get(), 2);
+        assert!(shared.bound.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn ticked_reader_observes_server_stop_without_a_shutdown_wakeup() {
+        let (stream, _peer) = UnixStream::pair().unwrap();
+        let shared = shared(Path::new("/unused-test-socket"));
+        let stopping = AtomicBool::new(false);
+        let polls = std::cell::Cell::new(0);
+        serve_connection_with_poll(
+            stream,
+            &shared,
+            1,
+            &stopping,
+            org_socket::READ_TICK,
+            |_, _| {
+                polls.set(polls.get() + 1);
+                stopping.store(true, Ordering::SeqCst);
+                Ok(false)
+            },
+        );
+        assert_eq!(polls.get(), 1);
+    }
 
     fn shared(path: &Path) -> Arc<Shared> {
         Arc::new(Shared::new(

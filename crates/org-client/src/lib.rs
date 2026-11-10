@@ -860,8 +860,23 @@ impl Drop for CloseOnExit<'_> {
 
 /// Reads server messages until the connection ends, then fails everything still waiting.
 fn read_loop(shared: &Shared, stream: UnixStream) {
+    read_loop_with_poll(
+        shared,
+        stream,
+        org_socket::READ_TICK,
+        org_socket::poll_readable,
+    );
+}
+
+fn read_loop_with_poll(
+    shared: &Shared,
+    stream: UnixStream,
+    tick: Duration,
+    poll: impl FnMut(std::os::fd::RawFd, Duration) -> std::io::Result<bool>,
+) {
     let _close = CloseOnExit(shared);
-    let mut reader = std::io::BufReader::new(stream);
+    let mut reader =
+        org_socket::Ticked::with_poll(stream, tick, || shared.closed.load(Ordering::SeqCst), poll);
     while let Ok(Some(line)) = frame::read_line(&mut reader) {
         match serde_json::from_slice::<ServerMessage>(&line) {
             Ok(ServerMessage::Response(response)) => {
@@ -917,6 +932,37 @@ mod tests {
     use std::os::unix::net::UnixListener;
 
     use super::*;
+
+    #[test]
+    fn ticked_reader_repolls_a_missed_eof_and_closes_pending_calls() {
+        let (stream, peer) = UnixStream::pair().unwrap();
+        drop(peer);
+        let (answer, pending) = mpsc::sync_channel(1);
+        let shared = Shared {
+            closed: AtomicBool::new(false),
+            next_id: AtomicU64::new(2),
+            pending: Mutex::new(HashMap::from([(1, answer)])),
+            events: Arc::new(Mutex::new(None)),
+            next_subscription: AtomicU64::new(1),
+            queued_bytes: AtomicUsize::new(0),
+            stream: stream.try_clone().unwrap(),
+        };
+        let polls = std::cell::Cell::new(0);
+        read_loop_with_poll(&shared, stream, org_socket::READ_TICK, |fd, _| {
+            polls.set(polls.get() + 1);
+            if polls.get() == 1 {
+                Ok(false)
+            } else {
+                org_socket::poll_readable(fd, Duration::from_millis(1))
+            }
+        });
+        assert_eq!(polls.get(), 2);
+        assert!(shared.closed.load(Ordering::SeqCst));
+        assert!(matches!(
+            pending.try_recv(),
+            Err(mpsc::TryRecvError::Disconnected)
+        ));
+    }
 
     /// A server that accepts one connection and never reads or answers, until dropped.
     struct StuckServer {
