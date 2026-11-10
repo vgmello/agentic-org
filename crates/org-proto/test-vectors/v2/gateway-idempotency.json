@@ -1,0 +1,211 @@
+{
+  "schema_version": 1,
+  "comment": "D-GW3 examples for authorized requests and newly admitted move-2a records; account context is NOT browser input. Real server dedup is verified by the worker suite, not these DTO examples.",
+  "native_before_move2a_reuse_code": "invalid_request",
+  "cases": [
+    {
+      "name": "same account and params",
+      "first": {
+        "wire": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "scope": {
+            "kind": "organization",
+            "instance_id": "01M72N8MG00000000000000001",
+            "org_id": "01M72N8MG00000000000000003"
+          },
+          "params": {
+            "name": "Platform",
+            "expected_version": 3
+          }
+        },
+        "trusted_account": "account-a",
+        "session_generation": 1
+      },
+      "second": {
+        "wire": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "scope": {
+            "kind": "organization",
+            "instance_id": "01M72N8MG00000000000000001",
+            "org_id": "01M72N8MG00000000000000003"
+          },
+          "params": {
+            "name": "Platform",
+            "expected_version": 3
+          }
+        },
+        "trusted_account": "account-a",
+        "session_generation": 1
+      },
+      "response": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "completed",
+        "result": {
+          "position": {
+            "epoch": 1,
+            "seq": 7
+          }
+        }
+      },
+      "expect": {
+        "same_native_id": true,
+        "same_params": true,
+        "same_account": true,
+        "replay": true,
+        "http_status": 200
+      }
+    },
+    {
+      "name": "new sign-in same account and params",
+      "first": {
+        "wire": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "scope": {
+            "kind": "organization",
+            "instance_id": "01M72N8MG00000000000000001",
+            "org_id": "01M72N8MG00000000000000003"
+          },
+          "params": {
+            "name": "Platform",
+            "expected_version": 3
+          }
+        },
+        "trusted_account": "account-a",
+        "session_generation": 1
+      },
+      "second": {
+        "wire": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "scope": {
+            "kind": "organization",
+            "instance_id": "01M72N8MG00000000000000001",
+            "org_id": "01M72N8MG00000000000000003"
+          },
+          "params": {
+            "name": "Platform",
+            "expected_version": 3
+          }
+        },
+        "trusted_account": "account-a",
+        "session_generation": 2
+      },
+      "response": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "completed",
+        "result": {
+          "position": {
+            "epoch": 1,
+            "seq": 7
+          }
+        }
+      },
+      "expect": {
+        "same_native_id": true,
+        "same_params": true,
+        "same_account": true,
+        "replay": true,
+        "http_status": 200
+      }
+    },
+    {
+      "name": "different params",
+      "first": {
+        "wire": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "scope": {
+            "kind": "organization",
+            "instance_id": "01M72N8MG00000000000000001",
+            "org_id": "01M72N8MG00000000000000003"
+          },
+          "params": {
+            "name": "Platform",
+            "expected_version": 3
+          }
+        },
+        "trusted_account": "account-a",
+        "session_generation": 1
+      },
+      "second": {
+        "wire": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "scope": {
+            "kind": "organization",
+            "instance_id": "01M72N8MG00000000000000001",
+            "org_id": "01M72N8MG00000000000000003"
+          },
+          "params": {
+            "name": "Changed intent",
+            "expected_version": 3
+          }
+        },
+        "trusted_account": "account-a",
+        "session_generation": 1
+      },
+      "response": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected",
+        "error": {
+          "code": "operation_reused",
+          "message": "Operation already used."
+        }
+      },
+      "expect": {
+        "same_native_id": true,
+        "same_params": false,
+        "same_account": true,
+        "replay": false,
+        "http_status": 409
+      }
+    },
+    {
+      "name": "different authorized account",
+      "first": {
+        "wire": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "scope": {
+            "kind": "organization",
+            "instance_id": "01M72N8MG00000000000000001",
+            "org_id": "01M72N8MG00000000000000003"
+          },
+          "params": {
+            "name": "Platform",
+            "expected_version": 3
+          }
+        },
+        "trusted_account": "account-a",
+        "session_generation": 1
+      },
+      "second": {
+        "wire": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "scope": {
+            "kind": "organization",
+            "instance_id": "01M72N8MG00000000000000001",
+            "org_id": "01M72N8MG00000000000000003"
+          },
+          "params": {
+            "name": "Platform",
+            "expected_version": 3
+          }
+        },
+        "trusted_account": "account-b",
+        "session_generation": 1
+      },
+      "response": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected",
+        "error": {
+          "code": "operation_reused",
+          "message": "Operation already used."
+        }
+      },
+      "expect": {
+        "same_native_id": true,
+        "same_params": true,
+        "same_account": false,
+        "replay": false,
+        "http_status": 409
+      }
+    }
+  ]
+}
