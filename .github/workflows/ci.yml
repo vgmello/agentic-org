@@ -29,7 +29,7 @@ jobs:
         os: [macos-15, ubuntu-26.04]
         include:
           - os: ubuntu-26.04
-            # The Tauri shell (package `agentic-org`, apps/desktop/src-tauri) is macOS only:
+            # The Tauri shell (package `agentic-org`, apps/org-ui/src-tauri) is macOS only:
             # excluded on Linux until F1-03 deletes src-tauri.
             # org-office-host has items only its macOS code uses (code-signature peer checks,
             # Keychain key store), so on Linux clippy's dead-code and unused-import lints fail, and
@@ -79,7 +79,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     env:
-      UI_DIR: apps/desktop
+      UI_DIR: apps/org-ui
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
