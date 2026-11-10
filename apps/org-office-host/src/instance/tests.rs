@@ -54,6 +54,56 @@ impl Fixture {
 }
 
 #[test]
+fn managed_layout_keeps_employee_homes_outside_office_control_state() {
+    let fixture = Fixture::new();
+    let instance = fixture.reserve("lab");
+    let paths = instance.prepare_layout().unwrap();
+    assert_eq!(paths.office_home, instance.root().join("office-state"));
+    assert_eq!(paths.agents, instance.root().join("agents"));
+    assert!(!paths.agents.starts_with(&paths.office_home));
+    for path in [
+        &paths.office_home,
+        &paths.agents,
+        &paths.office_home.join("offices"),
+        &paths.office_home.join("logs"),
+    ] {
+        let metadata = fs::symlink_metadata(path).unwrap();
+        assert!(metadata.is_dir());
+        assert_eq!(metadata.mode() & 0o7777, 0o700);
+    }
+    fs::write(paths.agents.join("sentinel"), b"employee data").unwrap();
+    instance.prepare_layout().unwrap();
+    assert_eq!(
+        fs::read(paths.agents.join("sentinel")).unwrap(),
+        b"employee data"
+    );
+}
+
+#[test]
+fn managed_layout_refuses_unsafe_existing_children_without_repairing_them() {
+    for child in ["office-state", "agents"] {
+        let fixture = Fixture::new();
+        let instance = fixture.reserve("lab");
+        let target = fixture.root("outside");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("sentinel"), b"outside").unwrap();
+        let path = instance.root().join(child);
+        symlink(&target, &path).unwrap();
+        assert!(instance.prepare_layout().is_err());
+        assert!(fs::symlink_metadata(&path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(fs::read(target.join("sentinel")).unwrap(), b"outside");
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(instance.prepare_layout().is_err());
+        assert_eq!(fs::metadata(&path).unwrap().mode() & 0o7777, 0o755);
+    }
+}
+
+#[test]
 fn names_have_one_portable_spelling_and_default_is_explicit() {
     assert_eq!(Name::parse(None).unwrap().as_str(), "default");
     for name in ["default", "lab", "a-1", "0", &"a".repeat(32)] {

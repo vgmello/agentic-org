@@ -147,6 +147,12 @@ pub(crate) struct Instance {
     user_temp: Directory,
 }
 
+/// Managed roots prepared while the instance owns its full-root lock.
+pub(crate) struct InstancePaths {
+    pub(crate) office_home: PathBuf,
+    pub(crate) agents: PathBuf,
+}
+
 impl Instance {
     pub(crate) fn id(&self) -> &str {
         &self.binding.id
@@ -156,6 +162,19 @@ impl Instance {
     }
     pub(crate) fn root(&self) -> &Path {
         self.root.path()
+    }
+
+    pub(crate) fn prepare_layout(&self) -> Result<InstancePaths, Error> {
+        self.config()?;
+        let office_home = self.root.child("office-state", true)?;
+        office_home.child(org_office_launch::OFFICES_DIR_NAME, true)?;
+        office_home.child("logs", true)?;
+        let agents = self.root.child("agents", true)?;
+        self.verify()?;
+        Ok(InstancePaths {
+            office_home: office_home.path().to_owned(),
+            agents: agents.path().to_owned(),
+        })
     }
 
     fn config(&self) -> Result<(Config, ControlFile), Error> {
