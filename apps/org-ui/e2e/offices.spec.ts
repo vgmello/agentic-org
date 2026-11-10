@@ -333,7 +333,7 @@ test('OFC-11 / BUG-24: an unsupported release gives local repair steps for the s
 	await expect(row).toContainText('Online');
 	await page.setViewportSize({ width: 320, height: 700 });
 	const host = 'northwindregionalagentservicesproductionheadquarterscluster.example';
-	await pushOffice(page, { host, status: 'unavailable', status_reason: 'unsupported_version' });
+	await pushOffice(page, { name: host, host, status: 'unavailable', status_reason: 'unsupported_version' });
 	const reason = `The release components on ${host} don't match. Run diagnostics and repair the selected instance there.`;
 	await expect(row).toContainText(reason);
 	const opener = row.getByRole('button');
@@ -342,6 +342,12 @@ test('OFC-11 / BUG-24: an unsupported release gives local repair steps for the s
 	await opener.click();
 	const sheet = page.getByRole('dialog');
 	await expect(sheet).toHaveCSS('width', '320px');
+	await expect(sheet.getByRole('heading', { name: host, exact: true })).toBeVisible();
+	expect(await sheet.evaluate((el) => {
+		const title = el.querySelector('[data-slot="sheet-title"]')!.getBoundingClientRect();
+		const close = el.querySelector('[data-slot="sheet-close"]')!.getBoundingClientRect();
+		return title.right <= close.left;
+	})).toBe(true);
 	await shot(page, 'office-incompatible-release');
 	await expect(sheet.getByTestId('office-why')).toHaveText(reason);
 	await expect(sheet.getByTestId('restart-office')).toHaveCount(0);
@@ -423,6 +429,17 @@ test('OFC-11 / BUG-26: a new restart countdown uses the time of the status push'
 	await page.clock.runFor(10_000);
 	await expect(row).toContainText(/Restarting in (?:3\d|4[0-3]) s/);
 	await expect(row.getByRole('button')).toHaveAccessibleName(/restarting shortly/);
+
+	const observed = await page.evaluate(() => Date.now());
+	const later = { ...pending, next_restart_at: new Date(observed + 60_000).toISOString() };
+	await pushOffice(page, later);
+	await expect(row).toContainText('Restarting in 60 s');
+	const opener = row.getByRole('button');
+	const label = (await opener.getAttribute('aria-label')) ?? '';
+	expect(label).toMatch(/restarting at \d\d:\d\d/);
+	await page.clock.setSystemTime(new Date(observed + 2_000));
+	await pushOffice(page, later);
+	await expect(opener).toHaveAccessibleName(label);
 });
 
 test('OFC-13 / BUG-27: the office sheet has one Close and returns focus to the opener', async ({ page }) => {

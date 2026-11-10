@@ -147,7 +147,7 @@
 <Sheet bind:open>
 	<SheetContent bind:ref={sheetContent} {onCloseAutoFocus} side="right" class="w-full max-w-md overflow-y-auto max-[640px]:max-w-full max-[640px]:data-[side=right]:w-full">
 		{#if office}
-			<SheetHeader>
+			<SheetHeader class="pr-14">
 				<SheetTitle class="[overflow-wrap:anywhere]">{office.name}</SheetTitle>
 				<SheetDescription>{roleInfo(office).description}</SheetDescription>
 			</SheetHeader>

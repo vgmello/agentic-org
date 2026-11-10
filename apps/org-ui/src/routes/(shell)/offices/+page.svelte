@@ -131,20 +131,22 @@ $effect(() => {
 		return () => (clearInterval(again), clearInterval(tick), (leaving = true), stopListening?.());
 	});
 	// Why a stopped office stopped: only for an office whose status is shown as reported by the host.
+const deadlineObservedAt = (office: OfficeInfo) => {
+	const sample = deadlineSamples.get(office.id);
+	return sample && sample.deadline === office.next_restart_at ? sample.observedAt : undefined;
+};
 	const labelWhyOf = (officeId: string) => {
 		const shown = statusOf(officeId);
 		const office = current.find((o) => o.id === officeId);
-		return office && (shown === 'offline' || shown === 'unavailable') ? whyForLabel(office, new Date()) : undefined;
+	return office && (shown === 'offline' || shown === 'unavailable')
+		? whyForLabel(office, new Date(deadlineObservedAt(office) ?? Date.now()))
+		: undefined;
 	};
 	const whyOf = (officeId: string) => {
 		const shown = statusOf(officeId);
 		const office = current.find((o) => o.id === officeId);
 	if (!office || (shown !== 'offline' && shown !== 'unavailable')) return undefined;
-	const sample = deadlineSamples.get(officeId);
-	const clock = sample && sample.deadline === office.next_restart_at
-		? Math.max(countdownClock, sample.observedAt)
-		: countdownClock;
-	return whyStopped(office, new Date(clock));
+	return whyStopped(office, new Date(Math.max(countdownClock, deadlineObservedAt(office) ?? countdownClock)));
 	};
 	// Another organization's office is another thing to verify: don't carry the last answer over.
 	let lastOffice: string | undefined;
