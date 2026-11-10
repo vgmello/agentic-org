@@ -129,7 +129,7 @@ grant neither. Tests cover two HQs on one listener and rejected owner-only creat
 on the host, so it needs the same instance-administrator grant; owning the
 organization is not enough. Inviting, approving or removing a satellite stays open
 to any authorized owner (OFC-7); OFC-7's "add" for the same-instance case needs a
-spec follow-up. The gateway op is an open point for X-02 (§12, Q9). (2026-11-10,
+spec follow-up. The gateway op is an open point for X-02 §12 Q9 (a draft not yet in this repo; see office-host-boundary.md §3, "Pending: launch v3"). (2026-11-10,
 post-merge review question.)
 
 ### Setup executable package identity
