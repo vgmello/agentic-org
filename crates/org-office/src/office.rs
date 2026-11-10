@@ -1,5 +1,6 @@
 use std::fs::{self, File, TryLockError};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::directory::{self, RuntimeView, ThisOffice};
@@ -12,6 +13,8 @@ use crate::rules::OrgCommand;
 use org_proto::directory::{WhoParams, WhoResult};
 use org_proto::org::{CommandAccepted, OrgChangedData, OrgSnapshot, Position};
 use org_proto::ApiError;
+use org_sync::error::SyncError;
+use org_sync::organization::{OrgAttempt, OrgOutput, OrgStore};
 
 use crate::store::org as org_db;
 use crate::store::{messages, status};
@@ -125,6 +128,23 @@ impl std::fmt::Debug for Office {
             .field("folder", &self.folder)
             .field("info", &self.info)
             .finish_non_exhaustive()
+    }
+}
+
+impl OrgStore for Office {
+    fn transact(&self, attempt: Arc<OrgAttempt>) -> Result<OrgOutput, SyncError> {
+        let output = org_db::transact_replication(self.org_store(), attempt)?;
+        if matches!(
+            output,
+            OrgOutput::Ack {
+                duplicate: false,
+                ..
+            } | OrgOutput::Published(_)
+                | OrgOutput::SnapshotInstalled
+        ) {
+            self.wake_followers();
+        }
+        Ok(output)
     }
 }
 

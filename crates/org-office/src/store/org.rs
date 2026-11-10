@@ -33,12 +33,20 @@ use crate::error::OfficeError;
 use crate::rules::{self, OrgCommand, OrgView, OrgWrite};
 use crate::{time, ulid};
 
+mod replication;
+pub(crate) use replication::transact_replication;
+
 /// The epoch of every entry until promotion exists (phase 4).
 const EPOCH: u64 = 1;
 
 pub(crate) const SCHEMA: Schema = Schema {
-    version: 1,
-    upgrade: |_, _| Ok(()),
+    version: 2,
+    upgrade: |tx, from| {
+        if from < 2 {
+            replication::create_tables(tx)?;
+        }
+        Ok(())
+    },
     create: |tx| {
         tx.execute_batch(
             "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
@@ -81,7 +89,8 @@ pub(crate) const SCHEMA: Schema = Schema {
              CREATE TABLE areas (
                  id TEXT PRIMARY KEY, project_id TEXT NOT NULL, body TEXT NOT NULL
              ) STRICT;",
-        )
+        )?;
+        replication::create_tables(tx)
     },
 };
 

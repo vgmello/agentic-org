@@ -15,6 +15,7 @@
 pub(crate) mod messages;
 pub(crate) mod org;
 pub(crate) mod status;
+mod sync;
 
 use std::any::Any;
 use std::error::Error;
