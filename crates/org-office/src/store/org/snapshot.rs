@@ -1,6 +1,7 @@
 //! A snapshot is an encrypted, allowlisted organization projection. Install it inside
 //! the writer transaction that advances the cursor. Local office data lives elsewhere.
 
+use std::collections::HashSet;
 use std::fs::{self, DirBuilder};
 use std::io::{self, Read, Write};
 use std::os::unix::fs::DirBuilderExt;
@@ -102,7 +103,7 @@ impl From<&OrganizationSnapshotManifest> for Header {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(untagged)]
 enum Cell {
     Null,
@@ -153,7 +154,9 @@ pub(super) fn create_table(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     tx.execute_batch(
         "CREATE TABLE org_snapshot_stage (
              singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-             stage_id TEXT NOT NULL, body BLOB NOT NULL
+             stage_id TEXT NOT NULL, epoch INTEGER NOT NULL CHECK (epoch > 0),
+             seq INTEGER NOT NULL CHECK (seq >= 0),
+             digest BLOB NOT NULL CHECK (length(digest) = 32), body BLOB NOT NULL
          ) STRICT;",
     )
 }
@@ -323,7 +326,7 @@ pub(crate) fn stage_replication_snapshot(
         return Err(Refusal::InvalidInput.into());
     }
     let checkpoint = super::replication::replication_checkpoint(store)?;
-    check_stage(&checkpoint, &peer, mode)?;
+    check_stage(&checkpoint, &peer, mode, manifest.position, manifest.digest)?;
     let scratch = Scratch::new().map_err(storage_error)?;
     let path = scratch.database();
     let mut file = private_file(&path).map_err(storage_error)?;
@@ -382,7 +385,7 @@ pub(crate) fn stage_replication_snapshot(
         return Err(Refusal::IntegrityFailure.into());
     }
 
-    let staged = ValidatedSnapshot {
+    let mut staged = ValidatedSnapshot {
         org_id: manifest.org_id.clone(),
         authority: manifest.position.epoch,
         position: manifest.position,
@@ -392,15 +395,39 @@ pub(crate) fn stage_replication_snapshot(
         protocol_level: manifest.protocol_level,
     };
     let id = staged.staging_id.clone();
-    store.sync_write(move |db| {
+    let position = staged.position;
+    let digest = staged.digest;
+    staged.staging_id = store.sync_write(move |db| {
         let current = OrganizationTxn(db).checkpoint()?;
-        check_stage(&current, &peer, mode)?;
+        check_stage(&current, &peer, mode, position, digest)?;
+        let epoch = int(position.epoch.get())?;
+        let seq = int(position.seq)?;
+        let existing: Option<(String, i64, [u8; 32])> = db
+            .query_row(
+                "SELECT stage_id, seq, digest FROM org_snapshot_stage WHERE epoch = ?1",
+                [epoch],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .map_err(storage_error)?;
+        if let Some((existing_id, existing_seq, existing_digest)) = existing {
+            if seq < existing_seq || (seq == existing_seq && digest.as_bytes() != &existing_digest)
+            {
+                return Err(Refusal::Divergence.into());
+            }
+            if seq == existing_seq {
+                return Ok(existing_id);
+            }
+        }
         db.execute(
-            "INSERT INTO org_snapshot_stage VALUES (1, ?1, ?2)
-             ON CONFLICT(singleton) DO UPDATE SET stage_id = excluded.stage_id, body = excluded.body",
-            params![id, body],
-        ).map_err(storage_error)?;
-        Ok(())
+            "INSERT INTO org_snapshot_stage (singleton, stage_id, epoch, seq, digest, body)
+             VALUES (1, ?1, ?2, ?3, ?4, ?5) ON CONFLICT(singleton) DO UPDATE SET
+             stage_id = excluded.stage_id, epoch = excluded.epoch, seq = excluded.seq,
+             digest = excluded.digest, body = excluded.body",
+            params![id, epoch, seq, digest.as_bytes(), body],
+        )
+        .map_err(storage_error)?;
+        Ok(id.clone())
     })?;
     Ok(staged)
 }
@@ -409,6 +436,8 @@ fn check_stage(
     current: &OrgCheckpoint,
     peer: &PeerIdentity,
     mode: SnapshotStageMode,
+    position: Position,
+    digest: Digest,
 ) -> Result<(), Refusal> {
     if current.org_id != peer.org_id
         || current.hq_office != peer.office_id
@@ -418,7 +447,14 @@ fn check_stage(
         return Err(Refusal::NotAuthorized);
     }
     match (current.restore_pending, mode) {
-        (false, SnapshotStageMode::Normal) => Ok(()),
+        (false, SnapshotStageMode::Normal) => {
+            if position.seq < current.position.seq
+                || (position == current.position && digest != current.digest)
+            {
+                return Err(Refusal::Divergence);
+            }
+            Ok(())
+        }
         (
             true,
             SnapshotStageMode::RecoveryWarningShown {
@@ -437,13 +473,84 @@ fn check_stage(
 fn decode(body: &[u8]) -> Result<Projection, Refusal> {
     let value: Projection = serde_json::from_slice(body).map_err(|_| Refusal::IntegrityFailure)?;
     for ((table, _, binds), rows) in TABLES.into_iter().zip(&value.rows) {
+        let mut ids = HashSet::with_capacity(rows.len());
         for row in rows {
-            if row.len() != binds.split(',').count() || !valid_row(table, row) {
+            if row.len() != binds.split(',').count()
+                || !valid_row(table, row)
+                || !ids.insert(&row[0])
+            {
                 return Err(Refusal::IntegrityFailure);
             }
         }
     }
+    validate_relationships(&value)?;
     Ok(value)
+}
+
+fn validate_relationships(value: &Projection) -> Result<(), Refusal> {
+    let [members, teams, projects, areas, memberships, links, _] = &value.rows;
+    let owner_count = members
+        .iter()
+        .filter_map(|row| match row.last() {
+            Some(Cell::Text(body)) => serde_json::from_str::<Member>(body).ok(),
+            _ => None,
+        })
+        .filter(|member| member.owner)
+        .try_fold(0, |count, owner| {
+            if owner.kind != org_proto::org::MemberKind::Person || owner.agent.is_some() {
+                return Err(Refusal::IntegrityFailure);
+            }
+            Ok(count + 1)
+        })?;
+    let member_ids = row_ids(members);
+    let team_ids = row_ids(teams);
+    let project_ids = row_ids(projects);
+    let handles = members
+        .iter()
+        .map(|row| &row[1])
+        .filter(|cell| !matches!(cell, Cell::Null));
+    if owner_count != 1
+        || !distinct(handles)
+        || !distinct(teams.iter().map(|row| (&row[1], &row[2])))
+        || !distinct(memberships.iter().map(|row| (&row[1], &row[2])))
+        || !distinct(links.iter().map(|row| (&row[1], &row[2])))
+        || members.iter().any(|row| !references(&row[2], &member_ids))
+        || teams
+            .iter()
+            .any(|row| !references(&row[1], &team_ids) || !references(&row[3], &member_ids))
+        || areas.iter().any(|row| !references(&row[1], &project_ids))
+        || memberships
+            .iter()
+            .any(|row| !references(&row[1], &team_ids) || !references(&row[2], &member_ids))
+        || links
+            .iter()
+            .any(|row| !references(&row[1], &project_ids) || !references(&row[2], &team_ids))
+    {
+        return Err(Refusal::IntegrityFailure);
+    }
+    Ok(())
+}
+
+fn distinct<T: Eq + std::hash::Hash>(values: impl IntoIterator<Item = T>) -> bool {
+    let mut seen = HashSet::new();
+    values.into_iter().all(|value| seen.insert(value))
+}
+
+fn row_ids(rows: &[Vec<Cell>]) -> HashSet<&str> {
+    rows.iter()
+        .filter_map(|row| match row.first() {
+            Some(Cell::Text(id)) => Some(id.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn references(cell: &Cell, ids: &HashSet<&str>) -> bool {
+    match cell {
+        Cell::Null => true,
+        Cell::Text(id) => ids.contains(id.as_str()),
+        Cell::Integer(_) => false,
+    }
 }
 
 fn valid_row(table: &str, row: &[Cell]) -> bool {

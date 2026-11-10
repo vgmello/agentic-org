@@ -647,7 +647,15 @@ pub(crate) fn changes_after(
     after: Position,
     limit: usize,
 ) -> Result<Vec<OrgChangedData>, OfficeError> {
-    let mut statement = db
+    // The retention check and page must use the same view. An install can replace the
+    // entire log between reads, so a stale subscription needs to close and resnapshot.
+    let tx = db.unchecked_transaction().map_err(OfficeError::storage)?;
+    if replication::native_position(&tx)?.is_some() && !can_resume_from(&tx, after)? {
+        return Err(OfficeError::Invalid(
+            "the organization feed requires a fresh snapshot",
+        ));
+    }
+    let mut statement = tx
         .prepare(
             "SELECT epoch, seq, command_id, body FROM events
              WHERE kind = 'org.changed' AND (epoch, seq) > (?1, ?2)

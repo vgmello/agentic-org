@@ -7,7 +7,7 @@ use org_sync::error::{Refusal, StoreError, SyncError};
 use org_sync::organization::{
     self, OrgAttempt, OrgCheckpoint, OrgEvent, OrgOutput, OrgTxn, ValidatedSnapshot,
 };
-use org_sync_proto::{Codec, Digest, Epoch, OfficeId, OrgId, Position};
+use org_sync_proto::{event_digest_v1, Codec, Digest, Epoch, OfficeId, OrgId, Position};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 
@@ -42,6 +42,11 @@ pub(super) fn create_tables(tx: &Transaction<'_>) -> rusqlite::Result<()> {
              previous BLOB NOT NULL CHECK (length(previous) = 32),
              codec TEXT NOT NULL, codec_version INTEGER NOT NULL, payload BLOB NOT NULL,
              PRIMARY KEY (epoch, seq)
+         ) STRICT;
+         CREATE TABLE org_replica_base (
+             singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+             epoch INTEGER NOT NULL CHECK (epoch > 0), seq INTEGER NOT NULL CHECK (seq >= 0),
+             digest BLOB NOT NULL CHECK (length(digest) = 32)
          ) STRICT;",
     )?;
     snapshot::create_table(tx)
@@ -123,6 +128,7 @@ pub(crate) fn bind_replication(
             params![org.as_str(), local.as_str(), hq.as_str(), ca.as_bytes(),
                 int(position.epoch.get())?, int(position.seq)?, digest.as_bytes(), PROTOCOL],
         ).map_err(storage_error)?;
+        store_snapshot_base(db, position, digest)?;
         Ok(())
     })
 }
@@ -286,7 +292,7 @@ pub(super) fn publish_command(
     changes: Vec<OrgChange>,
     answer: Answer,
 ) -> Result<org_proto::Position, OfficeError> {
-    let payload = serde_json::to_vec(&NativeEvent {
+    let record = NativeEvent {
         command_id: command_id.to_owned(),
         at,
         changes,
@@ -294,20 +300,74 @@ pub(super) fn publish_command(
             params_hash: answer.params_hash,
             refusal: answer.refusal,
         }),
-    })
-    .map_err(OfficeError::storage)?;
+    };
+    let payload = serde_json::to_vec(&record).map_err(OfficeError::storage)?;
     let codec = Codec::new(CODEC, 1).map_err(OfficeError::storage)?;
-    let published = organization::append_hq(&mut OrganizationTxn(db), codec, payload.into())
-        .map_err(OfficeError::storage)?;
-    match published {
-        OrgOutput::Published(event) => Ok(org_proto::Position {
-            epoch: event.position.epoch.get(),
-            seq: event.position.seq,
-        }),
-        _ => Err(OfficeError::storage(SyncError::from(
-            Refusal::InvariantFailure,
-        ))),
+    let position = if payload.len() > organization::MAX_PAYLOAD_BYTES {
+        publish_snapshot_checkpoint(db, record, &codec, &payload).map_err(OfficeError::storage)?
+    } else {
+        match organization::append_hq(&mut OrganizationTxn(db), codec, payload.into())
+            .map_err(OfficeError::storage)?
+        {
+            OrgOutput::Published(event) => event.position,
+            _ => {
+                return Err(OfficeError::storage(SyncError::from(
+                    Refusal::InvariantFailure,
+                )))
+            }
+        }
+    };
+    Ok(org_proto::Position {
+        epoch: position.epoch.get(),
+        seq: position.seq,
+    })
+}
+
+fn publish_snapshot_checkpoint(
+    db: &Connection,
+    record: NativeEvent,
+    codec: &Codec,
+    payload: &[u8],
+) -> Result<Position, SyncError> {
+    let mut txn = OrganizationTxn(db);
+    let mut head = txn.checkpoint()?;
+    if head.local_office != head.hq_office {
+        return Err(Refusal::NotAuthorized.into());
     }
+    if head.restore_pending {
+        return Err(Refusal::RestorePending.into());
+    }
+    if head.position.epoch != head.highest_epoch || head.protocol_level != PROTOCOL {
+        return Err(Refusal::InvariantFailure.into());
+    }
+    head.position.seq = head
+        .position
+        .seq
+        .checked_add(1)
+        .ok_or(Refusal::InvariantFailure)?;
+    head.digest = event_digest_v1(&head.org_id, head.position, head.digest, codec, payload)
+        .map_err(storage_error)?;
+    // This valid native command cannot fit in an event. Commit it at a new snapshot
+    // boundary so no peer can resume across the omitted delta.
+    record.apply(db, head.position)?;
+    db.execute("DELETE FROM org_replica_events", [])
+        .map_err(storage_error)?;
+    store_snapshot_base(db, head.position, head.digest)?;
+    txn.set_authority(&head)?;
+    Ok(head.position)
+}
+
+fn store_snapshot_base(
+    db: &Connection,
+    position: Position,
+    digest: Digest,
+) -> Result<(), StoreError> {
+    db.execute(
+        "INSERT INTO org_replica_base (singleton, epoch, seq, digest) VALUES (1, ?1, ?2, ?3)
+         ON CONFLICT(singleton) DO UPDATE SET epoch = excluded.epoch, seq = excluded.seq, digest = excluded.digest",
+        (int(position.epoch.get())?, int(position.seq)?, digest.as_bytes()),
+    ).map_err(storage_error)?;
+    Ok(())
 }
 
 impl OrgTxn for OrganizationTxn<'_> {
@@ -368,7 +428,8 @@ impl OrgTxn for OrganizationTxn<'_> {
     fn digest_at(&mut self, position: Position) -> Result<Option<Digest>, StoreError> {
         self.0
             .query_row(
-                "SELECT digest FROM org_replica_events WHERE (epoch, seq) = (?1, ?2)",
+                "SELECT digest FROM org_replica_events WHERE (epoch, seq) = (?1, ?2)
+                 UNION ALL SELECT digest FROM org_replica_base WHERE (epoch, seq) = (?1, ?2)",
                 (int(position.epoch.get())?, int(position.seq)?),
                 |row| row.get(0).map(Digest::from_bytes),
             )
@@ -417,6 +478,7 @@ impl OrgTxn for OrganizationTxn<'_> {
         next: &OrgCheckpoint,
     ) -> Result<(), SyncError> {
         snapshot::install(self.0, staged, next)?;
+        store_snapshot_base(self.0, next.position, next.digest)?;
         self.set_authority(next)?;
         Ok(())
     }
@@ -731,7 +793,7 @@ mod tests {
         let original = office.org_snapshot().unwrap();
         office.org_store().run_sql_for_test(
             "DROP TABLE org_snapshot_stage; DROP TABLE org_replica_events;
-             DROP TABLE org_replica; PRAGMA user_version = 1;",
+             DROP TABLE org_replica_base; DROP TABLE org_replica; PRAGMA user_version = 1;",
         );
         drop(office);
 
@@ -767,6 +829,10 @@ mod tests {
             )
             .unwrap();
         let anchor = hq.replication_checkpoint().unwrap();
+        let transport_key = Key::from_bytes([9; 32]);
+        let older = hq
+            .export_replication_snapshot(&transport_key, MAX_BYTES)
+            .unwrap();
         let first = event(2, anchor.digest, COMMAND, "first");
         let next = first.clone();
         assert_eq!(
@@ -784,7 +850,6 @@ mod tests {
         satellite
             .local_store()
             .run_sql_for_test("INSERT INTO meta VALUES ('outbox', 'pending')");
-        let transport_key = Key::from_bytes([9; 32]);
         assert!(hq.export_replication_snapshot(&key(), MAX_BYTES).is_err());
         let exported = hq
             .export_replication_snapshot(&transport_key, MAX_BYTES)
@@ -824,6 +889,17 @@ mod tests {
                 SnapshotStageMode::Normal,
             )
             .unwrap();
+        assert!(matches!(
+            satellite.stage_replication_snapshot(
+                &Hq,
+                &older.manifest,
+                &transport_key,
+                older.ciphertext.as_slice(),
+                MAX_BYTES,
+                SnapshotStageMode::Normal
+            ),
+            Err(SyncError::Refused(Refusal::Divergence))
+        ));
         drop(satellite);
         let satellite = Office::open(dir.path().join("SAT"), key()).unwrap();
         satellite.org_store().run_sql_for_test(
@@ -859,6 +935,135 @@ mod tests {
                 ..
             }
         ));
+        assert!(satellite.org_changes_after(old.position, 10).is_err());
+        assert!(matches!(
+            organization::apply(&satellite, &Hq, first).unwrap(),
+            OrgOutput::Ack {
+                duplicate: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn snapshot_with_no_owner_or_with_dangling_membership_is_refused() {
+        const MAX_BYTES: u64 = 1024 * 1024;
+        let dir = TempDir::new().unwrap();
+        let satellite = new_office(&dir, "SAT");
+        satellite
+            .bind_replication_satellite(
+                OfficeId::new("HQ").unwrap(),
+                Digest::ZERO,
+                Epoch::new(1).unwrap(),
+                Digest::ZERO,
+            )
+            .unwrap();
+        let hq = new_office(&dir, "HQ");
+        hq.bind_replication_hq(Digest::ZERO, MAX_BYTES).unwrap();
+        let transport_key = Key::from_bytes([8; 32]);
+        hq.org_store().run_sql_for_test("INSERT INTO memberships (id, team_id, member_id, body)
+            VALUES ('m', 'missing-team', 'missing-member',
+                    '{\"id\":\"m\",\"team_id\":\"missing-team\",\"member_id\":\"missing-member\",\"version\":1}')");
+        let stage = || {
+            let export = hq
+                .export_replication_snapshot(&transport_key, MAX_BYTES)
+                .unwrap();
+            satellite.stage_replication_snapshot(
+                &Hq,
+                &export.manifest,
+                &transport_key,
+                export.ciphertext.as_slice(),
+                MAX_BYTES,
+                SnapshotStageMode::Normal,
+            )
+        };
+        assert!(matches!(
+            stage(),
+            Err(SyncError::Refused(Refusal::IntegrityFailure))
+        ));
+        hq.org_store()
+            .run_sql_for_test("DELETE FROM memberships; DELETE FROM members");
+        assert!(matches!(
+            stage(),
+            Err(SyncError::Refused(Refusal::IntegrityFailure))
+        ));
+    }
+
+    #[test]
+    fn oversized_native_change_commits_and_requires_a_federation_snapshot() {
+        use crate::rules::OrgCommand;
+        use org_proto::org::{Member, MemberKind, MemberRemoveParams, TeamCreateParams};
+        const MAX_BYTES: u64 = 8 * 1024 * 1024;
+        let dir = TempDir::new().unwrap();
+        let hq = new_office(&dir, "HQ");
+        let manager = "00000000000000000000099999";
+        hq.org_store()
+            .write(move |db| {
+                let mut changes = Vec::new();
+                for index in 0..=1150 {
+                    let member = Member {
+                        id: if index == 0 {
+                            manager.to_owned()
+                        } else {
+                            format!("{index:026}")
+                        },
+                        kind: MemberKind::Person,
+                        name: format!("Person {index}"),
+                        contact: Some("😀".repeat(org_proto::org::AGENT_TEXT_MAX_CHARS)),
+                        owner: false,
+                        office_id: None,
+                        agent: None,
+                        reports_to_member_id: (index != 0).then(|| manager.to_owned()),
+                        created_at: None,
+                        version: 1,
+                    };
+                    changes.push(OrgChange::MemberUpserted { member });
+                }
+                apply_changes(db, &changes)?;
+                Ok(((), None))
+            })
+            .unwrap();
+        hq.bind_replication_hq(Digest::ZERO, MAX_BYTES).unwrap();
+        let before = hq.replication_checkpoint().unwrap();
+        let command = OrgCommand::MemberRemove(MemberRemoveParams {
+            command_id: ulid::generate().unwrap(),
+            member_id: manager.to_owned(),
+            expected_version: 1,
+        });
+        let answer = hq.submit_org(command.clone()).unwrap().unwrap();
+        assert_eq!(answer.position.unwrap().seq, before.position.seq + 1);
+        assert_eq!(hq.submit_org(command).unwrap().unwrap(), answer);
+        let after = hq.replication_checkpoint().unwrap();
+        assert_eq!(after.position.seq, before.position.seq + 1);
+        assert!(hq
+            .replication_events_after(before.position, before.digest, 8)
+            .unwrap()
+            .is_none());
+        assert!(hq
+            .replication_events_after(after.position, after.digest, 8)
+            .unwrap()
+            .unwrap()
+            .is_empty());
+        let state = hq.org_snapshot().unwrap();
+        assert!(state
+            .members
+            .iter()
+            .all(|member| member.id != manager && member.reports_to_member_id.is_none()));
+        hq.submit_org(OrgCommand::TeamCreate(TeamCreateParams {
+            command_id: ulid::generate().unwrap(),
+            team_id: "after".into(),
+            name: "After".into(),
+            owner_team_id: None,
+        }))
+        .unwrap()
+        .unwrap();
+        let resumed = hq
+            .replication_events_after(after.position, after.digest, 8)
+            .unwrap()
+            .unwrap();
+        assert_eq!(resumed.len(), 1);
+        assert_eq!(resumed[0].previous, after.digest);
+        assert_eq!(resumed[0].position.seq, after.position.seq + 1);
     }
 
     #[test]
