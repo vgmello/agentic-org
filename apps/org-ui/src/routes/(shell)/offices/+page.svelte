@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { createProbe } from '$lib/offices/probe';
 	import { invalidate } from '$app/navigation';
 	import Plus from '@lucide/svelte/icons/plus';
@@ -100,8 +100,21 @@
 		if (next === 'up' && document.activeElement?.matches('[data-testid=retry-office]')) rowButton(here.id)?.focus();
 	});
 	const rowButton = (officeId: string) => document.querySelector<HTMLElement>(`[data-office="${officeId}"] button[aria-haspopup]`);
-// Refresh the displayed countdown every 10 s, and sample the clock when a status changes.
-let countdownTick = $state(0);
+// A new deadline gets an immediate sample. Repeated reads of the same deadline don't advance the clock.
+type DeadlineSample = { deadline: string; observedAt: number };
+let deadlineSamples = $state.raw(new Map<string, DeadlineSample>());
+let countdownClock = $state(Date.now());
+$effect(() => {
+	const previous = untrack(() => deadlineSamples);
+	const next = new Map<string, DeadlineSample>();
+	const observedAt = Date.now();
+	for (const { id, status, next_restart_at: deadline } of current) {
+		if (status !== 'offline' || !deadline) continue;
+		const sample = previous.get(id);
+		next.set(id, sample?.deadline === deadline ? sample : { deadline, observedAt });
+	}
+	deadlineSamples = next;
+});
 	onMount(() => {
 		// The host says when an office's status changes: show it now instead of at the next check.
 		let stopListening: (() => void) | undefined;
@@ -123,7 +136,7 @@ let countdownTick = $state(0);
 			});
 		void probe.run('explicit');
 		const again = setInterval(() => void probe.run('background'), 30_000);
-	const tick = setInterval(() => countdownTick++, 10_000);
+	const tick = setInterval(() => (countdownClock = Date.now()), 10_000);
 		return () => (clearInterval(again), clearInterval(tick), (leaving = true), stopListening?.());
 	});
 	// Why a stopped office stopped: only for an office whose status is shown as reported by the host.
@@ -135,8 +148,12 @@ let countdownTick = $state(0);
 	const whyOf = (officeId: string) => {
 		const shown = statusOf(officeId);
 		const office = current.find((o) => o.id === officeId);
-	void countdownTick;
-	return office && (shown === 'offline' || shown === 'unavailable') ? whyStopped(office, new Date()) : undefined;
+	if (!office || (shown !== 'offline' && shown !== 'unavailable')) return undefined;
+	const sample = deadlineSamples.get(officeId);
+	const clock = sample && sample.deadline === office.next_restart_at
+		? Math.max(countdownClock, sample.observedAt)
+		: countdownClock;
+	return whyStopped(office, new Date(clock));
 	};
 	// Another organization's office is another thing to verify: don't carry the last answer over.
 	let lastOffice: string | undefined;

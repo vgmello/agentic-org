@@ -152,7 +152,7 @@
 				<dt class="text-gray-400">Role</dt>
 				<dd class="text-white">{roleInfo(office).label}</dd>
 				<dt class="text-gray-400">Where</dt>
-				<dd class="text-white">{secondaryText(office) + (here ? " (you're here)" : '')}</dd>
+				<dd class="min-w-0 text-white [overflow-wrap:anywhere]">{secondaryText(office) + (here ? " (you're here)" : '')}</dd>
 				<dt class="text-gray-400">Status</dt>
 				<dd><OfficeStatusBadge {status} /></dd>
 				{#if why}

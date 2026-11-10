@@ -332,8 +332,9 @@ test('OFC-11 / BUG-24: an unsupported release gives local repair steps for the s
 	const row = rows(page).first();
 	await expect(row).toContainText('Online');
 	await page.setViewportSize({ width: 320, height: 700 });
-	await pushOffice(page, { host: 'hq-machine', status: 'unavailable', status_reason: 'unsupported_version' });
-	const reason = "The release components on hq-machine don't match. Run diagnostics and repair the selected instance there.";
+	const host = 'northwindregionalagentservicesproductionheadquarterscluster.example';
+	await pushOffice(page, { host, status: 'unavailable', status_reason: 'unsupported_version' });
+	const reason = `The release components on ${host} don't match. Run diagnostics and repair the selected instance there.`;
 	await expect(row).toContainText(reason);
 	const opener = row.getByRole('button');
 	expect((await opener.boundingBox())?.width).toBeGreaterThanOrEqual(200);
@@ -354,10 +355,10 @@ test('OFC-11 / BUG-24: an unsupported release gives local repair steps for the s
 	await expect(hide).toBeFocused();
 	await expect(hide).toHaveAttribute('aria-expanded', 'true');
 	const instructions = sheet.locator(`[id="${id}"]`);
-	await expect(instructions.getByText('On hq-machine, run:', { exact: true })).toBeVisible();
+	await expect(instructions.getByText(`On ${host}, run:`, { exact: true })).toBeVisible();
 	await expect(instructions.locator('pre code')).toHaveText('agentic-org doctor');
 	await expect(instructions).toContainText('It checks the Agentic Org instance on that machine and says what to repair. Follow its steps there. This page updates on its own when the office is back.');
-	await expect(instructions).toContainText('If hq-machine runs more than one instance, add --name <instance>.');
+	await expect(instructions).toContainText(`If ${host} runs more than one instance, add --name <instance>.`);
 	await expect(instructions.locator('p code')).toHaveText('--name <instance>');
 	expect(await sheet.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
 	await shot(page, 'office-local-cli-repair');
@@ -410,10 +411,17 @@ test('OFC-11 / BUG-26: a new restart countdown uses the time of the status push'
 	await page.clock.runFor(10_000); // Establish the existing countdown clock's last sample.
 	const current = (await page.evaluate(() => Date.now())) + 4_000;
 	await page.clock.setSystemTime(new Date(current)); // A push arrives before the next timer tick.
-	await pushOffice(page, { status: 'offline', status_reason: 'crashed', next_restart_at: new Date(current + 45_000).toISOString() });
+	const pending = { status: 'offline', status_reason: 'crashed', next_restart_at: new Date(current + 45_000).toISOString() } as const;
+	await pushOffice(page, pending);
 	await expect(row).toContainText('Stopped');
 	await shot(page, 'office-countdown-new-push', { settle: false });
 	await expect(row).toContainText('Restarting in 45 s');
+	await expect(row.getByRole('button')).toHaveAccessibleName(/restarting shortly/);
+	await page.clock.setSystemTime(new Date(current + 2_000));
+	await pushOffice(page, pending); // The same deadline is reported again before a tick.
+	await expect(row).toContainText('Restarting in 45 s');
+	await page.clock.runFor(10_000);
+	await expect(row).toContainText(/Restarting in (?:3\d|4[0-3]) s/);
 	await expect(row.getByRole('button')).toHaveAccessibleName(/restarting shortly/);
 });
 
