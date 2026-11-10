@@ -357,6 +357,7 @@ fn servers_get_only_the_allowed_environment() {
         "TMPDIR",
         "LANG",
         "ORG_OFFICE_HOME",
+        "ORG_OFFICE_RUNTIME_DIR",
     ];
     let runs = home.env_names(A);
     assert!(!runs.is_empty());

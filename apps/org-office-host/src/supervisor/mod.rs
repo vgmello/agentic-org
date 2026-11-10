@@ -53,6 +53,7 @@ pub(crate) use state::{OfficeState, StatusObserver};
 pub(crate) struct SupervisorConfig {
     pub(crate) program: PathBuf,
     pub(crate) home: PathBuf,
+    pub(crate) runtime_dir: Option<PathBuf>,
     pub(crate) logs_dir: PathBuf,
     pub(crate) log_max_bytes: u64,
     pub(crate) timings: Timings,
@@ -201,10 +202,15 @@ impl Drop for Registration<'_> {
 }
 
 impl Supervisor {
+    pub(crate) fn socket_path(&self, office_id: &str) -> Option<PathBuf> {
+        self.spawner.socket_path(office_id)
+    }
+
     pub(crate) fn new(config: SupervisorConfig) -> Self {
         let spawner = Spawner {
             program: config.program.clone(),
             home: config.home.clone(),
+            runtime_dir: config.runtime_dir.clone(),
             check: Arc::clone(&config.server_check),
         };
         Self {
@@ -698,6 +704,7 @@ mod tests {
         Supervisor::new(SupervisorConfig {
             program,
             home: dir.to_path_buf(),
+            runtime_dir: None,
             logs_dir: dir.join("logs"),
             log_max_bytes: 1024,
             timings,

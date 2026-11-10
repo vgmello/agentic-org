@@ -69,7 +69,9 @@ use org_office_launch::{
     OFFICE_LOCK_WAIT,
 };
 use org_proto::frame;
-use org_proto::location::{office_socket_path, OFFICE_HOME_ENV};
+use org_proto::location::{
+    office_socket_in, office_socket_path, OFFICE_HOME_ENV, OFFICE_RUNTIME_DIR_ENV,
+};
 use org_proto::{
     ApiError, AppToken, DbKey, ErrorCode, Hello, HelloResult, OfficeHello, OfficeInfo,
     OfficeStatus, Request, Response,
@@ -246,7 +248,11 @@ fn main() {
         }
     };
 
-    let socket = office_socket_path(&home, &socket_id).expect("a plain id");
+    let socket = match std::env::var_os(OFFICE_RUNTIME_DIR_ENV) {
+        Some(runtime) => office_socket_in(Path::new(&runtime), &socket_id),
+        None => office_socket_path(&home, &socket_id),
+    }
+    .expect("a plain id");
     let listener = bind(&socket);
     let served = office.clone();
     thread::spawn(move || serve(&listener, &served));

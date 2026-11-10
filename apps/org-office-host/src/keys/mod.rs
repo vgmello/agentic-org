@@ -135,17 +135,26 @@ pub(crate) enum StoreError {
 pub(crate) fn store_for(
     dev_key_dir: Option<&Path>,
     home: &Path,
+    instance_id: Option<&str>,
     own_signing: impl FnOnce() -> Option<Signing>,
 ) -> Result<Arc<dyn KeyStore>, StoreError> {
     #[cfg(debug_assertions)]
     {
         let _ = own_signing;
-        dev_store(dev_key_dir, home)
+        let scoped = dev_key_dir.map(|dir| match instance_id {
+            Some(id) => dir.join(id),
+            None => dir.to_owned(),
+        });
+        dev_store(scoped.as_deref(), home)
     }
     #[cfg(not(debug_assertions))]
     {
         let _ = (dev_key_dir, home);
-        release_store(option_env!("ORG_HOST_KEYCHAIN_GROUP"), own_signing)
+        release_store_scoped(
+            option_env!("ORG_HOST_KEYCHAIN_GROUP"),
+            instance_id,
+            own_signing,
+        )
     }
 }
 
@@ -178,9 +187,18 @@ fn dev_store(dir: Option<&Path>, home: &Path) -> Result<Arc<dyn KeyStore>, Store
 /// `keychain-access-groups` and no hardened runtime, so it would always refuse. The decision,
 /// [`self_trusted`], is tested on synthetic signing information; the reading is
 /// `code_signing`'s, tested the same way. Check it live on the first signed build.
-#[cfg_attr(debug_assertions, allow(dead_code))]
+#[cfg(test)]
 fn release_store(
     group: Option<&str>,
+    own_signing: impl FnOnce() -> Option<Signing>,
+) -> Result<Arc<dyn KeyStore>, StoreError> {
+    release_store_scoped(group, None, own_signing)
+}
+
+#[cfg_attr(debug_assertions, allow(dead_code))]
+fn release_store_scoped(
+    group: Option<&str>,
+    instance_id: Option<&str>,
     own_signing: impl FnOnce() -> Option<Signing>,
 ) -> Result<Arc<dyn KeyStore>, StoreError> {
     let group = match group {
@@ -190,10 +208,14 @@ fn release_store(
     self_trusted(group, own_signing().as_ref())?;
     #[cfg(target_os = "macos")]
     {
-        Ok(Arc::new(keychain::Keychain::new(group)))
+        Ok(Arc::new(match instance_id {
+            Some(id) => keychain::Keychain::scoped(group, id),
+            None => keychain::Keychain::new(group),
+        }))
     }
     #[cfg(not(target_os = "macos"))]
     {
+        let _ = instance_id;
         Err(StoreError::NoKeychainGroup)
     }
 }
@@ -230,6 +252,48 @@ fn group_entitled(group: &str, entitled: Option<&[String]>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn instance_key_namespaces_and_orphan_sweeps_are_independent() {
+        use std::time::{Duration, UNIX_EPOCH};
+        let fixture = tempfile::tempdir().unwrap();
+        let home_a = fixture.path().join("a");
+        let home_b = fixture.path().join("b");
+        std::fs::create_dir(&home_a).unwrap();
+        std::fs::create_dir(&home_b).unwrap();
+        let key_base = fixture.path().join("keys");
+        let a = store_for(Some(&key_base), &home_a, Some("INSTANCEA"), || {
+            panic!("debug never signs")
+        })
+        .unwrap();
+        let b = store_for(Some(&key_base), &home_b, Some("INSTANCEB"), || {
+            panic!("debug never signs")
+        })
+        .unwrap();
+        let office = "SAMEOFFICE";
+        a.create(office, &DbKey::from_bytes([1; 32])).unwrap();
+        b.create(office, &DbKey::from_bytes([2; 32])).unwrap();
+        assert_eq!(a.list().unwrap(), vec![office]);
+        assert_eq!(b.list().unwrap(), vec![office]);
+        let before = b.load(office).unwrap().unwrap();
+        let now = UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+        assert!(sweep_orphans(&*a, &home_a, |ids| Ok(ids.to_vec()), now).is_empty());
+        assert_eq!(
+            sweep_orphans(
+                &*a,
+                &home_a,
+                |ids| Ok(ids.to_vec()),
+                now + Duration::from_secs(8 * 86400)
+            ),
+            vec![office]
+        );
+        assert!(a.load(office).unwrap().is_none());
+        assert_eq!(b.load(office).unwrap().unwrap(), before);
+        assert!(!home_b.join("orphan-keys.json").exists());
+        b.delete(office).unwrap();
+        assert!(b.list().unwrap().is_empty());
+    }
 
     #[test]
     fn errors_never_show_more_than_codes() {

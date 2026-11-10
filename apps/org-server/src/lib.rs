@@ -34,7 +34,9 @@ use org_office_launch::{
     office_dir, read_first_host_message, write_server_event, FailCode, FirstLine, HostMessage,
     OfficeFile, ServerEvent, CREATE_FLAG, DISCARD_FLAG, OFFICE_FLAG,
 };
-use org_proto::location::{check_socket_path, default_office_home, office_socket_path};
+use org_proto::location::{
+    check_socket_path, default_office_home, office_socket_in, OFFICE_RUNTIME_DIR_ENV,
+};
 use org_proto::{AppToken, OfficeRole};
 
 use fdswap::ControlPipe;
@@ -75,10 +77,18 @@ pub fn run(args: &[String], mut control: ControlPipe) -> i32 {
     let Some(home) = default_office_home() else {
         return fail(&mut control, FailCode::InvalidRequest, "no office home");
     };
+    let runtime = match runtime_dir_from(
+        &home,
+        std::env::var_os(OFFICE_RUNTIME_DIR_ENV),
+        cfg!(debug_assertions),
+    ) {
+        Ok(runtime) => runtime,
+        Err(message) => return fail(&mut control, FailCode::InvalidRequest, message),
+    };
     match mode {
         Mode::Discard(id) => discard(control, &home, &id),
-        Mode::Create => create_and_serve(control, &home),
-        Mode::Serve(id) => open_and_serve(control, &home, &id),
+        Mode::Create => create_and_serve(control, &home, &runtime),
+        Mode::Serve(id) => open_and_serve(control, &home, &runtime, &id),
     }
 }
 
@@ -120,7 +130,7 @@ fn discard(mut control: ControlPipe, home: &Path, id: &str) -> i32 {
     }
 }
 
-fn create_and_serve(mut control: ControlPipe, home: &Path) -> i32 {
+fn create_and_serve(mut control: ControlPipe, home: &Path, runtime: &Path) -> i32 {
     let (message, from_host) = match first_line(&mut control, FirstLine::Create) {
         Ok(first) => first,
         Err(code) => return code,
@@ -148,7 +158,7 @@ fn create_and_serve(mut control: ControlPipe, home: &Path) -> i32 {
     };
     // The socket path depends only on the home and the id: refuse a path that is too long
     // BEFORE anything is stored, so a create never makes an office that can never start.
-    if let Err(message) = socket_path(home, &create.office_id) {
+    if let Err(message) = socket_path(runtime, &create.office_id) {
         return fail(&mut control, FailCode::InvalidRequest, message);
     }
     // The contract: names travel trimmed, and a name that isn't is refused, not quietly trimmed
@@ -181,10 +191,10 @@ fn create_and_serve(mut control: ControlPipe, home: &Path) -> i32 {
     );
     // `office.json` is in place and durable: from here the office is stored, whatever happens.
     emit(&mut control, &ServerEvent::Created { office: file });
-    serve_office(control, from_host, home, office, create.app_token)
+    serve_office(control, from_host, runtime, office, create.app_token)
 }
 
-fn open_and_serve(mut control: ControlPipe, home: &Path, id: &str) -> i32 {
+fn open_and_serve(mut control: ControlPipe, home: &Path, runtime: &Path, id: &str) -> i32 {
     let (message, from_host) = match first_line(&mut control, FirstLine::Start) {
         Ok(first) => first,
         Err(code) => return code,
@@ -203,14 +213,14 @@ fn open_and_serve(mut control: ControlPipe, home: &Path, id: &str) -> i32 {
             "not a plain office id",
         );
     };
-    if let Err(message) = socket_path(home, id) {
+    if let Err(message) = socket_path(runtime, id) {
         return fail(&mut control, FailCode::InvalidRequest, message);
     }
     let office = match Office::open(folder, Key::from_db_key(start.db_key)) {
         Ok(office) => office,
         Err(e) => return fail_with(&mut control, &e),
     };
-    serve_office(control, from_host, home, office, start.app_token)
+    serve_office(control, from_host, runtime, office, start.app_token)
 }
 
 /// Reads the first line from the host. `Err(code)` is the exit code to return: 0 when the host
@@ -238,13 +248,13 @@ fn first_line(control: &mut ControlPipe, expected: FirstLine) -> Result<(HostMes
 fn serve_office(
     mut control: ControlPipe,
     from_host: File,
-    home: &Path,
+    runtime: &Path,
     office: Office,
     app_token: AppToken,
 ) -> i32 {
     let info = office.info().clone();
     let office = Arc::new(office);
-    let socket = match socket_path(home, &info.office_id) {
+    let socket = match socket_path(runtime, &info.office_id) {
         Ok(socket) => socket,
         Err(message) => return fail(&mut control, FailCode::InvalidRequest, message),
     };
@@ -443,9 +453,23 @@ impl follow::OrgFeed for OfficeFeed {
     }
 }
 
+/// Launch-v2 runtime comes from the host's clean environment. No invalid override falls back.
+fn runtime_dir_from(
+    home: &Path,
+    value: Option<std::ffi::OsString>,
+    debug: bool,
+) -> Result<std::path::PathBuf, &'static str> {
+    match value {
+        Some(value) if Path::new(&value).is_absolute() => Ok(value.into()),
+        Some(_) => Err("office runtime directory must be absolute"),
+        None if debug => Ok(home.join("run")),
+        None => Err("release worker requires an explicit office runtime directory"),
+    }
+}
+
 /// The office's socket path, or why it cannot be one.
-fn socket_path(home: &Path, office_id: &str) -> Result<std::path::PathBuf, &'static str> {
-    let socket = office_socket_path(home, office_id).ok_or("not a plain office id")?;
+fn socket_path(runtime: &Path, office_id: &str) -> Result<std::path::PathBuf, &'static str> {
+    let socket = office_socket_in(runtime, office_id).ok_or("not a plain office id")?;
     check_socket_path(&socket).map_err(|_| "the socket path is too long")?;
     Ok(socket)
 }
@@ -499,6 +523,26 @@ mod tests {
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[test]
+    fn explicit_runtime_is_required_in_release_and_invalid_values_never_fall_back() {
+        let home = Path::new("/very/long/data/root");
+        assert!(runtime_dir_from(home, None, false).is_err());
+        assert_eq!(
+            runtime_dir_from(home, None, true).unwrap(),
+            home.join("run")
+        );
+        for debug in [false, true] {
+            for invalid in ["", "relative"] {
+                assert!(runtime_dir_from(home, Some(invalid.into()), debug).is_err());
+            }
+            let runtime = runtime_dir_from(home, Some("/short/runtime".into()), debug).unwrap();
+            assert_eq!(
+                socket_path(&runtime, "OFFICE1").unwrap(),
+                Path::new("/short/runtime/OFFICE1.sock")
+            );
+        }
     }
 
     #[test]

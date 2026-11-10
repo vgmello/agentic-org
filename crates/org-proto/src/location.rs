@@ -20,6 +20,9 @@ use std::path::{Path, PathBuf};
 /// The environment variable that overrides the office home.
 pub const OFFICE_HOME_ENV: &str = "ORG_OFFICE_HOME";
 
+/// Host-selected private socket directory, independent of the data root (launch v2).
+pub const OFFICE_RUNTIME_DIR_ENV: &str = "ORG_OFFICE_RUNTIME_DIR";
+
 /// The host's socket file name inside the office home.
 pub const HOST_SOCKET_FILE_NAME: &str = "host.sock";
 
@@ -49,12 +52,18 @@ pub fn host_socket_path(office_home: &Path) -> PathBuf {
 /// passes, not just a ULID's 26. Office ids arrive over the wire, so this never lets one point
 /// outside `run/`.
 pub fn office_socket_path(office_home: &Path, office_id: &str) -> Option<PathBuf> {
+    office_socket_in(&office_home.join("run"), office_id)
+}
+
+/// An office socket in an explicitly selected runtime directory. This validates the
+/// opaque ID; the caller owns runtime-directory authorization and lifetime.
+pub fn office_socket_in(runtime_dir: &Path, office_id: &str) -> Option<PathBuf> {
     if !is_plain_office_id(office_id) {
         return None;
     }
     let start = office_id.len().saturating_sub(OFFICE_SOCKET_HANDLE_CHARS);
     let handle = &office_id[start..];
-    Some(office_home.join("run").join(format!("{handle}.sock")))
+    Some(runtime_dir.join(format!("{handle}.sock")))
 }
 
 /// Whether an office id is plain: 1..=[`MAX_OFFICE_ID_CHARS`] ASCII letters and digits. It
