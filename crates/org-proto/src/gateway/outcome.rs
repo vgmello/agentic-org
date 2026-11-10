@@ -211,6 +211,17 @@ impl<'de> Deserialize<'de> for GatewayError {
 }
 
 impl GatewayError {
+    /// Cancellation keeps the original create ID; in-progress is never a successful result.
+    pub fn create_in_progress(operation_id: OperationId) -> Self {
+        let mut error = Self::new(
+            GatewayErrorCode::Conflict,
+            "The create is still in progress; try again.",
+        );
+        error.operation_id = Some(operation_id);
+        error.state = Some(super::CancelState::InProgress);
+        error
+    }
+
     pub fn new(code: GatewayErrorCode, message: impl Into<String>) -> Self {
         Self {
             code,
@@ -325,6 +336,17 @@ impl<T> OperationLookup<T> {
 
 impl<T: Serialize> Serialize for OperationLookup<T> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if matches!(
+            self,
+            Self::Outcome {
+                outcome: MutationOutcome::Unknown { .. },
+                ..
+            }
+        ) {
+            return Err(<S::Error as serde::ser::Error>::custom(
+                "unknown is not a stored lookup outcome",
+            ));
+        }
         // Stream the typed result directly, preserving its bytes/field order exactly as
         // in the mutation response. A Value intermediary would reorder result fields.
         let mut wire = serializer.serialize_map(None)?;
