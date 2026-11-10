@@ -38,6 +38,7 @@ ada), §6.2 and §6.4, and its Q8 (accepted by ada):
   waiting end also departs from `standalone-server.md` §6's protected outputs
   (A104).
 Also new: RCV-30 (recovery status refuses a non-admin, with its own copy).
+SIGN-11 and SIGN-13 are rewritten (except after an unlink, SIGN-43).
 
 - The account commands follow X-02 §6.2 *(rev 5)*: `agentic-org account add`
   is now `account create`, which an instance admin runs after signing in, and
@@ -1304,9 +1305,9 @@ rules, which are distinct from uninstalling software on a machine.
 - SIGN-8 · A correct sign-in opens the page the user was trying to open, if it is a page of this HQ. A return target outside this HQ is ignored, and the last organization or the organization list opens (OPEN-1).
 - SIGN-9 · *(rev 5)* After sign-in, an account with no organizations sees "No organizations yet." with Create organization if it is an instance admin, and "This account doesn't own any organizations on this HQ. Ask an instance admin of this HQ to link it to one." with Sign out if not.
 - SIGN-10 · When a session ends while a page is open, the next refused request or stream opens the "Sign in again" dialog over that page; the page doesn't navigate away.
-- SIGN-11 · Text typed into a page and not saved is still in its fields after the user signs in again from the dialog, and after Not now.
+- SIGN-11 · *(rev 5)* Text typed into a page and not saved is still in its fields after the user signs in again from the dialog, and after Not now, except after an unlink from that page's organization (SIGN-43).
 - SIGN-12 · A save refused because the session ended is marked "Not saved", and nothing is resent after signing in until the user saves again.
-- SIGN-13 · After signing in again from the dialog, the user is on the same page with focus where it was, and live updates resume without a gap (SRV-12).
+- SIGN-13 · *(rev 5)* After signing in again from the dialog, the user is on the same page with focus where it was (except after an unlink, SIGN-43), and live updates resume without a gap (SRV-12).
 - SIGN-14 · With two tabs of the same HQ showing the dialog, signing in in one closes the dialog in the other.
 - SIGN-15 · Not now closes the dialog and shows "You're signed out. Text you haven't saved is still here…" with Sign in; the page sends no changes while signed out.
 - SIGN-16 · Sign in as someone else asks before discarding text that isn't saved, then opens the sign-in page.
