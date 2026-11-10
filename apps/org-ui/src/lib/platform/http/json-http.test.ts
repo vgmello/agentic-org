@@ -90,6 +90,20 @@ describe('same-origin JSON boundary (test paths, no production routes)', () => {
 		}
 	);
 
+	it.each(['/api/v1/test-only?q=hel\nlo', '/api/v1/test-only?q=hel\tlo', '/api/v1/test-only?q=hello world', '/api/v1/test-only?q=café', '/api/v1/test-only#'])(
+		'refuses a noncanonical raw request target before dispatch: %j', async (path) => {
+			const { send, http } = setup();
+			await expect(http({ ...request, path })).rejects.toBeInstanceOf(NotDispatchedError);
+			expect(send).not.toHaveBeenCalled();
+		}
+	);
+	it('preserves explicitly encoded query data without normalization', async () => {
+		const { send, http } = setup();
+		const path = '/api/v1/test-only?q=hello+world&cursor=a%2Fb&name=caf%C3%A9';
+		await http({ path, method: 'GET', proof });
+		expect(String(send.mock.calls[0][0])).toBe(origin + path);
+	});
+
 	it.each(['SECRET\u0100', 'SECRET\r\n'])('refuses unsafe header proof without echoing it: %j', async (unsafeProof) => {
 		const { send, http } = setup();
 		const error = await http({ ...request, proof: unsafeProof }).catch((error: unknown) => error);

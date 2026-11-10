@@ -5,10 +5,9 @@ export type JsonHttpRequest = { path: string; proof: string; signal?: AbortSigna
 	| { method: 'POST'; body: unknown }
 );
 
-function validApiPath(path: string): boolean {
-	if (typeof path !== 'string' || !path.startsWith('/api/v1/')) return false;
+function validApiTarget(path: string): boolean {
+	if (typeof path !== 'string' || !path.startsWith('/api/v1/') || /[\x00-\x20\x7f]/.test(path) || path.includes('#')) return false;
 	const pathname = path.split(/[?#]/, 1)[0];
-	if (/[\x00-\x20\x7f]/.test(pathname)) return false;
 	return pathname.slice(1).split('/').every((segment) => {
 		if (!segment || segment.includes('\\') || /%(?:2f|5c)/i.test(segment)) return false;
 		const dots = segment.replace(/%2e/ig, '.');
@@ -17,8 +16,8 @@ function validApiPath(path: string): boolean {
 }
 
 function confined(path: string, url: URL, origin: string): boolean {
-	// D-GW1: adapters segment-encode IDs, but separators in IDs are bugs, never route syntax.
-	return validApiPath(path) && url.pathname === path.split(/[?#]/, 1)[0] && url.origin === origin &&
+	// D-GW1: callers encode path/query data; URL parsing must preserve the entire request target.
+	return validApiTarget(path) && url.href === origin + path && url.origin === origin &&
 		url.pathname.startsWith('/api/v1/') && !/%(?:2f|5c)/i.test(url.pathname) &&
 		!url.hash && !url.username && !url.password;
 }
