@@ -1,15 +1,140 @@
 //! The single mapping from the runtime port to generic spawn primitives.
-//! Lifecycle instructions are returned explicitly for the later stop/cleanup layer;
+//! Lifecycle instructions are retained explicitly and mapped into generic core types;
 //! preparing a launch does not execute them. This is not a complete session runner.
 
 use std::io;
 use std::path::Path;
+use std::time::Duration;
 
 use org_runtime::{
-    CleanupPath, EnvName, FileLocation, LaunchContext, LaunchPlan, SessionId, Stdio, StopPlan,
+    CleanupPath, EnvName, FileLocation, LaunchContext, LaunchPlan, ProbeContext, ProbePlan,
+    SessionId, Stdio, StopPlan,
 };
 
 use crate::{files, unsupported, Environment, PreparedSpawn, SessionMark, SpawnSpec};
+
+/// Translate the runtime port's exhaustive stop instructions into the generic policy.
+pub fn stop_policy(plan: &StopPlan) -> io::Result<crate::StopPolicy> {
+    let steps = plan
+        .steps
+        .iter()
+        .map(|step| match *step {
+            org_runtime::StopStep::CloseStdin { grace_ms } => crate::StopStep::CloseStdin {
+                grace: Duration::from_millis(grace_ms),
+            },
+            org_runtime::StopStep::Signal {
+                signal,
+                target,
+                grace_ms,
+            } => crate::StopStep::Signal {
+                signal: match signal {
+                    org_runtime::StopSignal::Interrupt => crate::StopSignal::Interrupt,
+                    org_runtime::StopSignal::Terminate => crate::StopSignal::Terminate,
+                },
+                target: match target {
+                    org_runtime::SignalTarget::Leader => crate::SignalTarget::Leader,
+                    org_runtime::SignalTarget::Group => crate::SignalTarget::Group,
+                },
+                grace: Duration::from_millis(grace_ms),
+            },
+        })
+        .collect();
+    crate::StopPolicy::new(steps)
+}
+
+/// Retain validated runtime socket templates while keeping runtime types out of the core.
+pub fn socket_cleanup(paths: &[CleanupPath]) -> io::Result<Vec<crate::SocketCleanup>> {
+    paths
+        .iter()
+        .map(|path| {
+            let relative = path
+                .template()
+                .strip_prefix(path.root().as_str())
+                .and_then(|p| p.strip_prefix('/'))
+                .ok_or_else(|| crate::invalid("socket template outside its allowed root"))?;
+            crate::SocketCleanup::new(path.root().as_str().into(), relative.to_owned())
+        })
+        .collect()
+}
+
+/// Whether the caller closes stdin after initial lines or drives a ProbeSession itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProbeMode {
+    /// Close stdin after the initial lines, collect bounded output and parse it.
+    OneShot,
+    /// Leave stdin open for the caller's sans-I/O ProbeSession.
+    Conversation,
+}
+
+/// A probe's process and instructions. The caller retains all pipe and protocol I/O.
+pub struct RuntimeProbe {
+    /// Record mark, spawn, then record identity with the same callbacks as sessions.
+    pub prepared: PreparedSpawn,
+    /// Initial stdin lines, in order.
+    pub stdin_lines: Vec<org_runtime::Line>,
+    /// Stdin/protocol shape.
+    pub mode: ProbeMode,
+    /// Overall deadline duration, fixed by the caller when the process starts.
+    pub timeout: Duration,
+    /// Fresh empty cwd under the supplied private session temp tree. Owned by the
+    /// prepared process and removed on failed preparation/spawn or cleanup_and_reap.
+    pub cwd: std::path::PathBuf,
+}
+
+/// Prepare a probe without borrowing agent authority or writing a workspace. `temp_root`
+/// must be an existing, real-path own-UID/0700 session temp folder allocated by the caller.
+/// Refuse any ORG_* context instead of silently stripping an accidentally supplied token.
+/// The fresh private cwd protects shared folders from CLIs that write relative dotfiles.
+/// No ProbeSession is called here, and neither stdout nor stderr is consumed.
+pub fn prepare_probe(
+    plan: ProbePlan,
+    ctx: &ProbeContext,
+    environment: Environment,
+    mark: SessionMark,
+    temp_root: &Path,
+    mode: ProbeMode,
+) -> io::Result<RuntimeProbe> {
+    if environment
+        .0
+        .keys()
+        .any(|name| name.as_encoded_bytes().starts_with(b"ORG_"))
+    {
+        return Err(crate::invalid(
+            "probe context must not carry ORG binding or token variables",
+        ));
+    }
+    if plan.program != ctx.runtime_path {
+        return Err(crate::invalid(
+            "probe executable differs from the recorded runtime path",
+        ));
+    }
+    let additions = plan
+        .env_add
+        .into_iter()
+        .map(|(name, value)| (name.as_str().into(), value.into()))
+        .collect::<Vec<_>>();
+    let environment = environment.with_additions(&additions, REVIEWED_ENV_SWITCHES)?;
+    crate::platform::validate()?;
+    let directory = files::PrivateDirectory::new(temp_root)?;
+    let cwd = directory.path().to_owned();
+    let prepared = PreparedSpawn::new(
+        SpawnSpec {
+            program: plan.program,
+            args: plan.args.into_iter().map(Into::into).collect(),
+            cwd: cwd.clone(),
+            environment,
+        },
+        mark,
+    )?
+    .with_cleanup_directory(directory);
+    Ok(RuntimeProbe {
+        prepared,
+        stdin_lines: plan.stdin_lines,
+        mode,
+        timeout: Duration::from_millis(plan.timeout_ms),
+        cwd,
+    })
+}
 
 // Runtime-policy names belong at this mapping boundary, never in generic Environment.
 const REVIEWED_ENV_SWITCHES: &[&str] = &[
@@ -22,7 +147,7 @@ const REVIEWED_ENV_SWITCHES: &[&str] = &[
 pub struct Lifecycle {
     /// Graceful-stop instructions, not executed by preparation or minimal ownership Drop.
     pub stop: StopPlan,
-    /// Socket templates, to be cleaned before reaping by the later lifecycle layer.
+    /// Socket templates, mapped with socket_cleanup and cleaned before reaping.
     pub cleanup_after_exit: Vec<CleanupPath>,
     /// Secret variable names the pump must redact from protocol and stderr output.
     pub secret_env_names: Vec<EnvName>,

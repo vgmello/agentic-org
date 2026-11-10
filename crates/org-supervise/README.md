@@ -4,10 +4,10 @@ Synchronous process primitives with private macOS/GNU-Linux implementations. The
 only dependencies are `libc` and the `org-runtime` contract. The generic API knows
 no office, employee, protocol, storage or adapter implementation.
 
-This first delivery implements piped spawning and generated files. It is not a
-complete agent runner: graceful stop/probes/socket cleanup, orphan discovery and
-PTYs follow in separate deliveries. In particular, do not run real Claude until
-orphan discovery is available: its tools can leave its process group.
+Piped spawning, generated files, owned graceful/fast stopping, socket cleanup and
+probe preparation are implemented. Orphan discovery and PTYs follow in separate
+deliveries. Do not run real Claude until orphan discovery is available: its tools
+can leave its process group.
 
 The required platforms are macOS 13+, Linux kernel 5.10+/glibc 2.34+. Root and
 setuid/setgid executable launches are refused. Missing/restricted process APIs
@@ -39,10 +39,17 @@ Ownership sequence:
    reads them. Its shared stdin is nonblocking; retry `WouldBlock` while draining
    output, and use idempotent `close` to end input.
 5. `try_exit`/`wait_until` observe exit using `WNOWAIT`, preserving PID ownership.
-   A deadline does not reap. Dropping the owner kills its group and reaps only
-   this child. Full graceful lifecycle and detached descendants are not covered
-   by this minimal guard. The integration layer must later complete cleanup
-   before releasing an employee lock or starting a replacement.
+   A deadline does not reap. After protocol close or its deadline, call `stop` on
+   a worker while the pump continues draining. Its `StopPolicy` preserves each
+   step's monotonic grace, injects leader TERM before the first requested signal,
+   then finishes with group KILL. Fast mode uses leader TERM/five seconds/group
+   KILL without protocol or stdin waits.
+6. After natural or forced exit, `cleanup_and_reap` kills the residual group,
+   removes validated sockets and the probe cwd, then reaps only this leader.
+   `StopFailure` and `CleanupFailure` retain partial evidence and the owner for
+   recovery. Keep the run lock and admit no replacement on unresolved cleanup.
+   Dropping the owner is an emergency best-effort group-kill/reap guard. General
+   detached descendant discovery is still required before real harness use.
 
 The embedding process must never reap arbitrary children or configure automatic
 child reaping (`SIGCHLD=SIG_IGN`/`SA_NOCLDWAIT`). Preparation rejects automatic
@@ -71,7 +78,40 @@ replaces planned files without following symlinks. It returns the plan's stop,
 cleanup, redaction and conversation metadata explicitly for the lifecycle layer;
 it does not execute a stop. PTYs and `git_exclude` fail before any file writes.
 `git_exclude` requires the caller-owned repository capability being settled in X-09.
+`runtime::stop_policy` and `runtime::socket_cleanup` translate those retained
+instructions into generic core types. `runtime::prepare_probe` uses the same
+mark/identity persistence callbacks and refuses every ORG_* context value before
+creating files. The caller supplies an existing private session temp root; the
+mapper allocates a fresh empty 0700 cwd inside it and returns initial stdin lines,
+mode and timeout. The caller owns all ProbeSession I/O. The cwd is removed after
+exit before reaping, or by the guard if preparation/spawn/persistence fails.
+Relative dotfiles stay inside that fresh directory.
+
 No changes to `org-runtime` or adoption by the host are part of this delivery.
+
+Socket cleanup walks real paths from `/` using pinned no-follow dirfds. The final
+parent must already be a current-UID directory with mode exactly 0700; nothing
+repairs permissions. It checks the leaf with `fstatat(AT_SYMLINK_NOFOLLOW)` and
+unlinks only current-UID sockets. The private parent narrows the window, not
+atomic: deliberate same-UID replacement is outside v1's threat model (D-B22/D-B33).
+A missing/unsafe parent or unsafe leaf leaves cleanup unresolved and the leader
+unreaped. Missing socket leaves are recorded as absent.
+
+On macOS a zombie-only group can make `killpg` return EPERM: XNU's
+[killpg1](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_sig.c#L1612-L1621)
+filters zombies before deciding whether any member was signalled. EPERM is
+accepted only after WNOWAIT proves the owned leader exited, a complete libproc
+snapshot contains exactly that leader, and ownership is rechecked (D-B34). An
+extra member, unavailable enumeration or lost ownership fails closed. The query
+sizes the buffer first, adds headroom, and refuses a full/truncated result.
+Linux handling is unchanged.
+
+The fresh probe cwd is removed only after its pinned private parent and allocated
+inode identity are verified. It uses the standard library's
+[remove_dir_all](https://doc.rust-lang.org/std/fs/fn.remove_dir_all.html), which
+protects against symlink traversal on supported macOS/Linux systems. Renaming by
+a deliberate same-UID actor is outside v1's threat model. An ownership violation
+leaves the cwd for recovery rather than deleting it while child control is lost.
 
 Directories are never chmodded: `mkdir` does not return an inode handle, so even
 an opened directory may have been substituted after creation. A created-path inode

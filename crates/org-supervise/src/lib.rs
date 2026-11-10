@@ -1,11 +1,11 @@
 //! Synchronous process primitives. No protocol, storage or domain knowledge.
 //!
-//! Slice 1: explicit environment, piped spawning, generated files, identity and ownership.
+//! Explicit environment, piped spawning, generated files, owned stop/cleanup and probes.
 //! The caller persists the mark before spawning and the identity before obtaining stdin.
 //! It owns and drains stdout/stderr throughout the child's life; this crate never reads them.
 //! Exit observation never reaps. Dropping the owner kills its group and reaps only that child.
-//! Full graceful stopping, orphan discovery and PTYs are separate deliveries. In particular,
-//! this slice must not run real harnesses whose tools detach from their process group.
+//! Cleanup/reaping is explicit after exit. Orphan discovery and PTYs are later deliveries.
+//! Real harnesses whose tools detach require that discovery before use.
 //!
 //! All processes in the embedding program must preserve child ownership: never install
 //! SIGCHLD=SIG_IGN/SA_NOCLDWAIT or reap arbitrary children. Preparation checks the former;
@@ -19,15 +19,21 @@
 compile_error!("org-supervise requires macOS or GNU/Linux");
 
 mod child;
+mod cleanup;
 mod environment;
 mod files;
 mod platform;
 pub mod runtime;
 mod spawn;
+mod stop;
 
 pub use child::{ChildIdentity, ChildStdin, OwnedChild, Spawned};
+pub use cleanup::{CleanupFailure, CleanupReport, SocketCleanup};
 pub use environment::{Environment, SearchPath};
 pub use spawn::{PendingChild, PreparedSpawn, RecordedSpawn, SessionMark, SpawnSpec};
+pub use stop::{
+    SignalTarget, StopAction, StopFailure, StopMode, StopPolicy, StopReport, StopSignal, StopStep,
+};
 
 use std::io;
 
