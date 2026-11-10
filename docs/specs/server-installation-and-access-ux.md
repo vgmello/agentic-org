@@ -38,7 +38,7 @@ ada), §6.2 and §6.4, and its Q8 (accepted by ada):
   waiting end also departs from `standalone-server.md` §6's protected outputs
   (A104).
 Also new: RCV-30 (recovery status refuses a non-admin, with its own copy).
-SIGN-8, SIGN-11, SIGN-13 and SIGN-14 are rewritten (except after an unlink, SIGN-43).
+SIGN-8, SIGN-11, SIGN-13, SIGN-14 and SIGN-15 are rewritten (except after an unlink, SIGN-43).
 
 - The account commands follow X-02 §6.2 *(rev 5)*: `agentic-org account add`
   is now `account create`, which an instance admin runs after signing in, and
@@ -78,9 +78,9 @@ SIGN-8, SIGN-11, SIGN-13 and SIGN-14 are rewritten (except after an unlink, SIGN
   SIGN-43).
 
 **Criteria rewritten (same ID):** SRV-5, SRV-26, SIGN-2, SIGN-8, SIGN-9,
-SIGN-11, SIGN-13, SIGN-14, SIGN-25, SIGN-26, SIGN-30, RCV-2, RCV-4, RCV-6,
+SIGN-11, SIGN-13, SIGN-14, SIGN-15, SIGN-25, SIGN-26, SIGN-30, RCV-2, RCV-4, RCV-6,
 RCV-8, RCV-9, RCV-10, RCV-13, RCV-15,
-RCV-16, RCV-23 *(rev 5)*. **New:** SIGN-32 to SIGN-43, RCV-18 to RCV-29. Open questions
+RCV-16, RCV-23 *(rev 5)*. **New:** SIGN-32 to SIGN-43, RCV-18 to RCV-30. Open questions
 A99, A100, A103 and A104; A80, A85 and A86 resolved, then A99, A100 and A103
 resolved by Rowan's answers; A81, A88 and A94 updated.
 
@@ -787,8 +787,11 @@ data, a private window) counts as an ended session.
   - The dialog warns about this beforehand only when HQ says the session ended
     because the account was unlinked from this page's organization (A84). Its
     first line then reads "You no longer own Side Project, so you were signed
-    out." and its second "Signing in opens your list of organizations. Text you
-    haven't saved on this page will be lost: choose Not now to copy it first."
+    out." and its second "Signing in, here or in another tab, opens your list of
+    organizations. Text you haven't saved on this page will be lost: choose Not
+    now to copy it first." After Not now, the bar reads "You're signed out. Text
+    you haven't saved here is lost when you sign in, here or in another tab:
+    copy it first." *(review of 18d3f56)*
   - Without that reason, the dialog can't know, so it doesn't warn: it shows its
     usual copy.
 - **A revoked account can't sign in again.** The dialog shows SIGN-4's message,
@@ -801,8 +804,9 @@ data, a private window) counts as an ended session.
   closes the dialog in the others, because they share one session. A tab on a
   page of an organization the account no longer owns goes to the organization
   list too, with "You no longer own <organization>." above it, and the text that
-  wasn't saved there is gone. Tabs on organizations it still owns stay on their
-  page, with their text.
+  wasn't saved there is gone, even in a tab that chose Not now *(review of
+  18d3f56)*. Tabs on organizations it still owns stay on their page, with their
+  text.
 - **Not now** (or Esc) closes the dialog. The page stays visible but changes
   nothing, with a bar at the top: "You're signed out. Text you haven't saved is
   still here: copy it, or sign in to save it." **Sign in** reopens the dialog.
@@ -1321,11 +1325,11 @@ rules, which are distinct from uninstalling software on a machine.
 - SIGN-8 · *(rev 5)* A correct sign-in opens the page the user was trying to open, if it is a page of this HQ that the account can open. A return target outside this HQ is ignored, and the last organization or the organization list opens (OPEN-1); a page of an organization the account can't open is ignored too, and the organization list opens.
 - SIGN-9 · *(rev 5)* After sign-in, an account with no organizations sees "No organizations yet." with Create organization if it is an instance admin, and "This account doesn't own any organizations on this HQ. Ask an instance admin of this HQ to link it to one." with Sign out if not.
 - SIGN-10 · When a session ends while a page is open, the next refused request or stream opens the "Sign in again" dialog over that page; the page doesn't navigate away.
-- SIGN-11 · *(rev 5)* Text typed into a page and not saved is still in its fields after the user signs in again from the dialog, except after an unlink from that page's organization (SIGN-43), and after Not now.
+- SIGN-11 · *(rev 5)* Text typed into a page and not saved is still in its fields after the user signs in again from the dialog, or after Not now and then Sign in, except after an unlink from that page's organization (SIGN-43).
 - SIGN-12 · A save refused because the session ended is marked "Not saved", and nothing is resent after signing in until the user saves again.
-- SIGN-13 · *(rev 5)* After signing in again from the dialog, the user is on the same page with focus where it was (except after an unlink, SIGN-43), and live updates resume without a gap (SRV-12).
+- SIGN-13 · *(rev 5)* After signing in again from the dialog, the user is on the same page with focus where it was (except after an unlink from that page's organization, SIGN-43), and live updates resume without a gap (SRV-12).
 - SIGN-14 · *(rev 5)* With two tabs of the same HQ showing the dialog, signing in in one closes the dialog in the other, and the other stays on its page with its text, except when its page belongs to an organization the account no longer owns (SIGN-43).
-- SIGN-15 · Not now closes the dialog and shows "You're signed out. Text you haven't saved is still here…" with Sign in; the page sends no changes while signed out.
+- SIGN-15 · *(rev 5)* Not now closes the dialog and shows "You're signed out. Text you haven't saved is still here…" with Sign in (after an unlink from that page's organization, SIGN-43's bar instead); the page sends no changes while signed out.
 - SIGN-16 · Sign in as someone else asks before discarding text that isn't saved, then opens the sign-in page.
 - SIGN-17 · When an HQ restart ends the session (A84), an open page first shows LIVE-8's paused line, then the dialog. When HQ reports the restart as the reason, the dialog reads "HQ restarted, so you were signed out."; otherwise it shows the generic copy.
 - SIGN-18 · The account menu in the top bar shows "Signed in as <username>", "Instance admin" only for an account with the grant, and Sign out. It has no password or account form.
@@ -1353,7 +1357,7 @@ rules, which are distinct from uninstalling software on a machine.
 - SIGN-40 · *(new, rev 5, A103)* Revoking the instance's only instance admin is refused with "<username> is the only instance admin of instance <name>…", before the y/N question, and nothing changes.
 - SIGN-41 · *(new, rev 5, A103)* `agentic-org account link`, `unlink` and `revoke` over SSH on a Mac print the "needs you at this Mac" message before any prompt, and change nothing.
 - SIGN-42 · *(new, rev 5, A103)* Answering anything but y to `link`, `unlink` or `revoke` prints "Nothing changed." and changes nothing.
-- SIGN-43 · *(new, rev 5, review of 0802754)* With a page of an organization open, after `agentic-org account unlink <username> --org <organization>` for that page's account, signing in again from the "Sign in again" dialog succeeds and opens the organization list (or §4a.5's no-organization page) with "You no longer own <organization>." above it, not that page, and no text from that page is kept. Focus is on the organization list's heading (or the no-organization page's), and "You no longer own <organization>." is announced through the polite live region. Every other open tab of this HQ on a page of an organization the account no longer owns also opens the organization list with that line, and keeps none of its text; tabs on organizations it still owns behave as SIGN-14 says. The dialog shows "You no longer own <organization>, so you were signed out." only when HQ gives that reason (A84); otherwise it shows its usual copy. After `agentic-org account revoke <username>`, signing in again from the dialog is refused with SIGN-4's message, and the page stays as it was.
+- SIGN-43 · *(new, rev 5, review of 0802754)* With a page of an organization open, after `agentic-org account unlink <username> --org <organization>` for that page's account, signing in again from the "Sign in again" dialog succeeds and opens the organization list (or §4a.5's no-organization page) with "You no longer own <organization>." above it, not that page, and no text from that page is kept. Focus is on the organization list's heading (or the no-organization page's), and "You no longer own <organization>." is announced through the polite live region. Every other open tab of this HQ on a page of an organization the account no longer owns also opens the organization list with that line, and keeps none of its text, even a tab that chose Not now; tabs on organizations it still owns behave as SIGN-14 says. The dialog shows "You no longer own <organization>, so you were signed out." and warns that signing in, here or in another tab, loses that page's unsaved text only when HQ gives that reason (A84), and after Not now its bar reads "You're signed out. Text you haven't saved here is lost when you sign in, here or in another tab: copy it first."; otherwise it shows its usual copy. After `agentic-org account revoke <username>`, signing in again from the dialog is refused with SIGN-4's message, and the page stays as it was.
 
 **Recovery code (RCV)** *(new, rev 4, §4a.6)*
 - RCV-1 · The recovery code never passes through the gateway or reaches the browser: a fixture code appears in no gateway request or response, HTTP response, event, page, notice or copied text.

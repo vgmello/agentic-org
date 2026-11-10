@@ -104,7 +104,7 @@ Also new: JOIN-20 and §5c "Signing in first" (a join on an instance with accoun
 **Criteria rewritten (same ID):** OFC-7, JOIN-7 *(rev 15)*, then OFC-28, OFC-29,
 OFC-32 and JOIN-7 again, then OFC-28, OFC-29, OFC-37, JOIN-11 and JOIN-18 again,
 then JOIN-15, JOIN-18 and OFC-38 again.
-**New:** OFC-26 to OFC-38, JOIN-9 to JOIN-19. Open questions A101 and A102,
+**New:** OFC-26 to OFC-38, JOIN-9 to JOIN-20. Open questions A101 and A102,
 both since resolved; A105 and A106.
 
 **Revision 14 (2026-11-10): Create organization and the instance admin.** New
@@ -447,8 +447,9 @@ for it:
   `agentic-org doctor` on the HQ machine lists it with a count for each
   organization and no names, because it runs without a session, so it can't
   tell which organizations its reader owns *(review of 0802754)*: "Creating
-  Side Project: waiting for 3 agents to stop (2 in Lumen Labs, 1 in Other
-  Org), since 14:05."
+  Side Project: waiting for 3 agents to stop (3 in Lumen Labs), since 14:05."
+  With an agent of Other Org waiting too, it reads "(2 in Lumen Labs, 1 in
+  Other Org)" *(review of 18d3f56)*.
 - **Cancel** cancels that same create (its operation ID), from this panel or
   from the switcher's waiting entry, in any tab or browser of that account.
 - **While it waits, it isn't an organization yet.** After the panel is closed,
@@ -846,8 +847,8 @@ stop, and nothing is stopped automatically.
   office (Starting, §3.1); after Cancel it goes away.
 - There's no time limit, and `agentic-org doctor` on that machine lists it with
   a count for each organization and no names, as in §5a *(review of 0802754)*:
-  "Adding Office 2: waiting for 3 agents to stop (2 in Lumen Labs, 1 in Other
-  Org), since 14:05."
+  "Adding Office 2: waiting for 3 agents to stop (3 in Lumen Labs), since
+  14:05." *(review of 18d3f56)*
 - An office on another machine doesn't wait here. Its own instance may wait the
   same way while it joins (§5c).
 
