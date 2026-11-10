@@ -9,6 +9,7 @@ export async function loadConnections() {
 	try {
 		return await officeApi.connections();
 	} catch (e) {
-		error(500, toAppError(e).message);
+		const failure = toAppError(e);
+		error(failure.code === 'unavailable' ? 503 : 500, failure.message);
 	}
 }

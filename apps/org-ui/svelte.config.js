@@ -1,6 +1,4 @@
-// Tauri doesn't have a Node.js server to do proper SSR, so the app is a
-// single-page app: adapter-static with an index.html fallback.
-// See https://v2.tauri.app/start/frontend/sveltekit/
+// Static browser SPA with an index.html fallback; the gateway owns server operations.
 import adapter from '@sveltejs/adapter-static';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 
