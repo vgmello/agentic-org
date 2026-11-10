@@ -37,6 +37,7 @@ ada), §6.2 and §6.4, and its Q8 (accepted by ada):
   service, in X-02 §6.2's bootstrap order (§2, §4a.2, RCV-13). Automation's
   waiting end also departs from `standalone-server.md` §6's protected outputs
   (A104).
+Also new: RCV-30 (recovery status refuses a non-admin, with its own copy).
 
 - The account commands follow X-02 §6.2 *(rev 5)*: `agentic-org account add`
   is now `account create`, which an instance admin runs after signing in, and
@@ -1071,7 +1072,10 @@ Recovering an organization after losing the HQ machine isn't supported yet.
   `recovery.*` are admin only), but no confirmation that it's you, so it works
   over SSH too. Its sign-in, not-an-admin, instance-not-running,
   unknown-organization and no-terminal-for-the-password failures use the
-  `recovery release` and account tables' copy.
+  `recovery release` and account tables' copy, except that a non-admin is
+  refused with "<username> isn't an instance admin, so it can't see recovery
+  status. Sign in as an instance admin of instance <instance>." and nothing is
+  shown.
 - Without `--org`, on an instance with several organizations, it lists each
   one's State line, then "Run again with --org to see who showed it and when."
   With one organization, it shows that one.
@@ -1327,6 +1331,7 @@ rules, which are distinct from uninstalling software on a machine.
 - RCV-27 · *(new, rev 5, A100)* `agentic-org recovery release --redeliver` on a code that was never shown shows the code and records it as the first showing: `recovery status` lists it as shown, not shown again, and the browser's count of second showings stays at none.
 - RCV-28 · *(new, rev 5)* In interactive setup, when the code was shown and the answer at the last prompt isn't `yes`, the code is Shown, not confirmed, setup prints `agentic-org recovery release --redeliver --org '<organization>'`, and the service still starts.
 - RCV-29 · *(new, rev 5, A99)* While the code is Shown, not confirmed after second showings, the Recovery row and the notice give the first-showing date, the number of second showings and the last one's date.
+- RCV-30 · *(new, rev 5)* `agentic-org recovery status` signed in as an account without the instance-admin grant is refused with "<username> isn't an instance admin, so it can't see recovery status…", shows no state or showings, and exits with an error.
 
 
 ## 7. Decisions still requiring implementation evidence

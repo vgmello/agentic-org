@@ -60,6 +60,7 @@ X-02 (`org-proto` v2, approved by ada):
   `server-installation-and-access-ux.md` rev 5 (`agentic-org account create`,
   `set-password`, `reset-password`), and the admin grant alone opens no
   organization (its A86, resolved).
+Also new: JOIN-17 (remove-pending refusals, including a non-admin) and JOIN-18 (noninteractive setup ends with waiting_for_idle); §5b lists every HQ-machine command that needs the instance-admin grant.
 
 - *(Review of 07a8a4b)* **Waiting for running agents** ends only when no agent
   session on that instance is running: each agent Asleep, Paused or stopped. An
@@ -470,8 +471,11 @@ From the owner's decision O-1. People records and agents never sign in.
 
 - In v1.0, the browser actions that need the instance-admin grant are creating
   an organization (SRV-24) and adding an office on this instance (OFC-7)
-  *(rev 15)*. On the HQ machine, showing a recovery code needs it too. An owner
-  without the grant can do neither, and neither can an employee or an office.
+  *(rev 15)*. On the HQ machine, the CLI commands that need it are `account
+  create`, `link`, `unlink` and `revoke`, `recovery release` and `recovery
+  status`, and `office remove-pending` (the account table in
+  `server-installation-and-access-ux.md` §4a.2, and §5c here). An owner without
+  the grant can do none of these, and neither can an employee or an office.
 - The account menu says "Instance admin" for an account with the grant
   (`server-installation-and-access-ux.md` §4a.4).
 - **No browser screen lists, invites or adds accounts in v1.0.** Add person (§7.4)
@@ -540,7 +544,11 @@ Press Ctrl-C to cancel.
 - The number goes down in place as sessions end ("Waiting for 1 running agent to
   stop…" for one). Without a terminal, setup writes a new line only when it
   changes. Then setup goes on as above.
-- There's no time limit. `agentic-org doctor` lists the wait: "Joining Lumen
+- There's no time limit. Noninteractive setup doesn't wait here: it ends with
+  the `waiting_for_idle` result and "Waiting for 3 agents to stop before
+  joining. Setup will finish the join on its own; see agentic-org status.", and
+  `agentic-org status` and `doctor` report the wait until it ends or the join is
+  cancelled with `agentic-org office remove-pending`. `agentic-org doctor` lists the wait: "Joining Lumen
   Labs as Studio Mac: waiting for 3 agents to stop, since 14:05."
 - **Ctrl-C here cancels the join** (unlike Ctrl-C while waiting for approval,
   which only stops watching): "Cancelled. Studio Mac wasn't added to instance
@@ -1020,6 +1028,8 @@ Two directions, same result:
 - JOIN-14 · *(new, rev 15, A102)* When HQ doesn't support the joining instance's version, the join stays pending and setup shows "This instance needs an update to join this HQ. Update it, then setup continues." until the invitation expires.
 - JOIN-15 · *(new, rev 15, A101)* A join on an instance with running agent sessions waits, and setup shows "Waiting for <n> running agents to stop…" and "Press Ctrl-C to cancel", with <n> going down as sessions end; no agent is stopped or relaunched for it.
 - JOIN-16 · *(new, rev 15, A101)* Ctrl-C while a join waits for running agents cancels the join: setup prints "Cancelled. <office> wasn't added to instance <name>…", and the instance has no office or pending join for it.
+- JOIN-17 · *(new, rev 15)* Each row of §5c's `office remove-pending` table shows its copy and exit status and removes nothing; signed in as an account without the instance-admin grant it's refused with "<username> isn't an instance admin, so it can't remove join requests…".
+- JOIN-18 · *(new, rev 15, A101)* Noninteractive setup that reaches the wait for running agents ends with the `waiting_for_idle` result and its message, and `agentic-org status` and `agentic-org doctor` show the wait until it ends.
 
 **Offices (OFC)**
 - OFC-1 · *(rev 12)* HQ lists pending joins, HQ and satellites, with names, locations, status and last-seen/sync information. Browser location does not alter the office classification.
