@@ -136,13 +136,25 @@ impl Shared {
     /// Gives the connection up: later calls fail at once, waiting ones are woken, the peer is
     /// told to stop, and a write blocked on the socket is woken.
     fn close(&self) {
-        self.closed.store(true, Ordering::SeqCst);
-        // After the peer has half-closed, macOS refuses `shutdown(Both)` (ENOTCONN) and also
-        // `shutdown(Read)`; `shutdown(Write)` still works, and that is what wakes a writer.
-        if self.stream.shutdown(std::net::Shutdown::Both).is_err() {
-            let _ = self.stream.shutdown(std::net::Shutdown::Read);
-            let _ = self.stream.shutdown(std::net::Shutdown::Write);
+        self.close_with(|stream| {
+            // After the peer has half-closed, macOS refuses shutdown(Both) and Read.
+            if stream.shutdown(std::net::Shutdown::Both).is_err() {
+                let _ = stream.shutdown(std::net::Shutdown::Read);
+                let _ = stream.shutdown(std::net::Shutdown::Write);
+            }
+        });
+    }
+
+    // Kernel shutdown can still be in progress after another thread sees a local
+    // write-closed state. Keep the complete close operation testable without timing.
+    fn close_with(&self, shutdown: impl FnOnce(&UnixStream)) {
+        // Only one thread owns transport shutdown and completion notifications. Another
+        // close may observe the socket locally write-closed while the first shutdown is
+        // still notifying its peer; it must not finish pending calls ahead of that owner.
+        if self.closed.swap(true, Ordering::SeqCst) {
+            return;
         }
+        shutdown(&self.stream);
         // Dropping the senders wakes every waiting call with `Disconnected`.
         lock(&self.pending).clear();
         *lock(&self.events) = None;
@@ -917,6 +929,56 @@ mod tests {
     use std::os::unix::net::UnixListener;
 
     use super::*;
+
+    #[test]
+    fn a_concurrent_close_does_not_finish_calls_before_the_first_shutdown_finishes() {
+        use std::io::Read;
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        peer.set_nonblocking(true).unwrap();
+        let (answer_to, answer) = mpsc::sync_channel(1);
+        let shared = Shared {
+            closed: AtomicBool::new(false),
+            next_id: AtomicU64::new(1),
+            pending: Mutex::new(HashMap::from([(1, answer_to)])),
+            events: Arc::new(Mutex::new(None)),
+            next_subscription: AtomicU64::new(1),
+            queued_bytes: AtomicUsize::new(0),
+            stream,
+        };
+        let (entered, shutdown_started) = mpsc::channel();
+        let (release, released) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let closing = &shared;
+            let first = scope.spawn(move || {
+                closing.close_with(|stream| {
+                    entered.send(()).unwrap();
+                    released.recv_timeout(Duration::from_secs(10)).unwrap();
+                    stream.shutdown(std::net::Shutdown::Write).unwrap();
+                })
+            });
+            shutdown_started
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap();
+            // This represents the writer seeing an already-closing local socket while
+            // the reader's shutdown has not yet delivered peer EOF. It must not finish
+            // the pending call on behalf of the thread still performing shutdown.
+            shared.close_with(|_| {});
+            let before_shutdown_completed = answer.try_recv();
+            let before_peer_eof = peer.read(&mut [0u8; 1]);
+            release.send(()).unwrap();
+            first.join().unwrap();
+            assert_eq!(before_peer_eof.unwrap_err().kind(), ErrorKind::WouldBlock);
+            assert_eq!(peer.read(&mut [0u8; 1]).unwrap(), 0);
+            assert!(matches!(
+                before_shutdown_completed,
+                Err(mpsc::TryRecvError::Empty)
+            ));
+            assert!(matches!(
+                answer.try_recv(),
+                Err(mpsc::TryRecvError::Disconnected)
+            ));
+        });
+    }
 
     /// A server that accepts one connection and never reads or answers, until dropped.
     struct StuckServer {
