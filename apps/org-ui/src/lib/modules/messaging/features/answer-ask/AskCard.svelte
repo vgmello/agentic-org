@@ -1,10 +1,11 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { Button } from '$lib/components/ui/button';
 	import type { ChatContext } from '$lib/modules/messaging/engine';
 	import { acceptedWords, answerWords, appOnly, deadlineWords, nameOf, waitingFor } from '$lib/modules/messaging/model';
 	import type { ChatMessage } from '$lib/modules/messaging/types';
 	import { collapse } from '$lib/modules/messaging/model';
-	import Rich from '$lib/modules/messaging/features/send-message/Rich.svelte';
+	import Rich from '../../components/Rich.svelte';
 
 	/**
 	 * An ask, an approval or a hand-off as a card (CHAT-5, CHAT-6, CHAT-17). Answering here answers the ask. Where the card is
@@ -15,6 +16,7 @@
 		ctx,
 		now,
 		readOnly = false,
+		officeRunning = true,
 		where,
 		onanswer,
 		onaccept,
@@ -24,6 +26,7 @@
 		ctx: ChatContext;
 		now: string;
 		readOnly?: boolean;
+		officeRunning?: boolean;
 		/** Shown on cards outside their conversation (Needs you, Mentions): "in #atlas". */
 		where?: string;
 		onanswer: (answer: { option_id?: string; text?: string }) => Promise<void> | void;
@@ -49,6 +52,8 @@
 	const canAccept = $derived(message.addressed_to === ctx.actor);
 
 	async function go(run: () => Promise<void> | void) {
+		if (!officeRunning || busy) return;
+		const origin = document.activeElement;
 		busy = true;
 		error = undefined;
 		try {
@@ -59,11 +64,14 @@
 			error = (e as { message?: string }).message ?? 'That did not go through.';
 		} finally {
 			busy = false;
+			await tick();
+			// A delayed refusal can blur a disabled control. Restore it only if focus was lost here.
+			if (error && origin instanceof HTMLElement && origin.isConnected && document.activeElement === document.body) origin.focus({ preventScroll: true });
 		}
 	}
 </script>
 
-<div class="rounded-lg border {done ? 'border-white/10 bg-white/[0.03]' : isAsk ? 'border-amber-400/40 bg-amber-400/5' : 'border-indigo-400/30 bg-indigo-400/5'} p-4" data-testid={isAsk ? 'ask-card' : 'handoff-card'} data-answered={done ? 'true' : 'false'}>
+<div tabindex="-1" data-ask-id={message.id} class="rounded-lg border {done ? 'border-white/10 bg-white/[0.03]' : isAsk ? 'border-amber-400/40 bg-amber-400/5' : 'border-indigo-400/30 bg-indigo-400/5'} p-4" data-testid={isAsk ? 'ask-card' : 'handoff-card'} data-answered={done ? 'true' : 'false'}>
 	<p class="text-xs/5 font-semibold {isAsk ? 'text-amber-200' : 'text-indigo-200'}">
 		{#if isAsk}{message.approval ? '✅ Approval' : '❓ Ask'}: {nameOf(ctx, message.from)} asks {to}{:else}🔁 Hand-off: {nameOf(ctx, message.from)} → {to}{/if}
 		{#if where}<span class="font-normal text-gray-400">{' · in ' + where}</span>{/if}
@@ -83,6 +91,8 @@
 	{#if done}
 		<p class="mt-3 text-sm/6 text-emerald-300" data-testid="answered">{isAsk ? answerWords(message, ctx) : acceptedWords(message, ctx)}</p>
 		{#if isAsk && message.answer?.by === 'default' && deadline}<p class="text-xs/5 text-gray-400" data-testid="deadline">{deadline.text}</p>{/if}
+	{:else if !officeRunning}
+		<p class="mt-3 rounded-md bg-white/5 px-3 py-2 text-sm/6 text-gray-300">The office isn't running. Restart it from Offices.</p>
 	{:else if blockedHere}
 		<p class="mt-3 rounded-md bg-white/5 px-3 py-2 text-sm/6 text-gray-300" data-testid="app-only">This is answered only in Agentic Org, never from a bridge. <a href="/chat" class="font-semibold text-indigo-300 underline">Open in Agentic Org</a></p>
 	{:else if isAsk}
@@ -109,7 +119,7 @@
 		<div class="mt-3 flex flex-wrap items-center gap-2">
 			{#if canAccept}<Button type="button" size="sm" variant="outline" disabled={busy} onclick={() => go(onaccept)}>Accept</Button>{/if}
 			{#if onreplyinthread}<Button type="button" size="sm" variant="ghost" onclick={onreplyinthread}>Reply…</Button>{/if}
-			{#if message.linked_ref}<span class="text-xs/5 text-gray-400">Linked to <span class="font-mono text-gray-200">{message.linked_ref}</span></span>{/if}
+			{#if message.linked_ref}<div><Rich body={`Linked to ${message.linked_ref}`} /></div>{/if}
 		</div>
 	{/if}
 	{#if error}<p class="mt-2 text-sm/6 text-red-400" role="alert">{error}</p>{/if}

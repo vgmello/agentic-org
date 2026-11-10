@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, tick, untrack } from 'svelte';
 	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
 	import Search from '@lucide/svelte/icons/search';
 	import Users from '@lucide/svelte/icons/users';
@@ -59,6 +60,7 @@
 
 	let view = $state<ChatView>({ type: 'needs' });
 	let threadRoot = $state<string | undefined>();
+	let threadOpener: HTMLElement | undefined;
 	let showMembers = $state(false);
 	let query = $state('');
 	let readMarker = $state<string | undefined>();
@@ -105,9 +107,9 @@
 	onMount(() => {
 		void load().then(() => {
 			// A link from Activity opens the message; otherwise the owner starts where something waits for them.
-			const loc = parseChatLocation(page.url.search);
-			if (chatState && (loc.conversation || loc.message)) openLocation(loc);
-			else if (bar && bar.needsYou.length === 0) select({ type: 'conversation', id: chatState!.conversations.find((c) => c.auto?.type === 'general')?.id ?? '' });
+			const loc = urlLocation(page.url.search);
+			if (chatState && (loc.conversation || loc.message || page.url.searchParams.has('v'))) openLocation(loc);
+			else if (bar && bar.needsYou.length === 0) select({ type: 'conversation', id: chatState!.conversations.find((c) => c.auto?.type === 'general')?.id ?? '' }, false);
 			lastSearch = page.url.search;
 			started = true;
 		});
@@ -123,33 +125,61 @@
 		untrack(() => {
 			if (!started || !chatState || search === lastSearch) return;
 			lastSearch = search;
-			openLocation(parseChatLocation(search));
+			openLocation(urlLocation(search));
 		});
 	});
 
-	function openLocation(loc: { conversation?: string; message?: string }) {
+	const urlLocation = (search: string) => ({ ...parseChatLocation(search), thread: new URLSearchParams(search).get('thread') ?? undefined });
+	function openLocation(loc: { conversation?: string; message?: string; thread?: string }) {
 		if (!chatState) return;
 		const found = locate(chatState, loc);
-		if (!found.conversation) return;
-		select({ type: 'conversation', id: found.conversation.id });
+		if (!found.conversation) {
+			const virtual = page.url.searchParams.get('v');
+			select({ type: virtual === 'mentions' || virtual === 'threads' ? virtual : 'needs' }, false);
+			return;
+		}
+		select({ type: 'conversation', id: found.conversation.id }, false);
 		if (found.thread) threadRoot = found.thread.id;
 		else if (found.message && repliesTo(chatState, found.message.id).length) threadRoot = found.message.id;
+		const linkedThread = loc.thread;
+		if (linkedThread && chatState.messages.some((m) => m.id === linkedThread && m.conversation_id === found.conversation!.id && !m.thread_root_id)) threadRoot = linkedThread;
 		highlight = found.message?.id;
 		void tick().then(() => document.querySelector(`[data-id="${CSS.escape(found.message?.id ?? '')}"]`)?.scrollIntoView({ block: 'center' }));
 	}
 
-	function select(next: ChatView) {
+	function select(next: ChatView, navigate = true) {
 		query = '';
 		view = next;
 		threadRoot = undefined;
+		threadOpener = undefined;
 		showMembers = false;
 		showMuted = false;
 		openDigest = undefined;
 		highlight = undefined;
 		readMarker = next.type === 'conversation' ? chatState?.read_at[next.id] : undefined;
 		if (next.type === 'conversation') void tick().then(() => listEl && (listEl.scrollTop = listEl.scrollHeight));
+		if (navigate) writePlace();
 	}
 
+	// Use normal SvelteKit navigation so Back/Forward and direct links share one address model.
+	function writePlace(messageId?: string) {
+		const next = new URL(page.url);
+		for (const key of ['c', 'm', 'thread', 'v']) next.searchParams.delete(key);
+		if (view.type === 'conversation') next.searchParams.set('c', view.id);
+		else if (view.type !== 'needs') next.searchParams.set('v', view.type);
+		if (threadRoot) next.searchParams.set('thread', threadRoot);
+		if (messageId) next.searchParams.set('m', messageId);
+		if (next.href === page.url.href) return;
+		lastSearch = next.search;
+		void goto(next, { keepFocus: true, noScroll: true });
+	}
+	function closeThread(restore = true) {
+		const wasOpen = !!threadRoot;
+		threadRoot = undefined;
+		highlight = undefined;
+		writePlace();
+		if (wasOpen && restore) (threadOpener?.isConnected ? threadOpener : listEl)?.focus({ preventScroll: true });
+	}
 	// Opening a conversation reads it: what arrives while it is open is read too (unread muted messages don't count).
 	$effect(() => {
 		const c = conversation;
@@ -190,6 +220,8 @@
 		/** Kept across a Retry, so a message the office already has is not posted twice. */
 		change_id: string;
 		conversation_id: string;
+		thread_root_id?: string;
+		also_in_channel?: boolean;
 		body: string;
 		attachments: string[];
 		status: 'sending' | 'failed';
@@ -197,8 +229,8 @@
 	}
 	let pending = $state<Pending[]>([]);
 	let keys = 0;
-	const pendingHere = $derived(pending.filter((p) => p.conversation_id === conversation?.id));
-	const pendingMessage = (p: Pending): ChatMessage => ({ id: `pending-${p.key}`, conversation_id: p.conversation_id, from: ctx.owner, kind: 'msg', body: p.body, created_at: now, attachments: p.attachments });
+	const pendingHere = $derived(pending.filter((p) => p.conversation_id === conversation?.id && (!p.thread_root_id || p.also_in_channel)));
+	const pendingMessage = (p: Pending): ChatMessage => ({ id: `pending-${p.key}`, conversation_id: p.conversation_id, thread_root_id: p.thread_root_id, also_in_channel: p.also_in_channel, from: ctx.owner, kind: 'msg', body: p.body, created_at: now, attachments: p.attachments });
 
 	const env = $derived<CommandEnv>({ projects: (snapshot.projects ?? []).map((p) => ({ id: p.id, name: p.name })), members: ctx.members, conversationTitle: conversation && chatState ? titleOf(conversation, ctx, ctx.owner) : 'this conversation' });
 	let command = $state<CommandForm | undefined>();
@@ -223,25 +255,27 @@
 			}
 			return openForm(commandForm(slash, env));
 		}
-		if (thread) {
-			const accepted = await act({ method: 'msg.send', conversation_id: c.id, thread_root_id: thread, kind: 'msg', body: text, also_in_channel: options.alsoInChannel || undefined, attachments: options.attachments.length ? options.attachments : undefined });
-			return !!accepted;
-		}
-		pending.push({ key: ++keys, change_id: newId(), conversation_id: c.id, body: text, attachments: options.attachments, status: 'sending' });
+		pending.push({ key: ++keys, change_id: newId(), conversation_id: c.id, thread_root_id: thread, also_in_channel: thread && options.alsoInChannel ? true : undefined, body: text, attachments: options.attachments, status: 'sending' });
 		// The reactive copy: changing it redraws the row.
 		void deliver(pending[pending.length - 1]);
 		return true;
 	}
-	async function deliver(p: Pending) {
+	async function deliver(p: Pending, retry = false) {
+		const origin = retry ? document.activeElement : null;
+		const log = origin?.closest('[role="log"]');
+		const place = focusPlace();
+		let deliveredId: string | undefined;
 		p.status = 'sending';
 		try {
-			await chatApi.command(organizationId, { method: 'msg.send', change_id: p.change_id, conversation_id: p.conversation_id, kind: 'msg', body: p.body, attachments: p.attachments.length ? p.attachments : undefined } satisfies ChatCall);
+			const accepted = await chatApi.command(organizationId, { method: 'msg.send', change_id: p.change_id, conversation_id: p.conversation_id, thread_root_id: p.thread_root_id, also_in_channel: p.also_in_channel, kind: 'msg', body: p.body, attachments: p.attachments.length ? p.attachments : undefined } satisfies ChatCall);
+			deliveredId = accepted.id;
 			pending = pending.filter((x) => x.key !== p.key);
 			await load();
 		} catch (e) {
 			p.status = 'failed';
 			p.error = toAppError(e).message;
 		}
+		if (origin) await restoreFocus(origin, place, () => log?.querySelector<HTMLElement>(`[data-id="${CSS.escape(deliveredId ?? `pending-${p.key}`)}"]`) ?? null);
 	}
 
 	// ---- message actions -----------------------------------------------------------------------
@@ -251,22 +285,43 @@
 	const muteIn = (conversation_id: string, member_id: string, mode: MuteMode) => void act({ method: 'chat.mute', conversation_id, member_id, mode }, mode === 'none' ? `${nameOf(ctx, member_id)} is back.` : mode === 'muted' ? `${nameOf(ctx, member_id)} is muted here. Their messages still reach Activity.` : `${nameOf(ctx, member_id)} is on a daily digest here.`);
 	const mute = (m: ChatMessage, mode: MuteMode) => muteIn(m.conversation_id, m.from, mode);
 	const turn = (m: ChatMessage, into: 'bug' | 'request' | 'task') => openForm(turnForm(into, m, env));
+	// Restore only focus lost by this update; never pull it from a control the owner moved to.
+	const focusPlace = () => `${view.type}:${viewId ?? ''}:${threadRoot ?? ''}`;
+	async function restoreFocus(origin: Element | null, place: string, target: () => HTMLElement | null) {
+		await tick();
+		if (!origin || place !== focusPlace() || (document.activeElement !== document.body && document.activeElement !== origin)) return;
+		(target() ?? listEl)?.focus({ preventScroll: true });
+	}
 	async function answer(m: ChatMessage, a: { option_id?: string; text?: string }) {
+		if (!officeRunning) throw new Error("The office isn't running. Restart it from Offices.");
+		const origin = document.activeElement;
+		const log = origin?.closest('[role="log"]');
+		const place = focusPlace();
 		await send({ method: 'chat.answer', ask_id: m.id, ...a });
 		await load();
 		toast.success(`Answer sent to ${nameOf(ctx, m.from)}.`);
+		await restoreFocus(origin, place, () => view.type === 'needs'
+			? document.querySelector<HTMLElement>('[data-testid="needs-you-list"] [data-testid="ask-card"] button, [data-testid="nothing-needs-you"]')
+			: log?.querySelector<HTMLElement>(`[data-ask-id="${CSS.escape(m.id)}"]`) ?? null);
 	}
 	async function accept(m: ChatMessage) {
+		if (!officeRunning) throw new Error("The office isn't running. Restart it from Offices.");
 		await send({ method: 'chat.accept_handoff', message_id: m.id });
 		await load();
 	}
 	function openThread(m: ChatMessage) {
-		if (chatState && view.type !== 'conversation') select({ type: 'conversation', id: m.conversation_id });
-		else if (chatState && view.type === 'conversation' && view.id !== m.conversation_id) select({ type: 'conversation', id: m.conversation_id });
+		const opener = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+		if (chatState && view.type !== 'conversation') select({ type: 'conversation', id: m.conversation_id }, false);
+		else if (chatState && view.type === 'conversation' && view.id !== m.conversation_id) select({ type: 'conversation', id: m.conversation_id }, false);
+		threadOpener = opener;
 		threadRoot = m.thread_root_id ?? m.id;
 		showMembers = false;
+		writePlace();
 	}
-	const openMessage = (m: ChatMessage) => openLocation({ conversation: m.conversation_id, message: m.id });
+	const openMessage = (m: ChatMessage) => {
+		openLocation({ conversation: m.conversation_id, message: m.id });
+		writePlace(m.id);
+	};
 
 	// ---- channels and DMs ----------------------------------------------------------------------
 
@@ -299,13 +354,26 @@
 	const newAt = $derived(readMarker && convView ? convView.shown.find((m) => m.from !== ctx.owner && m.created_at > readMarker!)?.id : undefined);
 </script>
 
+<svelte:window onkeydown={(event) => {
+	if (event.key === 'Escape' && !event.defaultPrevented && threadRoot && !channelOpen && !dmOpen && !commandOpen) {
+		event.preventDefault();
+		closeThread();
+	}
+}} />
+
 <svelte:head><title>Chat · Agentic Org</title></svelte:head>
 
 {#snippet rowFor(m: ChatMessage, extra: { where?: string; open?: boolean } = {})}
-	<MessageRow message={m} {ctx} chatState={chatState!} {now} readOnly={bridgePreview} where={extra.where} onreact={react} onthread={openThread} onturn={turn} onmute={mute} onpin={pin} onanswer={answer} onaccept={accept} onopen={extra.open ? openMessage : undefined} />
+	<MessageRow message={m} {ctx} chatState={chatState!} {now} readOnly={bridgePreview} {officeRunning} where={extra.where} onreact={react} onthread={openThread} onturn={turn} onmute={mute} onpin={pin} onanswer={answer} onaccept={accept} onopen={extra.open ? openMessage : undefined} />
 {/snippet}
 
-<div class="flex h-[calc(100dvh-4rem)] min-h-0">
+{#snippet undeliveredRows(items: Pending[], inThread = false)}
+	{#each items as p (p.key)}
+		<MessageRow message={pendingMessage(p)} {ctx} chatState={chatState!} {now} {inThread} {officeRunning} delivery={{ status: p.status, error: p.error }} onretry={() => void deliver(p, true)} ondismiss={() => (pending = pending.filter((x) => x.key !== p.key))} />
+	{/each}
+{/snippet}
+
+<div class="relative flex h-[calc(100dvh-4rem)] min-h-0">
 	{#if loadError}
 		<p class="m-8 text-sm/6 text-red-400" role="alert">{loadError}</p>
 	{:else if !chatState || !bar}
@@ -321,15 +389,15 @@
 					</h2>
 					{#if conversation && !searching}<p class="text-xs/5 text-gray-400">{subtitle}{#if conversation.archived}{' · Archived'}{/if}</p>{/if}
 				</div>
-				<div class="flex flex-wrap items-center gap-2">
+				<div class="flex max-w-full flex-wrap items-center gap-2">
 					<Badge variant="secondary" data-testid="sample-data-note">Sample data</Badge>
 					{#if conversation && !searching}
-						<Button type="button" variant="outline" size="sm" aria-pressed={showMembers} onclick={() => ((showMembers = !showMembers), (threadRoot = undefined))}><Users aria-hidden="true" /> Members</Button>
+						<Button type="button" variant="outline" size="sm" aria-pressed={showMembers} onclick={() => { showMembers = !showMembers; closeThread(false); }}><Users aria-hidden="true" /> Members</Button>
 					{/if}
-					<div class="relative">
+					<div class="relative min-w-0 max-w-full">
 						<Search class="pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 text-gray-400" aria-hidden="true" />
 						<label class="sr-only" for="chat-search">Search chat</label>
-						<input id="chat-search" type="search" bind:value={query} placeholder="Search · from:@ada in:#atlas has:ask" class="w-56 rounded-md bg-gray-800 py-1.5 pr-3 pl-8 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:outline-indigo-400" data-testid="chat-search" />
+						<input id="chat-search" type="search" bind:value={query} placeholder="Search · from:@ada in:#atlas has:ask" class="w-56 max-w-full rounded-md bg-gray-800 py-1.5 pr-3 pl-8 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:outline-indigo-400" data-testid="chat-search" />
 					</div>
 				</div>
 			</div>
@@ -341,7 +409,7 @@
 				<p class="border-b border-white/10 bg-amber-400/10 px-5 py-2 text-sm/6 text-amber-100" data-testid="office-down">Read-only from the last copy. The office isn't running.</p>
 			{/if}
 
-			<div bind:this={listEl} class="min-h-0 flex-1 overflow-y-auto px-3 py-3" data-testid="message-list">
+			<div bind:this={listEl} class="min-h-0 flex-1 overflow-y-auto px-3 py-3" data-testid="message-list" tabindex="-1" role="log" aria-label="Messages" aria-live="polite" aria-relevant="additions text">
 				{#if searching}
 					<div class="px-2 pb-3">
 						<p class="text-sm/6 text-gray-300" data-testid="search-count">{results.length} {results.length === 1 ? 'result' : 'results'}</p>
@@ -365,11 +433,11 @@
 						{#each bar.needsYou as m (m.id)}
 							{@const c = chatState.conversations.find((x) => x.id === m.conversation_id)}
 							<div class="space-y-1">
-								<AskCard message={m} {ctx} {now} readOnly={bridgePreview} where={c ? titleOf(c, ctx, ctx.owner) : undefined} onanswer={(a) => answer(m, a)} onaccept={() => accept(m)} onreplyinthread={() => openThread(m)} />
+								<AskCard message={m} {ctx} {now} readOnly={bridgePreview} {officeRunning} where={c ? titleOf(c, ctx, ctx.owner) : undefined} onanswer={(a) => answer(m, a)} onaccept={() => accept(m)} onreplyinthread={() => openThread(m)} />
 								<button type="button" class="px-1 text-xs/5 font-semibold text-indigo-300 hover:text-indigo-200" onclick={() => openMessage(m)}>Open in conversation</button>
 							</div>
 						{:else}
-							<p class="px-2 py-8 text-center text-sm/6 text-gray-400" data-testid="nothing-needs-you">Nothing needs you.</p>
+							<p class="px-2 py-8 text-center text-sm/6 text-gray-400" data-testid="nothing-needs-you" tabindex="-1">Nothing needs you.</p>
 						{/each}
 					</div>
 				{:else if view.type === 'mentions'}
@@ -433,9 +501,7 @@
 							{#if showMuted}<div class="mt-1 space-y-1">{#each convView.muted as m (m.id)}<MessageRow message={m} {ctx} {chatState} {now} readOnly />{/each}</div>{/if}
 						</div>
 					{/if}
-					{#each pendingHere as p (p.key)}
-						<MessageRow message={pendingMessage(p)} {ctx} {chatState} {now} delivery={{ status: p.status, error: p.error }} onretry={() => void deliver(p)} ondismiss={() => (pending = pending.filter((x) => x.key !== p.key))} />
-					{/each}
+					{@render undeliveredRows(pendingHere)}
 				{/if}
 			</div>
 
@@ -446,7 +512,9 @@
 		</section>
 
 		{#if root && threadConversation}
-			<ThreadPanel {root} conversation={threadConversation} {ctx} {chatState} {now} {officeRunning} readOnly={bridgePreview} onclose={() => (threadRoot = undefined)} onsend={(t, o) => submit(t, o, threadConversation, root.id)} onreact={react} onturn={turn} onmute={mute} onpin={pin} onanswer={answer} onaccept={accept} />
+			<ThreadPanel {root} conversation={threadConversation} {ctx} {chatState} {now} {officeRunning} readOnly={bridgePreview} onclose={closeThread} onsend={(t, o) => submit(t, o, threadConversation, root.id)} onreact={react} onturn={turn} onmute={mute} onpin={pin} onanswer={answer} onaccept={accept}>
+				{#snippet undelivered()}{@render undeliveredRows(pending.filter((p) => p.thread_root_id === root.id), true)}{/snippet}
+			</ThreadPanel>
 		{:else if showMembers && conversation}
 			<MembersPanel {conversation} {ctx} {chatState} projectName={followsWords} onclose={() => (showMembers = false)} onmute={(id, mode) => muteIn(conversation.id, id, mode)} onrename={() => openChannelDialog('rename')} onaddpeople={() => openChannelDialog('members')} onremove={(id) => void act({ method: 'channel.remove_member', id: conversation.id, member_id: id })} onarchive={() => void act({ method: 'channel.archive', id: conversation.id }, `#${conversation.name} is archived.`)} />
 		{/if}

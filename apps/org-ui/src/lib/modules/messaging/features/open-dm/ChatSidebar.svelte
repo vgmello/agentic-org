@@ -31,14 +31,14 @@
 {#snippet row(r: ConversationRow)}
 	{@const active = view.type === 'conversation' && view.id === r.conversation.id}
 	<li>
-		<button type="button" class="{item} {active ? on : off}" aria-current={active ? 'true' : undefined} data-testid="conversation-link" data-conversation={r.conversation.id} onclick={() => onselect({ type: 'conversation', id: r.conversation.id })}>
+		<button type="button" class="{item} {active ? on : off}" aria-current={active ? 'true' : undefined} aria-label={r.other && r.presence ? `${r.title}, ${PRESENCE_WORD[r.presence]}${r.mentions ? `, ${r.mentions} mentions` : r.unread ? `, ${r.unread} unread` : ''}` : undefined} data-testid="conversation-link" data-conversation={r.conversation.id} onclick={() => onselect({ type: 'conversation', id: r.conversation.id })}>
 			{#if r.conversation.kind === 'channel'}
 				<span class="w-4 shrink-0 text-center text-gray-400" aria-hidden="true">#</span>
 				<span class="min-w-0 flex-1 truncate {r.unread ? 'font-semibold text-white' : ''}">{r.title.slice(1)}</span>
 			{:else if r.other}
-				<Avatar name={r.other.name} kind={r.other.kind} presence={r.presence} size="sm" />
+				<span aria-hidden="true"><Avatar name={r.other.name} kind={r.other.kind} presence={r.presence} size="sm" /></span>
 				<span class="min-w-0 flex-1 truncate {r.unread ? 'font-semibold text-white' : ''}">{r.title}</span>
-				{#if r.presence}<span class="shrink-0 text-xs/5 text-gray-400" data-testid="dm-status">{PRESENCE_WORD[r.presence]}</span>{/if}
+				{#if r.presence}<span class="shrink-0 text-xs/5 text-gray-300" data-testid="dm-status">{PRESENCE_WORD[r.presence]}</span>{/if}
 			{:else}
 				<span class="w-4 shrink-0 text-center text-gray-400" aria-hidden="true">👥</span>
 				<span class="min-w-0 flex-1 truncate {r.unread ? 'font-semibold text-white' : ''}">{r.title}</span>

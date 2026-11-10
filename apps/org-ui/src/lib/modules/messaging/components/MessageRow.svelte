@@ -3,12 +3,12 @@
 	import MessageSquareReply from '@lucide/svelte/icons/message-square-reply';
 	import { Button } from '$lib/components/ui/button';
 	import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '$lib/components/ui/dropdown-menu';
-	import type { ChatContext } from '$lib/modules/messaging/engine';
-	import { clockTime, collapse, foldedWords, KIND_MARK, KIND_WORD, muteOf, nameOf, repliesTo } from '$lib/modules/messaging/model';
-	import { REASON_LABEL, REACTIONS, type ChatMessage, type ChatState, type MuteMode, type Reaction } from '$lib/modules/messaging/types';
-	import AskCard from '$lib/modules/messaging/features/answer-ask/AskCard.svelte';
-	import Avatar from '$lib/modules/messaging/components/Avatar.svelte';
-	import Rich from '$lib/modules/messaging/features/send-message/Rich.svelte';
+	import type { ChatContext } from '../engine';
+	import { clockTime, collapse, foldedWords, KIND_MARK, KIND_WORD, muteOf, nameOf, repliesTo } from '../model';
+	import { REASON_LABEL, REACTIONS, type ChatMessage, type ChatState, type MuteMode, type Reaction } from '../types';
+	import AskCard from '../features/answer-ask/AskCard.svelte';
+	import Avatar from './Avatar.svelte';
+	import Rich from './Rich.svelte';
 
 	/** One message in a conversation, a thread, a search result or a list (CHAT-14). */
 	let {
@@ -17,6 +17,7 @@
 		chatState,
 		now,
 		readOnly = false,
+		officeRunning = true,
 		where,
 		inThread = false,
 		delivery,
@@ -36,6 +37,7 @@
 		chatState: ChatState;
 		now: string;
 		readOnly?: boolean;
+		officeRunning?: boolean;
 		where?: string;
 		inThread?: boolean;
 		delivery?: { status: 'sending' | 'failed'; error?: string };
@@ -63,7 +65,7 @@
 	const reactions = $derived(REACTIONS.map((r) => ({ ...r, who: message.reactions?.[r.id] ?? [] })));
 </script>
 
-<article class="group relative flex gap-x-3 rounded-md px-2 py-2 hover:bg-white/[0.03] focus-within:bg-white/[0.03]" data-testid="message" data-kind={message.kind} data-id={message.id} aria-label="{nameOf(ctx, message.from)}, {clockTime(message.created_at)}">
+<article tabindex="-1" class="group relative flex gap-x-3 rounded-md px-2 py-2 hover:bg-white/[0.03] focus-within:bg-white/[0.03]" data-testid="message" data-kind={message.kind} data-id={message.id} aria-label="{nameOf(ctx, message.from)}, {clockTime(message.created_at)}">
 	<Avatar name={nameOf(ctx, message.from)} kind={from?.kind ?? 'person'} />
 	<div class="min-w-0 flex-1">
 		<div class="flex flex-wrap items-baseline gap-x-2 text-sm/6">
@@ -79,7 +81,7 @@
 
 		{#if card}
 			<div class="mt-1">
-				<AskCard {message} {ctx} {now} {readOnly} onanswer={(a) => onanswer?.(message, a)} onaccept={() => onaccept?.(message)} onreplyinthread={inThread ? undefined : () => onthread?.(message)} />
+				<AskCard {message} {ctx} {now} {readOnly} {officeRunning} onanswer={(a) => onanswer?.(message, a)} onaccept={() => onaccept?.(message)} onreplyinthread={inThread ? undefined : () => onthread?.(message)} />
 			</div>
 		{:else}
 			<div class="mt-0.5" data-testid="message-body">
