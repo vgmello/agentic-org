@@ -1,11 +1,11 @@
 <script lang="ts">
 	import X from '@lucide/svelte/icons/x';
 	import { Button } from '$lib/components/ui/button';
-	import type { ChatContext } from '$lib/chat/engine';
-	import { composerState, repliesTo, titleOf } from '$lib/chat/model';
-	import type { ChatMessage, ChatState, Conversation, MuteMode, Reaction } from '$lib/chat/types';
-	import Composer from './Composer.svelte';
-	import MessageRow from './MessageRow.svelte';
+	import type { ChatContext } from '$lib/modules/messaging/engine';
+	import { composerState, repliesTo, titleOf } from '$lib/modules/messaging/model';
+	import type { ChatMessage, ChatState, Conversation, MuteMode, Reaction } from '$lib/modules/messaging/types';
+	import Composer from '$lib/modules/messaging/features/send-message/Composer.svelte';
+	import MessageRow from '$lib/modules/messaging/features/send-message/MessageRow.svelte';
 
 	/** A thread on the right (CHAT-8): the message, its replies, and a box that can also send to the channel. */
 	let {

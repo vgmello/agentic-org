@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { initialsOf } from '$lib/format';
-	import { PRESENCE_WORD } from '$lib/chat/model';
-	import type { Presence } from '$lib/chat/types';
+	import { PRESENCE_WORD } from '$lib/modules/messaging/model';
+	import type { Presence } from '$lib/modules/messaging/types';
 
 	/** Agents are squares, people are circles (chat-ux §1). A status dot shows when `presence` is given. */
 	let { name, kind, presence, size = 'md' }: { name: string; kind: 'agent' | 'person'; presence?: Presence; size?: 'sm' | 'md' } = $props();
