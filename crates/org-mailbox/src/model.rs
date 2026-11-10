@@ -1,6 +1,8 @@
+use std::fmt;
+
 use org_proto::msg::{
-    Message, MessageHeader, MessageLifecycleState, MessageReceivedData, MessageStateChangedData,
-    NotifyReason, ThreadCursor,
+    Message, MessageDeliveryFailedData, MessageHeader, MessageLifecycleState, MessageReceivedData,
+    MessageStateChangedData, NotifyReason, ThreadCursor,
 };
 use org_proto::Position;
 
@@ -39,18 +41,47 @@ pub struct CommitMessageOutcome {
     pub inserted: bool,
 }
 
-#[derive(Debug, Clone)]
+/// One local lifecycle change ([`crate::TriageStore::update_state_local`]). `reason` is the
+/// snooze or done note, so `Debug` prints only whether there is one.
+#[derive(Clone)]
 pub struct LocalStateTransition {
     pub id: String,
     pub to_member_id: String,
     pub state: MessageLifecycleState,
     pub snoozed_until: Option<String>,
     pub snooze_after_task: bool,
+    /// `Snoozed`: the snooze note. `Done`: the done note. Ignored for every other state.
     pub reason: Option<String>,
     pub now_utc: String,
+    /// The office making the change (the Mailbox passes its own). Written onto the
+    /// message's state row: the acting office becomes the state's owner.
     pub owner_office_id: String,
+    /// That office's incarnation, written onto the state row with the change.
     pub origin_incarnation: String,
+    /// The org position the change was made at (the caller's, from the directory), written
+    /// onto the state row with the change.
     pub org_position: Position,
+    /// With `Unread`: flags an ask to a person or the owner whose deadline passed (it stays
+    /// unread). Ignored with every other state.
+    pub expired_waiting_person: bool,
+}
+
+impl fmt::Debug for LocalStateTransition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LocalStateTransition")
+            .field("id", &self.id)
+            .field("to_member_id", &self.to_member_id)
+            .field("state", &self.state)
+            .field("snoozed_until", &self.snoozed_until)
+            .field("snooze_after_task", &self.snooze_after_task)
+            .field("reason", &self.reason.as_ref().map(|_| "<note>"))
+            .field("now_utc", &self.now_utc)
+            .field("owner_office_id", &self.owner_office_id)
+            .field("origin_incarnation", &self.origin_incarnation)
+            .field("org_position", &self.org_position)
+            .field("expired_waiting_person", &self.expired_waiting_person)
+            .finish()
+    }
 }
 
 /// Domain representation of ADR-0003's synced state, until org-sync-proto lands.
@@ -86,6 +117,7 @@ pub struct SnoozeDeadline {
 #[derive(Debug, Clone, Default)]
 pub struct PeekUnreadOutcome {
     pub message: Option<StoredMessage>,
+    /// At most [`crate::MAX_EXPIRED_IDS`], oldest first (commit order).
     pub expired_ids: Vec<String>,
 }
 
@@ -139,4 +171,31 @@ pub enum BindTarget<'a> {
 pub enum MessageEvent {
     Received(Box<MessageReceivedData>),
     StateChanged(MessageStateChangedData),
+    /// Published with the `Received` of the `delivery_failed` notice it describes.
+    DeliveryFailed(MessageDeliveryFailedData),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_state_transition_debug_hides_the_note() {
+        let change = LocalStateTransition {
+            id: "m1".into(),
+            to_member_id: "ada".into(),
+            state: MessageLifecycleState::Done,
+            snoozed_until: None,
+            snooze_after_task: false,
+            reason: Some("private reasoning".into()),
+            now_utc: "2026-11-08T12:00:00.000Z".into(),
+            owner_office_id: "office".into(),
+            origin_incarnation: "inc".into(),
+            org_position: Position { epoch: 1, seq: 1 },
+            expired_waiting_person: false,
+        };
+        let debug = format!("{change:?}");
+        assert!(!debug.contains("private"), "{debug}");
+        assert!(debug.contains("<note>") && debug.contains("m1"), "{debug}");
+    }
 }

@@ -3,6 +3,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
+use org_proto::msg::{MessageDeliveryFailedData, MessageStateChangedData};
 use org_proto::{AgentProfile, AgentRuntime, AgentStatus, Member, MemberKind, Position};
 
 use crate::{Clock, MessageEvent, MessageEvents};
@@ -157,7 +158,7 @@ impl RecordingEvents {
             .iter()
             .filter_map(|event| match event {
                 MessageEvent::Received(data) => Some(data.header.id.clone()),
-                MessageEvent::StateChanged(_) => None,
+                _ => None,
             })
             .collect()
     }
@@ -168,7 +169,31 @@ impl RecordingEvents {
             .iter()
             .filter_map(|event| match event {
                 MessageEvent::StateChanged(data) => Some(data.id.clone()),
-                MessageEvent::Received(_) => None,
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+impl RecordingEvents {
+    /// `message.state_changed` events, in publish order.
+    pub fn state_changes(&self) -> Vec<MessageStateChangedData> {
+        self.events()
+            .iter()
+            .filter_map(|event| match event {
+                MessageEvent::StateChanged(data) => Some(data.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// `message.delivery_failed` events, in publish order.
+    pub fn delivery_failed(&self) -> Vec<MessageDeliveryFailedData> {
+        self.events()
+            .iter()
+            .filter_map(|event| match event {
+                MessageEvent::DeliveryFailed(data) => Some(data.clone()),
+                _ => None,
             })
             .collect()
     }
