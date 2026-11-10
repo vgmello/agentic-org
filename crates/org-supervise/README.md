@@ -5,8 +5,9 @@ only dependencies are `libc` and the `org-runtime` contract. The generic API kno
 no office, employee, protocol, storage or adapter implementation.
 
 Piped spawning, generated files, owned graceful/fast stopping, socket cleanup and
-probe preparation are implemented. Orphan discovery and PTYs follow in separate
-deliveries. Do not run real Claude until orphan discovery is available: its tools
+probe preparation are implemented. Recovery policy over fake operations is implemented;
+native orphan discovery adapters and PTYs follow in separate deliveries.
+Do not run real Claude until native orphan discovery is available: its tools
 can leave its process group.
 
 The required platforms are macOS 13+, Linux kernel 5.10+/glibc 2.34+. Root and
@@ -90,6 +91,65 @@ emergency Drop cleanup is best effort and may leave a cwd for recovery.
 Relative dotfiles stay inside that fresh directory.
 
 No changes to `org-runtime` or adoption by the host are part of this delivery.
+
+## Recovery policy (B3-02.4a)
+
+`recovery::recover_startup` reads a consumer-owned `RecoveryRecords` port and uses
+`RecoveryCheckpoint` for durable target inventory. It never retires a storage row,
+writes SQL or releases a session lock. A live cleanup worker whose probe handle
+is gone calls `recovery::recover_record` by key; each attempt reads only that row
+and its current saved inventory, then uses the same policy as startup. The caller excludes
+concurrent spawning with the same mark. A mark-only record covers a crash before
+identity persistence. A matching recorded leader receives TERM and up to five
+seconds to exit; captured surviving descendants are checked/killed individually.
+Reused PIDs, process groups and session hints cannot authorize a signal. A reboot
+invalidates recorded identity/group hints but does not skip the full current mark scan.
+
+Before TERM or KILL, the caller's checkpoint store durably appends the identities
+and ancestry of every captured target to the matching row's inventory. If the
+leader survives TERM grace, refresh that capture before KILL. The union never shrinks and is capped at 256 identities including ancestry-only links;
+write failure or overflow permits
+no signal or completion. Retry reloads this inventory, checks exact PID, start
+and boot identity against a complete current snapshot, and still runs the full
+mark scan. A reparented child stays a target after its parent exits. Newly found
+descendants of a restored target use a fresh ancestry chain rooted at that live
+target; its earlier parents are not part of the new snapshot. Resolved entries remain until the consumer retires the row. The public store port carries
+plain data; the scan journal and proof issuance stay private to the crate.
+
+One scan pass captures all marked roots and descendants before killing them. It
+always includes the full user-process enumeration, regardless of tool-session hints.
+Zombies and an exact optional owned probe leader are skipped before environment
+reads. S0 unreadable environments are counted and skipped, without failing the scan;
+the caller surfaces these counts as warnings. A verified identity with an
+unreadable environment can link readable descendants to a marked tree without
+becoming a signal target itself. Every parent link carries its exact observed
+identity; mismatched or cyclic links invalidate the capture. A known live saved target skipped
+under S0 prevents an empty pass, without making the pass itself fail. A known
+target whose identity cannot be verified leaves recovery unresolved. No process
+environment bodies are retained.
+
+A shared crate-internal coordinator runs at most three passes, with a fresh
+getentropy/getrandom nonce each time. It validates the echoed mark and nonce, waits
+up to one second between nonempty passes, and requires a validated empty final
+pass before issuing `RecoveryGone`. That sealed proof is keyed by mark; the consumer
+binds it to its owned-process reference and commits its probe outcome before retiring
+the reference. A signal/wait/deadline/scan failure retains incomplete evidence.
+
+Process and scan traits are sealed. Startup uses only the internal scanner; callers
+cannot supply an empty fake snapshot to obtain a real proof. This slice provides
+only crate-local fake process operations and fake persistence tests. Slice 4b supplies
+Linux pidfd + /proc and macOS verified identity + KERN_PROCARGS2 implementations and
+real synthetic-process tests. Linux must refuse unavailable/restricted pidfds rather
+than fall back to raw PIDs; macOS's residual non-child PID race remains explicit.
+Processes clearing their environment and double-forking remain a containment limit.
+
+Existing owned stop/cleanup is unchanged and does not call this recovery policy yet.
+The later probe cleanup integration uses the shared coordinator after successful
+owned group kill, then reaps last; no new runtime may start before cleanup completes.
+No SQL, host/server wiring, or real-runtime admission is added here. Crate dependencies
+are unchanged: first-party Ce=1 (`org-runtime`), Ce=2 including `libc`. Policy and its
+sealed capability contracts remain in `org-supervise`; future storage adapters depend
+on this consumer-owned read port, without adding a dependency from process policy to SQL.
 
 Socket cleanup walks real paths from `/` using pinned no-follow dirfds. The final
 parent must already be a current-UID directory with mode exactly 0700; nothing
