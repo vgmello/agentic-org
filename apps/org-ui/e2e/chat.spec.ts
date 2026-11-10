@@ -385,7 +385,10 @@ for (const fail of [false, true]) {
 			let release!: () => void;
 			const began = new Promise<void>((resolve) => (started = resolve));
 			const gate = new Promise<void>((resolve) => (release = resolve));
+			let reads = 0;
 			orgApi.view = async (organizationId: string) => {
+				// The route load obtains its organization first; hold the next read, Chat's snapshot.
+				if (++reads === 1) return view(organizationId);
 				orgApi.view = view;
 				started();
 				await gate;
