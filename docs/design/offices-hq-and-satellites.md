@@ -318,8 +318,8 @@ references; remote satellites are no longer outside v1.
 2. **While HQ is unreachable,** satellites queue organization changes, as designed.
 3. **Work-data copies:** HQ keeps every task and message, and each satellite keeps what concerns its own agents and projects.
 4. **Project files are git repositories, connected to GitHub first.** See `projects-git-github.md`. The earlier "git service at HQ" idea is replaced: GitHub hosts the repositories, and each office clones from it.
-5. **Remote setup:** an invitation link that HQ generates, copied and opened on the other machine (see "The invitation and connection").
-6. **Reaching HQ:** direct network access only. There's no relay service for now. HQ's addresses travel in the link and the registry.
+5. **Remote setup (standalone amendment):** HQ generates a one-time invitation, copied with **Copy invitation** and supplied through the destination CLI's protected setup input. The owner verifies its check code on the destination terminal or through a trusted authenticated session to that machine, then approves through HQ (see "The invitation and connection").
+6. **Reaching HQ:** direct network access only. There's no relay service for now. HQ's addresses travel in the invitation and the registry.
 7. **Satellites don't listen.** They connect out to HQ and keep a full-duplex connection open. **HQ is the relay:** anything between satellites goes through HQ.
 8. **All offices are the owner's.** There are no permissions between offices for now. Permissions between employees of different offices may come later and stay an open topic.
 9. **Superseded 2026-11-09:** a browser client does not become a satellite. Explicit setup/enrollment creates an office.
