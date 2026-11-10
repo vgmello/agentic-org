@@ -54,6 +54,117 @@ impl Fixture {
 }
 
 #[test]
+fn rebind_confirms_without_locks_then_preserves_the_instance_and_office_handles() {
+    let (fixture, id) = restored_fixture();
+    let before = fs::read(fixture.root("lab").join(CONFIG)).unwrap();
+    fixture
+        .registry
+        .rebind(Some("lab"), |preview| {
+            assert!(preview.description().contains(&id));
+            assert!(preview.description().contains("lab"));
+            let registry_lock = fixture.registry.directory.lock_file(LOCK).unwrap();
+            let mut root = Directory::open(&fixture.root("lab"), false).unwrap();
+            root.lock_root().unwrap();
+            drop(root);
+            drop(registry_lock);
+            Ok(())
+        })
+        .unwrap();
+    let mut instance = fixture.reserve("lab");
+    assert_eq!(instance.id(), id);
+    assert_eq!(
+        instance.allocate_office_temp("01OFFICE").unwrap(),
+        instance.temp_folder().join(
+            decode::<Config>(&before)
+                .unwrap()
+                .office_temp_handles
+                .get("01OFFICE")
+                .unwrap()
+        )
+    );
+    assert_eq!(
+        fs::read(instance.root().join("sentinel")).unwrap(),
+        b"restored data"
+    );
+}
+
+#[test]
+fn declined_or_changed_confirmation_leaves_the_current_files_untouched() {
+    let (fixture, _) = restored_fixture();
+    let config_path = fixture.root("lab").join(CONFIG);
+    let locator_before = fs::read(fixture.locator()).unwrap();
+    let config_before = fs::read(&config_path).unwrap();
+    assert!(matches!(
+        fixture
+            .registry
+            .rebind(Some("lab"), |_| Err(Error::RebindUnconfirmed)),
+        Err(Error::RebindUnconfirmed)
+    ));
+    assert_eq!(fs::read(&config_path).unwrap(), config_before);
+    assert_eq!(fs::read(fixture.locator()).unwrap(), locator_before);
+    let mut config: Config = decode(&config_before).unwrap();
+    config
+        .office_temp_handles
+        .insert("01OTHER".into(), "zzz".into());
+    let changed = encode(&config).unwrap();
+    assert!(matches!(
+        fixture.registry.rebind(Some("lab"), |_| {
+            fs::write(&config_path, &changed).unwrap();
+            Ok(())
+        }),
+        Err(Error::RebindChanged { .. })
+    ));
+    assert_eq!(fs::read(&config_path).unwrap(), changed);
+    assert_eq!(fs::read(fixture.locator()).unwrap(), locator_before);
+}
+
+#[test]
+fn a_crash_between_rebind_writes_requires_explicit_retry_without_reminting() {
+    let (fixture, id) = restored_fixture();
+    let locator_before = fs::read(fixture.locator()).unwrap();
+    let config_path = fixture.root("lab").join(CONFIG);
+    let mut process = child(&fixture, "rebind-crash", &fixture.root("unused"));
+    until(|| process.0.try_wait().unwrap().is_some());
+    assert_eq!(process.0.wait().unwrap().code(), Some(78));
+    let staged = fs::read(&config_path).unwrap();
+    assert_eq!(fs::read(fixture.locator()).unwrap(), locator_before);
+    assert!(fixture
+        .registry
+        .reserve(Some("lab"), &fixture.root("lab"))
+        .is_err());
+    assert_eq!(fs::read(&config_path).unwrap(), staged);
+    fixture.registry.rebind(Some("lab"), |_| Ok(())).unwrap();
+    assert_eq!(fs::read(&config_path).unwrap(), staged);
+    assert_eq!(fixture.reserve("lab").id(), id);
+}
+
+#[test]
+fn concurrent_start_and_rebind_finish_with_a_bounded_process_join() {
+    let fixture = Fixture::new();
+    drop(fixture.reserve("lab"));
+    let mut process = child(&fixture, "rebind-concurrent", &fixture.root("unused"));
+    until(|| process.0.try_wait().unwrap().is_some());
+    assert!(process.0.wait().unwrap().success());
+    fixture.reserve("lab").verify().unwrap();
+}
+
+fn restored_fixture() -> (Fixture, String) {
+    let fixture = Fixture::new();
+    let mut instance = fixture.reserve("lab");
+    let id = instance.id().to_owned();
+    instance.allocate_office_temp("01OFFICE").unwrap();
+    drop(instance);
+    let root = fixture.root("lab");
+    let old = fixture.root("old-lab");
+    fs::rename(&root, &old).unwrap();
+    fs::create_dir(&root).unwrap();
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::copy(old.join(CONFIG), root.join(CONFIG)).unwrap();
+    fs::write(root.join("sentinel"), b"restored data").unwrap();
+    (fixture, id)
+}
+
+#[test]
 fn managed_layout_keeps_employee_homes_outside_office_control_state() {
     let fixture = Fixture::new();
     let instance = fixture.reserve("lab");
@@ -178,6 +289,32 @@ fn same_root_cannot_be_reserved_under_another_name() {
     ));
     assert_eq!(fs::read(first.root().join(CONFIG)).unwrap(), original);
     assert_eq!(fs::read(fixture.locator()).unwrap(), locator);
+}
+
+#[test]
+fn an_unavailable_peers_reused_inode_cannot_reserve_an_unrelated_ancestor() {
+    let fixture = Fixture::new();
+    drop(fixture.reserve("lab"));
+    let lab = fixture.root("lab");
+    fs::remove_file(lab.join(CONFIG)).unwrap();
+    fs::remove_dir(&lab).unwrap();
+    let parent = fixture.root("new-parent");
+    fs::create_dir(&parent).unwrap();
+    fs::set_permissions(&parent, fs::Permissions::from_mode(0o700)).unwrap();
+    let reused = Directory::open(&parent, false).unwrap().identity();
+    let lock = fixture.registry.directory.lock_file(LOCK).unwrap();
+    let (mut locator, previous) = fixture.registry.load().unwrap();
+    locator.entries[0].binding.identity = reused;
+    fixture
+        .registry
+        .save(&locator, &lock, previous.as_ref())
+        .unwrap();
+    drop(lock);
+    let instance = fixture
+        .registry
+        .reserve(Some("fresh"), &parent.join("fresh"))
+        .unwrap();
+    instance.verify().unwrap();
 }
 
 #[test]
@@ -683,6 +820,36 @@ fn reservation_child() {
     let base = PathBuf::from(std::env::var_os("ORG_INSTANCE_TEST_BASE").unwrap());
     let output = PathBuf::from(std::env::var_os("ORG_INSTANCE_TEST_OUTPUT").unwrap());
     let registry = Registry::open(&base.join("locator"), &base.join("temp")).unwrap();
+    if mode == "rebind-crash" {
+        registry
+            .rebind_after_config(Some("lab"), |_| Ok(()), || std::process::exit(78))
+            .unwrap();
+        panic!("crash hook was not called");
+    }
+    if mode == "rebind-concurrent" {
+        thread::scope(|scope| {
+            scope.spawn(|| {
+                for _ in 0..32 {
+                    match registry.reserve(Some("lab"), &base.join("lab")) {
+                        Ok(instance) => drop(instance),
+                        Err(Error::Busy(_)) => {}
+                        Err(error) => panic!("{error}"),
+                    }
+                }
+            });
+            scope.spawn(|| {
+                for _ in 0..32 {
+                    match registry.rebind(Some("lab"), |_| Ok(())) {
+                        Ok(()) | Err(Error::Busy(_)) => {}
+                        Err(error) => panic!("{error}"),
+                    }
+                }
+            });
+        });
+        registry.rebind(Some("lab"), |_| Ok(())).unwrap();
+        registry.reserve(Some("lab"), &base.join("lab")).unwrap();
+        return;
+    }
     if mode == "busy" {
         assert!(matches!(
             registry.reserve(Some("lab"), &base.join("lab")),

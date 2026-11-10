@@ -98,6 +98,17 @@ fn office_handles<'de, D: serde::Deserializer<'de>>(
 }
 
 impl Config {
+    fn validate_rebind(&self, binding: &Binding, actual: Identity) -> Result<(), Error> {
+        if self.binding.identity != binding.identity && self.binding.identity != actual {
+            return Err(Error::Unsafe(
+                "rebind found an unexpected configuration identity",
+            ));
+        }
+        let mut expected = binding.clone();
+        expected.identity = self.binding.identity;
+        self.validate(&expected)
+    }
+
     fn validate(&self, binding: &Binding) -> Result<(), Error> {
         if self.version != 1 || &self.binding != binding {
             return Err(Error::Unsafe(
@@ -151,6 +162,32 @@ pub(crate) struct Instance {
 pub(crate) struct InstancePaths {
     pub(crate) office_home: PathBuf,
     pub(crate) agents: PathBuf,
+}
+
+/// Confirmation is bound to these values. It must use OS presence or an interactive TTY.
+pub(crate) struct RebindPreview {
+    binding: Binding,
+    actual: Identity,
+}
+
+impl RebindPreview {
+    pub(crate) fn description(&self) -> String {
+        format!(
+            "Rebind instance {} ({}) at {:?}: {:?} -> {:?}",
+            self.binding.name.as_str(),
+            self.binding.id,
+            self.binding.root,
+            self.binding.identity,
+            self.actual,
+        )
+    }
+}
+
+struct RebindSnapshot {
+    phase: Phase,
+    config: ControlFile,
+    // Pins the observed directory inode without holding its lock during confirmation.
+    _root: Directory,
 }
 
 impl Instance {
@@ -228,6 +265,90 @@ impl Instance {
 }
 
 impl Registry {
+    /// Library use case only until org-setup can expose the signed/interactive CLI.
+    /// Preflight and confirmation hold no locks. Revalidation takes registry, then root.
+    pub(crate) fn rebind(
+        &self,
+        name: Option<&str>,
+        confirm: impl FnOnce(&RebindPreview) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        self.rebind_after_config(name, confirm, || Ok(()))
+    }
+
+    fn rebind_after_config(
+        &self,
+        name: Option<&str>,
+        confirm: impl FnOnce(&RebindPreview) -> Result<(), Error>,
+        after_config: impl FnOnce() -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        let name = Name::parse(name)?;
+        let (locator, _) = self.load()?;
+        let entry = locator
+            .entries
+            .iter()
+            .find(|entry| entry.binding.name == name)
+            .ok_or(Error::Invalid("instance is not registered"))?;
+        let root = Directory::open_root(&entry.binding.root, false)?;
+        let config_file = root.read(CONFIG, MAX_BYTES)?.ok_or(Error::Unsafe(
+            "rebind requires the existing in-root configuration",
+        ))?;
+        let config: Config = decode(&config_file)?;
+        config.validate_rebind(&entry.binding, root.identity())?;
+        let preview = RebindPreview {
+            binding: entry.binding.clone(),
+            actual: root.identity(),
+        };
+        let snapshot = RebindSnapshot {
+            phase: entry.phase,
+            config: config_file,
+            _root: root,
+        };
+        confirm(&preview)?;
+
+        // Canonical order; no root lock is retained across the human confirmation.
+        self.directory.verify()?;
+        let lock = self.directory.lock_file(LOCK)?;
+        let (mut locator, previous) = self.load()?;
+        let changed = || Error::RebindChanged {
+            name: name.as_str().to_owned(),
+            path: preview.binding.root.clone(),
+        };
+        let index = locator
+            .entries
+            .iter()
+            .position(|entry| entry.binding.name == name)
+            .ok_or_else(changed)?;
+        if locator.entries[index].binding != preview.binding
+            || locator.entries[index].phase != snapshot.phase
+        {
+            return Err(changed());
+        }
+        let mut root = Directory::open_root(&preview.binding.root, false)?;
+        root.lock_root()?;
+        root.verify()?;
+        if root.identity() != preview.actual {
+            return Err(changed());
+        }
+        let current = root.read(CONFIG, MAX_BYTES)?.ok_or_else(changed)?;
+        if !snapshot.config.same_version(&current)? {
+            return Err(changed());
+        }
+        let mut config: Config = decode(&current)?;
+        config.validate_rebind(&preview.binding, preview.actual)?;
+        // D-B22: these observed-identity checks narrow the window, not atomic CAS.
+        if config.binding.identity != preview.actual {
+            config.binding.identity = preview.actual;
+            root.publish(CONFIG, &encode(&config)?, Some(&current))?;
+        }
+        after_config()?;
+        if locator.entries[index].binding.identity != preview.actual {
+            locator.entries[index].binding.identity = preview.actual;
+            self.save(&locator, &lock, previous.as_ref())?;
+        }
+        self.directory.verify_file(LOCK, &lock)?;
+        root.verify()
+    }
+
     /// Only the final directory may be created; callers resolve the trusted account base.
     pub(crate) fn open(path: &Path, user_temp: &Path) -> Result<Self, Error> {
         let user_temp = Directory::open(user_temp, false)?;
@@ -279,7 +400,7 @@ impl Registry {
         let (mut locator, mut previous) = self.load()?;
         let mut root = match self.check_roots(&locator, &name, &path)? {
             Some(root) => root,
-            None => Directory::open(&path, true)?,
+            None => Directory::open_root(&path, true)?,
         };
         root.lock_root()?;
         root.verify()?;
@@ -387,7 +508,7 @@ impl Registry {
         path: &Path,
     ) -> Result<Option<Directory>, Error> {
         // Probe an existing root without modifying it; a missing final component is fine.
-        let candidate = match Directory::open(path, false) {
+        let candidate = match Directory::open_root(path, false) {
             Ok(root) => Some(root),
             Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => None,
             #[cfg(target_os = "linux")]
@@ -452,7 +573,7 @@ impl Registry {
             }
             // Unavailable peers retain their path and known identity, but do not
             // prevent unrelated instances from starting. Never adopt their moved inode.
-            let existing = Directory::open(&entry.binding.root, false)
+            let existing = Directory::open_root(&entry.binding.root, false)
                 .ok()
                 .filter(|root| root.identity() == entry.binding.identity);
             let lexical = paths_overlap(
@@ -461,7 +582,7 @@ impl Registry {
                 existing.is_none() && !known_target,
             );
             if lexical
-                || Directory::has_ancestor(path, entry.binding.identity)?
+                || (existing.is_some() && Directory::has_ancestor(path, entry.binding.identity)?)
                 || match &candidate {
                     Some(root) => match &existing {
                         Some(existing) => root.contains_path(existing.path())?,
