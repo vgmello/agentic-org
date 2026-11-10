@@ -59,7 +59,13 @@
        "version": 1,
        "kind": "task"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000001"
+      }
+     }
     },
     {
      "call": {
@@ -75,7 +81,13 @@
        "number": 2,
        "priority": "high"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000002"
+      }
+     }
     }
    ]
   },
@@ -94,7 +106,13 @@
       {
        "number": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000003"
+      }
+     }
     },
     {
      "call": {
@@ -107,7 +125,13 @@
       {
        "deleted": true
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000004"
+      }
+     }
     },
     {
      "call": {
@@ -121,7 +145,13 @@
       {
        "number": 2
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000005"
+      }
+     }
     }
    ]
   },
@@ -136,7 +166,13 @@
       "project_id": "p1",
       "title": "   "
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000006"
+      }
+     }
     },
     {
      "call": {
@@ -146,7 +182,13 @@
       "project_id": "p1",
       "title": "a\nb"
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000007"
+      }
+     }
     },
     {
      "call": {
@@ -156,7 +198,13 @@
       "project_id": "p1",
       "title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000008"
+      }
+     }
     }
    ]
   },
@@ -171,7 +219,13 @@
       "project_id": "nope",
       "title": "Task 1"
      },
-     "error": "not_found"
+     "error": "not_found",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000009"
+      }
+     }
     },
     {
      "call": {
@@ -181,7 +235,13 @@
       "project_id": "old",
       "title": "Task 1"
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000000A"
+      }
+     }
     },
     {
      "call": {
@@ -192,7 +252,13 @@
       "title": "Task 1",
       "team_id": "design"
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000000B"
+      }
+     }
     },
     {
      "call": {
@@ -203,7 +269,13 @@
       "title": "Task 1",
       "assignee_id": "ghost"
      },
-     "error": "unknown_recipient"
+     "error": "unknown_recipient",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000000C"
+      }
+     }
     }
    ]
   },
@@ -222,7 +294,13 @@
       {
        "number": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000000D"
+      }
+     }
     },
     {
      "call": {
@@ -232,7 +310,13 @@
       "project_id": "p1",
       "title": "Task 1"
      },
-     "error": "already_exists"
+     "error": "already_exists",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000000E"
+      }
+     }
     }
    ]
   },
@@ -251,7 +335,13 @@
       {
        "number": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000000F"
+      }
+     }
     },
     {
      "call": {
@@ -266,7 +356,13 @@
        "number": 1,
        "version": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000000F"
+      }
+     }
     },
     {
      "call": {
@@ -276,7 +372,13 @@
       "project_id": "p1",
       "title": "Other"
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000000F"
+      }
+     }
     }
    ]
   },
@@ -295,7 +397,13 @@
       {
        "version": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000000G"
+      }
+     }
     },
     {
      "call": {
@@ -312,7 +420,13 @@
        "priority": "high",
        "version": 2
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000000H"
+      }
+     }
     },
     {
      "call": {
@@ -322,7 +436,13 @@
       "expected_version": 1,
       "title": "Late"
      },
-     "error": "conflict"
+     "error": "conflict",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000000J"
+      }
+     }
     },
     {
      "call": {
@@ -331,7 +451,13 @@
       "item_id": "01JC0000000000000000000001",
       "expected_version": 2
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000000K"
+      }
+     }
     },
     {
      "call": {
@@ -342,7 +468,13 @@
       "description": "x",
       "clear_description": true
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000000M"
+      }
+     }
     }
    ]
   },
@@ -361,7 +493,13 @@
       {
        "version": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000000N"
+      }
+     }
     },
     {
      "call": {
@@ -375,7 +513,13 @@
       {
        "assignee_id": "sam"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000000P"
+      }
+     }
     },
     {
      "call": {
@@ -385,7 +529,13 @@
       "expected_version": 2,
       "assignee_id": "ghost"
      },
-     "error": "unknown_recipient"
+     "error": "unknown_recipient",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000000Q"
+      }
+     }
     },
     {
      "call": {
@@ -398,7 +548,13 @@
       {
        "version": 3
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000000R"
+      }
+     }
     },
     {
      "get": "01JC0000000000000000000001",
@@ -425,7 +581,13 @@
       {
        "version": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000000S"
+      }
+     }
     },
     {
      "call": {
@@ -435,7 +597,13 @@
       "expected_version": 1,
       "status": "blocked"
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000000T"
+      }
+     }
     },
     {
      "call": {
@@ -446,7 +614,13 @@
       "status": "in_progress",
       "blocked_reason": "x"
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000000V"
+      }
+     }
     },
     {
      "call": {
@@ -462,7 +636,13 @@
        "status": "blocked",
        "blocked_reason": "Waiting on design"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000000W"
+      }
+     }
     },
     {
      "call": {
@@ -476,7 +656,13 @@
       {
        "status": "in_progress"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000000X"
+      }
+     }
     },
     {
      "call": {
@@ -491,7 +677,13 @@
        "status": "done",
        "resolution": "completed"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000000Y"
+      }
+     }
     },
     {
      "call": {
@@ -502,7 +694,13 @@
       "status": "blocked",
       "blocked_reason": "x"
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000000Z"
+      }
+     }
     },
     {
      "call": {
@@ -517,7 +715,19 @@
        "status": "todo",
        "reopen_count": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-proto::work::WorkItemSummary.reopen_count counts bugs only",
+      "call": {
+       "change_id": "01M6A6FT000000000000000010"
+      },
+      "items": [
+       {
+        "status": "todo",
+        "reopen_count": null
+       }
+      ]
+     }
     }
    ]
   },
@@ -536,7 +746,13 @@
       {
        "version": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000011"
+      }
+     }
     },
     {
      "call": {
@@ -564,7 +780,13 @@
         "required_left": 1
        }
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000012"
+      }
+     }
     },
     {
      "call": {
@@ -574,7 +796,13 @@
       "expected_version": 2,
       "status": "done"
      },
-     "error": "checklist_incomplete"
+     "error": "checklist_incomplete",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000013"
+      }
+     }
     },
     {
      "call": {
@@ -585,7 +813,13 @@
       "status": "done",
       "anyway_reason": "   "
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000014"
+      }
+     }
     },
     {
      "call": {
@@ -601,7 +835,13 @@
        "status": "done",
        "done_anyway": true
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000015"
+      }
+     }
     },
     {
      "get": "01JC0000000000000000000001",
@@ -626,7 +866,18 @@
       {
        "done_anyway": false
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; WorkItemSummary omits done_anyway=false on the wire",
+      "call": {
+       "change_id": "01M6A6FT000000000000000016"
+      },
+      "items": [
+       {
+        "done_anyway": null
+       }
+      ]
+     }
     },
     {
      "call": {
@@ -641,7 +892,13 @@
       {
        "resolution": "cancelled"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000017"
+      }
+     }
     }
    ]
   },
@@ -660,7 +917,13 @@
       {
        "version": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000018"
+      }
+     }
     },
     {
      "call": {
@@ -679,7 +942,13 @@
       {
        "version": 2
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000019"
+      }
+     }
     },
     {
      "call": {
@@ -697,7 +966,13 @@
         "required_left": 0
        }
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000001A"
+      }
+     }
     },
     {
      "call": {
@@ -710,7 +985,13 @@
       {
        "version": 3
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000001B"
+      }
+     }
     },
     {
      "get": "01JC0000000000000000000001",
@@ -735,7 +1016,13 @@
       {
        "status": "done"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000001C"
+      }
+     }
     }
    ]
   },
@@ -754,7 +1041,13 @@
       {
        "version": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000001D"
+      }
+     }
     },
     {
      "call": {
@@ -773,7 +1066,13 @@
       {
        "version": 2
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000001E"
+      }
+     }
     },
     {
      "call": {
@@ -793,7 +1092,13 @@
       {
        "version": 3
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000001F"
+      }
+     }
     },
     {
      "call": {
@@ -808,7 +1113,13 @@
        }
       ]
      },
-     "error": "already_exists"
+     "error": "already_exists",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000001G"
+      }
+     }
     },
     {
      "call": {
@@ -823,7 +1134,13 @@
       {
        "version": 4
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000001H"
+      }
+     }
     },
     {
      "call": {
@@ -833,7 +1150,13 @@
       "expected_version": 1,
       "text": "Late"
      },
-     "error": "conflict"
+     "error": "conflict",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000001J"
+      }
+     }
     },
     {
      "call": {
@@ -850,7 +1173,13 @@
         "required_left": 1
        }
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000001K"
+      }
+     }
     },
     {
      "call": {
@@ -859,7 +1188,13 @@
       "step_id": "nope",
       "done": true
      },
-     "error": "not_found"
+     "error": "not_found",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000001M"
+      }
+     }
     }
    ]
   },
@@ -879,7 +1214,13 @@
        "version": 1
       }
      ],
-     "now": "2026-11-01T00:00:00.000Z"
+     "now": "2026-11-01T00:00:00.000Z",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000001N"
+      }
+     }
     },
     {
      "call": {
@@ -894,7 +1235,13 @@
        "status": "in_progress"
       }
      ],
-     "now": "2026-11-01T01:00:00.000Z"
+     "now": "2026-11-01T01:00:00.000Z",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000001P"
+      }
+     }
     },
     {
      "call": {
@@ -909,7 +1256,13 @@
        "status": "done"
       }
      ],
-     "now": "2026-11-01T03:00:00.000Z"
+     "now": "2026-11-01T03:00:00.000Z",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000001Q"
+      }
+     }
     },
     {
      "call": {
@@ -925,7 +1278,13 @@
        "version": 4
       }
      ],
-     "now": "2026-11-07T00:00:00.000Z"
+     "now": "2026-11-07T00:00:00.000Z",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000001R"
+      }
+     }
     },
     {
      "get": "01JC0000000000000000000001",
@@ -955,7 +1314,13 @@
       "project_id": "p1",
       "title": ""
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000001S"
+      }
+     }
     },
     {
      "call": {
@@ -965,7 +1330,13 @@
       "project_id": "nope",
       "title": "Task 1"
      },
-     "error": "not_found"
+     "error": "not_found",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000001T"
+      }
+     }
     },
     {
      "call": {
@@ -979,7 +1350,13 @@
       {
        "number": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000001V"
+      }
+     }
     }
    ]
   },
@@ -995,7 +1372,13 @@
       "title": "Task 1",
       "priority": "bogus"
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000001W"
+      }
+     }
     },
     {
      "call": {
@@ -1019,7 +1402,13 @@
       {
        "version": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000001X"
+      }
+     }
     },
     {
      "call": {
@@ -1030,7 +1419,13 @@
       "status": "done",
       "resolution": "garbage"
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000001Y"
+      }
+     }
     },
     {
      "call": {
@@ -1039,7 +1434,14 @@
       "step_id": "",
       "done": true
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; work error precedence: a missing step is not_found before validating the step ID",
+      "call": {
+       "change_id": "01M6A6FT00000000000000001Z"
+      },
+      "error": "not_found"
+     }
     }
    ]
   },
@@ -1069,7 +1471,13 @@
         "required_left": 1
        }
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000020"
+      }
+     }
     },
     {
      "call": {
@@ -1086,7 +1494,13 @@
         "required_left": 0
        }
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000021"
+      }
+     }
     },
     {
      "call": {
@@ -1103,7 +1517,13 @@
         "required_left": 1
        }
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000022"
+      }
+     }
     },
     {
      "call": {
@@ -1119,7 +1539,14 @@
       ],
       "after_step_id": "ghost"
      },
-     "error": "not_found"
+     "error": "not_found",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; checklist.add rejects an anchor outside the item with invalid_request",
+      "call": {
+       "change_id": "01M6A6FT000000000000000023"
+      },
+      "error": "invalid_request"
+     }
     }
    ]
   },
@@ -1140,7 +1567,13 @@
       {
        "team_id": "web"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000024"
+      }
+     }
     },
     {
      "call": {
@@ -1155,7 +1588,13 @@
       {
        "version": 2
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000025"
+      }
+     }
     },
     {
      "get": "01JC0000000000000000000001",
@@ -1176,7 +1615,13 @@
       {
        "deleted": true
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000026"
+      }
+     }
     },
     {
      "call": {
@@ -1186,7 +1631,14 @@
       "expected_version": 3,
       "title": "x"
      },
-     "error": "not_found"
+     "error": "not_found",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; a tombstoned item is present but invalid to edit (org-work::common::not_deleted)",
+      "call": {
+       "change_id": "01M6A6FT000000000000000027"
+      },
+      "error": "invalid_request"
+     }
     }
    ]
   },
@@ -1206,7 +1658,13 @@
        "version": 1
       }
      ],
-     "now": "2026-11-01T00:00:00.000Z"
+     "now": "2026-11-01T00:00:00.000Z",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000028"
+      }
+     }
     },
     {
      "get": "01JC0000000000000000000001",
@@ -1235,7 +1693,13 @@
        "number": 1,
        "kind": "task"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000029"
+      }
+     }
     },
     {
      "call": {
@@ -1256,7 +1720,23 @@
        "severity_confirmed": false,
        "area_id": "gen"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; WorkItemSummary omits severity_confirmed=false on the wire",
+      "call": {
+       "change_id": "01M6A6FT00000000000000002A"
+      },
+      "items": [
+       {
+        "kind": "bug",
+        "number": 1,
+        "status": "new",
+        "severity": "major",
+        "severity_confirmed": null,
+        "area_id": "gen"
+       }
+      ]
+     }
     },
     {
      "call": {
@@ -1268,7 +1748,13 @@
       "what_happened": "It broke",
       "severity": "huge"
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000002B"
+      }
+     }
     },
     {
      "call": {
@@ -1280,7 +1766,13 @@
       "what_happened": "  ",
       "severity": "major"
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000002C"
+      }
+     }
     },
     {
      "call": {
@@ -1293,7 +1785,14 @@
       "severity": "major",
       "area_id": "nope"
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; work error precedence: a missing area is not_found",
+      "call": {
+       "change_id": "01M6A6FT00000000000000002D"
+      },
+      "error": "not_found"
+     }
     },
     {
      "call": {
@@ -1311,7 +1810,13 @@
        "number": 2,
        "area_id": "pay"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000002E"
+      }
+     }
     }
    ]
   },
@@ -1332,7 +1837,18 @@
       {
        "version": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000002F"
+      },
+      "items": [
+       {
+        "version": 2
+       }
+      ]
+     }
     },
     {
      "call": {
@@ -1344,7 +1860,15 @@
       "severity": "major",
       "priority": "normal"
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6); work error precedence: a missing area is not_found",
+      "call": {
+       "change_id": "01M6A6FT00000000000000002G",
+       "expected_version": 2
+      },
+      "error": "not_found"
+     }
     },
     {
      "call": {
@@ -1366,7 +1890,14 @@
        "priority": "urgent",
        "assignee_id": "sam"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000002H",
+       "expected_version": 2
+      }
+     }
     },
     {
      "call": {
@@ -1378,7 +1909,14 @@
       "severity": "major",
       "priority": "normal"
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000002J",
+       "expected_version": 4
+      }
+     }
     }
    ]
   },
@@ -1399,7 +1937,18 @@
       {
        "version": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000002K"
+      },
+      "items": [
+       {
+        "version": 2
+       }
+      ]
+     }
     },
     {
      "call": {
@@ -1415,7 +1964,19 @@
       {
        "version": 2
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000002M",
+       "expected_version": 2
+      },
+      "items": [
+       {
+        "version": 4
+       }
+      ]
+     }
     },
     {
      "call": {
@@ -1425,7 +1986,14 @@
       "expected_version": 2,
       "outcome": "fixed"
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000002N",
+       "expected_version": 4
+      }
+     }
     },
     {
      "call": {
@@ -1435,7 +2003,14 @@
       "expected_version": 2,
       "note": "  "
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000002P",
+       "expected_version": 4
+      }
+     }
     },
     {
      "call": {
@@ -1449,7 +2024,14 @@
       {
        "status": "fixed"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000002Q",
+       "expected_version": 4
+      }
+     }
     },
     {
      "call": {
@@ -1459,7 +2041,14 @@
       "expected_version": 3,
       "outcome": "still_happens"
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000002R",
+       "expected_version": 5
+      }
+     }
     },
     {
      "call": {
@@ -1475,7 +2064,14 @@
        "status": "triaged",
        "reopen_count": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000002S",
+       "expected_version": 5
+      }
+     }
     },
     {
      "call": {
@@ -1489,7 +2085,14 @@
       {
        "status": "fixed"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000002T",
+       "expected_version": 6
+      }
+     }
     },
     {
      "call": {
@@ -1504,7 +2107,14 @@
        "status": "closed",
        "resolution": "verified"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000002V",
+       "expected_version": 7
+      }
+     }
     },
     {
      "call": {
@@ -1519,7 +2129,14 @@
        "status": "triaged",
        "reopen_count": 2
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000002W",
+       "expected_version": 8
+      }
+     }
     },
     {
      "call": {
@@ -1529,7 +2146,14 @@
       "expected_version": 7,
       "note": "x"
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000002X",
+       "expected_version": 9
+      }
+     }
     }
    ]
   },
@@ -1550,7 +2174,18 @@
       {
        "version": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000002Y"
+      },
+      "items": [
+       {
+        "version": 2
+       }
+      ]
+     }
     },
     {
      "call": {
@@ -1566,7 +2201,18 @@
       {
        "version": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000002Z"
+      },
+      "items": [
+       {
+        "version": 2
+       }
+      ]
+     }
     },
     {
      "call": {
@@ -1576,7 +2222,14 @@
       "expected_version": 1,
       "duplicate_of": "01JC0000000000000000000002"
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT000000000000000030",
+       "expected_version": 2
+      }
+     }
     },
     {
      "call": {
@@ -1586,7 +2239,14 @@
       "expected_version": 1,
       "duplicate_of": "ghost"
      },
-     "error": "not_found"
+     "error": "not_found",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT000000000000000031",
+       "expected_version": 2
+      }
+     }
     },
     {
      "call": {
@@ -1596,7 +2256,14 @@
       "expected_version": 1,
       "resolution": "wont_fix"
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT000000000000000032",
+       "expected_version": 2
+      }
+     }
     },
     {
      "call": {
@@ -1612,7 +2279,14 @@
        "resolution": "duplicate",
        "duplicate_of": "01JC0000000000000000000001"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT000000000000000033",
+       "expected_version": 2
+      }
+     }
     },
     {
      "call": {
@@ -1622,7 +2296,14 @@
       "expected_version": 1,
       "duplicate_of": "01JC0000000000000000000002"
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT000000000000000034",
+       "expected_version": 2
+      }
+     }
     },
     {
      "call": {
@@ -1637,7 +2318,14 @@
        "status": "new",
        "reopen_count": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT000000000000000035",
+       "expected_version": 4
+      }
+     }
     },
     {
      "call": {
@@ -1653,7 +2341,14 @@
        "status": "closed",
        "resolution": "cant_reproduce"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT000000000000000036",
+       "expected_version": 2
+      }
+     }
     }
    ]
   },
@@ -1674,7 +2369,18 @@
       {
        "version": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT000000000000000037"
+      },
+      "items": [
+       {
+        "version": 2
+       }
+      ]
+     }
     },
     {
      "call": {
@@ -1684,7 +2390,13 @@
       "expected_version": 1,
       "status": "done"
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000038"
+      }
+     }
     },
     {
      "call": {
@@ -1703,7 +2415,18 @@
       {
        "version": 2
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT000000000000000039"
+      },
+      "items": [
+       {
+        "version": 3
+       }
+      ]
+     }
     },
     {
      "call": {
@@ -1719,7 +2442,19 @@
       {
        "version": 3
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000003A",
+       "expected_version": 3
+      },
+      "items": [
+       {
+        "version": 5
+       }
+      ]
+     }
     },
     {
      "call": {
@@ -1729,7 +2464,14 @@
       "expected_version": 3,
       "note": "Done"
      },
-     "error": "checklist_incomplete"
+     "error": "checklist_incomplete",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000003B",
+       "expected_version": 5
+      }
+     }
     },
     {
      "call": {
@@ -1745,7 +2487,14 @@
        "status": "fixed",
        "done_anyway": true
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000003C",
+       "expected_version": 5
+      }
+     }
     }
    ]
   },
@@ -1766,7 +2515,18 @@
       {
        "version": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000003D"
+      },
+      "items": [
+       {
+        "version": 2
+       }
+      ]
+     }
     },
     {
      "call": {
@@ -1782,7 +2542,19 @@
       {
        "version": 2
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000003E",
+       "expected_version": 2
+      },
+      "items": [
+       {
+        "version": 4
+       }
+      ]
+     }
     },
     {
      "call": {
@@ -1811,7 +2583,40 @@
        ],
        "status": "triaged"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work::StoredItem::summary_with_fixed_by: link changes version only the task; assert the derived bug state through read_item",
+      "call": {
+       "change_id": "01M6A6FT00000000000000003F",
+       "fixes": [
+        {
+         "link_id": "01M6A6FT00000000000000004S",
+         "bug_id": "01JC0000000000000000000001"
+        }
+       ]
+      },
+      "items": [
+       {
+        "number": 1,
+        "fixes": [
+         "01JC0000000000000000000001"
+        ]
+       }
+      ],
+      "reads": [
+       {
+        "id": "01JC0000000000000000000001",
+        "expect": {
+         "summary": {
+          "fixed_by": [
+           "01JC0000000000000000000002"
+          ],
+          "status": "triaged"
+         }
+        }
+       }
+      ]
+     }
     },
     {
      "call": {
@@ -1828,7 +2633,13 @@
       {
        "status": "in_progress"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000003G"
+      }
+     }
     },
     {
      "call": {
@@ -1845,7 +2656,13 @@
       {
        "status": "fixed"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000003H"
+      }
+     }
     },
     {
      "call": {
@@ -1862,7 +2679,13 @@
       {
        "status": "in_progress"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000003J"
+      }
+     }
     }
    ]
   },
@@ -1883,7 +2706,18 @@
       {
        "version": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000003K"
+      },
+      "items": [
+       {
+        "version": 2
+       }
+      ]
+     }
     },
     {
      "call": {
@@ -1899,7 +2733,19 @@
       {
        "version": 2
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000003M",
+       "expected_version": 2
+      },
+      "items": [
+       {
+        "version": 4
+       }
+      ]
+     }
     },
     {
      "call": {
@@ -1919,7 +2765,19 @@
       {
        "number": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000003N",
+       "fixes": [
+        {
+         "link_id": "01M6A6FT00000000000000004S",
+         "bug_id": "01JC0000000000000000000001"
+        }
+       ]
+      }
+     }
     },
     {
      "call": {
@@ -1935,7 +2793,13 @@
        "status": "done",
        "resolution": "cancelled"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000003P"
+      }
+     }
     },
     {
      "get": "01JC0000000000000000000001",
@@ -1962,7 +2826,18 @@
       {
        "version": 3
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000003Q"
+      },
+      "items": [
+       {
+        "version": 5
+       }
+      ]
+     }
     },
     {
      "call": {
@@ -1976,7 +2851,13 @@
       {
        "status": "todo"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000003R"
+      }
+     }
     },
     {
      "call": {
@@ -1990,7 +2871,23 @@
       {
        "status": "done"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work::fixes::fix_done records the required-step refusal as a versioned automatic bug event (design §2.4)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000003S"
+      },
+      "items": [
+       {
+        "status": "done",
+        "version": 4
+       },
+       {
+        "status": "triaged",
+        "version": 6
+       }
+      ]
+     }
     },
     {
      "get": "01JC0000000000000000000001",
@@ -2019,7 +2916,18 @@
       {
        "version": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000003T"
+      },
+      "items": [
+       {
+        "version": 2
+       }
+      ]
+     }
     },
     {
      "call": {
@@ -2039,7 +2947,19 @@
       {
        "number": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000003V",
+       "fixes": [
+        {
+         "link_id": "01M6A6FT00000000000000004S",
+         "bug_id": "01JC0000000000000000000001"
+        }
+       ]
+      }
+     }
     },
     {
      "call": {
@@ -2053,7 +2973,13 @@
       {
        "status": "in_progress"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000003W"
+      }
+     }
     },
     {
      "call": {
@@ -2069,7 +2995,14 @@
       {
        "status": "in_progress"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000003X",
+       "expected_version": 2
+      }
+     }
     },
     {
      "call": {
@@ -2085,7 +3018,30 @@
        "fixed_by": [],
        "status": "in_progress"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work::StoredItem::summary_with_fixed_by: link changes version only the task; assert the derived bug state through read_item",
+      "call": {
+       "change_id": "01M6A6FT00000000000000003Y",
+       "link_id": "01M6A6FT00000000000000004S"
+      },
+      "items": [
+       {
+        "fixes": null
+       }
+      ],
+      "reads": [
+       {
+        "id": "01JC0000000000000000000001",
+        "expect": {
+         "summary": {
+          "fixed_by": null,
+          "status": "in_progress"
+         }
+        }
+       }
+      ]
+     }
     }
    ]
   },
@@ -2106,7 +3062,18 @@
       {
        "version": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000003Z"
+      },
+      "items": [
+       {
+        "version": 2
+       }
+      ]
+     }
     },
     {
      "call": {
@@ -2120,7 +3087,13 @@
       {
        "number": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000040"
+      }
+     }
     },
     {
      "call": {
@@ -2134,7 +3107,14 @@
        "item_id": "ghost"
       }
      },
-     "error": "not_found"
+     "error": "not_found",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000041",
+       "link_id": "01M6A6FT00000000000000004P"
+      }
+     }
     },
     {
      "call": {
@@ -2148,7 +3128,14 @@
        "item_id": "01JC0000000000000000000001"
       }
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000042",
+       "link_id": "01M6A6FT00000000000000004P"
+      }
+     }
     },
     {
      "call": {
@@ -2173,7 +3160,34 @@
         "01JC0000000000000000000002"
        ]
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work::StoredItem::summary_with_fixed_by: link changes version only the task; assert the derived bug state through read_item",
+      "call": {
+       "change_id": "01M6A6FT000000000000000043",
+       "link_id": "01M6A6FT00000000000000004P"
+      },
+      "items": [
+       {
+        "fixes": [
+         "01JC0000000000000000000001"
+        ]
+       }
+      ],
+      "reads": [
+       {
+        "id": "01JC0000000000000000000001",
+        "expect": {
+         "summary": {
+          "fixed_by": [
+           "01JC0000000000000000000002"
+          ],
+          "status": "new"
+         }
+        }
+       }
+      ]
+     }
     },
     {
      "call": {
@@ -2187,7 +3201,14 @@
        "item_id": "01JC0000000000000000000001"
       }
      },
-     "error": "already_exists"
+     "error": "already_exists",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000044",
+       "link_id": "01M6A6FT00000000000000004Q"
+      }
+     }
     },
     {
      "get": "01JC0000000000000000000001",
@@ -2199,6 +3220,18 @@
         "from_item_id": "01JC0000000000000000000002"
        }
       ]
+     },
+     "canonical": {
+      "reason": "The backlink retains the explicitly mapped client link ULID",
+      "expect": {
+       "backlinks": [
+        {
+         "id": "01M6A6FT00000000000000004P",
+         "kind": "fixes",
+         "from_item_id": "01JC0000000000000000000002"
+        }
+       ]
+      }
      }
     }
    ]
@@ -2220,7 +3253,18 @@
       {
        "version": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT000000000000000045"
+      },
+      "items": [
+       {
+        "version": 2
+       }
+      ]
+     }
     },
     {
      "call": {
@@ -2236,7 +3280,19 @@
       {
        "version": 2
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT000000000000000046",
+       "expected_version": 2
+      },
+      "items": [
+       {
+        "version": 4
+       }
+      ]
+     }
     },
     {
      "call": {
@@ -2250,7 +3306,13 @@
       {
        "number": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000047"
+      }
+     }
     },
     {
      "call": {
@@ -2264,7 +3326,13 @@
       {
        "status": "done"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000048"
+      }
+     }
     },
     {
      "call": {
@@ -2284,7 +3352,14 @@
         "01JC0000000000000000000001"
        ]
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT000000000000000049",
+       "link_id": "01M6A6FT00000000000000004R"
+      }
+     }
     },
     {
      "get": "01JC0000000000000000000001",
@@ -2312,7 +3387,19 @@
       {
        "number": 2
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000004A",
+       "fixes": [
+        {
+         "link_id": "01M6A6FT00000000000000004T",
+         "bug_id": "01JC0000000000000000000001"
+        }
+       ]
+      }
+     }
     },
     {
      "call": {
@@ -2329,7 +3416,13 @@
       {
        "status": "in_progress"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000004B"
+      }
+     }
     },
     {
      "call": {
@@ -2343,7 +3436,14 @@
       {
        "status": "fixed"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000004C",
+       "expected_version": 5
+      }
+     }
     },
     {
      "call": {
@@ -2363,7 +3463,19 @@
       {
        "number": 3
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000004D",
+       "fixes": [
+        {
+         "link_id": "01M6A6FT00000000000000004V",
+         "bug_id": "01JC0000000000000000000001"
+        }
+       ]
+      }
+     }
     },
     {
      "get": "01JC0000000000000000000001",
@@ -2386,7 +3498,14 @@
       {
        "status": "triaged"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000004E",
+       "expected_version": 6
+      }
+     }
     },
     {
      "call": {
@@ -2401,7 +3520,13 @@
       {
        "status": "blocked"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000004F"
+      }
+     }
     },
     {
      "get": "01JC0000000000000000000001",
@@ -2430,7 +3555,18 @@
       {
        "version": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs; org-work records triage waiting-open/close events as item versions (tasks-projects-docs §6)",
+      "call": {
+       "change_id": "01M6A6FT00000000000000004G"
+      },
+      "items": [
+       {
+        "version": 2
+       }
+      ]
+     }
     },
     {
      "call": {
@@ -2445,7 +3581,13 @@
        "number": 1,
        "project_id": "p2"
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000004H"
+      }
+     }
     },
     {
      "call": {
@@ -2459,7 +3601,14 @@
        "item_id": "01JC0000000000000000000001"
       }
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000004J",
+       "link_id": "01M6A6FT00000000000000004W"
+      }
+     }
     },
     {
      "call": {
@@ -2475,7 +3624,19 @@
        }
       ]
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000004K",
+       "fixes": [
+        {
+         "link_id": "01M6A6FT00000000000000004X",
+         "bug_id": "01JC0000000000000000000001"
+        }
+       ]
+      }
+     }
     },
     {
      "call": {
@@ -2489,7 +3650,13 @@
       {
        "number": 1
       }
-     ]
+     ],
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000004M"
+      }
+     }
     },
     {
      "call": {
@@ -2503,9 +3670,16 @@
        "item_id": "01JC0000000000000000000001"
       }
      },
-     "error": "invalid_request"
+     "error": "invalid_request",
+     "canonical": {
+      "reason": "org-work requires client-made ULIDs; preserve the legacy alias identity with explicit fixed inputs",
+      "call": {
+       "change_id": "01M6A6FT00000000000000004N"
+      }
+     }
     }
    ]
   }
- ]
+ ],
+ "canonical_comment": "Legacy calls and expectations are preserved. A canonical step supplies explicit fixed input/expectation differences with a contract reason; no runtime accept-actual or version replacement is allowed. Missing expected fields may be asserted as null under the subset rule; default false/empty fields are omitted by canonical serde."
 }

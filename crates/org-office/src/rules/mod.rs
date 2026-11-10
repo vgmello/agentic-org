@@ -35,6 +35,8 @@ mod view;
 pub(crate) mod memory;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod vectors;
 
 pub use apply::{apply, UnknownChange};
 pub use command::OrgCommand;
