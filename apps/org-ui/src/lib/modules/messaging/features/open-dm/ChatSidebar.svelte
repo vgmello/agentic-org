@@ -36,7 +36,7 @@
 				<span class="w-4 shrink-0 text-center text-gray-400" aria-hidden="true">#</span>
 				<span class="min-w-0 flex-1 truncate {r.unread ? 'font-semibold text-white' : ''}">{r.title.slice(1)}</span>
 			{:else if r.other}
-				<span aria-hidden="true"><Avatar name={r.other.name} kind={r.other.kind} presence={r.presence} size="sm" /></span>
+				<span class="flex" aria-hidden="true"><Avatar name={r.other.name} kind={r.other.kind} presence={r.presence} size="sm" /></span>
 				<span class="min-w-0 flex-1 truncate {r.unread ? 'font-semibold text-white' : ''}">{r.title}</span>
 				{#if r.presence}<span class="shrink-0 text-xs/5 text-gray-300" data-testid="dm-status">{PRESENCE_WORD[r.presence]}</span>{/if}
 			{:else}

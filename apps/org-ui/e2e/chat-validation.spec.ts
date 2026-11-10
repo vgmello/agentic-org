@@ -120,3 +120,51 @@ test('CHAT-8/9 BUG-45d: sending an unknown thread command as text preserves its 
 	await expect(page.getByTestId('message-list').getByTestId('message-body').filter({ hasText: '/Ship-2 literal thread reply' })).toHaveCount(1);
 	await shot(page, 'chat-literal-thread-channel-copy');
 });
+
+
+test('CHAT-1/2 BUG-57: Back dismisses Add channel before leaving its conversation', async ({ page }) => {
+	await open(page); await go(page, 'general'); await expect(page).toHaveURL(/c=c-general/);
+	await go(page, 'release-v1'); await expect(page).toHaveURL(/c=c-release-v1/);
+	await side(page).getByRole('button', { name: 'Add channel', exact: true }).click();
+	const dialog = page.getByRole('dialog', { name: 'Add a channel', exact: true });
+	await dialog.getByLabel('Name').fill('half');
+	await page.goBack();
+	await expect(dialog).toBeHidden();
+	await expect(page.getByTestId('conversation-title')).toHaveText('#release-v1');
+	await expect(page).toHaveURL(/c=c-release-v1/);
+	await shot(page, 'chat-back-dismisses-channel-dialog');
+	await page.goBack();
+	await expect(page.getByTestId('conversation-title')).toHaveText('#general');
+});
+
+test('CHAT-1/3 BUG-57: document titles name each channel, person and inbox view', async ({ page }) => {
+	await open(page); await expect(page).toHaveTitle('Needs you · Chat · Agentic Org');
+	await go(page, 'general'); await expect(page).toHaveTitle('#general · Chat · Agentic Org');
+	await go(page, 'Inês Duarte'); await expect(page).toHaveTitle('Inês Duarte · Chat · Agentic Org');
+	await side(page).getByTestId('mentions-link').click(); await expect(page).toHaveTitle('Mentions · Chat · Agentic Org');
+	await side(page).getByTestId('threads-link').click(); await expect(page).toHaveTitle('Threads · Chat · Agentic Org');
+	await shot(page, 'chat-place-title-threads');
+});
+
+test('CHAT-3 BUG-57: DM rows follow the 36px row size', async ({ page }) => {
+	await open(page);
+	const row = side(page).locator('[data-conversation="c-dm-sam"]');
+	await row.scrollIntoViewIfNeeded();
+	expect((await row.boundingBox())!.height).toBeCloseTo(36, 1);
+	await shot(page, 'chat-dm-row-36px');
+});
+
+for (const target of ['message', 'ask'] as const) {
+	test(`CHAT-5/14 BUG-57: clicking ${target} text does not focus its programmatic return target`, async ({ page }) => {
+		await open(page);
+		if (target === 'message') await go(page, 'general');
+		const row = target === 'message'
+			? page.getByTestId('message').filter({ hasText: 'Ready for review: create-org' })
+			: page.getByTestId('ask-card').filter({ hasText: 'Block bug reports' });
+		await row.locator(target === 'message' ? 'time' : 'p').first().click();
+		await page.mouse.move(350, 30);
+		await expect(row).not.toBeFocused();
+		if (target === 'message') await expect(row.getByRole('toolbar', { name: 'Message actions' })).toHaveCSS('opacity', '0');
+		await shot(page, `chat-pointer-${target}-no-stuck-focus`);
+	});
+}

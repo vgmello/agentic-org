@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, tick, untrack } from 'svelte';
 	import { page } from '$app/state';
-	import { goto } from '$app/navigation';
+	import { beforeNavigate, goto } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
 	import Search from '@lucide/svelte/icons/search';
 	import Users from '@lucide/svelte/icons/users';
@@ -93,6 +93,7 @@
 	};
 	const followsWords = (c: Conversation) => (c.auto?.type === 'general' ? 'the organization' : c.auto?.type === 'project' ? `the ${projectOf(c) ?? 'project'} project` : c.auto?.type === 'team' ? `the ${snapshot.teams.find((t) => c.auto?.type === 'team' && t.id === c.auto.team_id)?.name ?? ''} team` : undefined);
 	const subtitle = $derived(conversation ? `${conversation.members.length} ${conversation.members.length === 1 ? 'member' : 'members'}${conversation.auto ? ` · follows ${followsWords(conversation)}` : ''}` : '');
+	const viewTitle = $derived(searching ? 'Search' : view.type === 'needs' ? 'Needs you' : view.type === 'mentions' ? 'Mentions' : view.type === 'threads' ? 'Threads' : conversation ? titleOf(conversation, ctx, ctx.owner) : 'Chat');
 
 	async function load() {
 		try {
@@ -290,7 +291,17 @@
 	async function restoreFocus(origin: Element | null, place: string, target: () => HTMLElement | null) {
 		await tick();
 		if (!origin || place !== focusPlace() || (document.activeElement !== document.body && document.activeElement !== origin)) return;
-		(target() ?? listEl)?.focus({ preventScroll: true });
+		const next = target() ?? listEl;
+		if (!next) return;
+		// Generic rows become focusable only for this intentional return, so pointer clicks never acquire row focus.
+		const temporary = next.tabIndex < 0 && !next.hasAttribute('tabindex');
+		if (temporary) next.tabIndex = -1;
+		next.focus({ preventScroll: true });
+		if (temporary) {
+			const clear = () => { if (next.getAttribute('tabindex') === '-1') next.removeAttribute('tabindex'); };
+			if (document.activeElement === next) next.addEventListener('blur', clear, { once: true });
+			else clear();
+		}
 	}
 	async function answer(m: ChatMessage, a: { option_id?: string; text?: string }) {
 		if (!officeRunning) throw new Error("The office isn't running. Restart it from Offices.");
@@ -328,6 +339,12 @@
 	let channelMode = $state<'create' | 'rename' | 'members'>('create');
 	let channelOpen = $state(false);
 	let dmOpen = $state(false);
+	beforeNavigate((navigation) => {
+		if (navigation.type !== 'popstate' || (!channelOpen && !dmOpen && !commandOpen)) return;
+		// Back dismisses the modal first; the next Back leaves the conversation.
+		navigation.cancel();
+		channelOpen = dmOpen = commandOpen = false;
+	});
 	const openChannelDialog = (mode: typeof channelMode) => ((channelMode = mode), (channelOpen = true));
 
 	async function channelSubmit(r: { name: string; members: string[] }) {
@@ -364,7 +381,7 @@
 	}
 }} />
 
-<svelte:head><title>Chat · Agentic Org</title></svelte:head>
+<svelte:head><title>{viewTitle} · Chat · Agentic Org</title></svelte:head>
 
 {#snippet rowFor(m: ChatMessage, extra: { where?: string; open?: boolean } = {})}
 	<MessageRow message={m} {ctx} chatState={chatState!} {now} readOnly={bridgePreview} {officeRunning} where={extra.where} onreact={react} onthread={openThread} onturn={turn} onmute={mute} onpin={pin} onanswer={answer} onaccept={accept} onopen={extra.open ? openMessage : undefined} />
@@ -388,7 +405,7 @@
 			<div class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-3">
 				<div class="min-w-0">
 					<h2 class="truncate text-base/7 font-semibold text-white" data-testid="conversation-title">
-						{#if searching}Search{:else if view.type === 'needs'}Needs you{:else if view.type === 'mentions'}Mentions{:else if view.type === 'threads'}Threads{:else if conversation}{titleOf(conversation, ctx, ctx.owner)}{/if}
+						{viewTitle}
 					</h2>
 					{#if conversation && !searching}<p class="text-xs/5 text-gray-400">{subtitle}{#if conversation.archived}{' · Archived'}{/if}</p>{/if}
 				</div>

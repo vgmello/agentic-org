@@ -218,7 +218,7 @@
 				data-testid="composer"
 			></textarea>
 		</div>
-		{#if error}<p id="composer-error-{resetKey}" class="mt-2 text-sm/6 text-red-400" role="alert"><span>{error}</span>{#if unknownCommand} <button type="button" class="font-semibold underline" disabled={busy} onclick={() => void send(true)}>Send as message</button>{/if}</p>{/if}
+		{#if error}<p id="composer-error-{resetKey}" class="mt-2 text-sm/6 text-red-400" role="alert"><span>{error}</span>{#if unknownCommand}{' '}<button type="button" class="font-semibold underline" disabled={busy} onclick={() => void send(true)}>Send as message</button>{/if}</p>{/if}
 		{#if attachments.length}
 			<ul class="mt-2 flex flex-wrap gap-1.5" aria-label="Attached">
 				{#each attachments as a (a)}
