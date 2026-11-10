@@ -12,6 +12,9 @@ async function openChart(page: Page) {
 }
 const card = (page: Page, id: string) => page.locator(`[data-testid=team-card][data-team=${id}]`);
 const strip = (page: Page) => page.getByTestId('selected-member');
+async function failNext(page: Page, method: string) {
+	await page.evaluate((method) => (window as unknown as { __mockOrgFailNext: (method: string) => void }).__mockOrgFailNext(method), method);
+}
 async function select(page: Page, teamId: string, name: RegExp) {
 	await card(page, teamId).getByRole('button', { name }).first().click();
 }
@@ -34,11 +37,16 @@ test('DEAL-3: Pause confirms, then the agent shows Paused and Resume restores it
 	const dialog = page.getByRole('dialog', { name: 'Pause Noor Haddad?' });
 	await expect(dialog).toContainText("Noor Haddad won't be started or woken, and new tasks and messages wait until you resume.");
 	await expect(dialog).toContainText('Noor Haddad stays in Design, Web.');
-	await shot(page, 'pause-agent');
+	await shot(page, 'pause-agent', { context: dialog });
 	await dialog.getByRole('button', { name: 'Cancel' }).click();
 	await expect(strip(page).getByTestId('paused-badge')).toHaveCount(0); // nothing happened
 	await strip(page).getByRole('button', { name: 'Pause…' }).click();
-	await page.getByRole('dialog').getByRole('button', { name: 'Pause Noor Haddad' }).click();
+	await failNext(page, 'member.set_agent_status');
+	await dialog.getByRole('button', { name: 'Pause Noor Haddad' }).click();
+	await expect(dialog.getByRole('alert')).toHaveText('The office went away.');
+	await expect(strip(page).getByTestId('paused-badge')).toHaveCount(0);
+	await shot(page, 'pause-agent-error', { context: dialog });
+	await dialog.getByRole('button', { name: 'Pause Noor Haddad' }).click();
 	await expect(page.getByText('Paused Noor Haddad. Messages and tasks wait until you resume.')).toBeVisible();
 	await expect(strip(page).getByTestId('paused-badge')).toBeVisible();
 	await expect(card(page, 'web').getByRole('button', { name: /^Noor Haddad, agent, paused/ })).toBeVisible();
@@ -58,11 +66,16 @@ test('DEAL-4: Offboard names what changes, then the agent leaves the chart and i
 	await expect(dialog).toContainText('open tasks Sam Okafor has come back unassigned');
 	await expect(dialog).toContainText("Kai Lindqvist, Mira Castillo and Noor Haddad, who report to Sam Okafor, will report to Sam Okafor's manager, Avery Stone.");
 	await expect(dialog).toContainText('the name sam stays reserved');
-	await shot(page, 'offboard-agent');
+	await shot(page, 'offboard-agent', { context: dialog });
 	await dialog.getByRole('button', { name: 'Cancel' }).click();
 	await expect(card(page, 'eng').getByRole('button', { name: /^Sam Okafor/ })).toBeVisible(); // nothing happened
 	await strip(page).getByRole('button', { name: 'Offboard…' }).click();
-	await page.getByRole('dialog').getByRole('button', { name: 'Offboard Sam Okafor' }).click();
+	await failNext(page, 'member.offboard');
+	await dialog.getByRole('button', { name: 'Offboard Sam Okafor' }).click();
+	await expect(dialog.getByRole('alert')).toHaveText('The office went away.');
+	await expect(card(page, 'eng').getByRole('button', { name: /^Sam Okafor/ })).toBeVisible();
+	await shot(page, 'offboard-agent-error', { context: dialog });
+	await dialog.getByRole('button', { name: 'Offboard Sam Okafor' }).click();
 	await expect(page.getByText('Offboarded Sam Okafor. The record and name stay.')).toBeVisible();
 	await expect(page.getByRole('button', { name: /^Sam Okafor/ })).toHaveCount(0); // gone from the chart
 	await expect(card(page, 'eng')).toContainText('No lead');
@@ -100,7 +113,12 @@ test('AGENT-2: Edit changes the record and refuses a messaging name that is take
 	await expect(dialog.getByRole('button', { name: 'Save' })).toBeDisabled();
 	await dialog.getByLabel('Messaging name').fill('sam-principal');
 	await expect(dialog.getByTestId('handle-change-warning')).toContainText('Others reach Sam Okafor as sam today. After saving they must use sam-principal, and sam stays reserved.');
-	await shot(page, 'edit-agent');
+	await shot(page, 'edit-agent', { context: dialog });
+	await failNext(page, 'member.update_agent');
+	await dialog.getByRole('button', { name: 'Save' }).click();
+	await expect(dialog.getByRole('alert')).toHaveText('The office went away.');
+	await expect(dialog.getByLabel('Title')).toHaveValue('Principal engineer');
+	await shot(page, 'edit-agent-error', { context: dialog });
 	await dialog.getByRole('button', { name: 'Save' }).click();
 	await expect(page.getByText('Saved Sam Okafor.')).toBeVisible();
 	await expect(strip(page).getByTestId('agent-line')).toHaveText('Principal engineer · Runs on Codex · On call');
@@ -120,10 +138,15 @@ test('RUN-1: How it runs changes the mode; a scheduled agent needs a schedule; n
 	await expect(dialog.getByTestId('run-limits')).toContainText('back to sleep after 5 minutes');
 	await expect(dialog.getByRole('button', { name: 'Save' })).toBeDisabled(); // a schedule is needed
 	await expect(dialog.getByTestId('run-spec-help')).toHaveText('Add when it runs to save.'); // and it says so
-	await shot(page, 'how-it-runs');
+	await shot(page, 'how-it-runs', { context: dialog });
 	await dialog.getByLabel('When', { exact: true }).fill('weekdays at 9');
 	await expect(dialog.getByTestId('run-spec-help')).toHaveCount(0);
 	await dialog.getByLabel('Time zone', { exact: true }).fill('Europe/Lisbon');
+	await failNext(page, 'member.set_run_mode');
+	await dialog.getByRole('button', { name: 'Save' }).click();
+	await expect(dialog.getByRole('alert')).toHaveText('The office went away.');
+	await expect(dialog.getByLabel('When', { exact: true })).toHaveValue('weekdays at 9');
+	await shot(page, 'how-it-runs-error', { context: dialog });
 	await dialog.getByRole('button', { name: 'Save' }).click();
 	await expect(page.getByText('Saved Sam Okafor.')).toBeVisible();
 	await expect(strip(page).getByTestId('agent-line')).toHaveText('software engineer · Runs on Claude Code · Scheduled');
@@ -148,7 +171,14 @@ test('HIRE: Add agent adds an existing agent with a suggested messaging name, a 
 	await sheet.getByRole('checkbox', { name: 'Engineering › Web' }).click();
 	await expect(sheet.getByLabel('Reports to')).toHaveValue('noor'); // then the team's lead
 	await sheet.getByLabel('Reports to').selectOption({ label: 'Sam Okafor' });
-	await shot(page, 'add-agent');
+	await sheet.getByRole('heading', { name: 'Add an agent' }).scrollIntoViewIfNeeded();
+	await shot(page, 'add-agent', { context: sheet });
+	await failNext(page, 'member.add_agent');
+	await sheet.getByRole('button', { name: 'Add agent' }).click();
+	await expect(sheet.getByRole('alert')).toContainText('The office went away.');
+	await expect(sheet.getByLabel('Name', { exact: true })).toHaveValue('Cameron Díaz');
+	await expect(card(page, 'web').getByRole('button', { name: /^Cameron Díaz, agent/ })).toHaveCount(0);
+	await shot(page, 'add-agent-error', { context: sheet });
 	await sheet.getByRole('button', { name: 'Add agent' }).click();
 	await expect(page.getByText('Added Cameron Díaz. Everyone in Acme can reach Cameron Díaz.')).toBeVisible();
 	await expect(card(page, 'web').getByRole('button', { name: /^Cameron Díaz, agent/ })).toBeVisible();
@@ -267,6 +297,7 @@ test('a stale edit: after HQ changed the agent, the dialog says so and a retry w
 	// This one still reads the version it was opened with, so HQ refuses it.
 	await dialog.getByRole('button', { name: 'Save' }).click();
 	await expect(dialog.getByRole('alert')).toContainText("changed at HQ while you were editing. Here's the latest.");
+	await shot(page, 'edit-agent-conflict', { context: dialog });
 	await expect(dialog.getByLabel('Title')).toHaveValue('Principal engineer'); // what was typed is kept
 	await dialog.getByRole('button', { name: 'Save' }).click(); // and the retry works
 	await expect(page.getByText('Saved Sam Okafor.')).toBeVisible();

@@ -4,7 +4,7 @@
 	import Plus from '@lucide/svelte/icons/plus';
 	import UserPlus from '@lucide/svelte/icons/user-plus';
 	import { toast } from 'svelte-sonner';
-	import AddAgentSheet from '$lib/components/AddAgentSheet.svelte';
+	import { AddAgentSheet } from '$lib/modules/employees';
 	import BringInDialog from '$lib/components/BringInDialog.svelte';
 	import { announceBroughtIn, idsOf } from '$lib/import/after';
 	import { Badge } from '$lib/components/ui/badge';
