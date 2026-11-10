@@ -25,6 +25,16 @@
 		return focusDestinationHeading;
 	});
 
+	function handleFragmentChange({ oldURL, newURL }: HashChangeEvent) {
+		if (!open) return;
+		// Fragment traversal within this page can bypass the SvelteKit navigation hook.
+		const from = new URL(oldURL);
+		const to = new URL(newURL);
+		if (from.pathname !== to.pathname || from.search !== to.search) return;
+		closeForNavigation();
+		void focusDestinationHeading();
+	}
+
 	function closeForNavigation() {
 		closingForNavigation = true;
 		open = false;
@@ -67,6 +77,8 @@
 		}
 	}
 </script>
+
+<svelte:window onhashchange={handleFragmentChange} />
 
 <Sheet.Root bind:open onOpenChange={(value) => { if (value) closingForNavigation = false; }}>
 	<Sheet.Trigger bind:ref={trigger} aria-controls={menuId} class="-ml-2 inline-flex size-11 shrink-0 items-center justify-center rounded-md text-white hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring min-[640px]:hidden">

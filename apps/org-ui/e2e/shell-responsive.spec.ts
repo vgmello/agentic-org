@@ -143,6 +143,21 @@ test('BUG-59: browser Back closes Menu and focuses the destination heading', asy
 	await shot(page, 'shell-menu-back-destination');
 });
 
+test('BUG-59: Back from a same-page fragment closes Menu and focuses the heading', async ({ page }) => {
+	await openOffices(page);
+	await page.setViewportSize({ width: 600, height: 900 });
+	await page.evaluate(() => { window.location.hash = 'shell-page-title'; });
+	await expect(page).toHaveURL(/\/offices#shell-page-title$/);
+	await page.getByRole('button', { name: 'Menu', exact: true }).click();
+	const dialog = page.getByRole('dialog', { name: 'Main navigation' });
+	await expect(dialog).toBeVisible();
+	await page.goBack();
+	await expect(page).toHaveURL(/\/offices$/);
+	await expect(dialog).not.toBeVisible();
+	await expect(page.getByRole('heading', { level: 1, name: 'Offices', exact: true })).toBeFocused();
+	await shot(page, 'shell-menu-back-fragment');
+});
+
 test('BUG-59: the focused rail tooltip survives keyboard scrolling', async ({ page, browserName }) => {
 	await page.setViewportSize({ width: 720, height: 450 });
 	await createOrganization(page);
