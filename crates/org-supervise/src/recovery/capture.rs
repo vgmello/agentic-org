@@ -1,5 +1,5 @@
 //! Capture identity/ancestry before any signal can cause a process to reparent.
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io;
 use std::time::Instant;
 
@@ -40,6 +40,65 @@ pub(super) fn confirm_absent(
         ));
     }
     Ok(())
+}
+
+// Check exact parent observations before using any edge. A torn or cyclic graph
+// is an incomplete snapshot, so it must fail before the checkpoint or any signal.
+fn verified_children<'a>(
+    processes: &BTreeMap<u32, &'a ProcessObservation>,
+    context: &RecoveryContext,
+    ops: &mut dyn RecoveryProcesses,
+    deadline: Instant,
+) -> io::Result<BTreeMap<u32, Vec<&'a ProcessObservation>>> {
+    let mut children: BTreeMap<u32, Vec<&ProcessObservation>> = BTreeMap::new();
+    let mut parents = BTreeMap::new();
+    for child in processes.values() {
+        check_deadline(ops, deadline)?;
+        let Some(parent) = &child.parent else {
+            continue;
+        };
+        if !parent.valid() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid captured parent identity",
+            ));
+        }
+        let Some(observed) = processes.get(&parent.pid) else {
+            continue;
+        };
+        let Some(identity) = &observed.identity else {
+            continue;
+        };
+        if identity != parent {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "captured parent identity changed",
+            ));
+        }
+        if safe_identity(observed, context).is_some() {
+            parents.insert(child.pid, parent.pid);
+            children.entry(parent.pid).or_default().push(child);
+        }
+    }
+    let mut finished = BTreeSet::new();
+    for mut pid in parents.keys().copied() {
+        check_deadline(ops, deadline)?;
+        let mut path = BTreeSet::new();
+        while let Some(parent) = parents.get(&pid) {
+            if finished.contains(&pid) {
+                break;
+            }
+            if !path.insert(pid) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "cyclic captured process ancestry",
+                ));
+            }
+            pid = *parent;
+        }
+        finished.extend(path);
+    }
+    Ok(children)
 }
 
 /// Mark roots and any known earlier targets, plus an optional exact owned leader exclusion.
@@ -170,11 +229,8 @@ pub(super) fn capture_targets(
         ancestry_nodes.insert(saved.identity.pid, (None, id));
         queue.push_back((saved.identity.pid, true));
     }
-    let mut children: BTreeMap<u32, Vec<&ProcessObservation>> = BTreeMap::new();
-    for child in eligible.values() {
-        children.entry(child.parent).or_default().push(child);
-    }
-    // Mark each observed node once, bounding malformed cycles. Reconstruct a
+    let children = verified_children(&eligible, context, ops, deadline)?;
+    // Mark each observed node once. Reconstruct a
     // bounded ancestry chain only for a readable target, not for each S0 link.
     while let Some((parent, from_checkpoint)) = queue.pop_front() {
         check_deadline(ops, deadline)?;

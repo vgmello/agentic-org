@@ -245,8 +245,9 @@ pub struct ProcessObservation {
     pub pid: u32,
     /// Full start/boot identity, or None if it could not be read.
     pub identity: Option<ProcessIdentity>,
-    /// Parent PID from the identity-consistent snapshot; zero if the link cannot be verified.
-    pub parent: u32,
+    /// Parent's exact identity from the same capture, or None if the link could not
+    /// be verified. A numeric PPID alone is not ancestry evidence.
+    pub parent: Option<ProcessIdentity>,
     /// Process group; a hint only.
     pub group: u32,
     /// Session ID; a hint only.
@@ -352,8 +353,8 @@ pub trait RecoveryProcesses: sealed::Processes {
     /// Capture supervisor identity, refusing an unsupported native mechanism.
     fn context(&mut self) -> io::Result<RecoveryContext>;
     /// Complete user-process snapshot, preserving identity/ancestry evidence before kills.
-    /// Parent links must match identities in the same capture; a numeric PPID from a
-    /// stale or inconsistent observation cannot establish ancestry. A truncated or
+    /// Parent links must carry the exact parent identity from the same capture; a
+    /// numeric PPID from a stale observation cannot establish ancestry. A truncated or
     /// failed enumeration is an error, never an empty successful scan.
     fn snapshot(&mut self, deadline: Instant) -> io::Result<Vec<ProcessObservation>>;
     /// Revalidate/pin the policy-issued target and signal it individually.

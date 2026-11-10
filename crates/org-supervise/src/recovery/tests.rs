@@ -16,7 +16,11 @@ fn process(pid: u32, parent: u32, mark: MarkEvidence) -> ProcessObservation {
             started: format!("start-{pid}"),
             boot: "boot".into(),
         }),
-        parent,
+        parent: (parent > 1).then(|| ProcessIdentity {
+            pid: parent,
+            started: format!("start-{parent}"),
+            boot: "boot".into(),
+        }),
         group: pid,
         session: pid,
         uid: 501,
@@ -165,8 +169,8 @@ impl Processes {
     fn remove(&mut self, pid: u32) {
         self.live.retain(|p| p.pid != pid);
         for p in &mut self.live {
-            if p.parent == pid {
-                p.parent = 1;
+            if p.parent.as_ref().is_some_and(|parent| parent.pid == pid) {
+                p.parent = None;
             }
         }
     }
@@ -251,7 +255,7 @@ impl RecoveryProcesses for Processes {
             if self
                 .spawn_during_grace
                 .as_ref()
-                .is_some_and(|child| child.parent == identity.pid)
+                .is_some_and(|child| child.parent.as_ref() == Some(identity))
             {
                 self.live.push(self.spawn_during_grace.take().unwrap());
             }
@@ -879,7 +883,7 @@ fn recovery_failed_descendant_cleanup_cannot_allow_false_gone_on_retry() {
     assert!(first.gone.is_empty());
     assert_eq!(first.unresolved.len(), 1);
     assert_eq!(ops.live[0].pid, 201);
-    assert_eq!(ops.live[0].parent, 1);
+    assert!(ops.live[0].parent.is_none());
     ops.signal_failure = None;
     let deadline = ops.deadline();
     let second = recover_startup(&mut store, &mut ops, deadline).unwrap();
@@ -1234,4 +1238,31 @@ fn recovery_walks_verified_unreadable_intermediary_without_signalling_it() {
             assert!(ops.live.iter().any(|p| p.pid == 202));
         }
     }
+}
+
+#[test]
+fn recovery_torn_snapshot_cannot_attach_old_ppid_to_reused_intermediary() {
+    let mut bridge = process(201, 200, MarkEvidence::Unreadable);
+    bridge.identity.as_mut().unwrap().started = "replacement".into();
+    let child = process(202, 201, MarkEvidence::Absent);
+    let mut ops = Processes::new(vec![marked(200), bridge, child]);
+    let batch = run(false, &mut ops);
+    assert!(batch.gone.is_empty());
+    assert!(
+        ops.signals().is_empty(),
+        "a reused parent PID cannot establish ancestry"
+    );
+}
+
+#[test]
+fn recovery_cyclic_snapshot_cannot_authorize_descendant_signal() {
+    let root = process(200, 201, MarkEvidence::Present(MARK.into()));
+    let child = process(201, 200, MarkEvidence::Absent);
+    let mut ops = Processes::new(vec![root, child]);
+    let batch = run(false, &mut ops);
+    assert!(batch.gone.is_empty());
+    assert!(
+        ops.signals().is_empty(),
+        "cyclic parent links cannot establish ancestry"
+    );
 }

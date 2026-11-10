@@ -120,7 +120,8 @@ Zombies and an exact optional owned probe leader are skipped before environment
 reads. S0 unreadable environments are counted and skipped, without failing the scan;
 the caller surfaces these counts as warnings. A verified identity with an
 unreadable environment can link readable descendants to a marked tree without
-becoming a signal target itself. A known live saved target skipped
+becoming a signal target itself. Every parent link carries its exact observed
+identity; mismatched or cyclic links invalidate the capture. A known live saved target skipped
 under S0 prevents an empty pass, without making the pass itself fail. A known
 target whose identity cannot be verified leaves recovery unresolved. No process
 environment bodies are retained.
