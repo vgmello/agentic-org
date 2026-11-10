@@ -1462,6 +1462,32 @@ mod tests {
         assert_eq!(stored_commands(&store), 2);
     }
 
+    /// X-02 §4.2: fingerprint values don't change. The shared vectors pin `member.add_agent`
+    /// commands as v1 stored them; move 2a's params (the profile as `AgentProfileInput`) must
+    /// serialize the same bytes, which org-proto checks against the same file.
+    #[test]
+    fn fingerprints_match_the_org_proto_v2_vectors() {
+        let doc: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../org-proto/test-vectors/v2/proto-fingerprints.json"
+        ))
+        .unwrap();
+        let cases = doc["org"].as_array().unwrap();
+        for case in cases.iter().chain([&doc["org_refused_v1_home"]]) {
+            let command = OrgCommand::parse(&org_proto::Request {
+                id: 1,
+                method: case["method"].as_str().unwrap().into(),
+                principal: None,
+                params: case["params"].clone(),
+            })
+            .unwrap()
+            .unwrap();
+            let (method, params) = command.method_and_params();
+            assert_eq!(method, case["method"]);
+            assert_eq!(params, case["serialized"].as_str().unwrap());
+            assert_eq!(fingerprint(&command), case["fingerprint"].as_str().unwrap());
+        }
+    }
+
     #[test]
     fn an_unreadable_clock_mark_is_an_error_not_no_mark() {
         let clock = 1_800_000_000_000u64;
