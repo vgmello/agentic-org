@@ -80,7 +80,8 @@ it does not execute a stop. PTYs and `git_exclude` fail before any file writes.
 `git_exclude` requires the caller-owned repository capability being settled in X-09.
 `runtime::stop_policy` and `runtime::socket_cleanup` translate those retained
 instructions into generic core types. `runtime::prepare_probe` uses the same
-mark/identity persistence callbacks and refuses every ORG_* context value before
+mark/identity persistence callbacks and refuses all context-only environment names
+(`ORG_*`, `GIT_CONFIG_*`, `GH_CONFIG_DIR`) before
 creating files. The caller supplies an existing private session temp root; the
 mapper allocates a fresh empty 0700 cwd inside it and returns initial stdin lines,
 mode and timeout. The caller owns all ProbeSession I/O. The cwd is removed after

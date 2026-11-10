@@ -83,7 +83,8 @@ pub struct RuntimeProbe {
 
 /// Prepare a probe without borrowing agent authority or writing a workspace. `temp_root`
 /// must be an existing, real-path own-UID/0700 session temp folder allocated by the caller.
-/// Refuse any ORG_* context instead of silently stripping an accidentally supplied token.
+/// Refuse all context-only names (ORG_*, GIT_CONFIG_*, GH_CONFIG_DIR) rather than
+/// silently stripping accidentally supplied agent or tool authority.
 /// The fresh private cwd protects shared folders from CLIs that write relative dotfiles.
 /// No ProbeSession is called here, and neither stdout nor stderr is consumed.
 pub fn prepare_probe(
@@ -94,13 +95,12 @@ pub fn prepare_probe(
     temp_root: &Path,
     mode: ProbeMode,
 ) -> io::Result<RuntimeProbe> {
-    if environment
-        .0
-        .keys()
-        .any(|name| name.as_encoded_bytes().starts_with(b"ORG_"))
-    {
+    if environment.0.keys().any(|name| {
+        let name = name.as_encoded_bytes();
+        name.starts_with(b"ORG_") || name.starts_with(b"GIT_CONFIG_") || name == b"GH_CONFIG_DIR"
+    }) {
         return Err(crate::invalid(
-            "probe context must not carry ORG binding or token variables",
+            "probe environment must not carry context-only variables",
         ));
     }
     if plan.program != ctx.runtime_path {

@@ -498,7 +498,18 @@ fn probe_context_is_refused_and_abandoned_preparation_cleans_only_its_fresh_dire
     let real = root.path().canonicalize().unwrap();
     std::fs::write(real.join("keep"), b"keep").unwrap();
     let mode = org_supervise::runtime::ProbeMode::Conversation;
-    for name in ["ORG_AGENT", "ORG_SESSION_TOKEN", "ORG_OFFICE", "ORG_OTHER"] {
+    for name in [
+        "ORG_AGENT",
+        "ORG_SESSION_TOKEN",
+        "ORG_OFFICE",
+        "ORG_OTHER",
+        "GH_CONFIG_DIR",
+        "GIT_CONFIG_NOSYSTEM",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_KEY_0",
+        "GIT_CONFIG_VALUE_0",
+    ] {
         let env = environment(&real)
             .with_context(&[(name.into(), "must-not-reach-probe".into())])
             .unwrap();
