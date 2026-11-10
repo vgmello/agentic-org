@@ -2,7 +2,7 @@
 kind: spec
 title: "Dogfood run: fresh HQ, satellite and named instances"
 status: for-review
-revision: 7
+revision: 8
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-10"
@@ -12,6 +12,8 @@ builds_on: [server-installation-and-access-ux, our-org-in-the-app, offices-and-t
 ---
 
 # Spec · Dogfood run: fresh HQ, satellite and named instances
+
+**Revision 8 (2026-11-10):** 3a.14 checks project creation in the chart only (Activity has no row for it). In §7, an Optional row that can't run in the setup is Blocked with the reason, doesn't change the run's result and files no bug. §7's timing rule says the office, not the HR lead, provisions an approved hire. No criteria changed.
 
 **Revision 7 (2026-11-10):** the run tests the whole success test of
 [our-org-in-the-app.md](our-org-in-the-app.md) again. New **§3a Manage the team
@@ -244,7 +246,7 @@ has recorded it when it shows in the browser that made it (a change made in the
 browser), when the `org-agent` command returns (a change an agent makes, such as
 a message, a hire request or approval, or a task move), or when the agent's turn
 starts or ends in its own session view (a status change). A change HQ or an
-office makes as a result of another (the HR lead provisioning an approved hire,
+office makes as a result of another (the office provisioning an approved hire,
 an office confirming Pause) is timed from when it shows in the browser that's
 watching it to when it shows in the second browser. Up to 4 seconds is **Pass with
 notes**. Over 4 seconds, or a change that shows only after a reload, is a Fail.
