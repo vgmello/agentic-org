@@ -1,13 +1,15 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vitest/config';
+import { productionImportGuard } from './src/lib/platform/tooling/production-import-guard.ts';
 
 // Set by `tauri dev` when it targets a device on the network (mobile); unused on desktop.
 const host = process.env.TAURI_DEV_HOST;
 
 // https://v2.tauri.app/start/frontend/sveltekit/
 export default defineConfig({
-	plugins: [tailwindcss(), sveltekit()],
+	// Report until Avery's module moves and the production-factory cutovers are complete.
+	plugins: [tailwindcss(), sveltekit(), productionImportGuard({ mode: 'report' })],
 	// Keep Rust errors visible in the terminal.
 	clearScreen: false,
 	server: {
