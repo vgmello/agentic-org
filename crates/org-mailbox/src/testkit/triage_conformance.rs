@@ -2273,6 +2273,57 @@ pub fn mailbox_maintenance_validation_and_human_requests(backend: impl OpenTriag
     assert!(office.events.delivery_failed().is_empty());
 }
 
+/// Maintenance applies the deadline plus bounded skew, and an already flagged
+/// human ask does not emit another state-change event on each pass.
+pub fn mailbox_maintenance_deadline_and_flag_boundaries(backend: impl OpenTriageBackend) {
+    let office = triage_office(&backend);
+    // A 60-second TTL has a capped 2-second skew allowance: future, 1 ms before,
+    // and exactly at that allowance's end.
+    for (n, offset) in [(1, 60_000), (2, -1_999), (3, -2_000)] {
+        let mut request = expired_request(n, PAT_ID, ADA_ID);
+        request.message.header.to_display_name = ADA_NAME.into();
+        request.message.header.created_at = at(offset - 60_000);
+        request.message.header.expires_at = Some(at(offset));
+        request.message.header.ttl_ms = Some(60_000);
+        commit(&*office.store, request);
+    }
+    commit(&*office.store, expired_request(4, ADA_ID, PAT_ID));
+    let mut flagged = change(4, State::Unread);
+    flagged.to_member_id = PAT_ID.into();
+    flagged.expired_waiting_person = true;
+    apply(&*office.store, flagged);
+
+    office.mailbox.expire_due(ADA_ID, None, 10).unwrap();
+    for n in [1, 2] {
+        assert_eq!(
+            state_of(&*office.store, &msg_id(n)),
+            State::Unread,
+            "request {n}"
+        );
+        assert!(office
+            .store
+            .find_reply_for_ask(&msg_id(n), ADA_ID)
+            .unwrap()
+            .is_none());
+    }
+    assert_eq!(state_of(&*office.store, &msg_id(3)), State::Expired);
+    expect_notice(&*office.store, 3, PAT_ID, PAT_HANDLE);
+    assert_eq!(office.events.delivery_failed().len(), 1);
+    let changes = office.events.state_changes().len();
+    assert_eq!(changes, 1);
+    for _ in 0..2 {
+        office.mailbox.expire_due(PAT_ID, None, 10).unwrap();
+        assert_eq!(
+            office.events.state_changes().len(),
+            changes,
+            "flagged asks emit no event"
+        );
+    }
+    assert_eq!(state_of(&*office.store, &msg_id(4)), State::Unread);
+    assert!(header_of(&*office.store, 4).expired_waiting_person);
+    assert_eq!(office.events.delivery_failed().len(), 1);
+}
+
 /// Every case, by name: what [`crate::triage_conformance_tests!`] runs.
 #[doc(hidden)]
 #[macro_export]
@@ -2334,6 +2385,7 @@ macro_rules! triage_conformance_tests {
             mailbox_maintenance_retries_a_failed_notice,
             mailbox_maintenance_cursor_survives_concurrent_arrivals,
             mailbox_maintenance_validation_and_human_requests,
+            mailbox_maintenance_deadline_and_flag_boundaries,
             mailbox_a_failed_notice_does_not_fail_the_recipient,
             mailbox_a_squatted_notice_id_is_told_via_the_fallback,
             mailbox_squatted_notice_tells_the_asker_exactly_once,
