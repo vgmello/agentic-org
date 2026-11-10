@@ -69,6 +69,8 @@
 	let highlight = $state<string | undefined>();
 	let started = false;
 	let lastSearch = '';
+	let pendingPlace = $state.raw<URL>();
+	let documentPlace = $state('Needs you');
 	let listEl = $state<HTMLElement | undefined>();
 
 	// Previews how a bridge shows asks (CHAT-17): a mock hook like `?mock=`, `?org=` and `?chat=`.
@@ -94,6 +96,11 @@
 	const followsWords = (c: Conversation) => (c.auto?.type === 'general' ? 'the organization' : c.auto?.type === 'project' ? `the ${projectOf(c) ?? 'project'} project` : c.auto?.type === 'team' ? `the ${snapshot.teams.find((t) => c.auto?.type === 'team' && t.id === c.auto.team_id)?.name ?? ''} team` : undefined);
 	const subtitle = $derived(conversation ? `${conversation.members.length} ${conversation.members.length === 1 ? 'member' : 'members'}${conversation.auto ? ` · follows ${followsWords(conversation)}` : ''}` : '');
 	const viewTitle = $derived(searching ? 'Search' : view.type === 'needs' ? 'Needs you' : view.type === 'mentions' ? 'Mentions' : view.type === 'threads' ? 'Threads' : conversation ? titleOf(conversation, ctx, ctx.owner) : 'Chat');
+
+	$effect(() => {
+		// Let SvelteKit push the new entry before updating its title.
+		if (!pendingPlace || page.url.href === pendingPlace.href) documentPlace = viewTitle;
+	});
 
 	async function load() {
 		try {
@@ -172,7 +179,10 @@
 		if (messageId) next.searchParams.set('m', messageId);
 		if (next.href === page.url.href) return;
 		lastSearch = next.search;
-		void goto(next, { keepFocus: true, noScroll: true });
+		pendingPlace = next;
+		void goto(next, { keepFocus: true, noScroll: true }).finally(() => {
+			if (pendingPlace === next) pendingPlace = undefined;
+		});
 	}
 	function closeThread(restore = true) {
 		const wasOpen = !!threadRoot;
@@ -385,7 +395,7 @@
 	}
 }} />
 
-<svelte:head><title>{viewTitle} · Chat · Agentic Org</title></svelte:head>
+<svelte:head><title>{documentPlace} · Chat · Agentic Org</title></svelte:head>
 
 {#snippet rowFor(m: ChatMessage, extra: { where?: string; open?: boolean } = {})}
 	<MessageRow message={m} {ctx} chatState={chatState!} {now} readOnly={bridgePreview} {officeRunning} where={extra.where} onreact={react} onthread={openThread} onturn={turn} onmute={mute} onpin={pin} onanswer={answer} onaccept={accept} onopen={extra.open ? openMessage : undefined} />
