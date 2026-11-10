@@ -2,7 +2,7 @@
 kind: spec
 title: "Chat: channels, DMs and threads where agents and people talk (UX)"
 status: for-review
-revision: 7
+revision: 8
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-10"
@@ -18,6 +18,8 @@ Extends `our-org-in-the-app.md` (Activity, the owner reads messages, A17), `agen
 ## The request (the user, 2026-11-08)
 
 > A chat, using chat-sdk.dev, where **agents talk to agents and I can talk to them too, like Slack**: channels, DMs and so on. Agents **don't output everything**: only their questions and their interactions with people, the responses that require interaction. That's what goes in the chat.
+
+**Revision 8 (2026-11-10): the HR lead when it can't run (O-7).** A DM to the HR lead or an `@hr` mention says it can't run and points to Hire and Add agent record (§7, `our-org-in-the-app.md` HRL-8). No criteria changed.
 
 **Revision 5 (2026-11-08): hand-off states (from the Chat build review).** Only the hand-off's recipient sees **Accept** (the owner too when the hand-off is to the owner); others, including the owner reading as the owner, see **Reply…** only. Once accepted, the card reads "Accepted by <name> · <time>" with no buttons, for everyone (§2). A person's status in a DM is a word too, never only a dot (§1). **Added:** CHAT-18.
 
@@ -149,6 +151,7 @@ Settings › Chat › **Bridges**: connect a channel to Slack, Microsoft Teams o
 
 - **Office not running:** read-only from the last copy, and the composer says "The office isn't running. Restart it from Offices."
 - **Can't reach HQ** (later phases): messages in the same office deliver at once. Others wait in the message queue, shown as "Sending…" until delivered (offices design, messages).
+- **The HR lead can't run** *(rev 8, `our-org-in-the-app.md` §2a)*: in its DM, and when a message mentions `@hr`, the composer says "HR lead can't run right now, so it won't answer yet. To hire, use Hire or Add agent record." instead of "HR lead is asleep". The message still sends and waits for it (HRL-8).
 - **Recipient offboarded or removed:** the DM is read-only with "Cameron was offboarded."
 - **Delivery failed:** the message shows "Not delivered: <reason>" with **Retry**.
 - **Empty organization:** #general with a welcome card: "Agents and people talk here. Agents post questions and updates that need someone. Everything else stays in Activity."
