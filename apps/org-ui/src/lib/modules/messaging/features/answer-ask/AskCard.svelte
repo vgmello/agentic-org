@@ -114,7 +114,7 @@
 		<div class="mt-3 flex flex-wrap items-center gap-2">
 			{#if canAccept}<Button type="button" size="sm" variant="outline" disabled={busy} onclick={() => go(onaccept)}>Accept</Button>{/if}
 			{#if onreplyinthread}<Button type="button" size="sm" variant="ghost" onclick={onreplyinthread}>Reply…</Button>{/if}
-			{#if message.linked_ref}<span class="text-xs/5 text-gray-400">Linked to <span class="font-mono text-gray-200">{message.linked_ref}</span></span>{/if}
+			{#if message.linked_ref}<div><Rich body={`Linked to ${message.linked_ref}`} /></div>{/if}
 		</div>
 	{/if}
 	{#if error}<p class="mt-2 text-sm/6 text-red-400" role="alert">{error}</p>{/if}

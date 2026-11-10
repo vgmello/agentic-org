@@ -180,10 +180,10 @@ describe('CHAT-9 · slash commands and Turn into…', () => {
 		expect(parseSlash('/wake')).toMatchObject({ ok: false });
 		expect(parseSlash('/bgu the list')).toMatchObject({ ok: false, message: 'There is no /bgu command. Did you mean /bug?' });
 		expect(parseSlash('not a command')).toBeUndefined();
-		// Ordinary text that starts with a slash is a message, not a mistake.
-		expect(parseSlash('/tmp is full again')).toBeUndefined();
+		// A leading /word is reserved for commands; paths with further slashes remain ordinary text.
+		expect(parseSlash('/tmp is full again')).toEqual({ ok: false, message: 'No command /tmp.' });
 		expect(parseSlash('/etc/hosts has the wrong entry')).toBeUndefined();
-		expect(parseSlash('/nope')).toBeUndefined();
+		expect(parseSlash('/nope')).toEqual({ ok: false, message: 'No command /nope.' });
 		expect(parseSlash('http://example.com')).toBeUndefined();
 	});
 	it('CHAT-9 · commands complete while typing, and a reminder reads its delay', () => {

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import X from '@lucide/svelte/icons/x';
 	import { Button } from '$lib/components/ui/button';
 	import type { ChatContext } from '$lib/modules/messaging/engine';
@@ -17,6 +18,7 @@
 		officeRunning,
 		readOnly = false,
 		onclose,
+		undelivered,
 		onsend,
 		onreact,
 		onturn,
@@ -34,6 +36,7 @@
 		/** The bridge preview: asks to the owner and approvals are read-only, and nothing is posted. */
 		readOnly?: boolean;
 		onclose: () => void;
+		undelivered?: Snippet;
 		onsend: (text: string, options: { alsoInChannel: boolean; attachments: string[] }) => Promise<boolean | void> | boolean | void;
 		onreact: (m: ChatMessage, r: Reaction) => void;
 		onturn: (m: ChatMessage, into: 'bug' | 'request' | 'task') => void;
@@ -48,7 +51,7 @@
 	const title = $derived(titleOf(conversation, ctx, ctx.owner));
 </script>
 
-<aside class="absolute inset-y-0 right-0 z-30 flex h-full w-96 max-w-full shrink-0 flex-col shadow-xl xl:static xl:shadow-none border-l border-white/10 bg-gray-800" aria-label="Thread" data-testid="thread-panel">
+<aside class="absolute inset-y-0 right-0 left-64 z-30 flex h-full min-w-0 shrink-0 flex-col shadow-xl xl:static xl:w-96 xl:shadow-none border-l border-white/10 bg-gray-800" aria-label="Thread" data-testid="thread-panel">
 	<div class="flex items-center justify-between border-b border-white/10 px-4 py-3">
 		<h2 class="text-sm/6 font-semibold text-white">Thread <span class="font-normal text-gray-400">in {title}</span></h2>
 		<Button type="button" variant="ghost" size="icon-sm" aria-label="Close thread" onclick={onclose}><X aria-hidden="true" /></Button>
@@ -59,6 +62,7 @@
 		{#each replies as r (r.id)}
 			<MessageRow message={r} {ctx} {chatState} {now} {readOnly} {officeRunning} inThread {onreact} {onturn} {onmute} {onpin} {onanswer} {onaccept} />
 		{/each}
+		{@render undelivered?.()}
 	</div>
 	<Composer placeholder="Reply in thread" canWrite={compose.canWrite && !readOnly} note={compose.note} {conversation} {ctx} resetKey="thread:{root.id}" alsoIn={conversation.kind === 'channel' ? title : undefined} {onsend} />
 </aside>

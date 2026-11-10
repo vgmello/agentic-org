@@ -60,6 +60,7 @@
 
 	let view = $state<ChatView>({ type: 'needs' });
 	let threadRoot = $state<string | undefined>();
+	let threadOpener: HTMLElement | undefined;
 	let showMembers = $state(false);
 	let query = $state('');
 	let readMarker = $state<string | undefined>();
@@ -149,6 +150,7 @@
 		query = '';
 		view = next;
 		threadRoot = undefined;
+		threadOpener = undefined;
 		showMembers = false;
 		showMuted = false;
 		openDigest = undefined;
@@ -170,10 +172,12 @@
 		lastSearch = next.search;
 		void goto(next, { keepFocus: true, noScroll: true });
 	}
-	function closeThread() {
+	function closeThread(restore = true) {
+		const wasOpen = !!threadRoot;
 		threadRoot = undefined;
 		highlight = undefined;
 		writePlace();
+		if (wasOpen && restore) (threadOpener?.isConnected ? threadOpener : listEl)?.focus({ preventScroll: true });
 	}
 	// Opening a conversation reads it: what arrives while it is open is read too (unread muted messages don't count).
 	$effect(() => {
@@ -215,6 +219,8 @@
 		/** Kept across a Retry, so a message the office already has is not posted twice. */
 		change_id: string;
 		conversation_id: string;
+		thread_root_id?: string;
+		also_in_channel?: boolean;
 		body: string;
 		attachments: string[];
 		status: 'sending' | 'failed';
@@ -222,8 +228,8 @@
 	}
 	let pending = $state<Pending[]>([]);
 	let keys = 0;
-	const pendingHere = $derived(pending.filter((p) => p.conversation_id === conversation?.id));
-	const pendingMessage = (p: Pending): ChatMessage => ({ id: `pending-${p.key}`, conversation_id: p.conversation_id, from: ctx.owner, kind: 'msg', body: p.body, created_at: now, attachments: p.attachments });
+	const pendingHere = $derived(pending.filter((p) => p.conversation_id === conversation?.id && (!p.thread_root_id || p.also_in_channel)));
+	const pendingMessage = (p: Pending): ChatMessage => ({ id: `pending-${p.key}`, conversation_id: p.conversation_id, thread_root_id: p.thread_root_id, also_in_channel: p.also_in_channel, from: ctx.owner, kind: 'msg', body: p.body, created_at: now, attachments: p.attachments });
 
 	const env = $derived<CommandEnv>({ projects: (snapshot.projects ?? []).map((p) => ({ id: p.id, name: p.name })), members: ctx.members, conversationTitle: conversation && chatState ? titleOf(conversation, ctx, ctx.owner) : 'this conversation' });
 	let command = $state<CommandForm | undefined>();
@@ -248,22 +254,19 @@
 			}
 			return openForm(commandForm(slash, env));
 		}
-		if (thread) {
-			const accepted = await act({ method: 'msg.send', conversation_id: c.id, thread_root_id: thread, kind: 'msg', body: text, also_in_channel: options.alsoInChannel || undefined, attachments: options.attachments.length ? options.attachments : undefined });
-			return !!accepted;
-		}
-		pending.push({ key: ++keys, change_id: newId(), conversation_id: c.id, body: text, attachments: options.attachments, status: 'sending' });
+		pending.push({ key: ++keys, change_id: newId(), conversation_id: c.id, thread_root_id: thread, also_in_channel: thread && options.alsoInChannel ? true : undefined, body: text, attachments: options.attachments, status: 'sending' });
 		// The reactive copy: changing it redraws the row.
 		void deliver(pending[pending.length - 1]);
 		return true;
 	}
 	async function deliver(p: Pending, retry = false) {
 		const origin = retry ? document.activeElement : null;
+		const log = origin?.closest('[role="log"]');
 		const place = focusPlace();
 		let deliveredId: string | undefined;
 		p.status = 'sending';
 		try {
-			const accepted = await chatApi.command(organizationId, { method: 'msg.send', change_id: p.change_id, conversation_id: p.conversation_id, kind: 'msg', body: p.body, attachments: p.attachments.length ? p.attachments : undefined } satisfies ChatCall);
+			const accepted = await chatApi.command(organizationId, { method: 'msg.send', change_id: p.change_id, conversation_id: p.conversation_id, thread_root_id: p.thread_root_id, also_in_channel: p.also_in_channel, kind: 'msg', body: p.body, attachments: p.attachments.length ? p.attachments : undefined } satisfies ChatCall);
 			deliveredId = accepted.id;
 			pending = pending.filter((x) => x.key !== p.key);
 			await load();
@@ -271,7 +274,7 @@
 			p.status = 'failed';
 			p.error = toAppError(e).message;
 		}
-		if (origin) await restoreFocus(origin, place, () => document.querySelector<HTMLElement>(`[data-id="${CSS.escape(deliveredId ?? `pending-${p.key}`)}"]`));
+		if (origin) await restoreFocus(origin, place, () => log?.querySelector<HTMLElement>(`[data-id="${CSS.escape(deliveredId ?? `pending-${p.key}`)}"]`) ?? null);
 	}
 
 	// ---- message actions -----------------------------------------------------------------------
@@ -291,13 +294,14 @@
 	async function answer(m: ChatMessage, a: { option_id?: string; text?: string }) {
 		if (!officeRunning) throw new Error("The office isn't running. Restart it from Offices.");
 		const origin = document.activeElement;
+		const log = origin?.closest('[role="log"]');
 		const place = focusPlace();
 		await send({ method: 'chat.answer', ask_id: m.id, ...a });
 		await load();
 		toast.success(`Answer sent to ${nameOf(ctx, m.from)}.`);
 		await restoreFocus(origin, place, () => view.type === 'needs'
 			? document.querySelector<HTMLElement>('[data-testid="needs-you-list"] [data-testid="ask-card"] button, [data-testid="nothing-needs-you"]')
-			: document.querySelector<HTMLElement>(`[data-ask-id="${CSS.escape(m.id)}"]`));
+			: log?.querySelector<HTMLElement>(`[data-ask-id="${CSS.escape(m.id)}"]`) ?? null);
 	}
 	async function accept(m: ChatMessage) {
 		if (!officeRunning) throw new Error("The office isn't running. Restart it from Offices.");
@@ -305,8 +309,10 @@
 		await load();
 	}
 	function openThread(m: ChatMessage) {
+		const opener = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
 		if (chatState && view.type !== 'conversation') select({ type: 'conversation', id: m.conversation_id }, false);
 		else if (chatState && view.type === 'conversation' && view.id !== m.conversation_id) select({ type: 'conversation', id: m.conversation_id }, false);
+		threadOpener = opener;
 		threadRoot = m.thread_root_id ?? m.id;
 		showMembers = false;
 		writePlace();
@@ -347,10 +353,23 @@
 	const newAt = $derived(readMarker && convView ? convView.shown.find((m) => m.from !== ctx.owner && m.created_at > readMarker!)?.id : undefined);
 </script>
 
+<svelte:window onkeydown={(event) => {
+	if (event.key === 'Escape' && !event.defaultPrevented && threadRoot && !channelOpen && !dmOpen && !commandOpen) {
+		event.preventDefault();
+		closeThread();
+	}
+}} />
+
 <svelte:head><title>Chat · Agentic Org</title></svelte:head>
 
 {#snippet rowFor(m: ChatMessage, extra: { where?: string; open?: boolean } = {})}
 	<MessageRow message={m} {ctx} chatState={chatState!} {now} readOnly={bridgePreview} {officeRunning} where={extra.where} onreact={react} onthread={openThread} onturn={turn} onmute={mute} onpin={pin} onanswer={answer} onaccept={accept} onopen={extra.open ? openMessage : undefined} />
+{/snippet}
+
+{#snippet undeliveredRows(items: Pending[], inThread = false)}
+	{#each items as p (p.key)}
+		<MessageRow message={pendingMessage(p)} {ctx} chatState={chatState!} {now} {inThread} {officeRunning} delivery={{ status: p.status, error: p.error }} onretry={() => void deliver(p, true)} ondismiss={() => (pending = pending.filter((x) => x.key !== p.key))} />
+	{/each}
 {/snippet}
 
 <div class="relative flex h-[calc(100dvh-4rem)] min-h-0">
@@ -372,7 +391,7 @@
 				<div class="flex max-w-full flex-wrap items-center gap-2">
 					<Badge variant="secondary" data-testid="sample-data-note">Sample data</Badge>
 					{#if conversation && !searching}
-						<Button type="button" variant="outline" size="sm" aria-pressed={showMembers} onclick={() => { showMembers = !showMembers; closeThread(); }}><Users aria-hidden="true" /> Members</Button>
+						<Button type="button" variant="outline" size="sm" aria-pressed={showMembers} onclick={() => { showMembers = !showMembers; closeThread(false); }}><Users aria-hidden="true" /> Members</Button>
 					{/if}
 					<div class="relative min-w-0 max-w-full">
 						<Search class="pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 text-gray-400" aria-hidden="true" />
@@ -481,9 +500,7 @@
 							{#if showMuted}<div class="mt-1 space-y-1">{#each convView.muted as m (m.id)}<MessageRow message={m} {ctx} {chatState} {now} readOnly />{/each}</div>{/if}
 						</div>
 					{/if}
-					{#each pendingHere as p (p.key)}
-						<MessageRow message={pendingMessage(p)} {ctx} {chatState} {now} delivery={{ status: p.status, error: p.error }} onretry={() => void deliver(p, true)} ondismiss={() => (pending = pending.filter((x) => x.key !== p.key))} />
-					{/each}
+					{@render undeliveredRows(pendingHere)}
 				{/if}
 			</div>
 
@@ -494,7 +511,9 @@
 		</section>
 
 		{#if root && threadConversation}
-			<ThreadPanel {root} conversation={threadConversation} {ctx} {chatState} {now} {officeRunning} readOnly={bridgePreview} onclose={closeThread} onsend={(t, o) => submit(t, o, threadConversation, root.id)} onreact={react} onturn={turn} onmute={mute} onpin={pin} onanswer={answer} onaccept={accept} />
+			<ThreadPanel {root} conversation={threadConversation} {ctx} {chatState} {now} {officeRunning} readOnly={bridgePreview} onclose={closeThread} onsend={(t, o) => submit(t, o, threadConversation, root.id)} onreact={react} onturn={turn} onmute={mute} onpin={pin} onanswer={answer} onaccept={accept}>
+				{#snippet undelivered()}{@render undeliveredRows(pending.filter((p) => p.thread_root_id === root.id), true)}{/snippet}
+			</ThreadPanel>
 		{:else if showMembers && conversation}
 			<MembersPanel {conversation} {ctx} {chatState} projectName={followsWords} onclose={() => (showMembers = false)} onmute={(id, mode) => muteIn(conversation.id, id, mode)} onrename={() => openChannelDialog('rename')} onaddpeople={() => openChannelDialog('members')} onremove={(id) => void act({ method: 'channel.remove_member', id: conversation.id, member_id: id })} onarchive={() => void act({ method: 'channel.archive', id: conversation.id }, `#${conversation.name} is archived.`)} />
 		{/if}
