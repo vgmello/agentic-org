@@ -1109,6 +1109,31 @@ fn recovery_saved_target_requires_exact_pid_start_and_boot_match() {
 }
 
 #[test]
+fn recovery_refuses_term_for_a_checkpointed_leader_with_unreadable_environment() {
+    let leader = process(100, 1, MarkEvidence::Unreadable);
+    let inventory = vec![CheckpointTarget {
+        identity: leader.identity.clone().unwrap(),
+        ancestry: vec![],
+    }];
+    let mut store = records(true);
+    store.rows[0].1 = record(true).with_inventory(inventory.clone()).unwrap();
+    let mut ops = Processes::new(vec![leader]);
+
+    let batch = run_store(&mut store, &mut ops);
+
+    assert!(ops.signals().is_empty(), "S0 leader was signalled");
+    assert!(batch.gone.is_empty());
+    assert_eq!(batch.unresolved.len(), 1);
+    assert_eq!(batch.unresolved[0].0, 7);
+    assert_eq!(
+        batch.unresolved[0].1.error.kind(),
+        io::ErrorKind::PermissionDenied
+    );
+    assert_eq!(store.checkpoints, 0);
+    assert_eq!(store.rows[0].1.inventory(), inventory);
+}
+
+#[test]
 fn recovery_known_saved_target_with_unreadable_environment_is_skipped_but_not_forgotten() {
     let mut store = records(false);
     store.rows[0].1 = record(false)
