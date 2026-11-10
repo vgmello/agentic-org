@@ -83,7 +83,8 @@ type PeekPair = {
 
 async function holdOverlappingRefreshes(page: Page) {
 	await page.evaluate(async () => {
-		const modulePath = '/src/lib/office/api.ts';
+		// Use the same canonical fake as the route and the original deferred-read helper.
+		const modulePath = '/e2e/fakes/office-api.ts';
 		const { officeApi } = await import(modulePath);
 		const peek = officeApi.peekOrganizations.bind(officeApi);
 		const connection = (await officeApi.connections()).at(-1)!;
