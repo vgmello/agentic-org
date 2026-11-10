@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { Button } from '$lib/components/ui/button';
-	import type { ChatContext } from '$lib/chat/engine';
-	import { acceptedWords, answerWords, appOnly, deadlineWords, nameOf, waitingFor } from '$lib/chat/model';
-	import type { ChatMessage } from '$lib/chat/types';
-	import { collapse } from '$lib/chat/model';
-	import Rich from './Rich.svelte';
+	import type { ChatContext } from '$lib/modules/messaging/engine';
+	import { acceptedWords, answerWords, appOnly, deadlineWords, nameOf, waitingFor } from '$lib/modules/messaging/model';
+	import type { ChatMessage } from '$lib/modules/messaging/types';
+	import { collapse } from '$lib/modules/messaging/model';
+	import Rich from '$lib/modules/messaging/features/send-message/Rich.svelte';
 
 	/**
 	 * An ask, an approval or a hand-off as a card (CHAT-5, CHAT-6, CHAT-17). Answering here answers the ask. Where the card is

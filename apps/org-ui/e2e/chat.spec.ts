@@ -50,6 +50,7 @@ test('CHAT-2: #general, project and team channels exist, and people add a channe
 	await dialog.getByLabel('Name').fill('Release V2');
 	await expect(dialog).toContainText('It will be #release-v2.');
 	await dialog.getByLabel('Sam Okafor').check();
+	await shot(page, 'chat-add-channel', { context: dialog });
 	await dialog.getByRole('button', { name: 'Add channel' }).click();
 	await expect(dialog).toBeHidden();
 	await expect(title(page)).toHaveText('#release-v2');
@@ -59,6 +60,7 @@ test('CHAT-2: #general, project and team channels exist, and people add a channe
 	await page.getByRole('dialog', { name: 'Add people' }).getByLabel('Kai Lindqvist').check();
 	await page.getByRole('button', { name: 'Save members' }).click();
 	await expect(page.getByTestId('member-row')).toHaveCount(3);
+	await shot(page, 'chat-channel-members');
 	// An automatic channel follows the organization and cannot be edited by hand.
 	await go(page, 'atlas');
 	await page.getByRole('button', { name: 'Members' }).click();
@@ -78,6 +80,7 @@ test('CHAT-3: DMs show each member\'s status, and a group of up to 8 can be star
 	const dialog = page.getByRole('dialog', { name: 'New message' });
 	for (const n of ['Avery Stone', 'Hana Weiss', 'Leo Brandt', 'Kai Lindqvist', 'Mira Castillo', 'Juno Park', 'Pax Moreau']) await dialog.getByLabel(n).check();
 	await expect(dialog.getByLabel('Noor Haddad')).toBeDisabled();
+	await shot(page, 'chat-new-group-limit', { context: dialog });
 	await dialog.getByRole('button', { name: 'Start group' }).click();
 	await expect(dialog).toBeHidden();
 	await expect(page.getByRole('button', { name: 'Members' })).toBeVisible();
@@ -103,6 +106,7 @@ test('CHAT-5: an ask is a card with its options; answering it answers the ask an
 	await expect(answered).toHaveAttribute('data-answered', 'true');
 	await expect(answered.getByTestId('answered')).toHaveText('Answered by Alex Kim: Yes, block');
 	await expect(answered.getByRole('button', { name: 'Yes, block' })).toHaveCount(0);
+	await shot(page, 'chat-ask-answered');
 });
 
 test('CHAT-5: Reply… answers with text, and an approval is rejected with a reason', async ({ page }) => {
@@ -122,6 +126,7 @@ test('CHAT-5: Reply… answers with text, and an approval is rejected with a rea
 	await approval.getByLabel('Why do you reject it?').fill('Not before the audit.');
 	await approval.getByRole('button', { name: 'Reject', exact: true }).click();
 	await expect(page.getByTestId('nothing-needs-you')).toBeVisible();
+	await shot(page, 'chat-needs-you-empty');
 	await go(page, 'atlas');
 	await expect(page.getByTestId('ask-card').filter({ hasText: 'Publish the 0.2' }).getByTestId('answered')).toContainText('Answered by Alex Kim: Reject · Not before the audit.');
 });
@@ -181,6 +186,7 @@ test('CHAT-9: /bug, /request, /task, /status, /wake and /remind open their forms
 	await send(page, '/bug the export button does nothing');
 	let dialog = page.getByRole('dialog', { name: 'Report a bug' });
 	await expect(dialog.getByLabel('Title')).toHaveValue('the export button does nothing');
+	await shot(page, 'chat-command-form', { context: dialog });
 	await dialog.getByLabel('What happened').fill('Click it, nothing happens.');
 	await dialog.getByRole('button', { name: 'Report bug' }).click();
 	await expect(page.getByText('drafted for Atlas. Sample data: nothing was saved.')).toBeVisible();
@@ -270,6 +276,7 @@ test('CHAT-13: search filters by text, member, channel, kind and date', async ({
 	await expect(count).toContainText('results');
 	await search.fill('before:2020-01-01');
 	await expect(page.getByTestId('no-results')).toBeVisible();
+	await shot(page, 'chat-search-empty');
 	await search.fill('from:@kai has:ask');
 	await shot(page, 'chat-search');
 	await page.getByTestId('message').first().getByRole('button', { name: 'Open in conversation' }).click();
@@ -300,6 +307,7 @@ test('CHAT-14: Markdown renders safely, item numbers are chips, long messages co
 	await expect(own).toContainText('<img src=x onerror=alert(1)>');
 	await expect(own.locator('img')).toHaveCount(0);
 	await expect(own.locator('a')).toHaveCount(0);
+	await shot(page, 'chat-safe-markdown');
 	// Mentions complete a typed name to the handle.
 	await composer(page).fill('hello @hana');
 	await expect(page.getByTestId('composer-popup')).toContainText('Hana Weiss');
@@ -343,17 +351,65 @@ test('states: the office is not running, a message that fails shows Not delivere
 	await expect(page.getByTestId('office-down')).toBeVisible();
 	await expect(page.getByTestId('composer-note')).toHaveText("The office isn't running. Restart it from Offices.");
 	await expect(composer(page)).toHaveCount(0);
+	await shot(page, 'chat-office-offline');
 
 	await visit(page, '/chat?chat=fail');
 	await go(page, 'general');
 	await send(page, 'Will this arrive?');
 	await expect(page.getByTestId('not-delivered')).toContainText("Not delivered: The office didn't answer.");
+	await shot(page, 'chat-delivery-failed');
 	await page.getByRole('button', { name: 'Retry' }).click();
 	await expect(page.getByTestId('not-delivered')).toHaveCount(0);
 	await expect(messages(page).filter({ hasText: 'Will this arrive?' })).toHaveCount(1);
+	await shot(page, 'chat-delivery-retried');
 
 	await visit(page, '/chat?org=empty');
 	await expect(title(page)).toHaveText('#general');
 	await expect(page.getByTestId('welcome-card')).toContainText('Agents and people talk here.');
 	await shot(page, 'chat-empty');
 });
+
+// Hold the existing organization read used by Chat's snapshot, without a production test hook.
+type HeldChatRead = { started: Promise<void>; release: () => void };
+
+for (const fail of [false, true]) {
+	test(`CHAT-1: the initial snapshot shows loading, then ${fail ? 'its error' : 'the conversation list'}`, async ({ page }) => {
+		await open(page);
+		await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Agents', exact: true }).click();
+		await expect(page).toHaveURL(/\/agents$/);
+		await page.evaluate(async (fail) => {
+			const modulePath = '/src/lib/org/api.ts';
+			const { orgApi } = await import(modulePath);
+			const view = orgApi.view.bind(orgApi);
+			let started!: () => void;
+			let release!: () => void;
+			const began = new Promise<void>((resolve) => (started = resolve));
+			const gate = new Promise<void>((resolve) => (release = resolve));
+			let reads = 0;
+			orgApi.view = async (organizationId: string) => {
+				// The route load obtains its organization first; hold the next read, Chat's snapshot.
+				if (++reads === 1) return view(organizationId);
+				orgApi.view = view;
+				started();
+				await gate;
+				if (fail) throw { source: 'api', code: 'unavailable', message: 'The office went away.' };
+				return view(organizationId);
+			};
+			(window as unknown as { __heldChatRead: HeldChatRead }).__heldChatRead = { started: began, release };
+		}, fail);
+		// Client navigation retains the same dev-module instance as Chat's snapshot adapter.
+		await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Chat', exact: true }).click();
+		await page.evaluate(() => (window as unknown as { __heldChatRead: HeldChatRead }).__heldChatRead.started);
+		await expect(page.getByRole('status')).toHaveText('Loading chat…');
+		await shot(page, 'chat-snapshot-loading', { settle: false });
+		await page.evaluate(() => (window as unknown as { __heldChatRead: HeldChatRead }).__heldChatRead.release());
+		if (fail) {
+			await expect(page.getByRole('alert')).toHaveText('The office went away.');
+			await expect(side(page)).toHaveCount(0);
+		} else {
+			await expect(side(page)).toBeVisible();
+			await expect(title(page)).toHaveText('Needs you');
+		}
+		await shot(page, fail ? 'chat-snapshot-error' : 'chat-snapshot-loaded');
+	});
+}

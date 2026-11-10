@@ -3,9 +3,9 @@
 	import SendHorizontal from '@lucide/svelte/icons/send-horizontal';
 	import { untrack } from 'svelte';
 	import { Button } from '$lib/components/ui/button';
-	import type { ChatContext } from '$lib/chat/engine';
-	import { applyMention, mentionAt, mentionOptions, slashSuggestions } from '$lib/chat/model';
-	import { CHAT_LIMITS, type Conversation } from '$lib/chat/types';
+	import type { ChatContext } from '$lib/modules/messaging/engine';
+	import { applyMention, mentionAt, mentionOptions, slashSuggestions } from '$lib/modules/messaging/model';
+	import { CHAT_LIMITS, type Conversation } from '$lib/modules/messaging/types';
 
 	/**
 	 * The message box (CHAT-14): `@` completes a name to the member's handle, `/` lists the commands, Enter adds a line (⌘ or

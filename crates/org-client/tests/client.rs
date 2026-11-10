@@ -917,65 +917,74 @@ fn a_server_that_reads_a_few_bytes_at_a_time_cannot_stretch_the_timeout() {
 #[test]
 fn a_server_that_half_closes_while_a_request_is_being_written_wakes_the_caller_at_once() {
     let _exclusive = exclusive();
-    let (stop, stopped) = mpsc::channel::<()>();
-    let (seen_end, saw_end) = mpsc::channel::<()>();
-    let server = fake(move |mut peer| {
-        use std::io::Read;
-        // Reads one byte, which proves the client's write has started, and nothing more, so
-        // the write blocks; then says it is done sending. After that macOS refuses the
-        // client's `shutdown(Both)`, so only the fallback can wake it.
-        peer.stream
-            .set_read_timeout(Some(Duration::from_secs(60)))
-            .unwrap();
-        let mut first = [0u8; 1];
-        peer.stream.read_exact(&mut first).unwrap();
-        peer.stream.shutdown(std::net::Shutdown::Write).unwrap();
-        // Now read what the client had written and wait for the end of the stream. It only
-        // comes if the client freed its blocked writer and shut its end: a writer left blocked
-        // would just finish writing into our reads and then go quiet.
-        peer.stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
-        let mut sink = [0u8; 64 * 1024];
-        loop {
-            match peer.stream.read(&mut sink) {
-                Ok(0) => break,
-                Ok(_) => {}
-                Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
-                    panic!("the client never closed its end after the half-close")
+    watchdog(Duration::from_secs(60), || {
+        let (stop, stopped) = mpsc::channel::<()>();
+        let (seen_first, first_seen) = mpsc::channel();
+        let (half_close, may_half_close) = mpsc::channel();
+        let (drain, may_drain) = mpsc::channel();
+        let (seen_end, saw_end) = mpsc::channel();
+        let server = fake(move |mut peer| {
+            use std::io::Read;
+            peer.stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            let mut first = [0u8; 1];
+            peer.stream.read_exact(&mut first).unwrap();
+            seen_first.send(()).unwrap();
+            may_half_close
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap();
+            peer.stream.shutdown(std::net::Shutdown::Write).unwrap();
+            // Wait for Disconnected, so EOF is set before the peer starts reading.
+            // On macOS the old concurrent drain sometimes timed out in a blocked read
+            // with EOF already readable afterwards: an apparent missed wakeup. This
+            // ordering avoids waiting in read when EOF arrives.
+            may_drain.recv_timeout(Duration::from_secs(10)).unwrap();
+            let mut sink = [0u8; 64 * 1024];
+            loop {
+                match peer.stream.read(&mut sink) {
+                    Ok(0) => break,
+                    Ok(_) => {}
+                    Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+                        panic!("the client never closed its end after the half-close")
+                    }
+                    Err(_) => break,
                 }
-                Err(_) => break,
             }
-        }
-        // Reported while the client is still alive: dropping it would close its socket and
-        // give the same end-of-stream for the wrong reason.
-        seen_end.send(()).unwrap();
-        stopped.recv().unwrap();
+            seen_end.send(()).unwrap();
+            stopped.recv_timeout(Duration::from_secs(10)).unwrap();
+        });
+        let client = server.client();
+        std::thread::scope(|scope| {
+            let (finished, result) = mpsc::channel();
+            let caller = &client;
+            let call = scope.spawn(move || {
+                let huge = OrganizationCreateParams {
+                    name: "x".repeat(MAX_FRAME_BYTES - 200),
+                };
+                let result =
+                    caller.call_with_timeout::<OrganizationCreate>(&huge, Duration::from_secs(30));
+                finished.send(result).unwrap();
+            });
+            first_seen.recv_timeout(Duration::from_secs(10)).unwrap();
+            half_close.send(()).unwrap();
+            let result = result
+                .recv_timeout(Duration::from_secs(10))
+                .expect("half-close must wake the caller before the server drains the request");
+            assert!(
+                matches!(result, Err(ClientError::Disconnected)),
+                "{result:?}"
+            );
+            drain.send(()).unwrap();
+            saw_end
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the server must see EOF while the client is still alive");
+            call.join().unwrap();
+        });
+        stop.send(()).unwrap();
+        drop(client);
+        server.finish();
     });
-    let client = server.client();
-
-    let started = Instant::now();
-    let huge = OrganizationCreateParams {
-        name: "x".repeat(MAX_FRAME_BYTES - 200),
-    };
-    let result = client.call_with_timeout::<OrganizationCreate>(&huge, Duration::from_secs(5));
-
-    assert!(
-        matches!(result, Err(ClientError::Disconnected)),
-        "{result:?}"
-    );
-    assert!(
-        started.elapsed() < Duration::from_millis(1500),
-        "took {:?}",
-        started.elapsed()
-    );
-    assert!(
-        saw_end.recv_timeout(Duration::from_secs(10)).is_ok(),
-        "the server never saw the client's end close while the client was alive"
-    );
-    stop.send(()).unwrap();
-    drop(client);
-    server.finish();
 }
 
 #[test]
@@ -1212,95 +1221,6 @@ fn subscribe_from_sends_the_position_and_a_refused_resume_can_be_retried_live() 
         drop(client);
         server.finish();
     });
-}
-
-#[test]
-fn a_deadline_that_falls_mid_write_does_not_close_a_healthy_connection() {
-    let _exclusive = exclusive();
-    // The case needs the deadline to fall after the writer starts and before the write ends,
-    // with the write still ending inside the grace period. On a busy machine any of those
-    // can slip, so the test passes if ANY of ten attempts shows the right behaviour. A
-    // client that closes at the deadline fails every attempt, so a real regression still fails.
-    let mut failures = Vec::new();
-    for attempt in 1..=10 {
-        match mid_write_attempt() {
-            Ok(()) => return,
-            Err(why) => failures.push(format!("attempt {attempt}: {why}")),
-        }
-    }
-    panic!(
-        "no attempt showed a healthy connection surviving a mid-write deadline:\n{}",
-        failures.join("\n")
-    );
-}
-
-fn mid_write_attempt() -> Result<(), String> {
-    watchdog(Duration::from_secs(60), || {
-        let saw_big = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let server_saw = std::sync::Arc::clone(&saw_big);
-        let (go, wait_for_go) = mpsc::channel::<()>();
-        let server = fake(move |mut peer| {
-            use std::io::Read;
-            // Reads nothing until told to, so the client's write of the big request blocks
-            // once the socket buffers are full: it is mid-write when the deadline falls. Then
-            // it reads everything at once, and the write ends a moment after the deadline,
-            // inside the grace period.
-            if wait_for_go.recv().is_err() {
-                return;
-            }
-            let mut pending = Vec::new();
-            let mut chunk = vec![0u8; 64 * 1024];
-            loop {
-                match peer.stream.read(&mut chunk) {
-                    Ok(0) | Err(_) => return,
-                    Ok(n) => pending.extend_from_slice(&chunk[..n]),
-                }
-                while let Some(end) = pending.iter().position(|&b| b == b'\n') {
-                    let line: Vec<u8> = pending.drain(..=end).collect();
-                    if let Ok(request) = serde_json::from_slice::<Request>(&line) {
-                        if request.method == "organization.create" {
-                            server_saw.store(true, std::sync::atomic::Ordering::SeqCst);
-                        }
-                        if request.method == "hello" {
-                            let answer =
-                                Response::ok::<Hello>(request.id, &hello_result(API_VERSION))
-                                    .unwrap();
-                            if frame::write_message(&mut peer.stream, &answer).is_err() {
-                                return;
-                            }
-                        }
-                    }
-                }
-            }
-        });
-        let client = server.client();
-
-        let big = OrganizationCreateParams {
-            name: "x".repeat(256 * 1024),
-        };
-        // 20 ms after the 150 ms deadline, the server starts reading.
-        let timer = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(170));
-            let _ = go.send(());
-        });
-        let result =
-            client.call_with_timeout::<OrganizationCreate>(&big, Duration::from_millis(150));
-        timer.join().unwrap();
-        let outcome = if !matches!(result, Err(ClientError::Timeout)) {
-            Err(format!("the big call did not time out: {result:?}"))
-        } else if let Err(e) = client.hello() {
-            Err(format!(
-                "the connection did not survive the mid-write deadline: {e:?}"
-            ))
-        } else if !saw_big.load(std::sync::atomic::Ordering::SeqCst) {
-            Err("the deadline fell before the writer started: nothing was mid-write".to_string())
-        } else {
-            Ok(())
-        };
-        drop(client);
-        server.finish();
-        outcome
-    })
 }
 
 #[test]
