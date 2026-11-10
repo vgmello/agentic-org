@@ -63,6 +63,57 @@ struct Locator {
     entries: Vec<Entry>,
 }
 
+impl Locator {
+    /// One owner for persisted invariants, shared by every read and publication.
+    fn validate(&self, user_temp: &Path) -> Result<(), Error> {
+        if self.version != 1 || self.entries.len() > MAX_INSTANCES {
+            return Err(Error::Unsafe("unsupported locator version or entry count"));
+        }
+        if self.user_temp != user_temp {
+            return Err(Error::Unsafe(
+                "user temp base differs from the locator's recorded base",
+            ));
+        }
+        for (index, entry) in self.entries.iter().enumerate() {
+            entry.binding.validate()?;
+            if entry.binding.temp_folder != user_temp.join("ao").join(&entry.binding.temp_handle) {
+                return Err(Error::Unsafe(
+                    "instance temp folder differs from registered user base",
+                ));
+            }
+            if self.entries[..index].iter().any(|previous| {
+                previous.binding.name == entry.binding.name
+                    || previous.binding.id == entry.binding.id
+                    || previous.binding.identity == entry.binding.identity
+                    || previous.binding.temp_handle == entry.binding.temp_handle
+            }) {
+                return Err(Error::Unsafe(
+                    "locator contains duplicate instance bindings",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Stale inode reuse must refuse only this operation, before config or locator writes.
+    /// Never publish a state that the next load would reject for duplicate identities.
+    fn check_identity(&self, name: &Name, path: &Path, identity: Identity) -> Result<(), Error> {
+        if let Some(peer) = self
+            .entries
+            .iter()
+            .find(|entry| &entry.binding.name != name && entry.binding.identity == identity)
+        {
+            return Err(Error::IdentityClash {
+                name: name.as_str().to_owned(),
+                path: path.to_owned(),
+                reserved_by: peer.binding.name.as_str().to_owned(),
+                reserved_root: peer.binding.root.clone(),
+            });
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Config {
@@ -98,6 +149,18 @@ fn office_handles<'de, D: serde::Deserializer<'de>>(
 }
 
 impl Config {
+    fn validate_rebind(&self, binding: &Binding, actual: Identity) -> Result<(), Error> {
+        if self.binding.identity != binding.identity && self.binding.identity != actual {
+            return Err(Error::RebindRecoveryRequired {
+                name: binding.name.as_str().to_owned(),
+                path: binding.root.clone(),
+            });
+        }
+        let mut expected = binding.clone();
+        expected.identity = self.binding.identity;
+        self.validate(&expected)
+    }
+
     fn validate(&self, binding: &Binding) -> Result<(), Error> {
         if self.version != 1 || &self.binding != binding {
             return Err(Error::Unsafe(
@@ -147,6 +210,38 @@ pub(crate) struct Instance {
     user_temp: Directory,
 }
 
+/// Managed roots prepared while the instance owns its full-root lock.
+pub(crate) struct InstancePaths {
+    pub(crate) office_home: PathBuf,
+    pub(crate) agents: PathBuf,
+}
+
+/// Confirmation is bound to these values. It must use OS presence or an interactive TTY.
+pub(crate) struct RebindPreview {
+    binding: Binding,
+    actual: Identity,
+}
+
+impl RebindPreview {
+    pub(crate) fn description(&self) -> String {
+        format!(
+            "Rebind instance {} ({}) at {:?}: {:?} -> {:?}",
+            self.binding.name.as_str(),
+            self.binding.id,
+            self.binding.root,
+            self.binding.identity,
+            self.actual,
+        )
+    }
+}
+
+struct RebindSnapshot {
+    phase: Phase,
+    config: ControlFile,
+    // Pins the observed directory inode without holding its lock during confirmation.
+    _root: Directory,
+}
+
 impl Instance {
     pub(crate) fn id(&self) -> &str {
         &self.binding.id
@@ -156,6 +251,19 @@ impl Instance {
     }
     pub(crate) fn root(&self) -> &Path {
         self.root.path()
+    }
+
+    pub(crate) fn prepare_layout(&self) -> Result<InstancePaths, Error> {
+        self.config()?;
+        let office_home = self.root.child("office-state", true)?;
+        office_home.child(org_office_launch::OFFICES_DIR_NAME, true)?;
+        office_home.child("logs", true)?;
+        let agents = self.root.child("agents", true)?;
+        self.verify()?;
+        Ok(InstancePaths {
+            office_home: office_home.path().to_owned(),
+            agents: agents.path().to_owned(),
+        })
     }
 
     fn config(&self) -> Result<(Config, ControlFile), Error> {
@@ -209,6 +317,91 @@ impl Instance {
 }
 
 impl Registry {
+    /// Library use case only until org-setup can expose the signed/interactive CLI.
+    /// Preflight and confirmation hold no locks. Revalidation takes registry, then root.
+    pub(crate) fn rebind(
+        &self,
+        name: Option<&str>,
+        confirm: impl FnOnce(&RebindPreview) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        self.rebind_after_config(name, confirm, || Ok(()))
+    }
+
+    fn rebind_after_config(
+        &self,
+        name: Option<&str>,
+        confirm: impl FnOnce(&RebindPreview) -> Result<(), Error>,
+        after_config: impl FnOnce() -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        let name = Name::parse(name)?;
+        let (locator, _) = self.load()?;
+        let entry = locator
+            .entries
+            .iter()
+            .find(|entry| entry.binding.name == name)
+            .ok_or(Error::Invalid("instance is not registered"))?;
+        let root = Directory::open_root(&entry.binding.root, false)?;
+        let config_file = root.read(CONFIG, MAX_BYTES)?.ok_or(Error::Unsafe(
+            "rebind requires the existing in-root configuration",
+        ))?;
+        let config: Config = decode(&config_file)?;
+        config.validate_rebind(&entry.binding, root.identity())?;
+        let preview = RebindPreview {
+            binding: entry.binding.clone(),
+            actual: root.identity(),
+        };
+        let snapshot = RebindSnapshot {
+            phase: entry.phase,
+            config: config_file,
+            _root: root,
+        };
+        confirm(&preview)?;
+
+        // Canonical order; no root lock is retained across the human confirmation.
+        self.directory.verify()?;
+        let lock = self.directory.lock_file(LOCK)?;
+        let (mut locator, previous) = self.load()?;
+        let changed = || Error::RebindChanged {
+            name: name.as_str().to_owned(),
+            path: preview.binding.root.clone(),
+        };
+        let index = locator
+            .entries
+            .iter()
+            .position(|entry| entry.binding.name == name)
+            .ok_or_else(changed)?;
+        if locator.entries[index].binding != preview.binding
+            || locator.entries[index].phase != snapshot.phase
+        {
+            return Err(changed());
+        }
+        let mut root = Directory::open_root(&preview.binding.root, false)?;
+        root.lock_root()?;
+        root.verify()?;
+        if root.identity() != preview.actual {
+            return Err(changed());
+        }
+        let current = root.read(CONFIG, MAX_BYTES)?.ok_or_else(changed)?;
+        if !snapshot.config.same_version(&current)? {
+            return Err(changed());
+        }
+        let mut config: Config = decode(&current)?;
+        config.validate_rebind(&preview.binding, preview.actual)?;
+        locator.check_identity(&name, &preview.binding.root, preview.actual)?;
+        // D-B22: these observed-identity checks narrow the window, not atomic CAS.
+        if config.binding.identity != preview.actual {
+            config.binding.identity = preview.actual;
+            root.publish(CONFIG, &encode(&config)?, Some(&current))?;
+        }
+        after_config()?;
+        if locator.entries[index].binding.identity != preview.actual {
+            locator.entries[index].binding.identity = preview.actual;
+            self.save(&locator, &lock, previous.as_ref())?;
+        }
+        self.directory.verify_file(LOCK, &lock)?;
+        root.verify()
+    }
+
     /// Only the final directory may be created; callers resolve the trusted account base.
     pub(crate) fn open(path: &Path, user_temp: &Path) -> Result<Self, Error> {
         let user_temp = Directory::open(user_temp, false)?;
@@ -260,10 +453,11 @@ impl Registry {
         let (mut locator, mut previous) = self.load()?;
         let mut root = match self.check_roots(&locator, &name, &path)? {
             Some(root) => root,
-            None => Directory::open(&path, true)?,
+            None => Directory::open_root(&path, true)?,
         };
         root.lock_root()?;
         root.verify()?;
+        locator.check_identity(&name, &path, root.identity())?;
 
         let index = match locator.entries.iter().position(|e| e.binding.name == name) {
             Some(index) => {
@@ -326,38 +520,7 @@ impl Registry {
                 entries: Vec::new(),
             },
         };
-        if locator.version != 1 || locator.entries.len() > MAX_INSTANCES {
-            return Err(Error::Unsafe("unsupported locator version or entry count"));
-        }
-        if locator.user_temp != self.user_temp.path() {
-            return Err(Error::Unsafe(
-                "user temp base differs from the locator's recorded base",
-            ));
-        }
-        for (index, entry) in locator.entries.iter().enumerate() {
-            entry.binding.validate()?;
-            if entry.binding.temp_folder
-                != self
-                    .user_temp
-                    .path()
-                    .join("ao")
-                    .join(&entry.binding.temp_handle)
-            {
-                return Err(Error::Unsafe(
-                    "instance temp folder differs from registered user base",
-                ));
-            }
-            if locator.entries[..index].iter().any(|previous| {
-                previous.binding.name == entry.binding.name
-                    || previous.binding.id == entry.binding.id
-                    || previous.binding.identity == entry.binding.identity
-                    || previous.binding.temp_handle == entry.binding.temp_handle
-            }) {
-                return Err(Error::Unsafe(
-                    "locator contains duplicate instance bindings",
-                ));
-            }
-        }
+        locator.validate(self.user_temp.path())?;
         Ok((locator, previous))
     }
 
@@ -368,7 +531,7 @@ impl Registry {
         path: &Path,
     ) -> Result<Option<Directory>, Error> {
         // Probe an existing root without modifying it; a missing final component is fine.
-        let candidate = match Directory::open(path, false) {
+        let candidate = match Directory::open_root(path, false) {
             Ok(root) => Some(root),
             Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => None,
             #[cfg(target_os = "linux")]
@@ -433,7 +596,7 @@ impl Registry {
             }
             // Unavailable peers retain their path and known identity, but do not
             // prevent unrelated instances from starting. Never adopt their moved inode.
-            let existing = Directory::open(&entry.binding.root, false)
+            let existing = Directory::open_root(&entry.binding.root, false)
                 .ok()
                 .filter(|root| root.identity() == entry.binding.identity);
             let lexical = paths_overlap(
@@ -442,7 +605,7 @@ impl Registry {
                 existing.is_none() && !known_target,
             );
             if lexical
-                || Directory::has_ancestor(path, entry.binding.identity)?
+                || (existing.is_some() && Directory::has_ancestor(path, entry.binding.identity)?)
                 || match &candidate {
                     Some(root) => match &existing {
                         Some(existing) => root.contains_path(existing.path())?,
@@ -508,6 +671,7 @@ impl Registry {
         lock: &File,
         previous: Option<&ControlFile>,
     ) -> Result<ControlFile, Error> {
+        locator.validate(self.user_temp.path())?;
         self.directory.verify_file(LOCK, lock)?;
         self.directory
             .publish(REGISTRY, &encode(locator)?, previous)

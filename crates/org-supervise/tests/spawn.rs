@@ -98,8 +98,12 @@ fn child_entry() {
             println!("CORE-ZERO-ACCEPTED");
         }
         "drop-group-parent" => {
-            assert_drop_kills_group();
+            assert_owned_group_cleanup(false);
             println!("GROUP-REAPED");
+        }
+        "natural-group-parent" => {
+            assert_owned_group_cleanup(true);
+            println!("NATURAL-GROUP-REAPED");
         }
         "inspect" => {
             // No open calls before this scan. The test runner has no external descriptor.
@@ -211,7 +215,7 @@ fn child_entry() {
     }
 }
 
-fn assert_drop_kills_group() {
+fn assert_owned_group_cleanup(natural_exit: bool) {
     #[cfg(target_os = "linux")]
     // SAFETY: this is an isolated helper, not the parallel test runner. Adopt/reap its
     // grandchild so even container PID1 behavior cannot leave a fixture zombie.
@@ -223,7 +227,15 @@ fn assert_drop_kills_group() {
     let spawned = prepare(
         &root,
         "/bin/sh".into(),
-        vec!["-c".into(), "trap '' TERM; sleep 8 & echo $!; wait".into()],
+        vec![
+            "-c".into(),
+            if natural_exit {
+                "trap '' TERM; exec 3<&0; cat <&3 & echo $!; exit 17"
+            } else {
+                "trap '' TERM; exec 3<&0; cat <&3 & echo $!; wait"
+            }
+            .into(),
+        ],
         environment(&root),
     )
     .record_mark(|_| Ok(()))
@@ -233,21 +245,23 @@ fn assert_drop_kills_group() {
     .record_identity(|_| Ok(()))
     .unwrap();
     let Spawned {
-        child,
+        mut child,
         stdin,
         stdout,
         stderr,
     } = spawned;
-    stdin.close().unwrap();
     drop(stderr);
     let (sender, receiver) = std::sync::mpsc::channel();
+    let (eof_sender, eof_receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         use std::io::BufRead;
         let mut line = String::new();
-        std::io::BufReader::new(stdout)
-            .read_line(&mut line)
-            .unwrap();
+        let mut reader = std::io::BufReader::new(stdout);
+        reader.read_line(&mut line).unwrap();
         let _ = sender.send(line);
+        let mut rest = Vec::new();
+        let result = reader.read_to_end(&mut rest);
+        let _ = eof_sender.send(result);
     });
     let pid: i32 = receiver
         .recv_timeout(Duration::from_secs(5))
@@ -257,7 +271,22 @@ fn assert_drop_kills_group() {
         .unwrap();
     // SAFETY: queries only the freshly reported private fixture process.
     assert_eq!(unsafe { libc::getpgid(pid) }, child.identity().pgid as i32);
+    if natural_exit {
+        let status = child
+            .wait_until(Instant::now() + Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        assert_eq!(status.code(), Some(17));
+        // Still unreaped; cleanup must kill the group despite its leader already exiting.
+        assert_eq!(child.try_exit().unwrap(), Some(status));
+        let report = child.cleanup_and_reap(&[]).unwrap();
+        assert_eq!(report.status, status);
+    }
     drop(child);
+    // Keep the descendant alive until group cleanup, independent of scheduling. If a
+    // mutation misses it, closing this gate releases it without signalling a nonchild.
+    let eof = eof_receiver.recv_timeout(Duration::from_secs(5));
+    stdin.close().unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         #[cfg(target_os = "linux")]
@@ -290,12 +319,26 @@ fn assert_drop_kills_group() {
                 libc::kill(pid, libc::SIGKILL);
                 libc::waitpid(pid, std::ptr::null_mut(), 0);
             }
-            // On macOS a deliberately broken group-kill mutation has at most three
-            // seconds left on sleep8; do not signal a nonchild by numeric PID.
-            panic!("owned group member survived owner Drop");
+            // The EOF gate is already closed, so the fixture can exit without a signal.
+            // Never signal a macOS nonchild using a numeric PID after leader reaping.
+            panic!("owned group member survived cleanup and EOF release");
         }
         std::thread::sleep(Duration::from_millis(10));
     }
+    assert!(
+        matches!(eof, Ok(Ok(_))),
+        "group kept output pipe open before EOF release: {eof:?}"
+    );
+}
+
+#[test]
+fn natural_exit_cleans_the_residual_group_before_reaping_without_waiting_for_output_eof() {
+    let root = tempfile::tempdir().unwrap();
+    let (_, text) = output(launch(
+        &root.path().canonicalize().unwrap(),
+        "natural-group-parent",
+    ));
+    assert!(text.contains("NATURAL-GROUP-REAPED"));
 }
 
 #[test]

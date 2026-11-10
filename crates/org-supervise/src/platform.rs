@@ -289,6 +289,60 @@ pub(crate) fn identity(pid: libc::pid_t) -> io::Result<(u32, String, String)> {
     }
 }
 
+/// Called only for an exited WNOWAIT-owned leader after group signalling returned EPERM.
+/// XNU kern_sig.c:1612-1621 filters SZOMB during group iteration, then returns EPERM when
+/// no live member was signalled. Never infer an empty group from that error alone.
+/// https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_sig.c#L1612-L1621
+#[cfg(target_os = "macos")]
+pub(crate) fn group_contains_only_leader(pid: libc::pid_t) -> io::Result<bool> {
+    group_contains_only_leader_with(pid, |members| {
+        let (buffer, bytes) = match members {
+            None => (std::ptr::null_mut(), 0),
+            Some(members) => (
+                members.as_mut_ptr().cast(),
+                std::mem::size_of_val(members) as i32,
+            ),
+        };
+        // proc_listpgrppids returns a COUNT, whereas proc_listpids returns BYTES. The
+        // null-buffer estimate may cover all system processes; it is only a size hint.
+        // SAFETY: null sizing query or initialized pid buffer; query confined to held pgid.
+        let count = unsafe { libc::proc_listpgrppids(pid, buffer, bytes) };
+        if count <= 0 {
+            return Err(io::Error::other(
+                "cannot enumerate the retained leader's group",
+            ));
+        }
+        Ok(count as usize)
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn group_contains_only_leader_with(
+    pid: libc::pid_t,
+    mut list: impl FnMut(Option<&mut [libc::pid_t]>) -> io::Result<usize>,
+) -> io::Result<bool> {
+    let estimate = list(None)?;
+    if estimate == 0 {
+        return Err(io::Error::other("empty group size estimate"));
+    }
+    let capacity = estimate
+        .checked_add(16)
+        .filter(|size| *size <= i32::MAX as usize / std::mem::size_of::<libc::pid_t>())
+        .ok_or_else(|| invalid("process group snapshot exceeds native buffer size"))?;
+    let mut members = Vec::new();
+    members
+        .try_reserve_exact(capacity)
+        .map_err(io::Error::other)?;
+    members.resize(capacity, 0);
+    let count = list(Some(&mut members))?;
+    if count == 0 || count >= capacity {
+        return Err(io::Error::other(
+            "empty or truncated process group snapshot",
+        ));
+    }
+    Ok(count == 1 && members[0] == pid)
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -323,5 +377,52 @@ mod tests {
         assert!(super::privileged_credentials(501, 0, 501, false));
         assert!(super::privileged_credentials(501, 501, 0, false));
         assert!(super::privileged_credentials(501, 501, 501, true));
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod zombie_group_tests {
+    use super::*;
+    #[test]
+    fn only_the_complete_single_owned_leader_snapshot_is_accepted() {
+        for (snapshot, expected) in [(vec![19], true), (vec![19, 20], false), (vec![20], false)] {
+            assert_eq!(
+                group_contains_only_leader_with(19, |members| {
+                    let Some(members) = members else {
+                        return Ok(2);
+                    };
+                    members[..snapshot.len()].copy_from_slice(&snapshot);
+                    Ok(snapshot.len())
+                })
+                .unwrap(),
+                expected
+            );
+        }
+        assert!(
+            group_contains_only_leader_with(19, |_| Err(io::Error::other("sizing denied")))
+                .is_err()
+        );
+        assert!(
+            group_contains_only_leader_with(19, |members| if members.is_none() {
+                Ok(2)
+            } else {
+                Err(io::Error::other("enumeration denied"))
+            })
+            .is_err()
+        );
+        assert!(
+            group_contains_only_leader_with(19, |members| Ok(members.map_or(2, |p| p.len())))
+                .is_err()
+        );
+        assert!(
+            group_contains_only_leader_with(19, |members| Ok(if members.is_none() {
+                2
+            } else {
+                0
+            }))
+            .is_err()
+        );
+        assert!(group_contains_only_leader_with(19, |_| Ok(0)).is_err());
+        assert!(group_contains_only_leader_with(19, |_| Ok(usize::MAX)).is_err());
     }
 }

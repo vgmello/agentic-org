@@ -44,6 +44,7 @@ impl SessionMark {
 pub struct PreparedSpawn {
     spec: SpawnSpec,
     mark: SessionMark,
+    cleanup_dir: Option<crate::files::PrivateDirectory>,
 }
 
 impl PreparedSpawn {
@@ -66,7 +67,19 @@ impl PreparedSpawn {
         }
         spec.environment
             .insert("ORG_SESSION_MARK".into(), mark.0.clone().into())?;
-        Ok(Self { spec, mark })
+        Ok(Self {
+            spec,
+            mark,
+            cleanup_dir: None,
+        })
+    }
+
+    pub(crate) fn with_cleanup_directory(
+        mut self,
+        directory: crate::files::PrivateDirectory,
+    ) -> Self {
+        self.cleanup_dir = Some(directory);
+        self
     }
 
     /// The callback must durably persist this mark before returning success. Failure cannot
@@ -87,13 +100,21 @@ impl RecordedSpawn {
     /// Start with pipes, capture process identity, and keep stdin unavailable until recorded.
     pub fn spawn(self) -> io::Result<PendingChild> {
         platform::validate()?;
-        let PreparedSpawn { spec, mark } = self.0;
+        let PreparedSpawn {
+            spec,
+            mark,
+            cleanup_dir,
+        } = self.0;
         let metadata = spec.program.metadata()?;
         if metadata.mode() & 0o6000 != 0 {
             return Err(invalid("setuid/setgid executable refused"));
         }
         let (pid, stdin, stdout, stderr) = spawn_piped(&spec)?;
         let mut child = OwnedChild::new(pid);
+        child.cleanup_dir = cleanup_dir.map(|mut directory| {
+            directory.attach();
+            directory
+        });
         // Successful posix_spawn applied SETSID before exec; guard the group even if a
         // subsequent identity/watch query fails.
         child.group = true;
@@ -284,4 +305,127 @@ fn spawn_piped(spec: &SpawnSpec) -> io::Result<(libc::pid_t, File, File, File)> 
     // SAFETY: actions was successfully initialized, independently of attrs/result.
     unsafe { libc::posix_spawn_file_actions_destroy(actions.as_mut_ptr()) };
     Ok((result?, input.into(), output.into(), error.into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_parent_pipe_is_cloexec_and_stays_out_of_an_unrelated_exec() {
+        let temp = tempfile::tempdir().unwrap();
+        let spec = SpawnSpec {
+            program: "/bin/cat".into(),
+            args: Vec::new(),
+            cwd: temp.path().canonicalize().unwrap(),
+            environment: Environment::new(
+                crate::SearchPath::new(
+                    std::path::Path::new("/usr/bin"),
+                    "/usr/bin:/bin".as_ref(),
+                    &[],
+                )
+                .unwrap(),
+                &[],
+            )
+            .unwrap(),
+        };
+        let (pid, stdin, stdout, stderr) = spawn_piped(&spec).unwrap();
+        let mut child = OwnedChild::new(pid);
+        child.group = true;
+        let descriptors = [stdin.as_raw_fd(), stdout.as_raw_fd(), stderr.as_raw_fd()];
+        for fd in descriptors {
+            // SAFETY: queries a live owned parent pipe end without altering it.
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+            assert!(
+                flags >= 0 && flags & libc::FD_CLOEXEC != 0,
+                "parent fd {fd} lacks CLOEXEC"
+            );
+        }
+        // A normal exec relies on CLOEXEC, unlike org-supervise's close-all spawn actions.
+        // This isolated shell only tests these exact fd numbers; it opens no test files.
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "test-only exec must rely on CLOEXEC rather than the supervisor's close-all actions"
+        )]
+        let status = std::process::Command::new("/bin/sh")
+            .env_clear()
+            .args([
+                "-c",
+                "for fd in \"$@\"; do if test -p \"/dev/fd/$fd\"; then exit 1; fi; done",
+                "check-parent-pipes",
+            ])
+            .args(descriptors.map(|fd| fd.to_string()))
+            .status()
+            .unwrap();
+        assert!(
+            status.success(),
+            "parent pipe leaked through unrelated exec"
+        );
+        drop(child);
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod zombie_group_tests {
+    use super::*;
+    use std::io::BufRead;
+    use std::time::{Duration, Instant};
+
+    fn exited_group(script: &str) -> (OwnedChild, File, File) {
+        let temp = tempfile::tempdir().unwrap();
+        let spec = SpawnSpec {
+            program: "/bin/sh".into(),
+            args: vec!["-c".into(), script.into()],
+            cwd: temp.path().canonicalize().unwrap(),
+            environment: Environment::new(
+                crate::SearchPath::new(
+                    std::path::Path::new("/usr/bin"),
+                    "/usr/bin:/bin".as_ref(),
+                    &[],
+                )
+                .unwrap(),
+                &[],
+            )
+            .unwrap(),
+        };
+        let (pid, stdin, stdout, _stderr) = spawn_piped(&spec).unwrap();
+        let mut child = OwnedChild::new(pid);
+        child.group = true;
+        child.watch = Some(platform::Watch::new(pid).unwrap());
+        child.release_after_record().unwrap();
+        assert_eq!(
+            child
+                .wait_until(Instant::now() + Duration::from_secs(5))
+                .unwrap()
+                .unwrap()
+                .code(),
+            Some(17)
+        );
+        (child, stdout, stdin)
+    }
+
+    #[test]
+    fn zombie_only_group_eperm_is_verified_before_explicit_cleanup_reaps() {
+        let (mut child, _stdout, _hold_input) = exited_group("exit 17");
+        assert!(platform::group_contains_only_leader(child.pid).unwrap());
+        // SAFETY: the held leader is still our unreaped child, reserving this group ID.
+        assert_eq!(unsafe { libc::killpg(child.pid, libc::SIGKILL) }, -1);
+        assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
+        assert_eq!(child.cleanup_and_reap(&[]).unwrap().status.code(), Some(17));
+    }
+
+    #[test]
+    fn an_exited_leader_with_a_live_group_member_is_not_the_zombie_only_exception() {
+        let (mut child, stdout, _hold_input) =
+            exited_group("exec 3<&0; cat <&3 & echo $!; exit 17");
+        let mut line = String::new();
+        std::io::BufReader::new(stdout)
+            .read_line(&mut line)
+            .unwrap();
+        let member: i32 = line.trim().parse().unwrap();
+        // SAFETY: observation only of the gated fixture member in the held child group.
+        assert_eq!(unsafe { libc::getpgid(member) }, child.pid);
+        assert!(!platform::group_contains_only_leader(child.pid).unwrap());
+        assert_eq!(child.cleanup_and_reap(&[]).unwrap().status.code(), Some(17));
+    }
 }

@@ -371,7 +371,8 @@ impl OfficeRunner {
     }
 
     fn expected_socket(&self) -> std::path::PathBuf {
-        org_proto::location::office_socket_path(&self.spawner.home, &self.office_id)
+        self.spawner
+            .socket_path(&self.office_id)
             .unwrap_or_default()
     }
 

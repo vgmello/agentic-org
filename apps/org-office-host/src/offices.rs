@@ -548,7 +548,9 @@ impl Offices {
     /// The reason goes only with `offline` and `unavailable`, and the next restart only with
     /// `offline`, as the contract says.
     fn office_info(&self, office: &OfficeFile, state: OfficeState) -> OfficeInfo {
-        let endpoint = org_proto::location::office_socket_path(&self.home, &office.office_id)
+        let endpoint = self
+            .supervisor
+            .socket_path(&office.office_id)
             .and_then(|path| path.to_str().map(str::to_owned));
         let down = matches!(
             state.status,
@@ -759,6 +761,7 @@ mod tests {
         let supervisor = Supervisor::new(SupervisorConfig {
             program: script,
             home: home.to_path_buf(),
+            runtime_dir: None,
             logs_dir: home.join("logs"),
             log_max_bytes: 1024,
             timings: Timings::default(),
@@ -797,6 +800,7 @@ mod tests {
         let supervisor = Supervisor::new(SupervisorConfig {
             program: home.join("no-such-server"),
             home: home.to_path_buf(),
+            runtime_dir: None,
             logs_dir: home.join("logs"),
             log_max_bytes: 1024,
             timings: Timings::default(),
@@ -850,6 +854,7 @@ mod tests {
             let supervisor = Supervisor::new(SupervisorConfig {
                 program: home.join("no-such-server"),
                 home: home.to_path_buf(),
+                runtime_dir: None,
                 logs_dir: home.join("logs"),
                 log_max_bytes: 1024,
                 timings: Timings::default(),
@@ -894,6 +899,7 @@ mod tests {
         let supervisor = Supervisor::new(SupervisorConfig {
             program: home.join("no-such-server"),
             home: home.to_path_buf(),
+            runtime_dir: None,
             logs_dir: home.join("logs"),
             log_max_bytes: 1024,
             timings: Timings::default(),

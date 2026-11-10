@@ -4,7 +4,8 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
-use std::path::{Component, Path};
+use std::os::unix::fs::MetadataExt;
+use std::path::{Component, Path, PathBuf};
 
 use crate::invalid;
 
@@ -89,7 +90,7 @@ fn open_directory(parent: &OwnedFd, name: &CString, usage: DirectoryUse) -> io::
     Ok(fd)
 }
 
-fn root(path: &Path) -> io::Result<OwnedFd> {
+pub(crate) fn root(path: &Path) -> io::Result<OwnedFd> {
     if !path.is_absolute() {
         return Err(invalid("planned-file root must be absolute"));
     }
@@ -113,6 +114,123 @@ fn root(path: &Path) -> io::Result<OwnedFd> {
         }
     }
     Ok(current)
+}
+
+pub(crate) fn private_directory(fd: &OwnedFd) -> io::Result<()> {
+    let mut info = std::mem::MaybeUninit::<libc::stat>::uninit();
+    // SAFETY: an owned directory descriptor and a valid output slot.
+    if unsafe { libc::fstat(fd.as_raw_fd(), info.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: successful fstat initialized the record; geteuid only queries credentials.
+    let info = unsafe { info.assume_init() };
+    if info.st_mode & libc::S_IFMT != libc::S_IFDIR
+        || info.st_uid != unsafe { libc::geteuid() }
+        || info.st_mode & 0o7777 != 0o700
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "cleanup parent must already be a current-user directory with mode 0700",
+        ));
+    }
+    Ok(())
+}
+
+/// A fresh disposable directory, never an existing caller directory. Once attached to a
+/// child, its owner explicitly removes it after exit; losing ownership leaves it unresolved.
+pub(crate) struct PrivateDirectory {
+    path: PathBuf,
+    parent_path: PathBuf,
+    parent: OwnedFd,
+    name: CString,
+    dev: u64,
+    ino: u64,
+    armed: bool,
+    present: bool,
+}
+
+impl PrivateDirectory {
+    pub(crate) fn new(parent_path: &Path) -> io::Result<Self> {
+        let parent = root(parent_path)?;
+        private_directory(&parent)?;
+        let mut random = [0; 16];
+        File::open("/dev/urandom")?.read_exact(&mut random)?;
+        let name = CString::new(format!("probe-{:032x}", u128::from_ne_bytes(random))).unwrap();
+        // SAFETY: pinned private parent, newly allocated literal name, no chmod of any inode.
+        if unsafe { libc::mkdirat(parent.as_raw_fd(), name.as_ptr(), 0o700) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let result = (|| {
+            let fd = open_directory(&parent, &name, DirectoryUse::Created)?;
+            private_directory(&fd)?;
+            let path = parent_path.join(OsStr::from_bytes(name.as_bytes()));
+            let metadata = File::from(fd).metadata()?;
+            Ok(Self {
+                path,
+                parent_path: parent_path.to_owned(),
+                parent,
+                name,
+                dev: metadata.dev(),
+                ino: metadata.ino(),
+                armed: true,
+                present: true,
+            })
+        })();
+        // On an owner-masking umask, opening the created directory may fail. Never repair
+        // permissions. The empty allocation remains for its owner to diagnose/remove.
+        result
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(crate) fn attach(&mut self) {
+        self.armed = false;
+    }
+
+    pub(crate) fn remove(&mut self) -> io::Result<bool> {
+        if !self.present {
+            return Ok(false);
+        }
+        private_directory(&self.parent)?;
+        // Reopen from / without following links; refuse a moved/replaced ancestor.
+        let current_parent = root(&self.parent_path)?;
+        private_directory(&current_parent)?;
+        let pinned = File::from(self.parent.try_clone()?).metadata()?;
+        let current = File::from(current_parent).metadata()?;
+        if (pinned.dev(), pinned.ino()) != (current.dev(), current.ino()) {
+            return Err(invalid("probe parent was replaced"));
+        }
+        let current = match open_directory(&self.parent, &self.name, DirectoryUse::Created) {
+            Ok(fd) => fd,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                self.present = false;
+                return Ok(false);
+            }
+            Err(error) => return Err(error),
+        };
+        private_directory(&current)?;
+        let metadata = File::from(current).metadata()?;
+        if (metadata.dev(), metadata.ino()) != (self.dev, self.ino) {
+            return Err(invalid("probe directory was replaced"));
+        }
+        // Rust's Unix remove_dir_all uses fd-relative traversal and protects against
+        // symlink TOCTOU on our supported macOS/Linux platforms. The private parent and
+        // identity checks above bound which tree is owned; deliberate same-UID mutation
+        // remains outside v1's threat model, not an atomic rename/identity guarantee.
+        std::fs::remove_dir_all(&self.path)?;
+        self.present = false;
+        Ok(true)
+    }
+}
+
+impl Drop for PrivateDirectory {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = self.remove();
+        }
+    }
 }
 
 fn components(relative: &Path) -> io::Result<Vec<&OsStr>> {

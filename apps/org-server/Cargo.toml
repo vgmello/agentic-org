@@ -15,6 +15,7 @@ name = "launch"
 path = "tests/launch.rs"
 
 [dependencies]
+org-socket = { path = "../../crates/org-socket" }
 org-proto = { path = "../../crates/org-proto" }
 org-office = { path = "../../crates/org-office" }
 org-mailbox = { path = "../../crates/org-mailbox" }

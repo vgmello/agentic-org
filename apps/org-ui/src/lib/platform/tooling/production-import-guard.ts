@@ -55,7 +55,8 @@ export function productionImportGuard({ mode = 'report' }: { mode?: 'report' | '
 			for (const id of this.getModuleIds()) {
 				const local = localPath(id);
 				if (!local) continue;
-				if (!local.startsWith('src/') || fixtureModule.test(`/${local}`) || testModule.test(local) ||
+				// The app imports its version from this root metadata file.
+				if ((!local.startsWith('src/') && local !== 'package.json') || fixtureModule.test(`/${local}`) || testModule.test(local) ||
 					mixedFactories.test(`/${local}`) || /\/processes\/world\.ts$/.test(local) || sourceLeaks.has(normalize(id)))
 					leaks.add(local);
 			}

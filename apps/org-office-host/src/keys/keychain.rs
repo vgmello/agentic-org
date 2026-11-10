@@ -54,6 +54,7 @@ extern "C" {
 /// The Data Protection keychain, in one access group.
 pub(crate) struct Keychain {
     group: String,
+    service: String,
 }
 
 impl Keychain {
@@ -61,6 +62,14 @@ impl Keychain {
     pub(crate) fn new(group: &str) -> Self {
         Self {
             group: group.to_owned(),
+            service: SERVICE.to_owned(),
+        }
+    }
+
+    pub(crate) fn scoped(group: &str, instance_id: &str) -> Self {
+        Self {
+            group: group.to_owned(),
+            service: format!("{SERVICE}.instance.{instance_id}"),
         }
     }
 
@@ -69,7 +78,7 @@ impl Keychain {
     fn options(&self, office_id: &str) -> PasswordOptions {
         #[allow(deprecated)] // the field is the query itself; it is built here in one place
         PasswordOptions {
-            query: query_attributes(office_id, &self.group),
+            query: query_attributes_for(office_id, &self.group, &self.service),
         }
     }
 }
@@ -78,7 +87,12 @@ impl Keychain {
 /// `delete`): a generic password, [`SERVICE`], account = the office id, in the Data Protection
 /// keychain and the access group. Pure: it builds Core Foundation values and never calls the
 /// Keychain.
+#[cfg(test)]
 pub(crate) fn query_attributes(office_id: &str, group: &str) -> Vec<(CFString, CFType)> {
+    query_attributes_for(office_id, group, SERVICE)
+}
+
+fn query_attributes_for(office_id: &str, group: &str, service: &str) -> Vec<(CFString, CFType)> {
     // SAFETY: every `kSec…` here is an immutable CFString constant that Security.framework
     // exports for the life of the process; `wrap_under_get_rule` retains it.
     unsafe {
@@ -90,7 +104,7 @@ pub(crate) fn query_attributes(office_id: &str, group: &str) -> Vec<(CFString, C
             ),
             (
                 constant(kSecAttrService),
-                CFString::new(SERVICE).into_CFType(),
+                CFString::new(service).into_CFType(),
             ),
             (
                 constant(kSecAttrAccount),
@@ -112,8 +126,13 @@ pub(crate) fn query_attributes(office_id: &str, group: &str) -> Vec<(CFString, C
 /// generic password, [`SERVICE`], account = the office id, the Data Protection keychain, the access
 /// group, readable after the first unlock on this device only, and not synchronizable. Pure: it
 /// builds Core Foundation values and never calls the Keychain.
+#[cfg(test)]
 pub(crate) fn item_attributes(office_id: &str, group: &str) -> Vec<(CFString, CFType)> {
-    let mut attributes = query_attributes(office_id, group);
+    item_attributes_for(office_id, group, SERVICE)
+}
+
+fn item_attributes_for(office_id: &str, group: &str, service: &str) -> Vec<(CFString, CFType)> {
+    let mut attributes = query_attributes_for(office_id, group, service);
     // SAFETY: as in `query_attributes`.
     unsafe {
         let constant = |name: CFStringRef| CFString::wrap_under_get_rule(name);
@@ -134,7 +153,7 @@ impl KeyStore for Keychain {
         if !is_plain_id(office_id) {
             return Err(KeyStoreError::NotPlainId);
         }
-        let mut attributes = item_attributes(office_id, &self.group);
+        let mut attributes = item_attributes_for(office_id, &self.group, &self.service);
         // SAFETY: `kSecValueData` is an immutable constant (as in `item_attributes`).
         let value_key = unsafe { CFString::wrap_under_get_rule(kSecValueData) };
         attributes.push((
@@ -197,7 +216,7 @@ impl KeyStore for Keychain {
         let mut search = ItemSearchOptions::new();
         search
             .class(ItemClass::generic_password())
-            .service(SERVICE)
+            .service(&self.service)
             .access_group(&self.group)
             .ignore_legacy_keychains()
             .load_attributes(true)
@@ -242,6 +261,28 @@ mod tests {
 
     fn string(value: &CFType) -> String {
         value.downcast::<CFString>().expect("a string").to_string()
+    }
+
+    #[test]
+    #[allow(deprecated)] // inspect the exact PasswordOptions query without Keychain I/O
+    fn instance_queries_preserve_the_office_account_and_scope_every_service() {
+        let a = Keychain::scoped(GROUP, "INSTANCEA");
+        let b = Keychain::scoped(GROUP, "INSTANCEB");
+        let query_a = a.options(A).query;
+        let query_b = b.options(A).query;
+        // SAFETY: immutable Security.framework CFString constants.
+        unsafe {
+            assert_eq!(string(&value(&query_a, kSecAttrAccount)), A);
+            assert_eq!(string(&value(&query_b, kSecAttrAccount)), A);
+            assert_eq!(
+                string(&value(&query_a, kSecAttrService)),
+                format!("{SERVICE}.instance.INSTANCEA")
+            );
+            assert_eq!(
+                string(&value(&query_b, kSecAttrService)),
+                format!("{SERVICE}.instance.INSTANCEB")
+            );
+        }
     }
 
     #[test]
