@@ -95,10 +95,7 @@ pub fn prepare_probe(
     temp_root: &Path,
     mode: ProbeMode,
 ) -> io::Result<RuntimeProbe> {
-    if environment.0.keys().any(|name| {
-        let name = name.as_encoded_bytes();
-        name.starts_with(b"ORG_") || name.starts_with(b"GIT_CONFIG_") || name == b"GH_CONFIG_DIR"
-    }) {
+    if environment.carries_context() {
         return Err(crate::invalid(
             "probe environment must not carry context-only variables",
         ));
