@@ -124,6 +124,18 @@ describe('same-origin JSON boundary (test paths, no production routes)', () => {
 		expect(send).not.toHaveBeenCalled();
 	});
 
+	it.each(['fetch', 'body'])('never propagates a pre-dispatch marker from %s after fetch begins', async (stage) => {
+		const send = vi.fn<typeof fetch>(async () => {
+			if (stage === 'fetch') throw new NotDispatchedError('Unsafe marker after possible send');
+			return new Response(new ReadableStream({ start(controller) { controller.error(new NotDispatchedError('Unsafe marker in response')); } }), { headers: { 'Content-Type': 'application/json' } });
+		});
+		const http = createJsonHttp({ origin, fetch: send, timeoutMs: 1000, maxRequestBytes: 100, maxResponseBytes: 100 });
+		const error = await http(request).catch((error: unknown) => error);
+		expect(error).toBeInstanceOf(Error);
+		expect(error).not.toBeInstanceOf(NotDispatchedError);
+		expect(send).toHaveBeenCalledOnce();
+	});
+
 	it('times out even when an injected transport ignores cancellation', async () => {
 		vi.useFakeTimers();
 		const send = vi.fn<typeof fetch>(() => new Promise(() => {}));

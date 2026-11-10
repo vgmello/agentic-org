@@ -117,6 +117,10 @@ export function createJsonHttp({ origin, fetch: send = globalThis.fetch, timeout
 					return { status: response.status, body: JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown };
 				} catch { throw new Error('Invalid JSON response'); }
 			})()]);
+		} catch (error) {
+			// The preflight marker is valid only before send, even for a faulty injected fetch/stream.
+			if (error instanceof NotDispatchedError) throw new Error('Request failed after possible dispatch');
+			throw error;
 		} finally {
 			clearTimeout(timer);
 			signal?.removeEventListener('abort', cancel);
