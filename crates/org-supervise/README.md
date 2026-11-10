@@ -49,6 +49,20 @@ child reaping (`SIGCHLD=SIG_IGN`/`SA_NOCLDWAIT`). Preparation rejects automatic
 reaping; an observed `ECHILD` disarms the owner before any further signals. The
 crate-local Clippy configuration forbids common accidental reaping/spawning paths.
 
+The embedder must ignore or safely handle/block `SIGPIPE` on threads writing
+`ChildStdin`, so a closed pipe produces `BrokenPipe` instead of terminating the
+worker. Rust's default ignored disposition satisfies this; children still reset
+it to the default. On macOS, every other child-creation path in the embedder must
+also close descriptors by default, or serialize its spawn with the whole
+`RecordedSpawn::spawn` call: Darwin has no atomic `pipe2(O_CLOEXEC)`. Linux uses
+`pipe2(O_CLOEXEC)` to avoid this creation window.
+
+Credential checks reject real/effective/saved root IDs on Linux and real/effective
+root or `issetugid()` provenance on macOS. Credential policy is unit tested;
+running the real privileged-credential queries under root requires a privileged
+harness. Core-dump limits are inherited unchanged: ada's D-B32 assigns startup
+`RLIMIT_CORE` soft/hard0 to host/server hardening H-1, outside this slice.
+
 `runtime::prepare` maps a piped `LaunchPlan`, creates its directories and atomically
 replaces planned files without following symlinks. It returns the plan's stop,
 cleanup, redaction and conversation metadata explicitly for the lifecycle layer;

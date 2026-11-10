@@ -156,15 +156,25 @@ fn c(bytes: &[u8]) -> io::Result<CString> {
 
 fn pipe() -> io::Result<(OwnedFd, OwnedFd)> {
     let mut pair = [-1; 2];
-    // SAFETY: valid two-element out buffer. Explicit child fd closing protects concurrent
-    // non-CLOEXEC creation on macOS; both parent ends are marked before return.
-    if unsafe { libc::pipe(pair.as_mut_ptr()) } != 0 {
+    #[cfg(target_os = "linux")]
+    // SAFETY: valid two-element out buffer; CLOEXEC is set atomically with creation.
+    let rc = unsafe { libc::pipe2(pair.as_mut_ptr(), libc::O_CLOEXEC) };
+    #[cfg(target_os = "macos")]
+    // SAFETY: valid out buffer. Darwin has no pipe2: other embedder spawn paths must
+    // also close descriptors by default, or serialize their spawn with this entire call.
+    let rc = unsafe { libc::pipe(pair.as_mut_ptr()) };
+    if rc != 0 {
         return Err(io::Error::last_os_error());
     }
     // SAFETY: pipe returned two distinct owned descriptors.
     let original = unsafe { [OwnedFd::from_raw_fd(pair[0]), OwnedFd::from_raw_fd(pair[1])] };
-    let duplicate = |fd: &OwnedFd| -> io::Result<OwnedFd> {
-        // SAFETY: valid owned descriptor. Keep spawn source fds above 2 even if stdio is closed.
+    let duplicate = |fd: OwnedFd| -> io::Result<OwnedFd> {
+        #[cfg(target_os = "linux")]
+        if fd.as_raw_fd() >= 3 {
+            // Already CLOEXEC from pipe2; transfer it without another duplication.
+            return Ok(fd);
+        }
+        // SAFETY: valid owned descriptor. Keep spawn source fds above2 even if stdio is closed.
         let new = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 3) };
         if new < 0 {
             return Err(io::Error::last_os_error());
@@ -172,7 +182,8 @@ fn pipe() -> io::Result<(OwnedFd, OwnedFd)> {
         // SAFETY: successful duplication returns a new owned descriptor.
         Ok(unsafe { OwnedFd::from_raw_fd(new) })
     };
-    Ok((duplicate(&original[0])?, duplicate(&original[1])?))
+    let [read, write] = original;
+    Ok((duplicate(read)?, duplicate(write)?))
 }
 
 fn spawn_piped(spec: &SpawnSpec) -> io::Result<(libc::pid_t, File, File, File)> {

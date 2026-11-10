@@ -19,7 +19,21 @@ pub(crate) fn check(rc: libc::c_int) -> io::Result<()> {
 pub(crate) fn validate() -> io::Result<()> {
     // SAFETY: querying process credentials and signal disposition, without changing either.
     unsafe {
-        if libc::geteuid() == 0 {
+        let real = libc::getuid();
+        let effective = libc::geteuid();
+        #[cfg(target_os = "linux")]
+        let (saved, tainted) = {
+            let (mut real_out, mut effective_out, mut saved) = (0, 0, 0);
+            if libc::getresuid(&mut real_out, &mut effective_out, &mut saved) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            (saved, false)
+        };
+        #[cfg(target_os = "macos")]
+        let (saved, tainted) = (effective, libc::issetugid() != 0);
+        // Actual root/set-id integration needs a privileged harness; the complete
+        // credential-policy combinations are tested below without changing process IDs.
+        if privileged_credentials(real, effective, saved, tainted) {
             return Err(unsupported("refusing root process supervision"));
         }
         let mut action = std::mem::zeroed::<libc::sigaction>();
@@ -33,6 +47,15 @@ pub(crate) fn validate() -> io::Result<()> {
         }
     }
     check_version()
+}
+
+fn privileged_credentials(
+    real: libc::uid_t,
+    effective: libc::uid_t,
+    saved: libc::uid_t,
+    tainted: bool,
+) -> bool {
+    real == 0 || effective == 0 || saved == 0 || tainted
 }
 
 #[cfg(target_os = "macos")]
@@ -242,5 +265,17 @@ pub(crate) fn identity(pid: libc::pid_t) -> io::Result<(u32, String, String)> {
             .to_string();
         let boot = std::fs::read_to_string("/proc/sys/kernel/random/boot_id")?;
         Ok((pgid, started, boot.trim().to_owned()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn refuses_every_root_credential_and_setid_provenance() {
+        assert!(!super::privileged_credentials(501, 501, 501, false));
+        assert!(super::privileged_credentials(0, 501, 501, false));
+        assert!(super::privileged_credentials(501, 0, 501, false));
+        assert!(super::privileged_credentials(501, 501, 0, false));
+        assert!(super::privileged_credentials(501, 501, 501, true));
     }
 }
