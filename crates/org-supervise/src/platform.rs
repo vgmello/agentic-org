@@ -46,7 +46,28 @@ pub(crate) fn validate() -> io::Result<()> {
             ));
         }
     }
+    check_core_limit(core_limit())?;
     check_version()
+}
+
+fn core_limit() -> io::Result<libc::rlimit> {
+    let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+    // SAFETY: querying a process limit with a correctly sized output slot.
+    if unsafe { libc::getrlimit(libc::RLIMIT_CORE, limit.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: successful getrlimit initialized the complete record.
+    Ok(unsafe { limit.assume_init() })
+}
+
+// This policy seam covers nonzero values even when the test harness already inherited
+// hard0, which an unprivileged fixture cannot raise again. Query errors fail closed too.
+fn check_core_limit(limit: io::Result<libc::rlimit>) -> io::Result<()> {
+    let limit = limit?;
+    if limit.rlim_cur != 0 || limit.rlim_max != 0 {
+        return Err(unsupported("RLIMIT_CORE soft and hard limits must be 0; disable core dumps at host/server startup before supervising children"));
+    }
+    Ok(())
 }
 
 fn privileged_credentials(
@@ -270,6 +291,31 @@ pub(crate) fn identity(pid: libc::pid_t) -> io::Result<(u32, String, String)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn core_dump_limits_and_query_errors_fail_closed() {
+        for (soft, hard) in [
+            (1, 1),
+            (0, 1),
+            (1, 0),
+            (libc::RLIM_INFINITY, libc::RLIM_INFINITY),
+        ] {
+            let error = super::check_core_limit(Ok(libc::rlimit {
+                rlim_cur: soft,
+                rlim_max: hard,
+            }))
+            .unwrap_err();
+            assert!(error.to_string().contains("RLIMIT_CORE"));
+        }
+        super::check_core_limit(Ok(libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        }))
+        .unwrap();
+        let error = super::check_core_limit(Err(std::io::Error::from_raw_os_error(libc::EACCES)))
+            .unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(libc::EACCES));
+    }
+
     #[test]
     fn refuses_every_root_credential_and_setid_provenance() {
         assert!(!super::privileged_credentials(501, 501, 501, false));

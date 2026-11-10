@@ -1,3 +1,5 @@
+mod core_limit;
+
 use std::io::Read;
 use std::process::ExitStatus;
 use std::sync::mpsc;

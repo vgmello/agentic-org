@@ -82,6 +82,21 @@ fn child_entry() {
         return;
     };
     match case.as_str() {
+        "core-limit-parent" => {
+            let mut limits = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+            // SAFETY: correctly sized output slot, querying this isolated helper only.
+            assert_eq!(
+                unsafe { libc::getrlimit(libc::RLIMIT_CORE, limits.as_mut_ptr()) },
+                0
+            );
+            // SAFETY: successful query initialized both fields.
+            let limits = unsafe { limits.assume_init() };
+            assert_eq!((limits.rlim_cur, limits.rlim_max), (0, 0));
+            // The normal prepare/spawn path rechecks the actual inherited zero limits.
+            let root = std::env::current_dir().unwrap();
+            output(launch(&root, "inspect"));
+            println!("CORE-ZERO-ACCEPTED");
+        }
         "drop-group-parent" => {
             assert_drop_kills_group();
             println!("GROUP-REAPED");
@@ -461,6 +476,17 @@ fn resets_inherited_signal_mask_and_ignored_dispositions() {
     ))
     .1
     .contains("SIGNALS-RESET"));
+}
+
+#[test]
+fn accepts_the_hardened_core_limit_in_an_isolated_helper() {
+    let root = tempfile::tempdir().unwrap();
+    assert!(output(launch(
+        &root.path().canonicalize().unwrap(),
+        "core-limit-parent"
+    ))
+    .1
+    .contains("CORE-ZERO-ACCEPTED"));
 }
 
 #[test]

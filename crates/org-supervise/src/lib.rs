@@ -38,3 +38,7 @@ fn invalid(message: &'static str) -> io::Error {
 fn unsupported(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::Unsupported, message)
 }
+
+#[cfg(test)]
+#[path = "../tests/support/core_limit.rs"]
+mod test_core_limit;

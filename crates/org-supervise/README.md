@@ -60,8 +60,11 @@ also close descriptors by default, or serialize its spawn with the whole
 Credential checks reject real/effective/saved root IDs on Linux and real/effective
 root or `issetugid()` provenance on macOS. Credential policy is unit tested;
 running the real privileged-credential queries under root requires a privileged
-harness. Core-dump limits are inherited unchanged: ada's D-B32 assigns startup
-`RLIMIT_CORE` soft/hard0 to host/server hardening H-1, outside this slice.
+harness. Core-dump limits are inherited unchanged, and preparation/spawn refuse either
+limit being nonzero. Ada's revised D-B32 assigns `RLIMIT_CORE` soft/hard0 to
+host/server startup H-1, before concurrency. Tests set both to0 before their
+harness starts; a private policy seam covers nonzero values/query errors even
+when a developer already inherited hard0 (which fixtures cannot raise).
 
 `runtime::prepare` maps a piped `LaunchPlan`, creates its directories and atomically
 replaces planned files without following symlinks. It returns the plan's stop,
