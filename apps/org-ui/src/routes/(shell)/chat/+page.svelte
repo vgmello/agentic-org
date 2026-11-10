@@ -246,8 +246,8 @@
 	}
 
 	/** The composer's text: a slash command opens its form, anything else is sent (CHAT-9). */
-	async function submit(text: string, options: { alsoInChannel: boolean; attachments: string[] }, c: Conversation, thread?: string): Promise<boolean> {
-		const slash = parseSlash(text);
+	async function submit(text: string, options: { alsoInChannel: boolean; attachments: string[]; asMessage?: boolean }, c: Conversation, thread?: string): Promise<boolean> {
+		const slash = options.asMessage ? undefined : parseSlash(text);
 		if (slash) {
 			if (!slash.ok) {
 				toast.error(slash.message);
@@ -255,7 +255,7 @@
 			}
 			return openForm(commandForm(slash, env));
 		}
-		pending.push({ key: ++keys, change_id: newId(), conversation_id: c.id, thread_root_id: thread, also_in_channel: thread && options.alsoInChannel ? true : undefined, body: text, attachments: options.attachments, status: 'sending' });
+		pending.push({ key: ++keys, change_id: newId(), conversation_id: c.id, thread_root_id: thread, also_in_channel: thread && options.alsoInChannel ? true : undefined, body: text.trim(), attachments: options.attachments, status: 'sending' });
 		// The reactive copy: changing it redraws the row.
 		void deliver(pending[pending.length - 1]);
 		return true;

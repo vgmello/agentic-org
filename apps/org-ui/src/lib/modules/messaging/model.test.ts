@@ -178,13 +178,27 @@ describe('CHAT-9 · slash commands and Turn into…', () => {
 		expect(parseSlash('/task')).toMatchObject({ ok: false, message: 'Say which agent: /task @agent [title]' });
 		expect(parseSlash('/task @sam')).toMatchObject({ ok: false, message: 'Give the task a title: /task @agent [title]' });
 		expect(parseSlash('/wake')).toMatchObject({ ok: false });
-		expect(parseSlash('/bgu the list')).toMatchObject({ ok: false, message: 'There is no /bgu command. Did you mean /bug?' });
+		expect(parseSlash('/bgu the list')).toMatchObject({ ok: false, message: 'No command /bgu. Did you mean /bug?' });
 		expect(parseSlash('not a command')).toBeUndefined();
 		// A leading /word is reserved for commands; paths with further slashes remain ordinary text.
-		expect(parseSlash('/tmp is full again')).toEqual({ ok: false, message: 'No command /tmp.' });
+		expect(parseSlash('/tmp is full again')).toEqual({ ok: false, unknown: true, message: 'No command /tmp.' });
 		expect(parseSlash('/etc/hosts has the wrong entry')).toBeUndefined();
-		expect(parseSlash('/nope')).toEqual({ ok: false, message: 'No command /nope.' });
+		expect(parseSlash('/nope')).toEqual({ ok: false, unknown: true, message: 'No command /nope.' });
 		expect(parseSlash('http://example.com')).toBeUndefined();
+	});
+	it('CHAT-9 BUG-45d · commands ignore case without trimming leading whitespace', () => {
+		expect(parseSlash('/BuG Case-sensitive Title')).toMatchObject({ ok: true, name: 'bug', rest: 'Case-sensitive Title' });
+		expect(parseSlash('/TASK @SaM Keep Argument Case')).toMatchObject({ ok: true, name: 'task', handle: 'sam', rest: 'Keep Argument Case' });
+		expect(parseSlash(' /bug plain text')).toBeUndefined();
+		expect(parseSlash('\t/status')).toBeUndefined();
+	});
+	it('CHAT-9 BUG-45d · unknown words with uppercase letters, digits and hyphens offer literal sending', () => {
+		for (const word of ['Frobnicate', 'deploy2', 'ship-now']) {
+			expect(parseSlash(`/${word} now`)).toMatchObject({ ok: false, unknown: true, message: `No command /${word}.` });
+		}
+		expect(parseSlash('/BGU now')).toMatchObject({ ok: false, unknown: true, message: 'No command /BGU. Did you mean /bug?' });
+		expect(parseSlash('/wake')).toMatchObject({ ok: false });
+		expect(parseSlash('/wake')).not.toHaveProperty('unknown');
 	});
 	it('CHAT-9 · commands complete while typing, and a reminder reads its delay', () => {
 		expect(slashSuggestions('/').map((c) => c.name)).toEqual(['bug', 'request', 'task', 'status', 'wake', 'remind']);

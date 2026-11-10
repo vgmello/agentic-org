@@ -4,7 +4,7 @@
 	import { untrack } from 'svelte';
 	import { Button } from '$lib/components/ui/button';
 	import type { ChatContext } from '$lib/modules/messaging/engine';
-	import { applyMention, mentionAt, mentionOptions, slashSuggestions } from '$lib/modules/messaging/model';
+	import { applyMention, mentionAt, mentionOptions, parseSlash, slashSuggestions } from '$lib/modules/messaging/model';
 	import { CHAT_LIMITS, type Conversation } from '$lib/modules/messaging/types';
 
 	/**
@@ -31,7 +31,7 @@
 		/** A thread: the channel a reply can also be sent to. */
 		alsoIn?: string;
 		/** Resolves `false` when the message was not sent, so the text stays in the box. */
-		onsend: (text: string, options: { alsoInChannel: boolean; attachments: string[] }) => Promise<boolean | void> | boolean | void;
+		onsend: (text: string, options: { alsoInChannel: boolean; attachments: string[]; asMessage?: boolean }) => Promise<boolean | void> | boolean | void;
 	} = $props();
 
 	const drafts: Record<string, string> = {};
@@ -47,6 +47,7 @@
 	let enterSends = $state(false);
 	let lastKey = '';
 	let error = $state<string | undefined>();
+	let unknownCommand = $state(false);
 
 	try {
 		enterSends = globalThis.localStorage?.getItem('agentic-org.chat.enterSends') === '1';
@@ -73,6 +74,7 @@
 			alsoInChannel = false;
 			dismissed = false;
 			error = undefined;
+			unknownCommand = false;
 		});
 	});
 
@@ -102,18 +104,25 @@
 		picked = 0;
 	}
 
-	async function send() {
+	async function send(asMessage = false) {
 		const body = text.trim();
 		if (!canWrite || busy || body === '') return;
 		if (new TextEncoder().encode(body).byteLength > CHAT_LIMITS.bodyMax) {
 			error = 'That message is too long. Shorten it or attach it as a file.';
 			return;
 		}
+		const slash = asMessage ? undefined : parseSlash(text);
+		if (slash && !slash.ok && slash.unknown) {
+			error = slash.message;
+			unknownCommand = true;
+			return;
+		}
 		error = undefined;
+		unknownCommand = false;
 		busy = true;
 		const key = resetKey;
 		try {
-			if ((await onsend(body, { alsoInChannel, attachments })) === false) return;
+			if ((await onsend(text, { alsoInChannel, attachments, asMessage })) === false) return;
 			// The draft that was sent is gone, but only where it was written: the owner may have moved on while it went.
 			drafts[key] = '';
 			if (key === resetKey) {
@@ -202,14 +211,14 @@
 				maxlength={CHAT_LIMITS.bodyMax}
 				disabled={busy}
 				{onkeydown}
-				oninput={() => { error = undefined; track(); }}
+				oninput={() => { error = undefined; unknownCommand = false; track(); }}
 				onclick={track}
 				onkeyup={(e) => (e.key.startsWith('Arrow') && popup ? undefined : track())}
 				class="w-full resize-none rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:outline-indigo-400"
 				data-testid="composer"
 			></textarea>
 		</div>
-		{#if error}<p id="composer-error-{resetKey}" class="mt-2 text-sm/6 text-red-400" role="alert">{error}</p>{/if}
+		{#if error}<p id="composer-error-{resetKey}" class="mt-2 text-sm/6 text-red-400" role="alert"><span>{error}</span>{#if unknownCommand} <button type="button" class="font-semibold underline" disabled={busy} onclick={() => void send(true)}>Send as message</button>{/if}</p>{/if}
 		{#if attachments.length}
 			<ul class="mt-2 flex flex-wrap gap-1.5" aria-label="Attached">
 				{#each attachments as a (a)}
@@ -225,7 +234,7 @@
 				<label class="inline-flex items-center gap-x-1"><input type="checkbox" checked={enterSends} onchange={(e) => setEnterSends(e.currentTarget.checked)} class="accent-indigo-500" /> Enter sends</label>
 				{#if alsoIn}<label class="inline-flex items-center gap-x-1 text-gray-300"><input type="checkbox" bind:checked={alsoInChannel} class="accent-indigo-500" /> Also send to {alsoIn}</label>{/if}
 			</div>
-			<Button type="button" size="sm" disabled={busy || text.trim() === ''} onclick={send}><SendHorizontal aria-hidden="true" /> Send<span class="sr-only"> (⌘ Enter)</span></Button>
+			<Button type="button" size="sm" disabled={busy || text.trim() === ''} onclick={() => void send()}><SendHorizontal aria-hidden="true" /> Send<span class="sr-only"> (⌘ Enter)</span></Button>
 		</div>
 	{/if}
 </div>
