@@ -347,8 +347,8 @@ they sign in. It shows no organization data.
 | Wrong username or password | "That username and password don't match. Try again." The same words for both cases. Password is cleared, Username kept, focus moves to Password. |
 | Too many attempts, with a retry time | "Too many sign-in attempts. Try again in <n> minutes." ("1 minute" when one is left.) **Sign in** stays disabled until then. The minutes round up and update once a minute. |
 | Too many attempts, no retry time | "Too many sign-in attempts. Wait a few minutes, then try again." Limits are A82. |
-| HQ unreachable | "Can't reach HQ. Check that the instance is running on the HQ machine (`agentic-org status`), then try again." **Try again**. Both fields are kept. |
-| HQ error | "HQ couldn't sign you in because of a problem on the HQ machine. Try again. If it keeps happening, run `agentic-org doctor` there." **Try again**. |
+| HQ unreachable | "Can't reach HQ. Check that the instance is running on the HQ machine (`agentic-org status --name <instance>`), then try again." **Try again**. Both fields are kept. |
+| HQ error | "HQ couldn't sign you in because of a problem on the HQ machine. Try again. If it keeps happening, run `agentic-org doctor --name <instance>` there." **Try again**. |
 | Page out of date | "This page is out of date. Reload to get the current version." **Reload**. (API and page versions differ, standalone design §5.) |
 | Signed in | Opens what §4a.5 says. |
 

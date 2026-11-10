@@ -15,7 +15,7 @@ builds_on: [offices-and-teams-ux, work-items-ux]
 
 **Revision 20 (2026-11-10):** the success test names the sections of the
 [dogfood run](dogfood-run.md) (rev 7) that check each of its items. No criteria
-changed. Open question A96 (the approval check on `member.add_agent`).
+changed. §7.1 says the new-role route waits for role files (after v1.0). Open question A96 (the approval check on `member.add_agent`).
 
 **Revision 18 (2026-11-09): fresh standalone-v1 setup.**
 The owner confirmed that no application was deployed. Existing-team import and
@@ -218,7 +218,7 @@ v1 §3.6 holds, with these changes for the office model:
 2. Otherwise up the **reporting line** to the nearest manager with the flag.
 3. Otherwise **the owner**.
 
-*(rev 17)* A proposal that needs a **new role** (no role file fits) goes straight to the owner, skipping the steps above, since a new role is the owner's to approve (`roles-ux.md` decision 4). It's one approval: the owner approves the role and the hire together. Its state reads "Waiting for you: new role".
+*(rev 17)* A proposal that needs a **new role** (no role file fits) goes straight to the owner, skipping the steps above, since a new role is the owner's to approve (`roles-ux.md` decision 4). It's one approval: the owner approves the role and the hire together. Its state reads "Waiting for you: new role". *(rev 20)* This route starts when role files ship (`roles-ux.md`, after v1.0). Until then roles are free text, no proposal is classed as needing a new role, and proposals follow the steps above.
 
 The owner can always approve or reject any proposal. Someone who requests a hire never approves their own request: it goes one level up. The one exception is **the owner**, who approves their own hires, since nobody is above the owner. The HR lead never approves.
 
