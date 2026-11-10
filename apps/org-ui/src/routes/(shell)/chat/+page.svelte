@@ -311,7 +311,7 @@
 		await send({ method: 'chat.answer', ask_id: m.id, ...a });
 		await load();
 		toast.success(`Answer sent to ${nameOf(ctx, m.from)}.`);
-		await restoreFocus(origin, place, () => view.type === 'needs'
+		await restoreFocus(origin, place, () => view.type === 'needs' && !searching
 			? document.querySelector<HTMLElement>('[data-testid="needs-you-list"] [data-testid="ask-card"] button, [data-testid="nothing-needs-you"]')
 			: area?.querySelector<HTMLElement>(`[data-ask-id="${CSS.escape(m.id)}"]`) ?? null);
 	}
@@ -433,7 +433,7 @@
 				<p class="border-b border-white/10 bg-amber-400/10 px-5 py-2 text-sm/6 text-amber-100" data-testid="office-down">Read-only from the last copy. The office isn't running.</p>
 			{/if}
 
-			<div bind:this={listEl} data-focus-scope class="min-h-0 flex-1 overflow-y-auto px-3 py-3" data-testid="message-list" tabindex="-1" role="log" aria-label="Messages" aria-live="polite" aria-relevant="additions text">
+			<div bind:this={listEl} data-focus-scope class="min-h-0 flex-1 overflow-y-auto px-3 py-3" data-testid="message-list" tabindex="-1" role="region" aria-label="Messages">
 				{#if searching}
 					<div class="px-2 pb-3">
 						<p class="text-sm/6 text-gray-300" data-testid="search-count">{results.length} {results.length === 1 ? 'result' : 'results'}</p>
@@ -488,44 +488,48 @@
 						{/each}
 					</ul>
 				{:else if conversation && convView}
-					{#if !conversation.members.includes(ctx.owner)}
-						<p class="mb-2 rounded-md bg-white/5 px-3 py-2 text-sm/6 text-gray-300" data-testid="reading-as-owner">You're reading as the owner. You can reply here.</p>
-					{/if}
-					{#each convView.shown as m, i (m.id)}
-						{#if dayChange(convView.shown, i)}
-							<div class="my-2 flex items-center gap-x-3 px-2 text-xs/5 text-gray-400"><span class="h-px flex-1 bg-white/10"></span>{dayLabel(m.created_at, now)}<span class="h-px flex-1 bg-white/10"></span></div>
-						{/if}
-						{#if m.id === newAt}
-							<div class="my-2 flex items-center gap-x-3 px-2 text-xs/5 font-semibold text-indigo-300" data-testid="new-divider"><span class="h-px flex-1 bg-indigo-400/40"></span>New<span class="h-px flex-1 bg-indigo-400/40"></span></div>
-						{/if}
-						<div class={highlight === m.id ? 'rounded-md ring-2 ring-indigo-400' : ''}>{@render rowFor(m)}</div>
-					{:else}
-						{#if conversation.auto?.type === 'general'}
-							<div class="mx-auto my-8 max-w-md rounded-lg border border-white/10 bg-white/[0.03] p-5 text-center" data-testid="welcome-card">
-								<h3 class="text-sm/6 font-semibold text-white">Welcome to #general</h3>
-								<p class="mt-1 text-sm/6 text-gray-300">Agents and people talk here. Agents post questions and updates that need someone. Everything else stays in Activity.</p>
-							</div>
-						{:else}
-							<p class="px-2 py-8 text-center text-sm/6 text-gray-400">No messages yet.</p>
-						{/if}
-					{/each}
-
-					{#each convView.digests as g (g.member_id)}
-						<div class="mt-2 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2" data-testid="digest-row">
-							<button type="button" class="text-sm/6 font-semibold text-indigo-300" aria-expanded={openDigest === g.member_id} onclick={() => (openDigest = openDigest === g.member_id ? undefined : g.member_id)}>Daily digest · {nameOf(ctx, g.member_id)} · {g.messages.length} {g.messages.length === 1 ? 'update' : 'updates'}</button>
-							{#if openDigest === g.member_id}
-								<div class="mt-1 space-y-1">{#each g.messages as m (m.id)}<MessageRow message={m} {ctx} {chatState} {now} readOnly />{/each}</div>
+					{#key conversation.id}
+						<div role="log" aria-label="Messages" aria-live="polite" aria-relevant="additions text">
+							{#if !conversation.members.includes(ctx.owner)}
+								<p class="mb-2 rounded-md bg-white/5 px-3 py-2 text-sm/6 text-gray-300" data-testid="reading-as-owner">You're reading as the owner. You can reply here.</p>
 							{/if}
+							{#each convView.shown as m, i (m.id)}
+								{#if dayChange(convView.shown, i)}
+									<div class="my-2 flex items-center gap-x-3 px-2 text-xs/5 text-gray-400"><span class="h-px flex-1 bg-white/10"></span>{dayLabel(m.created_at, now)}<span class="h-px flex-1 bg-white/10"></span></div>
+								{/if}
+								{#if m.id === newAt}
+									<div class="my-2 flex items-center gap-x-3 px-2 text-xs/5 font-semibold text-indigo-300" data-testid="new-divider"><span class="h-px flex-1 bg-indigo-400/40"></span>New<span class="h-px flex-1 bg-indigo-400/40"></span></div>
+								{/if}
+								<div class={highlight === m.id ? 'rounded-md ring-2 ring-indigo-400' : ''}>{@render rowFor(m)}</div>
+							{:else}
+								{#if conversation.auto?.type === 'general'}
+									<div class="mx-auto my-8 max-w-md rounded-lg border border-white/10 bg-white/[0.03] p-5 text-center" data-testid="welcome-card">
+										<h3 class="text-sm/6 font-semibold text-white">Welcome to #general</h3>
+										<p class="mt-1 text-sm/6 text-gray-300">Agents and people talk here. Agents post questions and updates that need someone. Everything else stays in Activity.</p>
+									</div>
+								{:else}
+									<p class="px-2 py-8 text-center text-sm/6 text-gray-400">No messages yet.</p>
+								{/if}
+							{/each}
+
+							{#each convView.digests as g (g.member_id)}
+								<div class="mt-2 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2" data-testid="digest-row">
+									<button type="button" class="text-sm/6 font-semibold text-indigo-300" aria-expanded={openDigest === g.member_id} onclick={() => (openDigest = openDigest === g.member_id ? undefined : g.member_id)}>Daily digest · {nameOf(ctx, g.member_id)} · {g.messages.length} {g.messages.length === 1 ? 'update' : 'updates'}</button>
+									{#if openDigest === g.member_id}
+										<div class="mt-1 space-y-1">{#each g.messages as m (m.id)}<MessageRow message={m} {ctx} {chatState} {now} readOnly />{/each}</div>
+									{/if}
+								</div>
+							{/each}
+							{#if convView.muted.length}
+								<div class="mt-2 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2" data-testid="muted-row">
+									<button type="button" class="text-sm/6 font-semibold text-indigo-300" aria-expanded={showMuted} onclick={() => (showMuted = !showMuted)}>{convView.muted.length} muted {convView.muted.length === 1 ? 'message' : 'messages'} · {showMuted ? 'Hide' : 'Show'}</button>
+									<span class="text-xs/5 text-gray-400"> They still reach Activity.</span>
+									{#if showMuted}<div class="mt-1 space-y-1">{#each convView.muted as m (m.id)}<MessageRow message={m} {ctx} {chatState} {now} readOnly />{/each}</div>{/if}
+								</div>
+							{/if}
+							{@render undeliveredRows(pendingHere)}
 						</div>
-					{/each}
-					{#if convView.muted.length}
-						<div class="mt-2 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2" data-testid="muted-row">
-							<button type="button" class="text-sm/6 font-semibold text-indigo-300" aria-expanded={showMuted} onclick={() => (showMuted = !showMuted)}>{convView.muted.length} muted {convView.muted.length === 1 ? 'message' : 'messages'} · {showMuted ? 'Hide' : 'Show'}</button>
-							<span class="text-xs/5 text-gray-400"> They still reach Activity.</span>
-							{#if showMuted}<div class="mt-1 space-y-1">{#each convView.muted as m (m.id)}<MessageRow message={m} {ctx} {chatState} {now} readOnly />{/each}</div>{/if}
-						</div>
-					{/if}
-					{@render undeliveredRows(pendingHere)}
+					{/key}
 				{/if}
 			</div>
 
