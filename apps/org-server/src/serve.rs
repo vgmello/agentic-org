@@ -155,12 +155,14 @@ impl Registration<'_> {
         let mut bound = self.bound.lock().unwrap_or_else(|p| p.into_inner());
         // Under the lock the watcher acts under: a decision about the member this connection
         // had must not unbind the one it has now.
-        self.control.revoked.store(false, Ordering::SeqCst);
         match member {
+            Some(_) if self.control.revoked.load(Ordering::SeqCst) => return false,
             Some(member) => {
                 bound.insert(self.conn, (member.to_owned(), Arc::clone(&self.control)));
             }
             None => {
+                // A lookup-failure unbind must not erase a watcher revocation that raced
+                // the call's liveness check. The reader still needs to observe that flag.
                 bound.remove(&self.conn);
             }
         }
@@ -558,24 +560,24 @@ fn serve_connection_with_poll(
         while let Ok(Some(request)) = frame::read_message::<Request>(&mut reader) {
             // The member this connection acts as is checked on every call, not only at bind, and
             // the watcher may have ended the connection's held calls already.
-            if control.revoked.load(Ordering::SeqCst) {
-                held.cancel_all();
-                let refusal = bind_error(
-                    request.id,
-                    ErrorCode::NotBound,
-                    "this connection's member binding was revoked",
-                );
-                let _ = send(&out, request.id, &refusal, shared.timing);
+            let member_lookup = if control.revoked.load(Ordering::SeqCst) {
+                Some(Lookup::Not)
+            } else {
+                binding
+                    .member()
+                    .map(|member| lookup_binding(shared, member))
+            };
+            if matches!(member_lookup, Some(Lookup::Not)) || control.revoked.load(Ordering::SeqCst)
+            {
+                refuse_revoked(&out, request.id, &control, shared.timing);
                 break;
             }
-            if let Some(member) = binding.member() {
-                if !request.is::<MsgBind>() && !still_bindable(shared, member) {
-                    binding = Binding::Anonymous;
-                    registration.sync(None);
-                    generation.fetch_add(1, Ordering::SeqCst);
-                    subscribed = false;
-                    held.cancel_all();
-                }
+            if !request.is::<MsgBind>() && matches!(member_lookup, Some(Lookup::Failed)) {
+                binding = Binding::Anonymous;
+                registration.sync(None);
+                generation.fetch_add(1, Ordering::SeqCst);
+                subscribed = false;
+                held.cancel_all();
             }
             if request.is::<MsgBind>() {
                 generation.fetch_add(1, Ordering::SeqCst);
@@ -696,12 +698,28 @@ fn serve_connection_with_poll(
                     }
                 }
             }
+            // A watcher can revoke the old binding while msg.bind resolves the new one.
+            // Registration keeps that revocation sticky; never acknowledge a fresh bind.
+            if request.is::<MsgBind>() && control.revoked.load(Ordering::SeqCst) {
+                refuse_revoked(&out, request.id, &control, shared.timing);
+                break;
+            }
             if !send(&out, request.id, &response, shared.timing) {
                 break;
             }
         }
         generation.fetch_add(1, Ordering::SeqCst);
     });
+}
+
+fn refuse_revoked(out: &Mutex<UnixStream>, id: u64, control: &Control, timing: Timing) {
+    control.held.cancel_all();
+    let refusal = bind_error(
+        id,
+        ErrorCode::NotBound,
+        "this connection's member binding was revoked",
+    );
+    let _ = send(out, id, &refusal, timing);
 }
 
 /// Writes `response` to the client; `false` when the connection is gone.
@@ -1012,21 +1030,18 @@ fn lookup(shared: &Shared, handle: &str) -> Lookup {
     }
 }
 
-/// Whether a connection bound as member `id` may still act as it. The bind's rules are not
-/// checked once: an agent the owner has since made office-run, offboarded or removed must bind
-/// again (and then fails the same rules).
-fn still_bindable(shared: &Shared, id: &str) -> bool {
-    bindable(shared, id).is_some_and(|member| member.id == id)
+/// Resolves an existing binding by identity: another member's matching handle cannot keep it.
+fn lookup_binding(shared: &Shared, id: &str) -> Lookup {
+    match lookup(shared, id) {
+        Lookup::Bindable(member) if member.id != id => Lookup::Not,
+        found => found,
+    }
 }
 
 /// Whether the member `id` is certainly no longer bindable. A directory that could not answer is
 /// not certain.
 fn is_gone(shared: &Shared, id: &str) -> bool {
-    match lookup(shared, id) {
-        Lookup::Bindable(member) => member.id != id,
-        Lookup::Not => true,
-        Lookup::Failed => false,
-    }
+    matches!(lookup_binding(shared, id), Lookup::Not)
 }
 
 fn bind_error(id: u64, code: ErrorCode, message: &str) -> Response {
@@ -1046,6 +1061,29 @@ mod tests {
     use std::sync::atomic::AtomicBool;
 
     use super::*;
+
+    #[test]
+    fn an_unbind_preserves_a_racing_watcher_revocation() {
+        let control = Arc::new(Control::default());
+        let bound = Mutex::new(HashMap::from([(
+            1,
+            (
+                org_mailbox::testkit::fixture::ADA_ID.to_owned(),
+                Arc::clone(&control),
+            ),
+        )]));
+        let mut registration = Registration {
+            bound: &bound,
+            conn: 1,
+            control: Arc::clone(&control),
+            member: Some(org_mailbox::testkit::fixture::ADA_ID.to_owned()),
+        };
+        // The watcher wins after a call's liveness check but before a lookup-failure unbind.
+        control.revoked.store(true, Ordering::SeqCst);
+        registration.sync(None);
+        assert!(bound.lock().unwrap().is_empty());
+        assert!(control.revoked.load(Ordering::SeqCst));
+    }
 
     #[test]
     fn ticked_reader_repolls_a_missed_eof_at_the_server_call_site() {
@@ -1176,6 +1214,97 @@ mod tests {
             .unwrap();
         assert_eq!(bound.id, 1);
         assert!(matches!(bound.outcome, org_proto::Outcome::Result(_)));
+        let refused = frame::read_message::<Response>(&mut responses)
+            .unwrap()
+            .unwrap();
+        assert_eq!(refused.id, 2);
+        assert_eq!(code_of(refused.outcome), ErrorCode::NotBound);
+        assert!(frame::read_message::<Response>(&mut responses)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn a_rebind_cannot_revive_a_connection_revoked_during_its_directory_lookup() {
+        struct RevokingDirectory {
+            inner: Arc<org_mailbox::testkit::InMemoryDirectory>,
+            revoke: Mutex<Option<Arc<Control>>>,
+        }
+        impl MemberDirectory for RevokingDirectory {
+            fn resolve_member(
+                &self,
+                name: &str,
+            ) -> Result<Option<(org_proto::Member, org_proto::Position)>, org_mailbox::StoreError>
+            {
+                if name == org_mailbox::testkit::fixture::REMY_HANDLE {
+                    if let Some(control) = self.revoke.lock().unwrap().take() {
+                        control.revoked.store(true, Ordering::SeqCst);
+                    }
+                }
+                self.inner.resolve_member(name)
+            }
+        }
+        let (mailbox, inner) = messaging();
+        let directory = Arc::new(RevokingDirectory {
+            inner,
+            revoke: Mutex::new(None),
+        });
+        let mut ports = ports(Box::new(|| Err("none".to_owned())));
+        ports.mailbox = mailbox;
+        ports.directory = directory.clone();
+        let shared = Shared::new(
+            &test_info(),
+            Path::new("/unused-test-socket"),
+            ports,
+            token(),
+        );
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        let bind = |id, member: &str| {
+            Request::new::<MsgBind>(
+                id,
+                &MsgBindParams {
+                    member: Some(member.to_owned()),
+                    app_token: None,
+                },
+            )
+            .unwrap()
+        };
+        frame::write_message(
+            &mut peer,
+            &bind(1, org_mailbox::testkit::fixture::ADA_HANDLE),
+        )
+        .unwrap();
+        let mut polls = 0;
+        serve_connection_with_poll(
+            stream,
+            &shared,
+            1,
+            &AtomicBool::new(false),
+            org_socket::READ_TICK,
+            |fd, _| {
+                polls += 1;
+                assert!(polls <= 2, "the rebind erased a watcher revocation");
+                if polls == 2 {
+                    let control = Arc::clone(&shared.bound.lock().unwrap().get(&1).unwrap().1);
+                    *directory.revoke.lock().unwrap() = Some(control);
+                    frame::write_message(
+                        &mut peer,
+                        &bind(2, org_mailbox::testkit::fixture::REMY_HANDLE),
+                    )
+                    .unwrap();
+                }
+                org_socket::poll_readable(fd, Duration::from_millis(1))
+            },
+        );
+        assert_eq!(polls, 2);
+        assert!(shared.bound.lock().unwrap().is_empty());
+        let mut responses = BufReader::new(peer);
+        let first = frame::read_message::<Response>(&mut responses)
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.id, 1);
+        assert!(matches!(first.outcome, org_proto::Outcome::Result(_)));
         let refused = frame::read_message::<Response>(&mut responses)
             .unwrap()
             .unwrap();
@@ -2795,7 +2924,7 @@ mod tests {
     }
 
     #[test]
-    fn a_connection_is_unbound_when_its_member_stops_being_bindable() {
+    fn a_connection_closes_when_its_member_stops_being_bindable() {
         use org_mailbox::testkit::fixture::{members, POSITION};
         use org_proto::{AgentStatus, RunMode};
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
@@ -2808,8 +2937,7 @@ mod tests {
             urgent_only: false,
         };
 
-        // Made office-run after it bound: every call is `not_bound`, `who` and the snapshot
-        // included, and its held wait ends.
+        // A confirmed revocation found by a call closes just as the watcher path does.
         for change in 0..3 {
             let mut client = Client::bound_as(&path, "ada");
             let held = client.call_later::<org_proto::msg::MsgWait>(&wait);
@@ -2824,27 +2952,26 @@ mod tests {
                 directory.upsert(changed, POSITION);
             }
             let who = client.call_later::<org_proto::directory::Who>(&Default::default());
-            let inbox = client.call_later::<MsgInbox>(&inbox_params());
-            // Three answers, in whatever order: all `not_bound`, the held wait's included.
+            // The call and held wait both receive `not_bound`, in either order, then EOF.
             let mut got = std::collections::BTreeMap::new();
-            for _ in 0..3 {
+            for _ in 0..2 {
                 let answer = client.answer();
                 got.insert(answer.id, code_of(answer.outcome));
             }
             assert_eq!(
                 got,
-                [
-                    (held, ErrorCode::NotBound),
-                    (who, ErrorCode::NotBound),
-                    (inbox, ErrorCode::NotBound)
-                ]
-                .into_iter()
-                .collect(),
+                [(held, ErrorCode::NotBound), (who, ErrorCode::NotBound),]
+                    .into_iter()
+                    .collect(),
                 "change {change}"
             );
-            // It stays unbound until it binds again, which fails the same rules.
+            assert!(frame::read_message::<Response>(&mut client.reader)
+                .unwrap()
+                .is_none());
+            // A new connection still cannot bind the revoked member.
+            let mut refused = Client::connect(&path);
             assert_eq!(
-                code_of(client.bind(Some("ada"), None)),
+                code_of(refused.bind(Some("ada"), None)),
                 ErrorCode::NotAuthorized
             );
             directory.upsert(ada(), POSITION);
@@ -3805,15 +3932,28 @@ mod tests {
         pat.bind(Some("pat"), Some(token()));
         pat.subscribe(None);
         let mut ada = Client::bound_as(&path, "ada");
+        let mut lookup_failure = Client::bound_as(&path, "remy");
         ada.call_later::<org_proto::msg::MsgWait>(&wait_params());
         until("a wait is held", || mailbox.held_waits() == 1);
         flaky.failing.store(true, Ordering::SeqCst);
         feed.push(21);
         std::thread::sleep(Duration::from_millis(400));
         assert_eq!(mailbox.held_waits(), 1, "a failed lookup ends nothing");
+        assert_eq!(
+            code_of(lookup_failure.call::<org_proto::directory::Who>(&Default::default())),
+            ErrorCode::NotBound
+        );
+        assert!(matches!(
+            lookup_failure.call::<Hello>(&org_proto::Empty {}),
+            org_proto::Outcome::Result(_)
+        ));
 
         // Once the watcher revokes pat, restoring the member cannot revive that connection.
         flaky.failing.store(false, Ordering::SeqCst);
+        assert!(matches!(
+            lookup_failure.bind(Some("remy"), None),
+            org_proto::Outcome::Result(_)
+        ));
         let pat_member = memory
             .resolve_member(PAT_ID)
             .unwrap()
