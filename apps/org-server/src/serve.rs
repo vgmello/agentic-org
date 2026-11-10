@@ -14,7 +14,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::bounded;
 use crate::follow::{self, OrgFeed, Timing};
@@ -133,8 +133,28 @@ struct Control {
     revoked: std::sync::atomic::AtomicBool,
 }
 
-/// The member-bound connections, by connection number: who each acts as, and how to reach it.
-type Bound = Mutex<HashMap<u64, (String, Arc<Control>)>>;
+impl Control {
+    /// Ends the connection's held calls and its subscription, and has its next call answered as
+    /// unbound. `revoked` first: a wait or a subscription that starts after this sees it.
+    fn revoke(&self) {
+        self.revoked.store(true, Ordering::SeqCst);
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        self.held.cancel_all();
+    }
+}
+
+/// A member-bound connection, as the watcher finds it.
+struct Entry {
+    member: String,
+    /// Which of the connection's bindings this is: every registration has a number of its own,
+    /// so a decision the watcher made about one binding is never applied to a later one, not
+    /// even to one as the same member.
+    epoch: u64,
+    control: Arc<Control>,
+}
+
+/// The member-bound connections, by connection number.
+type Bound = Mutex<HashMap<u64, Entry>>;
 
 /// Keeps `conn`'s entry in [`Bound`] equal to the member it acts as. Called whenever its binding
 /// may have changed; removes the entry when the connection is not bound as a member, and when
@@ -144,6 +164,8 @@ struct Registration<'a> {
     conn: u64,
     control: Arc<Control>,
     member: Option<String>,
+    /// The number of the last registration.
+    epoch: u64,
 }
 
 impl Registration<'_> {
@@ -154,12 +176,15 @@ impl Registration<'_> {
             return false;
         }
         let mut bound = self.bound.lock().unwrap_or_else(|p| p.into_inner());
-        // Under the lock the watcher acts under: a decision about the member this connection
-        // had must not unbind the one it has now.
-        self.control.revoked.store(false, Ordering::SeqCst);
         match member {
             Some(member) => {
-                bound.insert(self.conn, (member.to_owned(), Arc::clone(&self.control)));
+                self.epoch += 1;
+                let entry = Entry {
+                    member: member.to_owned(),
+                    epoch: self.epoch,
+                    control: Arc::clone(&self.control),
+                };
+                bound.insert(self.conn, entry);
             }
             None => {
                 bound.remove(&self.conn);
@@ -167,6 +192,17 @@ impl Registration<'_> {
         }
         self.member = member.map(str::to_owned);
         member.is_some()
+    }
+
+    /// A `msg.bind` begins, failed or not: the binding before it is over. Unregistered under the
+    /// lock the watcher acts under, so a decision it made about that binding can no longer be
+    /// applied, and one it applied already is spent: the binding that follows registers anew
+    /// (with a number of its own, even as the same member, restored since) and starts clean.
+    fn rebind(&mut self) {
+        let mut bound = self.bound.lock().unwrap_or_else(|p| p.into_inner());
+        bound.remove(&self.conn);
+        self.member = None;
+        self.control.revoked.store(false, Ordering::SeqCst);
     }
 }
 
@@ -405,63 +441,102 @@ pub fn run(listener: &UnixListener, shared: &Arc<Shared>, stop: &dyn Fn() -> boo
 /// connection's member: one that is no longer bindable (offboarded, made office-run, removed) has
 /// its held `msg.wait` calls ended with `not_bound` and its subscription ended, without waiting
 /// for the connection's next call. (That next call is answered as unbound.) A lookup that fails
-/// ends nothing. Organization changes are what can unbind a member, so a quiet log costs one
-/// cheap head read per tick.
+/// ends nothing; the pass is tried again, later and later while it still cannot decide (and
+/// while the head cannot be read, which may hide a change), so a directory or a log that is down
+/// is not asked on every tick, but a new head is looked at at once.
+/// Organization changes are what can unbind a member, so a quiet log costs one cheap head read
+/// per tick.
 fn watch(shared: &Shared, watching: &std::sync::atomic::AtomicBool) {
-    let mut last_head = None;
+    let idle = shared.timing.idle;
+    // The last head a pass looked at; when to look again if that pass could not decide or could
+    // not read the head (`None`: it settled); how long to wait after the next pass that cannot.
+    let mut looked_at = None;
+    let mut retry_at = Some(Instant::now());
+    let mut backoff = idle;
     while watching.load(Ordering::SeqCst) {
         // Before looking, so a change while looking wakes the wait below at once.
         let token = shared.ports.feed.token();
         let head = shared.ports.feed.head().ok();
-        if head.is_none() || head != last_head {
+        let moved = head.is_some() && head != looked_at;
+        // A head that cannot be read may hide a change: look, and back off while it stays so.
+        if head.is_none() && retry_at.is_none() {
+            retry_at = Some(Instant::now());
+        }
+        if moved || retry_at.is_some_and(|at| Instant::now() >= at) {
+            // An unreadable head keeps the last one read: one that comes back the same is no change.
+            if head.is_some() {
+                looked_at = head;
+            }
             // A panic in a lookup must not end the watching for good.
             let pass = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| revoke(shared)));
-            match pass {
-                // Settled: this head is done with.
-                Ok(false) => last_head = head,
-                // A lookup could not answer: look again on the next tick.
-                Ok(true) => {}
+            let decided = match pass {
+                Ok(undecided) => !undecided,
                 Err(_) => {
                     eprintln!("org-server: the member watcher failed once; it carries on");
+                    false
                 }
+            };
+            // Nor is a pass over a head that could not be read settled.
+            if decided && head.is_some() {
+                retry_at = None;
+                backoff = idle;
+            } else {
+                retry_at = Some(Instant::now() + backoff);
+                backoff = retry_after(backoff, idle);
             }
         }
-        shared.ports.feed.wait(token, shared.timing.idle);
+        let sleep = retry_at.map_or(idle, |at| {
+            at.saturating_duration_since(Instant::now()).min(idle)
+        });
+        shared.ports.feed.wait(token, sleep);
     }
+}
+
+/// The most the watcher waits before it tries again a pass that could not decide (unless its
+/// idle tick is longer).
+const MAX_RETRY: Duration = Duration::from_secs(5);
+
+/// How long to wait after the next undecided pass, when the last one waited `backoff`: twice
+/// as long, up to [`MAX_RETRY`].
+fn retry_after(backoff: Duration, idle: Duration) -> Duration {
+    (backoff * 2).min(MAX_RETRY.max(idle))
 }
 
 /// One pass of the watcher. `true` when a lookup could not answer, so the pass must be repeated.
 fn revoke(shared: &Shared) -> bool {
     let mut undecided = false;
-    let members: std::collections::HashSet<String> = shared
+    // Each member's connections, with the registration each was looked at in.
+    let mut watched: HashMap<String, Vec<(u64, u64)>> = HashMap::new();
+    for (conn, entry) in shared
         .bound
         .lock()
         .unwrap_or_else(|p| p.into_inner())
-        .values()
-        .map(|(member, _)| member.clone())
-        .collect();
-    // One lookup per member, however many connections it has.
-    for member in members {
-        match lookup(shared, &member) {
-            Lookup::Failed => {
+        .iter()
+    {
+        watched
+            .entry(entry.member.clone())
+            .or_default()
+            .push((*conn, entry.epoch));
+    }
+    // One look per member, however many connections it has, and outside the registry's lock: a
+    // look reads the organization, and the connections need the lock to bind.
+    for (member, connections) in watched {
+        match gone_twice(shared, &member) {
+            Some(true) => {}
+            Some(false) => continue,
+            None => {
                 undecided = true;
                 continue;
             }
-            Lookup::Bindable(found) if found.id == member => continue,
-            Lookup::Bindable(_) | Lookup::Not => {}
         }
-        // Confirmed under the registry's lock, on the connections that STILL act as this member:
-        // one that bound as someone else, or bound again after the member was restored, is left
-        // alone.
+        // Applied under the lock, to the registrations it was looked at in: a connection that
+        // bound again since, as anyone (the same member, restored, included), is left alone; a
+        // registration made after the look looked at its member itself.
         let bound = shared.bound.lock().unwrap_or_else(|p| p.into_inner());
-        if !is_gone(shared, &member) {
-            continue;
-        }
-        for (_, control) in bound.values().filter(|(m, _)| *m == member) {
-            // `revoked` first: a wait that starts after the cancel below sees it.
-            control.revoked.store(true, Ordering::SeqCst);
-            control.generation.fetch_add(1, Ordering::SeqCst);
-            control.held.cancel_all();
+        for (conn, epoch) in connections {
+            if let Some(entry) = bound.get(&conn).filter(|entry| entry.epoch == epoch) {
+                entry.control.revoke();
+            }
         }
     }
     undecided
@@ -508,6 +583,7 @@ fn serve_connection(stream: UnixStream, shared: &Shared, conn: u64) {
         conn,
         control: Arc::clone(&control),
         member: None,
+        epoch: 0,
     };
     // The events sent on this connection, whichever subscription sent them.
     let sent = AtomicU64::new(0);
@@ -524,23 +600,26 @@ fn serve_connection(stream: UnixStream, shared: &Shared, conn: u64) {
         // A line the framing refuses (too long, not JSON) ends the connection: the stream is out
         // of step and nothing in it can be trusted.
         while let Ok(Some(request)) = frame::read_message::<Request>(&mut reader) {
-            // The member this connection acts as is checked on every call, not only at bind, and
-            // the watcher may have ended the connection's held calls already.
-            let revoked = control.revoked.swap(false, Ordering::SeqCst);
-            if let Some(member) = binding.member() {
-                if !request.is::<MsgBind>() && (revoked || !still_bindable(shared, member)) {
+            if request.is::<MsgBind>() {
+                // A bind, failed or not, ends the binding before it: its registration (and any
+                // decision of the watcher's about it), its events and its held calls.
+                registration.rebind();
+                generation.fetch_add(1, Ordering::SeqCst);
+                subscribed = false;
+                held.cancel_all();
+            } else if let Some(member) = binding.member() {
+                // The member this connection acts as is checked on every call, not only at bind,
+                // and the watcher may have ended the connection's held calls already.
+                if control.revoked.swap(false, Ordering::SeqCst) || !still_bindable(shared, member)
+                {
                     binding = Binding::Anonymous;
                     registration.sync(None);
+                    // Unregistered: a revoke that landed since the swap is spent too.
+                    control.revoked.store(false, Ordering::SeqCst);
                     generation.fetch_add(1, Ordering::SeqCst);
                     subscribed = false;
                     held.cancel_all();
                 }
-            }
-            if request.is::<MsgBind>() {
-                generation.fetch_add(1, Ordering::SeqCst);
-                subscribed = false;
-                // A bind, failed or not, ends the held calls of the binding before it.
-                held.cancel_all();
             }
             if request.is::<MsgWait>() {
                 match msg_calls::begin_wait(&request, binding.member()) {
@@ -615,6 +694,11 @@ fn serve_connection(stream: UnixStream, shared: &Shared, conn: u64) {
                         // The generation this subscription belongs to, taken before the answer
                         // goes out: a watcher's bump after this ends it.
                         let mine = generation.load(Ordering::SeqCst);
+                        // A revoke that landed after this call was checked has its bump in
+                        // `mine`, but set `revoked` before it: it ends this subscription too.
+                        if control.revoked.load(Ordering::SeqCst) {
+                            generation.fetch_add(1, Ordering::SeqCst);
+                        }
                         // The answer first, then the events.
                         let answer =
                             Response::ok::<org_proto::Subscribe>(request.id, &org_proto::Empty {})
@@ -649,9 +733,7 @@ fn serve_connection(stream: UnixStream, shared: &Shared, conn: u64) {
                 // seen this entry, so look once.
                 if let Some(member) = binding.member() {
                     if is_gone(shared, member) {
-                        control.held.cancel_all();
-                        control.generation.fetch_add(1, Ordering::SeqCst);
-                        control.revoked.store(true, Ordering::SeqCst);
+                        control.revoke();
                     }
                 }
             }
@@ -978,14 +1060,29 @@ fn still_bindable(shared: &Shared, id: &str) -> bool {
     bindable(shared, id).is_some_and(|member| member.id == id)
 }
 
+/// Whether the member `id` is no longer bindable; `None` when the directory could not say.
+fn gone(shared: &Shared, id: &str) -> Option<bool> {
+    match lookup(shared, id) {
+        Lookup::Bindable(member) => Some(member.id != id),
+        Lookup::Not => Some(true),
+        Lookup::Failed => None,
+    }
+}
+
 /// Whether the member `id` is certainly no longer bindable. A directory that could not answer is
 /// not certain.
 fn is_gone(shared: &Shared, id: &str) -> bool {
-    match lookup(shared, id) {
-        Lookup::Bindable(member) => member.id != id,
-        Lookup::Not => true,
-        Lookup::Failed => false,
+    gone(shared, id) == Some(true)
+}
+
+/// The watcher's verdict on member `id`: gone only if two looks in a row say so, so a member
+/// restored between them (a removal undone at once) is left alone. `None` when the directory
+/// could not say.
+fn gone_twice(shared: &Shared, id: &str) -> Option<bool> {
+    if !gone(shared, id)? {
+        return Some(false);
     }
+    gone(shared, id)
 }
 
 fn bind_error(id: u64, code: ErrorCode, message: &str) -> Response {
@@ -1081,12 +1178,26 @@ mod tests {
         woken: std::sync::Condvar,
         /// Makes every read of the log fail.
         broken: std::sync::atomic::AtomicBool,
+        /// Makes every read of the head fail.
+        headless: std::sync::atomic::AtomicBool,
         /// Followers asleep in `wait` now, and the most there have been at once.
         waiting: AtomicUsize,
         peak_waiting: AtomicUsize,
+        /// The latest token the server's watcher went to sleep on: it read that token, then
+        /// made its pass (if any), then slept.
+        watcher_slept_on: AtomicU64,
     }
 
     impl FakeFeed {
+        /// Waits until the watcher is done with whatever it was doing now: it has gone back to
+        /// sleep on a token it read from now on, so a pass over the head of now is finished.
+        fn watcher_settled(&self) {
+            let now = *self.token.lock().unwrap();
+            until("the watcher went back to sleep", || {
+                self.watcher_slept_on.load(Ordering::SeqCst) >= now
+            });
+        }
+
         fn push(&self, seq: u64) {
             self.push_with(seq, format!("cmd-{seq}"));
         }
@@ -1118,6 +1229,9 @@ mod tests {
 
     impl OrgFeed for Arc<FakeFeed> {
         fn head(&self) -> Result<org_proto::org::Position, String> {
+            if self.headless.load(Ordering::SeqCst) {
+                return Err("head unreadable".to_owned());
+            }
             let seq = self
                 .log
                 .lock()
@@ -1152,6 +1266,9 @@ mod tests {
             *self.token.lock().unwrap()
         }
         fn wait(&self, seen: u64, timeout: Duration) -> u64 {
+            if std::thread::current().name() == Some("org-office-watch") {
+                self.watcher_slept_on.fetch_max(seen, Ordering::SeqCst);
+            }
             let now = self.waiting.fetch_add(1, Ordering::SeqCst) + 1;
             self.peak_waiting.fetch_max(now, Ordering::SeqCst);
             let guard = self.token.lock().unwrap();
@@ -3572,10 +3689,66 @@ mod tests {
         server.join().unwrap();
     }
 
-    /// A directory that can be made to fail, over the testkit's in-memory one.
+    /// A directory over the testkit's in-memory one that can be made to fail, and whose lookups
+    /// can be parked: a parked lookup has its answer already and holds it until the test lets
+    /// it go, so the test can change the organization (or the connection) between a lookup and
+    /// what is done with its answer.
     struct FlakyDirectory {
         inner: Arc<org_mailbox::testkit::InMemoryDirectory>,
         failing: AtomicBool,
+        /// The lookups the server's watcher has made.
+        watcher_lookups: AtomicUsize,
+        /// The watcher's lookup with this number (counted from 1; 0 for none) parks.
+        park_watcher_at: AtomicUsize,
+        /// The next lookup made on a connection's thread parks.
+        park_connection: AtomicBool,
+        parked: Mutex<std::sync::mpsc::Sender<()>>,
+        release: Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+
+    /// The test's side of a parked lookup.
+    struct Gate {
+        parked: std::sync::mpsc::Receiver<()>,
+        release: std::sync::mpsc::Sender<()>,
+    }
+
+    impl Gate {
+        fn wait_parked(&self) {
+            self.parked
+                .recv_timeout(Duration::from_secs(20))
+                .expect("no lookup parked");
+        }
+
+        fn release(&self) {
+            self.release.send(()).unwrap();
+        }
+    }
+
+    impl FlakyDirectory {
+        fn over(inner: Arc<org_mailbox::testkit::InMemoryDirectory>) -> (Arc<Self>, Gate) {
+            let (parked, parked_rx) = std::sync::mpsc::channel();
+            let (release_tx, release) = std::sync::mpsc::channel();
+            let directory = Arc::new(Self {
+                inner,
+                failing: AtomicBool::new(false),
+                watcher_lookups: AtomicUsize::new(0),
+                park_watcher_at: AtomicUsize::new(0),
+                park_connection: AtomicBool::new(false),
+                parked: Mutex::new(parked),
+                release: Mutex::new(release),
+            });
+            let gate = Gate {
+                parked: parked_rx,
+                release: release_tx,
+            };
+            (directory, gate)
+        }
+
+        /// The watcher's `n`th lookup from now on parks.
+        fn park_watcher_in(&self, n: usize) {
+            let made = self.watcher_lookups.load(Ordering::SeqCst);
+            self.park_watcher_at.store(made + n, Ordering::SeqCst);
+        }
     }
 
     impl MemberDirectory for FlakyDirectory {
@@ -3584,11 +3757,82 @@ mod tests {
             id_or_handle: &str,
         ) -> Result<Option<(org_proto::Member, org_proto::Position)>, org_mailbox::StoreError>
         {
-            if self.failing.load(Ordering::SeqCst) {
-                return Err(org_mailbox::StoreError::new("the directory is down"));
+            let answer = if self.failing.load(Ordering::SeqCst) {
+                Err(org_mailbox::StoreError::new("the directory is down"))
+            } else {
+                self.inner.resolve_member(id_or_handle)
+            };
+            let park = match std::thread::current().name() {
+                Some("org-office-watch") => {
+                    let number = self.watcher_lookups.fetch_add(1, Ordering::SeqCst) + 1;
+                    self.park_watcher_at.load(Ordering::SeqCst) == number
+                }
+                Some("org-office-conn") => self.park_connection.swap(false, Ordering::SeqCst),
+                _ => false,
+            };
+            if park {
+                self.parked.lock().unwrap().send(()).unwrap();
+                self.release.lock().unwrap().recv().unwrap();
             }
-            self.inner.resolve_member(id_or_handle)
+            answer
         }
+    }
+
+    /// A server for the watcher tests over a [`FlakyDirectory`].
+    struct Watched {
+        mailbox: Arc<Mailbox>,
+        /// What the directory reads; the test changes the organization here.
+        memory: Arc<org_mailbox::testkit::InMemoryDirectory>,
+        directory: Arc<FlakyDirectory>,
+        gate: Gate,
+        feed: Arc<FakeFeed>,
+        live: Arc<LiveEvents>,
+        stop: Arc<AtomicBool>,
+        server: std::thread::JoinHandle<()>,
+    }
+
+    impl Watched {
+        fn stop(self) {
+            self.stop.store(true, Ordering::SeqCst);
+            self.server.join().unwrap();
+        }
+    }
+
+    /// Its followers and watcher sleep `idle` unless woken, as in [`unbind_server`].
+    fn watched_server(path: &Path, idle: Duration) -> Watched {
+        let feed = Arc::new(FakeFeed::default());
+        let live = {
+            let feed = Arc::clone(&feed);
+            Arc::new(LiveEvents::new(Box::new(move || feed.wake())))
+        };
+        let (mailbox, memory) = messaging_with(Arc::clone(&live));
+        let (directory, gate) = FlakyDirectory::over(Arc::clone(&memory));
+        let mut ports = ports(Box::new(|| Err("none".to_owned())));
+        ports.mailbox = Arc::clone(&mailbox);
+        ports.directory = directory.clone();
+        ports.live = Arc::clone(&live);
+        ports.feed = Box::new(Arc::clone(&feed));
+        let timing = Timing {
+            idle,
+            ..Timing::default()
+        };
+        let shared = Arc::new(Shared::new(&test_info(), path, ports, token()).with_timing(timing));
+        let (stop, server) = start(path, &shared);
+        Watched {
+            mailbox,
+            memory,
+            directory,
+            gate,
+            feed,
+            live,
+            stop,
+            server,
+        }
+    }
+
+    /// The fixture's member `id`, as the directory has it now (to restore it after a removal).
+    fn member(memory: &org_mailbox::testkit::InMemoryDirectory, id: &str) -> org_proto::Member {
+        memory.resolve_member(id).unwrap().unwrap().0
     }
 
     #[test]
@@ -3596,28 +3840,13 @@ mod tests {
         use org_mailbox::testkit::fixture::POSITION;
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
-        let feed = Arc::new(FakeFeed::default());
-        let live = {
-            let feed = Arc::clone(&feed);
-            Arc::new(LiveEvents::new(Box::new(move || feed.wake())))
-        };
-        let (mailbox, memory) = messaging_with(Arc::clone(&live));
-        let flaky = Arc::new(FlakyDirectory {
-            inner: Arc::clone(&memory),
-            failing: AtomicBool::new(false),
-        });
-        let mut ports = ports(Box::new(|| Err("none".to_owned())));
-        ports.mailbox = Arc::clone(&mailbox);
-        ports.directory = flaky.clone();
-        ports.live = Arc::clone(&live);
-        ports.feed = Box::new(Arc::clone(&feed));
-        let timing = Timing {
-            idle: Duration::from_secs(3),
-            ..Timing::default()
-        };
-        let shared =
-            Arc::new(Shared::new(&test_info(), path.as_path(), ports, token()).with_timing(timing));
-        let (stop, server) = start(&path, &shared);
+        let server = watched_server(&path, Duration::from_secs(3));
+        let (mailbox, memory, flaky, feed) = (
+            &server.mailbox,
+            &server.memory,
+            &server.directory,
+            &server.feed,
+        );
 
         // The directory is down for a moment: nothing is ended.
         let mut pat = Client::connect(&path);
@@ -3635,11 +3864,7 @@ mod tests {
         // subscription, and the connection's own state follows (it is unbound, not "already
         // subscribed").
         flaky.failing.store(false, Ordering::SeqCst);
-        let pat_member = memory
-            .resolve_member(PAT_ID)
-            .unwrap()
-            .map(|(member, _)| member)
-            .unwrap();
+        let pat_member = member(memory, PAT_ID);
         memory.remove(PAT_ID, POSITION);
         feed.push(22);
         std::thread::sleep(Duration::from_millis(800));
@@ -3651,9 +3876,8 @@ mod tests {
             ErrorCode::NotAuthorized,
             "unbound by the watcher, not still 'subscribed'"
         );
-        stop.store(true, Ordering::SeqCst);
         drop((pat, ada));
-        server.join().unwrap();
+        server.stop();
     }
 
     #[test]
@@ -3661,29 +3885,14 @@ mod tests {
         use org_mailbox::testkit::fixture::POSITION;
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
-        let feed = Arc::new(FakeFeed::default());
-        let live = {
-            let feed = Arc::clone(&feed);
-            Arc::new(LiveEvents::new(Box::new(move || feed.wake())))
-        };
-        let (mailbox, memory) = messaging_with(Arc::clone(&live));
-        let flaky = Arc::new(FlakyDirectory {
-            inner: Arc::clone(&memory),
-            failing: AtomicBool::new(false),
-        });
-        let mut ports = ports(Box::new(|| Err("none".to_owned())));
-        ports.mailbox = Arc::clone(&mailbox);
-        ports.directory = flaky.clone();
-        ports.live = Arc::clone(&live);
-        ports.feed = Box::new(Arc::clone(&feed));
         // A short idle: the retry comes without any commit.
-        let timing = Timing {
-            idle: Duration::from_millis(100),
-            ..Timing::default()
-        };
-        let shared =
-            Arc::new(Shared::new(&test_info(), path.as_path(), ports, token()).with_timing(timing));
-        let (stop, server) = start(&path, &shared);
+        let server = watched_server(&path, Duration::from_millis(100));
+        let (mailbox, memory, flaky, feed) = (
+            &server.mailbox,
+            &server.memory,
+            &server.directory,
+            &server.feed,
+        );
 
         let mut ada = Client::bound_as(&path, "ada");
         let held = ada.call_later::<org_proto::msg::MsgWait>(&wait_params());
@@ -3704,8 +3913,370 @@ mod tests {
         let answer = ada.answer();
         assert_eq!(answer.id, held);
         assert_eq!(code_of(answer.outcome), ErrorCode::NotBound);
-        stop.store(true, Ordering::SeqCst);
         drop(ada);
-        server.join().unwrap();
+        server.stop();
+    }
+
+    #[test]
+    fn a_pass_that_could_not_decide_is_tried_again_later_and_later_but_a_commit_is_looked_at_at_once(
+    ) {
+        use org_mailbox::testkit::fixture::POSITION;
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let idle = Duration::from_millis(50);
+        let server = watched_server(&path, idle);
+        let (memory, flaky, feed) = (&server.memory, &server.directory, &server.feed);
+        let mut ada = Client::bound_as(&path, "ada");
+        let held = ada.call_later::<org_proto::msg::MsgWait>(&wait_params());
+        until("a wait is held", || server.mailbox.held_waits() == 1);
+
+        // The directory is down: every pass is undecided (one lookup each, for ada).
+        flaky.failing.store(true, Ordering::SeqCst);
+        let before = flaky.watcher_lookups.load(Ordering::SeqCst);
+        let started = std::time::Instant::now();
+        feed.push(51);
+        // At once, then after 1, 2, 4, 8 and 16 idles: not on every idle tick.
+        until("six passes", || {
+            flaky.watcher_lookups.load(Ordering::SeqCst) >= before + 6
+        });
+        assert!(
+            started.elapsed() >= idle * 24,
+            "six undecided passes in {:?}",
+            started.elapsed()
+        );
+
+        // The next retry is 32 idles away; a commit is looked at now.
+        memory.remove(ADA_ID, POSITION);
+        flaky.failing.store(false, Ordering::SeqCst);
+        let committed = std::time::Instant::now();
+        feed.push(52);
+        let answer = ada.answer();
+        assert_eq!(answer.id, held);
+        assert_eq!(code_of(answer.outcome), ErrorCode::NotBound);
+        assert!(
+            committed.elapsed() < idle * 24,
+            "the commit waited for the retry: {:?}",
+            committed.elapsed()
+        );
+        drop(ada);
+        server.stop();
+    }
+
+    #[test]
+    fn a_head_that_stops_being_readable_after_a_settled_pass_is_looked_past() {
+        use org_mailbox::testkit::fixture::POSITION;
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let server = watched_server(&path, Duration::from_secs(3));
+        let (memory, feed) = (&server.memory, &server.feed);
+        let mut ada = Client::bound_as(&path, "ada");
+        let held = ada.call_later::<org_proto::msg::MsgWait>(&wait_params());
+        until("a wait is held", || server.mailbox.held_waits() == 1);
+        // A settled pass over a readable head.
+        feed.push(121);
+        feed.watcher_settled();
+
+        // The head can no longer be read when ada is removed: the watcher looks all the same.
+        memory.remove(ADA_ID, POSITION);
+        feed.headless.store(true, Ordering::SeqCst);
+        feed.wake();
+        let answer: Response = serde_json::from_value(
+            ada.message_within(Duration::from_secs(2))
+                .expect("the wait was held on"),
+        )
+        .unwrap();
+        assert_eq!(answer.id, held);
+        assert_eq!(code_of(answer.outcome), ErrorCode::NotBound);
+        drop(ada);
+        server.stop();
+    }
+
+    #[test]
+    fn a_head_that_cannot_be_read_is_looked_past_later_and_later() {
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let idle = Duration::from_millis(50);
+        let server = watched_server(&path, idle);
+        let (flaky, feed) = (&server.directory, &server.feed);
+        let _ada = Client::bound_as(&path, "ada");
+        feed.push(131);
+        feed.watcher_settled();
+
+        // Every pass decides (one lookup each, for ada), but none can read the head.
+        let before = flaky.watcher_lookups.load(Ordering::SeqCst);
+        let started = std::time::Instant::now();
+        feed.headless.store(true, Ordering::SeqCst);
+        feed.wake();
+        // At once, then after 1, 2, 4, 8 and 16 idles: not on every idle tick.
+        until("six passes", || {
+            flaky.watcher_lookups.load(Ordering::SeqCst) >= before + 6
+        });
+        assert!(
+            started.elapsed() >= idle * 24,
+            "six passes over an unreadable head in {:?}",
+            started.elapsed()
+        );
+        server.stop();
+    }
+
+    #[test]
+    fn the_wait_between_two_undecided_passes_doubles_up_to_a_bound() {
+        let idle = Duration::from_millis(200);
+        let mut wait = idle;
+        let mut waits = Vec::new();
+        for _ in 0..8 {
+            waits.push(wait);
+            wait = retry_after(wait, idle);
+        }
+        let ms: Vec<u128> = waits.iter().map(Duration::as_millis).collect();
+        assert_eq!(ms, [200, 400, 800, 1600, 3200, 5000, 5000, 5000]);
+        // An idle longer than the bound is not shortened.
+        let long = Duration::from_secs(8);
+        assert_eq!(retry_after(long, long), long);
+    }
+
+    #[test]
+    fn a_member_restored_between_the_watchers_two_looks_is_left_alone() {
+        use org_mailbox::testkit::fixture::POSITION;
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let server = watched_server(&path, Duration::from_secs(3));
+        let (memory, flaky, feed, gate) = (
+            &server.memory,
+            &server.directory,
+            &server.feed,
+            &server.gate,
+        );
+        let mut ada = Client::bound_as(&path, "ada");
+        ada.call_later::<org_proto::msg::MsgWait>(&wait_params());
+        until("a wait is held", || server.mailbox.held_waits() == 1);
+
+        // The watcher's first look finds ada removed; she is back before its second.
+        let ada_member = member(memory, ADA_ID);
+        memory.remove(ADA_ID, POSITION);
+        flaky.park_watcher_in(1);
+        feed.push(61);
+        gate.wait_parked();
+        memory.upsert(ada_member, POSITION);
+        gate.release();
+        feed.watcher_settled();
+
+        assert_eq!(server.mailbox.held_waits(), 1, "the wait was ended");
+        assert!(
+            matches!(
+                ada.call::<MsgInbox>(&inbox_params()),
+                org_proto::Outcome::Result(_)
+            ),
+            "the connection was unbound"
+        );
+        drop(ada);
+        server.stop();
+    }
+
+    #[test]
+    fn a_connection_bound_again_as_its_restored_member_while_the_watcher_decides_stays_bound() {
+        use org_mailbox::testkit::fixture::POSITION;
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let server = watched_server(&path, Duration::from_secs(3));
+        let (memory, flaky, feed, gate) = (
+            &server.memory,
+            &server.directory,
+            &server.feed,
+            &server.gate,
+        );
+        let mut ada = Client::bound_as(&path, "ada");
+
+        // The watcher has seen ada gone twice and is about to end her connection...
+        let ada_member = member(memory, ADA_ID);
+        memory.remove(ADA_ID, POSITION);
+        flaky.park_watcher_in(2);
+        feed.push(71);
+        gate.wait_parked();
+        // ...when she is restored and the connection binds as her again.
+        memory.upsert(ada_member, POSITION);
+        assert!(matches!(
+            ada.bind(Some("ada"), None),
+            org_proto::Outcome::Result(_)
+        ));
+        gate.release();
+        feed.watcher_settled();
+
+        // The decision was about the binding before: this one is left alone.
+        assert!(
+            matches!(
+                ada.call::<MsgInbox>(&inbox_params()),
+                org_proto::Outcome::Result(_)
+            ),
+            "the new binding was ended by a decision about the old one"
+        );
+        drop(ada);
+        server.stop();
+    }
+
+    #[test]
+    fn a_connection_whose_member_was_ended_and_restored_binds_again_and_stays_bound() {
+        use org_mailbox::testkit::fixture::POSITION;
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let server = watched_server(&path, Duration::from_secs(3));
+        let (memory, feed) = (&server.memory, &server.feed);
+        let mut ada = Client::bound_as(&path, "ada");
+        let held = ada.call_later::<org_proto::msg::MsgWait>(&wait_params());
+        until("a wait is held", || server.mailbox.held_waits() == 1);
+
+        // The watcher ends the connection; it hears so and sends nothing else meanwhile.
+        let ada_member = member(memory, ADA_ID);
+        memory.remove(ADA_ID, POSITION);
+        feed.push(81);
+        let answer = ada.answer();
+        assert_eq!(answer.id, held);
+        assert_eq!(code_of(answer.outcome), ErrorCode::NotBound);
+
+        // Re-onboarded, she binds again: the old binding's end does not carry over.
+        memory.upsert(ada_member, POSITION);
+        assert!(matches!(
+            ada.bind(Some("ada"), None),
+            org_proto::Outcome::Result(_)
+        ));
+        assert!(
+            matches!(
+                ada.call::<MsgInbox>(&inbox_params()),
+                org_proto::Outcome::Result(_)
+            ),
+            "the new binding was answered as unbound"
+        );
+        drop(ada);
+        server.stop();
+    }
+
+    #[test]
+    fn a_wait_whose_member_is_ended_while_the_call_is_checked_ends_at_once() {
+        use org_mailbox::testkit::fixture::POSITION;
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let server = watched_server(&path, Duration::from_secs(3));
+        let (memory, flaky, feed, gate) = (
+            &server.memory,
+            &server.directory,
+            &server.feed,
+            &server.gate,
+        );
+        let mut ada = Client::bound_as(&path, "ada");
+
+        // The wait's check finds ada bindable; before the wait is held, the watcher ends her.
+        // Made office-run (not removed): the mailbox would still hold a wait for her, so only
+        // the server's own check can end it.
+        flaky.park_connection.store(true, Ordering::SeqCst);
+        let held = ada.call_later::<org_proto::msg::MsgWait>(&wait_params());
+        gate.wait_parked();
+        let mut office_run = member(memory, ADA_ID);
+        office_run.agent.as_mut().unwrap().run_mode = Some(org_proto::RunMode::OnCall);
+        memory.upsert(office_run, POSITION);
+        feed.push(91);
+        feed.watcher_settled();
+        gate.release();
+
+        let answer: Response = serde_json::from_value(
+            ada.message_within(Duration::from_secs(3))
+                .expect("the wait was held on"),
+        )
+        .unwrap();
+        assert_eq!(answer.id, held);
+        assert_eq!(code_of(answer.outcome), ErrorCode::NotBound);
+        drop(ada);
+        server.stop();
+    }
+
+    #[test]
+    fn a_member_removed_between_its_bind_and_its_registration_is_ended_all_the_same() {
+        use org_mailbox::testkit::fixture::POSITION;
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let server = watched_server(&path, Duration::from_secs(3));
+        let (memory, flaky, feed, gate) = (
+            &server.memory,
+            &server.directory,
+            &server.feed,
+            &server.gate,
+        );
+        let mut ada = Client::connect(&path);
+
+        // The bind finds ada bindable; she is removed, and the watcher's pass over that commit
+        // is done, before the connection is registered as her.
+        flaky.park_connection.store(true, Ordering::SeqCst);
+        let bind = ada.call_later::<MsgBind>(&MsgBindParams {
+            member: Some("ada".to_owned()),
+            app_token: None,
+        });
+        gate.wait_parked();
+        let ada_member = member(memory, ADA_ID);
+        memory.remove(ADA_ID, POSITION);
+        feed.push(101);
+        feed.watcher_settled();
+        gate.release();
+        let answer = ada.answer();
+        assert_eq!(answer.id, bind);
+        assert!(matches!(answer.outcome, org_proto::Outcome::Result(_)));
+
+        // Restored before the next call, the binding is ended all the same: no pass saw it.
+        memory.upsert(ada_member, POSITION);
+        assert_eq!(
+            code_of(ada.call::<MsgInbox>(&inbox_params())),
+            ErrorCode::NotBound
+        );
+        drop(ada);
+        server.stop();
+    }
+
+    #[test]
+    fn a_subscription_set_up_while_its_person_is_ended_gets_nothing() {
+        use org_mailbox::testkit::fixture::POSITION;
+        let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
+        let path = dir.path().join("s.sock");
+        let server = watched_server(&path, Duration::from_secs(3));
+        let (memory, flaky, feed, gate) = (
+            &server.memory,
+            &server.directory,
+            &server.feed,
+            &server.gate,
+        );
+        let mut pat = Client::connect(&path);
+        assert!(matches!(
+            pat.bind(Some("pat"), Some(token())),
+            org_proto::Outcome::Result(_)
+        ));
+
+        // The subscribe's check finds pat bindable; before it is set up, the watcher ends her.
+        flaky.park_connection.store(true, Ordering::SeqCst);
+        let subscribe = pat.call_later::<org_proto::Subscribe>(&org_proto::SubscribeParams {
+            from_position: None,
+            from_work_position: None,
+        });
+        gate.wait_parked();
+        memory.remove(PAT_ID, POSITION);
+        feed.push(111);
+        feed.watcher_settled();
+        gate.release();
+        let answer = pat.answer();
+        assert_eq!(answer.id, subscribe);
+
+        // Whatever happens now is not pushed to pat.
+        server
+            .live
+            .publish_presence(org_proto::directory::MemberPresenceChangedData {
+                member_id: "X".into(),
+                presence: org_proto::directory::MemberPresence::Offline,
+                last_seen_at: "2026-11-09T12:00:00.000Z".into(),
+                status: None,
+                status_expires_at: None,
+                current_task_id: None,
+            });
+        assert!(
+            pat.nothing_within(Duration::from_millis(800)),
+            "an event reached a subscription whose person was ended"
+        );
+        drop(pat);
+        server.stop();
     }
 }
