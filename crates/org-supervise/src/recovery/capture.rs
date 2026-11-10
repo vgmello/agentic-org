@@ -63,7 +63,8 @@ fn validated_parent_links(
     ops: &mut dyn RecoveryProcesses,
     deadline: Instant,
 ) -> io::Result<BTreeMap<u32, u32>> {
-    let mut parents = BTreeMap::new();
+    let mut reported = BTreeMap::new();
+    let mut verified = BTreeMap::new();
     for child in snapshot.values() {
         check_deadline(ops, deadline)?;
         let Some(parent) = &child.parent else {
@@ -75,6 +76,7 @@ fn validated_parent_links(
                 "invalid captured parent identity",
             ));
         }
+        reported.insert(child.pid, parent.pid);
         let Some(observed) = snapshot.get(&parent.pid) else {
             continue;
         };
@@ -87,13 +89,15 @@ fn validated_parent_links(
                 "captured parent identity changed",
             ));
         }
-        parents.insert(child.pid, parent.pid);
+        verified.insert(child.pid, parent.pid);
     }
+    // Unreadable identities prevent traversal, but cannot hide a malformed cycle
+    // in the reported topology. Keep the structural and verified graphs separate.
     let mut finished = BTreeSet::new();
-    for mut pid in parents.keys().copied() {
+    for mut pid in reported.keys().copied() {
         check_deadline(ops, deadline)?;
         let mut path = BTreeSet::new();
-        while let Some(parent) = parents.get(&pid) {
+        while let Some(parent) = reported.get(&pid) {
             if finished.contains(&pid) {
                 break;
             }
@@ -107,7 +111,7 @@ fn validated_parent_links(
         }
         finished.extend(path);
     }
-    Ok(parents)
+    Ok(verified)
 }
 
 /// Mark roots and any known earlier targets, plus an optional exact owned leader exclusion.

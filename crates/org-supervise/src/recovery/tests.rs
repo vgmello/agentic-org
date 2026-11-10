@@ -1314,3 +1314,18 @@ fn recovery_startup_cannot_discard_torn_snapshot_when_recorded_leader_is_reused(
         "failure must still observe a full mark scan without authorizing signals"
     );
 }
+
+#[test]
+fn recovery_unreadable_identity_cannot_hide_reported_cycle() {
+    let mut leader = marked(100);
+    leader.zombie = true;
+    let mut child = process(101, 101, MarkEvidence::Unreadable);
+    child.identity = None;
+    let mut ops = Processes::new(vec![]);
+    ops.snapshots = [vec![leader, child], vec![marked(200)], vec![]].into();
+    let mut store = records(true);
+    let batch = run_store(&mut store, &mut ops);
+    assert!(batch.gone.is_empty());
+    assert!(ops.signals().is_empty());
+    assert_eq!(store.checkpoints, 0);
+}
