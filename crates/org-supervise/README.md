@@ -105,7 +105,8 @@ invalidates recorded identity/group hints but does not skip the full current mar
 
 Before TERM or KILL, the caller's checkpoint store durably appends the identities
 and ancestry of every captured target to the matching row's inventory. If the
-leader survives TERM grace, refresh that capture before KILL. The union never shrinks and is capped at 256 identities; write failure or overflow permits
+leader survives TERM grace, refresh that capture before KILL. The union never shrinks and is capped at 256 identities including ancestry-only links;
+write failure or overflow permits
 no signal or completion. Retry reloads this inventory, checks exact PID, start
 and boot identity against a complete current snapshot, and still runs the full
 mark scan. A reparented child stays a target after its parent exits. Newly found
@@ -117,7 +118,9 @@ One scan pass captures all marked roots and descendants before killing them. It
 always includes the full user-process enumeration, regardless of tool-session hints.
 Zombies and an exact optional owned probe leader are skipped before environment
 reads. S0 unreadable environments are counted and skipped, without failing the scan;
-the caller surfaces these counts as warnings. A known live saved target skipped
+the caller surfaces these counts as warnings. A verified identity with an
+unreadable environment can link readable descendants to a marked tree without
+becoming a signal target itself. A known live saved target skipped
 under S0 prevents an empty pass, without making the pass itself fail. A known
 target whose identity cannot be verified leaves recovery unresolved. No process
 environment bodies are retained.

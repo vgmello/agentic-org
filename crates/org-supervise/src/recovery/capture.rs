@@ -75,7 +75,6 @@ pub(super) fn capture_targets(
         }
         if p.mark == MarkEvidence::Unreadable {
             report.unreadable_environments += 1;
-            continue;
         }
         if p.identity.is_none() {
             report.unreadable_identities += 1;
@@ -83,6 +82,9 @@ pub(super) fn capture_targets(
         eligible.insert(*pid, p);
     }
     let mut targets = BTreeMap::new();
+    // The traversal graph also includes verified identity-only links. They never
+    // become signal targets merely because their environments are unreadable.
+    let mut ancestry_nodes = BTreeMap::new();
     let mut queue = VecDeque::new();
     for (pid, p) in &eligible {
         if matches!(&p.mark, MarkEvidence::Present(mark) if mark.as_str() == scope.mark) {
@@ -102,7 +104,8 @@ pub(super) fn capture_targets(
                     evidence: TargetEvidence::Marked,
                 },
             );
-            queue.push_back((*pid, vec![id.clone()], false));
+            ancestry_nodes.insert(*pid, (None, id));
+            queue.push_back((*pid, false));
         }
     }
     // Restore targets observed before earlier parent kills, even after reparenting
@@ -137,15 +140,19 @@ pub(super) fn capture_targets(
             // S0: skip without failing this pass. A previously known live target
             // still prevents the coordinator from declaring a final empty pass.
             pending_unreadable += 1;
+            if let Some(id) = safe_identity(current, context) {
+                ancestry_nodes.insert(saved.identity.pid, (None, id));
+                queue.push_back((saved.identity.pid, true));
+            }
             continue;
         }
-        if current.identity.is_none() || safe_identity(current, context).is_none() {
+        let id = safe_identity(current, context).ok_or_else(|| {
             report.refused += 1;
-            return Err(io::Error::new(
+            io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "saved target identity cannot be verified",
-            ));
-        }
+            )
+        })?;
         if targets.contains_key(&saved.identity.pid) {
             continue;
         }
@@ -160,38 +167,59 @@ pub(super) fn capture_targets(
         );
         // The saved ancestry explains this anchor's authority, not its current parent
         // links. Descendants discovered now start a new chain at the live anchor.
-        queue.push_back((saved.identity.pid, vec![saved.identity.clone()], true));
+        ancestry_nodes.insert(saved.identity.pid, (None, id));
+        queue.push_back((saved.identity.pid, true));
     }
-    // Snapshot descendants before killing parents. A visited set also bounds malformed cycles.
-    while let Some((parent, ancestry, from_checkpoint)) = queue.pop_front() {
+    let mut children: BTreeMap<u32, Vec<&ProcessObservation>> = BTreeMap::new();
+    for child in eligible.values() {
+        children.entry(child.parent).or_default().push(child);
+    }
+    // Mark each observed node once, bounding malformed cycles. Reconstruct a
+    // bounded ancestry chain only for a readable target, not for each S0 link.
+    while let Some((parent, from_checkpoint)) = queue.pop_front() {
         check_deadline(ops, deadline)?;
-        for (pid, child) in &eligible {
-            if child.parent != parent || targets.contains_key(pid) {
+        for child in children.get(&parent).into_iter().flatten() {
+            let pid = child.pid;
+            if ancestry_nodes.contains_key(&pid) {
                 continue;
             }
-            let id = safe_identity(child, context).ok_or_else(|| {
+            let Some(id) = safe_identity(child, context) else {
+                if child.mark == MarkEvidence::Unreadable {
+                    continue;
+                }
                 report.refused += 1;
-                io::Error::new(
+                return Err(io::Error::new(
                     io::ErrorKind::PermissionDenied,
                     "unsafe descendant identity",
-                )
-            })?;
+                ));
+            };
+            ancestry_nodes.insert(pid, (Some(parent), id));
+            queue.push_back((pid, from_checkpoint));
+            if child.mark == MarkEvidence::Unreadable {
+                continue;
+            }
             validate_target_count(targets.len() + 1)?;
+            let mut ancestry = Vec::new();
+            let mut cursor = Some(parent);
+            while let Some(ancestor) = cursor {
+                validate_target_count(ancestry.len() + 2)?; // ancestor plus the target
+                let (previous, identity) = ancestry_nodes[&ancestor];
+                ancestry.push(identity.clone());
+                cursor = previous;
+            }
+            ancestry.reverse();
             targets.insert(
-                *pid,
+                pid,
                 VerifiedTarget {
                     identity: id.clone(),
                     mark: scope.mark.into(),
                     evidence: if from_checkpoint {
-                        TargetEvidence::CheckpointDescendant(ancestry.clone())
+                        TargetEvidence::CheckpointDescendant(ancestry)
                     } else {
-                        TargetEvidence::Descendant(ancestry.clone())
+                        TargetEvidence::Descendant(ancestry)
                     },
                 },
             );
-            let mut next = ancestry.clone();
-            next.push(id.clone());
-            queue.push_back((*pid, next, from_checkpoint));
         }
     }
     report.found_live = targets.len() + pending_unreadable;

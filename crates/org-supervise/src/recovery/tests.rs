@@ -1012,23 +1012,35 @@ fn recovery_257_captured_identities_refuse_before_signal_or_partial_write() {
 }
 
 #[test]
-fn recovery_inventory_cap_includes_resolved_entries_in_cumulative_union() {
-    let inventory = (1000..1256)
-        .map(|pid| CheckpointTarget {
-            identity: marked(pid).identity.unwrap(),
-            ancestry: vec![],
-        })
-        .collect();
-    let mut store = records(false);
-    store.rows[0].1 = record(false).with_inventory(inventory).unwrap();
-    let mut ops = Processes::new(vec![]);
-    assert!(run_store(&mut store, &mut ops).unresolved.is_empty()); // exactly 256 allowed
-    let writes = store.checkpoints;
-    ops.live.push(marked(200));
-    assert!(run_store(&mut store, &mut ops).gone.is_empty());
-    assert!(ops.signals().is_empty());
-    assert_eq!(store.checkpoints, writes);
-    assert_eq!(store.rows[0].1.inventory().len(), 256);
+fn recovery_inventory_cap_includes_resolved_targets_and_ancestry_only_entries() {
+    for ancestry_only in [false, true] {
+        let inventory = if ancestry_only {
+            vec![CheckpointTarget {
+                identity: marked(1255).identity.unwrap(),
+                ancestry: (1000..1255)
+                    .map(|pid| marked(pid).identity.unwrap())
+                    .collect(),
+            }]
+        } else {
+            (1000..1256)
+                .map(|pid| CheckpointTarget {
+                    identity: marked(pid).identity.unwrap(),
+                    ancestry: vec![],
+                })
+                .collect()
+        };
+        let count = inventory.len();
+        let mut store = records(false);
+        store.rows[0].1 = record(false).with_inventory(inventory).unwrap();
+        let mut ops = Processes::new(vec![]);
+        assert!(run_store(&mut store, &mut ops).unresolved.is_empty()); // exactly 256 identities
+        let writes = store.checkpoints;
+        ops.live.push(marked(200));
+        assert!(run_store(&mut store, &mut ops).gone.is_empty());
+        assert!(ops.signals().is_empty());
+        assert_eq!(store.checkpoints, writes);
+        assert_eq!(store.rows[0].1.inventory().len(), count);
+    }
 }
 
 fn saved_parent_and_child() -> Vec<CheckpointTarget> {
@@ -1188,6 +1200,38 @@ fn recovery_checkpoints_children_created_during_term_grace_before_final_kill() {
                 ]
             );
             assert_eq!(store.rows[0].1.inventory().len(), 2);
+        }
+    }
+}
+
+#[test]
+fn recovery_walks_verified_unreadable_intermediary_without_signalling_it() {
+    for identity_readable in [true, false] {
+        let mut store = records(false);
+        let mut intermediary = process(201, 200, MarkEvidence::Unreadable);
+        if !identity_readable {
+            intermediary.identity = None;
+        }
+        let mut ops = Processes::new(vec![
+            marked(200),
+            intermediary,
+            process(202, 201, MarkEvidence::Absent),
+        ]);
+        let batch = run_store(&mut store, &mut ops);
+        assert!(batch.unresolved.is_empty());
+        assert!(!ops.signals().iter().any(|(pid, _)| *pid == 201));
+        if identity_readable {
+            assert_eq!(
+                ops.signals(),
+                [(200, RecoverySignal::Kill), (202, RecoverySignal::Kill)]
+            );
+            let inventory = store.rows[0].1.inventory();
+            assert_eq!(inventory.len(), 2); // bridge is ancestry evidence, not a saved signal target
+            let saved = inventory.iter().find(|t| t.identity.pid == 202).unwrap();
+            assert!(saved.ancestry.iter().map(|p| p.pid).eq([200, 201]));
+        } else {
+            assert_eq!(ops.signals(), [(200, RecoverySignal::Kill)]);
+            assert!(ops.live.iter().any(|p| p.pid == 202));
         }
     }
 }

@@ -127,7 +127,7 @@ impl RecoveryRecord {
     }
 }
 
-/// Maximum number of distinct saved process identities in one record.
+/// Maximum distinct process identities in a record, including ancestry-only links.
 pub const MAX_RECOVERY_TARGETS: usize = 256;
 
 /// Plain persisted data, never a process-signalling capability. Restored only through
@@ -161,13 +161,15 @@ fn validate_inventory(inventory: &[CheckpointTarget]) -> io::Result<()> {
     for target in inventory {
         let mut seen = BTreeSet::new();
         for ancestor in &target.ancestry {
-            if ancestor.boot != target.identity.boot
-                || ancestor == &target.identity
-                || !seen.insert(ancestor.key())
-                || !identities.contains(&ancestor.key())
+            if !ancestor.valid()
+                || ancestor.boot != target.identity.boot
+                || ancestor.pid == target.identity.pid
+                || !seen.insert(ancestor.pid)
             {
                 return Err(invalid("invalid saved process ancestry"));
             }
+            identities.insert(ancestor.key());
+            validate_target_count(identities.len())?;
         }
     }
     Ok(())
@@ -243,7 +245,7 @@ pub struct ProcessObservation {
     pub pid: u32,
     /// Full start/boot identity, or None if it could not be read.
     pub identity: Option<ProcessIdentity>,
-    /// Parent PID at snapshot time.
+    /// Parent PID from the identity-consistent snapshot; zero if the link cannot be verified.
     pub parent: u32,
     /// Process group; a hint only.
     pub group: u32,
@@ -350,7 +352,9 @@ pub trait RecoveryProcesses: sealed::Processes {
     /// Capture supervisor identity, refusing an unsupported native mechanism.
     fn context(&mut self) -> io::Result<RecoveryContext>;
     /// Complete user-process snapshot, preserving identity/ancestry evidence before kills.
-    /// A truncated or failed enumeration is an error, never an empty successful scan.
+    /// Parent links must match identities in the same capture; a numeric PPID from a
+    /// stale or inconsistent observation cannot establish ancestry. A truncated or
+    /// failed enumeration is an error, never an empty successful scan.
     fn snapshot(&mut self, deadline: Instant) -> io::Result<Vec<ProcessObservation>>;
     /// Revalidate/pin the policy-issued target and signal it individually.
     fn signal_checked(
