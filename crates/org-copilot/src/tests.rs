@@ -782,23 +782,110 @@ fn an_answer_that_arrives_after_the_timeout_is_thrown_away() {
         timeout: Duration::from_millis(20),
         ..Limits::default()
     };
-    let late = Reply::Slow(Duration::from_millis(120), GOOD_TEXT_ANSWER.into());
-    let c = Copilot::new(builtin(), FakeRuntime::new([late]), limits.clone());
+    // The fake answers only once the run's cancel token is set, that is after the deadline.
+    let late = Reply::AfterCancel(GOOD_TEXT_ANSWER.into());
+    let c = Copilot::new(builtin(), FakeRuntime::new([late]), limits);
     assert_eq!(
         c.draft("ana", &improve_request("a")).unwrap_err(),
         CopilotError::Timeout
     );
-    // In time is fine, and the same limit was handed to the runtime.
+    // The fake did see its token set, and answered only then: after the copilot had given up.
+    wait_until("the late answer", || c.runtime.cancelled() == 1);
+    // In time is fine.
     let quick = Reply::Slow(Duration::from_millis(1), GOOD_TEXT_ANSWER.into());
+    let c = Copilot::new(builtin(), FakeRuntime::new([quick]), Limits::default());
+    assert!(c.draft("ana", &improve_request("a")).is_ok());
+}
+
+#[test]
+fn an_answer_already_waiting_at_the_deadline_is_still_a_timeout() {
+    // With no time at all, every answer comes at or after the deadline. The worker often has it
+    // queued before the copilot looks (more so with callers competing for the CPU), and the
+    // channel would hand it over: the clock decides.
+    const CALLERS: usize = 4;
+    const RUNS: usize = 500;
+    let limits = Limits {
+        timeout: Duration::ZERO,
+        max_concurrent_runs: CALLERS * RUNS,
+        ..Limits::default()
+    };
+    let replies = std::iter::repeat_with(|| Reply::Text(GOOD_TEXT_ANSWER.into()));
     let c = Copilot::new(
         builtin(),
-        FakeRuntime::new([quick]),
-        Limits {
-            timeout: Duration::from_secs(5),
-            ..limits
-        },
+        FakeRuntime::new(replies.take(CALLERS * RUNS)),
+        limits,
     );
-    assert!(c.draft("ana", &improve_request("a")).is_ok());
+    thread::scope(|s| {
+        for caller in 0..CALLERS {
+            let c = &c;
+            s.spawn(move || {
+                let user = format!("user-{caller}");
+                for run in 0..RUNS {
+                    assert_eq!(
+                        c.draft(&user, &improve_request("a")).unwrap_err(),
+                        CopilotError::Timeout,
+                        "{user}, run {run}"
+                    );
+                }
+            });
+        }
+    });
+}
+
+#[test]
+fn a_result_the_adapter_returned_at_or_after_the_deadline_is_a_timeout() {
+    use crate::service::{settle, Finished};
+    use std::sync::mpsc::RecvTimeoutError;
+    use std::time::Instant;
+
+    let answer = || {
+        Ok(RunOutput {
+            text: GOOD_TEXT_ANSWER.into(),
+            usage: None,
+        })
+    };
+    let deadline = Instant::now();
+    let late = deadline + Duration::from_millis(1);
+    // Received, but returned at or after the deadline: `timeout`, and the run is told to stop.
+    for (result, at) in [
+        (answer(), deadline),
+        (answer(), late),
+        (Err(RuntimeError::Failed), deadline),
+        (Err(RuntimeError::NotSetUp), late),
+    ] {
+        let cancel = CancelToken::new();
+        let received = Ok(Finished { result, at });
+        assert_eq!(
+            settle(received, Some(deadline), &cancel).unwrap_err(),
+            CopilotError::Timeout
+        );
+        assert!(cancel.is_cancelled());
+    }
+    // Returned before the deadline: the answer stands, and the token is left alone.
+    let cancel = CancelToken::new();
+    let in_time = Ok(Finished {
+        result: answer(),
+        at: deadline,
+    });
+    assert!(settle(in_time, Some(late), &cancel).is_ok());
+    assert!(!cancel.is_cancelled());
+    // No deadline (a timeout too long for the clock): never late.
+    let whenever = Ok(Finished {
+        result: answer(),
+        at: late,
+    });
+    assert!(settle(whenever, None, &cancel).is_ok());
+    assert!(!cancel.is_cancelled());
+    // Nothing by the deadline is `timeout`; a worker gone without an answer panicked.
+    let silent = settle(Err(RecvTimeoutError::Timeout), Some(deadline), &cancel);
+    assert_eq!(silent.unwrap_err(), CopilotError::Timeout);
+    assert!(cancel.is_cancelled());
+    let gone = settle(
+        Err(RecvTimeoutError::Disconnected),
+        Some(late),
+        &CancelToken::new(),
+    );
+    assert_eq!(gone.unwrap_err(), CopilotError::Failed(FailReason::Runtime));
 }
 
 #[test]
@@ -811,17 +898,28 @@ fn the_default_limits_are_the_designs() {
 
 // ---- one run per person per feature ----------------------------------------------------------
 
+/// Lets the fake's held runs go when dropped, so a failed assertion can't leave one held.
+struct ReleaseOnDrop<'a>(&'a FakeRuntime);
+
+impl Drop for ReleaseOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.release();
+    }
+}
+
 #[test]
 fn a_second_run_by_the_same_person_and_feature_is_busy_until_the_first_ends() {
-    let slow = Reply::Slow(Duration::from_millis(400), GOOD_TEXT_ANSWER.into());
+    // The first run is held until the test lets it go, rather than outlasting a sleep.
+    let held = Reply::Held(GOOD_TEXT_ANSWER.into());
     let c = copilot(FakeRuntime::new([
-        slow,
+        held,
         Reply::Text(GOOD_TEXT_ANSWER.into()),
         Reply::Text(GOOD_BUG_ANSWER.into()),
         Reply::Text(GOOD_TEXT_ANSWER.into()),
         Reply::Text(GOOD_TEXT_ANSWER.into()),
     ]));
     thread::scope(|s| {
+        let release = ReleaseOnDrop(&c.runtime);
         let first = s.spawn(|| c.draft("ana", &improve_request("one")));
         while c.runtime.started() == 0 {
             thread::yield_now();
@@ -838,6 +936,7 @@ fn a_second_run_by_the_same_person_and_feature_is_busy_until_the_first_ends() {
         // Another person, or another feature, is not blocked.
         assert!(c.draft("bo", &improve_request("two")).is_ok());
         assert!(c.draft("ana", &bug_request("two")).is_ok());
+        drop(release);
         assert!(first.join().unwrap().is_ok());
     });
     // The slot is free again.

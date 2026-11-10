@@ -1,10 +1,9 @@
 import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
-import { shot } from './shot';
 
 // The smart features on the TypeScript mock, in the real screens: "Report a bug from a sentence" in
 // the Report a bug dialog, and "Draft or improve" on the bug and task text fields.
-// `?copilot=off|failed|timeout` picks a scenario (src/lib/copilot/mock.ts).
+// `?copilot=off|failed|timeout` picks a scenario (src/lib/modules/copilot/mock.ts).
 
 async function openProject(page: Page, tab: 'Bugs' | 'Tasks', scenario = '') {
 	await visit(page, '/create');
@@ -25,6 +24,12 @@ async function openReportDialog(page: Page, scenario = '') {
 
 const smartButtons = (scope: ReturnType<Page['locator']>) => scope.getByRole('button', { name: /^Draft or improve/ });
 const bugRows = (page: Page) => page.getByTestId('bug-row');
+
+// Keep this flow's named state captures isolated per test, including parallel runs.
+async function copilotShot(page: Page, name: string) {
+	await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => undefined))));
+	await page.screenshot({ path: test.info().outputPath(`${name}.png`), fullPage: true });
+}
 
 test('report dialog: a sentence drafts the fields of the real form, and nothing is reported until the person confirms', async ({ page }) => {
 	const dialog = await openReportDialog(page);
@@ -47,7 +52,7 @@ test('report dialog: a sentence drafts the fields of the real form, and nothing 
 	// The app's own environment line is not overwritten by a draft that doesn't have one.
 	await expect(dialog.getByLabel('Environment')).toHaveValue(/^This Mac \(HQ\)/);
 	await expect(bugRows(page)).toHaveCount(0);
-	await shot(page, 'report-dialog-drafted');
+	await copilotShot(page, 'report-dialog-drafted');
 
 	// The person edits the title: its tag goes, the other field keeps its tag.
 	await dialog.getByLabel('Title').fill('Save does nothing after a rename');
@@ -163,7 +168,7 @@ test('report dialog: Draft or improve is on the title, what happened, expected a
 	await expect(panel.getByTestId('copilot-proposal')).toHaveText('The save button does nothing.');
 	// It is only a proposal: the field still holds what the person wrote.
 	await expect(field).toHaveValue('  the save  button does nothing');
-	await shot(page, 'report-dialog-improve-proposal');
+	await copilotShot(page, 'report-dialog-improve-proposal');
 
 	await panel.getByRole('button', { name: 'Use this draft' }).click();
 	await expect(field).toHaveValue('The save button does nothing.');
@@ -204,6 +209,7 @@ test('report dialog: the fields are locked while a draft is on its way, so it ca
 	await dialog.getByRole('button', { name: 'Draft the report' }).click();
 	await expect(dialog.getByLabel('Title')).toBeDisabled();
 	await expect(dialog.getByLabel('What happened')).toBeDisabled();
+	await page.screenshot({ path: test.info().outputPath('report-dialog-drafting.png'), fullPage: true });
 	await expect(dialog.getByLabel('Title')).toBeEnabled();
 	await expect(dialog.getByLabel('Title')).toHaveValue('It crashed on start');
 });
@@ -242,6 +248,7 @@ test('report dialog: with nothing to go on, Draft asks for an instruction instea
 	await panel.getByRole('button', { name: 'Draft', exact: true }).click();
 	await expect(panel.getByRole('alert')).toHaveText('Say what it should be about, then ask for a draft.');
 	await expect(panel.getByTestId('copilot-proposal')).toHaveCount(0);
+	await copilotShot(page, 'copilot-empty-instruction');
 	await panel.getByLabel('Instruction (optional)').fill('the file is saved');
 	await expect(panel.getByRole('alert')).toHaveCount(0);
 });
@@ -257,7 +264,7 @@ test('report dialog: without a runtime there are no smart buttons and the form s
 	await dialog.getByRole('radio', { name: /^Major/ }).check();
 	await dialog.getByRole('button', { name: 'Report bug' }).click();
 	await expect(page.getByText('Bug B-1 reported.')).toBeVisible();
-	await shot(page, 'report-dialog-no-copilot');
+	await copilotShot(page, 'report-dialog-no-copilot');
 });
 
 for (const [scenario, title] of [
@@ -280,7 +287,7 @@ for (const [scenario, title] of [
 		await expect(dialog.getByLabel('What happened')).toHaveValue('Some text');
 		// One error at a time: running the field's copilot cleared the sentence draft's error.
 		await expect(dialog.getByRole('alert')).toHaveCount(1);
-		await shot(page, `copilot-${scenario}`);
+		await copilotShot(page, `copilot-${scenario}`);
 
 		// Running it again clears the panel's own error while it works, and Dismiss clears it too.
 		await panel.getByRole('button', { name: 'Improve' }).click();
@@ -324,7 +331,7 @@ test('task dialog: Draft or improve on the description of a new task, and the ta
 	await page.getByTestId('task-card').filter({ hasText: 'Plan the launch' }).getByRole('button', { name: 'Plan the launch' }).click();
 	const sheet = page.getByRole('dialog');
 	await expect(sheet.getByLabel('Description')).toHaveValue('Write the launch plan.');
-	await shot(page, 'task-description-drafted');
+	await copilotShot(page, 'task-description-drafted');
 });
 
 test('task sheet: a draft used on the description of an existing task is saved like any edit, and Undo is saved too', async ({ page }) => {
