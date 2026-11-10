@@ -32,6 +32,7 @@ pub(super) struct Directory {
     path: PathBuf,
     identity: Identity,
     locked: bool,
+    root_device: Option<u64>,
 }
 
 impl Drop for Directory {
@@ -49,6 +50,12 @@ pub(super) struct FileLock(File);
 pub(super) struct ControlFile {
     file: File,
     bytes: Vec<u8>,
+}
+
+impl ControlFile {
+    pub(super) fn same_version(&self, other: &Self) -> Result<bool, Error> {
+        Ok(self.bytes == other.bytes && Identity::of(&self.file)? == Identity::of(&other.file)?)
+    }
 }
 
 impl std::ops::Deref for ControlFile {
@@ -131,6 +138,15 @@ impl Directory {
         Self::from_file(file, path)
     }
 
+    /// An instance root additionally establishes its supported filesystem and device fence.
+    pub(super) fn open_root(path: &Path, create: bool) -> Result<Self, Error> {
+        let path = absolute(path)?;
+        let file = Self::walk_with_probe(&path, create, true, check_path_component)?;
+        let mut root = Self::from_file(file, path)?;
+        root.root_device = Some(root.identity.device);
+        Ok(root)
+    }
+
     fn from_file(file: File, path: PathBuf) -> Result<Self, Error> {
         let metadata = file.metadata()?;
         if metadata.uid() != effective_user() || metadata.mode() & 0o7777 != 0o700 {
@@ -144,14 +160,22 @@ impl Directory {
             path,
             identity,
             locked: false,
+            root_device: None,
         })
     }
 
     fn walk(path: &Path, create_final: bool) -> Result<File, Error> {
+        Self::walk_with_probe(path, create_final, false, check_path_component)
+    }
+
+    fn walk_with_probe(
+        path: &Path,
+        create_final: bool,
+        root: bool,
+        mut probe: impl FnMut(&File, &Path, bool) -> Result<(), Error>,
+    ) -> Result<File, Error> {
         let mut directory = File::open("/")?;
-        #[cfg(target_os = "linux")]
-        require_case_sensitive(&directory, Path::new("/"))?;
-        #[cfg(target_os = "linux")]
+        probe(&directory, Path::new("/"), false)?;
         let mut traversed = PathBuf::from("/");
         let parts: Vec<_> = path
             .components()
@@ -160,34 +184,44 @@ impl Directory {
                 _ => None,
             })
             .collect();
-        for (index, name) in parts.iter().enumerate() {
-            let name = cstring(name)?;
-            if create_final && index + 1 == parts.len() {
-                // SAFETY: the parent fd and NUL-terminated component are valid.
-                let result = unsafe { libc::mkdirat(directory.as_raw_fd(), name.as_ptr(), 0o700) };
-                if result != 0 {
-                    let error = io::Error::last_os_error();
-                    if error.kind() != io::ErrorKind::AlreadyExists {
-                        return Err(error.into());
+        for (index, part) in parts.iter().enumerate() {
+            let name = cstring(part)?;
+            let open = || {
+                // SAFETY: each component is relative to a retained parent descriptor.
+                from_fd(unsafe {
+                    libc::openat(
+                        directory.as_raw_fd(),
+                        name.as_ptr(),
+                        libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                    )
+                })
+            };
+            let final_part = index + 1 == parts.len();
+            let child = match open() {
+                Err(error)
+                    if create_final && final_part && error.kind() == io::ErrorKind::NotFound =>
+                {
+                    // A new directory inherits its parent's filesystem. Refuse unsupported
+                    // roots before creating anything; existing mount roots are checked below.
+                    if root {
+                        probe(&directory, &traversed, true)?;
                     }
+                    // SAFETY: retained parent and validated NUL-terminated component.
+                    if unsafe { libc::mkdirat(directory.as_raw_fd(), name.as_ptr(), 0o700) } != 0 {
+                        let error = io::Error::last_os_error();
+                        if error.kind() != io::ErrorKind::AlreadyExists {
+                            return Err(error.into());
+                        }
+                    } else {
+                        directory.sync_all()?;
+                    }
+                    open()?
                 }
-                if result == 0 {
-                    directory.sync_all()?;
-                }
-            }
-            // SAFETY: each component is opened relative to a retained parent fd.
-            directory = from_fd(unsafe {
-                libc::openat(
-                    directory.as_raw_fd(),
-                    name.as_ptr(),
-                    libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-                )
-            })?;
-            #[cfg(target_os = "linux")]
-            {
-                traversed.push(parts[index]);
-                require_case_sensitive(&directory, &traversed)?;
-            }
+                other => other?,
+            };
+            directory = child;
+            traversed.push(part);
+            probe(&directory, &traversed, root && final_part)?;
         }
         Ok(directory)
     }
@@ -204,7 +238,9 @@ impl Directory {
             return Err(Error::Invalid("cannot duplicate a root lock owner"));
         }
         self.verify()?;
-        Self::from_file(self.file.try_clone()?, self.path.clone())
+        let mut copy = Self::from_file(self.file.try_clone()?, self.path.clone())?;
+        copy.root_device = self.root_device;
+        Ok(copy)
     }
 
     pub(super) fn child(&self, name: &str, create: bool) -> Result<Self, Error> {
@@ -229,7 +265,9 @@ impl Directory {
                 libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
             )
         })?;
-        let child = Self::from_file(file, self.path.join(name))?;
+        let mut child = Self::from_file(file, self.path.join(name))?;
+        self.require_device(child.identity.device)?;
+        child.root_device = self.root_device;
         self.verify()?;
         child.verify()?;
         Ok(child)
@@ -273,8 +311,18 @@ impl Directory {
         Ok(())
     }
 
+    fn require_device(&self, device: u64) -> Result<(), Error> {
+        if self.root_device.is_some_and(|root| root != device) {
+            return Err(Error::Unsafe(
+                "instance descendants must remain on the root device",
+            ));
+        }
+        Ok(())
+    }
+
     pub(super) fn verify(&self) -> Result<(), Error> {
         let current = Self::open(&self.path, false)?;
+        self.require_device(current.identity.device)?;
         if current.identity != self.identity {
             return Err(Error::Unsafe("registered directory was replaced or moved"));
         }
@@ -339,6 +387,7 @@ impl Directory {
             device: current.st_dev,
             inode: current.st_ino,
         };
+        self.require_device(identity.device)?;
         if identity != Identity::of(held)? {
             return Err(Error::Unsafe("control file was replaced"));
         }
@@ -357,6 +406,7 @@ impl Directory {
             )
         })?;
         let metadata = file.metadata()?;
+        self.require_device(metadata.dev())?;
         if !metadata.is_file()
             || metadata.uid() != effective_user()
             || metadata.mode() & 0o7777 != 0o600
@@ -514,39 +564,79 @@ impl Directory {
     }
 }
 
+fn check_path_component(file: &File, path: &Path, root: bool) -> Result<(), Error> {
+    #[cfg(target_os = "linux")]
+    {
+        check_linux_component(file, path, root, &NativeProbe)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (file, path, root);
+        Ok(())
+    }
+}
+
 #[cfg(target_os = "linux")]
-fn require_case_sensitive(file: &File, path: &Path) -> Result<(), Error> {
-    let mut stats = std::mem::MaybeUninit::<libc::statfs>::uninit();
-    // SAFETY: the retained directory descriptor and writable output are valid.
-    if unsafe { libc::fstatfs(file.as_raw_fd(), stats.as_mut_ptr()) } != 0 {
-        return Err(Error::FilesystemProbe {
-            path: path.to_owned(),
-            probe: "fstatfs",
-            source: io::Error::last_os_error(),
-        });
-    }
-    // SAFETY: fstatfs initialized stats on success.
-    let kind = unsafe { stats.assume_init() }.f_type as u32 as u64;
-    if kind == 0x5846_5342 {
-        check_xfs_geometry(path, xfs_geometry_flags(file))?;
-    }
-    check_linux_directory(path, kind, || {
-        let mut flags: libc::c_int = 0;
-        // SAFETY: FS_IOC_GETFLAGS writes to the valid flags pointer for this directory.
+trait LinuxProbe {
+    fn flags(&self, file: &File, path: &Path) -> io::Result<libc::c_int>;
+    fn filesystem(&self, file: &File, path: &Path) -> io::Result<u64>;
+    fn xfs(&self, file: &File, path: &Path) -> io::Result<u32>;
+}
+
+#[cfg(target_os = "linux")]
+struct NativeProbe;
+
+#[cfg(target_os = "linux")]
+impl LinuxProbe for NativeProbe {
+    fn flags(&self, file: &File, _: &Path) -> io::Result<libc::c_int> {
+        let mut flags = 0;
+        // SAFETY: FS_IOC_GETFLAGS writes into our valid output for a retained directory.
         if unsafe { libc::ioctl(file.as_raw_fd(), libc::FS_IOC_GETFLAGS, &mut flags) } != 0 {
             return Err(io::Error::last_os_error());
         }
         Ok(flags)
-    })
+    }
+    fn filesystem(&self, file: &File, _: &Path) -> io::Result<u64> {
+        let mut stats = std::mem::MaybeUninit::<libc::statfs>::uninit();
+        // SAFETY: fstatfs initializes stats on success for this retained descriptor.
+        if unsafe { libc::fstatfs(file.as_raw_fd(), stats.as_mut_ptr()) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: the call succeeded.
+        Ok(unsafe { stats.assume_init() }.f_type as u32 as u64)
+    }
+    fn xfs(&self, file: &File, _: &Path) -> io::Result<u32> {
+        xfs_geometry_flags(file)
+    }
 }
 
 #[cfg(target_os = "linux")]
-fn check_linux_directory(
+fn check_linux_component(
+    file: &File,
     path: &Path,
-    kind: u64,
-    flags: impl FnOnce() -> io::Result<libc::c_int>,
+    root: bool,
+    probe: &impl LinuxProbe,
 ) -> Result<(), Error> {
-    // Never infer sensitivity from an unknown filesystem's lack of an ioctl.
+    // Ancestor mount types may be tmpfs/autofs/etc.; their casefold flags still matter.
+    check_flags(path, probe.flags(file, path))?;
+    if root {
+        let kind = probe
+            .filesystem(file, path)
+            .map_err(|source| Error::FilesystemProbe {
+                path: path.to_owned(),
+                probe: "fstatfs",
+                source,
+            })?;
+        require_root_filesystem(path, kind)?;
+        if kind == 0x5846_5342 {
+            check_xfs_geometry(path, probe.xfs(file, path))?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn require_root_filesystem(path: &Path, kind: u64) -> Result<(), Error> {
     if !matches!(
         kind,
         0xEF53 | 0x5846_5342 | 0x9123_683E | 0xF2F5_2010 | 0x794C_7630
@@ -556,7 +646,12 @@ fn check_linux_directory(
             kind,
         });
     }
-    let flags = match flags() {
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn check_flags(path: &Path, flags: io::Result<libc::c_int>) -> Result<(), Error> {
+    let flags = match flags {
         Err(error) if matches!(error.raw_os_error(), Some(libc::ENOTTY | libc::EOPNOTSUPP)) => 0,
         result => result.map_err(|source| Error::FilesystemProbe {
             path: path.to_owned(),
@@ -710,7 +805,7 @@ mod tests {
 
     #[test]
     fn updates_require_the_current_retained_control_handle() {
-        let temporary = tempfile::tempdir().unwrap();
+        let temporary = super::super::test_directory();
         std::fs::set_permissions(temporary.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
         let directory = Directory::open(&temporary.path().canonicalize().unwrap(), false).unwrap();
         let first = directory.publish("control", b"first", None).unwrap();
@@ -737,7 +832,7 @@ mod tests {
     #[test]
     fn updates_refuse_control_entries_replaced_since_the_checked_read() {
         use std::os::unix::fs::symlink;
-        let temporary = tempfile::tempdir().unwrap();
+        let temporary = super::super::test_directory();
         std::fs::set_permissions(temporary.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
         let root = Directory::open(&temporary.path().canonicalize().unwrap(), false).unwrap();
         for replacement in ["symlink", "hardlink", "different-inode"] {
@@ -785,7 +880,7 @@ mod tests {
     #[test]
     fn checked_reads_refuse_control_entries_replaced_after_open() {
         use std::os::unix::fs::symlink;
-        let temporary = tempfile::tempdir().unwrap();
+        let temporary = super::super::test_directory();
         std::fs::set_permissions(temporary.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
         let root = Directory::open(&temporary.path().canonicalize().unwrap(), false).unwrap();
         for replacement in ["symlink", "hardlink", "different-inode"] {
@@ -825,6 +920,111 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn walked_ancestors_probe_flags_but_only_the_root_probes_filesystem_and_xfs() {
+        use std::cell::RefCell;
+        struct Probe<'a> {
+            root: &'a Path,
+            folded: Option<&'a Path>,
+            kind: u64,
+            xfs_flags: u32,
+            flags: RefCell<Vec<PathBuf>>,
+            xfs_calls: RefCell<Vec<PathBuf>>,
+        }
+        impl LinuxProbe for Probe<'_> {
+            fn flags(&self, _: &File, path: &Path) -> io::Result<i32> {
+                self.flags.borrow_mut().push(path.to_owned());
+                if self.folded == Some(path) {
+                    Ok(0x4000_0000)
+                } else if path == self.root {
+                    Ok(0)
+                } else {
+                    Err(io::Error::from_raw_os_error(libc::ENOTTY))
+                }
+            }
+            fn filesystem(&self, _: &File, path: &Path) -> io::Result<u64> {
+                // Any call on an ancestor (which may be unsupported tmpfs/autofs)
+                // is a policy/walk wiring regression, not a classifier failure.
+                assert_eq!(path, self.root);
+                Ok(self.kind)
+            }
+            fn xfs(&self, _: &File, path: &Path) -> io::Result<u32> {
+                self.xfs_calls.borrow_mut().push(path.to_owned());
+                Ok(self.xfs_flags)
+            }
+        }
+        let fixture = super::super::test_directory();
+        let root = fixture.path().canonicalize().unwrap();
+        let probe = |folded, kind, xfs_flags| Probe {
+            root: &root,
+            folded,
+            kind,
+            xfs_flags,
+            flags: RefCell::default(),
+            xfs_calls: RefCell::default(),
+        };
+        let walk = |probe: &Probe<'_>| {
+            Directory::walk_with_probe(&root, false, true, |file, path, is_root| {
+                check_linux_component(file, path, is_root, probe)
+            })
+        };
+        let ext4 = probe(None, 0xEF53, 0);
+        walk(&ext4).unwrap();
+        let mut expected: Vec<_> = root.ancestors().map(Path::to_owned).collect();
+        expected.reverse();
+        assert_eq!(*ext4.flags.borrow(), expected);
+        for component in &expected {
+            assert!(matches!(walk(&probe(Some(component), 0xEF53, 0)),
+                Err(Error::CaseInsensitive(path)) if &path == component));
+        }
+        assert!(matches!(walk(&probe(None, 0x0102_1994, 0)),
+            Err(Error::UnsupportedFilesystem { path, .. }) if path == root));
+        let xfs = probe(None, 0x5846_5342, 0);
+        walk(&xfs).unwrap();
+        assert_eq!(*xfs.xfs_calls.borrow(), vec![root.clone()]);
+        assert!(matches!(walk(&probe(None, 0x5846_5342, 1 << 12)),
+            Err(Error::CaseInsensitive(path)) if path == root));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unsupported_new_root_is_refused_before_creation() {
+        let fixture = super::super::test_directory();
+        let root = fixture.path().canonicalize().unwrap().join("new");
+        let result = Directory::walk_with_probe(&root, true, true, |_, path, is_root| {
+            if is_root {
+                require_root_filesystem(path, 0x0102_1994)
+            } else {
+                Ok(())
+            }
+        });
+        assert!(matches!(result, Err(Error::UnsupportedFilesystem { .. })));
+        assert!(!root.exists());
+    }
+
+    /// The native fixture mounts a second disk below a supported instance root.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_instance_children_refuse_a_different_device() {
+        let Some(path) = std::env::var_os("ORG_INSTANCE_NESTED_MOUNT_FIXTURE") else {
+            return;
+        };
+        let root = Directory::open_root(Path::new(&path), false).unwrap();
+        let child_path = root.path().join("nested");
+        assert_ne!(
+            std::fs::metadata(&child_path).unwrap().dev(),
+            root.identity.device
+        );
+        assert!(matches!(
+            root.child("nested", false),
+            Err(Error::Unsafe(
+                "instance descendants must remain on the root device"
+            ))
+        ));
+        assert!(!child_path.join("untouched").exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn disk_validation_refuses_a_real_memory_filesystem() {
         let temporary = tempfile::tempdir_in("/dev/shm").unwrap();
         std::fs::set_permissions(temporary.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -841,14 +1041,14 @@ mod tests {
     fn casefold_refusal_names_the_unsupported_component() {
         let path = Path::new("/disk/folded-parent");
         for flags in [0x4000_0000, 0x4008_0000] {
-            let error = check_linux_directory(path, 0xEF53, || Ok(flags)).unwrap_err();
+            let error = check_flags(path, Ok(flags)).unwrap_err();
             assert!(matches!(&error, Error::CaseInsensitive(component) if component == path));
             let diagnostic = error.to_string();
             assert!(diagnostic.contains("/disk/folded-parent"));
             assert!(diagnostic.contains("case-insensitive directories aren't supported on Linux"));
         }
-        check_linux_directory(path, 0xEF53, || Ok(0)).unwrap();
-        check_linux_directory(path, 0xEF53, || Ok(0x0008_0000)).unwrap();
+        check_flags(path, Ok(0)).unwrap();
+        check_flags(path, Ok(0x0008_0000)).unwrap();
     }
 
     #[cfg(target_os = "linux")]
@@ -856,15 +1056,13 @@ mod tests {
     fn linux_filesystem_support_is_explicit_and_ioctl_errors_fail_closed() {
         let path = Path::new("/disk/instance");
         for kind in [0xEF53, 0x5846_5342, 0x9123_683E, 0xF2F5_2010, 0x794C_7630] {
-            check_linux_directory(path, kind, || Ok(0)).unwrap();
+            require_root_filesystem(path, kind).unwrap();
+            check_flags(path, Ok(0)).unwrap();
             for errno in [libc::ENOTTY, libc::EOPNOTSUPP] {
-                check_linux_directory(path, kind, || Err(io::Error::from_raw_os_error(errno)))
-                    .unwrap();
+                check_flags(path, Err(io::Error::from_raw_os_error(errno))).unwrap();
             }
-            let error = check_linux_directory(path, kind, || {
-                Err(io::Error::from_raw_os_error(libc::EACCES))
-            })
-            .unwrap_err();
+            let error =
+                check_flags(path, Err(io::Error::from_raw_os_error(libc::EACCES))).unwrap_err();
             assert!(
                 matches!(&error, Error::FilesystemProbe { path: reported, probe: "FS_IOC_GETFLAGS", source } if reported == path && source.raw_os_error() == Some(libc::EACCES))
             );
@@ -883,10 +1081,7 @@ mod tests {
             0x2FC1_2FC1,
             u64::MAX,
         ] {
-            let error = check_linux_directory(path, kind, || {
-                panic!("unsupported type must not query flags")
-            })
-            .unwrap_err();
+            let error = require_root_filesystem(path, kind).unwrap_err();
             assert!(
                 matches!(&error, Error::UnsupportedFilesystem { path: reported, kind: reported_kind } if reported == path && *reported_kind == kind)
             );
@@ -917,7 +1112,7 @@ mod tests {
 
     #[test]
     fn concurrent_lock_file_creation_never_loses_the_existing_entry() {
-        let temporary = tempfile::tempdir().unwrap();
+        let temporary = super::super::test_directory();
         std::fs::set_permissions(temporary.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
         let root = Directory::open(&temporary.path().canonicalize().unwrap(), false).unwrap();
         let directories: Vec<_> = (0..128)
@@ -949,7 +1144,7 @@ mod tests {
 
     #[test]
     fn dropping_lock_owners_unlocks_even_while_a_duplicate_fd_survives() {
-        let temporary = tempfile::tempdir().unwrap();
+        let temporary = super::super::test_directory();
         std::fs::set_permissions(temporary.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
         let path = temporary.path().canonicalize().unwrap();
         let mut root = Directory::open(&path, false).unwrap();
@@ -967,7 +1162,7 @@ mod tests {
 
     #[test]
     fn relative_file_capabilities_cannot_escape_the_opened_directory() {
-        let temporary = tempfile::tempdir().unwrap();
+        let temporary = super::super::test_directory();
         std::fs::set_permissions(temporary.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
         let parent = Directory::open(&temporary.path().canonicalize().unwrap(), false).unwrap();
         for name in [
@@ -989,7 +1184,7 @@ mod tests {
     #[test]
     fn verifying_a_held_lock_refuses_a_symlink_back_to_the_same_inode() {
         use std::os::unix::fs::symlink;
-        let temporary = tempfile::tempdir().unwrap();
+        let temporary = super::super::test_directory();
         std::fs::set_permissions(temporary.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
         let path = temporary.path().canonicalize().unwrap();
         let directory = Directory::open(&path, false).unwrap();

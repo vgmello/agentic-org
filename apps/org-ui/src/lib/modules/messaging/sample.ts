@@ -59,7 +59,7 @@ export function sampleChat(ctx: ChatContext): ChatState {
 			blocks: 'W7'
 		});
 		add(atlas, 'mira', 'request', 9, 'Publish the 0.2 release notes? They list REQ-14 and ADR-0004.', { addressed_to: owner, approval: true, options: APPROVAL_OPTIONS, blocks: 'release' });
-		add('c-release-v1', 'kai', 'handoff', 25, 'Please review the store traits before I start the storage work.', { addressed_to: 'sam', linked_ref: 'T-12' });
+		add('c-release-v1', 'kai', 'handoff', 25, 'Please review the store traits before I start the storage work.', { addressed_to: 'sam', linked_ref: 'ac-T-12' });
 		const root = add('c-release-v1', 'avery', 'msg', 90, '@sam your part and status for Phase 1, please.');
 		add('c-release-v1', 'sam', 'reply', 80, 'Storage is done. Waiting on the contract review.', { thread_root_id: root });
 		add('c-release-v1', 'avery', 'msg', 70, 'Thanks. @kai can you take the review?', { thread_root_id: root });
@@ -79,7 +79,7 @@ export function sampleChat(ctx: ChatContext): ChatState {
 	add('c-dm-avery', 'avery', 'msg', 400, 'Can we move the sync to Thursday?');
 	add('c-group', owner, 'msg', 500, 'Sam, Noor: who takes the web part of ac-17?');
 	add('c-group', 'noor', 'reply', 490, 'I do. Starting after lunch.');
-	add('c-dm-sam-noor', 'sam', 'handoff', 600, 'Noor, please take the settings page.', { addressed_to: 'noor', linked_ref: 'T-14', accepted_by: 'noor', accepted_at: at(595) });
+	add('c-dm-sam-noor', 'sam', 'handoff', 600, 'Noor, please take the settings page.', { addressed_to: 'noor', linked_ref: 'ac-T-14', accepted_by: 'noor', accepted_at: at(595) });
 	add('c-dm-sam-noor', 'noor', 'reply', 590, 'Accepted.');
 
 	const presence: Record<string, Presence> = {};

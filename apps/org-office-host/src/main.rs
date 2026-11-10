@@ -62,6 +62,20 @@ struct Args {
 }
 
 fn main() -> ExitCode {
+    // Before startup concurrency or key material: inherited by all threads and children.
+    let limits = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: RLIMIT_CORE accepts this valid limits structure.
+    if unsafe { libc::setrlimit(libc::RLIMIT_CORE, &limits) } != 0 {
+        eprintln!(
+            "cannot disable core dumps: {}",
+            std::io::Error::last_os_error()
+        );
+        return ExitCode::FAILURE;
+    }
+
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {

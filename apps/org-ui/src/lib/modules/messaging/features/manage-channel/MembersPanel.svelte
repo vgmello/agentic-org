@@ -43,7 +43,7 @@
 	const presenceOf = (id: string, kind: 'agent' | 'person'): Presence => chatState.presence[id] ?? (kind === 'agent' ? 'offline' : 'online');
 </script>
 
-<aside class="flex h-full w-96 shrink-0 flex-col border-l border-white/10 bg-gray-800" aria-label="Members" data-testid="members-panel">
+<aside class="absolute inset-y-0 right-0 left-64 z-30 flex h-full min-w-0 shrink-0 flex-col shadow-xl xl:static xl:w-96 xl:shadow-none border-l border-white/10 bg-gray-800" aria-label="Members" data-testid="members-panel">
 	<div class="flex items-center justify-between border-b border-white/10 px-4 py-3">
 		<h2 class="text-sm/6 font-semibold text-white">{titleOf(conversation, ctx, ctx.owner)} <span class="font-normal text-gray-400">· {members.length} {members.length === 1 ? 'member' : 'members'}</span></h2>
 		<Button type="button" variant="ghost" size="icon-sm" aria-label="Close members" onclick={onclose}><X aria-hidden="true" /></Button>

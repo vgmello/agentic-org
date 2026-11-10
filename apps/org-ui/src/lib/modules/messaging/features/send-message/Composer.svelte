@@ -46,6 +46,7 @@
 	let files = $state<HTMLInputElement | undefined>();
 	let enterSends = $state(false);
 	let lastKey = '';
+	let error = $state<string | undefined>();
 
 	try {
 		enterSends = globalThis.localStorage?.getItem('agentic-org.chat.enterSends') === '1';
@@ -71,6 +72,7 @@
 			attachments = [];
 			alsoInChannel = false;
 			dismissed = false;
+			error = undefined;
 		});
 	});
 
@@ -103,6 +105,11 @@
 	async function send() {
 		const body = text.trim();
 		if (!canWrite || busy || body === '') return;
+		if (new TextEncoder().encode(body).byteLength > CHAT_LIMITS.bodyMax) {
+			error = 'That message is too long. Shorten it or attach it as a file.';
+			return;
+		}
+		error = undefined;
 		busy = true;
 		const key = resetKey;
 		try {
@@ -185,6 +192,8 @@
 				id="composer-{resetKey}"
 				bind:this={box}
 				bind:value={text}
+				aria-invalid={error ? true : undefined}
+				aria-describedby={error ? `composer-error-${resetKey}` : undefined}
 				aria-autocomplete="list"
 				aria-controls={popup ? `composer-popup-${resetKey}` : undefined}
 				aria-activedescendant={popup ? `composer-opt-${resetKey}-${picked % (popup === 'mention' ? mentions.length : slashes.length)}` : undefined}
@@ -193,13 +202,14 @@
 				maxlength={CHAT_LIMITS.bodyMax}
 				disabled={busy}
 				{onkeydown}
-				oninput={track}
+				oninput={() => { error = undefined; track(); }}
 				onclick={track}
 				onkeyup={(e) => (e.key.startsWith('Arrow') && popup ? undefined : track())}
 				class="w-full resize-none rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:outline-indigo-400"
 				data-testid="composer"
 			></textarea>
 		</div>
+		{#if error}<p id="composer-error-{resetKey}" class="mt-2 text-sm/6 text-red-400" role="alert">{error}</p>{/if}
 		{#if attachments.length}
 			<ul class="mt-2 flex flex-wrap gap-1.5" aria-label="Attached">
 				{#each attachments as a (a)}

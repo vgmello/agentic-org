@@ -313,10 +313,10 @@ export function parseSlash(text: string): Slash | undefined {
 	if (!m) return undefined;
 	const cmd = SLASH_COMMANDS.find((c) => c.name === m[1]);
 	if (!cmd) {
-		// `/tmp is full` is a message, not a command. A near miss of a real command (`/bgu`) is a typo worth catching.
+		// A leading /word is a command; keep unknown commands in the composer for correction.
 		const sorted = (t: string) => [...t].sort().join('');
 		const near = SLASH_COMMANDS.find((c) => editDistance(c.name, m[1]) <= 1 || sorted(c.name) === sorted(m[1]));
-		return near ? { ok: false, message: `There is no /${m[1]} command. Did you mean /${near.name}?` } : undefined;
+		return near ? { ok: false, message: `There is no /${m[1]} command. Did you mean /${near.name}?` } : { ok: false, message: `No command /${m[1]}.` };
 	}
 	const args = (m[2] ?? '').trim();
 	const who = /^@([\w-]+)\s*([\s\S]*)$/.exec(args);

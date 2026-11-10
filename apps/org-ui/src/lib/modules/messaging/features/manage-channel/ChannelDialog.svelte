@@ -77,9 +77,9 @@
 			{#if mode !== 'members'}
 				<div class="space-y-2">
 					<Label for="channel-name">Name</Label>
-					<Input id="channel-name" bind:value={name} maxlength={60} disabled={busy} autocomplete="off" placeholder="release-v2" aria-invalid={nameError ? true : undefined} />
+					<Input id="channel-name" bind:value={name} maxlength={60} disabled={busy} autocomplete="off" placeholder="release-v2" aria-invalid={nameError || error ? true : undefined} aria-describedby={nameError ? 'channel-name-error' : error ? 'channel-submit-error' : undefined} oninput={() => (error = undefined)} />
 					{#if clean && clean !== name}<p class="text-xs/5 text-gray-400">It will be #{clean}.</p>{/if}
-					{#if nameError}<p class="text-sm/6 text-red-400" role="alert">{nameError}</p>{/if}
+					{#if nameError}<p id="channel-name-error" class="text-sm/6 text-red-400" role="alert">{nameError}</p>{/if}
 				</div>
 			{/if}
 			{#if mode !== 'rename'}
@@ -97,7 +97,7 @@
 					</ul>
 				</fieldset>
 			{/if}
-			{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
+			{#if error}<p id="channel-submit-error" class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 			<DialogFooter>
 				<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}>Cancel</Button>
 				<Button type="submit" disabled={busy}>{mode === 'create' ? 'Add channel' : mode === 'rename' ? 'Rename' : 'Save members'}</Button>
