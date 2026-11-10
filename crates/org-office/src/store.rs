@@ -16,6 +16,8 @@ pub(crate) mod org;
 pub(crate) mod status;
 
 use std::any::Any;
+use std::error::Error;
+use std::fmt;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -293,6 +295,23 @@ enum BatchResult {
     Aborted { culprit: usize, error: OfficeError },
 }
 
+/// A failed BEGIN or COMMIT can affect multiple requests. Keep the original SQLite
+/// error available to each one for storage diagnostics and retry classification.
+#[derive(Clone, Debug)]
+struct SharedTransactionError(Arc<rusqlite::Error>);
+
+impl fmt::Display for SharedTransactionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl Error for SharedTransactionError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(self.0.as_ref())
+    }
+}
+
 fn run_batch(db: &mut Connection, mut jobs: Vec<WriteJob>) {
     while !jobs.is_empty() {
         match attempt_batch(db, &mut jobs) {
@@ -316,9 +335,9 @@ fn attempt_batch(db: &mut Connection, jobs: &mut Vec<WriteJob>) -> BatchResult {
     let mut tx = match db.transaction_with_behavior(TransactionBehavior::Immediate) {
         Ok(tx) => tx,
         Err(cause) => {
-            let reason = cause.to_string();
+            let cause = SharedTransactionError(Arc::new(cause));
             for job in jobs.drain(..) {
-                (job.reply)(Err(failure(reason.clone())));
+                (job.reply)(Err(OfficeError::storage(cause.clone())));
             }
             return BatchResult::Finished;
         }
@@ -385,14 +404,14 @@ fn attempt_batch(db: &mut Connection, jobs: &mut Vec<WriteJob>) -> BatchResult {
             // (SQLite can't rule out that the commit reached the WAL before a later fsync
             // failed; after a crash, recovery could then bring rows back whose folders were
             // just undone. A registered organization with no workspace folder is repairable.)
-            let reason = cause.to_string();
+            let cause = SharedTransactionError(Arc::new(cause));
             for (job, outcome) in jobs.drain(..).zip(outcomes) {
                 match outcome {
                     Ok(undo) => {
                         if let Some(undo) = undo {
                             run_undo(undo);
                         }
-                        (job.reply)(Err(failure(reason.clone())));
+                        (job.reply)(Err(OfficeError::storage(cause.clone())));
                     }
                     Err(error) => (job.reply)(Err(error)),
                 }
@@ -1141,6 +1160,47 @@ mod tests {
         );
     }
 
+    fn sqlite_error_code(error: &OfficeError) -> Option<rusqlite::ErrorCode> {
+        let mut cause = error.source();
+        while let Some(error) = cause {
+            if let Some(rusqlite::Error::SqliteFailure(failure, _)) = error.downcast_ref() {
+                return Some(failure.code);
+            }
+            cause = error.source();
+        }
+        None
+    }
+
+    #[test]
+    fn a_busy_transaction_reports_the_sqlite_code_to_every_request() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("busy.db");
+        let mut other_writer = Connection::open(&path).unwrap();
+        let mut writer = Connection::open(&path).unwrap();
+        writer.busy_timeout(std::time::Duration::ZERO).unwrap();
+        let lock = other_writer
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        let (send, replies) = mpsc::channel();
+        let jobs = (0..2)
+            .map(|_| {
+                let send = send.clone();
+                WriteJob {
+                    attempt: Box::new(|_| panic!("request ran while BEGIN was blocked")),
+                    reply: Box::new(move |result| send.send(result).unwrap()),
+                }
+            })
+            .collect();
+        drop(send);
+        run_batch(&mut writer, jobs);
+        let codes: Vec<_> = replies
+            .into_iter()
+            .map(|result| sqlite_error_code(&result.unwrap_err()))
+            .collect();
+        assert_eq!(codes, vec![Some(rusqlite::ErrorCode::DatabaseBusy); 2]);
+        lock.rollback().unwrap();
+    }
+
     #[test]
     fn a_failed_commit_fails_every_request_and_undoes_their_effects() {
         let dir = TempDir::new().unwrap();
@@ -1172,10 +1232,11 @@ mod tests {
         gate.join().unwrap();
 
         for worker in workers {
-            assert!(matches!(
-                worker.join().unwrap(),
-                Err(OfficeError::Storage(_))
-            ));
+            let error = worker.join().unwrap().unwrap_err();
+            assert_eq!(
+                sqlite_error_code(&error),
+                Some(rusqlite::ErrorCode::ConstraintViolation)
+            );
         }
         assert!(registered_ids(&store).is_empty());
         assert!(
