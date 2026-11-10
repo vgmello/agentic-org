@@ -25,7 +25,7 @@ Status: **approved by the user** 2026-11-08 (decisions at the end); amended by a
   - `reports_to_member_id`: who they report to (an agent or a person). Empty means directly to the owner. The owner reports to no one.
   - `created_at`: when HQ created the member. HQ sets it, and it never changes. For an agent, the profile shows "hired on" from it. Records from before it existed don't have it.
   - **An agent** is an AI employee. Its record also says which office it's placed in.
-  - `agent` is an agent's profile, `AgentProfile { role, title, focus?, runtime, model?, run_mode?, schedule?, home?, messaging_name, status, offboarded_at? }`. In org-proto it's `agent: Option<AgentProfile>`, set for agents and empty for people.
+  - `agent` is an agent's profile, `AgentProfile { role, title, focus?, runtime, model?, run_mode?, schedule?, home?, messaging_name, status, offboarded_at? }`. In org-proto it's `agent: Option<AgentProfile>`, set for agents and empty for people. (Amended 2026-11-10: X-02 D7, an approved draft not yet in this repo, see the launch v3 note in office-host-boundary.md §3. `home` leaves `AgentProfile` in `org-proto` v2; the owning office reports the managed home as status.)
     - `model`: the model the runtime uses, if the agent sets one.
     - `run_mode`: how the agent is run: `always_on`, `on_call` or `scheduled`. Empty (`None`) means the agent isn't office-run. `schedule` (a `spec` and a `time_zone`) is set exactly when `run_mode` is `scheduled`.
     - `status`: `active`, `paused` or `offboarded`. `offboarded_at` is set exactly when it's `offboarded`.
