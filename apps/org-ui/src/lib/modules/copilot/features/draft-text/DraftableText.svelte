@@ -9,10 +9,10 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
-	import { copilotApi, copilotFeatures, describeCopilotFailure, offers, type CopilotApi } from '$lib/copilot/api';
-	import { checkTextRequest, fitTo, undoTarget } from '$lib/copilot/check';
-	import { createDraftFlow, isDrafting, type DraftPhase } from '$lib/copilot/draft-flow';
-	import { COPILOT_LIMITS, type CopilotFeature, type TextDraft } from '$lib/copilot/types';
+	import { copilotApi, copilotFeatures, describeCopilotFailure, offers, type CopilotApi } from '$lib/modules/copilot/api';
+	import { checkTextRequest, fitTo, undoTarget } from '$lib/modules/copilot/check';
+	import { createDraftFlow, isDrafting, type DraftPhase } from '$lib/modules/copilot/draft-flow';
+	import { COPILOT_LIMITS, type CopilotFeature, type TextDraft } from '$lib/modules/copilot/types';
 
 	/**
 	 * A text field with the copilot's "Draft or improve" button. Use it for every text field. The

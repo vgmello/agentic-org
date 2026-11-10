@@ -211,7 +211,10 @@ and writes `office.json` (`state: pending`), before sending the request; after a
 request's outcome rather than minting a second office. Resume the same pending
 approval after restart. If setup re-runs `office.join` for its own pending office, gets
 `already_exists`, and the status read shows that `office_id` as a pending join, it shows the existing request and check code (JOIN-6) instead of
-failing. An explicit mode/config change on existing state is refused
+failing. If the status read shows that office as `active`, setup reports it as already
+joined; if it shows a terminal state (`expired`, `cancelled` or `rejected`), setup points
+to `agentic-org office remove-pending <id>` (the offices design, "Provisioning a
+satellite"). An explicit mode/config change on existing state is refused
 with instructions; setup does not silently convert roles.
 
 Interactive and automated input feed the same validation layer. Noninteractive

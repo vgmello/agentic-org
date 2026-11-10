@@ -1,5 +1,5 @@
 <script lang="ts">
-	import DraftableText from '$lib/components/DraftableText.svelte';
+	import DraftableText from '$lib/modules/copilot/features/draft-text/DraftableText.svelte';
 	import { untrack } from 'svelte';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import { Badge } from '$lib/components/ui/badge';
