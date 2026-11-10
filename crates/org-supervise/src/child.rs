@@ -91,6 +91,17 @@ pub struct OwnedChild {
     pub(crate) cleanup_dir: Option<crate::files::PrivateDirectory>,
 }
 
+// Keep the whole exceptional permission decision together, including the ownership
+// recheck after the snapshot. Its refusal paths cannot be provoked by a same-UID live
+// fixture, whose group signal succeeds; exercise those paths through these capabilities.
+#[cfg(any(target_os = "macos", test))]
+fn tolerate_zombie_group_eperm(
+    mut exited: impl FnMut() -> io::Result<bool>,
+    singleton: impl FnOnce() -> io::Result<bool>,
+) -> io::Result<bool> {
+    Ok(exited()? && singleton()? && exited()?)
+}
+
 impl OwnedChild {
     pub(crate) fn new(pid: libc::pid_t) -> Self {
         Self {
@@ -229,14 +240,16 @@ impl OwnedChild {
                 return Ok(());
             }
             #[cfg(target_os = "macos")]
-            if target == crate::SignalTarget::Group
-                && error.raw_os_error() == Some(libc::EPERM)
-                && self.try_exit()?.is_some()
-                && crate::platform::group_contains_only_leader(self.pid)?
             {
-                // D-B34: prove the sole member is STILL our unreaped terminal child.
-                // Any ownership/enumeration error or additional member remains unresolved.
-                if self.try_exit()?.is_some() {
+                let pid = self.pid;
+                if target == crate::SignalTarget::Group
+                    && error.raw_os_error() == Some(libc::EPERM)
+                    && tolerate_zombie_group_eperm(
+                        || self.try_exit().map(|status| status.is_some()),
+                        || crate::platform::group_contains_only_leader(pid),
+                    )?
+                {
+                    // D-B34: any ownership/query error or additional member is unresolved.
                     return Ok(());
                 }
             }
@@ -306,5 +319,83 @@ impl Drop for OwnedChild {
                 let _ = directory.remove();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    #[test]
+    fn zombie_group_eperm_requires_complete_verification_in_order() {
+        fn case(
+            exits: &[Result<bool, i32>],
+            snapshot: Result<bool, i32>,
+            expected: Result<bool, i32>,
+            expected_trace: &[&str],
+        ) {
+            let trace = RefCell::new(Vec::new());
+            let mut exits = exits.iter();
+            let result = tolerate_zombie_group_eperm(
+                || {
+                    trace.borrow_mut().push("ownership");
+                    (*exits.next().expect("unexpected ownership check"))
+                        .map_err(io::Error::from_raw_os_error)
+                },
+                || {
+                    trace.borrow_mut().push("snapshot");
+                    snapshot.map_err(io::Error::from_raw_os_error)
+                },
+            )
+            .map_err(|error| error.raw_os_error().unwrap());
+            assert_eq!(result, expected);
+            assert_eq!(trace.into_inner(), expected_trace);
+            assert!(exits.next().is_none(), "ownership verification was skipped");
+        }
+        case(&[Ok(false)], Ok(true), Ok(false), &["ownership"]);
+        case(
+            &[Err(libc::ECHILD)],
+            Ok(true),
+            Err(libc::ECHILD),
+            &["ownership"],
+        );
+        case(
+            &[Ok(true)],
+            Ok(false),
+            Ok(false),
+            &["ownership", "snapshot"],
+        );
+        case(
+            &[Ok(true)],
+            Err(libc::EIO),
+            Err(libc::EIO),
+            &["ownership", "snapshot"],
+        );
+        case(
+            &[Ok(true), Ok(false)],
+            Ok(true),
+            Ok(false),
+            &["ownership", "snapshot", "ownership"],
+        );
+        case(
+            &[Ok(true), Err(libc::ECHILD)],
+            Ok(true),
+            Err(libc::ECHILD),
+            &["ownership", "snapshot", "ownership"],
+        );
+        case(
+            &[Ok(true), Ok(true)],
+            Ok(true),
+            Ok(true),
+            &["ownership", "snapshot", "ownership"],
+        );
+
+        let truncated = tolerate_zombie_group_eperm(
+            || Ok(true),
+            || Err(io::Error::other("truncated snapshot")),
+        )
+        .unwrap_err();
+        assert_eq!(truncated.kind(), io::ErrorKind::Other);
     }
 }
