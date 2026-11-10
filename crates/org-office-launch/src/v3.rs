@@ -219,7 +219,10 @@ fn check_v3(line: &[u8]) -> Result<(), LaunchError> {
     if version.v == LAUNCH_VERSION {
         Ok(())
     } else {
-        Err(LaunchError::UnsupportedVersion(version.v))
+        Err(LaunchError::UnsupportedVersion {
+            found: version.v,
+            supported: &[LAUNCH_VERSION],
+        })
     }
 }
 
@@ -318,7 +321,10 @@ fn decode_any(line: &[u8]) -> Result<AnyFirstLine, LaunchError> {
         LAUNCH_VERSION => serde_json::from_slice::<HostFirstLine>(line)
             .map(AnyFirstLine::V3)
             .map_err(LaunchError::Json),
-        other => Err(LaunchError::UnsupportedVersion(other)),
+        other => Err(LaunchError::UnsupportedVersion {
+            found: other,
+            supported: &[crate::LAUNCH_VERSION, LAUNCH_VERSION],
+        }),
     }
 }
 

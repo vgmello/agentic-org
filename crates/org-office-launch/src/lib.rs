@@ -658,8 +658,13 @@ pub enum FailCode {
 pub enum LaunchError {
     /// The pipe failed or a line was malformed (see [`LaunchError::closes_stream`]).
     Frame(FrameError),
-    /// A pipe line's `v` this build doesn't support (other than [`LAUNCH_VERSION`]).
-    UnsupportedVersion(u32),
+    /// A pipe or rendezvous line whose `v` isn't one the reader expects: `found` is the line's,
+    /// `supported` the versions that reader takes (`[2]` for a v2 reader, `[3]` for a v3 one,
+    /// `[2, 3]` for [`v3::read_first_line_any`]).
+    UnsupportedVersion {
+        found: u32,
+        supported: &'static [u32],
+    },
     /// An `office.json` whose `v` this build doesn't support (other than
     /// [`OFFICE_FILE_VERSION`]).
     UnsupportedOfficeFileVersion(u32),
@@ -673,10 +678,19 @@ impl std::fmt::Display for LaunchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             LaunchError::Frame(e) => write!(f, "launch pipe: {e}"),
-            LaunchError::UnsupportedVersion(v) => write!(
-                f,
-                "launch version {v} isn't supported (this build speaks {LAUNCH_VERSION})"
-            ),
+            LaunchError::UnsupportedVersion { found, supported } => {
+                write!(
+                    f,
+                    "launch version {found} isn't supported (this build speaks "
+                )?;
+                for (i, v) in supported.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(" or ")?;
+                    }
+                    write!(f, "{v}")?;
+                }
+                f.write_str(")")
+            }
             LaunchError::UnsupportedOfficeFileVersion(v) => write!(
                 f,
                 "office.json version {v} isn't supported (this build reads \
@@ -693,7 +707,7 @@ impl std::error::Error for LaunchError {
         match self {
             LaunchError::Frame(e) => Some(e),
             LaunchError::Json(e) => Some(e),
-            LaunchError::UnsupportedVersion(_)
+            LaunchError::UnsupportedVersion { .. }
             | LaunchError::UnsupportedOfficeFileVersion(_)
             | LaunchError::Invalid(_) => None,
         }
@@ -706,7 +720,7 @@ impl LaunchError {
     pub fn closes_stream(&self) -> bool {
         match self {
             LaunchError::Frame(e) => e.closes_stream(),
-            LaunchError::UnsupportedVersion(_)
+            LaunchError::UnsupportedVersion { .. }
             | LaunchError::UnsupportedOfficeFileVersion(_)
             | LaunchError::Json(_)
             | LaunchError::Invalid(_) => false,
@@ -725,9 +739,8 @@ impl LaunchError {
     /// [`LaunchError::is_host_gone`] first: then there's nobody to report to.
     pub fn fail_code(&self) -> FailCode {
         match self {
-            LaunchError::UnsupportedVersion(_) | LaunchError::UnsupportedOfficeFileVersion(_) => {
-                FailCode::UnsupportedVersion
-            }
+            LaunchError::UnsupportedVersion { .. }
+            | LaunchError::UnsupportedOfficeFileVersion(_) => FailCode::UnsupportedVersion,
             LaunchError::Frame(FrameError::Io(_) | FrameError::Truncated) => FailCode::StorageError,
             LaunchError::Frame(_) | LaunchError::Json(_) | LaunchError::Invalid(_) => {
                 FailCode::InvalidRequest
@@ -958,11 +971,14 @@ struct Line<'a, T> {
     body: &'a T,
 }
 
-fn check_version(v: u32, supported: u32) -> Result<(), LaunchError> {
-    if v == supported {
+fn check_version(v: u32, supported: &'static [u32]) -> Result<(), LaunchError> {
+    if supported.contains(&v) {
         Ok(())
     } else {
-        Err(LaunchError::UnsupportedVersion(v))
+        Err(LaunchError::UnsupportedVersion {
+            found: v,
+            supported,
+        })
     }
 }
 
@@ -987,7 +1003,7 @@ fn read_versioned_line(r: &mut impl BufRead) -> Result<Option<Vec<u8>>, LaunchEr
 /// Whether a line's `v` is one this build supports.
 fn versioned(line: &[u8]) -> Result<(), LaunchError> {
     let version: Versioned = serde_json::from_slice(line).map_err(LaunchError::Json)?;
-    check_version(version.v, LAUNCH_VERSION)
+    check_version(version.v, &[LAUNCH_VERSION])
 }
 
 fn write_versioned<T: Serialize>(w: &mut impl Write, body: &T) -> Result<(), LaunchError> {

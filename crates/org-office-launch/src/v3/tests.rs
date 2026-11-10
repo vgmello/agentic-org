@@ -127,7 +127,7 @@ fn v2_and_v3_refuse_each_others_lines() {
     write_first_line(&mut v3, &HostFirstLine::Start(office())).unwrap();
     assert!(matches!(
         read_first_host_message(&mut Cursor::new(v3), FirstLine::Start),
-        Err(LaunchError::UnsupportedVersion(3))
+        Err(LaunchError::UnsupportedVersion { found: 3, .. })
     ));
     let mut v2 = Vec::new();
     write_host_message(
@@ -138,10 +138,24 @@ fn v2_and_v3_refuse_each_others_lines() {
         }),
     )
     .unwrap();
+    let err = read_first_line(&mut Cursor::new(v2), FirstLine::Start).unwrap_err();
     assert!(matches!(
-        read_first_line(&mut Cursor::new(v2), FirstLine::Start),
-        Err(LaunchError::UnsupportedVersion(2))
+        err,
+        LaunchError::UnsupportedVersion { found: 2, .. }
     ));
+    // Each reader names the version it speaks, not a fixed one.
+    assert_eq!(
+        err.to_string(),
+        "launch version 2 isn't supported (this build speaks 3)"
+    );
+    let mut v3 = Vec::new();
+    write_first_line(&mut v3, &HostFirstLine::Start(office())).unwrap();
+    assert_eq!(
+        read_first_host_message(&mut Cursor::new(v3), FirstLine::Start)
+            .unwrap_err()
+            .to_string(),
+        "launch version 3 isn't supported (this build speaks 2)"
+    );
 }
 
 #[test]
@@ -322,7 +336,10 @@ fn a_handoff_naming_the_wrong_descriptors_or_version_is_refused() {
     ] {
         let result = decode_handoff(line.as_bytes());
         if version {
-            assert!(matches!(result, Err(LaunchError::UnsupportedVersion(2))));
+            assert!(matches!(
+                result,
+                Err(LaunchError::UnsupportedVersion { found: 2, .. })
+            ));
         } else {
             assert!(result.is_err(), "{line}");
         }
@@ -438,10 +455,15 @@ fn the_rollout_reader_takes_either_version_and_checks_the_flag() {
         ));
     }
     let v4 = b"{\"v\":4,\"op\":\"start\"}\n".to_vec();
+    let err = read_first_line_any(&mut Cursor::new(v4), FirstLine::Start).unwrap_err();
     assert!(matches!(
-        read_first_line_any(&mut Cursor::new(v4), FirstLine::Start),
-        Err(LaunchError::UnsupportedVersion(4))
+        err,
+        LaunchError::UnsupportedVersion { found: 4, .. }
     ));
+    assert_eq!(
+        err.to_string(),
+        "launch version 4 isn't supported (this build speaks 2 or 3)"
+    );
     assert!(
         read_first_line_any(&mut Cursor::new(Vec::new()), FirstLine::Start)
             .unwrap()
@@ -469,7 +491,7 @@ fn worker_events_on_the_rendezvous_are_v3_lines() {
     crate::write_server_event(&mut v2, &ready).unwrap();
     assert!(matches!(
         read_server_event(&mut Cursor::new(v2)),
-        Err(LaunchError::UnsupportedVersion(2))
+        Err(LaunchError::UnsupportedVersion { found: 2, .. })
     ));
     assert!(write_server_event(&mut Vec::new(), &ServerEvent::Unknown).is_err());
 }
@@ -484,7 +506,7 @@ fn the_v3_reader_refuses_any_v2_line_as_a_version() {
     ] {
         assert!(matches!(
             read_first_line(&mut Cursor::new(line), FirstLine::Start),
-            Err(LaunchError::UnsupportedVersion(2))
+            Err(LaunchError::UnsupportedVersion { found: 2, .. })
         ));
     }
 }
