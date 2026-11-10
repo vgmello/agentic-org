@@ -54,6 +54,8 @@ updates the crate.
 | the office's database key (amended 2026-11-08: key custody): a Keychain item, service `org.agentic.office-key`, account = the office id (release); a file in the dev-keys folder (debug builds and tests) | **host** creates it before the office's first `--create`, and deletes it only after `discarded` | host, which sends it on the pipe (see 3); the server never reads a key store |
 
 **The catalog** = the folders under `offices/` named by a plain id that hold a valid `office.json`.
+A satellite whose `office.json` records a terminal join `state` stays in the catalog (status
+`unavailable`, its `join_*` reason) but is never spawned, at startup or later (2026-11-10).
 The host looks only at folders named by a plain id; any other folder (such as `.refused`) is never
 started or discarded.
 - **No `office.json`:** an unfinished create. The host never starts it. At startup, or after that create
@@ -62,7 +64,10 @@ started or discarded.
   custody). The server takes the lock (same wait), and removes the folder only if the office never
   finished (with no folder, it takes no lock, creates nothing and reports `discarded`, see 3):
   - it refuses (`already_exists`) a folder with `office.json`, or with databases that hold a committed
-    organization;
+    organization. One exception (2026-11-10): a satellite whose join never completed, removed with
+    `office.remove_pending` (`office.json` with `role: satellite`, a `pending` or terminal `state`, and
+    an `org.db` with no applied snapshot, checked with the key); an `active` office or any applied copy
+    is still refused;
   - with a key, it deletes only when no database file exists, or when it opens them with that key and
     they hold no committed organization; with `db_key: null`, it deletes only a folder with no database
     file;
@@ -97,7 +102,10 @@ would keep the lock after the server died.
 No secrets. At most 64 KiB, mode 0600, written to a temp file, fsynced, renamed into place, then the
 folder fsynced. Readers read it without following symlinks, only as a regular file owned by this user,
 and check that `office_id` names its folder. Unknown fields (phase 2 adds `hq_address`) and an unknown
-role are kept when a server rewrites it (e.g. on an organization rename, later).
+role are kept when a server rewrites it (e.g. on an organization rename, later). A satellite's
+`office.json` also carries `state`: `pending` while its join is open, then `active`, or a terminal
+`expired`, `cancelled` or `rejected`; the worker writes it, and the host doesn't restart a terminal one
+(2026-11-10, see the offices design, "Provisioning a satellite").
 
 ## 2. Starting a server
 
@@ -178,7 +186,7 @@ first line is `invalid_request`.
 | `invalid_request` | a bad first line or bad args | fatal: `unavailable`; starts again only with a host restart and a fixed binary |
 | `unsupported_version` | `v` unknown | fatal: `unavailable`; starts again only with a host restart and a fixed binary |
 | `invalid_name` | name breaks the rule | create fails: `invalid_name` |
-| `already_exists` | `--create` but the folder or office.json exists; `--discard` of an office with office.json or a committed organization | create fails: `already_exists`; discard: log, leave it |
+| `already_exists` | `--create` but the folder or office.json exists; `--discard` of an office with office.json or a committed organization (except a satellite join that never completed, see the discard exception in 1) | create fails: `already_exists`; discard: log, leave it |
 | `key_missing` | (amended 2026-11-08: key custody) `--office`: the key the host sent doesn't open the office's existing databases (ADR-0002); the server deletes nothing. The host also sets `key_missing` itself, without a spawn, when its key item for the office is gone. `--discard` says `storage_error` instead | fatal: `unavailable` (`key_missing`); no automatic restart, but `office.restart` retries it. The host never makes a new key for an existing office |
 | `in_use` | lock not acquired within 10 s | restart with backoff |
 | `storage_error` | anything else (I/O, SQLCipher); `--discard` of a folder whose databases it can't open or check, or with any database file when `db_key` is `null` | restart with backoff (create: fails with `storage_error`; discard: log, leave it and its key) |
@@ -190,6 +198,8 @@ first line is `invalid_request`.
   database left behind without its key could never be checked or discarded. On a discard refusal the
   key stays with the folder.
 - EOF on stdout with no `failed` line, or exit before `ready`, means a crash: restart with backoff.
+  Exception: a satellite worker whose `office.json` records a terminal join `state` exits cleanly and
+  isn't restarted (2026-11-10).
 - (amended 2026-11-08: agent sessions rev 3.3, ada) **Children, for the watchdog.** After `ready`, the server also sends a line for each agent runtime it spawns, and one when that child is reaped and cleaned up ([`agent-sessions.md`](agent-sessions.md), "Processes and safety"):
   `{"v":2,"event":"child","pgid":4250,"pid":4250,"started_at":"…","mark":"…"}` and `{"v":2,"event":"child_gone","pgid":4250}` (amended 2026-11-08: key custody: `"v":2`, like every pipe line).
   The host keeps them in memory only, and when the server dies it runs the orphan cleanup on them before it restarts the server. The mark isn't a secret.
@@ -202,7 +212,13 @@ first line is `invalid_request`.
   child alive) → `offline` (exited; a restart is pending, with `next_restart_at`, unless the reason is
   `stopped_by_owner`) → `unavailable` (fatal code, or restarts given up). The `ready` wait is 30 s
   (the first SQLCipher open can be slow), then kill + backoff.
-- **Status reasons** (`OfficeInfo.status_reason`, set with `offline` and `unavailable`), one for every
+  - **A pending satellite join** (2026-11-10): the worker sends `ready` as soon as its socket is bound,
+    whatever its join state, so the 30 s rule covers only the start. While `office.json` records
+    `state: pending`, the host reports the office as `starting` with `status_reason: join_pending`,
+    never `active`, for as long as the join lasts (up to the invitation's expiry). It moves the office
+    to `active` only when the worker reports `joined` over the rendezvous, after approval and the
+    required initial synchronization; the worker writes `state: active` first, then sends `joined`.
+- **Status reasons** (`OfficeInfo.status_reason`, set with `offline` and `unavailable`, and with `starting` only for `join_pending`), one for every
   way a start or a running server ends:
 
   | what happened | `status_reason` | status |
@@ -216,6 +232,8 @@ first line is `invalid_request`.
   | `failed: invalid_request` | `invalid_request` | `unavailable` |
   | the give-up rule (below) | `restarts_exhausted` | `unavailable` |
   | the owner stopped it (no call does yet) | `stopped_by_owner` | `offline`, no restart pending |
+  | a satellite join is waiting for approval or its initial synchronization | `join_pending` | `starting` (the worker is running) |
+  | a satellite join ended (`office.json` `state`) | `join_expired`, `join_cancelled` or `join_rejected` | `unavailable`, no restart |
 
   `invalid_name` and `already_exists` end a create only; that office never enters the catalog.
 - **Restart:** backoff 1, 2, 4 … 60 s, reset after 60 s of uptime. Fatal codes never restart on
@@ -316,9 +334,9 @@ first line is `invalid_request`.
     its own app token, and a Keychain item owned by the server would trust that server. With the host
     holding the keys, a server started by anyone else gets no key and can't open `org.db`.
 - **host.sock:** 0600 and `run/` 0700. On accept, the host also checks the peer's uid (`getpeereid`) is its own (defence in depth).
-- **Fatal status and restart:** `unavailable` (with `status_reason`) lasts until the owner calls `office.restart` from the app, or the host restarts (for `unsupported_version` and `invalid_request`, a host restart with a fixed binary only). `office.restart` starts an `offline` or `unavailable` office now; for any other status it returns `conflict`. It's app-only: the host checks the caller's code signature, as for `office.app_token` (`not_authorized` otherwise). It clears `unavailable`, resets the backoff and the give-up count (the failure count goes to 0), and retries `key_missing` (it goes straight back if the key is still missing); it refuses `unsupported_version` and `invalid_request` (`unavailable`). Every status change is pushed as `office.status_changed` on `subscribe`.
+- **Fatal status and restart:** `unavailable` (with `status_reason`) lasts until the owner calls `office.restart` from the app, or the host restarts (for `unsupported_version` and `invalid_request`, a host restart with a fixed binary only). `office.restart` starts an `offline` or `unavailable` office now; for any other status, and for a terminal satellite join (`join_*`), it returns `conflict`. It's app-only: the host checks the caller's code signature, as for `office.app_token` (`not_authorized` otherwise). It clears `unavailable`, resets the backoff and the give-up count (the failure count goes to 0), and retries `key_missing` (it goes straight back if the key is still missing); it refuses `unsupported_version` and `invalid_request` (`unavailable`). Every status change is pushed as `office.status_changed` on `subscribe`.
 - **Startup:** the host binds `host.sock` before it spawns anything. (amended 2026-11-08: key custody) It
-  runs the orphan key sweep in release builds (see Key custody). It answers `hello`, `office.list` and `subscribe` at once. `office.list` shows every catalog office as `starting` from the start, before the host has spawned it (this widens `starting`, see Status per office). Calls that need a settled catalog (`organization.create`, `office.restart`, and `office.app_token` for an office still being discarded) wait for the startup discards, at most 30 s, then return `not_ready` ("host starting"; temporary, retry shortly).
+  runs the orphan key sweep in release builds (see Key custody). It answers `hello`, `office.list` and `subscribe` at once. `office.list` shows every catalog office (except a terminal satellite join, shown `unavailable`) as `starting` from the start, before the host has spawned it (this widens `starting`, see Status per office). Calls that need a settled catalog (`organization.create`, `office.restart`, and `office.app_token` for an office still being discarded) wait for the startup discards, at most 30 s, then return `not_ready` ("host starting"; temporary, retry shortly).
 - **A create that stored its office but didn't report `created`** (it died, or sent a `failed` line after `office.json` was in place): if `office.json` matches the plan (id, org_id, org_name, office_name, role), the host adopts it: the create succeeds (status `starting`), it starts `--office`, and it emits `organization.created`. It never runs `--discard` once `office.json` is present. A mismatch is a refused create.
 - **Spawning:** `org-supervise` is the single spawn path: every process the host or a server starts goes through it (`posix_spawn` with `POSIX_SPAWN_CLOEXEC_DEFAULT` and explicit file actions for fds 0/1/2), so a child inherits only the fds it's given. That needs libc FFI; the `unsafe` is confined to `org-supervise`. It complements the server's fd swap (see 2), which is the structural guarantee and doesn't depend on it.
 - **Give-up rule:** 10 failed restarts within 30 minutes → `unavailable` with `restarts_exhausted` (no more automatic restarts until `office.restart`, which resets the count). A **failed restart** is an exit before 60 s of uptime: a crash, EOF without `ready`, a `failed` line, or the ready timeout. A crash after 60 s of uptime counts as a fresh start, not a failure. While `offline` with a restart pending, `next_restart_at` says when.

@@ -962,7 +962,11 @@ Fresh disposable organizations have no Phase A state and skip it.
 1. Before redirecting a live Phase A producer, explicitly select the source spool,
    target immutable instance and HQ office IDs. Pause/fence old producers, record
    the import watermark and use an idempotent owner-authorized import operation
-   (proposed spelling: `org-server import-v1-old-spool --instance <name> --office <id> --from <path>`).
+   run by the **live HQ worker**, which already holds the office lock and key: `agentic-org`
+   verifies the owner on `host.sock`, opens a host-made local channel to that office and
+   calls the import there, naming the immutable instance and office IDs and the source
+   path (2026-11-10: replaces the stand-alone `org-server import-v1-old-spool` spelling,
+   which would have needed key custody and competed for the office lock; see X-02 §4.5).
 2. Preserve message/reply ULIDs, ask correlations and original deadlines, unresolved
    asks, read/unread, snooze/defer and done state. Expired asks remain expired and
    import does not wake every historical recipient. Retries deduplicate by source
