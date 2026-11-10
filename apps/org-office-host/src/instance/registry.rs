@@ -63,6 +63,57 @@ struct Locator {
     entries: Vec<Entry>,
 }
 
+impl Locator {
+    /// One owner for persisted invariants, shared by every read and publication.
+    fn validate(&self, user_temp: &Path) -> Result<(), Error> {
+        if self.version != 1 || self.entries.len() > MAX_INSTANCES {
+            return Err(Error::Unsafe("unsupported locator version or entry count"));
+        }
+        if self.user_temp != user_temp {
+            return Err(Error::Unsafe(
+                "user temp base differs from the locator's recorded base",
+            ));
+        }
+        for (index, entry) in self.entries.iter().enumerate() {
+            entry.binding.validate()?;
+            if entry.binding.temp_folder != user_temp.join("ao").join(&entry.binding.temp_handle) {
+                return Err(Error::Unsafe(
+                    "instance temp folder differs from registered user base",
+                ));
+            }
+            if self.entries[..index].iter().any(|previous| {
+                previous.binding.name == entry.binding.name
+                    || previous.binding.id == entry.binding.id
+                    || previous.binding.identity == entry.binding.identity
+                    || previous.binding.temp_handle == entry.binding.temp_handle
+            }) {
+                return Err(Error::Unsafe(
+                    "locator contains duplicate instance bindings",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Stale inode reuse must refuse only this operation, before config or locator writes.
+    /// Never publish a state that the next load would reject for duplicate identities.
+    fn check_identity(&self, name: &Name, path: &Path, identity: Identity) -> Result<(), Error> {
+        if let Some(peer) = self
+            .entries
+            .iter()
+            .find(|entry| &entry.binding.name != name && entry.binding.identity == identity)
+        {
+            return Err(Error::IdentityClash {
+                name: name.as_str().to_owned(),
+                path: path.to_owned(),
+                reserved_by: peer.binding.name.as_str().to_owned(),
+                reserved_root: peer.binding.root.clone(),
+            });
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Config {
@@ -100,9 +151,10 @@ fn office_handles<'de, D: serde::Deserializer<'de>>(
 impl Config {
     fn validate_rebind(&self, binding: &Binding, actual: Identity) -> Result<(), Error> {
         if self.binding.identity != binding.identity && self.binding.identity != actual {
-            return Err(Error::Unsafe(
-                "rebind found an unexpected configuration identity",
-            ));
+            return Err(Error::RebindRecoveryRequired {
+                name: binding.name.as_str().to_owned(),
+                path: binding.root.clone(),
+            });
         }
         let mut expected = binding.clone();
         expected.identity = self.binding.identity;
@@ -335,6 +387,7 @@ impl Registry {
         }
         let mut config: Config = decode(&current)?;
         config.validate_rebind(&preview.binding, preview.actual)?;
+        locator.check_identity(&name, &preview.binding.root, preview.actual)?;
         // D-B22: these observed-identity checks narrow the window, not atomic CAS.
         if config.binding.identity != preview.actual {
             config.binding.identity = preview.actual;
@@ -404,6 +457,7 @@ impl Registry {
         };
         root.lock_root()?;
         root.verify()?;
+        locator.check_identity(&name, &path, root.identity())?;
 
         let index = match locator.entries.iter().position(|e| e.binding.name == name) {
             Some(index) => {
@@ -466,38 +520,7 @@ impl Registry {
                 entries: Vec::new(),
             },
         };
-        if locator.version != 1 || locator.entries.len() > MAX_INSTANCES {
-            return Err(Error::Unsafe("unsupported locator version or entry count"));
-        }
-        if locator.user_temp != self.user_temp.path() {
-            return Err(Error::Unsafe(
-                "user temp base differs from the locator's recorded base",
-            ));
-        }
-        for (index, entry) in locator.entries.iter().enumerate() {
-            entry.binding.validate()?;
-            if entry.binding.temp_folder
-                != self
-                    .user_temp
-                    .path()
-                    .join("ao")
-                    .join(&entry.binding.temp_handle)
-            {
-                return Err(Error::Unsafe(
-                    "instance temp folder differs from registered user base",
-                ));
-            }
-            if locator.entries[..index].iter().any(|previous| {
-                previous.binding.name == entry.binding.name
-                    || previous.binding.id == entry.binding.id
-                    || previous.binding.identity == entry.binding.identity
-                    || previous.binding.temp_handle == entry.binding.temp_handle
-            }) {
-                return Err(Error::Unsafe(
-                    "locator contains duplicate instance bindings",
-                ));
-            }
-        }
+        locator.validate(self.user_temp.path())?;
         Ok((locator, previous))
     }
 
@@ -648,6 +671,7 @@ impl Registry {
         lock: &File,
         previous: Option<&ControlFile>,
     ) -> Result<ControlFile, Error> {
+        locator.validate(self.user_temp.path())?;
         self.directory.verify_file(LOCK, lock)?;
         self.directory
             .publish(REGISTRY, &encode(locator)?, previous)

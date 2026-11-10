@@ -26,9 +26,19 @@ pub(crate) enum Error {
     Unsafe(&'static str),
     Conflict(&'static str),
     RebindUnconfirmed,
+    RebindRecoveryRequired {
+        name: String,
+        path: PathBuf,
+    },
     RebindChanged {
         name: String,
         path: PathBuf,
+    },
+    IdentityClash {
+        name: String,
+        path: PathBuf,
+        reserved_by: String,
+        reserved_root: PathBuf,
     },
     RootUnavailable {
         name: String,
@@ -62,8 +72,12 @@ impl fmt::Display for Error {
             Self::Unsafe(why) => write!(f, "unsafe instance state: {why}; repair before retrying"),
             Self::Conflict(why) => write!(f, "instance conflict: {why}; use its registered root"),
             Self::RebindUnconfirmed => write!(f, "instance rebind was not confirmed"),
+            Self::RebindRecoveryRequired { name, path } => write!(f,
+                "instance {name} at {path:?}: recovery required; configuration has neither the recorded nor confirmed filesystem identity; a fresh explicit repair must verify the immutable instance ID"),
             Self::RebindChanged { name, path } => write!(f,
                 "instance {name} at {path:?} changed during confirmation; nothing was changed; run rebind again"),
+            Self::IdentityClash { name, path, reserved_by, reserved_root } => write!(f,
+                "instance {name} root {path:?} has a filesystem identity reserved for instance {reserved_by} at {reserved_root:?}; registry unchanged; restore or rebind {reserved_by}, or choose another root"),
             Self::RootUnavailable { name, path } => write!(f,
                 "instance {name} root {} is unavailable or changed; repair with agentic-org instance rebind {name}",
                 path.display()),
