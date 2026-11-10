@@ -237,20 +237,63 @@ test('CHAT-8 BUG-45: Escape closes the thread and returns focus to its opener', 
 	await expect(opener).toBeFocused(); await shot(page, 'chat-thread-escape');
 });
 
-test('CHAT-5 BUG-43: a refused answer keeps focus on the answer for correction or retry', async ({ page }) => {
-	await open(page);
-	await page.evaluate(async () => {
-		const path = '/src/lib/modules/messaging/legacy-api.ts'; const { chatApi } = await import(path);
-		const command = chatApi.command.bind(chatApi);
-		chatApi.command = async (id: string, call: { method: string }) => {
-			if (call.method === 'chat.answer') { chatApi.command = command; throw new Error('Answer was refused. Try again.'); }
-			return command(id, call);
-		};
+type HeldAnswer = { started: Promise<void>; release: () => void };
+
+for (const movedOn of [false, true]) {
+	test(`CHAT-5 BUG-43: a delayed refused answer ${movedOn ? 'preserves moved focus' : 'keeps focus for correction or retry'}`, async ({ page }) => {
+		await open(page);
+		await page.evaluate(async () => {
+			const path = '/src/lib/modules/messaging/legacy-api.ts';
+			const { chatApi } = await import(path);
+			const command = chatApi.command.bind(chatApi);
+			let started!: () => void;
+			let release!: () => void;
+			const began = new Promise<void>((resolve) => (started = resolve));
+			const gate = new Promise<void>((resolve) => (release = resolve));
+			(window as typeof window & { __heldChatAnswer: HeldAnswer }).__heldChatAnswer = { started: began, release };
+			chatApi.command = async (id: string, call: { method: string }) => {
+				if (call.method === 'chat.answer') {
+					chatApi.command = command;
+					started();
+					await gate;
+					throw new Error('Answer was refused. Try again.');
+				}
+				return command(id, call);
+			};
+		});
+		const card = page.getByTestId('ask-card').filter({ hasText: 'Block bug reports' });
+		const answer = card.getByRole('button', { name: 'Yes, block', exact: true });
+		await answer.focus();
+		await answer.press('Enter');
+		await page.evaluate(() => (window as typeof window & { __heldChatAnswer: HeldAnswer }).__heldChatAnswer.started);
+		await expect(answer).toBeDisabled();
+		if (movedOn) await page.getByRole('searchbox', { name: 'Search chat' }).focus();
+		await page.evaluate(() => (window as typeof window & { __heldChatAnswer: HeldAnswer }).__heldChatAnswer.release());
+		await expect(card.getByRole('alert')).toHaveText('Answer was refused. Try again.');
+		await expect(movedOn ? page.getByRole('searchbox', { name: 'Search chat' }) : answer).toBeFocused();
+		await shot(page, movedOn ? 'chat-answer-refused-moved-focus' : 'chat-answer-refused-focus');
+		await answer.focus();
+		await answer.press('Enter');
+		await expect(card).toHaveCount(0);
 	});
-	const card = page.getByTestId('ask-card').filter({ hasText: 'Block bug reports' });
-	const answer = card.getByRole('button', { name: 'Yes, block', exact: true });
-	await answer.focus(); await answer.press('Enter');
-	await expect(card.getByRole('alert')).toHaveText('Answer was refused. Try again.');
-	await expect(answer).toBeFocused(); await shot(page, 'chat-answer-refused-focus');
-	await answer.press('Enter'); await expect(card).toHaveCount(0);
+}
+
+test('CHAT-13/15 BUG-44: opening a search result uses its destination thread', async ({ page }) => {
+	await open(page);
+	await go(page, 'release-v1');
+	await page.getByTestId('replies-link').first().click();
+	await expect(page).toHaveURL(/thread=/);
+	await page.getByRole('searchbox', { name: 'Search chat' }).fill('Delivered');
+	const result = page.getByTestId('message-list').getByTestId('message').filter({ hasText: 'Delivered: the offices screen' });
+	const messageId = await result.getAttribute('data-id');
+	await result.getByRole('button', { name: 'Open in conversation' }).click();
+	await expect(page.getByTestId('thread-panel')).toBeHidden();
+	await expect.poll(() => new URL(page.url()).searchParams.get('m')).toBe(messageId);
+	await expect(page).not.toHaveURL(/thread=/);
+	await shot(page, 'chat-search-result-no-stale-thread');
+	// A reply still opens its own thread, rather than losing legitimate message links.
+	await page.getByRole('searchbox', { name: 'Search chat' }).fill('Storage is done');
+	await page.getByTestId('message-list').getByRole('button', { name: 'Open in conversation' }).click();
+	await expect(page.getByTestId('thread-panel')).toContainText('Storage is done');
+	await shot(page, 'chat-search-result-reply-thread');
 });

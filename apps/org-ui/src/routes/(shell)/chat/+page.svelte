@@ -107,7 +107,7 @@
 	onMount(() => {
 		void load().then(() => {
 			// A link from Activity opens the message; otherwise the owner starts where something waits for them.
-			const loc = parseChatLocation(page.url.search);
+			const loc = urlLocation(page.url.search);
 			if (chatState && (loc.conversation || loc.message || page.url.searchParams.has('v'))) openLocation(loc);
 			else if (bar && bar.needsYou.length === 0) select({ type: 'conversation', id: chatState!.conversations.find((c) => c.auto?.type === 'general')?.id ?? '' }, false);
 			lastSearch = page.url.search;
@@ -125,11 +125,12 @@
 		untrack(() => {
 			if (!started || !chatState || search === lastSearch) return;
 			lastSearch = search;
-			openLocation(parseChatLocation(search));
+			openLocation(urlLocation(search));
 		});
 	});
 
-	function openLocation(loc: { conversation?: string; message?: string }) {
+	const urlLocation = (search: string) => ({ ...parseChatLocation(search), thread: new URLSearchParams(search).get('thread') ?? undefined });
+	function openLocation(loc: { conversation?: string; message?: string; thread?: string }) {
 		if (!chatState) return;
 		const found = locate(chatState, loc);
 		if (!found.conversation) {
@@ -140,7 +141,7 @@
 		select({ type: 'conversation', id: found.conversation.id }, false);
 		if (found.thread) threadRoot = found.thread.id;
 		else if (found.message && repliesTo(chatState, found.message.id).length) threadRoot = found.message.id;
-		const linkedThread = page.url.searchParams.get('thread');
+		const linkedThread = loc.thread;
 		if (linkedThread && chatState.messages.some((m) => m.id === linkedThread && m.conversation_id === found.conversation!.id && !m.thread_root_id)) threadRoot = linkedThread;
 		highlight = found.message?.id;
 		void tick().then(() => document.querySelector(`[data-id="${CSS.escape(found.message?.id ?? '')}"]`)?.scrollIntoView({ block: 'center' }));

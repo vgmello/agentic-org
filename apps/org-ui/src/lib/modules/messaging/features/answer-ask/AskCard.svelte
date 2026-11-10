@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import { Button } from '$lib/components/ui/button';
 	import type { ChatContext } from '$lib/modules/messaging/engine';
 	import { acceptedWords, answerWords, appOnly, deadlineWords, nameOf, waitingFor } from '$lib/modules/messaging/model';
@@ -52,6 +53,7 @@
 
 	async function go(run: () => Promise<void> | void) {
 		if (!officeRunning || busy) return;
+		const origin = document.activeElement;
 		busy = true;
 		error = undefined;
 		try {
@@ -62,6 +64,9 @@
 			error = (e as { message?: string }).message ?? 'That did not go through.';
 		} finally {
 			busy = false;
+			await tick();
+			// A delayed refusal can blur a disabled control. Restore it only if focus was lost here.
+			if (error && origin instanceof HTMLElement && origin.isConnected && document.activeElement === document.body) origin.focus({ preventScroll: true });
 		}
 	}
 </script>
