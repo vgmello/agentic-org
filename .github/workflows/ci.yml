@@ -31,10 +31,11 @@ jobs:
           - os: ubuntu-26.04
             # The Tauri shell (package `agentic-org`, apps/desktop/src-tauri) is macOS only:
             # excluded on Linux until F1-03 deletes src-tauri.
-            # org-office-host compiles on Linux, but its macOS-only modules (code-signature peer
-            # checks, Keychain key store) are unused there, so clippy's dead-code and unused-import
-            # lints fail, and its tests can't start a worker yet. Both are excluded until B2-06
-            # (Linux host bring-up); the `cargo check (Linux host)` step keeps it compiling.
+            # org-office-host has items only its macOS code uses (code-signature peer checks,
+            # Keychain key store), so on Linux clippy's dead-code and unused-import lints fail, and
+            # its tests can't start a worker yet. Until B2-06 (Linux host bring-up) gates those items
+            # by target, it's excluded here and linted by the `clippy (Linux host)` step with only
+            # those two lints allowed; its tests stay excluded.
             clippy-flags: --exclude agentic-org --exclude org-office-host
             test-flags: --exclude agentic-org --exclude org-office-host
     steps:
@@ -61,14 +62,14 @@ jobs:
 
       # No frontend build needed: in a debug build the Tauri shell uses devUrl, not frontendDist.
       - name: cargo clippy
-        run: cargo clippy --workspace --all-targets ${{ matrix.clippy-flags }} -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets ${{ matrix.clippy-flags }} -- -D warnings
 
-      - name: cargo check (Linux host)
+      - name: clippy (Linux host)
         if: runner.os == 'Linux'
-        run: cargo check -p org-office-host --all-targets
+        run: cargo clippy --locked -p org-office-host --all-targets -- -D warnings -A dead_code -A unused_imports
 
       - name: cargo test
-        run: cargo test --workspace ${{ matrix.test-flags }}
+        run: cargo test --locked --workspace ${{ matrix.test-flags }}
 
   # The UI checks run in a browser against the app's own code and fakes, with no Tauri and nothing
   # platform-specific, so they run on Linux only, on purpose. Node comes from the runner image
