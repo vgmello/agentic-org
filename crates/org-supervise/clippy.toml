@@ -1,5 +1,6 @@
 # Child ownership depends on non-reaping exit observation. The single explicit waitpid in
-# OwnedChild::drop reaps exactly its own child, only after group cleanup.
+# OwnedChild's explicit finalization and emergency Drop reap only their own child,
+# after group/filesystem cleanup (Drop is best effort).
 disallowed-methods = [
   { path = "std::process::Child::wait", reason = "exit observation must use WNOWAIT" },
   { path = "std::process::Child::try_wait", reason = "exit observation must use WNOWAIT" },

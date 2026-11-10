@@ -79,15 +79,27 @@ pub struct Spawned {
     pub stderr: File,
 }
 
-/// Send process owner. Waiting observes exit without reaping; ownership ends on Drop.
-/// Full graceful stopping/cleanup is a later slice. This minimal guard kills the leader's
-/// group, then reaps, and does not discover detached tools.
+/// Send process owner. Waiting observes exit without reaping. Stop, cleanup and reaping
+/// are explicit, retaining ownership on failure. Drop is an emergency group-kill/reap
+/// guard. Detached tools still require the later orphan-discovery slice.
 pub struct OwnedChild {
     pub(crate) pid: libc::pid_t,
     pub(crate) group: bool,
     owned: bool,
     pub(crate) identity: Option<ChildIdentity>,
     pub(crate) watch: Option<Watch>,
+    pub(crate) cleanup_dir: Option<crate::files::PrivateDirectory>,
+}
+
+// Keep the whole exceptional permission decision together, including the ownership
+// recheck after the snapshot. Its refusal paths cannot be provoked by a same-UID live
+// fixture, whose group signal succeeds; exercise those paths through these capabilities.
+#[cfg(any(target_os = "macos", test))]
+fn tolerate_zombie_group_eperm(
+    mut exited: impl FnMut() -> io::Result<bool>,
+    singleton: impl FnOnce() -> io::Result<bool>,
+) -> io::Result<bool> {
+    Ok(exited()? && singleton()? && exited()?)
 }
 
 impl OwnedChild {
@@ -98,6 +110,7 @@ impl OwnedChild {
             owned: true,
             identity: None,
             watch: None,
+            cleanup_dir: None,
         }
     }
 
@@ -191,14 +204,88 @@ impl OwnedChild {
 
     /// Send TERM only to our unreaped leader. Does not wait, reap, or consume pipes.
     pub fn terminate(&mut self) -> io::Result<()> {
-        if self.try_exit()?.is_some() {
+        self.signal_owned(libc::SIGTERM, crate::SignalTarget::Leader)
+    }
+
+    pub(crate) fn is_owned(&self) -> bool {
+        self.owned
+    }
+
+    pub(crate) fn signal_owned(
+        &mut self,
+        signal: libc::c_int,
+        target: crate::SignalTarget,
+    ) -> io::Result<()> {
+        let exited = self.try_exit()?.is_some();
+        if target == crate::SignalTarget::Leader && exited {
             return Ok(());
         }
-        // SAFETY: waitid confirmed ownership; only this owner can reap this child.
-        if unsafe { libc::kill(self.pid, libc::SIGTERM) } != 0 {
-            return Err(io::Error::last_os_error());
+        if target == crate::SignalTarget::Group && !self.group {
+            return Err(io::Error::other("owned process group was not established"));
         }
-        Ok(())
+        loop {
+            // SAFETY: waitid verified our unreaped child; its pid/group cannot be reused.
+            let result = unsafe {
+                match target {
+                    crate::SignalTarget::Leader => libc::kill(self.pid, signal),
+                    crate::SignalTarget::Group => libc::killpg(self.pid, signal),
+                }
+            };
+            if result == 0 {
+                return Ok(());
+            }
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::ESRCH) {
+                // The child exited between observation and signal, or its group is empty.
+                return Ok(());
+            }
+            #[cfg(target_os = "macos")]
+            {
+                let pid = self.pid;
+                if target == crate::SignalTarget::Group
+                    && error.raw_os_error() == Some(libc::EPERM)
+                    && tolerate_zombie_group_eperm(
+                        || self.try_exit().map(|status| status.is_some()),
+                        || crate::platform::group_contains_only_leader(pid),
+                    )?
+                {
+                    // D-B34: any ownership/query error or additional member is unresolved.
+                    return Ok(());
+                }
+            }
+            if error.kind() != io::ErrorKind::Interrupted {
+                return Err(error);
+            }
+        }
+    }
+
+    pub(crate) fn kill_owned_group(&mut self) -> io::Result<()> {
+        self.signal_owned(libc::SIGKILL, crate::SignalTarget::Group)
+    }
+
+    pub(crate) fn reap_after_cleanup(&mut self) -> io::Result<ExitStatus> {
+        if self.try_exit()?.is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "owned child is still running",
+            ));
+        }
+        loop {
+            let mut status = 0;
+            // SAFETY: this owner alone reaps this previously observed terminal child.
+            let result = unsafe { libc::waitpid(self.pid, &mut status, 0) };
+            if result == self.pid {
+                self.owned = false;
+                return Ok(ExitStatus::from_raw(status));
+            }
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::ECHILD) {
+                self.owned = false;
+            }
+            if error.kind() != io::ErrorKind::Interrupted {
+                return Err(error);
+            }
+        }
     }
 }
 
@@ -227,5 +314,88 @@ impl Drop for OwnedChild {
                 }
             }
         }
+        if !self.owned {
+            if let Some(directory) = self.cleanup_dir.as_mut() {
+                let _ = directory.remove();
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    #[test]
+    fn zombie_group_eperm_requires_complete_verification_in_order() {
+        fn case(
+            exits: &[Result<bool, i32>],
+            snapshot: Result<bool, i32>,
+            expected: Result<bool, i32>,
+            expected_trace: &[&str],
+        ) {
+            let trace = RefCell::new(Vec::new());
+            let mut exits = exits.iter();
+            let result = tolerate_zombie_group_eperm(
+                || {
+                    trace.borrow_mut().push("ownership");
+                    (*exits.next().expect("unexpected ownership check"))
+                        .map_err(io::Error::from_raw_os_error)
+                },
+                || {
+                    trace.borrow_mut().push("snapshot");
+                    snapshot.map_err(io::Error::from_raw_os_error)
+                },
+            )
+            .map_err(|error| error.raw_os_error().unwrap());
+            assert_eq!(result, expected);
+            assert_eq!(trace.into_inner(), expected_trace);
+            assert!(exits.next().is_none(), "ownership verification was skipped");
+        }
+        case(&[Ok(false)], Ok(true), Ok(false), &["ownership"]);
+        case(
+            &[Err(libc::ECHILD)],
+            Ok(true),
+            Err(libc::ECHILD),
+            &["ownership"],
+        );
+        case(
+            &[Ok(true)],
+            Ok(false),
+            Ok(false),
+            &["ownership", "snapshot"],
+        );
+        case(
+            &[Ok(true)],
+            Err(libc::EIO),
+            Err(libc::EIO),
+            &["ownership", "snapshot"],
+        );
+        case(
+            &[Ok(true), Ok(false)],
+            Ok(true),
+            Ok(false),
+            &["ownership", "snapshot", "ownership"],
+        );
+        case(
+            &[Ok(true), Err(libc::ECHILD)],
+            Ok(true),
+            Err(libc::ECHILD),
+            &["ownership", "snapshot", "ownership"],
+        );
+        case(
+            &[Ok(true), Ok(true)],
+            Ok(true),
+            Ok(true),
+            &["ownership", "snapshot", "ownership"],
+        );
+
+        let truncated = tolerate_zombie_group_eperm(
+            || Ok(true),
+            || Err(io::Error::other("truncated snapshot")),
+        )
+        .unwrap_err();
+        assert_eq!(truncated.kind(), io::ErrorKind::Other);
     }
 }
