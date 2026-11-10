@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Read;
 use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
@@ -49,14 +50,9 @@ fn prepare(
         SearchPath::new(Path::new("/usr/bin"), "/bin".as_ref(), &[root.to_owned()])?,
         &[],
     )?;
-    let name = tempfile::Builder::new().prefix("mark-").tempdir()?;
-    let mark = SessionMark::new(
-        name.path()
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .replace('_', "-"),
-    )?;
+    let mut random = [0u8; 16];
+    fs::File::open("/dev/urandom")?.read_exact(&mut random)?;
+    let mark = SessionMark::new(format!("file-test-{:032x}", u128::from_ne_bytes(random)))?;
     runtime::prepare(plan, ctx, env, mark)
 }
 
@@ -197,10 +193,11 @@ fn restrictive_umask_child() {
         return;
     };
     let root = std::env::current_dir().unwrap();
+    let mask: libc::mode_t = mask.parse().unwrap();
     // SAFETY: only this isolated helper's process-wide umask changes; the main test runner
     // never changes its umask while other tests/threads create files.
     unsafe {
-        libc::umask(mask.parse().unwrap());
+        libc::umask(mask);
     }
     let mut launch = plan(&root);
     launch.dirs.push(PlannedDir {
@@ -212,7 +209,23 @@ fn restrictive_umask_child() {
         rel_path: RelPath::try_from("new/deep").unwrap(),
     });
     launch.files.push(file("new/deep/config", b"settings"));
-    prepare(&root, launch, &context(&root)).unwrap();
+    let result = prepare(&root, launch, &context(&root));
+    if mask & 0o400 != 0 {
+        // Ada's v1.0 decision: never repair an unpinnable directory by pathname.
+        let error = result.err().expect("extreme umask must fail closed");
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(error.to_string().contains("umask preserving owner-read"));
+        assert!(!root.join("new/deep/config").exists());
+        assert_eq!(fs::metadata(root.join("new")).unwrap().mode() & 0o777, 0);
+        assert_eq!(
+            fs::metadata(root.join("existing")).unwrap().mode() & 0o777,
+            0o750
+        );
+        // Test-only cleanup in this isolated helper's private tree; no concurrent actor.
+        fs::set_permissions(root.join("new"), fs::Permissions::from_mode(0o700)).unwrap();
+        return;
+    }
+    result.unwrap();
     for name in ["new", "new/deep"] {
         assert_eq!(fs::metadata(root.join(name)).unwrap().mode() & 0o777, 0o700);
     }
@@ -227,11 +240,10 @@ fn restrictive_umask_child() {
 }
 
 #[test]
-fn planned_modes_survive_restrictive_umask_without_changing_existing_dirs() {
+fn planned_modes_or_explicit_refusal_under_restrictive_umask() {
     use org_supervise::{PreparedSpawn, SpawnSpec};
-    use std::io::Read;
     use std::time::{Duration, Instant};
-    for mask in [0o100, 0o700, 0o777] {
+    for mask in [0o022, 0o077, 0o100, 0o700, 0o777] {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
         fs::create_dir(root.join("existing")).unwrap();

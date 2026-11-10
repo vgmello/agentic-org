@@ -52,6 +52,15 @@ it does not execute a stop. PTYs and `git_exclude` fail before any file writes.
 `git_exclude` requires the caller-owned repository capability being settled in X-09.
 No changes to `org-runtime` or adoption by the host are part of this delivery.
 
+New directory modes are repaired only after opening and validating a no-follow
+directory descriptor. Existing directories keep their modes. Normal umasks and
+ones that remove owner-execute still work; an extreme umask that prevents safely
+opening a newly created directory is refused with a specific error. Universal
+umask support is not required for v1.0 (ada's decision); no path-based chmod,
+process-wide umask mutation or helper fallback is used. Preparation may leave a
+partially created directory on failure; the caller/operator must resolve its
+permissions before retrying. No child is spawned by a failed preparation.
+
 Verification uses temporary roots and fake child processes only. The regression
 suite covers received inheritable fds held by another thread at spawn, environment
 and signal isolation, identity ordering, non-reaping waits, drop cleanup and

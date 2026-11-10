@@ -26,24 +26,12 @@ fn directory(parent: &OwnedFd, name: &OsStr, create: bool) -> io::Result<OwnedFd
             }
         }
     }
-    if created {
-        // Restore the specified mode even if umask created a mode-000 directory, which
-        // cannot be opened for reading yet. Never follow a substituted symlink. Existing
-        // directories (EEXIST above) keep their permissions. GNU libc 2.34 implements the
-        // no-follow operation with a pinned O_PATH descriptor when the kernel needs it.
-        // SAFETY: owned parent, literal child name, and explicit no-follow flag.
-        if unsafe {
-            libc::fchmodat(
-                parent.as_raw_fd(),
-                name.as_ptr(),
-                0o700,
-                libc::AT_SYMLINK_NOFOLLOW,
-            )
-        } != 0
-        {
-            return Err(io::Error::last_os_error());
-        }
-    }
+    open_directory(parent, &name, created)
+}
+
+// Pin and validate the inode before any permission repair. Keeping this step separate
+// lets tests reproduce substitution between mkdir and open without production test hooks.
+fn open_directory(parent: &OwnedFd, name: &CString, created: bool) -> io::Result<OwnedFd> {
     // SAFETY: openat is confined to this component; O_NOFOLLOW rejects a symlink and
     // O_DIRECTORY rejects a replacement that isn't a directory.
     let fd = unsafe {
@@ -54,10 +42,21 @@ fn directory(parent: &OwnedFd, name: &OsStr, create: bool) -> io::Result<OwnedFd
         )
     };
     if fd < 0 {
-        return Err(io::Error::last_os_error());
+        let error = io::Error::last_os_error();
+        if created && error.kind() == io::ErrorKind::PermissionDenied {
+            return Err(io::Error::new(error.kind(), "new planned directory cannot be pinned securely; use a umask preserving owner-read access"));
+        }
+        return Err(error);
     }
-    // SAFETY: newly opened descriptor.
-    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+    // SAFETY: newly opened descriptor, already verified as a non-symlink directory.
+    let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+    if created {
+        // SAFETY: only the pinned directory inode, never a replaceable pathname/hardlink.
+        if unsafe { libc::fchmod(fd.as_raw_fd(), 0o700) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok(fd)
 }
 
 fn root(path: &Path) -> io::Result<OwnedFd> {
@@ -163,4 +162,32 @@ pub(crate) fn write_file(base: &Path, relative: &Path, contents: &[u8]) -> io::R
         unsafe { libc::unlinkat(parent.as_raw_fd(), temp.as_ptr(), 0) };
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    #[test]
+    fn concurrent_substitution_cannot_chmod_an_unrelated_hardlink() {
+        let temp = tempfile::tempdir().unwrap();
+        let private = tempfile::tempdir().unwrap();
+        let target = private.path().join("unchanged");
+        std::fs::write(&target, b"private content").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let name = temp.path().join("new");
+        std::fs::create_dir(&name).unwrap();
+        let parent = root(&temp.path().canonicalize().unwrap()).unwrap();
+        let replacement = target.clone();
+        // Deterministically schedule another actor between mkdir and the pin/repair step.
+        std::thread::spawn(move || {
+            std::fs::remove_dir(&name).unwrap();
+            std::fs::hard_link(replacement, name).unwrap();
+        })
+        .join()
+        .unwrap();
+        assert!(open_directory(&parent, &CString::new("new").unwrap(), true).is_err());
+        assert_eq!(std::fs::metadata(target).unwrap().mode() & 0o777, 0o600);
+    }
 }
