@@ -19,8 +19,8 @@ export default defineConfig({
 		{ name: 'production', testMatch: 'production-unavailable.spec.ts', use: { browserName: 'chromium', baseURL: `http://localhost:${productionPort}` } },
 		...(webkit ? [{
 			name: 'webkit',
-			testMatch: 'offices.spec.ts',
-			grep: /BUG-27|BUG-24: pointer/,
+			testMatch: ['offices.spec.ts', 'shell-responsive.spec.ts'],
+			grep: /BUG-27|BUG-24: pointer|BUG-59/,
 			use: { browserName: 'webkit' as const, baseURL: `http://localhost:${port}` }
 		}] : [])
 	],

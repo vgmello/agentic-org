@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
+	import { goto, onNavigate } from '$app/navigation';
 	import { tick } from 'svelte';
 	import { innerWidth } from 'svelte/reactivity/window';
 	import MenuIcon from '@lucide/svelte/icons/menu';
@@ -12,52 +12,63 @@
 	let open = $state(false);
 	let content = $state<HTMLDivElement | null>(null);
 	let trigger = $state<HTMLButtonElement | null>(null);
-	let closeReason: 'dismiss' | 'navigate' | 'resize' = 'dismiss';
+	let closingForNavigation = false;
 
 	// A viewport change must release the modal before the desktop navigation takes over.
 	$effect(() => {
-		if ((innerWidth.current ?? 0) >= 640 && open) {
-			closeReason = 'resize';
-			open = false;
-		}
+		if ((innerWidth.current ?? 0) >= 640 && open) open = false;
 	});
 
+	onNavigate(({ type }) => {
+		if (type !== 'popstate' || !open) return;
+		closeForNavigation();
+		return focusDestinationHeading;
+	});
+
+	function closeForNavigation() {
+		closingForNavigation = true;
+		open = false;
+	}
+	async function focusDestinationHeading() {
+		await tick();
+		const heading = document.querySelector<HTMLElement>('main h1');
+		if (heading) {
+			heading.tabIndex = -1;
+			heading.focus({ preventScroll: true });
+		}
+	}
+	function focusNavigationControl() {
+		if ((innerWidth.current ?? 0) >= 640) onWiden();
+		else trigger?.focus({ preventScroll: true });
+	}
 	async function focusCurrent(event: Event) {
 		event.preventDefault();
 		await tick();
 		if (open) content?.querySelector<HTMLElement>('nav [aria-current="page"]')?.focus();
 	}
 	async function restoreFocus(event: Event) {
-		if (closeReason === 'navigate') event.preventDefault();
-		if (closeReason !== 'resize') return;
 		event.preventDefault();
+		if (closingForNavigation) return;
 		await tick();
-		if ((innerWidth.current ?? 0) >= 640) onWiden();
-		else trigger?.focus();
+		if (!open) focusNavigationControl();
 	}
 	async function select(event: MouseEvent, href: string) {
 		if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
 		event.preventDefault();
 		if (!open) return;
 		const from = window.location.href;
-		closeReason = 'navigate';
-		open = false;
+		closeForNavigation();
 		try {
 			await goto(href);
-			await tick();
-			const heading = document.querySelector<HTMLElement>('main h1');
-			if (heading) {
-				heading.tabIndex = -1;
-				heading.focus({ preventScroll: true });
-			}
+			await focusDestinationHeading();
 		} catch {
 			// SvelteKit owns route errors. Restore the trigger only if this page stayed put.
-			if (window.location.href === from && trigger?.isConnected) trigger.focus();
+			if (window.location.href === from && trigger?.isConnected && !open) focusNavigationControl();
 		}
 	}
 </script>
 
-<Sheet.Root bind:open onOpenChange={(value) => { if (value) closeReason = 'dismiss'; }}>
+<Sheet.Root bind:open onOpenChange={(value) => { if (value) closingForNavigation = false; }}>
 	<Sheet.Trigger bind:ref={trigger} aria-controls={menuId} class="-ml-2 inline-flex size-11 shrink-0 items-center justify-center rounded-md text-white hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring min-[640px]:hidden">
 		<MenuIcon class="size-6" aria-hidden="true" strokeWidth={1.5} /><span class="sr-only">Menu</span>
 	</Sheet.Trigger>

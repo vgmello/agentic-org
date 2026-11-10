@@ -2,11 +2,15 @@ import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
 
-async function openOffices(page: Page) {
+async function createOrganization(page: Page) {
 	await visit(page, '/create');
 	await page.getByLabel('Organization name').fill('Acme');
 	await page.getByRole('button', { name: 'Create organization' }).click();
 	await expect(page).toHaveURL(/\/agents$/);
+}
+
+async function openOffices(page: Page) {
+	await createOrganization(page);
 	await page.getByRole('navigation', { name: 'Main', exact: true }).getByRole('link', { name: 'Offices', exact: true }).click();
 	await expect(page.getByRole('heading', { name: 'Offices', exact: true })).toBeVisible();
 }
@@ -107,4 +111,81 @@ test('BUG-52: the scrim dismisses Menu and widening the window releases the focu
 	await expect(page.getByRole('navigation', { name: 'Main', exact: true }).getByRole('link', { name: 'Offices', exact: true })).toBeFocused();
 	await expect(menu).toHaveCount(0);
 	await shot(page, 'shell-menu-resized-to-rail');
+});
+
+for (const dismissal of ['Escape', 'scrim', 'Close']) {
+	test(`BUG-59: pointer-open Menu restores focus after ${dismissal}`, async ({ page }) => {
+		await openOffices(page);
+		await page.setViewportSize({ width: 600, height: 900 });
+		const menu = page.getByRole('button', { name: 'Menu', exact: true });
+		await menu.click();
+		const dialog = page.getByRole('dialog', { name: 'Main navigation' });
+		await expect(dialog).toBeVisible();
+		if (dismissal === 'Escape') await page.keyboard.press('Escape');
+		else if (dismissal === 'Close') await dialog.getByRole('button', { name: 'Close' }).click();
+		else await page.locator('[data-slot="sheet-overlay"]').click({ position: { x: 590, y: 120 } });
+		await expect(dialog).not.toBeVisible();
+		await expect(menu).toBeFocused();
+		await shot(page, `shell-menu-return-${dismissal.toLowerCase()}`);
+	});
+}
+
+test('BUG-59: browser Back closes Menu and focuses the destination heading', async ({ page }) => {
+	await openOffices(page);
+	await page.setViewportSize({ width: 600, height: 900 });
+	await page.getByRole('button', { name: 'Menu', exact: true }).click();
+	const dialog = page.getByRole('dialog', { name: 'Main navigation' });
+	await expect(dialog).toBeVisible();
+	await page.goBack();
+	await expect(page).toHaveURL(/\/agents$/);
+	await expect(dialog).not.toBeVisible();
+	await expect(page.getByRole('heading', { level: 1, name: 'Agents', exact: true })).toBeFocused();
+	await shot(page, 'shell-menu-back-destination');
+});
+
+test('BUG-59: the focused rail tooltip survives keyboard scrolling', async ({ page, browserName }) => {
+	await page.setViewportSize({ width: 720, height: 450 });
+	await createOrganization(page);
+	await visit(page, '/offices');
+	const nav = page.getByRole('navigation', { name: 'Main', exact: true });
+	const rail = nav.locator('..');
+	await nav.getByRole('link', { name: 'Chat', exact: true }).focus();
+	await expect(page.getByRole('tooltip', { name: 'Chat', exact: true })).toBeVisible();
+	const initial = await rail.evaluate((el) => el.scrollTop);
+	const key = browserName === 'webkit' ? 'Alt+Tab' : 'Tab';
+	for (const name of ['Agents', 'Org chart', 'Projects', 'Work', 'Sessions', 'Activity']) {
+		await page.keyboard.press(key);
+		await expect(nav.getByRole('link', { name, exact: true })).toBeFocused();
+		if (name !== 'Activity') await expect(page.getByRole('tooltip', { name, exact: true })).toBeVisible();
+	}
+	await expect.poll(() => rail.evaluate((el) => el.scrollTop)).toBeGreaterThan(initial);
+	await page.evaluate(() => new Promise<void>((resolve) => {
+		requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+	}));
+	await shot(page, 'shell-rail-keyboard-scroll', { settle: false });
+	const tooltip = page.getByRole('tooltip', { name: 'Activity', exact: true });
+	await expect(tooltip).toBeVisible();
+	await page.keyboard.press('Escape');
+	await expect(tooltip).not.toBeVisible();
+	await expect(nav.getByRole('link', { name: 'Activity', exact: true })).toBeFocused();
+});
+
+test('BUG-59: a supplied navigation badge appears in the full sidebar and rail', async ({ page }) => {
+	await visit(page, '/create');
+	await page.evaluate(async () => {
+		const path = '/src/lib/nav.ts';
+		const { NAV } = await import(path);
+		NAV.find((item: { href: string }) => item.href === '/chat').badge = { text: '3', label: '3 need you' };
+	});
+	await page.getByLabel('Organization name').fill('Acme');
+	await page.getByRole('button', { name: 'Create organization' }).click();
+	await expect(page).toHaveURL(/\/agents$/);
+	const nav = page.getByRole('navigation', { name: 'Main', exact: true });
+	const chat = nav.getByRole('link', { name: 'Chat, 3 need you', exact: true });
+	const badge = chat.getByText('3', { exact: true });
+	await expect(badge).toBeInViewport({ ratio: 1 });
+	await shot(page, 'shell-badge-full');
+	await page.setViewportSize({ width: 720, height: 900 });
+	await expect(badge).toBeInViewport({ ratio: 1 });
+	await shot(page, 'shell-badge-rail');
 });
