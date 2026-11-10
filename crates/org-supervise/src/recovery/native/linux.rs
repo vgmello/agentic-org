@@ -610,3 +610,24 @@ fn exited(fd: &OwnedFd, deadline: Instant) -> io::Result<bool> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_stat, Stat};
+
+    #[test]
+    fn stat_uses_the_last_parenthesis_and_only_decodes_numeric_fields() {
+        let bytes = b"42 (\xff) a process) S 13 41 44 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 789 0\n";
+        assert_eq!(
+            parse_stat(bytes, 42).unwrap(),
+            Stat {
+                parent: 13,
+                group: 41,
+                session: 44,
+                started: 789,
+                zombie: false,
+            }
+        );
+        assert!(parse_stat(bytes, 43).is_err());
+    }
+}

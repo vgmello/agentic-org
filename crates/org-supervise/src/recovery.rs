@@ -18,7 +18,9 @@ mod capture;
 #[cfg(target_os = "linux")]
 #[path = "recovery/native/linux.rs"]
 mod native;
-#[cfg(target_os = "linux")]
+#[cfg(target_os = "macos")]
+#[path = "recovery/native/macos.rs"]
+mod native;
 pub use native::NativeRecovery;
 mod checkpoint;
 mod scan;
@@ -457,7 +459,6 @@ fn safe_identity<'a>(
 #[cfg(test)]
 mod tests;
 
-#[cfg(target_os = "linux")]
 fn native_mark(bytes: &[u8]) -> MarkEvidence {
     if !bytes.is_empty() && bytes.last() != Some(&0) {
         return MarkEvidence::Unreadable;
