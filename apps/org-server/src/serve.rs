@@ -713,6 +713,7 @@ fn serve_connection_with_poll(
 }
 
 fn refuse_revoked(out: &Mutex<UnixStream>, id: u64, control: &Control, timing: Timing) {
+    control.generation.fetch_add(1, Ordering::SeqCst);
     control.held.cancel_all();
     let refusal = bind_error(
         id,
