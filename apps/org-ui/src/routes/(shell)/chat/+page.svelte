@@ -507,7 +507,7 @@
 {/snippet}
 
 <!-- At high zoom, keep a readable message area and let the shell scroll vertically. -->
-<div bind:this={chatEl} onfocusin={revealChatFocus} class="relative flex h-[calc(100dvh-64px)] min-h-0 min-w-0 max-[640px]:h-[calc(100dvh-56px)] max-[640px]:min-h-[28rem]">
+<div bind:this={chatEl} onfocusin={revealChatFocus} class="relative flex h-[calc(100dvh-4rem)] min-h-0 min-w-0 max-[640px]:h-[calc(100dvh-3.5rem)] max-[640px]:min-h-[28rem]">
 	{#if loadError}
 		<p class="m-8 text-sm/6 text-red-400" role="alert">{loadError}</p>
 	{:else if !chatState || !bar}

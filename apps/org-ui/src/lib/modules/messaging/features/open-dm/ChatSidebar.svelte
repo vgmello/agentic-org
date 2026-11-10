@@ -150,7 +150,7 @@
 {/snippet}
 
 {#if inline}
-	<div class="h-full w-64 shrink-0">{@render navigation()}</div>
+	<div class="h-full w-[256px] shrink-0">{@render navigation()}</div>
 {:else}
 	<Sheet bind:open>
 		<SheetContent
