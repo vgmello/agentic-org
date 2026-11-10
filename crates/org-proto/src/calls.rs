@@ -25,7 +25,64 @@ pub trait Call {
 pub struct Empty {}
 
 /// `hello`: the first call on a connection. The client checks `api_version`.
+///
+/// Its params ([`HelloParams`]) offer the versions the client speaks. A `hello` without `api`
+/// (every v1 client: `{}`) means `{1, 1}`. The server answers with the highest version both
+/// speak, or with `unsupported_version` and closes the connection (X-02 §3). A server that
+/// predates `api` ignores it and answers 1, so a client always checks `api_version` in the
+/// result.
 pub struct Hello;
+
+/// A range of `org-proto` API versions, both ends included: `{"min": 1, "max": 2}`.
+///
+/// Decoding doesn't check that `min <= max`: a reversed range shares no version with any
+/// server, so it gets `unsupported_version`, like any other range a server doesn't speak.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ApiRange {
+    pub min: u32,
+    pub max: u32,
+}
+
+impl ApiRange {
+    /// What a `hello` without `api` stands for: version 1 only.
+    pub const V1: ApiRange = ApiRange { min: 1, max: 1 };
+
+    /// Whether `version` is in the range, both ends included.
+    pub fn contains(&self, version: u32) -> bool {
+        self.min <= version && version <= self.max
+    }
+}
+
+/// `hello`'s params. `{}` is a v1 `hello`, and stays valid.
+///
+/// `#[non_exhaustive]`: fields may be added. Build one with [`HelloParams::default`] (a v1
+/// `hello`, `{}` on the wire) or [`HelloParams::offering`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct HelloParams {
+    /// The versions the client speaks. Absent means [`ApiRange::V1`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api: Option<ApiRange>,
+    /// The client, for logs only, e.g. `"org-gateway 0.1.0"`. Never authority, and untrusted
+    /// text: a server escapes control characters and caps its length before logging it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client: Option<String>,
+}
+
+impl HelloParams {
+    /// A `hello` offering `api`, from `client` (for logs).
+    pub fn offering(api: ApiRange, client: impl Into<String>) -> Self {
+        Self {
+            api: Some(api),
+            client: Some(client.into()),
+        }
+    }
+
+    /// The range this `hello` offers: `api`, or [`ApiRange::V1`] when it's absent.
+    pub fn api_range(&self) -> ApiRange {
+        self.api.unwrap_or(ApiRange::V1)
+    }
+}
 
 /// The answer to `hello`.
 ///
@@ -55,6 +112,11 @@ pub struct HelloResult {
         deserialize_with = "lenient_names"
     )]
     pub capabilities: Vec<String>,
+    /// The instance this server belongs to (a ULID). Required in every v2 result (X-02 §3);
+    /// absent from v1 servers. A client checks it against the instance of the context it
+    /// selected and refuses a mismatch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance_id: Option<String>,
 }
 
 /// Reads an advisory list of names: `null` is empty, and non-string items are dropped.
@@ -97,6 +159,7 @@ impl HelloResult {
             host: host.into(),
             office: None,
             capabilities: Vec::new(),
+            instance_id: None,
         }
     }
 
@@ -118,6 +181,12 @@ impl HelloResult {
         self
     }
 
+    /// The same answer, naming the instance the server belongs to.
+    pub fn with_instance_id(mut self, instance_id: impl Into<String>) -> Self {
+        self.instance_id = Some(instance_id.into());
+        self
+    }
+
     /// Whether the server listed `name` in its capabilities.
     pub fn supports(&self, name: &str) -> bool {
         self.capabilities.iter().any(|c| c == name)
@@ -126,7 +195,7 @@ impl HelloResult {
 
 impl Call for Hello {
     const METHOD: &'static str = "hello";
-    type Params = Empty;
+    type Params = HelloParams;
     type Result = HelloResult;
 }
 

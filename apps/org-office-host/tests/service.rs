@@ -12,9 +12,10 @@ use std::os::unix::fs::PermissionsExt;
 
 use org_office_host::Host;
 use org_proto::{
-    Empty, ErrorCode, Hello, OfficeInfo, OfficeList, OfficeStatus, OfficeStatusChanged,
-    OrganizationCreate, OrganizationCreateParams, OrganizationCreated, OrganizationList, Outcome,
-    ServerMessage, Subscribe, SubscribeParams, API_VERSION, UNREADABLE_REQUEST_ID,
+    Empty, ErrorCode, Hello, HelloParams, OfficeInfo, OfficeList, OfficeStatus,
+    OfficeStatusChanged, OrganizationCreate, OrganizationCreateParams, OrganizationCreated,
+    OrganizationList, Outcome, ServerMessage, Subscribe, SubscribeParams, API_VERSION,
+    UNREADABLE_REQUEST_ID,
 };
 use support::{Client, TestHome};
 
@@ -30,7 +31,7 @@ fn hello_names_the_host_and_no_office() {
     let home = TestHome::new();
     let host = Host::start(home.config()).unwrap();
     let hello = Client::connect(host.socket_path())
-        .call::<Hello>(&Empty {})
+        .call::<Hello>(&HelloParams::default())
         .unwrap();
     assert_eq!(hello.api_version, API_VERSION);
     assert_eq!(hello.server_version, env!("CARGO_PKG_VERSION"));
@@ -106,7 +107,7 @@ fn a_stale_socket_is_replaced_but_another_file_is_not() {
     drop(std::os::unix::net::UnixListener::bind(stale.path().join("host.sock")).unwrap());
     let host = Host::start(stale.config()).unwrap();
     Client::connect(host.socket_path())
-        .call::<Hello>(&Empty {})
+        .call::<Hello>(&HelloParams::default())
         .unwrap();
     host.shutdown();
 

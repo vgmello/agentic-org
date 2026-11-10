@@ -1174,6 +1174,7 @@ fn requests_are_read_as_commands_and_unknown_or_malformed_ones_are_told_apart() 
         id: 2,
         method: "hello".into(),
         params: json!({}),
+        principal: None,
     };
     assert!(OrgCommand::parse(&hello).unwrap().is_none());
     // A known method with params of the wrong shape.
@@ -1181,6 +1182,7 @@ fn requests_are_read_as_commands_and_unknown_or_malformed_ones_are_told_apart() 
         id: 3,
         method: "team.create".into(),
         params: json!({"name": 5}),
+        principal: None,
     };
     assert_eq!(code(OrgCommand::parse(&bad)), ErrorCode::InvalidRequest);
 }
@@ -3005,6 +3007,7 @@ fn the_agent_commands_are_read_from_their_requests() {
         id: 5,
         method: MemberUpdateAgent::METHOD.to_owned(),
         params: json!({"command_id": "cmd-1", "member_id": mid("AG1"), "expected_version": 1, "role": "x"}),
+        principal: None,
     };
     assert!(matches!(
         OrgCommand::parse(&update).unwrap(),
@@ -3015,6 +3018,7 @@ fn the_agent_commands_are_read_from_their_requests() {
         id: 6,
         method: MemberOffboard::METHOD.to_owned(),
         params: json!({"nope": 1}),
+        principal: None,
     };
     assert_eq!(
         OrgCommand::parse(&bad).unwrap_err().code,

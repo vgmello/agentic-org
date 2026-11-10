@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use org_office_host::Host;
 use org_office_launch::OfficeFile;
 use org_proto::{
-    Empty, ErrorCode, Hello, OfficeList, OfficeRole, OfficeStatus, Organization,
+    Empty, ErrorCode, Hello, HelloParams, OfficeList, OfficeRole, OfficeStatus, Organization,
     OrganizationCreate, OrganizationCreateParams, OrganizationCreated, OrganizationList, Subscribe,
     SubscribeParams,
 };
@@ -84,7 +84,7 @@ fn create_stores_the_office_starts_it_and_tells_subscribers() {
         status_of(&mut client, &hq.id) == OfficeStatus::Active
     });
     let mut office = Client::connect(&expected_socket);
-    let hello = office.call::<Hello>(&Empty {}).unwrap();
+    let hello = office.call::<Hello>(&HelloParams::default()).unwrap();
     assert_eq!(hello.office.unwrap().office.id, hq.id);
 
     // The subscriber hears about it, with the same organization.
@@ -496,7 +496,9 @@ fn a_created_office_reported_under_another_offices_id_leaves_that_office_alone()
     assert_eq!(status_of(&mut client, OTHER), OfficeStatus::Active);
     assert_eq!(home.runs(OTHER), 1);
     let socket = org_proto::location::office_socket_path(&home.path(), OTHER).unwrap();
-    let hello = Client::connect(&socket).call::<Hello>(&Empty {}).unwrap();
+    let hello = Client::connect(&socket)
+        .call::<Hello>(&HelloParams::default())
+        .unwrap();
     assert_eq!(hello.office.unwrap().office.id, OTHER);
     host.shutdown();
 }

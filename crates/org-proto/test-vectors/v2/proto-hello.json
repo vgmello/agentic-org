@@ -1,0 +1,955 @@
+{
+  "schema_version": 1,
+  "comment": "X-02 \u00a73 version negotiation: every cell of the \u00a73 table, per connection and phase, and the client's instance_id check. hello without api means {1,1}. A server answers the highest version in both its range and the offered one, or unsupported_version and closes; a repeated hello answers the negotiated version if the offered range includes it, and otherwise unsupported_version and close. A first request that isn't hello proceeds as v1 only where v1_without_hello is true. v2 results always carry instance_id; a client refuses a v2 result whose instance_id is absent or isn't the selected instance's, and any api_version outside the range it offered.",
+  "instance_id": "01M72N8MG00000000000000I01",
+  "connections": {
+    "office_socket_move2": {
+      "comment": "An office socket from move 2a: SUPPORTED_API = {1,2}. A first request that isn't hello is allowed and treated as v1.",
+      "accepts": {
+        "min": 1,
+        "max": 2
+      },
+      "v1_without_hello": true
+    },
+    "office_socket_move3": {
+      "comment": "An office socket from move 3: SUPPORTED_API = {2,2}.",
+      "accepts": {
+        "min": 2,
+        "max": 2
+      },
+      "v1_without_hello": false
+    },
+    "host_made_channel": {
+      "comment": "A host-made channel (gateway or local), from move 2a: no v1 client exists there, so api must include 2.",
+      "accepts": {
+        "min": 2,
+        "max": 2
+      },
+      "v1_without_hello": false
+    }
+  },
+  "cases": [
+    {
+      "name": "v1 hello",
+      "connection": "office_socket_move2",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {}
+          },
+          "expect": {
+            "result": {
+              "api_version": 1,
+              "server_version": "0.0.0",
+              "host": "This Mac"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "v1 hello",
+      "connection": "office_socket_move3",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {}
+          },
+          "expect": {
+            "error": "unsupported_version",
+            "close": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "v1 hello",
+      "connection": "host_made_channel",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {}
+          },
+          "expect": {
+            "error": "unsupported_version",
+            "close": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "api {1,2}: highest common",
+      "connection": "office_socket_move2",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 1,
+                "max": 2
+              },
+              "client": "org-agent 0.1.0"
+            }
+          },
+          "expect": {
+            "result": {
+              "api_version": 2,
+              "server_version": "0.0.0",
+              "host": "This Mac",
+              "instance_id": "01M72N8MG00000000000000I01"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "api {2,2}",
+      "connection": "office_socket_move2",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 2,
+                "max": 2
+              },
+              "client": "org-gateway 0.1.0"
+            }
+          },
+          "expect": {
+            "result": {
+              "api_version": 2,
+              "server_version": "0.0.0",
+              "host": "This Mac",
+              "instance_id": "01M72N8MG00000000000000I01"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "api {1,1}",
+      "connection": "office_socket_move2",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 1,
+                "max": 1
+              }
+            }
+          },
+          "expect": {
+            "result": {
+              "api_version": 1,
+              "server_version": "0.0.0",
+              "host": "This Mac"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "api {2,5}: a newer client",
+      "connection": "office_socket_move2",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 2,
+                "max": 5
+              }
+            }
+          },
+          "expect": {
+            "result": {
+              "api_version": 2,
+              "server_version": "0.0.0",
+              "host": "This Mac",
+              "instance_id": "01M72N8MG00000000000000I01"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "api {3,4}: no common version",
+      "connection": "office_socket_move2",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 3,
+                "max": 4
+              }
+            }
+          },
+          "expect": {
+            "error": "unsupported_version",
+            "close": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "api {2,1}: a reversed range shares nothing",
+      "connection": "office_socket_move2",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 2,
+                "max": 1
+              }
+            }
+          },
+          "expect": {
+            "error": "unsupported_version",
+            "close": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "api {1,2}: highest common",
+      "connection": "office_socket_move3",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 1,
+                "max": 2
+              },
+              "client": "org-agent 0.1.0"
+            }
+          },
+          "expect": {
+            "result": {
+              "api_version": 2,
+              "server_version": "0.0.0",
+              "host": "This Mac",
+              "instance_id": "01M72N8MG00000000000000I01"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "api {2,2}",
+      "connection": "office_socket_move3",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 2,
+                "max": 2
+              },
+              "client": "org-gateway 0.1.0"
+            }
+          },
+          "expect": {
+            "result": {
+              "api_version": 2,
+              "server_version": "0.0.0",
+              "host": "This Mac",
+              "instance_id": "01M72N8MG00000000000000I01"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "api {1,1}: excludes 2",
+      "connection": "office_socket_move3",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 1,
+                "max": 1
+              }
+            }
+          },
+          "expect": {
+            "error": "unsupported_version",
+            "close": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "api {3,4}: no common version",
+      "connection": "office_socket_move3",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 3,
+                "max": 4
+              }
+            }
+          },
+          "expect": {
+            "error": "unsupported_version",
+            "close": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "api {2,1}: a reversed range shares nothing",
+      "connection": "office_socket_move3",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 2,
+                "max": 1
+              }
+            }
+          },
+          "expect": {
+            "error": "unsupported_version",
+            "close": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "api {1,2}: highest common",
+      "connection": "host_made_channel",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 1,
+                "max": 2
+              },
+              "client": "org-agent 0.1.0"
+            }
+          },
+          "expect": {
+            "result": {
+              "api_version": 2,
+              "server_version": "0.0.0",
+              "host": "This Mac",
+              "instance_id": "01M72N8MG00000000000000I01"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "api {2,2}",
+      "connection": "host_made_channel",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 2,
+                "max": 2
+              },
+              "client": "org-gateway 0.1.0"
+            }
+          },
+          "expect": {
+            "result": {
+              "api_version": 2,
+              "server_version": "0.0.0",
+              "host": "This Mac",
+              "instance_id": "01M72N8MG00000000000000I01"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "api {1,1}: excludes 2",
+      "connection": "host_made_channel",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 1,
+                "max": 1
+              }
+            }
+          },
+          "expect": {
+            "error": "unsupported_version",
+            "close": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "api {3,4}: no common version",
+      "connection": "host_made_channel",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 3,
+                "max": 4
+              }
+            }
+          },
+          "expect": {
+            "error": "unsupported_version",
+            "close": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "api {2,1}: a reversed range shares nothing",
+      "connection": "host_made_channel",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 2,
+                "max": 1
+              }
+            }
+          },
+          "expect": {
+            "error": "unsupported_version",
+            "close": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "first request not hello",
+      "connection": "office_socket_move2",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "who",
+            "params": {}
+          },
+          "expect": {
+            "proceeds_as": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "first request not hello",
+      "connection": "office_socket_move3",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "who",
+            "params": {}
+          },
+          "expect": {
+            "error": "unsupported_version",
+            "close": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "first request not hello",
+      "connection": "host_made_channel",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "who",
+            "params": {}
+          },
+          "expect": {
+            "error": "unsupported_version",
+            "close": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "repeated hello inside the negotiated version",
+      "connection": "office_socket_move2",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 1,
+                "max": 2
+              }
+            }
+          },
+          "expect": {
+            "result": {
+              "api_version": 2,
+              "server_version": "0.0.0",
+              "host": "This Mac",
+              "instance_id": "01M72N8MG00000000000000I01"
+            }
+          }
+        },
+        {
+          "send": {
+            "id": 2,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 2,
+                "max": 3
+              }
+            }
+          },
+          "expect": {
+            "result": {
+              "api_version": 2,
+              "server_version": "0.0.0",
+              "host": "This Mac",
+              "instance_id": "01M72N8MG00000000000000I01"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "repeated hello excluding the negotiated version",
+      "connection": "office_socket_move2",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 2,
+                "max": 2
+              }
+            }
+          },
+          "expect": {
+            "result": {
+              "api_version": 2,
+              "server_version": "0.0.0",
+              "host": "This Mac",
+              "instance_id": "01M72N8MG00000000000000I01"
+            }
+          }
+        },
+        {
+          "send": {
+            "id": 2,
+            "method": "hello",
+            "params": {}
+          },
+          "expect": {
+            "error": "unsupported_version",
+            "close": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "repeated hello inside the negotiated version",
+      "connection": "office_socket_move3",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 1,
+                "max": 2
+              }
+            }
+          },
+          "expect": {
+            "result": {
+              "api_version": 2,
+              "server_version": "0.0.0",
+              "host": "This Mac",
+              "instance_id": "01M72N8MG00000000000000I01"
+            }
+          }
+        },
+        {
+          "send": {
+            "id": 2,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 2,
+                "max": 3
+              }
+            }
+          },
+          "expect": {
+            "result": {
+              "api_version": 2,
+              "server_version": "0.0.0",
+              "host": "This Mac",
+              "instance_id": "01M72N8MG00000000000000I01"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "repeated hello excluding the negotiated version",
+      "connection": "office_socket_move3",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 2,
+                "max": 2
+              }
+            }
+          },
+          "expect": {
+            "result": {
+              "api_version": 2,
+              "server_version": "0.0.0",
+              "host": "This Mac",
+              "instance_id": "01M72N8MG00000000000000I01"
+            }
+          }
+        },
+        {
+          "send": {
+            "id": 2,
+            "method": "hello",
+            "params": {}
+          },
+          "expect": {
+            "error": "unsupported_version",
+            "close": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "repeated hello inside the negotiated version",
+      "connection": "host_made_channel",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 1,
+                "max": 2
+              }
+            }
+          },
+          "expect": {
+            "result": {
+              "api_version": 2,
+              "server_version": "0.0.0",
+              "host": "This Mac",
+              "instance_id": "01M72N8MG00000000000000I01"
+            }
+          }
+        },
+        {
+          "send": {
+            "id": 2,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 2,
+                "max": 3
+              }
+            }
+          },
+          "expect": {
+            "result": {
+              "api_version": 2,
+              "server_version": "0.0.0",
+              "host": "This Mac",
+              "instance_id": "01M72N8MG00000000000000I01"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "repeated hello excluding the negotiated version",
+      "connection": "host_made_channel",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 2,
+                "max": 2
+              }
+            }
+          },
+          "expect": {
+            "result": {
+              "api_version": 2,
+              "server_version": "0.0.0",
+              "host": "This Mac",
+              "instance_id": "01M72N8MG00000000000000I01"
+            }
+          }
+        },
+        {
+          "send": {
+            "id": 2,
+            "method": "hello",
+            "params": {}
+          },
+          "expect": {
+            "error": "unsupported_version",
+            "close": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "repeated hello after a v1 hello",
+      "connection": "office_socket_move2",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "hello",
+            "params": {}
+          },
+          "expect": {
+            "result": {
+              "api_version": 1,
+              "server_version": "0.0.0",
+              "host": "This Mac"
+            }
+          }
+        },
+        {
+          "send": {
+            "id": 2,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 1,
+                "max": 2
+              }
+            }
+          },
+          "expect": {
+            "result": {
+              "api_version": 1,
+              "server_version": "0.0.0",
+              "host": "This Mac"
+            }
+          }
+        },
+        {
+          "send": {
+            "id": 3,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 2,
+                "max": 2
+              }
+            }
+          },
+          "expect": {
+            "error": "unsupported_version",
+            "close": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "hello after a v1 request",
+      "connection": "office_socket_move2",
+      "steps": [
+        {
+          "send": {
+            "id": 1,
+            "method": "who",
+            "params": {}
+          },
+          "expect": {
+            "proceeds_as": 1
+          }
+        },
+        {
+          "send": {
+            "id": 2,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 1,
+                "max": 2
+              }
+            }
+          },
+          "expect": {
+            "result": {
+              "api_version": 1,
+              "server_version": "0.0.0",
+              "host": "This Mac"
+            }
+          }
+        },
+        {
+          "send": {
+            "id": 3,
+            "method": "hello",
+            "params": {
+              "api": {
+                "min": 2,
+                "max": 2
+              }
+            }
+          },
+          "expect": {
+            "error": "unsupported_version",
+            "close": true
+          }
+        }
+      ]
+    }
+  ],
+  "client_cases": [
+    {
+      "name": "v2 answer for the selected instance",
+      "selected_instance_id": "01M72N8MG00000000000000I01",
+      "offered": {
+        "min": 1,
+        "max": 2
+      },
+      "result": {
+        "api_version": 2,
+        "server_version": "0.0.0",
+        "host": "This Mac",
+        "instance_id": "01M72N8MG00000000000000I01"
+      },
+      "expect": "accept"
+    },
+    {
+      "name": "instance_id mismatch",
+      "selected_instance_id": "01M72N8MG00000000000000I02",
+      "offered": {
+        "min": 1,
+        "max": 2
+      },
+      "result": {
+        "api_version": 2,
+        "server_version": "0.0.0",
+        "host": "This Mac",
+        "instance_id": "01M72N8MG00000000000000I01"
+      },
+      "expect": "refuse"
+    },
+    {
+      "name": "v2 answer without instance_id",
+      "selected_instance_id": "01M72N8MG00000000000000I01",
+      "offered": {
+        "min": 1,
+        "max": 2
+      },
+      "result": {
+        "api_version": 2,
+        "server_version": "0.0.0",
+        "host": "This Mac"
+      },
+      "expect": "refuse"
+    },
+    {
+      "name": "a pre-2a server ignores api and answers 1",
+      "selected_instance_id": "01M72N8MG00000000000000I01",
+      "offered": {
+        "min": 1,
+        "max": 2
+      },
+      "result": {
+        "api_version": 1,
+        "server_version": "0.0.0",
+        "host": "This Mac"
+      },
+      "expect": "accept"
+    },
+    {
+      "name": "an answer outside the offered range",
+      "selected_instance_id": "01M72N8MG00000000000000I01",
+      "offered": {
+        "min": 2,
+        "max": 2
+      },
+      "result": {
+        "api_version": 1,
+        "server_version": "0.0.0",
+        "host": "This Mac"
+      },
+      "expect": "refuse"
+    }
+  ]
+}

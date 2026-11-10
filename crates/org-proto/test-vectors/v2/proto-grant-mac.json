@@ -1,0 +1,345 @@
+{
+  "schema_version": 1,
+  "comment": "X-02 §4.1. mac = HMAC-SHA256(key, grant_mac_input(claims)) with grant_mac_input = \"org-grant/1\" || 0x00 || lp(account) || lp(member) || lp(org_id) || lp(office_id) || lp(channel_id) || lp(session_id) || u64_be(exp), lp(x) = u32_be(len(x)) || utf8(x). org-proto checks the input bytes and the wire shape; the host and the worker check mac_hex with their HMAC.",
+  "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "cases": [
+    {
+      "name": "typical",
+      "grant": {
+        "account": "01M72N8MG00000000000000A01",
+        "member": "01M72N8MG00000000000000M01",
+        "org_id": "01M72N8MG00000000000000G01",
+        "office_id": "01M72N8MG00000000000000F01",
+        "channel_id": "01M72N8MG00000000000000C01",
+        "session_id": "01M72N8MG00000000000000S01",
+        "exp": 1762766100000,
+        "mac": "8637d563af0edf21100827a4a0a1f79f0053b6d974f0a9afb30465412e4b95a5"
+      },
+      "mac_input_hex": "6f72672d6772616e742f31000000001a30314d37324e384d4730303030303030303030303030304130310000001a30314d37324e384d4730303030303030303030303030304d30310000001a30314d37324e384d4730303030303030303030303030304730310000001a30314d37324e384d4730303030303030303030303030304630310000001a30314d37324e384d4730303030303030303030303030304330310000001a30314d37324e384d4730303030303030303030303030305330310000019a6d0c1620",
+      "mac_hex": "8637d563af0edf21100827a4a0a1f79f0053b6d974f0a9afb30465412e4b95a5"
+    },
+    {
+      "name": "empty fields and exp 0",
+      "comment": "Every field empty: each still gets its 4-byte zero length.",
+      "grant": {
+        "account": "",
+        "member": "",
+        "org_id": "",
+        "office_id": "",
+        "channel_id": "",
+        "session_id": "",
+        "exp": 0,
+        "mac": "954150d289e358dfc6f209ab8c25ceb08e73d88d691f586e45acbf2aa8c6a082"
+      },
+      "mac_input_hex": "6f72672d6772616e742f31000000000000000000000000000000000000000000000000000000000000000000",
+      "mac_hex": "954150d289e358dfc6f209ab8c25ceb08e73d88d691f586e45acbf2aa8c6a082"
+    },
+    {
+      "name": "utf-8 lengths are bytes and exp is u64::MAX",
+      "comment": "lp() counts UTF-8 bytes, not characters; exp is a full u64, big-endian.",
+      "grant": {
+        "account": "é",
+        "member": "日本",
+        "org_id": "01M72N8MG00000000000000G01",
+        "office_id": "01M72N8MG00000000000000F01",
+        "channel_id": "01M72N8MG00000000000000C01",
+        "session_id": "01M72N8MG00000000000000S01",
+        "exp": 18446744073709551615,
+        "mac": "3728680a3cc305b748d93b58d261b435ae849524e5123c802e27387efbaf1789"
+      },
+      "mac_input_hex": "6f72672d6772616e742f310000000002c3a900000006e697a5e69cac0000001a30314d37324e384d4730303030303030303030303030304730310000001a30314d37324e384d4730303030303030303030303030304630310000001a30314d37324e384d4730303030303030303030303030304330310000001a30314d37324e384d473030303030303030303030303030533031ffffffffffffffff",
+      "mac_hex": "3728680a3cc305b748d93b58d261b435ae849524e5123c802e27387efbaf1789"
+    },
+    {
+      "name": "field boundary A",
+      "comment": "With boundary B: the same concatenated text, different inputs and MACs.",
+      "grant": {
+        "account": "ab",
+        "member": "c",
+        "org_id": "01M72N8MG00000000000000G01",
+        "office_id": "01M72N8MG00000000000000F01",
+        "channel_id": "01M72N8MG00000000000000C01",
+        "session_id": "01M72N8MG00000000000000S01",
+        "exp": 1762766100000,
+        "mac": "ed4167d00adecd1b545e114827c549c26b14c066be70f37ca57990910c295604"
+      },
+      "mac_input_hex": "6f72672d6772616e742f310000000002616200000001630000001a30314d37324e384d4730303030303030303030303030304730310000001a30314d37324e384d4730303030303030303030303030304630310000001a30314d37324e384d4730303030303030303030303030304330310000001a30314d37324e384d4730303030303030303030303030305330310000019a6d0c1620",
+      "mac_hex": "ed4167d00adecd1b545e114827c549c26b14c066be70f37ca57990910c295604"
+    },
+    {
+      "name": "field boundary B",
+      "grant": {
+        "account": "a",
+        "member": "bc",
+        "org_id": "01M72N8MG00000000000000G01",
+        "office_id": "01M72N8MG00000000000000F01",
+        "channel_id": "01M72N8MG00000000000000C01",
+        "session_id": "01M72N8MG00000000000000S01",
+        "exp": 1762766100000,
+        "mac": "6f15df1ef449ea53358fdfd70ba62453b55a88219cfdcf995e6a73f009d9efac"
+      },
+      "mac_input_hex": "6f72672d6772616e742f310000000001610000000262630000001a30314d37324e384d4730303030303030303030303030304730310000001a30314d37324e384d4730303030303030303030303030304630310000001a30314d37324e384d4730303030303030303030303030304330310000001a30314d37324e384d4730303030303030303030303030305330310000019a6d0c1620",
+      "mac_hex": "6f15df1ef449ea53358fdfd70ba62453b55a88219cfdcf995e6a73f009d9efac"
+    },
+    {
+      "name": "another channel",
+      "comment": "Only channel_id differs from 'typical': a grant can't be replayed on another channel.",
+      "grant": {
+        "account": "01M72N8MG00000000000000A01",
+        "member": "01M72N8MG00000000000000M01",
+        "org_id": "01M72N8MG00000000000000G01",
+        "office_id": "01M72N8MG00000000000000F01",
+        "channel_id": "01M72N8MG00000000000000C02",
+        "session_id": "01M72N8MG00000000000000S01",
+        "exp": 1762766100000,
+        "mac": "7d88693e9f7542a821c5aa8f5f4dd828da6a15265810d2a427c00b1973c4501a"
+      },
+      "mac_input_hex": "6f72672d6772616e742f31000000001a30314d37324e384d4730303030303030303030303030304130310000001a30314d37324e384d4730303030303030303030303030304d30310000001a30314d37324e384d4730303030303030303030303030304730310000001a30314d37324e384d4730303030303030303030303030304630310000001a30314d37324e384d4730303030303030303030303030304330320000001a30314d37324e384d4730303030303030303030303030305330310000019a6d0c1620",
+      "mac_hex": "7d88693e9f7542a821c5aa8f5f4dd828da6a15265810d2a427c00b1973c4501a"
+    }
+  ],
+  "request": {
+    "comment": "A request carrying a principal (the X-02 §4.1 example, with team.create's real params), as org-proto writes it.",
+    "wire": {
+      "id": 42,
+      "method": "team.create",
+      "principal": {
+        "grant": {
+          "account": "01M72N8MG00000000000000A01",
+          "member": "01M72N8MG00000000000000M01",
+          "org_id": "01M72N8MG00000000000000G01",
+          "office_id": "01M72N8MG00000000000000F01",
+          "channel_id": "01M72N8MG00000000000000C01",
+          "session_id": "01M72N8MG00000000000000S01",
+          "exp": 1762766100000,
+          "mac": "8637d563af0edf21100827a4a0a1f79f0053b6d974f0a9afb30465412e4b95a5"
+        }
+      },
+      "params": {
+        "command_id": "01M72N8MG00000000000000P01",
+        "team_id": "01M72N8MG00000000000000T01",
+        "name": "Platform"
+      }
+    }
+  },
+  "refused_principals": {
+    "comment": "Each decodes as a request envelope, but Request::principal() fails, which a worker answers with not_authorized. The error never quotes the mac.",
+    "cases": [
+      {
+        "name": "principal null",
+        "principal": null
+      },
+      {
+        "name": "principal a string",
+        "principal": "grant"
+      },
+      {
+        "name": "no grant",
+        "principal": {}
+      },
+      {
+        "name": "mac upper case",
+        "principal": {
+          "grant": {
+            "account": "01M72N8MG00000000000000A01",
+            "member": "01M72N8MG00000000000000M01",
+            "org_id": "01M72N8MG00000000000000G01",
+            "office_id": "01M72N8MG00000000000000F01",
+            "channel_id": "01M72N8MG00000000000000C01",
+            "session_id": "01M72N8MG00000000000000S01",
+            "exp": 1762766100000,
+            "mac": "8637D563AF0EDF21100827A4A0A1F79F0053B6D974F0A9AFB30465412E4B95A5"
+          }
+        }
+      },
+      {
+        "name": "mac 63 digits",
+        "principal": {
+          "grant": {
+            "account": "01M72N8MG00000000000000A01",
+            "member": "01M72N8MG00000000000000M01",
+            "org_id": "01M72N8MG00000000000000G01",
+            "office_id": "01M72N8MG00000000000000F01",
+            "channel_id": "01M72N8MG00000000000000C01",
+            "session_id": "01M72N8MG00000000000000S01",
+            "exp": 1762766100000,
+            "mac": "8637d563af0edf21100827a4a0a1f79f0053b6d974f0a9afb30465412e4b95a"
+          }
+        }
+      },
+      {
+        "name": "mac 65 digits",
+        "principal": {
+          "grant": {
+            "account": "01M72N8MG00000000000000A01",
+            "member": "01M72N8MG00000000000000M01",
+            "org_id": "01M72N8MG00000000000000G01",
+            "office_id": "01M72N8MG00000000000000F01",
+            "channel_id": "01M72N8MG00000000000000C01",
+            "session_id": "01M72N8MG00000000000000S01",
+            "exp": 1762766100000,
+            "mac": "8637d563af0edf21100827a4a0a1f79f0053b6d974f0a9afb30465412e4b95a50"
+          }
+        }
+      },
+      {
+        "name": "mac not hex",
+        "principal": {
+          "grant": {
+            "account": "01M72N8MG00000000000000A01",
+            "member": "01M72N8MG00000000000000M01",
+            "org_id": "01M72N8MG00000000000000G01",
+            "office_id": "01M72N8MG00000000000000F01",
+            "channel_id": "01M72N8MG00000000000000C01",
+            "session_id": "01M72N8MG00000000000000S01",
+            "exp": 1762766100000,
+            "mac": "g637d563af0edf21100827a4a0a1f79f0053b6d974f0a9afb30465412e4b95a5"
+          }
+        }
+      },
+      {
+        "name": "mac null",
+        "principal": {
+          "grant": {
+            "account": "01M72N8MG00000000000000A01",
+            "member": "01M72N8MG00000000000000M01",
+            "org_id": "01M72N8MG00000000000000G01",
+            "office_id": "01M72N8MG00000000000000F01",
+            "channel_id": "01M72N8MG00000000000000C01",
+            "session_id": "01M72N8MG00000000000000S01",
+            "exp": 1762766100000,
+            "mac": null
+          }
+        }
+      },
+      {
+        "name": "mac a number",
+        "principal": {
+          "grant": {
+            "account": "01M72N8MG00000000000000A01",
+            "member": "01M72N8MG00000000000000M01",
+            "org_id": "01M72N8MG00000000000000G01",
+            "office_id": "01M72N8MG00000000000000F01",
+            "channel_id": "01M72N8MG00000000000000C01",
+            "session_id": "01M72N8MG00000000000000S01",
+            "exp": 1762766100000,
+            "mac": 1234
+          }
+        }
+      },
+      {
+        "name": "mac missing",
+        "principal": {
+          "grant": {
+            "account": "01M72N8MG00000000000000A01",
+            "member": "01M72N8MG00000000000000M01",
+            "org_id": "01M72N8MG00000000000000G01",
+            "office_id": "01M72N8MG00000000000000F01",
+            "channel_id": "01M72N8MG00000000000000C01",
+            "session_id": "01M72N8MG00000000000000S01",
+            "exp": 1762766100000
+          }
+        }
+      },
+      {
+        "name": "exp a string",
+        "principal": {
+          "grant": {
+            "account": "01M72N8MG00000000000000A01",
+            "member": "01M72N8MG00000000000000M01",
+            "org_id": "01M72N8MG00000000000000G01",
+            "office_id": "01M72N8MG00000000000000F01",
+            "channel_id": "01M72N8MG00000000000000C01",
+            "session_id": "01M72N8MG00000000000000S01",
+            "exp": "1762766100000",
+            "mac": "8637d563af0edf21100827a4a0a1f79f0053b6d974f0a9afb30465412e4b95a5"
+          }
+        }
+      },
+      {
+        "name": "exp negative",
+        "principal": {
+          "grant": {
+            "account": "01M72N8MG00000000000000A01",
+            "member": "01M72N8MG00000000000000M01",
+            "org_id": "01M72N8MG00000000000000G01",
+            "office_id": "01M72N8MG00000000000000F01",
+            "channel_id": "01M72N8MG00000000000000C01",
+            "session_id": "01M72N8MG00000000000000S01",
+            "exp": -1,
+            "mac": "8637d563af0edf21100827a4a0a1f79f0053b6d974f0a9afb30465412e4b95a5"
+          }
+        }
+      },
+      {
+        "name": "exp fractional",
+        "principal": {
+          "grant": {
+            "account": "01M72N8MG00000000000000A01",
+            "member": "01M72N8MG00000000000000M01",
+            "org_id": "01M72N8MG00000000000000G01",
+            "office_id": "01M72N8MG00000000000000F01",
+            "channel_id": "01M72N8MG00000000000000C01",
+            "session_id": "01M72N8MG00000000000000S01",
+            "exp": 1.5,
+            "mac": "8637d563af0edf21100827a4a0a1f79f0053b6d974f0a9afb30465412e4b95a5"
+          }
+        }
+      },
+      {
+        "name": "session_id missing",
+        "principal": {
+          "grant": {
+            "account": "01M72N8MG00000000000000A01",
+            "member": "01M72N8MG00000000000000M01",
+            "org_id": "01M72N8MG00000000000000G01",
+            "office_id": "01M72N8MG00000000000000F01",
+            "channel_id": "01M72N8MG00000000000000C01",
+            "exp": 1762766100000,
+            "mac": "8637d563af0edf21100827a4a0a1f79f0053b6d974f0a9afb30465412e4b95a5"
+          }
+        }
+      },
+      {
+        "name": "principal the bare mac",
+        "principal": "8637d563af0edf21100827a4a0a1f79f0053b6d974f0a9afb30465412e4b95a5"
+      },
+      {
+        "name": "grant the bare mac",
+        "principal": {
+          "grant": "8637d563af0edf21100827a4a0a1f79f0053b6d974f0a9afb30465412e4b95a5"
+        }
+      },
+      {
+        "name": "grant an array in field order",
+        "principal": {
+          "grant": [
+            "01M72N8MG00000000000000A01",
+            "01M72N8MG00000000000000M01",
+            "01M72N8MG00000000000000G01",
+            "01M72N8MG00000000000000F01",
+            "01M72N8MG00000000000000C01",
+            "01M72N8MG00000000000000S01",
+            1762766100000,
+            "8637d563af0edf21100827a4a0a1f79f0053b6d974f0a9afb30465412e4b95a5"
+          ]
+        }
+      },
+      {
+        "name": "principal an array",
+        "principal": [
+          {
+            "account": "01M72N8MG00000000000000A01",
+            "member": "01M72N8MG00000000000000M01",
+            "org_id": "01M72N8MG00000000000000G01",
+            "office_id": "01M72N8MG00000000000000F01",
+            "channel_id": "01M72N8MG00000000000000C01",
+            "session_id": "01M72N8MG00000000000000S01",
+            "exp": 1762766100000,
+            "mac": "8637d563af0edf21100827a4a0a1f79f0053b6d974f0a9afb30465412e4b95a5"
+          }
+        ]
+      }
+    ]
+  }
+}

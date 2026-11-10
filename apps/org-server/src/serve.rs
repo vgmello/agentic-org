@@ -1421,6 +1421,7 @@ mod tests {
                     position: org_proto::org::Position { epoch: 1, seq },
                     command_id,
                     changes: Vec::new(),
+                    actor: None,
                 });
             *self.token.lock().unwrap() += 1;
             self.woken.notify_all();
@@ -1480,7 +1481,7 @@ mod tests {
     /// (a full workspace run) can take seconds to schedule 64 connection threads; a connection
     /// the server refuses is closed at once, so that case does not wait for it.
     fn hello_ok(stream: &mut UnixStream) -> bool {
-        let request = Request::new::<Hello>(1, &org_proto::Empty {}).unwrap();
+        let request = Request::new::<Hello>(1, &org_proto::HelloParams::default()).unwrap();
         if frame::write_message(&mut *stream, &request).is_err() {
             return false;
         }
@@ -1670,7 +1671,7 @@ mod tests {
             "{answer:?}"
         );
         // And the connection still works.
-        let hello = Request::new::<Hello>(2, &org_proto::Empty {}).unwrap();
+        let hello = Request::new::<Hello>(2, &org_proto::HelloParams::default()).unwrap();
         frame::write_message(&mut &client, &hello).unwrap();
         let next = frame::read_message::<Response>(&mut reader)
             .unwrap()
@@ -1868,6 +1869,7 @@ mod tests {
             id,
             method: "team.create".to_owned(),
             params: serde_json::json!({"nope": 1}),
+            principal: None,
         };
         assert_eq!(code_of(client.ask(garbled)), ErrorCode::NotAuthorized);
         // A method this office does not know is still just unknown.
@@ -1875,6 +1877,7 @@ mod tests {
             id,
             method: "team.fly".to_owned(),
             params: serde_json::json!({}),
+            principal: None,
         };
         assert_eq!(code_of(client.ask(unknown)), ErrorCode::UnknownMethod);
 
@@ -1953,6 +1956,7 @@ mod tests {
             id,
             method: "msg.bind".to_owned(),
             params: serde_json::json!({"app_token": "not hex"}),
+            principal: None,
         };
         assert_eq!(code_of(client.bind(None, None)), ErrorCode::InvalidRequest);
         client.bind(None, Some(token()));
@@ -2042,11 +2046,13 @@ mod tests {
             id,
             method: "team.create".to_owned(),
             params: serde_json::json!({"nope": 1}),
+            principal: None,
         };
         let unknown = |id| Request {
             id,
             method: "team.fly".to_owned(),
             params: serde_json::json!({}),
+            principal: None,
         };
         assert_eq!(code_of(client.ask(garbled)), ErrorCode::InvalidRequest);
         assert_eq!(code_of(client.ask(unknown)), ErrorCode::UnknownMethod);
@@ -2096,6 +2102,7 @@ mod tests {
                 id,
                 method: method.to_owned(),
                 params: serde_json::json!({}),
+                principal: None,
             };
             assert_eq!(
                 code_of(client.ask(request)),
@@ -2121,7 +2128,7 @@ mod tests {
         assert_eq!(code_of(client.ask(snapshot)), ErrorCode::NotAuthorized);
         // Hello stays open: a client learns what it is talking to before it binds.
         assert!(matches!(
-            client.ask(|id| Request::new::<Hello>(id, &org_proto::Empty {}).unwrap()),
+            client.ask(|id| Request::new::<Hello>(id, &org_proto::HelloParams::default()).unwrap()),
             org_proto::Outcome::Result(_)
         ));
         client.bind(None, Some(token()));
@@ -2190,6 +2197,7 @@ mod tests {
             id,
             method: "subscribe".to_owned(),
             params: serde_json::json!({"from_position": "nope"}),
+            principal: None,
         };
         assert_eq!(code_of(client.ask(garbled)), ErrorCode::NotAuthorized);
         feed.push(2);
@@ -2219,7 +2227,7 @@ mod tests {
         assert_eq!(event_of(&client.next_message()), (2, 4, "cmd-4".into()));
         // The connection still answers, between events.
         assert!(matches!(
-            client.ask(|id| Request::new::<Hello>(id, &org_proto::Empty {}).unwrap()),
+            client.ask(|id| Request::new::<Hello>(id, &org_proto::HelloParams::default()).unwrap()),
             org_proto::Outcome::Result(_)
         ));
         stop.store(true, Ordering::SeqCst);
@@ -2626,6 +2634,7 @@ mod tests {
             id,
             method: "who".to_owned(),
             params,
+            principal: None,
         })
     }
 
@@ -3072,6 +3081,7 @@ mod tests {
                 "id": msg_id(2), "to": "remy", "kind": "msg", "body": "x",
                 "from": "pat", "from_member_id": PAT_ID
             }),
+            principal: None,
         };
         let sent = ada.ask(|id| Request { id, ..forged });
         let mut remy = Client::bound_as(&path, "remy");
@@ -3134,6 +3144,7 @@ mod tests {
                 "id": msg_id(4), "to": "remy", "kind": "msg", "body": "x",
                 "priority": "SECRET-BODY"
             }),
+            principal: None,
         }) else {
             panic!("a refusal")
         };
@@ -3376,6 +3387,7 @@ mod tests {
             id,
             method: "status.set".to_owned(),
             params: serde_json::json!({"text": "Hijack", "member": PAT_ID, "member_id": PAT_ID}),
+            principal: None,
         });
         let _ = forged;
         let seen: Vec<String> = log.lock().unwrap().iter().map(|(m, _)| m.clone()).collect();
@@ -3409,6 +3421,7 @@ mod tests {
                 id,
                 method: "status.set".to_owned(),
                 params: serde_json::json!({"text": ["not a string"]}),
+                principal: None,
             }))
         };
         let mut client = Client::connect(&path);
@@ -3436,6 +3449,7 @@ mod tests {
             id,
             method: "status.set".to_owned(),
             params: serde_json::json!({"text": ["SECRET-STATUS"]}),
+            principal: None,
         }) else {
             panic!("a refusal")
         };
@@ -3945,7 +3959,7 @@ mod tests {
             ErrorCode::NotBound
         );
         assert!(matches!(
-            lookup_failure.call::<Hello>(&org_proto::Empty {}),
+            lookup_failure.call::<Hello>(&org_proto::HelloParams::default()),
             org_proto::Outcome::Result(_)
         ));
 

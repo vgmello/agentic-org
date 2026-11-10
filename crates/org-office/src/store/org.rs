@@ -588,6 +588,7 @@ pub(crate) fn changes_after(
             position,
             command_id,
             changes,
+            actor: None,
         });
     }
     Ok(out)
