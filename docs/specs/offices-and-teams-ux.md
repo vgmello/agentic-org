@@ -44,7 +44,7 @@ X-02 (`org-proto` v2, approved by ada):
   Restart office, which the host refuses for it. §3.1: a pending join shows
   Waiting for approval, then, once HQ approves it, Starting · copying records
   until its first copy of records completes (§6.3); on the joining instance,
-  telling the two apart is A102.
+  the status read's `join_phase` tells the two apart (A102, resolved).
 - **Two views of a joining office:** Waiting for approval and the "join ended"
   row show only in the joining instance's own view (its status and, if it has
   one, its local status page), never in HQ's Offices list, which keeps §6.3's
@@ -61,8 +61,27 @@ X-02 (`org-proto` v2, approved by ada):
   `set-password`, `reset-password`), and the admin grant alone opens no
   organization (its A86, resolved).
 
-**Criteria rewritten (same ID):** OFC-7, JOIN-7 *(rev 15)*. **New:** OFC-26 to
-OFC-32, JOIN-9 to JOIN-12. Open questions A101 and A102.
+- *(Review of 07a8a4b)* **Waiting for running agents** ends only when no agent
+  session on that instance is running: each agent Asleep, Paused or stopped. An
+  agent that's Idle between turns still counts (`agent-sessions.md`, ADR-0003).
+  The copy reads "Waiting for 3 agents to stop. Their current sessions must end
+  first." No agent is stopped or relaunched for it (§5a, §6.2; OFC-28, OFC-29).
+- *(Rowan's answers, 2026-11-10; X-02 Q9)* A101: the wait's number comes from
+  `waiting_for_idle { sessions }`; Cancel cancels the same operation; a waiting
+  organization shows in the switcher, and a waiting office as a pending row in
+  the Offices list; a satellite join waits the same way in setup, where Ctrl-C
+  cancels; there's no time limit, and `agentic-org doctor` shows the wait (§5a,
+  §5c, §6.2). A102: `join_phase` tells Waiting for approval from Starting ·
+  copying records (§3.1, §5c); `join_cancelled` covers a cancelled or replaced
+  invitation; an HQ identity mismatch ends as `join_rejected` and isn't retried;
+  an unsupported version keeps the join waiting until the invitation expires
+  (§3.3, §5c). New A105: telling a decline from a mismatch, both
+  `join_rejected`. §5b lists `agentic-org account link`, `unlink` and `revoke`
+  (`server-installation-and-access-ux.md` rev 5, its A103).
+
+**Criteria rewritten (same ID):** OFC-7, JOIN-7 *(rev 15)*, then OFC-28, OFC-29,
+OFC-32 and JOIN-7 again. **New:** OFC-26 to OFC-38, JOIN-9 to JOIN-16. Open
+questions A101 and A102, both since resolved; A105.
 
 **Revision 14 (2026-11-10): Create organization and the instance admin.** New
 §5a, **Create organization**, for instance admins only, from the organization
@@ -206,7 +225,7 @@ Status colors reuse the existing tokens: green = online, blue = starting, gray =
 - `active` → **Online**. `starting` → **Starting**. `update_needed` → **Update needed**. `pending` (invited, not joined yet) → **Invited**.
 - **Two views of a joining office** *(rev 15)*. The joining instance's own view is its `agentic-org status` (and setup) and, if it has one, its local status page. HQ's Offices list is HQ's view. Each shows only its own states, as below (§5c).
 - `starting` with `status_reason: join_pending` (a satellite whose join waits for approval or its first copy of records) *(rev 15)*:
-  - In the joining instance's own view: before HQ approves it → **Waiting for approval**, never Starting or Online; after HQ approves it, while its first copy of records runs → **Starting** with "copying records", never Online. The host reports both phases as `join_pending`, so until the instance status read tells them apart (A102), this view shows **Waiting for approval** for the whole of `join_pending`.
+  - In the joining instance's own view, from the status read's `join_phase` (A102, resolved: Rowan, 2026-11-10; X-02 Q9): `awaiting_approval` → **Waiting for approval**, never Starting or Online; `initial_sync` (HQ approved it, and its first copy of records runs) → **Starting** with "copying records" (shown as "Starting · copying records"), never Online.
   - In HQ's Offices list: never Waiting for approval. Before approval the request is a **Wants to join** row (§6.1, OFC-5). After approval → **Starting** with "copying records" (shown as "Starting · copying records", as in §6.3), never Online. This holds for an office on HQ's own instance too: a local satellite joins its own instance's HQ (`offices-hq-and-satellites.md`, "Provisioning a satellite", step 3, Checks), and HQ's list shows it as HQ sees it, whatever that instance's status reports.
   - The office becomes `active` (**Online**) only once that first copy completes (`offices-hq-and-satellites.md`, "Provisioning a satellite", steps 4 and 5; `office-host-boundary.md` §4).
 - `unavailable` with a `join_*` reason → in the joining instance's own view only, **Stopped**, with §3.3's "join ended" row. HQ's Offices list never shows that row: it shows the invitation's own row from §6.3, with **New invitation** and **Remove**.
@@ -242,7 +261,7 @@ Shown as the Stopped row's secondary text and at the top of its details, with th
 | `stopped_by_owner` | "You stopped it" | **Start office** (`office.restart`). Phase 1 has no stop call, so this appears only once one exists. |
 | `unsupported_version` | "The release components on <office machine / instance> don't match. Run diagnostics and repair the selected instance there." *(rev 8)* | **Show local CLI repair instructions** · Copy details. No office restart until the instance release is repaired. |
 | `invalid_request` | "It couldn't start because of an internal error" | Copy details (to send to support). No Restart: the contract refuses it. |
-| `join_expired`, `join_cancelled`, `join_rejected` *(rev 15)*: a satellite whose join ended. The host never restarts it, and `office.restart` answers `unavailable` for it. Shown only in the joining instance's own view, never in HQ's Offices list (§3.1, §5c) | `join_expired`: "Its invitation expired before the join was approved". `join_cancelled`: "Its join was cancelled after 3 wrong check codes". `join_rejected`: "Its join was declined at HQ" | **Remove…** · Copy details. Never Restart office, Try again or Start office. |
+| `join_expired`, `join_cancelled`, `join_rejected` *(rev 15)*: a satellite whose join ended. The host never restarts it, and `office.restart` answers `unavailable` for it. Shown only in the joining instance's own view, never in HQ's Offices list (§3.1, §5c) | `join_expired`: "Its invitation expired before the join was approved". `join_cancelled`: "Its invitation was cancelled or replaced at HQ (3 wrong check codes also cancel it)". `join_rejected`: "Its join was declined at HQ"; for an HQ identity mismatch, "HQ's identity didn't match the invitation, so it stopped joining"; when the status doesn't say which (A105), "Its join was refused: declined at HQ, or HQ's identity didn't match the invitation" | **Remove…** · Copy details. Never Restart office, Try again or Start office. |
 | `unknown` (a reason this version doesn't know, from a newer host) | "It stopped for a reason this version doesn't know" | **Restart office** · Copy details |
 | No `status_reason` (the host doesn't know why) *(rev 8)* | "It isn't running" | **Restart office** · Copy details |
 
@@ -349,7 +368,7 @@ creates it owns it. The mechanics are in `docs/design/create-organization.md`.
 
 | State | What shows |
 | --- | --- |
-| Waiting for running agents *(rev 15)* | "Waiting for running agents to finish. Side Project is created once the agents running on <HQ instance> finish what they're doing. They aren't stopped for it." with a spinner and **Cancel**. Name is read-only. A new organization changes what running agents may access, so HQ waits until they're idle, and never stops or relaunches them for it (until the host can ask offices to relaunch sessions, X-02 Q9). **Cancel** stops it: "Side Project wasn't created." and the form is back with the name. If it's already being created: "Too late to cancel: Side Project is being created now." and the panel shows Creating…. Closing the panel doesn't cancel it (A101). |
+| Waiting for running agents *(rev 15)* | "Waiting for 3 agents to stop. Their current sessions must end first. Side Project is created once no agent on <HQ instance> is running. They aren't stopped or restarted for it." with a spinner and **Cancel**. Name is read-only. One agent: "Waiting for 1 agent to stop. Its current session must end first." See **Waiting for running agents** below the table. **Cancel** stops it: "Side Project wasn't created." and the form is back with the name. If it's already being created: "Too late to cancel: Side Project is being created now." and the panel shows Creating…. Closing the panel doesn't cancel it. |
 | Creating | **Creating…**, disabled. Name is read-only. **Cancel** becomes **Close**, with "Closing this panel doesn't stop it." A second click sends nothing. |
 | Created, starting | The new organization opens. Its HQ shows **Starting** (§3.1), and the page says "Side Project is starting. This usually takes a few seconds." Toast: "Created Side Project. You own it." The switcher lists it with "HQ · Starting". |
 | Ready | The organization's pages load as usual. The recovery-code notice shows for its owner once the code is waiting to be collected (a new organization starts as Being prepared, `server-installation-and-access-ux.md` §4a.6). |
@@ -357,6 +376,32 @@ creates it owns it. The mechanics are in `docs/design/create-organization.md`.
 | Failed | A red alert in the panel, with the reason, **Try again** and **Copy details**. Name keeps its text. Try again is a new attempt. |
 | Checking (the response was lost) | "Checking whether Side Project was created…" with a spinner. The browser looks up the same attempt; it never sends a new one while the outcome is unknown. |
 | Session ended | The sign-in-again dialog (`server-installation-and-access-ux.md` §4a.4). The form keeps its text. After signing in, press **Create organization** again. |
+
+**Waiting for running agents** *(rev 15; A101, resolved: Rowan, 2026-11-10; X-02
+Q9)*. A new organization changes what the agents running on that instance may
+access, and the host can't yet ask offices to relaunch their sessions (X-02 Q9's
+`layout_changed`; `agent-sessions.md`). So HQ creates it only once **no agent
+session on that instance is running**, and never stops or relaunches an agent
+for it:
+- An agent counts as running while it has a live session, **including Idle**,
+  between turns (ADR-0003). It stops counting once it's **Asleep**, **Paused**
+  or stopped (Offline). Agents of every organization on that instance count.
+- The create stays accepted, and its lookup and HQ's status feed report how many
+  sessions it waits for (`waiting_for_idle { sessions: n }`). "3" in the copy is
+  that number, and it goes down live as sessions end. When HQ doesn't give the
+  number: "Waiting for running agents to stop. Their current sessions must end
+  first."
+- There's no time limit: it waits until the sessions end or someone cancels.
+  `agentic-org doctor` on the HQ machine lists it: "Creating Side Project:
+  waiting for 3 agents to stop, since 14:05."
+- **Cancel** cancels that same create (its operation ID), from this panel or
+  from the switcher's waiting entry, in any tab or browser of that account.
+- **While it waits, it isn't an organization yet.** After the panel is closed,
+  the organization switcher shows a waiting entry for it, driven by the
+  operation: "Side Project · Waiting for 3 agents to stop", with an `hourglass`
+  icon. It can't be opened; choosing it reopens this panel in its Waiting state,
+  with **Cancel**. Once the create starts, the entry becomes "HQ · Starting" (OFC-23).
+  After Cancel it goes away.
 
 **Failure reasons** (the alert's words). `organization.create` fails only when
 nothing was stored. An organization that was stored but whose office didn't start
@@ -381,7 +426,7 @@ prepared. Try again."
 
 | Lookup finds | What shows |
 | --- | --- |
-| It's waiting for running agents *(rev 15)* | As Waiting for running agents. |
+| It's waiting for running agents (`waiting_for_idle`) *(rev 15)* | As Waiting for running agents, with its number of sessions. |
 | It's still being created | Stays in Checking ("Still creating Side Project…") and checks again every few seconds, never sending a new attempt. |
 | It was created | As Created, starting. |
 | It failed | As Failed, with its reason. |
@@ -400,7 +445,8 @@ prepared. Try again."
 linked with `aria-describedby`, and an invalid name sets `aria-invalid`. Errors and
 the failure alert are announced when they appear, and focus moves to the alert on
 failure. Creating…, Checking and Starting are announced through a polite live
-region. When the new organization opens, focus moves to its main heading. The
+region. Waiting for running agents is announced once, with its number, when it
+starts; the number going down isn't announced, so it doesn't tick *(rev 15)*. When the new organization opens, focus moves to its main heading. The
 panel traps focus and returns it to the switcher button when it closes. In the
 switcher, ↑/↓ reach **Create organization**, Enter opens it and Esc closes the menu.
 
@@ -417,6 +463,7 @@ From the owner's decision O-1. People records and agents never sign in.
 | See the recovery-code state | The organization's owner | Browser (state only, never the code) |
 | Show a recovery code and confirm it's stored *(rev 15)* | An instance admin, signed in on the HQ machine, who confirms it's them there | HQ machine only (`agentic-org recovery release`, `server-installation-and-access-ux.md` §4a.6) |
 | Add an account *(rev 15)* | An instance admin, signed in on the HQ machine, who confirms it's them there | HQ machine only (`agentic-org account create`, `server-installation-and-access-ux.md` §4a.2) |
+| Link an account to any organization on the instance, unlink it, or revoke an account *(rev 15)* | An instance admin, signed in on the HQ machine, who confirms it's them there. The instance always keeps an instance admin, and each organization a linked account | HQ machine only (`agentic-org account link`, `unlink`, `revoke`, `server-installation-and-access-ux.md` §4a.2) |
 | Change your own password *(rev 15)* | Any account, signed in with its current password | HQ machine only (`agentic-org account set-password`) |
 | Reset a forgotten password *(rev 15)* | Anyone at the HQ machine who confirms it's them there (Mac), or root (Linux, `sudo`). No sign-in | HQ machine only (`agentic-org account reset-password <username>`) |
 | Start, stop or repair the instance | Whoever can run `agentic-org` as the instance's user on the HQ machine | HQ machine only |
@@ -450,8 +497,10 @@ The invitation expires tomorrow at 14:02.
 Status: waiting for approval at HQ · checked 14:05
 ```
 
-- **Status** reads "waiting for approval at HQ", then, after approval, "approved
-  · copying records from HQ" (A102), with the time setup last checked.
+- **Status** reads "waiting for approval at HQ" while the status read's
+  `join_phase` is `awaiting_approval`, then "approved · copying records from HQ"
+  once it's `initial_sync` (A102, resolved: Rowan, 2026-11-10; X-02 Q9), with
+  the time setup last checked.
 - **Last error**, while there is one, is a line under Status. It's cleared when
   the next check works:
 
@@ -474,18 +523,56 @@ Status: waiting for approval at HQ · checked 14:05
 - `agentic-org status` shows the same Check code, Status and Last error lines for
   a pending join.
 
-**When the join ends, or can't go on** *(JOIN-7)*. Exit status Error for the three
-that end it:
+**Waiting for running agents** *(rev 15; A101, resolved: Rowan, 2026-11-10;
+X-02 Q9)*. Adding the joining office changes what the agents already running on
+this instance may access, so, as for Add office › On this instance (§6.2), the
+join waits while any agent session on this instance is running (an Idle agent
+counts; an Asleep, Paused or stopped one doesn't). No agent is stopped or
+relaunched for it. Setup shows:
+
+```
+Joining Lumen Labs as "Studio Mac" (instance default)
+Waiting for 3 running agents to stop… Their current sessions must end first.
+They aren't stopped or restarted for this.
+Press Ctrl-C to cancel.
+```
+
+- The number goes down in place as sessions end ("Waiting for 1 running agent to
+  stop…" for one). Without a terminal, setup writes a new line only when it
+  changes. Then setup goes on as above.
+- There's no time limit. `agentic-org doctor` lists the wait: "Joining Lumen
+  Labs as Studio Mac: waiting for 3 agents to stop, since 14:05."
+- **Ctrl-C here cancels the join** (unlike Ctrl-C while waiting for approval,
+  which only stops watching): "Cancelled. Studio Mac wasn't added to instance
+  default. To join, run agentic-org setup again with the invitation." Exit
+  status Error.
+
+**When the join ends, or can't go on** *(JOIN-7, JOIN-13, JOIN-14)*. Exit status
+Error for the ones that end it:
 
 | What happened | The join | Setup and `status` say | Repair (printed under it) |
 | --- | --- | --- | --- |
 | The invitation expired before approval (`join_expired`) | Ends | "The invitation for Studio Mac expired before the join was approved. Nothing was added to Lumen Labs." | "Remove this request (agentic-org office remove-pending 01JBX7…), then ask for a new invitation at HQ (Offices › Studio Mac › New invitation) and run agentic-org setup again." |
-| Cancelled after 3 wrong check codes at HQ (`join_cancelled`) | Ends | "The join for Studio Mac was cancelled at HQ after 3 wrong check codes." | As for expired, plus: "When you approve, type the code exactly as setup shows it." |
+| The invitation was cancelled or replaced at HQ after it was used, or got 3 wrong check codes, which cancel it (`join_cancelled`; HQ refuses the join) | Ends | "This invitation was cancelled or replaced at HQ, so Studio Mac can't join with it. (3 wrong check codes at HQ also cancel it.) Nothing was added to Lumen Labs." | "Remove this request (agentic-org office remove-pending 01JBX7…), then ask the owner for a new invitation and run agentic-org setup again. When approving, type the code exactly as setup shows it." |
 | Declined at HQ (`join_rejected`) | Ends | "The join for Studio Mac was declined at HQ. Nothing was added to Lumen Labs." | "Remove this request (agentic-org office remove-pending 01JBX7…). If it was declined by mistake, ask for a new invitation and run agentic-org setup again." |
+| HQ's identity doesn't match the invitation: the server at HQ's address doesn't hold the certificate authority the invitation pins (`join_rejected`, a security failure) | Ends, and setup doesn't retry | "Stopped joining: the server at hq.example.com:8443 couldn't prove it's Lumen Labs' HQ. Its identity doesn't match the invitation. Studio Mac didn't join it, and setup won't try again." | "Check HQ's address with the owner of Lumen Labs. This can mean the address now points to another server, or that someone is intercepting the connection. Remove this request (agentic-org office remove-pending 01JBX7…), then ask for a new invitation and run agentic-org setup again." |
+| HQ doesn't support this instance's version (unsupported version) | Stays waiting, until the invitation expires | Status: "This instance needs an update to join this HQ. Update it, then setup continues." | "Update Agentic Org on this machine with agentic-org upgrade. Setup checks again on its own. The request stays open until the invitation expires (tomorrow at 14:02)." |
 | HQ can't be reached | Stays waiting | The Last error line above, with the reason and its time. | "Check that HQ is running and that this machine can reach hq.example.com:8443. Nothing to remove: setup keeps trying." |
 
-- An identity mismatch and an unsupported version keep their own errors (JOIN-4,
-  JOIN-7). Whether they end the join is A102.
+- *(A102, resolved: Rowan, 2026-11-10; X-02 Q9)* An HQ identity mismatch ends
+  the join as `join_rejected`, and is never retried. An unsupported version
+  keeps it waiting; if the invitation expires first, the join ends as
+  `join_expired`, as above. A familiar name with a different identity is still
+  flagged before the join starts (JOIN-4).
+- Both a decline and an identity mismatch end as `join_rejected`. Setup and
+  `agentic-org status` show the matching row when the instance's status says
+  which it was (A105). When it doesn't, they show one row for both: "The join
+  for Studio Mac was refused: it was declined at HQ, or HQ's identity didn't
+  match the invitation. Nothing was added to Lumen Labs." with the repair "Check
+  HQ's address with the owner of Lumen Labs. Then remove this request
+  (agentic-org office remove-pending 01JBX7…), ask for a new invitation and run
+  agentic-org setup again."
+
 - A join that ended is never reported as an office that joined, and it isn't
   restarted.
 
@@ -589,20 +676,33 @@ key and a worker on HQ's instance (`standalone-server.md`, "Create organization"
 - Inviting, approving and removing a satellite stay open to any authorized owner
   (OFC-7).
 
-**Waiting for running agents** *(rev 15)*. A new office on this instance changes
-what the agents running there may access, so while any are running the office
-waits until they finish what they're doing. They're never stopped or relaunched
-for it, until the host can ask offices to relaunch sessions (X-02 Q9). The form
-shows "Waiting for running agents to finish. Office 2 is added once the agents
-running on <instance> finish what they're doing. They aren't stopped for it."
-with a spinner and **Cancel**, and the name is read-only.
-- **Cancel:** "Office 2 wasn't added." The form is back with the name.
+**Waiting for running agents** *(rev 15; A101, resolved: Rowan, 2026-11-10;
+X-02 Q9)*. A new office on this instance changes what the agents running there
+may access, so the office is added only once **no agent session on that
+instance is running**, as for Create organization (§5a): an Idle agent, between
+turns, still counts; an Asleep, Paused or stopped one doesn't. They're never
+stopped or relaunched for it. The form shows "Waiting for 3 agents to stop.
+Their current sessions must end first. Office 2 is added once no agent on
+<instance> is running. They aren't stopped or restarted for it." with a spinner
+and **Cancel**, and the name is read-only. The number comes from the
+operation's `waiting_for_idle { sessions: n }` and goes down live; its
+one-agent and no-number forms are §5a's.
+- **Cancel** cancels that same Add office (its operation ID), as for Create
+  organization: "Office 2 wasn't added." The form is back with the name.
 - Already being added: "Too late to cancel: Office 2 is being added now." Then
   Creating, as usual.
-- Closing the form doesn't cancel it. Whether the waiting office shows in the
-  list meanwhile is A101.
-- An office on another machine doesn't wait here: its instance starts it when the
-  join completes.
+- **In the Offices list,** a waiting office isn't an office yet. Closing the
+  form doesn't cancel it, and the list shows a pending row driven by the
+  operation, like the switcher's waiting organization: `hourglass`, "Office 2",
+  "Waiting for 3 agents to stop · on <instance>", and **Cancel**, which asks
+  "Stop adding Office 2? It wasn't added yet." (**Stop adding** / **Keep
+  waiting**). It has no status dot, no agents and no other action. When the
+  office is added, the row becomes the office (Starting, §3.1); after Cancel it
+  goes away.
+- There's no time limit, and `agentic-org doctor` on that machine lists it:
+  "Adding Office 2: waiting for 3 agents to stop, since 14:05."
+- An office on another machine doesn't wait here. Its own instance may wait the
+  same way while it joins (§5c).
 
 For another machine/instance, generate a one-time invitation and show the CLI
 setup instructions. The secret is shown once, with Copy invitation and an expiry;
@@ -910,12 +1010,16 @@ Two directions, same result:
 - JOIN-4 · *(rev 12)* A familiar organization name with a different identity is flagged; setup cannot silently replace an existing instance or office.
 - JOIN-5 · *(rev 12)* The joining CLI displays the check code accessibly; HQ requires the owner to verify that code before approval.
 - JOIN-6 · *(rev 12)* Closing the browser does not cancel enrollment. Setup/status can show the existing pending request and its check code again.
-- JOIN-7 · *(rev 15)* Setup and `agentic-org status` show an expired invitation, a join cancelled after 3 wrong check codes and a declined join as ended, each with its §5c copy and `agentic-org office remove-pending <office id>` as the repair; HQ that can't be reached shows as the last error while the request stays waiting. Identity mismatch and unsupported version have specific errors. No failure is reported as an active office.
+- JOIN-7 · *(rev 15)* Setup and `agentic-org status` show an expired invitation, an invitation cancelled or replaced at HQ (3 wrong check codes included) and a declined join as ended, each with its §5c copy and `agentic-org office remove-pending <office id>` as the repair; HQ that can't be reached shows as the last error while the request stays waiting. No failure is reported as an active office.
 - JOIN-8 · *(rev 12)* The check code identifies the same persisted invitation/request key across reconnects and setup restarts; a second setup cannot create a duplicate office.
 - JOIN-9 · *(new, rev 15)* While a join waits, setup shows its status, the check code and the last error when there is one, and clears the error once a check works.
 - JOIN-10 · *(new, rev 15)* `agentic-org office remove-pending <office id>` removes a join that ended without asking, and prints how to join again.
 - JOIN-11 · *(new, rev 15)* `agentic-org office remove-pending` on a join that's still waiting says it stops the join and to remove the office at HQ if HQ approves it later, and removes it only after y in a terminal.
 - JOIN-12 · *(new, rev 15)* `agentic-org office remove-pending` on an office that has joined removes nothing and points to Remove office at HQ.
+- JOIN-13 · *(new, rev 15, A102)* When the server at HQ's address doesn't match the certificate authority the invitation pins, the join ends as `join_rejected` and setup makes no further attempt. Setup shows §5c's "couldn't prove it's <organization>'s HQ" row, or, while the status can't say which `join_rejected` it was (A105), the combined row; never the decline row alone.
+- JOIN-14 · *(new, rev 15, A102)* When HQ doesn't support the joining instance's version, the join stays pending and setup shows "This instance needs an update to join this HQ. Update it, then setup continues." until the invitation expires.
+- JOIN-15 · *(new, rev 15, A101)* A join on an instance with running agent sessions waits, and setup shows "Waiting for <n> running agents to stop…" and "Press Ctrl-C to cancel", with <n> going down as sessions end; no agent is stopped or relaunched for it.
+- JOIN-16 · *(new, rev 15, A101)* Ctrl-C while a join waits for running agents cancels the join: setup prints "Cancelled. <office> wasn't added to instance <name>…", and the instance has no office or pending join for it.
 
 **Offices (OFC)**
 - OFC-1 · *(rev 12)* HQ lists pending joins, HQ and satellites, with names, locations, status and last-seen/sync information. Browser location does not alter the office classification.
@@ -949,11 +1053,17 @@ Two directions, same result:
 **Joins that end, waiting for running agents, and offices on this instance (OFC)** *(new, rev 15, §3.3, §5a, §6.2)*
 - OFC-26 · In the joining instance's own view (its status and, if it has one, its local status page), a satellite whose join ended (`join_expired`, `join_cancelled`, `join_rejected`) shows its §3.3 copy and Remove…, which shows `agentic-org office remove-pending <office id>` with Copy command, and never offers Restart office, Try again or Start office. HQ's Offices list never shows this row: after 3 wrong check codes, a decline or an expired invitation it shows §6.3's row with New invitation and Remove.
 - OFC-27 · On the joining instance's own status (CLI or local status page), when `office.restart` answers `unavailable` because the office's join ended, the office shows the join-ended row, with no restart action. HQ's Offices list is unaffected and keeps §6.3's rows.
-- OFC-28 · Create organization while agents are running on the HQ instance shows "Waiting for running agents to finish…" with Cancel, and creates the organization only once they're idle; no running agent is stopped or relaunched for it.
-- OFC-29 · Add office › On this instance while agents are running on that instance shows "Waiting for running agents to finish…" with Cancel, and adds the office only once they're idle; no running agent is stopped or relaunched for it.
+- OFC-28 · *(rewritten in rev 15, review of 07a8a4b)* Create organization while any agent session on the HQ instance is running shows "Waiting for <n> agents to stop. Their current sessions must end first…" with Cancel, and creates the organization only once no agent session on that instance is running (each agent Asleep, Paused or stopped); no agent is stopped or relaunched for it.
+- OFC-29 · *(rewritten in rev 15, review of 07a8a4b)* Add office › On this instance while any agent session on that instance is running shows "Waiting for <n> agents to stop. Their current sessions must end first…" with Cancel, and adds the office only once no agent session on that instance is running (each agent Asleep, Paused or stopped); no agent is stopped or relaunched for it.
 - OFC-30 · Cancel while waiting for running agents creates nothing and keeps the name; once creating has started it shows "Too late to cancel…" and the create continues.
 - OFC-31 · HQ's refusal of Add office › On this instance for an account without the grant shows "Only an instance admin can add an office on this instance. You can still invite another machine." with Invite another machine and no Try again.
-- OFC-32 · In the joining instance's own view, a satellite whose join is pending (`join_pending`) shows Waiting for approval until HQ approves it, then Starting · copying records until its first copy of records completes, and never Online before then; until the status read tells the two phases apart (A102), it shows Waiting for approval for the whole of `join_pending`. HQ's Offices list never shows Waiting for approval: it shows Wants to join before approval, then Starting · copying records until the first copy completes, and never Online before then, also for an office on HQ's own instance.
+- OFC-32 · *(rewritten in rev 15, A102)* In the joining instance's own view, a satellite whose join is pending (`join_pending`) shows Waiting for approval while its `join_phase` is `awaiting_approval`, then Starting · copying records while it's `initial_sync`, and never Online before its first copy of records completes. HQ's Offices list never shows Waiting for approval: it shows Wants to join before approval, then Starting · copying records until the first copy completes, and never Online before then, also for an office on HQ's own instance.
+- OFC-33 · *(new, rev 15)* An agent that's Idle, between turns, keeps a create or Add office waiting; an agent that's Asleep, Paused or stopped doesn't.
+- OFC-34 · *(new, rev 15, A101)* The waiting copy's number is HQ's `waiting_for_idle` session count, and it goes down without a reload as sessions end.
+- OFC-35 · *(new, rev 15, A101)* Cancel on a waiting create or Add office, from the panel, another tab, the switcher's waiting entry or the Offices list's pending row, cancels that same operation, and the organization or office is never created.
+- OFC-36 · *(new, rev 15, A101)* After its panel is closed, a waiting organization shows in the switcher as "<name> · Waiting for <n> agents to stop", can't be opened, and reopens the panel in its Waiting state when chosen.
+- OFC-37 · *(new, rev 15, A101)* A waiting Add office shows in the Offices list only as a pending row with "Waiting for <n> agents to stop" and Cancel, with no status dot or other action, and becomes the office once it's added.
+- OFC-38 · *(new, rev 15, A101)* A wait for running agents has no time limit, and `agentic-org doctor` on that machine lists each waiting create, Add office and join with its number of agents.
 
 **Org chart: Teams (TEAM)**
 - TEAM-1 · *(rev 2)* The Teams view draws the ownership tree from the organization root; each card shows its name, the lead or "No lead", an Agents row and a People row with avatars and counts, its sub-team count and its projects.
@@ -1011,8 +1121,9 @@ Two directions, same result:
 - A91 · *(rev 14)* The name rules follow `org-proto` (trimmed, 64 characters, no control, invisible or direction-changing characters, duplicates compared case-insensitively on the trimmed name). Open: is the duplicate check per HQ instance or per account?
 - A95 · *(rev 14)* Which error does the gateway return when an account without the admin grant calls Create organization, and does a key-store failure during create surface as `storage_error` or something else?
 - A92 · *(rev 14)* How long can a create attempt be looked up after a lost response, and what does HQ answer once it's too old?
-- A101 · *(rev 15)* Waiting for running agents (§5a, §6.2): how does the browser learn that a create or an Add office is waiting, and can it say how many agents it waits for? How does Cancel reach a waiting Add office (X-02 Q9's gateway op)? Does a waiting office show in the Offices list? Does a satellite join on an instance with running agents wait the same way, and what does setup say then? Is there a longest wait?
-- A102 · *(rev 15)* Joins (§5c): does the status read tell "waiting for approval" from "copying records" (both `join_pending`)? Until it does, the joining instance shows Waiting for approval for both (§3.1, OFC-32). Does `join_cancelled` also cover an invitation the owner cancelled or replaced after it was used, and what should setup say then? Do an identity mismatch or an unsupported version during a pending join end it or keep it waiting?
+- ~~A101~~ · *Resolved (Rowan, 2026-11-10; X-02 Q9):* a waiting create or Add office stays `accepted`, and its lookup and the instance status feed report `waiting_for_idle { sessions: n }`, so the copy gives the number. Cancel uses the original operation ID, as for Create organization. A waiting office isn't in the Offices list yet: it's a pending row driven by the operation, like a waiting organization in the switcher. A satellite join on an instance with running agents waits the same way, and setup shows "Waiting for N running agents to stop…" with "Press Ctrl-C to cancel". There's no longest wait: the person can always cancel, and `agentic-org doctor` shows the wait (§5a, §5c, §6.2; OFC-33 to OFC-38, JOIN-15, JOIN-16).
+- ~~A102~~ · *Resolved (Rowan, 2026-11-10; X-02 Q9):* the status read adds `join_phase: awaiting_approval | initial_sync` under `join_pending`, so the joining instance shows Waiting for approval, then Starting · copying records (§3.1, §5c, OFC-32). `join_cancelled` also covers an invitation the owner cancelled or replaced after it was used (HQ refuses the join). An HQ identity mismatch ends the join as `join_rejected`, a security failure that isn't retried. An unsupported version keeps the join pending until the invitation expires (§5c; JOIN-7, JOIN-13, JOIN-14).
+- A105 · *(rev 15)* A decline at HQ and an HQ identity mismatch both end as `join_rejected` (A102). Setup and `agentic-org status` need to tell them apart to show the right copy and repair (§5c): a decline asks for a new invitation, a mismatch asks to check HQ's address first. Does the instance's status say which one it was, so setup, `status` and the §3.3 row can say so? Until it does, they show one combined row for both (§3.3, §5c).
 - A89 and A93 in `server-installation-and-access-ux.md` §4a.9 also affect §5a and §5b: whether a failed recovery package fails the create, and the HQ machine's name in copy. *(rev 15)* Its A86 is resolved: the admin grant alone opens no organization.
 
 **Resolved in revision 2:** U1 (wording kept for now), U2 (reporting lines stay as their own view), U3 (no departments, no labels), U4 (one optional lead, agent or person; owner in no team; shared projects allowed), A1 (§5.2 warning), A2 (stable code, §5.3), A3 (three wrong codes cancel, §6.3), A4 (unplaced agents, §6.4), A5 (Add office and approval on HQ's Mac, §6.1), A6 (8 Crockford base32 characters in two groups of four).

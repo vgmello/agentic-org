@@ -19,6 +19,10 @@ release`, interrupts it after the code is shown, and shows it again with
 `--redeliver`. Row 2.5 expects noninteractive setup to end with the recovery code
 waiting, and to collect it later at the machine. Rows 1.7 and 2.5 cite the new
 RCV criteria. No criteria changed here.
+Later in revision 9 (Rowan's answers A99 and A100, 2026-11-10; X-02 Q9): row 1.7
+expects one confirmation per run, the Recovery row's new copy with the count of
+second showings, and `agentic-org recovery status` listing who showed the code
+and when; it also cites RCV-24 and RCV-25.
 
 **Revision 8 (2026-11-10):** 3a.14 checks project creation in the chart only (Activity has no row for it). In §7, an Optional row that can't run in the setup is Blocked with the reason, doesn't change the run's result and files no bug. §7's timing rule says the office, not the HR lead, provisions an approved hire. No criteria changed.
 
@@ -78,7 +82,7 @@ that any of these checks ran.
 | 1.4 | Stop the instance, repeat setup, then repeat while running | Start once when stopped; while running return status/URL without restarting it | SRV-6, SRV-15 | Required |
 | 1.5 | Attempt unauthenticated and cross-origin mutation/stream access | Refuse without disclosing protected data; browser auth does not grant a local agent owner rights | SRV-7, SIGN-1, SIGN-4 | Required |
 | 1.6 | Create a second HQ organization through the same listener as an instance admin; repeat as an organization owner without that right | One gateway listener routes both HQs; owner-only creation refused; host keys never reach gateway/CLI | SRV-24, OFC-14, OFC-19, OFC-22 | Required |
-| 1.7 | Provision recovery material; at the HQ machine run `agentic-org recovery release`, interrupt it after the code is shown and before `yes`, run it again without and then with `--redeliver`, confirm, and retain the encrypted package/code off HQ; then run it again | Same CA/code on pending retry; without `--redeliver` no code, with it the same code; the browser shows Shown, not confirmed, then "collected on <date> · shown again on <date>"; no secret in status/logs; acknowledged code is not shown again, even with `--redeliver`. Wrong-code/damaged-escrow fixture fails closed and correct code recovers the same CA identity | SRV-25, RCV-1, RCV-6, RCV-8, RCV-10, RCV-18, RCV-19, RCV-23 | Required |
+| 1.7 | Provision recovery material; at the HQ machine run `agentic-org recovery release`, interrupt it after the code is shown and before `yes`, run it again without and then with `--redeliver`, confirm, and retain the encrypted package/code off HQ; then run it again, and run `agentic-org recovery status` | Same CA/code on pending retry; without `--redeliver` no code, with it the same code; each run asks once to confirm it's you; the browser shows Shown, not confirmed, then "Recovery code shown on <date> (shown again once, on <date>) · collected on <date>."; `recovery status` lists both showings with the account and time, and no code; no secret in status/logs; acknowledged code is not shown again, even with `--redeliver`. Wrong-code/damaged-escrow fixture fails closed and correct code recovers the same CA identity | SRV-25, RCV-1, RCV-6, RCV-8, RCV-10, RCV-18, RCV-19, RCV-23, RCV-24, RCV-25 | Required |
 
 ## 2. Named instances and setup failures
 

@@ -46,11 +46,27 @@ ada), §6.2 and §6.4, and its Q8 (accepted by ada):
   one, with confirmation at the Mac or `sudo` on Linux. Both end every session
   of that account. The sign-in page's help, the commands' failure table and
   §4a.5's no-organization copy follow (§4a.1 to §4a.5).
+- *(Review of 07a8a4b)* Setup's recovery block says what each ending leaves: n,
+  or no showing, leaves the code waiting; shown without `yes` leaves it Shown,
+  not confirmed, and setup still starts the service and prints the
+  `--redeliver` command (§4a.2, RCV-28). The sign-in page's mock-up shows the
+  full `sudo agentic-org account reset-password …` command. The `--redeliver`
+  cancelled-confirmation row ends with the REC-1 sentence.
+- *(Rowan's answers, 2026-11-10; X-02 Q9)* A99: the Recovery row and notice give
+  the first showing's date, how many times it was shown again and the last one's
+  date, and the new `agentic-org recovery status` lists who showed it and when
+  (§4a.6). A100: one confirmation per run, naming both showing and recording,
+  replaces the two prompts; `--redeliver` on a code never shown is its first
+  showing (§4a.6). A103: new `agentic-org account link`, `unlink` and `revoke`,
+  with their prompts and the refusals that keep an instance admin and a linked
+  account per organization; `account create` lists every organization on the
+  instance (§4a.1, §4a.2). A104: Rowan updates `standalone-server.md` §6.
 
 **Criteria rewritten (same ID):** SRV-5, SRV-26, SIGN-2, SIGN-9, SIGN-25,
-SIGN-26, SIGN-30, RCV-2, RCV-4, RCV-6, RCV-8, RCV-10, RCV-13, RCV-15, RCV-16
-*(rev 5)*. **New:** SIGN-32 to SIGN-34, RCV-18 to RCV-23. Open questions A99,
-A100, A103 and A104; A80, A85 and A86 resolved, A81, A88 and A94 updated.
+SIGN-26, SIGN-30, RCV-2, RCV-4, RCV-6, RCV-8, RCV-10, RCV-13, RCV-15, RCV-16,
+RCV-23 *(rev 5)*. **New:** SIGN-32 to SIGN-42, RCV-18 to RCV-29. Open questions
+A99, A100, A103 and A104; A80, A85 and A86 resolved, then A99, A100 and A103
+resolved by Rowan's answers; A81, A88 and A94 updated.
 
 **Revision 4 (2026-11-10): sign in, first access and recovery code.** New §4a,
 built on the owner's decisions O-1 (accounts) and O-2 (recovery-code delivery):
@@ -253,6 +269,14 @@ shows `--name <instance>` as text to replace (§4a.3).
   account an instance admin, and it links the account to the organizations it
   owns. No browser screen lists, adds or edits accounts. If a later screen lists
   accounts, it shows that command and has no form.
+- Later, on the HQ machine, an instance admin links an account to an
+  organization (`agentic-org account link`), unlinks it (`account unlink`), or
+  revokes the account (`account revoke`), which signs it out everywhere and
+  disables it (§4a.2) *(A103, Rowan, 2026-11-10; X-02 Q9)*. These, and `account
+  create`, can name any organization on this instance, not only the admin's own.
+- Two rules always hold, and a command that would break one is refused: the
+  instance keeps at least one instance admin, and every organization keeps at
+  least one linked account (X-02 §6.2).
 - Passwords are changed only on the HQ machine *(rev 5)*:
   - `agentic-org account set-password` changes your own password. It asks for
     the current one.
@@ -320,12 +344,43 @@ Open http://127.0.0.1:<port> in a browser and sign in as alex.
   account and the HQ, then offers the recovery code, and only after that
   registers and starts the service. So the recovery block comes before
   "Service running", and HQ isn't open in a browser until the code has been
-  collected or left waiting.
+  collected, left waiting, or shown but not confirmed.
 - **Collect it now? Y** runs the same steps as `recovery release` (§4a.6),
   using the account just created, so it doesn't ask to sign in again. It still
-  asks the person to confirm it's them.
-  **n**, or setup ending before the acknowledgement, leaves the code waiting.
-  This is a **deliberate departure** from `standalone-server.md` §6, which says
+  asks the person to confirm it's them, once (§4a.6).
+- **What setup leaves behind** *(rev 5, review of 07a8a4b)*. In every case below
+  setup goes on, registers and starts the service, and ends with "HQ ready": X-02
+  §6.2 doesn't make starting the service depend on the acknowledgement.
+  - **n**, or the confirmation cancelled or failed, so the code wasn't shown:
+    the code is **Waiting to be collected**, and setup prints the
+    `agentic-org recovery release --org '<organization>'` command, as in the
+    transcript above.
+  - **The code was shown, and the answer at the last prompt wasn't `yes`:** the
+    code is **Shown, not confirmed** (§4a.6, RCV-8, X-02 §6.4). Setup prints the
+    `--redeliver` command instead:
+
+    ```
+    Not recorded. The code was shown, but not confirmed as stored.
+    Once the code and the recovery package are stored away from this
+    machine, show the code again and confirm:
+      agentic-org recovery release --redeliver --org 'Lumen Labs'
+    Recovering an organization after losing the HQ machine isn't supported yet.
+    …
+    Service running.
+    HQ ready.
+    ```
+
+  - **`yes`:** the code is **Collected**, and setup prints §4a.6's "Recorded
+    on…" lines.
+  - **Setup itself ends** in the recovery block (Ctrl-C, closed terminal): the
+    service hasn't started yet. Before the code was shown, the code stays
+    **Waiting to be collected**; once it was shown, it's **Shown, not
+    confirmed**. Running setup again resumes (SRV-6) and prints the matching
+    command, `recovery release` or `recovery release --redeliver`, as a repeated
+    setup does (below).
+
+  Finishing setup without the acknowledgement is a **deliberate departure** from
+  `standalone-server.md` §6, which says
   setup "requires acknowledgement": a first-time owner shouldn't be blocked from
   reaching the browser, and the code stays waiting with a notice until collected.
   ada decides whether to accept it and update the design, or to make the
@@ -406,8 +461,8 @@ sam can sign in at http://127.0.0.1:<port>.
 
 - The admin question defaults to No: Enter means no. **y** makes the new account
   an instance admin, and the last line says "Instance admin: yes."
-- The list shows the organizations the signed-in admin owns. Whether an admin can
-  give an organization it doesn't own is A103. With no organizations to list, it
+- The list shows every organization on this instance, including ones the
+  signed-in admin doesn't own *(A103, Rowan, 2026-11-10; X-02 Q9)*. With no organizations to list, it
   doesn't ask. With none chosen, the result reads "Owns: none." and adds "sam
   doesn't own any organization yet."
 - On a Mac, the system dialog names the action and the organizations: "add the
@@ -478,18 +533,102 @@ in with the new password now.
   other way back is removing the instance and its data (§5). No copy suggests
   that; the not-root error says to use `sudo`.
 
+**Link, unlink and revoke an account** *(rev 5; A103, Rowan, 2026-11-10; X-02
+§6.2 and Q9)*. They match X-02's `account.link`, `account.unlink` and
+`account.revoke`. Each one asks an instance admin to sign in, then asks y/N in
+words that name the account and the organization, then (on a Mac) asks the admin
+to confirm it's them in a system dialog that names the same. Enter means no.
+
+```
+$ agentic-org account link sam --org 'Side Project'
+Link an account on instance default
+
+Sign in as an instance admin of this instance.
+Username: alex
+Password (not shown as you type):
+
+sam will own Side Project: sam can sign in and open it, as its owner.
+Link sam to Side Project? [y/N]: y
+Confirm it's you in the system dialog (Touch ID or this Mac's login password).
+sam is linked to Side Project. sam owns: Lumen Labs, Side Project.
+```
+
+```
+$ agentic-org account unlink sam --org 'Side Project'
+Unlink an account on instance default
+
+Sign in as an instance admin of this instance.
+Username: alex
+Password (not shown as you type):
+
+sam will no longer own Side Project or open it. This signs sam out
+everywhere; sam can sign in again to open the organizations it still owns.
+Side Project stays linked to: alex.
+Unlink sam from Side Project? [y/N]: y
+Confirm it's you in the system dialog (Touch ID or this Mac's login password).
+sam is unlinked from Side Project. sam owns: Lumen Labs.
+```
+
+```
+$ agentic-org account revoke sam
+Revoke an account on instance default
+
+Sign in as an instance admin of this instance.
+Username: alex
+Password (not shown as you type):
+
+This signs sam out everywhere and disables the account: sam can't sign in.
+sam owns Lumen Labs and Side Project. Each stays linked to its other
+accounts: Lumen Labs to alex, Side Project to alex.
+Revoke sam? [y/N]: y
+Confirm it's you in the system dialog (Touch ID or this Mac's login password).
+sam is revoked. Every session of sam has ended, and sam can't sign in.
+```
+
+- `link` and `unlink` can name any organization on this instance, including one
+  the signed-in admin doesn't own (X-02 Q9). `--org` takes the organization's
+  name, quoted for the shell as in §4a.6.
+- `revoke`'s question names the account and every organization it owns; an
+  account that owns none reads "sam doesn't own any organization." The dialog
+  reads "revoke the account sam".
+- On a Mac the dialogs read "link the account sam to Side Project" and "unlink
+  the account sam from Side Project". On Linux there's no dialog: the password
+  typed at sign-in confirms it's you, so the "Confirm it's you" line doesn't
+  appear. Over SSH on a Mac they stop before any prompt (the table below).
+- Unlinking and revoking end every session of that account (X-02 §4.1), so an
+  open page of that account shows "Sign in again" (§4a.4). Revoking the account
+  you signed in with ends your own sessions too.
+- Signing in with a revoked account shows the sign-in page's usual "That
+  username and password don't match. Try again." (§4a.3), so the page never
+  says an account exists or was revoked.
+- **The two rules** (§4a.1). A command that would leave the instance with no
+  instance admin, or an organization with no linked account, is refused before
+  the y/N question, and nothing changes (the table below).
+
 **When account commands fail** (nothing is changed in any case) *(rev 5)*:
 
 | Case | CLI output | Exit |
 | --- | --- | --- |
-| `create`, `set-password`: wrong username or password at sign-in | "That username and password don't match. Try again." Asks again. Too many tries: "Too many sign-in attempts. Try again in a few minutes." | — / Error |
+| `create`, `set-password`, `link`, `unlink`, `revoke`: wrong username or password at sign-in | "That username and password don't match. Try again." Asks again. Too many tries: "Too many sign-in attempts. Try again in a few minutes." | — / Error |
 | `create`: the account that signed in isn't an instance admin | "sam isn't an instance admin, so it can't add accounts. Sign in as an instance admin of instance default." | Error |
+| `link`, `unlink`, `revoke`: the account that signed in isn't an instance admin *(A103)* | "sam isn't an instance admin, so it can't change accounts. Sign in as an instance admin of instance default." | Error |
+| `link`, `unlink`, `revoke`: anything but y at the question *(A103)* | "Nothing changed." | Error |
+| `link`, `unlink`, `revoke`: unknown username *(A103)* | "There's no account called sam on instance default." | Error |
+| `link`, `unlink`: unknown organization *(A103)* | "There's no organization called "Side Project" on instance default." | Error |
+| `link`, `unlink`: no `--org` *(A103)* | "Name the organization: agentic-org account link <username> --org <organization>" (`unlink` in the unlink command) | Error |
+| `link`: already linked *(A103)* | "sam is already linked to Side Project. Nothing changed." Asks nothing else. | Success |
+| `unlink`: not linked *(A103)* | "sam isn't linked to Side Project. Nothing changed." | Error |
+| `unlink`: the organization's only linked account *(A103)* | "sam is the only account linked to Side Project, so it can't be unlinked: every organization keeps at least one. Link another account first: agentic-org account link <username> --org 'Side Project'" | Error |
+| `revoke`: the only linked account of an organization *(A103)* | "sam is the only account linked to Side Project, so it can't be revoked: every organization keeps at least one. Link another account to Side Project first: agentic-org account link <username> --org 'Side Project'" (it names every such organization) | Error |
+| `revoke`: the instance's only instance admin *(A103)* | "sam is the only instance admin of instance default, so it can't be revoked: the instance keeps at least one. Add another instance admin first with agentic-org account create." | Error |
+| `revoke`: already revoked *(A103)* | "sam is already revoked. Nothing changed." | Error |
 | `create`: username already used | "There's already an account called sam. Choose another username." Asks again. Usernames that differ only in capital letters count as the same (X-02 §6.2). | — |
 | `create`: empty username | "Enter a username." Asks again. | — |
 | `create`: anything but y, n or Enter at the admin question | "Type y or n." Asks again. | — |
 | `create`: an organization number that isn't in the list | "Type numbers from the list, separated by commas, or press Enter for none." Asks again. | — |
-| `create`, `reset-password` on a Mac: the confirmation is cancelled or fails (the system dialog) | "Not confirmed, so nothing was changed. Run this command again when you're at the machine." | Error |
+| `create`, `reset-password`, `link`, `unlink`, `revoke` on a Mac: the confirmation is cancelled or fails (the system dialog) | "Not confirmed, so nothing was changed. Run this command again when you're at the machine." | Error |
 | `create` over SSH on a Mac, or no session at the Mac's screen | "Adding an account needs you at this Mac, to confirm it's you with Touch ID or the login password, and that can't be done over SSH. Run this command at the Mac itself or through Screen Sharing." Shown before any prompt. | Error |
+| `link`, `unlink`, `revoke` over SSH on a Mac, or no session at the Mac's screen *(A103)* | "Changing an account needs you at this Mac, to confirm it's you with Touch ID or the login password, and that can't be done over SSH. Run this command at the Mac itself or through Screen Sharing." Shown before any prompt. | Error |
 | `reset-password` over SSH on a Mac, or no session at the Mac's screen | "Resetting a password needs you at this Mac, to confirm it's you with Touch ID or the login password, and that can't be done over SSH. Run this command at the Mac itself or through Screen Sharing." Shown before any prompt. | Error |
 | `reset-password` on Linux without root | "Resetting a password on Linux needs root. Run it with sudo: sudo agentic-org account reset-password alex" (with `--name lab` for a named instance). | Error |
 | `reset-password` as root, not through `sudo`, without `--user` | "Name the Linux user who runs the instance: agentic-org account reset-password --user <user> alex" | Error |
@@ -528,7 +667,9 @@ they sign in. It shows no organization data.
  │  Forgot your password? At the HQ machine, run:      │
  │    agentic-org account reset-password               │
  │      --name <instance> <username>                   │
- │  On Linux, run it with sudo in front.               │
+ │  On Linux, run:                                     │
+ │    sudo agentic-org account reset-password          │
+ │      --name <instance> <username>                   │
  │  Need an account? An instance admin adds it at the  │
  │  HQ machine: agentic-org account create             │
  │    --name <instance>                                │
@@ -667,7 +808,8 @@ page:
    - Not an admin: "This account doesn't own any organizations on this HQ.
      Ask an instance admin of this HQ to link it to one." **Sign out**.
      *(rev 5)* The admin grant alone opens no organization (X-02 §6.1; A86
-     resolved). The command an admin uses to link an existing account is A103.
+     resolved). An admin links an existing account with `agentic-org account link
+     <username> --org <organization>` (§4a.2; A103 resolved).
 
 ### 4a.6 Recovery code
 
@@ -684,12 +826,16 @@ state.
 on the HQ machine, in a session at that machine:
 - `agentic-org recovery release` first asks the admin to sign in with their
   username and password. Setup's own offer (§4a.2) uses the account it just made.
-- Then it asks them to confirm it's them, each time it shows the code and again
-  when it records that the code is stored. On a Mac this is Touch ID or the Mac's
-  login password, in a system dialog that names the action and the organization:
-  "show the recovery code for Lumen Labs", "show the recovery code for Lumen Labs
-  again", "record that the recovery code for Lumen Labs is stored". On Linux, the
-  password typed at the terminal counts.
+- Then it asks them to confirm it's them, **once per run**, before it shows the
+  code *(rev 5; A100, Rowan, 2026-11-10; X-02 Q9)*. That one confirmation covers
+  both showing the code and recording that it's stored, and the prompt names
+  both: on a Mac, Touch ID or the Mac's login password, in a system dialog that
+  reads "show the recovery code for Lumen Labs and record it as stored" (with
+  `--redeliver`: "show the recovery code for Lumen Labs again and record it as
+  stored"). On Linux, the password typed at the terminal counts.
+- The acknowledgement is still recorded only after the person types `yes` in
+  that same run (below). Each new run, including a `--redeliver` run, asks for a
+  new confirmation: a confirmation never carries over to another run.
 - Over SSH on a Mac, or with no session at the Mac's screen, it can't confirm
   that, so it shows no code (the table below). It says so before asking anyone to sign in. Over SSH on Linux, with a terminal, it works.
 - An owner who isn't an instance admin sees the same states in the browser, and
@@ -703,10 +849,18 @@ never the code, and the browser says so (below). Once the owner confirms it's
 stored, the host erases its copy and the code can't be shown again, with or
 without `--redeliver`.
 
+**What HQ records** *(rev 5; A99, Rowan, 2026-11-10; X-02 Q9)*. The recovery
+state carries when the code was first shown, when it was last shown again and
+how many times, and when it was confirmed as stored. Every showing is recorded
+in the instance's journal and audit log with the account and the time, never
+the code. The browser shows only the dates and the count (below). Who showed it
+is visible only with `agentic-org recovery status` on the HQ machine (below).
+
 **Every message that reports the code's state** (collected, waiting, shown but
 not confirmed, being prepared, couldn't be prepared, not recorded), wherever it appears (the
 notice, the Recovery row, Needs you items, setup's recovery block, a repeated
-setup's reminder, `agentic-org status` and `agentic-org recovery release`), ends with this
+setup's reminder, `agentic-org status`, `agentic-org recovery release` and
+`agentic-org recovery status`), ends with this
 sentence: "Recovering an organization after losing the HQ machine isn't supported
 yet." (REC-1, §7.) The tables below leave it out for space. Input errors (no
 `--org`, an unknown organization, a group that doesn't match, no interactive
@@ -720,17 +874,19 @@ don't report the state and don't need it.
 | --- | --- | --- | --- |
 | Being prepared (the package is still being created) | "Recovery code: being prepared. This takes a moment." | None | None |
 | Waiting to be collected | "Recovery code: waiting to be collected on the HQ machine. Run `agentic-org recovery release --org '<organization>'` on <HQ machine>." **Copy command** (the name is shell-quoted: single quotes, with an embedded `'` written `'\''`, so names with `"`, `$` or backticks paste safely) | The notice below | "Collect the recovery code for <organization> on <HQ machine>." Opens the Recovery row. |
-| Shown, not confirmed *(rev 5)* (shown on the HQ machine, not yet confirmed as stored) | "Recovery code: shown on <HQ machine> on <date>, but not confirmed as stored. To show it again and confirm, run `agentic-org recovery release --redeliver --org '<organization>'` on <HQ machine>." **Copy command** (quoted as above) | The notice below, in its "shown, not confirmed" form | "Confirm the recovery code for <organization> is stored, on <HQ machine>." Opens the Recovery row. |
-| Collected | "Recovery code collected on <date>." After a second showing *(rev 5)*: "Recovery code collected on <date> · shown again on <date>." | None | None (the item clears) |
+| Shown, not confirmed *(rev 5)* (shown on the HQ machine, not yet confirmed as stored) | "Recovery code: shown on <HQ machine> on <date>, but not confirmed as stored. To show it again and confirm, run `agentic-org recovery release --redeliver --org '<organization>'` on <HQ machine>." After a second showing *(A99)*: "Recovery code: shown on <HQ machine> on <date> (shown again 2 times, last on <date>), but not confirmed as stored. To show it again…" **Copy command** (quoted as above) | The notice below, in its "shown, not confirmed" form | "Confirm the recovery code for <organization> is stored, on <HQ machine>." Opens the Recovery row. |
+| Collected | "Recovery code collected on <date>." After a second showing *(rev 5, A99)*: "Recovery code shown on <date> (shown again 2 times, last on <date>) · collected on <date>." | None | None (the item clears) |
 | Couldn't be prepared | "Recovery code: couldn't be prepared. <reason>. On <HQ machine>, run `agentic-org doctor`." **Copy command** | "Recovery material for <organization> couldn't be prepared. See Settings › Organization." | "Recovery material for <organization> couldn't be prepared." |
 | Status unknown (HQ didn't say) | "Recovery code: status unknown." Never shown as collected. | None | None |
 
 - The command includes `--name <instance>` when the instance isn't `default`.
-- `<date>` is the acknowledgement date in the browser's date format, for example
-  "10 Nov 2026". In Shown, not confirmed, it's the date it was shown; after
-  "shown again", the date of the latest second showing *(rev 5)*. When HQ doesn't
-  give a date (A99), the row leaves out "on <date>", never guesses it.
-  `<HQ machine>` is the name HQ reports for its machine (A93).
+- Dates are in the browser's date format, for example "10 Nov 2026" *(rev 5,
+  A99)*: "shown on <date>" is when the code was first shown, "last on <date>"
+  when it was last shown again, and "collected on <date>" when it was confirmed
+  as stored. "shown again 2 times" is the number of second showings; one reads
+  "shown again once, on <date>". When HQ doesn't give a date, the row leaves out
+  that "on <date>", never guesses it.
+- `<HQ machine>` is the name HQ reports for its machine (A93).
 - When the signed-in owner isn't an instance admin, the Waiting and Shown, not
   confirmed rows add: "An instance admin of this HQ runs it." *(rev 5)*
 - **Copy command** copies only the command. No state copies or shows the code.
@@ -764,6 +920,10 @@ In the Shown, not confirmed state *(rev 5)*:
  ┃                                                            [Copy command]
 ```
 
+After a second showing, its second line reads "It was shown on hq-mac on 10 Nov
+2026 and shown again 2 times, last on 11 Nov 2026, but nobody confirmed it's
+stored." *(A99)*
+
 **Collecting it on the HQ machine:**
 
 ```
@@ -784,6 +944,8 @@ keeping the code now is what will make it possible.
 
 Recovery package: <where it is, or how to copy it off this machine, A90>
 
+Showing the code is recorded, with your username and the time. The code
+itself is never recorded.
 Press Enter to show the code.
 Confirm it's you in the system dialog (Touch ID or this Mac's login password).
 
@@ -792,7 +954,6 @@ Recovery code: <the code, in groups separated by dashes, A90>
 To confirm you stored it, type the last group of the code: 9FXM
 Are the code and the encrypted recovery package stored away from this machine?
 Type yes to confirm: yes
-Confirm it's you in the system dialog (Touch ID or this Mac's login password).
 
 Recorded on 10 Nov 2026 at 14:02. This code won't be shown again.
 Recovering an organization after losing the HQ machine isn't supported yet.
@@ -800,8 +961,12 @@ Recovering an organization after losing the HQ machine isn't supported yet.
 
 - The code is shown, and counts as shown, only after Enter and the confirmation.
   Stopping before that shows nothing and leaves the code waiting.
+- *(A100)* The one confirmation, after Enter, covers showing the code and
+  recording that it's stored: `yes` records it with no second dialog. The
+  system dialog reads "show the recovery code for Lumen Labs and record it as
+  stored".
 - On Linux there's no system dialog: the password typed at sign-in confirms it's
-  you, so the two "Confirm it's you" lines don't appear.
+  you, so the "Confirm it's you" line doesn't appear.
 
 **Showing it again** *(rev 5)*, when it was shown but not confirmed as stored:
 
@@ -824,15 +989,19 @@ Recovery code: <the same code, in groups separated by dashes>
 To confirm you stored it, type the last group of the code: 9FXM
 Are the code and the encrypted recovery package stored away from this machine?
 Type yes to confirm: yes
-Confirm it's you in the system dialog (Touch ID or this Mac's login password).
 
 Recorded on 10 Nov 2026 at 15:10. This code won't be shown again.
 Recovering an organization after losing the HQ machine isn't supported yet.
 ```
 
 - It's the **same code**: showing it again never makes a new one.
-- `--redeliver` while the code is still waiting (never shown) shows it as a
-  first showing, and nothing is recorded as shown again (A100).
+- This run asks for its own confirmation, even if an earlier run was confirmed
+  *(A100)*. The system dialog reads "show the recovery code for Lumen Labs again
+  and record it as stored".
+- `--redeliver` while the code is still waiting (never shown) is accepted as the
+  first showing *(A100, Rowan, 2026-11-10; X-02 Q9)*: the run looks and reads
+  like the first-showing transcript above, it's recorded as a first showing, not
+  as shown again, and the browser's count of second showings doesn't change.
 - Its failures are the same as the first showing's (below), except the rows
   marked `--redeliver`: a showing again that fails or is interrupted leaves the
   code **Shown, not confirmed**, never waiting, and its copy says so.
@@ -848,8 +1017,8 @@ Recovering an organization after losing the HQ machine isn't supported yet.
 | Already collected, with or without `--redeliver` *(rev 5)* | "The recovery code for Lumen Labs was collected on 10 Nov 2026. It can't be shown again. Recovering an organization after losing the HQ machine isn't supported yet." No code. | Error |
 | Wrong username or password at sign-in *(rev 5)* | "That username and password don't match. Try again." Asks again. Too many tries: "Too many sign-in attempts. Try again in a few minutes." No code. | — / Error |
 | The account isn't an instance admin *(rev 5)* | "sam isn't an instance admin, so it can't show recovery codes. Sign in as an instance admin of instance default." No code. | Error |
-| The confirmation is cancelled or fails (the system dialog) *(rev 5)* | "Not confirmed, so the code wasn't shown. Run this command again when you're at the machine." No code; nothing changes. If it was the confirmation for recording, "Not recorded…" as for Interrupted after the code is shown. | Error |
-| `--redeliver`: the confirmation is cancelled or fails (the system dialog) *(rev 5)* | "Not confirmed, so the code wasn't shown again. Nobody has confirmed it's stored yet. When you're at the machine, run: agentic-org recovery release --redeliver --org 'Lumen Labs'." No code; nothing changes: the code stays **Shown, not confirmed**. If it was the confirmation for recording, "Not recorded…" as for Interrupted after the code is shown. | Error |
+| The confirmation is cancelled or fails (the system dialog) *(rev 5)* | "Not confirmed, so the code wasn't shown. Run this command again when you're at the machine." No code; nothing changes. It's the run's only confirmation, so there's none to cancel after the code is shown *(A100)*. | Error |
+| `--redeliver`: the confirmation is cancelled or fails (the system dialog) *(rev 5)* | "Not confirmed, so the code wasn't shown again. Nobody has confirmed it's stored yet. When you're at the machine, run: agentic-org recovery release --redeliver --org 'Lumen Labs'. Recovering an organization after losing the HQ machine isn't supported yet." No code; nothing changes: the code stays **Shown, not confirmed**. | Error |
 | Over SSH on a Mac, or no session at the Mac's screen *(rev 5)* | "Showing the recovery code needs you at this Mac, to confirm it's you with Touch ID or the login password, and that can't be done over SSH. Run this command at the Mac itself or through Screen Sharing." No code. | Error |
 | Still being prepared | "Recovery material for Lumen Labs is still being prepared. Try again in a minute. Recovering an organization after losing the HQ machine isn't supported yet." | Error |
 | Couldn't be prepared | "Recovery material for Lumen Labs couldn't be prepared: <reason>. Run agentic-org doctor. Recovering an organization after losing the HQ machine isn't supported yet." | Error |
@@ -864,6 +1033,45 @@ Recovering an organization after losing the HQ machine isn't supported yet.
 - An organization created in the browser starts as **Being prepared**, then
   **Waiting to be collected**. An instance admin collects it with the same
   command, naming that organization.
+
+**Who showed it, and when** *(rev 5; A99, Rowan, 2026-11-10; X-02 Q9)*.
+`agentic-org recovery status` on the HQ machine is the only place that shows
+who showed the code. It never shows the code, and it changes nothing:
+
+```
+$ agentic-org recovery status --org 'Lumen Labs'
+Recovery code for Lumen Labs (instance default)
+
+Sign in as an instance admin of this instance.
+Username: alex
+Password (not shown as you type):
+
+State: shown, not confirmed as stored.
+Showings (the code itself is never recorded):
+  10 Nov 2026 14:02  shown         by alex
+  10 Nov 2026 16:40  shown again   by alex
+  11 Nov 2026 09:30  shown again   by sam
+To show it again and confirm, run:
+  agentic-org recovery release --redeliver --org 'Lumen Labs'
+Recovering an organization after losing the HQ machine isn't supported yet.
+```
+
+- **State** uses the Settings row's words: "waiting to be collected", "shown,
+  not confirmed as stored", "collected on 11 Nov 2026 at 09:31", "being
+  prepared", "couldn't be prepared: <reason>".
+- **Showings** lists every showing, oldest first, with its date, time and
+  account. A code that was never shown reads "Showings: none yet.", and the
+  last lines give the `agentic-org recovery release --org '<organization>'`
+  command instead. Once it's collected, the list stays, and the command lines
+  are replaced by "It can't be shown again."
+- It needs an instance admin's sign-in, like `recovery release` (X-02 §6.2's
+  `recovery.*` are admin only), but no confirmation that it's you, so it works
+  over SSH too. Its sign-in, not-an-admin, instance-not-running,
+  unknown-organization and no-terminal-for-the-password failures use the
+  `recovery release` and account tables' copy.
+- Without `--org`, on an instance with several organizations, it lists each
+  one's State line, then "Run again with --org to see who showed it and when."
+  With one organization, it shows that one.
 
 ### 4a.7 Accessibility
 
@@ -926,7 +1134,7 @@ the recovery code in the browser, and recovering after losing HQ (REC-1).
   `account create` can give the admin grant (`admin`), and links the new account
   to the organizations it owns (`owner_of`). A second account can be linked to
   an existing organization: at creation, or later with X-02's admin-only
-  `account.link` (A103). Several accounts can link to one organization. The
+  `account.link`, the command `agentic-org account link` (A103, resolved). Several accounts can link to one organization. The
   admin grant alone opens no organization: the reads and grants cover linked
   organizations only (§4a.5).
 - A87 · The owner bar (offices §7.1) shows the owner's name. Does setup ask for a
@@ -935,8 +1143,8 @@ the recovery code in the browser, and recovering after losing HQ (REC-1).
   collected with its date, couldn't be prepared with a reason), and is it
   limited to the owner? *(rev 5)* Partly answered: X-02 §6.1's
   `organization.list` gives linked organizations `recovery: pending | delivered |
-  acknowledged`. Being prepared, couldn't be prepared and the dates are still
-  open (A99).
+  acknowledged`. Being prepared and couldn't be prepared are still open. The
+  dates and the count of second showings are answered (A99, resolved).
 - A89 · If the recovery package can't be created, does the create fail
   (offices §5a), or is the organization created with recovery "couldn't be
   prepared"? What repairs it: a host restart, `doctor`, or a command?
@@ -950,26 +1158,34 @@ the recovery code in the browser, and recovering after losing HQ (REC-1).
   design, or make the acknowledgement part of setup? *(rev 5)* X-02 Q8 accepts
   the waiting end for noninteractive setup and setup over SSH on a Mac. Answering
   n in an interactive setup is still this question.
-- A99 · *(rev 5)* Which dates does the recovery state carry: when the code was
-  first shown, when it was last shown again with `--redeliver`, and when it was
-  confirmed? "Shown, not confirmed" and "collected on <date> · shown again on
-  <date>" need them; without them the browser leaves the dates out. Is the record
-  of a second showing (who, when) visible anywhere besides that row?
-- A100 · *(rev 5)* Can one confirmation (Touch ID or the login password) cover
-  both showing the code and recording that it's stored in the same run, or does
-  the person confirm twice, as §4a.6 shows? And does the host accept
-  `redeliver` while the code is still waiting (never shown), treating it as a
-  first showing, as §4a.6 assumes?
-- A103 · *(rev 5)* X-02 §6.2 has admin-only `account.link`, `account.unlink` and
-  `account.revoke`, and this spec has no commands for them yet. What are their
-  spellings, and what do they ask? And can `account create` (and `account.link`)
-  give an organization the signed-in admin doesn't own? §4a.2 lists only the
-  organizations the admin owns.
+- ~~A99~~ · *Resolved (Rowan, 2026-11-10; X-02 Q9):* the recovery state carries
+  when the code was first shown (`released_at`), when it was last shown again
+  (`redelivered_at`) with how many times (`redelivery_count`), and when it was
+  confirmed (`acknowledged_at`). Every showing is journaled and audited with the
+  account and the time. Who showed it is visible only through `agentic-org
+  recovery status`; the browser shows the dates and the count (§4a.6; RCV-23,
+  RCV-24, RCV-29).
+- ~~A100~~ · *Resolved (Rowan, 2026-11-10; X-02 Q9):* one confirmation per run,
+  whose prompt names both actions, covers showing the code and recording it as
+  stored; the acknowledgement is still recorded only after `yes` in that run, and
+  a second run asks again. `--redeliver` on a code that was never shown is
+  accepted and recorded as the first showing (§4a.6; RCV-25 to RCV-27).
+- ~~A103~~ · *Resolved (Rowan, 2026-11-10; X-02 Q9):* `agentic-org account link
+  <username> --org <organization>`, `account unlink <username> --org
+  <organization>` and `account revoke <username>`. Each asks for an instance
+  admin's sign-in, a y/N naming the account and the organization, and the
+  confirmation that it's you (Touch ID or the login password on a Mac, the
+  password at a terminal on Linux). `account create` and `account link` can name
+  any organization on the instance. A command that would leave no instance admin,
+  or an organization with no linked account, is refused (§4a.1, §4a.2; SIGN-35
+  to SIGN-42).
 - A104 · *(rev 5)* X-02 Q8 (accepted) ends noninteractive setup, and setup over
   SSH on a Mac, with the recovery code waiting: automation never receives the
   code. `standalone-server.md` §6 ("CA escrow and the explicit recovery gate")
   still says "Automation uses separate protected outputs". Can you update that
-  design to match the decision (§2, §4a.2)?
+  design to match the decision (§2, §4a.2)? *(Rowan, 2026-11-10)* Rowan updates
+  standalone-server.md §6 (agreed), on his next docs branch. Open until it's
+  merged.
 
 ## 5. Lifecycle, updates and removal
 
@@ -1069,6 +1285,14 @@ rules, which are distinct from uninstalling software on a machine.
 - SIGN-32 · *(new, rev 5)* `agentic-org account reset-password <username>` at a Mac HQ machine asks for no sign-in, asks for the new password twice and for confirmation in the system dialog, then: the old password is refused, the new one signs in, every session of that account has ended (an open page shows "Sign in again"), a rate-limited sign-in for that account is allowed again, and the reset is recorded with its time and without the password.
 - SIGN-33 · *(new, rev 5)* On Linux, `agentic-org account reset-password <username>` without root is refused with the `sudo` command and changes nothing. With `sudo`, it resets the password on the instance of the Linux user who ran `sudo` (`--name` picks among that user's instances), and its first line names that user; run as root without `sudo`, it needs `--user <user>`.
 - SIGN-34 · *(new, rev 5)* `agentic-org account create` and `agentic-org account reset-password` over SSH on a Mac print the "needs you at this Mac" message before any prompt, and change nothing. Over SSH on Linux, with a terminal, both work.
+- SIGN-35 · *(new, rev 5, A103)* `agentic-org account link <username> --org <organization>` asks an instance admin to sign in, asks a y/N that names the account and the organization, then (on a Mac) asks for confirmation in the system dialog; after y, that account signs in and opens the organization as its owner.
+- SIGN-36 · *(new, rev 5, A103)* After y, `agentic-org account unlink <username> --org <organization>` leaves that account unable to open the organization, and every session of that account has ended: an open page of it shows "Sign in again".
+- SIGN-37 · *(new, rev 5, A103)* After y, `agentic-org account revoke <username>` ends every session of that account, and signing in with it is refused with SIGN-4's message.
+- SIGN-38 · *(new, rev 5, A103)* `agentic-org account create` lists every organization on the instance, and `account link` accepts any of them, including organizations the signed-in admin doesn't own.
+- SIGN-39 · *(new, rev 5, A103)* Unlinking or revoking an organization's only linked account is refused with "<username> is the only account linked to <organization>…", before the y/N question, and nothing changes.
+- SIGN-40 · *(new, rev 5, A103)* Revoking the instance's only instance admin is refused with "<username> is the only instance admin of instance <name>…", before the y/N question, and nothing changes.
+- SIGN-41 · *(new, rev 5, A103)* `agentic-org account link`, `unlink` and `revoke` over SSH on a Mac print the "needs you at this Mac" message before any prompt, and change nothing.
+- SIGN-42 · *(new, rev 5, A103)* Answering anything but y to `link`, `unlink` or `revoke` prints "Nothing changed." and changes nothing.
 
 **Recovery code (RCV)** *(new, rev 4, §4a.6)*
 - RCV-1 · The recovery code never passes through the gateway or reaches the browser: a fixture code appears in no gateway request or response, HTTP response, event, page, notice or copied text.
@@ -1086,14 +1310,20 @@ rules, which are distinct from uninstalling software on a machine.
 - RCV-13 · *(rev 5)* Interactive setup at the HQ machine (or over SSH on Linux) offers to collect the code once the HQ is created and before it starts the service; answering n leaves it waiting and prints `agentic-org recovery release --org '<organization>'`.
 - RCV-14 · An organization created in the browser starts as being prepared, then waiting, and is collected with `--org` naming it.
 - RCV-15 · *(rev 5)* `agentic-org recovery release` run without an interactive terminal prints no code.
-- RCV-16 · *(rev 5)* Every message that reports the code's state (in the notice, the Recovery row, Needs you, setup, a repeated setup, `agentic-org status` and `agentic-org recovery release`) says that recovering after losing the HQ machine isn't supported yet.
+- RCV-16 · *(rev 5)* Every message that reports the code's state (in the notice, the Recovery row, Needs you, setup, a repeated setup, `agentic-org status`, `agentic-org recovery release` and `agentic-org recovery status`) says that recovering after losing the HQ machine isn't supported yet.
 - RCV-17 · CLI output for setup, account and recovery commands carries no meaning by colour alone, and writes no colour codes with `NO_COLOR` set or when output isn't a terminal.
 - RCV-18 · *(new, rev 5)* After the code is shown and before it's confirmed, the owner sees the Shown, not confirmed row, notice and Needs you item, each with `agentic-org recovery release --redeliver --org '<organization>'`.
 - RCV-19 · *(new, rev 5)* `agentic-org recovery release --redeliver` before the acknowledgement shows the same code as the first showing, then asks for the same confirmation (last group, then `yes`).
 - RCV-20 · *(new, rev 5)* Noninteractive setup, and setup over SSH on a Mac, finish with the HQ created, exit successfully, report the recovery code as waiting with no code in any output, and print `agentic-org recovery release --org '<organization>'` to run at the machine.
 - RCV-21 · *(new, rev 5)* `agentic-org recovery release` over SSH on a Mac prints the "needs you at this Mac" message, shows no code and leaves the state unchanged.
 - RCV-22 · *(new, rev 5)* `agentic-org recovery release` signed in with an account that isn't an instance admin is refused with "<username> isn't an instance admin…", shows no code and leaves the state unchanged.
-- RCV-23 · *(new, rev 5)* After an acknowledgement that followed a second showing, the Recovery row reads "Recovery code collected on <date> · shown again on <date>.", without a reload while live updates run.
+- RCV-23 · *(new, rev 5; rewritten for A99)* After an acknowledgement that followed second showings, the Recovery row reads "Recovery code shown on <date> (shown again <n> times, last on <date>) · collected on <date>.", with the first-showing, last-second-showing and acknowledgement dates, without a reload while live updates run.
+- RCV-24 · *(new, rev 5, A99)* `agentic-org recovery status --org '<organization>'`, after an instance admin signs in, shows the state and lists every showing with its date, time, account and whether it was the first showing or shown again; it shows no code and changes nothing.
+- RCV-25 · *(new, rev 5, A100)* One run of `agentic-org recovery release` asks for one confirmation, before the code is shown, and the system dialog names both showing the code and recording it as stored; after `yes`, the acknowledgement is recorded with no second dialog.
+- RCV-26 · *(new, rev 5, A100)* A new run of `agentic-org recovery release --redeliver` asks for the confirmation again, even when an earlier run was confirmed.
+- RCV-27 · *(new, rev 5, A100)* `agentic-org recovery release --redeliver` on a code that was never shown shows the code and records it as the first showing: `recovery status` lists it as shown, not shown again, and the browser's count of second showings stays at none.
+- RCV-28 · *(new, rev 5)* In interactive setup, when the code was shown and the answer at the last prompt isn't `yes`, the code is Shown, not confirmed, setup prints `agentic-org recovery release --redeliver --org '<organization>'`, and the service still starts.
+- RCV-29 · *(new, rev 5, A99)* While the code is Shown, not confirmed after second showings, the Recovery row and the notice give the first-showing date, the number of second showings and the last one's date.
 
 
 ## 7. Decisions still requiring implementation evidence
