@@ -1266,6 +1266,7 @@ write_call!(
     /// with its `clear_` flag, or nothing to change, is `invalid_request`. `feature_id` and
     /// `clear_feature` are phase 3: a server before it refuses them with `invalid_request`.
     /// Errors: `not_found`, `invalid_request` (also limits), `conflict`.
+    /// Updating an existing deleted item is `invalid_request`, not `not_found`.
     TaskUpdate, "task.update", TaskUpdateParams {
         item_id: String,
         expected_version: u64,
@@ -1575,6 +1576,7 @@ write_call!(
     /// `checklist.add`: 1 to [`WORK_MAX_STEPS`] steps after `after_step_id` (absent: at the
     /// end); an item has at most [`WORK_MAX_STEPS`]. Tasks and bugs only. Errors: `not_found`,
     /// `invalid_request` (a request; too many steps; limits), `already_exists`.
+    /// An unknown or removed `after_step_id` is `invalid_request`.
     ChecklistAdd, "checklist.add", ChecklistAddParams {
         item_id: String,
         steps: Vec<NewStep>,

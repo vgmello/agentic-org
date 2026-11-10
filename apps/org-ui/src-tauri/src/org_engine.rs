@@ -2116,8 +2116,19 @@ mod tests {
     /// must give the same answer to each.
     #[test]
     fn the_shared_cases_agree_with_the_contract() {
-        let vectors: serde_json::Value =
-            serde_json::from_str(include_str!("../../test-vectors/org-commands.json")).unwrap();
+        let shared_seed: OrgSnapshot = serde_json::from_str(include_str!(
+            "../../../../crates/org-office/test-vectors/organization.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            hq().snapshot,
+            shared_seed,
+            "canonical and mock readers must start from the same organization"
+        );
+        let vectors: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../crates/org-office/test-vectors/org-commands.json"
+        ))
+        .unwrap();
         let build = |step: &serde_json::Value, n: usize| -> OrgCommand {
             let mut params = step["params"].clone();
             params["command_id"] = json!(format!("01ARZ3NDEKTSV4RRFFQ69G5F{n:02}"));
