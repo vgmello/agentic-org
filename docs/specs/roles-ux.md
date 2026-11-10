@@ -2,10 +2,10 @@
 kind: spec
 title: "Roles: what each agent is for, inherited and overridden per agent (UX)"
 status: for-review
-revision: 2
+revision: 3
 owner: ac-product-designer-eden
 created: "2026-11-09"
-updated: "2026-11-09"
+updated: "2026-11-10"
 requested_by: owner
 reviewers: [ac-staff-engineer-ada, owner]
 builds_on: [processes-ux, our-org-in-the-app, agent-run-modes-ux]
@@ -16,6 +16,8 @@ builds_on: [processes-ux, our-org-in-the-app, agent-run-modes-ux]
 Builds on `processes-ux.md` (levels, overrides, sealing, approvals, the "why" panel, autonomy §4a), `our-org-in-the-app.md` (the agent record §5, Hire §7, the HR lead §2a) and `agent-run-modes-ux.md` (start and wake).
 
 ## Changelog
+
+**Revision 3 (2026-11-10): the HR lead when it can't run (O-7).** Asking the HR lead for a role is disabled with the reason while it can't run, and a hire filled in without it picks an existing role (`our-org-in-the-app.md` §2a, §7). The "no roles yet" copy no longer says HR always writes them. **Criteria rewritten (same ID):** ROLE-10 *(rev 3)*.
 
 **Revision 1 (2026-11-09):** first version, from the user's request. Designed by Eden with a peer consult (the decide-and-escalate procedure).
 
@@ -65,7 +67,7 @@ ROLE-11 makes this distinction explicit; the existing role approval flow is unch
 - **A role row** opens the role: its sections, its version history, the agents holding it (each with "Override" when it has one), and **Propose a change…**, which asks the HR lead to draft the change (like `@hr`; the owner approves it, decision 4).
 - **Profile › Role** shows the **effective role**, every line badged with where it came from: **Role v3** · **Override** · **Flagged** · **Superseded by <process>**, words plus icons, never color alone. A dropped line shows struck through with its reason. **Why** opens the chain (role → override → processes), as the Processes "why" panel does. Actions: **Propose an override…** (the agent's manager or the owner; the agent itself through the CLI) and, with an override, **Edit override…**.
 - **Drift:** when the role changes after an override was written, the row and the Role tab show ⚠ "Role changed: Software Engineer is now v3" with **Review**: a side-by-side diff, **Keep my override** · **Take the new version** · **Edit**, as for processes (`processes-ux.md` §2). In the app these are for the agent's manager and the owner; the agent does the same with `org-agent role propose-override` (`--keep` points its override at the new version, `--take-role` retires it). Each is an override change, approved under decision 4.
-- **States:** loading (skeleton rows) · an agent with no role file yet (brought in before roles existed: "No role on record. HR's title: <title>." with **Propose a role…** to the HR lead) · **Propose an override…** disabled for anyone but the agent's manager and the owner, with "Only <manager> or the owner can propose <name>'s override." · no roles yet ("Roles say what each kind of agent is for. HR writes the first ones when you hire.") · the handbook unreachable ("Can't reach the handbook. Showing the last copy from <time>.") · a role file with invalid details ("<role>: details not recognized (<field>)." with **Fix**) · an override that drops or rewords an inherited boundary, or changes a setting ("An override can't remove or reword a boundary: <line>." / "Autonomy is set in the agent's Settings, not in a role.", refused when it's written) · a change waiting to merge ("Waiting to merge · v4 proposed by HR lead").
+- **States:** loading (skeleton rows) · an agent with no role file yet (brought in before roles existed: "No role on record. HR's title: <title>." with **Propose a role…** to the HR lead) · **Propose an override…** disabled for anyone but the agent's manager and the owner, with "Only <manager> or the owner can propose <name>'s override." · no roles yet ("Roles say what each kind of agent is for. The HR lead writes the first ones as you hire.") · the HR lead can't run *(rev 3)*: **New role…**, **Propose a change…** and **Propose a role…** are disabled with "The HR lead can't run right now, so it can't draft roles." (`our-org-in-the-app.md` §2a) · the handbook unreachable ("Can't reach the handbook. Showing the last copy from <time>.") · a role file with invalid details ("<role>: details not recognized (<field>)." with **Fix**) · an override that drops or rewords an inherited boundary, or changes a setting ("An override can't remove or reword a boundary: <line>." / "Autonomy is set in the agent's Settings, not in a role.", refused when it's written) · a change waiting to merge ("Waiting to merge · v4 proposed by HR lead").
 - **Accessibility:** badges are words plus icons; the diff has a "Changes only" list and keyboard navigation (as PROC-18).
 
 ## 2. Flow 2 · What the agent reads
@@ -73,7 +75,7 @@ ROLE-11 makes this distinction explicit; the existing role approval flow is unch
 - **At start:** the full effective role, in order: role, override, then "If your role and a process disagree, follow the process and flag it." and the processes (`processes-ux.md` §3).
 - **At wake:** only what changed since it last read it (a new role version, a new override, a superseded line).
 - **CLI:** `org-agent role show` (the effective role with its layers), `role why "<line>"`, `role propose-override` (the agent's own: opens a handbook branch for its manager), `role propose-override --for <member>` (a manager's, for a report: approved by the owner, decision 4), `role flag "<line>" --process <key>`, and for approvers `role approve <doc id>` / `role reject <doc id> --reason "…"`.
-- **Hire:** the Hire review shows the role (title and version) and the role's suggestions, if any (its autonomy, runtime and model defaults), for the owner to confirm (`processes-ux.md` §4a); the new agent starts with no override.
+- **Hire:** *(rev 3)* when the HR lead can't run, the requester picks an existing role, since only the HR lead drafts new ones (`our-org-in-the-app.md` §7). The Hire review shows the role (title and version) and the role's suggestions, if any (its autonomy, runtime and model defaults), for the owner to confirm (`processes-ux.md` §4a); the new agent starts with no override.
 
 ## 3. UX acceptance criteria (ROLE)
 
@@ -86,7 +88,7 @@ ROLE-11 makes this distinction explicit; the existing role approval flow is unch
 - ROLE-7 · At start the agent gets its full effective role; at wake, only what changed since it last read it. The role text isn't kept in the agent's own home.
 - ROLE-8 · `org-agent role show|why|propose-override [--for <member>]|flag|approve|reject` work with the same words as the app; `--for` lets a manager who is an agent do what Propose an override… does in the app.
 - ROLE-9 · Change role… (agent Settings, owner only, decision 7) archives the agent's old override, says so in the dialog, and starts it with none.
-- ROLE-10 · The Roles views and Profile › Role cover loading, empty, the handbook unreachable, invalid details, refused overrides, a change waiting to merge, an agent with no role file yet (Propose a role…), and Propose an override… disabled with who can use it.
+- ROLE-10 · *(rev 3)* The Roles views and Profile › Role cover loading, empty, the handbook unreachable, invalid details, refused overrides, a change waiting to merge, an agent with no role file yet (Propose a role…), Propose an override… disabled with who can use it, and New role…, Propose a change… and Propose a role… disabled with the reason while the HR lead can't run.
 
 - ROLE-11 · *(new, rev 2)* A generated employee harness definition reflects the effective approved role and override plus applicable processes. It cannot widen permissions or replace role approvals. Employee-created private specialists are scoped internal definitions, not organization roles/members, and cannot override the inherited processes; fresh-self delegates retain the employee persona without inheriting its conversation by default (EMP-4..8).
 

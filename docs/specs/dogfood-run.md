@@ -2,7 +2,7 @@
 kind: spec
 title: "Dogfood run: fresh HQ, satellite and named instances"
 status: for-review
-revision: 7
+revision: 8
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-10"
@@ -12,6 +12,8 @@ builds_on: [server-installation-and-access-ux, our-org-in-the-app, offices-and-t
 ---
 
 # Spec · Dogfood run: fresh HQ, satellite and named instances
+
+**Revision 8 (2026-11-10):** 3a.14 checks project creation in the chart only (Activity has no row for it). In §7, an Optional row that can't run in the setup is Blocked with the reason, doesn't change the run's result and files no bug. §7's timing rule says the office, not the HR lead, provisions an approved hire. No criteria changed.
 
 **Revision 7 (2026-11-10):** the run tests the whole success test of
 [our-org-in-the-app.md](our-org-in-the-app.md) again. New **§3a Manage the team
@@ -136,7 +138,7 @@ needing a new role, and APPR-2's new-role routing isn't exercised.
 | 3a.11 | **Move to team…** › Dogfood Office on Dogfood QA 1. Press **Undo** on the toast, then move it again | The dialog says "Moves Dogfood QA 1 from Dogfood App to Dogfood Office. Dogfood QA 1 stops working on Dogfood App's projects (Dogfood Desktop) and starts on Dogfood Office's (Dogfood Server)." The card moves in one step, never through Not in a team; the toast reads "Dogfood QA 1 moved to Dogfood Office. **Undo**", and Undo moves it back the same way. | MOVE-1, MOVE-2 | Required |
 | 3a.12 | Check that Dogfood QA 2 is Idle, then **Pause** it. While it's paused, have Dogfood QA 1 send it a message, and assign it a new task "Dogfood QA: no-op 2" on the Dogfood Desktop board. Then **Resume** it | The dialog says HQ will record Pause and new work waits once the office applies it. The card shows **Paused · stop pending at office** (at HQ's own office this may be too brief to see; 4.8 covers it), then **Paused** once HQ's office confirms. Paused, it isn't woken and the message waits; assigning asks "Dogfood QA 2 is paused. Assign anyway? They'll see it when resumed." Resume is one click, and the message then reaches it | DEAL-3, MOVE-4 | Required |
 | 3a.13 | In Reporting lines, note Dogfood Lead 1's manager and who reports to it. **Offboard** Dogfood Lead 1, then Dogfood QA 1. Then try **Add person** with Dogfood QA 1's messaging name | Each dialog lists only what applies: Dogfood Lead 1's names each agent that reports to it and says they will report to its manager, or to the owner if it had none; Dogfood QA 1's says its open task comes back unassigned. Afterwards both are under Settings › Team › Former members with the date, read-only; the task is unassigned; the reporting lines changed as stated. Add person refuses the name inline | DEAL-4, PEOPLE-4 | Required |
-| 3a.14 | Throughout 3a.1 to 3a.13, watch the second browser | Each of these changes from 3a.1 to 3a.13 (hires, lead, teams, task, move, Undo, pause, resume, offboard) shows in its org chart, where the chart shows it (cards, teams, lead and status; tasks aren't on cards), and in its Activity (Pause and Resume are Status changes, hidden by default: turn on the Status filter to see them; consecutive changes by one member collapse into a group such as "… changed team 3 times · Show", and Show lists one row per change), within the live-update allowance (§7) and without a reload. Proposals, rejections and the Can approve hires setting add no card and aren't counted as Activity rows here | LIVE-1, LIVE-6, STAFF-2, MOVE-1, Success test 3 (`our-org-in-the-app.md`) | Required |
+| 3a.14 | Throughout 3a.1 to 3a.13, watch the second browser | Each of these changes from 3a.1 to 3a.13 (hires, lead, teams, task, move, Undo, pause, resume, offboard) shows in its org chart, where the chart shows it (cards, teams, lead and status; tasks aren't on cards), and in its Activity (Pause and Resume are Status changes, hidden by default: turn on the Status filter to see them; consecutive changes by one member collapse into a group such as "… changed team 3 times · Show", and Show lists one row per change), within the live-update allowance (§7) and without a reload. Proposals, rejections and the Can approve hires setting add no card and aren't counted as Activity rows here. Project creation (3a.1) is checked in the chart only: Activity has no row for it (decision 7 and LIVE-1 list team and member changes, not project changes) | LIVE-1, LIVE-6, STAFF-2, MOVE-1, Success test 3 (`our-org-in-the-app.md`) | Required |
 | 3a.15 | Throughout 3a.1 to 3a.13, watch the 3.4 employee | The 3.4 employee keeps working on its own runtime: nothing stops, restarts or pauses it | Success test 3 (`our-org-in-the-app.md`; no criterion ID) | Required |
 | 3a.16 | Words check across 3a. Open the HR lead's quick view | The UI never says "deallocate"; it offers Remove from team, Pause, Resume, Offboard and Unassign. Status, runtime, Paused and Lead are words with icons. The HR lead has no Offboard, Move or team action | DEAL-1, HRL-1 | Required |
 
@@ -158,7 +160,8 @@ filter back off (Activity's default). The owner's messaging handle is `owner`.
 
 Row 3b.6 is Optional because this run uses non-repository tasks (§3 note) and
 needs a repository the HQ office can fetch; a merge into the integration branch
-is still part of the success test, so run it when one is set up.
+is still part of the success test, so run it when one is set up. When none is
+set up, record 3b.6 as **Blocked** with that reason (§7).
 
 ## 4. Disconnect, retries and event recovery
 
@@ -227,8 +230,9 @@ with notes**, **Fail**, **Blocked** or **N/A**.
 
 - **Blocked:** a capability the row needs isn't implemented (§0). Name the
   missing capability. A row that can't run because an earlier row failed is
-  Blocked too, naming that row. A failure doesn't stop the run otherwise:
-  carry on with the next row.
+  Blocked too, naming that row. So is an Optional row that can't run in this
+  setup, such as 3b.6 when no repository is set up: record the reason. A
+  failure doesn't stop the run otherwise: carry on with the next row.
 - **N/A:** only when this platform assignment can't run the row, with the reason
   recorded beside the result. A missing or unfinished feature is Blocked, never
   N/A. A Required row that is N/A on one assignment must pass on the other; N/A
@@ -242,7 +246,7 @@ has recorded it when it shows in the browser that made it (a change made in the
 browser), when the `org-agent` command returns (a change an agent makes, such as
 a message, a hire request or approval, or a task move), or when the agent's turn
 starts or ends in its own session view (a status change). A change HQ or an
-office makes as a result of another (the HR lead provisioning an approved hire,
+office makes as a result of another (the office provisioning an approved hire,
 an office confirming Pause) is timed from when it shows in the browser that's
 watching it to when it shows in the second browser. Up to 4 seconds is **Pass with
 notes**. Over 4 seconds, or a change that shows only after a reload, is a Fail.
@@ -254,7 +258,8 @@ execution findings. Backup recovery, cross-office repository work and optional
 runtime coverage require their own evidence; do not infer them from this smoke run.
 A Required row is complete when it is Pass or Pass with notes, or N/A under the
 rule above. The run is **Pass with notes** when its only exceptions are timings
-within the allowance or failed Optional rows.
+within the allowance or failed Optional rows. A Blocked Optional row doesn't
+change the run's result: it isn't an exception, and it files no bug.
 
 **Bugs.** Every Fail, and every Pass with notes, becomes a bug in Agentic Org
 (`ac`), with the row number and platform assignment in its title (for example
