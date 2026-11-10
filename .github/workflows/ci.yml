@@ -31,9 +31,11 @@ jobs:
           - os: ubuntu-26.04
             # The Tauri shell (package `agentic-org`, apps/desktop/src-tauri) is macOS only:
             # excluded on Linux until F1-03 deletes src-tauri.
-            clippy-flags: --exclude agentic-org
-            # org-office-host still builds and passes clippy on Linux, but its tests can't start a
-            # worker there yet: tests excluded until B2-06 (Linux host bring-up).
+            # org-office-host compiles on Linux, but its macOS-only modules (code-signature peer
+            # checks, Keychain key store) are unused there, so clippy's dead-code and unused-import
+            # lints fail, and its tests can't start a worker yet. Both are excluded until B2-06
+            # (Linux host bring-up); the `cargo check (Linux host)` step keeps it compiling.
+            clippy-flags: --exclude agentic-org --exclude org-office-host
             test-flags: --exclude agentic-org --exclude org-office-host
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -60,6 +62,10 @@ jobs:
       # No frontend build needed: in a debug build the Tauri shell uses devUrl, not frontendDist.
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets ${{ matrix.clippy-flags }} -- -D warnings
+
+      - name: cargo check (Linux host)
+        if: runner.os == 'Linux'
+        run: cargo check -p org-office-host --all-targets
 
       - name: cargo test
         run: cargo test --workspace ${{ matrix.test-flags }}
