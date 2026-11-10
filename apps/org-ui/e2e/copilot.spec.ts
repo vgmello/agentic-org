@@ -234,7 +234,8 @@ test('report dialog: a draft longer than the field allows is cut to fit, and the
 	const value = await dialog.getByLabel('Title').inputValue();
 	expect(value.length).toBeLessThanOrEqual(120);
 	expect(value.length).toBeGreaterThan(100);
-	await expect(dialog.getByTestId('draft-used')).toContainText('Shortened to fit the limit of 120 characters');
+	await expect(dialog.getByTestId('draft-used')).toContainText('Draft used. Shortened to fit the limit of 120 characters.');
+	await shot(page, 'copilot-bug10-clipped-spacing', { context: dialog });
 });
 
 test('report dialog: with nothing to go on, Draft asks for an instruction instead of running', async ({ page }) => {
