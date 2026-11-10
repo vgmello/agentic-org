@@ -200,6 +200,22 @@ mod tests {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     #[test]
+    fn refuses_an_existing_directory_owned_by_another_user() {
+        // Query an existing system directory directly: no mkdir/chown or privileged
+        // harness needed, and no system directory is modified by this test.
+        assert_eq!(std::fs::metadata("/usr").unwrap().uid(), 0);
+        let parent = root(Path::new("/")).unwrap();
+        let error = open_directory(
+            &parent,
+            &CString::new("usr").unwrap(),
+            DirectoryUse::Existing,
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(error.to_string().contains("owned by the current user"));
+    }
+
+    #[test]
     fn concurrent_substitution_cannot_chmod_an_unrelated_hardlink() {
         let temp = tempfile::tempdir().unwrap();
         let private = tempfile::tempdir().unwrap();

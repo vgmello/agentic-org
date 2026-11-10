@@ -1,4 +1,5 @@
 //! Fake processes only. Every workspace, private home and mark is disposable and unique.
+mod support;
 use std::ffi::OsString;
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -69,25 +70,8 @@ fn launch(root: &Path, case: &str) -> Spawned {
     .unwrap()
 }
 
-fn output(mut spawned: Spawned) -> (std::process::ExitStatus, String) {
-    spawned.stdin.close().unwrap();
-    let reader = std::thread::spawn(move || {
-        let mut text = String::new();
-        spawned.stdout.read_to_string(&mut text).unwrap();
-        text
-    });
-    let stderr = std::thread::spawn(move || {
-        let mut text = String::new();
-        spawned.stderr.read_to_string(&mut text).unwrap();
-        text
-    });
-    let status = spawned
-        .child
-        .wait_until(Instant::now() + Duration::from_secs(10))
-        .unwrap()
-        .expect("child deadline");
-    let text = reader.join().unwrap();
-    let errors = stderr.join().unwrap();
+fn output(spawned: Spawned) -> (std::process::ExitStatus, String) {
+    let (status, text, errors) = support::collect(spawned, Duration::from_secs(10));
     assert!(status.success(), "stdout={text}\nstderr={errors}");
     (status, text)
 }
@@ -98,6 +82,10 @@ fn child_entry() {
         return;
     };
     match case.as_str() {
+        "drop-group-parent" => {
+            assert_drop_kills_group();
+            println!("GROUP-REAPED");
+        }
         "inspect" => {
             // No open calls before this scan. The test runner has no external descriptor.
             let extra: Vec<_> = (3..1024)
@@ -206,6 +194,91 @@ fn child_entry() {
         }
         other => panic!("unknown fake case {other}"),
     }
+}
+
+fn assert_drop_kills_group() {
+    #[cfg(target_os = "linux")]
+    // SAFETY: this is an isolated helper, not the parallel test runner. Adopt/reap its
+    // grandchild so even container PID1 behavior cannot leave a fixture zombie.
+    assert_eq!(
+        unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) },
+        0
+    );
+    let root = std::env::current_dir().unwrap();
+    let spawned = prepare(
+        &root,
+        "/bin/sh".into(),
+        vec!["-c".into(), "sleep 8 & echo $!; wait".into()],
+        environment(&root),
+    )
+    .record_mark(|_| Ok(()))
+    .unwrap()
+    .spawn()
+    .unwrap()
+    .record_identity(|_| Ok(()))
+    .unwrap();
+    let Spawned {
+        child,
+        stdin,
+        stdout,
+        stderr,
+    } = spawned;
+    stdin.close().unwrap();
+    drop(stderr);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        let mut line = String::new();
+        std::io::BufReader::new(stdout)
+            .read_line(&mut line)
+            .unwrap();
+        let _ = sender.send(line);
+    });
+    let pid: i32 = receiver
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    // SAFETY: queries only the freshly reported private fixture process.
+    assert_eq!(unsafe { libc::getpgid(pid) }, child.identity().pgid as i32);
+    drop(child);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        #[cfg(target_os = "linux")]
+        // SAFETY: the isolated subreaper owns this adopted grandchild after leader Drop.
+        unsafe {
+            libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG);
+        }
+        // SAFETY: signal0 only probes the fixture pid; it cannot signal a reused identity.
+        if unsafe { libc::kill(pid, 0) } == -1 {
+            assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
+            break;
+        }
+        if Instant::now() >= deadline {
+            #[cfg(target_os = "linux")]
+            // SAFETY: clean up the isolated subreaper's own still-unreaped grandchild.
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+                libc::waitpid(pid, std::ptr::null_mut(), 0);
+            }
+            // On macOS a deliberately broken group-kill mutation has at most three
+            // seconds left on sleep8; do not signal a nonchild by numeric PID.
+            panic!("owned group member survived owner Drop");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn owner_drop_kills_and_reaps_its_process_group() {
+    let root = tempfile::tempdir().unwrap();
+    assert!(output(launch(
+        &root.path().canonicalize().unwrap(),
+        "drop-group-parent"
+    ))
+    .1
+    .contains("GROUP-REAPED"));
 }
 
 #[test]
@@ -498,7 +571,7 @@ fn only_three_fds_even_during_concurrent_inheritable_fd_receipt() {
                     assert_eq!(libc::recvmsg(rx.as_raw_fd(), &mut msg, 0), 1);
                     let header = libc::CMSG_FIRSTHDR(&msg);
                     assert!(!header.is_null());
-                    let fd = *libc::CMSG_DATA(header).cast::<i32>();
+                    let fd = libc::CMSG_DATA(header).cast::<i32>().read_unaligned();
                     assert_eq!(libc::fcntl(fd, libc::F_SETFD, 0), 0);
                     fd
                 };
@@ -534,7 +607,9 @@ fn only_three_fds_even_during_concurrent_inheritable_fd_receipt() {
             (*header).cmsg_level = libc::SOL_SOCKET;
             (*header).cmsg_type = libc::SCM_RIGHTS;
             (*header).cmsg_len = libc::CMSG_LEN(std::mem::size_of::<i32>() as _) as _;
-            *libc::CMSG_DATA(header).cast::<i32>() = file.as_raw_fd();
+            libc::CMSG_DATA(header)
+                .cast::<i32>()
+                .write_unaligned(file.as_raw_fd());
             assert_eq!(libc::sendmsg(tx.as_raw_fd(), &msg, 0), 1);
         }
         barrier.wait();

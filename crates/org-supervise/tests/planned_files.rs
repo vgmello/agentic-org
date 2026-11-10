@@ -1,3 +1,4 @@
+mod support;
 use std::fs;
 use std::io::Read;
 use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
@@ -199,6 +200,15 @@ fn restrictive_umask_child() {
     unsafe {
         libc::umask(mask);
     }
+    // No directories need creating here: even an owner-masking umask must leave the
+    // newly O_EXCL-created regular file at0600 through its pinned descriptor.
+    let mut file_only = plan(&root);
+    file_only.files.push(file("existing/private", b"settings"));
+    prepare(&root, file_only, &context(&root)).unwrap();
+    assert_eq!(
+        fs::metadata(root.join("existing/private")).unwrap().mode() & 0o777,
+        0o600
+    );
     let mut launch = plan(&root);
     launch.dirs.push(PlannedDir {
         location: FileLocation::RuntimeDir,
@@ -245,7 +255,7 @@ fn restrictive_umask_child() {
 #[test]
 fn planned_modes_or_explicit_refusal_under_restrictive_umask() {
     use org_supervise::{PreparedSpawn, SpawnSpec};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
     for mask in [0o002, 0o022, 0o027, 0o077, 0o100, 0o700, 0o777] {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
@@ -274,7 +284,7 @@ fn planned_modes_or_explicit_refusal_under_restrictive_umask() {
             cwd: root.clone(),
             environment: env,
         };
-        let mut child = PreparedSpawn::new(
+        let child = PreparedSpawn::new(
             spec,
             SessionMark::new(
                 temp.path()
@@ -292,23 +302,7 @@ fn planned_modes_or_explicit_refusal_under_restrictive_umask() {
         .unwrap()
         .record_identity(|_| Ok(()))
         .unwrap();
-        child.stdin.close().unwrap();
-        let out = std::thread::spawn(move || {
-            let mut text = String::new();
-            child.stdout.read_to_string(&mut text).unwrap();
-            text
-        });
-        let err = std::thread::spawn(move || {
-            let mut text = String::new();
-            child.stderr.read_to_string(&mut text).unwrap();
-            text
-        });
-        let status = child
-            .child
-            .wait_until(Instant::now() + Duration::from_secs(10))
-            .unwrap()
-            .unwrap();
-        let (out, err) = (out.join().unwrap(), err.join().unwrap());
+        let (status, out, err) = support::collect(child, Duration::from_secs(10));
         assert!(status.success(), "umask {mask:o}: {out}\n{err}");
     }
 }
