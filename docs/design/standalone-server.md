@@ -61,7 +61,7 @@ does not own office provisioning logic. Existing installs are discovered before
 activation, so re-running bootstrap cannot silently update every instance.
 
 **Proposed packaging:** the release executable carries the static asset/server
-payload and platform-matched internal host/office helpers plus the small
+payload and platform-matched internal host, office and `org-gateway` helpers plus the small
 `org-agent` helper. It unpacks verified payloads into an immutable versioned
 release directory. One download may yield multiple local executables. This retains
 the existing process and signing boundaries and the tiny CLI instead of requiring
@@ -95,7 +95,7 @@ from target names and lists affected workspace, tests, build and packaging refer
 The first release must verify download authenticity, executable signatures where
 applicable, checksums of embedded helpers and architecture compatibility. Extract
 to a private staging directory; reject path traversal and symlink redirection;
-publish a complete release atomically. A release pin selects host, worker, assets
+publish a complete release atomically. A release pin selects setup, host, worker, gateway, assets
 and `org-agent` together. The short bootstrap trusts a configured release signing
 key; a checksum downloaded from an unauthenticated source is not sufficient.
 
@@ -125,6 +125,12 @@ to the protected instance administrator identity and requested action (never a
 browser-supplied role flag), before provisioning, creates the key itself and returns an operation result, never a key.
 The same human may hold both roles, but office certificates and employee tokens
 grant neither. Tests cover two HQs on one listener and rejected owner-only creates.
+**Add office on this instance** (OFC-2) also provisions a key and a worker
+on the host, so it needs the same instance-administrator grant; owning the
+organization is not enough. Inviting, approving or removing a satellite stays open
+to any authorized owner (OFC-7); OFC-7's "add" for the same-instance case needs a
+spec follow-up. The gateway op is an open point for X-02 §12 Q9 (a draft not yet in this repo; see office-host-boundary.md §3, "Pending: launch v3"). (2026-11-10,
+post-merge review question.)
 
 ### Setup executable package identity
 
@@ -188,13 +194,24 @@ users/containers. The runtime sandbox/permission model must still enforce its de
 
 ## 4. Setup and service lifecycle
 
-Setup is a resumable state machine: reserve instance, verify release, write config,
-establish owner or enrollment credentials, provision the office, register service,
-start, probe. Each irreversible identity/provisioning step has a durable operation
-ID and completion marker before another invocation may advance it. Persist an
-enrollment key/request before sending it; after an ambiguous reply query that
+Setup is a resumable state machine. For an HQ: reserve instance, verify release,
+write config, establish the instance administrator, provision the office, register
+service, start, probe. For a satellite: reserve instance, verify release, write
+config, register service, start, probe, then hand the invitation to the running host
+with `office.join` on `host.sock` and poll its status (`awaiting_approval` for
+non-interactive setup). `office.join` is gated by the signed `agentic-org` peer and
+the destination consent setup captured, plus an administrator session when the
+instance has accounts. On a satellite-only instance the service host creates its
+account registry database (X-02 §6.3; a draft, see the launch v3 note in office-host-boundary.md §3) at its first start, with the op journal and
+no accounts (X-02 §12 Q9).
+The satellite worker generates and keeps the TLS identity key; see the offices design. Each irreversible identity/provisioning step has a durable operation
+ID and completion marker before another invocation may advance it. The satellite
+worker persists its TLS identity key, request and invitation key in its `office.db`,
+and writes `office.json` (`state: pending`), before sending the request; after an ambiguous reply query that
 request's outcome rather than minting a second office. Resume the same pending
-approval after restart. An explicit mode/config change on existing state is refused
+approval after restart. If setup re-runs `office.join` for its own pending office, gets
+`already_exists`, and the status read shows that `office_id` as a pending join, it shows the existing request and check code (JOIN-6) instead of
+failing. An explicit mode/config change on existing state is refused
 with instructions; setup does not silently convert roles.
 
 Interactive and automated input feed the same validation layer. Noninteractive
@@ -402,8 +419,8 @@ processes, secret credentials and local workspace files are not replicated as UI
 Enrollment keeps one-time invitations, pinned HQ identity, owner approval, office
 certificates, renewal and revocation. Initial enrollment differs from reconnect:
 reconnect reuses the identity and resumes positions. Local satellites use the same
-identity model (or a proven equivalent private capability); same UID alone is not
-proof of enrollment. Headless enrollment replaces desktop deep links. Approvals
+identity model in v1 (plan B2-10; 2026-11-10); a proven equivalent private capability
+is post-v1. Same UID alone is not proof of enrollment. Headless enrollment replaces desktop deep links. Approvals
 happen in an authenticated HQ browser, independent of the browser's machine.
 
 The existing project design currently uses local bare Git in v1 and defers real

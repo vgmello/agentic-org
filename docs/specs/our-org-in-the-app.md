@@ -2,7 +2,7 @@
 kind: spec
 title: "Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)"
 status: for-review
-revision: 19
+revision: 20
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-10"
@@ -12,6 +12,10 @@ builds_on: [offices-and-teams-ux, work-items-ux]
 ---
 
 # Spec · Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)
+
+**Revision 20 (2026-11-10):** the success test names the sections of the
+[dogfood run](dogfood-run.md) (rev 7) that check each of its items. No criteria
+changed. §7.1 says the new-role route waits for role files (after v1.0). Open question A96 (the approval check on `member.add_agent`).
 
 **Revision 18 (2026-11-09): fresh standalone-v1 setup.**
 The owner confirmed that no application was deployed. Existing-team import and
@@ -63,6 +67,8 @@ Builds on `offices-and-teams-ux.md` rev 4, `work-items-ux.md` rev 5 and `desktop
 1. The owner creates a fresh organization and provisions members through supported organization/hiring operations. Each agent appears under the right team and manager with its runtime; no HR/spool import is required.
 2. Home and Activity show, live, what the team is doing: who's working, the messages they send each other (like ada's phase-1 push), tasks and bugs moving, and merges into `v1`.
 3. The owner hires a new agent, assigns it to a team, a project and a task, moves an agent to another team, pauses an idle agent and offboards one. Every change shows at once in the chart and Activity, and every agent keeps working on its own runtime.
+
+The [dogfood run](dogfood-run.md) checks item 1 in its §1, §3 and §3a, item 2 in §3b, and item 3 in §3a.
 
 ## Where we are (survey of `origin/v1` at 0f7df26, 2026-11-08)
 
@@ -212,7 +218,7 @@ v1 §3.6 holds, with these changes for the office model:
 2. Otherwise up the **reporting line** to the nearest manager with the flag.
 3. Otherwise **the owner**.
 
-*(rev 17)* A proposal that needs a **new role** (no role file fits) goes straight to the owner, skipping the steps above, since a new role is the owner's to approve (`roles-ux.md` decision 4). It's one approval: the owner approves the role and the hire together. Its state reads "Waiting for you: new role".
+*(rev 17)* A proposal that needs a **new role** (no role file fits) goes straight to the owner, skipping the steps above, since a new role is the owner's to approve (`roles-ux.md` decision 4). It's one approval: the owner approves the role and the hire together. Its state reads "Waiting for you: new role". *(rev 20)* This route starts when role files ship (`roles-ux.md`, after v1.0). Until then roles are free text, no proposal is classed as needing a new role, and proposals follow the steps above.
 
 The owner can always approve or reject any proposal. Someone who requests a hire never approves their own request: it goes one level up. The one exception is **the owner**, who approves their own hires, since nobody is above the owner. The HR lead never approves.
 
@@ -337,6 +343,7 @@ The owner can always approve or reject any proposal. Someone who requests a hire
 - ~~U13~~ · *Resolved (the user):* don't start Remy and Riley. They're brought in Active and show as **Offline** (no session), not Paused. Their planned work (G3, G6, G7) needs another owner (ada). *Update (later the same day): the user started Remy, who now owns messaging (AGENTS.md). Riley stays Offline.*
 
 **For ada**
+- A96 · *(rev 20)* SRV-30 and STAFF-4 require HQ to refuse member creation without an authorized approval, including direct API callers, but `member.add_agent` (`crates/org-proto/src/org.rs`) has no approval reference and no approval error today. Which field carries the approval, and which error code does a call without one return? `dogfood-run.md` 3a.8 checks it.
 - ~~A47~~ · *Resolved (ada):* `can_approve_hires` (owner-set only), `HireProposal` with routing up the reporting line, and `hire.request|approve|reject` (server-dev the contract, codex-dev the flow). In our team, ada has the flag.
 - ~~A46~~ · *Resolved (ada):* server-dev adds a built-in `hr_lead` agent with the reserved handle `hr`, created with the organization; codex-dev builds the HR lead's runs. Note: `member.add_agent` is app-only today (`teams-and-org-chart.md`), so provisioning approved by an agent needs an exception for the HR lead's run (ada).
 - ~~A37~~ · *Resolved (ada):* offboarding is a state. `AgentStatus` gains `offboarded`, and `member.offboard { member_id, expected_version }` sets it with `offboarded_at`. The record stays, the handle stays reserved, the agent shows under Former members, and its open tasks are reclaimed as in the teams design. `member.remove` stays for hard deletes of members with no history (mistakes). server-dev drafts it. ada updates `docs/design/teams-and-org-chart.md`, which still says offboarding issues `member.remove`.
