@@ -122,6 +122,10 @@ fn hold_fixture() {
     let Ok(mode) = std::env::var("ORG_TEST_CASE") else {
         return;
     };
+    #[cfg(target_os = "linux")]
+    if mode.starts_with("partial-environ:") {
+        hold_partial_environment();
+    }
     let _nested = if mode == "delegate" {
         let mark = std::env::var("ORG_SESSION_MARK").unwrap();
         let root = std::env::current_dir().unwrap();
@@ -181,6 +185,22 @@ fn native_recovery_refuses_a_reused_non_child_identity_and_scans_detached_tools(
         mark: format!("{mark}-stale"),
     };
     let mut native = NativeRecovery::new().unwrap();
+    let rows = native
+        .snapshot(Instant::now() + Duration::from_secs(5))
+        .unwrap();
+    let nested = rows
+        .iter()
+        .find(|row| row.identity.as_ref() == Some(&tool))
+        .expect("live detached tool");
+    assert_eq!(
+        nested.parent.as_ref(),
+        Some(&ProcessIdentity {
+            pid: owner.identity().pid,
+            started: owner.identity().started.clone(),
+            boot: owner.identity().boot.clone(),
+        }),
+        "native snapshot must verify the exact parent identity"
+    );
     let mut stale_row = Row(RecoveryRecord::new(stale.mark.clone(), Some(stale), vec![]).unwrap());
     let gone = recover_record(
         &mut stale_row,
@@ -205,6 +225,89 @@ fn native_recovery_refuses_a_reused_non_child_identity_and_scans_detached_tools(
     assert!(row.0.inventory().iter().any(|entry| entry.identity == tool));
     assert!(native.wait_exited(&tool, Instant::now()).unwrap());
     assert!(owner.try_exit().unwrap().is_some());
+}
+
+#[cfg(target_os = "linux")]
+fn page_size() -> usize {
+    // SAFETY: _SC_PAGESIZE requires no pointer arguments.
+    let size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    assert!(size > 0);
+    size as usize
+}
+
+#[cfg(target_os = "linux")]
+fn environment_range(stat: &str) -> (usize, usize) {
+    let fields = stat.rsplit_once(") ").unwrap().1;
+    let mut addresses = fields.split_ascii_whitespace().skip(47);
+    let start = addresses.next().unwrap().parse().unwrap();
+    let end = addresses.next().unwrap().parse().unwrap();
+    (start, end)
+}
+
+#[cfg(target_os = "linux")]
+fn hold_partial_environment() -> ! {
+    let mark = std::env::var("ORG_SESSION_MARK").unwrap();
+    let entry = format!("ORG_SESSION_MARK={mark}\0");
+    let conflict = b"ORG_SESSION_MARK=hidden-conflict\0";
+    let stat = std::fs::read_to_string("/proc/self/stat").unwrap();
+    let (start, end) = environment_range(&stat);
+    let page = page_size();
+    let hidden = (start + page).next_multiple_of(page);
+    assert!(hidden + page <= end);
+    assert!(entry.len() < hidden - start);
+
+    let ready = b"RECOVERY_READY\n";
+    // SAFETY: the fixture owns its writable initial environment and has
+    // copied the launch values it needs. The protected page lies wholly
+    // within that environment. Afterward only raw libc calls are used.
+    unsafe {
+        std::ptr::write_bytes(start as *mut u8, 0, hidden - start);
+        std::ptr::copy_nonoverlapping(entry.as_ptr(), start as *mut u8, entry.len());
+        std::ptr::copy_nonoverlapping(conflict.as_ptr(), hidden as *mut u8, conflict.len());
+        if libc::mprotect(hidden as *mut libc::c_void, page, libc::PROT_NONE) != 0 {
+            libc::_exit(125);
+        }
+        libc::write(libc::STDOUT_FILENO, ready.as_ptr().cast(), ready.len());
+        libc::sleep(20);
+        libc::_exit(0);
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn native_capture_quarantines_a_nul_terminated_partial_environment() {
+    use org_supervise::recovery::MarkEvidence;
+    let root = tempfile::tempdir().unwrap();
+    let mark = unique_mark();
+    let mode = format!("partial-environ:{}", "x".repeat(4 * page_size()));
+    let (mut child, _) = fixture(root.path(), &mark, &mode);
+    let identity = child.identity().clone();
+    let proc = format!("/proc/{}", identity.pid);
+    let stat = std::fs::read_to_string(format!("{proc}/stat")).unwrap();
+    let (start, end) = environment_range(&stat);
+    let prefix = std::fs::read(format!("{proc}/environ")).unwrap();
+    assert!(prefix.starts_with(format!("ORG_SESSION_MARK={mark}\0").as_bytes()));
+    assert!(
+        prefix.len() < end - start,
+        "fixture must truncate the procfs read"
+    );
+    let mut native = NativeRecovery::new().unwrap();
+    let rows = native
+        .snapshot(Instant::now() + Duration::from_secs(5))
+        .unwrap();
+    let row = rows.iter().find(|row| row.pid == identity.pid).unwrap();
+    assert_eq!(row.mark, MarkEvidence::Unreadable);
+
+    let mut row = Row(RecoveryRecord::new(mark, Some(identity), vec![]).unwrap());
+    let error = recover_record(
+        &mut row,
+        &(),
+        &mut native,
+        Instant::now() + Duration::from_secs(5),
+    )
+    .expect_err("a recorded process with partial environment evidence must remain unresolved");
+    assert_eq!(error.report.signals, 0);
+    assert!(child.try_exit().unwrap().is_none());
 }
 
 #[cfg(target_os = "linux")]

@@ -102,7 +102,7 @@ impl NativeRecovery {
         let mark = if pin.stat.zombie || !credentials_safe || pid == self.context.pid {
             MarkEvidence::Unreadable
         } else {
-            read_mark(&pin.directory, deadline)?
+            read_mark(&pin.directory, pid, pin.stat, deadline)?
         };
         // A zombie thread-group leader can still have live workers. Only the
         // process pidfd certifies exit of the whole group.
@@ -127,33 +127,45 @@ impl NativeRecovery {
     }
 
     fn pin(&self, pid: u32, deadline: Option<Instant>) -> io::Result<Option<Pin>> {
-        if let Some(deadline) = deadline {
-            check_time(deadline)?;
-        }
-        let fd = match pidfd(pid) {
-            Ok(fd) => fd,
-            Err(err) if vanished(&err) => return Ok(None),
-            Err(err) => return Err(err),
-        };
         let name = CString::new(pid.to_string()).unwrap();
-        let capture = open_at(&self.procfs, &name, libc::O_DIRECTORY).and_then(|directory| {
-            let stat = read_stat(&directory, pid, deadline)?;
-            Ok((directory, stat))
-        });
-        match capture {
-            Ok((directory, stat)) => {
-                if exited(&fd, Instant::now())? && !stat.zombie {
-                    return Ok(None);
-                }
-                Ok(Some(Pin {
-                    fd,
-                    directory,
-                    stat,
-                }))
+        for _ in 0..2 {
+            if let Some(deadline) = deadline {
+                check_time(deadline)?;
             }
-            Err(err) if vanished(&err) && exited(&fd, Instant::now())? => Ok(None),
-            Err(err) => Err(err),
+            // Open the identity-bound procfs directory before the numeric pidfd
+            // lookup. Reading stat through that directory afterward proves the
+            // old PID could not have been reaped and reassigned between opens.
+            let directory = open_at(&self.procfs, &name, libc::O_DIRECTORY);
+            let fd = match pidfd(pid) {
+                Ok(fd) => fd,
+                Err(err) if vanished(&err) => return Ok(None),
+                Err(err) => return Err(err),
+            };
+            let capture = directory.and_then(|directory| {
+                let stat = read_stat(&directory, pid, deadline)?;
+                Ok((directory, stat))
+            });
+            match capture {
+                Ok((directory, stat)) => {
+                    if exited(&fd, Instant::now())? && !stat.zombie {
+                        return Ok(None);
+                    }
+                    return Ok(Some(Pin {
+                        fd,
+                        directory,
+                        stat,
+                    }));
+                }
+                // Retry a vanished lookup. A hidden procfs row alone is never
+                // proof of exit while a pidfd lookup succeeds.
+                Err(err) if vanished(&err) => continue,
+                Err(err) => return Err(err),
+            }
         }
+        Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "process identity could not be pinned to its procfs directory",
+        ))
     }
 }
 
@@ -244,7 +256,7 @@ impl RecoveryProcesses for NativeRecovery {
                     "recovery cannot verify credentials and mark for an exited thread-group leader",
                 ));
             }
-            let mark = read_mark(&pin.directory, deadline)?;
+            let mark = read_mark(&pin.directory, identity.pid, stat, deadline)?;
             let direct = matches!(
                 target.evidence(),
                 TargetEvidence::Marked | TargetEvidence::RecordedLeader
@@ -334,6 +346,7 @@ struct Stat {
     group: u32,
     session: u32,
     started: u64,
+    environment: (u64, u64),
     zombie: bool,
 }
 
@@ -378,11 +391,25 @@ fn parse_stat(bytes: &[u8], pid: u32) -> io::Result<Stat> {
             .nth(15)
             .ok_or_else(|| invalid("missing proc stat start time"))?,
     )?;
+    // Field 22 was start time. Fields 50 and 51 bound the environment.
+    let environment = (
+        number(
+            fields
+                .nth(27)
+                .ok_or_else(|| invalid("missing proc stat env_start"))?,
+        )?,
+        number(
+            fields
+                .next()
+                .ok_or_else(|| invalid("missing proc stat env_end"))?,
+        )?,
+    );
     Ok(Stat {
         parent,
         group,
         session,
         started,
+        environment,
         zombie: matches!(state, b"Z" | b"X" | b"x"),
     })
 }
@@ -465,9 +492,37 @@ fn ordinary_exec(directory: &File, deadline: Instant) -> io::Result<bool> {
     Ok(false)
 }
 
-fn read_mark(directory: &File, deadline: Instant) -> io::Result<MarkEvidence> {
-    match read_at(directory, c"environ", ENVIRONMENT_LIMIT, Some(deadline)) {
-        Ok(bytes) => Ok(native_mark(&bytes)),
+fn read_mark(
+    directory: &File,
+    pid: u32,
+    stat: Stat,
+    deadline: Instant,
+) -> io::Result<MarkEvidence> {
+    let (start, end) = stat.environment;
+    let Some(length) = end
+        .checked_sub(start)
+        .filter(|length| start != 0 && *length <= ENVIRONMENT_LIMIT as u64)
+    else {
+        return Ok(MarkEvidence::Unreadable);
+    };
+    let capture: io::Result<MarkEvidence> = (|| {
+        let bytes = read_at(directory, c"environ", length as usize, Some(deadline))?;
+        // A hole in the target's memory can produce an early EOF even after a
+        // complete NUL-terminated entry. Require the entire advertised range.
+        if bytes.len() != length as usize {
+            return Ok(MarkEvidence::Unreadable);
+        }
+        let current = read_stat(directory, pid, Some(deadline))?;
+        if current.started != stat.started
+            || current.zombie
+            || current.environment != stat.environment
+        {
+            return Ok(MarkEvidence::Unreadable);
+        }
+        Ok(native_mark(&bytes))
+    })();
+    match capture {
+        Ok(mark) => Ok(mark),
         Err(err) if err.kind() == io::ErrorKind::TimedOut => Err(err),
         Err(_) => Ok(MarkEvidence::Unreadable),
     }
@@ -627,17 +682,23 @@ mod tests {
 
     #[test]
     fn stat_uses_the_last_parenthesis_and_only_decodes_numeric_fields() {
-        let bytes = b"42 (\xff) a process) S 13 41 44 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 789 0\n";
+        let mut bytes =
+            b"42 (\xff) a process) S 13 41 44 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 789".to_vec();
+        for _ in 23..50 {
+            bytes.extend_from_slice(b" 0");
+        }
+        bytes.extend_from_slice(b" 4096 4128 0\n");
         assert_eq!(
-            parse_stat(bytes, 42).unwrap(),
+            parse_stat(&bytes, 42).unwrap(),
             Stat {
                 parent: 13,
                 group: 41,
                 session: 44,
                 started: 789,
+                environment: (4096, 4128),
                 zombie: false,
             }
         );
-        assert!(parse_stat(bytes, 43).is_err());
+        assert!(parse_stat(&bytes, 43).is_err());
     }
 }

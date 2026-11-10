@@ -5,10 +5,10 @@ only dependencies are `libc` and the `org-runtime` contract. The generic API kno
 no office, employee, protocol, storage or adapter implementation.
 
 Piped spawning, generated files, owned graceful/fast stopping, socket cleanup and
-probe preparation are implemented. Recovery policy over fake operations is implemented;
-native orphan discovery adapters and PTYs follow in separate deliveries.
-Do not run real Claude until native orphan discovery is available: its tools
-can leave its process group.
+probe preparation are implemented. Native orphan discovery is available through
+the recovery API on macOS and Linux. PTYs follow in a separate delivery.
+Integrate native recovery before launching real Claude. Its tools can leave its
+process group.
 
 The required platforms are macOS 13+, Linux kernel 5.10+/glibc 2.34+. Root and
 setuid/setgid executable launches are refused. Missing/restricted process APIs
@@ -139,9 +139,10 @@ Process and scan traits are sealed. `recovery::NativeRecovery::new` supplies the
 process operations for startup and live record recovery. The one-pass scanner
 continues to use the same policy and checkpoint contract.
 
-On Linux, the adapter checks the procfs PID namespace and opens pidfds before
-capturing process identity. It retains those descriptors through a scan, checks
-credentials and environment evidence again before signaling, and uses
+On Linux, the adapter checks the procfs PID namespace and binds each pidfd to
+an open procfs process directory before reading identity. It verifies that the
+environment read covers the entire procfs address range. It retains the pidfds
+through a scan, rechecks credentials and mark evidence before signaling, and uses
 `pidfd_send_signal` for the individual process. Unsupported or denied pidfd
 operations fail recovery. A zombie group leader with live worker threads
 remains unresolved if its mark is unreadable. The pidfd reports exit of the
