@@ -1,0 +1,464 @@
+{
+  "schema_version": 1,
+  "contract_revision": 2,
+  "route_scope": {
+    "kind": "organization",
+    "instance_id": "01M72N8MG00000000000000001",
+    "org_id": "01M72N8MG00000000000000003"
+  },
+  "cases": [
+    {
+      "name": "team.create all optional fields",
+      "reader": "Rust+TS",
+      "operation": "team.create",
+      "path": "/api/v1/organizations/01M72N8MG00000000000000003/teams/create",
+      "envelope": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "params": {
+          "team_id": "01M72N8MG00000000000000007",
+          "name": "Platform",
+          "owner_team_id": "01M72N8MG00000000000000008"
+        }
+      },
+      "native": {
+        "method": "team.create",
+        "params": {
+          "command_id": "01M72N8MG00000000000000006",
+          "team_id": "01M72N8MG00000000000000007",
+          "name": "Platform",
+          "owner_team_id": "01M72N8MG00000000000000008"
+        }
+      }
+    },
+    {
+      "name": "team.rename all optional fields",
+      "reader": "Rust+TS",
+      "operation": "team.rename",
+      "path": "/api/v1/organizations/01M72N8MG00000000000000003/teams/rename",
+      "envelope": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "params": {
+          "team_id": "01M72N8MG00000000000000007",
+          "expected_version": 3,
+          "name": "Infrastructure"
+        }
+      },
+      "native": {
+        "method": "team.rename",
+        "params": {
+          "command_id": "01M72N8MG00000000000000006",
+          "team_id": "01M72N8MG00000000000000007",
+          "expected_version": 3,
+          "name": "Infrastructure"
+        }
+      }
+    },
+    {
+      "name": "team.move all optional fields",
+      "reader": "Rust+TS",
+      "operation": "team.move",
+      "path": "/api/v1/organizations/01M72N8MG00000000000000003/teams/move",
+      "envelope": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "params": {
+          "team_id": "01M72N8MG00000000000000007",
+          "expected_version": 3,
+          "owner_team_id": "01M72N8MG00000000000000008"
+        }
+      },
+      "native": {
+        "method": "team.move",
+        "params": {
+          "command_id": "01M72N8MG00000000000000006",
+          "team_id": "01M72N8MG00000000000000007",
+          "expected_version": 3,
+          "owner_team_id": "01M72N8MG00000000000000008"
+        }
+      }
+    },
+    {
+      "name": "team.set_lead all optional fields",
+      "reader": "Rust+TS",
+      "operation": "team.set_lead",
+      "path": "/api/v1/organizations/01M72N8MG00000000000000003/teams/set-lead",
+      "envelope": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "params": {
+          "team_id": "01M72N8MG00000000000000007",
+          "expected_version": 3,
+          "lead_member_id": "01M72N8MG00000000000000009"
+        }
+      },
+      "native": {
+        "method": "team.set_lead",
+        "params": {
+          "command_id": "01M72N8MG00000000000000006",
+          "team_id": "01M72N8MG00000000000000007",
+          "expected_version": 3,
+          "lead_member_id": "01M72N8MG00000000000000009"
+        }
+      }
+    },
+    {
+      "name": "team.delete all optional fields",
+      "reader": "Rust+TS",
+      "operation": "team.delete",
+      "path": "/api/v1/organizations/01M72N8MG00000000000000003/teams/delete",
+      "envelope": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "params": {
+          "team_id": "01M72N8MG00000000000000007",
+          "expected_version": 3
+        }
+      },
+      "native": {
+        "method": "team.delete",
+        "params": {
+          "command_id": "01M72N8MG00000000000000006",
+          "team_id": "01M72N8MG00000000000000007",
+          "expected_version": 3
+        }
+      }
+    },
+    {
+      "name": "team.add_member all optional fields",
+      "reader": "Rust+TS",
+      "operation": "team.add_member",
+      "path": "/api/v1/organizations/01M72N8MG00000000000000003/teams/add-member",
+      "envelope": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "params": {
+          "membership_id": "01M72N8MG0000000000000000A",
+          "team_id": "01M72N8MG00000000000000007",
+          "member_id": "01M72N8MG00000000000000009",
+          "title_in_team": "Staff engineer"
+        }
+      },
+      "native": {
+        "method": "team.add_member",
+        "params": {
+          "command_id": "01M72N8MG00000000000000006",
+          "membership_id": "01M72N8MG0000000000000000A",
+          "team_id": "01M72N8MG00000000000000007",
+          "member_id": "01M72N8MG00000000000000009",
+          "title_in_team": "Staff engineer"
+        }
+      }
+    },
+    {
+      "name": "team.remove_member all optional fields",
+      "reader": "Rust+TS",
+      "operation": "team.remove_member",
+      "path": "/api/v1/organizations/01M72N8MG00000000000000003/teams/remove-member",
+      "envelope": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "params": {
+          "membership_id": "01M72N8MG0000000000000000A",
+          "expected_version": 3
+        }
+      },
+      "native": {
+        "method": "team.remove_member",
+        "params": {
+          "command_id": "01M72N8MG00000000000000006",
+          "membership_id": "01M72N8MG0000000000000000A",
+          "expected_version": 3
+        }
+      }
+    },
+    {
+      "name": "team.set_title all optional fields",
+      "reader": "Rust+TS",
+      "operation": "team.set_title",
+      "path": "/api/v1/organizations/01M72N8MG00000000000000003/teams/set-title",
+      "envelope": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "params": {
+          "membership_id": "01M72N8MG0000000000000000A",
+          "expected_version": 3,
+          "title_in_team": "Technical lead"
+        }
+      },
+      "native": {
+        "method": "team.set_title",
+        "params": {
+          "command_id": "01M72N8MG00000000000000006",
+          "membership_id": "01M72N8MG0000000000000000A",
+          "expected_version": 3,
+          "title_in_team": "Technical lead"
+        }
+      }
+    },
+    {
+      "name": "member.move all optional fields",
+      "reader": "Rust+TS",
+      "operation": "member.move",
+      "path": "/api/v1/organizations/01M72N8MG00000000000000003/members/move",
+      "envelope": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "params": {
+          "membership_id": "01M72N8MG0000000000000000A",
+          "expected_version": 3,
+          "new_membership_id": "01M72N8MG0000000000000000B",
+          "to_team_id": "01M72N8MG00000000000000008",
+          "title_in_team": "Engineer"
+        }
+      },
+      "native": {
+        "method": "member.move",
+        "params": {
+          "command_id": "01M72N8MG00000000000000006",
+          "membership_id": "01M72N8MG0000000000000000A",
+          "expected_version": 3,
+          "new_membership_id": "01M72N8MG0000000000000000B",
+          "to_team_id": "01M72N8MG00000000000000008",
+          "title_in_team": "Engineer"
+        }
+      }
+    },
+    {
+      "name": "member.add_person all optional fields",
+      "reader": "Rust+TS",
+      "operation": "member.add_person",
+      "path": "/api/v1/organizations/01M72N8MG00000000000000003/members/add-person",
+      "envelope": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "params": {
+          "member_id": "01M72N8MG00000000000000009",
+          "name": "Pat",
+          "contact": "pat@example.test"
+        }
+      },
+      "native": {
+        "method": "member.add_person",
+        "params": {
+          "command_id": "01M72N8MG00000000000000006",
+          "member_id": "01M72N8MG00000000000000009",
+          "name": "Pat",
+          "contact": "pat@example.test"
+        }
+      }
+    },
+    {
+      "name": "member.update_person all optional fields",
+      "reader": "Rust+TS",
+      "operation": "member.update_person",
+      "path": "/api/v1/organizations/01M72N8MG00000000000000003/members/update-person",
+      "envelope": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "params": {
+          "member_id": "01M72N8MG00000000000000009",
+          "expected_version": 3,
+          "name": "Pat New",
+          "contact": "new@example.test",
+          "clear_contact": false
+        }
+      },
+      "native": {
+        "method": "member.update_person",
+        "params": {
+          "command_id": "01M72N8MG00000000000000006",
+          "member_id": "01M72N8MG00000000000000009",
+          "expected_version": 3,
+          "name": "Pat New",
+          "contact": "new@example.test"
+        }
+      }
+    },
+    {
+      "name": "member.remove all optional fields",
+      "reader": "Rust+TS",
+      "operation": "member.remove",
+      "path": "/api/v1/organizations/01M72N8MG00000000000000003/members/remove",
+      "envelope": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "params": {
+          "member_id": "01M72N8MG00000000000000009",
+          "expected_version": 3
+        }
+      },
+      "native": {
+        "method": "member.remove",
+        "params": {
+          "command_id": "01M72N8MG00000000000000006",
+          "member_id": "01M72N8MG00000000000000009",
+          "expected_version": 3
+        }
+      }
+    },
+    {
+      "name": "member.set_reports_to all optional fields",
+      "reader": "Rust+TS",
+      "operation": "member.set_reports_to",
+      "path": "/api/v1/organizations/01M72N8MG00000000000000003/members/set-reports-to",
+      "envelope": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "params": {
+          "member_id": "01M72N8MG00000000000000009",
+          "expected_version": 3,
+          "reports_to_member_id": "01M72N8MG0000000000000000E"
+        }
+      },
+      "native": {
+        "method": "member.set_reports_to",
+        "params": {
+          "command_id": "01M72N8MG00000000000000006",
+          "member_id": "01M72N8MG00000000000000009",
+          "expected_version": 3,
+          "reports_to_member_id": "01M72N8MG0000000000000000E"
+        }
+      }
+    },
+    {
+      "name": "project.add_team all optional fields",
+      "reader": "Rust+TS",
+      "operation": "project.add_team",
+      "path": "/api/v1/organizations/01M72N8MG00000000000000003/projects/add-team",
+      "envelope": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "params": {
+          "project_team_id": "01M72N8MG0000000000000000D",
+          "project_id": "01M72N8MG0000000000000000C",
+          "team_id": "01M72N8MG00000000000000007"
+        }
+      },
+      "native": {
+        "method": "project.add_team",
+        "params": {
+          "command_id": "01M72N8MG00000000000000006",
+          "project_team_id": "01M72N8MG0000000000000000D",
+          "project_id": "01M72N8MG0000000000000000C",
+          "team_id": "01M72N8MG00000000000000007"
+        }
+      }
+    },
+    {
+      "name": "project.remove_team all optional fields",
+      "reader": "Rust+TS",
+      "operation": "project.remove_team",
+      "path": "/api/v1/organizations/01M72N8MG00000000000000003/projects/remove-team",
+      "envelope": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "params": {
+          "project_team_id": "01M72N8MG0000000000000000D",
+          "expected_version": 3,
+          "areas_to_team_id": "01M72N8MG0000000000000000F"
+        }
+      },
+      "native": {
+        "method": "project.remove_team",
+        "params": {
+          "command_id": "01M72N8MG00000000000000006",
+          "project_team_id": "01M72N8MG0000000000000000D",
+          "expected_version": 3,
+          "areas_to_team_id": "01M72N8MG0000000000000000F"
+        }
+      }
+    },
+    {
+      "name": "member.update_person name and clear_contact",
+      "reader": "Rust+TS",
+      "operation": "member.update_person",
+      "path": "/api/v1/organizations/01M72N8MG00000000000000003/members/update-person",
+      "envelope": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "params": {
+          "member_id": "01M72N8MG00000000000000009",
+          "expected_version": 3,
+          "name": "Pat New",
+          "clear_contact": true
+        }
+      },
+      "native": {
+        "method": "member.update_person",
+        "params": {
+          "command_id": "01M72N8MG00000000000000006",
+          "member_id": "01M72N8MG00000000000000009",
+          "expected_version": 3,
+          "name": "Pat New",
+          "clear_contact": true
+        }
+      }
+    }
+  ]
+}

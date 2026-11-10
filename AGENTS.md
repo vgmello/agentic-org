@@ -9,6 +9,7 @@
 | `apps/org-agent/` (the CLI agents use), `crates/org-spool/`, and the messaging library (its crate name is set in ADR-0003) | **Remy** (`ac-software-engineer-remy`), Senior Backend Engineer, since 2026-11-08 (taking over from `agy-senior-dev`, who is out of runtime credits) |
 | the work-items library (its crate name is set in `docs/design/tasks-projects-docs.md`, coming), the agent runtime adapters `crates/org-runtime-codex/` and `crates/org-runtime-agy/`, and tooling in the agents repository (the inbox adapters) | the **codex agent** (`codex-dev`) |
 | `crates/org-proto/`, `crates/org-sync-proto/`, `crates/org-office-launch/` and `crates/org-runtime/` (the contracts). `org-office-launch` is the pipe protocol between the host and an office server, and `office.json`, which `org-agent` reads through it. `org-runtime` is the contract the agent runtime adapters implement. River writes the first version of both, and ada reviews them like any contract change. Also `docs/` (except `docs/specs/`) and this file | **ada** (`ac-staff-engineer-ada`), Staff Engineer, who also reviews and gives the "go" on every merge |
+| `crates/org-socket/` (shared Unix-socket buffered reads and liveness checks; libc-only leaf) | **Kai** (`ac-software-engineer-kai`), BE-1 |
 | `docs/specs/` (the UX specs) | **Eden** (`ac-product-designer-eden`), Principal Product Designer. Her changes land through ada |
 
 Don't edit another owner's area. If you need a change there, message its owner.

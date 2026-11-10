@@ -201,37 +201,46 @@ pub struct Capabilities {
 }
 
 /// Targeted cancellation of the original create. No new ID or fingerprint is submitted.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+///
+/// ```compile_fail
+/// use org_proto::gateway::{CancelResult, CancelState, OperationId};
+/// let _ = CancelResult {
+///     operation_id: OperationId::parse("01M72N8MG00000000000000006".into()).unwrap(),
+///     state: CancelState::InProgress,
+/// };
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CancelResult {
     pub operation_id: OperationId,
-    pub state: CancelState,
+    pub state: CancelResultState,
 }
 
-impl<'de> Deserialize<'de> for CancelResult {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        struct Raw {
-            operation_id: OperationId,
-            state: CancelState,
+/// A cancellation result cannot represent in_progress, which is a conflict error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", try_from = "CancelState")]
+pub enum CancelResultState {
+    Abandoned,
+    Linked,
+    Unknown,
+}
+
+impl TryFrom<CancelState> for CancelResultState {
+    type Error = &'static str;
+    fn try_from(state: CancelState) -> Result<Self, Self::Error> {
+        match state {
+            CancelState::Abandoned => Ok(Self::Abandoned),
+            CancelState::Linked => Ok(Self::Linked),
+            CancelState::Unknown => Ok(Self::Unknown),
+            CancelState::InProgress => Err("in_progress requires a conflict error envelope"),
         }
-        let raw = Raw::deserialize(d)?;
-        if raw.state == CancelState::InProgress {
-            return Err(D::Error::custom(
-                "in_progress requires a conflict error envelope",
-            ));
-        }
-        Ok(Self {
-            operation_id: raw.operation_id,
-            state: raw.state,
-        })
     }
 }
 
 impl CancelResult {
     pub fn http_status(&self) -> Option<u16> {
         match self.state {
-            CancelState::Abandoned | CancelState::Linked => Some(200),
-            CancelState::InProgress | CancelState::Unknown => None,
+            CancelResultState::Abandoned | CancelResultState::Linked => Some(200),
+            CancelResultState::Unknown => None,
         }
     }
 }

@@ -119,6 +119,7 @@ crates/
   org-proto/                         # Local request/event contracts
   org-office-launch/                 # Private host/worker launch contract
   org-client/                        # Local IPC client
+  org-socket/                        # Shared Unix-socket reads and liveness checks (libc only)
   org-runtime/                       # Harness contracts and conformance support
   org-copilot/                       # Existing bounded draft-only capability
   org-spool/                         # Explicitly retained offline CLI behavior
