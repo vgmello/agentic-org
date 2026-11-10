@@ -2103,6 +2103,176 @@ pub fn mailbox_read_skips_more_than_one_expired_batch(backend: impl OpenTriageBa
     assert_eq!(office.events.delivery_failed().len(), count as usize);
 }
 
+/// More than twice the interactive cleanup budget: after one read, maintenance
+/// pages alone finish every expiry and notice. No recipient read drives those ticks.
+pub fn mailbox_maintenance_finishes_a_large_backlog(backend: impl OpenTriageBackend) {
+    let office = triage_office(&backend);
+    let read_budget = (crate::mailbox::MAX_RECHECKS + 1) * crate::MAX_EXPIRED_IDS as u32;
+    let count = 2 * read_budget + 5;
+    for n in 1..=count {
+        commit(&*office.store, expired_request(n, PAT_ID, ADA_ID));
+    }
+    send(&office.mailbox, PAT_ID, count + 1, ADA_HANDLE).unwrap();
+    assert_eq!(read_next(&office.mailbox, ADA_ID), Some(msg_id(count + 1)));
+    assert_eq!(state_of(&*office.store, &msg_id(count)), State::Unread);
+
+    let limit = org_proto::msg::MAX_PAGE_LIMIT;
+    let mut cursor = None;
+    let mut inspected = 0;
+    let mut finished = false;
+    for _ in 0..=(count + 1).div_ceil(limit) {
+        let progress = office.mailbox.expire_due(ADA_ID, cursor, limit).unwrap();
+        assert!(progress.inspected <= limit as usize);
+        inspected += progress.inspected;
+        if let (Some(previous), Some(next)) = (cursor, progress.next_cursor) {
+            assert!(next < previous, "maintenance cursor must advance");
+        }
+        cursor = progress.next_cursor;
+        if cursor.is_none() {
+            finished = true;
+            break;
+        }
+    }
+    assert!(finished, "the bounded pages must finish the pass");
+    assert_eq!(inspected, count as usize + 1);
+    for n in 1..=count {
+        assert_eq!(
+            state_of(&*office.store, &msg_id(n)),
+            State::Expired,
+            "request {n}"
+        );
+    }
+    assert_eq!(office.events.delivery_failed().len(), count as usize);
+    office.mailbox.expire_due(ADA_ID, None, limit).unwrap();
+    assert_eq!(
+        office.events.delivery_failed().len(),
+        count as usize,
+        "no repeat notices"
+    );
+}
+
+/// A failed page retains its input cursor: retrying it sends an already-expired
+/// request's missing notice, without a read and without a second transition.
+pub fn mailbox_maintenance_retries_a_failed_notice(backend: impl OpenTriageBackend) {
+    let (store, directory) = backend.open(&members(), POSITION);
+    let directory = Arc::new(FlakyDirectory {
+        inner: directory,
+        reference: PAT_ID,
+        failing: std::sync::atomic::AtomicBool::new(true),
+    });
+    let store = Arc::new(store);
+    let events = Arc::new(RecordingEvents::default());
+    let mailbox = Mailbox::with_triage(
+        store.clone(),
+        store.clone(),
+        directory.clone(),
+        identity(),
+        Arc::new(ManualClock::new(NOW_MS)),
+        events.clone(),
+    )
+    .unwrap();
+    let mut first = expired_request(1, PAT_ID, ADA_ID);
+    first.message.header.to_display_name = ADA_NAME.into();
+    commit(&*store, first);
+    let mut second = expired_request(2, OWNER_ID, ADA_ID);
+    second.message.header.to_display_name = ADA_NAME.into();
+    commit(&*store, second);
+    assert_eq!(
+        mailbox.expire_due(ADA_ID, None, 2),
+        Err(MailboxError::StorageError)
+    );
+    assert_eq!(state_of(&*store, &msg_id(1)), State::Expired);
+    assert_eq!(
+        events.delivery_failed().len(),
+        1,
+        "the newer request's notice committed"
+    );
+    directory
+        .failing
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(mailbox.expire_due(ADA_ID, None, 2).unwrap().inspected, 2);
+    expect_notice(&*store, 1, PAT_ID, PAT_HANDLE);
+    assert_eq!(events.delivery_failed().len(), 2);
+    expect_notice(&*store, 2, OWNER_ID, OWNER_NAME);
+    assert_eq!(
+        events.state_changes().len(),
+        2,
+        "no second expiry transition"
+    );
+    // An answered/notified request does not need its sender directory again.
+    directory
+        .failing
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    mailbox.expire_due(ADA_ID, None, 2).unwrap();
+    assert_eq!(events.delivery_failed().len(), 2);
+}
+
+/// Inserts with out-of-order IDs do not move a stable sequence cursor. An arrival
+/// above the current pass is picked up by the next pass, without skips or repeats.
+pub fn mailbox_maintenance_cursor_survives_concurrent_arrivals(backend: impl OpenTriageBackend) {
+    let office = triage_office(&backend);
+    for n in [50, 10, 70, 30] {
+        commit(&*office.store, expired_request(n, PAT_ID, ADA_ID));
+    }
+    let first = office.mailbox.expire_due(ADA_ID, None, 2).unwrap();
+    assert_eq!(first.inspected, 2);
+    let cursor = first.next_cursor.expect("two older rows remain");
+    commit(&*office.store, expired_request(20, PAT_ID, ADA_ID));
+    let second = office.mailbox.expire_due(ADA_ID, Some(cursor), 2).unwrap();
+    assert_eq!(second.inspected, 2);
+    assert_eq!(second.next_cursor, None);
+    for n in [50, 10, 70, 30] {
+        assert_eq!(state_of(&*office.store, &msg_id(n)), State::Expired);
+    }
+    assert_eq!(state_of(&*office.store, &msg_id(20)), State::Unread);
+    assert_eq!(office.events.delivery_failed().len(), 4);
+
+    let mut cursor = None;
+    let mut finished = false;
+    for _ in 0..3 {
+        let progress = office.mailbox.expire_due(ADA_ID, cursor, 2).unwrap();
+        assert!(progress.inspected <= 2);
+        cursor = progress.next_cursor;
+        if cursor.is_none() {
+            finished = true;
+            break;
+        }
+    }
+    assert!(finished, "the next pass covers the concurrent arrival");
+    assert_eq!(state_of(&*office.store, &msg_id(20)), State::Expired);
+    assert_eq!(office.events.delivery_failed().len(), 5);
+}
+
+/// Maintenance is recipient-scoped, bounded, and preserves actionable human asks
+/// and a human's explicit snooze.
+pub fn mailbox_maintenance_validation_and_human_requests(backend: impl OpenTriageBackend) {
+    let office = triage_office(&backend);
+    for limit in [0, org_proto::msg::MAX_PAGE_LIMIT + 1] {
+        assert_eq!(
+            office.mailbox.expire_due(ADA_ID, None, limit),
+            Err(MailboxError::InvalidRequest)
+        );
+    }
+    assert_eq!(
+        office.mailbox.expire_due(ADA_HANDLE, None, 1),
+        Err(MailboxError::NotBound)
+    );
+    commit(&*office.store, expired_request(1, PAT_ID, REMY_ID));
+    commit(&*office.store, expired_request(2, ADA_ID, PAT_ID));
+    commit(&*office.store, expired_request(3, ADA_ID, PAT_ID));
+    let mut snooze = snooze_until(3, &at(60_000), None);
+    snooze.to_member_id = PAT_ID.into();
+    apply(&*office.store, snooze);
+    office.mailbox.expire_due(ADA_ID, None, 10).unwrap();
+    assert_eq!(state_of(&*office.store, &msg_id(1)), State::Unread);
+    office.mailbox.expire_due(PAT_ID, None, 10).unwrap();
+    assert_eq!(state_of(&*office.store, &msg_id(2)), State::Unread);
+    assert!(header_of(&*office.store, 2).expired_waiting_person);
+    assert_eq!(state_of(&*office.store, &msg_id(3)), State::Snoozed);
+    assert!(!header_of(&*office.store, 3).expired_waiting_person);
+    assert!(office.events.delivery_failed().is_empty());
+}
+
 /// Every case, by name: what [`crate::triage_conformance_tests!`] runs.
 #[doc(hidden)]
 #[macro_export]
@@ -2160,6 +2330,10 @@ macro_rules! triage_conformance_tests {
             mailbox_read_expires_an_overdue_request,
             mailbox_wait_expires_more_than_one_batch,
             mailbox_read_skips_more_than_one_expired_batch,
+            mailbox_maintenance_finishes_a_large_backlog,
+            mailbox_maintenance_retries_a_failed_notice,
+            mailbox_maintenance_cursor_survives_concurrent_arrivals,
+            mailbox_maintenance_validation_and_human_requests,
             mailbox_a_failed_notice_does_not_fail_the_recipient,
             mailbox_a_squatted_notice_id_is_told_via_the_fallback,
             mailbox_squatted_notice_tells_the_asker_exactly_once,

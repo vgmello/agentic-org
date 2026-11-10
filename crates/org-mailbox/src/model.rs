@@ -121,12 +121,20 @@ pub struct PeekUnreadOutcome {
     pub expired_ids: Vec<String>,
 }
 
+/// One bounded maintenance page. Continue with `next_cursor`, or start a new
+/// pass with `None` on a later timer tick after reaching the end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExpiryProgress {
+    pub inspected: usize,
+    pub next_cursor: Option<u64>,
+}
+
 #[derive(Debug, Clone)]
 pub struct DeliveredMessage {
     pub message: StoredMessage,
 }
 
-/// Visibility is explicit. Global scope is used only by an app-authorized caller.
+/// Visibility is explicit. Global scope requires office-wide authority at the caller boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HeaderScope {
     Inbox(String),

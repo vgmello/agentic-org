@@ -17,9 +17,9 @@ use crate::snoozes::SnoozeTimers;
 use crate::waiters::{WaitOutcome, WaiterRegistry};
 use crate::{
     content_hash, format_utc, parse_utc, past_deadline, Cancellation, Clock, CommitMessageOutcome,
-    HeaderQuery, HeaderScope, LocalStateTransition, MailboxError, MemberDirectory, MessageEvent,
-    MessageEvents, MessageStore, NewStoredMessage, StoreError, StoredMessage, TriageStore,
-    MAX_EXPIRED_IDS,
+    ExpiryProgress, HeaderQuery, HeaderScope, LocalStateTransition, MailboxError, MemberDirectory,
+    MessageEvent, MessageEvents, MessageStore, NewStoredMessage, StoreError, StoredMessage,
+    TriageStore, MAX_EXPIRED_IDS,
 };
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -32,7 +32,7 @@ const EXPIRED_SUBJECT: &str = "Request expired";
 
 /// The most extra expiry peeks one `read` makes before claiming, or one `wait`
 /// makes before blocking. A concurrent backlog cannot make a cleanup turn unbounded.
-const MAX_RECHECKS: u32 = 10;
+pub(crate) const MAX_RECHECKS: u32 = 10;
 
 #[derive(Debug, Clone)]
 pub struct OfficeIdentity {
@@ -459,6 +459,63 @@ impl Mailbox {
                 WaitOutcome::Deadline | WaitOutcome::Notified => {}
             }
         }
+    }
+
+    /// Office-internal expiry maintenance for one canonical local recipient. No
+    /// external request is authorized here: a trusted office timer owns scheduling
+    /// and recipient discovery. `limit` must be in `1..=MAX_PAGE_LIMIT`.
+    ///
+    /// Pages inspect headers, newest first, including terminal requests whose
+    /// notice previously failed. The transition/notice rules are the same ones
+    /// used by read and wait. On error, retain the input cursor and retry it: a
+    /// partial page is safe to replay. Completed passes restart at `None` on a
+    /// later tick to cover new arrivals or deadlines crossed during the scan.
+    pub fn expire_due(
+        &self,
+        recipient_id: &str,
+        cursor: Option<u64>,
+        limit: u32,
+    ) -> Result<ExpiryProgress, MailboxError> {
+        if limit == 0 || limit > MAX_PAGE_LIMIT {
+            return Err(MailboxError::InvalidRequest);
+        }
+        let (recipient, position) = self.bound_member(recipient_id)?;
+        self.triage()?;
+        let now_ms = self.clock.now_ms();
+        let now = format_utc(now_ms).ok_or(MailboxError::StorageError)?;
+        let page = self.store.list_headers(HeaderQuery {
+            scope: HeaderScope::Inbox(recipient_id.to_owned()),
+            from_member_id: None,
+            thread_id: None,
+            unread_only: false,
+            include_snoozed: true,
+            cursor,
+            limit,
+        })?;
+        for header in &page.headers {
+            match header.state {
+                MessageLifecycleState::Expired
+                    if recipient.kind == MemberKind::Agent && header.kind == KIND_REQUEST =>
+                {
+                    // No new transition: retry the notice even if the recipient
+                    // never reads the expired request again.
+                    self.notify_expired(header, &now)?;
+                }
+                MessageLifecycleState::Unread | MessageLifecycleState::Snoozed
+                    if past_deadline(header, now_ms)
+                        && !header.expired_waiting_person
+                        && (recipient.kind == MemberKind::Agent
+                            || header.state == MessageLifecycleState::Unread) =>
+                {
+                    self.expire(&recipient, position, &header.id, &now, NoticeFailure::Fail)?;
+                }
+                _ => {}
+            }
+        }
+        Ok(ExpiryProgress {
+            inspected: page.headers.len(),
+            next_cursor: page.next_cursor,
+        })
     }
 
     /// `msg.defer`: snooze a message addressed to the bound member until a time or its next
