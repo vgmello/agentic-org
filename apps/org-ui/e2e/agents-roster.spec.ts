@@ -79,6 +79,11 @@ test('AGENT-3: an organization with no agents says so and offers Add your first 
 	await createOrg(page);
 	await visit(page, '/agents?org=empty');
 	await expect(page.getByTestId('no-agents')).toContainText('No agents yet');
+	await shot(page, 'employees-empty');
 	await page.getByRole('button', { name: 'Add your first agent' }).click();
-	await expect(page.getByRole('dialog', { name: 'Add an agent' })).toBeVisible();
+	const sheet = page.getByRole('dialog', { name: 'Add an agent' });
+	await expect(sheet).toBeVisible();
+	await expect(sheet.getByRole('button', { name: 'Add agent' })).toBeDisabled();
+	await expect(sheet.getByRole('list', { name: 'Teams' })).toHaveText('There are no teams yet.');
+	await shot(page, 'employees-first-agent', { context: sheet });
 });
