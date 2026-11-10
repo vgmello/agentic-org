@@ -1,12 +1,12 @@
 /** Same-origin JSON boundary. B1-02 adapters supply concrete routes and decode the returned body. */
-export function createJsonHttp({ origin, fetch: send = globalThis.fetch, timeoutMs, maxResponseBytes }: {
-	origin: string; fetch?: typeof fetch; timeoutMs: number; maxResponseBytes: number;
+export function createJsonHttp({ origin, fetch: send = globalThis.fetch, timeoutMs, maxRequestBytes, maxResponseBytes }: {
+	origin: string; fetch?: typeof fetch; timeoutMs: number; maxRequestBytes: number; maxResponseBytes: number;
 }) {
 	const base = new URL(origin);
 	if (base.origin !== origin || !['http:', 'https:'].includes(base.protocol)) throw new Error('Invalid browser origin');
 	if (typeof globalThis.location !== 'undefined' && globalThis.location.origin !== origin)
 		throw new Error('The API must use this browser origin');
-	if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2 ** 31 - 1 || !Number.isSafeInteger(maxResponseBytes) || maxResponseBytes <= 0)
+	if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2 ** 31 - 1 || !Number.isSafeInteger(maxRequestBytes) || maxRequestBytes <= 0 || !Number.isSafeInteger(maxResponseBytes) || maxResponseBytes <= 0)
 		throw new Error('HTTP requests require finite time and body limits');
 	return async ({ path, method, body, proof, signal }: {
 		path: string; method: 'GET' | 'POST'; body?: unknown; proof: string; signal?: AbortSignal;
@@ -14,9 +14,11 @@ export function createJsonHttp({ origin, fetch: send = globalThis.fetch, timeout
 		const url = new URL(path, base);
 		if (!path.startsWith('/api/v1/') || path.includes('\\') || url.origin !== origin || !url.pathname.startsWith('/api/v1/') || url.hash || url.username || url.password)
 			throw new Error('Only same-origin API paths are allowed');
-		if (!proof || url.href.includes(proof) || url.href.includes(encodeURIComponent(proof))) throw new Error('Session proof must be supplied only in the header');
+		if (!proof || [url.href, decodeURIComponent(url.pathname), ...Array.from(url.searchParams).flat()].some((part) => part.includes(proof))) throw new Error('Session proof must be supplied only in the header');
 		const headers = new Headers({ Accept: 'application/json', 'X-Org-Session-Proof': proof });
 		const encoded = body === undefined ? undefined : JSON.stringify(body);
+		if (encoded !== undefined && new TextEncoder().encode(encoded).byteLength > maxRequestBytes)
+			throw new Error('JSON request exceeds its limit');
 		if (encoded !== undefined) headers.set('Content-Type', 'application/json');
 		const controller = new AbortController();
 		const cancel = () => controller.abort(new Error('Request cancelled'));
@@ -31,7 +33,10 @@ export function createJsonHttp({ origin, fetch: send = globalThis.fetch, timeout
 		try {
 			return await Promise.race([deadline, (async () => {
 				const response = await send(url, { method, headers, body: encoded, credentials: 'same-origin', redirect: 'error', cache: 'no-store', signal: controller.signal });
-				if (!/^application\/(?:[\w.+-]+\+)?json(?:;|$)/i.test(response.headers.get('content-type') ?? '')) throw new Error('Expected JSON');
+				if (!/^application\/(?:[\w.+-]+\+)?json(?:;|$)/i.test(response.headers.get('content-type') ?? '')) {
+					void response.body?.cancel().catch(() => {});
+					throw new Error('Expected JSON');
+				}
 				const reader = response.body?.getReader();
 				if (!reader) throw new Error('Missing JSON body');
 				const chunks: Uint8Array[] = [];
@@ -51,6 +56,7 @@ export function createJsonHttp({ origin, fetch: send = globalThis.fetch, timeout
 				return { status: response.status, body: JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown };
 			})()]);
 		} finally {
+			controller.abort();
 			clearTimeout(timer);
 			signal?.removeEventListener('abort', cancel);
 			if (aborted) controller.signal.removeEventListener('abort', aborted);

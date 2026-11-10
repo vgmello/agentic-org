@@ -6,15 +6,17 @@ const origin = 'http://localhost:4173';
 const request = { path: '/api/v1/test-only', method: 'POST' as const, proof, body: { expected_version: 3 } };
 function setup(response = () => Response.json({ ok: true })) {
 	const send = vi.fn<typeof fetch>(async () => response());
-	return { send, http: createJsonHttp({ origin, fetch: send, timeoutMs: 1000, maxResponseBytes: 100 }) };
+	return { send, http: createJsonHttp({ origin, fetch: send, timeoutMs: 1000, maxResponseBytes: 100, maxRequestBytes: 100 }) };
 }
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('same-origin JSON boundary (test paths, no production routes)', () => {
 	it('refuses missing or overflowing timeout/body budgets', () => {
 		for (const timeoutMs of [0, NaN, 2 ** 31])
-			expect(() => createJsonHttp({ origin, timeoutMs, maxResponseBytes: 100 })).toThrow('limits');
-		expect(() => createJsonHttp({ origin, timeoutMs: 1000, maxResponseBytes: Infinity })).toThrow('limits');
+			expect(() => createJsonHttp({ origin, timeoutMs, maxResponseBytes: 100, maxRequestBytes: 100 })).toThrow('limits');
+		expect(() => createJsonHttp({ origin, timeoutMs: 1000, maxResponseBytes: Infinity, maxRequestBytes: 100 })).toThrow('limits');
+		for (const maxRequestBytes of [0, NaN, Infinity])
+			expect(() => createJsonHttp({ origin, timeoutMs: 1000, maxResponseBytes: 100, maxRequestBytes })).toThrow('limits');
 	});
 	it('keeps proof in a header, sends the cookie and refuses redirects/cache', async () => {
 		const { send, http } = setup();
@@ -28,13 +30,36 @@ describe('same-origin JSON boundary (test paths, no production routes)', () => {
 
 	it('refuses a misconfigured foreign origin even if a caller supplies it as the base', () => {
 		vi.stubGlobal('location', { origin });
-		expect(() => createJsonHttp({ origin: 'https://evil.example', timeoutMs: 1000, maxResponseBytes: 100 })).toThrow('this browser origin');
+		expect(() => createJsonHttp({ origin: 'https://evil.example', timeoutMs: 1000, maxResponseBytes: 100, maxRequestBytes: 100 })).toThrow('this browser origin');
 	});
 
 	it.each(['https://evil.example/api/v1/test', '//evil.example/api/v1/test', '/api/v1/../../private', '/api/v1/%2e%2e/%2e%2e/private', '/api/v1/test#secret', '/api/v1/\\evil.example', `/api/v1/test?proof=${proof}`])('refuses unsafe path %s before calling fetch', async (path) => {
 		const { send, http } = setup();
 		await expect(http({ ...request, path })).rejects.toThrow();
 		expect(send).not.toHaveBeenCalled();
+	});
+
+	it('rejects partially encoded proofs in path and query before dispatch', async () => {
+		const { send, http } = setup();
+		for (const path of ['/api/v1/%6fpaque-proof-value', '/api/v1/test?proof=%6fpaque-proof-value'])
+			await expect(http({ ...request, path })).rejects.toThrow('proof');
+		expect(send).not.toHaveBeenCalled();
+	});
+
+	it('rejects oversized UTF-8 request bodies before dispatch', async () => {
+		const { send, http } = setup();
+		await expect(http({ ...request, body: { text: 'é'.repeat(50) } })).rejects.toThrow('request exceeds');
+		expect(send).not.toHaveBeenCalled();
+	});
+
+	it('cancels rejected streaming bodies and aborts the transport', async () => {
+		const cancel = vi.fn();
+		const { http, send } = setup(() => new Response(new ReadableStream({ cancel }), {
+			headers: { 'Content-Type': 'text/html' }
+		}));
+		await expect(http(request)).rejects.toThrow('Expected JSON');
+		expect(cancel).toHaveBeenCalledOnce();
+		expect(send.mock.calls[0][1]?.signal?.aborted).toBe(true);
 	});
 
 	it('does not infer success/rejection from HTTP status', async () => {
@@ -52,7 +77,7 @@ describe('same-origin JSON boundary (test paths, no production routes)', () => {
 	it('times out even when an injected transport ignores cancellation', async () => {
 		vi.useFakeTimers();
 		const send = vi.fn<typeof fetch>(() => new Promise(() => {}));
-		const http = createJsonHttp({ origin, fetch: send, timeoutMs: 25, maxResponseBytes: 100 });
+		const http = createJsonHttp({ origin, fetch: send, timeoutMs: 25, maxResponseBytes: 100, maxRequestBytes: 100 });
 		const pending = expect(http(request)).rejects.toThrow('timed out');
 		await vi.advanceTimersByTimeAsync(25);
 		await pending;
@@ -62,7 +87,7 @@ describe('same-origin JSON boundary (test paths, no production routes)', () => {
 
 	it('cancels an active request without exposing a durable-operation success or rejection', async () => {
 		const send = vi.fn<typeof fetch>(() => new Promise(() => {}));
-		const http = createJsonHttp({ origin, fetch: send, timeoutMs: 1000, maxResponseBytes: 100 });
+		const http = createJsonHttp({ origin, fetch: send, timeoutMs: 1000, maxResponseBytes: 100, maxRequestBytes: 100 });
 		const controller = new AbortController();
 		const pending = expect(http({ ...request, signal: controller.signal })).rejects.toThrow('cancelled');
 		controller.abort();
