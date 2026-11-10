@@ -42,7 +42,9 @@ X-02 (`org-proto` v2, approved by ada):
   can't be reached), with copy and repair; and `agentic-org office remove-pending`.
 - **§3.3:** a satellite whose join ended gets its own row with **Remove…**, never
   Restart office, which the host refuses for it. §3.1: a pending join shows
-  Waiting for approval.
+  Waiting for approval, then, once HQ approves it, Starting · copying records
+  until its first copy of records completes (§6.3); on the joining instance,
+  telling the two apart is A102.
 - **Waiting for running agents:** Create organization and Add office › On this
   instance wait, with Cancel, while agents are running on that instance, until the
   host can ask offices to relaunch their sessions (X-02 Q9) (§5a, §6.2).
@@ -184,7 +186,7 @@ Status colors reuse the existing tokens: green = online, blue = starting, gray =
 | Label | Icon (Lucide) | Color | When | Secondary text |
 | --- | --- | --- | --- | --- |
 | Online | `circle` filled | green | The office runs and is in sync with HQ (HQ itself: it runs) | — |
-| Starting | `loader` | blue | Its owning instance reports the office starting | — |
+| Starting | `loader` | blue | Its owning instance reports the office starting | —; for a joining office HQ has approved, "copying records" until its first copy of records completes *(rev 15)* |
 | Offline | `circle` outline | gray | The office is disconnected from HQ; its current execution state is not confirmed | "last seen 2 h ago" |
 | Unreachable | `wifi-off` | red | HQ cannot be reached by the browser or the joining CLI | "last synced 10 min ago" |
 | Stopped | `circle-x` | red | Its owning instance confirms the office is stopped/unavailable | the reason from §3.3, in plain words |
@@ -197,7 +199,11 @@ Status colors reuse the existing tokens: green = online, blue = starting, gray =
 **From the wire to the label** *(rev 8)*. `OfficeInfo.status` shows as one label:
 
 - `active` → **Online**. `starting` → **Starting**. `update_needed` → **Update needed**. `pending` (invited, not joined yet) → **Invited**.
-- `starting` with `status_reason: join_pending` (a satellite on this instance whose join waits for approval or its first copy of records) → **Waiting for approval**, never Starting or Online *(rev 15)*. `unavailable` with a `join_*` reason → **Stopped**, with §3.3's "join ended" row.
+- `starting` with `status_reason: join_pending` (a satellite whose join waits for approval or its first copy of records) *(rev 15)*:
+  - before HQ approves it → **Waiting for approval**, never Starting or Online;
+  - after HQ approves it, while its first copy of records runs → **Starting** with "copying records" (shown as "Starting · copying records", as in §6.3), never Online. The office becomes `active` (**Online**) only once that copy completes (`offices-hq-and-satellites.md`, "Provisioning a satellite", steps 4 and 5; `office-host-boundary.md` §4).
+  - The host reports both phases as `join_pending`. HQ, which approved the join, shows Starting · copying records after approval. For a satellite on this instance, until the instance status read tells the two phases apart (A102), the app shows **Waiting for approval** for the whole of `join_pending`.
+- `unavailable` with a `join_*` reason → **Stopped**, with §3.3's "join ended" row.
 - `offline` or `unavailable`, for an office whose local instance reports it stopped → **Stopped**, with §3.3's reason as secondary text. The two look the same; the reason and its action say what differs.
 - **Offline** means an office is not connected to HQ. Distinguish this from a locally confirmed Stopped state and from Unknown when evidence is unavailable.
 - `unknown`, or no status at all → **Unknown** ("Status unknown").
@@ -480,7 +486,9 @@ that end it:
 
 **Removing a join** (on the joining machine, through its instance): `agentic-org
 office remove-pending <office id>`. On an instance that has accounts, it asks an
-instance admin to sign in first, as setup does there.
+instance admin to sign in first, as setup does there. Its sign-in failures use
+the account commands' words (`server-installation-and-access-ux.md` §4a.2,
+SIGN-30), in the table below.
 
 ```
 $ agentic-org office remove-pending 01JBX7…
@@ -504,6 +512,8 @@ Removed the join request for Studio Mac from instance default.
 | Still waiting, no terminal | "Studio Mac is still waiting for approval. Run this in a terminal to confirm removing it." Nothing removed. | Error |
 | The office has joined | "Studio Mac has joined Lumen Labs, so there's no pending join to remove. To remove the office, use Offices › Remove office at HQ." Nothing removed. | Error |
 | Unknown ID | "There's no join request 01JBX7… on instance default. agentic-org status lists them." | Error |
+| Wrong username or password at sign-in (an instance with accounts) | "That username and password don't match. Try again." Asks again. Too many tries: "Too many sign-in attempts. Try again in a few minutes." Nothing removed. | — / Error |
+| The account that signed in isn't an instance admin | "sam isn't an instance admin, so it can't remove join requests. Sign in as an instance admin of instance default." Nothing removed. | Error |
 | Instance not running | "Instance default isn't running. Start it with agentic-org start, then run this command again." | Error |
 
 ## 6. Flow 3 · Offices and Add office
@@ -603,7 +613,7 @@ Triggers: the HQ Needs-you inbox and highlighted Offices row. Each opens this ac
 - **Approve** is enabled once the code has 8 characters. Case, spaces and dashes are ignored. As in Crockford base32, a typed O counts as 0 and I or L as 1, so look-alikes never cause a mismatch. A U, or any other character that can't be in a code, is rejected as typed with the hint "Codes use digits and letters, without U".
 - **Wrong code:** "That code doesn't match Studio Mac's. Check its terminal or your trusted session. 2 tries left." After 3 wrong codes the invitation is cancelled (A3, resolved): "Join declined after 3 wrong codes. The invitation is cancelled; create a new invitation to try again." The row becomes **Invitation cancelled** with **New invitation** and **Remove**.
 - **Decline** asks once: "Decline Studio Mac? Its invitation is cancelled." · **Decline**.
-- **Approved:** the row moves to the office list as "Starting · copying records", then Online. Toast: "Studio Mac joined Lumen Labs."
+- **Approved:** the row moves to the office list as "Starting · copying records" (§3.1), then Online once its first copy of records completes. Toast: "Studio Mac joined Lumen Labs."
 - **Two requests on one link** (shouldn't happen, but HQ may see a retry from a new address): both are listed. Approving one declines the rest.
 
 ### 6.4 Remove office (through an authorized HQ browser session)
@@ -920,7 +930,7 @@ Two directions, same result:
 - OFC-29 · Add office › On this instance while agents are running on that instance shows "Waiting for running agents to finish…" with Cancel, and adds the office only once they're idle; no running agent is stopped or relaunched for it.
 - OFC-30 · Cancel while waiting for running agents creates nothing and keeps the name; once creating has started it shows "Too late to cancel…" and the create continues.
 - OFC-31 · HQ's refusal of Add office › On this instance for an account without the grant shows "Only an instance admin can add an office on this instance. You can still invite another machine." with Invite another machine and no Try again.
-- OFC-32 · A satellite on this instance whose join is pending (`join_pending`) shows Waiting for approval, never Starting or Online.
+- OFC-32 · A satellite whose join is pending (`join_pending`) shows Waiting for approval until HQ approves it, then Starting · copying records until its first copy of records completes, and never Online before then. HQ's Offices list shows Starting · copying records after approval; on the joining instance, until the status read tells the two phases apart (A102), it shows Waiting for approval for the whole of `join_pending`.
 
 **Org chart: Teams (TEAM)**
 - TEAM-1 · *(rev 2)* The Teams view draws the ownership tree from the organization root; each card shows its name, the lead or "No lead", an Agents row and a People row with avatars and counts, its sub-team count and its projects.
@@ -979,7 +989,7 @@ Two directions, same result:
 - A95 · *(rev 14)* Which error does the gateway return when an account without the admin grant calls Create organization, and does a key-store failure during create surface as `storage_error` or something else?
 - A92 · *(rev 14)* How long can a create attempt be looked up after a lost response, and what does HQ answer once it's too old?
 - A101 · *(rev 15)* Waiting for running agents (§5a, §6.2): how does the browser learn that a create or an Add office is waiting, and can it say how many agents it waits for? How does Cancel reach a waiting Add office (X-02 Q9's gateway op)? Does a waiting office show in the Offices list? Does a satellite join on an instance with running agents wait the same way, and what does setup say then? Is there a longest wait?
-- A102 · *(rev 15)* Joins (§5c): does the status read tell "waiting for approval" from "copying records" (both `join_pending`)? Does `join_cancelled` also cover an invitation the owner cancelled or replaced after it was used, and what should setup say then? Do an identity mismatch or an unsupported version during a pending join end it or keep it waiting?
+- A102 · *(rev 15)* Joins (§5c): does the status read tell "waiting for approval" from "copying records" (both `join_pending`)? Until it does, the joining instance shows Waiting for approval for both (§3.1, OFC-32). Does `join_cancelled` also cover an invitation the owner cancelled or replaced after it was used, and what should setup say then? Do an identity mismatch or an unsupported version during a pending join end it or keep it waiting?
 - A89 and A93 in `server-installation-and-access-ux.md` §4a.9 also affect §5a and §5b: whether a failed recovery package fails the create, and the HQ machine's name in copy. *(rev 15)* Its A86 is resolved: the admin grant alone opens no organization.
 
 **Resolved in revision 2:** U1 (wording kept for now), U2 (reporting lines stay as their own view), U3 (no departments, no labels), U4 (one optional lead, agent or person; owner in no team; shared projects allowed), A1 (§5.2 warning), A2 (stable code, §5.3), A3 (three wrong codes cancel, §6.3), A4 (unplaced agents, §6.4), A5 (Add office and approval on HQ's Mac, §6.1), A6 (8 Crockford base32 characters in two groups of four).

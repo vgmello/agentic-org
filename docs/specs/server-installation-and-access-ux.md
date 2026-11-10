@@ -33,6 +33,10 @@ ada), §6.2 and §6.4, and its Q8 (accepted by ada):
   (§2, §4a.2, §4a.6).
 - SRV-26 states what v1.0 isolates and what it doesn't (the owner via ada, wording
   agreed by Rowan and Eden).
+- Setup offers the recovery code once the HQ is created and before it starts the
+  service, in X-02 §6.2's bootstrap order (§2, §4a.2, RCV-13). Automation's
+  waiting end also departs from `standalone-server.md` §6's protected outputs
+  (A104).
 
 - The account commands follow X-02 §6.2 *(rev 5)*: `agentic-org account add`
   is now `account create`, which an instance admin runs after signing in, and
@@ -46,7 +50,7 @@ ada), §6.2 and §6.4, and its Q8 (accepted by ada):
 **Criteria rewritten (same ID):** SRV-5, SRV-26, SIGN-2, SIGN-9, SIGN-25,
 SIGN-26, SIGN-30, RCV-2, RCV-4, RCV-6, RCV-8, RCV-10, RCV-13, RCV-15, RCV-16
 *(rev 5)*. **New:** SIGN-32 to SIGN-34, RCV-18 to RCV-23. Open questions A99,
-A100 and A103; A80, A85 and A86 resolved, A81, A88 and A94 updated.
+A100, A103 and A104; A80, A85 and A86 resolved, A81, A88 and A94 updated.
 
 **Revision 4 (2026-11-10): sign in, first access and recovery code.** New §4a,
 built on the owner's decisions O-1 (accounts) and O-2 (recovery-code delivery):
@@ -124,8 +128,9 @@ For a new instance the wizard establishes, in order:
    first office. An instance may later host more than one office. Each office's
    role is persisted independently.
 3. HQ instance-admin/owner access, gateway listening/TLS configuration, and protected
-   CA escrow/recovery-code provisioning (collecting the code and acknowledging its
-   off-HQ retention happens after HQ is ready, and can be deferred: §4a.2, A94); or the
+   CA escrow/recovery-code provisioning (setup offers the code once the HQ is
+   created, before step 5 starts the service, as in X-02 §6.2; collecting it and
+   acknowledging its off-HQ retention can be deferred: §4a.2, A94); or the
    satellite invitation, destination identity and enrollment confirmation.
 4. Runtime selection, dependency checks and authentication readiness.
 5. Service registration, start and a summary with separate readiness states.
@@ -133,7 +138,11 @@ For a new instance the wizard establishes, in order:
 Automation uses the same validation and state transitions, with one stated
 exception *(rev 5, X-02 Q8)*: noninteractive setup, and setup over SSH on a Mac,
 finish with the HQ created and its recovery code waiting, because showing the
-code needs someone at the HQ machine (§4a.2, §4a.6). Missing mandatory
+code needs someone at the HQ machine (§4a.2, §4a.6). This also departs from
+`standalone-server.md` §6 ("CA escrow and the explicit recovery gate"), which
+says "Automation uses separate protected outputs": there is no protected output
+for the code, and automation never receives it. Updating the design to match is
+A104. Missing mandatory
 input causes a structured failure instead of waiting for stdin. Secrets enter
 through a protected descriptor/file or a dedicated stdin option, not arguments
 or ordinary configuration fields. Machine-readable output contains stable error
@@ -213,8 +222,9 @@ recovery code.
 ## 4a. Sign in, first access and recovery code *(rev 4)*
 
 This section builds on the owner's decisions of 2026-11-10: **O-1** (accounts)
-and **O-2** (recovery-code delivery). Commands are proposed spellings, like the
-rest of this spec (A80). Placeholders in angle brackets, such as `<HQ machine>`,
+and **O-2** (recovery-code delivery). The recovery and account commands follow
+X-02 §6.2 and §6.4 (A80, resolved); other commands are proposed spellings, like
+the rest of this spec. Placeholders in angle brackets, such as `<HQ machine>`,
 are filled from HQ's data. Questions for ada are in §4a.9.
 
 **Naming the instance in CLI copy.** Every command shown to the user, in the CLI
@@ -281,8 +291,7 @@ Password (at least 12 characters, not shown as you type):
 Password again:
 Account "alex" created. Instance admin: yes. Owns: Lumen Labs.
 …
-Service running.
-HQ ready.
+Lumen Labs created. This machine is its HQ.
 
 Recovery code for Lumen Labs
 It's shown only here on the HQ machine, never in the browser.
@@ -290,6 +299,9 @@ Collect it now? [Y/n]: n
 Not collected. It's waiting on this machine. Collect it later with:
   agentic-org recovery release --org 'Lumen Labs'
 Recovering an organization after losing the HQ machine isn't supported yet.
+…
+Service running.
+HQ ready.
 
 Open http://127.0.0.1:<port> in a browser and sign in as alex.
 ```
@@ -304,6 +316,11 @@ Open http://127.0.0.1:<port> in a browser and sign in as alex.
   a log or JSON status (SRV-5). Noninteractive setup takes it through the
   protected input in §2.
 - The last line prints the configured browser address and the username.
+- **Order** *(rev 5, X-02 §6.2 bootstrap steps 4 and 5)*: setup creates the
+  account and the HQ, then offers the recovery code, and only after that
+  registers and starts the service. So the recovery block comes before
+  "Service running", and HQ isn't open in a browser until the code has been
+  collected or left waiting.
 - **Collect it now? Y** runs the same steps as `recovery release` (§4a.6),
   using the account just created, so it doesn't ask to sign in again. It still
   asks the person to confirm it's them.
@@ -323,7 +340,9 @@ Open http://127.0.0.1:<port> in a browser and sign in as alex.
   the HQ created and the code **waiting**, which isn't a failure: setup exits
   successfully, and its status output reports HQ ready and the recovery code
   waiting (`pending`), never the code. This is a stated exception to §2's "same
-  state transitions". The owner collects it later with `agentic-org recovery
+  state transitions", and a departure from `standalone-server.md` §6, where
+  automation gets the code through a separate protected output: here it never
+  gets the code (A104). The owner collects it later with `agentic-org recovery
   release`, at the machine. Setup over SSH on a Mac ends its recovery block with:
 
   ```
@@ -813,26 +832,30 @@ Recovering an organization after losing the HQ machine isn't supported yet.
 - It's the **same code**: showing it again never makes a new one.
 - `--redeliver` while the code is still waiting (never shown) shows it as a
   first showing, and nothing is recorded as shown again (A100).
-- Its failures are the same as the first showing's (below).
+- Its failures are the same as the first showing's (below), except the rows
+  marked `--redeliver`: a showing again that fails or is interrupted leaves the
+  code **Shown, not confirmed**, never waiting, and its copy says so.
 
 | Case | CLI output | Exit |
 | --- | --- | --- |
 | Typed group doesn't match | "That isn't the last group of the code. Check what you stored, then type it again." Asks again. | — |
 | Anything but `yes` at the last prompt *(rev 5)* | "Not recorded. Once the code and the recovery package are stored away from this machine, show the code again and confirm: agentic-org recovery release --redeliver --org 'Lumen Labs'. Recovering an organization after losing the HQ machine isn't supported yet." The code is now **Shown, not confirmed**. | Error |
 | Interrupted before the code is shown (Ctrl-C at sign-in or at "Press Enter") *(rev 5)* | "Not shown. The code is still waiting; run this command again to see it. Recovering an organization after losing the HQ machine isn't supported yet." Nothing changes. | Error |
+| `--redeliver`: interrupted before the code is shown again (Ctrl-C at sign-in or at "Press Enter") *(rev 5)* | "Not shown again. Nobody has confirmed the code is stored yet. To show it again and confirm, run: agentic-org recovery release --redeliver --org 'Lumen Labs'. Recovering an organization after losing the HQ machine isn't supported yet." Nothing changes: the code stays **Shown, not confirmed**. | Error |
 | Interrupted after the code is shown, before `yes` (Ctrl-C, closed terminal) *(rev 5)* | On Ctrl-C: "Not recorded. To show the code again and confirm, run: agentic-org recovery release --redeliver --org 'Lumen Labs'. Recovering an organization after losing the HQ machine isn't supported yet." A closed terminal prints nothing. Either way the code is **Shown, not confirmed**. | Error |
 | Run without `--redeliver` after the code was shown but not confirmed *(rev 5)* | "The recovery code for Lumen Labs was shown on 10 Nov 2026 at 14:02, but nobody confirmed it's stored. To show it again, run: agentic-org recovery release --redeliver --org 'Lumen Labs'. Recovering an organization after losing the HQ machine isn't supported yet." No code. | Error |
 | Already collected, with or without `--redeliver` *(rev 5)* | "The recovery code for Lumen Labs was collected on 10 Nov 2026. It can't be shown again. Recovering an organization after losing the HQ machine isn't supported yet." No code. | Error |
 | Wrong username or password at sign-in *(rev 5)* | "That username and password don't match. Try again." Asks again. Too many tries: "Too many sign-in attempts. Try again in a few minutes." No code. | — / Error |
 | The account isn't an instance admin *(rev 5)* | "sam isn't an instance admin, so it can't show recovery codes. Sign in as an instance admin of instance default." No code. | Error |
 | The confirmation is cancelled or fails (the system dialog) *(rev 5)* | "Not confirmed, so the code wasn't shown. Run this command again when you're at the machine." No code; nothing changes. If it was the confirmation for recording, "Not recorded…" as for Interrupted after the code is shown. | Error |
+| `--redeliver`: the confirmation is cancelled or fails (the system dialog) *(rev 5)* | "Not confirmed, so the code wasn't shown again. Nobody has confirmed it's stored yet. When you're at the machine, run: agentic-org recovery release --redeliver --org 'Lumen Labs'." No code; nothing changes: the code stays **Shown, not confirmed**. If it was the confirmation for recording, "Not recorded…" as for Interrupted after the code is shown. | Error |
 | Over SSH on a Mac, or no session at the Mac's screen *(rev 5)* | "Showing the recovery code needs you at this Mac, to confirm it's you with Touch ID or the login password, and that can't be done over SSH. Run this command at the Mac itself or through Screen Sharing." No code. | Error |
 | Still being prepared | "Recovery material for Lumen Labs is still being prepared. Try again in a minute. Recovering an organization after losing the HQ machine isn't supported yet." | Error |
 | Couldn't be prepared | "Recovery material for Lumen Labs couldn't be prepared: <reason>. Run agentic-org doctor. Recovering an organization after losing the HQ machine isn't supported yet." | Error |
 | No `--org`, one organization on the instance | Collects that organization's code. | — |
 | No `--org`, several organizations | "This instance has several organizations. Run again with --org and one of: Lumen Labs, Side Project." | Error |
 | Unknown organization | "There's no organization called "Lumen Labs" on instance default." | Error |
-| Not an interactive terminal | "The recovery code is shown only in an interactive terminal." No code. (Automation's protected output is A80.) | Error |
+| Not an interactive terminal | "The recovery code is shown only in an interactive terminal." No code. Automation never gets the code: noninteractive setup ends with it waiting (§4a.2, X-02 Q8). | Error |
 | Instance not running, or the host can't be reached | "Instance default isn't running. Start it with agentic-org start, then run this command again." For a named instance: "Instance lab isn't running. Start it with agentic-org start --name lab, then run this command again." No code. | Error |
 
 - `agentic-org status` lists each organization's recovery state in the same
@@ -941,6 +964,11 @@ the recovery code in the browser, and recovering after losing HQ (REC-1).
   spellings, and what do they ask? And can `account create` (and `account.link`)
   give an organization the signed-in admin doesn't own? §4a.2 lists only the
   organizations the admin owns.
+- A104 · *(rev 5)* X-02 Q8 (accepted) ends noninteractive setup, and setup over
+  SSH on a Mac, with the recovery code waiting: automation never receives the
+  code. `standalone-server.md` §6 ("CA escrow and the explicit recovery gate")
+  still says "Automation uses separate protected outputs". Can you update that
+  design to match the decision (§2, §4a.2)?
 
 ## 5. Lifecycle, updates and removal
 
@@ -1054,7 +1082,7 @@ rules, which are distinct from uninstalling software on a machine.
 - RCV-10 · *(rev 5)* After the acknowledgement, `agentic-org recovery release`, with or without `--redeliver`, prints when it was collected and that it can't be shown again, prints no code and exits with an error status.
 - RCV-11 · While the package is being created, the browser shows "being prepared" and the command says to try again in a minute, with no code.
 - RCV-12 · When the package couldn't be created, the browser and the command show the reason and `agentic-org doctor`, with no code.
-- RCV-13 · *(rev 5)* Interactive setup at the HQ machine (or over SSH on Linux) offers to collect the code at its end; answering n leaves it waiting and prints `agentic-org recovery release --org '<organization>'`.
+- RCV-13 · *(rev 5)* Interactive setup at the HQ machine (or over SSH on Linux) offers to collect the code once the HQ is created and before it starts the service; answering n leaves it waiting and prints `agentic-org recovery release --org '<organization>'`.
 - RCV-14 · An organization created in the browser starts as being prepared, then waiting, and is collected with `--org` naming it.
 - RCV-15 · *(rev 5)* `agentic-org recovery release` run without an interactive terminal prints no code.
 - RCV-16 · *(rev 5)* Every message that reports the code's state (in the notice, the Recovery row, Needs you, setup, a repeated setup, `agentic-org status` and `agentic-org recovery release`) says that recovering after losing the HQ machine isn't supported yet.
