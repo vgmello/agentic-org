@@ -966,6 +966,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ticked_reader_stops_on_a_closed_client_after_one_idle_tick() {
+        // Keep the peer open: EOF must come from the client's stop flag, not the socket.
+        let (stream, _peer) = UnixStream::pair().unwrap();
+        let shared = Shared {
+            closed: AtomicBool::new(true),
+            next_id: AtomicU64::new(1),
+            pending: Mutex::new(HashMap::new()),
+            events: Arc::new(Mutex::new(None)),
+            next_subscription: AtomicU64::new(1),
+            queued_bytes: AtomicUsize::new(0),
+            stream: stream.try_clone().unwrap(),
+        };
+        let mut polls = 0;
+        read_loop_with_poll(&shared, stream, org_socket::READ_TICK, |_, tick| {
+            polls += 1;
+            assert!(polls < 3, "closed client reader did not stop after a tick");
+            assert_eq!(tick, org_socket::READ_TICK);
+            Ok(false)
+        });
+        assert_eq!(polls, 1);
+    }
+
+    #[test]
     fn ticked_reader_repolls_a_missed_eof_and_closes_pending_calls() {
         let (stream, peer) = UnixStream::pair().unwrap();
         drop(peer);
@@ -982,6 +1005,7 @@ mod tests {
         let polls = std::cell::Cell::new(0);
         read_loop_with_poll(&shared, stream, org_socket::READ_TICK, |fd, _| {
             polls.set(polls.get() + 1);
+            assert!(polls.get() <= 10, "client reader failed to observe EOF");
             if polls.get() == 1 {
                 Ok(false)
             } else {

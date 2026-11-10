@@ -126,9 +126,9 @@ struct Control {
     /// events of the binding before it.
     generation: AtomicU64,
     /// Set by the watcher when it has ended this connection's held calls and subscription
-    /// because its member can no longer be bound: the connection thread then treats the
-    /// connection as unbound before its next call, so its own state (`subscribed`, the binding)
-    /// matches. If it remains idle, the next reader tick ends it and removes its registration.
+    /// because its member can no longer be bound: the connection thread refuses the next call
+    /// with `not_bound`, then closes. If it remains idle, the next reader tick ends it and
+    /// removes its registration.
     revoked: std::sync::atomic::AtomicBool,
 }
 
@@ -407,9 +407,10 @@ pub fn run(listener: &UnixListener, shared: &Arc<Shared>, stop: &dyn Fn() -> boo
 /// Whenever the organization's log has moved (and the first time), looks at each member-bound
 /// connection's member: one that is no longer bindable (offboarded, made office-run, removed) has
 /// its held `msg.wait` calls ended with `not_bound` and its subscription ended, without waiting
-/// for the connection's next call. (That next call is answered as unbound.) A lookup that fails
-/// ends nothing. Organization changes are what can unbind a member, so a quiet log costs one
-/// cheap head read per tick.
+/// for the connection's next call. An idle revoked connection closes at its next reader tick;
+/// a call that arrives first receives `not_bound`, then the connection closes. A lookup that
+/// fails ends nothing. Organization changes are what can unbind a member, so a quiet log costs
+/// one cheap head read per tick.
 fn watch(shared: &Shared, watching: &std::sync::atomic::AtomicBool) {
     let mut last_head = None;
     while watching.load(Ordering::SeqCst) {
@@ -557,9 +558,18 @@ fn serve_connection_with_poll(
         while let Ok(Some(request)) = frame::read_message::<Request>(&mut reader) {
             // The member this connection acts as is checked on every call, not only at bind, and
             // the watcher may have ended the connection's held calls already.
-            let revoked = control.revoked.swap(false, Ordering::SeqCst);
+            if control.revoked.load(Ordering::SeqCst) {
+                held.cancel_all();
+                let refusal = bind_error(
+                    request.id,
+                    ErrorCode::NotBound,
+                    "this connection's member binding was revoked",
+                );
+                let _ = send(&out, request.id, &refusal, shared.timing);
+                break;
+            }
             if let Some(member) = binding.member() {
-                if !request.is::<MsgBind>() && (revoked || !still_bindable(shared, member)) {
+                if !request.is::<MsgBind>() && !still_bindable(shared, member) {
                     binding = Binding::Anonymous;
                     registration.sync(None);
                     generation.fetch_add(1, Ordering::SeqCst);
@@ -1118,6 +1128,62 @@ mod tests {
         );
         assert_eq!(polls.get(), 2);
         assert!(shared.bound.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_revoked_connection_answers_a_call_that_arrives_before_the_tick_then_closes() {
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        let shared = shared(Path::new("/unused-test-socket"));
+        let bind = Request::new::<MsgBind>(
+            1,
+            &MsgBindParams {
+                member: Some(org_mailbox::testkit::fixture::ADA_HANDLE.to_owned()),
+                app_token: None,
+            },
+        )
+        .unwrap();
+        frame::write_message(&mut peer, &bind).unwrap();
+        let mut polls = 0;
+        serve_connection_with_poll(
+            stream,
+            &shared,
+            1,
+            &AtomicBool::new(false),
+            org_socket::READ_TICK,
+            |fd, _| {
+                polls += 1;
+                assert!(
+                    polls <= 2,
+                    "revoked connection stayed open after its refusal"
+                );
+                if polls == 2 {
+                    let bound = shared.bound.lock().unwrap();
+                    let (member, control) = bound.get(&1).expect("member must be registered");
+                    assert_eq!(member, org_mailbox::testkit::fixture::ADA_ID);
+                    control.revoked.store(true, Ordering::SeqCst);
+                    let call = Request::new::<MsgInbox>(2, &inbox_params()).unwrap();
+                    frame::write_message(&mut peer, &call).unwrap();
+                }
+                org_socket::poll_readable(fd, Duration::from_millis(1))
+            },
+        );
+        assert_eq!(polls, 2);
+        assert!(shared.bound.lock().unwrap().is_empty());
+        let mut responses = BufReader::new(peer);
+        let bound = frame::read_message::<Response>(&mut responses)
+            .unwrap()
+            .unwrap();
+        assert_eq!(bound.id, 1);
+        assert!(matches!(bound.outcome, org_proto::Outcome::Result(_)));
+        let refused = frame::read_message::<Response>(&mut responses)
+            .unwrap()
+            .unwrap();
+        assert_eq!(refused.id, 2);
+        assert_eq!(code_of(refused.outcome), ErrorCode::NotBound);
+        assert!(frame::read_message::<Response>(&mut responses)
+            .unwrap()
+            .is_none());
     }
 
     fn shared(path: &Path) -> Arc<Shared> {
@@ -3707,7 +3773,7 @@ mod tests {
     }
 
     #[test]
-    fn a_directory_that_fails_does_not_end_a_connection_but_a_removal_does_and_the_state_follows() {
+    fn a_directory_failure_preserves_connections_but_restoring_a_revoked_member_does_not() {
         use org_mailbox::testkit::fixture::POSITION;
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
@@ -3746,9 +3812,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(400));
         assert_eq!(mailbox.held_waits(), 1, "a failed lookup ends nothing");
 
-        // pat is removed and restored inside one watcher pass window: the watcher ended the
-        // subscription, and the connection's own state follows (it is unbound, not "already
-        // subscribed").
+        // Once the watcher revokes pat, restoring the member cannot revive that connection.
         flaky.failing.store(false, Ordering::SeqCst);
         let pat_member = memory
             .resolve_member(PAT_ID)
@@ -3757,15 +3821,34 @@ mod tests {
             .unwrap();
         memory.remove(PAT_ID, POSITION);
         feed.push(22);
-        std::thread::sleep(Duration::from_millis(800));
+        until("pat is revoked or already closed", || {
+            let bound = shared.bound.lock().unwrap();
+            match bound.values().find(|(member, _)| member == PAT_ID) {
+                Some((_, control)) => control.revoked.load(Ordering::SeqCst),
+                None => true,
+            }
+        });
         memory.upsert(pat_member, POSITION);
-        // The org.changed events of the two pushes may be on the wire: they are not the answer.
-        while pat.message_within(Duration::from_millis(300)).is_some() {}
-        assert_eq!(
-            code_of(pat.subscribe(None)),
-            ErrorCode::NotAuthorized,
-            "unbound by the watcher, not still 'subscribed'"
+        // Changes already on the wire may precede EOF, but the old connection must close.
+        while let Some(message) = frame::read_message::<serde_json::Value>(&mut pat.reader).unwrap()
+        {
+            assert_eq!(message["event"], "org.changed");
+        }
+        assert!(
+            shared
+                .bound
+                .lock()
+                .unwrap()
+                .values()
+                .all(|(member, _)| member != PAT_ID),
+            "the revoked connection must release its registration"
         );
+        // The restored person can bind and subscribe on a fresh connection.
+        let mut restored = Client::bound_as(&path, "pat");
+        assert!(matches!(
+            restored.subscribe(None),
+            org_proto::Outcome::Result(_)
+        ));
         stop.store(true, Ordering::SeqCst);
         drop((pat, ada));
         server.join().unwrap();
