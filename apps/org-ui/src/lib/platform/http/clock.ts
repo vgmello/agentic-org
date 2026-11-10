@@ -3,7 +3,7 @@ const MAX_TIME = 2 ** 48 - 1;
 
 /** Server-clock calibration is supplied by the session adapter, never inferred from a cookie. */
 export function createOperationClock({
-	now = Date.now,
+	now = () => performance.timeOrigin + performance.now(),
 	random = () => globalThis.crypto.getRandomValues(new Uint8Array(10))
 }: { now?: () => number; random?: () => Uint8Array } = {}) {
 	let offset: number | undefined;

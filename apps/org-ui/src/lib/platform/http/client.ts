@@ -1,3 +1,5 @@
+import { NotDispatchedError } from './errors';
+
 /** Local adapter contracts, NOT the pending /api/v1 wire DTOs or route names. */
 export type OperationKind = 'org' | 'work' | 'host' | 'msg';
 export interface OperationScope {
@@ -26,6 +28,7 @@ export type AdapterOutcome = { readonly operationId: string } & (
 	| { readonly status: 'completed'; readonly result: unknown }
 	| { readonly status: 'rejected'; readonly error: { readonly code: string; readonly message: string } }
 );
+/** A missing ledger entry is `missing`; a stored rule-level not_found remains a rejected outcome. */
 export type AdapterLookup = AdapterOutcome | { readonly operationId: string; readonly status: 'missing' | 'expired' };
 /**
  * B1-02's adapter maps validated wire data to AdapterOutcome/AdapterLookup. Inputs remain
@@ -41,7 +44,7 @@ export interface Refusal {
 	readonly category: 'conflict' | 'authorization' | 'version' | 'clock' | 'unavailable' | 'other';
 }
 export type OperationState<T> =
-	| { readonly status: 'not_submitted' }
+	| { readonly status: 'not_submitted'; readonly error?: Refusal }
 	| { readonly status: 'accepted' }
 	| { readonly status: 'completed'; readonly result: T }
 	| { readonly status: 'rejected'; readonly error: Refusal }
@@ -50,7 +53,7 @@ export type OperationState<T> =
 	| { readonly status: 'unsupported' };
 export interface Operation<T> extends OperationRef {
 	readonly state: OperationState<T>;
-	/** Sends once. Further calls return the same state; unknown outcomes use lookup, never a fresh ID. */
+	/** Sends once after possible dispatch. A proven local refusal permits explicit retry; unknown outcomes only use lookup. */
 	submit(): Promise<OperationState<T>>;
 	lookup(): Promise<OperationState<T>>;
 }
@@ -59,7 +62,13 @@ const ID_FIELD = { org: 'command_id', work: 'change_id', host: 'operation_id', m
 const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
 const object = (value: unknown): value is Record<string, unknown> =>
 	!!value && typeof value === 'object' && !Array.isArray(value);
-const terminal = <T>(state: OperationState<T>) => ['completed', 'rejected', 'expired'].includes(state.status);
+function terminal<T>(state: OperationState<T>): boolean {
+	switch (state.status) {
+		case 'completed': case 'rejected': case 'expired': return true;
+		case 'not_submitted': case 'accepted': case 'unresolved': case 'unsupported': return false;
+		default: { const unreachable: never = state; return unreachable; }
+	}
+}
 const sameAccount = (session: Session | undefined, scope: OperationScope) =>
 	session?.instanceId === scope.instanceId && session.accountId === scope.accountId;
 
@@ -145,7 +154,11 @@ export function createOperationClient({ transport, session, clock }: {
 				let reply: unknown;
 				try {
 					reply = await (lookup ? transport.lookup(reference, auth) : transport.submit(request!, auth));
-				} catch {
+				} catch (error) {
+					if (!lookup && error instanceof NotDispatchedError) {
+						sent = false;
+						return update({ status: 'not_submitted', error: Object.freeze({ code: error.code, message: error.message, category: 'other' }) });
+					}
 					return update({ status: 'unresolved', reason: 'transport' });
 				}
 				const latest = readSession();

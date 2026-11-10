@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createJsonHttp } from './json-http';
+import { NotDispatchedError } from './errors';
 
 const proof = 'opaque-proof-value';
 const origin = 'http://localhost:4173';
@@ -24,7 +25,7 @@ describe('same-origin JSON boundary (test paths, no production routes)', () => {
 		const [url, init] = send.mock.calls[0];
 		expect(String(url)).toBe(`${origin}/api/v1/test-only`);
 		expect(String(url)).not.toContain(proof);
-		expect(init).toMatchObject({ method: 'POST', credentials: 'same-origin', redirect: 'error', cache: 'no-store', body: '{"expected_version":3}' });
+		expect(init).toMatchObject({ method: 'POST', mode: 'same-origin', credentials: 'same-origin', redirect: 'error', cache: 'no-store', body: '{"expected_version":3}' });
 		expect(new Headers(init?.headers).get('X-Org-Session-Proof')).toBe(proof);
 	});
 
@@ -71,6 +72,46 @@ describe('same-origin JSON boundary (test paths, no production routes)', () => {
 		expect(send.mock.calls[0][1]?.signal?.aborted).toBe(true);
 	});
 
+	it.each(['/api/v1/a%2fb', '/api/v1/a%2Fb', '/api/v1/%5c..%5cx', '/api/v1/a%5Cb',
+		'/api/v1/teams/../other', '/api/v1/teams/./one', '/api/v1/teams/%2e/one',
+		'/api/v1/teams/.%2E/other', '/api/v1/teams/%2e%2E/other', '/api/v1/teams//one', '/api/v1/teams/'
+	])(
+		'D-GW1: rejects an encoded separator before routing or dispatch: %s', async (path) => {
+			const { send, http } = setup();
+			await expect(http({ ...request, path })).rejects.toBeInstanceOf(NotDispatchedError);
+			expect(send).not.toHaveBeenCalled();
+		}
+	);
+	it.each(['SECRET\u0100', 'SECRET\r\n'])('refuses unsafe header proof without echoing it: %j', async (unsafeProof) => {
+		const { send, http } = setup();
+		const error = await http({ ...request, proof: unsafeProof }).catch((error: unknown) => error);
+		expect(error).toBeInstanceOf(NotDispatchedError);
+		expect(String(error)).not.toContain('SECRET');
+		expect(send).not.toHaveBeenCalled();
+	});
+	it('sanitizes unexpected request getters without echoing proofs', async () => {
+		const { send, http } = setup();
+		const invalid = { ...request, get proof(): string { throw new Error('SECRET input'); } };
+		const local = await http(invalid).catch((error: unknown) => error);
+		expect(local).toBeInstanceOf(NotDispatchedError);
+		expect(String(local)).not.toContain('SECRET');
+		expect(send).not.toHaveBeenCalled();
+	});
+	it('sanitizes malformed response JSON without echoing proofs', async () => {
+		const responseError = await setup(() => new Response(proof, { headers: { 'Content-Type': 'application/json' } })).http(request).catch((error: unknown) => error);
+		expect(responseError).toBeInstanceOf(Error);
+		expect(String(responseError)).not.toContain(proof);
+	});
+
+	it('allows a bodyless GET and refuses a forged GET with a body before dispatch', async () => {
+		const { send, http } = setup();
+		await http({ path: request.path, proof, method: 'GET' });
+		expect(send.mock.calls[0][1]?.body).toBeUndefined();
+		// @ts-expect-error The typed boundary forbids GET bodies; still reject forged JavaScript input.
+		await expect(http({ ...request, method: 'GET' })).rejects.toBeInstanceOf(NotDispatchedError);
+		expect(send).toHaveBeenCalledTimes(1);
+	});
+
 	it('does not infer success/rejection from HTTP status', async () => {
 		const { http } = setup(() => Response.json({ error: { code: 'conflict' } }, { status: 409 }));
 		expect(await http(request)).toEqual({ status: 409, body: { error: { code: 'conflict' } } });
@@ -92,6 +133,18 @@ describe('same-origin JSON boundary (test paths, no production routes)', () => {
 		await pending;
 		expect(send.mock.calls[0][1]?.signal?.aborted).toBe(true);
 		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it('cancels a stalled response reader on timeout even when the injected fetch ignores abort', async () => {
+		vi.useFakeTimers();
+		const cancel = vi.fn();
+		const { http } = setup(() => new Response(new ReadableStream({
+			start(controller) { controller.enqueue(new TextEncoder().encode('{')); }, cancel
+		}), { headers: { 'Content-Type': 'application/json' } }));
+		const pending = expect(http(request)).rejects.toThrow('timed out');
+		await vi.advanceTimersByTimeAsync(1000);
+		await pending;
+		expect(cancel).toHaveBeenCalledOnce();
 	});
 
 	it('cancels an active request without exposing a durable-operation success or rejection', async () => {

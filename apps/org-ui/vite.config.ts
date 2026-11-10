@@ -1,7 +1,7 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vitest/config';
-import { productionImportGuard } from './src/lib/platform/tooling/production-import-guard.ts';
+import { productionImportGuard } from './src/lib/platform/tooling/production-import-guard';
 
 // Set by `tauri dev` when it targets a device on the network (mobile); unused on desktop.
 const host = process.env.TAURI_DEV_HOST;

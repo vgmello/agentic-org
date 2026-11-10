@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createOperationClock } from './clock';
+import { NotDispatchedError } from './errors';
 import { createOperationClient, type OperationRef, type OperationRequest, type Session } from './client';
 
 const id = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
@@ -25,7 +26,10 @@ describe('one operation intent', () => {
 		const operation = s.client.prepare({ kind, method: 'edit', scope, params, decode });
 		params.expected_version = 99;
 		params.nested.expected_version = 99;
-		await Promise.all([operation.submit(), operation.submit()]);
+		const a = operation.submit();
+		const b = operation.submit();
+		expect(b).toBe(a);
+		await Promise.all([a, b]);
 		await operation.submit();
 		expect(s.transport.submit).toHaveBeenCalledTimes(1);
 		expect(s.newId).not.toHaveBeenCalled();
@@ -76,6 +80,7 @@ describe('one operation intent', () => {
 	it.each([
 		{ operationId: 'another-id', status: 'completed', result: { saved: true } },
 		{ operationId: id, status: 'accepted', result: { saved: true } },
+		{ operationId: id, status: 'missing' },
 		{ operationId: id, status: 'completed', result: { saved: 'bad' } },
 		{ operationId: id, status: 'rejected', result: {}, error: { code: 'conflict', message: 'No' } }
 	])('never converts malformed/foreign replies into confirmed results: %j', async (reply) => {
@@ -100,6 +105,28 @@ describe('one operation intent', () => {
 		const s = setup();
 		s.transport.submit.mockResolvedValueOnce({ operationId: id, status: 'rejected', error: { code, message: 'Refused' } });
 		expect(await s.prepare().submit()).toEqual(expected);
+	});
+
+	it('D-GW2: submit not_found is a confirmed refusal, keeps the draft and never auto-replays it', async () => {
+		const s = setup();
+		const draft = { expected_version: 4, name: 'QA' };
+		const operation = s.client.prepare({ kind: 'org', method: 'team.rename', scope, params: draft, decode });
+		s.transport.submit.mockResolvedValueOnce({ operationId: id, status: 'rejected', error: { code: 'not_found', message: 'Not found' } });
+		expect(await operation.submit()).toMatchObject({ status: 'rejected', error: { code: 'not_found' } });
+		await operation.submit();
+		expect(s.transport.submit).toHaveBeenCalledTimes(1);
+		expect(draft).toEqual({ expected_version: 4, name: 'QA' });
+		const nextId = '01ARZ3NDEKTSV4RRFFQ69G5FAW';
+		s.newId.mockReturnValueOnce(nextId);
+		expect(s.client.prepare({ kind: 'org', method: 'team.rename', scope, params: draft, decode }).id).toBe(nextId);
+	});
+
+	it('D-GW2: a stored not_found refusal differs from a missing operation lookup', async () => {
+		const s = setup();
+		const operation = s.client.resume({ kind: 'org', id, scope }, decode);
+		expect(await operation.lookup()).toEqual({ status: 'unresolved', reason: 'missing' });
+		s.transport.lookup.mockResolvedValueOnce({ operationId: id, status: 'rejected', error: { code: 'not_found', message: 'Not found' } });
+		expect(await operation.lookup()).toMatchObject({ status: 'rejected', error: { code: 'not_found' } });
 	});
 
 	it('requires the original account, permits same-account lookup after reauth and never resends', async () => {
@@ -150,6 +177,57 @@ describe('one operation intent', () => {
 		expect(s.transport.submit).toHaveBeenCalledTimes(1);
 	});
 
+	it('coalesces concurrent lookup calls to the same pending promise', async () => {
+		const s = setup();
+		const operation = s.prepare();
+		await operation.submit();
+		let finish!: (reply: unknown) => void;
+		s.transport.lookup.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+		const a = operation.lookup();
+		const b = operation.lookup();
+		expect(b).toBe(a);
+		expect(s.transport.lookup).toHaveBeenCalledTimes(1);
+		finish({ operationId: id, status: 'completed', result: { saved: true } });
+		expect(await a).toEqual({ status: 'completed', result: { saved: true } });
+	});
+
+	it('discards a late result after proof rotation within the same account', async () => {
+		const s = setup();
+		let finish!: (reply: unknown) => void;
+		s.transport.submit.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+		const operation = s.prepare();
+		const pending = operation.submit();
+		s.authenticate({ ...scope, proof: 'rotated-proof' });
+		finish({ operationId: id, status: 'completed', result: { saved: true } });
+		expect(await pending).toEqual({ status: 'unresolved', reason: 'session_changed' });
+		await operation.lookup();
+		expect(s.transport.lookup.mock.calls[0][1].proof).toBe('rotated-proof');
+	});
+
+	it('keeps a proven local pre-dispatch refusal definite, permitting only an explicit same-ID retry', async () => {
+		const s = setup();
+		s.transport.submit.mockRejectedValueOnce(new NotDispatchedError('JSON request exceeds its limit'));
+		const operation = s.prepare();
+		expect(await operation.submit()).toMatchObject({ status: 'not_submitted', error: { code: 'invalid_request' } });
+		await operation.lookup();
+		expect(s.transport.lookup).not.toHaveBeenCalled();
+		expect(s.transport.submit).toHaveBeenCalledTimes(1);
+		await operation.submit();
+		expect(s.transport.submit).toHaveBeenCalledTimes(2);
+		expect(s.transport.submit.mock.calls[1][0]).toBe(s.transport.submit.mock.calls[0][0]);
+		expect(s.newId).toHaveBeenCalledTimes(1);
+	});
+
+	it('a failed lookup dispatch cannot prove the original mutation was not submitted', async () => {
+		const s = setup();
+		const operation = s.prepare();
+		await operation.submit();
+		s.transport.lookup.mockRejectedValueOnce(new NotDispatchedError());
+		expect(await operation.lookup()).toEqual({ status: 'unresolved', reason: 'transport' });
+		await operation.submit();
+		expect(s.transport.submit).toHaveBeenCalledTimes(1);
+	});
+
 	it('resumes lookup with an immutable reference, without recreating a request body', async () => {
 		const s = setup();
 		const ref = { kind: 'org' as const, id, scope: { ...scope } };
@@ -178,6 +256,20 @@ describe('one operation intent', () => {
 });
 
 describe('server-clock ULIDs', () => {
+	it('keeps calibrated IDs steady across a wall-clock jump using the default monotonic clock', () => {
+		const monotonic = vi.spyOn(performance, 'now').mockReturnValue(10);
+		const wall = vi.spyOn(Date, 'now').mockReturnValue(1000);
+		try {
+			const clock = createOperationClock({ random: () => new Uint8Array(10) });
+			clock.synchronize(1000);
+			wall.mockReturnValue(9_000_000_000);
+			monotonic.mockReturnValue(15);
+			const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+			const time = [...clock.newId().slice(0, 10)].reduce((n, char) => n * 32 + alphabet.indexOf(char), 0);
+			expect(time).toBe(1005);
+		} finally { monotonic.mockRestore(); wall.mockRestore(); }
+	});
+
 	it('requires synchronization, uses server offset and keeps 80 random bits', () => {
 		let local = 9_000_000;
 		const bytes = new Uint8Array(10).fill(255);
