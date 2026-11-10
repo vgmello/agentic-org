@@ -118,6 +118,8 @@ test('AGENT-2: Edit changes the record and refuses a messaging name that is take
 	await dialog.getByRole('button', { name: 'Save' }).click();
 	await expect(dialog.getByRole('alert')).toHaveText('The office went away.');
 	await expect(dialog.getByLabel('Title')).toHaveValue('Principal engineer');
+	await expect(strip(page).getByTestId('agent-line')).toHaveText('software engineer · Runs on Claude Code · On call');
+	await expect(strip(page).getByTestId('messaging-name')).toHaveText('sam');
 	await shot(page, 'edit-agent-error', { context: dialog });
 	await dialog.getByRole('button', { name: 'Save' }).click();
 	await expect(page.getByText('Saved Sam Okafor.')).toBeVisible();
@@ -146,6 +148,7 @@ test('RUN-1: How it runs changes the mode; a scheduled agent needs a schedule; n
 	await dialog.getByRole('button', { name: 'Save' }).click();
 	await expect(dialog.getByRole('alert')).toHaveText('The office went away.');
 	await expect(dialog.getByLabel('When', { exact: true })).toHaveValue('weekdays at 9');
+	await expect(strip(page).getByTestId('agent-line')).toHaveText('software engineer · Runs on Claude Code · On call');
 	await shot(page, 'how-it-runs-error', { context: dialog });
 	await dialog.getByRole('button', { name: 'Save' }).click();
 	await expect(page.getByText('Saved Sam Okafor.')).toBeVisible();

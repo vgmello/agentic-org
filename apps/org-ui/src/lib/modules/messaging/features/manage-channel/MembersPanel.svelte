@@ -1,10 +1,10 @@
 <script lang="ts">
 	import X from '@lucide/svelte/icons/x';
 	import { Button } from '$lib/components/ui/button';
-	import type { ChatContext } from '$lib/chat/engine';
-	import { muteOf, PRESENCE_WORD, titleOf } from '$lib/chat/model';
-	import type { ChatState, Conversation, MuteMode, Presence } from '$lib/chat/types';
-	import Avatar from './Avatar.svelte';
+	import type { ChatContext } from '$lib/modules/messaging/engine';
+	import { muteOf, PRESENCE_WORD, titleOf } from '$lib/modules/messaging/model';
+	import type { ChatState, Conversation, MuteMode, Presence } from '$lib/modules/messaging/types';
+	import Avatar from '$lib/modules/messaging/components/Avatar.svelte';
 
 	/** Who is in a conversation and how the owner hears from them (CHAT-11); channels people made can be edited here (CHAT-2). */
 	let {

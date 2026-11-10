@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
-	import { markdown, type Inline } from '$lib/chat/markdown';
+	import { markdown, type Inline } from '$lib/modules/messaging/markdown';
 	import { inTauri } from '$lib/office/api';
 	import { openExternal } from '$lib/open-external';
 

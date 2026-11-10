@@ -2,8 +2,8 @@
 	import { untrack } from 'svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '$lib/components/ui/dialog';
-	import type { ChatMember } from '$lib/chat/engine';
-	import { CHAT_LIMITS } from '$lib/chat/types';
+	import type { ChatMember } from '$lib/modules/messaging/engine';
+	import { CHAT_LIMITS } from '$lib/modules/messaging/types';
 
 	/** New message (CHAT-3): one member opens a DM, up to seven more make a group of up to 8 with you. */
 	let { open = $bindable(false), members, onsubmit }: { open: boolean; members: ChatMember[]; onsubmit: (ids: string[]) => Promise<void> } = $props();

@@ -4,8 +4,8 @@
 	import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
-	import type { ChatMember } from '$lib/chat/engine';
-	import { channelName } from '$lib/chat/engine';
+	import type { ChatMember } from '$lib/modules/messaging/engine';
+	import { channelName } from '$lib/modules/messaging/engine';
 
 	/**
 	 * Add a channel (name and members), rename one, or choose who is in one (CHAT-2). The owner is always in a channel they
