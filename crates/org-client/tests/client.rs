@@ -726,9 +726,18 @@ fn a_relative_office_home_is_refused() {
 
 #[test]
 fn a_flood_of_events_nobody_reads_closes_the_connection_instead_of_filling_memory() {
+    use std::io::Read;
+
     watchdog(Duration::from_secs(60), || {
         let (finish, hold) = mpsc::channel::<()>();
+        let (closed, closure) = mpsc::channel();
         let server = fake(move |mut peer| {
+            peer.stream
+                .set_write_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            peer.stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
             let request = peer.next_request().unwrap();
             peer.reply::<org_proto::Subscribe>(request.id, &Empty {});
             for n in 0..2_000 {
@@ -738,19 +747,34 @@ fn a_flood_of_events_nobody_reads_closes_the_connection_instead_of_filling_memor
                     break; // the client gave up on us
                 }
             }
-            // Keep the connection open either way: a hang-up here must come from the client,
-            // not from this script ending.
+            // Observe the client's close before the app drains any events. Finishing the
+            // writes alone is insufficient: they may still be queued in the socket.
+            match peer.reader.read(&mut [0u8; 1]) {
+                Ok(0) => {}
+                Err(error) if error.kind() == ErrorKind::ConnectionReset => {}
+                result => panic!("the flooded client did not close its socket: {result:?}"),
+            }
+            closed.send(()).unwrap();
+            // Keep the server socket owned until the assertions finish: the client caused EOF.
             hold.recv().unwrap();
         });
         let client = server.client();
         let events = client.subscribe().unwrap();
 
-        // The app doesn't read for a while.
-        std::thread::sleep(Duration::from_millis(500));
+        // The app never reads until the queue has forced the client to close.
+        closure
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the server must observe the client's close before the app reads");
 
         let mut received = 0;
-        while events.recv_timeout(Duration::from_secs(2)).is_ok() {
-            received += 1;
+        loop {
+            match events.recv_timeout(Duration::from_secs(10)) {
+                Ok(_) => received += 1,
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    panic!("the closed client's event channel stayed open")
+                }
+            }
         }
         assert!(
             received > 0 && received <= 256,
