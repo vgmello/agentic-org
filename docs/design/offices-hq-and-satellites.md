@@ -45,14 +45,15 @@ The boundary between the host and an office server (who writes what on disk, the
     - On HQ it also holds the event log.
   - `office.db`: SQLCipher, the same key. It holds the office's own data: the work data it owns or received (tasks, messages), its outboxes, sessions and work queue.
     - On HQ it also holds **HQ-only secrets**, which are never copied: the organization CA's private key and the public keys of pending invitations.
+    - On a satellite it holds the office's **TLS identity key** and, while the join is pending, the enrollment request and the invitation key (erased when the join ends: on approval or a terminal state).
   - `workspace/`: the office's files.
 
   Keeping them apart means replacing the copy (a snapshot) never touches the office's own data.
 - **Keys** (amended 2026-11-08: key custody): **`org-office-host` creates and holds every office's key.** It makes the key for a create, before the office's first `--create`, and keeps it in the Data Protection keychain (service `org.agentic.office-key`, account = the office id, in the signed host's access group, this Mac only; debug builds and tests use a dev-keys file store). It sends the key to the server on the first pipe line of every create, start and discard. The server never creates, stores, loads or deletes a key, and never touches the Keychain. Why: a same-user process could stop the host and run the signed `org-server` itself with its own app token, and a Keychain item owned by the server would trust it. With the host holding the keys, a server started by anyone else gets no key and can't open `org.db`. The details are in [`office-host-boundary.md`](office-host-boundary.md) ("Key custody").
 - **An office lock:** the server takes an exclusive `flock` on its folder at start. Two processes can never write one office.
 - **The instance host is one service per named instance.** Standalone setup registers it with the platform service manager. Each instance has its own root, credentials, sockets, service identity and release pin; no Tauri bundle is required.
-  - It starts one `org-server` per office folder on this Mac that has a valid `office.json`, and restarts a crashed one with backoff. It looks only at folders named by a plain office id.
-  - **A folder without an `office.json` is an unfinished create.** The host never starts it, and doesn't delete it itself: it runs `org-server --discard <office-id>`, with the office's key on the first line, or none if the host holds none (amended 2026-11-08: key custody). That server takes the office lock and refuses a folder that holds `office.json` or databases with a committed organization. It deletes the folder only when no database file exists, or when it opens them with that key and they hold no committed organization. A database it can't open or check (the key doesn't open it, or the host sent none) means it refuses too (`storage_error`). On any refusal the host logs it and leaves the folder and its key, so a real office is never destroyed automatically. The server never deletes a key: the host deletes that office's key item only after the server reports "discarded". `org-agent`'s scan ignores an unfinished folder too (ADR-0003 §2.1).
+  - It starts one `org-server` per office folder of this instance that has a valid `office.json`, except a satellite whose `office.json` records a terminal join `state` (see "Provisioning a satellite"), and restarts a crashed one with backoff. It looks only at folders named by a plain office id.
+  - **A folder without an `office.json` is an unfinished create.** The host never starts it, and doesn't delete it itself: it runs `org-server --discard <office-id>`, with the office's key on the first line, or none if the host holds none (amended 2026-11-08: key custody). That server takes the office lock and refuses a folder that holds `office.json` or databases with a committed organization. It deletes the folder only when no database file exists, or when it opens them with that key and they hold no committed organization. A database it can't open or check (the key doesn't open it, or the host sent none) means it refuses too (`storage_error`). On any refusal the host logs it and leaves the folder and its key, so a real office is never destroyed automatically. The server never deletes a key: the host deletes that office's key item only after the server reports "discarded". `org-agent`'s scan ignores an unfinished folder too (ADR-0003 §2.1). One exception: `office.remove_pending` discards a satellite whose join never completed (see "Provisioning a satellite").
   - **A folder with an unreadable or invalid `office.json`** is left alone and logged: the host neither starts it nor runs `--discard`. **A folder whose `office.json` names another office id** is never started: the host moves it to `offices/.refused/<id>`, `<id>` being the folder's name.
   - For "create organization", it starts a new office server with `--create` as its only argument and the host passes every detail of the new office (its id, its role `hq`, the organization's id and name, and its key) to it through the pipe between them, never on the command line. That server creates the office and then goes on serving it. Once creation has finished (the office's `office.json` is written), later starts use `--office <id>`; a create that fails or crashes before that is never restarted. On a create that fails BEFORE `office.json` is in place, the host keeps the key it made and runs `--discard` for that office with it, deletes the key only after the server reports "discarded", and returns the error to the app (amended 2026-11-08: key custody). Once `office.json` is in place, the host never runs `--discard`: if the stored `office.json` matches the plan, the host adopts the office (the create succeeds, see office-host-boundary.md). A created office whose `office.json` doesn't match the create request (another office id, `org_id`, `org_name`, `office_name` or role) is refused: the host stops the server and moves the REQUESTED id's folder to `offices/.refused/<requested id>`, deleting nothing, so a person can inspect it. The host acts only on the folder of the office id it requested, never on an id the server reported, and never touches any other office. The pipe is long-lived and two-way: stdin carries the host's lines to the server (the first one at every start, `--discard` included), stdout carries the server's control lines to the host ("created", "ready", "discarded", "failed"), and the server exits when stdin closes. The server logs to stderr only. No child can read the host's lines or write a control line, and that's structural, not a convention. The guarantee is the fd swap: first thing at startup, before any thread or child starts, the server dups fds 0 and 1 to new close-on-exec (`CLOEXEC`) descriptors, which carry the pipe, and reopens 0 and 1 on `/dev/null`. So a child gets `/dev/null` on fds 0 and 1 unless it's given its own pipes, whoever spawns it. fd 2 (stderr, the logs) is inherited. Every other fd the server opens is close-on-exec, the `office.lock` fd above all: a child that inherited it would keep the lock after the server died, and the lock would no longer mean the server is running. The server does the swap itself; the spawn helper doesn't. One spawn helper, `org-supervise` (River's, not on `v1` yet), is the single spawn path: `posix_spawn` with `POSIX_SPAWN_CLOEXEC_DEFAULT`, so a child inherits only the fds it's given (it needs libc FFI; the `unsafe` stays confined to `org-supervise`). The pipe protocol and `office.json` will be defined in a new contract crate, `org-office-launch` (see "Where the code lives").
   - **Creates reserve their name:** the host's **catalog mutex** (in-process; the host also holds the **single-host lock**, `host.lock`, for its whole life) covers only the name check and the reservation: it checks the name against this Mac's organizations *and* the names reserved by creates still in flight, reserves it, and releases the mutex. The slow part (starting the server, waiting for "created") runs outside the mutex, so `organization.list` and `office.list` never wait on a create. A reservation ends when its create succeeds or fails.
@@ -166,9 +167,63 @@ Agents run on their office's machine and talk only to that office, through the l
    organization. It displays the organization and pinned HQ identity before the
    owner confirms that the office may run agents there. Automation supplies that
    intent explicitly; opening a browser does not enroll anything.
-3. The satellite persists its own private key and pending request, verifies HQ's
-   identity and proves possession of the invitation. The invitation's secret is
-   not logged or put in argv. The private invitation key is never sent to HQ.
+3. The satellite's **`org-server` worker** enrolls and holds the office's **TLS
+   identity key** (distinct from the office database key the host holds; see "Keys").
+   Setup (`agentic-org`) never generates or holds it.
+   - **Hand-off.** Setup hands the invitation to the host with `office.join
+     { operation_id, invitation }` on `host.sock`, journaled; the invitation is a
+     secret type. Its authority is the signed `agentic-org` peer (macOS; on Linux the
+     same-UID residual of X-02 §2, a draft not yet in this repo; see office-host-boundary.md §3, "Pending: launch v3") plus the destination consent setup captured, in
+     the wizard or as the explicit automation input (JOIN-2). OS user presence isn't
+     required, so unattended, SSH and Linux joins work. The trust anchors are the
+     one-time invitation and the owner's check-code approval at HQ. On an instance
+     that already has accounts, `office.join` also needs an instance-administrator
+     session, like Add office (standalone §2). `office.join`, `office.remove_pending`
+     and the invitation as a secret type are an open point for X-02's next revision
+     (X-02 §12 Q9; a draft, see the launch v3 note in office-host-boundary.md §3). The host creates
+     the pending office and starts the worker with launch **v3** `create` (role satellite).
+     The first line carries only the invitation's non-secret reference; the
+     invitation secret goes over the verified rendezvous (X-02 §5.4; a draft, see the launch v3 note in office-host-boundary.md §3), never in argv,
+     the first line or a log. The host keeps it only in memory until `office.json`
+     exists.
+   - **Checks.** `office.join` refuses, with `already_exists` (JOIN-8), an `office_id`
+     this instance already has or whose 12-character handle collides with another
+     office's ignoring case (the socket and log file are keyed on it); an id that isn't
+     a plain id (ULID) gets `invalid_request`. It doesn't apply create's
+     organization-name check: the same `org_id` as an HQ office on this instance is
+     allowed, because v1's local satellites (B2-10) join their own instance's HQ.
+   - **Pending lifecycle.** The worker generates the TLS identity key and the
+     request, persists them with the invitation key in its `office.db` (encrypted
+     with the office database key), then writes `office.json` with `state: pending`,
+     all **before** it sends anything to HQ. From then on the folder is a created
+     office under the usual adopt rule (it's keyed on `office.json`): the host never
+     runs `--discard` on it automatically (only `office.remove_pending` does, below), and later starts use `--office <id>` and resume the same
+     request (same request ID and check code). A folder without `office.json` is an
+     unfinished create and is discarded as usual; setup never persists the invitation, so its resume asks for it again and re-supplies the
+     invitation, which never reached HQ.
+   - **Status.** The worker reports the join's state, check code and any error over
+     its rendezvous connection (and `joined` once approval and the initial
+     synchronization complete); the host shows a pending join as `starting` with
+     `join_pending` (office-host-boundary §4) and these details in the instance status read,
+     which `host.sock` serves without a session (X-02 §6.2; a draft, see the launch v3 note in office-host-boundary.md §3) and which setup polls.
+   - **Terminal states.** An expired, cancelled (three wrong codes cancel the
+     invitation, below) or rejected request is written to `office.json` as that state, the invitation key
+     is erased, and the worker exits cleanly. The host stops restarting it and
+     reports it in status; `agentic-org office remove-pending <id>` removes it
+     (`office.remove_pending { operation_id, office_id }` on `host.sock`, journaled,
+     with `office.join`'s authority). For a still-`pending` join the host stops the
+     worker first; HQ's reservation expires, or, if HQ had already approved, the owner
+     removes that office at HQ (OFC-7) like any office that never connects. It then runs `--discard`,
+     which accepts this one case of a folder with `office.json`: `role: satellite`,
+     a `pending` or terminal `state`, and an `org.db` with no applied snapshot
+     (checked with the key). It refuses an `active` office or any applied copy. The
+     key is deleted after `discarded`, as usual. A failed join is never reported as an active
+     office (JOIN-7). The worker sets `state: active` once approval and the required
+     initial synchronization (step 5) complete.
+   - The worker verifies HQ's identity and proves possession of the invitation. The
+     invitation key is never sent to HQ and is erased when the join ends: on approval or a terminal state.
+   (2026-11-10, post-merge review M1 and its follow-up review: process, key,
+   pending lifecycle, `host.sock` authority.)
 4. The owner approves the joining key at HQ using the existing check-code flow,
    from any authorized browser. Approval certifies exactly the request's key;
    certificate identity includes office ID, role and client/server purpose. A
@@ -180,8 +235,8 @@ Agents run on their office's machine and talk only to that office, through the l
    Removal revokes the certificate and applies the existing reclaim/unplaced-agent
    rules. HQ cannot remotely erase a disconnected machine's retained copy.
 
-Local offices use the same office-identity model or a reviewed private-capability
-equivalent. Same UID is not enrollment proof. A local setup may orchestrate consent
+Local offices use the same office-identity model in v1 (plan B2-10); a reviewed
+private-capability equivalent is post-v1. Same UID is not enrollment proof. A local setup may orchestrate consent
 directly but cannot bypass office identity validation.
 
 ## The invitation and connection
@@ -266,7 +321,7 @@ If HQ is gone for good, the owner can **promote** a satellite to HQ. It's a deli
 
   It works over a small **storage trait** that `org-office`'s `store.rs` implements, so all SQL, snapshot export included, stays in `store.rs` (ADR-0002's swap point). The server only supplies the transport.
 - **`org-office`:** the domain. It validates commands, produces events and uses `org-sync`. It knows nothing about networks or certificates.
-- **`org-pki`** (new adapter crate): enrollment, the organization's CA, certificates, TLS. Only the server binaries use it.
+- **`org-pki`** (new adapter crate): enrollment, the organization's CA, certificates, TLS. Only the server binaries use it: the HQ worker (CA, certificates, and the enrollment listener where X-05 places it) and the satellite worker (its TLS identity key, enrollment, client TLS). Setup and the host never hold an office's TLS identity key.
 - **`org-office-launch`** (new contract crate): the pipe protocol between the host and an office server it starts, and the `office.json` file the server writes and the host reads. The host and the office server use it, and `org-agent` reads `office.json` through it (ADR-0003 §2.1). It stays out of `org-proto`, so the crate every client depends on doesn't grow.
 - **`org-sync-proto`** (new contract crate): the office-to-office protocol (stream, snapshot chunks, enrollment, status updates). It stays out of `org-proto`, so the crate every client depends on doesn't grow.
 - **`org-server` and `org-office-host`** stay thin, each with a library target for its logic.

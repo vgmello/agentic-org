@@ -2,7 +2,7 @@
 kind: spec
 title: "Offices, organizations and teams (UX)"
 status: for-review
-revision: 13
+revision: 14
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-10"
@@ -28,6 +28,16 @@ Requested by ada for the user.
 **What it changes in my earlier work:** it replaces, for the office model, `desktop-app-v1.md` (in Eden's notes, not in this repository) §2.5 (workspace switcher), §3.2 (department and reporting-line chart) and §7.1 (Machines). Revision 5 of that spec folds this in. Acceptance-criterion IDs here are stable: changed criteria are rewritten under the same ID, retired IDs are never reused.
 
 ## Changelog
+
+**Revision 14 (2026-11-10): Create organization and the instance admin.** New
+§5a, **Create organization**, for instance admins only, from the organization
+switcher (where the old "+ Create organization" entry was): the name and its
+validation, Creating…, Starting, ready, failed with Try again, and a lost response
+resolved by looking up the same operation (`create-organization.md`). New §5b,
+**Who can do what**, from the owner's decision O-1. Decision 17. Glossary: Account,
+Instance admin and Recovery code. §10 points to the recovery-code screens in
+`server-installation-and-access-ux.md` §4a. Open questions A91, A92 and A95.
+**Criteria added:** OFC-14 to OFC-25. No existing criterion changed.
 
 **Revision 11 (2026-11-09): the menu has New request.** The menu-bar menu gains **New request… ⌥⌘N** and, while captures wait for the office, "n requests waiting to send" (`feature-requests-ux.md` §1.1). No criteria changed here; see RQS-1, RQS-17.
 
@@ -92,6 +102,7 @@ Requested by ada for the user.
 14. **Agents and people never look alike**, and the difference is never color only (§7.0).
 15. **The owner is shown once, above the chart**, never inside it, except as the root of Reporting lines, where everyone ultimately reports to them.
 16. **Reporting lines and teams are independent.** Leading a team doesn't make you anyone's manager, and the UI says so where people would assume it.
+17. **Accounts sign in; people don't** *(rev 14, O-1)*. An account belongs to the instance. Only an instance admin creates organizations, and whoever creates one owns it. People are records agents can reach, never sign-ins. Accounts are added and passwords reset only on the HQ machine (`server-installation-and-access-ux.md` §4a.1).
 
 ## 1. Words (proposed additions to the design-system glossary)
 
@@ -108,12 +119,17 @@ Requested by ada for the user.
 | Agent | An AI employee. It's placed in an office. | Bot, assistant, subagent |
 | Person | A human added to the organization. Agents can reach them. | User, contact, human (in labels) |
 | Owner | You: the organization's special user, with full access | Admin, root, super user |
+| Account *(rev 14)* | What you sign in with: a username and a password on this HQ instance. It can own organizations. People and agents don't have one. | User, login, profile |
+| Instance admin *(rev 14)* | An account that can create organizations on this HQ instance. Setup makes the first account one. It isn't the same as owning an organization. | Admin (alone), superuser, root, owner |
+| Recovery code *(rev 14)* | The code, collected once on the HQ machine, that will let the owner recover an organization if HQ is lost. Never shown in the browser. | Backup code, recovery key, password |
 | Lead | A team's optional lead, agent or person. Also leads the team's projects. | Manager, head |
 | Reports to / Manager | Who someone reports to. Separate from teams. | Lead, boss |
 | Shared | A project worked on by more than one team | Cross-team, joint |
 | Unassigned | A project with no team, or an agent with no office ("Unplaced") | Orphan |
 
 "Department" (from the role catalog) is not a grouping in the app, and there are no labels.
+
+The owner and the instance admin are often the same account, but they are different words for different rights: the owner has full access to one organization; the instance admin can create organizations (§5b) *(rev 14)*.
 
 ## 2. Visual direction (Tailwind Plus application UI)
 
@@ -222,6 +238,136 @@ Same-machine office provisioning must still prove office identity. Display locat
 relative to HQ/the selected instance, never infer them from the browser's hostname.
 Status and snapshots carry freshness; a disconnected browser says Live updates paused.
 See SRV-7 through SRV-12 for the network/authorization behavior.
+
+Signing in, the session and sign out are in
+[server-installation-and-access-ux.md §4a](server-installation-and-access-ux.md#4a-sign-in-first-access-and-recovery-code-rev-4).
+
+### 5a. Create organization (instance admin only) *(rev 14)*
+
+Only an account with the instance-admin grant can create an organization. Whoever
+creates it owns it. The mechanics are in `docs/design/create-organization.md`.
+
+**Entry point: the organization switcher** (sidebar footer, §2):
+
+```
+ ┌──────────────────────────────────────┐
+ │ [LL] Lumen Labs                    ✓ │
+ │      HQ · Online                     │
+ │ [SP] Side Project                    │
+ │      HQ · Starting                   │
+ ├──────────────────────────────────────┤
+ │ + Create organization                │  ← instance admins only
+ └──────────────────────────────────────┘
+ [LL] Lumen Labs · HQ  ▾                    ← sidebar footer button
+```
+
+- An instance admin sees **+ Create organization** as the last item, after a divider.
+- Any other account sees only its organizations: no divider, no item, no disabled
+  item and no hint. Nothing suggests a right it doesn't have.
+- An instance admin with no organizations also gets **Create organization** on the
+  empty page after sign-in (`server-installation-and-access-ux.md` §4a.5).
+
+**The form** (slide-over, as for other forms in §2):
+
+```
+ Create organization                                    (slide-over)
+ Name        [ Side Project                        ]
+ ┃ ⓘ It will be stored on HQ instance default (hq-mac), and you'll own it.
+ ┃   Its recovery code is then collected on that machine.
+                                    [Cancel]  [Create organization]
+```
+
+- **Name:** required, trimmed. The form has no other field and no folder picker.
+  - Empty: "Give the organization a name."
+  - Too long: "Use 64 characters or fewer."
+  - Control characters: "The name can't contain control characters."
+  - Invisible or direction-changing characters: "The name can't contain invisible or
+    direction-changing characters."
+  - These are the same messages HQ returns (`crates/org-proto/src/name.rs`), so the
+    pre-check and HQ never disagree.
+  - Already used, from HQ: "There's already an organization called Side Project
+    on this HQ. Choose another name." (names are compared ignoring case, as HQ does).
+  - **Create organization** stays enabled; pressing it with an invalid name shows
+    the error and sends nothing.
+- The note names the HQ instance that will store it and the HQ machine (A93), and
+  says the creator will own it.
+
+**States:**
+
+| State | What shows |
+| --- | --- |
+| Creating | **Creating…**, disabled. Name is read-only. **Cancel** becomes **Close**, with "Closing this panel doesn't stop it." A second click sends nothing. |
+| Created, starting | The new organization opens. Its HQ shows **Starting** (§3.1), and the page says "Side Project is starting. This usually takes a few seconds." Toast: "Created Side Project. You own it." The switcher lists it with "HQ · Starting". |
+| Ready | The organization's pages load as usual. The recovery-code notice shows for its owner once the code is waiting to be collected (a new organization starts as Being prepared, `server-installation-and-access-ux.md` §4a.6). |
+| Created, then stopped | The organization exists: its HQ shows **Stopped** with §3.3's reason. This is not a failed create. |
+| Failed | A red alert in the panel, with the reason, **Try again** and **Copy details**. Name keeps its text. Try again is a new attempt. |
+| Checking (the response was lost) | "Checking whether Side Project was created…" with a spinner. The browser looks up the same attempt; it never sends a new one while the outcome is unknown. |
+| Session ended | The sign-in-again dialog (`server-installation-and-access-ux.md` §4a.4). The form keeps its text. After signing in, press **Create organization** again. |
+
+**Failure reasons** (the alert's words). `organization.create` fails only when
+nothing was stored. An organization that was stored but whose office didn't start
+is **Created, then stopped** (above), never a failure, so Try again can't hit
+"already exists" (`create-organization.md`; `org-proto` `calls.rs`).
+
+| Wire error | Copy |
+| --- | --- |
+| `invalid_name` | The matching inline name message (above). |
+| `already_exists` | "There's already an organization called Side Project on this HQ. Choose another name." (OFC-17) |
+| `storage_error` | "Side Project wasn't created: HQ couldn't write its data on <HQ machine>. Run `agentic-org doctor` there, then try again." |
+| `not_ready` | "HQ is still starting. Try again in a moment." **Try again** |
+| `unavailable` | "Several organizations are being created right now. Try again in a moment." **Try again** |
+| Not an instance admin (refused by the gateway, A95) | "Only an instance admin can create organizations." No Try again. The switcher item goes away. |
+| Any other error | "Side Project wasn't created. Try again." |
+
+Whether a recovery package that can't be created fails the create is A89; if it
+does, its copy is "Side Project wasn't created: its recovery material couldn't be
+prepared. Try again."
+
+**Resolving a lost response** (the Checking state):
+
+| Lookup finds | What shows |
+| --- | --- |
+| It's still being created | Stays in Checking ("Still creating Side Project…") and checks again every few seconds, never sending a new attempt. |
+| It was created | As Created, starting. |
+| It failed | As Failed, with its reason. |
+| HQ has no record of it | "Side Project wasn't created. Try again." **Try again** resends the same attempt. |
+| HQ still can't be reached | "Couldn't confirm whether Side Project was created, because HQ can't be reached." **Check again**. No Try again until the outcome is known. |
+| The attempt is too old to look up (A92) | "This attempt is too old to check. Look for Side Project in the organization list before creating it again." **Open organization list** |
+
+- **Copy details** copies the organization name, the attempt's ID, the error code,
+  the time and the app version. It never includes keys, tokens or a recovery code.
+- **Closing the panel** while Creating or Checking doesn't stop the attempt. A
+  created organization appears in the switcher with "HQ · Starting". If the tab
+  closes before a lost response is resolved, the organization list shows whether
+  it was created.
+
+**Accessibility:** Name has a visible label; its rule, the note and any error are
+linked with `aria-describedby`, and an invalid name sets `aria-invalid`. Errors and
+the failure alert are announced when they appear, and focus moves to the alert on
+failure. Creating…, Checking and Starting are announced through a polite live
+region. When the new organization opens, focus moves to its main heading. The
+panel traps focus and returns it to the switcher button when it closes. In the
+switcher, ↑/↓ reach **Create organization**, Enter opens it and Esc closes the menu.
+
+### 5b. Who can do what *(rev 14)*
+
+From the owner's decision O-1. People records and agents never sign in.
+
+| Action | Who | Where |
+| --- | --- | --- |
+| Sign in | Any account | Browser |
+| Create an organization | An instance admin only. Setup creates the first one. | Browser (§5a), or `agentic-org setup` |
+| Open an organization and act in it (teams, people, offices, approvals) | Its owner (A86 asks whether the admin grant alone opens it) | Browser |
+| See the recovery-code state | The organization's owner | Browser (state only, never the code) |
+| Collect a recovery code, add an account, reset a password, start, stop or repair the instance | Whoever can run `agentic-org` as the instance's user on the HQ machine | HQ machine only |
+
+- In v1.0, creating an organization is the only thing that needs the
+  instance-admin grant (SRV-24). An owner without the grant can't create one, and
+  neither can an employee or an office.
+- The account menu says "Instance admin" for an account with the grant
+  (`server-installation-and-access-ux.md` §4a.4).
+- **No browser screen lists, invites or adds accounts in v1.0.** Add person (§7.4)
+  adds a record agents can reach; it has no invite, password or sign-in option.
 
 ## 6. Flow 3 · Offices and Add office
 
@@ -586,6 +732,20 @@ Two directions, same result:
 - OFC-12 · *(rev 12)* Office status arrives through the authenticated HQ HTTP/event contract with capability and freshness information. Missing or stale live status is Unknown, never stale Online.
 - OFC-13 · *(rev 12)* Each status has an icon and text, with office name, role, location, reason and agent count available to assistive technology. Countdown announcements do not tick, and changes use a polite live region.
 
+**Create organization and who can do what (OFC)** *(new, rev 14, §5a, §5b)*
+- OFC-14 · For an instance admin, the organization switcher ends with a divider and **+ Create organization**. For any other account it has no divider, no Create organization item (enabled or disabled) and no hint.
+- OFC-15 · The Create organization form has one field, Name, and no folder picker. Its note names the HQ instance and machine that will store it and says the creator will own it.
+- OFC-16 · An empty or too long name, or one with control, invisible or direction-changing characters, shows its inline message and sends no request.
+- OFC-17 · A name HQ refuses as already used shows "There's already an organization called <name> on this HQ. Choose another name." and no organization is created.
+- OFC-18 · While creating, the button reads **Creating…** and is disabled; double-clicking sends one request.
+- OFC-19 · A created organization opens showing Starting, with the toast "Created <name>. You own it.", and then loads normally. Its owner is the account that created it.
+- OFC-20 · A confirmed failure shows its reason's copy, keeps the name, and offers Try again and Copy details. Copy details contains no key, token or recovery code.
+- OFC-21 · When the create response is lost, the panel shows "Checking whether <name> was created…" and looks up the same attempt. Each lookup outcome shows its copy (including "still being created", which keeps checking), and repeating the check never creates a second organization.
+- OFC-22 · HQ's refusal for a missing instance-admin grant shows "Only an instance admin can create organizations." with no Try again.
+- OFC-23 · Closing the panel while creating doesn't stop it: the new organization then appears in the switcher with "HQ · Starting".
+- OFC-24 · The form meets §5a's accessibility: labelled Name with linked rule and errors, `aria-invalid` on an invalid name, announced failures with focus on the alert, polite announcements of progress, focus on the new organization's heading, and focus returned to the switcher on close.
+- OFC-25 · Add person and the person quick view offer no invite, password or sign-in option.
+
 **Org chart: Teams (TEAM)**
 - TEAM-1 · *(rev 2)* The Teams view draws the ownership tree from the organization root; each card shows its name, the lead or "No lead", an Agents row and a People row with avatars and counts, its sub-team count and its projects.
 - TEAM-2 · A member in several teams appears in each, with a "+N teams" badge listing the others.
@@ -639,9 +799,13 @@ Two directions, same result:
 - A7 · Remove office: I've made it HQ-only, like Add office and approval. Confirm, or should it work from any office while HQ is reachable?
 - A8 · Is there a limit on how many people an organization can add, or on a person's name length? I've assumed the team-name rules (1–64 characters).
 - A9 · Does the agent's `delivery_failed` notice carry the name the agent used, so PEOPLE-7 can say "Couldn't reach "Sam"" and prefill Add person?
+- A91 · *(rev 14)* The name rules follow `org-proto` (trimmed, 64 characters, no control, invisible or direction-changing characters, duplicates compared case-insensitively on the trimmed name). Open: is the duplicate check per HQ instance or per account?
+- A95 · *(rev 14)* Which error does the gateway return when an account without the admin grant calls Create organization, and does a key-store failure during create surface as `storage_error` or something else?
+- A92 · *(rev 14)* How long can a create attempt be looked up after a lost response, and what does HQ answer once it's too old?
+- A86, A89 and A93 in `server-installation-and-access-ux.md` §4a.9 also affect §5a and §5b: whether the admin grant alone opens an organization, whether a failed recovery package fails the create, and the HQ machine's name in copy.
 
 **Resolved in revision 2:** U1 (wording kept for now), U2 (reporting lines stay as their own view), U3 (no departments, no labels), U4 (one optional lead, agent or person; owner in no team; shared projects allowed), A1 (§5.2 warning), A2 (stable code, §5.3), A3 (three wrong codes cancel, §6.3), A4 (unplaced agents, §6.4), A5 (Add office and approval on HQ's Mac, §6.1), A6 (8 Crockford base32 characters in two groups of four).
 
 ## 10. Out of scope here (follow-ups)
 
-The placement flow itself (Place… opens the agent profile's flow, specced separately); hiring and offboarding (the HR flow); messaging and task screens beyond the PEOPLE-7 notice; promotion (phase 4, "Make this HQ…" reserved); the recovery-code screens (phase 3); the design-system glossary and the v1 spec revision 5, which fold this spec in.
+The placement flow itself (Place… opens the agent profile's flow, specced separately); hiring and offboarding (the HR flow); messaging and task screens beyond the PEOPLE-7 notice; promotion (phase 4, "Make this HQ…" reserved); the recovery-code screens, which are in `server-installation-and-access-ux.md` §4a.6 *(rev 14)*; the design-system glossary and the v1 spec revision 5, which fold this spec in.
