@@ -101,6 +101,17 @@ impl OwnedChild {
         }
     }
 
+    pub(crate) fn release_after_record(&mut self) -> io::Result<()> {
+        #[cfg(target_os = "macos")]
+        if self.try_exit()?.is_none() {
+            // SAFETY: the leader is our unreaped child; no identity can be reused here.
+            if unsafe { libc::kill(self.pid, libc::SIGCONT) } != 0 {
+                return Err(io::Error::last_os_error());
+            }
+        }
+        Ok(())
+    }
+
     /// The recorded identity. Available on every successfully spawned public handle.
     pub fn identity(&self) -> &ChildIdentity {
         self.identity
@@ -132,7 +143,13 @@ impl OwnedChild {
                 #[cfg(target_os = "linux")]
                 // SAFETY: waitid returns the SIGCHLD variant of this union.
                 let (pid, status) = unsafe { (info.si_pid(), info.si_status()) };
-                return Ok((pid != 0).then(|| {
+                // Darwin reports START_SUSPENDED as CLD_STOPPED even with WEXITED.
+                // Only terminal codes are exits; a stop must still be resumed/reaped.
+                let exited = matches!(
+                    info.si_code,
+                    libc::CLD_EXITED | libc::CLD_KILLED | libc::CLD_DUMPED
+                );
+                return Ok((pid != 0 && exited).then(|| {
                     ExitStatus::from_raw(if info.si_code == libc::CLD_EXITED {
                         status << 8
                     } else {

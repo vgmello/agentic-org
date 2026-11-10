@@ -133,11 +133,14 @@ impl PendingChild {
     }
 
     /// Persist the identity and release all pipes to the pump once, on success only.
+    /// On macOS this resumes the suspended child after persistence. This orders startup;
+    /// it is not admission control, since another same-user process can send SIGCONT.
     pub fn record_identity(
-        self,
+        mut self,
         persist: impl FnOnce(&ChildIdentity) -> io::Result<()>,
     ) -> io::Result<Spawned> {
         persist(self.child.identity())?;
+        self.child.release_after_record()?;
         Ok(Spawned {
             child: self.child,
             stdin: ChildStdin::new(self.stdin),
@@ -240,6 +243,7 @@ fn spawn_piped(spec: &SpawnSpec) -> io::Result<(libc::pid_t, File, File, File)> 
             #[cfg(target_os = "macos")]
             // Darwin spawn.h defines SETSID=0x0400; libc doesn't export this flag.
             let flags = libc::POSIX_SPAWN_CLOEXEC_DEFAULT
+                | libc::POSIX_SPAWN_START_SUSPENDED
                 | 0x0400
                 | libc::POSIX_SPAWN_SETSIGMASK
                 | libc::POSIX_SPAWN_SETSIGDEF;

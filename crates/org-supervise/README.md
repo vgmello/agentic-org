@@ -28,9 +28,13 @@ Ownership sequence:
    durably. A failed callback cannot spawn.
 2. `spawn` creates a new session, resets the signal mask/dispositions, closes every
    descriptor except the three explicitly duplicated pipes, and captures process
-   start/boot identity. It returns `PendingChild`, without access to stdin.
+   start/boot identity. On macOS the child starts suspended, so a fast exit cannot
+   remove its process-table identity before capture. It returns `PendingChild`,
+   without access to stdin.
 3. `record_identity` commits that identity. Only then does `Spawned` release stdin
    and the two readers to the pump. A failed callback kills/reaps the child.
+   On macOS success also resumes the child. Suspension is a lifecycle ordering
+   mechanism, not executable admission: another same-user process can send CONT.
 4. The pump owns stdout/stderr for their entire lifetime. The supervisor never
    reads them. Its shared stdin is nonblocking; retry `WouldBlock` while draining
    output, and use idempotent `close` to end input.
@@ -52,14 +56,16 @@ it does not execute a stop. PTYs and `git_exclude` fail before any file writes.
 `git_exclude` requires the caller-owned repository capability being settled in X-09.
 No changes to `org-runtime` or adoption by the host are part of this delivery.
 
-New directory modes are repaired only after opening and validating a no-follow
-directory descriptor. Existing directories keep their modes. Normal umasks and
-ones that remove owner-execute still work; an extreme umask that prevents safely
-opening a newly created directory is refused with a specific error. Universal
-umask support is not required for v1.0 (ada's decision); no path-based chmod,
-process-wide umask mutation or helper fallback is used. Preparation may leave a
-partially created directory on failure; the caller/operator must resolve its
-permissions before retrying. No child is spawned by a failed preparation.
+Directories are never chmodded: `mkdir` does not return an inode handle, so even
+an opened directory may have been substituted after creation. A created-path inode
+is accepted only when it is a no-follow directory owned by the current user with
+mode exactly `0700`. Common umasks (`002`, `022`, `027`, `077`) already produce that
+mode. Owner-bit-masking umasks such as `0100` or `0777` are explicitly refused;
+universal umask support is not required for v1.0 (ada's decision). Existing planned
+directories are validated for ownership and keep their modes. No helper or
+process-wide umask mutation is used. Preparation may leave a partial directory on
+failure; the caller/operator must resolve its permissions before retrying. No child
+is spawned by a failed preparation.
 
 Verification uses temporary roots and fake child processes only. The regression
 suite covers received inheritable fds held by another thread at spawn, environment

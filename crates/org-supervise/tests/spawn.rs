@@ -215,6 +215,59 @@ fn supplies_only_explicit_environment_and_private_session() {
     assert!(text.contains("INSPECTED"));
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_holds_even_a_fast_child_until_its_identity_is_recorded() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let pending = prepare(
+        &root,
+        "/bin/sh".into(),
+        vec!["-c".into(), "printf ready > startup-marker".into()],
+        environment(&root),
+    )
+    .record_mark(|_| Ok(()))
+    .unwrap()
+    .spawn()
+    .unwrap();
+    let pid = pending.identity().pid;
+    let mut child = pending
+        .record_identity(|identity| {
+            assert_eq!(identity.pid, pid);
+            let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
+            let size = std::mem::size_of::<libc::proc_bsdinfo>();
+            // SAFETY: querying only our child with a correctly sized output record.
+            assert_eq!(
+                unsafe {
+                    libc::proc_pidinfo(
+                        pid as i32,
+                        libc::PROC_PIDTBSDINFO,
+                        0,
+                        info.as_mut_ptr().cast(),
+                        size as i32,
+                    )
+                },
+                size as i32
+            );
+            // SAFETY: complete proc_bsdinfo returned above.
+            assert_eq!(unsafe { info.assume_init() }.pbi_status, libc::SSTOP);
+            assert!(!root.join("startup-marker").exists());
+            Ok(())
+        })
+        .unwrap();
+    child.stdin.close().unwrap();
+    assert!(child
+        .child
+        .wait_until(Instant::now() + Duration::from_secs(5))
+        .unwrap()
+        .unwrap()
+        .success());
+    assert_eq!(
+        std::fs::read(root.join("startup-marker")).unwrap(),
+        b"ready"
+    );
+}
+
 #[test]
 fn mark_and_identity_must_be_persisted_before_stdin_is_exposed() {
     let root = tempfile::tempdir().unwrap();
