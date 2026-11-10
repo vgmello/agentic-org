@@ -24,7 +24,8 @@ pub struct ChildIdentity {
 }
 
 /// Idempotently closable, shared stdin. Closing it makes future writes fail BrokenPipe.
-/// Writes are nonblocking: the pump must retry WouldBlock while continuing to drain output.
+/// Writes are nonblocking: the pump must track partial-write offsets and retry WouldBlock
+/// while draining output. Do not retry an entire line after a partial write_all failure.
 #[derive(Clone)]
 pub struct ChildStdin(Arc<Mutex<Option<File>>>);
 
@@ -135,7 +136,12 @@ impl OwnedChild {
                     ExitStatus::from_raw(if info.si_code == libc::CLD_EXITED {
                         status << 8
                     } else {
-                        status & 0x7f
+                        (status & 0x7f)
+                            | if info.si_code == libc::CLD_DUMPED {
+                                0x80
+                            } else {
+                                0
+                            }
                     })
                 }));
             }

@@ -238,7 +238,7 @@ fn spawn_piped(spec: &SpawnSpec) -> io::Result<(libc::pid_t, File, File, File)> 
             platform::check(libc::posix_spawnattr_setsigmask(attrs, &mask))?;
             platform::check(libc::posix_spawnattr_setsigdefault(attrs, &defaults))?;
             #[cfg(target_os = "macos")]
-            // Darwin spawn.h defines SETSID=0x0400 since macOS 10.15; libc doesn't export it.
+            // Darwin spawn.h defines SETSID=0x0400; libc doesn't export this flag.
             let flags = libc::POSIX_SPAWN_CLOEXEC_DEFAULT
                 | 0x0400
                 | libc::POSIX_SPAWN_SETSIGMASK

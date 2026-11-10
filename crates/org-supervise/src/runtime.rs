@@ -61,6 +61,11 @@ pub fn prepare(
             "git exclusion needs a caller-owned repository capability",
         ));
     }
+    if program != ctx.runtime_path {
+        return Err(crate::invalid(
+            "plan executable differs from the recorded runtime path",
+        ));
+    }
     let additions = env_add
         .into_iter()
         .map(|(name, value)| (name.as_str().into(), value.into()))

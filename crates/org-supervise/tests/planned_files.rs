@@ -163,6 +163,11 @@ fn unsupported_plan_parts_fail_before_file_writes_and_lifecycle_is_retained() {
         expected.cleanup_after_exit
     );
     assert_eq!(mapped.lifecycle.secret_env_names, expected.secret_env_names);
+    let mut mismatched = plan(&root);
+    mismatched.program = "/bin/sh".into();
+    mismatched.files.push(file("wrong-runtime", b"no"));
+    assert!(prepare(&root, mismatched, &context(&root)).is_err());
+    assert!(!root.join("wrong-runtime").exists());
 }
 
 #[test]
