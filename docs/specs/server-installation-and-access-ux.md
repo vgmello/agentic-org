@@ -62,10 +62,18 @@ Also new: RCV-30 (recovery status refuses a non-admin, with its own copy).
   with their prompts and the refusals that keep an instance admin and a linked
   account per organization; `account create` lists every organization on the
   instance (§4a.1, §4a.2). A104: Rowan updates `standalone-server.md` §6.
+- *(Review of 0802754)* Unlinking and revoking are among the causes of a session
+  ending (§4a.4). Signing in again after being unlinked from the page's
+  organization opens the organization list with "You no longer own Side
+  Project." instead of the page, and text that wasn't saved there is gone; the
+  dialog warns first only when HQ gives that reason (A84). A revoked account
+  can't sign in again: the dialog shows SIGN-4's message (§4a.2, §4a.4, §4a.5;
+  SIGN-43). The revoke example's sam owns only Lumen Labs, as after the unlink
+  example.
 
 **Criteria rewritten (same ID):** SRV-5, SRV-26, SIGN-2, SIGN-9, SIGN-25,
-SIGN-26, SIGN-30, RCV-2, RCV-4, RCV-6, RCV-8, RCV-10, RCV-13, RCV-15, RCV-16,
-RCV-23 *(rev 5)*. **New:** SIGN-32 to SIGN-42, RCV-18 to RCV-29. Open questions
+SIGN-26, SIGN-30, RCV-2, RCV-4, RCV-6, RCV-8, RCV-9, RCV-10, RCV-13, RCV-15,
+RCV-16, RCV-23 *(rev 5)*. **New:** SIGN-32 to SIGN-43, RCV-18 to RCV-29. Open questions
 A99, A100, A103 and A104; A80, A85 and A86 resolved, then A99, A100 and A103
 resolved by Rowan's answers; A81, A88 and A94 updated.
 
@@ -579,8 +587,7 @@ Username: alex
 Password (not shown as you type):
 
 This signs sam out everywhere and disables the account: sam can't sign in.
-sam owns Lumen Labs and Side Project. Each stays linked to its other
-accounts: Lumen Labs to alex, Side Project to alex.
+sam owns Lumen Labs. Lumen Labs stays linked to its other accounts: alex.
 Revoke sam? [y/N]: y
 Confirm it's you in the system dialog (Touch ID or this Mac's login password).
 sam is revoked. Every session of sam has ended, and sam can't sign in.
@@ -598,7 +605,10 @@ sam is revoked. Every session of sam has ended, and sam can't sign in.
   appear. Over SSH on a Mac they stop before any prompt (the table below).
 - Unlinking and revoking end every session of that account (X-02 §4.1), so an
   open page of that account shows "Sign in again" (§4a.4). Revoking the account
-  you signed in with ends your own sessions too.
+  you signed in with ends your own sessions too. After an unlink, signing in
+  again on a page of the unlinked organization opens the organization list
+  instead of that page; a revoked account can't sign in again (§4a.4,
+  SIGN-43) *(review of 0802754)*.
 - Signing in with a revoked account shows the sign-in page's usual "That
   username and password don't match. Try again." (§4a.3), so the page never
   says an account exists or was revoked.
@@ -719,7 +729,9 @@ error. The table covers a page that loaded and then can't reach HQ.
 ### 4a.4 Session end, signing in again, and sign out
 
 **When a session ends.** It expires (A83), the account's password is changed or
-reset *(rev 5: X-02 §4.1, §6.2; A85 resolved)*, or HQ
+reset *(rev 5: X-02 §4.1, §6.2; A85 resolved)*, the account is unlinked from
+an organization or revoked (`agentic-org account unlink` or `revoke`, §4a.2;
+X-02 §4.1) *(review of 0802754)*, or HQ
 restarts, if the gateway ends sessions when its listener stops (the plan's
 starting point; not yet decided in `standalone-server.md` §6, A84). Signing out
 in another tab is different: every tab goes to the sign-in page (Sign out, below). A missing session proof (cleared site
@@ -757,6 +769,25 @@ data, a private window) counts as an ended session.
   A save that HQ refused because the session had ended is marked "Not saved" by
   that field. Nothing is resent on its own: after signing in, the user presses
   Save (or Send) again.
+- **If the account no longer owns the page's organization** *(review of
+  0802754)*, because it was unlinked from it, signing in again still works, but
+  the page doesn't come back. The organization list opens (OPEN-1) with "You no
+  longer own Side Project." above it, and text that wasn't saved on that page is
+  gone. An account left with no organizations sees §4a.5's no-organization page,
+  with the same line above it.
+  - The dialog warns about this beforehand only when HQ says the session ended
+    because the account was unlinked from this page's organization (A84). Its
+    first line then reads "You no longer own Side Project, so you were signed
+    out." and its second "Signing in opens your list of organizations. Text you
+    haven't saved on this page will be lost: choose Not now to copy it first."
+  - Without that reason, the dialog can't know, so it doesn't warn: it shows its
+    usual copy.
+- **A revoked account can't sign in again.** The dialog shows SIGN-4's message,
+  "That username and password don't match. Try again." (§4a.3), as for any wrong
+  password, so it never says the account was revoked (§4a.2; X-02 §4.1).
+  **Not now** still keeps the page, so text that
+  isn't saved can be copied, and **Sign in as someone else** goes to the sign-in
+  page.
 - **Other tabs of this HQ** show the same dialog. Signing in in any one of them
   closes the dialog in the others, because they share one session.
 - **Not now** (or Esc) closes the dialog. The page stays visible but changes
@@ -801,7 +832,11 @@ page:
 ### 4a.5 After sign-in: what opens
 
 1. The page the user was trying to open, if it is a page of this HQ. Any other
-   return target is ignored.
+   return target is ignored. A page of an organization the account can't open
+   is ignored too, and the organization list opens instead. When the "Sign in
+   again" dialog was open over that page, the list shows "You no longer own
+   <organization>." above it, with the name the page was showing (§4a.4)
+   *(review of 0802754)*.
 2. Otherwise the last authorized organization, or the organization list (OPEN-1).
 3. An account with no organizations sees:
    - Instance admin: "No organizations yet. Create one to get started."
@@ -1131,7 +1166,8 @@ the recovery code in the browser, and recovering after losing HQ (REC-1).
   the page visible).
 - A84 · Does an HQ restart end every session (the plan's starting point for B1-06),
   or do sessions survive it? When HQ refuses a request because the session ended,
-  does it say why (expired, signed out, HQ restarted, password changed)? Without a reason the
+  does it say why (expired, signed out, HQ restarted, password changed, and,
+  *(review of 0802754)*, unlinked from which organization)? Without a reason the
   page uses the generic copy. Is that reason safe to show before sign-in?
 - ~~A85~~ · *Resolved (Rowan, X-02 §4.1 and §6.2, approved by ada; rev 5):* yes.
   `account reset-password` ends every session of that account, and so does
@@ -1300,6 +1336,7 @@ rules, which are distinct from uninstalling software on a machine.
 - SIGN-40 · *(new, rev 5, A103)* Revoking the instance's only instance admin is refused with "<username> is the only instance admin of instance <name>…", before the y/N question, and nothing changes.
 - SIGN-41 · *(new, rev 5, A103)* `agentic-org account link`, `unlink` and `revoke` over SSH on a Mac print the "needs you at this Mac" message before any prompt, and change nothing.
 - SIGN-42 · *(new, rev 5, A103)* Answering anything but y to `link`, `unlink` or `revoke` prints "Nothing changed." and changes nothing.
+- SIGN-43 · *(new, rev 5, review of 0802754)* With a page of an organization open, after `agentic-org account unlink <username> --org <organization>` for that page's account, signing in again from the "Sign in again" dialog succeeds and opens the organization list (or §4a.5's no-organization page) with "You no longer own <organization>." above it, not that page, and no text from that page is kept. The dialog shows "You no longer own <organization>, so you were signed out." only when HQ gives that reason (A84); otherwise it shows its usual copy. After `agentic-org account revoke <username>`, signing in again from the dialog is refused with SIGN-4's message, and the page stays as it was.
 
 **Recovery code (RCV)** *(new, rev 4, §4a.6)*
 - RCV-1 · The recovery code never passes through the gateway or reaches the browser: a fixture code appears in no gateway request or response, HTTP response, event, page, notice or copied text.
