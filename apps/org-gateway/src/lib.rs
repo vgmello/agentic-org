@@ -6,4 +6,5 @@
 #![deny(unsafe_code)]
 
 pub mod assets;
+pub mod blocking;
 pub mod path;
