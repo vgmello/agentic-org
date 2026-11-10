@@ -214,15 +214,19 @@
 				oninput={() => { error = undefined; unknownCommand = false; track(); }}
 				onclick={track}
 				onkeyup={(e) => (e.key.startsWith('Arrow') && popup ? undefined : track())}
-				class="w-full resize-none rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:outline-indigo-400"
+				class="w-full resize-none rounded-md max-[640px]:max-h-32 bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:outline-indigo-400"
 				data-testid="composer"
 			></textarea>
 		</div>
 		{#if error}<p id="composer-error-{resetKey}" class="mt-2 text-sm/6 text-red-400" role="alert"><span>{error}</span>{#if unknownCommand}{' '}<button type="button" class="font-semibold underline" disabled={busy} onclick={() => void send(true)}>Send as message</button>{/if}</p>{/if}
 		{#if attachments.length}
-			<ul class="mt-2 flex flex-wrap gap-1.5" aria-label="Attached">
+			<ul class="mt-2 flex flex-wrap gap-1.5 max-[640px]:max-h-14 max-[640px]:overflow-y-auto" aria-label="Attached">
 				{#each attachments as a (a)}
-					<li class="flex items-center gap-x-1 rounded bg-white/10 px-2 py-0.5 text-xs/5 text-gray-200">📎 {a} <button type="button" class="text-gray-400 hover:text-white" aria-label="Remove {a}" onclick={() => (attachments = attachments.filter((x) => x !== a))}>×</button></li>
+					<li class="flex min-w-0 max-w-full items-center gap-x-1 rounded bg-white/10 px-2 py-0.5 text-xs/5 text-gray-200">
+						<span aria-hidden="true" class="shrink-0">📎</span>
+						<span class="min-w-0 truncate" title={a}>{a}</span>
+						<button type="button" class="shrink-0 text-gray-400 hover:text-white" aria-label="Remove {a}" onclick={() => (attachments = attachments.filter((x) => x !== a))}>×</button>
+					</li>
 				{/each}
 			</ul>
 		{/if}

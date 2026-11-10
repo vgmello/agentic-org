@@ -167,3 +167,53 @@ for (const panel of ['thread', 'members'] as const) {
 		await shot(page, `chat-narrow-320-${panel}-tab-after-scroll`);
 	});
 }
+
+async function openShortThread(page: Page) {
+	await open(page, 320, 256, 'c-release-v1');
+	const opener = page.getByTestId('replies-link').first();
+	await opener.scrollIntoViewIfNeeded(); await opener.press('Enter');
+	const thread = page.getByTestId('thread-panel');
+	await expect(thread.getByRole('button', { name: 'Close thread', exact: true })).toBeFocused();
+	return thread;
+}
+const multiline = Array.from({ length: 8 }, (_, i) => `Draft line ${i + 1}`).join('\n');
+const fixtureFile = (name: string) => ({ name, mimeType: 'text/plain', buffer: Buffer.from('test attachment') });
+
+test('CHAT-8/14 BUG-49: a multiline thread draft stays visible when focus returns at 320px', async ({ page }) => {
+	const thread = await openShortThread(page);
+	const composer = thread.getByTestId('composer');
+	await composer.fill(multiline);
+	const attach = thread.getByRole('button', { name: 'Attach', exact: true });
+	await attach.focus(); await attach.press('Shift+Tab');
+	await expect(composer).toBeFocused();
+	await expect.poll(() => composer.evaluate(visibleBelowHeader)).toBe(true);
+	await expect(composer).toHaveValue(multiline);
+	await shot(page, 'chat-narrow-320-multiline-focus');
+});
+
+test('CHAT-8/14 BUG-49: a multiline draft with ten attachments leaves a readable thread log at 320px', async ({ page }) => {
+	const thread = await openShortThread(page);
+	await thread.getByTestId('composer').fill(multiline);
+	const files = Array.from({ length: 10 }, (_, i) => fixtureFile(`thread-draft-attachment-${i + 1}.txt`));
+	await thread.getByLabel('Attach files').setInputFiles(files);
+	const attached = thread.getByRole('list', { name: 'Attached', exact: true });
+	await expect(attached.getByRole('listitem')).toHaveCount(10);
+	await expect.poll(async () => (await thread.getByRole('log').boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(48);
+	await attached.getByRole('button', { name: 'Remove thread-draft-attachment-10.txt', exact: true }).click();
+	await expect(attached.getByRole('listitem')).toHaveCount(9);
+	await noSidewaysScroll(page);
+	await shot(page, 'chat-narrow-320-attached-draft');
+});
+
+test('CHAT-14 BUG-49: a long attachment name fits without sideways scrolling at 320px', async ({ page }) => {
+	const thread = await openShortThread(page);
+	const name = `${'x'.repeat(220)}.txt`;
+	await thread.getByLabel('Attach files').setInputFiles(fixtureFile(name));
+	const attached = thread.getByRole('list', { name: 'Attached', exact: true });
+	await expect(attached).toContainText(name);
+	await noSidewaysScroll(page);
+	await expect.poll(() => thread.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0);
+	await expect.poll(() => attached.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0);
+	await attached.getByRole('button', { name: `Remove ${name}`, exact: true }).scrollIntoViewIfNeeded();
+	await shot(page, 'chat-narrow-320-long-attachment');
+});
