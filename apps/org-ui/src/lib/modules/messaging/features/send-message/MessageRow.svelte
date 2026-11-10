@@ -17,6 +17,7 @@
 		chatState,
 		now,
 		readOnly = false,
+		officeRunning = true,
 		where,
 		inThread = false,
 		delivery,
@@ -36,6 +37,7 @@
 		chatState: ChatState;
 		now: string;
 		readOnly?: boolean;
+		officeRunning?: boolean;
 		where?: string;
 		inThread?: boolean;
 		delivery?: { status: 'sending' | 'failed'; error?: string };
@@ -79,7 +81,7 @@
 
 		{#if card}
 			<div class="mt-1">
-				<AskCard {message} {ctx} {now} {readOnly} onanswer={(a) => onanswer?.(message, a)} onaccept={() => onaccept?.(message)} onreplyinthread={inThread ? undefined : () => onthread?.(message)} />
+				<AskCard {message} {ctx} {now} {readOnly} {officeRunning} onanswer={(a) => onanswer?.(message, a)} onaccept={() => onaccept?.(message)} onreplyinthread={inThread ? undefined : () => onthread?.(message)} />
 			</div>
 		{:else}
 			<div class="mt-0.5" data-testid="message-body">

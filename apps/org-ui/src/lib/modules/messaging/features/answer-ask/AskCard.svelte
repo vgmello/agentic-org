@@ -15,6 +15,7 @@
 		ctx,
 		now,
 		readOnly = false,
+		officeRunning = true,
 		where,
 		onanswer,
 		onaccept,
@@ -24,6 +25,7 @@
 		ctx: ChatContext;
 		now: string;
 		readOnly?: boolean;
+		officeRunning?: boolean;
 		/** Shown on cards outside their conversation (Needs you, Mentions): "in #atlas". */
 		where?: string;
 		onanswer: (answer: { option_id?: string; text?: string }) => Promise<void> | void;
@@ -49,6 +51,7 @@
 	const canAccept = $derived(message.addressed_to === ctx.actor);
 
 	async function go(run: () => Promise<void> | void) {
+		if (!officeRunning || busy) return;
 		busy = true;
 		error = undefined;
 		try {
@@ -83,6 +86,8 @@
 	{#if done}
 		<p class="mt-3 text-sm/6 text-emerald-300" data-testid="answered">{isAsk ? answerWords(message, ctx) : acceptedWords(message, ctx)}</p>
 		{#if isAsk && message.answer?.by === 'default' && deadline}<p class="text-xs/5 text-gray-400" data-testid="deadline">{deadline.text}</p>{/if}
+	{:else if !officeRunning}
+		<p class="mt-3 rounded-md bg-white/5 px-3 py-2 text-sm/6 text-gray-300">The office isn't running. Restart it from Offices.</p>
 	{:else if blockedHere}
 		<p class="mt-3 rounded-md bg-white/5 px-3 py-2 text-sm/6 text-gray-300" data-testid="app-only">This is answered only in Agentic Org, never from a bridge. <a href="/chat" class="font-semibold text-indigo-300 underline">Open in Agentic Org</a></p>
 	{:else if isAsk}

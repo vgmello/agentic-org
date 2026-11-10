@@ -252,11 +252,13 @@
 	const mute = (m: ChatMessage, mode: MuteMode) => muteIn(m.conversation_id, m.from, mode);
 	const turn = (m: ChatMessage, into: 'bug' | 'request' | 'task') => openForm(turnForm(into, m, env));
 	async function answer(m: ChatMessage, a: { option_id?: string; text?: string }) {
+		if (!officeRunning) throw new Error("The office isn't running. Restart it from Offices.");
 		await send({ method: 'chat.answer', ask_id: m.id, ...a });
 		await load();
 		toast.success(`Answer sent to ${nameOf(ctx, m.from)}.`);
 	}
 	async function accept(m: ChatMessage) {
+		if (!officeRunning) throw new Error("The office isn't running. Restart it from Offices.");
 		await send({ method: 'chat.accept_handoff', message_id: m.id });
 		await load();
 	}
@@ -302,7 +304,7 @@
 <svelte:head><title>Chat · Agentic Org</title></svelte:head>
 
 {#snippet rowFor(m: ChatMessage, extra: { where?: string; open?: boolean } = {})}
-	<MessageRow message={m} {ctx} chatState={chatState!} {now} readOnly={bridgePreview} where={extra.where} onreact={react} onthread={openThread} onturn={turn} onmute={mute} onpin={pin} onanswer={answer} onaccept={accept} onopen={extra.open ? openMessage : undefined} />
+	<MessageRow message={m} {ctx} chatState={chatState!} {now} readOnly={bridgePreview} {officeRunning} where={extra.where} onreact={react} onthread={openThread} onturn={turn} onmute={mute} onpin={pin} onanswer={answer} onaccept={accept} onopen={extra.open ? openMessage : undefined} />
 {/snippet}
 
 <div class="relative flex h-[calc(100dvh-4rem)] min-h-0">
@@ -365,7 +367,7 @@
 						{#each bar.needsYou as m (m.id)}
 							{@const c = chatState.conversations.find((x) => x.id === m.conversation_id)}
 							<div class="space-y-1">
-								<AskCard message={m} {ctx} {now} readOnly={bridgePreview} where={c ? titleOf(c, ctx, ctx.owner) : undefined} onanswer={(a) => answer(m, a)} onaccept={() => accept(m)} onreplyinthread={() => openThread(m)} />
+								<AskCard message={m} {ctx} {now} readOnly={bridgePreview} {officeRunning} where={c ? titleOf(c, ctx, ctx.owner) : undefined} onanswer={(a) => answer(m, a)} onaccept={() => accept(m)} onreplyinthread={() => openThread(m)} />
 								<button type="button" class="px-1 text-xs/5 font-semibold text-indigo-300 hover:text-indigo-200" onclick={() => openMessage(m)}>Open in conversation</button>
 							</div>
 						{:else}

@@ -54,10 +54,10 @@
 		<Button type="button" variant="ghost" size="icon-sm" aria-label="Close thread" onclick={onclose}><X aria-hidden="true" /></Button>
 	</div>
 	<div class="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 py-3">
-		<MessageRow message={root} {ctx} {chatState} {now} {readOnly} inThread {onreact} {onturn} {onmute} {onpin} {onanswer} {onaccept} />
+		<MessageRow message={root} {ctx} {chatState} {now} {readOnly} {officeRunning} inThread {onreact} {onturn} {onmute} {onpin} {onanswer} {onaccept} />
 		<p class="px-2 pt-2 text-xs/5 text-gray-400" data-testid="thread-count">{replies.length} {replies.length === 1 ? 'reply' : 'replies'}</p>
 		{#each replies as r (r.id)}
-			<MessageRow message={r} {ctx} {chatState} {now} {readOnly} inThread {onreact} {onturn} {onmute} {onpin} {onanswer} {onaccept} />
+			<MessageRow message={r} {ctx} {chatState} {now} {readOnly} {officeRunning} inThread {onreact} {onturn} {onmute} {onpin} {onanswer} {onaccept} />
 		{/each}
 	</div>
 	<Composer placeholder="Reply in thread" canWrite={compose.canWrite && !readOnly} note={compose.note} {conversation} {ctx} resetKey="thread:{root.id}" alsoIn={conversation.kind === 'channel' ? title : undefined} {onsend} />

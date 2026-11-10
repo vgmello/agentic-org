@@ -40,3 +40,18 @@ for (const panel of ['thread', 'members'] as const) {
   await shot(page, `chat-${panel}-minimum-closed`);
  });
 }
+
+test('CHAT-5/6 BUG-41: stopped office keeps asks and approvals read-only everywhere', async ({page}) => {
+ await open(page, '?chat=offline');
+ await expect(page.getByTestId('office-down')).toBeVisible();
+ for (const card of await page.getByTestId('ask-card').all()) {
+  await expect(card.getByRole('button')).toHaveCount(0);
+  await expect(card).toContainText("The office isn't running. Restart it from Offices.");
+ }
+ await shot(page, 'chat-offline-needs-you');
+ await go(page, 'atlas');
+ const asks = page.getByTestId('ask-card');
+ await expect(asks.first()).toBeVisible();
+ for (const card of await asks.all()) await expect(card.getByRole('button')).toHaveCount(0);
+ await shot(page, 'chat-offline-conversation');
+});
