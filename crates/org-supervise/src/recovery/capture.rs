@@ -9,19 +9,33 @@ use super::{
     TargetEvidence, VerifiedTarget,
 };
 
-pub(super) fn snapshot_map(
-    snapshot: Vec<ProcessObservation>,
-) -> io::Result<BTreeMap<u32, ProcessObservation>> {
-    let mut map = BTreeMap::new();
-    for process in snapshot {
-        if map.insert(process.pid, process).is_some() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "duplicate PID in process snapshot",
-            ));
+/// The only snapshot type consumed by recovery policy. Leader eligibility and
+/// traversal can never inspect an unchecked capture, even on early-return paths.
+pub(super) struct ValidatedSnapshot {
+    processes: BTreeMap<u32, ProcessObservation>,
+    parents: BTreeMap<u32, u32>,
+}
+
+impl ValidatedSnapshot {
+    pub(super) fn capture(ops: &mut dyn RecoveryProcesses, deadline: Instant) -> io::Result<Self> {
+        check_deadline(ops, deadline)?;
+        let mut processes = BTreeMap::new();
+        for process in ops.snapshot(deadline)? {
+            if processes.insert(process.pid, process).is_some() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "duplicate PID in process snapshot",
+                ));
+            }
         }
+        let parents = validated_parent_links(&processes, ops, deadline)?;
+        check_deadline(ops, deadline)?;
+        Ok(Self { processes, parents })
     }
-    Ok(map)
+
+    pub(super) fn get(&self, pid: u32) -> Option<&ProcessObservation> {
+        self.processes.get(&pid)
+    }
 }
 
 // User enumeration can omit a known PID after its credentials change. Confirm the
@@ -105,15 +119,14 @@ pub(super) struct CaptureScope<'a> {
 
 pub(super) fn capture_targets(
     scope: CaptureScope<'_>,
-    snapshot: &BTreeMap<u32, ProcessObservation>,
+    snapshot: &ValidatedSnapshot,
     context: &RecoveryContext,
     ops: &mut dyn RecoveryProcesses,
     deadline: Instant,
     report: &mut RecoveryReport,
 ) -> io::Result<Vec<VerifiedTarget>> {
-    let parent_links = validated_parent_links(snapshot, ops, deadline)?;
     let mut eligible = BTreeMap::new();
-    for (pid, p) in snapshot {
+    for (pid, p) in &snapshot.processes {
         if p.uid != context.uid {
             continue;
         }
@@ -170,7 +183,7 @@ pub(super) fn capture_targets(
         if saved.identity.boot != context.boot {
             continue;
         }
-        let Some(current) = snapshot.get(&saved.identity.pid) else {
+        let Some(current) = snapshot.get(saved.identity.pid) else {
             confirm_absent(&saved.identity, ops, deadline)?;
             continue;
         };
@@ -226,7 +239,7 @@ pub(super) fn capture_targets(
         queue.push_back((saved.identity.pid, true));
     }
     let mut children: BTreeMap<u32, Vec<&ProcessObservation>> = BTreeMap::new();
-    for (child, parent) in parent_links {
+    for (&child, &parent) in &snapshot.parents {
         let (Some(child), Some(observed)) = (eligible.get(&child), eligible.get(&parent)) else {
             continue;
         };

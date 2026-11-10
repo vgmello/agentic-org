@@ -1,15 +1,14 @@
-use std::collections::BTreeMap;
 use std::io;
 use std::time::{Duration, Instant};
 
-use super::capture::{capture_targets, confirm_absent, snapshot_map, CaptureScope};
+use super::capture::{capture_targets, confirm_absent, CaptureScope, ValidatedSnapshot};
 use super::checkpoint::{Journal, TargetCheckpoint};
 use super::fixed_point;
 use super::RecoveryCheckpoint;
 use super::{
-    check_deadline, checked_context, safe_identity, MarkEvidence, ProcessIdentity,
-    ProcessObservation, RecoveryContext, RecoveryProcesses, RecoveryRecord, RecoveryReport,
-    RecoverySignal, ScanFailure, ScanPort, TargetEvidence, VerifiedTarget,
+    check_deadline, checked_context, safe_identity, MarkEvidence, ProcessIdentity, RecoveryContext,
+    RecoveryProcesses, RecoveryRecord, RecoveryReport, RecoverySignal, ScanFailure, ScanPort,
+    TargetEvidence, VerifiedTarget,
 };
 
 /// Sealed policy completion, bound to one persisted mark. The consumer must still
@@ -57,7 +56,7 @@ fn leader_identity(record: &RecoveryRecord) -> Option<ProcessIdentity> {
 
 fn checkpoint_capture(
     mark: &str,
-    snapshot: &BTreeMap<u32, ProcessObservation>,
+    snapshot: &ValidatedSnapshot,
     context: &RecoveryContext,
     ops: &mut dyn RecoveryProcesses,
     deadline: Instant,
@@ -101,8 +100,8 @@ fn stop_recorded(
         return Ok(());
     }
     check_deadline(ops, deadline)?;
-    let snapshot = snapshot_map(ops.snapshot(deadline)?)?;
-    let Some(observed) = snapshot.get(&expected.pid) else {
+    let snapshot = ValidatedSnapshot::capture(ops, deadline)?;
+    let Some(observed) = snapshot.get(expected.pid) else {
         return confirm_absent(&expected, ops, deadline);
     };
     if observed.zombie {
@@ -165,7 +164,7 @@ fn stop_recorded(
         // The leader can start new tools during grace. Refresh the entire checkpoint
         // before KILL, then signal only the freshly verified leader identity. The full
         // scan handles other saved survivors after the leader exits.
-        let snapshot = snapshot_map(ops.snapshot(deadline)?)?;
+        let snapshot = ValidatedSnapshot::capture(ops, deadline)?;
         let targets = checkpoint_capture(
             record.mark(),
             &snapshot,

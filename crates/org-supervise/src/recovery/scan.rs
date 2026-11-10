@@ -2,7 +2,7 @@ use std::fmt;
 use std::io;
 use std::time::{Duration, Instant};
 
-use super::capture::{capture_targets, snapshot_map, CaptureScope};
+use super::capture::{capture_targets, CaptureScope, ValidatedSnapshot};
 use super::checkpoint::TargetCheckpoint;
 
 use super::{
@@ -220,7 +220,7 @@ pub(crate) fn scan_one_pass(
         }
         check_deadline(ops, request.deadline)?;
         let context = checked_context(ops)?;
-        let snapshot = snapshot_map(ops.snapshot(request.deadline)?)?;
+        let snapshot = ValidatedSnapshot::capture(ops, request.deadline)?;
         check_deadline(ops, request.deadline)?;
         let mut targets = capture_targets(
             CaptureScope {
@@ -236,9 +236,9 @@ pub(crate) fn scan_one_pass(
         )?;
         // Tool sessions only affect priority. Unhinted/detached marked tools remain included.
         targets.sort_by_key(|t| {
-            !request
-                .tool_sessions
-                .contains(&snapshot[&t.identity.pid].session)
+            !snapshot
+                .get(t.identity.pid)
+                .is_some_and(|p| request.tool_sessions.contains(&p.session))
         });
         // This write commits the entire cumulative inventory before the first kill.
         check_deadline(ops, request.deadline)?;

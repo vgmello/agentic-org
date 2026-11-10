@@ -1287,3 +1287,30 @@ fn recovery_detects_torn_parent_identity_even_if_replacement_is_a_zombie() {
     assert!(ops.signals().is_empty());
     assert_eq!(store.checkpoints, 0);
 }
+
+#[test]
+fn recovery_startup_cannot_discard_torn_snapshot_when_recorded_leader_is_reused() {
+    let mut replacement = process(100, 1, MarkEvidence::Unreadable);
+    replacement.identity.as_mut().unwrap().started = "zombie-replacement".into();
+    replacement.zombie = true;
+    let mut ops = Processes::new(vec![]);
+    ops.snapshots = [
+        vec![replacement, process(101, 100, MarkEvidence::Absent)],
+        vec![marked(200)],
+        vec![],
+    ]
+    .into();
+    let mut store = records(true);
+    let batch = run_store(&mut store, &mut ops);
+    assert!(batch.gone.is_empty());
+    assert!(ops.signals().is_empty());
+    assert_eq!(store.checkpoints, 0);
+    assert_eq!(
+        ops.actions
+            .iter()
+            .filter(|a| **a == Action::Snapshot)
+            .count(),
+        2,
+        "failure must still observe a full mark scan without authorizing signals"
+    );
+}
