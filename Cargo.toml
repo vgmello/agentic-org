@@ -14,10 +14,8 @@ members = [
   "apps/org-server",
   "apps/org-office-host",
   "apps/org-agent",
-  "apps/org-ui/src-tauri",
 ]
-# Every member except the Tauri shell, so a plain `cargo test` at the root doesn't compile Tauri.
-# Build the app with `cargo <cmd> -p agentic-org` or from apps/org-ui.
+# Root checks cover every retained server, CLI and domain member.
 default-members = [
   "crates/org-proto",
   "crates/org-client",
@@ -49,9 +47,8 @@ rusqlite = { version = "=0.41.1", features = ["bundled-sqlcipher"] }
 tempfile = "=3.27.0"
 sha2 = "=0.10.9"
 libc = "=0.2.191"
-# The host's check of the desktop app's code signature (office.app_token, office.restart),
-# and the app's own use on v1. `OSX_10_15` for the Data Protection keychain
-# (`kSecUseDataProtectionKeychain`), where the host keeps every office's database key.
+# The host's retained code-signature checks and Data Protection keychain
+# (`OSX_10_15`, `kSecUseDataProtectionKeychain`), where it keeps office database keys.
 security-framework = { version = "=3.7.0", features = ["OSX_10_15"] }
 # The host key store's direct `SecItemAdd` (add-only); the version security-framework uses.
 security-framework-sys = { version = "=2.17.0", features = ["OSX_10_15"] }

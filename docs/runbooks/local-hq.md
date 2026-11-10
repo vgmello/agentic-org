@@ -2,7 +2,8 @@
 
 **Naming amendment (2026-11-10):** the server app/package/binary is now
 `apps/org-server` / `org-server`; the browser UI rename to `apps/org-ui` / `org-ui`
-is pending. The legacy debug commands below use the renamed worker. See
+is complete. The Tauri shell is removed; its legacy debug commands below are historical
+and cannot be run against the current tree. The worker remains renamed. See
 [project structure](../design/project-structure.md); process boundaries are unchanged.
 
 **V1 direction changed 2026-11-09:** the target is a standalone Rust server

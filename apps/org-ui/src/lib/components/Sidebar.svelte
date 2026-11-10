@@ -17,10 +17,10 @@
 </script>
 
 <div class="flex grow flex-col gap-y-5 overflow-y-auto bg-black/10 px-6 ring-1 ring-white/5">
-	<!-- This strip drags the window, and its top padding clears the macOS traffic lights. -->
-	<div data-tauri-drag-region class="relative flex h-24 shrink-0 items-center gap-x-3 pt-8">
+	<!-- Application identity. -->
+	<div class="relative flex h-24 shrink-0 items-center gap-x-3 pt-8">
 		<Logo class="h-8 w-auto" />
-		<span data-tauri-drag-region class="truncate text-base/7 font-semibold text-white" title={connection.organization.name}>
+		<span class="truncate text-base/7 font-semibold text-white" title={connection.organization.name}>
 			{connection.organization.name}
 		</span>
 	</div>

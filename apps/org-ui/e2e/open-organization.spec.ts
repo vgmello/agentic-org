@@ -52,12 +52,12 @@ test('an organization created here is listed afterwards', async ({ page }) => {
 });
 
 test('when the office cannot start, the screen explains why and still offers Create', async ({ page }) => {
-	await visit(page, '/welcome?mock=needs_approval');
-	await expect(page.getByText('Approval needed')).toBeVisible();
+	await visit(page, '/welcome?mock=unreachable');
+	await expect(page.getByText("The office isn't answering")).toBeVisible();
 	await expect(rows(page)).toHaveCount(0);
 	await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
 	await expect(page.getByRole('link', { name: /Create organization/ })).toBeVisible();
-	await shot(page, 'welcome-needs-approval');
+	await shot(page, 'welcome-unreachable');
 });
 
 test('an organization that vanished is dropped from the list when opening it fails', async ({ page }) => {

@@ -11,7 +11,8 @@ type HeldRefresh = {
 async function holdFirstRefresh(page: Page, stoppedSnapshot = false) {
 	await page.evaluate(async (stoppedSnapshot) => {
 		// The same dev module instance used by the route. No production hook is added.
-		const modulePath = '/src/lib/office/api.ts';
+		// Use the same test-owned singleton as compiled UI imports.
+		const modulePath = '/e2e/fakes/office-api.ts';
 		const { officeApi } = await import(modulePath);
 		const peek = officeApi.peekOrganizations.bind(officeApi);
 		const connection = (await officeApi.connections()).at(-1)!;
@@ -74,3 +75,75 @@ for (const unrelated of [false, true]) {
 		await shot(page, unrelated ? 'office-refresh-unrelated-push' : 'office-refresh-newer-push');
 	});
 }
+
+type PeekPair = {
+	started: Promise<void>[];
+	release: (index: number) => Promise<void>;
+};
+
+async function holdOverlappingRefreshes(page: Page) {
+	await page.evaluate(async () => {
+		// Use the same canonical fake as the route and the original deferred-read helper.
+		const modulePath = '/e2e/fakes/office-api.ts';
+		const { officeApi } = await import(modulePath);
+		const peek = officeApi.peekOrganizations.bind(officeApi);
+		const connection = (await officeApi.connections()).at(-1)!;
+		const starts: (() => void)[] = [];
+		const releases: (() => void)[] = [];
+		const started = [0, 1].map((index) => new Promise<void>((resolve) => (starts[index] = resolve)));
+		const gates = [0, 1].map((index) => new Promise<void>((resolve) => (releases[index] = resolve)));
+		const pending: Promise<unknown>[] = [];
+		let reads = 0;
+		officeApi.peekOrganizations = () => {
+			const index = reads++;
+			if (index > 1) return peek();
+			pending[index] = (async () => {
+				const organizations = await peek();
+				const office = organizations.find((organization: { id: string }) => organization.id === connection.organization.id).offices.find((office: OfficeInfo) => office.id === connection.office.id);
+				office.status = index === 0 ? 'unavailable' : 'active';
+				office.status_reason = index === 0 ? 'crashed' : undefined;
+				starts[index]();
+				await gates[index];
+				return organizations;
+			})();
+			return pending[index];
+		};
+		// The host admits the restart; its authoritative result arrives in the second peek, with no push.
+		officeApi.restartOffice = async () => undefined;
+		(window as unknown as { __officePeekPair: PeekPair }).__officePeekPair = {
+			started,
+			release: async (index) => { releases[index](); await pending[index]; }
+		};
+	});
+}
+
+async function releasePeek(page: Page, index: number) {
+	await page.evaluate(async (index) => {
+		await (window as unknown as { __officePeekPair: PeekPair }).__officePeekPair.release(index);
+		await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+	}, index);
+}
+
+test('OFC-11 / BUG-5 LOW: a delayed probe refresh cannot overwrite a newer restart refresh without a push', async ({ page }) => {
+	await visit(page, '/create?office=crashed');
+	await page.getByLabel('Organization name').fill('Acme');
+	await page.getByRole('button', { name: 'Create organization' }).click();
+	await expect(page).toHaveURL(/\/agents$/);
+	await holdOverlappingRefreshes(page);
+	await page.getByRole('link', { name: 'Offices', exact: true }).click();
+	await page.evaluate(() => (window as unknown as { __officePeekPair: PeekPair }).__officePeekPair.started[0]);
+	const hq = page.getByTestId('office-row').first();
+	await expect(hq).toContainText('Stopped');
+	await shot(page, 'office-refresh-stopped');
+	await hq.getByRole('button').first().click();
+	await page.getByRole('dialog').getByTestId('restart-office').click();
+	await page.evaluate(() => (window as unknown as { __officePeekPair: PeekPair }).__officePeekPair.started[1]);
+	await expect(page.getByRole('dialog').getByTestId('restart-office')).toHaveText('Restarting…');
+	await shot(page, 'office-refresh-newer-pending', { settle: false });
+	await releasePeek(page, 1);
+	await expect(hq).toContainText('Online');
+	await releasePeek(page, 0);
+	expect(await hq.innerText()).toContain('Online');
+	expect(await hq.innerText()).not.toContain('Stopped');
+	await shot(page, 'office-refresh-newer-restart');
+});

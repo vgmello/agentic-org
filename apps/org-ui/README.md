@@ -1,26 +1,21 @@
 # apps/org-ui: Agentic Org
 
-**V1 direction changed 2026-11-09:** the target is a standalone Rust server
-on macOS/Linux serving the browser application from HQ. Tauri is deferred to v2.
-See the [server design](../../docs/design/standalone-server.md) and [deletion inventory](../../docs/design/standalone-server-removal-inventory.md).
-This documentation change specifies the pivot; the source described below is the
-inspected pre-pivot implementation. Its Tauri/bundle commands are historical
-development instructions, not installation instructions for the new v1. Do not
-claim the new CLI, HTTP server or remote sync exists until implemented. No migration
-of the undeployed desktop app or its data is required.
+The retained browser application uses Svelte 5, static SvelteKit 2, TypeScript and Tailwind v4, managed with Bun. Licensed UI stays inside this product application.
 
-**Application naming:** the browser UI is now `apps/org-ui` (package `org-ui`), and
-the worker app/package/binary is `apps/org-server` / `org-server`. See the
-[project structure](../../docs/design/project-structure.md). The UI rename moves
-`src-tauri` with it; shell removal and HTTP integration are separate follow-ups.
-Licensed UI stays inside this product application.
+The Tauri shell, native installation/login controls and existing-team import are removed. Canonical domain fixtures and readers remain in `crates/org-office`, `crates/org-work` and `crates/org-proto`; `src/lib/office/wire-shapes.test.ts` retains the independent TypeScript wire gate.
 
-The desktop app: **Tauri 2 + SvelteKit 2 (static SPA) + Svelte 5 + Tailwind v4**, managed with **bun**. It is a *client*: it reaches an office server only through its Rust shell (`src-tauri`) and never reads an office's storage directly.
+Production and ordinary `bun run dev` show an explicit unavailable state for areas without a gateway adapter. No real HTTP routes or sign-in/setup behavior are claimed yet; those follow the approved gateway contract. Office, organization and work imports have no automatic browser mock fallback.
+Other gated features retain sample factories until their scheduled module cutovers; the shell keeps those areas unavailable.
 
-See [TECH-STACK.md](TECH-STACK.md) for the stack, how to run it and what is still undecided.
+```sh
+bun install --frozen-lockfile
+bun run dev
+bun run check
+bun run test
+bun run build
+bun run test:e2e
+```
 
-- `src/`: the UI. First screens: Welcome (Create / Open organization), Create organization, then the shell. The look follows the approved prototype (Tailwind Plus application UI, used here only, never published separately: see AGENTS.md).
-- `src-tauri/`: the Tauri shell and a workspace member. `OfficeConnection` is its seam to an office (`RealOffice` on `org-client` by default; `MockOffice` with `AGENTIC_ORG_OFFICE=mock`, whose `AGENTIC_ORG_MOCK*` settings only apply then).
-- `src/lib/org/`: the org chart's rules as pure functions (`model.ts`, `reporting.ts`, `team-edit.ts`, `people-edit.ts`, `agents.ts`), the commands the UI sends (`commands.ts`, `actions.ts`) and the browser mock HQ (`reducer.ts`, `api.ts`). `src-tauri/src/org_engine.rs` is the Rust mock HQ; both follow `crates/org-proto` and share `crates/org-office/test-vectors/org-commands.json` (workspace root).
-- `INSTALLING-THE-OFFICE.md`: the office host and server inside the app bundle, the login service that starts the host, the dev install and the manual checklist.
-- `e2e/`: Playwright specs, one per area, tests named after the UX criteria.
+Playwright starts an explicitly composed test-only fake server plus a separate static production build. Retained UI workflows run against the test fakes; production checks prove unserved areas stay unavailable and browser flags cannot enable fakes. Screenshots and reports stay ignored under `test-results/` and `playwright-report/`.
+
+See [TECH-STACK.md](TECH-STACK.md), the [standalone design](../../docs/design/standalone-server.md), [project structure](../../docs/design/project-structure.md) and [removal inventory](../../docs/design/standalone-server-removal-inventory.md). Server setup and release packaging remain separate work.

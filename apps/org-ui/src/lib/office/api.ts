@@ -4,27 +4,22 @@ import {
 	type AppError,
 	type Connection,
 	type HelloResult,
-	type LoginState,
 	type Organization,
 	type StatusUpdate
 } from '$lib/proto';
-import { createMockOffice } from './mock';
-import { tauriOffice } from './tauri';
+import { unavailableCall } from '$lib/platform/unavailable-api';
 
-/**
- * What the UI needs from an office. Two implementations: Tauri (the Rust shell, which owns the
- * connection) and a mock that runs in a plain browser, for `bun run dev` and tests.
- */
+/** Browser office capability. Concrete gateway adapters replace the unavailable default. */
 export interface OfficeApi {
 	/** Offices and organizations remembered from earlier launches. */
 	connections(): Promise<Connection[]>;
-	/** Make sure an office is installed, running and answering. */
+	/** Legacy flow readiness seam; unavailable until replaced by authenticated gateway bootstrap. */
 	ensureRunning(): Promise<HelloResult>;
 	/** Whether the running office answers. Read-only (never starts anything): safe to call often. */
 	ping(): Promise<HelloResult>;
 	/** The organizations as the host lists them now, read-only: it never starts or restarts anything (for the status checks). */
 	peekOrganizations(): Promise<Organization[]>;
-	/** Ask the host to start an office again (`office.restart`, app-only). Rejects with the host's refusal; an office already starting is not an error. */
+	/** Ask the host to start an office again (`office.restart`). Rejects with the host's refusal; an office already starting is not an error. */
 	restartOffice(officeId: string): Promise<void>;
 	/** Create an organization on this Mac's host (reached by `ensureRunning`), and remember it. */
 	createOrganization(name: string): Promise<Connection>;
@@ -32,12 +27,6 @@ export interface OfficeApi {
 	listOrganizations(): Promise<Organization[]>;
 	/** Open one of them: remember the connection to its office here. */
 	openOrganization(id: string): Promise<Connection>;
-	/** The office host's login service: whether macOS runs it at login, or waits for the owner's approval. */
-	loginItem(): Promise<LoginState>;
-	/** Turn that service on or off. Resolves to the state it ends in (macOS may leave it waiting for approval). */
-	setLoginItem(enabled: boolean): Promise<LoginState>;
-	/** Open System Settings at Login Items, where the owner approves it. */
-	openLoginSettings(): Promise<void>;
 	/** Be told when an office's status changes (the host's `office.status_changed`). Resolves to the function that stops listening. */
 	onOfficeStatus(listener: (update: StatusUpdate) => void): Promise<() => void>;
 }
@@ -54,8 +43,15 @@ export function toAppError(e: unknown): AppError {
 	return { source: 'app', code: 'internal', message: e instanceof Error ? e.message : String(e) };
 }
 
-export function inTauri(): boolean {
-	return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
-}
-
-export const officeApi: OfficeApi = inTauri() ? tauriOffice : createMockOffice({ testHook: true });
+/** No service startup, desktop token or browser mock is selected by a production import. */
+export const officeApi: OfficeApi = Object.freeze({
+	connections: unavailableCall,
+	ensureRunning: unavailableCall,
+	ping: unavailableCall,
+	peekOrganizations: unavailableCall,
+	restartOffice: unavailableCall,
+	createOrganization: unavailableCall,
+	listOrganizations: unavailableCall,
+	openOrganization: unavailableCall,
+	onOfficeStatus: unavailableCall
+});

@@ -134,11 +134,6 @@
 			<AlertTitle>{failure.title}</AlertTitle>
 			<AlertDescription>
 				<p>{failure.hint}</p>
-				{#if failure.action === 'open_login_items'}
-					<Button type="button" variant="outline" size="sm" class="mt-3" onclick={() => officeApi.openLoginSettings()}>Open Login Items</Button>
-				{:else if failure.action === 'turn_on'}
-					<Button type="button" variant="outline" size="sm" class="mt-3" disabled={busy} onclick={async () => { await officeApi.setLoginItem(true); await flow.submit(name); await afterRun(); }}>Turn on</Button>
-				{/if}
 			</AlertDescription>
 		</Alert>
 	{/if}

@@ -5,8 +5,6 @@
 	import UserPlus from '@lucide/svelte/icons/user-plus';
 	import { toast } from 'svelte-sonner';
 	import { AddAgentSheet } from '$lib/modules/employees';
-	import BringInDialog from '$lib/components/BringInDialog.svelte';
-	import { announceBroughtIn, idsOf } from '$lib/import/after';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
 	import { filterRoster, roster, runModeLabel, runtimeLabel, type RosterFilter } from '$lib/org/agents';
@@ -36,14 +34,6 @@
 
 	const session = $derived(sessionFor(orgApi, connection.organization.id));
 	let adding = $state(false);
-	let bringingIn = $state(false);
-	// "Bring in an existing team" (IMP-1): offered here too, where a new organization lands.
-	async function broughtIn(r: { done: Parameters<typeof announceBroughtIn>[0]; handles: string[] }) {
-		if (!r.done) return;
-		await invalidate('app:org');
-		const said = announceBroughtIn(r.done, idsOf(data.snapshot.members, r.handles));
-		if (said) toast.success(said);
-	}
 	async function added(r: { memberId: string; name: string; problems: string[] }) {
 		await invalidate('app:org');
 		if (r.problems.length === 0) toast.success(`Added ${r.name}. Everyone in ${connection.organization.name} can reach ${r.name}.`);
@@ -62,7 +52,6 @@
 			{/if}
 		</div>
 		<div class="flex items-center gap-x-2">
-			<Button variant="outline" onclick={() => (bringingIn = true)} data-testid="bring-in-header">Bring in a team…</Button>
 			<Button onclick={() => (adding = true)}><Plus aria-hidden="true" /> Add agent</Button>
 		</div>
 	</div>
@@ -74,7 +63,6 @@
 			<p class="mt-1 max-w-sm text-sm/6 text-gray-400">Agents are the AI employees of your organization. Add the first one to start giving them work.</p>
 			<div class="mt-6 flex flex-wrap justify-center gap-3">
 				<Button onclick={() => (adding = true)}>Add your first agent</Button>
-				<Button variant="outline" onclick={() => (bringingIn = true)} data-testid="bring-in-empty-agents">Bring in an existing team…</Button>
 			</div>
 		</div>
 	{:else}
@@ -138,5 +126,4 @@
 	{/if}
 </div>
 
-<BringInDialog bind:open={bringingIn} {session} snapshot={full} organizationId={connection.organization.id} organization={connection.organization.name} officeId={connection.office.id} ondone={broughtIn} />
 <AddAgentSheet bind:open={adding} snapshot={withoutFormer(full)} fullSnapshot={full} {session} officeId={connection.office.id} officeName={connection.office.name} organization={connection.organization.name} ondone={added} />
