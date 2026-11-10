@@ -46,6 +46,15 @@ describe('same-origin JSON boundary (test paths, no production routes)', () => {
 		expect(send).not.toHaveBeenCalled();
 	});
 
+	it('rejects session proofs in JSON values and keys before dispatch', async () => {
+		const { send, http } = setup();
+		for (const body of [{ session: { proof } }, { [proof]: true }, { text: `prefix ${proof} suffix` }])
+			await expect(http({ ...request, body })).rejects.toThrow('proof');
+		// Detection must run on JSON values, even when escaping hides their raw representation.
+		await expect(http({ ...request, proof: 'quoted"proof', body: { value: 'quoted"proof' } })).rejects.toThrow('proof');
+		expect(send).not.toHaveBeenCalled();
+	});
+
 	it('rejects oversized UTF-8 request bodies before dispatch', async () => {
 		const { send, http } = setup();
 		await expect(http({ ...request, body: { text: 'é'.repeat(50) } })).rejects.toThrow('request exceeds');

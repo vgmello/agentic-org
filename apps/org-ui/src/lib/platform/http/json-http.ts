@@ -16,7 +16,11 @@ export function createJsonHttp({ origin, fetch: send = globalThis.fetch, timeout
 			throw new Error('Only same-origin API paths are allowed');
 		if (!proof || [url.href, decodeURIComponent(url.pathname), ...Array.from(url.searchParams).flat()].some((part) => part.includes(proof))) throw new Error('Session proof must be supplied only in the header');
 		const headers = new Headers({ Accept: 'application/json', 'X-Org-Session-Proof': proof });
-		const encoded = body === undefined ? undefined : JSON.stringify(body);
+		const encoded = body === undefined ? undefined : JSON.stringify(body, (key, value: unknown) => {
+			if (key.includes(proof) || (typeof value === 'string' && value.includes(proof)))
+				throw new Error('Session proof must be supplied only in the header');
+			return value;
+		});
 		if (encoded !== undefined && new TextEncoder().encode(encoded).byteLength > maxRequestBytes)
 			throw new Error('JSON request exceeds its limit');
 		if (encoded !== undefined) headers.set('Content-Type', 'application/json');
