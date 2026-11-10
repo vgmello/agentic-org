@@ -998,5 +998,7 @@ fn write_versioned<T: Serialize>(w: &mut impl Write, body: &T) -> Result<(), Lau
     frame::write_message(w, &line).map_err(LaunchError::Frame)
 }
 
+pub mod v3;
+
 #[cfg(test)]
 mod tests;
