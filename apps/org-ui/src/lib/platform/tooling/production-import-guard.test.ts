@@ -5,16 +5,16 @@ import { build, createLogger } from 'vite';
 import { describe, expect, it } from 'vitest';
 import { productionImportGuard } from './production-import-guard';
 
-async function fixture(mode: 'report' | 'error', leak: boolean, path = 'src/lib/mock.ts', code = 'export const sample = \"invented\";') {
+async function fixture(mode: 'report' | 'error', leak: boolean, path = 'src/lib/mock.ts', code = 'export const sample = \"invented\";', entry?: string) {
 	const root = await mkdtemp(join(tmpdir(), 'org-import-guard-'));
 	const warnings: string[] = [];
 	try {
 		await mkdir(join(root, 'src/lib'), { recursive: true });
 		await mkdir(join(root, path, '..'), { recursive: true });
 		await writeFile(join(root, path), code);
-		await writeFile(join(root, 'src/entry.ts'), leak
+		await writeFile(join(root, 'src/entry.ts'), entry ?? (leak
 			? 'export async function load() { return (await import("@fixture")).sample; }'
-			: 'export const real = "no test implementation";');
+			: 'export const real = "no test implementation";'));
 		const logger = createLogger('silent');
 		logger.warn = (message) => { warnings.push(message); };
 		await build({
@@ -28,6 +28,20 @@ async function fixture(mode: 'report' | 'error', leak: boolean, path = 'src/lib/
 }
 
 describe('resolved production imports', () => {
+	it.each(['report', 'error'] as const)('BUG-46: allows root package version metadata in %s mode', async (mode) => {
+		const warnings = await fixture(mode, true, 'package.json', '{"version":"1.2.3"}',
+			'import pkg from "@fixture"; export const version = pkg.version;');
+		expect(warnings.join('\n')).not.toContain('Production fake/sample imports');
+	});
+	it.each(['e2e/support/office.ts', 'test/helpers/office.ts'])(
+		'BUG-46: still rejects ordinary outside-src modules at %s', async (path) => {
+			await expect(fixture('error', true, path)).rejects.toThrow(path);
+		}
+	);
+	it('BUG-46: does not exempt a nested package.json', async () => {
+		await expect(fixture('error', true, 'config/package.json', '{"sample":"invented"}'))
+			.rejects.toThrow('config/package.json');
+	});
 	it('reports an aliased dynamic fake import while the staged migration remains buildable', async () => {
 		const warnings = await fixture('report', true);
 		expect(warnings.join('\n')).toContain('Production fake/sample imports (report mode)');
