@@ -49,7 +49,7 @@
 		onanswer?: (m: ChatMessage, answer: { option_id?: string; text?: string }) => Promise<void> | void;
 		onaccept?: (m: ChatMessage) => Promise<void> | void;
 		onopen?: (m: ChatMessage) => void;
-		onretry?: () => void;
+		onretry?: (button: HTMLButtonElement) => void;
 		ondismiss?: () => void;
 	} = $props();
 
@@ -119,7 +119,7 @@
 		{#if delivery?.status === 'sending'}
 			<p class="mt-1 text-xs/5 text-gray-400" data-testid="sending">Sending…</p>
 		{:else if delivery?.status === 'failed'}
-			<p class="mt-1 text-xs/5 text-red-400" role="alert" data-testid="not-delivered">Not delivered: {delivery.error} <button type="button" class="font-semibold underline" onclick={onretry}>Retry</button> · <button type="button" class="underline" onclick={ondismiss}>Dismiss</button></p>
+			<p class="mt-1 text-xs/5 text-red-400" role="alert" data-testid="not-delivered">Not delivered: {delivery.error} <button type="button" class="font-semibold underline" onclick={(event) => onretry?.(event.currentTarget)}>Retry</button> · <button type="button" class="underline" onclick={ondismiss}>Dismiss</button></p>
 		{/if}
 	</div>
 

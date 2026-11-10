@@ -243,3 +243,68 @@ test('CHAT-5/14 BUG-57: an intentional answer focus target stops accepting point
 	await expect(card).not.toBeFocused();
 	await shot(page, 'chat-answer-focus-cleans-up-after-blur');
 });
+
+for (const kind of ['channel', 'dm'] as const) {
+	test(`CHAT-2/3 BUG-57: Back preserves a pending ${kind} submission and its conversation`, async ({ page }) => {
+		await open(page); await go(page, 'general'); await expect(page).toHaveURL(/c=c-general/);
+		await go(page, 'release-v1'); await expect(page).toHaveURL(/c=c-release-v1/);
+		await page.evaluate(async (method) => {
+			const path = '/src/lib/modules/messaging/legacy-api.ts';
+			const { chatApi } = await import(path);
+			const command = chatApi.command.bind(chatApi);
+			let started!: () => void;
+			let release!: () => void;
+			const began = new Promise<void>((resolve) => (started = resolve));
+			const gate = new Promise<void>((resolve) => (release = resolve));
+			(window as unknown as { heldChatCommand: { started: Promise<void>; release: () => void } }).heldChatCommand = { started: began, release };
+			chatApi.command = async (id: string, call: { method: string }) => {
+				if (call.method === method) {
+					chatApi.command = command;
+					started(); await gate;
+				}
+				return command(id, call);
+			};
+		}, kind === 'channel' ? 'channel.create' : 'dm.open');
+		await side(page).getByRole('button', { name: kind === 'channel' ? 'Add channel' : 'New message', exact: true }).click();
+		const dialog = page.getByRole('dialog', { name: kind === 'channel' ? 'Add a channel' : 'New message', exact: true });
+		if (kind === 'channel') await dialog.getByLabel('Name').fill('pending-channel');
+		else await dialog.getByRole('checkbox', { name: /Inês Duarte/ }).check();
+		await dialog.getByRole('button', { name: kind === 'channel' ? 'Add channel' : 'Open', exact: true }).click();
+		await page.evaluate(() => (window as unknown as { heldChatCommand: { started: Promise<void> } }).heldChatCommand.started);
+		// Both popstates complete: Back, then SvelteKit's restoration after the modal cancels navigation.
+		await page.evaluate(() => new Promise<void>((resolve) => {
+			let count = 0;
+			const returned = () => { if (++count === 2) { removeEventListener('popstate', returned); resolve(); } };
+			addEventListener('popstate', returned);
+			history.back();
+		}));
+		await expect(dialog).toBeVisible();
+		await expect(page.getByTestId('conversation-title')).toHaveText('#release-v1');
+		await expect(page).toHaveURL(/c=c-release-v1/);
+		await expect(dialog).toHaveAttribute('data-state', 'open');
+		await shot(page, `chat-back-keeps-pending-${kind}`);
+		await expect(dialog).toHaveAttribute('data-state', 'open');
+		await page.evaluate(() => (window as unknown as { heldChatCommand: { release: () => void } }).heldChatCommand.release());
+		await expect(dialog).toBeHidden();
+		await expect(page.getByTestId('conversation-title')).toHaveText(kind === 'channel' ? '#pending-channel' : 'Inês Duarte');
+	});
+}
+
+for (const place of ['conversation', 'thread'] as const) {
+	test(`CHAT-14 BUG-57: mouse Retry still focuses the delivered ${place} message`, async ({ page }) => {
+		await open(page, '?chat=fail'); await go(page, 'release-v1');
+		if (place === 'thread') await page.getByTestId('replies-link').first().click();
+		const area = place === 'thread' ? page.getByTestId('thread-panel') : page.getByRole('region', { name: 'Conversation', exact: true });
+		const composer = area.getByTestId('composer');
+		const text = `Pointer retry in the ${place}`;
+		await composer.fill(text); await composer.press('Control+Enter');
+		const failed = area.getByTestId('message').filter({ hasText: text });
+		await expect(failed.getByTestId('not-delivered')).toBeVisible();
+		await failed.getByRole('button', { name: 'Retry', exact: true }).click();
+		await expect(area.getByTestId('not-delivered')).toHaveCount(0);
+		const delivered = area.getByTestId('message').filter({ hasText: text });
+		await expect(delivered).toHaveCount(1);
+		await expect(delivered).toBeFocused();
+		await shot(page, `chat-pointer-retry-${place}-focus`);
+	});
+}

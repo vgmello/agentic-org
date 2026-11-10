@@ -261,9 +261,9 @@
 		void deliver(pending[pending.length - 1]);
 		return true;
 	}
-	async function deliver(p: Pending, retry = false) {
+	async function deliver(p: Pending, retry = false, retryButton?: HTMLElement) {
 		const origin = retry ? document.activeElement : null;
-		const log = origin?.closest('[role="log"]');
+		const log = (retryButton ?? origin)?.closest('[role="log"]');
 		const place = focusPlace();
 		let deliveredId: string | undefined;
 		p.status = 'sending';
@@ -339,11 +339,15 @@
 	let channelMode = $state<'create' | 'rename' | 'members'>('create');
 	let channelOpen = $state(false);
 	let dmOpen = $state(false);
+	let channelDialog = $state<{ dismiss: () => void } | undefined>();
+	let dmDialog = $state<{ dismiss: () => void } | undefined>();
 	beforeNavigate((navigation) => {
 		if (navigation.type !== 'popstate' || (!channelOpen && !dmOpen && !commandOpen)) return;
 		// Back dismisses the modal first; the next Back leaves the conversation.
 		navigation.cancel();
-		channelOpen = dmOpen = commandOpen = false;
+		if (channelOpen) channelDialog?.dismiss();
+		if (dmOpen) dmDialog?.dismiss();
+		commandOpen = false;
 	});
 	const openChannelDialog = (mode: typeof channelMode) => ((channelMode = mode), (channelOpen = true));
 
@@ -389,7 +393,7 @@
 
 {#snippet undeliveredRows(items: Pending[], inThread = false)}
 	{#each items as p (p.key)}
-		<MessageRow message={pendingMessage(p)} {ctx} chatState={chatState!} {now} {inThread} {officeRunning} delivery={{ status: p.status, error: p.error }} onretry={() => void deliver(p, true)} ondismiss={() => (pending = pending.filter((x) => x.key !== p.key))} />
+		<MessageRow message={pendingMessage(p)} {ctx} chatState={chatState!} {now} {inThread} {officeRunning} delivery={{ status: p.status, error: p.error }} onretry={(button) => void deliver(p, true, button)} ondismiss={() => (pending = pending.filter((x) => x.key !== p.key))} />
 	{/each}
 {/snippet}
 
@@ -541,6 +545,6 @@
 	{/if}
 </div>
 
-<ChannelDialog bind:open={channelOpen} mode={channelMode} members={ctx.members} initialName={channelMode === 'rename' ? (conversation?.name ?? '') : ''} initialMembers={channelMode === 'members' ? (conversation?.members ?? []) : []} onsubmit={channelSubmit} />
-<NewMessageDialog bind:open={dmOpen} members={ctx.members} onsubmit={dmSubmit} />
+<ChannelDialog bind:this={channelDialog} bind:open={channelOpen} mode={channelMode} members={ctx.members} initialName={channelMode === 'rename' ? (conversation?.name ?? '') : ''} initialMembers={channelMode === 'members' ? (conversation?.members ?? []) : []} onsubmit={channelSubmit} />
+<NewMessageDialog bind:this={dmDialog} bind:open={dmOpen} members={ctx.members} onsubmit={dmSubmit} />
 <CommandDialog bind:open={commandOpen} form={command} ondone={(message) => toast.success(message)} />

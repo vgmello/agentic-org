@@ -23,6 +23,11 @@
 	const choices = $derived(members.filter((m) => !m.former && !m.owner));
 	const max = CHAT_LIMITS.groupDmMax - 1;
 
+	/** Navigation uses the same busy guard as the dialog's own dismissal controls. */
+	export function dismiss() {
+		if (!busy) open = false;
+	}
+
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
 		if (busy || picked.length === 0) return;
