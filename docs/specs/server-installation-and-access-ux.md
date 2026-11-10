@@ -2,7 +2,7 @@
 kind: spec
 title: "Standalone server: installation, instances and browser access (UX)"
 status: for-review
-revision: 3
+revision: 4
 owner: ac-product-designer-eden
 created: "2026-11-09"
 updated: "2026-11-10"
@@ -12,6 +12,19 @@ builds_on: [offices-and-teams-ux, agent-run-modes-ux, employee-supervision-ux, p
 ---
 
 # Spec · Standalone server: installation, instances and browser access
+
+## Changelog
+
+**Revision 4 (2026-11-10): sign in, first access and recovery code.** New §4a,
+built on the owner's decisions O-1 (accounts) and O-2 (recovery-code delivery):
+who can sign in, the setup transcript for the first account, the sign-in page
+and its errors, session end and signing in again, sign out, what opens after
+sign-in, and the recovery-code states in the browser and the CLI, with their
+accessibility. Open questions A80 to A90 and A93 for ada (§4a.9). §4 points to
+§4a. **Criteria added:** SIGN-1 to SIGN-28, RCV-1 to RCV-17. No existing
+criterion changed.
+
+Revisions 1 to 3 came from PR #5 and have no entries here.
 
 ## 0. Scope and decisions
 
@@ -157,6 +170,400 @@ and cross-office delivery retain the existing outbox rules. Last-known copies ar
 not backups. Automatic HQ promotion and a satellite-hosted offline web UI are
 outside this pivot.
 
+§4a defines the screens for signing in, the session, first owner access and the
+recovery code.
+
+## 4a. Sign in, first access and recovery code *(rev 4)*
+
+This section builds on the owner's decisions of 2026-11-10: **O-1** (accounts)
+and **O-2** (recovery-code delivery). Commands are proposed spellings, like the
+rest of this spec (A80). Placeholders in angle brackets, such as `<HQ machine>`,
+are filled from HQ's data. Questions for ada are in §4a.9.
+
+### 4a.1 Accounts: who can sign in
+
+- An **account** belongs to this instance, not to an organization. It has a
+  username and a password. It is an **instance admin** or not, and it is linked
+  to the organizations it owns.
+- `agentic-org setup` creates the first account. That account is an instance
+  admin and owns the first organization.
+- Whoever creates an organization owns it ([offices §5a](offices-and-teams-ux.md#5a-create-organization-instance-admin-only-rev-14)).
+- **Only accounts sign in.** People in an organization's People view
+  ([offices §7.4](offices-and-teams-ux.md#74-add-edit-and-remove-a-person)) are
+  records that agents can reach. They never sign in, and nothing invites them.
+  Agents never sign in to the browser either.
+- In v1.0 another account is added only on the HQ machine, with
+  `agentic-org account add`. No browser screen lists, adds or edits accounts.
+  If a later screen lists accounts, it shows that command and has no form.
+- A password is reset only on the HQ machine, with
+  `agentic-org account password <username>`. The browser has no "forgot
+  password" flow and no form to change a password.
+- The password is checked with a maintained library (O-1). The page never
+  says whether the username or the password was wrong.
+
+### 4a.2 First owner access
+
+Setup creates the account in its step 3 (§2). The transcript shows only the
+lines that matter here; `…` stands for the other steps.
+
+```
+$ agentic-org setup
+Setting up instance "default".
+…
+Create or join an organization?
+  1) Create an organization. This machine becomes its HQ.
+  2) Join an organization with an invitation.
+Choose 1 or 2: 1
+Organization name: Lumen Labs
+
+Your account
+You'll sign in to HQ in a browser with this account. It will own
+Lumen Labs and be this instance's admin, so it can also create
+other organizations.
+Username: alex
+Password (at least 12 characters, not shown as you type):
+Password again:
+Account "alex" created. Instance admin: yes. Owns: Lumen Labs.
+…
+Service running.
+HQ ready.
+
+Recovery code for Lumen Labs
+It's shown once, here on the HQ machine, and never in the browser.
+Collect it now? [Y/n]: n
+Not collected. It's waiting on this machine. Collect it later with:
+  agentic-org recovery-code collect --org "Lumen Labs"
+
+Open http://127.0.0.1:<port> in a browser and sign in as alex.
+```
+
+- **Username:** required, trimmed. Empty: "Enter a username." Other rules are
+  A81; until then, setup refuses only an empty username.
+- **Password:** not shown as it's typed, asked twice. The strength rule is
+  "at least 12 characters" (proposed, A81). Too short: "Use at least 12
+  characters." If the two entries differ: "The passwords don't match. Enter
+  them again." Setup then asks for both again.
+- Setup never prints the password, and never puts it in a command argument,
+  a log or JSON status (SRV-5). Noninteractive setup takes it through the
+  protected input in §2.
+- The last line prints the configured browser address and the username.
+- **Collect it now? Y** runs the same steps as `recovery-code collect` (§4a.6).
+  **n**, or setup ending before the acknowledgement, leaves the code waiting.
+- **A repeated setup** (SRV-2) asks for no account. It ends with "HQ is running.
+  Open <address> and sign in as alex." While the code is waiting, it also prints
+  the collect command.
+- **The first browser visit** is an ordinary sign-in (§4a.3). After it, the first
+  organization opens (OPEN-1), with the recovery notice while the code is waiting.
+
+**Other account commands (HQ machine only):**
+
+```
+$ agentic-org account add
+Username: sam
+Password (at least 12 characters, not shown as you type):
+Password again:
+Account "sam" created. sam can sign in at http://127.0.0.1:<port>.
+sam doesn't own any organization yet.
+
+$ agentic-org account password alex
+New password for alex (at least 12 characters, not shown as you type):
+Password again:
+Password changed for alex.
+```
+
+Whether `account add` can give the admin grant, and whether a password change
+ends that account's open sessions, are A86 and A85.
+
+### 4a.3 Sign in
+
+The sign-in page is the first thing any visitor to the instance URL sees until
+they sign in. It shows no organization data.
+
+```
+ ┌────────────────────────────────────────────────────┐
+ │  Agentic Org                                        │
+ │  Sign in to HQ at 127.0.0.1:7420                    │
+ │                                                     │
+ │  ┃ ⚠ That username and password don't match.       │  ← error area (hidden
+ │  ┃   Try again.                                     │     until needed)
+ │                                                     │
+ │  Username                                           │
+ │  [ alex                                         ]   │
+ │  Password                                           │
+ │  [ ••••••••••••                        ] [ Show ]   │
+ │                                                     │
+ │  [                 Sign in                      ]   │
+ │                                                     │
+ │  Forgot your password? On the HQ machine, run       │
+ │  agentic-org account password <username>            │
+ │  Need an account? Accounts are added on the HQ      │
+ │  machine with agentic-org account add               │
+ └────────────────────────────────────────────────────┘
+```
+
+- "Sign in to HQ at <host:port>" uses the address in the browser's own address
+  bar, so two instances on one machine (default and lab) are told apart without
+  HQ revealing anything before sign-in.
+- **Show** reveals the password and becomes **Hide**.
+- Enter in either field submits.
+
+| State | What shows |
+| --- | --- |
+| Loading | "Loading…" while the page checks for a session that is still valid. No form, no organization data. |
+| Ready | The form. Focus is in Username, or in Password when Username is already filled. |
+| Signing in | **Signing in…**, disabled. Both fields are read-only. |
+| Empty field | No request is sent. Under the field: "Enter your username." or "Enter your password." Focus moves to the first empty field. |
+| Wrong username or password | "That username and password don't match. Try again." The same words for both cases. Password is cleared, Username kept, focus moves to Password. |
+| Too many attempts, with a retry time | "Too many sign-in attempts. Try again in 5 minutes." **Sign in** stays disabled until then. The minutes round up and update once a minute. |
+| Too many attempts, no retry time | "Too many sign-in attempts. Wait a few minutes, then try again." Limits are A82. |
+| HQ unreachable | "Can't reach HQ. Check that the instance is running on the HQ machine (`agentic-org status`), then try again." **Try again**. Both fields are kept. |
+| HQ error | "HQ couldn't sign you in because of a problem on the HQ machine. Try again. If it keeps happening, run `agentic-org doctor` there." **Try again**. |
+| Page out of date | "This page is out of date. Reload to get the current version." **Reload**. (API and page versions differ, standalone design §5.) |
+| Signed in | Opens what §4a.5 says. |
+
+A note above the form says why the visitor is here, when the page knows:
+
+| Arrived because | Note |
+| --- | --- |
+| They signed out | "You signed out." |
+| HQ restarted (when HQ says so, A84) | "HQ restarted, so everyone was signed out. Sign in again." |
+| Their session ended for any other reason, or the reason is unknown | "Your session ended. Sign in again." |
+
+When HQ is stopped, the browser can't load this page at all and shows its own
+error. The table covers a page that loaded and then can't reach HQ.
+
+### 4a.4 Session end, signing in again, and sign out
+
+**When a session ends.** It expires (A83), the account signs out in another tab
+of this HQ, the account's password is changed (A85), or HQ restarts: the gateway
+ends every session when its listener stops. A missing session proof (cleared site
+data, a private window) counts as an ended session.
+
+**In an open page, the user signs in again where they are:**
+
+```
+ ┌ Sign in again ─────────────────────────────────────┐
+ │ Your session ended. Sign in again to carry on.      │
+ │ Text you haven't saved stays on this page.          │
+ │                                                     │
+ │ Signed in as alex                                   │
+ │ Password                                            │
+ │ [                                      ] [ Show ]   │
+ │                                                     │
+ │ Sign in as someone else          [Not now] [Sign in]│
+ └────────────────────────────────────────────────────┘
+```
+
+- The dialog opens over the page the user was on, the first time HQ refuses a
+  request or the event stream because the session ended. Its first line depends
+  on the reason, when HQ gives one (A84):
+  - HQ restarted: "HQ restarted, so you were signed out. Sign in again to carry on."
+  - Any other reason, or unknown: "Your session ended. Sign in again to carry on."
+- While HQ is stopped or restarting, the page shows LIVE-8's "Live updates
+  paused" line, as for any lost connection. The dialog appears once HQ answers
+  again.
+- It re-authenticates the same account: the username is shown as text, not a
+  field. Its errors are §4a.3's, shown inside the dialog.
+- **After signing in,** the dialog closes and the user is on the same page, at
+  the same scroll position, with focus back where it was. Live updates resume
+  by cursor or snapshot (SRV-12).
+- **Text typed but not saved is kept.** Fields keep their text the whole time.
+  A save that HQ refused because the session had ended is marked "Not saved" by
+  that field. Nothing is resent on its own: after signing in, the user presses
+  Save (or Send) again.
+- **Other tabs of this HQ** show the same dialog. Signing in in any one of them
+  closes the dialog in the others, because they share one session.
+- **Not now** (or Esc) closes the dialog. The page stays visible but changes
+  nothing, with a bar at the top: "You're signed out. Text you haven't saved is
+  still here: copy it, or sign in to save it." **Sign in** reopens the dialog.
+- **Sign in as someone else** goes to the sign-in page. If the page has text
+  that isn't saved, it asks first: "Discard text you haven't saved on this
+  page?" **Keep editing** · **Discard and sign in**.
+- Reloading or closing the tab loses text that isn't saved, as §4 says. A reload
+  while signed out goes to the sign-in page. After signing in, the user lands on
+  that same page.
+
+**Sign out.** The account menu is the username button in the top bar of every
+page:
+
+```
+ [ alex ▾ ]
+ ┌────────────────────────┐
+ │ Signed in as alex      │
+ │ Instance admin         │  ← only with the admin grant
+ ├────────────────────────┤
+ │ Sign out               │
+ └────────────────────────┘
+```
+
+- With text that isn't saved on the page, it asks first: "Sign out? Text you
+  haven't saved on this page will be lost." **Stay** · **Sign out**.
+- Sign out ends this browser's session at HQ. Every open tab of this HQ goes to
+  the sign-in page with "You signed out." The browser's Back button doesn't show
+  organization data again.
+- Sessions in other browsers are not affected.
+
+### 4a.5 After sign-in: what opens
+
+1. The page the user was trying to open, if it is a page of this HQ. Any other
+   return target is ignored.
+2. Otherwise the last authorized organization, or the organization list (OPEN-1).
+3. An account with no organizations sees:
+   - Instance admin: "No organizations yet. Create one to get started."
+     **Create organization** (offices §5a).
+   - Not an admin: "This account doesn't own any organizations on this HQ."
+     **Sign out**. (How such an account gets one is A86.)
+
+### 4a.6 Recovery code
+
+The recovery code, with the organization's encrypted recovery package, will let
+the owner recover the organization's certificate authority if the HQ machine is
+lost. Under O-2 the host generates the code, the worker creates the authority and
+the encrypted package, and the host keeps the code until it is collected with
+`agentic-org` on the HQ machine. This is the same for every organization: the
+first one from setup, and each one created in the browser. **The browser never
+shows the code.** It shows only its state.
+
+Every surface below says plainly: "Recovering an organization after losing the
+HQ machine isn't supported yet." (REC-1, §7.)
+
+**States in the browser.** Only the organization's owner sees them.
+
+| State | Settings › Organization, Recovery row | Notice at the top of the organization's pages | Needs you |
+| --- | --- | --- | --- |
+| Being prepared (the package is still being created) | "Recovery code: being prepared. This takes a moment." | None | None |
+| Waiting to be collected | "Recovery code: waiting to be collected on the HQ machine. Run `agentic-org recovery-code collect --org "<organization>"` on <HQ machine>." **Copy command** | The notice below | "Collect the recovery code for <organization> on <HQ machine>." Opens the Recovery row. |
+| Collected | "Recovery code collected on <date>." | None | None (the item clears) |
+| Couldn't be prepared | "Recovery code: couldn't be prepared. <reason>. On <HQ machine>, run `agentic-org doctor`." **Copy command** | "Recovery material for <organization> couldn't be prepared. See Settings › Organization." | "Recovery material for <organization> couldn't be prepared." |
+| Status unknown (HQ didn't say) | "Recovery code: status unknown." Never shown as collected. | None | None |
+
+- The command includes `--name <instance>` when the instance isn't `default`.
+- `<date>` is the acknowledgement date in the browser's date format, for example
+  "10 Nov 2026". `<HQ machine>` is the name HQ reports for its machine (A93).
+- **Copy command** copies only the command. No state copies or shows the code.
+- The browser state changes live when the code is collected: the notice and the
+  Needs you item go away without a reload. While live updates are paused, the
+  change shows on the next load.
+- If Home's Needs you isn't built yet, the notice and the Settings row carry the
+  state alone. Nothing else depends on Needs you.
+
+**The notice** (owner only, every page of that organization, no close button,
+gone once collected):
+
+```
+ ┃ ⚠ Collect the recovery code for Lumen Labs
+ ┃   It's waiting on the HQ machine and is never shown in the browser.
+ ┃   On hq-mac, run:  agentic-org recovery-code collect --org "Lumen Labs"
+ ┃   Then store it away from that machine.                    [Copy command]
+```
+
+**Collecting it on the HQ machine:**
+
+```
+$ agentic-org recovery-code collect --org "Lumen Labs"
+Recovery code for Lumen Labs (instance default)
+
+You'll see this code once. With the recovery package, it's what will
+let you recover Lumen Labs if this machine is lost. Store both away
+from this machine: for example, the code in a password manager on
+another device, or on paper somewhere safe.
+Recovering after losing the HQ machine isn't supported yet, but
+keeping the code now is what will make it possible.
+
+Recovery package: <where it is, or how to copy it off this machine, A90>
+
+Press Enter to show the code.
+
+Recovery code: <the code, in groups separated by dashes, A90>
+
+To confirm you stored it, type the last group of the code: 9FXM
+Is the code stored away from this machine? Type yes to confirm: yes
+
+Recorded on 10 Nov 2026 at 14:02. This code won't be shown again.
+```
+
+| Case | CLI output | Exit |
+| --- | --- | --- |
+| Typed group doesn't match | "That isn't the last group of the code. Check what you stored, then type it again." Asks again. | — |
+| Anything but `yes` at the last prompt | "Not recorded. Run this command again once the code is stored away from this machine." The code stays waiting. | Error |
+| Interrupted before `yes` (Ctrl-C, closed terminal) | "Not recorded. The code is still waiting; run this command again to see it." Running it again shows the **same** code. | Error |
+| Already collected | "The recovery code for Lumen Labs was collected on 10 Nov 2026. It can't be shown again. Recovering after losing the HQ machine isn't supported yet." No code. | Error |
+| Still being prepared | "Recovery material for Lumen Labs is still being prepared. Try again in a minute." | Error |
+| Couldn't be prepared | "Recovery material for Lumen Labs couldn't be prepared: <reason>. Run agentic-org doctor." | Error |
+| No `--org`, one organization on the instance | Collects that organization's code. | — |
+| No `--org`, several organizations | "This instance has several organizations. Run again with --org and one of: Lumen Labs, Side Project." | Error |
+| Unknown organization | "There's no organization called "Lumen Labs" on instance default." | Error |
+| Not an interactive terminal | "The recovery code is shown only in an interactive terminal." No code. (Automation's protected output is A80.) | Error |
+
+- `agentic-org status` lists each organization's recovery state in the same
+  words as the Settings row, never the code.
+- An organization created in the browser starts as **Being prepared**, then
+  **Waiting to be collected**. Its owner collects it with the same command,
+  naming that organization.
+
+### 4a.7 Accessibility
+
+- **Labels.** Every field has a visible label tied to it: Username, Password.
+  The fields use `autocomplete="username"` and `"current-password"`, so password
+  managers work. **Show** is a button with `aria-pressed` and the label "Show
+  password".
+- **Focus order** on the sign-in page: the error area (when shown), Username,
+  Password, Show, Sign in, then the help text. In the sign-in-again dialog:
+  Password, Show, Sign in, Not now, Sign in as someone else. The dialog traps
+  focus while open and returns focus to where it was when it closes.
+- **Errors.** A field's error sits under it, is linked with `aria-describedby`,
+  and sets `aria-invalid`. The wrong-password message is linked to both fields.
+  Errors are announced (`role="alert"`) when they appear. Focus moves as §4a.3
+  says, never to a hidden element.
+- **Status changes** (Signing in…, the session-ended bar, the recovery state
+  changing) are announced through a polite live region. The rate-limit minutes
+  don't tick in the announcement.
+- **Not by colour alone.** Errors have an icon and words. The notice has an
+  icon, a heading and words. Recovery states are words.
+- **The CLI** writes plain words, with no meaning carried only by colour or
+  symbols. It follows `NO_COLOR` and writes no colour when the output isn't a
+  terminal. Prompts say what to type ("Type yes to confirm"). The code is shown
+  as plain text in short groups, so a screen reader can read it group by group.
+
+### 4a.8 Out of scope in v1.0
+
+Inviting people to sign in, account screens in the browser, password change or
+reset in the browser, sign-in with another provider, two-step sign-in, showing
+the recovery code in the browser, and recovering after losing HQ (REC-1).
+
+### 4a.9 Open questions for ada
+
+- A80 · Command spelling: `agentic-org account add`, `agentic-org account password <username>`
+  and `agentic-org recovery-code collect --org <organization>` are my proposals.
+  What does noninteractive setup use as the code's protected output (§2)?
+- A81 · Username rules (length, characters, whether uniqueness ignores case) and
+  the password rule. I've proposed at least 12 characters and no other rule.
+- A82 · Sign-in rate limit: per username, per source address or both, the limits,
+  and whether the refusal carries a retry time the page can show.
+- A83 · Session lifetime: idle and absolute expiry, whether activity extends it,
+  and whether an idle expiry should also hide what the page shows (§4a.4 keeps
+  the page visible).
+- A84 · When HQ refuses a request because the session ended, does it say why
+  (expired, signed out, HQ restarted, password changed)? Without a reason the
+  page uses the generic copy. Is that reason safe to show before sign-in?
+- A85 · Does `account password` end that account's open sessions?
+- A86 · Can `account add` give the admin grant? Can a second account be linked
+  to an existing organization in v1.0? Does the admin grant alone open
+  organizations the account doesn't own?
+- A87 · The owner bar (offices §7.1) shows the owner's name. Does setup ask for a
+  display name, or does the owner bar show the username?
+- A88 · Which read gives the browser the recovery state (being prepared, waiting,
+  collected with its date, couldn't be prepared with a reason), and is it
+  limited to the owner?
+- A89 · If the recovery package can't be created, does the create fail
+  (offices §5a), or is the organization created with recovery "couldn't be
+  prepared"? What repairs it: a host restart, `doctor`, or a command?
+- A90 · The acknowledgement covers keeping the encrypted package off HQ too. How
+  does the owner get a copy of the package? And what does the code look like
+  (length, groups), so the CLI can ask for its last group?
+- A93 · Which name for the HQ machine does HQ report for "<HQ machine>" in copy:
+  the host name, or a configured label?
+
 ## 5. Lifecycle, updates and removal
 
 All instance operations accept `--name`, defaulting to `default`: `start`, `stop`,
@@ -219,6 +626,55 @@ rules, which are distinct from uninstalling software on a machine.
 - SRV-30 · Add agent record follows STAFF-4/HRL-3: neither UI nor direct HTTP calls provision a member, home or messaging binding before approval. The built-in organization bootstrap exception is explicit.
 - SRV-31 · A fixture-based live Phase A cutover preserves unresolved asks/replies, deadlines and read/triage state across interruption/retry. Person-started CLI context selects explicit immutable instance/office identities; managed binding cannot fall back to spool or another office. Fresh organizations need no spool import.
 - SRV-32 · The first standalone local API negotiates version 2 and rejects unsupported peers before dispatch; version-1 statements remain historical/additive. HTTP/launch/sync version spaces are independent. New setup Cargo package org-setup is distinct, and the retired Tauri member cannot overwrite the staged agentic-org CLI artifact.
+
+**Sign in, session and first access (SIGN)** *(new, rev 4, §4a)*
+- SIGN-1 · Opening any HQ page without a session shows the sign-in page, with Username, Password and Sign in. The page and its responses contain no organization data.
+- SIGN-2 · The sign-in page has no "forgot password" link, reset form or sign-up form. It shows the HQ-machine commands to reset a password and to add an account.
+- SIGN-3 · Submitting with an empty field sends no request and shows "Enter your username." or "Enter your password." under that field.
+- SIGN-4 · A wrong password for an existing username and any password for an unknown username show the same message, "That username and password don't match. Try again.", and HQ answers both with the same status and body. Password is cleared and Username kept.
+- SIGN-5 · A person record's name (offices §7.4), with any password, is refused with SIGN-4's message.
+- SIGN-6 · A rate-limited sign-in shows "Too many sign-in attempts." with the retry time when HQ gives one, and keeps Sign in disabled until then; without a time it shows "Wait a few minutes, then try again."
+- SIGN-7 · When the loaded sign-in page can't reach HQ, it shows "Can't reach HQ…" with `agentic-org status` and Try again, and keeps both fields.
+- SIGN-8 · A correct sign-in opens the page the user was trying to open, if it is a page of this HQ. A return target outside this HQ is ignored, and the last organization or the organization list opens (OPEN-1).
+- SIGN-9 · After sign-in, an account with no organizations sees "No organizations yet." with Create organization if it is an instance admin, and "This account doesn't own any organizations on this HQ." with Sign out if not.
+- SIGN-10 · When a session ends while a page is open, the next refused request or stream opens the "Sign in again" dialog over that page; the page doesn't navigate away.
+- SIGN-11 · Text typed into a page and not saved is still in its fields after the user signs in again from the dialog, and after Not now.
+- SIGN-12 · A save refused because the session ended is marked "Not saved", and nothing is resent after signing in until the user saves again.
+- SIGN-13 · After signing in again from the dialog, the user is on the same page with focus where it was, and live updates resume without a gap (SRV-12).
+- SIGN-14 · With two tabs of the same HQ showing the dialog, signing in in one closes the dialog in the other.
+- SIGN-15 · Not now closes the dialog and shows "You're signed out. Text you haven't saved is still here…" with Sign in; the page sends no changes while signed out.
+- SIGN-16 · Sign in as someone else asks before discarding text that isn't saved, then opens the sign-in page.
+- SIGN-17 · After HQ restarts, an open page first shows LIVE-8's paused line, then the dialog. When HQ reports the restart as the reason, the dialog reads "HQ restarted, so you were signed out."; otherwise it shows the generic copy.
+- SIGN-18 · The account menu in the top bar shows "Signed in as <username>", "Instance admin" only for an account with the grant, and Sign out. It has no password or account form.
+- SIGN-19 · Sign out with text that isn't saved asks "Sign out? Text you haven't saved on this page will be lost." first. Stay keeps the page.
+- SIGN-20 · Sign out ends the session at HQ: every open tab of that HQ shows the sign-in page with "You signed out.", Back shows no organization data, and a session in another browser still works.
+- SIGN-21 · First setup asks for a username and the password twice, without echoing it. Different entries show "The passwords don't match. Enter them again." and ask again; a password under the rule shows the rule.
+- SIGN-22 · First setup creates one account that is an instance admin and owns the first organization, and ends by printing the browser address and username. Its output, logs and JSON status never contain the password.
+- SIGN-23 · Signing in with the setup account at the printed address opens the first organization, with that account as its owner.
+- SIGN-24 · A repeated setup asks for no account and prints the address and the existing username.
+- SIGN-25 · `agentic-org account add` on the HQ machine creates an account that can sign in at the printed address.
+- SIGN-26 · `agentic-org account password <username>` on the HQ machine changes the password: the old one is refused and the new one signs in.
+- SIGN-27 · The sign-in page and the dialog meet §4a.7: labelled fields with username and current-password autocomplete, the stated focus order, errors linked with `aria-describedby` and announced, and no meaning by colour alone.
+- SIGN-28 · No browser screen lists, adds or edits accounts, and HQ's HTTP API refuses any request to create an account.
+
+**Recovery code (RCV)** *(new, rev 4, §4a.6)*
+- RCV-1 · The recovery code never reaches the browser: a fixture code appears in no HTTP response, event, page, notice or copied text.
+- RCV-2 · While the code is waiting, the organization's owner sees the notice on every page of that organization, with the collect command and Copy command, and no close button. Other accounts don't see it.
+- RCV-3 · While the code is waiting, Needs you shows "Collect the recovery code for <organization> on <HQ machine>.", and the item opens the Recovery row. Without Needs you, the notice and the row still show.
+- RCV-4 · The Recovery row in Settings › Organization shows the exact copy for each state: being prepared, waiting to be collected, collected on <date>, couldn't be prepared with its reason, and status unknown.
+- RCV-5 · No browser state is labelled collected or ready before the acknowledgement is recorded; status unknown is never shown as collected.
+- RCV-6 · `agentic-org recovery-code collect` shows the code once and records the acknowledgement only after the typed last group matches and the owner types `yes`.
+- RCV-7 · A typed group that doesn't match is refused with "That isn't the last group of the code…" and nothing is recorded.
+- RCV-8 · Interrupting the command before `yes` records nothing, and running it again shows the same code. The browser still says waiting.
+- RCV-9 · After the acknowledgement, the browser shows "Recovery code collected on <date>" and the notice and Needs you item go away, without a reload while live updates run.
+- RCV-10 · After the acknowledgement, the collect command prints when it was collected and that it can't be shown again, prints no code and exits with an error status.
+- RCV-11 · While the package is being created, the browser shows "being prepared" and the command says to try again in a minute, with no code.
+- RCV-12 · When the package couldn't be created, the browser and the command show the reason and `agentic-org doctor`, with no code.
+- RCV-13 · Interactive setup offers to collect the code at its end; answering n leaves it waiting and prints the collect command.
+- RCV-14 · An organization created in the browser starts as being prepared, then waiting, and is collected with `--org` naming it.
+- RCV-15 · The collect command run without an interactive terminal prints no code.
+- RCV-16 · The notice, the Recovery row and the collect command each say that recovering after losing the HQ machine isn't supported yet.
+- RCV-17 · CLI output for setup, account and recovery commands carries no meaning by colour alone, and writes no colour codes with `NO_COLOR` set or when output isn't a terminal.
 
 
 ## 7. Decisions still requiring implementation evidence

@@ -2,7 +2,7 @@
 kind: spec
 title: "Dogfood run: fresh HQ, satellite and named instances"
 status: for-review
-revision: 5
+revision: 6
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-10"
@@ -12,6 +12,12 @@ builds_on: [server-installation-and-access-ux, our-org-in-the-app, offices-and-t
 ---
 
 # Spec · Dogfood run: fresh HQ, satellite and named instances
+
+**Revision 6 (2026-11-10):** rows 1.1, 1.2, 1.5, 1.6, 1.7 and 2.7 also cite the
+screen criteria that now define them: SIGN and RCV in
+[server-installation-and-access-ux.md §4a](server-installation-and-access-ux.md#4a-sign-in-first-access-and-recovery-code-rev-4)
+and OFC-14 to OFC-25 in [offices-and-teams-ux.md §5a](offices-and-teams-ux.md#5a-create-organization-instance-admin-only-rev-14).
+No action or pass condition changed.
 
 **Revision 4 (2026-11-09):** replaces the old desktop/team-import walkthrough.
 The product has never been deployed. Start from fresh disposable instances, with
@@ -43,13 +49,13 @@ that any of these checks ran.
 
 | Step | Action | Pass condition | Requirements |
 | --- | --- | --- | --- |
-| 1.1 | Install with no instance name, configure HQ and owner access | One `default` instance, platform-private data, valid release payload, ready service; no Tauri or frontend build tools | SRV-1, SRV-2, SRV-7 |
-| 1.2 | Open its URL from a browser on the other machine | Authenticate and see the real organization without installing/enrolling the browser machine | SRV-8, SRV-18 |
+| 1.1 | Install with no instance name, configure HQ and owner access | One `default` instance, platform-private data, valid release payload, ready service; no Tauri or frontend build tools | SRV-1, SRV-2, SRV-7, SIGN-21, SIGN-22, RCV-13 |
+| 1.2 | Open its URL from a browser on the other machine | Authenticate and see the real organization without installing/enrolling the browser machine | SRV-8, SRV-18, SIGN-23 |
 | 1.3 | Repeat install/setup without a name | Same instance/office identity, root, endpoint and release pin; no duplicate process, enrollment or configuration reset | SRV-2, SRV-6 |
 | 1.4 | Stop the instance, repeat setup, then repeat while running | Start once when stopped; while running return status/URL without restarting it | SRV-6, SRV-15 |
-| 1.5 | Attempt unauthenticated and cross-origin mutation/stream access | Refuse without disclosing protected data; browser auth does not grant a local agent owner rights | SRV-7 |
-| 1.6 | Create a second HQ organization through the same listener as an instance admin; repeat as an organization owner without that right | One gateway listener routes both HQs; owner-only creation refused; host keys never reach gateway/CLI | SRV-24 |
-| 1.7 | Provision recovery material, interrupt protected delivery before acknowledgement, resume, and retain the encrypted package/code off HQ | Same CA/code on pending retry; no secret in status/logs; acknowledged delivery is not later redisplayed. Wrong-code/damaged-escrow fixture fails closed and correct code recovers the same CA identity | SRV-25 |
+| 1.5 | Attempt unauthenticated and cross-origin mutation/stream access | Refuse without disclosing protected data; browser auth does not grant a local agent owner rights | SRV-7, SIGN-1, SIGN-4 |
+| 1.6 | Create a second HQ organization through the same listener as an instance admin; repeat as an organization owner without that right | One gateway listener routes both HQs; owner-only creation refused; host keys never reach gateway/CLI | SRV-24, OFC-14, OFC-19, OFC-22 |
+| 1.7 | Provision recovery material, interrupt protected delivery before acknowledgement, resume, and retain the encrypted package/code off HQ | Same CA/code on pending retry; no secret in status/logs; acknowledged delivery is not later redisplayed. Wrong-code/damaged-escrow fixture fails closed and correct code recovers the same CA identity | SRV-25, RCV-1, RCV-6, RCV-8, RCV-10 |
 
 ## 2. Named instances and setup failures
 
@@ -61,7 +67,7 @@ that any of these checks ran.
 | 2.4 | Interrupt setup before/after office provisioning markers, then repeat | Resume recorded operation; no duplicate office, lost key or destructive discard of committed data | SRV-6 |
 | 2.5 | Run noninteractive setup with complete inputs, then missing input and unavailable secret provider | Same result as wizard when valid; predictable failures without prompts, secrets or dev-key fallback | SRV-5, SRV-26 |
 | 2.6 | Use default/lab and a hostile dev server on the same host; copy/overwrite cookies and try read, mutation, stream, refresh/proof recovery and logout | No cross-origin/instance authority without the matching proof; proof never enters URL/log/redirect; valid paired sessions still work | SRV-23 |
-| 2.7 | Open eight HQ tabs under HTTP/1.1, issue commands, close the leader and change login session; repeat without worker/lock coordination | At most one shared stream per origin, command capacity retained, cursor-safe leadership change; fallback uses bounded short polling | SRV-27 |
+| 2.7 | Open eight HQ tabs under HTTP/1.1, issue commands, close the leader and change login session; repeat without worker/lock coordination | At most one shared stream per origin, command capacity retained, cursor-safe leadership change; fallback uses bounded short polling | SRV-27, SIGN-14, SIGN-20 |
 
 ## 3. Enroll and execute at a satellite
 
