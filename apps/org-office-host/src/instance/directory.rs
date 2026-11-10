@@ -493,6 +493,42 @@ fn set_errno(value: i32) {
     }
 }
 
+pub(super) fn paths_overlap(a: &Path, b: &Path, unavailable: bool) -> bool {
+    if a.starts_with(b) || b.starts_with(a) {
+        return true;
+    }
+    #[cfg(target_os = "macos")]
+    if unavailable {
+        // Compare components, not string prefixes: APFS/HFS+ also equate canonical
+        // Unicode spellings. No localized, diacritic-ignoring or width-ignoring flags.
+        // Existing registered targets retain their proven distinct inode ownership
+        // on case-sensitive volumes; this conservative comparison is for new claims.
+        return a.components().zip(b.components()).all(|(left, right)| {
+            match (left, right) {
+                (std::path::Component::Normal(left), std::path::Component::Normal(right)) => {
+                    use core_foundation::base::{CFComparisonResult, TCFType};
+                    use core_foundation::string::{
+                        kCFCompareCaseInsensitive, kCFCompareNonliteral, CFString, CFStringCompare,
+                    };
+                    let left = CFString::new(&left.to_string_lossy());
+                    let right = CFString::new(&right.to_string_lossy());
+                    // SAFETY: both owned strings remain live throughout this comparison.
+                    unsafe {
+                        CFStringCompare(
+                            left.as_concrete_TypeRef(),
+                            right.as_concrete_TypeRef(),
+                            kCFCompareCaseInsensitive | kCFCompareNonliteral,
+                        ) == CFComparisonResult::EqualTo
+                    }
+                }
+                (left, right) => left == right,
+            }
+        });
+    }
+    let _ = unavailable;
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

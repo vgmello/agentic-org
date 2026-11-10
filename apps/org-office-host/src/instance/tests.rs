@@ -169,6 +169,45 @@ fn an_unavailable_other_instance_does_not_block_default_or_release_its_reservati
     }
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn an_unavailable_root_reserves_unicode_normalization_aliases() {
+    let fixture = Fixture::new();
+    let composed = fixture.root("caf\u{e9}");
+    let decomposed = fixture.root("cafe\u{301}");
+    let held = fixture.registry.reserve(Some("lab"), &composed).unwrap();
+    drop(held);
+    fs::rename(&composed, fixture.root("moved-lab")).unwrap();
+    assert!(
+        fixture
+            .registry
+            .reserve(Some("other"), &decomposed)
+            .is_err(),
+        "an unavailable NFC path must not be taken over through its NFD spelling"
+    );
+    assert!(!composed.exists() && !decomposed.exists());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn unavailable_path_comparison_preserves_component_and_accent_boundaries() {
+    assert!(paths_overlap(
+        Path::new("/data/CAF\u{c9}"),
+        Path::new("/data/cafe\u{301}/child"),
+        true
+    ));
+    assert!(!paths_overlap(
+        Path::new("/data/caf\u{e9}"),
+        Path::new("/data/cafe"),
+        true
+    ));
+    assert!(!paths_overlap(
+        Path::new("/data/caf\u{e9}"),
+        Path::new("/data/caf\u{e9}2"),
+        true
+    ));
+}
+
 #[test]
 fn every_control_symlink_is_refused_without_changing_its_valid_target() {
     for control in ["instance.json", "instances.json", "registry.lock"] {

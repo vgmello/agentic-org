@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::directory::{absolute, Directory, Identity};
+use super::directory::{absolute, paths_overlap, Directory, Identity};
 use super::temp;
 use super::{Error, Name};
 
@@ -403,6 +403,11 @@ impl Registry {
                 "instance control and user temp roots must not overlap",
             ));
         }
+        let known_target = locator.entries.iter().any(|entry| {
+            &entry.binding.name == name
+                && entry.binding.root == path
+                && candidate.as_ref().map(Directory::identity) == Some(entry.binding.identity)
+        });
         for entry in &locator.entries {
             if &entry.binding.name == name {
                 if entry.binding.root != path {
@@ -421,7 +426,11 @@ impl Registry {
             let existing = Directory::open(&entry.binding.root, false)
                 .ok()
                 .filter(|root| root.identity() == entry.binding.identity);
-            let lexical = paths_overlap(path, &entry.binding.root, existing.is_none());
+            let lexical = paths_overlap(
+                path,
+                &entry.binding.root,
+                existing.is_none() && !known_target,
+            );
             if lexical
                 || Directory::has_ancestor(path, entry.binding.identity)?
                 || match &candidate {
@@ -486,18 +495,6 @@ impl Registry {
         self.directory.verify_file(LOCK, lock)?;
         self.directory.publish(REGISTRY, &encode(locator)?, true)
     }
-}
-
-fn paths_overlap(a: &Path, b: &Path, unavailable: bool) -> bool {
-    #[cfg(target_os = "macos")]
-    if unavailable {
-        // Conservatively reserve case aliases of unavailable paths on macOS.
-        let a = a.to_string_lossy().to_lowercase();
-        let b = b.to_string_lossy().to_lowercase();
-        return Path::new(&a).starts_with(&b) || Path::new(&b).starts_with(&a);
-    }
-    let _ = unavailable;
-    a.starts_with(b) || b.starts_with(a)
 }
 
 #[cfg(test)]
