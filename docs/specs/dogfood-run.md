@@ -24,7 +24,8 @@ Required or Optional (a new Type column; existing rows are all Required). New
 allowance, bug severities and results file restored from revision 3. The pass
 rule moved from §6 to §7, which adds what makes a Required row complete. No
 existing row's action, pass condition or requirements changed, and no criterion
-was added. §0 records each row's result as §7 defines it.
+was added. §0 records each row's result as §7 defines it. §6's retained-features check no
+longer includes processes (Wave A, after v1.0).
 
 **Revision 6 (2026-11-10):** rows 1.1, 1.2, 1.5, 1.6, 1.7 and 2.7 also cite the
 screen criteria that now define them: SIGN and RCV in
@@ -121,8 +122,8 @@ needing a new role, and APPR-2's new-role routing isn't exercised.
 | 3a.2 | From Dogfood App, open **Hire**: "A QA lead for the app". Name it Dogfood Lead 1 and place it at HQ's office. Stop at Review | The HR lead wakes (its chip no longer says Asleep) and proposes. Review shows team, reports to, runtime, model, office, home folder (read-only) and messaging name. Nothing exists yet: no card, no roster row, and Agents › Requests shows the proposal as **Waiting for you** | STAFF-1, HRL-3, APPR-3 | Required |
 | 3a.3 | Approve the hire. Then make Dogfood Lead 1 the lead of Dogfood App | Hiring progress in words, then "Dogfood Lead 1 is hired and in Dogfood App." The card appears in Dogfood App, highlighted; Activity has one row, "Dogfood Lead 1 was hired into Dogfood App"; the profile records who requested and approved it. The card then shows Lead, and the team card names it | STAFF-2, APPR-5, MOVE-5 | Required |
 | 3a.4 | Hire Dogfood QA 1 into Dogfood App the same way, and approve it | Review suggests Dogfood Lead 1 as its manager (the team's lead). After approval it's in Dogfood App, under Dogfood Lead 1 in Reporting lines | STAFF-1, STAFF-2 | Required |
-| 3a.5 | In Dogfood Lead 1's Settings, turn on **Can approve hires**. Then have Dogfood QA 1 run `org-agent hire request "A QA engineer named Dogfood QA 2 for Dogfood App, for the dogfood run"` | The roster and quick view show "Approves hires" on Dogfood Lead 1. The request becomes a proposal in Requests with requester Dogfood QA 1 and state **Waiting for Dogfood Lead 1**; Dogfood Lead 1 gets it in its inbox; nothing is hired yet | APPR-1, APPR-2, HRL-4, APPR-8 | Required |
-| 3a.6 | Have Dogfood Lead 1 run `org-agent hire approve <id>` with no reason, then again with `--reason "…"` | Without a reason it's refused and nothing changes. With one, Dogfood QA 2 is hired with no human step: its card appears in Dogfood App, highlighted; its profile and Activity say it was requested by Dogfood QA 1 and approved by Dogfood Lead 1; Home shows "Dogfood Lead 1 approved hiring Dogfood QA 2…" with **Open** | APPR-4, APPR-5, APPR-8, STAFF-2 | Required |
+| 3a.5 | In Dogfood Lead 1's Settings, turn on **Can approve hires**. Then have Dogfood QA 1 run `org-agent hire request "A QA engineer named Dogfood QA 2 for Dogfood App, always on, at HQ's office, for the dogfood run"` | The roster and quick view show "Approves hires" on Dogfood Lead 1. The request becomes a proposal in Requests with requester Dogfood QA 1 and state **Waiting for Dogfood Lead 1**; Dogfood Lead 1 gets it in its inbox; nothing is hired yet | APPR-1, APPR-2, HRL-4, APPR-8 | Required |
+| 3a.6 | Have Dogfood Lead 1 run `org-agent hire approve <id>` with no reason, then again with `--reason "…"` | Without a reason it's refused and nothing changes. With one, Dogfood QA 2 is hired with no human step, Always on, at HQ's office (its profile shows both): its card appears in Dogfood App, highlighted; its profile and Activity say it was requested by Dogfood QA 1 and approved by Dogfood Lead 1; Home shows "Dogfood Lead 1 approved hiring Dogfood QA 2…" with **Open** | APPR-4, APPR-5, APPR-8, STAFF-2 | Required |
 | 3a.7 | Have Dogfood QA 2 request another hire ("Dogfood QA 4"). Have Dogfood Lead 1 run `org-agent hire reject <id>` with no reason, then with `--reason "…"` | Without a reason it's refused. With one, Requests shows **Rejected**; no card, roster row or messaging name exists for Dogfood QA 4 | APPR-8, HRL-4 | Required |
 | 3a.8 | Open **Add agent record** for Dogfood QA 3 (messaging name, runtime, role and title, team Dogfood App, reports to Dogfood Lead 1, office HQ) and submit. Before approving, call `member.add_agent` directly through HQ's API for Dogfood QA 3 with the owner's session. Then **Reject** the proposal with a reason | Submitting creates only a proposal, **Waiting for you**. The direct call is refused (the error it returns is A96 in `our-org-in-the-app.md` §13), and creates no member, home or messaging binding. After Reject, Requests shows **Rejected**, and Dogfood QA 3 appears nowhere else: not in the chart, the roster or the HQ office's agents | STAFF-4, HRL-3, SRV-30, APPR-6 | Required |
 | 3a.9 | On Dogfood QA 2, **Add to team…** › Dogfood Office. Then **Remove from Dogfood Office** (no confirmation expected), and start **Remove from Dogfood App** (its last team) but cancel it. On Dogfood Lead 1, open **Move to team…** › Dogfood Office and cancel; then **Add to project…** › Dogfood Server | Dogfood QA 2 shows in both teams, each with the "+N teams" badge naming the other, then in Dogfood App only. Removing its last team asks first and says it would be in Not in a team; Cancel changes nothing. Dogfood Lead 1's Move dialog says "Dogfood Lead 1 leads Dogfood App. Dogfood App will have no lead.", and Cancel changes nothing. Add to project lists Dogfood Server's one team and adds Dogfood Lead 1 to Dogfood Office in one step | TEAM-2, DEAL-2, MOVE-2, MOVE-3 | Required |
@@ -137,7 +138,8 @@ needing a new role, and APPR-2's new-role routing isn't exercised.
 ## 3b. See what's happening, live (HQ)
 
 Run after 3a, with Dogfood QA 2 (kept from 3a) and the 3.4 employee. Watch the
-second browser from 3a, without reloading. The owner's messaging handle is `owner`.
+second browser from 3a, without reloading, after turning its Activity Status
+filter back off (Activity's default). The owner's messaging handle is `owner`.
 
 | Step | Action | Pass condition | Requirements | Type |
 | --- | --- | --- | --- | --- |
@@ -145,7 +147,7 @@ second browser from 3a, without reloading. The owner's messaging handle is `owne
 | 3b.2 | Have Dogfood QA 2 send the 3.4 employee a short message with `org-agent msg send`. Open the thread from Activity. Then have the 3.4 employee send `owner` a message, and open that thread | The message row appears in Activity within the allowance, and **Open thread** shows the whole thread. The first thread is read-only and says so; the thread addressed to the owner offers **Reply**, and a reply sends | LIVE-2, LIVE-3 | Required |
 | 3b.3 | Have Dogfood QA 2 start a turn (send it a message), then let it finish | Its card's status word changes to Working and back, and Working now on Home adds and removes it, each within the allowance. Activity shows no Status row by default; the Status filter shows them | LIVE-6, LIVE-4, PROF-3 | Required |
 | 3b.4 | Have Dogfood QA 2 move its task "Dogfood QA: no-op 2" with `org-agent task start <id>`. As the owner, move "Dogfood QA: no-op" on the board, and report a bug in Dogfood Desktop | Each shows as a row in Activity (Tasks and bugs), and the board updates, within the allowance | LIVE-1 | Required |
-| 3b.5 | In Activity, scroll down, then have Dogfood QA 2 send another message. Press **Jump to latest** | The list doesn't move, and a "1 new · Jump to latest" pill appears. Jump to latest goes to the top with the new row there | LIVE-5 | Required |
+| 3b.5 | In Activity, scroll down, then have Dogfood QA 2 send another message. Press **Jump to latest** | The list doesn't move, and an "n new · Jump to latest" pill appears (1 new when only that message arrived). Jump to latest goes to the top with the new row there | LIVE-5 | Required |
 | 3b.6 | Merge a reviewed branch into the integration branch of a repository the HQ office fetches | A Git row in Activity ("merged … into …") once the office has fetched | LIVE-1 | Optional |
 | 3b.7 | With Activity open in both browsers, run `agentic-org stop` on the HQ machine. Move to another screen already loaded, and press **Retry**. While HQ is down, have the 3.4 employee send Dogfood QA 2 a message. Then run `agentic-org start` | Both browsers show "Live updates paused. Showing what was loaded at <HH:MM>." with **Retry**, on every screen; Retry reads "Retrying…" and the line stays while HQ is down. Once HQ is back the line clears by itself, after signing in again if the restart ended the session. The message sent while HQ was down then shows in Activity once, with no gap | LIVE-8, SIGN-17, SIGN-13, SRV-10, SRV-12 | Required |
 
@@ -228,8 +230,10 @@ with notes**, **Fail**, **Blocked** or **N/A**.
   on both counts as a Fail.
 
 **Live-update allowance.** The live timings in §3a and §3b are 2 seconds, without
-a reload (`our-org-in-the-app.md` decision 8, LIVE-2, LIVE-6). Time them from the
-action to the change in the second browser. Up to 4 seconds is **Pass with
+a reload (`our-org-in-the-app.md` decision 8, LIVE-2, LIVE-6). Time each change
+from when it shows in the browser that made it (HQ has recorded it) to when it
+shows in the second browser, so a slow but correct operation, such as a hire,
+isn't counted as a slow live update. Up to 4 seconds is **Pass with
 notes**. Over 4 seconds, or a change that shows only after a reload, is a Fail.
 The allowance covers timing only, never a missing, wrong or duplicated change.
 
