@@ -82,7 +82,7 @@ describe('one operation intent', () => {
 		await operation.lookup();
 		expect(s.transport.submit).toHaveBeenCalledTimes(1);
 		expect(s.transport.lookup).toHaveBeenCalledTimes(2);
-		expect(s.transport.lookup.mock.calls[0]).toEqual([{ kind: 'org', id, scope }, { ...scope, proof: 'secret-proof' }]);
+		expect(s.transport.lookup.mock.calls[0]).toEqual([{ kind: 'org', id, scope }, { instanceId: scope.instanceId, accountId: scope.accountId, proof: 'secret-proof' }]);
 		expect(s.newId).toHaveBeenCalledTimes(1);
 	});
 
@@ -256,6 +256,29 @@ describe('one operation intent', () => {
 		expect(await operation.lookup()).toEqual({ status: 'unresolved', reason: 'transport' });
 		await operation.submit();
 		expect(s.transport.submit).toHaveBeenCalledTimes(1);
+	});
+
+	it('captures only public scope and session fields when callers pass structurally compatible records', async () => {
+		const s = setup();
+		const compatible = { ...scope, proof: 'secret-proof', password: 'private-value' };
+		const operation = s.client.prepare({ kind: 'org', method: 'team.rename', scope: compatible, params: { name: 'QA' }, decode });
+		expect(operation.scope).toEqual(scope);
+		expect(JSON.stringify(operation)).not.toContain('secret-proof');
+		expect(JSON.stringify(operation)).not.toContain('private-value');
+		await operation.submit();
+		const [request, auth] = s.transport.submit.mock.calls[0];
+		expect(request.scope).toEqual(scope);
+		expect(Object.keys(auth).sort()).toEqual(['accountId', 'instanceId', 'proof']);
+	});
+
+	it('resume retains only an operation reference, never extra credentials or a mutable request body', async () => {
+		const s = setup();
+		const compatible = { kind: 'org' as const, id, scope: { ...scope, proof: 'secret-proof' }, proof: 'secret-proof', params: { private: 'private-value' } };
+		const operation = s.client.resume(compatible, decode);
+		expect(JSON.stringify(operation)).not.toContain('secret-proof');
+		expect(JSON.stringify(operation)).not.toContain('private-value');
+		await operation.lookup();
+		expect(Object.keys(s.transport.lookup.mock.calls[0][0]).sort()).toEqual(['id', 'kind', 'scope']);
 	});
 
 	it('resumes lookup with an immutable reference, without recreating a request body', async () => {

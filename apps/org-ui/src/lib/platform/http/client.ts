@@ -72,6 +72,19 @@ function terminal<T>(state: OperationState<T>): boolean {
 const sameAccount = (session: Session | undefined, scope: OperationScope) =>
 	session?.instanceId === scope.instanceId && session.accountId === scope.accountId;
 
+/** Copy the public reference fields, never credentials or unrelated fields from a compatible record. */
+function captureScope(scope: OperationScope): OperationScope {
+	const { instanceId, accountId, organizationId, officeId } = scope;
+	if (typeof instanceId !== 'string' || !instanceId || typeof accountId !== 'string' || !accountId)
+		throw new Error('Operation scope requires instance and account');
+	if ((organizationId !== undefined && typeof organizationId !== 'string') || (officeId !== undefined && typeof officeId !== 'string'))
+		throw new Error('Invalid operation scope');
+	return Object.freeze({ instanceId, accountId,
+		...(organizationId === undefined ? {} : { organizationId }),
+		...(officeId === undefined ? {} : { officeId })
+	});
+}
+
 /** Capture an immutable JSON intent before the first dispatch, including expected versions. */
 function capture(value: unknown, depth = 0): unknown {
 	if (depth > 50) throw new Error('Operation params are too deeply nested');
@@ -101,12 +114,20 @@ export function createOperationClient({ transport, session, clock }: {
 	session: () => Session | undefined;
 	clock: { newId(): string };
 }) {
-	const readSession = () => { try { return session(); } catch { return undefined; } };
+	const readSession = (): Session | undefined => {
+		try {
+			const active = session();
+			if (!active) return undefined;
+			const { instanceId, accountId, proof } = active;
+			if (typeof instanceId !== 'string' || !instanceId || typeof accountId !== 'string' || !accountId || typeof proof !== 'string' || !proof) return undefined;
+			return { instanceId, accountId, proof };
+		} catch { return undefined; }
+	};
 	function handle<T>(ref: OperationRef, decode: (result: unknown) => T, request?: OperationRequest): Operation<T> {
-		if (!ULID.test(ref.id)) throw new Error('Invalid operation ID');
-		const scope = Object.freeze({ ...ref.scope });
-		if (!scope.instanceId || !scope.accountId) throw new Error('Operation scope requires instance and account');
-		const reference = Object.freeze({ ...ref, scope });
+		if (typeof ref.id !== 'string' || !ULID.test(ref.id)) throw new Error('Invalid operation ID');
+		if (typeof ref.kind !== 'string' || !Object.hasOwn(ID_FIELD, ref.kind)) throw new Error('Invalid operation kind');
+		const scope = captureScope(ref.scope);
+		const reference = Object.freeze({ kind: ref.kind, id: ref.id, scope });
 		let state: OperationState<T> = Object.freeze(request ? { status: 'not_submitted' } : { status: 'unresolved', reason: 'unknown' });
 		let sent = !request;
 		let pending: Promise<OperationState<T>> | undefined;
@@ -191,7 +212,7 @@ export function createOperationClient({ transport, session, clock }: {
 			if (existing !== undefined && typeof existing !== 'string') throw new Error('Invalid operation ID');
 			const id = existing ?? clock.newId();
 			const captured = capture({ ...params, [field]: id }) as Readonly<Record<string, unknown>>;
-			const ref = { kind, id, scope: Object.freeze({ ...scope }) };
+			const ref = { kind, id, scope: captureScope(scope) };
 			return handle(ref, decode, Object.freeze({ ...ref, method, params: captured }));
 		},
 		/** Reconnect with a known ID without retaining or recreating a request body/outbox. */
