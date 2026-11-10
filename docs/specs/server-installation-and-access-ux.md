@@ -2,7 +2,7 @@
 kind: spec
 title: "Standalone server: installation, instances and browser access (UX)"
 status: for-review
-revision: 5
+revision: 6
 owner: ac-product-designer-eden
 created: "2026-11-09"
 updated: "2026-11-10"
@@ -14,6 +14,20 @@ builds_on: [offices-and-teams-ux, agent-run-modes-ux, employee-supervision-ux, p
 # Spec · Standalone server: installation, instances and browser access
 
 ## Changelog
+
+**Revision 6 (2026-11-10): "You no longer own" after Not now, and the
+unavailable pages.** From the Principal Product Designer's decision of
+2026-11-10 on narrow widths and its follow-ups:
+- §4a.5 item 1: the organization list shows "You no longer own
+  <organization>." when the session ended while that page was open, whether the
+  "Sign in again" dialog was open or the user had chosen Not now and its bar was
+  showing. Before, only the open dialog counted.
+- Criterion SRV-18 points to `app-shell-ux.md` §3 for the unavailable pages' copy.
+- SIGN-43 also covers a page in the Not now state: after an unlink, the next
+  sign-in from any tab, including one showing the Not now bar, opens the
+  organization list with "You no longer own <organization>."
+
+**Criteria rewritten (same ID):** SRV-18, SIGN-43 *(rev 6)*. **New:** none.
 
 **Revision 5 (2026-11-10): recovery release, setup without a local session, and
 instance isolation.** From Rowan's X-02 (`org-proto` v2, rev 13, approved by
@@ -851,10 +865,10 @@ page:
 
 1. The page the user was trying to open, if it is a page of this HQ. Any other
    return target is ignored. A page of an organization the account can't open
-   is ignored too, and the organization list opens instead. When the "Sign in
-   again" dialog was open over that page, the list shows "You no longer own
-   <organization>." above it, with the name the page was showing (§4a.4)
-   *(review of 0802754)*.
+   is ignored too, and the organization list opens instead. When the session
+   ended while that page was open (the dialog, or its bar after Not now), the
+   list shows "You no longer own <organization>." above it, with the name the
+   page was showing (§4a.4) *(review of 0802754; rev 6)*.
 2. Otherwise the last authorized organization, or the organization list (OPEN-1).
 3. An account with no organizations sees:
    - Instance admin: "No organizations yet. Create one to get started."
@@ -1296,7 +1310,7 @@ rules, which are distinct from uninstalling software on a machine.
 - SRV-15 · `start`, `stop`, `status`, `logs`, `doctor`, `upgrade` and `uninstall` operate on the selected instance. Service manager or credential-unlock limitations are surfaced explicitly.
 - SRV-16 · Upgrading or uninstalling one instance cannot replace a running peer's helpers, remove a referenced release, delete peer data or sweep peer credentials.
 - SRV-17 · Shutdown drains acknowledged writes and reaps owned descendants within documented deadlines. Restart reconciles recorded work; browser disconnect does not cancel durable work.
-- SRV-18 · Production browser paths use the HTTP API, with an explicit unavailable state for missing features. Missing Tauri globals or API failure never select sample data.
+- SRV-18 · *(rev 6)* Production browser paths use the HTTP API, with an explicit unavailable state for missing features. Missing Tauri globals or API failure never select sample data. The unavailable pages' copy is in `app-shell-ux.md` §3 (SHELL-18 to SHELL-21).
 - SRV-19 · The v1 build, runtime and acceptance suite require no Tauri packages, desktop command bridge, tray, native notification or global shortcut.
 - SRV-20 · The implementation deletes superseded paths without preserving old desktop contracts or importing undeployed app data. Domain rules, storage durability, office identity and supervision invariants remain covered.
 - SRV-21 · A fresh HQ and satellite complete the cross-platform walkthrough in [dogfood-run.md](dogfood-run.md), including disconnect/reconnect and a real agent. Mock-only success is insufficient.
@@ -1357,7 +1371,7 @@ rules, which are distinct from uninstalling software on a machine.
 - SIGN-40 · *(new, rev 5, A103)* Revoking the instance's only instance admin is refused with "<username> is the only instance admin of instance <name>…", before the y/N question, and nothing changes.
 - SIGN-41 · *(new, rev 5, A103)* `agentic-org account link`, `unlink` and `revoke` over SSH on a Mac print the "needs you at this Mac" message before any prompt, and change nothing.
 - SIGN-42 · *(new, rev 5, A103)* Answering anything but y to `link`, `unlink` or `revoke` prints "Nothing changed." and changes nothing.
-- SIGN-43 · *(new, rev 5, review of 0802754)* With a page of an organization open, after `agentic-org account unlink <username> --org <organization>` for that page's account, signing in again from the "Sign in again" dialog succeeds and opens the organization list (or §4a.5's no-organization page) with "You no longer own <organization>." above it, not that page, and no text from that page is kept. Focus is on the organization list's heading (or the no-organization page's), and "You no longer own <organization>." is announced through the polite live region. Every other open tab of this HQ on a page of an organization the account no longer owns also opens the organization list with that line, and keeps none of its text, even a tab that chose Not now; tabs on organizations it still owns behave as SIGN-14 says. The dialog shows "You no longer own <organization>, so you were signed out." and warns that signing in, here or in another tab, loses that page's unsaved text only when HQ gives that reason (A84), and after Not now its bar reads "You're signed out. Text you haven't saved here is lost when you sign in, here or in another tab: copy it first."; otherwise it shows its usual copy. After `agentic-org account revoke <username>`, signing in again from the dialog is refused with SIGN-4's message, and the page stays as it was.
+- SIGN-43 · *(new, rev 5, review of 0802754; rev 6)* With a page of an organization open, after `agentic-org account unlink <username> --org <organization>` for that page's account, the next sign-in from any tab of this HQ, from the "Sign in again" dialog or from a page showing the Not now bar, succeeds and opens the organization list (or §4a.5's no-organization page) with "You no longer own <organization>." above it, not that page, and no text from that page is kept. Focus is on the organization list's heading (or the no-organization page's), and "You no longer own <organization>." is announced through the polite live region. Every other open tab of this HQ on a page of an organization the account no longer owns also opens the organization list with that line, and keeps none of its text, even a tab that chose Not now; tabs on organizations it still owns behave as SIGN-14 says. The dialog shows "You no longer own <organization>, so you were signed out." and warns that signing in, here or in another tab, loses that page's unsaved text only when HQ gives that reason (A84), and after Not now its bar reads "You're signed out. Text you haven't saved here is lost when you sign in, here or in another tab: copy it first."; otherwise it shows its usual copy. After `agentic-org account revoke <username>`, signing in again from the dialog is refused with SIGN-4's message, and the page stays as it was.
 
 **Recovery code (RCV)** *(new, rev 4, §4a.6)*
 - RCV-1 · The recovery code never passes through the gateway or reaches the browser: a fixture code appears in no gateway request or response, HTTP response, event, page, notice or copied text.
