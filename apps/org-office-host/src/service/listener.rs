@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::io::{self, BufReader, BufWriter};
+use std::io::{self, BufWriter};
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::os::unix::io::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -278,16 +278,42 @@ fn serve(
     handler: Arc<dyn Handler>,
     max_in_flight: usize,
 ) {
+    serve_with_poll(
+        stream,
+        connection,
+        queue,
+        handler,
+        max_in_flight,
+        org_socket::READ_TICK,
+        org_socket::poll_readable,
+    );
+}
+
+fn serve_with_poll(
+    stream: UnixStream,
+    connection: Arc<Connection>,
+    queue: Receiver<Outbound>,
+    handler: Arc<dyn Handler>,
+    max_in_flight: usize,
+    tick: Duration,
+    poll: impl FnMut(std::os::fd::RawFd, Duration) -> io::Result<bool>,
+) {
     // The writer gets its own handle on the socket, never the `Connection`: that owns the
     // queue's sender, and a writer holding it would keep its own queue open forever.
+    let closed = Arc::clone(&connection.closed);
     let writer = stream.try_clone().and_then(|out| {
         thread::Builder::new()
             .name("host-conn-out".into())
-            .spawn(move || write_loop(&out, queue))
+            .spawn(move || write_loop(&out, queue, &closed))
     });
     let in_flight = Arc::new(InFlight::new(max_in_flight));
     let mut reader = Counted {
-        inner: BufReader::new(stream),
+        inner: org_socket::Ticked::with_poll(
+            stream,
+            tick,
+            || connection.closed.load(Ordering::SeqCst),
+            poll,
+        ),
         consumed: 0,
     };
     loop {
@@ -429,6 +455,8 @@ pub(crate) struct Connection {
     stream: UnixStream,
     /// What the host noted about the client when it accepted the connection (`app_auth`).
     accepted: Accepted,
+    /// Ends the ticked reader even if shutdown misses a platform wakeup.
+    closed: Arc<AtomicBool>,
 }
 
 impl Connection {
@@ -438,6 +466,7 @@ impl Connection {
             outbound,
             stream,
             accepted,
+            closed: Arc::new(AtomicBool::new(false)),
         };
         (Arc::new(connection), queue)
     }
@@ -473,6 +502,7 @@ impl Connection {
 
     /// Closes the socket both ways, which ends the connection's threads.
     pub(crate) fn close(&self) {
+        self.closed.store(true, Ordering::SeqCst);
         shut_down(&self.stream);
     }
 
@@ -505,7 +535,14 @@ fn shut_down(stream: &UnixStream) {
 
 /// The writer: writes queued messages until [`Outbound::Close`], until every sender is gone,
 /// or until a write fails (then it closes the socket, which also ends the reader).
-fn write_loop(stream: &UnixStream, queue: Receiver<Outbound>) {
+fn write_loop(stream: &UnixStream, queue: Receiver<Outbound>, closed: &AtomicBool) {
+    struct MarkClosed<'a>(&'a AtomicBool);
+    impl Drop for MarkClosed<'_> {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+    let _closed = MarkClosed(closed);
     let mut out = BufWriter::new(stream);
     let mut seq = 0u64;
     for message in queue {
@@ -564,6 +601,55 @@ mod tests {
     use super::*;
     use std::io::{BufRead, Write};
     use std::path::PathBuf;
+
+    #[test]
+    fn ticked_reader_repolls_a_missed_eof_at_the_host_call_site() {
+        let (stream, peer) = UnixStream::pair().unwrap();
+        drop(peer);
+        let (connection, queue) =
+            Connection::new(stream.try_clone().unwrap(), Accepted::sample(&stream));
+        let polls = std::cell::Cell::new(0);
+        serve_with_poll(
+            stream,
+            Arc::clone(&connection),
+            queue,
+            Arc::new(Echo),
+            1,
+            org_socket::READ_TICK,
+            |fd, _| {
+                polls.set(polls.get() + 1);
+                if polls.get() == 1 {
+                    Ok(false)
+                } else {
+                    org_socket::poll_readable(fd, Duration::from_millis(1))
+                }
+            },
+        );
+        assert_eq!(polls.get(), 2);
+        assert!(connection.closed.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn ticked_reader_observes_host_close_at_the_first_idle_tick() {
+        let (stream, _peer) = UnixStream::pair().unwrap();
+        let (connection, queue) =
+            Connection::new(stream.try_clone().unwrap(), Accepted::sample(&stream));
+        let polls = std::cell::Cell::new(0);
+        serve_with_poll(
+            stream,
+            Arc::clone(&connection),
+            queue,
+            Arc::new(Echo),
+            1,
+            org_socket::READ_TICK,
+            |_, _| {
+                polls.set(polls.get() + 1);
+                connection.close();
+                Ok(false)
+            },
+        );
+        assert_eq!(polls.get(), 1);
+    }
 
     struct Echo;
 

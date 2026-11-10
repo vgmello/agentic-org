@@ -220,6 +220,7 @@ dependencies = [
  "libc",
  "org-office-launch",
  "org-proto",
+ "org-socket",
  "serde_json",
  "tempfile",
 ]
@@ -263,6 +264,7 @@ dependencies = [
  "org-office-host",
  "org-office-launch",
  "org-proto",
+ "org-socket",
  "security-framework",
  "security-framework-sys",
  "serde",
@@ -306,9 +308,17 @@ dependencies = [
  "org-office",
  "org-office-launch",
  "org-proto",
+ "org-socket",
  "serde",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "org-socket"
+version = "0.0.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

@@ -763,10 +763,9 @@ impl Drop for Client {
         // Let the writer thread end once its queue is empty.
         self.outbound.take();
         if let Some(reader) = self.reader.take() {
-            // The shutdown above ends the reader's read. On macOS it has been seen not to wake
-            // it (in about one drop in a hundred), and an unconditional join would then freeze
-            // whoever dropped the client, usually a UI thread. Wait a moment, then let the
-            // thread go: it ends when the server closes its side.
+            // Shutdown normally wakes the reader. If macOS misses that wakeup, Ticked
+            // observes `closed` within READ_TICK. Keep this short UI-facing join bound;
+            // a reader that outlives it releases its remaining resources at the next tick.
             let give_up_at = Instant::now() + DROP_JOIN_WAIT;
             while !reader.is_finished() && Instant::now() < give_up_at {
                 std::thread::sleep(Duration::from_millis(5));
@@ -893,8 +892,23 @@ impl Drop for CloseOnExit<'_> {
 
 /// Reads server messages until the connection ends, then fails everything still waiting.
 fn read_loop(shared: &Shared, stream: UnixStream) {
+    read_loop_with_poll(
+        shared,
+        stream,
+        org_socket::READ_TICK,
+        org_socket::poll_readable,
+    );
+}
+
+fn read_loop_with_poll(
+    shared: &Shared,
+    stream: UnixStream,
+    tick: Duration,
+    poll: impl FnMut(std::os::fd::RawFd, Duration) -> std::io::Result<bool>,
+) {
     let _close = CloseOnExit(shared);
-    let mut reader = std::io::BufReader::new(stream);
+    let mut reader =
+        org_socket::Ticked::with_poll(stream, tick, || shared.closed.load(Ordering::SeqCst), poll);
     while let Ok(Some(line)) = frame::read_line(&mut reader) {
         match serde_json::from_slice::<ServerMessage>(&line) {
             Ok(ServerMessage::Response(response)) => {
@@ -950,6 +964,61 @@ mod tests {
     use std::os::unix::net::UnixListener;
 
     use super::*;
+
+    #[test]
+    fn ticked_reader_stops_on_a_closed_client_after_one_idle_tick() {
+        // Keep the peer open: EOF must come from the client's stop flag, not the socket.
+        let (stream, _peer) = UnixStream::pair().unwrap();
+        let shared = Shared {
+            closed: AtomicBool::new(true),
+            next_id: AtomicU64::new(1),
+            pending: Mutex::new(HashMap::new()),
+            events: Arc::new(Mutex::new(None)),
+            next_subscription: AtomicU64::new(1),
+            queued_bytes: AtomicUsize::new(0),
+            stream: stream.try_clone().unwrap(),
+        };
+        let mut polls = 0;
+        read_loop_with_poll(&shared, stream, org_socket::READ_TICK, |_, tick| {
+            polls += 1;
+            assert!(polls < 3, "closed client reader did not stop after a tick");
+            assert_eq!(tick, org_socket::READ_TICK);
+            Ok(false)
+        });
+        assert_eq!(polls, 1);
+    }
+
+    #[test]
+    fn ticked_reader_repolls_a_missed_eof_and_closes_pending_calls() {
+        let (stream, peer) = UnixStream::pair().unwrap();
+        drop(peer);
+        let (answer, pending) = mpsc::sync_channel(1);
+        let shared = Shared {
+            closed: AtomicBool::new(false),
+            next_id: AtomicU64::new(2),
+            pending: Mutex::new(HashMap::from([(1, answer)])),
+            events: Arc::new(Mutex::new(None)),
+            next_subscription: AtomicU64::new(1),
+            queued_bytes: AtomicUsize::new(0),
+            stream: stream.try_clone().unwrap(),
+        };
+        let polls = std::cell::Cell::new(0);
+        read_loop_with_poll(&shared, stream, org_socket::READ_TICK, |fd, _| {
+            polls.set(polls.get() + 1);
+            assert!(polls.get() <= 10, "client reader failed to observe EOF");
+            if polls.get() == 1 {
+                Ok(false)
+            } else {
+                org_socket::poll_readable(fd, Duration::from_millis(1))
+            }
+        });
+        assert_eq!(polls.get(), 2);
+        assert!(shared.closed.load(Ordering::SeqCst));
+        assert!(matches!(
+            pending.try_recv(),
+            Err(mpsc::TryRecvError::Disconnected)
+        ));
+    }
 
     #[test]
     fn a_concurrent_close_does_not_finish_calls_before_the_first_shutdown_finishes() {

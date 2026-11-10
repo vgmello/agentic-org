@@ -24,6 +24,7 @@ test = false
 doc = false
 
 [dependencies]
+org-socket = { path = "../../crates/org-socket" }
 org-proto = { path = "../../crates/org-proto" }
 org-office-launch = { path = "../../crates/org-office-launch" }
 serde.workspace = true
