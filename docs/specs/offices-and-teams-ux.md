@@ -1277,7 +1277,7 @@ Two directions, same result:
 - OFC-43 · *(new, rev 16)* An office whose reason is `unsupported_version` shows no restart button.
 - OFC-44 · *(new, rev 16)* While a restart runs, the restart button stays focusable (`aria-disabled` plus `aria-busy`), and the busy state is announced.
 - OFC-45 · *(new, rev 16)* A refused restart shows its reason in an alert with focus kept on the restart button, and the message clears when the office's status or reason changes. A restart refused as `unavailable` shows the reason row, not the host's raw message.
-- OFC-46 · *(new, rev 16)* The visible restart countdown shows the remaining time rounded down to a 10 s step ("Restarting in 40 s" while 40 to 49 s remain) and updates on those 10 s boundaries, so it never overstates the time left; under 10 s it reads "Restarting shortly". It's correct from its first frame, including right after a status push, and the screen-reader label doesn't tick.
+- OFC-46 · *(new, rev 16)* The visible restart countdown shows the remaining time rounded down to a 10 s step ("Restarting in 40 s" while 40 to 49 s remain) and updates on those 10 s boundaries, so it never overstates the time left; under 10 s it reads "Restarting shortly". For `in_use`, the same steps apply to "Trying again in N s", which reads "Trying again shortly" under 10 s. It's correct from its first frame, including right after a status push, and the screen-reader label doesn't tick.
 - OFC-47 · *(new, rev 16)* The office details sheet has one Close control, and closing it returns focus to whatever opened it.
 - OFC-48 · *(new, rev 16)* The Offices list's footer reads "Shown from HQ. Statuses include last-seen information."
 
