@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, tick, untrack } from 'svelte';
 	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
 	import Search from '@lucide/svelte/icons/search';
 	import Users from '@lucide/svelte/icons/users';
@@ -106,8 +107,8 @@
 		void load().then(() => {
 			// A link from Activity opens the message; otherwise the owner starts where something waits for them.
 			const loc = parseChatLocation(page.url.search);
-			if (chatState && (loc.conversation || loc.message)) openLocation(loc);
-			else if (bar && bar.needsYou.length === 0) select({ type: 'conversation', id: chatState!.conversations.find((c) => c.auto?.type === 'general')?.id ?? '' });
+			if (chatState && (loc.conversation || loc.message || page.url.searchParams.has('v'))) openLocation(loc);
+			else if (bar && bar.needsYou.length === 0) select({ type: 'conversation', id: chatState!.conversations.find((c) => c.auto?.type === 'general')?.id ?? '' }, false);
 			lastSearch = page.url.search;
 			started = true;
 		});
@@ -130,15 +131,21 @@
 	function openLocation(loc: { conversation?: string; message?: string }) {
 		if (!chatState) return;
 		const found = locate(chatState, loc);
-		if (!found.conversation) return;
-		select({ type: 'conversation', id: found.conversation.id });
+		if (!found.conversation) {
+			const virtual = page.url.searchParams.get('v');
+			select({ type: virtual === 'mentions' || virtual === 'threads' ? virtual : 'needs' }, false);
+			return;
+		}
+		select({ type: 'conversation', id: found.conversation.id }, false);
 		if (found.thread) threadRoot = found.thread.id;
 		else if (found.message && repliesTo(chatState, found.message.id).length) threadRoot = found.message.id;
+		const linkedThread = page.url.searchParams.get('thread');
+		if (linkedThread && chatState.messages.some((m) => m.id === linkedThread && m.conversation_id === found.conversation!.id && !m.thread_root_id)) threadRoot = linkedThread;
 		highlight = found.message?.id;
 		void tick().then(() => document.querySelector(`[data-id="${CSS.escape(found.message?.id ?? '')}"]`)?.scrollIntoView({ block: 'center' }));
 	}
 
-	function select(next: ChatView) {
+	function select(next: ChatView, navigate = true) {
 		query = '';
 		view = next;
 		threadRoot = undefined;
@@ -148,8 +155,26 @@
 		highlight = undefined;
 		readMarker = next.type === 'conversation' ? chatState?.read_at[next.id] : undefined;
 		if (next.type === 'conversation') void tick().then(() => listEl && (listEl.scrollTop = listEl.scrollHeight));
+		if (navigate) writePlace();
 	}
 
+	// Use normal SvelteKit navigation so Back/Forward and direct links share one address model.
+	function writePlace(messageId?: string) {
+		const next = new URL(page.url);
+		for (const key of ['c', 'm', 'thread', 'v']) next.searchParams.delete(key);
+		if (view.type === 'conversation') next.searchParams.set('c', view.id);
+		else if (view.type !== 'needs') next.searchParams.set('v', view.type);
+		if (threadRoot) next.searchParams.set('thread', threadRoot);
+		if (messageId) next.searchParams.set('m', messageId);
+		if (next.href === page.url.href) return;
+		lastSearch = next.search;
+		void goto(next, { keepFocus: true, noScroll: true });
+	}
+	function closeThread() {
+		threadRoot = undefined;
+		highlight = undefined;
+		writePlace();
+	}
 	// Opening a conversation reads it: what arrives while it is open is read too (unread muted messages don't count).
 	$effect(() => {
 		const c = conversation;
@@ -280,12 +305,16 @@
 		await load();
 	}
 	function openThread(m: ChatMessage) {
-		if (chatState && view.type !== 'conversation') select({ type: 'conversation', id: m.conversation_id });
-		else if (chatState && view.type === 'conversation' && view.id !== m.conversation_id) select({ type: 'conversation', id: m.conversation_id });
+		if (chatState && view.type !== 'conversation') select({ type: 'conversation', id: m.conversation_id }, false);
+		else if (chatState && view.type === 'conversation' && view.id !== m.conversation_id) select({ type: 'conversation', id: m.conversation_id }, false);
 		threadRoot = m.thread_root_id ?? m.id;
 		showMembers = false;
+		writePlace();
 	}
-	const openMessage = (m: ChatMessage) => openLocation({ conversation: m.conversation_id, message: m.id });
+	const openMessage = (m: ChatMessage) => {
+		openLocation({ conversation: m.conversation_id, message: m.id });
+		writePlace(m.id);
+	};
 
 	// ---- channels and DMs ----------------------------------------------------------------------
 
@@ -343,7 +372,7 @@
 				<div class="flex max-w-full flex-wrap items-center gap-2">
 					<Badge variant="secondary" data-testid="sample-data-note">Sample data</Badge>
 					{#if conversation && !searching}
-						<Button type="button" variant="outline" size="sm" aria-pressed={showMembers} onclick={() => ((showMembers = !showMembers), (threadRoot = undefined))}><Users aria-hidden="true" /> Members</Button>
+						<Button type="button" variant="outline" size="sm" aria-pressed={showMembers} onclick={() => { showMembers = !showMembers; closeThread(); }}><Users aria-hidden="true" /> Members</Button>
 					{/if}
 					<div class="relative min-w-0 max-w-full">
 						<Search class="pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 text-gray-400" aria-hidden="true" />
@@ -465,7 +494,7 @@
 		</section>
 
 		{#if root && threadConversation}
-			<ThreadPanel {root} conversation={threadConversation} {ctx} {chatState} {now} {officeRunning} readOnly={bridgePreview} onclose={() => (threadRoot = undefined)} onsend={(t, o) => submit(t, o, threadConversation, root.id)} onreact={react} onturn={turn} onmute={mute} onpin={pin} onanswer={answer} onaccept={accept} />
+			<ThreadPanel {root} conversation={threadConversation} {ctx} {chatState} {now} {officeRunning} readOnly={bridgePreview} onclose={closeThread} onsend={(t, o) => submit(t, o, threadConversation, root.id)} onreact={react} onturn={turn} onmute={mute} onpin={pin} onanswer={answer} onaccept={accept} />
 		{:else if showMembers && conversation}
 			<MembersPanel {conversation} {ctx} {chatState} projectName={followsWords} onclose={() => (showMembers = false)} onmute={(id, mode) => muteIn(conversation.id, id, mode)} onrename={() => openChannelDialog('rename')} onaddpeople={() => openChannelDialog('members')} onremove={(id) => void act({ method: 'channel.remove_member', id: conversation.id, member_id: id })} onarchive={() => void act({ method: 'channel.archive', id: conversation.id }, `#${conversation.name} is archived.`)} />
 		{/if}

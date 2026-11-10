@@ -114,3 +114,31 @@ test('CHAT-14 BUG-43: keyboard Retry focuses the delivered message', async ({pag
  await expect(delivered).toHaveCount(1); await expect(delivered).toBeFocused();
  await shot(page, 'chat-focus-delivered');
 });
+
+test('CHAT-1/8/15 BUG-44: channel and thread survive Back, Forward and reload without losing mock parameters', async ({page}) => {
+ await open(page, '?chat=fail&surface=bridge');
+ await go(page, 'general');
+ await expect(page).toHaveURL(/c=c-general/);
+ await go(page, 'release-v1');
+ await expect(page).toHaveURL(/c=c-release-v1/);
+ await page.getByTestId('replies-link').first().click();
+ await expect(page).toHaveURL(/thread=/);
+ const threadURL=page.url();
+ await page.reload();
+ await expect(page.getByTestId('conversation-title')).toHaveText('#release-v1');
+ await expect(page.getByTestId('thread-panel')).toContainText('Storage is done');
+ expect(new URL(page.url()).searchParams.get('chat')).toBe('fail');
+ expect(new URL(page.url()).searchParams.get('surface')).toBe('bridge');
+ await page.getByRole('button',{name:'Close thread'}).click();
+ await expect(page).not.toHaveURL(/thread=/);
+ await page.goBack();
+ await expect(page).toHaveURL(threadURL);
+ await expect(page.getByTestId('thread-panel')).toBeVisible();
+ await page.goBack();
+ await expect(page.getByTestId('thread-panel')).toBeHidden();
+ await page.goBack();
+ await expect(page.getByTestId('conversation-title')).toHaveText('#general');
+ await page.goForward();
+ await expect(page.getByTestId('conversation-title')).toHaveText('#release-v1');
+ await shot(page, 'chat-history-restored');
+});
