@@ -4,7 +4,7 @@ import { shot } from './shot';
 
 // The smart features on the TypeScript mock, in the real screens: "Report a bug from a sentence" in
 // the Report a bug dialog, and "Draft or improve" on the bug and task text fields.
-// `?copilot=off|failed|timeout` picks a scenario (src/lib/copilot/mock.ts).
+// `?copilot=off|failed|timeout` picks a scenario (src/lib/modules/copilot/mock.ts).
 
 async function openProject(page: Page, tab: 'Bugs' | 'Tasks', scenario = '') {
 	await visit(page, '/create');
@@ -163,7 +163,7 @@ test('report dialog: Draft or improve is on the title, what happened, expected a
 	await expect(panel.getByTestId('copilot-proposal')).toHaveText('The save button does nothing.');
 	// It is only a proposal: the field still holds what the person wrote.
 	await expect(field).toHaveValue('  the save  button does nothing');
-	await shot(page, 'report-dialog-improve-proposal');
+	await shot(page, 'report-dialog-improve-proposal', { context: panel });
 
 	await panel.getByRole('button', { name: 'Use this draft' }).click();
 	await expect(field).toHaveValue('The save button does nothing.');
@@ -204,6 +204,8 @@ test('report dialog: the fields are locked while a draft is on its way, so it ca
 	await dialog.getByRole('button', { name: 'Draft the report' }).click();
 	await expect(dialog.getByLabel('Title')).toBeDisabled();
 	await expect(dialog.getByLabel('What happened')).toBeDisabled();
+	// Capture while the spinner is intentionally running, before the draft unlocks the fields.
+	await shot(page, 'report-dialog-drafting', { settle: false });
 	await expect(dialog.getByLabel('Title')).toBeEnabled();
 	await expect(dialog.getByLabel('Title')).toHaveValue('It crashed on start');
 });
@@ -242,6 +244,7 @@ test('report dialog: with nothing to go on, Draft asks for an instruction instea
 	await panel.getByRole('button', { name: 'Draft', exact: true }).click();
 	await expect(panel.getByRole('alert')).toHaveText('Say what it should be about, then ask for a draft.');
 	await expect(panel.getByTestId('copilot-proposal')).toHaveCount(0);
+	await shot(page, 'copilot-empty-instruction', { context: panel });
 	await panel.getByLabel('Instruction (optional)').fill('the file is saved');
 	await expect(panel.getByRole('alert')).toHaveCount(0);
 });
@@ -280,7 +283,7 @@ for (const [scenario, title] of [
 		await expect(dialog.getByLabel('What happened')).toHaveValue('Some text');
 		// One error at a time: running the field's copilot cleared the sentence draft's error.
 		await expect(dialog.getByRole('alert')).toHaveCount(1);
-		await shot(page, `copilot-${scenario}`);
+		await shot(page, `copilot-${scenario}`, { context: panel });
 
 		// Running it again clears the panel's own error while it works, and Dismiss clears it too.
 		await panel.getByRole('button', { name: 'Improve' }).click();

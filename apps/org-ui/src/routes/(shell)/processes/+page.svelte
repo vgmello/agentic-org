@@ -7,13 +7,13 @@
 	import Lock from '@lucide/svelte/icons/lock';
 	import PowerOff from '@lucide/svelte/icons/power-off';
 	import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
-	import ProcessBadges, { KIND_ICON } from '$lib/components/ProcessBadges.svelte';
-	import { hhmm, KIND_WORD } from '$lib/processes/present';
-	import ProcessSheet from '$lib/components/ProcessSheet.svelte';
+	import ProcessBadges, { KIND_ICON } from '$lib/modules/processes/components/ProcessBadges.svelte';
+	import { hhmm, KIND_WORD } from '$lib/modules/processes/present';
+	import ProcessSheet from '$lib/modules/processes/features/inspect-effective/ProcessSheet.svelte';
 	import { Badge } from '$lib/components/ui/badge';
-	import { knownPlace, parsePlace, placeKey, viewOf } from '$lib/processes/view';
-	import { sampleWorld, type ProcessWorld } from '$lib/processes/world';
-	import type { Entry, TurnedOff } from '$lib/processes/types';
+	import { knownPlace, parsePlace, placeKey, viewOf } from '$lib/modules/processes/view';
+	import { sampleWorld, type ProcessWorld } from '$lib/modules/processes/world';
+	import type { Entry, TurnedOff } from '$lib/modules/processes/types';
 
 	// Until HQ serves processes this screen reads the sample organization's files (Sample data). `?handbook=down` shows the
 	// unreachable-handbook state, `?processes=empty` the empty one.
