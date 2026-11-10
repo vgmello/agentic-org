@@ -46,6 +46,10 @@ mod error;
 mod home;
 mod host_log;
 mod ids;
+// B2-01 foundation: compiled now; host wiring follows in the next reviewed slice.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[allow(dead_code)]
+mod instance;
 mod keys;
 mod logs;
 mod offices;
