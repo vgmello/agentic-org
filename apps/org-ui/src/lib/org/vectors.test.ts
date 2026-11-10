@@ -6,7 +6,7 @@ import type { OrgCommand } from './commands';
 import { applyCommand, type Ctx } from './reducer';
 import { sampleOrg } from './sample';
 
-// The same cases run against the Rust mock HQ (src-tauri/src/org_engine.rs): the two engines must agree.
+// Shared legacy cases are preserved alongside the canonical org-office reader and its explicit deferred manifest.
 type Step = { method: string; params: Record<string, unknown> };
 // The clock and the one office the shared cases use (the Rust runner uses the same).
 const ctx: Ctx = { now: '2026-11-08T12:00:00.000Z', offices: ['office-1'] };

@@ -14,8 +14,7 @@ members = [
   "apps/org-office-host",
   "apps/org-agent",
 ]
-# Every member except the Tauri shell, so a plain `cargo test` at the root doesn't compile Tauri.
-# Build the app with `cargo <cmd> -p agentic-org` or from apps/org-ui.
+# Root checks cover every retained server, CLI and domain member.
 default-members = [
   "crates/org-proto",
   "crates/org-client",

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import vectors from '../../../../../crates/org-work/test-vectors/work-commands.json';
 import { applyWork, emptyWork, itemOf, type WorkCall, type WorkContext, type WorkState } from './engine';
 
-// The same cases run against the Rust mock office (src-tauri/src/work_engine.rs): the two engines must agree.
+// Shared legacy cases also run through canonical org-work; documented canonical overrides stay in the fixture.
 type Step = { call?: WorkCall; now?: string; error?: string; items?: Record<string, unknown>[]; get?: string; expect?: Record<string, unknown> };
 
 /** Every field in `want` is in `have`, recursively (arrays element by element). */

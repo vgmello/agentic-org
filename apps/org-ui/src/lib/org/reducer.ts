@@ -1,10 +1,7 @@
-// Applies one organization command to a snapshot with the contract's rules (crates/org-proto/src/org.rs):
-// what HQ validates. The TEMPORARY browser mock uses it so the UI can be built and tested without the app;
-// the Rust shell's mock HQ (src-tauri/src/org_engine.rs) follows the same rules, and crates/org-office/test-vectors/org-commands.json
-// is run against both. The real HQ is the authority. Pure: it returns a new snapshot, or throws the same
-// error codes HQ would, in the contract's order: not_found, invalid_request, invalid_name, then the command's own rule
-// (owner_protected, cycle, not_a_member, not_empty), conflict, then already_exists: a permanent refusal is never hidden
-// behind a stale version.
+// Legacy browser reducer used only by tests; canonical org-office owns production authority.
+// Both readers share crates/org-office/test-vectors/org-commands.json. The canonical reader
+// records unsupported project/area cases in its explicit deferred manifest.
+// Pure: returns a new snapshot or throws a refusal without mutating its input.
 import type { AgentProfile, AgentRuntime, ApiErrorCode, AppError, Area, Member, Membership, OrgSnapshot, ProjectSummary, ProjectTeam, RunMode, Schedule, Team } from '$lib/proto';
 import { trimWhiteSpace, validateName } from '$lib/name';
 import { withoutNulls, type OrgCommand } from './commands';
