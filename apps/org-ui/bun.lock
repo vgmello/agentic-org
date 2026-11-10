@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "agentic-org-desktop",
+      "name": "org-ui",
       "dependencies": {
         "@fontsource-variable/inter": "5.3.0",
         "@tauri-apps/api": "2.12.4",

@@ -726,7 +726,7 @@ Both arrive alongside `org-sync-proto`.
 | `crates/org-office-launch` | the launch-pipe lines that carry children to the host | ada owns the contract; River writes it |
 | `org-git` | re-creating a worktree from a pushed branch, the office's git hardening near worktrees | River |
 | the messaging library (`org-mailbox`) and `org-agent` | the `SessionAuth` port (including a one-off's allowed recipients), the session token and one-off binding on `msg.bind`, capped waits, no spool for office-run agents | Remy (`ac-software-engineer-remy`, the messaging owner) |
-| `apps/desktop` | the session panel (events), take-over (attach to the office's PTY, the lease), Needs you approvals, the Runs tab, Pause and Resume, one-offs on a job | app-frontend-dev |
+| `apps/org-ui` | the session panel (events), take-over (attach to the office's PTY, the lease), Needs you approvals, the Runs tab, Pause and Resume, one-offs on a job | app-frontend-dev |
 | `org-proto` | the calls and events above | ada |
 
 **Architecture check.** Without a split, `org-server` would depend on about 13 crates: `org-office`, `org-runtime`, `org-supervise`, three adapters, `org-git`, `org-github`, `org-proto`, `org-mailbox`, `org-spool`, `org-office-launch` and `org-sync`. Above 10 the architecture rules call for a design review, and this is it:

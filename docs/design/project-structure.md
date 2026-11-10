@@ -36,7 +36,9 @@ update AGENTS.md's path references with the source move without relaxing its
 license restrictions. The worker path, Cargo package, binary, library imports and
 helper/signing references now use `org-server`. **Rename history (2026-11-10):**
 these were `apps/org-office-server`, `org-office-server` and `org_office_server`.
-The UI remains at `apps/desktop` until its own rename.
+The UI rename to `apps/org-ui` (package `org-ui`) is also implemented. Its
+`src-tauri` workspace member moved with it; shell deletion and domain moves remain
+separate work. The inspected names in the table above are historical source paths.
 
 ## 2. Architecture to follow
 
