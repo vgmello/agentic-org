@@ -185,6 +185,7 @@ for (const place of ['conversation', 'thread'] as const) {
 		await expect(page.getByRole('menuitem', { name: 'Pin to the conversation', exact: true })).toBeDisabled();
 		await expect(page.getByRole('menuitem', { name: 'Mute Sam Okafor here', exact: true })).toBeDisabled();
 		await expect(page.getByRole('menuitem', { name: 'Daily digest from Sam Okafor', exact: true })).toBeDisabled();
+		await page.getByRole('menuitem', { name: 'Daily digest from Sam Okafor', exact: true }).scrollIntoViewIfNeeded();
 		await shot(page, `chat-stopped-${place}-actions`);
 	});
 }
@@ -225,4 +226,20 @@ test('CHAT-11 BUG-58: a running office still accepts reactions, pins and mute ch
 	await expect(select).toBeEnabled();
 	await select.selectOption('digest'); await expect(select).toHaveValue('digest');
 	await shot(page, 'chat-running-actions-still-enabled');
+});
+
+
+test('CHAT-5/14 BUG-57: an intentional answer focus target stops accepting pointer focus after blur', async ({ page }) => {
+	await open(page); await go(page, 'atlas');
+	const card = page.getByTestId('ask-card').filter({ hasText: 'Block bug reports' });
+	await card.getByRole('button', { name: 'Reply…', exact: true }).click();
+	await card.getByRole('textbox').fill('Please wait for the audit.');
+	const send = card.getByRole('button', { name: 'Send reply', exact: true });
+	await send.focus(); await send.press('Enter');
+	await expect(card).toBeFocused();
+	await page.getByRole('searchbox', { name: 'Search chat' }).focus();
+	await expect(card).not.toHaveAttribute('tabindex');
+	await card.locator('p').first().click(); await page.mouse.move(350, 30);
+	await expect(card).not.toBeFocused();
+	await shot(page, 'chat-answer-focus-cleans-up-after-blur');
 });

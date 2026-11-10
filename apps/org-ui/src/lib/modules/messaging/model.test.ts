@@ -191,6 +191,8 @@ describe('CHAT-9 · slash commands and Turn into…', () => {
 		expect(parseSlash('/TASK @SaM Keep Argument Case')).toMatchObject({ ok: true, name: 'task', handle: 'sam', rest: 'Keep Argument Case' });
 		expect(parseSlash(' /bug plain text')).toBeUndefined();
 		expect(parseSlash('\t/status')).toBeUndefined();
+		// A command token ends at whitespace/end; paths and punctuation stay literal.
+		for (const text of ['/etc/hosts has the wrong entry', '/tmp,', '/tmp.', '/']) expect(parseSlash(text)).toBeUndefined();
 	});
 	it('CHAT-9 BUG-45d · unknown words with uppercase letters, digits and hyphens offer literal sending', () => {
 		for (const word of ['Frobnicate', 'deploy2', 'ship-now']) {
