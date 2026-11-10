@@ -1005,6 +1005,9 @@ Recovering an organization after losing the HQ machine isn't supported yet.
 - Its failures are the same as the first showing's (below), except the rows
   marked `--redeliver`: a showing again that fails or is interrupted leaves the
   code **Shown, not confirmed**, never waiting, and its copy says so.
+- A run that can't show the code (not an instance admin, run without
+  `--redeliver` after a showing, already collected) is refused before the
+  presence confirmation, so it never asks to confirm it's you.
 
 | Case | CLI output | Exit |
 | --- | --- | --- |
@@ -1050,7 +1053,7 @@ State: shown, not confirmed as stored.
 Showings (the code itself is never recorded):
   10 Nov 2026 14:02  shown         by alex
   10 Nov 2026 16:40  shown again   by alex
-  11 Nov 2026 09:30  shown again   by sam
+  11 Nov 2026 09:30  shown again   by alex
 To show it again and confirm, run:
   agentic-org recovery release --redeliver --org 'Lumen Labs'
 Recovering an organization after losing the HQ machine isn't supported yet.
@@ -1280,7 +1283,7 @@ rules, which are distinct from uninstalling software on a machine.
 - SIGN-27 · The sign-in page and the dialog meet §4a.7: labelled fields with username and current-password autocomplete, the stated focus order, errors linked with `aria-describedby` and announced, and no meaning by colour alone.
 - SIGN-28 · No browser screen lists, adds or edits accounts, and HQ's HTTP API refuses any request to create an account.
 - SIGN-29 · Sign out shows Signing out… while HQ ends the session; when HQ can't be reached it shows "Couldn't sign out: HQ can't be reached…" with Try again, and the page stays signed in.
-- SIGN-30 · *(rev 5)* Each `account create`, `account set-password` and `account reset-password` failure in §4a.2's table shows its copy and exit status, and changes nothing.
+- SIGN-30 · *(rev 5)* Each row of §4a.2's account-command table (`account create`, `set-password`, `reset-password`, `link`, `unlink` and `revoke`) shows its copy and exit status. A refusal changes nothing, and a non-admin is refused `link`, `unlink` and `revoke` with "<login> isn't an instance admin, so it can't change accounts".
 - SIGN-31 · When a different account signs in from one tab, every other open tab of that HQ shows "You're now signed in as <username> in another tab…" with Reload, and shows no data of the previous account.
 - SIGN-32 · *(new, rev 5)* `agentic-org account reset-password <username>` at a Mac HQ machine asks for no sign-in, asks for the new password twice and for confirmation in the system dialog, then: the old password is refused, the new one signs in, every session of that account has ended (an open page shows "Sign in again"), a rate-limited sign-in for that account is allowed again, and the reset is recorded with its time and without the password.
 - SIGN-33 · *(new, rev 5)* On Linux, `agentic-org account reset-password <username>` without root is refused with the `sudo` command and changes nothing. With `sudo`, it resets the password on the instance of the Linux user who ran `sudo` (`--name` picks among that user's instances), and its first line names that user; run as root without `sudo`, it needs `--user <user>`.
@@ -1317,7 +1320,7 @@ rules, which are distinct from uninstalling software on a machine.
 - RCV-20 · *(new, rev 5)* Noninteractive setup, and setup over SSH on a Mac, finish with the HQ created, exit successfully, report the recovery code as waiting with no code in any output, and print `agentic-org recovery release --org '<organization>'` to run at the machine.
 - RCV-21 · *(new, rev 5)* `agentic-org recovery release` over SSH on a Mac prints the "needs you at this Mac" message, shows no code and leaves the state unchanged.
 - RCV-22 · *(new, rev 5)* `agentic-org recovery release` signed in with an account that isn't an instance admin is refused with "<username> isn't an instance admin…", shows no code and leaves the state unchanged.
-- RCV-23 · *(new, rev 5; rewritten for A99)* After an acknowledgement that followed second showings, the Recovery row reads "Recovery code shown on <date> (shown again <n> times, last on <date>) · collected on <date>.", with the first-showing, last-second-showing and acknowledgement dates, without a reload while live updates run.
+- RCV-23 · *(new, rev 5; rewritten for A99)* After an acknowledgement that followed second showings, the Recovery row reads "Recovery code shown on <date> (shown again <n> times, last on <date>; with one second showing: "shown again once, on <date>") · collected on <date>.", with the first-showing, last-second-showing and acknowledgement dates, without a reload while live updates run.
 - RCV-24 · *(new, rev 5, A99)* `agentic-org recovery status --org '<organization>'`, after an instance admin signs in, shows the state and lists every showing with its date, time, account and whether it was the first showing or shown again; it shows no code and changes nothing.
 - RCV-25 · *(new, rev 5, A100)* One run of `agentic-org recovery release` asks for one confirmation, before the code is shown, and the system dialog names both showing the code and recording it as stored; after `yes`, the acknowledgement is recorded with no second dialog.
 - RCV-26 · *(new, rev 5, A100)* A new run of `agentic-org recovery release --redeliver` asks for the confirmation again, even when an earlier run was confirmed.
