@@ -15,7 +15,8 @@ trap 'rm -rf "$probe_dir"' EXIT
 cargo build --release --features vendored
 cp "$CARGO_TARGET_DIR/release/sage-b204-sqlcipher" "$bin_dir/sqlcipher-vendored"
 ldd "$bin_dir/sqlcipher-vendored"
-if readelf -d "$bin_dir/sqlcipher-vendored" | grep -E 'NEEDED.*(libcrypto|libssl|libsqlite|libsqlcipher)'; then
+readelf -d "$bin_dir/sqlcipher-vendored" > "$probe_dir/dynamic-dependencies.txt"
+if grep -E 'NEEDED.*(libcrypto|libssl|libsqlite|libsqlcipher)' "$probe_dir/dynamic-dependencies.txt"; then
     echo 'FAIL unwanted dynamic crypto or database dependency'
     exit 1
 fi
