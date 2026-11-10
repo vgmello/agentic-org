@@ -39,7 +39,7 @@ test('PROC-4/PROC-3/PROC-6: a project shows what it turned off, a sealed refusal
 	await shot(page, 'processes-project');
 	await visit(page, '/processes?place=project:bea');
 	await expect(page.getByTestId('conflict')).toContainText("Code review: Design and Web disagree. The organization's version applies until the project decides.");
-	await expect(page.getByTestId('problem').filter({ hasText: 'Two processes use the key `standup` in Beacon. Neither applies until one is renamed.' })).toHaveCount(2);
+	await expect(page.getByTestId('problem').filter({ hasText: 'Two processes use the key standup in Beacon. Neither applies until one is renamed.' })).toHaveCount(2);
 	await shot(page, 'processes-conflict');
 });
 
@@ -121,7 +121,7 @@ test('PROC-14: the rule is on for a project even when its process is missing', a
 
 test('PROC-1: two files copied with git (one doc id, one key) both show their problem and the screen still renders', async ({ page }) => {
 	await open(page, '?place=project:bea&processes=copied');
-	await expect(page.getByTestId('problem').filter({ hasText: 'Two processes use the key `standup` in Beacon.' })).toHaveCount(2);
+	await expect(page.getByTestId('problem').filter({ hasText: 'Two processes use the key standup in Beacon.' })).toHaveCount(2);
 	await expect(page.getByTestId('conflict')).toBeVisible();
 });
 
