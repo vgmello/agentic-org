@@ -37,7 +37,7 @@
 		readOnly?: boolean;
 		onclose: () => void;
 		undelivered?: Snippet;
-		onsend: (text: string, options: { alsoInChannel: boolean; attachments: string[] }) => Promise<boolean | void> | boolean | void;
+		onsend: (text: string, options: { alsoInChannel: boolean; attachments: string[]; asMessage?: boolean }) => Promise<boolean | void> | boolean | void;
 		onreact: (m: ChatMessage, r: Reaction) => void;
 		onturn: (m: ChatMessage, into: 'bug' | 'request' | 'task') => void;
 		onmute: (m: ChatMessage, mode: MuteMode) => void;
