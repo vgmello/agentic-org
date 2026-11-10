@@ -378,7 +378,8 @@ for (const fail of [false, true]) {
 		await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Agents', exact: true }).click();
 		await expect(page).toHaveURL(/\/agents$/);
 		await page.evaluate(async (fail) => {
-			const modulePath = '/src/lib/org/api.ts';
+			// Share the singleton composed into the UI by the explicit e2e resolver.
+			const modulePath = '/e2e/fakes/org-api.ts';
 			const { orgApi } = await import(modulePath);
 			const view = orgApi.view.bind(orgApi);
 			let started!: () => void;

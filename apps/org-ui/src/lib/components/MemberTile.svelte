@@ -3,7 +3,6 @@
 	import Bot from '@lucide/svelte/icons/bot';
 	import Pause from '@lucide/svelte/icons/pause';
 	import { initialsOf } from '$lib/format';
-	import { arrived } from '$lib/import/arrived.svelte';
 	import type { Member, Team } from '$lib/proto';
 
 	let {
@@ -33,10 +32,8 @@
 	const searchHit = $derived(search?.matches?.has(member.id) === true);
 	const searchMiss = $derived(!!search?.matches && !search.matches.has(member.id));
 	const agent = $derived(member.kind === 'agent');
-	// Just brought in by an import: ringed and tagged "New" for a while, unless the office filter ringed it already.
-	const isNew = $derived(arrived.has(member.id));
-	const ringed = $derived(highlighted || isNew);
-	const tag = $derived(highlighted ? highlightLabel : 'New');
+	const ringed = $derived(highlighted);
+	const tag = $derived(highlightLabel);
 	// Agents and people are told apart by shape and glyph, not color: a square tile with a robot, or
 	// a round avatar; both show initials; screen readers hear "agent" or "person" after the name.
 	const label = $derived(

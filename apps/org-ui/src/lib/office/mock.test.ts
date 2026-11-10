@@ -7,7 +7,7 @@ describe('the browser test hook', () => {
 		delete (globalThis as { window?: unknown }).window;
 	});
 
-	it('is not installed unless the mock asks for it (the Tauri build never does)', () => {
+	it('is not installed unless the mock asks for it (production never does)', () => {
 		(globalThis as { window?: object }).window = {};
 		createMockOffice({ storage });
 		expect((window as unknown as Record<string, unknown>).__mockOfficeStatus).toBeUndefined();

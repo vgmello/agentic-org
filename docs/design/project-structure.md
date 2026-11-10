@@ -3,7 +3,8 @@
 Status: **owner-requested implementation proposal**, 2026-11-10. This document
 extends PR #5 with application naming, domain modules containing vertical slices,
 shared-code ownership, and a concrete reorganization sequence. The proposal changed
-documentation only. The worker rename is now implemented; the remaining moves are pending.
+documentation only. The worker and UI renames and Tauri removal are now implemented;
+the copilot module move has landed, and the remaining domain moves are pending.
 Source observations refer to `a4039a0c810ca222d574a44eba5f84b83d07e9a4`.
 
 Read the language-agnostic [architecture rules](../architecture-rules.md) first.
@@ -37,8 +38,9 @@ license restrictions. The worker path, Cargo package, binary, library imports an
 helper/signing references now use `org-server`. **Rename history (2026-11-10):**
 these were `apps/org-office-server`, `org-office-server` and `org_office_server`.
 The UI rename to `apps/org-ui` (package `org-ui`) is also implemented. Its
-`src-tauri` workspace member moved with it; shell deletion and domain moves remain
-separate work. The inspected names in the table above are historical source paths.
+`src-tauri` workspace member moved with it and was subsequently deleted in F1-03.
+The retained browser UI uses explicit unavailable states until gateway adapters land;
+remaining domain moves are separate work. The inspected names in the table above are historical source paths.
 
 ## 2. Architecture to follow
 

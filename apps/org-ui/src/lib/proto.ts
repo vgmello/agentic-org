@@ -127,15 +127,8 @@ export const API_ERROR_CODES = [
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
 
 /** Errors from making the office ready. These belong to the app, not to `org-proto`. */
-export type SetupErrorCode = 'not_installed' | 'needs_approval' | 'turned_off' | 'unreachable';
+export type SetupErrorCode = 'unreachable';
 
-/**
- * The office host's login service, as macOS reports it: running at login (`enabled`), waiting for the owner to allow
- * it in System Settings (`requires_approval`), turned off (`not_registered`), or missing from this copy of the app
- * (`not_found`).
- */
-export const LOGIN_STATES = ['not_registered', 'enabled', 'requires_approval', 'not_found'] as const;
-export type LoginState = (typeof LOGIN_STATES)[number];
 
 /** What every failed call looks like to the UI. `source` says which layer failed. */
 export type AppError =
@@ -304,24 +297,6 @@ export interface OrgSnapshot {
 	project_teams?: ProjectTeam[];
 	/** Every project's areas, deleted ones (tombstones) included. */
 	areas?: Area[];
-}
-
-// ---- office.app_token (crates/org-proto/src/calls.rs) -------------------------------------------
-
-export interface OfficeAppTokenParams {
-	office_id: string;
-}
-
-/**
- * `office.app_token` (the host, on its socket only): the office's token, 64 lowercase hex digits,
- * which lets the app bind to that office as a human. THE RESULT IS A SECRET: only the Rust shell
- * ever asks for it and holds it, and the WebView never receives it. If it ever must pass through
- * TypeScript: never log it, never put it in a store, a URL or storage, and drop it as soon as it is
- * used. Errors: `not_authorized` (the host's code-signature check failed), `not_found`,
- * `unavailable` (the office isn't running).
- */
-export interface OfficeAppTokenResult {
-	app_token: string;
 }
 
 export * from './proto-work';

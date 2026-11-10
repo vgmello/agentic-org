@@ -1,43 +1,42 @@
-# Agentic Org desktop: tech stack
+# Agentic Org browser UI: tech stack
 
-**V1 direction changed 2026-11-09:** the target is a standalone Rust server
-on macOS/Linux serving the browser application from HQ. Tauri is deferred to v2.
-See the [server design](../../docs/design/standalone-server.md) and [deletion inventory](../../docs/design/standalone-server-removal-inventory.md).
-This documentation change specifies the pivot; the source described below is the
-inspected pre-pivot implementation. Its Tauri/bundle commands are historical
-development instructions, not installation instructions for the new v1. Do not
-claim the new CLI, HTTP server or remote sync exists until implemented. No migration
-of the undeployed desktop app or its data is required.
+V1 is a standalone Rust server on macOS/Linux serving a browser application from HQ.
+See the [server design](../../docs/design/standalone-server.md),
+[project structure](../../docs/design/project-structure.md) and
+[removal inventory](../../docs/design/standalone-server-removal-inventory.md).
+The Tauri shell, adapters, packages, workspace member and native installation scripts
+have been removed. Tauri is deferred to v2. The import feature remains retired.
 
-**Application naming:** the browser UI is now `apps/org-ui` (package `org-ui`), and
-the worker app/package/binary is `apps/org-server` / `org-server`. See the
-[project structure](../../docs/design/project-structure.md). The UI rename moves
-`src-tauri` with it; shell removal and HTTP integration are separate follow-ups.
-Licensed UI stays inside this product application.
+The application lives in `apps/org-ui` (package `org-ui`); the worker is
+`apps/org-server` (`org-server`). Licensed UI remains inside this product application.
+Versions are pinned in `package.json`; `bun.lock` is the frontend lockfile.
 
-What `apps/org-ui` is built with, why, and what is still undecided. Versions are pinned exactly in `package.json` and `src-tauri/Cargo.toml`.
-
-## Decided
+## Current implementation
 
 | Concern | Choice | Notes |
 | --- | --- | --- |
-| Shell | **Tauri 2** (Rust) | macOS first. Native overlay title bar, menu-bar item, Dock hiding. |
-| UI framework | **SvelteKit 2 + Svelte 5** (runes), static SPA | `adapter-static`, `ssr = false`, `index.html` fallback. |
-| Language | **TypeScript** (strict) | |
-| Styling | **Tailwind CSS v4** | CSS-first config in `src/app.css`. Dark only. |
-| Look | **Tailwind Plus** application UI, ported to Svelte | Matches the approved prototype. Allowed **inside `apps/org-ui` only** (see AGENTS.md). |
-| Extra components | **shadcn-svelte** on **Bits UI** | Generated into `src/lib/components/ui`. Tokens in `app.css` map onto the Tailwind Plus palette. Add with `bunx shadcn-svelte@latest add <name>`. |
-| Icons | `@lucide/svelte` (shadcn), Heroicons paths (ported sidebar) | |
-| Font | Inter Variable, bundled (`@fontsource-variable/inter`) | The CSP forbids remote fonts. |
-| Package manager / scripts | **bun** | `bun install`, `bun run dev`, `bun run check`, `bun run test`, `bun run tauri build`. Lockfile: `bun.lock`. |
-| Unit tests | **Vitest** | Pure logic: the create flow, name rules, the mock. `bun run test`. |
-| UI tests (navigation, flows) | **Playwright** (Chromium) against its own `bun run dev --port 4173` server on the TS mock (so it never collides with `tauri dev` on 1420) | Clicks and types through every flow and error state. `bun run test:e2e`. The Rust shell is covered by `cargo test`. |
-| Rust | Workspace member `apps/org-ui/src-tauri` | Toolchain pinned by `rust-toolchain.toml`. `cargo test -p agentic-org`. |
-| Talking to an office | **UI → Tauri commands → Rust → `org-client` → Unix socket** | The WebView never touches the socket and has no network access (`connect-src` is IPC only). A WebView can't open Unix sockets, and a localhost TCP port would need its own auth and origin checks. Rust owns the connection, the login-service install and reconnects. A Tauri call costs well under a millisecond, so there is no speed reason to go direct. |
-| Contract | `org-proto` types; TypeScript mirrored by hand in `src/lib/proto.ts` | Generated TS later. |
-| Mocking | Two seams, same types: TS mocks (`src/lib/office/mock.ts`, `src/lib/org/api.ts`, browser) and Rust mocks (`src-tauri/src/mock.rs`, `org_engine.rs`, in the app) | `?mock=<scenario>` in the browser, `AGENTIC_ORG_MOCK=<scenario>` in the app. Scenarios: `not_installed`, `needs_approval`, `unreachable`, `storage_error`. Org data: `?org=empty` (owner only), `?org=fails`, `?org=fails_once`, `?org=slow` in the browser; `AGENTIC_ORG_MOCK_ORG=empty` in the app. The mock office plays **HQ**: it applies the org commands (teams, members, memberships, people, agents, reporting lines, project links) with `org-proto`'s rules and error order, answers a retried `command_id` the same, and keeps each organization's structure in `structures.json` (versioned; unknown versions are never overwritten). The browser reducer (`src/lib/org/reducer.ts`) and the Rust engine are tested against the same cases (`crates/org-office/test-vectors/org-commands.json` at the workspace root). Both are labelled "Sample data". |
-| Screens built | Org chart (Teams, People, Reporting lines; search; edit teams, members, people, agents, managers, projects), Offices (read-only, HQ, status verified by a read-only ping), Welcome / Create / Open organization, the menu-bar tray | Tests are named after the UX criteria in `offices-and-teams-ux.md` (TEAM-, PEOPLE-, REPORT-, OWNER-, OFC-, DEAL-, RUN-). Playwright specs in `e2e/`, named full-page screenshots via `test.info().outputPath` under per-test `test-results/` (ignored by git). |
-| Security | Strict CSP, deny-by-default custom commands, minimal capabilities, no fs/shell plugins | Permissions listed in `src-tauri/capabilities/default.json`: window dragging, the office commands (`src-tauri/build.rs` lists them) and the event listener, nothing else (not even `core:default`). `style-src` keeps `'unsafe-inline'` on purpose: Svelte transitions and Bits UI set inline styles, and Tauri's nonce injection would otherwise disable it (`dangerousDisableAssetCspModification`). Scripts stay `'self'`. |
+| UI framework | SvelteKit 2 + Svelte 5 runes | Static SPA, adapter-static, ssr=false, index.html fallback. |
+| Language | Strict TypeScript | Runtime wire readers and feature adapters land separately. |
+| Styling | Tailwind CSS v4 | CSS-first configuration and tokens in src/app.css; dark theme. |
+| Look | Tailwind Plus application UI, ported to Svelte | Licensed inside apps/org-ui, never as a separate UI kit. |
+| Components | shadcn-svelte on Bits UI | Shared primitives under src/lib/components/ui. |
+| Icons and font | Lucide/Heroicons; bundled Inter Variable | No remote font dependency. |
+| Package manager | Bun | Frozen install, check, test and build scripts. |
+| Unit tests | Vitest | Domain behavior, test fakes, canonical vectors and platform boundaries. |
+| Browser tests | Playwright Chromium | Retained flows use explicit test-owned dev composition; a second project checks the static production release. |
+| Rust | Server, CLI and domain workspace members | No UI Rust workspace member remains. |
+| Contracts | org-proto; legacy TypeScript mirrored in src/lib/proto.ts | Independent office/wire-shapes.test.ts remains. Shared org/work vectors live in crates/org-office/test-vectors and crates/org-work/test-vectors. |
+| Production availability | Shell capability gate and unavailable APIs | No native global, query parameter or remembered sample data enables production fakes. |
+
+Real HTTP feature adapters are separate deliveries. The shell defaults every product
+route to unavailable until its adapter is explicitly composed. Framework 404s retain
+the error page. Office, organization and work API defaults reject as unavailable;
+remaining feature factory cutovers follow their module handoffs.
+
+`e2e/vite-composition.ts` selects test fakes only for the explicit `e2e` dev-server
+mode. Every build, including `--mode e2e`, retains production availability. Fakes
+preserve browser-test query scenarios. They are not a server or persistence
+implementation. Production authority belongs to the Rust domain owners.
 
 ## Screenshot evidence
 
@@ -49,26 +48,29 @@ A full-page screenshot captures the page scroll area, but does not expand a fixe
 
 ## Run it
 
-```
+```sh
 cd apps/org-ui
-bun install
-bunx playwright install chromium   # once, for bun run test:e2e
-bun run dev                 # the UI in a browser on the mock, http://localhost:1420
-bun run tauri dev           # the real app, on the real office (AGENTIC_ORG_OFFICE=mock for the invented one)
-bun run check && bun run test && bun run test:e2e
-cargo test -p agentic-org   # from the repo root
-bun run tauri build --bundles app
+bun install --frozen-lockfile
+bunx playwright install chromium
+bun run dev                 # unserved areas are unavailable
+bun run check
+bun run test
+bun run build
+PW_PORT=4373 bun run test:e2e --workers=2
 ```
 
-## Not decided yet
+`test:e2e` builds before either server starts. The fake-backed dev server uses
+`PW_PORT` (default 4173); production preview uses the next port. Choose a free pair
+on the shared machine. Do not run another check or build against the same
+`.svelte-kit` directory while those servers are running.
 
-1. **Testing the packaged app.** Tauri's official WebDriver (`tauri-driver`) does not support macOS (WKWebView has no WebDriver). Options: a small smoke test that launches the `.app`, or a community WebDriver plugin (not vetted). Flows are covered by Playwright on the mock.
-2. **Lint and format for TS/Svelte.** Not set up. Proposal: Prettier (+ svelte plugin) and ESLint (typescript-eslint, eslint-plugin-svelte), run in CI. Rust already has `cargo fmt` and clippy.
-3. **TypeScript types from `org-proto`.** By hand for now. Options: `specta`/`tauri-specta` (generates command and type bindings) or `ts-rs`. Needs ada's decision, since it touches the contract crate.
-4. **Distribution.** Code signing, notarization, DMG and auto-update (`tauri-plugin-updater`). None needed until there is something to ship.
-5. **Login-service registration.** `SMAppService` has to be called from the app bundle. Who installs the office server is undecided (ADR-0001 follow-up).
-6. **Menu bar and Dock hiding.** Planned as a follow-up PR (tray menu listing offices, `ActivationPolicy::Accessory` toggle).
-7. **Logging and crash reporting.** Nothing yet. Proposal: `tracing` in Rust, logs to the app's log directory, no remote reporting.
-8. **CI.** The repo has no workflows yet. A macOS runner is needed for the Tauri build.
-9. **Windows/Linux.** Out of scope. macOS only for now.
-10. **Accessibility and i18n.** Keyboard and screen-reader behaviour follows Bits UI and Tailwind Plus defaults. English only, strings inline.
+At the repository root, use `CARGO_BUILD_JOBS=2` with workspace Clippy and tests.
+The toolchain is pinned by `rust-toolchain.toml`. Tests use temporary directories,
+never a user's organization workspace.
+
+## Follow-ups
+
+- Gateway routes, wire readers and per-feature factories follow the approved contracts.
+- TypeScript/Svelte lint and formatting tools are not configured; current checks use Svelte and TypeScript diagnostics.
+- Browser security headers and server authorization belong to the gateway delivery; removed Tauri capabilities do not provide browser protection.
+- English copy remains inline; keyboard and screen-reader behavior is covered by UI primitives and browser tests.

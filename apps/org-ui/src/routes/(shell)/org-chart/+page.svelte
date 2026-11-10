@@ -13,8 +13,6 @@
 	import RemoveProjectDialog from '$lib/components/RemoveProjectDialog.svelte';
 	import MoveMemberDialog from '$lib/components/MoveMemberDialog.svelte';
 	import { AddAgentSheet, EditAgentDialog, HowItRunsDialog, OffboardAgentDialog, PauseAgentDialog } from '$lib/modules/employees';
-	import BringInDialog from '$lib/components/BringInDialog.svelte';
-	import { announceBroughtIn, idsOf } from '$lib/import/after';
 	import AddPersonSheet from '$lib/components/AddPersonSheet.svelte';
 	import EditPersonDialog from '$lib/components/EditPersonDialog.svelte';
 	import RemovePersonDialog from '$lib/components/RemovePersonDialog.svelte';
@@ -166,7 +164,6 @@
 	let movingMember = $state<Member | undefined>();
 	let moveMemberOpen = $state(false);
 	let addAgentOpen = $state(false);
-	let bringInOpen = $state(false);
 	let pausing = $state<Member | undefined>();
 	let pauseOpen = $state(false);
 	let offboarding = $state<Member | undefined>();
@@ -232,13 +229,6 @@
 		await reload();
 	}
 	const organizationName = $derived(data.connection.organization.name);
-	// "Bring in an existing team" (IMP-7): the chart shows what came in, highlighted for a while.
-	async function broughtIn(r: { done: Parameters<typeof announceBroughtIn>[0]; handles: string[] }) {
-		if (!r.done) return;
-		await reload();
-		const said = announceBroughtIn(r.done, idsOf(data.snapshot.members, r.handles));
-		if (said) toast.success(said);
-	}
 	async function personAdded(r: { memberId: string; name: string; problems: string[] }) {
 		await reload();
 		selected = r.memberId;
@@ -429,7 +419,6 @@
 					<Button size="sm" onclick={() => newTeam()}><Plus aria-hidden="true" /> New team</Button>
 					<Button variant="outline" size="sm" onclick={() => ((addPersonTeam = undefined), (addPersonOpen = true))}><Plus aria-hidden="true" /> Add person</Button>
 					<Button variant="outline" size="sm" onclick={() => (addAgentOpen = true)}><Plus aria-hidden="true" /> Add agent</Button>
-					<Button variant="outline" size="sm" onclick={() => (bringInOpen = true)}>Bring in a team…</Button>
 					<Button variant="outline" size="sm" onclick={() => (asList = !asList)}>
 						{#if asList}<Network aria-hidden="true" /> Chart{:else}<LayoutList aria-hidden="true" /> List{/if}
 					</Button>
@@ -465,7 +454,6 @@
 					<p class="mx-auto mt-1 max-w-sm text-sm/6 text-gray-400">Teams group your agents and people. A team can be part of another team, so a whole division is just a team with teams under it.</p>
 					<div class="mt-4 flex flex-wrap justify-center gap-3">
 						<Button onclick={() => newTeam()}>Create your first team</Button>
-						<Button variant="outline" onclick={() => (bringInOpen = true)} data-testid="bring-in-empty">Bring in an existing team…</Button>
 					</div>
 				</div>
 			{:else if asList}
@@ -595,7 +583,6 @@
 <RemovePersonDialog bind:open={removePersonOpen} person={removingPerson && snapshot.members.find((x) => x.id === removingPerson?.id)} snapshot={live} {session} organization={organizationName} ondone={personRemoved} />
 <ChangeManagerDialog bind:open={managerOpen} member={managing && snapshot.members.find((x) => x.id === managing?.id)} snapshot={live} {session} ondone={managerChanged} />
 <EditMemberTeamsDialog bind:open={memberTeamsOpen} member={memberTeams && snapshot.members.find((x) => x.id === memberTeams?.id)} snapshot={live} {session} ondone={memberTeamsEdited} />
-<BringInDialog bind:open={bringInOpen} {session} snapshot={full} organizationId={data.connection.organization.id} organization={organizationName} officeId={data.connection.office.id} ondone={broughtIn} />
 <AddAgentSheet bind:open={addAgentOpen} snapshot={live} fullSnapshot={full} {session} officeId={data.connection.office.id} officeName={data.connection.office.name} organization={organizationName} ondone={agentAdded} />
 <PauseAgentDialog bind:open={pauseOpen} agent={pausing && snapshot.members.find((x) => x.id === pausing?.id)} snapshot={live} {session} ondone={agentPaused} />
 <OffboardAgentDialog bind:open={offboardOpen} agent={offboarding && snapshot.members.find((x) => x.id === offboarding?.id)} snapshot={live} {session} ondone={agentOffboarded} />

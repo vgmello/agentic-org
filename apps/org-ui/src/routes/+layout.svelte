@@ -1,34 +1,19 @@
 <script lang="ts">
 	import '../app.css';
-	import { goto, invalidate } from '$app/navigation';
 	import { onMount } from 'svelte';
-	import { isAppPath } from '$lib/navigation';
-	import { inTauri } from '$lib/office/api';
+	import { page } from '$app/state';
+	import { areaCapability } from '$lib/platform/shell/capabilities';
+	import Unavailable from '$lib/platform/shell/Unavailable.svelte';
 
 	let { children } = $props();
-
-	// The menu bar asks the window to go somewhere (an organization was picked, "Create
-	// organization…"): the Rust side sends a `navigate` event with one of a few known paths.
+	const capability = $derived(areaCapability(page.url.pathname));
 	onMount(() => {
-		// Tells the browser tests the page is interactive: clicking earlier would submit a form natively.
 		document.documentElement.dataset.hydrated = 'true';
-		if (!inTauri()) return;
-		let stop: (() => void) | undefined;
-		let gone = false;
-		import('@tauri-apps/api/event').then(async ({ listen }) => {
-			const unlisten = await listen<string>('navigate', async (event) => {
-				if (!isAppPath(event.payload)) return;
-				await invalidate('app:connections');
-				await goto(event.payload);
-			});
-			if (gone) unlisten();
-			else stop = unlisten;
-		});
-		return () => {
-			gone = true;
-			stop?.();
-		};
 	});
 </script>
 
-{@render children()}
+{#if capability.available || page.status === 404}
+	{@render children()}
+{:else}
+	<Unavailable message={capability.message} />
+{/if}

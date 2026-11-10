@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import vectors from '../../../../crates/org-proto/test-vectors/organization-names.json';
 import { validateName } from './name';
 
-// org-proto's own vectors, the ones the Rust mock is tested against too (src-tauri/src/mock.rs).
+// Shared organization-name vectors checked by the canonical Rust protocol tests.
 describe('validateName', () => {
 	it.each(vectors.vectors.map((v) => [JSON.stringify(v.input).slice(0, 40), v] as const))(
 		'%s',
