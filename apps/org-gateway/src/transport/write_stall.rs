@@ -15,7 +15,19 @@ use tokio::time::{self, Sleep};
 pub struct WriteStall<T> {
     inner: T,
     timeout: Duration,
-    pending_since: Option<Pin<Box<Sleep>>>,
+    pending_since: Option<PendingOutput>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OutputOperation {
+    Write,
+    Flush,
+    Shutdown,
+}
+
+struct PendingOutput {
+    operation: OutputOperation,
+    timer: Pin<Box<Sleep>>,
 }
 
 impl<T> WriteStall<T> {
@@ -33,11 +45,16 @@ impl<T> WriteStall<T> {
         })
     }
 
-    fn stalled(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        let timer = self
-            .pending_since
-            .get_or_insert_with(|| Box::pin(time::sleep(self.timeout)));
-        if timer.as_mut().poll(cx).is_ready() {
+    fn stalled(
+        &mut self,
+        cx: &mut Context<'_>,
+        operation: OutputOperation,
+    ) -> Poll<io::Result<()>> {
+        let timer = self.pending_since.get_or_insert_with(|| PendingOutput {
+            operation,
+            timer: Box::pin(time::sleep(self.timeout)),
+        });
+        if timer.timer.as_mut().poll(cx).is_ready() {
             Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 "response write stalled",
@@ -60,7 +77,7 @@ impl<T> WriteStall<T> {
                 Poll::Ready(Ok(bytes))
             }
             Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
-            Poll::Pending => self.stalled(cx).map_ok(|_| 0),
+            Poll::Pending => self.stalled(cx, OutputOperation::Write).map_ok(|_| 0),
         }
     }
 
@@ -68,13 +85,23 @@ impl<T> WriteStall<T> {
         &mut self,
         cx: &mut Context<'_>,
         result: Poll<io::Result<()>>,
+        operation: OutputOperation,
     ) -> Poll<io::Result<()>> {
         match result {
             Poll::Ready(result) => {
-                self.pending_since = None;
+                // TCP's empty flush is immediately Ready, even while a write
+                // remains blocked. Only completing the operation that started
+                // this timer can clear it without accepted write bytes.
+                if self
+                    .pending_since
+                    .as_ref()
+                    .is_some_and(|pending| pending.operation == operation)
+                {
+                    self.pending_since = None;
+                }
                 Poll::Ready(result)
             }
-            Poll::Pending => self.stalled(cx),
+            Poll::Pending => self.stalled(cx, operation),
         }
     }
 }
@@ -117,13 +144,13 @@ impl<T: AsyncWrite + Unpin> AsyncWrite for WriteStall<T> {
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         let this = self.get_mut();
         let result = Pin::new(&mut this.inner).poll_flush(cx);
-        this.flushed(cx, result)
+        this.flushed(cx, result, OutputOperation::Flush)
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         let this = self.get_mut();
         let result = Pin::new(&mut this.inner).poll_shutdown(cx);
-        this.flushed(cx, result)
+        this.flushed(cx, result, OutputOperation::Shutdown)
     }
 }
 
@@ -164,6 +191,27 @@ mod tests {
             pending(write.as_mut()).await;
             time::advance(Duration::from_secs(1)).await;
             assert_eq!(write.await.unwrap_err().kind(), io::ErrorKind::TimedOut);
+        });
+    }
+
+    #[test]
+    fn an_empty_successful_flush_is_not_write_progress() {
+        run(async {
+            let (writer, _reader) = tokio::io::duplex(1);
+            let mut writer = WriteStall::new(writer, Duration::from_secs(30)).unwrap();
+            writer.write_all(&[1]).await.unwrap();
+            poll_fn(|cx| {
+                assert!(Pin::new(&mut writer).poll_write(cx, &[2]).is_pending());
+                Poll::Ready(())
+            })
+            .await;
+            writer.flush().await.unwrap();
+            time::advance(Duration::from_secs(30)).await;
+            let error = time::timeout(Duration::from_secs(1), writer.write_all(&[2]))
+                .await
+                .expect("empty flush must not reset an existing write deadline")
+                .unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         });
     }
 

@@ -136,13 +136,15 @@ where
                     return;
                 };
                 match mode {
-                    ListenMode::HttpLoopback => serve_connection(stream, handler, limits).await,
+                    ListenMode::HttpLoopback => {
+                        let _ = serve_connection(stream, handler, limits).await;
+                    }
                     ListenMode::Https(certificates) => {
                         let accept = TlsAcceptor::from(certificates.server_config());
                         if let Ok(Ok(stream)) =
                             time::timeout(limits.handshake_timeout, accept.accept(stream)).await
                         {
-                            serve_connection(stream, handler, limits).await;
+                            let _ = serve_connection(stream, handler, limits).await;
                         }
                     }
                 }
@@ -170,7 +172,11 @@ async fn until_shutdown<F: Future, S: Future<Output = ()>>(
     .await
 }
 
-async fn serve_connection<T, H, F>(stream: T, handler: Arc<H>, limits: HttpLimits)
+async fn serve_connection<T, H, F>(
+    stream: T,
+    handler: Arc<H>,
+    limits: HttpLimits,
+) -> Result<(), hyper::Error>
 where
     T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     H: Fn(Request<Incoming>) -> F + Send + Sync + 'static,
@@ -186,12 +192,12 @@ where
         .keep_alive(true);
     // Hyper owns malformed-HTTP400/431: empty bodies, connection closed,
     // and no application handler invocation. Application headers are separate.
-    let _ = builder
+    builder
         .serve_connection(
             TokioIo::new(stream),
             service_fn(move |request| handler(request)),
         )
-        .await;
+        .await
 }
 
 #[cfg(test)]

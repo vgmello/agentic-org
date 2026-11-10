@@ -293,3 +293,92 @@ fn invalid_limits_and_non_loopback_plaintext_are_refused_before_initialization()
         matches!(run_http(listener, ListenMode::HttpLoopback, HttpLimits::default(), fail_initialize), Err(error) if error.kind() == io::ErrorKind::PermissionDenied)
     );
 }
+
+fn virtual_time(test: impl Future<Output = ()>) {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap()
+        .block_on(async {
+            time::pause();
+            test.await;
+        });
+}
+
+fn large_response(
+    _: Request<Incoming>,
+) -> std::future::Ready<Result<Response<Full<Bytes>>, Infallible>> {
+    std::future::ready(Ok(Response::new(Full::new(Bytes::from_static(
+        &[b'x'; 8192],
+    )))))
+}
+
+#[test]
+fn full_http_stack_times_out_when_a_client_stops_reading() {
+    virtual_time(async {
+        use std::error::Error as _;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let (server, mut client) = tokio::io::duplex(128);
+        let server = WriteStall::new(server, Duration::from_secs(30)).unwrap();
+        let connection = tokio::spawn(serve_connection(
+            server,
+            Arc::new(large_response),
+            HttpLimits::default(),
+        ));
+        client.write_all(REQUEST).await.unwrap();
+        // Bounded in-memory I/O makes the non-reading condition deterministic:
+        // the real Hyper stack cannot fit the response in the 128-byte pipe.
+        let error = time::timeout(Duration::from_secs(60), connection)
+            .await
+            .expect("stalled HTTP connection must finish within its write bound")
+            .unwrap()
+            .unwrap_err();
+        let mut source = error.source();
+        let mut timed_out = false;
+        while let Some(error) = source {
+            timed_out |= error
+                .downcast_ref::<io::Error>()
+                .is_some_and(|error| error.kind() == io::ErrorKind::TimedOut);
+            source = error.source();
+        }
+        assert!(timed_out, "connection must end on the write-stall error");
+        let mut partial = Vec::new();
+        client.read_to_end(&mut partial).await.unwrap();
+        assert!(partial.starts_with(b"HTTP/1.1 200"));
+        assert!(body(&partial).len() < 8192);
+    });
+}
+
+#[test]
+fn full_http_stack_completes_a_slow_but_continuously_read_response() {
+    virtual_time(async {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let started = time::Instant::now();
+        let (server, mut client) = tokio::io::duplex(128);
+        let server = WriteStall::new(server, Duration::from_secs(30)).unwrap();
+        let connection = tokio::spawn(serve_connection(
+            server,
+            Arc::new(large_response),
+            HttpLimits::default(),
+        ));
+        client.write_all(REQUEST).await.unwrap();
+        let mut response = Vec::new();
+        let mut chunk = [0; 128];
+        time::timeout(Duration::from_secs(2000), async {
+            loop {
+                let read = client.read(&mut chunk).await.unwrap();
+                if read == 0 {
+                    break;
+                }
+                response.extend_from_slice(&chunk[..read]);
+                time::advance(Duration::from_secs(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+        connection.await.unwrap().unwrap();
+        assert!(started.elapsed() > Duration::from_secs(30));
+        assert!(response.starts_with(b"HTTP/1.1 200"));
+        assert_eq!(body(&response), &[b'x'; 8192]);
+    });
+}
