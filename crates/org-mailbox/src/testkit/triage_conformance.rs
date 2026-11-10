@@ -2084,6 +2084,47 @@ pub fn mailbox_wait_expires_more_than_one_batch(backend: impl OpenTriageBackend)
     assert!(peek(&*office.store, ADA_ID).expired_ids.is_empty());
 }
 
+/// More overdue messages than one peek reports ([`crate::MAX_EXPIRED_IDS`]): one read with no
+/// id acts on them all before it claims, so none is left behind a newer message. An agent's
+/// requests expire (each asker told) and the newer message is read; a person's are flagged
+/// `expired_waiting_person`, and read oldest first, before the newer message.
+pub fn mailbox_read_acts_on_more_than_one_batch(backend: impl OpenTriageBackend) {
+    let count = crate::MAX_EXPIRED_IDS as u32 + 5;
+
+    // An agent: Pat's requests to Ada expire.
+    let office = triage_office(&backend);
+    for n in 1..=count {
+        commit(&*office.store, expired_request(n, PAT_ID, ADA_ID));
+    }
+    send(&office.mailbox, PAT_ID, count + 1, ADA_HANDLE).unwrap();
+    assert_eq!(read_next(&office.mailbox, ADA_ID), Some(msg_id(count + 1)));
+    for n in 1..=count {
+        assert_eq!(
+            state_of(&*office.store, &msg_id(n)),
+            State::Expired,
+            "request {n}"
+        );
+    }
+    assert_eq!(office.events.delivery_failed().len(), count as usize);
+
+    // A person: Ada's requests to Pat are flagged, and stay ahead of the newer message.
+    let office = triage_office(&backend);
+    for n in 1..=count {
+        commit(&*office.store, expired_request(n, ADA_ID, PAT_ID));
+    }
+    send(&office.mailbox, ADA_ID, count + 1, PAT_HANDLE).unwrap();
+    assert_eq!(read_next(&office.mailbox, PAT_ID), Some(msg_id(1)));
+    for n in 2..=count {
+        let header = header_of(&*office.store, n);
+        assert!(header.expired_waiting_person, "request {n} is flagged");
+        assert_eq!(header.state, State::Unread, "request {n}");
+    }
+    for n in 2..=count + 1 {
+        assert_eq!(read_next(&office.mailbox, PAT_ID), Some(msg_id(n)));
+    }
+    assert!(office.events.delivery_failed().is_empty());
+}
+
 /// Every case, by name: what [`crate::triage_conformance_tests!`] runs.
 #[doc(hidden)]
 #[macro_export]
@@ -2146,6 +2187,7 @@ macro_rules! triage_conformance_tests {
             mailbox_a_restored_office_does_not_notify_again,
             mailbox_an_answered_request_expires_without_a_notice,
             mailbox_read_releases_due_snoozes,
+            mailbox_read_acts_on_more_than_one_batch,
         }
     };
 }

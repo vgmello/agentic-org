@@ -30,7 +30,8 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 /// The `delivery_failed` notice's subject: fixed text, never the original's content.
 const EXPIRED_SUBJECT: &str = "Request expired";
 
-/// The most extra peeks one `wait` makes before blocking (see `wait`).
+/// The most extra peeks one `wait` makes before blocking, and one `read` with no id makes
+/// before claiming (see each).
 const MAX_RECHECKS: u32 = 10;
 
 #[derive(Debug, Clone)]
@@ -57,8 +58,11 @@ pub struct Mailbox {
     /// Held across a local triage write (`update_state_local`) and the snooze timer update
     /// that follows it, so the timers apply concurrent writes in the order the store did:
     /// otherwise two defers of one message could reach the store as A then B but the timers
-    /// as B then A, leaving A's deadline (or none) while the store holds B's. Taken before
-    /// `snoozes`, never inside it. Events and waiter wake-ups happen after it is released.
+    /// as B then A, leaving A's deadline (or none) while the store holds B's. Also held across
+    /// the timer-driven release (`release_due_snoozes`: take the due timers, `check_notify`,
+    /// put them back on failure), so a timer put back can't override a concurrent triage
+    /// write, and across a failed defer's re-read of the message. Taken before `snoozes`,
+    /// never inside it. Events and waiter wake-ups happen after it is released.
     triage_writes: Mutex<()>,
 }
 
@@ -329,12 +333,23 @@ impl Mailbox {
                 Some(_) => {}
                 None => {
                     // As wait does: release due snoozes, then expire what peek passes over.
+                    // While a full batch of MAX_EXPIRED_IDS comes back, more overdue messages
+                    // may wait behind it, and the claim below would skip them for a newer
+                    // one: peek again, at most MAX_RECHECKS more times (as wait bounds it, so
+                    // a store that keeps reporting the same ids can't spin the read).
                     self.release_due_snoozes(bound_member_id, now_ms, &now)?;
-                    let peek = self
-                        .store
-                        .peek_next_unread(bound_member_id, None, false, &now)?;
-                    for id in &peek.expired_ids {
-                        self.expire(&member, position, id, &now, NoticeFailure::Ignore)?;
+                    let mut rechecks = 0;
+                    loop {
+                        let peek =
+                            self.store
+                                .peek_next_unread(bound_member_id, None, false, &now)?;
+                        for id in &peek.expired_ids {
+                            self.expire(&member, position, id, &now, NoticeFailure::Ignore)?;
+                        }
+                        if peek.expired_ids.len() < MAX_EXPIRED_IDS || rechecks >= MAX_RECHECKS {
+                            break;
+                        }
+                        rechecks += 1;
                     }
                 }
             }
@@ -479,7 +494,7 @@ impl Mailbox {
         };
         let header = {
             let _ordered = lock(&self.triage_writes);
-            let header = triage.update_state_local(LocalStateTransition {
+            let header = match triage.update_state_local(LocalStateTransition {
                 snoozed_until,
                 snooze_after_task,
                 reason: params.note,
@@ -490,16 +505,25 @@ impl Mailbox {
                     position,
                     &now,
                 )
-            })?;
-            let mut timers = lock(&self.snoozes);
-            match header.snoozed_until.as_deref() {
-                Some(at) => timers.insert(
-                    parse_utc(at).map_or(0, epoch_ms),
-                    bound_member_id,
-                    &header.id,
-                ),
-                None => timers.remove(&header.id),
-            }
+            }) {
+                Ok(header) => header,
+                Err(error) => {
+                    // The write may have landed anyway (D11): set the timer from what the
+                    // store holds now, still under `triage_writes`. A failed read keeps it.
+                    // Another member's message (refused as not found) is left alone.
+                    match self.store.get_message(&params.id) {
+                        Ok(Some(stored))
+                            if stored.message.header.to_member_id == bound_member_id =>
+                        {
+                            self.set_timer(&stored.message.header)
+                        }
+                        Ok(None) => lock(&self.snoozes).remove(&params.id),
+                        Ok(Some(_)) | Err(_) => {}
+                    }
+                    return Err(error.into());
+                }
+            };
+            self.set_timer(&header);
             header
         };
         // A held wait recomputes its bound with the new timer.
@@ -585,8 +609,34 @@ impl Mailbox {
         }
     }
 
+    /// Sets the timer of the message `header` describes from its snooze, under the caller's
+    /// `triage_writes`: a time snooze gets one (an unreadable deadline is due at once, so the
+    /// next release hands it to `check_notify`), anything else (an after-task snooze, or no
+    /// longer snoozed) has none.
+    fn set_timer(&self, header: &MessageHeader) {
+        let mut timers = lock(&self.snoozes);
+        match header.snoozed_until.as_deref() {
+            Some(at) if header.state == MessageLifecycleState::Snoozed => timers.insert(
+                parse_utc(at).map_or(0, epoch_ms),
+                &header.to_member_id,
+                &header.id,
+            ),
+            _ => timers.remove(&header.id),
+        }
+    }
+
     /// Releases the member's due time snoozes (§2.2) through `check_notify`, before a wait
-    /// peeks. Only when the timers say one is due, and only with triage.
+    /// or a read with no id peeks. Only when the timers say one is due, and only with triage.
+    ///
+    /// Taking the due timers, `check_notify` and putting them back after a failure all run
+    /// under `triage_writes` (D7), so no defer, done or expiry of the same message lands in
+    /// between: a timer put back can't outlive a done or expiry, or replace a newer defer's,
+    /// that the store applied meanwhile. `snoozes` is locked only briefly inside it, never
+    /// across the store call.
+    ///
+    /// Cost (D2): there is no releases-only port, so each due timer costs one `check_notify`,
+    /// which also reads the member's open urgent messages to list them (and lists nothing
+    /// else: it sweeps nothing). The list is thrown away; only the releases are used.
     fn release_due_snoozes(
         &self,
         member: &str,
@@ -596,24 +646,37 @@ impl Mailbox {
         let Some(triage) = self.triage.as_deref() else {
             return Ok(());
         };
-        let due = lock(&self.snoozes).take_due(member, epoch_ms(now_ms));
-        if due.is_empty() {
+        let now_ms = epoch_ms(now_ms);
+        // Most calls find nothing due: they don't take `triage_writes`. A timer due but not
+        // seen here (put back by a concurrent release that failed) waits for the next
+        // release: the next read with no id, or wait round.
+        if lock(&self.snoozes)
+            .next_for(member)
+            .is_none_or(|at_ms| at_ms > now_ms)
+        {
             return Ok(());
         }
         // Sweep nothing (the epoch): only the releases matter here, not what is listed.
         let sweep_before = format_utc(0).ok_or(MailboxError::StorageError)?;
-        let candidates = match triage.check_notify(member, false, false, &sweep_before, now) {
-            Ok(candidates) => candidates,
-            Err(error) => {
-                let mut timers = lock(&self.snoozes);
-                for (at_ms, id) in due {
-                    timers.restore(at_ms, member, &id);
+        let candidates = {
+            let _ordered = lock(&self.triage_writes);
+            let due = lock(&self.snoozes).take_due(member, now_ms);
+            if due.is_empty() {
+                return Ok(());
+            }
+            match triage.check_notify(member, false, false, &sweep_before, now) {
+                Ok(candidates) => candidates,
+                Err(error) => {
+                    let mut timers = lock(&self.snoozes);
+                    for (at_ms, id) in due {
+                        timers.restore(at_ms, member, &id);
+                    }
+                    return Err(error.into());
                 }
-                return Err(error.into());
             }
         };
         // The due timers were taken above; a released message's timer is not removed here,
-        // since a defer since check_notify may have set a new one.
+        // since a defer after check_notify may have set a new one.
         let released: Vec<_> = candidates
             .into_iter()
             .filter(|candidate| candidate.reason == NotifyReason::Due)
@@ -1356,6 +1419,329 @@ mod tests {
         assert_eq!(stored.snoozed_until.as_deref(), Some(deadline.as_str()));
         let timers = lock(&mailbox.snoozes);
         assert_eq!(timers.next_for(ADA_ID), Some(epoch_ms(NOW_MS + 2_000)));
+    }
+
+    /// A Mailbox with triage over `store` and `triage`, at `clock`.
+    fn triage_mailbox(
+        store: Arc<dyn MessageStore + Send + Sync>,
+        triage: Arc<dyn TriageStore + Send + Sync>,
+        clock: Arc<ManualClock>,
+    ) -> Arc<Mailbox> {
+        Arc::new(
+            Mailbox::with_triage(
+                store,
+                triage,
+                Arc::new(InMemoryDirectory::new(members(), POSITION)),
+                identity(),
+                clock,
+                Arc::new(NoMessageEvents),
+            )
+            .unwrap(),
+        )
+    }
+
+    /// Pat sends Ada `msg_id(n)`.
+    fn send_to_ada(mailbox: &Mailbox, n: u32) {
+        mailbox
+            .send(
+                PAT_ID,
+                MsgSendParams {
+                    id: msg_id(n),
+                    to: ADA_ID.into(),
+                    kind: KIND_MSG.into(),
+                    priority: None,
+                    subject: None,
+                    body: "hello".into(),
+                    meta: Meta::new(),
+                    reply_to: None,
+                },
+            )
+            .unwrap();
+    }
+
+    /// A triage store whose next `check_notify` once `entered` is set says so, gives a
+    /// concurrent triage write up to `window` to land (it ends early when `proceed` hears the
+    /// write landed), then fails.
+    struct FailingCheck {
+        inner: InMemoryStore,
+        entered: Mutex<Option<mpsc::Sender<()>>>,
+        proceed: Mutex<mpsc::Receiver<()>>,
+        window: Duration,
+    }
+
+    impl TriageStore for FailingCheck {
+        fn update_state_local(
+            &self,
+            change: LocalStateTransition,
+        ) -> Result<MessageHeader, StoreError> {
+            self.inner.update_state_local(change)
+        }
+        fn check_notify(
+            &self,
+            to_member_id: &str,
+            after_task: bool,
+            urgent_only: bool,
+            sweep_before_utc: &str,
+            now_utc: &str,
+        ) -> Result<Vec<NotifyCandidate>, StoreError> {
+            if let Some(entered) = lock(&self.entered).take() {
+                entered.send(()).unwrap();
+                // Either the concurrent write lands (and says so) or the window passes.
+                let _ = lock(&self.proceed).recv_timeout(self.window);
+                return Err(StoreError::new("disk I/O error"));
+            }
+            self.inner.check_notify(
+                to_member_id,
+                after_task,
+                urgent_only,
+                sweep_before_utc,
+                now_utc,
+            )
+        }
+        fn list_active_snooze_deadlines(&self) -> Result<Vec<SnoozeDeadline>, StoreError> {
+            self.inner.list_active_snooze_deadlines()
+        }
+    }
+
+    /// D7: a timer-driven release whose `check_notify` fails puts the due timer back. A done
+    /// of that message racing it must not end with the timer back on a done message: the
+    /// done waits for the release to finish, then drops the timer.
+    #[test]
+    fn a_failed_release_does_not_restore_a_timer_over_a_concurrent_done() {
+        let store = InMemoryStore::new();
+        let (entered, check_entered) = mpsc::channel();
+        let (done_landed, proceed) = mpsc::channel();
+        let triage = Arc::new(FailingCheck {
+            inner: store.clone(),
+            entered: Mutex::new(None),
+            proceed: Mutex::new(proceed),
+            window: Duration::from_millis(300),
+        });
+        let clock = Arc::new(ManualClock::new(NOW_MS));
+        let mailbox = triage_mailbox(Arc::new(store.clone()), triage.clone(), clock.clone());
+        send_to_ada(&mailbox, 1);
+        mailbox.defer(ADA_ID, defer_at(1_000)).unwrap();
+        clock.set(NOW_MS + 1_000);
+
+        *lock(&triage.entered) = Some(entered);
+        let read = {
+            let mailbox = mailbox.clone();
+            thread::spawn(move || mailbox.read(ADA_ID, MsgReadParams::default()))
+        };
+        check_entered
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the release reached check_notify");
+        let done = {
+            let mailbox = mailbox.clone();
+            thread::spawn(move || {
+                let result = mailbox.done(
+                    ADA_ID,
+                    MsgDoneParams {
+                        id: msg_id(1),
+                        note: None,
+                    },
+                );
+                // The release may have finished (and dropped the receiver's need) already.
+                let _ = done_landed.send(());
+                result
+            })
+        };
+        assert_eq!(read.join().unwrap(), Err(MailboxError::StorageError));
+        assert!(done.join().unwrap().is_ok());
+
+        assert_eq!(
+            store
+                .get_message(&msg_id(1))
+                .unwrap()
+                .unwrap()
+                .message
+                .header
+                .state,
+            MessageLifecycleState::Done
+        );
+        assert_eq!(
+            lock(&mailbox.snoozes).next_for(ADA_ID),
+            None,
+            "the failed release put its timer back on a done message"
+        );
+    }
+
+    type AfterUpdate = Box<dyn FnOnce(&InMemoryStore) + Send>;
+
+    /// A store whose next `update_state_local` applies the change, runs `after`, then
+    /// returns an error anyway (a lost COMMIT acknowledgement), and whose `get_message` can
+    /// be made to fail.
+    #[derive(Default)]
+    struct LandedButFailed {
+        inner: InMemoryStore,
+        fail_update: Mutex<Option<AfterUpdate>>,
+        fail_get: AtomicBool,
+    }
+
+    impl LandedButFailed {
+        fn fail_next_update(&self, after: impl FnOnce(&InMemoryStore) + Send + 'static) {
+            *lock(&self.fail_update) = Some(Box::new(after));
+        }
+    }
+
+    impl TriageStore for LandedButFailed {
+        fn update_state_local(
+            &self,
+            change: LocalStateTransition,
+        ) -> Result<MessageHeader, StoreError> {
+            let result = self.inner.update_state_local(change);
+            match lock(&self.fail_update).take() {
+                Some(after) => {
+                    result.expect("the change applies");
+                    after(&self.inner);
+                    Err(StoreError::new("connection lost after COMMIT"))
+                }
+                None => result,
+            }
+        }
+        fn check_notify(
+            &self,
+            to_member_id: &str,
+            after_task: bool,
+            urgent_only: bool,
+            sweep_before_utc: &str,
+            now_utc: &str,
+        ) -> Result<Vec<NotifyCandidate>, StoreError> {
+            self.inner.check_notify(
+                to_member_id,
+                after_task,
+                urgent_only,
+                sweep_before_utc,
+                now_utc,
+            )
+        }
+        fn list_active_snooze_deadlines(&self) -> Result<Vec<SnoozeDeadline>, StoreError> {
+            self.inner.list_active_snooze_deadlines()
+        }
+    }
+
+    impl MessageStore for LandedButFailed {
+        fn commit_message(
+            &self,
+            msg: NewStoredMessage,
+        ) -> Result<CommitMessageOutcome, StoreError> {
+            self.inner.commit_message(msg)
+        }
+        fn claim_read(
+            &self,
+            to_member_id: &str,
+            id: Option<&str>,
+            now_utc: &str,
+        ) -> Result<Option<StoredMessage>, StoreError> {
+            self.inner.claim_read(to_member_id, id, now_utc)
+        }
+        fn peek_next_unread(
+            &self,
+            to_member_id: &str,
+            from_member_id: Option<&str>,
+            urgent_only: bool,
+            now_utc: &str,
+        ) -> Result<crate::PeekUnreadOutcome, StoreError> {
+            self.inner
+                .peek_next_unread(to_member_id, from_member_id, urgent_only, now_utc)
+        }
+        fn get_message(&self, id: &str) -> Result<Option<StoredMessage>, StoreError> {
+            if self.fail_get.load(Ordering::SeqCst) {
+                return Err(StoreError::new("disk I/O error"));
+            }
+            self.inner.get_message(id)
+        }
+        fn list_headers(&self, query: HeaderQuery) -> Result<HeaderPage, StoreError> {
+            self.inner.list_headers(query)
+        }
+        fn find_reply_for_ask(
+            &self,
+            ask_id: &str,
+            responder_id: &str,
+        ) -> Result<Option<StoredMessage>, StoreError> {
+            self.inner.find_reply_for_ask(ask_id, responder_id)
+        }
+    }
+
+    /// D11: a defer whose store write landed but reported an error returns the error, with
+    /// the timer set from what the store now holds: the new deadline when it is snoozed, none
+    /// once it isn't (closed meanwhile, or snoozed until a break), and the old timer when the
+    /// re-read fails too.
+    #[test]
+    fn a_failed_defer_sets_the_timer_from_the_store() {
+        let store = Arc::new(LandedButFailed::default());
+        let mailbox = triage_mailbox(
+            store.clone(),
+            store.clone(),
+            Arc::new(ManualClock::new(NOW_MS)),
+        );
+        let next = || lock(&mailbox.snoozes).next_for(ADA_ID);
+        send_to_ada(&mailbox, 1);
+        mailbox.defer(ADA_ID, defer_at(1_000)).unwrap();
+        assert_eq!(next(), Some(epoch_ms(NOW_MS + 1_000)));
+
+        // Another member's defer of it is refused (not found) and leaves Ada's timer alone.
+        assert_eq!(
+            mailbox.defer(PAT_ID, defer_at(9_000)),
+            Err(MailboxError::NotFound)
+        );
+        assert_eq!(next(), Some(epoch_ms(NOW_MS + 1_000)));
+
+        // Landed: the timer moves to the new deadline.
+        store.fail_next_update(|_| {});
+        assert_eq!(
+            mailbox.defer(ADA_ID, defer_at(2_000)),
+            Err(MailboxError::StorageError)
+        );
+        assert_eq!(next(), Some(epoch_ms(NOW_MS + 2_000)));
+
+        // Landed, but the re-read fails as well: the old timer stays.
+        store.fail_next_update(|_| {});
+        store.fail_get.store(true, Ordering::SeqCst);
+        assert_eq!(
+            mailbox.defer(ADA_ID, defer_at(3_000)),
+            Err(MailboxError::StorageError)
+        );
+        store.fail_get.store(false, Ordering::SeqCst);
+        assert_eq!(next(), Some(epoch_ms(NOW_MS + 2_000)));
+
+        // Landed as an after-task snooze: no timer.
+        store.fail_next_update(|_| {});
+        let after_task = MsgDeferParams {
+            until: SnoozeTarget::AfterTask,
+            ..defer_at(0)
+        };
+        assert_eq!(
+            mailbox.defer(ADA_ID, after_task),
+            Err(MailboxError::StorageError)
+        );
+        assert_eq!(next(), None);
+
+        // Landed, then closed before the re-read: no timer.
+        mailbox.defer(ADA_ID, defer_at(4_000)).unwrap();
+        assert_eq!(next(), Some(epoch_ms(NOW_MS + 4_000)));
+        store.fail_next_update(|inner| {
+            inner
+                .update_state_local(LocalStateTransition {
+                    id: msg_id(1),
+                    to_member_id: ADA_ID.into(),
+                    state: MessageLifecycleState::Done,
+                    snoozed_until: None,
+                    snooze_after_task: false,
+                    reason: None,
+                    now_utc: NOW_UTC.into(),
+                    owner_office_id: OFFICE_ID.into(),
+                    origin_incarnation: INCARNATION.into(),
+                    org_position: POSITION,
+                    expired_waiting_person: false,
+                })
+                .unwrap();
+        });
+        assert_eq!(
+            mailbox.defer(ADA_ID, defer_at(5_000)),
+            Err(MailboxError::StorageError)
+        );
+        assert_eq!(next(), None);
     }
 
     /// Expiring a request more than once commits one notice and announces it once:

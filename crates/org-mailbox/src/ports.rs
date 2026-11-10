@@ -38,8 +38,10 @@ pub trait SessionAuth {
 // The ADR-0003 §4.3 storage ports (amended 2026-11-08: store split). Four capability
 // traits over office.db, with no default methods: each caller depends only on what it
 // calls. All calls are synchronous; the Mailbox holds none of its registry locks across
-// them (it holds one lock, which only orders its own triage writes, across an
-// `update_state_local`, so a slow call there delays other local triage writes).
+// them. It holds one lock, which only orders its own triage writes, across an
+// `update_state_local` and across the timer-driven `check_notify` that releases due snoozes
+// (with a failed defer's `get_message` re-read), so a slow call there delays other local
+// triage writes.
 // Implementations own transaction atomicity and their database timeouts. office.db and
 // org.db (MemberDirectory) are separate databases: no transaction spans both.
 
@@ -67,6 +69,11 @@ pub trait MessageStore {
     /// already read `id` comes back unchanged, keeping its earlier `read_at`. Concurrent
     /// claims of one message succeed once: with no `id`, the store selects the message and
     /// marks it in ONE writer transaction, never choosing it from a reader's snapshot.
+    ///
+    /// With no `id`, it never returns an expired message, "expired" exactly as
+    /// [`Self::peek_next_unread`] defines it at `now_utc` ([`crate::past_deadline`] holds and
+    /// the message isn't flagged `expired_waiting_person`): it passes over them and leaves
+    /// them unread, for the Mailbox to expire. A flagged one is claimable like any other.
     fn claim_read(
         &self,
         to_member_id: &str,
@@ -104,7 +111,8 @@ pub trait MessageStore {
     /// One page of headers, newest first by `local_seq`, without reading bodies, from a
     /// fresh snapshot.
     fn list_headers(&self, query: HeaderQuery) -> Result<HeaderPage, StoreError>;
-    /// The earliest (by `local_seq`) message replying to `ask_id` and addressed to whoever
+    /// The earliest message, in commit order (by `local_seq`, not by id: a reply with a
+    /// larger id committed first is the answer), replying to `ask_id` and addressed to whoever
     /// asked: a reply from `responder_id`, or the office's own `delivery_failed` notice.
     /// `None` when `ask_id` doesn't exist. The Mailbox commits a `delivery_failed` for an
     /// expired request only while this is `None`: the asker has neither an answer nor a

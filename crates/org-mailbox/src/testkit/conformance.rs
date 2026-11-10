@@ -472,6 +472,32 @@ pub fn store_find_reply_for_ask(backend: impl OpenBackend) {
     assert_eq!(found(99, ADA_ID), None, "an unknown ask");
 }
 
+/// `find_reply_for_ask`'s "earliest" is commit order (`local_seq`), not id order: a reply
+/// with a larger ULID committed first is still the answer.
+pub fn store_find_reply_for_ask_is_commit_order(backend: impl OpenBackend) {
+    let store = open_store(&backend);
+    let reply = |n: u32| {
+        let mut reply = new_message(n, ADA_ID, PAT_ID, MessagePriority::Normal);
+        let header = &mut reply.message.header;
+        header.reply_to = Some(msg_id(1));
+        header.thread_id = msg_id(1);
+        reply
+    };
+    commit(&store, expired_request(1, PAT_ID, ADA_ID));
+    let first = commit(&store, reply(9));
+    let second = commit(&store, reply(5));
+    assert!(
+        msg_id(5) < msg_id(9),
+        "the second reply has the smaller ULID"
+    );
+    assert!(first.message.message.header.local_seq < second.message.message.header.local_seq);
+    let found = store
+        .find_reply_for_ask(&msg_id(1), ADA_ID)
+        .expect("find_reply_for_ask")
+        .map(|stored| stored.message.header.id);
+    assert_eq!(found, Some(msg_id(9)), "the first committed");
+}
+
 /// A message committed Read (an ask reply claimed before commit) is never unread.
 pub fn store_initial_read_is_never_unread(backend: impl OpenBackend) {
     let store = open_store(&backend);
@@ -638,6 +664,34 @@ pub fn store_peek_caps_expired_ids_oldest_first(backend: impl OpenBackend) {
         "the first {MAX_EXPIRED_IDS} committed, ids {expired} down to 6"
     );
     assert_eq!(state_of(&store, &msg_id(expired)), State::Unread);
+}
+
+/// With no id, a claim never returns an expired message (as `peek_next_unread` defines it:
+/// past its deadline and grace, and not flagged `expired_waiting_person`). It passes over
+/// expired messages, older or newer, and leaves them unread for the Mailbox to expire; one
+/// still inside its skew grace is claimed.
+pub fn store_claim_read_without_id_skips_expired(backend: impl OpenBackend) {
+    let store = open_store(&backend);
+    commit(&store, with_deadline(1, PAT_ID, -3_600_000));
+    // 1 s past a 60 s message's deadline: inside the 2 s grace, so not expired.
+    commit(&store, with_deadline(2, PAT_ID, -1_000));
+    commit(
+        &store,
+        new_message(3, PAT_ID, ADA_ID, MessagePriority::Normal),
+    );
+    commit(&store, expired_request(4, PAT_ID, ADA_ID));
+    let claim = || {
+        store
+            .claim_read(ADA_ID, None, NOW_UTC)
+            .expect("claim_read")
+            .map(|stored| stored.message.header.id)
+    };
+    assert_eq!(claim(), Some(msg_id(2)));
+    assert_eq!(claim(), Some(msg_id(3)));
+    assert_eq!(claim(), None, "only expired messages are left");
+    for n in [1, 4] {
+        assert_eq!(state_of(&store, &msg_id(n)), State::Unread, "message {n}");
+    }
 }
 
 /// Claims go oldest first, only to the recipient, and an already read id comes back
@@ -1999,6 +2053,7 @@ macro_rules! mailbox_conformance_tests {
             store_commit_replay_and_conflict,
             store_commit_refuses_a_second_delivery_failed,
             store_find_reply_for_ask,
+            store_find_reply_for_ask_is_commit_order,
             store_initial_read_is_never_unread,
             store_peek_is_read_only_and_oldest_first,
             store_peek_reports_expired_without_deleting,
@@ -2006,6 +2061,7 @@ macro_rules! mailbox_conformance_tests {
             store_peek_unreadable_now_passes_every_deadline,
             store_peek_caps_expired_ids_oldest_first,
             store_claim_read_order_and_ownership,
+            store_claim_read_without_id_skips_expired,
             store_claim_read_is_once_under_concurrency,
             store_claim_read_k_barrier_claimers_all_get_distinct,
             store_commits_and_claims_are_visible_to_other_readers,
