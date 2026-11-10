@@ -2296,6 +2296,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "org-supervise"
+version = "0.0.0"
+dependencies = [
+ "libc",
+ "org-runtime",
+ "tempfile",
+]
+
+[[package]]
 name = "org-work"
 version = "0.0.0"
 dependencies = [
