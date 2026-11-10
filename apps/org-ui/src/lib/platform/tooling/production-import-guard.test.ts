@@ -58,6 +58,24 @@ describe('resolved production imports', () => {
 		await expect(fixture('error', true, 'src/lib/ordinary.ts', `function ${name}() { return 'invented'; } export const sample = ${name}();`)).rejects.toThrow('src/lib/ordinary.ts');
 	});
 
+	it.each([
+		'const createMockOffice = () => 1; export const sample = createMockOffice?.();',
+		'const inTauri = () => 1; export const sample = inTauri /* call */ ();',
+		'const provider = { createMockOffice: () => 1 }; export const sample = provider?.createMockOffice?.();',
+		'const provider = { inTauri: () => 1 }; export const sample = provider["inTauri"] /* call */ ();',
+		'const createMockOffice = (): number => 1; export const sample = (createMockOffice as () => number)?.();'
+	])('rejects forbidden call expressions independently of spelling: %s', async (code) => {
+		await expect(fixture('error', true, 'src/lib/ordinary.ts', code)).rejects.toThrow('src/lib/ordinary.ts');
+	});
+	it.each([
+		'export const sample = "inTauri(";',
+		'// createMockOffice();\nexport const sample = "real";',
+		'export const sample = `createMockOffice()`;',
+		'function inTauri() { return true; } export const sample = typeof inTauri;'
+	])('allows non-call source text and declarations: %s', async (code) => {
+		expect(await fixture('error', true, 'src/lib/ordinary.ts', code)).not.toContain('Production fake/sample imports');
+	});
+
 	it('allows a clean production graph without a warning', async () => {
 		expect((await fixture('report', false)).join('\n')).not.toContain('Production fake/sample imports');
 	});

@@ -4,7 +4,30 @@ import type { Plugin } from 'vite';
 const mixedFactories = /\/(?:org|organization|work|chat|messaging)\/api\.[cm]?[jt]s$/;
 const fixtureModule = /\/(?:__mocks__|mocks?|fakes?|samples?|fixtures?|testkit|testing)(?:[A-Z./-]|$)/;
 const testModule = /\.(?:test|spec)\.(?:[cm]?[jt]sx?|svelte(?:\.[jt]s)?)$/;
-const fakeCall = /\b(?:createMock[\w$]*|inTauri)\s*\(/;
+const forbiddenName = (name: unknown): boolean =>
+	typeof name === 'string' && (name === 'inTauri' || name.startsWith('createMock'));
+
+/** Inspect parsed expressions, so comments/strings cannot imitate or hide a call. */
+function hasForbiddenCall(ast: unknown): boolean {
+	const nodes: unknown[] = [ast];
+	while (nodes.length) {
+		const node = nodes.pop();
+		if (!node || typeof node !== 'object') continue;
+		if (Array.isArray(node)) { nodes.push(...node); continue; }
+		const value = node as Record<string, unknown>;
+		if (value.type === 'CallExpression') {
+			const callee = value.callee as Record<string, unknown>;
+			if (callee.type === 'Identifier' && forbiddenName(callee.name)) return true;
+			if (callee.type === 'MemberExpression') {
+				const property = callee.property as Record<string, unknown>;
+				if ((!callee.computed && property.type === 'Identifier' && forbiddenName(property.name)) ||
+					(callee.computed && property.type === 'Literal' && forbiddenName(property.value))) return true;
+			}
+		}
+		nodes.push(...Object.values(value));
+	}
+	return false;
+}
 
 /** Report the resolved build graph, including aliases/dynamic imports. No dev/test runtime toggle. */
 export function productionImportGuard({ mode = 'report' }: { mode?: 'report' | 'error' } = {}): Plugin {
@@ -23,8 +46,9 @@ export function productionImportGuard({ mode = 'report' }: { mode?: 'report' | '
 		name: 'org-production-import-guard',
 		apply: 'build',
 		configResolved(config) { root = config.root.replaceAll('\\', '/').replace(/\/$/, ''); },
-		transform(code, id) {
-			if (localPath(id) && fakeCall.test(code)) sourceLeaks.add(normalize(id));
+		moduleParsed({ code, id }) {
+			// Parse after the TS/Svelte transforms; use the bundler parser without a new dependency.
+			if (localPath(id) && code && hasForbiddenCall(this.parse(code))) sourceLeaks.add(normalize(id));
 		},
 		generateBundle() {
 			const leaks = new Set<string>();
