@@ -365,6 +365,45 @@ impl TestHome {
             .collect()
     }
 
+    /// The stdio probes' records: (the fd probed, the probe's pid, the pid that last used the
+    /// probed socket, the bytes the fake sent on it, the fake's exit status).
+    pub fn stdio_probes(&self) -> Vec<(String, String, String, String, String)> {
+        fs::read_to_string(self.path().join("fake.log"))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| l.strip_prefix("stdio-probe "))
+            .map(|rest| {
+                let f: Vec<String> = rest.split(' ').map(str::to_owned).collect();
+                (
+                    f[0].clone(),
+                    f[1].clone(),
+                    f[2].clone(),
+                    f[3].clone(),
+                    f[4].clone(),
+                )
+            })
+            .collect()
+    }
+
+    /// The lines of `fake.log` that start with `prefix`.
+    pub fn log_lines(&self, prefix: &str) -> Vec<String> {
+        fs::read_to_string(self.path().join("fake.log"))
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| l.starts_with(prefix))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// Whether `line` (e.g. `impostor-served`) starts a line of `fake.log`, and how often.
+    pub fn log_count(&self, prefix: &str) -> usize {
+        fs::read_to_string(self.path().join("fake.log"))
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| l.starts_with(prefix))
+            .count()
+    }
+
     /// Why each run that refused its inherited descriptors (fd hygiene) refused.
     pub fn fd_hygiene_refusals(&self) -> Vec<String> {
         fs::read_to_string(self.path().join("fake.log"))

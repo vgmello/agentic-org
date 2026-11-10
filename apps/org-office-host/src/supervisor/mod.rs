@@ -1061,6 +1061,48 @@ exec($ARGV[1]) or exit 8;
         );
     }
 
+    /// A server whose fd hygiene failed exits 78 at once, and the host's re-check of its token
+    /// fails, maybe while it is still exiting (not yet waitable). It is still reported as a
+    /// refusal of its launch descriptors, not as an untrusted server: the host kills it and waits
+    /// for it before it reads its exit status. The check here fails shortly after the server has
+    /// reached its last instruction, without waiting for it to become a zombie.
+    #[test]
+    fn a_server_that_refused_its_descriptors_before_the_recheck_is_reported_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let last = dir.path().join("last");
+        let program = script(
+            dir.path(),
+            "server",
+            &format!(
+                ": > '{}'\nexit {}",
+                last.display(),
+                org_office_launch::EXIT_LAUNCH_DESCRIPTORS_REFUSED
+            ),
+        );
+        let keys = Arc::new(MemoryKeys::default());
+        let check = scripted(move |step, _| match step {
+            Step::Admit => Ok(Some([1; 32])),
+            Step::Still => {
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while !last.exists() {
+                    assert!(Instant::now() < deadline, "the server didn't run");
+                    thread::sleep(Duration::from_millis(5));
+                }
+                // Past its last instruction but `exit` (a SIGKILL before it would change the
+                // status): it may or may not be waitable yet. Generous, so a loaded machine still
+                // lets the shell reach its `exit 78` before the kill.
+                thread::sleep(Duration::from_millis(500));
+                Err("no token".into())
+            }
+        });
+        let supervisor = checked_supervisor(dir.path(), program, &keys, check);
+        let err = supervisor.discard(OFFICE).unwrap_err();
+        assert!(
+            err.to_string().contains("refused its launch descriptors"),
+            "{err}"
+        );
+    }
+
     /// L3a: a child whose token changed between the admission and its first line (an exec) is
     /// refused at the re-check: it gets no line.
     #[test]

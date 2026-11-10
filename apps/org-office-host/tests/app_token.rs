@@ -15,7 +15,7 @@ use std::time::Duration;
 use org_office_host::Host;
 use org_office_launch::{write_host_message, CreateOffice, HostMessage, KeySocketId, StartOffice};
 use org_proto::{
-    Empty, ErrorCode, OfficeList, OfficeRole, OfficeStatus, OrganizationCreate,
+    Empty, ErrorCode, OfficeList, OfficeRole, OfficeStatus, OfficeStatusReason, OrganizationCreate,
     OrganizationCreateParams,
 };
 use serde_json::json;
@@ -210,7 +210,8 @@ fn a_server_whose_stdin_closes_before_its_first_line_exits_and_is_restarted() {
 }
 
 /// The contract's fd hygiene: a server whose stdin, stdout or stderr isn't a pipe refuses to
-/// start (`invalid_request`, fatal) and takes no key.
+/// start without a line (`EXIT_LAUNCH_DESCRIPTORS_REFUSED`), which the host reports as
+/// `storage_error`, retried; it takes no key.
 #[test]
 fn a_server_whose_stdio_isnt_three_pipes_refuses_to_start() {
     for (name, body) in [
@@ -221,9 +222,19 @@ fn a_server_whose_stdio_isnt_three_pipes_refuses_to_start() {
         home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
         let mut config = home.config();
         config.set_server_program(home.wrapper(name, body));
+        config.timings.backoff_initial = Duration::from_secs(30);
         let host = Host::start(config).unwrap();
-        wait_for(&host, A, OfficeStatus::Unavailable);
+        wait_for(&host, A, OfficeStatus::Offline);
+        let reason = Client::connect(host.socket_path())
+            .call::<OfficeList>(&Empty {})
+            .unwrap()
+            .offices
+            .into_iter()
+            .find(|o| o.id == A)
+            .and_then(|o| o.status_reason);
+        assert_eq!(reason, Some(OfficeStatusReason::StorageError), "{name}");
         assert_eq!(home.fd_hygiene_refusals().len(), 1, "{name}");
+        assert!(home.first_line_refusals(A).is_empty(), "{name}");
         assert!(home.token_fingerprints(A).is_empty(), "{name}");
         assert!(home.key_socket_modes(A).is_empty(), "{name}");
         host.shutdown();

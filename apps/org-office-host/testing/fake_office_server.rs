@@ -29,17 +29,52 @@
 //!   contract says. `none`: it never connects (it waits for stdin EOF, then exits 0). `twice`: it
 //!   opens two connections at once and reads the hand-off from the first, then records what the
 //!   second got. `helper`: it doesn't connect itself; a helper process (another pid, so another
-//!   peer) connects and records what it got, and the fake waits for stdin EOF.
+//!   peer) connects and records what it got, and the fake waits for stdin EOF. `impostor`:
+//!   another process replaces the key socket with its own and serves a forged line; the fake
+//!   connects to it, and must refuse it before reading anything (recorded as
+//!   `hand-off-peer-refused <key> <pid>`; the impostor records `impostor-accepted <pid>`).
+//!   Three more hold the connection the way the contract forbids, set up before the connect so
+//!   the host's peer-fd check sees them however fast it accepts: `dup` (a second close-on-exec
+//!   fd on it), `fork` (a forked child holds it too, until the fake exits) and `on_stderr` (the
+//!   connection is moved onto fd 2, its only fd). The host must refuse each before writing.
+//!   Otherwise its key connection is a socket it creates itself, close-on-exec, on one fd, that it
+//!   never duplicates, passes or holds across a fork or spawn, as the contract says.
+//! - `peer_check_delay_ms`: wait this long between connecting to the key socket and checking who
+//!   its peer is (the host must keep its end open until the fake closes its own).
 //!
-//! **Fd hygiene first** (the contract): before anything else, it requires fds 0, 1 and 2 to be
-//! pipes (else `invalid_request`, recorded as `fd-hygiene-refused <pid> <why>`), closes every
-//! other open fd, listed by the kernel (after recording them, `fds …`), and resets its thread's
-//! and its task's exception ports, `EXC_CRASH` included (recorded as `fd-hygiene <pid> <note>`).
+//! It also runs as `--early-resumer <args>`, for the tests: the pre-exec image of the attack the
+//! host's peer-fd check stops (`handoff`). Spawned (through a wrapper) as the server, it makes a
+//! socket without close-on-exec, forks a helper that keeps it, and turns itself into the genuine
+//! server (this fake, with `<args>`) with `posix_spawn(POSIX_SPAWN_SETEXEC |
+//! POSIX_SPAWN_START_SUSPENDED)`, that socket on fd 2 and the environment
+//! `OBJC_HELP=YES ORG_FAKE_STOP_AT_MAIN=1`. The helper waits for the key socket, stops the host
+//! (`SIGSTOP`), connects the socket to it and shuts down its sending side, then resumes the
+//! server: before `main`, libobjc writes its `OBJC_HELP` text to fd 2; the write fails (`EPIPE`)
+//! but makes the server the socket's last user, so the host would take the helper's connection
+//! for the server's. `ORG_FAKE_STOP_AT_MAIN` makes the server stop itself first thing in `main`
+//! (recorded first, `stopped-at-main <pid>`), standing in for the attacker stopping it right after
+//! that write (the real server would refuse
+//! fd 2 at its fd hygiene and exit). Once it has stopped, the helper resumes the host and records
+//! what its connection got: `early-resumer <key> <helper pid> <server pid> <bytes>`.
+//!
+//! It also runs as `--stdio-probe <1|2> <args>`, for the tests: it runs the fake with one end of a
+//! socket pair as fd 1 or 2, and records whether the fake touched it (`stdio-probe <fd> <probe
+//! pid> <the socket's last user> <bytes sent> <exit status>`).
+//!
+//! **Fd hygiene first** (the contract): before any other I/O on any descriptor, it `fstat`s fds
+//! 0, 1 and 2. If any isn't a pipe, or a later step fails, it does no I/O on any inherited fd,
+//! writes no line, records `fd-hygiene-refused <pid> <why>` in `fake.log` and exits with
+//! `EXIT_LAUNCH_DESCRIPTORS_REFUSED` (78). Otherwise it closes every other open fd, listed by the
+//! kernel (after recording them, `fds …`), and resets its thread's and its task's exception
+//! ports, `EXC_CRASH` included (recorded as `fd-hygiene <pid> <note>`).
 //!
 //! **The key hand-off:** right after its first line, before anything else, it builds its key
 //! socket's path from its own office home and the line's `key_socket_id` (`key_socket_path`),
 //! `lstat`s it (a socket, owned by its uid, 0600, not a symlink; otherwise `invalid_request`),
-//! connects, and reads the hand-off line with `read_hand_off`. EOF before the line means the host
+//! connects, checks right away who is at the other end (the debug rule: the connection's peer,
+//! `LOCAL_PEERPID`, must be its parent, the host, running as its user; otherwise
+//! `invalid_request`, and nothing from the connection is used), and reads the hand-off line with
+//! `read_hand_off`. EOF before the line means the host
 //! closed it: it exits 0. A failed connect or read is `storage_error`.
 //!
 //! Its first stdin line must match its flag, as the contract says: a `create` message with
@@ -75,6 +110,7 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -85,7 +121,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use org_office_launch::{
     key_socket_path, office_dir, read_hand_off, read_host_message, write_server_event, FailCode,
     FirstLine, HandOff, HostMessage, KeySocketId, OfficeFile, ServerEvent, CREATE_FLAG,
-    DISCARD_FLAG, OFFICE_FILE_NAME, OFFICE_FLAG, OFFICE_LOCK_FILE_NAME, OFFICE_LOCK_WAIT,
+    DISCARD_FLAG, EXIT_LAUNCH_DESCRIPTORS_REFUSED, OFFICE_FILE_NAME, OFFICE_FLAG,
+    OFFICE_LOCK_FILE_NAME, OFFICE_LOCK_WAIT,
 };
 use org_proto::frame;
 use org_proto::location::{office_socket_path, OFFICE_HOME_ENV};
@@ -104,6 +141,18 @@ const CRASH: i32 = 3;
 /// The fake's own argument for its `hand_off: helper` process: `--key-helper <key> <path>`.
 const KEY_HELPER_FLAG: &str = "--key-helper";
 
+/// The fake's own argument for its `hand_off: impostor` process: `--impostor <path>`.
+const IMPOSTOR_FLAG: &str = "--impostor";
+
+/// The fake's own argument for the tests' stdio probe: `--stdio-probe <1|2> <the fake's args>`.
+const STDIO_PROBE_FLAG: &str = "--stdio-probe";
+
+/// The fake's own argument for the early resumer: `--early-resumer <the fake's args>`.
+const EARLY_RESUMER_FLAG: &str = "--early-resumer";
+
+/// Set (by the early resumer only): the fake stops itself first thing in `main`.
+const STOP_AT_MAIN_ENV: &str = "ORG_FAKE_STOP_AT_MAIN";
+
 /// How long a connection to the key socket may take to connect and answer.
 const HAND_OFF_WAIT: Duration = Duration::from_secs(5);
 
@@ -120,22 +169,51 @@ struct Step {
     orphan_stdout_ms: Option<u64>,
     ready_delay: Duration,
     hand_off: String,
+    peer_check_delay: Duration,
 }
 
 fn main() {
-    // First, before this process opens anything: what it inherited beyond stdin, stdout and
-    // stderr (the host must give it nothing else).
+    // The early resumer's server, before anything else: stops, as if the attacker had stopped it
+    // right after its runtime's pre-`main` write to fd 2 (see the module docs). Reading the
+    // environment is no I/O on any descriptor.
+    if std::env::var_os(STOP_AT_MAIN_ENV).is_some() {
+        if let Some(home) = std::env::var_os(OFFICE_HOME_ENV) {
+            // A file this process opens itself; the helper waits for this line.
+            record(
+                Path::new(&home),
+                &format!("stopped-at-main {}", std::process::id()),
+            );
+        }
+        // SAFETY: stops this process until it gets a SIGCONT; nothing else.
+        unsafe { libc::raise(libc::SIGSTOP) };
+    }
+    // The contract's first act, before any other I/O on any descriptor: are 0, 1 and 2 pipes?
+    // (`fstat` only.)
+    let pipes = stdio_pipes();
+    // Then what it inherited beyond them (the host must give it nothing else): `fcntl` only.
     let inherited = inherited_fds();
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let helper = matches!(args.as_slice(), [flag, _, _] if flag == KEY_HELPER_FLAG);
-    // The contract's first act, before any thread (the helper isn't a server).
-    let hygiene = if helper { Ok(Vec::new()) } else { fd_hygiene() };
-    let home = match std::env::var_os(OFFICE_HOME_ENV) {
-        Some(home) if Path::new(&home).is_absolute() => PathBuf::from(home),
-        _ => exit(2),
-    };
-    if let [flag, key, path] = args.as_slice() {
-        if flag == KEY_HELPER_FLAG {
+    let home = std::env::var_os(OFFICE_HOME_ENV)
+        .map(PathBuf::from)
+        .filter(|home| home.is_absolute());
+    let helper = matches!(
+        args.first().map(String::as_str),
+        Some(KEY_HELPER_FLAG | IMPOSTOR_FLAG | STDIO_PROBE_FLAG | EARLY_RESUMER_FLAG)
+    );
+    // A server refuses descriptors that aren't three pipes before anything else, its office home
+    // included (only the record needs it).
+    if !helper && pipes != [true; 3] {
+        let why: Vec<&str> = ["stdin-not-a-pipe", "stdout-not-a-pipe", "stderr-not-a-pipe"]
+            .into_iter()
+            .zip(pipes)
+            .filter_map(|(why, pipe)| (!pipe).then_some(why))
+            .collect();
+        refuse_descriptors(home.as_deref(), &why.join(","));
+    }
+    let Some(home) = home else { exit(2) };
+    // The fake's own helper processes, which aren't servers.
+    match args.as_slice() {
+        [flag, key, path] if flag == KEY_HELPER_FLAG => {
             let got = other_connection(Path::new(path));
             record(
                 &home,
@@ -143,20 +221,18 @@ fn main() {
             );
             exit(0);
         }
+        [flag, path] if flag == IMPOSTOR_FLAG => impostor(&home, Path::new(path)),
+        [flag, which, rest @ ..] if flag == STDIO_PROBE_FLAG => stdio_probe(&home, which, rest),
+        [flag, rest @ ..] if flag == EARLY_RESUMER_FLAG => early_resumer(&home, rest),
+        _ => {}
     }
-    match hygiene {
+    match fd_hygiene() {
         Ok(notes) => {
             for note in notes {
                 record(&home, &format!("fd-hygiene {} {note}", std::process::id()));
             }
         }
-        Err(why) => {
-            record(
-                &home,
-                &format!("fd-hygiene-refused {} {why}", std::process::id()),
-            );
-            fail(FailCode::InvalidRequest);
-        }
+        Err(why) => refuse_descriptors(Some(&home), why),
     }
     let (office_id, discard) = match args.as_slice() {
         [flag] if flag == CREATE_FLAG => (None, false),
@@ -383,16 +459,6 @@ fn has_hex_run(value: &std::ffi::OsStr) -> bool {
 /// exception port can be handed its task. Returns notes to record (one word each), or why it
 /// refused.
 fn fd_hygiene() -> Result<Vec<&'static str>, &'static str> {
-    for fd in 0..3 {
-        // SAFETY: an all-zero `stat` is a valid out-value; fstat writes at most its size.
-        let mut st: libc::stat = unsafe { std::mem::zeroed() };
-        // SAFETY: fstat on an fd number, with a valid out-pointer; fails harmlessly if closed.
-        if unsafe { libc::fstat(fd, &mut st) } != 0 || st.st_mode & libc::S_IFMT != libc::S_IFIFO {
-            return Err(
-                ["stdin-not-a-pipe", "stdout-not-a-pipe", "stderr-not-a-pipe"][fd as usize],
-            );
-        }
-    }
     for fd in open_fds().ok_or("open-fds-not-listed")? {
         if fd > 2 {
             // SAFETY: closes an inherited fd; nothing of this process uses it yet.
@@ -527,6 +593,139 @@ fn open_fds() -> Option<Vec<i32>> {
     }
 }
 
+/// Whether fds 0, 1 and 2 are pipes, by `fstat` alone: no read, write or other call that would
+/// make this process the last user of a socket handed to it there.
+fn stdio_pipes() -> [bool; 3] {
+    [0, 1, 2].map(|fd| {
+        // SAFETY: an all-zero `stat` is a valid out-value; fstat writes at most its size.
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        // SAFETY: fstat on an fd number, with a valid out-pointer; fails harmlessly if closed.
+        let ok = unsafe { libc::fstat(fd, &mut st) } == 0;
+        ok && st.st_mode & libc::S_IFMT == libc::S_IFIFO
+    })
+}
+
+/// The contract's answer to a failed fd hygiene (an fd 0, 1 or 2 that isn't a pipe, or a later
+/// step that failed): no I/O at all on any inherited fd, no `failed` line, just
+/// `_exit(EXIT_LAUNCH_DESCRIPTORS_REFUSED)`. The host learns why from the exit status alone. (The
+/// record goes to `fake.log`, a file this process opens itself.)
+fn refuse_descriptors(home: Option<&Path>, why: &str) -> ! {
+    if let Some(home) = home {
+        record(
+            home,
+            &format!("fd-hygiene-refused {} {why}", std::process::id()),
+        );
+    }
+    // SAFETY: ends the process at once, writing nothing anywhere else and flushing nothing.
+    unsafe { libc::_exit(EXIT_LAUNCH_DESCRIPTORS_REFUSED) }
+}
+
+/// The fake's `hand_off: impostor` process: a same-user process that replaces the key socket
+/// with its own (0600, like the host's) and serves a forged hand-off line to whoever connects.
+fn impostor(home: &Path, path: &Path) -> ! {
+    let _ = fs::remove_file(path);
+    let Ok(listener) = UnixListener::bind(path) else {
+        exit(1)
+    };
+    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+    // Ready: the fake waits for this byte before it connects.
+    let _ = io::stdout().write_all(b"r");
+    let _ = io::stdout().flush();
+    if let Ok((mut stream, _)) = listener.accept() {
+        // Recorded before anything is written, so a test can tell it was reached even when the
+        // fake refused (and closed) before reading.
+        record(home, &format!("impostor-accepted {}", std::process::id()));
+        let token = AppToken::from_bytes([0x42; 32]);
+        let key = DbKey::from_bytes([0x42; 32]);
+        if org_office_launch::write_hand_off(&mut stream, &token, Some(&key)).is_ok() {
+            record(home, &format!("impostor-served {}", std::process::id()));
+        }
+        // Written: the fake checks its peer only now, so it is sure to find the line waiting.
+        let _ = io::stdout().write_all(b"w");
+        let _ = io::stdout().flush();
+        // Kept open until the fake closes its end.
+        let mut sink = [0u8; 1];
+        let _ = stream.read(&mut sink);
+    }
+    let _ = fs::remove_file(path);
+    exit(0);
+}
+
+/// The fake's stdio probe, for the tests: runs the fake (`rest`) with a socket of a socket pair
+/// in place of fd `which` (1 or 2), keeps the other end, and after the fake exits records whether
+/// the fake touched the socket: `stdio-probe <which> <probe pid> <the socket's last user's pid>
+/// <bytes the fake sent>`. A fake that never touched it leaves the probe as the last user.
+fn stdio_probe(home: &Path, which: &str, rest: &[String]) -> ! {
+    if which != "1" && which != "2" {
+        eprintln!("--stdio-probe takes 1 or 2");
+        exit(2);
+    }
+    let Ok((given, kept)) = UnixStream::pair() else {
+        exit(1)
+    };
+    let Ok(exe) = std::env::current_exe() else {
+        exit(1)
+    };
+    let mut fake = std::process::Command::new(exe);
+    fake.args(rest);
+    let given = std::process::Stdio::from(std::os::fd::OwnedFd::from(given));
+    if which == "1" {
+        fake.stdout(given);
+    } else {
+        fake.stderr(given);
+    }
+    let status = fake.status();
+    let code = status.ok().and_then(|s| s.code()).unwrap_or(-1);
+    let last = peer_pid(&kept).map_or_else(|| "unknown".to_owned(), |pid| pid.to_string());
+    let mut waiting: libc::c_int = 0;
+    // SAFETY: a valid socket fd, and an out-value of the size FIONREAD writes.
+    let sent = if unsafe { libc::ioctl(kept.as_raw_fd(), libc::FIONREAD, &mut waiting) } == 0 {
+        waiting.to_string()
+    } else {
+        "unknown".to_owned()
+    };
+    record(
+        home,
+        &format!(
+            "stdio-probe {which} {} {last} {sent} {code}",
+            std::process::id()
+        ),
+    );
+    // The fake's own status, so the host sees what the fake meant.
+    exit(code);
+}
+
+/// The pid that last used the peer end of `stream` (`LOCAL_PEERPID`).
+fn peer_pid(stream: &UnixStream) -> Option<u32> {
+    let mut pid: libc::pid_t = 0;
+    let mut len = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
+    // SAFETY: a valid socket fd, and an out-value of `len` bytes that outlives the call.
+    let rc = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_LOCAL,
+            libc::LOCAL_PEERPID,
+            (&mut pid as *mut libc::pid_t).cast(),
+            &mut len,
+        )
+    };
+    (rc == 0).then(|| u32::try_from(pid).ok()).flatten()
+}
+
+/// The debug rule for the host end of the hand-off: the peer of the connection is this process's
+/// parent (the host spawned it), running as this user. (A release server checks the peer's code
+/// against the host's signing requirement instead.)
+fn host_is_peer(stream: &UnixStream) -> bool {
+    // SAFETY: getppid has no preconditions and can't fail.
+    let parent = u32::try_from(unsafe { libc::getppid() }).ok();
+    let (mut uid, mut gid) = (0, 0);
+    // SAFETY: a valid socket fd and two valid out-pointers.
+    let same_user = unsafe { libc::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) } == 0
+        // SAFETY: geteuid has no preconditions and can't fail.
+        && uid == unsafe { libc::geteuid() };
+    parent.is_some() && peer_pid(stream) == parent && same_user
+}
+
 /// The open fds from 3 to 255, comma-separated (`-` for none).
 fn inherited_fds() -> String {
     let open: Vec<String> = (3..256)
@@ -610,6 +809,7 @@ fn take_hand_off(
     if !meta.file_type().is_socket() || !ours || meta.permissions().mode() & 0o777 != 0o600 {
         fail(FailCode::InvalidRequest);
     }
+    let mut impostor: Option<std::process::ChildStdout> = None;
     match step.hand_off.as_str() {
         "none" => {
             record(home, &format!("no-connect {key} {pid}"));
@@ -631,9 +831,63 @@ fn take_hand_off(
             wait_for_eof(step, home, key, stdin);
             exit(0);
         }
+        "impostor" => {
+            // Another process replaces the socket before the fake connects; waits until it has.
+            let spawned = std::process::Command::new(
+                std::env::current_exe().unwrap_or_else(|_| fail(FailCode::StorageError)),
+            )
+            .arg(IMPOSTOR_FLAG)
+            .arg(&path)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+            let mut ready = [0u8; 1];
+            let mut out = spawned
+                .ok()
+                .and_then(|mut child| child.stdout.take())
+                .unwrap_or_else(|| fail(FailCode::StorageError));
+            if out.read_exact(&mut ready).is_err() {
+                fail(FailCode::StorageError);
+            }
+            impostor = Some(out);
+        }
         _ => {}
     }
-    let stream = connect(&path);
+    let stream = match step.hand_off.as_str() {
+        how @ ("dup" | "fork" | "on_stderr") => connect_held_badly(&path, how),
+        _ => connect(&path),
+    };
+    if let Some(mut out) = impostor {
+        // For the test: the impostor has written its line before this process checks its peer.
+        let mut written = [0u8; 1];
+        if out.read_exact(&mut written).is_err() {
+            fail(FailCode::StorageError);
+        }
+    }
+    // A server descheduled before its check, for the tests: the host must still be there.
+    thread::sleep(step.peer_check_delay);
+    // Who is at the other end, checked right after the connect, before a byte is read: a
+    // same-user process could have replaced the socket (`lstat` guards only against other users).
+    // The host keeps its end open until this process closes its own, so it can still be asked.
+    if !host_is_peer(&stream) {
+        // Refused before a byte is read: nothing from this connection is used. Recorded with the
+        // bytes still waiting on it, unread (`FIONREAD`).
+        let mut waiting: libc::c_int = 0;
+        // SAFETY: a valid socket fd, and an out-value of the size FIONREAD writes.
+        let rc = unsafe { libc::ioctl(stream.as_raw_fd(), libc::FIONREAD, &mut waiting) };
+        let waiting = if rc == 0 {
+            waiting.to_string()
+        } else {
+            "unknown".to_owned()
+        };
+        drop(stream);
+        record(
+            home,
+            &format!("hand-off-peer-refused {key} {pid} {waiting}"),
+        );
+        fail(FailCode::InvalidRequest);
+    }
     let second = (step.hand_off == "twice").then(|| UnixStream::connect(&path));
     let hand_off = read_hand_off(&mut BufReader::new(&stream), first);
     drop(stream);
@@ -657,11 +911,296 @@ fn take_hand_off(
 /// A connection to the key socket, with the contract's deadline on its reads.
 fn connect(path: &Path) -> UnixStream {
     let stream = UnixStream::connect(path).unwrap_or_else(|_| fail(FailCode::StorageError));
-    // macOS refuses (EINVAL) a timeout on a socket whose peer already closed, which the host
-    // does as soon as it has written the line: then the line is already here, and the read
-    // can't block.
+    // macOS refuses (EINVAL) a timeout on a socket whose peer has already closed. The host keeps
+    // its end open until this process closes its own, so that shouldn't happen here; if it does,
+    // the peer check that follows fails closed.
     let _ = stream.set_read_timeout(Some(HAND_OFF_WAIT));
     stream
+}
+
+/// A connection to the key socket held the way the contract forbids (`how`: `dup`, `fork` or
+/// `on_stderr`, see the module docs), arranged before the connect.
+fn connect_held_badly(path: &Path, how: &str) -> UnixStream {
+    use std::os::fd::FromRawFd;
+    // SAFETY: plain socket creation; checked before use.
+    let fd = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0) };
+    // SAFETY: sets only the close-on-exec flag of the fd just made.
+    if fd < 0 || unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) } != 0 {
+        fail(FailCode::StorageError);
+    }
+    let fd = match how {
+        "dup" => {
+            // SAFETY: duplicates the fd just made; the copy stays open until the fake exits.
+            if unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 0) } < 0 {
+                fail(FailCode::StorageError);
+            }
+            fd
+        }
+        "fork" => {
+            hold_in_a_forked_child(fd);
+            fd
+        }
+        _ => {
+            // SAFETY: moves the socket onto fd 2 (`dup2` leaves it without close-on-exec) and
+            // closes the original, so fd 2 is its only fd.
+            unsafe {
+                if libc::dup2(fd, 2) != 2 {
+                    fail(FailCode::StorageError);
+                }
+                libc::close(fd);
+            }
+            2
+        }
+    };
+    if connect_fd(fd, path).is_err() {
+        fail(FailCode::StorageError);
+    }
+    // SAFETY: a connected socket this process owns, handed over whole.
+    let stream = unsafe { UnixStream::from_raw_fd(fd) };
+    let _ = stream.set_read_timeout(Some(HAND_OFF_WAIT));
+    stream
+}
+
+/// Forks a child that holds `fd` (and nothing else of the fake's) until the fake exits.
+fn hold_in_a_forked_child(fd: i32) {
+    let mut ends = [0; 2];
+    // SAFETY: an out-array of two fds.
+    if unsafe { libc::pipe(ends.as_mut_ptr()) } != 0 {
+        fail(FailCode::StorageError);
+    }
+    // SAFETY: the fake is single-threaded here; the child only closes fds, reads and exits.
+    match unsafe { libc::fork() } {
+        0 => {
+            // SAFETY: async-signal-safe calls only; `_exit` never returns.
+            unsafe {
+                for other in 0..1024 {
+                    if other != fd && other != ends[0] {
+                        libc::close(other);
+                    }
+                }
+                let mut byte = 0u8;
+                // EOF once the fake (the pipe's only writer) is gone.
+                while libc::read(ends[0], (&mut byte as *mut u8).cast(), 1) > 0 {}
+                libc::_exit(0)
+            }
+        }
+        -1 => fail(FailCode::StorageError),
+        _ => {
+            // SAFETY: closes our copy of the read end; the write end stays open (close-on-exec)
+            // until the fake exits.
+            unsafe {
+                libc::close(ends[0]);
+                libc::fcntl(ends[1], libc::F_SETFD, libc::FD_CLOEXEC);
+            }
+        }
+    }
+}
+
+/// `connect(2)` of socket `fd` to `path`.
+fn connect_fd(fd: i32, path: &Path) -> io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    // SAFETY: an all-zero `sockaddr_un` is a valid value.
+    let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    let bytes = path.as_os_str().as_bytes();
+    if bytes.len() >= addr.sun_path.len() {
+        return Err(io::Error::other("path too long"));
+    }
+    for (slot, &b) in addr.sun_path.iter_mut().zip(bytes) {
+        *slot = b as libc::c_char;
+    }
+    addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
+    let len = std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t;
+    addr.sun_len = len as u8;
+    // SAFETY: a valid `sockaddr_un` of `len` bytes that outlives the call.
+    if unsafe { libc::connect(fd, (&addr as *const libc::sockaddr_un).cast(), len) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+/// The early resumer (`--early-resumer <args>`): see the module docs. Runs as the pre-exec image
+/// the host spawned and resumed; never returns.
+fn early_resumer(home: &Path, args: &[String]) -> ! {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    let key = match args {
+        [_, id] => id.clone(),
+        _ => "create".to_owned(),
+    };
+    // SAFETY: getppid has no preconditions: the host, which spawned this process.
+    let host = unsafe { libc::getppid() };
+    // SAFETY: ignored across the exec too (no POSIX_SPAWN_SETSIGDEF below), so the server's
+    // failed pre-`main` write to fd 2 doesn't kill it.
+    unsafe { libc::signal(libc::SIGPIPE, libc::SIG_IGN) };
+    // The socket the helper keeps, and the server will have on fd 2: no close-on-exec.
+    // SAFETY: plain socket creation; checked.
+    let socket = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0) };
+    // Its write end closes when this process execs: the helper's signal that it has.
+    let mut execed = [0; 2];
+    // SAFETY: an out-array of two fds; then sets only their close-on-exec flags.
+    let piped = unsafe {
+        libc::pipe(execed.as_mut_ptr()) == 0
+            && libc::fcntl(execed[0], libc::F_SETFD, libc::FD_CLOEXEC) == 0
+            && libc::fcntl(execed[1], libc::F_SETFD, libc::FD_CLOEXEC) == 0
+    };
+    if socket < 0 || !piped {
+        exit(1);
+    }
+    // SAFETY: this process is single-threaded; the child runs ordinary code, then exits.
+    match unsafe { libc::fork() } {
+        0 => {
+            // SAFETY: closes the helper's copy of the write end.
+            unsafe { libc::close(execed[1]) };
+            early_resumer_helper(home, &key, host, socket, execed[0])
+        }
+        -1 => exit(1),
+        _ => {}
+    }
+    let Ok(exe) = std::env::current_exe() else {
+        exit(1)
+    };
+    let c = |bytes: &[u8]| CString::new(bytes).unwrap_or_else(|_| exit(1));
+    let program = c(exe.as_os_str().as_bytes());
+    let mut argv_c = vec![program.clone()];
+    argv_c.extend(args.iter().map(|arg| c(arg.as_bytes())));
+    let mut home_pair = format!("{OFFICE_HOME_ENV}=").into_bytes();
+    home_pair.extend_from_slice(home.as_os_str().as_bytes());
+    let env_c = [
+        home_pair,
+        b"OBJC_HELP=YES".to_vec(),
+        format!("{STOP_AT_MAIN_ENV}=1").into_bytes(),
+    ]
+    .map(|pair| c(&pair));
+    let mut argv: Vec<*mut libc::c_char> = argv_c.iter().map(|s| s.as_ptr().cast_mut()).collect();
+    argv.push(std::ptr::null_mut());
+    let mut envp: Vec<*mut libc::c_char> = env_c.iter().map(|s| s.as_ptr().cast_mut()).collect();
+    envp.push(std::ptr::null_mut());
+    let mut actions: libc::posix_spawn_file_actions_t = std::ptr::null_mut();
+    let mut attr: libc::posix_spawnattr_t = std::ptr::null_mut();
+    // SAFETY: initialized before use; on success the exec replaces this process, so nothing here
+    // is used again; the pointers outlive the call.
+    let rc = unsafe {
+        libc::posix_spawn_file_actions_init(&mut actions);
+        libc::posix_spawnattr_init(&mut attr);
+        libc::posix_spawn_file_actions_adddup2(&mut actions, socket, 2);
+        libc::posix_spawn_file_actions_addclose(&mut actions, socket);
+        let flags = libc::POSIX_SPAWN_SETEXEC | libc::POSIX_SPAWN_START_SUSPENDED;
+        libc::posix_spawnattr_setflags(&mut attr, flags as libc::c_short);
+        let mut pid = 0;
+        libc::posix_spawn(
+            &mut pid,
+            program.as_ptr(),
+            &actions,
+            &attr,
+            argv.as_ptr(),
+            envp.as_ptr(),
+        )
+    };
+    record(home, &format!("early-resumer-exec-failed {key} {rc}"));
+    exit(1);
+}
+
+/// The early resumer's helper: see the module docs. `socket` is the server's fd 2; `execed`
+/// reads EOF once the server image is in place.
+fn early_resumer_helper(home: &Path, key: &str, host: libc::pid_t, socket: i32, execed: i32) -> ! {
+    use std::os::fd::FromRawFd;
+    // Off the host's pipes, so a server's exit is seen as soon as it happens.
+    if let Ok(null) = File::open("/dev/null") {
+        for fd in 0..=2 {
+            // SAFETY: points 0-2 at /dev/null; `null` stays open for the call.
+            unsafe { libc::dup2(null.as_raw_fd(), fd) };
+        }
+    }
+    // SAFETY: getppid has no preconditions: the server's pid (an exec keeps it).
+    let server = unsafe { libc::getppid() };
+    let mut byte = 0u8;
+    // SAFETY: reads into a valid one-byte buffer until EOF.
+    while unsafe { libc::read(execed, (&mut byte as *mut u8).cast(), 1) } > 0 {}
+    let run = home.join("run");
+    let deadline = Instant::now() + HAND_OFF_WAIT;
+    let key_socket = loop {
+        let found = fs::read_dir(&run).ok().and_then(|entries| {
+            entries.flatten().map(|e| e.path()).find(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("k-") && n.ends_with(".sock"))
+            })
+        });
+        if let Some(path) = found {
+            break path;
+        }
+        if Instant::now() > deadline {
+            record(home, &format!("early-resumer-no-key-socket {key}"));
+            exit(1);
+        }
+        thread::sleep(Duration::from_millis(1));
+    };
+    /// Resumes the host however the helper ends.
+    struct Resume(libc::pid_t);
+    impl Drop for Resume {
+        fn drop(&mut self) {
+            // SAFETY: signals the host; harmless if it is gone.
+            unsafe { libc::kill(self.0, libc::SIGCONT) };
+        }
+    }
+    // SAFETY: stops the host (same user) so it can't accept before the server's write.
+    unsafe { libc::kill(host, libc::SIGSTOP) };
+    let resume = Resume(host);
+    // SAFETY: shuts down the sending side of the socket the server and the helper share.
+    let ready = connect_fd(socket, &key_socket).is_ok()
+        && unsafe { libc::shutdown(socket, libc::SHUT_WR) } == 0;
+    if ready {
+        // SAFETY: resumes the server, suspended since its exec.
+        unsafe { libc::kill(server, libc::SIGCONT) };
+        // Until it has stopped in `main`: suspended since its exec, it looked stopped before.
+        let marker = format!("stopped-at-main {server}");
+        let deadline = Instant::now() + HAND_OFF_WAIT;
+        while Instant::now() < deadline
+            && !(stopped(server)
+                && fs::read_to_string(home.join("fake.log"))
+                    .is_ok_and(|log| log.lines().any(|line| line == marker)))
+        {
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+    drop(resume);
+    // Leaves the socket alone while the host decides (it accepts within milliseconds of
+    // resuming): a read, and even a `poll` or `select`, would make the helper its last user.
+    thread::sleep(Duration::from_secs(1));
+    // SAFETY: a socket this process owns, handed over whole.
+    let got = read_to_end_count(unsafe { UnixStream::from_raw_fd(socket) });
+    record(
+        home,
+        &format!(
+            "early-resumer {key} {} {server} {}",
+            std::process::id(),
+            if ready {
+                got
+            } else {
+                "connect-failed".to_owned()
+            }
+        ),
+    );
+    exit(0);
+}
+
+/// Whether process `pid` is stopped (`SSTOP`).
+fn stopped(pid: libc::pid_t) -> bool {
+    // SAFETY: an all-zero `proc_bsdinfo` is a valid value.
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    // SAFETY: a buffer of exactly `size` bytes that outlives the call.
+    let n = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            (&mut info as *mut libc::proc_bsdinfo).cast(),
+            size,
+        )
+    };
+    n == size && info.pbi_status == libc::SSTOP
 }
 
 /// What a connection that isn't the server's own got: the number of bytes until EOF (the bytes
@@ -978,6 +1517,12 @@ fn step(home: &Path, key: &str, run: u64) -> Step {
                 .unwrap_or(0),
         ),
         hand_off: text("hand_off", "connect"),
+        peer_check_delay: Duration::from_millis(
+            entry
+                .get("peer_check_delay_ms")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+        ),
     }
 }
 

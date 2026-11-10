@@ -13,7 +13,8 @@ use std::time::{Duration, Instant};
 
 use org_office_launch::{
     read_server_event, write_host_message, CreateOffice, DiscardOffice, HostMessage, KeySocketId,
-    ServerEvent, StartOffice, CREATE_FLAG, DISCARD_FLAG, OFFICE_FLAG,
+    ServerEvent, StartOffice, CREATE_FLAG, DISCARD_FLAG, EXIT_LAUNCH_DESCRIPTORS_REFUSED,
+    OFFICE_FLAG,
 };
 use org_proto::location::OFFICE_HOME_ENV;
 use org_proto::{AppToken, DbKey, OfficeRole, APP_TOKEN_BYTES, DB_KEY_BYTES};
@@ -80,6 +81,13 @@ pub(crate) enum SpawnError {
     /// that isn't the admitted server, or an error): it was killed and reaped, and got nothing
     /// (`handoff`).
     HandOff(String),
+    /// Its key was delivered, then the hand-off failed (it sent bytes on the key socket, or
+    /// didn't close it in time): it was killed and reaped.
+    AfterHandOff(String),
+    /// It exited before taking its key with
+    /// [`EXIT_LAUNCH_DESCRIPTORS_REFUSED`]:
+    /// its fd hygiene refused the descriptors it was started with. It got nothing.
+    DescriptorsRefused,
 }
 
 impl std::fmt::Display for SpawnError {
@@ -88,6 +96,10 @@ impl std::fmt::Display for SpawnError {
             SpawnError::Io(e) => write!(f, "{e}"),
             SpawnError::Untrusted(why) => write!(f, "refused to start it: {why}"),
             SpawnError::HandOff(why) => write!(f, "its key hand-off failed: {why}"),
+            SpawnError::AfterHandOff(why) => {
+                write!(f, "its key was delivered, then its hand-off failed: {why}")
+            }
+            SpawnError::DescriptorsRefused => f.write_str("it refused its launch descriptors"),
         }
     }
 }
@@ -102,7 +114,10 @@ impl From<SpawnError> for io::Error {
     fn from(e: SpawnError) -> Self {
         match e {
             SpawnError::Io(e) => e,
-            SpawnError::Untrusted(_) | SpawnError::HandOff(_) => io::Error::other(e.to_string()),
+            SpawnError::Untrusted(_)
+            | SpawnError::HandOff(_)
+            | SpawnError::AfterHandOff(_)
+            | SpawnError::DescriptorsRefused => io::Error::other(e.to_string()),
         }
     }
 }
@@ -322,10 +337,19 @@ impl Spawner {
 
         // Still the image that was checked (no exec since), right before the line.
         if let Err(why) = self.check.still(pid, admitted) {
+            // Killed and reaped first (a blocking reap; SIGKILL doesn't change the status of a
+            // process already exiting): a server whose fd hygiene failed exits at once, and its
+            // token can't be taken from what is left of it, but its exit status says why.
+            running.kill();
+            if running.refused_descriptors() {
+                return Err(descriptors_refused(
+                    pid,
+                    Some(&format!("the re-check had also failed: {why}")),
+                ));
+            }
             host_log::log(&format!(
                 "refused office server {pid}: {why}; it was stopped and got nothing"
             ));
-            running.kill();
             return Err(SpawnError::Untrusted(why));
         }
         // Only now, with the image admitted and unchanged, does its key socket exist: nothing
@@ -337,10 +361,13 @@ impl Spawner {
             Ok(key_socket) => key_socket,
             Err(e) => {
                 let why = format!("couldn't make its key socket: {e}");
+                running.kill();
+                if running.refused_descriptors() {
+                    return Err(descriptors_refused(pid, Some(&format!("also, {why}"))));
+                }
                 host_log::log(&format!(
                     "office server {pid}: {why}; it was stopped and got nothing"
                 ));
-                running.kill();
                 return Err(SpawnError::HandOff(why));
             }
         };
@@ -355,6 +382,9 @@ impl Spawner {
         );
         match handed {
             Ok(HandOff::Sent) => Ok(running),
+            Ok(HandOff::Exited) if running.exit_code() == Some(EXIT_LAUNCH_DESCRIPTORS_REFUSED) => {
+                Err(descriptors_refused(pid, None))
+            }
             Ok(HandOff::Exited) => {
                 host_log::log(&format!(
                     "office server {pid} exited before its hand-off on key socket \
@@ -362,19 +392,57 @@ impl Spawner {
                 ));
                 Ok(running)
             }
-            Err(why) => {
-                host_log::log(&format!(
-                    "office server {pid}, key socket {key_socket_id}: {why}; it was stopped and \
-                     got nothing"
-                ));
+            Err(failed) => {
                 running.kill();
-                Err(SpawnError::HandOff(why))
+                if !failed.delivered && running.refused_descriptors() {
+                    return Err(descriptors_refused(
+                        pid,
+                        Some(&format!(
+                            "its hand-off on key socket {key_socket_id} had also failed: {}",
+                            failed.why
+                        )),
+                    ));
+                }
+                let why = failed.why;
+                if failed.delivered {
+                    host_log::log(&format!(
+                        "office server {pid}, key socket {key_socket_id}: the key was \
+                         delivered, then {why}; it was stopped"
+                    ));
+                    Err(SpawnError::AfterHandOff(why))
+                } else {
+                    host_log::log(&format!(
+                        "office server {pid}, key socket {key_socket_id}: {why}; it was stopped \
+                         and got nothing"
+                    ));
+                    Err(SpawnError::HandOff(why))
+                }
             }
         }
     }
 }
 
+/// Logs a server that exited with [`EXIT_LAUNCH_DESCRIPTORS_REFUSED`] before its hand-off, and
+/// says so. `also` is a check that failed on it too (the re-check, the key socket, the hand-off),
+/// logged with it: an early resumer can't hide a detected exec or a refused peer behind exit 78.
+/// The classification stays [`SpawnError::DescriptorsRefused`].
+fn descriptors_refused(pid: u32, also: Option<&str>) -> SpawnError {
+    let also = also.map(|why| format!("; {why}")).unwrap_or_default();
+    host_log::log(&format!(
+        "office server {pid} refused its launch descriptors (exit \
+         {EXIT_LAUNCH_DESCRIPTORS_REFUSED}) before its hand-off{also}; it got nothing"
+    ));
+    SpawnError::DescriptorsRefused
+}
+
 impl RunningChild {
+    /// Whether it exited with [`EXIT_LAUNCH_DESCRIPTORS_REFUSED`]. Ask only once it is reaped
+    /// (after [`RunningChild::kill`], which waits for it): a process still exiting isn't
+    /// waitable yet.
+    fn refused_descriptors(&self) -> bool {
+        self.exit_code() == Some(EXIT_LAUNCH_DESCRIPTORS_REFUSED)
+    }
+
     /// The first line on a new server's control pipe, the one place that writes it: `--create`
     /// gets the create message, `--office` the start message, `--discard` the discard message,
     /// each naming the spawn's key socket. It holds no secret.
@@ -409,6 +477,11 @@ impl RunningChild {
     #[cfg(test)]
     pub(crate) fn pid(&self) -> u32 {
         self.process.id()
+    }
+
+    /// Its exit code, if it has exited normally and was reaped here.
+    fn exit_code(&self) -> Option<i32> {
+        self.process.exit_code()
     }
 
     /// Whether the process has exited (it is reaped if so). Doesn't wait.

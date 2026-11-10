@@ -53,11 +53,18 @@ pub(crate) struct Spawned {
 pub(crate) struct Process {
     pid: libc::pid_t,
     reaped: bool,
+    /// Its exit code, once reaped by this handle after a normal exit (not a signal).
+    exit_code: Option<i32>,
 }
 
 impl Process {
     pub(crate) fn id(&self) -> u32 {
         self.pid as u32
+    }
+
+    /// Its exit code, if this handle reaped it after it exited normally.
+    pub(crate) fn exit_code(&self) -> Option<i32> {
+        self.exit_code
     }
 
     /// Lets a suspended child run.
@@ -100,17 +107,29 @@ impl Process {
         }
     }
 
-    /// `waitpid` with `options`, retried on `EINTR`: whether it reaped the child.
-    fn wait_pid(&self, options: libc::c_int) -> io::Result<bool> {
+    /// `waitpid` with `options`, retried on `EINTR`: whether it reaped the child (noting its exit
+    /// code).
+    fn wait_pid(&mut self, options: libc::c_int) -> io::Result<bool> {
+        let status = self.wait_status(options)?;
+        if let Some(status) = status {
+            if libc::WIFEXITED(status) {
+                self.exit_code = Some(libc::WEXITSTATUS(status));
+            }
+        }
+        Ok(status.is_some())
+    }
+
+    /// `waitpid` with `options`, retried on `EINTR`: the status if it reaped the child.
+    fn wait_status(&self, options: libc::c_int) -> io::Result<Option<libc::c_int>> {
         loop {
             let mut status = 0;
             // SAFETY: our own unreaped child, and a valid out-pointer.
             let rc = unsafe { libc::waitpid(self.pid, &mut status, options) };
             if rc == self.pid {
-                return Ok(true);
+                return Ok(Some(status));
             }
             if rc == 0 {
-                return Ok(false);
+                return Ok(None);
             }
             let e = io::Error::last_os_error();
             if e.kind() != io::ErrorKind::Interrupted {
@@ -235,7 +254,11 @@ pub(crate) fn spawn_suspended(
         unsafe { File::from_raw_fd(std::os::fd::IntoRawFd::into_raw_fd(fd)) }
     };
     Ok(Spawned {
-        process: Process { pid, reaped: false },
+        process: Process {
+            pid,
+            reaped: false,
+            exit_code: None,
+        },
         stdin: file(stdin_ours),
         stdout: file(stdout_ours),
         stderr: file(stderr_ours),
@@ -293,7 +316,9 @@ fn check(rc: libc::c_int) -> io::Result<()> {
 /// then its file is set to 0600, and only then does it listen (a socket that isn't listening
 /// refuses every connection). Its fd is close-on-exec; it is made in two steps, so the caller
 /// holds `cloexec::SPAWN_LOCK`. `path` must not exist and must fit `sockaddr_un` (103 bytes,
-/// `org_proto::location::check_socket_path`). On an error after the bind, the file is removed.
+/// `org_proto::location::check_socket_path`). On an error after the bind, the file is removed if
+/// it is still the node that was bound (`lstat`ed right after the bind: a socket of ours, the same
+/// `(dev, ino)`); anything else is left for the startup sweep.
 pub(crate) fn listen_owner_only(path: &Path, backlog: u8) -> io::Result<UnixListener> {
     use std::os::fd::{FromRawFd, OwnedFd};
     use std::os::unix::ffi::OsStrExt;
@@ -334,6 +359,10 @@ pub(crate) fn listen_owner_only(path: &Path, backlog: u8) -> io::Result<UnixList
     if rc != 0 {
         return Err(io::Error::last_os_error());
     }
+    // The node just bound, to remove only that one if a later step fails. (`fstat` of the socket
+    // can't say: it describes the socket, not the path's node.) A same-user swap before this
+    // `lstat` isn't detected, as in `handoff`.
+    let bound = own_socket_node(path);
     let listening = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
         .and_then(|()| {
             // SAFETY: a valid, bound socket descriptor.
@@ -344,10 +373,22 @@ pub(crate) fn listen_owner_only(path: &Path, backlog: u8) -> io::Result<UnixList
             }
         });
     if let Err(e) = listening {
-        let _ = std::fs::remove_file(path);
+        // Only the node it bound, still a socket of ours: anything else is left for the startup
+        // sweep (`handoff::remove_stale_key_sockets`) or its owner.
+        if bound.is_some() && own_socket_node(path) == bound {
+            let _ = std::fs::remove_file(path);
+        }
         return Err(e);
     }
     Ok(UnixListener::from(owned))
+}
+
+/// `path`'s `(dev, ino)` if it is a socket owned by us (`lstat`, so never through a symlink).
+fn own_socket_node(path: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    (meta.file_type().is_socket() && meta.uid() == crate::home::euid())
+        .then(|| (meta.dev(), meta.ino()))
 }
 
 /// `TASK_AUDIT_TOKEN` (`<mach/task_info.h>`).

@@ -52,6 +52,8 @@ mod keys;
 mod logs;
 mod offices;
 mod peer;
+#[cfg(target_os = "macos")]
+mod peer_fds;
 mod secrets;
 mod server_check;
 mod service;

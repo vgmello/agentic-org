@@ -85,10 +85,16 @@ org-office-server --discard <id>    # remove an unfinished office, then exit (th
   process group.
 - **stdout carries the server's control lines to the host, and nothing else.** Logs go to stderr,
   which the host sends to `<home>/logs/<handle>.log` (`logs/` 0700, files 0600; rotate at 10 MiB, keep one old file, so a crash loop can't fill the disk).
-- (amended 2026-11-09: key hand-off review H1, ada) **Fd hygiene is the server's first act**, in
-  `main` before any thread, exactly as `org-office-launch`'s "Descriptors" says:
-  1. fds 0, 1 and 2 must be pipes (`fstat`, `st_mode & S_IFMT == S_IFIFO`); anything else is
-     `invalid_request` (the host always gives three pipes, stderr being the log pipe);
+- (amended 2026-11-09: key hand-off reviews, ada) **Fd hygiene is the server's first act**, in
+  `main` before any thread and before any other I/O, exactly as `org-office-launch`'s
+  "Descriptors" says. **The invariant:** the server performs no `read`, `write`, `send`, `recv`,
+  `connect`, `poll` or `select`, failed or zero-length ones included, on any descriptor it didn't
+  create itself, except fds 0, 1 and 2 after all three have passed the pipe check. (On Darwin each
+  of those calls, even one that fails with `EPIPE` or `EAGAIN`, makes the caller the socket's last
+  user, its `last_pid`, with nothing sent; `poll` was seen to do it while building the peer-fd
+  check's test, 2026-11-09; `fstat`, `fcntl`, `getsockopt`, `dup2` and `close` don't.) The
+  steps:
+  1. `fstat` fds 0, 1 and 2: each must be a pipe (`st_mode & S_IFMT == S_IFIFO`);
   2. every other open fd is closed, found by **listing** them (`proc_pidinfo(getpid(),
      PROC_PIDLISTFDS, …)` or `/dev/fd`), never by counting up to `getdtablesize()`, which a parent
      can lower below an fd it leaves open; a second listing must show nothing above 2;
@@ -97,12 +103,33 @@ org-office-server --discard <id>    # remove an unfinished office, then exit (th
      `task_set_exception_ports(mach_task_self(), EXC_MASK_ALL | EXC_MASK_CRASH /* 0x1ffe */)` (a
      crash port left by the pre-exec image would get the server's corpse, memory included), and
      `task_set_exception_ports(mach_task_self(), EXC_MASK_CORPSE_NOTIFY /* 0x2000 */)`, ignoring
-     only `KERN_INVALID_ARGUMENT` there (a kernel that refuses that mask). Any
-     other failure is fatal.
+     only `KERN_INVALID_ARGUMENT` there (a kernel that refuses that mask; macOS 26 takes it).
 
-  So the only socket it ever touches is the key hand-off connection it makes itself, which the key
-  hand-off's peer check depends on (see "Only the signed server gets a key" in 4). It doesn't reset
-  its bootstrap port, which it needs for system services (see the residuals there).
+  **If any step fails**, an fd 0-2 that isn't a pipe included, the server does no I/O on any
+  inherited fd at all, writes no `failed` line (not even when fd 1 is a pipe) and logs nothing to
+  fd 2: it calls `_exit(78)` at once, `org_office_launch::EXIT_LAUNCH_DESCRIPTORS_REFUSED`
+  (`EX_CONFIG`), exactly that status. The host learns why from the exit status alone: it logs
+  "refused its launch descriptors" and counts the start as `storage_error` (retried with backoff),
+  not as a crash; a create answers `storage_error`, a discard fails.
+
+  So the only socket the server ever touches is the key hand-off connection it makes itself, which
+  the key hand-off's peer check depends on (see "Only the signed server gets a key" in 4). It
+  doesn't reset its bootstrap port, which it needs for system services (see the residuals there).
+  The fd hygiene runs in `main`: what runs before it (dyld, library initialisers) isn't bound by it,
+  which is why the host also checks how the server holds its key connection (next point).
+- (amended 2026-11-09: review server-half H1, ada) **The key connection.** The server creates its
+  key-socket connection itself, close-on-exec (the socket is marked `FD_CLOEXEC` before the
+  `connect`), holds it on that one fd, never duplicates, shares or passes it (`dup`, `SCM_RIGHTS`),
+  doesn't fork or spawn while it is open (even `posix_spawn` marks every close-on-exec fd of the
+  spawning process shared for a moment: measured, about one scan in seven of a process spawning in
+  a loop), closes it right after the hand-off line, and never sets `FD_CLOEXEC` on an fd it
+  inherited. Why: the host's **peer-fd check** (4, step 4) takes the connection only if the admitted
+  pid holds its other end on exactly one fd that is close-on-exec, not 0, 1 or 2, and not shared.
+  An fd that survived an `exec` can't be close-on-exec (`exec` closes those), so the check tells the
+  server's own connection from one it inherited; and with `PROC_FP_SHARED` clear nothing else (no
+  other fd, no other process, no descriptor in flight) holds the client end, so only the admitted
+  image reads the line. Setting `FD_CLOEXEC` on an inherited fd would forge the first half of that
+  proof.
 - **No child can read the host's lines or write a control line.** The structural guarantee is the fd
   swap, which the server does itself, right after its fd hygiene, before any thread or child starts: it dups
   fds 0 and 1 to new close-on-exec fds, which carry the pipe, and reopens 0 and 1 on `/dev/null`.
@@ -149,13 +176,19 @@ line; version 3 moves them to a one-shot socket, and the first line carries only
   ada: a socket bound before the spawn could be connected to by the pre-exec image). After the first
   line it accepts exactly one connection within 10 s, and answers it only if the peer's audit
   token is the admitted one (in debug builds, if its pid is the child's) and the peer has sent
-  nothing. It writes the hand-off line, unlinks the socket and closes the connection, in that order. A timeout or a refused peer gets
-  nothing: the host kills the child and counts the start as `storage_error`.
+  nothing, on a socket file that is still the node it bound. It writes the hand-off line,
+  half-closes its end (`shutdown(SHUT_WR)`), waits for the server's EOF (within the 10 s, at least
+  1 s), then unlinks the socket and closes the connection, in that order. A timeout, a refused peer,
+  a replaced socket, or a byte from the server: the host kills the child and counts the start as
+  `storage_error` (nothing is written, except in the last case, where the line already went out).
 - **The server** connects right after its first line, before its office lock or any database (create,
   start and discard alike). It builds the path itself from its own office home and the id, never
   from the host, and `lstat`s it first: a socket, owned by its uid, 0600, not a symlink; anything else
-  is `invalid_request`, and nothing is read. It connects and reads with a 5 s deadline, reads the one
-  line and drops the connection: no ack, no reconnect.
+  is `invalid_request`, and nothing is read. It connects (5 s deadline for the connect and the read)
+  and, **right after the connect and before reading anything**, checks that its peer is the host
+  (release: the peer token's code meets the host's requirement; debug: `LOCAL_PEERPID ==
+  getppid()`, same uid); otherwise `invalid_request`, nothing read. Then it reads the one line and
+  closes the connection: it never sends on it, no ack, no reconnect.
 - EOF before the hand-off line means the host is gone: exit 0 without a `failed` line. Any other
   failure (the deadline, a malformed line, an unknown field, a `null` key on a create or start) is a
   `failed` line with fixed text: `invalid_request` for a bad line, `storage_error` for the deadline or
@@ -332,66 +365,191 @@ first line is `invalid_request`.
     3. **The server**, right after its first line and before anything else (the office lock, any
        database), builds the path itself from its own office home and the id (it never takes a path
        from the host), `lstat`s it (a socket, owned by its uid, 0600, not a symlink; anything else
-       is `invalid_request`), connects with a 5 s deadline for the connect and the read, reads one
-       line `{"v":3,"app_token":…,"db_key":…|null}` and drops the connection (close-on-exec, no
-       ack, no reconnect). EOF before the line means the host is gone: exit 0, silently.
+       is `invalid_request`), and connects with a 5 s deadline for the connect and the read. Right
+       after the connect, before it reads or uses anything, it **checks that the peer is the
+       host** (amended 2026-11-09: review M1, ada), because a same-user process can replace the
+       socket with its own 0600 one, which the `lstat` doesn't catch: a swapped path means
+       another process's listener, refused before a byte is read. The peer can be asked right
+       after the connect, even before the host accepts, and until the host closes its end
+       (`ENOTCONN` after that), which the host doesn't do before the server closes its own (step
+       4). The host's end comes from the host's listening socket, so its last user is the host,
+       and the host only ever samples it, writes the line, half-closes it and reads its EOF. In
+       a release build, the code of the peer's audit token (`LOCAL_PEERTOKEN`) must meet the host's requirement (identifier
+       `com.ellosoft.agentic-org.org-office-host`, signed with the Developer ID of the team
+       compiled into the server as `ORG_APP_TEAM_ID`, hardened and clean (no rejected
+       entitlements); the server also checks that its
+       own signature's team is that compiled-in team, and fails closed otherwise or with no team
+       compiled in). In a debug build, `LOCAL_PEERPID` must be `getppid()` and the uid its own.
+       A peer that fails is `invalid_request` with fixed text, and nothing from it is used. Then
+       it reads one line `{"v":3,"app_token":…,"db_key":…|null}` and closes the connection right
+       after reading it (close-on-exec until then; no ack, nothing sent, no reconnect). EOF before the line means the host is gone: exit 0,
+       silently.
     4. **The host** accepts exactly one connection, within 10 s of the first line. At accept it
        samples the peer: first its identity, then the bytes it has sent (`FIONREAD`). In release
        builds the peer's audit token (`LOCAL_PEERTOKEN`) must equal the admitted token byte for
        byte, pid version included, and the code it names must still meet the server requirement;
        in debug builds `LOCAL_PEERPID` must be the child's pid, with our uid. The peer must have
-       sent nothing. Then the host writes the hand-off line (borrowing the secrets, zeroing its
-       encoded copy), **unlinks** the socket, and closes the connection, in that order. Any other
+       sent nothing. (amended 2026-11-09: review server-half H1, ada) Then, in the same window
+       and with the accepted connection held open throughout (the kernel handles it compares are
+       reused once a socket is freed), the **peer-fd check**, in debug and release builds alike:
+       the host reads its own end's identity (`proc_pidfdinfo(getpid(), fd,
+       PROC_PIDFDSOCKETINFO)`: its socket, its control block and the socket it is connected to),
+       lists the admitted pid's fds (`proc_pidinfo(PROC_PIDLISTFDS)`) and reads each socket's
+       (public libproc only). **Exactly one** fd must be the other end (all three identities
+       match), and it must be close-on-exec, not 0, 1 or 2, and not shared (`PROC_FP_CLEXEC` set,
+       `PROC_FP_SHARED` clear). Then it samples the peer again (the same token byte for byte, or
+       pid and uid, and still nothing sent; in release builds the admitted pid must also still be
+       the admitted image, its task's token unchanged), so the fds scanned were the admitted
+       server's and a pid that died or was reused can't pass. Any libproc error (`EPERM`, `ESRCH`, a
+       short read, a process with no fds), no match, several matches or a match that fails a rule
+       fails closed: nothing is written, the child is killed, and the log says why (never a
+       secret). An fd that goes away during the scan, or whose number is reused by something that
+       isn't a socket, is skipped: a holder hiding that way still leaves the match shared. The
+       scan takes microseconds (p50 12 µs, p99 16 µs over 200 hand-offs). Then the host writes the
+       hand-off line (borrowing the secrets, zeroing its
+       encoded copy) and half-closes its end (`shutdown(SHUT_WR)`), and **keeps its end open until
+       the server closes** (amended 2026-11-09: so the server's check of its peer never meets a
+       closed one): it waits for the server's EOF, at most the rest of the 10 s (at least 1 s).
+       Then it **unlinks** the socket and closes the connection, in that order. A byte from the
+       server instead of EOF, or no EOF in time, fails the start (killed), though the key is out
+       by then: the server must never send on this socket. Any other
        connection already queued is closed with nothing sent and logged (ids only); after the
        unlink nobody can connect.
-    5. **On a timeout, a refused peer or any error** the host writes nothing, unlinks the socket,
-       kills and reaps the child, and counts the start as `storage_error` (retried with backoff;
-       a create answers `storage_error` and its key goes only with the discard that follows). A
-       child that exits before it connects got nothing, and its exit (or its `failed` line) is
-       reported as usual.
+       The host also checks the socket's file (amended 2026-11-09: review M1, ada): right after
+       the bind and the chmod it `lstat`s it (a socket, ours, 0600) and keeps its `(dev, ino)`;
+       after the accept, before writing, it requires the same node, owner and mode again, or it
+       fails closed. `run/` itself must be a real folder of ours, 0700: the host makes and
+       tightens it at startup (and refuses a symlink or another owner's), and refuses to bind in
+       one that isn't so. This only **detects** a same-user swap of the socket: a server that
+       connected to the impostor never reaches the host, which times out and kills it. What stops
+       the server from using forged secrets is its own check of the host (step 3). A swap in the
+       instant between the bind and the first `lstat` isn't detected at all (same user only; the
+       server's check still protects). The host checks the node before it unlinks it (a same-user
+       swap between that check and the unlink isn't prevented); if its chmod or listen fails right
+       after the bind, it removes the path only while it is still the node it `lstat`ed then (a
+       socket of ours), and leaves anything else for the startup sweep.
+    5. **On a timeout, a refused peer or any error before the line** the host writes nothing,
+       unlinks the socket, kills and reaps the child, and counts the start as `storage_error`
+       (retried with backoff; a create answers `storage_error` and its key goes only with the
+       discard that follows). The one exception is a failure **after** the line (the server sent
+       bytes, or didn't close in time): the key was delivered, the host logs that ("the key was
+       delivered, then …"), and kills and counts it the same way. A child that exits before it
+       connects got nothing, and its exit (or its `failed` line, or the descriptor refusal, exit
+       78) is reported as usual.
     6. **The socket never outlives its spawn:** it is unlinked on every path, early returns and
        panics included, and a host removes stale `run/k-*.sock` files (sockets only) at startup,
        under `host.lock`, before it spawns anything.
 
-    **Why it holds** (corrected 2026-11-09: review H1, ada). `LOCAL_PEERTOKEN` doesn't name the
-    process that made the connection: the kernel keeps the pid that last created, connected, sent
-    or received on it (`last_pid`; `fork`, `exec` and `SCM_RIGHTS` don't change it) and looks up
-    that pid's *current* token when asked. So a connection made by the pre-exec image, kept by a
-    helper it forked, would show the genuine server's token once the pid exec'd it. The check holds
-    because (i) **the socket exists only after the genuine image is admitted** and re-checked, so no
-    connection to it can predate the exec, and (ii) **the server touches no socket it didn't create
-    itself** (its fd hygiene, see 2), so the admitted pid's `last_pid` can only be on its own
-    connection. A helper that connects later is the peer itself, with its own token, and gets
-    nothing; the child is killed. Stdin, which a helper may hold, carries no secret. Same-socket
-    token games (the inherited-socket swap) don't apply: the socket is fresh, the host reads
-    nothing from the peer, and it checks at accept a peer that must have sent nothing. Debug builds'
-    pid rule rests on the same two facts. The key's time in the host's memory is unchanged: loaded
-    just before the spawn, dropped right after the hand-off.
+    **Why it holds** (corrected 2026-11-09: review H1, ada; corrected again 2026-11-09: review
+    server-half H1, ada). `LOCAL_PEERTOKEN` doesn't name the process that made the connection: the
+    kernel keeps the pid that last created, connected, sent or received on it (`last_pid`; `fork`,
+    `exec` and `SCM_RIGHTS` don't change it) and looks up that pid's *current* token when asked.
+    So a connection made by the pre-exec image, kept by a helper it forked, would show the genuine
+    server's token once the pid exec'd it. The check holds because (i) **the socket exists only
+    after the genuine image is admitted** and re-checked, so no connection to it can predate the
+    exec; (ii) from `main` on, **the server touches no socket it didn't create itself** (its fd
+    hygiene, see 2); and (iii) **the peer-fd check** (step 4): the admitted pid holds the
+    connection on exactly one fd, close-on-exec (so not inherited) and not shared (so nobody else
+    holds its end). (ii) alone isn't enough: **system code honours the environment before `main`,
+    and stdio can be a socket until `main`'s fd hygiene refuses it.** libobjc writes to fd 2
+    before `main` under `OBJC_HELP` and the `OBJC_PRINT_*` variables (the hardened runtime strips
+    `DYLD_*`, not `OBJC_*`; on macOS 26 even a program linking only libSystem, the test fake or
+    `/usr/bin/true`, does it), and a write that fails (the helper shut the socket's sending side)
+    still makes the server the socket's last user with nothing sent, so `FIONREAD` stays 0. So the
+    environment and the stdio the early resumer chooses are **secret** risks before `main`, not
+    integrity-only ones; (iii) is what keeps such a socket from passing. A helper that connects
+    later is the peer itself, with its own token, and gets nothing; stdin carries no secret. The
+    socket is fresh and the host reads nothing from the peer. Debug builds' pid rule rests on the
+    same facts, with the peer-fd check too; a zombie peer (which `LOCAL_PEERPID` still answers for)
+    now fails the check (it has no fds), and is reported as the child's exit. The key's time in the
+    host's memory is unchanged: loaded just before the spawn, dropped right after the hand-off.
 
-    **Residual risks (open):**
-    - The attacker who resumes the child early still chooses the genuine server's launch context
-      when it exec's it: argv, environment, working directory, resource limits. The server must
-      treat all of it as untrusted (it takes its office home and the socket id only as the contract
-      says, and checks them).
-    - The list of calls that update `last_pid` (create, connect, send, receive) is believed complete,
-      with medium confidence (from the XNU sources, not a documented API contract).
-    - The stdio pipes: it can dup pipes of its own onto fds 0-2, so the `S_IFIFO` check passes, and
-      relay or forge the first line and the control lines. They hold no secret: an integrity risk
-      (e.g. a forged `ready` or `failed`), not a secret one.
-    - Inherited Mach special ports, above all the bootstrap port: it can sit in the middle of the
-      server's Mach and XPC lookups, and a reply can carry a fileport. If any library turns that into
-      an fd and does I/O on it, the premise "the server touches no socket it didn't create" breaks.
-      The fd hygiene doesn't reset the bootstrap port (the server needs it for system services).
+    **The copied-host chain, step by step** (review server-half H1), and what closes each step:
+    1. A same-user process runs the signed host from a copy (or a link) next to its own
+       `org-office-server`: the host starts the server next to its own executable.
+    2. The host spawns that sibling suspended; the attacker resumes it (`SIGCONT`) before the host
+       takes its token, by stopping or starving the host. *Only gate (C) closes this*: with a
+       spawn-time launch requirement the kernel refuses to run the sibling at all.
+    3. The sibling makes a socket without close-on-exec, forks a helper that keeps it, ignores
+       `SIGPIPE`, and turns itself into the genuine server (`POSIX_SPAWN_SETEXEC |
+       POSIX_SPAWN_START_SUSPENDED`) with that socket on fd 2 and `OBJC_HELP=YES` in its
+       environment. The host admits it (its token is genuine: the server check can't tell),
+       resumes it, re-checks it, binds the key socket and writes the first line.
+    4. The attacker keeps the server from running its initialisers until the key socket exists
+       (stopping it again right after the host's `SIGCONT`); the helper connects the socket to the
+       key socket and shuts down its sending side.
+    5. The server runs: before `main`, libobjc writes to fd 2. The write fails (`EPIPE`), but makes
+       the server the socket's last user, and nothing arrives. The attacker stops the server (or the
+       host) so the host samples while the server is alive; `main`'s fd hygiene would refuse fd 2
+       and exit 78, too late.
+    6. At accept the peer is the admitted server (its token; in debug builds its pid) and it has
+       sent nothing: before the peer-fd check, the host wrote the line and the helper read it.
+       *The peer-fd check closes this*: the admitted pid holds the connection on fd 2, inherited
+       (not close-on-exec) and shared with the helper. The host's test
+       `an_early_resumers_helper_gets_nothing_from_the_servers_pre_main_write` (`tests/binary.rs`)
+       runs this chain against the debug host; the fake server stopping itself at the top of `main`
+       stands in for step 5's stop.
 
-    The release gate below closes all of these: with a kernel-enforced launch requirement, the
-    attacker's image is never the child's first image.
+    **Library copies of fd 2** (spike, 2026-11-09, the reviewer's case 1): with fd 2 a socket and
+    `OBJC_HELP`, `OBJC_PRINT_OPTIONS`, `OBJC_PRINT_IMAGES` and `OBJC_PRINT_LOAD_METHODS` set (each,
+    then all four), plain and hardened, neither a Foundation and libobjc test program (12 runs, up to
+    37,802 bytes written to fd 2) nor the real `org-office-server` (`--help`; the objc runtime loads
+    through Security and CoreFoundation) held a copy of fd 2's socket on any other fd; the server's
+    own fds 3 and 4 are its dups of fds 0 and 1 (close-on-exec, shared). Had a library copied fd 2
+    to a high close-on-exec fd, that copy would pass "close-on-exec, not 0-2" and fail only on
+    shared: `PROC_FP_SHARED` is essential, and stays. Matching was exact (21 fds, 8 decoy socket
+    pairs and 2 connections to the host).
 
-    **Pre-release gate** (ada, 2026-11-09): before any signed build holds real data, the spawn
-    gets (C) a **kernel-enforced launch requirement**, public API only (`NSTask`'s
-    `launchRequirementData`, or its public `posix_spawn`-level equivalent; no SPI), so the kernel
-    itself refuses to exec anything but the signed server into the child. It is verified on a
-    signed fixture first. The fallback, if (C) can't be done with public API, is (B): the hand-off
-    over Mach messages with the audit trailer. The dynamic `SecCode` check stays either way.
+    **Residual risks (open until gate (C)):**
+    - The server's **post-`main` launch context**: the early resumer still chooses argv, the
+      environment (what system frameworks read after `main`), the working directory and resource
+      limits (`RLIMIT_CORE` among them: see the gate's checks). The server treats all of it as
+      untrusted and takes only what the contract names, checked.
+    - Its **bootstrap port** (and its other Mach special ports): it can sit in the middle of the
+      server's Mach and XPC lookups, and a reply can carry a fileport. If a library turns that into
+      an fd and does I/O on it, premise (ii) breaks. A key connection that arrives that way while
+      the attacker keeps a copy is shared, so the peer-fd check refuses it, but what else a forged
+      service reply can do isn't bounded. The fd hygiene doesn't reset the bootstrap port (the
+      server needs it for system services).
+    - **Our reliance on `last_pid` semantics** and on libproc's: the list of calls that move
+      `last_pid` (create, connect, send, receive, and `poll`/`select`) is from the XNU sources, with
+      medium confidence, not a documented contract; so are the meanings of `PROC_FP_SHARED`,
+      `PROC_FP_CLEXEC` and the socket identities the peer-fd check compares (checked against the SDK
+      header by the host's tests, and by the spike's runs).
+    - The stdio pipes: the early resumer can dup pipes of its own onto fds 0-2, so the `S_IFIFO`
+      check passes, and relay or forge the first line and the control lines. Pipes hold no secret
+      and can't be a key connection, so this is an integrity risk (e.g. a forged `ready` or
+      `failed`). A **socket** on fds 0-2 is a secret risk before `main` (above), which the peer-fd
+      check closes.
+    - The server's **debug** check of the host (`LOCAL_PEERPID == getppid()` and the same uid) is
+      pid-based: open to pid reuse and to any process of the same user, and it exists only in
+      debug and test builds. Release builds rely on the `LOCAL_PEERTOKEN` requirement check.
+
+    The pre-`main` write to a socket on fd 2 (or 0 or 1), which could expose the secrets until
+    now, is closed by the peer-fd check; the residuals above stay until gate (C), which closes all
+    of them: with a spawn-time launch requirement, the attacker's image is never the child's first
+    image.
+
+    **To verify on a signed build**, before the gate is passed: the server's release check of the
+    host (`LOCAL_PEERTOKEN` read right after the connect, before the host accepts, against the
+    host's requirement, and the server's check of its own team), and whether `LOCAL_PEERTOKEN`,
+    like `LOCAL_PEERPID`, fails with `ENOTCONN` once the peer has closed (the host keeps its end
+    open until the server closes; the server fails closed if it ever meets that).
+
+    **Pre-release gate (C)** (ada, 2026-11-09; refined the same day, review server-half H1):
+    before any signed build holds real data, the host sets a **spawn-time launch requirement** on
+    the server's spawn, public API only (`NSTask`'s `launchRequirementData`, or its public
+    `posix_spawn`-level equivalent; no SPI), so the kernel itself refuses to run anything but the
+    signed server as the child's first image. It must be a requirement **the host sets on its
+    spawn**, not a launch constraint in the server's own signature: a parent constraint ("my parent
+    is the host") doesn't help, because after `POSIX_SPAWN_SETEXEC` the parent is still the host, so
+    the chain above satisfies it. Before signing, check on a signed fixture: which fds `NSTask`
+    passes the child (only its three pipes, as `POSIX_SPAWN_CLOEXEC_DEFAULT` gives today); whether
+    starting suspended is lost (`NSTask` can't start a child suspended, which the host's admission
+    relies on today); and that a hardened process writes no core dump (the attacker chooses the
+    resource limits, `RLIMIT_CORE` included, and a core would hold the key). The fallback, if (C)
+    can't be done with public API, is (B): the hand-off over Mach messages with the audit trailer.
+    The dynamic `SecCode` check and the peer-fd check stay either way.
     **Release builds require macOS 14.4 or later.**
   - **No migration:** no real office existed before this; development offices are re-created by hand.
   - **This Mac only** (the user's decision): keys never leave it. A "move this office" export, protected

@@ -52,14 +52,18 @@
 //!   host's key store are unchanged), only development builds ever spoke version 2, and the host
 //!   and the server ship together.
 //! - **Descriptors:** the server touches no socket it didn't create itself, and no child of a
-//!   server can read the host's lines or write a control line. Its **first** act in `main`,
-//!   before any thread starts, is fd hygiene, exactly:
-//!   1. fds 0, 1 and 2 must be pipes (`fstat`, `st_mode & S_IFMT == S_IFIFO`); anything else is
-//!      [`FailCode::InvalidRequest`] (the host always gives three pipes, stderr being the log);
+//!   server can read the host's lines or write a control line. **The invariant:** the server
+//!   performs no `read`, `write`, `send`, `recv`, `connect`, `poll` or `select`, failed or
+//!   zero-length ones included, on any descriptor it didn't create itself, except fds 0, 1 and 2
+//!   after all three have passed the pipe check. (On Darwin each of those calls, even one that
+//!   fails with `EPIPE` or `EAGAIN`, makes the caller a socket's last user, `last_pid`, with
+//!   nothing sent; `fstat`, `fcntl`, `getsockopt`, `dup2` and `close` don't.) Its **first** act in `main`, before any
+//!   thread starts and before any other I/O, is fd hygiene, exactly:
+//!   1. `fstat` fds 0, 1 and 2: each must be a pipe (`st_mode & S_IFMT == S_IFIFO`);
 //!   2. every other open descriptor is closed, found by **listing** them
 //!      (`proc_pidinfo(getpid(), PROC_PIDLISTFDS, …)`, or `/dev/fd`), never by counting up to
 //!      `getdtablesize()`: a parent can lower `RLIMIT_NOFILE` below an fd it leaves open. List
-//!      again afterwards; any fd above 2 still open is fatal;
+//!      again afterwards: no fd above 2 may be left;
 //!   3. the exception ports are reset to `MACH_PORT_NULL` (`EXCEPTION_DEFAULT`,
 //!      `THREAD_STATE_NONE`): `thread_set_exception_ports(mach_thread_self(), EXC_MASK_ALL)`
 //!      (`EXC_MASK_ALL` is 0x1bfe); `task_set_exception_ports(mach_task_self(), EXC_MASK_ALL |
@@ -67,16 +71,31 @@
 //!      corpse, memory included, after a crash it can cause); and
 //!      `task_set_exception_ports(mach_task_self(), EXC_MASK_CORPSE_NOTIFY)` (0x2000), where the
 //!      only error that may be ignored is `KERN_INVALID_ARGUMENT` (a kernel that doesn't take
-//!      that mask from a task). Any other failure is fatal.
+//!      that mask from a task; macOS 26 takes it).
+//!
+//!   **If any step fails** (an fd 0-2 that isn't a pipe included), the server does no I/O on any
+//!   inherited descriptor at all, writes no `failed` line (not even when fd 1 is a pipe) and logs
+//!   nothing to fd 2: it calls `_exit(`[`EXIT_LAUNCH_DESCRIPTORS_REFUSED`]`)` at once, exactly
+//!   that status. The host learns why from the exit status alone: it reports the start as a
+//!   refusal of the launch descriptors (`storage_error`, logged as such), not a crash.
 //!
 //!   The key hand-off depends on it (see below). Then, before any child starts, it moves its
 //!   stdin and stdout pipes to new close-on-exec descriptors and reopens 0 and 1 on `/dev/null`.
-//!   Every
-//!   other descriptor it opens is close-on-exec too: the `office.lock` one above all (a child that
-//!   inherited it would keep the lock after the server died), and the key hand-off connection,
-//!   which it drops right after reading the hand-off line. A child's stdin and stdout are
+//!   Every other descriptor it opens is close-on-exec too: the `office.lock` one above all (a
+//!   child that inherited it would keep the lock after the server died), and the key hand-off
+//!   connection, which it closes right after reading the hand-off line. A child's stdin and stdout are
 //!   `/dev/null` unless it's given its own pipes; stderr (the logs) is inherited. The host opens
 //!   its own descriptors close-on-exec, so no child holds `host.lock` or a key socket.
+//!
+//!   **The key connection** (the host's peer-fd check depends on it): the server creates it
+//!   itself, close-on-exec (marked `FD_CLOEXEC` before the `connect`), holds it on that one fd,
+//!   never duplicates, shares or passes it (`dup`, `SCM_RIGHTS`), doesn't fork or spawn while it
+//!   is open (even `posix_spawn` marks the spawning process's close-on-exec fds shared for a
+//!   moment), and never sets `FD_CLOEXEC` on an fd it inherited. Why: the host gives the line only
+//!   to a connection the admitted pid holds on exactly one fd that is close-on-exec, not 0-2 and
+//!   not shared. An fd that survived an `exec` can't be close-on-exec, so that fd is the server's
+//!   own; and with "shared" clear nothing else (another fd, another process, a descriptor in
+//!   flight) holds the client end, so only the admitted image reads the line.
 //! - **The app token** ([`AppToken`], ADR-0003 §2.1) travels only on the hand-off line, on every
 //!   create and start (and discard, which doesn't use it). The host makes a new one for each
 //!   office each time the host starts and keeps it only in memory. The server keeps it only in
@@ -115,9 +134,15 @@
 //! created, connected, sent or received on the connection (not its creator; `fork`, `exec` and
 //! `SCM_RIGHTS` don't change it), looked up when asked. So the check is sound only because (i)
 //! the socket exists only after the genuine image is admitted (step 1), so no connection to it
-//! can predate the server's exec; and (ii) the server's fd hygiene (its first act, see
-//! "Descriptors") means it never touches a socket it didn't create, so the admitted process can
-//! appear as the peer only of its own connection.
+//! can predate the server's exec; (ii) from `main` on, the server's fd hygiene (its first act, see
+//! "Descriptors") means it never touches a socket it didn't create; and (iii) the host's peer-fd
+//! check (step 4) finds the connection's other end on exactly one fd of the admitted pid,
+//! close-on-exec (so not inherited) and not shared (so nobody else holds it). (ii) alone isn't
+//! enough: system code honours the environment before `main` (libobjc writes to fd 2 under
+//! `OBJC_HELP` and `OBJC_PRINT_*`, which the hardened runtime doesn't strip), and stdio can be a
+//! socket until `main` refuses it; a write there that fails still makes the server the socket's
+//! last user with nothing sent. So the environment and stdio the early resumer chooses are secret
+//! risks before `main`, and (iii) is what keeps such a socket from passing.
 //!
 //! 1. The host spawns the server suspended, takes and checks its audit token (admits it), resumes
 //!    it and checks the token again. **Only then** does it make a fresh [`KeySocketId`] from 8
@@ -141,14 +166,54 @@
 //! 4. **The host** accepts exactly one connection, within 10 s. It samples the peer's audit token
 //!    at accept (`LOCAL_PEERTOKEN`); the connection is the admitted server's only if that token
 //!    equals the admitted one in full, pid version included, the code it names still meets the
-//!    server requirement, and the peer has sent nothing. Then
-//!    the host writes the hand-off line ([`write_hand_off`]), unlinks the socket and closes the
-//!    connection, in that order. A second connection is refused and logged. On a timeout or a
-//!    refused peer, the host kills the child, unlinks the socket, writes nothing, and reports
-//!    `storage_error`. Debug builds check that `LOCAL_PEERPID` is the child's pid instead of the
-//!    audit token; the exchange is otherwise the same.
-//! 5. **The server** reads the one hand-off line ([`read_hand_off`]), which zeroes it, and drops
-//!    the connection (close-on-exec): the exchange is one way, with no ack and no reconnect. EOF
+//!    server requirement, and the peer has sent nothing. Then the host writes the hand-off line
+//!    ([`write_hand_off`]), half-closes its end (`shutdown(SHUT_WR)`), and **keeps its end open
+//!    until the server closes**: it waits, at most the rest of the 10 s (at least 1 s), for the
+//!    server's EOF. Only then does it unlink the socket and close the connection, in that order.
+//!    A byte from the server instead of EOF, or no EOF in time, fails the start (the child is
+//!    killed), though the key is out by then: the server must never send on this socket. A
+//!    second connection is refused and logged. On a timeout or a refused peer, the host kills the
+//!    child, unlinks the socket, writes nothing, and reports `storage_error`. Debug builds check
+//!    that `LOCAL_PEERPID` is the child's pid instead of the audit token; the exchange is
+//!    otherwise the same.
+//!
+//!    Before the line, in the same window and with the accepted connection open throughout, the
+//!    host also runs the **peer-fd check**, in debug and release builds alike: with public libproc
+//!    it reads its own end's identity (its socket, its control block, the socket it is connected
+//!    to) and the admitted pid's sockets; exactly one fd must be the other end, and it must be
+//!    close-on-exec, not 0, 1 or 2, and not shared. Then it samples the peer again (the same
+//!    token, or pid and uid, still nothing sent; in release builds the admitted pid must still be
+//!    the admitted image). Any libproc error, no match, several matches or a broken rule fails
+//!    closed: nothing is written, the child is killed, and the log says why. (A zombie peer, which
+//!    `LOCAL_PEERPID` still answers for, has no fds, so it fails the check.)
+//!
+//!    Before it writes the line, the host also checks the socket's file: right after the bind and
+//!    the chmod it `lstat`s the path (a socket, its uid, 0600) and records its `(dev, ino)`; after
+//!    the accept it `lstat`s it again and requires the same `(dev, ino)`, owner and mode, or it
+//!    fails closed (kills the child, writes nothing). This only **detects** a same-user process
+//!    that replaced the socket: a server that connected to the impostor never reaches the host,
+//!    which times out and kills it. What stops the server from using forged secrets is the next
+//!    step's check of the host.
+//! 5. **The server** checks that the connection's peer is the host, **right after the connect**
+//!    and before it reads or uses anything (a same-user process can replace the socket with its
+//!    own 0600 one, which the `lstat` doesn't catch): a swapped path means another process's
+//!    listener, refused before a byte is read. The peer can be asked right after the connect, even
+//!    before the host accepts, and until the host closes its end (a closed peer can't be asked:
+//!    `ENOTCONN`), which it doesn't do before the server has closed its own. The host's end is
+//!    made from the host's listening socket, so its last user is the host, and the host only ever
+//!    samples it, writes the line, half-closes it and reads its EOF. In a release build,
+//!    the code of the peer's audit token (`LOCAL_PEERTOKEN`) must meet the host's requirement
+//!    (identifier `com.ellosoft.agentic-org.org-office-host`, signed with the Developer ID of the
+//!    team compiled into the server as `ORG_APP_TEAM_ID`, the hardened runtime and none of the
+//!    rejected entitlements, the host's own "hardened and clean" check; the server
+//!    also checks that its own signature's team equals that compiled-in team, and fails closed if
+//!    it doesn't or if no team is compiled in). In a debug build, `LOCAL_PEERPID` must be
+//!    `getppid()` (the host spawned the server) and the peer's uid its own. A peer that fails is
+//!    [`FailCode::InvalidRequest`] with fixed text, and nothing from the connection is used. Then
+//!    it reads the one hand-off line
+//!    ([`read_hand_off`]), which zeroes it, and **closes the connection right after reading the
+//!    line** (it is close-on-exec until then): the host waits for that close. The exchange is one
+//!    way, with no ack, nothing sent by the server and no reconnect. EOF
 //!    before the whole line means the host is gone ([`LaunchError::is_host_gone`]): it exits 0
 //!    without a `failed` line. Every other failure (the deadline, a malformed line, a missing
 //!    key) is a `failed` line with fixed text (never the error's text) and
@@ -158,27 +223,51 @@
 //!
 //! ## Residuals and the release gate
 //! An attacker that resumes the suspended child before the host admits it (its pre-exec image
-//! runs first) can't get the secrets, but it still controls what the genuine server inherits:
-//! - **its launch context:** argv, the environment, the working directory, resource limits. The
-//!   server treats all of it as untrusted and takes only what this contract names, checked;
-//! - **its stdio pipes:** it can dup pipes of its own onto fds 0-2, so the `S_IFIFO` check
-//!   passes, and relay or forge the first line and the control lines. They hold no secret: an
-//!   integrity risk (e.g. a forged `ready` or `failed`), not a secret one;
+//! runs first) still controls what the genuine server inherits. The worst of it, a socket on fd 2
+//! (or 0 or 1) that a helper also holds and connects to the key socket, which the server's
+//! runtime makes its own with a failed write before `main` (the copied-host, early-resume and
+//! `SETEXEC` chain; see `docs/design/office-host-boundary.md`), is closed by the host's peer-fd
+//! check: such an fd is inherited (not close-on-exec) and shared. **Until the release gate (C),
+//! these stay open:**
+//! - **its post-`main` launch context:** argv, the environment, the working directory, resource
+//!   limits. The server treats all of it as untrusted and takes only what this contract names,
+//!   checked;
 //! - **its Mach special ports, above all the bootstrap port:** it can sit in the middle of the
 //!   server's Mach and XPC lookups, and a reply can carry a fileport. If a library turns that into
-//!   an fd and does I/O on it, "the server touches no socket it didn't create" no longer holds.
-//!   The fd hygiene doesn't reset the bootstrap port: the server needs it for system services.
+//!   an fd and does I/O on it, "the server touches no socket it didn't create" no longer holds; a
+//!   key connection the attacker keeps a copy of is shared, and refused, but what else a forged
+//!   reply can do isn't bounded. The fd hygiene doesn't reset the bootstrap port: the server
+//!   needs it for system services;
+//! - **our reliance on `last_pid` semantics** (and libproc's): the calls that move it (create,
+//!   connect, send, receive, `poll`/`select`) are from the XNU sources, with medium confidence,
+//!   not a documented API; so are `PROC_FP_SHARED`, `PROC_FP_CLEXEC` and the socket identities.
 //!
-//! Also, the list of calls that move a connection's `last_pid` (create, connect, send, receive)
-//! is believed complete, with medium confidence (from the XNU sources, not a documented API).
+//! Its **stdio pipes** stay an integrity risk only: it can dup pipes of its own onto fds 0-2, so
+//! the `S_IFIFO` check passes, and relay or forge the first line and the control lines (e.g. a
+//! forged `ready` or `failed`). Pipes hold no secret and can't be a key connection.
 //!
-//! **The release gate** (ada, 2026-11-09): before any signed build holds real data, the host's
-//! spawn of the server gets (C) a kernel-enforced launch requirement, public API only
-//! (`NSTask`'s `launchRequirementData`, or its public `posix_spawn`-level equivalent; no SPI),
-//! verified on a signed fixture. Then the kernel refuses to run anything but the signed server in
-//! the child, so the attacker's image is never the first image and none of the residuals above
-//! remain. If (C) can't be done with public API, the fallback is (B): the hand-off over Mach
-//! messages with the audit trailer. The host's dynamic `SecCode` check stays either way.
+//! The server's **debug** check of the host (`LOCAL_PEERPID == getppid()` and the same uid) is
+//! pid-based: it is open to pid reuse and to any process of the same user, and it exists only in
+//! debug and test builds. Release builds rely on the `LOCAL_PEERTOKEN` requirement check alone.
+//!
+//! **To verify on a signed build** (before the gate is passed): the server's release check of
+//! the host, `LOCAL_PEERTOKEN` read right after the connect (before the host accepts) against the
+//! host's requirement, and the server's check of its own team; and whether `LOCAL_PEERTOKEN`,
+//! like `LOCAL_PEERPID`, fails (`ENOTCONN`) once the peer has closed (the host keeps its end open
+//! until the server closes, so the server's check shouldn't meet that, but it must fail closed if
+//! it does).
+//!
+//! **The release gate (C)** (ada, 2026-11-09): before any signed build holds real data, the host
+//! sets a **spawn-time launch requirement** on the server's spawn, public API only (`NSTask`'s
+//! `launchRequirementData`, or its public `posix_spawn`-level equivalent; no SPI), verified on a
+//! signed fixture. Then the kernel refuses to run anything but the signed server in the child, so
+//! the attacker's image is never the first image and none of the residuals above remain. It must
+//! be set by the host on its spawn: a launch constraint in the server's own signature naming its
+//! parent doesn't help, because after `POSIX_SPAWN_SETEXEC` the parent is still the host. Before
+//! signing, check which fds `NSTask` passes the child, whether starting suspended is lost, and
+//! that a hardened process writes no core dump (the attacker chooses `RLIMIT_CORE`). If (C) can't
+//! be done with public API, the fallback is (B): the hand-off over Mach messages with the audit
+//! trailer. The host's dynamic `SecCode` check and its peer-fd check stay either way.
 //! **Release builds require macOS 14.4 or later.**
 //!
 //! ## An office's folder
@@ -249,6 +338,12 @@ pub const CREATE_FLAG: &str = "--create";
 pub const OFFICE_FLAG: &str = "--office";
 /// The command-line flag, followed by the office id, that removes an unfinished office.
 pub const DISCARD_FLAG: &str = "--discard";
+
+/// The exit status of a server whose fd hygiene failed (an fd 0, 1 or 2 that isn't a pipe, or a
+/// later step; see "Descriptors" in the crate docs): `EX_CONFIG`. A server must exit with exactly
+/// this, through `_exit`, having done no I/O on any inherited descriptor and written no line. The
+/// host reports it as a refusal of the launch descriptors, not a crash.
+pub const EXIT_LAUNCH_DESCRIPTORS_REFUSED: i32 = 78;
 
 /// The folder under the office home that holds one folder per office.
 pub const OFFICES_DIR_NAME: &str = "offices";

@@ -13,6 +13,7 @@ mod support;
 use std::fs::{self, File};
 use std::ops::{Deref, DerefMut};
 use std::os::unix::net::UnixStream;
+use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -63,13 +64,18 @@ impl Drop for HostProcess {
 }
 
 fn spawn_host(home: &TestHome, stderr_to: &str) -> HostProcess {
+    spawn_host_running(home, stderr_to, &fake_server())
+}
+
+/// A host whose office server program is `server_bin`.
+fn spawn_host_running(home: &TestHome, stderr_to: &str, server_bin: &Path) -> HostProcess {
     let stderr = File::create(home.path().join(stderr_to)).unwrap();
     HostProcess(
         Command::new(env!("CARGO_BIN_EXE_org-office-host"))
             .arg("--home")
             .arg(home.path())
             .arg("--server-bin")
-            .arg(fake_server())
+            .arg(server_bin)
             // Something of the login session's that must never reach a server.
             .env(CANARY, "from-the-host-environment")
             // The host's own development key folder: never passed on to a server.
@@ -145,6 +151,60 @@ fn sigint_also_stops_it() {
     let mut host = spawn_host(&home, "host.err");
     wait_until_active(&home);
     signal(&host, libc::SIGINT);
+    assert!(wait_for_exit(&mut host).success());
+}
+
+/// The early resumer's attack, end to end against the real (debug) host: the pre-exec image the
+/// host spawned and resumed makes a socket without close-on-exec, forks a helper that keeps it,
+/// and turns itself into the genuine server (`POSIX_SPAWN_SETEXEC`, suspended) with that socket
+/// on fd 2 and `OBJC_HELP=YES`. The helper stops the host, connects the socket to the key socket,
+/// shuts down its sending side and resumes the server, whose runtime writes its `OBJC_HELP` text
+/// to fd 2 before `main`: the write fails, but makes the server the connection's last user, so
+/// the host's peer rule (the pid, in debug builds) passes. The server then stops (standing in for
+/// the attacker stopping it there), and the helper resumes the host. The peer-fd check refuses:
+/// the admitted server holds the connection on fd 2. The helper gets nothing, the server is
+/// killed, and the retry (a plain server) starts the office.
+#[cfg(debug_assertions)]
+#[test]
+fn an_early_resumers_helper_gets_nothing_from_the_servers_pre_main_write() {
+    let home = home_with_office();
+    let attack = home.wrapper(
+        "early-resumer",
+        r#"if [ -e "$ORG_OFFICE_HOME/attacked" ]; then exec "$FAKE" "$@"; fi
+: > "$ORG_OFFICE_HOME/attacked"
+exec "$FAKE" --early-resumer "$@""#,
+    );
+    let mut host = spawn_host_running(&home, "host.err", &attack);
+    eventually(WAIT, "the early resumer's helper to finish", || {
+        home.log_count("early-resumer ") == 1
+    });
+    let record = home.log_lines("early-resumer ")[0].clone();
+    let fields: Vec<&str> = record.split(' ').collect();
+    assert_eq!(fields[1], A, "{record}");
+    let server: u32 = fields[3].parse().unwrap();
+    assert_eq!(
+        fields[4], "0",
+        "the early resumer's helper got the hand-off line"
+    );
+    wait_until_active(&home);
+    assert!(!alive(server), "the refused server is still running");
+    let stderr = fs::read_to_string(home.path().join("host.err")).unwrap();
+    assert!(
+        stderr.contains(&format!("office server {server}, key socket ")),
+        "{stderr}"
+    );
+    // Refused by the fd check, not by the pid rule: the attack did make the server the peer.
+    assert!(
+        stderr.contains(
+            "refused the connection to its key socket: it holds the connection on \
+                         standard fd 2"
+        ),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("another pid"), "{stderr}");
+    // Only the retry took a key.
+    assert_eq!(home.token_fingerprints(A).len(), 1);
+    signal(&host, libc::SIGTERM);
     assert!(wait_for_exit(&mut host).success());
 }
 

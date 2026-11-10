@@ -302,3 +302,153 @@ fn fd_hygiene_closes_an_inherited_fd_above_a_lowered_limit() {
     );
     host.shutdown();
 }
+
+/// A socket in place of fd 1 or fd 2 (e.g. one a helper of an early resumer holds, connected to
+/// the key socket): the server must not touch it at all, not even with a write that fails, since
+/// any write, read or connect would make it the socket's last user, and the host would take that
+/// connection for the admitted server's. The probe gives the fake one end of a socket pair there
+/// and checks afterwards that the fake never used it: its last user is still the probe, and
+/// nothing was sent. The server writes no `failed` line at all and exits with
+/// `EXIT_LAUNCH_DESCRIPTORS_REFUSED`, which the host reports as a refusal of the launch
+/// descriptors (`storage_error`), not a crash. Nobody gets a hand-off.
+#[test]
+fn a_server_never_touches_a_socket_in_place_of_its_stdout_or_stderr() {
+    for fd in ["1", "2"] {
+        let home = TestHome::new();
+        home.write_office(&hq(A, "01ORGA", "Acme", T));
+        let mut config = home.config();
+        config.set_server_program(home.wrapper(
+            &format!("probe-{fd}"),
+            &format!(r#"exec "$FAKE" --stdio-probe {fd} "$@""#),
+        ));
+        config.timings.backoff_initial = Duration::from_secs(30);
+        let host = Host::start(config).unwrap();
+        wait_for_reason(
+            host.socket_path(),
+            A,
+            OfficeStatus::Offline,
+            OfficeStatusReason::StorageError,
+        );
+        eventually(WAIT, "the probe's record", || {
+            !home.stdio_probes().is_empty()
+        });
+        let (probed, probe, last, sent, exit) = home.stdio_probes()[0].clone();
+        assert_eq!(probed, fd);
+        assert_eq!(last, probe, "fd {fd}: the server used the socket");
+        assert_eq!(sent, "0", "fd {fd}: the server wrote to the socket");
+        assert_eq!(
+            exit,
+            org_office_launch::EXIT_LAUNCH_DESCRIPTORS_REFUSED.to_string(),
+            "fd {fd}: the contract's exit status"
+        );
+        assert_eq!(home.fd_hygiene_refusals().len(), 1, "fd {fd}");
+        assert!(home.token_fingerprints(A).is_empty(), "fd {fd}");
+        assert!(home.key_socket_modes(A).is_empty(), "fd {fd}");
+        assert_eq!(home.key_sockets(), Vec::<String>::new());
+        host.shutdown();
+    }
+}
+
+/// A server that holds its key connection the way the contract forbids gets nothing, though it
+/// is the admitted server (the peer rule passes): the host's peer-fd check refuses a connection
+/// another process also holds (`fork`: shared), one held on two fds (`dup`), and one on fd 0-2
+/// (`on_stderr`). The server is killed and the start is `storage_error`.
+#[test]
+fn a_server_holding_its_key_connection_badly_gets_nothing() {
+    for how in ["fork", "dup", "on_stderr"] {
+        let home = TestHome::new();
+        home.write_office(&hq(A, "01ORGA", "Acme", T));
+        home.script(json!({ A: {"hand_off": how} }));
+        let mut config = home.config();
+        config.timings.backoff_initial = Duration::from_secs(30);
+        let host = Host::start(config).unwrap();
+        wait_for_reason(
+            host.socket_path(),
+            A,
+            OfficeStatus::Offline,
+            OfficeStatusReason::StorageError,
+        );
+        let pid = home.pids(A)[0];
+        eventually(WAIT, "the refused server to be killed", || !alive(pid));
+        assert!(
+            home.token_fingerprints(A).is_empty(),
+            "{how}: it got a token"
+        );
+        assert!(
+            home.db_key_fingerprints(A).is_empty(),
+            "{how}: it got a key"
+        );
+        // It did connect, and its peer check found the host: only the host's check refused.
+        assert_eq!(
+            home.log_count(&format!("hand-off-peer-refused {A} ")),
+            0,
+            "{how}"
+        );
+        assert_eq!(home.key_sockets(), Vec::<String>::new());
+        host.shutdown();
+    }
+}
+
+/// A same-user process replaces the key socket with its own (0600, so `lstat` passes) and serves
+/// a forged hand-off: the server checks who sent the line before using it (debug rule: its parent,
+/// the host), refuses it, and never uses the forged secrets.
+#[test]
+fn the_server_refuses_a_hand_off_from_an_impostor() {
+    let home = TestHome::new();
+    home.write_office(&hq(A, "01ORGA", "Acme", T));
+    home.script(json!({ A: {"hand_off": "impostor"} }));
+    let host = Host::start(home.config()).unwrap();
+    wait_for_reason(
+        host.socket_path(),
+        A,
+        OfficeStatus::Unavailable,
+        OfficeStatusReason::InvalidRequest,
+    );
+    eventually(WAIT, "the impostor to accept the fake's connection", || {
+        home.log_count("impostor-accepted") == 1
+    });
+    // Refused before a byte was read: the impostor's whole line was still waiting, unread.
+    let mut line = Vec::new();
+    org_office_launch::write_hand_off(
+        &mut line,
+        &org_proto::AppToken::from_bytes([0x42; 32]),
+        Some(&org_proto::DbKey::from_bytes([0x42; 32])),
+    )
+    .unwrap();
+    assert_eq!(
+        home.log_count(&format!("hand-off-peer-refused {A} ")),
+        1,
+        "the fake didn't refuse the impostor"
+    );
+    let refused = home.log_lines("hand-off-peer-refused");
+    assert!(
+        refused[0].ends_with(&format!(" {}", line.len())),
+        "the fake read some of the forged line: {refused:?}"
+    );
+    assert!(
+        home.token_fingerprints(A).is_empty(),
+        "the forged secrets were used"
+    );
+    assert!(home.db_key_fingerprints(A).is_empty());
+    host.shutdown();
+}
+
+/// A server that is slow to check who its peer is (descheduled between its connect and its
+/// check) still finds the host there: the host keeps its end open until the server closes its
+/// own, so the check never meets a closed peer.
+#[test]
+fn a_server_slow_to_check_the_host_still_gets_its_key() {
+    let home = TestHome::new();
+    home.write_office(&hq(A, "01ORGA", "Acme", T));
+    home.script(json!({ A: {"peer_check_delay_ms": 300} }));
+    let host = Host::start(home.config()).unwrap();
+    eventually(WAIT, "the office to be active", || {
+        office_info(host.socket_path(), A).is_some_and(|o| o.status == OfficeStatus::Active)
+    });
+    assert_eq!(
+        home.db_key_fingerprints(A),
+        [home.stored_key_fingerprint(A).unwrap()]
+    );
+    assert_eq!(home.log_count("hand-off-peer-refused"), 0);
+    host.shutdown();
+}

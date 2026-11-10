@@ -34,8 +34,10 @@
 //! another token, and connects as itself. Debug builds check `LOCAL_PEERPID` is the child's pid
 //! and the uid is ours instead. Either way, a peer that has already sent anything is refused.
 //! The peer token names the pid that last used the connection, looked up when asked, so the rule
-//! means something only because the socket is bound after the admission and the server touches
-//! no socket it didn't create (`handoff`'s module docs).
+//! means something only because the socket is bound after the admission, the server touches no
+//! socket it didn't create, and the host's peer-fd check finds the connection on one fd of the
+//! admitted pid, close-on-exec and not shared (`handoff`'s module docs), after which the peer is
+//! sampled again ([`PeerRule::still`]). The debug pid rule rests on the same facts.
 //!
 //! Only a child that passes is resumed. Right before the first line is written, its audit token
 //! is taken again and must be unchanged, so an `exec` after the check is refused. A child that
@@ -203,8 +205,10 @@ pub(crate) struct PeerSample {
     pub(crate) token: Option<AuditToken>,
     pub(crate) pid: Option<u32>,
     pub(crate) uid: Option<u32>,
-    /// Bytes waiting on the connection (`FIONREAD`): the host reads nothing from the peer, so
-    /// anything sent at all refuses it.
+    /// Bytes waiting on the connection (`FIONREAD`): the host reads nothing from the peer, so any
+    /// bytes it has sent refuse it. (It counts only bytes that arrived: a failed or zero-length
+    /// write that made someone the socket's last user leaves it at 0. The peer-fd check, not
+    /// this, rules those out: `handoff`.)
     pub(crate) waiting: Option<u64>,
 }
 
@@ -245,6 +249,46 @@ impl PeerRule {
     pub(crate) fn admits(&self, sample: &PeerSample) -> Result<(), String> {
         admits_peer(self, sample, satisfies)
     }
+
+    /// The admitted server's pid: whose fds the hand-off's peer-fd check scans (`handoff`). In a
+    /// release build, the pid the admitted audit token names.
+    pub(crate) fn pid(&self) -> u32 {
+        match self {
+            PeerRule::Token { admitted, .. } => token_pid(admitted),
+            #[cfg(any(debug_assertions, test))]
+            PeerRule::Pid { pid, .. } => *pid,
+        }
+    }
+
+    /// The re-check after the peer-fd check, with a fresh `sample` of the same connection: it is
+    /// still the admitted peer (the same token byte for byte, or the same pid and uid) and has
+    /// still sent nothing; in a release build, the admitted pid must also still be the admitted
+    /// image (its task's token, as [`ServerCheck::still`] reads it). So the fds that were scanned
+    /// were the admitted server's: a pid that died or was reused meanwhile can't pass. (The code
+    /// requirement isn't asked again: the token is the one that met it a moment ago, and an image
+    /// can't change without changing the token.)
+    pub(crate) fn still(&self, sample: &PeerSample) -> Result<(), String> {
+        still_peer(self, sample, token_of)
+    }
+}
+
+/// [`PeerRule::still`], pure: `token_now` gives the task token of a pid.
+fn still_peer(
+    rule: &PeerRule,
+    sample: &PeerSample,
+    token_now: impl FnOnce(u32) -> Result<AuditToken, String>,
+) -> Result<(), String> {
+    admits_peer(rule, sample, |_, _| true)?;
+    match rule {
+        PeerRule::Token { admitted, .. } => unchanged(*admitted, token_now(rule.pid())),
+        #[cfg(any(debug_assertions, test))]
+        PeerRule::Pid { .. } => Ok(()),
+    }
+}
+
+/// The pid an audit token names (`audit_token_t` word 5).
+fn token_pid(token: &AuditToken) -> u32 {
+    u32::from_ne_bytes([token[20], token[21], token[22], token[23]])
 }
 
 /// The hand-off decision, pure: `satisfies` checks the code a token names against a requirement,
@@ -498,6 +542,66 @@ mod tests {
             })
         );
         assert!(ServerCheck::Skip.peer_rule(Some([7; 32]), 42).is_err());
+    }
+
+    /// The fd check scans the admitted server's pid: the one in the admitted token (word 5), or
+    /// the debug rule's.
+    #[test]
+    fn the_peer_rule_names_the_admitted_pid() {
+        let mut admitted = [0u8; 32];
+        admitted[20..24].copy_from_slice(&4242u32.to_ne_bytes());
+        let rule = PeerRule::Token {
+            admitted,
+            requirement: "R".into(),
+        };
+        assert_eq!(rule.pid(), 4242);
+        assert_eq!(PeerRule::Pid { pid: 42, uid: 501 }.pid(), 42);
+    }
+
+    /// After the fd check: the same peer, nothing sent, and (release) the admitted pid still the
+    /// admitted image. The requirement isn't asked again.
+    #[test]
+    fn the_re_check_wants_the_same_peer_and_the_same_image() {
+        let mut admitted = [7u8; 32];
+        admitted[20..24].copy_from_slice(&4242u32.to_ne_bytes());
+        let rule = PeerRule::Token {
+            admitted,
+            requirement: "R".into(),
+        };
+        let sample = |token: Option<AuditToken>, waiting| PeerSample {
+            token,
+            waiting: Some(waiting),
+            ..PeerSample::default()
+        };
+        let asked = Cell::new(None);
+        let same = |pid| {
+            asked.set(Some(pid));
+            Ok(admitted)
+        };
+        assert_eq!(still_peer(&rule, &sample(Some(admitted), 0), same), Ok(()));
+        assert_eq!(asked.get(), Some(4242));
+        // The pid is now another image (it exec'd, or it died and the pid was reused), or gone.
+        let mut other = admitted;
+        other[28] ^= 1;
+        assert!(still_peer(&rule, &sample(Some(admitted), 0), |_| Ok(other)).is_err());
+        assert!(still_peer(&rule, &sample(Some(admitted), 0), |_| Err("gone".into())).is_err());
+        // The connection's peer changed, or it sent something meanwhile.
+        let never = |_| -> Result<AuditToken, String> { panic!("asked for the task's token") };
+        assert!(still_peer(&rule, &sample(Some(other), 0), never).is_err());
+        assert!(still_peer(&rule, &sample(None, 0), never).is_err());
+        let err = still_peer(&rule, &sample(Some(admitted), 1), never).unwrap_err();
+        assert!(err.contains("sent something"), "{err}");
+        // Debug: the pid and uid again.
+        let rule = PeerRule::Pid { pid: 42, uid: 501 };
+        let by_pid = |pid, waiting| PeerSample {
+            pid: Some(pid),
+            uid: Some(501),
+            waiting: Some(waiting),
+            ..PeerSample::default()
+        };
+        assert_eq!(still_peer(&rule, &by_pid(42, 0), never), Ok(()));
+        assert!(still_peer(&rule, &by_pid(43, 0), never).is_err());
+        assert!(still_peer(&rule, &by_pid(42, 2), never).is_err());
     }
 
     #[test]

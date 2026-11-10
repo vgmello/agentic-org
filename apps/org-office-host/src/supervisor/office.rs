@@ -217,9 +217,10 @@ impl OfficeRunner {
                 // program isn't fixed by itself, so the give-up rule ends it), and it never got
                 // the key.
                 let reason = match e {
-                    SpawnError::Untrusted(_) | SpawnError::HandOff(_) => {
-                        OfficeStatusReason::StorageError
-                    }
+                    SpawnError::Untrusted(_)
+                    | SpawnError::HandOff(_)
+                    | SpawnError::AfterHandOff(_)
+                    | SpawnError::DescriptorsRefused => OfficeStatusReason::StorageError,
                     SpawnError::Io(_) => OfficeStatusReason::Crashed,
                 };
                 Ending::Ended {

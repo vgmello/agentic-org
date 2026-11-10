@@ -275,10 +275,15 @@ security delete-generic-password -s org.agentic.office -a <office id>
 ## 9. Known gaps for the switchover
 
 1. **No signing:** (release builds require **macOS 14.4 or later**, ada 2026-11-09: the pre-release launch
-   requirement on the server's spawn needs it. Until that gate is in, the key hand-off has open residuals: a
-   same-user process that resumes the server early chooses its launch context, its stdio pipes and its Mach
-   special ports (the bootstrap port above all), though it never gets the secrets; see `office-host-boundary.md`,
-   "Only the signed server gets a key".)
+   requirement the host sets on the server's spawn needs it. Until that gate (C) is in, the key hand-off has open
+   residuals: a same-user process that resumes the server early chooses its post-`main` launch context and its Mach
+   special ports (the bootstrap port above all), and we rely on the kernel's `last_pid` and libproc semantics. A
+   pre-`main` write to a socket on fd 2 (`OBJC_HELP` makes libobjc write there) no longer exposes the key: the host's
+   peer-fd check, in debug and release builds, refuses a key connection the server holds on fd 0-2, without
+   close-on-exec, on several fds or shared with another process, and logs why ("refused the connection to its key
+   socket: it holds the connection on standard fd 2"). The stdio pipes stay an integrity risk only; see
+   `office-host-boundary.md`, "Only the signed server gets a key".) A server whose fds 0-2 aren't all pipes exits
+   78 (`EXIT_LAUNCH_DESCRIPTORS_REFUSED`) with no line; the host logs "refused its launch descriptors".
    No Developer ID, no `ORG_APP_TEAM_ID`, no `keychain-access-groups` entitlement. A **release** host
    refuses to start without `ORG_HOST_KEYCHAIN_GROUP` and the matching entitlement, so `bun run install:dev`
    (release host, ad-hoc signed, registered through `SMAppService`) builds a login service that can't start today.
