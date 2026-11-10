@@ -465,6 +465,10 @@ The classifier consumes a correlated native reply with a numeric native ID:
   including not_bound and unknown native refusal names, become sanitized
   unavailable503 with an invariant issue. Native errors cannot supply gateway
   session, cancellation or identity hints. Rate limiting is gateway-owned.
+  The native code allowlist is explicit and exhaustive: codes belonging to
+  HTTP admission or other domains (including unsupported_version and timeout)
+  cannot pass through with a native message. HTTP admission can still emit
+  its own documented errors before dispatch.
 - Native not_authorized returns `NeedsAuthorizationRecheck` outside the
   serializable browser outcome type. B1-06 checks host-session liveness. For a
   live session it renews once and redispatches once with the same operation ID,
@@ -482,7 +486,7 @@ worker enforces authorization. A disabled operation must be refused503 before
 native dispatch even when a client ignores its capability.
 
 Layer A vectors live in `test-vectors/v2/gateway/`: 16 mapping cases, 233 strict
-input/optional cases and 27 reply cases, plus one core outbound-encoding guard.
+input/optional cases and 38 reply cases, plus one core outbound-encoding guard.
 Each case is tagged Rust or Rust+TS; native reply classification is Rust-only,
 while its browser JSON and mapping paths/envelopes are shared with Jules's
 reader/URL builder. The Rust reader does not claim HTTP-path routing coverage.
