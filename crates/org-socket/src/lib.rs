@@ -119,6 +119,9 @@ impl<
 /// Wait for bytes, EOF or a socket error on a descriptor owned by the caller.
 /// Invalid descriptors fail; interruption is returned for the caller to handle.
 pub fn poll_readable(fd: RawFd, tick: Duration) -> io::Result<bool> {
+    if fd < 0 {
+        return Err(io::Error::from_raw_os_error(libc::EBADF));
+    }
     let mut slot = libc::pollfd {
         fd,
         events: libc::POLLIN,
@@ -227,5 +230,65 @@ mod tests {
         assert_eq!(line, "first second\n");
         assert_eq!(polls.get(), 3);
         assert_eq!(ticks.get(), 1);
+    }
+
+    #[test]
+    fn repeated_idle_ticks_keep_the_connection_open_until_data_arrives() {
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        let polls = Cell::new(0);
+        let ticks = Cell::new(0);
+        let mut reader = Ticked::with_poll(
+            stream,
+            READ_TICK,
+            || {
+                ticks.set(ticks.get() + 1);
+                false
+            },
+            |fd, _| {
+                polls.set(polls.get() + 1);
+                if polls.get() <= 5 {
+                    Ok(false)
+                } else {
+                    peer.write_all(b"still live\n").unwrap();
+                    poll_readable(fd, Duration::from_millis(1))
+                }
+            },
+        );
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        assert_eq!(line, "still live\n");
+        assert_eq!(ticks.get(), 5);
+    }
+
+    #[test]
+    fn an_interrupted_poll_rechecks_liveness_without_reading() {
+        let ticks = Cell::new(0);
+        let mut reader = Ticked::with_poll(
+            NoReadyRead,
+            READ_TICK,
+            || {
+                ticks.set(ticks.get() + 1);
+                true
+            },
+            |_, _| Err(io::ErrorKind::Interrupted.into()),
+        );
+        assert_eq!(reader.read(&mut [0; 1]).unwrap(), 0);
+        assert_eq!(ticks.get(), 1);
+    }
+
+    #[test]
+    fn an_invalid_descriptor_fails_instead_of_spinning_or_reading() {
+        assert_eq!(
+            poll_readable(-2, Duration::from_millis(1))
+                .unwrap_err()
+                .raw_os_error(),
+            Some(libc::EBADF)
+        );
+        assert_eq!(
+            poll_readable(i32::MAX, Duration::from_millis(1))
+                .unwrap_err()
+                .raw_os_error(),
+            Some(libc::EBADF)
+        );
     }
 }

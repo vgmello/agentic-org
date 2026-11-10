@@ -752,10 +752,9 @@ impl Drop for Client {
         // Let the writer thread end once its queue is empty.
         self.outbound.take();
         if let Some(reader) = self.reader.take() {
-            // The shutdown above ends the reader's read. On macOS it has been seen not to wake
-            // it (in about one drop in a hundred), and an unconditional join would then freeze
-            // whoever dropped the client, usually a UI thread. Wait a moment, then let the
-            // thread go: it ends when the server closes its side.
+            // Shutdown normally wakes the reader. If macOS misses that wakeup, Ticked
+            // observes `closed` within READ_TICK. Keep this short UI-facing join bound;
+            // a reader that outlives it releases its remaining resources at the next tick.
             let give_up_at = Instant::now() + DROP_JOIN_WAIT;
             while !reader.is_finished() && Instant::now() < give_up_at {
                 std::thread::sleep(Duration::from_millis(5));

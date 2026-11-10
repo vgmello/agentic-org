@@ -128,7 +128,7 @@ struct Control {
     /// Set by the watcher when it has ended this connection's held calls and subscription
     /// because its member can no longer be bound: the connection thread then treats the
     /// connection as unbound before its next call, so its own state (`subscribed`, the binding)
-    /// matches.
+    /// matches. If it remains idle, the next reader tick ends it and removes its registration.
     revoked: std::sync::atomic::AtomicBool,
 }
 
@@ -1081,6 +1081,43 @@ mod tests {
             },
         );
         assert_eq!(polls.get(), 1);
+    }
+
+    #[test]
+    fn ticked_reader_clears_a_revoked_idle_member_registration() {
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        let shared = shared(Path::new("/unused-test-socket"));
+        let request = Request::new::<MsgBind>(
+            1,
+            &MsgBindParams {
+                member: Some(org_mailbox::testkit::fixture::ADA_HANDLE.to_owned()),
+                app_token: None,
+            },
+        )
+        .unwrap();
+        frame::write_message(&mut peer, &request).unwrap();
+        let polls = std::cell::Cell::new(0);
+        serve_connection_with_poll(
+            stream,
+            &shared,
+            1,
+            &AtomicBool::new(false),
+            org_socket::READ_TICK,
+            |fd, _| {
+                polls.set(polls.get() + 1);
+                if polls.get() == 1 {
+                    org_socket::poll_readable(fd, Duration::from_millis(1))
+                } else {
+                    let bound = shared.bound.lock().unwrap();
+                    let (member, control) = bound.get(&1).expect("bind must register the member");
+                    assert_eq!(member, org_mailbox::testkit::fixture::ADA_ID);
+                    control.revoked.store(true, Ordering::SeqCst);
+                    Ok(false)
+                }
+            },
+        );
+        assert_eq!(polls.get(), 2);
+        assert!(shared.bound.lock().unwrap().is_empty());
     }
 
     fn shared(path: &Path) -> Arc<Shared> {
