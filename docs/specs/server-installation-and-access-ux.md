@@ -181,6 +181,15 @@ and **O-2** (recovery-code delivery). Commands are proposed spellings, like the
 rest of this spec (A80). Placeholders in angle brackets, such as `<HQ machine>`,
 are filled from HQ's data. Questions for ada are in §4a.9.
 
+**Naming the instance in CLI copy.** Every command shown to the user, in the CLI
+or the browser, includes `--name <instance>` whenever the instance isn't
+`default`, and leaves it out for `default`. `--name` always comes after the
+command it selects for, as in §1 and §5: `agentic-org setup --name lab`,
+`agentic-org account add --name lab`,
+`agentic-org recovery-code collect --name lab --org 'Lumen Labs'`. The examples
+below use `default`. The sign-in page can't know the instance's name, so it always
+shows `--name <instance>` as text to replace (§4a.3).
+
 ### 4a.1 Accounts: who can sign in
 
 - An **account** belongs to this instance, not to an organization. It has a
@@ -287,7 +296,7 @@ Password changed for alex.
 | `account password`: unknown username | "There's no account called sam on instance default." | Error |
 | Password too short (either command) | "Use at least 12 characters." Asks again. | — |
 | The two password entries differ | "The passwords don't match. Enter them again." Asks for both again. | — |
-| Instance not running, or the host can't be reached | "Instance default isn't running. Start it with agentic-org start, then run this command again." | Error |
+| Instance not running, or the host can't be reached | "Instance default isn't running. Start it with agentic-org start, then run this command again." For a named instance: "Instance lab isn't running. Start it with agentic-org start --name lab, then run this command again." | Error |
 | Not an interactive terminal, and no protected password input given | "Run this in a terminal, or pass the password through the protected input (§2)." | Error |
 
 Whether `account add` can give the admin grant, and whether a password change
@@ -314,9 +323,9 @@ they sign in. It shows no organization data.
  │  [                 Sign in                      ]   │
  │                                                     │
  │  Forgot your password? On the HQ machine, run       │
- │  agentic-org --name <instance> account password ... │
+ │  agentic-org account password --name <instance> ... │
  │  Need an account? Accounts are added on the HQ      │
- │  machine: agentic-org --name <instance> account add │
+ │  machine: agentic-org account add --name <instance> │
  └────────────────────────────────────────────────────┘
 ```
 
@@ -460,10 +469,10 @@ passes through the gateway or the browser.** It shows only its state.
 prepared, couldn't be prepared, not recorded), wherever it appears (the
 notice, the Recovery row, Needs you items, setup's recovery block, a repeated
 setup's reminder, `agentic-org status` and the collect command), ends with this
-sentence. The tables below leave it out for space. Input errors (no `--org`, an
-unknown organization, a group that doesn't match, no interactive terminal, an
-instance that isn't running) don't report the state and don't need it: "Recovering an organization after losing the
-HQ machine isn't supported yet." (REC-1, §7.)
+sentence: "Recovering an organization after losing the HQ machine isn't supported
+yet." (REC-1, §7.) The tables below leave it out for space. Input errors (no
+`--org`, an unknown organization, a group that doesn't match, no interactive
+terminal, an instance that isn't running) don't report the state and don't need it.
 
 **States in the browser.** Only the organization's owner sees them.
 
@@ -536,7 +545,7 @@ Recovering an organization after losing the HQ machine isn't supported yet.
 | No `--org`, several organizations | "This instance has several organizations. Run again with --org and one of: Lumen Labs, Side Project." | Error |
 | Unknown organization | "There's no organization called "Lumen Labs" on instance default." | Error |
 | Not an interactive terminal | "The recovery code is shown only in an interactive terminal." No code. (Automation's protected output is A80.) | Error |
-| Instance not running, or the host can't be reached | "Instance default isn't running. Start it with agentic-org start, then run this command again." No code. | Error |
+| Instance not running, or the host can't be reached | "Instance default isn't running. Start it with agentic-org start, then run this command again." For a named instance: "Instance lab isn't running. Start it with agentic-org start --name lab, then run this command again." No code. | Error |
 
 - `agentic-org status` lists each organization's recovery state in the same
   words as the Settings row, never the code.
