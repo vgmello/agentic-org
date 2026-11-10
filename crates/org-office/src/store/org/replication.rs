@@ -19,6 +19,9 @@ use crate::{time, ulid};
 use super::{apply_changes, json, snapshot, Answer, KEEP_MS};
 
 const CODEC: &str = "org.native.changes";
+// X-05 limits the encoded JSON frame to 1 MiB. Reserve 1 KiB for its envelope,
+// whose IDs, digests, position and codec fields have bounded representations.
+const MAX_LIVE_PAYLOAD_BYTES: usize = (1024 * 1024 - 1024) / 4 * 3;
 pub(super) const PROTOCOL: u32 = 1;
 
 pub(super) fn create_tables(tx: &Transaction<'_>) -> rusqlite::Result<()> {
@@ -34,6 +37,7 @@ pub(super) fn create_tables(tx: &Transaction<'_>) -> rusqlite::Result<()> {
              pending_base BLOB CHECK (length(pending_base) = 32),
              protocol_level INTEGER NOT NULL CHECK (protocol_level > 0),
              awaiting_snapshot INTEGER NOT NULL CHECK (awaiting_snapshot IN (0, 1)),
+             native_seq INTEGER NOT NULL CHECK (native_seq >= 0),
              CHECK (awaiting_snapshot = 0 OR local_office <> hq_office),
              CHECK ((epoch < highest_epoch) = (pending_base IS NOT NULL)),
              CHECK (epoch = highest_epoch OR restore_pending = 1)
@@ -125,8 +129,9 @@ pub(crate) fn bind_replication(
         };
         db.execute(
             "INSERT INTO org_replica (singleton, org_id, local_office, hq_office, ca,
-                    epoch, seq, digest, highest_epoch, restore_pending, pending_base, protocol_level, awaiting_snapshot)
-             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?5, 0, NULL, ?8, ?9)",
+                    epoch, seq, digest, highest_epoch, restore_pending, pending_base, protocol_level,
+                    awaiting_snapshot, native_seq)
+             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?5, 0, NULL, ?8, ?9, ?6)",
             params![org.as_str(), local.as_str(), hq.as_str(), ca.as_bytes(),
                 int(position.epoch.get())?, int(position.seq)?, digest.as_bytes(), PROTOCOL, local != hq],
         ).map_err(storage_error)?;
@@ -279,7 +284,7 @@ pub(super) fn int(value: u64) -> Result<i64, StoreError> {
 pub(super) fn native_position(db: &Connection) -> Result<Option<org_proto::Position>, OfficeError> {
     let row = db
         .query_row(
-            "SELECT epoch, seq, awaiting_snapshot FROM org_replica WHERE singleton = 1",
+            "SELECT epoch, native_seq, awaiting_snapshot FROM org_replica WHERE singleton = 1",
             [],
             |row| {
                 Ok((
@@ -300,7 +305,7 @@ pub(super) fn native_position(db: &Connection) -> Result<Option<org_proto::Posit
     }
 }
 
-fn awaiting_snapshot(db: &Connection) -> Result<bool, StoreError> {
+pub(super) fn awaiting_snapshot(db: &Connection) -> Result<bool, StoreError> {
     db.query_row(
         "SELECT awaiting_snapshot FROM org_replica WHERE singleton = 1",
         [],
@@ -337,24 +342,13 @@ pub(super) fn publish_command(
     };
     let payload = serde_json::to_vec(&record).map_err(OfficeError::storage)?;
     let codec = Codec::new(CODEC, 1).map_err(OfficeError::storage)?;
-    let position = if payload.len() > organization::MAX_PAYLOAD_BYTES {
-        publish_snapshot_checkpoint(db, record, &codec, &payload).map_err(OfficeError::storage)?
+    if payload.len() > MAX_LIVE_PAYLOAD_BYTES {
+        publish_snapshot_checkpoint(db, record, &codec, &payload).map_err(OfficeError::storage)?;
     } else {
-        match organization::append_hq(&mut OrganizationTxn(db), codec, payload.into())
-            .map_err(OfficeError::storage)?
-        {
-            OrgOutput::Published(event) => event.position,
-            _ => {
-                return Err(OfficeError::storage(SyncError::from(
-                    Refusal::InvariantFailure,
-                )))
-            }
-        }
-    };
-    Ok(org_proto::Position {
-        epoch: position.epoch.get(),
-        seq: position.seq,
-    })
+        organization::append_hq(&mut OrganizationTxn(db), codec, payload.into())
+            .map_err(OfficeError::storage)?;
+    }
+    super::head(db)
 }
 
 fn publish_snapshot_checkpoint(
@@ -362,7 +356,7 @@ fn publish_snapshot_checkpoint(
     record: NativeEvent,
     codec: &Codec,
     payload: &[u8],
-) -> Result<Position, SyncError> {
+) -> Result<(), SyncError> {
     let mut txn = OrganizationTxn(db);
     let mut head = txn.checkpoint()?;
     if head.local_office != head.hq_office {
@@ -388,7 +382,7 @@ fn publish_snapshot_checkpoint(
         .map_err(storage_error)?;
     store_snapshot_base(db, head.position, head.digest)?;
     txn.set_authority(&head)?;
-    Ok(head.position)
+    Ok(())
 }
 
 fn store_snapshot_base(
@@ -459,6 +453,10 @@ impl OrgTxn for OrganizationTxn<'_> {
         })
     }
 
+    fn requires_initial_snapshot(&mut self) -> Result<bool, StoreError> {
+        awaiting_snapshot(self.0)
+    }
+
     fn digest_at(&mut self, position: Position) -> Result<Option<Digest>, StoreError> {
         self.0
             .query_row(
@@ -480,9 +478,6 @@ impl OrgTxn for OrganizationTxn<'_> {
     }
 
     fn apply_event(&mut self, event: &OrgEvent) -> Result<(), SyncError> {
-        if awaiting_snapshot(self.0)? {
-            return Err(Refusal::RecoveryRequired.into());
-        }
         if event.codec.id() != CODEC || event.codec.version() != 1 {
             return Err(Refusal::IntegrityFailure.into());
         }
@@ -525,7 +520,8 @@ impl OrgTxn for OrganizationTxn<'_> {
             .0
             .execute(
                 "UPDATE org_replica SET epoch = ?1, seq = ?2, digest = ?3,
-                    highest_epoch = ?4, restore_pending = ?5, pending_base = ?6
+                    highest_epoch = ?4, restore_pending = ?5, pending_base = ?6,
+                    native_seq = CASE WHEN epoch <> ?1 AND ?2 = 0 THEN 0 ELSE native_seq END
              WHERE singleton = 1",
                 params![
                     int(next.position.epoch.get())?,
@@ -592,26 +588,31 @@ impl NativeEvent {
             error => storage_error(error).into(),
         })?;
 
-        let mut kind = "org.changed";
-        let mut body = json(&self.changes);
-        let (epoch, seq) = (int(position.epoch.get())?, int(position.seq)?);
+        // Federation keeps every outcome. The native feed advances only for changes,
+        // so a copied refusal cannot introduce a gap in existing subscribers' positions.
+        let changed = self
+            .answer
+            .as_ref()
+            .is_none_or(|answer| answer.refusal.is_none());
+        let (epoch, seq) = if changed {
+            let next = super::append_event(db, &self.command_id, &self.at, &self.changes)
+                .map_err(storage_error)?;
+            let seq = int(next.seq)?;
+            db.execute("UPDATE org_replica SET native_seq = ?1", [seq])
+                .map_err(storage_error)?;
+            (int(next.epoch)?, seq)
+        } else {
+            (0, 0)
+        };
         if let Some((answer, expires)) = self.answer.zip(expires) {
-            let result_position = match &answer.refusal {
-                Some(refusal) => {
-                    kind = "org.rejected";
-                    body = json(refusal);
-                    (0, 0)
-                }
-                None => (epoch, seq),
-            };
             let inserted = db
                 .execute(
                     "INSERT INTO commands (command_id, epoch, seq, expires_at, result)
                  VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(command_id) DO NOTHING",
                     (
                         &self.command_id,
-                        result_position.0,
-                        result_position.1,
+                        epoch,
+                        seq,
                         time::format_epoch_ms(expires),
                         json(&Answer {
                             params_hash: answer.params_hash,
@@ -624,12 +625,6 @@ impl NativeEvent {
                 return Err(Refusal::Divergence.into());
             }
         }
-        db.execute(
-            "INSERT INTO events (epoch, seq, kind, command_id, at, body)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            (epoch, seq, kind, self.command_id, self.at, body),
-        )
-        .map_err(storage_error)?;
         Ok(())
     }
 }
@@ -639,7 +634,9 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use org_sync::error::MAX_STORE_RETRIES;
-    use org_sync::organization::{self, PeerIdentity, PeerRole, VerifiedPeer};
+    use org_sync::organization::{
+        self, AuthorityRecord, AuthorityVerifier, PeerIdentity, PeerRole, VerifiedPeer,
+    };
     use serde_json::json;
     use tempfile::TempDir;
 
@@ -670,6 +667,14 @@ mod tests {
                 authority: self.0,
                 ..Hq.identity()
             }
+        }
+    }
+
+    struct VerifiedSignature;
+
+    impl AuthorityVerifier for VerifiedSignature {
+        fn verify(&self, _: &AuthorityRecord) -> Result<(), Refusal> {
+            Ok(())
         }
     }
 
@@ -706,7 +711,7 @@ mod tests {
             .write(move |db| {
                 db.execute(
                     "INSERT INTO org_replica VALUES (1, 'ORG', ?1, 'HQ', zeroblob(32),
-                                            1, 1, zeroblob(32), 1, 0, NULL, 1, 0)",
+                                            1, 1, zeroblob(32), 1, 0, NULL, 1, 0, 1)",
                     [local_id],
                 )
                 .map_err(OfficeError::storage)?;
@@ -845,7 +850,7 @@ mod tests {
         assert_eq!(office.org_snapshot().unwrap(), original);
         office.org_store().run_sql_for_test(
             "INSERT INTO org_replica VALUES (1, 'ORG', 'SAT', 'HQ', zeroblob(32),
-                                            1, 1, zeroblob(32), 1, 0, NULL, 1, 0)",
+                                            1, 1, zeroblob(32), 1, 0, NULL, 1, 0, 1)",
         );
         assert!(matches!(
             organization::apply(&office, &Hq, event(2, Digest::ZERO, COMMAND, "first")).unwrap(),
@@ -1033,7 +1038,7 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_refuses_team_cycles_and_leads_without_a_membership() {
+    fn snapshot_refuses_team_cycles_and_invalid_team_roles() {
         const MAX_BYTES: u64 = 1024 * 1024;
         let dir = TempDir::new().unwrap();
         let satellite = new_office(&dir, "SAT");
@@ -1069,17 +1074,59 @@ mod tests {
             Err(SyncError::Refused(Refusal::IntegrityFailure))
         ));
         hq.org_store().run_sql_for_test("DELETE FROM teams;");
-        let owner = hq.org_snapshot().unwrap().members[0].id.clone();
+        let mut person = hq.org_snapshot().unwrap().members.remove(0);
+        let owner = person.id.clone();
+        person.id = "person".into();
+        person.owner = false;
         hq.org_store()
             .write(move |db| {
                 let team = org_proto::org::Team {
                     id: "team".into(),
                     owner_team_id: None,
                     name: "team".into(),
-                    lead_member_id: Some(owner.clone()),
+                    lead_member_id: Some(person.id.clone()),
                     version: 1,
                 };
-                apply_changes(db, &[OrgChange::TeamUpserted { team }])?;
+                apply_changes(
+                    db,
+                    &[
+                        OrgChange::MemberUpserted {
+                            member: person.clone(),
+                        },
+                        OrgChange::TeamUpserted { team },
+                    ],
+                )?;
+                Ok(((), None))
+            })
+            .unwrap();
+        assert!(matches!(
+            stage(),
+            Err(SyncError::Refused(Refusal::IntegrityFailure))
+        ));
+        hq.org_store()
+            .write(move |db| {
+                let membership = org_proto::org::Membership {
+                    id: "membership".into(),
+                    team_id: "team".into(),
+                    member_id: owner.clone(),
+                    title_in_team: None,
+
+                    version: 1,
+                };
+                let team = org_proto::org::Team {
+                    id: "team".into(),
+                    owner_team_id: None,
+                    name: "team".into(),
+                    lead_member_id: Some(owner.clone()),
+                    version: 2,
+                };
+                apply_changes(
+                    db,
+                    &[
+                        OrgChange::TeamUpserted { team },
+                        OrgChange::MembershipUpserted { membership },
+                    ],
+                )?;
                 Ok(((), None))
             })
             .unwrap();
@@ -1105,16 +1152,46 @@ mod tests {
             Err(SyncError::Refused(Refusal::RecoveryRequired))
         ));
         assert!(satellite.org_snapshot().is_err());
-        let sample = event(1, base, COMMAND, "incomplete");
-        let incoming = OrgEvent::new(
-            sample.org_id,
-            Position { epoch, seq: 1 },
-            base,
-            sample.codec,
-            sample.payload,
-        )
-        .unwrap();
-        assert!(organization::apply(&satellite, &HqAt(epoch), incoming).is_err());
+        for seq in [2, 1] {
+            let sample = event(seq, base, COMMAND, "incomplete");
+            let incoming = OrgEvent::new(
+                sample.org_id,
+                Position { epoch, seq },
+                base,
+                sample.codec,
+                sample.payload,
+            )
+            .unwrap();
+            assert_eq!(
+                organization::apply(&satellite, &HqAt(epoch), incoming).unwrap(),
+                OrgOutput::SnapshotRequired
+            );
+        }
+        let record = |authority, restored_epoch| AuthorityRecord {
+            org_id: OrgId::new("ORG").unwrap(),
+            hq_office: OfficeId::new("HQ").unwrap(),
+            ca: Digest::ZERO,
+            epoch: authority,
+            restored_position: Position {
+                epoch: restored_epoch,
+                seq: 0,
+            },
+            restored_digest: base,
+            signature: Arc::from([1]),
+        };
+        for signed in [
+            record(epoch, Epoch::new(1).unwrap()),
+            record(epoch.checked_next().unwrap(), epoch),
+        ] {
+            assert_eq!(
+                organization::accept_authority(&satellite, signed, Arc::new(VerifiedSignature))
+                    .unwrap(),
+                OrgOutput::AuthorityAccepted {
+                    snapshot_required: true
+                }
+            );
+        }
+        assert!(satellite.org_snapshot().is_err());
     }
 
     #[test]
@@ -1128,7 +1205,7 @@ mod tests {
         hq.org_store()
             .write(move |db| {
                 let mut changes = Vec::new();
-                for index in 0..=1150 {
+                for index in 0..=875 {
                     let member = Member {
                         id: if index == 0 {
                             manager.to_owned()
@@ -1196,15 +1273,7 @@ mod tests {
 
     #[test]
     fn accepting_a_higher_authority_persists_the_fence_and_rejects_stale_sessions() {
-        use org_sync::organization::{AuthorityRecord, AuthorityVerifier};
         const MAX_BYTES: u64 = 1024 * 1024;
-
-        struct VerifiedSignature;
-        impl AuthorityVerifier for VerifiedSignature {
-            fn verify(&self, _: &AuthorityRecord) -> Result<(), Refusal> {
-                Ok(())
-            }
-        }
 
         let (dir, satellite) = replica();
         let old = satellite.replication_checkpoint().unwrap();
@@ -1321,31 +1390,72 @@ mod tests {
         use crate::rules::OrgCommand;
         use org_proto::org::TeamCreateParams;
 
+        const MAX_BYTES: u64 = 1024 * 1024;
         let dir = TempDir::new().unwrap();
         let hq = new_office(&dir, "HQ");
         let ca = Digest::from_bytes([6; 32]);
-        hq.bind_replication_hq(ca, 1024 * 1024).unwrap();
+        hq.bind_replication_hq(ca, MAX_BYTES).unwrap();
         let anchor = hq.replication_checkpoint().unwrap();
         assert_ne!(anchor.digest, Digest::ZERO);
-        let new_team = |team_id: &str| {
+        let new_team = |team_id: &str, name: &str| {
             OrgCommand::TeamCreate(TeamCreateParams {
                 command_id: ulid::generate().unwrap(),
                 team_id: team_id.into(),
-                name: "Design".into(),
+                name: name.into(),
                 owner_team_id: None,
             })
         };
-        let accepted = new_team("teamA");
+        let accepted = new_team("teamA", "Design");
         let committed = hq.submit_org(accepted.clone()).unwrap().unwrap();
         assert_eq!(committed.position.unwrap().seq, 2);
         assert_eq!(hq.org_head().unwrap().seq, 2);
         assert_eq!(hq.submit_org(accepted).unwrap().unwrap(), committed);
-        let refused = new_team("teamB");
+        let refused = new_team("teamB", "Design");
         let error = hq.submit_org(refused.clone()).unwrap().unwrap_err();
         assert_eq!(error.code, org_proto::ErrorCode::AlreadyExists);
-        assert_eq!(hq.org_head().unwrap().seq, 3);
         assert_eq!(hq.submit_org(refused).unwrap().unwrap_err(), error);
-        assert_eq!(hq.org_head().unwrap().seq, 3);
+        let satellite = new_office(&dir, "SAT");
+        satellite
+            .bind_replication_satellite(
+                OfficeId::new("HQ").unwrap(),
+                ca,
+                anchor.position.epoch,
+                Digest::ZERO,
+            )
+            .unwrap();
+        let transport_key = Key::from_bytes([8; 32]);
+        let export = hq
+            .export_replication_snapshot(&transport_key, MAX_BYTES)
+            .unwrap();
+        assert_eq!(export.manifest.position.seq, 3);
+        let staged = satellite
+            .stage_replication_snapshot(
+                &Hq,
+                &export.manifest,
+                &transport_key,
+                export.ciphertext.as_slice(),
+                MAX_BYTES,
+                SnapshotStageMode::Normal,
+            )
+            .unwrap();
+        assert_eq!(
+            organization::install_snapshot(&satellite, staged).unwrap(),
+            OrgOutput::SnapshotInstalled
+        );
+        assert_eq!(satellite.org_head().unwrap().seq, 2);
+        let next = hq
+            .submit_org(new_team("teamC", "Engineering"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            hq.org_changes_after(org_proto::Position { epoch: 1, seq: 1 }, 8)
+                .unwrap()
+                .iter()
+                .map(|change| change.position.seq)
+                .collect::<Vec<_>>(),
+            [2, 3]
+        );
+        assert_eq!(next.position.unwrap().seq, 3);
         assert!(matches!(
             hq.replication_events_after(anchor.position, Digest::ZERO, 8),
             Err(SyncError::Refused(Refusal::Divergence))
@@ -1354,14 +1464,23 @@ mod tests {
             .replication_events_after(anchor.position, anchor.digest, 8)
             .unwrap()
             .unwrap();
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 3);
         assert_eq!(events[1].previous, events[0].digest);
+        assert_eq!(events[2].previous, events[1].digest);
         assert_eq!(
-            events[1].digest,
+            events[2].digest,
             hq.replication_checkpoint().unwrap().digest
         );
-        assert!(hq.bind_replication_hq(Digest::ZERO, 1024 * 1024).is_err());
-        hq.bind_replication_hq(ca, 1024 * 1024).unwrap();
+        assert!(matches!(
+            organization::apply(&satellite, &Hq, events[2].clone()).unwrap(),
+            OrgOutput::Ack { position, duplicate: false, .. } if position.seq == 4
+        ));
+        assert_eq!(
+            satellite.org_snapshot().unwrap(),
+            hq.org_snapshot().unwrap()
+        );
+        assert!(hq.bind_replication_hq(Digest::ZERO, MAX_BYTES).is_err());
+        hq.bind_replication_hq(ca, MAX_BYTES).unwrap();
         assert_eq!(hq.org_head().unwrap().seq, 3);
     }
 }

@@ -115,6 +115,7 @@ enum Cell {
 #[serde(deny_unknown_fields)]
 struct Projection {
     header: Header,
+    native_seq: u64,
     rows: [Vec<Vec<Cell>>; TABLES.len()],
 }
 
@@ -164,6 +165,7 @@ pub(super) fn create_table(tx: &Transaction<'_>) -> rusqlite::Result<()> {
 fn bounded_rows(db: &Connection, header: Header, limit: u64) -> Result<Projection, OfficeError> {
     let mut projection = Projection {
         header,
+        native_seq: super::head(db)?.seq,
         rows: std::array::from_fn(|_| Vec::new()),
     };
     let mut remaining = limit;
@@ -400,6 +402,7 @@ pub(crate) fn stage_replication_snapshot(
     staged.staging_id = store.sync_write(move |db| {
         let current = OrganizationTxn(db).checkpoint()?;
         check_stage(&current, &peer, mode, position, digest)?;
+        check_native_sequence(db, &current, &projection)?;
         let epoch = int(position.epoch.get())?;
         let seq = int(position.seq)?;
         let existing: Option<(String, i64, [u8; 32])> = db
@@ -473,8 +476,30 @@ fn check_stage(
     }
 }
 
+fn check_native_sequence(
+    db: &Connection,
+    current: &OrgCheckpoint,
+    incoming: &Projection,
+) -> Result<(), SyncError> {
+    if incoming.header.epoch != current.position.epoch.get()
+        || super::replication::awaiting_snapshot(db)?
+    {
+        return Ok(());
+    }
+    let local = super::head(db).map_err(storage_error)?;
+    if incoming.native_seq < local.seq
+        || (incoming.header.sequence == current.position.seq && incoming.native_seq != local.seq)
+    {
+        return Err(Refusal::Divergence.into());
+    }
+    Ok(())
+}
+
 fn decode(body: &[u8]) -> Result<Projection, Refusal> {
     let value: Projection = serde_json::from_slice(body).map_err(|_| Refusal::IntegrityFailure)?;
+    if value.native_seq > value.header.sequence {
+        return Err(Refusal::IntegrityFailure);
+    }
     for ((table, _, binds), rows) in TABLES.into_iter().zip(&value.rows) {
         let mut ids = HashSet::with_capacity(rows.len());
         for row in rows {
@@ -491,23 +516,23 @@ fn decode(body: &[u8]) -> Result<Projection, Refusal> {
 }
 
 fn validate_relationships(value: &Projection) -> Result<(), Refusal> {
-    let [members, teams, projects, areas, memberships, links, _] = &value.rows;
-    let owner_count = members
+    let [members, teams, projects, areas, memberships, links, commands] = &value.rows;
+    let mut owners = members
         .iter()
         .filter_map(|row| match row.last() {
             Some(Cell::Text(body)) => serde_json::from_str::<Member>(body).ok(),
             _ => None,
         })
-        .filter(|member| member.owner)
-        .try_fold(0, |count, owner| {
-            if owner.kind != org_proto::org::MemberKind::Person
-                || owner.agent.is_some()
-                || owner.reports_to_member_id.is_some()
-            {
-                return Err(Refusal::IntegrityFailure);
-            }
-            Ok(count + 1)
-        })?;
+        .filter(|member| member.owner);
+    let owner = owners.next().ok_or(Refusal::IntegrityFailure)?;
+    if owners.next().is_some()
+        || owner.kind != org_proto::org::MemberKind::Person
+        || owner.agent.is_some()
+        || owner.reports_to_member_id.is_some()
+    {
+        return Err(Refusal::IntegrityFailure);
+    }
+    let owner = Cell::Text(owner.id);
     let member_ids = row_ids(members);
     let team_ids = row_ids(teams);
     let project_ids = row_ids(projects);
@@ -516,8 +541,7 @@ fn validate_relationships(value: &Projection) -> Result<(), Refusal> {
         .map(|row| &row[1])
         .filter(|cell| !matches!(cell, Cell::Null));
     let team_members: HashSet<_> = memberships.iter().map(|row| (&row[1], &row[2])).collect();
-    if owner_count != 1
-        || !distinct(handles)
+    if !distinct(handles)
         || !distinct(teams.iter().map(|row| (&row[1], &row[2])))
         || team_members.len() != memberships.len()
         || !distinct(links.iter().map(|row| (&row[1], &row[2])))
@@ -525,15 +549,23 @@ fn validate_relationships(value: &Projection) -> Result<(), Refusal> {
         || teams.iter().any(|row| {
             !references(&row[1], &team_ids)
                 || !references(&row[3], &member_ids)
+                || row[3] == owner
                 || (!matches!(row[3], Cell::Null) && !team_members.contains(&(&row[0], &row[3])))
         })
         || areas.iter().any(|row| !references(&row[1], &project_ids))
-        || memberships
-            .iter()
-            .any(|row| !references(&row[1], &team_ids) || !references(&row[2], &member_ids))
+        || memberships.iter().any(|row| {
+            row[2] == owner || !references(&row[1], &team_ids) || !references(&row[2], &member_ids)
+        })
         || links
             .iter()
             .any(|row| !references(&row[1], &project_ids) || !references(&row[2], &team_ids))
+        || commands.iter().any(|row| {
+            let (Cell::Integer(epoch), Cell::Integer(seq)) = (&row[1], &row[2]) else {
+                return true;
+            };
+            *epoch as u64 > value.header.epoch
+                || (*epoch as u64 == value.header.epoch && *seq as u64 > value.native_seq)
+        })
         || !acyclic(members, 2)
         || !acyclic(teams, 1)
     {
@@ -693,6 +725,8 @@ pub(super) fn install(
         return Err(Refusal::Divergence.into());
     }
 
+    let current = OrganizationTxn(db).checkpoint()?;
+    check_native_sequence(db, &current, &projection)?;
     clear_projection(db)?;
     for ((table, columns, binds), rows) in TABLES.into_iter().zip(projection.rows) {
         let mut insert = db
@@ -712,8 +746,8 @@ pub(super) fn install(
         }
     }
     db.execute(
-        "UPDATE org_replica SET protocol_level = ?1, awaiting_snapshot = 0",
-        [next.protocol_level],
+        "UPDATE org_replica SET protocol_level = ?1, awaiting_snapshot = 0, native_seq = ?2",
+        (next.protocol_level, int(projection.native_seq)?),
     )
     .map_err(storage_error)?;
     db.execute(
