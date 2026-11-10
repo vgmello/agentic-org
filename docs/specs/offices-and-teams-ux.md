@@ -327,6 +327,7 @@ prepared. Try again."
 
 | Lookup finds | What shows |
 | --- | --- |
+| It's still being created | Stays in Checking ("Still creating Side Project…") and checks again every few seconds, never sending a new attempt. |
 | It was created | As Created, starting. |
 | It failed | As Failed, with its reason. |
 | HQ has no record of it | "Side Project wasn't created. Try again." **Try again** resends the same attempt. |
@@ -739,7 +740,7 @@ Two directions, same result:
 - OFC-18 · While creating, the button reads **Creating…** and is disabled; double-clicking sends one request.
 - OFC-19 · A created organization opens showing Starting, with the toast "Created <name>. You own it.", and then loads normally. Its owner is the account that created it.
 - OFC-20 · A confirmed failure shows its reason's copy, keeps the name, and offers Try again and Copy details. Copy details contains no key, token or recovery code.
-- OFC-21 · When the create response is lost, the panel shows "Checking whether <name> was created…" and looks up the same attempt. Each lookup outcome shows its copy, and repeating the check never creates a second organization.
+- OFC-21 · When the create response is lost, the panel shows "Checking whether <name> was created…" and looks up the same attempt. Each lookup outcome shows its copy (including "still being created", which keeps checking), and repeating the check never creates a second organization.
 - OFC-22 · HQ's refusal for a missing instance-admin grant shows "Only an instance admin can create organizations." with no Try again.
 - OFC-23 · Closing the panel while creating doesn't stop it: the new organization then appears in the switcher with "HQ · Starting".
 - OFC-24 · The form meets §5a's accessibility: labelled Name with linked rule and errors, `aria-invalid` on an invalid name, announced failures with focus on the alert, polite announcements of progress, focus on the new organization's heading, and focus returned to the switcher on close.

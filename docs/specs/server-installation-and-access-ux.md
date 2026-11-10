@@ -21,7 +21,7 @@ who can sign in, the setup transcript for the first account, the sign-in page
 and its errors, session end and signing in again, sign out, what opens after
 sign-in, and the recovery-code states in the browser and the CLI, with their
 accessibility. Open questions A80 to A90, A93 and A94 for ada (A91, A92 and A95 are in offices) (§4a.9). §4 points to
-§4a. **Criteria added:** SIGN-1 to SIGN-29, RCV-1 to RCV-17. No existing
+§4a. **Criteria added:** SIGN-1 to SIGN-31, RCV-1 to RCV-17. No existing
 criterion changed.
 
 Revisions 1 to 3 came from PR #5 and have no entries here.
@@ -278,8 +278,20 @@ Password again:
 Password changed for alex.
 ```
 
+**When account commands fail** (nothing is changed in any case):
+
+| Case | CLI output | Exit |
+| --- | --- | --- |
+| `account add`: username already used | "There's already an account called sam. Choose another username." Asks again. | — |
+| `account add`: empty username | "Enter a username." Asks again. | — |
+| `account password`: unknown username | "There's no account called sam on instance default." | Error |
+| Password too short (either command) | "Use at least 12 characters." Asks again. | — |
+| The two password entries differ | "The passwords don't match. Enter them again." Asks for both again. | — |
+| Instance not running, or the host can't be reached | "Instance default isn't running. Start it with agentic-org start, then run this command again." | Error |
+| Not an interactive terminal, and no protected password input given | "Run this in a terminal, or pass the password through the protected input (§2)." | Error |
+
 Whether `account add` can give the admin grant, and whether a password change
-ends that account's open sessions, are A86 and A85.
+ends that account's open sessions, are A86 and A85. `agentic-org start` is §5's.
 
 ### 4a.3 Sign in
 
@@ -387,7 +399,12 @@ data, a private window) counts as an ended session.
 - **Not now** (or Esc) closes the dialog. The page stays visible but changes
   nothing, with a bar at the top: "You're signed out. Text you haven't saved is
   still here: copy it, or sign in to save it." **Sign in** reopens the dialog.
-- **Sign in as someone else** goes to the sign-in page. If the page has text
+- **Sign in as someone else** goes to the sign-in page. A browser has one
+  session per HQ, so when a different account signs in, every other open tab of
+  this HQ goes to the sign-in page with "You're now signed in as sam in another
+  tab. Reload to continue as sam." and **Reload**; none of them keeps showing the
+  previous account's data, and none can sign the previous account back in over
+  the new session. If the page has text
   that isn't saved, it asks first: "Discard text you haven't saved on this
   page?" **Keep editing** · **Discard and sign in**.
 - Reloading or closing the tab loses text that isn't saved, as §4 says. A reload
@@ -439,11 +456,13 @@ the encrypted package, and the host keeps the code until it is collected with
 first one from setup, and each one created in the browser. **The code never
 passes through the gateway or the browser.** It shows only its state.
 
-The notice, every Recovery row state, setup's recovery block and every collect
-outcome that reports the code's state (collected, waiting, being prepared,
-couldn't be prepared, not recorded) end with this sentence; the browser table
-below leaves it out for space, and input errors (no `--org`, an unknown
-organization, a group that doesn't match, no interactive terminal) don't need it: "Recovering an organization after losing the
+**Every message that reports the code's state** (collected, waiting, being
+prepared, couldn't be prepared, not recorded), wherever it appears (the
+notice, the Recovery row, Needs you items, setup's recovery block, a repeated
+setup's reminder, `agentic-org status` and the collect command), ends with this
+sentence. The tables below leave it out for space. Input errors (no `--org`, an
+unknown organization, a group that doesn't match, no interactive terminal, an
+instance that isn't running) don't report the state and don't need it: "Recovering an organization after losing the
 HQ machine isn't supported yet." (REC-1, §7.)
 
 **States in the browser.** Only the organization's owner sees them.
@@ -517,6 +536,7 @@ Recovering an organization after losing the HQ machine isn't supported yet.
 | No `--org`, several organizations | "This instance has several organizations. Run again with --org and one of: Lumen Labs, Side Project." | Error |
 | Unknown organization | "There's no organization called "Lumen Labs" on instance default." | Error |
 | Not an interactive terminal | "The recovery code is shown only in an interactive terminal." No code. (Automation's protected output is A80.) | Error |
+| Instance not running, or the host can't be reached | "Instance default isn't running. Start it with agentic-org start, then run this command again." No code. | Error |
 
 - `agentic-org status` lists each organization's recovery state in the same
   words as the Settings row, never the code.
@@ -684,6 +704,8 @@ rules, which are distinct from uninstalling software on a machine.
 - SIGN-27 · The sign-in page and the dialog meet §4a.7: labelled fields with username and current-password autocomplete, the stated focus order, errors linked with `aria-describedby` and announced, and no meaning by colour alone.
 - SIGN-28 · No browser screen lists, adds or edits accounts, and HQ's HTTP API refuses any request to create an account.
 - SIGN-29 · Sign out shows Signing out… while HQ ends the session; when HQ can't be reached it shows "Couldn't sign out: HQ can't be reached…" with Try again, and the page stays signed in.
+- SIGN-30 · Each `account add` and `account password` failure in §4a.2's table shows its copy and exit status, and changes nothing.
+- SIGN-31 · When a different account signs in from one tab, every other open tab of that HQ shows "You're now signed in as <username> in another tab…" with Reload, and shows no data of the previous account.
 
 **Recovery code (RCV)** *(new, rev 4, §4a.6)*
 - RCV-1 · The recovery code never passes through the gateway or reaches the browser: a fixture code appears in no gateway request or response, HTTP response, event, page, notice or copied text.
@@ -701,7 +723,7 @@ rules, which are distinct from uninstalling software on a machine.
 - RCV-13 · Interactive setup offers to collect the code at its end; answering n leaves it waiting and prints the collect command.
 - RCV-14 · An organization created in the browser starts as being prepared, then waiting, and is collected with `--org` naming it.
 - RCV-15 · The collect command run without an interactive terminal prints no code.
-- RCV-16 · Setup's recovery block, the notice, every Recovery row state and every collect outcome that reports the code's state (collected, waiting, being prepared, couldn't be prepared, not recorded) each say that recovering after losing the HQ machine isn't supported yet.
+- RCV-16 · Every message that reports the code's state (in the notice, the Recovery row, Needs you, setup, a repeated setup, `agentic-org status` and the collect command) says that recovering after losing the HQ machine isn't supported yet.
 - RCV-17 · CLI output for setup, account and recovery commands carries no meaning by colour alone, and writes no colour codes with `NO_COLOR` set or when output isn't a terminal.
 
 
