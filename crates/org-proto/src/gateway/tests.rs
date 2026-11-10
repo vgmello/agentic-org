@@ -324,7 +324,12 @@ fn credential_diagnostics_never_echo_mistyped_secrets() {
     let params: SignInParams =
         decode(br#"{"login":"alex","password":"PUBLIC FIXTURE PASSWORD"}"#).unwrap();
     assert!(!format!("{params:?}").contains("PUBLIC FIXTURE PASSWORD"));
-    for invalid_proof in ["AB".repeat(32), "gg".repeat(32), "00".repeat(31), "00".repeat(33)] {
+    for invalid_proof in [
+        "AB".repeat(32),
+        "gg".repeat(32),
+        "00".repeat(31),
+        "00".repeat(33),
+    ] {
         assert!(SessionProof::parse(invalid_proof).is_err());
     }
     for raw in [
