@@ -22,10 +22,16 @@
 //! [`TlsPrivateKey`], [`RecoveryCode`], and `org-proto`'s grant MAC): a redacted `Debug`, no `Clone`, zeroed on
 //! drop. Responses carrying them are written through the host's secret-line path.
 //!
-//! This crate holds types only. Not here yet, because X-02 rev 13 leaves their params or shapes
-//! open: `account.link`, `account.unlink` and `account.revoke`, the instance status read for
-//! `status` and `doctor`, the event payloads, and the host-only results and refusals
-//! (`tls_required`, `tls_mismatch`, `needs_local_session`, bootstrap's "already finished").
+//! **The listen configuration** ([`listen`], X-02 rev 14): the browser-facing origin
+//! ([`listen::ListenOrigin`], the one implementation that parses, checks and serialises it), the
+//! `hsts` setting, the per-bind snapshot, [`listen::ListenFailure`], and `tls.fetch`'s and
+//! `tls.set`'s use of them.
+//!
+//! This crate holds types and pure functions only. Not here yet, because X-02 leaves their params
+//! or shapes open: `account.link`, `account.unlink` and `account.revoke`, the instance status
+//! read for `status` and `doctor` (with `gateway_failed`'s `start_failed` and `tls_missing`), the
+//! event payloads, and the host-only results and refusals (`needs_local_session`, bootstrap's
+//! "already finished").
 //! Transfer-socket records are `org-office-launch`'s v3 `TransferRecord`; this crate doesn't
 //! re-export it (X-02 §5.2 says it would), so that its only dependencies stay `org-proto` and
 //! serde (§11).
@@ -36,6 +42,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod gateway;
 pub mod journal;
+pub mod listen;
 pub mod ops;
 mod secret;
 
@@ -62,21 +69,23 @@ pub mod event {
 }
 
 /// The result of a journaled host op (§6.3): `accepted` (still in flight, e.g. a create waiting
-/// for its office), `completed` with the op's result, or `rejected` with a stored domain refusal
-/// (`already_exists`, `invalid_name`). `not_authorized`, `unavailable` and `storage_error` are
-/// never stored: they're plain error responses.
+/// for its office), `completed` with the op's result, or `rejected` with a refusal. A domain
+/// refusal (`already_exists`, `invalid_name`) is an [`org_proto::ApiError`] and is stored;
+/// `tls.set`'s refusals are [`ops::TlsRefusal`]s, of which only `tls_key_mismatch` is stored.
+/// `not_authorized`, `unavailable` and `storage_error` are never stored: they're plain error
+/// responses.
 ///
 /// A status this build doesn't know decodes as [`HostOpResult::Unknown`]. It is never sent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 #[non_exhaustive]
-pub enum HostOpResult<T> {
+pub enum HostOpResult<T, R = org_proto::ApiError> {
     Accepted,
     Completed {
         result: T,
     },
     Rejected {
-        refusal: org_proto::ApiError,
+        refusal: R,
     },
     #[serde(other)]
     Unknown,

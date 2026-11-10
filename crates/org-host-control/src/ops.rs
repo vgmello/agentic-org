@@ -13,6 +13,9 @@
 use org_proto::{Call, Empty, Grant, ListOfficesResult};
 use serde::{Deserialize, Serialize};
 
+use crate::listen::{
+    Hsts, InvalidListenConfig, ListenFailure, ListenMode, ListenOrigin, Uncovered,
+};
 use crate::{HostOpResult, Password, RecoveryCode, SessionHandle, TlsPrivateKey};
 
 /// `account.verify` (open): sign in. Argon2id on a bounded pool; an unknown login hashes against
@@ -232,7 +235,8 @@ impl Call for OfficeOpenChannel {
 }
 
 /// `operation.get` (the same account): a journaled op's stored result, by its `operation_id`.
-/// `not_found` for an unknown op or another account's.
+/// `not_found` for an unknown op or another account's. The result and the refusal are the op's
+/// own (an `org_proto::ApiError`, or a [`TlsRefusal`] for `tls.set`), so both decode as JSON.
 pub struct OperationGet;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -244,69 +248,125 @@ pub struct OperationGetParams {
 impl Call for OperationGet {
     const METHOD: &'static str = "operation.get";
     type Params = OperationGetParams;
-    type Result = HostOpResult<serde_json::Value>;
+    type Result = HostOpResult<serde_json::Value, serde_json::Value>;
 }
 
-/// `tls.fetch` (**control connection only**; refused on `host.sock`): the gateway's TLS pair, at
-/// start and after each `tls.renew` event.
+/// `tls.fetch` (**control connection only**; refused on `host.sock`): what the gateway serves, at
+/// start and after each `tls.renew` event. `mode`, `origin` and `hsts` come from the **per-bind
+/// snapshot** ([`crate::listen::ListenConfig`]) of the listener this gateway was given, never a live re-read;
+/// `cert` and `key` are the stored pair. Before answering `ok` the host re-runs its pre-spawn
+/// check on that snapshot ([`ListenOrigin`]'s two steps, and in `https` coverage of the
+/// snapshot's origin by the stored pair), in the pre-spawn check's order, and answers
+/// `unavailable` with the reason on a failure. A correct host never does: the form is defence in
+/// depth. If the stored pair can't be read (the credential item was lost), the host answers the
+/// plain error `storage_error` instead and reports `tls_missing` in status; the gateway treats
+/// that error as it treats `unavailable`.
+///
+/// The gateway, at start: on `ok` it checks `origin` against `mode` and its listener with
+/// [`ListenOrigin::check`] and refuses to start on a failure; on `unavailable` it refuses to
+/// start. After `tls.renew`: `ok` with the same `mode`, `origin` and `hsts` swaps the pair for new
+/// handshakes; `ok` with different ones is a host bug, and it exits without swapping;
+/// `unavailable` keeps the current pair.
 pub struct TlsFetch;
 
-/// `tls.fetch`'s result, by the configured listen scheme: `{"mode": "https", "cert", "key"}` or
-/// `{"mode": "http_loopback"}`. Not `Clone`: the key is a secret.
+/// `tls.fetch`'s tagged result:
+/// - `{"ok": {"mode": "https", "cert", "key", "origin", "hsts"}}`;
+/// - `{"ok": {"mode": "http_loopback", "origin", "hsts"}}`, with no certificate fields;
+/// - `{"unavailable": <ListenFailure>}`: exactly a [`ListenFailure`].
 ///
-/// It decodes as one flat object, not through serde's internally tagged enums, so the key goes
-/// straight from the JSON into [`TlsPrivateKey`] without an intermediate buffer. `https` needs
-/// both `cert` and `key`; `http_loopback` takes neither; any other `mode` is refused.
+/// Not `Clone`: the key is a secret. The `ok` object decodes as one flat object, not through
+/// serde's internally tagged enums, so the key goes straight from the JSON into
+/// [`TlsPrivateKey`] without an intermediate buffer. `https` needs both `cert` and `key`;
+/// `http_loopback` takes neither; any other `mode` is refused. `origin` must be canonical; its fit
+/// to the listener is the gateway's check, not the decoder's.
 #[derive(Debug)]
 pub enum TlsFetchResult {
     Https {
         /// The certificate chain, PEM.
         cert: String,
         key: TlsPrivateKey,
+        origin: ListenOrigin,
+        hsts: Hsts,
     },
-    /// Plain HTTP on a loopback address: no pair.
-    HttpLoopback,
+    /// Plain HTTP on `127.0.0.1` or `::1`: no pair.
+    HttpLoopback { origin: ListenOrigin, hsts: Hsts },
+    /// The host can't serve the snapshot (a host bug).
+    Unavailable(ListenFailure),
 }
 
-/// The configured listen scheme, `tls.fetch`'s `mode`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum TlsMode {
-    Https,
-    HttpLoopback,
+impl TlsFetchResult {
+    /// The snapshot's `mode`, `origin` and `hsts`, for `ok`: what the gateway compares after
+    /// `tls.renew`. `None` for `unavailable`.
+    pub fn listen(&self) -> Option<(ListenMode, &ListenOrigin, Hsts)> {
+        match self {
+            TlsFetchResult::Https { origin, hsts, .. } => Some((ListenMode::Https, origin, *hsts)),
+            TlsFetchResult::HttpLoopback { origin, hsts } => {
+                Some((ListenMode::HttpLoopback, origin, *hsts))
+            }
+            TlsFetchResult::Unavailable(_) => None,
+        }
+    }
 }
 
 #[derive(Serialize)]
 struct TlsFetchRef<'a> {
-    mode: TlsMode,
+    mode: ListenMode,
     #[serde(skip_serializing_if = "Option::is_none")]
     cert: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     key: Option<&'a TlsPrivateKey>,
+    origin: &'a ListenOrigin,
+    hsts: Hsts,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum TlsFetchOut<'a> {
+    Ok(TlsFetchRef<'a>),
+    Unavailable(&'a ListenFailure),
 }
 
 #[derive(Deserialize)]
 struct RawTlsFetch {
-    mode: TlsMode,
+    mode: ListenMode,
     #[serde(default)]
     cert: Option<String>,
     #[serde(default)]
     key: Option<TlsPrivateKey>,
+    origin: ListenOrigin,
+    hsts: Hsts,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum TlsFetchIn {
+    Ok(RawTlsFetch),
+    Unavailable(ListenFailure),
 }
 
 impl Serialize for TlsFetchResult {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         match self {
-            TlsFetchResult::Https { cert, key } => TlsFetchRef {
-                mode: TlsMode::Https,
+            TlsFetchResult::Https {
+                cert,
+                key,
+                origin,
+                hsts,
+            } => TlsFetchOut::Ok(TlsFetchRef {
+                mode: ListenMode::Https,
                 cert: Some(cert),
                 key: Some(key),
-            },
-            TlsFetchResult::HttpLoopback => TlsFetchRef {
-                mode: TlsMode::HttpLoopback,
+                origin,
+                hsts: *hsts,
+            }),
+            TlsFetchResult::HttpLoopback { origin, hsts } => TlsFetchOut::Ok(TlsFetchRef {
+                mode: ListenMode::HttpLoopback,
                 cert: None,
                 key: None,
-            },
+                origin,
+                hsts: *hsts,
+            }),
+            TlsFetchResult::Unavailable(failed) => TlsFetchOut::Unavailable(failed),
         }
         .serialize(s)
     }
@@ -315,12 +375,29 @@ impl Serialize for TlsFetchResult {
 impl<'de> Deserialize<'de> for TlsFetchResult {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         use serde::de::Error as _;
-        let raw = RawTlsFetch::deserialize(d)?;
-        match (raw.mode, raw.cert, raw.key) {
-            (TlsMode::Https, Some(cert), Some(key)) => Ok(TlsFetchResult::Https { cert, key }),
-            (TlsMode::HttpLoopback, None, None) => Ok(TlsFetchResult::HttpLoopback),
-            (TlsMode::Https, _, _) => Err(D::Error::custom("https needs a cert and a key")),
-            (TlsMode::HttpLoopback, _, _) => {
+        let raw = match TlsFetchIn::deserialize(d)? {
+            TlsFetchIn::Ok(raw) => raw,
+            TlsFetchIn::Unavailable(failed) => return Ok(TlsFetchResult::Unavailable(failed)),
+        };
+        let RawTlsFetch {
+            mode,
+            cert,
+            key,
+            origin,
+            hsts,
+        } = raw;
+        match (mode, cert, key) {
+            (ListenMode::Https, Some(cert), Some(key)) => Ok(TlsFetchResult::Https {
+                cert,
+                key,
+                origin,
+                hsts,
+            }),
+            (ListenMode::HttpLoopback, None, None) => {
+                Ok(TlsFetchResult::HttpLoopback { origin, hsts })
+            }
+            (ListenMode::Https, _, _) => Err(D::Error::custom("https needs a cert and a key")),
+            (ListenMode::HttpLoopback, _, _) => {
                 Err(D::Error::custom("http_loopback takes no cert or key"))
             }
         }
@@ -334,10 +411,20 @@ impl Call for TlsFetch {
 }
 
 /// `tls.set` (`host.sock` only; admin, the signed `agentic-org` peer on macOS; journaled): install
-/// a TLS pair. The host checks that the key matches the certificate and that the certificate is
-/// valid now before it stores the pair and emits `tls.renew`. It never changes the scheme. Its
-/// journal fingerprint is SHA-256 of the certificate DER plus SHA-256 of the key, computed by the
-/// host; the stored result echoes neither.
+/// a TLS pair. Before it stores the pair and emits `tls.renew`, the host checks, in this order,
+/// and answers the first failure (X-02 §6.2):
+/// 1. the stored `origin` ([`TlsRefusal::OriginInvalid`]);
+/// 2. the stored `hsts` ([`TlsRefusal::HstsInvalid`]);
+/// 3. that the key matches the certificate ([`TlsRefusal::TlsKeyMismatch`]);
+/// 4. that the certificate is valid now ([`TlsRefusal::TlsNotValid`]);
+/// 5. in `https`, that it covers every `https` origin among the stored one and the running one
+///    ([`TlsRefusal::TlsNameMismatch`]; Certificate coverage).
+///
+/// It never changes the scheme. Its journal fingerprint is SHA-256 of the certificate DER plus
+/// SHA-256 of the key, computed by the host; the stored result echoes neither.
+///
+/// A failed check answers `{"status": "rejected", "refusal": <TlsRefusal>}` and stores no pair;
+/// only [`TlsRefusal::TlsKeyMismatch`] is journaled ([`TlsRefusal::is_stored`]).
 pub struct TlsSet;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -351,7 +438,81 @@ pub struct TlsSetParams {
 impl Call for TlsSet {
     const METHOD: &'static str = "tls.set";
     type Params = TlsSetParams;
-    type Result = HostOpResult<Empty>;
+    type Result = HostOpResult<Empty, TlsRefusal>;
+}
+
+/// Why `tls.set` or `bootstrap` refused a TLS pair (X-02 §6.2, §6.3), with its wire form. These
+/// aren't §9 error codes, and none carries a message.
+///
+/// A code this build doesn't know decodes as [`TlsRefusal::Unknown`]. It is never sent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "code", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum TlsRefusal {
+    /// `{"code": "tls_name_mismatch", "uncovered": [...]}`: in `https`, the certificate doesn't
+    /// cover these origins (the stored one first, then the running one).
+    TlsNameMismatch { uncovered: Uncovered },
+    /// `{"code": "tls_key_mismatch"}`: the key doesn't match the certificate.
+    TlsKeyMismatch,
+    /// `{"code": "tls_not_valid", "not_before", "not_after"}`: the certificate isn't valid now.
+    /// Both are the certificate's validity bounds, RFC 3339 UTC.
+    TlsNotValid {
+        not_before: String,
+        not_after: String,
+    },
+    /// `{"code": "origin_invalid"}`: the stored listen configuration's `origin` is invalid.
+    OriginInvalid,
+    /// `{"code": "hsts_invalid"}`: the stored listen configuration's `hsts` is invalid.
+    HstsInvalid,
+    #[serde(other)]
+    Unknown,
+}
+
+impl TlsRefusal {
+    /// Whether the host journals this refusal from `op`, so a retry with the same `operation_id`
+    /// replays it (X-02 §6.3):
+    /// - `tls.set`: only `tls_key_mismatch` is stored. It depends on the pair alone, which the
+    ///   fingerprint covers. The others depend on state outside the op that is expected to change
+    ///   (the stored and running origins, the clock, the stored configuration), so a retry is
+    ///   checked again. [`TlsRefusal::Unknown`] is never stored.
+    /// - `bootstrap`: never. The host runs every bootstrap check before it creates the registry,
+    ///   so a refused bootstrap leaves no record, and a re-run with the same `operation_id` is a
+    ///   first bootstrap.
+    pub fn is_stored(&self, op: TlsInstallOp) -> bool {
+        match op {
+            TlsInstallOp::TlsSet => matches!(self, TlsRefusal::TlsKeyMismatch),
+            TlsInstallOp::Bootstrap => false,
+        }
+    }
+}
+
+impl From<InvalidListenConfig> for TlsRefusal {
+    /// The invalid-configuration rule's refusal, as `bootstrap` and `tls.set` answer it.
+    fn from(invalid: InvalidListenConfig) -> Self {
+        match invalid {
+            InvalidListenConfig::Origin(_) => TlsRefusal::OriginInvalid,
+            InvalidListenConfig::Hsts => TlsRefusal::HstsInvalid,
+        }
+    }
+}
+
+/// The ops that install a TLS pair and can refuse it with a [`TlsRefusal`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TlsInstallOp {
+    /// `tls.set`.
+    TlsSet,
+    /// `bootstrap` (its `tls`, and its invalid-configuration check with or without `tls`).
+    Bootstrap,
+}
+
+impl TlsInstallOp {
+    /// The op's method.
+    pub fn method(self) -> &'static str {
+        match self {
+            TlsInstallOp::TlsSet => TlsSet::METHOD,
+            TlsInstallOp::Bootstrap => Bootstrap::METHOD,
+        }
+    }
 }
 
 /// `account.set_password` (`host.sock`): change the password of the session's own account. A
@@ -476,6 +637,13 @@ impl Call for Subscribe {
 /// `operation_id` and `hq_operation_id`; the same `operation_id` on a non-empty registry replays
 /// (a fresh session, after the password is checked), and a different one aborts. Under `https` a
 /// first bootstrap needs `tls`; a replay may omit it and compares a given pair by fingerprint.
+///
+/// Its result is a [`HostOpResult`] that is **never `accepted`**: `completed` with
+/// [`BootstrapResult`], or `rejected` with a [`BootstrapRefusal`]. The host checks the stored
+/// listen configuration with or without `tls` (`origin_invalid`, `hsts_invalid`), and a first
+/// `tls` gets `tls.set`'s checks in `tls.set`'s order. It runs every check before it creates the
+/// registry, so **no bootstrap refusal is ever stored**: a re-run with the same `operation_id`
+/// is a first bootstrap.
 pub struct Bootstrap;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -496,7 +664,7 @@ pub struct TlsPair {
     pub key: TlsPrivateKey,
 }
 
-/// `bootstrap`'s result: a session for the first account.
+/// `bootstrap`'s completed result: a session for the first account.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BootstrapResult {
     pub session: SessionHandle,
@@ -505,7 +673,77 @@ pub struct BootstrapResult {
 impl Call for Bootstrap {
     const METHOD: &'static str = "bootstrap";
     type Params = BootstrapParams;
-    type Result = BootstrapResult;
+    type Result = HostOpResult<BootstrapResult, BootstrapRefusal>;
+}
+
+/// Why `bootstrap` refused (X-02 §6.3, "Result shapes fixed by move 1"): a [`TlsRefusal`], or
+/// one of bootstrap's own two, `{"code": "tls_required"}` and `{"code": "tls_mismatch"}`. None is
+/// ever stored ([`BootstrapRefusal::is_stored`]).
+///
+/// It is one flat object tagged by `code`, like [`TlsRefusal`]. A code neither type knows decodes
+/// as `Tls(TlsRefusal::Unknown)`; it is never sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BootstrapRefusal {
+    /// `{"code": "tls_required"}`: a first bootstrap under `https` without `tls`.
+    TlsRequired,
+    /// `{"code": "tls_mismatch"}`: a replay with a pair other than the stored one (compared by
+    /// fingerprint). Setup tells the operator to re-run `setup --resume` with the original pair,
+    /// or without `tls` and then `agentic-org tls renew`.
+    TlsMismatch,
+    /// The listen configuration or the pair failed one of `tls.set`'s checks.
+    Tls(TlsRefusal),
+}
+
+impl BootstrapRefusal {
+    /// Always `false`: the host runs every bootstrap check before it creates the registry, so a
+    /// refused bootstrap leaves no record ([`TlsRefusal::is_stored`] with
+    /// [`TlsInstallOp::Bootstrap`]).
+    pub fn is_stored(&self) -> bool {
+        match self {
+            BootstrapRefusal::TlsRequired | BootstrapRefusal::TlsMismatch => false,
+            BootstrapRefusal::Tls(refusal) => refusal.is_stored(TlsInstallOp::Bootstrap),
+        }
+    }
+}
+
+/// Bootstrap's own codes.
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "code", rename_all = "snake_case")]
+enum BootstrapOwnRefusal {
+    TlsRequired,
+    TlsMismatch,
+}
+
+/// Bootstrap's own codes first: [`TlsRefusal`] would take any other code as its `Unknown`.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum BootstrapRefusalWire {
+    Own(BootstrapOwnRefusal),
+    Tls(TlsRefusal),
+}
+
+impl Serialize for BootstrapRefusal {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self {
+            BootstrapRefusal::TlsRequired => BootstrapOwnRefusal::TlsRequired.serialize(s),
+            BootstrapRefusal::TlsMismatch => BootstrapOwnRefusal::TlsMismatch.serialize(s),
+            BootstrapRefusal::Tls(refusal) => refusal.serialize(s),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for BootstrapRefusal {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(match BootstrapRefusalWire::deserialize(d)? {
+            BootstrapRefusalWire::Own(BootstrapOwnRefusal::TlsRequired) => {
+                BootstrapRefusal::TlsRequired
+            }
+            BootstrapRefusalWire::Own(BootstrapOwnRefusal::TlsMismatch) => {
+                BootstrapRefusal::TlsMismatch
+            }
+            BootstrapRefusalWire::Tls(refusal) => BootstrapRefusal::Tls(refusal),
+        })
+    }
 }
 
 /// `exit` (bootstrap-mode host only): setup is done with the bootstrap-mode host, which exits and

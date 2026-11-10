@@ -2,6 +2,7 @@ use serde_json::{json, Value};
 
 use crate::gateway::*;
 use crate::journal::{fingerprint_input, Journaled};
+use crate::listen::*;
 use crate::ops::*;
 use crate::*;
 
@@ -179,33 +180,78 @@ fn channels_and_lists_have_their_wire_shapes() {
 }
 
 #[test]
-fn tls_fetch_has_two_modes() {
-    let https: TlsFetchResult = serde_json::from_value(json!({
-        "mode": "https", "cert": "-----BEGIN CERTIFICATE-----", "key": "-----BEGIN PRIVATE KEY-----x"
-    }))
+fn tls_fetch_has_two_modes_and_unavailable() {
+    let origin = ListenOrigin::parse("https://mac.local:8443").unwrap();
+    let https: TlsFetchResult = serde_json::from_value(json!({"ok": {
+        "mode": "https", "cert": "-----BEGIN CERTIFICATE-----", "key": "-----BEGIN PRIVATE KEY-----x",
+        "origin": "https://mac.local:8443", "hsts": "on"
+    }}))
     .unwrap();
-    let TlsFetchResult::Https { cert, key } = &https else {
+    let TlsFetchResult::Https {
+        cert,
+        key,
+        origin: served,
+        hsts,
+    } = &https
+    else {
         panic!("{https:?}");
     };
     assert!(cert.starts_with("-----BEGIN CERTIFICATE"));
     assert_eq!(key.expose(), "-----BEGIN PRIVATE KEY-----x");
+    assert_eq!((served, *hsts), (&origin, Hsts::On));
+    assert_eq!(https.listen(), Some((ListenMode::Https, &origin, Hsts::On)));
     assert!(!format!("{https:?}").contains("PRIVATE KEY"));
-    let loopback: TlsFetchResult =
-        serde_json::from_value(json!({"mode": "http_loopback"})).unwrap();
-    assert!(matches!(loopback, TlsFetchResult::HttpLoopback));
-    assert_eq!(
-        serde_json::to_value(&loopback).unwrap(),
-        json!({"mode": "http_loopback"})
-    );
-    // An https answer without a pair, or an unknown mode, is refused: the gateway won't start.
+
+    let wire =
+        json!({"ok": {"mode": "http_loopback", "origin": "http://127.0.0.1:8080", "hsts": "off"}});
+    let loopback: TlsFetchResult = serde_json::from_value(wire.clone()).unwrap();
+    assert!(matches!(
+        &loopback,
+        TlsFetchResult::HttpLoopback {
+            hsts: Hsts::Off,
+            ..
+        }
+    ));
+    assert_eq!(serde_json::to_value(&loopback).unwrap(), wire);
+
+    let unavailable: TlsFetchResult =
+        serde_json::from_value(json!({"unavailable": {"reason": "hsts_invalid"}})).unwrap();
+    assert!(matches!(
+        unavailable,
+        TlsFetchResult::Unavailable(ListenFailure::HstsInvalid)
+    ));
+    assert_eq!(unavailable.listen(), None);
+}
+
+#[test]
+fn tls_fetch_refuses_a_key_where_the_mode_has_none() {
+    let ok = |extra: Value| {
+        let mut body = json!({"origin": "http://127.0.0.1:8080", "hsts": "off"});
+        body.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        json!({ "ok": body })
+    };
     for bad in [
-        json!({"mode": "https"}),
-        json!({"mode": "https", "cert": "c"}),
-        json!({"mode": "http"}),
-        json!({}),
+        ok(json!({"mode": "http_loopback", "key": "k"})),
+        ok(json!({"mode": "http_loopback", "cert": "c"})),
+        ok(json!({"mode": "https", "key": "k"})),
     ] {
-        assert!(serde_json::from_value::<TlsFetchResult>(bad).is_err());
+        let error = serde_json::from_value::<TlsFetchResult>(bad)
+            .unwrap_err()
+            .to_string();
+        assert!(!error.contains("\"k\""), "{error}");
     }
+    let https = TlsFetchResult::Https {
+        cert: "c".into(),
+        key: TlsPrivateKey::new("k".into()).unwrap(),
+        origin: ListenOrigin::parse("https://mac.local").unwrap(),
+        hsts: Hsts::Clear,
+    };
+    assert_eq!(
+        serde_json::to_value(&https).unwrap(),
+        json!({"ok": {"mode": "https", "cert": "c", "key": "k", "origin": "https://mac.local", "hsts": "clear"}})
+    );
 }
 
 fn journaled<P: serde::de::DeserializeOwned + Journaled>(
@@ -354,28 +400,6 @@ fn passwords_and_keys_stay_redacted() {
 }
 
 #[test]
-fn tls_fetch_refuses_a_key_where_the_mode_has_none() {
-    for bad in [
-        json!({"mode": "http_loopback", "key": "k"}),
-        json!({"mode": "http_loopback", "cert": "c"}),
-        json!({"mode": "https", "key": "k"}),
-    ] {
-        let error = serde_json::from_value::<TlsFetchResult>(bad)
-            .unwrap_err()
-            .to_string();
-        assert!(!error.contains("\"k\""), "{error}");
-    }
-    let https = TlsFetchResult::Https {
-        cert: "c".into(),
-        key: TlsPrivateKey::new("k".into()).unwrap(),
-    };
-    assert_eq!(
-        serde_json::to_value(&https).unwrap(),
-        json!({"mode": "https", "cert": "c", "key": "k"})
-    );
-}
-
-#[test]
 fn account_recovery_and_bootstrap_ops_have_their_wire_shapes() {
     let create: AccountCreateParams = serde_json::from_value(json!({
         "session": "h", "operation_id": "01M72N8MG00000000000000H04", "login": "sam",
@@ -434,3 +458,5 @@ fn account_recovery_and_bootstrap_ops_have_their_wire_shapes() {
         "BootstrapResult { session: SessionHandle(<redacted>) }"
     );
 }
+
+mod listen_vectors;
