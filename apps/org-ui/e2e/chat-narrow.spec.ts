@@ -134,3 +134,36 @@ test('CHAT-5 BUG-49: the question text in a Chat message stays readable at 320px
 	await noSidewaysScroll(page);
 	await shot(page, 'chat-narrow-320-ask');
 });
+
+for (const panel of ['thread', 'members'] as const) {
+	test(`CHAT-8/11 BUG-49: tabbing through the ${panel} stays visible after scrolling at 320px`, async ({ page }) => {
+		await open(page, 320, 256, 'c-release-v1');
+		const opener = panel === 'thread' ? page.getByTestId('replies-link').first() : page.getByRole('button', { name: 'Members', exact: true });
+		await opener.scrollIntoViewIfNeeded();
+		await opener.press('Enter');
+		const pane = page.getByTestId(`${panel}-panel`);
+		await expect(pane.getByRole('button', { name: `Close ${panel}`, exact: true })).toBeFocused();
+		const focused = pane.locator(':focus');
+		const composer = pane.getByTestId('composer');
+		let visited = 0;
+		async function checkFocus() {
+			if (!await focused.count()) return;
+			visited++;
+			await expect.poll(() => focused.evaluate((element) => {
+				const r = element.getBoundingClientRect();
+				const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+				return { visible: r.y >= 56 && r.bottom <= innerHeight && !!hit && element.contains(hit), top: r.y, bottom: r.bottom, control: element.getAttribute('aria-label') ?? element.textContent?.trim() };
+			})).toMatchObject({ visible: true });
+		}
+		if (panel === 'thread') {
+			for (let i = 0; i < 40 && !await composer.evaluate((element) => element === document.activeElement); i++) await page.keyboard.press('Tab');
+			await expect(composer).toBeFocused();
+			await checkFocus();
+		} else {
+			for (let i = 0; i < 7; i++) { await page.keyboard.press('Tab'); await checkFocus(); }
+		}
+		for (let i = 0; i < 12; i++) { await page.keyboard.press('Shift+Tab'); await checkFocus(); }
+		expect(visited).toBeGreaterThan(0);
+		await shot(page, `chat-narrow-320-${panel}-tab-after-scroll`);
+	});
+}

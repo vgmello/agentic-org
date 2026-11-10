@@ -59,7 +59,7 @@
 	}
 </script>
 
-<aside class="absolute inset-y-0 right-0 {sidebarInline ? 'left-64' : 'left-0'} z-30 flex h-full min-w-0 shrink-0 flex-col shadow-xl xl:static xl:w-96 xl:shadow-none border-l border-white/10 bg-gray-800" aria-label="Thread" data-testid="thread-panel">
+<aside data-chat-panel class="absolute inset-y-0 right-0 {sidebarInline ? 'left-64' : 'left-0'} z-30 flex h-full min-w-0 shrink-0 flex-col shadow-xl xl:static xl:w-96 xl:shadow-none border-l border-white/10 bg-gray-800" aria-label="Thread" data-testid="thread-panel">
 	<div class="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
 		<h2 class="min-w-0 text-sm/6 font-semibold break-words text-white">Thread <span class="font-normal text-gray-400">in {title}</span></h2>
 		<Button type="button" variant="ghost" size="icon-sm" class="scroll-mt-16" aria-label="Close thread" bind:ref={closeButton} onclick={onclose}><X aria-hidden="true" /></Button>

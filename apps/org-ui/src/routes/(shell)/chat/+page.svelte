@@ -97,14 +97,27 @@
 	let sidebarDialogMode = $state(false);
 	let sidebarDialogSelected = false;
 	let sidebarDialogOpener: HTMLElement | undefined;
+	function revealFocus(target: HTMLElement) {
+		// The shell heading stays fixed while a short, zoomed Chat can scroll vertically.
+		const rect = target.getBoundingClientRect();
+		const x = rect.x + rect.width / 2;
+		const inset = Math.min(1, rect.height / 2);
+		if (![rect.top + inset, rect.bottom - inset].every((y) => target.contains(document.elementFromPoint(x, y)))) {
+			target.scrollIntoView({ block: 'center', inline: 'nearest' });
+		}
+	}
 	function focusVisible(target: HTMLElement | null | undefined) {
 		if (!target?.isConnected) return;
 		target.focus({ preventScroll: true });
-		if (!compactPanels) return;
-		// The shell heading stays fixed while a short, zoomed Chat can scroll vertically.
-		const rect = target.getBoundingClientRect();
-		const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
-		if (!target.contains(hit)) target.scrollIntoView({ block: 'center', inline: 'nearest' });
+		if (compactPanels) revealFocus(target);
+	}
+	function revealPanelFocus(event: FocusEvent) {
+		const target = event.target;
+		if (!compactPanels || !(target instanceof HTMLElement) || !target.closest('[data-chat-panel]')) return;
+		// Native Tab can scroll after focusin; inspect the final position without changing focus.
+		requestAnimationFrame(() => {
+			if (compactPanels && target.isConnected && document.activeElement === target) revealFocus(target);
+		});
 	}
 	function focusAfterNavigation(selected: boolean) {
 		if (compactPanels && panelKind) panel?.focusClose();
@@ -494,7 +507,7 @@
 {/snippet}
 
 <!-- At high zoom, keep a readable message area and let the shell scroll vertically. -->
-<div bind:this={chatEl} class="relative flex h-[calc(100dvh-64px)] min-h-0 min-w-0 max-[640px]:h-[calc(100dvh-56px)] max-[640px]:min-h-[28rem]">
+<div bind:this={chatEl} onfocusin={revealPanelFocus} class="relative flex h-[calc(100dvh-64px)] min-h-0 min-w-0 max-[640px]:h-[calc(100dvh-56px)] max-[640px]:min-h-[28rem]">
 	{#if loadError}
 		<p class="m-8 text-sm/6 text-red-400" role="alert">{loadError}</p>
 	{:else if !chatState || !bar}
