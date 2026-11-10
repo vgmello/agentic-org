@@ -17,7 +17,7 @@ comes from the fixture itself; this does **not** validate a signed release manif
 create/reopen a temporary encrypted office and stop/reap it when its private
 control pipe closes. `linux-host-baseline.py` reproduces the current host's
 macOS-only spawn refusal. These probes do not implement `org-supervise` or Linux
-host support. The v2 fixture uses private inherited pipes; X-02 rev 4 proposes a
+host support. The v2 fixture uses private inherited pipes; X-02 rev 8 proposes a
 common post-admission rendezvous for launch v3, without inherited authority.
 That handoff, release-manifest trust, sandboxing and lifecycle still need review/tests.
 
@@ -40,6 +40,9 @@ shows that the same UID can decrypt the credential: v1 accepts that threat limit
 It needs passwordless sudo for the different-UID, isolated provider and synthetic
 null-envelope controls. Positive controls verify nobody's own decrypt path and
 root's --uid path. Production does not inherit this testing requirement.
+The damaged-service control also reads only its unique current-boot unit's
+journal and requires corruption diagnostics as well as exit 243. A provider
+outage with the same exit code must fail this control.
 
 The credential format needs systemd 256 for `--user`; explicit `--refuse-null`
 needs systemd 259. This exact probe therefore requires 259. The workflow initializes

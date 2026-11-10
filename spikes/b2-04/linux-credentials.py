@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 
 if not __debug__:
     raise SystemExit("probe assertions must be enabled")
@@ -21,6 +22,15 @@ def require_failure(result, cause, label):
     return diagnostic
 
 
+def require_damaged_service(result, journal):
+    assert result.returncode == 243, "service did not fail at credential setup"
+    assert journal.returncode == 0, journal.stderr.decode()
+    diagnostic = journal.stdout.decode()
+    assert "Bad credential format." in diagnostic, diagnostic
+    assert "Failed to set up credentials: Bad message" in diagnostic, diagnostic
+    return diagnostic
+
+
 wrong_name_cause = "Name in credential doesn't match expectations."
 missing_file_cause = "Failed to read encrypted credential data: No such file or directory"
 # Exercise the same failure-cause checker against an unrelated provider outage.
@@ -33,6 +43,14 @@ for label, expected_cause in [("wrong-name", wrong_name_cause), ("missing-envelo
     else:
         raise AssertionError(f"{label} accepted an unrelated broker failure")
 print("PASS unrelated broker failures do not satisfy credential rejection controls")
+try:
+    require_damaged_service(subprocess.CompletedProcess([], 243, b"", b"broker unavailable"),
+                            subprocess.CompletedProcess([], 0, b"credential broker unavailable", b""))
+except AssertionError:
+    pass
+else:
+    raise AssertionError("damaged-service control accepted an unrelated provider failure")
+print("PASS provider outage with exit 243 does not satisfy damaged-service control")
 
 with tempfile.TemporaryDirectory(prefix="sage-b204-creds-") as tmp:
     root = Path(tmp)
@@ -102,11 +120,20 @@ with tempfile.TemporaryDirectory(prefix="sage-b204-creds-") as tmp:
     # Distinct transient launches prove unattended load across service restarts.
     digest = hashlib.sha256(secret).hexdigest()
     script = f"import os,pathlib,hashlib; p=pathlib.Path(os.environ['CREDENTIALS_DIRECTORY'])/'dbkey'; assert hashlib.sha256(p.read_bytes()).hexdigest()=='{digest}'; print('PASS service received exact synthetic credential without logging it')"
+    unit_prefix = f"sage-b204-{os.getpid()}-{os.urandom(8).hex()}"
     for i in range(2):
-        result = run(["systemd-run", "--user", "--wait", "--pipe", "--collect", f"--unit=sage-b204-{os.getpid()}-{i}", f"--property=LoadCredentialEncrypted=dbkey:{blob}", "python3", "-I", "-c", script])
+        result = run(["systemd-run", "--user", "--wait", "--pipe", "--collect", f"--unit={unit_prefix}-{i}", f"--property=LoadCredentialEncrypted=dbkey:{blob}", "python3", "-I", "-c", script])
         print("service", i, "rc=", result.returncode, result.stdout.decode().strip(), result.stderr.decode().strip())
         assert result.returncode == 0
-    result = run(["systemd-run", "--user", "--wait", "--pipe", "--collect", f"--unit=sage-b204-{os.getpid()}-bad", f"--property=LoadCredentialEncrypted=dbkey:{damaged}", "/usr/bin/true"])
+    bad_unit = f"{unit_prefix}-bad.service"
+    result = run(["systemd-run", "--user", "--wait", "--pipe", "--collect", f"--unit={bad_unit}", f"--property=LoadCredentialEncrypted=dbkey:{damaged}", "/usr/bin/true"])
     print("damaged service rc=", result.returncode)
-    assert result.returncode == 243
+    deadline = time.monotonic() + 5
+    while True:
+        journal = run(["sudo", "-n", "journalctl", "--boot", "--no-pager", "--output=cat", f"_SYSTEMD_USER_UNIT={bad_unit}", f"_UID={os.getuid()}"])
+        assert journal.returncode == 0, journal.stderr.decode()
+        if "Failed to set up credentials" in journal.stdout.decode() or time.monotonic() >= deadline:
+            break
+        time.sleep(0.1)
+    print("damaged service journal:", require_damaged_service(result, journal))
     print("PASS damaged credential prevents service payload start (243); no fallback")
