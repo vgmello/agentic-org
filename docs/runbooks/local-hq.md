@@ -90,7 +90,7 @@ The desktop app (Tauri 2 + SvelteKit, bun). `bun run tauri dev` starts Vite on `
 host starts:
 
 ```sh
-cd "$REPO/apps/desktop" && bun install
+cd "$REPO/apps/org-ui" && bun install
 cd "$REPO" && cargo build -p agentic-org     # or: run `bun run tauri dev` once and quit it
 test -x "$ORG_DEV_APP_PATH" && echo "dev app: ok"
 ```
@@ -180,7 +180,7 @@ python3 "$DEV/hostcall.py" "$ORG_OFFICE_HOME/host.sock" hello
 **From the app (the real check):**
 
 ```sh
-cd "$REPO/apps/desktop"
+cd "$REPO/apps/org-ui"
 AGENTIC_ORG_OFFICE=real bun run tauri dev     # ORG_OFFICE_HOME must be exported in this terminal
 ```
 

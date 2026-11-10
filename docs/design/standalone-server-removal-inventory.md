@@ -16,12 +16,15 @@ the same change. Git history is sufficient to recover the old shell for referenc
 
 The owner-requested [project structure](project-structure.md) and
 [architecture rules](../architecture-rules.md) define the target layout.
-Paths in the source-audit tables below reflect the source, including the completed
-worker rename. Implementation must apply the remaining mappings:
+Paths in the source-audit tables below include the completed worker rename.
+The UI is now at `apps/org-ui` (package `org-ui`), including the retained
+`src-tauri` shell. The `apps/desktop` paths below identify the historical audit
+baseline: resolve their suffixes under `apps/org-ui` for current source. Shell
+removal and the remaining replacement work are still pending.
 
 | Inspected name/path | Target and required follow-through |
 | --- | --- |
-| Retained browser application in `apps/desktop/` | Move to `apps/org-ui/`; use frontend package name `org-ui`; retain the static SvelteKit build, assets, licensed UI and useful tests. Delete Tauri-only pieces under §1. |
+| Retained browser application in `apps/desktop/` (historical) | Rename complete: `apps/org-ui/`, frontend package `org-ui`; static SvelteKit build, assets, licensed UI, tests and `src-tauri` retained. Delete Tauri-only pieces under §1 in the follow-up. |
 | `apps/org-server/`, Cargo package/binary `org-server` | Rename complete, including Rust application-library references to `org_server`. Preserves one worker per office and host key custody. |
 | New gateway/setup helpers | Add planned `apps/org-gateway` for browser HTTP outside key custody and `apps/org-setup` with distinct Cargo package ID. Remove the Tauri workspace member before building/staging the new `agentic-org` binary to avoid package/artifact collisions. |
 | Workspace and consumer references | Update Cargo members/paths/lockfile, frontend package/lockfile, test helper binary paths and environment references, build/release/signing checks, host helper resolution and documentation atomically with the source move. |
@@ -32,7 +35,7 @@ worker rename. Implementation must apply the remaining mappings:
 
 The downloaded setup/release command remains provisionally `agentic-org`;
 `org-office-host`, `org-office-launch`, and office identities are not renamed
-by this decision. The worker rename is implemented; UI and setup changes remain pending.
+by this decision. Worker and UI renames are implemented; setup changes remain pending.
 
 ## 1. Delete desktop-only implementation
 
@@ -71,9 +74,9 @@ frontend directory would discard the browser application we intend to keep.
 
 ### 2.1 B1-03 shell audit and deletion handoff
 
-Audited against `v1` at `0a83d76` (2026-11-10). Source paths below use
-`apps/desktop`; F1-01 changes that prefix to `apps/org-ui` without changing the
-dispositions. This audit does not implement the gateway, projects/areas or runtime,
+Audited against `v1` at `0a83d76` (2026-11-10), then integrated with F1-01 at
+`a0748a0`. Relative source paths below now live under `apps/org-ui`; historical
+`apps/desktop` references retain their audit provenance. This audit does not implement the gateway, projects/areas or runtime,
 and does not delete the shell. B1-10 remains the owner of project/area commands.
 
 | File | Observed behavior and disposition |

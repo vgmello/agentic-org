@@ -9,13 +9,13 @@ development instructions, not installation instructions for the new v1. Do not
 claim the new CLI, HTTP server or remote sync exists until implemented. No migration
 of the undeployed desktop app or its data is required.
 
-**Target naming:** retain the browser UI as `apps/org-ui` (package `org-ui`) and
-rename the worker app/package/binary to `apps/org-server` / `org-server`. See the
-[proposed project structure](../../docs/design/project-structure.md). This file's
-current source paths and desktop commands are pre-pivot evidence; the docs PR
-performs no directory moves. Licensed UI stays inside the renamed UI application.
+**Application naming:** the browser UI is now `apps/org-ui` (package `org-ui`), and
+the worker app/package/binary is `apps/org-server` / `org-server`. See the
+[project structure](../../docs/design/project-structure.md). The UI rename moves
+`src-tauri` with it; shell removal and HTTP integration are separate follow-ups.
+Licensed UI stays inside this product application.
 
-What `apps/desktop` is built with, why, and what is still undecided. Versions are pinned exactly in `package.json` and `src-tauri/Cargo.toml`.
+What `apps/org-ui` is built with, why, and what is still undecided. Versions are pinned exactly in `package.json` and `src-tauri/Cargo.toml`.
 
 ## Decided
 
@@ -25,14 +25,14 @@ What `apps/desktop` is built with, why, and what is still undecided. Versions ar
 | UI framework | **SvelteKit 2 + Svelte 5** (runes), static SPA | `adapter-static`, `ssr = false`, `index.html` fallback. |
 | Language | **TypeScript** (strict) | |
 | Styling | **Tailwind CSS v4** | CSS-first config in `src/app.css`. Dark only. |
-| Look | **Tailwind Plus** application UI, ported to Svelte | Matches the approved prototype. Allowed **inside `apps/desktop` only** (see AGENTS.md). |
+| Look | **Tailwind Plus** application UI, ported to Svelte | Matches the approved prototype. Allowed **inside `apps/org-ui` only** (see AGENTS.md). |
 | Extra components | **shadcn-svelte** on **Bits UI** | Generated into `src/lib/components/ui`. Tokens in `app.css` map onto the Tailwind Plus palette. Add with `bunx shadcn-svelte@latest add <name>`. |
 | Icons | `@lucide/svelte` (shadcn), Heroicons paths (ported sidebar) | |
 | Font | Inter Variable, bundled (`@fontsource-variable/inter`) | The CSP forbids remote fonts. |
 | Package manager / scripts | **bun** | `bun install`, `bun run dev`, `bun run check`, `bun run test`, `bun run tauri build`. Lockfile: `bun.lock`. |
 | Unit tests | **Vitest** | Pure logic: the create flow, name rules, the mock. `bun run test`. |
 | UI tests (navigation, flows) | **Playwright** (Chromium) against its own `bun run dev --port 4173` server on the TS mock (so it never collides with `tauri dev` on 1420) | Clicks and types through every flow and error state. `bun run test:e2e`. The Rust shell is covered by `cargo test`. |
-| Rust | Workspace member `apps/desktop/src-tauri` | Toolchain pinned by `rust-toolchain.toml`. `cargo test -p agentic-org`. |
+| Rust | Workspace member `apps/org-ui/src-tauri` | Toolchain pinned by `rust-toolchain.toml`. `cargo test -p agentic-org`. |
 | Talking to an office | **UI → Tauri commands → Rust → `org-client` → Unix socket** | The WebView never touches the socket and has no network access (`connect-src` is IPC only). A WebView can't open Unix sockets, and a localhost TCP port would need its own auth and origin checks. Rust owns the connection, the login-service install and reconnects. A Tauri call costs well under a millisecond, so there is no speed reason to go direct. |
 | Contract | `org-proto` types; TypeScript mirrored by hand in `src/lib/proto.ts` | Generated TS later. |
 | Mocking | Two seams, same types: TS mocks (`src/lib/office/mock.ts`, `src/lib/org/api.ts`, browser) and Rust mocks (`src-tauri/src/mock.rs`, `org_engine.rs`, in the app) | `?mock=<scenario>` in the browser, `AGENTIC_ORG_MOCK=<scenario>` in the app. Scenarios: `not_installed`, `needs_approval`, `unreachable`, `storage_error`. Org data: `?org=empty` (owner only), `?org=fails`, `?org=fails_once`, `?org=slow` in the browser; `AGENTIC_ORG_MOCK_ORG=empty` in the app. The mock office plays **HQ**: it applies the org commands (teams, members, memberships, people, agents, reporting lines, project links) with `org-proto`'s rules and error order, answers a retried `command_id` the same, and keeps each organization's structure in `structures.json` (versioned; unknown versions are never overwritten). The browser reducer (`src/lib/org/reducer.ts`) and the Rust engine are tested against the same cases (`crates/org-office/test-vectors/org-commands.json` at the workspace root). Both are labelled "Sample data". |
@@ -42,7 +42,7 @@ What `apps/desktop` is built with, why, and what is still undecided. Versions ar
 ## Run it
 
 ```
-cd apps/desktop
+cd apps/org-ui
 bun install
 bunx playwright install chromium   # once, for bun run test:e2e
 bun run dev                 # the UI in a browser on the mock, http://localhost:1420
