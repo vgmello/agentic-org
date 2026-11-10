@@ -308,32 +308,50 @@ impl<T> OperationLookup<T> {
 
 impl<T: Serialize> Serialize for OperationLookup<T> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::Error as _;
-        let mut wire = match self {
-            Self::Outcome { outcome, .. } => {
-                serde_json::to_value(outcome).map_err(S::Error::custom)?
-            }
-            Self::Abandoned { operation_id } | Self::Unsupported { operation_id, .. } => {
-                serde_json::json!({"operation_id": operation_id})
-            }
-        };
+        // Stream the typed result directly, preserving its bytes/field order exactly as
+        // in the mutation response. A Value intermediary would reorder result fields.
+        let mut wire = serializer.serialize_map(None)?;
         match self {
-            Self::Outcome { kind, state, .. } => {
-                wire["kind"] = serde_json::to_value(kind).map_err(S::Error::custom)?;
+            Self::Outcome {
+                kind,
+                state,
+                outcome,
+            } => {
+                wire.serialize_entry("kind", kind)?;
                 if let Some(state) = state {
-                    wire["state"] = serde_json::to_value(state).map_err(S::Error::custom)?;
+                    wire.serialize_entry("state", state)?;
+                }
+                let (operation_id, name) = match outcome {
+                    MutationOutcome::Accepted { operation_id } => (operation_id, "accepted"),
+                    MutationOutcome::Completed { operation_id, .. } => (operation_id, "completed"),
+                    MutationOutcome::Rejected { operation_id, .. } => (operation_id, "rejected"),
+                    MutationOutcome::Unknown { operation_id } => (operation_id, "unknown"),
+                    MutationOutcome::Unsupported { operation_id } => (operation_id, "unsupported"),
+                };
+                wire.serialize_entry("operation_id", operation_id)?;
+                wire.serialize_entry("outcome", name)?;
+                match outcome {
+                    MutationOutcome::Completed { result, .. } => {
+                        wire.serialize_entry("result", result)?
+                    }
+                    MutationOutcome::Rejected { error, .. } => {
+                        wire.serialize_entry("error", error)?
+                    }
+                    _ => {}
                 }
             }
-            Self::Abandoned { .. } => {
-                wire["kind"] = Value::String("host".into());
-                wire["state"] = Value::String("abandoned".into());
+            Self::Abandoned { operation_id } => {
+                wire.serialize_entry("operation_id", operation_id)?;
+                wire.serialize_entry("kind", "host")?;
+                wire.serialize_entry("state", "abandoned")?;
             }
-            Self::Unsupported { kind, .. } => {
-                wire["kind"] = serde_json::to_value(kind).map_err(S::Error::custom)?;
-                wire["state"] = Value::String("unknown".into());
+            Self::Unsupported { operation_id, kind } => {
+                wire.serialize_entry("operation_id", operation_id)?;
+                wire.serialize_entry("kind", kind)?;
+                wire.serialize_entry("state", "unknown")?;
             }
         }
-        wire.serialize(serializer)
+        wire.end()
     }
 }
 

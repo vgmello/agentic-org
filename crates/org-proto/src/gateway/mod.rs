@@ -26,7 +26,7 @@ pub use stream::{
 };
 pub use views::{
     CancelResult, CancelState, Capabilities, Capability, GatewayStatus, InstanceView, ListenScheme,
-    OfficeView, OrganizationView, RecoveryState, SessionReason, TlsStatus,
+    OfficeRestartResult, OfficeView, OrganizationView, RecoveryState, SessionReason, TlsStatus,
 };
 
 /// HTTP API and contract revision. Revisions are additive; breaking changes need a new API.
@@ -208,6 +208,10 @@ pub enum OperationKind {
 
 pub type OrganizationCreateRequest = CommandEnvelope<crate::OrganizationCreateParams>;
 pub type OfficeRestartRequest = CommandEnvelope<crate::Empty>;
+pub type OrganizationCreateOutcome = MutationOutcome<OrganizationView>;
+pub type OrganizationCreateLookup = OperationLookup<OrganizationView>;
+pub type OfficeRestartOutcome = MutationOutcome<OfficeRestartResult>;
+pub type OfficeRestartLookup = OperationLookup<OfficeRestartResult>;
 
 /// Dedicated cancellation has no body ID or business payload; the URL names the original ID.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

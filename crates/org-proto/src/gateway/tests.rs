@@ -34,6 +34,24 @@ fn check_view<T: DeserializeOwned + Serialize>(case: &Value) {
     }
 }
 
+fn check_typed_response<T: DeserializeOwned + Serialize>(case: &Value) {
+    let response = parse::<T>(&case["wire"]);
+    assert_eq!(
+        response.is_ok(),
+        case["expect"]["valid"] == true,
+        "{}",
+        case["name"]
+    );
+    if let Ok(response) = response {
+        assert_eq!(
+            serde_json::to_value(response).unwrap(),
+            case["expect"]["normalized"],
+            "{}",
+            case["name"]
+        );
+    }
+}
+
 #[test]
 fn public_version_has_only_constant_protocol_metadata() {
     assert_eq!(
@@ -563,5 +581,66 @@ fn shared_resource_refusals_hide_existence_and_keep_attempts_distinct_from_looku
         assert_eq!(trace["expect"]["keep_draft"], true);
         assert_eq!(trace["expect"]["auto_resubmit"], false);
         assert_eq!(trace["expect"]["new_user_attempt"], "new_id");
+    }
+}
+
+#[test]
+fn shared_create_and_restart_projections_match_lookup_bytes_and_reject_private_fields() {
+    let vectors = fixture(
+        include_str!("../../test-vectors/v2/gateway-mutation-results.json"),
+        28,
+    );
+    for case in vectors["cases"].as_array().unwrap() {
+        match (
+            case["operation"].as_str().unwrap(),
+            case["response_kind"].as_str().unwrap(),
+        ) {
+            ("organization.create", "mutation") => {
+                check_typed_response::<OrganizationCreateOutcome>(case)
+            }
+            ("organization.create", "lookup") => {
+                check_typed_response::<ReadResponse<OrganizationCreateLookup>>(case)
+            }
+            ("office.restart", "mutation") => check_typed_response::<OfficeRestartOutcome>(case),
+            ("office.restart", "lookup") => {
+                check_typed_response::<ReadResponse<OfficeRestartLookup>>(case)
+            }
+            _ => panic!("unknown public projection case"),
+        }
+    }
+    for pair in vectors["pairs"].as_array().unwrap() {
+        let (mutation, lookup) = if pair["operation"] == "organization.create" {
+            (
+                serde_json::to_vec(&parse::<OrganizationCreateOutcome>(&pair["mutation"]).unwrap())
+                    .unwrap(),
+                serde_json::to_vec(
+                    &parse::<ReadResponse<OrganizationCreateLookup>>(&pair["lookup"]).unwrap(),
+                )
+                .unwrap(),
+            )
+        } else {
+            (
+                serde_json::to_vec(&parse::<OfficeRestartOutcome>(&pair["mutation"]).unwrap())
+                    .unwrap(),
+                serde_json::to_vec(
+                    &parse::<ReadResponse<OfficeRestartLookup>>(&pair["lookup"]).unwrap(),
+                )
+                .unwrap(),
+            )
+        };
+        // This checks actual serialized bytes, not only Value equality (which sorts keys).
+        let result = if pair["operation"] == "organization.create" {
+            serde_json::to_vec(
+                &serde_json::from_value::<OrganizationView>(pair["mutation"]["result"].clone())
+                    .unwrap(),
+            )
+            .unwrap()
+        } else {
+            b"{}".to_vec()
+        };
+        let mut needle = b"\"result\":".to_vec();
+        needle.extend(result);
+        assert!(mutation.windows(needle.len()).any(|part| part == needle));
+        assert!(lookup.windows(needle.len()).any(|part| part == needle));
     }
 }

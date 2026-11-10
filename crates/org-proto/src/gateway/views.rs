@@ -1,4 +1,6 @@
+use serde::de::Error as _;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use super::{Milliseconds, OperationId, Scope};
 use crate::{OfficeInfo, OfficeRole, OfficeStatus, OfficeStatusReason, Organization};
@@ -79,12 +81,11 @@ impl From<OfficeInfo> for OfficeView {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OrganizationView {
     pub id: String,
     pub name: String,
     pub created_at: String,
-    pub offices: Vec<OfficeView>,
     /// State only. The recovery code must never enter the browser contract.
     pub recovery: RecoveryState,
 }
@@ -95,13 +96,80 @@ impl OrganizationView {
             id: organization.id,
             name: organization.name,
             created_at: organization.created_at,
-            offices: organization
-                .offices
-                .into_iter()
-                .map(OfficeView::from)
-                .collect(),
             recovery,
         }
+    }
+}
+
+/// Known host-control fields can never become additive public result fields. This guard
+/// applies only to create/restart projections, not domain records such as repository paths.
+fn check_public_projection(value: &Value) -> Result<(), &'static str> {
+    match value {
+        Value::Object(fields) => {
+            for (key, value) in fields {
+                if matches!(
+                    key.as_str(),
+                    "endpoint"
+                        | "socket"
+                        | "path"
+                        | "db_key"
+                        | "recovery_code"
+                        | "owner_grant"
+                        | "host_control"
+                ) || key.ends_with("_path")
+                {
+                    return Err("host-control fields are not public result data");
+                }
+                check_public_projection(value)?;
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                check_public_projection(value)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn public_object<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Value, D::Error> {
+    let value = Value::deserialize(d)?;
+    if !value.is_object() {
+        return Err(D::Error::custom("public result must be an object"));
+    }
+    check_public_projection(&value).map_err(D::Error::custom)?;
+    Ok(value)
+}
+
+impl<'de> Deserialize<'de> for OrganizationView {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Raw {
+            id: String,
+            name: String,
+            created_at: String,
+            recovery: RecoveryState,
+        }
+        let raw: Raw = serde_json::from_value(public_object(d)?)
+            .map_err(|_| D::Error::custom("invalid public organization view"))?;
+        Ok(Self {
+            id: raw.id,
+            name: raw.name,
+            created_at: raw.created_at,
+            recovery: raw.recovery,
+        })
+    }
+}
+
+/// Restart acceptance/completion says nothing about health. Read the offices list/feed.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct OfficeRestartResult {}
+
+impl<'de> Deserialize<'de> for OfficeRestartResult {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        public_object(d)?;
+        Ok(Self {})
     }
 }
 

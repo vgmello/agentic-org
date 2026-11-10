@@ -87,6 +87,14 @@ organization_id/name/role/host/status/status_reason/next_restart_at, **omitting
 `endpoint`**, which is a local socket detail. Recovery code never crosses HTTP.
 Status reason `unsupported_version` is distinct from the request error code.
 
+Completed result types, frozen by Rowan `01M72Z9MC0CRC011GJ2EWQYBQD`:
+organization.create returns exactly OrganizationView identity/name/created_at/recovery;
+office.restart returns `{}`. Offices and health come from the offices list/feed,
+not these completed results. Lookup uses the same public projection, with identical
+serialized result bytes. Endpoint/socket/path, recovery-code, database-key and
+owner-grant fields are not public result data. Unknown additive business fields
+remain ignorable; known host-control fields are refused.
+
 Mutation envelope (path fixes the typed operation):
 
 ```json

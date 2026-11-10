@@ -31,7 +31,10 @@
           "state": "linked",
           "outcome": "completed",
           "result": {
-            "organization_id": "org-1"
+            "id": "01M72N8MG00000000000000003",
+            "name": "Acme",
+            "created_at": "2026-11-10T12:00:00.000Z",
+            "recovery": "pending"
           }
         }
       },
@@ -43,7 +46,10 @@
           "state": "linked",
           "outcome": "completed",
           "result": {
-            "organization_id": "org-1"
+            "id": "01M72N8MG00000000000000003",
+            "name": "Acme",
+            "created_at": "2026-11-10T12:00:00.000Z",
+            "recovery": "pending"
           }
         },
         "final": true
@@ -102,10 +108,7 @@
           "operation_id": "01M72N8MG00000000000000006",
           "kind": "host",
           "outcome": "completed",
-          "result": {
-            "status": "completed",
-            "office_id": "office-1"
-          }
+          "result": {}
         }
       },
       "expect": {
@@ -114,10 +117,7 @@
           "operation_id": "01M72N8MG00000000000000006",
           "kind": "host",
           "outcome": "completed",
-          "result": {
-            "status": "completed",
-            "office_id": "office-1"
-          }
+          "result": {}
         },
         "final": true
       }
