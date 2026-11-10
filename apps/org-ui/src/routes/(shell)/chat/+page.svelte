@@ -46,6 +46,8 @@
 
 	/** Chat (docs/specs/chat-ux.md): channels, DMs and threads where agents and people talk. A mock office; always sample data. */
 	let { data } = $props();
+	const componentId = $props.id();
+	const conversationsId = componentId + '-conversations';
 	const organizationId = $derived(data.connection.organization.id);
 	const snapshot = $derived(data.snapshot);
 	const send = $derived(sender(organizationId));
@@ -62,6 +64,10 @@
 	let threadRoot = $state<string | undefined>();
 	let threadOpener: HTMLElement | undefined;
 	let showMembers = $state(false);
+	let membersOpener: HTMLElement | undefined;
+	let compactPanels = $state(false);
+	let conversationEl = $state<HTMLElement | undefined>();
+	let panel = $state<{ focusClose: () => void } | undefined>();
 	let query = $state('');
 	let readMarker = $state<string | undefined>();
 	let showMuted = $state(false);
@@ -70,6 +76,64 @@
 	let started = false;
 	let lastSearch = '';
 	let listEl = $state<HTMLElement | undefined>();
+	let chatEl = $state<HTMLElement | undefined>();
+	let heading = $state<HTMLHeadingElement | undefined>();
+	let sidebarInline = $state(true);
+	let sidebarOpen = $state(false);
+	let sidebarToggle = $state<HTMLButtonElement | HTMLAnchorElement | null>(null);
+	let conversationNavigation = $state<{ focusSelected: (preferred?: HTMLElement) => void } | undefined>();
+	// A resize can remove the toggle just after a dialog restores focus to it.
+	$effect.pre(() => {
+		if (!sidebarInline) return;
+		untrack(() => {
+			const origin = sidebarToggle;
+			if (!origin || document.activeElement !== origin) return;
+			void tick().then(() => {
+				if (sidebarInline && (document.activeElement === origin || document.activeElement === document.body)) conversationNavigation?.focusSelected();
+			});
+		});
+	});
+	let sidebarReturn: 'toggle' | 'selection' | 'dialog' = 'toggle';
+	let sidebarDialogMode = $state(false);
+	let sidebarDialogSelected = false;
+	let sidebarDialogOpener: HTMLElement | undefined;
+	function focusVisible(target: HTMLElement | null | undefined) {
+		if (!target?.isConnected) return;
+		target.focus({ preventScroll: true });
+		if (!compactPanels) return;
+		// The shell heading stays fixed while a short, zoomed Chat can scroll vertically.
+		const rect = target.getBoundingClientRect();
+		const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+		if (!target.contains(hit)) target.scrollIntoView({ block: 'center', inline: 'nearest' });
+	}
+	function focusAfterNavigation(selected: boolean) {
+		if (compactPanels && panelKind) panel?.focusClose();
+		else if (selected) focusVisible(heading);
+		else if (sidebarInline) conversationNavigation?.focusSelected();
+		else focusVisible(sidebarToggle);
+	}
+	function closeSidebarFocus() {
+		const reason = sidebarReturn;
+		sidebarReturn = 'toggle';
+		if (reason !== 'dialog') void tick().then(() => focusAfterNavigation(reason === 'selection'));
+	}
+	function startSidebarDialog(kind: 'channel' | 'dm', opener: HTMLElement) {
+		sidebarDialogMode = true;
+		sidebarDialogSelected = false;
+		sidebarDialogOpener = opener;
+		if (sidebarOpen) { sidebarReturn = 'dialog'; sidebarOpen = false; }
+		if (kind === 'channel') openChannelDialog('create'); else dmOpen = true;
+	}
+	function finishSidebarDialog() {
+		const selected = sidebarDialogSelected;
+		const opener = sidebarDialogOpener;
+		sidebarDialogMode = false;
+		sidebarDialogOpener = undefined;
+		void tick().then(() => {
+			if (sidebarInline) conversationNavigation?.focusSelected(opener);
+			else focusAfterNavigation(selected);
+		});
+	}
 
 	// Previews how a bridge shows asks (CHAT-17): a mock hook like `?mock=`, `?org=` and `?chat=`.
 	const bridgePreview = $derived(page.url.searchParams.get('surface') === 'bridge');
@@ -80,6 +144,18 @@
 	const convView = $derived(conversation && chatState ? conversationView(chatState, ctx, conversation.id) : undefined);
 	const root = $derived(threadRoot && chatState ? chatState.messages.find((m) => m.id === threadRoot) : undefined);
 	const threadConversation = $derived(root && chatState ? chatState.conversations.find((c) => c.id === root.conversation_id) : undefined);
+	const panelKind = $derived(root && threadConversation ? 'thread' : showMembers && conversation ? 'members' : undefined);
+	$effect(() => {
+		const target = panel;
+		if (!compactPanels || !panelKind || !target) return;
+		untrack(() => {
+			const origin = document.activeElement;
+			if (origin !== document.body && !conversationEl?.contains(origin)) return;
+			void tick().then(() => {
+				if (panel === target && compactPanels && panelKind && (document.activeElement === document.body || document.activeElement === origin)) target.focusClose();
+			});
+		});
+	});
 	const compose = $derived(conversation && chatState ? composerState(chatState, ctx, conversation, officeRunning) : undefined);
 	const typing = $derived(conversation && chatState ? typingWords(chatState.typing, ctx, conversation.id, now) : undefined);
 	const results = $derived(chatState && searching ? searchMessages(chatState, ctx, parseSearch(query)) : []);
@@ -106,6 +182,10 @@
 	}
 
 	onMount(() => {
+		const media = window.matchMedia('(width < 1280px)');
+		const syncCompactPanels = () => (compactPanels = media.matches);
+		syncCompactPanels();
+		media.addEventListener('change', syncCompactPanels);
 		void load().then(() => {
 			// A link from Activity opens the message; otherwise the owner starts where something waits for them.
 			const loc = urlLocation(page.url.search);
@@ -116,7 +196,7 @@
 		});
 		const stop = chatApi.subscribe(organizationId, () => void load());
 		const timer = setInterval(() => void load(), 30_000);
-		return () => (stop(), clearInterval(timer));
+		return () => { stop(); clearInterval(timer); media.removeEventListener('change', syncCompactPanels); };
 	});
 
 	// A link followed while the screen is open (Open in Chat from another place).
@@ -149,11 +229,14 @@
 	}
 
 	function select(next: ChatView, navigate = true) {
+		if (sidebarOpen) { sidebarReturn = 'selection'; sidebarOpen = false; }
+		if (sidebarDialogMode) sidebarDialogSelected = true;
 		query = '';
 		view = next;
 		threadRoot = undefined;
 		threadOpener = undefined;
 		showMembers = false;
+		membersOpener = undefined;
 		showMuted = false;
 		openDigest = undefined;
 		highlight = undefined;
@@ -179,7 +262,19 @@
 		threadRoot = undefined;
 		highlight = undefined;
 		writePlace();
-		if (wasOpen && restore) (threadOpener?.isConnected ? threadOpener : listEl)?.focus({ preventScroll: true });
+		const target = threadOpener?.isConnected ? threadOpener : listEl;
+		if (wasOpen && restore) void tick().then(() => focusVisible(target));
+	}
+	function closeMembers() {
+		showMembers = false;
+		const target = membersOpener?.isConnected ? membersOpener : listEl;
+		void tick().then(() => focusVisible(target));
+	}
+	function toggleMembers(opener: HTMLElement) {
+		if (showMembers) return closeMembers();
+		membersOpener = opener;
+		showMembers = true;
+		closeThread(false);
 	}
 	// Opening a conversation reads it: what arrives while it is open is read too (unread muted messages don't count).
 	$effect(() => {
@@ -342,9 +437,10 @@
 	let channelDialog = $state<{ dismiss: () => void } | undefined>();
 	let dmDialog = $state<{ dismiss: () => void } | undefined>();
 	beforeNavigate((navigation) => {
-		if (navigation.type !== 'popstate' || (!channelOpen && !dmOpen && !commandOpen)) return;
+		if (navigation.type !== 'popstate' || (!sidebarOpen && !channelOpen && !dmOpen && !commandOpen)) return;
 		// Back dismisses the modal first; the next Back leaves the conversation.
 		navigation.cancel();
+		if (sidebarOpen) { sidebarReturn = 'toggle'; sidebarOpen = false; }
 		if (channelOpen) channelDialog?.dismiss();
 		if (dmOpen) dmDialog?.dismiss();
 		commandOpen = false;
@@ -376,12 +472,12 @@
 </script>
 
 <svelte:window onkeydown={(event) => {
-	if (event.key === 'Escape' && !event.defaultPrevented && threadRoot && !channelOpen && !dmOpen && !commandOpen) {
+	if (event.key === 'Escape' && !event.defaultPrevented && panelKind && !sidebarOpen && !channelOpen && !dmOpen && !commandOpen) {
 		const field = event.target;
 		const textField = field instanceof HTMLTextAreaElement || (field instanceof HTMLInputElement && /^(text|search|email|url|tel|password|number)$/.test(field.type));
 		if (event.isComposing || (textField && field.value !== '')) return;
 		event.preventDefault();
-		closeThread();
+		if (panelKind === 'thread') closeThread(); else closeMembers();
 	}
 }} />
 
@@ -397,26 +493,35 @@
 	{/each}
 {/snippet}
 
-<div class="relative flex h-[calc(100dvh-4rem)] min-h-0">
+<!-- At high zoom, keep a readable message area and let the shell scroll vertically. -->
+<div bind:this={chatEl} class="relative flex h-[calc(100dvh-64px)] min-h-0 min-w-0 max-[640px]:h-[calc(100dvh-56px)] max-[640px]:min-h-[28rem]">
 	{#if loadError}
 		<p class="m-8 text-sm/6 text-red-400" role="alert">{loadError}</p>
 	{:else if !chatState || !bar}
 		<p class="m-8 text-sm/6 text-gray-400" role="status">Loading chat…</p>
 	{:else}
-		<ChatSidebar {bar} {view} {ctx} onselect={select} onnewchannel={() => openChannelDialog('create')} onnewmessage={() => (dmOpen = true)} />
+		<ChatSidebar bind:this={conversationNavigation} {bar} {view} {ctx} container={chatEl} id={conversationsId} bind:inline={sidebarInline} bind:open={sidebarOpen} onCloseFocus={closeSidebarFocus} onselect={select} onnewchannel={(opener) => startSidebarDialog('channel', opener)} onnewmessage={(opener) => startSidebarDialog('dm', opener)} />
 
-		<section class="flex min-w-0 flex-1 flex-col" aria-label="Conversation">
+		<section bind:this={conversationEl} inert={(compactPanels && !!panelKind) || sidebarOpen} class="flex min-w-0 flex-1 flex-col" aria-label="Conversation">
 			<div class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-3">
 				<div class="min-w-0">
-					<h2 class="truncate text-base/7 font-semibold text-white" data-testid="conversation-title">
-						{viewTitle}
-					</h2>
+					<div class="flex min-w-0 items-center gap-2">
+						{#if !sidebarInline}
+							<Button bind:ref={sidebarToggle} variant="outline" size="sm" aria-haspopup="dialog" aria-expanded={sidebarOpen} aria-controls={conversationsId} aria-label={`Conversations${bar.needsYou.length ? `, ${bar.needsYou.length} ${bar.needsYou.length === 1 ? 'needs' : 'need'} you` : ''}`} onclick={() => { sidebarReturn = 'toggle'; sidebarOpen = true; }}>
+								Conversations
+								{#if bar.needsYou.length}<span class="rounded-full bg-amber-400 px-1.5 text-xs/5 font-semibold text-gray-900" aria-hidden="true">{bar.needsYou.length}</span>{/if}
+							</Button>
+						{/if}
+						<h2 bind:this={heading} tabindex="-1" class="min-w-0 flex-1 truncate text-base/7 font-semibold text-white focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring" data-testid="conversation-title">
+							{viewTitle}
+						</h2>
+					</div>
 					{#if conversation && !searching}<p class="text-xs/5 text-gray-400">{subtitle}{#if conversation.archived}{' · Archived'}{/if}</p>{/if}
 				</div>
 				<div class="flex max-w-full flex-wrap items-center gap-2">
 					<Badge variant="secondary" data-testid="sample-data-note">Sample data</Badge>
 					{#if conversation && !searching}
-						<Button type="button" variant="outline" size="sm" aria-pressed={showMembers} onclick={() => { showMembers = !showMembers; closeThread(false); }}><Users aria-hidden="true" /> Members</Button>
+						<Button type="button" variant="outline" size="sm" aria-pressed={showMembers} onclick={(event) => toggleMembers(event.currentTarget)}><Users aria-hidden="true" /> Members</Button>
 					{/if}
 					<div class="relative min-w-0 max-w-full">
 						<Search class="pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 text-gray-400" aria-hidden="true" />
@@ -540,15 +645,15 @@
 		</section>
 
 		{#if root && threadConversation}
-			<ThreadPanel {root} conversation={threadConversation} {ctx} {chatState} {now} {officeRunning} readOnly={bridgePreview} onclose={closeThread} onsend={(t, o) => submit(t, o, threadConversation, root.id)} onreact={react} onturn={turn} onmute={mute} onpin={pin} onanswer={answer} onaccept={accept}>
+			<ThreadPanel {sidebarInline} bind:this={panel} {root} conversation={threadConversation} {ctx} {chatState} {now} {officeRunning} readOnly={bridgePreview} onclose={closeThread} onsend={(t, o) => submit(t, o, threadConversation, root.id)} onreact={react} onturn={turn} onmute={mute} onpin={pin} onanswer={answer} onaccept={accept}>
 				{#snippet undelivered()}{@render undeliveredRows(pending.filter((p) => p.thread_root_id === root.id), true)}{/snippet}
 			</ThreadPanel>
 		{:else if showMembers && conversation}
-			<MembersPanel {conversation} {ctx} {chatState} {officeRunning} projectName={followsWords} onclose={() => (showMembers = false)} onmute={(id, mode) => muteIn(conversation.id, id, mode)} onrename={() => openChannelDialog('rename')} onaddpeople={() => openChannelDialog('members')} onremove={(id) => void act({ method: 'channel.remove_member', id: conversation.id, member_id: id })} onarchive={() => void act({ method: 'channel.archive', id: conversation.id }, `#${conversation.name} is archived.`)} />
+			<MembersPanel {sidebarInline} bind:this={panel} {conversation} {ctx} {chatState} {officeRunning} projectName={followsWords} onclose={closeMembers} onmute={(id, mode) => muteIn(conversation.id, id, mode)} onrename={() => openChannelDialog('rename')} onaddpeople={() => openChannelDialog('members')} onremove={(id) => void act({ method: 'channel.remove_member', id: conversation.id, member_id: id })} onarchive={() => void act({ method: 'channel.archive', id: conversation.id }, `#${conversation.name} is archived.`)} />
 		{/if}
 	{/if}
 </div>
 
-<ChannelDialog bind:this={channelDialog} bind:open={channelOpen} mode={channelMode} members={ctx.members} initialName={channelMode === 'rename' ? (conversation?.name ?? '') : ''} initialMembers={channelMode === 'members' ? (conversation?.members ?? []) : []} onsubmit={channelSubmit} />
-<NewMessageDialog bind:this={dmDialog} bind:open={dmOpen} members={ctx.members} onsubmit={dmSubmit} />
+<ChannelDialog bind:this={channelDialog} returnFocus={sidebarDialogMode ? finishSidebarDialog : undefined} bind:open={channelOpen} mode={channelMode} members={ctx.members} initialName={channelMode === 'rename' ? (conversation?.name ?? '') : ''} initialMembers={channelMode === 'members' ? (conversation?.members ?? []) : []} onsubmit={channelSubmit} />
+<NewMessageDialog bind:this={dmDialog} returnFocus={sidebarDialogMode ? finishSidebarDialog : undefined} bind:open={dmOpen} members={ctx.members} onsubmit={dmSubmit} />
 <CommandDialog bind:open={commandOpen} form={command} ondone={(message) => toast.success(message)} />
