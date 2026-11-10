@@ -20,8 +20,8 @@ built on the owner's decisions O-1 (accounts) and O-2 (recovery-code delivery):
 who can sign in, the setup transcript for the first account, the sign-in page
 and its errors, session end and signing in again, sign out, what opens after
 sign-in, and the recovery-code states in the browser and the CLI, with their
-accessibility. Open questions A80 to A90 and A93 for ada (§4a.9). §4 points to
-§4a. **Criteria added:** SIGN-1 to SIGN-28, RCV-1 to RCV-17. No existing
+accessibility. Open questions A80 to A90, A93 and A94 for ada (§4a.9). §4 points to
+§4a. **Criteria added:** SIGN-1 to SIGN-29, RCV-1 to RCV-17. No existing
 criterion changed.
 
 Revisions 1 to 3 came from PR #5 and have no entries here.
@@ -234,6 +234,7 @@ It's shown once, here on the HQ machine, and never in the browser.
 Collect it now? [Y/n]: n
 Not collected. It's waiting on this machine. Collect it later with:
   agentic-org recovery-code collect --org "Lumen Labs"
+Recovering an organization after losing the HQ machine isn't supported yet.
 
 Open http://127.0.0.1:<port> in a browser and sign in as alex.
 ```
@@ -250,6 +251,11 @@ Open http://127.0.0.1:<port> in a browser and sign in as alex.
 - The last line prints the configured browser address and the username.
 - **Collect it now? Y** runs the same steps as `recovery-code collect` (§4a.6).
   **n**, or setup ending before the acknowledgement, leaves the code waiting.
+  This is a **deliberate departure** from `standalone-server.md` §6, which says
+  setup "requires acknowledgement": a first-time owner shouldn't be blocked from
+  reaching the browser, and the code stays waiting with a notice until collected.
+  ada decides whether to accept it and update the design, or to make the
+  acknowledgement part of setup (A94).
 - **A repeated setup** (SRV-2) asks for no account. It ends with "HQ is running.
   Open <address> and sign in as alex." While the code is waiting, it also prints
   the collect command.
@@ -305,7 +311,10 @@ they sign in. It shows no organization data.
 - "Sign in to HQ at <host:port>" uses the address in the browser's own address
   bar, so two instances on one machine (default and lab) are told apart without
   HQ revealing anything before sign-in.
-- **Show** reveals the password and becomes **Hide**.
+- The reset and add-account commands show `<instance>` literally, as text to
+  replace: the page can't know the instance's name before sign-in.
+- **Show password** is a toggle that reveals the password. Its label stays the
+  same; its pressed state says whether the password is shown.
 - Enter in either field submits.
 
 | State | What shows |
@@ -404,6 +413,10 @@ page:
   the sign-in page with "You signed out." The browser's Back button doesn't show
   organization data again.
 - Sessions in other browsers are not affected.
+- While HQ ends the session, the menu item reads **Signing out…** and is
+  disabled. If HQ can't be reached, nothing changes and the page shows "Couldn't
+  sign out: HQ can't be reached. Try again when it's back." with **Try again**;
+  the session stays valid until HQ ends it or it expires (A83).
 
 ### 4a.5 After sign-in: what opens
 
@@ -423,8 +436,8 @@ the owner recover the organization's certificate authority if the HQ machine is
 lost. Under O-2 the host generates the code, the worker creates the authority and
 the encrypted package, and the host keeps the code until it is collected with
 `agentic-org` on the HQ machine. This is the same for every organization: the
-first one from setup, and each one created in the browser. **The browser never
-shows the code.** It shows only its state.
+first one from setup, and each one created in the browser. **The code never
+passes through the gateway or the browser.** It shows only its state.
 
 The notice, every Recovery row state and the collect command end with this
 sentence (the table below leaves it out for space): "Recovering an organization after losing the
@@ -492,11 +505,11 @@ Recovering an organization after losing the HQ machine isn't supported yet.
 | Case | CLI output | Exit |
 | --- | --- | --- |
 | Typed group doesn't match | "That isn't the last group of the code. Check what you stored, then type it again." Asks again. | — |
-| Anything but `yes` at the last prompt | "Not recorded. Run this command again once the code and the recovery package are stored away from this machine." The code stays waiting. | Error |
-| Interrupted before `yes` (Ctrl-C, closed terminal) | "Not recorded. The code is still waiting; run this command again to see it." Running it again shows the **same** code. | Error |
+| Anything but `yes` at the last prompt | "Not recorded. Run this command again once the code and the recovery package are stored away from this machine. Recovering an organization after losing the HQ machine isn't supported yet." The code stays waiting. | Error |
+| Interrupted before `yes` (Ctrl-C, closed terminal) | "Not recorded. The code is still waiting; run this command again to see it. Recovering an organization after losing the HQ machine isn't supported yet." Running it again shows the **same** code. | Error |
 | Already collected | "The recovery code for Lumen Labs was collected on 10 Nov 2026. It can't be shown again. Recovering after losing the HQ machine isn't supported yet." No code. | Error |
-| Still being prepared | "Recovery material for Lumen Labs is still being prepared. Try again in a minute." | Error |
-| Couldn't be prepared | "Recovery material for Lumen Labs couldn't be prepared: <reason>. Run agentic-org doctor." | Error |
+| Still being prepared | "Recovery material for Lumen Labs is still being prepared. Try again in a minute. Recovering an organization after losing the HQ machine isn't supported yet." | Error |
+| Couldn't be prepared | "Recovery material for Lumen Labs couldn't be prepared: <reason>. Run agentic-org doctor. Recovering an organization after losing the HQ machine isn't supported yet." | Error |
 | No `--org`, one organization on the instance | Collects that organization's code. | — |
 | No `--org`, several organizations | "This instance has several organizations. Run again with --org and one of: Lumen Labs, Side Project." | Error |
 | Unknown organization | "There's no organization called "Lumen Labs" on instance default." | Error |
@@ -512,8 +525,8 @@ Recovering an organization after losing the HQ machine isn't supported yet.
 
 - **Labels.** Every field has a visible label tied to it: Username, Password.
   The fields use `autocomplete="username"` and `"current-password"`, so password
-  managers work. **Show** is a button with `aria-pressed` and the label "Show
-  password".
+  managers work. **Show password** is a button with `aria-pressed` and a fixed
+  label.
 - **Focus order** on the sign-in page: the error area (when shown), Username,
   Password, Show, Sign in, then the help text. In the sign-in-again dialog:
   Password, Show, Sign in, Not now, Sign in as someone else. The dialog traps
@@ -571,6 +584,9 @@ the recovery code in the browser, and recovering after losing HQ (REC-1).
   (length, groups), so the CLI can ask for its last group?
 - A93 · Which name for the HQ machine does HQ report for "<HQ machine>" in copy:
   the host name, or a configured label?
+- A94 · Setup can finish without the recovery-code acknowledgement (§4a.2), a
+  deliberate departure from `standalone-server.md` §6. Accept it and update the
+  design, or make the acknowledgement part of setup?
 
 ## 5. Lifecycle, updates and removal
 
@@ -640,7 +656,7 @@ rules, which are distinct from uninstalling software on a machine.
 - SIGN-2 · The sign-in page has no "forgot password" link, reset form or sign-up form. It shows the HQ-machine commands to reset a password and to add an account.
 - SIGN-3 · Submitting with an empty field sends no request and shows "Enter your username." or "Enter your password." under that field.
 - SIGN-4 · A wrong password for an existing username and any password for an unknown username show the same message, "That username and password don't match. Try again.", and HQ answers both with the same status and body. Password is cleared and Username kept.
-- SIGN-5 · A person record's name (offices §7.4), with any password, is refused with SIGN-4's message.
+- SIGN-5 · A name that matches a person record (offices §7.4) but no account, with any password, is refused with SIGN-4's message.
 - SIGN-6 · A rate-limited sign-in shows "Too many sign-in attempts." with the retry time when HQ gives one, and keeps Sign in disabled until then; without a time it shows "Wait a few minutes, then try again."
 - SIGN-7 · When the loaded sign-in page can't reach HQ, it shows "Can't reach HQ…" with `agentic-org status` and Try again, and keeps both fields.
 - SIGN-8 · A correct sign-in opens the page the user was trying to open, if it is a page of this HQ. A return target outside this HQ is ignored, and the last organization or the organization list opens (OPEN-1).
@@ -664,9 +680,10 @@ rules, which are distinct from uninstalling software on a machine.
 - SIGN-26 · `agentic-org account password <username>` on the HQ machine changes the password: the old one is refused and the new one signs in.
 - SIGN-27 · The sign-in page and the dialog meet §4a.7: labelled fields with username and current-password autocomplete, the stated focus order, errors linked with `aria-describedby` and announced, and no meaning by colour alone.
 - SIGN-28 · No browser screen lists, adds or edits accounts, and HQ's HTTP API refuses any request to create an account.
+- SIGN-29 · Sign out shows Signing out… while HQ ends the session; when HQ can't be reached it shows "Couldn't sign out: HQ can't be reached…" with Try again, and the page stays signed in.
 
 **Recovery code (RCV)** *(new, rev 4, §4a.6)*
-- RCV-1 · The recovery code never reaches the browser: a fixture code appears in no HTTP response, event, page, notice or copied text.
+- RCV-1 · The recovery code never passes through the gateway or reaches the browser: a fixture code appears in no gateway request or response, HTTP response, event, page, notice or copied text.
 - RCV-2 · While the code is waiting, the organization's owner sees the notice on every page of that organization, with the collect command and Copy command, and no close button. Other accounts don't see it.
 - RCV-3 · While the code is waiting, Needs you shows "Collect the recovery code for <organization> on <HQ machine>.", and the item opens the Recovery row. Without Needs you, the notice and the row still show.
 - RCV-4 · The Recovery row in Settings › Organization shows the exact copy for each state: being prepared, waiting to be collected, collected on <date>, couldn't be prepared with its reason, and status unknown.
@@ -681,7 +698,7 @@ rules, which are distinct from uninstalling software on a machine.
 - RCV-13 · Interactive setup offers to collect the code at its end; answering n leaves it waiting and prints the collect command.
 - RCV-14 · An organization created in the browser starts as being prepared, then waiting, and is collected with `--org` naming it.
 - RCV-15 · The collect command run without an interactive terminal prints no code.
-- RCV-16 · The notice, the Recovery row and the collect command each say that recovering after losing the HQ machine isn't supported yet.
+- RCV-16 · Setup's recovery block, the notice, the Recovery row and every collect command outcome each say that recovering after losing the HQ machine isn't supported yet.
 - RCV-17 · CLI output for setup, account and recovery commands carries no meaning by colour alone, and writes no colour codes with `NO_COLOR` set or when output isn't a terminal.
 
 

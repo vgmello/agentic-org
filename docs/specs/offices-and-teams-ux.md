@@ -309,7 +309,7 @@ creates it owns it. The mechanics are in `docs/design/create-organization.md`.
 | Reason | Copy |
 | --- | --- |
 | Key store unavailable | "Side Project wasn't created: HQ couldn't get a key for it from this instance's key store. On <HQ machine>, run `agentic-org doctor`, then try again." |
-| Office didn't start | "Side Project wasn't created: its office didn't start. Try again. If it keeps happening, run `agentic-org doctor` on <HQ machine>." |
+| HQ stored nothing | Only when HQ confirms nothing was stored: "Side Project wasn't created. Try again. If it keeps happening, run `agentic-org doctor` on <HQ machine>." An organization that was stored but whose office didn't start is **Created, then stopped** (above), never a failure, so Try again can't hit "already exists" (`create-organization.md`; `org-proto` `calls.rs`). |
 | Storage error | "Side Project wasn't created: HQ couldn't write its data on <HQ machine>. Run `agentic-org doctor` there, then try again." |
 | Not an instance admin | "Only an instance admin can create organizations." No Try again. The switcher item goes away. |
 | Any other reason | "Side Project wasn't created. Try again." |
@@ -729,7 +729,7 @@ Two directions, same result:
 **Create organization and who can do what (OFC)** *(new, rev 14, §5a, §5b)*
 - OFC-14 · For an instance admin, the organization switcher ends with a divider and **+ Create organization**. For any other account it has no divider, no Create organization item (enabled or disabled) and no hint.
 - OFC-15 · The Create organization form has one field, Name, and no folder picker. Its note names the HQ instance and machine that will store it and says the creator will own it.
-- OFC-16 · An empty, too long or control-character name shows its inline message and sends no request.
+- OFC-16 · An empty or too long name, or one with control, invisible or direction-changing characters, shows its inline message and sends no request.
 - OFC-17 · A name HQ refuses as already used shows "There's already an organization called <name> on this HQ. Choose another name." and no organization is created.
 - OFC-18 · While creating, the button reads **Creating…** and is disabled; double-clicking sends one request.
 - OFC-19 · A created organization opens showing Starting, with the toast "Created <name>. You own it.", and then loads normally. Its owner is the account that created it.
