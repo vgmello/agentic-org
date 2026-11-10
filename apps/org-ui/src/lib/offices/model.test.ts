@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { OfficeInfo, OfficeStatusReason } from '$lib/proto';
 import { sampleOrg } from '$lib/org/sample';
-import { agentsIn, applyStatusUpdate, copyDetails, displayStatus, displayStatusFor, isHere, orderOffices, roleInfo, rowLabel, secondaryText, statusIcon, statusInfo, unplacedAgents, restartAction, restartOutcome, whyForLabel, whyStopped } from './model';
+import { agentsIn, applyStatusUpdate, copyDetails, displayStatus, displayStatusFor, isHere, orderOffices, roleInfo, rowLabel, sampleRestartDeadlines, secondaryText, statusIcon, statusInfo, unplacedAgents, restartAction, restartOutcome, whyForLabel, whyStopped } from './model';
 
 const office = (id: string, name: string, over: Partial<OfficeInfo> = {}): OfficeInfo => ({
 	id,
@@ -159,6 +159,15 @@ describe('OFC-11..13 why an office stopped', () => {
 		// A time in the past counts down to 0, never negative; junk is ignored.
 		expect(whyStopped(stopped('crashed', '2026-11-08T11:59:00.000Z'), NOW)).toBe('It stopped unexpectedly');
 		expect(whyStopped(stopped('crashed', 'soon'), NOW)).toBe('It stopped unexpectedly');
+	});
+
+	it('samples a second pending office without changing the first office’s countdown', () => {
+		const hq = { id: 'hq', ...stopped('crashed', '2026-11-08T12:00:45.000Z') };
+		const branch = { id: 'branch', ...stopped('crashed', '2026-11-08T12:00:57.000Z') };
+		const first = sampleRestartDeadlines([hq], new Map(), NOW.getTime());
+		const both = sampleRestartDeadlines([hq, branch], first, NOW.getTime() + 2_000);
+		expect(whyStopped(hq, new Date(both.get('hq')!.observedAt))).toContain('Restarting in 45 s');
+		expect(whyStopped(branch, new Date(both.get('branch')!.observedAt))).toContain('Restarting in 55 s');
 	});
 
 	it('has words for every reason, and a reason it does not know reads as unknown', () => {

@@ -438,3 +438,18 @@ test('OFC-13 / BUG-27: the office sheet has one Close and returns focus to the o
 	await expect(sheet).not.toBeVisible();
 	await expect(opener).toBeFocused();
 });
+
+test('OFC-13 / BUG-27: pointer activation without focus still returns to the office row', async ({ page, browserName }) => {
+	await openOffices(page);
+	const opener = rows(page).first().getByRole('button');
+	await page.getByRole('link', { name: 'Offices', exact: true }).focus();
+	// WebKit doesn't focus a button on pointer activation. Exercise the same path in Chromium.
+	if (browserName === 'webkit') await opener.click();
+	else await opener.dispatchEvent('click');
+	const sheet = page.getByRole('dialog');
+	await expect(sheet).toBeVisible();
+	await sheet.getByRole('button', { name: 'Close', exact: true }).click();
+	await expect(sheet).not.toBeVisible();
+	await expect(opener).toBeFocused();
+	await shot(page, 'office-details-pointer-return-focus');
+});

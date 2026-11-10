@@ -175,6 +175,22 @@ const REASON_COPY: Record<Exclude<OfficeStatusReason, 'unsupported_version'>, st
 };
 
 type OfficeStop = Pick<OfficeInfo, 'host' | 'status' | 'status_reason' | 'next_restart_at'>;
+export type RestartDeadlineSample = { deadline: string; observedAt: number };
+
+/** A new pending deadline is sampled once; another office or a repeated report cannot move that sample. */
+export function sampleRestartDeadlines(
+	offices: readonly Pick<OfficeInfo, 'id' | 'status' | 'next_restart_at'>[],
+	previous: ReadonlyMap<string, RestartDeadlineSample>,
+	observedAt: number
+): ReadonlyMap<string, RestartDeadlineSample> {
+	const next = new Map<string, RestartDeadlineSample>();
+	for (const { id, status, next_restart_at: deadline } of offices) {
+		if (status !== 'offline' || !deadline) continue;
+		const sample = previous.get(id);
+		next.set(id, sample?.deadline === deadline ? sample : { deadline, observedAt });
+	}
+	return next;
+}
 
 /** The reason line for the screen-reader label: it never ticks, so a pending restart reads "restarting shortly" (spec §3.3). */
 export function whyForLabel(o: OfficeStop, now: Date): string | undefined {

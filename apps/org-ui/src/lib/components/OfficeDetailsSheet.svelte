@@ -19,7 +19,8 @@
 		here = false,
 		why,
 		capabilities,
-		onrestarted
+		onrestarted,
+		onCloseAutoFocus
 	}: {
 		open: boolean;
 		office: OfficeInfo | undefined;
@@ -38,6 +39,8 @@
 		capabilities?: string[];
 		/** The host accepted a restart: reload the offices' statuses. */
 		onrestarted?: () => Promise<void> | void;
+		/** The list owns the row that opened this sheet. */
+		onCloseAutoFocus?: (event: Event) => void;
 	} = $props();
 
 	const agents = $derived(office && snapshot ? agentsIn(snapshot, office.id) : []);
@@ -142,7 +145,7 @@
 </script>
 
 <Sheet bind:open>
-	<SheetContent bind:ref={sheetContent} side="right" class="w-full max-w-md overflow-y-auto max-[640px]:max-w-full max-[640px]:data-[side=right]:w-full">
+	<SheetContent bind:ref={sheetContent} {onCloseAutoFocus} side="right" class="w-full max-w-md overflow-y-auto max-[640px]:max-w-full max-[640px]:data-[side=right]:w-full">
 		{#if office}
 			<SheetHeader>
 				<SheetTitle class="[overflow-wrap:anywhere]">{office.name}</SheetTitle>

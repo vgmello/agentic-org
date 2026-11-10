@@ -9,7 +9,7 @@
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
 	import { officeApi } from '$lib/office/api';
-	import { agentsIn, applyStatusUpdate, displayStatusFor, isHq, orderOffices, rowLabel, secondaryText, statusInfo, unplacedAgents, whyForLabel, whyStopped, type LiveCheck } from '$lib/offices/model';
+	import { agentsIn, applyStatusUpdate, displayStatusFor, isHq, orderOffices, rowLabel, sampleRestartDeadlines, secondaryText, statusInfo, unplacedAgents, whyForLabel, whyStopped, type LiveCheck, type RestartDeadlineSample } from '$lib/offices/model';
 	import type { OfficeInfo } from '$lib/proto';
 	import type { Counts } from './+page';
 
@@ -101,19 +101,10 @@
 	});
 	const rowButton = (officeId: string) => document.querySelector<HTMLElement>(`[data-office="${officeId}"] button[aria-haspopup]`);
 // A new deadline gets an immediate sample. Repeated reads of the same deadline don't advance the clock.
-type DeadlineSample = { deadline: string; observedAt: number };
-let deadlineSamples = $state.raw(new Map<string, DeadlineSample>());
+let deadlineSamples = $state.raw<ReadonlyMap<string, RestartDeadlineSample>>(new Map());
 let countdownClock = $state(Date.now());
 $effect(() => {
-	const previous = untrack(() => deadlineSamples);
-	const next = new Map<string, DeadlineSample>();
-	const observedAt = Date.now();
-	for (const { id, status, next_restart_at: deadline } of current) {
-		if (status !== 'offline' || !deadline) continue;
-		const sample = previous.get(id);
-		next.set(id, sample?.deadline === deadline ? sample : { deadline, observedAt });
-	}
-	deadlineSamples = next;
+	deadlineSamples = sampleRestartDeadlines(current, untrack(() => deadlineSamples), Date.now());
 });
 	onMount(() => {
 		// The host says when an office's status changes: show it now instead of at the next check.
@@ -171,13 +162,23 @@ $effect(() => {
 	// The open sheet shows the latest data for its office, not the copy captured when it was clicked.
 	const detailsFor = $derived(current.find((o) => o.id === detailsId));
 	let detailsOpen = $state(false);
+	let detailsOpener: HTMLButtonElement | undefined;
 	$effect(() => {
 		if (detailsOpen && !detailsFor) detailsOpen = false; // the office went away: close its sheet
 	});
 
-	function open(id: string) {
+	function open(id: string, opener: HTMLButtonElement) {
+		detailsOpener = opener;
 		detailsId = id;
 		detailsOpen = true;
+	}
+
+	function restoreDetailsFocus(event: Event) {
+		const opener = detailsOpener;
+		detailsOpener = undefined;
+		if (!opener?.isConnected) return;
+		event.preventDefault();
+		opener.focus({ preventScroll: true });
 	}
 </script>
 
@@ -218,7 +219,7 @@ $effect(() => {
 					class="min-w-0 flex-1 text-left focus-visible:outline-2 focus-visible:outline-indigo-400 max-[640px]:order-first max-[640px]:w-full max-[640px]:flex-none"
 					aria-label={rowLabel(office, agents, here.id === office.id, statusOf(office.id), labelWhyOf(office.id))}
 					aria-haspopup="dialog"
-					onclick={() => open(office.id)}
+					onclick={(event) => open(office.id, event.currentTarget)}
 				>
 					<span class="block truncate text-sm/6 font-semibold text-white" title={office.name}>{office.name}</span>
 					<span class="block truncate text-xs/5 text-gray-400 max-[640px]:whitespace-normal max-[640px]:[overflow-wrap:anywhere]" title={whyOf(office.id)}>{statusOf(office.id) === 'unreachable' ? "Can't reach this office" : (whyOf(office.id) ?? secondaryText(office) + (here.id === office.id ? " (you're here)" : ''))}</span>
@@ -275,4 +276,4 @@ $effect(() => {
 	<p class="text-xs/5 text-gray-400">Shown from this Mac.</p>
 </div>
 
-<OfficeDetailsSheet bind:open={detailsOpen} office={detailsFor} status={detailsFor ? statusOf(detailsFor.id) : 'status_unknown'} why={detailsFor ? whyOf(detailsFor.id) : undefined} {capabilities} onrestarted={refreshOffices} {snapshot} counting={!snapshot && !countError} {sample} here={detailsFor?.id === here.id} />
+<OfficeDetailsSheet bind:open={detailsOpen} office={detailsFor} status={detailsFor ? statusOf(detailsFor.id) : 'status_unknown'} why={detailsFor ? whyOf(detailsFor.id) : undefined} {capabilities} onrestarted={refreshOffices} onCloseAutoFocus={restoreDetailsFocus} {snapshot} counting={!snapshot && !countError} {sample} here={detailsFor?.id === here.id} />
