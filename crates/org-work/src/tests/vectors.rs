@@ -74,6 +74,21 @@ fn canonical_step(legacy: &Value) -> Value {
                 "reason" => {}
                 "call" => {
                     for (field, fixed) in value.as_object().unwrap() {
+                        assert!(
+                            matches!(field.as_str(), "change_id" | "link_id" | "fixes" | "expected_version"),
+                            "a canonical override must not replace the operation or its business input: {field}"
+                        );
+                        if field == "fixes" {
+                            let original = step["call"][field].as_array().unwrap();
+                            let mapped = fixed.as_array().unwrap();
+                            assert_eq!(original.len(), mapped.len());
+                            for (original, mapped) in original.iter().zip(mapped) {
+                                let (mut original, mut mapped) = (original.clone(), mapped.clone());
+                                original.as_object_mut().unwrap().remove("link_id");
+                                mapped.as_object_mut().unwrap().remove("link_id");
+                                assert_eq!(original, mapped, "only the fix link ID may differ");
+                            }
+                        }
                         step["call"][field] = fixed.clone();
                     }
                 }
