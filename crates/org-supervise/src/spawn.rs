@@ -348,6 +348,7 @@ mod tests {
             reason = "test-only exec must rely on CLOEXEC rather than the supervisor's close-all actions"
         )]
         let status = std::process::Command::new("/bin/sh")
+            .env_clear()
             .args([
                 "-c",
                 "for fd in \"$@\"; do if test -p \"/dev/fd/$fd\"; then exit 1; fi; done",
@@ -370,7 +371,7 @@ mod zombie_group_tests {
     use std::io::BufRead;
     use std::time::{Duration, Instant};
 
-    fn exited_group(script: &str) -> (OwnedChild, File) {
+    fn exited_group(script: &str) -> (OwnedChild, File, File) {
         let temp = tempfile::tempdir().unwrap();
         let spec = SpawnSpec {
             program: "/bin/sh".into(),
@@ -387,7 +388,7 @@ mod zombie_group_tests {
             )
             .unwrap(),
         };
-        let (pid, _stdin, stdout, _stderr) = spawn_piped(&spec).unwrap();
+        let (pid, stdin, stdout, _stderr) = spawn_piped(&spec).unwrap();
         let mut child = OwnedChild::new(pid);
         child.group = true;
         child.watch = Some(platform::Watch::new(pid).unwrap());
@@ -400,13 +401,14 @@ mod zombie_group_tests {
                 .code(),
             Some(17)
         );
-        (child, stdout)
+        (child, stdout, stdin)
     }
 
     #[test]
     fn zombie_only_group_eperm_is_verified_before_explicit_cleanup_reaps() {
-        let (mut child, _stdout) = exited_group("exit 17");
+        let (mut child, _stdout, _hold_input) = exited_group("exit 17");
         assert!(platform::group_contains_only_leader(child.pid).unwrap());
+        // SAFETY: the held leader is still our unreaped child, reserving this group ID.
         assert_eq!(unsafe { libc::killpg(child.pid, libc::SIGKILL) }, -1);
         assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
         assert_eq!(child.cleanup_and_reap(&[]).unwrap().status.code(), Some(17));
@@ -414,12 +416,14 @@ mod zombie_group_tests {
 
     #[test]
     fn an_exited_leader_with_a_live_group_member_is_not_the_zombie_only_exception() {
-        let (mut child, stdout) = exited_group("sleep 8 & echo $!; exit 17");
+        let (mut child, stdout, _hold_input) =
+            exited_group("exec 3<&0; cat <&3 & echo $!; exit 17");
         let mut line = String::new();
         std::io::BufReader::new(stdout)
             .read_line(&mut line)
             .unwrap();
         let member: i32 = line.trim().parse().unwrap();
+        // SAFETY: observation only of the gated fixture member in the held child group.
         assert_eq!(unsafe { libc::getpgid(member) }, child.pid);
         assert!(!platform::group_contains_only_leader(child.pid).unwrap());
         assert_eq!(child.cleanup_and_reap(&[]).unwrap().status.code(), Some(17));

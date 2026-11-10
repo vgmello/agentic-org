@@ -245,6 +245,7 @@ mod tests {
     #[test]
     fn foreign_uid_socket_policy_is_refused_without_privileged_fixtures() {
         // No chown/root fixture: policy uses the same stat record as real fstatat.
+        // SAFETY: stat is a plain C record; initialized policy fields are set below.
         let mut info: libc::stat = unsafe { std::mem::zeroed() };
         info.st_mode = libc::S_IFSOCK | 0o600;
         info.st_uid = 42;

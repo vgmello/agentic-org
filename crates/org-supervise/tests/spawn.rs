@@ -230,9 +230,9 @@ fn assert_owned_group_cleanup(natural_exit: bool) {
         vec![
             "-c".into(),
             if natural_exit {
-                "trap '' TERM; sleep 8 & echo $!; exit 17"
+                "trap '' TERM; exec 3<&0; cat <&3 & echo $!; exit 17"
             } else {
-                "trap '' TERM; sleep 8 & echo $!; wait"
+                "trap '' TERM; exec 3<&0; cat <&3 & echo $!; wait"
             }
             .into(),
         ],
@@ -250,7 +250,6 @@ fn assert_owned_group_cleanup(natural_exit: bool) {
         stdout,
         stderr,
     } = spawned;
-    stdin.close().unwrap();
     drop(stderr);
     let (sender, receiver) = std::sync::mpsc::channel();
     let (eof_sender, eof_receiver) = std::sync::mpsc::channel();
@@ -284,6 +283,10 @@ fn assert_owned_group_cleanup(natural_exit: bool) {
         assert_eq!(report.status, status);
     }
     drop(child);
+    // Keep the descendant alive until group cleanup, independent of scheduling. If a
+    // mutation misses it, closing this gate releases it without signalling a nonchild.
+    let eof = eof_receiver.recv_timeout(Duration::from_secs(5));
+    stdin.close().unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         #[cfg(target_os = "linux")]
@@ -316,16 +319,16 @@ fn assert_owned_group_cleanup(natural_exit: bool) {
                 libc::kill(pid, libc::SIGKILL);
                 libc::waitpid(pid, std::ptr::null_mut(), 0);
             }
-            // On macOS a deliberately broken group-kill mutation has at most three
-            // seconds left on sleep8; do not signal a nonchild by numeric PID.
-            panic!("owned group member survived owner Drop");
+            // The EOF gate is already closed, so the fixture can exit without a signal.
+            // Never signal a macOS nonchild using a numeric PID after leader reaping.
+            panic!("owned group member survived cleanup and EOF release");
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    eof_receiver
-        .recv_timeout(Duration::from_secs(5))
-        .expect("group kept output pipe open")
-        .unwrap();
+    assert!(
+        matches!(eof, Ok(Ok(_))),
+        "group kept output pipe open before EOF release: {eof:?}"
+    );
 }
 
 #[test]

@@ -84,7 +84,8 @@ mark/identity persistence callbacks and refuses every ORG_* context value before
 creating files. The caller supplies an existing private session temp root; the
 mapper allocates a fresh empty 0700 cwd inside it and returns initial stdin lines,
 mode and timeout. The caller owns all ProbeSession I/O. The cwd is removed after
-exit before reaping, or by the guard if preparation/spawn/persistence fails.
+exit before reaping. Preparation/spawn/persistence failures use ownership guards;
+emergency Drop cleanup is best effort and may leave a cwd for recovery.
 Relative dotfiles stay inside that fresh directory.
 
 No changes to `org-runtime` or adoption by the host are part of this delivery.
