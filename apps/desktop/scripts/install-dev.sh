@@ -18,7 +18,7 @@ bundle="$workspace/target/release/bundle/macos/$name"
 [ -d "$bundle" ] || { echo "install-dev: $bundle wasn't built" >&2; exit 1; }
 
 # Sign the inside first (the two binaries), then the app that contains them.
-for binary in org-office-host org-office-server; do
+for binary in org-office-host org-server; do
   codesign --force --sign - "$bundle/Contents/MacOS/$binary"
 done
 codesign --force --sign - "$bundle"

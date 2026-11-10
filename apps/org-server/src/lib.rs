@@ -1,10 +1,10 @@
-//! # org-office-server: one process per office
+//! # org-server: one process per office
 //!
 //! Started by the host on the launch protocol (`org-office-launch`):
 //! ```text
-//! org-office-server --create        # first stdin line: the create message; makes the office, serves it
-//! org-office-server --office <id>   # first stdin line: the start message; serves the office
-//! org-office-server --discard <id>  # first stdin line: the discard message (the key or null); removes an unfinished create
+//! org-server --create        # first stdin line: the create message; makes the office, serves it
+//! org-server --office <id>   # first stdin line: the start message; serves the office
+//! org-server --discard <id>  # first stdin line: the discard message (the key or null); removes an unfinished create
 //! ```
 //! stdout carries only [`ServerEvent`] lines (`created`, `ready`, `discarded`, `failed`), logs go
 //! to stderr, and EOF on stdin means the host is gone: the server closes its databases and exits 0.
@@ -45,7 +45,7 @@ pub fn install_panic_hook() {
         let place = info
             .location()
             .map_or_else(String::new, |l| format!(" at {}:{}", l.file(), l.line()));
-        eprintln!("org-office-server: internal error{place}");
+        eprintln!("org-server: internal error{place}");
     }));
 }
 
@@ -62,7 +62,7 @@ fn parse_args(args: &[String]) -> Result<Mode, &'static str> {
         [flag] if flag == CREATE_FLAG => Ok(Mode::Create),
         [flag, id] if flag == OFFICE_FLAG => Ok(Mode::Serve(id.clone())),
         [flag, id] if flag == DISCARD_FLAG => Ok(Mode::Discard(id.clone())),
-        _ => Err("usage: org-office-server --create | --office <id> | --discard <id>"),
+        _ => Err("usage: org-server --create | --office <id> | --discard <id>"),
     }
 }
 
@@ -251,7 +251,7 @@ fn serve_office(
     let listener = match serve::bind(&socket) {
         Ok(listener) => listener,
         Err(error) => {
-            eprintln!("org-office-server: bind failed: {error}");
+            eprintln!("org-server: bind failed: {error}");
             return fail(
                 &mut control,
                 FailCode::StorageError,
@@ -386,7 +386,7 @@ fn serve_office(
 /// path, SQL or secret in it) and returns it for the connection, which tells the client only a
 /// fixed text.
 fn logged(what: &str, error: &OfficeError) -> String {
-    eprintln!("org-office-server: {what} failed: {error}");
+    eprintln!("org-server: {what} failed: {error}");
     log_causes(error);
     error.to_string()
 }
@@ -396,7 +396,7 @@ fn logged(what: &str, error: &OfficeError) -> String {
 fn log_causes(error: &OfficeError) {
     let mut cause = std::error::Error::source(error);
     while let Some(inner) = cause {
-        eprintln!("org-office-server:   caused by: {inner}");
+        eprintln!("org-server:   caused by: {inner}");
         cause = inner.source();
     }
 }
@@ -458,7 +458,7 @@ fn emit(control: &mut ControlPipe, event: &ServerEvent) {
 
 fn fail(control: &mut ControlPipe, code: FailCode, message: &str) -> i32 {
     // The host's log is this process's stderr: say what failed (a fixed text, never a secret).
-    eprintln!("org-office-server: {message}");
+    eprintln!("org-server: {message}");
     emit(
         control,
         &ServerEvent::Failed {

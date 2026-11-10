@@ -1,6 +1,6 @@
 [package]
 name = "org-office-launch"
-description = "The contract between org-office-host and org-office-server: how an office server is started, what it reports on its pipe, and office.json."
+description = "The contract between org-office-host and org-server: how an office server is started, what it reports on its pipe, and office.json."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

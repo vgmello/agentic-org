@@ -2,9 +2,9 @@
 //!
 //! The one per-user login service on a Mac (see `docs/design/offices-hq-and-satellites.md`,
 //! "Processes on one Mac", and the host/server boundary design). It:
-//! - supervises one `org-office-server` per office folder on this Mac, restarting a crashed
+//! - supervises one `org-server` per office folder on this Mac, restarting a crashed
 //!   one with backoff (`supervisor`),
-//! - creates organizations (an HQ office made by `org-office-server --create`), and
+//! - creates organizations (an HQ office made by `org-server --create`), and
 //! - tells the app and `org-agent` which offices run here and how to reach them, over
 //!   `org-proto` on `<home>/host.sock` (`service`).
 //!
@@ -86,7 +86,7 @@ pub use crate::logs::DEFAULT_LOG_MAX_BYTES;
 pub use crate::timings::Timings;
 
 /// The office server's program name, looked for next to the host's own executable.
-pub const SERVER_PROGRAM_NAME: &str = "org-office-server";
+pub const SERVER_PROGRAM_NAME: &str = "org-server";
 
 /// Requests one connection may have running at once.
 const MAX_IN_FLIGHT_PER_CONNECTION: usize = 16;
@@ -255,7 +255,7 @@ fn sweep_refusal(
     }
 }
 
-/// `org-office-server` next to this executable (both live in the app bundle), found through the
+/// `org-server` next to this executable (both live in the app bundle), found through the
 /// executable's canonical path (symlinks resolved). Defence in depth only: a hard link or a
 /// copied bundle still puts another server next to the host, which is why a release host checks
 /// every server's code signature before it gives it a key (`server_check`).

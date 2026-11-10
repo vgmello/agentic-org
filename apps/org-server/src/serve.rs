@@ -422,7 +422,7 @@ fn watch(shared: &Shared, watching: &std::sync::atomic::AtomicBool) {
                 // A lookup could not answer: look again on the next tick.
                 Ok(true) => {}
                 Err(_) => {
-                    eprintln!("org-office-server: the member watcher failed once; it carries on");
+                    eprintln!("org-server: the member watcher failed once; it carries on");
                 }
             }
         }

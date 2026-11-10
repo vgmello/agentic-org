@@ -294,9 +294,8 @@ mod tests {
     #[test]
     fn a_developer_id_requirement_names_the_identifier_and_team() {
         assert_eq!(
-            developer_id_requirement("com.ellosoft.agentic-org.org-office-server", "AB12CD34EF")
-                .unwrap(),
-            "identifier \"com.ellosoft.agentic-org.org-office-server\" and anchor apple generic \
+            developer_id_requirement("com.ellosoft.agentic-org.org-server", "AB12CD34EF").unwrap(),
+            "identifier \"com.ellosoft.agentic-org.org-server\" and anchor apple generic \
              and certificate 1[field.1.2.840.113635.100.6.2.6] exists and \
              certificate leaf[field.1.2.840.113635.100.6.1.13] exists and \
              certificate leaf[subject.OU] = \"AB12CD34EF\""

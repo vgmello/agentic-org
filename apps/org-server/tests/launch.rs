@@ -1,4 +1,4 @@
-//! The real `org-office-server` binary, driven the way the host drives it: arguments, the control
+//! The real `org-server` binary, driven the way the host drives it: arguments, the control
 //! pipe on stdin and stdout, and the office socket. The host holds the database key and sends it
 //! on the first line (key custody), so there is no key store here and no test can touch a
 //! Keychain: the server has no Keychain code.
@@ -43,7 +43,7 @@ impl World {
     }
 
     fn spawn(&self, args: &[&str]) -> Run {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_org-office-server"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_org-server"))
             .args(args)
             .env("ORG_OFFICE_HOME", &self.home)
             .stdin(Stdio::piped())
@@ -543,7 +543,7 @@ fn a_create_whose_socket_path_cannot_exist_fails_before_anything_is_stored() {
     let long = dir.path().join("x".repeat(90));
     std::fs::create_dir_all(long.join("offices")).unwrap();
     std::fs::create_dir_all(long.join("run")).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_org-office-server"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_org-server"))
         .arg("--create")
         .env("ORG_OFFICE_HOME", &long)
         .stdin(Stdio::piped())

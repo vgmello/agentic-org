@@ -2,8 +2,8 @@
 
 Status: **owner-requested implementation proposal**, 2026-11-10. This document
 extends PR #5 with application naming, domain modules containing vertical slices,
-shared-code ownership, and a concrete reorganization sequence. It is documentation
-only: no source directory, package, executable, or runtime behavior is changed here.
+shared-code ownership, and a concrete reorganization sequence. The proposal changed
+documentation only. The worker rename is now implemented; the remaining moves are pending.
 Source observations refer to `a4039a0c810ca222d574a44eba5f84b83d07e9a4`.
 
 Read the language-agnostic [architecture rules](../architecture-rules.md) first.
@@ -14,13 +14,13 @@ product scope, process/security boundaries, and deletion acceptance.
 
 ## 1. Names and process boundaries
 
-| Inspected source | V1 target | Meaning |
+| Source / current name | V1 target | Meaning |
 | --- | --- | --- |
 | `apps/desktop/` | `apps/org-ui/` | Retained Svelte 5/TypeScript browser application, built with SvelteKit 2's static adapter |
 | Frontend package name | `org-ui` | UI build/package identity; product display name remains Agentic Org |
-| `apps/org-office-server/` | `apps/org-server/` | Rust server application/composition |
-| Cargo package and executable `org-office-server` | `org-server` | One office worker per process, including HQ or satellite role |
-| Rust application-library import `org_office_server` | `org_server` | Update affected test harnesses and other authorized callers during implementation |
+| `apps/org-server/` | `apps/org-server/` | Rust server application/composition |
+| Cargo package and executable `org-server` | `org-server` | One office worker per process, including HQ or satellite role |
+| Rust application-library import `org_server` | `org_server` | Updated test harnesses and authorized callers |
 | New browser HTTP helper | `apps/org-gateway/`, package/binary `org-gateway` (planned) | One instance-scoped browser listener, no office-key custody |
 | Setup command implementation | `apps/org-setup/`, package `org-setup`, binary `agentic-org` (planned) | Distinct package ID from the old Tauri shell; remove that workspace member before staging the new same-named binary |
 
@@ -33,9 +33,10 @@ the host, workers, and agent CLI into one privileged process.
 Delete desktop-only Tauri code according to the inventory and move the retained
 browser application to `apps/org-ui`. Keep licensed UI inside that application;
 update AGENTS.md's path references with the source move without relaxing its
-license restrictions. During this docs-only proposal, existing source links and
-historical build examples still use their real `apps/desktop` and
-`apps/org-office-server` paths. Their presence is not a target-layout exception.
+license restrictions. The worker path, Cargo package, binary, library imports and
+helper/signing references now use `org-server`. **Rename history (2026-11-10):**
+these were `apps/org-office-server`, `org-office-server` and `org_office_server`.
+The UI remains at `apps/desktop` until its own rename.
 
 ## 2. Architecture to follow
 

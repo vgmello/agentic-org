@@ -3,7 +3,7 @@
 //! An office is one folder (`<home>/offices/<office-id>/`) with its own encrypted databases
 //! (`org.db`: the organization's data; `office.db`: the office's own), one key, a lock that
 //! makes the server the only owner, a workspace, and `office.json` marking it finished. A
-//! library with no entry point: `apps/org-office-server` runs it.
+//! library with no entry point: `apps/org-server` runs it.
 //!
 //! Knows nothing about sockets: callers hand it plain values and get plain values back.
 //! `Office::create` / `open` / `discard` are the three ways into a folder; the engine

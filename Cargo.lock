@@ -2181,8 +2181,8 @@ version = "0.0.0"
 dependencies = [
  "org-client",
  "org-office-launch",
- "org-office-server",
  "org-proto",
+ "org-server",
  "org-spool",
  "serde",
  "serde_json",
@@ -2256,21 +2256,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "org-office-server"
-version = "0.0.0"
-dependencies = [
- "libc",
- "org-client",
- "org-mailbox",
- "org-office",
- "org-office-launch",
- "org-proto",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
 name = "org-proto"
 version = "0.0.0"
 dependencies = [
@@ -2285,6 +2270,21 @@ dependencies = [
  "org-runtime",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "org-server"
+version = "0.0.0"
+dependencies = [
+ "libc",
+ "org-client",
+ "org-mailbox",
+ "org-office",
+ "org-office-launch",
+ "org-proto",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

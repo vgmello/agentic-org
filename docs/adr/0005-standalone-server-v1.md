@@ -56,8 +56,8 @@ and use `org-ui` as its frontend package name. Delete the Tauri-only shell under
 the existing removal inventory; retain the actual browser application and licensed
 UI within its renamed product directory.
 
-Rename `apps/org-office-server/` to `apps/org-server/`, its Cargo package and
-worker executable to `org-server`, and affected Rust library imports to
+The worker application lives in `apps/org-server/`, its Cargo package and
+worker executable are `org-server`, and affected Rust library imports use
 `org_server`. Update workspace/lockfiles, test helpers, build/release/signing
 references, host helper resolution, and ownership documentation with the source
 rename. No legacy desktop naming alias is required for this undeployed product.

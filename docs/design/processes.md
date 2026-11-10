@@ -250,7 +250,7 @@ A new module, `crates/org-proto/src/process.rs`. The historical sketch was addit
 ## 7. Where the code lives
 - **`org-process`** (new; owner TBD by ada): front matter, path → level and scope, `resolve`, the fingerprint, `render`, the checklist merge, `one_branch` (start check, guarded moves, own work from given shas), the write checks. Pure: no SQL, git, network or clock; no ports. Depends on `org-proto`, `org-docs` and `serde`: `Ce = 2` for the proposed internal package graph, or 3 including `serde`; calculate I only after identifying consumers at the same level.
 - **`org-office`** (server-dev): the index, caches, project-wide items, last reads, records, exceptions, the calls and the checks inside the work write; one new stable-ward edge, to `org-process`.
-- **`org-office-server`** (server-dev): repo reads through `org-git`; the handbook at organization create.
+- **`org-server`** (server-dev): repo reads through `org-git`; the handbook at organization create.
 - **`org-git`** (River): W7's `DocRepo` API, the handbook's repository and merge, branch creation at a sha, and the §4.5 cleanup.
 - **`org-agent`** (Remy): the PROC-8 commands (Appendix B), `task allow-second-branch`, the `one_branch_open` exit code.
 - **`apps/desktop`** (app-frontend-dev): the Processes views, the profile tab, Allow once…, Mark merged…, the work state.
