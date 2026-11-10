@@ -139,8 +139,8 @@ org-server --discard <id>    # remove an unfinished office, then exit (the host 
 ## 3. The pipe protocol (v2)
 
 > **Pending: launch v3** (amended 2026-11-10, PR #5 post-merge fixes). Plan task X-02, the
-> `org-proto` v2 and launch v3 contract, is a **draft awaiting approval and not yet in this repo**
-> (rev 13, `projects/ac/agents/ac-fullstack-engineer-rowan/knowledge/designs/x-02-org-proto-v2.md` in the
+> `org-proto` v2 and launch v3 contract, is an **approved draft not yet in this repo**
+> (rev 13, approved by ada 2026-11-10; `projects/ac/agents/ac-fullstack-engineer-rowan/knowledge/designs/x-02-org-proto-v2.md` in the
 > agents repository). Other docs here that cite "X-02 §…" mean that draft, and this note is their
 > anchor until X-02 lands here. Launch v3 changes this section:
 > - the host spawns the server suspended, verifies its image, and only then creates a per-spawn
@@ -150,13 +150,15 @@ org-server --discard <id>    # remove an unfinished office, then exit (the host 
 > - the first line keeps only non-secret fields (for a satellite `create`, the invitation's
 >   non-secret reference).
 >
-> Pending in X-02 §12 Q9, not yet in its §5: the office temp handle on the first line, the `joined`
-> event, moving the watchdog's `child`/`child_gone` lines (below) off stdout, and a `layout_changed`
+> Pending in X-02 §12 Q9, not yet in its §5: the office temp handle on the first line (at startup,
+> before it starts any worker, the host allocates and claims one for every catalog office that lacks
+> one, so offices created under v2 aren't stranded), the `joined` event, moving the watchdog's `child`/`child_gone` lines (below) off stdout, and a `layout_changed`
 > record that asks workers to refresh sandbox policies.
 >
 > **Until then:** a satellite create is refused (below); office-run sessions don't launch, because they need
-> the office temp handle (fail closed, the agent shows Needs you, no fallback temp directory); hires
-> still allocate their temp handles in `office.db` but create no temp folder (agent-sessions, `TMPDIR`);
+> the office temp handle (fail closed: an employee's session or job shows Needs you, a one-off run
+> ends with that outcome; no fallback temp directory); hires and office creation still allocate their
+> temp handles in `office.db` but create no temp folder (agent-sessions, `TMPDIR`);
 > the watchdog's `child`/`child_gone` lines stay on stdout under v2;
 > setup- and host-made layout changes are deferred while affected sessions run (agent-sessions,
 > "Standalone-v1 managed state and grants").

@@ -34,6 +34,9 @@ Status: **accepted** 2026-11-08 (the user); **amended** the same day for the off
    HTTP `/api/v1`, office-sync negotiation and the private launch contract have
    independent versions. TypeScript mirrors follow the HTTP contract. No old Tauri
    compatibility adapter is required, but retained protocols remain intentional.
+   (2026-11-10) `org-proto` v2 is defined by X-02 (an approved draft not yet in this
+   repo; see the launch v3 note in
+   [`office-host-boundary.md`](../design/office-host-boundary.md) §3).
 4. **The agent CLI (`org-agent`) stays tiny.** ~~It writes to the local spool (`org-spool`), and the server ingests. It carries no server or network code.~~ *(Amended 2026-11-08, the user's decision:)* the office server is also the message hub. `org-agent` sends and receives through **its own office's** local socket, speaking `org-proto`, instead of going through a separate relay process. Within an office, replies reach a waiting `ask` directly; across offices they go through HQ (offices design). It stays tiny; its dependencies are settled in the messaging ADR. That separate messaging ADR, written before this is built, settles the rest, including what happens while the server is down and any role for `org-spool`.
 5. **Repository layout:** `crates/` holds libraries only, and `apps/` holds the things we run or ship. Apps depend on crates, never the reverse.
 
