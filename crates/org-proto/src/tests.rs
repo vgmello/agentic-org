@@ -6,6 +6,25 @@ use serde_json::json;
 use crate::frame::{read_line, read_message, write_message, FrameError};
 use crate::*;
 
+#[test]
+fn shared_office_wire_payloads_survive_desktop_removal() {
+    let shapes: serde_json::Value =
+        serde_json::from_str(include_str!("../test-vectors/office-wire-shapes.json")).unwrap();
+    fn roundtrip<T: serde::de::DeserializeOwned + Serialize>(value: &serde_json::Value) {
+        let decoded: T = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), *value);
+    }
+    roundtrip::<ApiError>(&shapes["api_error"]);
+    roundtrip::<OfficeInfo>(&shapes["office"]);
+    roundtrip::<Organization>(&shapes["organization"]);
+    roundtrip::<OrgSnapshot>(&shapes["snapshot"]);
+    roundtrip::<CommandAccepted>(&shapes["command_accepted"]);
+    assert_eq!(
+        serde_json::to_value(ApiError::new(ErrorCode::AlreadyExists, "Taken.")).unwrap(),
+        shapes["api_error"]
+    );
+}
+
 fn org() -> Organization {
     Organization {
         id: "01M6WEQ98NHCE6ZVZWJGWQAJT3".into(),

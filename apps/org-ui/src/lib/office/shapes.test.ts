@@ -1,11 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import shapes from '../../../test-vectors/command-shapes.json';
+import wire from '../../../../../crates/org-proto/test-vectors/office-wire-shapes.json';
 import type { CommandAccepted, Connection, OrgView } from '$lib/proto';
 import { toAppError } from './api';
 
 // The same fixture the Rust side serializes its command results against (src-tauri/src/lib.rs).
 describe('what the Tauri commands return', () => {
+	it('keeps canonical wire payloads separate from retired desktop wrappers', () => {
+		const { source: _source, ...apiError } = shapes.command_error;
+		expect(apiError).toEqual(wire.api_error);
+		expect(shapes.connection.office).toEqual(wire.office);
+		expect(shapes.connection.organization).toEqual(wire.organization);
+		expect(shapes.org_view.snapshot).toEqual(wire.snapshot);
+		expect(shapes.command_accepted).toEqual(wire.command_accepted);
+	});
 	it('an error is read as an AppError unchanged', () => {
 		expect(toAppError(shapes.command_error)).toEqual(shapes.command_error);
 	});
