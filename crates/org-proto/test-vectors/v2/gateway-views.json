@@ -447,6 +447,133 @@
       "expect": {
         "valid": false
       }
+    },
+    {
+      "name": "future scope preserves all known capabilities",
+      "category": "capabilities",
+      "wire": {
+        "result": {
+          "api_version": 1,
+          "contract_revision": 1,
+          "instance_id": "01M72N8MG00000000000000001",
+          "operations": [
+            {
+              "name": "org.snapshot",
+              "scope": {
+                "kind": "organization",
+                "instance_id": "01M72N8MG00000000000000001",
+                "org_id": "01M72N8MG00000000000000003"
+              },
+              "available": true
+            },
+            {
+              "name": "project.create",
+              "scope": {
+                "kind": "organization",
+                "instance_id": "01M72N8MG00000000000000001",
+                "org_id": "01M72N8MG00000000000000003"
+              },
+              "available": false,
+              "reason": "unavailable"
+            },
+            {
+              "name": "future.operation",
+              "scope": {
+                "kind": "instance",
+                "instance_id": "01M72N8MG00000000000000001"
+              },
+              "available": true
+            },
+            {
+              "name": "org.snapshot",
+              "scope": {
+                "kind": "project",
+                "instance_id": "01M72N8MG00000000000000001",
+                "org_id": "01M72N8MG00000000000000003",
+                "project_id": "future-project"
+              },
+              "available": true
+            }
+          ],
+          "feeds": [
+            {
+              "name": "organization",
+              "scope": {
+                "kind": "organization",
+                "instance_id": "01M72N8MG00000000000000001",
+                "org_id": "01M72N8MG00000000000000003"
+              },
+              "available": true
+            }
+          ]
+        }
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "result": {
+            "api_version": 1,
+            "contract_revision": 1,
+            "instance_id": "01M72N8MG00000000000000001",
+            "operations": [
+              {
+                "name": "org.snapshot",
+                "scope": {
+                  "kind": "organization",
+                  "instance_id": "01M72N8MG00000000000000001",
+                  "org_id": "01M72N8MG00000000000000003"
+                },
+                "available": true
+              },
+              {
+                "name": "project.create",
+                "scope": {
+                  "kind": "organization",
+                  "instance_id": "01M72N8MG00000000000000001",
+                  "org_id": "01M72N8MG00000000000000003"
+                },
+                "available": false,
+                "reason": "unavailable"
+              },
+              {
+                "name": "future.operation",
+                "scope": {
+                  "kind": "instance",
+                  "instance_id": "01M72N8MG00000000000000001"
+                },
+                "available": true
+              },
+              {
+                "name": "org.snapshot",
+                "scope": {
+                  "kind": "project",
+                  "instance_id": "01M72N8MG00000000000000001",
+                  "org_id": "01M72N8MG00000000000000003",
+                  "project_id": "future-project"
+                },
+                "available": true
+              }
+            ],
+            "feeds": [
+              {
+                "name": "organization",
+                "scope": {
+                  "kind": "organization",
+                  "instance_id": "01M72N8MG00000000000000001",
+                  "org_id": "01M72N8MG00000000000000003"
+                },
+                "available": true
+              }
+            ]
+          }
+        },
+        "available": [
+          true,
+          false,
+          false,
+          false
+        ]
+      }
     }
   ]
 }

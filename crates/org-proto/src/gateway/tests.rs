@@ -88,6 +88,12 @@ fn shared_mutation_outcomes_preserve_identity_and_http_meaning() {
                 "{}",
                 case["name"]
             );
+            assert_eq!(
+                response.is_final(),
+                case["expect"]["final"] == true,
+                "{}",
+                case["name"]
+            );
             let wire = serde_json::to_value(response).unwrap();
             assert_eq!(wire, case["expect"]["normalized"], "{}", case["name"]);
             assert_eq!(
@@ -107,19 +113,30 @@ fn shared_mutation_outcomes_preserve_identity_and_http_meaning() {
 fn shared_lookups_distinguish_final_abandonment_from_unresolved_and_expired() {
     let vectors = fixture(
         include_str!("../../test-vectors/v2/gateway-lookups.json"),
-        21,
+        26,
     );
     for case in vectors["cases"].as_array().unwrap() {
         if case["category"] == "cancel" {
-            let response: ReadResponse<CancelResult> = parse(&case["wire"]).unwrap();
-            let ReadResponse::Result(response) = response else {
-                panic!("expected cancel result")
-            };
-            assert_eq!(json!(response.http_status()), case["expect"]["http_status"]);
+            let response: Result<ReadResponse<CancelResult>, _> = parse(&case["wire"]);
             assert_eq!(
-                serde_json::to_value(response).unwrap(),
-                case["expect"]["normalized"]
+                response.is_ok(),
+                case["expect"]["valid"] == true,
+                "{}",
+                case["name"]
             );
+            if let Ok(response) = response {
+                let (status, normalized) = match response {
+                    ReadResponse::Result(result) => {
+                        (result.http_status(), serde_json::to_value(result).unwrap())
+                    }
+                    ReadResponse::Error(error) => (
+                        error.http_status(true),
+                        serde_json::to_value(error).unwrap(),
+                    ),
+                };
+                assert_eq!(json!(status), case["expect"]["http_status"]);
+                assert_eq!(normalized, case["expect"]["normalized"]);
+            }
             continue;
         }
         let response: Result<ReadResponse<OperationLookup<Value>>, _> = parse(&case["wire"]);
@@ -179,7 +196,7 @@ fn typed_core_commands_and_cancellation_do_not_accept_another_operation_identity
 fn shared_envelopes_have_one_native_id_unchanged_versions_and_explicit_scope() {
     let vectors = fixture(
         include_str!("../../test-vectors/v2/gateway-envelopes.json"),
-        16,
+        17,
     );
     for case in vectors["cases"].as_array().unwrap() {
         let result: Result<CommandEnvelope<Value>, _> = parse(&case["wire"]);
@@ -212,14 +229,32 @@ fn shared_envelopes_have_one_native_id_unchanged_versions_and_explicit_scope() {
 
 #[test]
 fn shared_views_are_typed_additive_and_do_not_expose_private_endpoints() {
-    let vectors = fixture(include_str!("../../test-vectors/v2/gateway-views.json"), 16);
+    let vectors = fixture(include_str!("../../test-vectors/v2/gateway-views.json"), 17);
     for case in vectors["cases"].as_array().unwrap() {
         match case["category"].as_str().unwrap() {
             "version" => check_view::<Version>(case),
             "instance" => check_view::<InstanceView>(case),
             "office" => check_view::<OfficeView>(case),
             "organization" => check_view::<OrganizationView>(case),
-            "capabilities" => check_view::<Capabilities>(case),
+            "capabilities" => {
+                check_view::<Capabilities>(case);
+                if let Some(expected) = case["expect"].get("available") {
+                    let ReadResponse::Result(caps): ReadResponse<Capabilities> =
+                        parse(&case["wire"]).unwrap()
+                    else {
+                        panic!("expected capabilities")
+                    };
+                    let known: Vec<_> = OPERATIONS.iter().map(|op| op.name).collect();
+                    assert_eq!(
+                        json!(caps
+                            .operations
+                            .iter()
+                            .map(|op| op.is_available(&known))
+                            .collect::<Vec<_>>()),
+                        *expected
+                    );
+                }
+            }
             "snapshot" => check_view::<SnapshotResponse>(case),
             other => panic!("unknown shared view category {other}"),
         }
@@ -349,9 +384,13 @@ fn shared_idempotency_examples_keep_native_identity_and_trusted_context_distinct
 fn shared_stream_and_poll_frames_join_the_snapshot_resume_cursor() {
     let vectors = fixture(
         include_str!("../../test-vectors/v2/gateway-stream.json"),
-        10,
+        15,
     );
     for case in vectors["cases"].as_array().unwrap() {
+        if case["category"] == "poll" {
+            check_typed_response::<PollResponse>(case);
+            continue;
+        }
         let response: Result<EventFrame, _> = parse(&case["wire"]);
         assert_eq!(
             response.is_ok(),
@@ -391,7 +430,7 @@ fn shared_stream_and_poll_frames_join_the_snapshot_resume_cursor() {
         else {
             panic!("expected change")
         };
-        assert_eq!(scope, request.subscriptions[0].scope);
+        assert_eq!(scope.known(), Some(&request.subscriptions[0].scope));
         assert_eq!(feed, Feed::Organization);
         assert_eq!(data["position"]["epoch"], snapshot.snapshot.position.epoch);
         let seq = data["position"]["seq"].as_u64().unwrap();
@@ -588,7 +627,7 @@ fn shared_resource_refusals_hide_existence_and_keep_attempts_distinct_from_looku
 fn shared_create_and_restart_projections_match_lookup_bytes_and_reject_private_fields() {
     let vectors = fixture(
         include_str!("../../test-vectors/v2/gateway-mutation-results.json"),
-        28,
+        44,
     );
     for case in vectors["cases"].as_array().unwrap() {
         match (
@@ -643,4 +682,62 @@ fn shared_create_and_restart_projections_match_lookup_bytes_and_reject_private_f
         assert!(mutation.windows(needle.len()).any(|part| part == needle));
         assert!(lookup.windows(needle.len()).any(|part| part == needle));
     }
+}
+
+#[test]
+fn shared_lookup_query_fields_are_strict_and_bound_to_the_session_instance() {
+    let vectors = fixture(
+        include_str!("../../test-vectors/v2/gateway-lookup-query.json"),
+        15,
+    );
+    for case in vectors["cases"].as_array().unwrap() {
+        let kind: OperationKind = serde_json::from_value(case["kind"].clone()).unwrap();
+        let fields: Vec<(String, String)> = serde_json::from_value(case["fields"].clone()).unwrap();
+        let query = LookupQuery::from_fields(fields);
+        let checked = query
+            .as_ref()
+            .map_err(Clone::clone)
+            .and_then(|q| q.scope(kind, case["session_instance"].as_str().unwrap()));
+        assert_eq!(
+            checked.is_ok(),
+            case["expect"]["valid"] == true,
+            "{}",
+            case["name"]
+        );
+        match checked {
+            Ok(scope) => {
+                assert_eq!(
+                    serde_json::to_value(scope).unwrap(),
+                    case["expect"]["scope"]
+                );
+                assert_eq!(
+                    serde_json::to_value(query.unwrap()).unwrap(),
+                    case["expect"]["normalized"]
+                );
+            }
+            Err(error) => assert_eq!(
+                json!(error.http_status(true)),
+                case["expect"]["http_status"]
+            ),
+        }
+    }
+    let visibility = &vectors["visibility"];
+    let fields: Vec<(String, String)> =
+        serde_json::from_value(visibility["fields"].clone()).unwrap();
+    assert!(LookupQuery::from_fields(fields)
+        .unwrap()
+        .scope(OperationKind::Org, "01M72N8MG00000000000000001")
+        .is_ok());
+    for (access, expected) in [
+        (ResourceAccess::Hidden, &visibility["hidden"]),
+        (ResourceAccess::Missing, &visibility["missing"]),
+    ] {
+        let error = GatewayError::for_resource_access(access);
+        assert_eq!(json!(error.http_status(true)), visibility["http_status"]);
+        assert_eq!(
+            serde_json::to_value(ReadResponse::<serde_json::Value>::Error(error)).unwrap(),
+            *expected
+        );
+    }
+    assert_eq!(visibility["hidden"], visibility["missing"]);
 }

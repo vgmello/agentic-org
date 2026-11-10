@@ -255,6 +255,176 @@
       "expect": {
         "valid": false
       }
+    },
+    {
+      "name": "unknown scope makes ready frame unsupported",
+      "wire": {
+        "type": "ready",
+        "subscriptions": [
+          {
+            "scope": {
+              "kind": "project",
+              "instance_id": "01M72N8MG00000000000000001",
+              "org_id": "01M72N8MG00000000000000003",
+              "project_id": "future-project"
+            },
+            "feed": "organization",
+            "cursor": "fixture-org-position-4"
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "type": "unsupported"
+        }
+      }
+    },
+    {
+      "name": "unknown scope makes change frame unsupported",
+      "wire": {
+        "type": "change",
+        "scope": {
+          "kind": "project",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003",
+          "project_id": "future-project"
+        },
+        "feed": "organization",
+        "cursor": "fixture-org-position-5",
+        "event": "org.changed",
+        "data": {
+          "organization_id": "01M72N8MG00000000000000003",
+          "position": {
+            "epoch": 1,
+            "seq": 5
+          }
+        }
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "type": "unsupported"
+        }
+      }
+    },
+    {
+      "name": "unknown scope makes resync frame unsupported",
+      "wire": {
+        "type": "resync",
+        "scope": {
+          "kind": "project",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003",
+          "project_id": "future-project"
+        },
+        "feed": "organization",
+        "reason": "snapshot_required"
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "type": "unsupported"
+        }
+      }
+    },
+    {
+      "name": "unknown scope makes unavailable frame unsupported",
+      "wire": {
+        "type": "unavailable",
+        "scope": {
+          "kind": "project",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003",
+          "project_id": "future-project"
+        },
+        "feed": "work",
+        "error": {
+          "code": "unavailable",
+          "message": "Office offline."
+        }
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "type": "unsupported"
+        }
+      }
+    },
+    {
+      "name": "poll retains known frames around future scope",
+      "category": "poll",
+      "wire": {
+        "frames": [
+          {
+            "type": "heartbeat",
+            "server_time_ms": 1794312000000
+          },
+          {
+            "type": "change",
+            "scope": {
+              "kind": "project",
+              "instance_id": "01M72N8MG00000000000000001",
+              "org_id": "01M72N8MG00000000000000003",
+              "project_id": "future-project"
+            },
+            "feed": "organization",
+            "cursor": "fixture-org-position-5",
+            "event": "org.changed",
+            "data": {
+              "organization_id": "01M72N8MG00000000000000003",
+              "position": {
+                "epoch": 1,
+                "seq": 5
+              }
+            }
+          },
+          {
+            "type": "ready",
+            "subscriptions": [
+              {
+                "scope": {
+                  "kind": "organization",
+                  "instance_id": "01M72N8MG00000000000000001",
+                  "org_id": "01M72N8MG00000000000000003"
+                },
+                "feed": "organization",
+                "cursor": "fixture-org-position-4"
+              }
+            ]
+          }
+        ],
+        "retry_after_ms": 1000
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "frames": [
+            {
+              "type": "heartbeat",
+              "server_time_ms": 1794312000000
+            },
+            {
+              "type": "unsupported"
+            },
+            {
+              "type": "ready",
+              "subscriptions": [
+                {
+                  "scope": {
+                    "kind": "organization",
+                    "instance_id": "01M72N8MG00000000000000001",
+                    "org_id": "01M72N8MG00000000000000003"
+                  },
+                  "feed": "organization",
+                  "cursor": "fixture-org-position-4"
+                }
+              ]
+            }
+          ],
+          "retry_after_ms": 1000
+        }
+      }
     }
   ],
   "trace": {

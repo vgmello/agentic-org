@@ -556,6 +556,330 @@
       "expect": {
         "valid": false
       }
+    },
+    {
+      "name": "organization.create mutation public result refuses host_control",
+      "operation": "organization.create",
+      "response_kind": "mutation",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "completed",
+        "result": {
+          "id": "01M72N8MG00000000000000003",
+          "name": "Acme",
+          "created_at": "2026-11-10T12:00:00.000Z",
+          "recovery": "pending",
+          "host_control": true
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "organization.create mutation public result refuses display_path",
+      "operation": "organization.create",
+      "response_kind": "mutation",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "completed",
+        "result": {
+          "id": "01M72N8MG00000000000000003",
+          "name": "Acme",
+          "created_at": "2026-11-10T12:00:00.000Z",
+          "recovery": "pending",
+          "display_path": "PUBLIC TEST PATH"
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "organization.create mutation public result refuses additive",
+      "operation": "organization.create",
+      "response_kind": "mutation",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "completed",
+        "result": {
+          "id": "01M72N8MG00000000000000003",
+          "name": "Acme",
+          "created_at": "2026-11-10T12:00:00.000Z",
+          "recovery": "pending",
+          "additive": {
+            "path": "PUBLIC TEST PATH"
+          }
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "organization.create lookup public result refuses host_control",
+      "operation": "organization.create",
+      "response_kind": "lookup",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "completed",
+          "result": {
+            "id": "01M72N8MG00000000000000003",
+            "name": "Acme",
+            "created_at": "2026-11-10T12:00:00.000Z",
+            "recovery": "pending",
+            "host_control": true
+          },
+          "kind": "host",
+          "state": "linked"
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "organization.create lookup public result refuses display_path",
+      "operation": "organization.create",
+      "response_kind": "lookup",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "completed",
+          "result": {
+            "id": "01M72N8MG00000000000000003",
+            "name": "Acme",
+            "created_at": "2026-11-10T12:00:00.000Z",
+            "recovery": "pending",
+            "display_path": "PUBLIC TEST PATH"
+          },
+          "kind": "host",
+          "state": "linked"
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "organization.create lookup public result refuses additive",
+      "operation": "organization.create",
+      "response_kind": "lookup",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "completed",
+          "result": {
+            "id": "01M72N8MG00000000000000003",
+            "name": "Acme",
+            "created_at": "2026-11-10T12:00:00.000Z",
+            "recovery": "pending",
+            "additive": {
+              "path": "PUBLIC TEST PATH"
+            }
+          },
+          "kind": "host",
+          "state": "linked"
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "office.restart mutation public result refuses host_control",
+      "operation": "office.restart",
+      "response_kind": "mutation",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "completed",
+        "result": {
+          "host_control": true
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "office.restart mutation public result refuses display_path",
+      "operation": "office.restart",
+      "response_kind": "mutation",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "completed",
+        "result": {
+          "display_path": "PUBLIC TEST PATH"
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "office.restart mutation public result refuses additive",
+      "operation": "office.restart",
+      "response_kind": "mutation",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "completed",
+        "result": {
+          "additive": {
+            "path": "PUBLIC TEST PATH"
+          }
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "office.restart lookup public result refuses host_control",
+      "operation": "office.restart",
+      "response_kind": "lookup",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "completed",
+          "result": {
+            "host_control": true
+          },
+          "kind": "host"
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "office.restart lookup public result refuses display_path",
+      "operation": "office.restart",
+      "response_kind": "lookup",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "completed",
+          "result": {
+            "display_path": "PUBLIC TEST PATH"
+          },
+          "kind": "host"
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "office.restart lookup public result refuses additive",
+      "operation": "office.restart",
+      "response_kind": "lookup",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "completed",
+          "result": {
+            "additive": {
+              "path": "PUBLIC TEST PATH"
+            }
+          },
+          "kind": "host"
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "organization.create mutation public result refuses private keys inside arrays",
+      "operation": "organization.create",
+      "response_kind": "mutation",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "completed",
+        "result": {
+          "id": "01M72N8MG00000000000000003",
+          "name": "Acme",
+          "created_at": "2026-11-10T12:00:00.000Z",
+          "recovery": "pending",
+          "additive": [
+            {
+              "path": "PUBLIC TEST PATH"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "organization.create lookup public result refuses private keys inside arrays",
+      "operation": "organization.create",
+      "response_kind": "lookup",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "completed",
+          "result": {
+            "id": "01M72N8MG00000000000000003",
+            "name": "Acme",
+            "created_at": "2026-11-10T12:00:00.000Z",
+            "recovery": "pending",
+            "additive": [
+              {
+                "path": "PUBLIC TEST PATH"
+              }
+            ]
+          },
+          "kind": "host",
+          "state": "linked"
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "office.restart mutation public result refuses private keys inside arrays",
+      "operation": "office.restart",
+      "response_kind": "mutation",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "completed",
+        "result": {
+          "additive": [
+            {
+              "path": "PUBLIC TEST PATH"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "office.restart lookup public result refuses private keys inside arrays",
+      "operation": "office.restart",
+      "response_kind": "lookup",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "completed",
+          "result": {
+            "additive": [
+              {
+                "path": "PUBLIC TEST PATH"
+              }
+            ]
+          },
+          "kind": "host"
+        }
+      },
+      "expect": {
+        "valid": false
+      }
     }
   ],
   "pairs": [

@@ -130,7 +130,7 @@ impl<P: Serialize> CommandEnvelope<P> {
 }
 
 /// Browser error vocabulary. New X-02 codes are additive here before the socket API cutover.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum GatewayErrorCode {
@@ -159,8 +159,10 @@ pub enum GatewayErrorCode {
     OperationReused,
     /// Always a confirmed pre-dispatch refusal. Distinct from domain error codes.
     RateLimited,
-    #[serde(other)]
     Unknown,
+    /// A newer refusal code is still a refusal; retain its exact spelling.
+    #[serde(untagged)]
+    Other(String),
 }
 
 /// Sanitized human error, with optional nonsecret retry/session hints.
@@ -172,6 +174,10 @@ pub struct GatewayError {
     pub retry_after_ms: Option<super::Milliseconds>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_reason: Option<SessionReason>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation_id: Option<OperationId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<super::CancelState>,
 }
 
 impl<'de> Deserialize<'de> for GatewayError {
@@ -184,6 +190,10 @@ impl<'de> Deserialize<'de> for GatewayError {
             retry_after_ms: Option<super::Milliseconds>,
             #[serde(default)]
             session_reason: Option<SessionReason>,
+            #[serde(default)]
+            operation_id: Option<OperationId>,
+            #[serde(default)]
+            state: Option<super::CancelState>,
         }
         let raw = Object::<Raw>::deserialize(d)?.0;
         if raw.code == GatewayErrorCode::RateLimited && raw.retry_after_ms.is_none() {
@@ -194,6 +204,8 @@ impl<'de> Deserialize<'de> for GatewayError {
             message: raw.message,
             retry_after_ms: raw.retry_after_ms,
             session_reason: raw.session_reason,
+            operation_id: raw.operation_id,
+            state: raw.state,
         })
     }
 }
@@ -205,6 +217,8 @@ impl GatewayError {
             message: message.into(),
             retry_after_ms: None,
             session_reason: None,
+            operation_id: None,
+            state: None,
         }
     }
 
@@ -224,7 +238,7 @@ impl GatewayError {
             UnsupportedVersion => 426,
             RateLimited => 429,
             NotReady | Unavailable | StorageError | Timeout => 503,
-            Unknown => return None,
+            Unknown | Other(_) => return None,
         })
     }
 
@@ -298,8 +312,11 @@ impl<T> OperationLookup<T> {
         matches!(
             self,
             Self::Abandoned { .. }
+                | Self::Unsupported { .. }
                 | Self::Outcome {
-                    outcome: MutationOutcome::Completed { .. } | MutationOutcome::Rejected { .. },
+                    outcome: MutationOutcome::Completed { .. }
+                        | MutationOutcome::Rejected { .. }
+                        | MutationOutcome::Unsupported { .. },
                     ..
                 }
         )
@@ -348,7 +365,7 @@ impl<T: Serialize> Serialize for OperationLookup<T> {
             Self::Unsupported { operation_id, kind } => {
                 wire.serialize_entry("operation_id", operation_id)?;
                 wire.serialize_entry("kind", kind)?;
-                wire.serialize_entry("state", "unknown")?;
+                wire.serialize_entry("outcome", "unsupported")?;
             }
         }
         wire.end()
@@ -358,6 +375,9 @@ impl<T: Serialize> Serialize for OperationLookup<T> {
 impl<'de, T: DeserializeOwned> Deserialize<'de> for OperationLookup<T> {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let mut wire = Object::<serde_json::Map<String, Value>>::deserialize(d)?.0;
+        if wire.get("outcome").and_then(Value::as_str) == Some("unknown") {
+            return Err(D::Error::custom("unknown is not a stored lookup outcome"));
+        }
         let operation_id: OperationId =
             serde_json::from_value(wire.get("operation_id").cloned().unwrap_or(Value::Null))
                 .map_err(|_| D::Error::custom("lookup requires an operation ID"))?;
@@ -513,6 +533,14 @@ impl<T> fmt::Debug for MutationOutcome<T> {
 }
 
 impl<T> MutationOutcome<T> {
+    /// Unsupported future outcomes stop polling for an update; they never mean success.
+    pub fn is_final(&self) -> bool {
+        matches!(
+            self,
+            Self::Completed { .. } | Self::Rejected { .. } | Self::Unsupported { .. }
+        )
+    }
+
     pub fn http_status(&self, authenticated: bool) -> Option<u16> {
         match self {
             Self::Accepted { .. } => Some(202),

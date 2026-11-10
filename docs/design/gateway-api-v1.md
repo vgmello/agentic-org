@@ -48,9 +48,23 @@ SPA HTML. Unknown operations do not forward to a local socket.
 | GET `/api/v1/organizations/{org}/offices` | `{offices:[...]}` | Pair; host `office.list` narrowed to an authorized organization |
 | GET `/api/v1/organizations/{org}/snapshot` | `{snapshot:OrgSnapshot,resume_cursor}` | Pair; canonical `org.snapshot` on selected HQ, cursor at the same snapshot position |
 | POST `/api/v1/organizations/{org}/offices/{office}/restart` | office-scoped command envelope with `{}` | Pair; host `office.restart`, account linked to organization; no admin bypass |
-| GET `/api/v1/operations/{kind}/{id}` | scoped lookup (§5) | Pair; `kind=host\|org\|work\|msg`; org/office scope supplied by explicit query fields, checked before lookup |
+| GET `/api/v1/operations/{kind}/{id}` | scoped lookup (§5) | Pair; `kind=host\|org\|work\|msg`; query fields `instance_id`, `org_id`, `office_id` as specified below, checked before lookup |
 | POST `/api/v1/events` | subscriptions/cursors (§6) → SSE | Pair; streaming fetch, no proof in URL |
 | POST `/api/v1/events/poll` | same subscriptions/cursors → bounded frame batch | Pair; bounded short-poll alternative, no held connection |
+
+Lookup query spelling is fixed: `instance_id` is always required; `kind=host`
+forbids `org_id` and `office_id`, `kind=org` requires `org_id` and forbids
+`office_id`, and `kind=work|msg` requires both `org_id` and `office_id`.
+The gateway resolves HQ for `org`; work/message lookups go to the office that
+admitted the ID. All IDs are 1..64 ASCII letters/digits, matching the existing
+plain office-ID shape. Empty values, repeated keys (even identical values), unknown
+keys and malformed IDs are HTTP 400 `invalid_request`, checked before authorization.
+The adapter passes decoded query pairs to `LookupQuery::from_fields` without first
+collapsing duplicates into a map. The query's instance must equal the session
+pair's instance; mismatch is the same 400 scope-mismatch refusal as mutations,
+never forwarded. A well-formed hidden scope and a missing record return the same
+404 body, byte for byte. Shared `gateway-lookup-query.json` pins the fields,
+per-kind requirements, malformed/duplicate refusals, instance binding and visibility.
 
 The minimum organization snapshot is an M1 dependency and is included here;
 B1-10/11 add further organization/work operations before M2 screens connect.
@@ -91,9 +105,14 @@ Completed result types, frozen by Rowan `01M72Z9MC0CRC011GJ2EWQYBQD`:
 organization.create returns exactly OrganizationView identity/name/created_at/recovery;
 office.restart returns `{}`. Offices and health come from the offices list/feed,
 not these completed results. Lookup uses the same public projection, with identical
-serialized result bytes. Endpoint/socket/path, recovery-code, database-key and
-owner-grant fields are not public result data. Unknown additive business fields
-remain ignorable; known host-control fields are refused.
+serialized result bytes. The exact refused object keys are `endpoint`, `socket`, `path`, `recovery_code`,
+`db_key`, `owner_grant` and `host_control`, plus every key ending in `_path`
+(including `display_path` and `socket_path`). This applies recursively at every
+object nesting depth, including objects within arrays, in both create/restart
+mutation results and their lookup results. Unknown additive business fields that
+do not match this rule remain ignorable. The shared mutation-result vectors pin
+the named keys, suffix rule and nested-key rule. This guard is specific to these
+public host-result projections, not domain records such as repository paths.
 
 Mutation envelope (path fixes the typed operation):
 
@@ -194,13 +213,17 @@ not durable success/failure; the UI keeps the ID and performs lookup. Never mint
 fresh ID automatically. Transport/client failure can synthesize unknown locally.
 
 Lookup returns accepted/completed/rejected, or an error `not_found`/`expired`.
+A literal stored `outcome:"unknown"` is invalid: uncertainty is not a durable
+record. This differs from the literal domain error code `"unknown"` below.
 In-window not_found remains unresolved if dispatch may have happened; it never
 means an automatic fresh-ID retry. `queued` is deferred to X-05, per X-02 §4.2.
 Worker `committed` maps to completed; worker stored rejected maps to rejected;
 host journal reserved maps to accepted and linked to completed. A targeted
-cancellation returns `{operation_id,state:abandoned|linked|in_progress}`:
-abandoned means cancelled now/earlier; linked means too late, creation completed;
-in_progress is HTTP409 conflict and can be retried. Its `{}` body has no new ID
+cancellation returns HTTP 200 `{result:{operation_id,state:"abandoned"|"linked"}}`:
+abandoned means cancelled now/earlier; linked means too late, creation completed.
+In progress is HTTP 409 with an error body, never a success result:
+`{error:{code:"conflict",message:"The create is still in progress; try again.",operation_id,state:"in_progress"}}`.
+It can be retried with the same `{}` body, which has no new ID
 or params/fingerprint, and does not go through ordinary mutation dispatch. Only
 the same account or an instance admin can cancel; others get not_found. Lookup of
 the original ID reports the final state. A missing record is not authorization to retry
@@ -217,6 +240,20 @@ needs no new code. Stored domain refusals have rejected/error; other host ops
 (office.restart included) have completed/result or rejected/error without state.
 `not_found` and `expired` are errors of the lookup itself. As with other reads,
 the HTTP envelope is `{result:<flat record>}` or `{error:<lookup error>}`.
+Response decoding distinguishes three cases (Rowan `01M732VV3VSXP5VZGR70ZT7AR6`):
+- An unrecognized error **code** inside a known rejected outcome remains rejected
+  and final. Retain the raw code and server message; show generic “not done” and
+  stop lookup. Its HTTP class cannot be inferred from that future code alone.
+- An unrecognized **outcome** becomes Unsupported/update-needed, final for polling
+  purposes. Stop lookup; it is neither success nor a rejection.
+- The literal domain error code `"unknown"` becomes unresolved outcome unknown,
+  including when received inside a rejected lookup record. Keep the original ID
+  and continue lookup. This conversion does not permit a literal stored
+  `outcome:"unknown"` record.
+
+Shared mutation and lookup vectors cover each of these three cases. They also
+pin the cancellation conflict's operation_id/state metadata on the error.
+
 The shared `gateway-lookups.json` includes all six requested host examples and
 org/work/msg records, state/outcome errors and unresolved-versus-expired failures.
 
@@ -304,6 +341,14 @@ and feed names, not executable strings accepted by an arbitrary dispatch endpoin
 Availability means the real authorized operation is wired end to end. Missing or
 unknown capability means unavailable; UI shows an explicit unavailable state.
 Contract publication does not advertise runtime support before B1-05 onward.
+Request scopes stay closed. Response scopes preserve future kind objects rather
+than refusing the capabilities response or poll batch. A capability with an
+unknown scope is unavailable even when its name is known and available is true;
+known capabilities in the same response remain usable. An event frame with an
+unknown scope (including any ready subscription) becomes Unsupported; other
+frames in that poll batch still decode. The shared views/stream vectors pin the
+preserved capability object, unsupported frames and mixed known/future batch.
+
 Unknown operation names are unavailable. A higher contract_revision is additive:
 ignore unknown fields/capabilities; lower than the client's required revision
 means update needed (426 on use). Breaking changes require a new api_version.
@@ -332,8 +377,9 @@ Decision record (Rowan `01M72QXR241XRPW9QBY098EB06`, ada as cited above):
    unknown504; error class table above, rate_limited429 pre-dispatch only.
 3. **D3 decided:** minimum instance fields/constant public version as above;
    typed capability names, additive revisions/new API version for breaking changes.
-4. **D4 decided:** targeted idempotent cancellation of original create ID,
-   dedicated abandoned/linked/in_progress result; no new ID/fingerprint. Q9 held.
+4. **D4 decided:** targeted idempotent cancellation of original create ID (200 result for abandoned/linked,
+   409 conflict error with operation_id/state for in_progress),
+   no new ID/fingerprint. Q9 held.
 5. **D5 approved:** nonreplayable instance baseline/resync and shared stream/poll
    shape; finite queue/frame/poll budgets before shipping in B1-05/08.
 6. **D6 M1 snapshot/clock, decided by ada:** minimum organization snapshot with

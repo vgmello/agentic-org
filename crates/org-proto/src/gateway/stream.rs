@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{GatewayError, Milliseconds, Scope, SessionReason};
+use super::{GatewayError, Milliseconds, ResponseScope, Scope, SessionReason};
 use crate::OrgSnapshot;
 
 /// Opaque nonsecret resume position. Authorization, scope/epoch binding and expiry must be
@@ -56,7 +56,7 @@ pub struct StreamRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubscriptionCursor {
-    pub scope: Scope,
+    pub scope: ResponseScope,
     pub feed: Feed,
     pub cursor: ResumeCursor,
 }
@@ -80,7 +80,7 @@ pub enum ResyncReason {
 
 /// SSE uses `event: frame` and JSON data of this shape. No global SSE ID replaces the scoped
 /// cursors. Short polling returns exactly the same frames. Unknown future frames are explicit.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum EventFrame {
@@ -88,14 +88,14 @@ pub enum EventFrame {
         subscriptions: Vec<SubscriptionCursor>,
     },
     Change {
-        scope: Scope,
+        scope: ResponseScope,
         feed: Feed,
         cursor: ResumeCursor,
         event: String,
         data: Value,
     },
     Resync {
-        scope: Scope,
+        scope: ResponseScope,
         feed: Feed,
         reason: ResyncReason,
     },
@@ -107,12 +107,66 @@ pub enum EventFrame {
         reason: Option<SessionReason>,
     },
     Unavailable {
-        scope: Scope,
+        scope: ResponseScope,
         feed: Feed,
         error: GatewayError,
     },
     #[serde(other)]
     Unsupported,
+}
+
+#[derive(Deserialize)]
+#[serde(remote = "EventFrame", tag = "type", rename_all = "snake_case")]
+enum FrameWire {
+    Ready {
+        subscriptions: Vec<SubscriptionCursor>,
+    },
+    Change {
+        scope: ResponseScope,
+        feed: Feed,
+        cursor: ResumeCursor,
+        event: String,
+        data: Value,
+    },
+    Resync {
+        scope: ResponseScope,
+        feed: Feed,
+        reason: ResyncReason,
+    },
+    Heartbeat {
+        server_time_ms: Milliseconds,
+    },
+    SessionEnded {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<SessionReason>,
+    },
+    Unavailable {
+        scope: ResponseScope,
+        feed: Feed,
+        error: GatewayError,
+    },
+    #[serde(other)]
+    Unsupported,
+}
+
+impl<'de> Deserialize<'de> for EventFrame {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let frame = FrameWire::deserialize(d)?;
+        let unknown_scope = match &frame {
+            Self::Ready { subscriptions } => {
+                subscriptions.iter().any(|s| s.scope.known().is_none())
+            }
+            Self::Change { scope, .. }
+            | Self::Resync { scope, .. }
+            | Self::Unavailable { scope, .. } => scope.known().is_none(),
+            _ => false,
+        };
+        Ok(if unknown_scope {
+            Self::Unsupported
+        } else {
+            frame
+        })
+    }
 }
 
 impl std::fmt::Debug for EventFrame {

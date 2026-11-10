@@ -356,6 +356,29 @@
       "expect": {
         "valid": false
       }
+    },
+    {
+      "name": "future scope remains invalid for requests",
+      "kind": "host",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "scope": {
+          "kind": "project",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003",
+          "project_id": "future-project"
+        },
+        "params": {
+          "name": "Acme"
+        }
+      },
+      "route_scope": {
+        "kind": "instance",
+        "instance_id": "01M72N8MG00000000000000001"
+      },
+      "expect": {
+        "valid": false
+      }
     }
   ]
 }

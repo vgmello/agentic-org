@@ -2,7 +2,7 @@ use serde::de::Error as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{Milliseconds, OperationId, Scope};
+use super::{Milliseconds, OperationId, ResponseScope};
 use crate::{OfficeInfo, OfficeRole, OfficeStatus, OfficeStatusReason, Organization};
 
 macro_rules! view_enum {
@@ -176,7 +176,7 @@ impl<'de> Deserialize<'de> for OfficeRestartResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Capability {
     pub name: String,
-    pub scope: Scope,
+    pub scope: ResponseScope,
     #[serde(default)]
     pub available: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -187,7 +187,7 @@ impl Capability {
     /// Callers supply names their client actually implements. A newer server cannot make
     /// an unknown client operation executable merely by advertising it.
     pub fn is_available(&self, known_names: &[&str]) -> bool {
-        self.available && known_names.contains(&self.name.as_str())
+        self.available && self.scope.known().is_some() && known_names.contains(&self.name.as_str())
     }
 }
 
@@ -201,18 +201,37 @@ pub struct Capabilities {
 }
 
 /// Targeted cancellation of the original create. No new ID or fingerprint is submitted.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CancelResult {
     pub operation_id: OperationId,
     pub state: CancelState,
+}
+
+impl<'de> Deserialize<'de> for CancelResult {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Raw {
+            operation_id: OperationId,
+            state: CancelState,
+        }
+        let raw = Raw::deserialize(d)?;
+        if raw.state == CancelState::InProgress {
+            return Err(D::Error::custom(
+                "in_progress requires a conflict error envelope",
+            ));
+        }
+        Ok(Self {
+            operation_id: raw.operation_id,
+            state: raw.state,
+        })
+    }
 }
 
 impl CancelResult {
     pub fn http_status(&self) -> Option<u16> {
         match self.state {
             CancelState::Abandoned | CancelState::Linked => Some(200),
-            CancelState::InProgress => Some(409),
-            CancelState::Unknown => None,
+            CancelState::InProgress | CancelState::Unknown => None,
         }
     }
 }

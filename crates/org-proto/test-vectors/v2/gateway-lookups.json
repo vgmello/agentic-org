@@ -365,7 +365,9 @@
       "name": "dedicated cancel in_progress",
       "category": "cancel",
       "wire": {
-        "result": {
+        "error": {
+          "code": "conflict",
+          "message": "The create is still in progress; try again.",
           "operation_id": "01M72N8MG00000000000000006",
           "state": "in_progress"
         }
@@ -373,6 +375,8 @@
       "expect": {
         "valid": true,
         "normalized": {
+          "code": "conflict",
+          "message": "The create is still in progress; try again.",
           "operation_id": "01M72N8MG00000000000000006",
           "state": "in_progress"
         },
@@ -395,6 +399,101 @@
           "state": "unknown"
         },
         "http_status": null
+      }
+    },
+    {
+      "name": "literal unknown cannot be a stored lookup outcome",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "org",
+          "outcome": "unknown"
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "unrecognized stored refusal stays final",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "org",
+          "outcome": "rejected",
+          "error": {
+            "code": "future_code",
+            "message": "Not done."
+          }
+        }
+      },
+      "expect": {
+        "valid": true,
+        "final": true,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "org",
+          "outcome": "rejected",
+          "error": {
+            "code": "future_code",
+            "message": "Not done."
+          }
+        }
+      }
+    },
+    {
+      "name": "future stored outcome requires update and stops polling",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "org",
+          "outcome": "future_outcome"
+        }
+      },
+      "expect": {
+        "valid": true,
+        "final": true,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "org",
+          "outcome": "unsupported"
+        }
+      }
+    },
+    {
+      "name": "literal unknown domain code remains unresolved",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "org",
+          "outcome": "rejected",
+          "error": {
+            "code": "unknown",
+            "message": "Unknown."
+          }
+        }
+      },
+      "expect": {
+        "valid": true,
+        "final": false,
+        "normalized": {
+          "kind": "org",
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "unknown"
+        }
+      }
+    },
+    {
+      "name": "cancel in_progress is never a success result",
+      "category": "cancel",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "state": "in_progress"
+        }
+      },
+      "expect": {
+        "valid": false
       }
     }
   ]

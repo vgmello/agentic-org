@@ -196,6 +196,142 @@ impl Scope {
     }
 }
 
+/// Response scopes are open: retain future scope objects without making them executable.
+/// Requests continue to use the closed `Scope` type.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(untagged)]
+pub enum ResponseScope {
+    Known(Scope),
+    Unknown(serde_json::Value),
+}
+
+impl ResponseScope {
+    pub fn known(&self) -> Option<&Scope> {
+        match self {
+            Self::Known(scope) => Some(scope),
+            Self::Unknown(_) => None,
+        }
+    }
+}
+
+impl From<Scope> for ResponseScope {
+    fn from(scope: Scope) -> Self {
+        Self::Known(scope)
+    }
+}
+
+impl<'de> Deserialize<'de> for ResponseScope {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use serde::de::Error as _;
+        let value = serde_json::Value::deserialize(d)?;
+        let kind = value
+            .get("kind")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| D::Error::custom("response scope requires a kind"))?;
+        if matches!(kind, "instance" | "organization" | "office") {
+            serde_json::from_value(value)
+                .map(Self::Known)
+                .map_err(|_| D::Error::custom("invalid known response scope"))
+        } else {
+            Ok(Self::Unknown(value))
+        }
+    }
+}
+
+/// Already-decoded lookup query fields. The HTTP adapter must retain repeated query keys
+/// and pass them through `from_fields`, rather than collapsing them into a map first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "LookupQueryFields")]
+pub struct LookupQuery {
+    pub instance_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub org_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub office_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LookupQueryFields {
+    instance_id: String,
+    org_id: Option<String>,
+    office_id: Option<String>,
+}
+
+impl TryFrom<LookupQueryFields> for LookupQuery {
+    type Error = &'static str;
+    fn try_from(fields: LookupQueryFields) -> Result<Self, Self::Error> {
+        for id in std::iter::once(&fields.instance_id)
+            .chain(fields.org_id.iter())
+            .chain(fields.office_id.iter())
+        {
+            if !(1..=64).contains(&id.len()) || !id.bytes().all(|b| b.is_ascii_alphanumeric()) {
+                return Err("lookup IDs must be 1..64 ASCII letters or digits");
+            }
+        }
+        Ok(Self {
+            instance_id: fields.instance_id,
+            org_id: fields.org_id,
+            office_id: fields.office_id,
+        })
+    }
+}
+
+impl LookupQuery {
+    pub fn from_fields<K: AsRef<str>, V: AsRef<str>>(
+        fields: impl IntoIterator<Item = (K, V)>,
+    ) -> Result<Self, GatewayError> {
+        let mut object = serde_json::Map::new();
+        for (key, value) in fields {
+            if object
+                .insert(
+                    key.as_ref().to_owned(),
+                    serde_json::Value::String(value.as_ref().to_owned()),
+                )
+                .is_some()
+            {
+                return Err(Self::invalid());
+            }
+        }
+        serde_json::from_value(serde_json::Value::Object(object)).map_err(|_| Self::invalid())
+    }
+
+    /// Validate shape and session-instance equality before any authorization or lookup.
+    pub fn scope(
+        &self,
+        kind: OperationKind,
+        session_instance: &str,
+    ) -> Result<Scope, GatewayError> {
+        if self.instance_id != session_instance {
+            return Err(GatewayError::new(
+                GatewayErrorCode::InvalidRequest,
+                "The request scope does not match its route.",
+            ));
+        }
+        match (kind, &self.org_id, &self.office_id) {
+            (OperationKind::Host, None, None) => Ok(Scope::Instance {
+                instance_id: self.instance_id.clone(),
+            }),
+            (OperationKind::Org, Some(org_id), None) => Ok(Scope::Organization {
+                instance_id: self.instance_id.clone(),
+                org_id: org_id.clone(),
+            }),
+            (OperationKind::Work | OperationKind::Msg, Some(org_id), Some(office_id)) => {
+                Ok(Scope::Office {
+                    instance_id: self.instance_id.clone(),
+                    org_id: org_id.clone(),
+                    office_id: office_id.clone(),
+                })
+            }
+            _ => Err(Self::invalid()),
+        }
+    }
+
+    fn invalid() -> GatewayError {
+        GatewayError::new(GatewayErrorCode::InvalidRequest, "Invalid lookup scope.")
+    }
+}
+
 /// The independently stored operation-ID namespaces. The ID alone cannot select a ledger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
