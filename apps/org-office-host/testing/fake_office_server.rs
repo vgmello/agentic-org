@@ -1,4 +1,4 @@
-//! A fake `org-office-server` for `org-office-host`'s tests. **Never shipped:** it is built
+//! A fake `org-server` for `org-office-host`'s tests. **Never shipped:** it is built
 //! only with the `test-support` feature, which only the host's own tests turn on.
 //!
 //! It follows the launch protocol (`org-office-launch`, version 2) without SQLCipher or a key

@@ -15,7 +15,7 @@
 //!
 //! A debug build takes them for development and tests: `--home` overrides the office home
 //! (otherwise `org_proto::location`'s rule), `--server-bin` the office server program (otherwise
-//! `org-office-server` next to this one), and `--app-team-id` the team id it was built with.
+//! `org-server` next to this one), and `--app-team-id` the team id it was built with.
 //! It may also accept one unsigned development app for the app-only calls: the path of its
 //! executable (`Contents/MacOS/<exe>`) is the build-time constant `ORG_DEV_APP_PATH` (set when
 //! the host is compiled), never read from the command line, a config file or the environment at

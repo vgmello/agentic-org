@@ -1,4 +1,4 @@
-//! One `org-office-server` process: spawning it with its pipes, reading its control lines,
+//! One `org-server` process: spawning it with its pipes, reading its control lines,
 //! copying its stderr to the office's log, and stopping it.
 
 use std::ffi::{OsStr, OsString};

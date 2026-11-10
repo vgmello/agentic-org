@@ -1,4 +1,4 @@
-# org-office-host ↔ org-office-server: the boundary (phase 1, HQ only)
+# org-office-host ↔ org-server: the boundary (phase 1, HQ only)
 
 **Browser HTTP separation (standalone-v1 review):** planned `org-gateway` is a
 separate supervised child for the instance browser listener. The host retains key
@@ -7,12 +7,11 @@ HTTP. The gateway has no office-key entitlement or raw-key return operation, and
 organization creation requires an instance-admin grant. See
 [standalone-server.md](standalone-server.md#browser-listener-and-privilege-boundary).
 
-**Naming amendment (2026-11-10):** the target worker app/package/binary is
-`apps/org-server` / `org-server`, replacing `apps/org-office-server` / `org-office-server`;
+**Naming amendment (2026-11-10):** the worker app/package/binary is now
+`apps/org-server` / `org-server`;
 the retained browser application becomes `apps/org-ui` / `org-ui`. See
 [project structure](project-structure.md). Host custody, private launch and one worker
-per office remain. Older spellings below identify pre-rename source/contracts;
-implementation updates executable/build references without merging process roles.
+per office remain. Executable/build references use the renamed worker without merging process roles.
 
 **Standalone-v1 precedence (2026-11-09):**
 [standalone-server.md](standalone-server.md) and
@@ -58,7 +57,7 @@ updates the crate.
 The host looks only at folders named by a plain id; any other folder (such as `.refused`) is never
 started or discarded.
 - **No `office.json`:** an unfinished create. The host never starts it. At startup, or after that create
-  failed before `office.json` was in place, it runs `org-office-server --discard <id>`, with the office's
+  failed before `office.json` was in place, it runs `org-server --discard <id>`, with the office's
   key on the first line, or `"db_key": null` when it holds none for that id (amended 2026-11-08: key
   custody). The server takes the lock (same wait), and removes the folder only if the office never
   finished (with no folder, it takes no lock, creates nothing and reports `discarded`, see 3):
@@ -103,9 +102,9 @@ role are kept when a server rewrites it (e.g. on an organization rename, later).
 ## 2. Starting a server
 
 ```
-org-office-server --create          # create a new office from the pipe message, then serve it
-org-office-server --office <id>     # serve an existing office
-org-office-server --discard <id>    # remove an unfinished office, then exit (the host then deletes its key)
+org-server --create          # create a new office from the pipe message, then serve it
+org-server --office <id>     # serve an existing office
+org-server --discard <id>    # remove an unfinished office, then exit (the host then deletes its key)
 ```
 - The host always sets `ORG_OFFICE_HOME` explicitly on the child, so both use the same home.
 - No details on the command line beyond the office id (the design: details travel through the pipe).
@@ -277,7 +276,7 @@ first line is `invalid_request`.
     genuine server and pass a later check. The host takes the suspended child's audit token
     (`task_name_for_pid`, then `TASK_AUDIT_TOKEN`; it names the image the exec loaded), gets its code
     object through it (`SecCodeCopyGuestWithAttributes`), and requires `identifier
-    "com.ellosoft.agentic-org.org-office-server" and anchor apple generic` with the Developer ID
+    "com.ellosoft.agentic-org.org-server" and anchor apple generic` with the Developer ID
     markers and `certificate leaf[subject.OU] = "<team id>"`, the hardened runtime and none of the
     rejected entitlements (the same checks as the app's, ADR-0003 §2.1). Only then does it resume the
     child (`SIGCONT`); a child that fails is killed while still suspended, so it never ran. Right
@@ -285,7 +284,7 @@ first line is `invalid_request`.
     check). A child that fails, or whose token can't be taken, is killed and reaped and gets
     nothing; the start counts as `storage_error`. A release host with no team id compiled in starts no server at all (logged as a
     WARNING). This stops a same-user process that runs the signed host from a copy, a symlink or a
-    hard link next to its own `org-office-server` from receiving the keys, with one **residual
+    hard link next to its own `org-server` from receiving the keys, with one **residual
     risk (open)**: any same-user process can resume a suspended child (`SIGCONT`). An attacker that
     resumes the child before the host takes its token (stopping or starving the host, e.g. a copy
     of the host it launched itself, makes that easy), lets it fork a helper that
@@ -298,7 +297,7 @@ first line is `invalid_request`.
   - **This Mac only** (the user's decision): keys never leave it. A "move this office" export, protected
     by the owner's recovery code, comes later as a feature.
   - **Release trust inputs are compiled in:** the team id, the bundle id, the Keychain access group,
-    and the office-home rules. The server is the `org-office-server` next to the host's own
+    and the office-home rules. The server is the `org-server` next to the host's own
     executable (canonical path), and is admitted only if it passes the signature check. Release
     builds refuse `--home`, `--server-bin` and `--app-team-id`; debug builds keep them. (amended
     2026-11-08: review M1) At startup a release host also reads its own signing information once
@@ -313,7 +312,7 @@ first line is `invalid_request`.
     build. If it needs a provisioning profile, the host ships as a helper app bundle
     (`Contents/Library/LoginItems/…`). The legacy-ACL fallback is used only if the Data Protection
     keychain proves impossible, and then it goes back to ada first.
-  - **Why:** a same-user process could stop the host and run the signed `org-office-server` itself with
+  - **Why:** a same-user process could stop the host and run the signed `org-server` itself with
     its own app token, and a Keychain item owned by the server would trust that server. With the host
     holding the keys, a server started by anyone else gets no key and can't open `org.db`.
 - **host.sock:** 0600 and `run/` 0700. On accept, the host also checks the peer's uid (`getpeereid`) is its own (defence in depth).
@@ -334,14 +333,14 @@ first line is `invalid_request`.
   `organization.create`, `organization.list`, `office.list`, `office.restart`, `office.app_token`,
   `subscribe`), and (amended 2026-11-08: key custody) `keys` (the key store: the Data Protection
   keychain in release builds, the dev-keys files in debug builds).
-- The supervisor takes the server program's path as config (default: the `org-office-server` next to
+- The supervisor takes the server program's path as config (default: the `org-server` next to
   the host binary in the app bundle; a release build uses only that one, next to the host's own
   executable (canonical path), and admits it only if it passes the signature check, see Key
   custody). The host's tests use a **fake office server** (a test helper binary
   that follows section 3), so the host is tested without SQLCipher or the Keychain (its keys go to the
   dev-keys files or an in-memory store), and doesn't wait for server-dev's work to land. The fake must never ship: it's an example or a dev-only bin the bundle never picks up.
 - The host doesn't depend on `org-office` (no SQLCipher in the login service) or on
-  `org-office-server`'s library (an app doesn't depend on an app).
+  `org-server`'s library (an app doesn't depend on an app).
 
 ## 6. Decisions (ada, 2026-11-08)
 1. **The pipe protocol and `office.json` types live in a new contract crate, `crates/org-office-launch`**, not `org-proto` (the client contract stays small). It depends only on `org-proto`, `serde` and `serde_json`. ada owns it as a contract. River writes the first version, and ada reviews every commit that touches it. It's additive and versioned (`"v":1`, now 2 for the pipe lines since key custody; lines after the first are ignored, and an unknown op on the first line is `invalid_request`; unknown events and fields are ignored; unknown failed codes count as `storage_error`).

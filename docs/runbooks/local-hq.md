@@ -1,10 +1,9 @@
 # Runbook: a real HQ office on this Mac (debug build)
 
-**Naming amendment (2026-11-10):** standalone v1 renames the server app/package/binary
-from `apps/org-office-server` / `org-office-server` to `apps/org-server` / `org-server`,
-and the retained browser UI to `apps/org-ui` / `org-ui`. The legacy debug commands
-below describe the inspected source. Follow [project structure](../design/project-structure.md)
-for implementation; this docs PR does not rename source or change process boundaries.
+**Naming amendment (2026-11-10):** the server app/package/binary is now
+`apps/org-server` / `org-server`; the browser UI rename to `apps/org-ui` / `org-ui`
+is pending. The legacy debug commands below use the renamed worker. See
+[project structure](../design/project-structure.md); process boundaries are unchanged.
 
 **V1 direction changed 2026-11-09:** the target is a standalone Rust server
 on macOS/Linux serving the browser application from HQ. Tauri is deferred to v2.
@@ -16,14 +15,14 @@ claim the new CLI, HTTP server or remote sync exists until implemented. No migra
 of the undeployed desktop app or its data is required.
 
 Status: draft (River, 2026-11-08), for ada's switchover from the mock to the real `org-office-host` and an HQ
-`org-office-server`, from **debug builds**, and an end-to-end check. Nothing here is signed or bundled. Each claim
+`org-server`, from **debug builds**, and an end-to-end check. Nothing here is signed or bundled. Each claim
 not checked against a run is marked "(unverified: …)".
 
 ## 0. Before you start: the tree must hold both halves of key custody
 
 The host side (the tip of `river/host-keys`) and the server side (`server-dev/server-key-custody`, `da54892`) are
 **not in `origin/v1` yet** (2026-11-08). They merge cleanly (`git merge-tree`), but that merge hasn't been built.
-With the host side alone, `org-office-server` still has its own key store: a default build reads and writes the
+With the host side alone, `org-server` still has its own key store: a default build reads and writes the
 **login Keychain** (service `org.agentic.office`) and ignores the key on the launch pipe, and a `--features dev-keys`
 build refuses to start, because the host passes no `ORG_OFFICE_DEV_KEY_DIR` to its servers. Check first:
 
@@ -31,7 +30,7 @@ build refuses to start, because the host passes no `ORG_OFFICE_DEV_KEY_DIR` to i
 export REPO=/path/to/checkout   # holds both branches, e.g. v1 after both merges
 cd "$REPO"
 git merge-base --is-ancestor origin/river/host-keys HEAD && git merge-base --is-ancestor da54892 HEAD && echo "both halves: ok"
-test ! -e apps/org-office-server/src/keys.rs && echo "server: keys only from the launch pipe"
+test ! -e apps/org-server/src/keys.rs && echo "server: keys only from the launch pipe"
 ```
 
 Stop if either line prints nothing.
@@ -75,8 +74,8 @@ what `proc_pidpath` reports (unverified: check with step 6's `ps` line; with `CA
 ```sh
 cd "$REPO"
 export ORG_DEV_APP_PATH="$REPO/target/debug/agentic-org"
-cargo build -p org-office-host -p org-office-server        # no features: none is needed or wanted
-cp target/debug/org-office-host target/debug/org-office-server "$DEV/bin/"
+cargo build -p org-office-host -p org-server        # no features: none is needed or wanted
+cp target/debug/org-office-host target/debug/org-server "$DEV/bin/"
 strings "$DEV/bin/org-office-host" | grep -F "$ORG_DEV_APP_PATH"   # the path is compiled in
 ```
 
@@ -108,7 +107,7 @@ start the host yourself **before** the app. It then answers `hello` and the app 
 **Recommended: A, in a terminal.** Logs are on screen and Ctrl-C stops everything.
 
 ```sh
-"$DEV/bin/org-office-host" --server-bin "$DEV/bin/org-office-server" 2>&1 | tee -a "$DEV/logs/host.log"
+"$DEV/bin/org-office-host" --server-bin "$DEV/bin/org-server" 2>&1 | tee -a "$DEV/logs/host.log"
 ```
 
 Expect the lines `org-office-host: DEVELOPMENT FALLBACK (debug build only): office.app_token and office.restart also
@@ -126,7 +125,7 @@ cat > "$DEV/org.agentic.office-host.dev.plist" <<EOF
 <plist version="1.0"><dict>
   <key>Label</key><string>org.agentic.office-host.dev</string>
   <key>ProgramArguments</key><array>
-    <string>$DEV/bin/org-office-host</string><string>--server-bin</string><string>$DEV/bin/org-office-server</string>
+    <string>$DEV/bin/org-office-host</string><string>--server-bin</string><string>$DEV/bin/org-server</string>
   </array>
   <key>EnvironmentVariables</key><dict>
     <key>ORG_OFFICE_HOME</key><string>$DEV/home</string>
@@ -255,7 +254,7 @@ security delete-generic-password -s org.agentic.office -a <office id>
    refuses to start without `ORG_HOST_KEYCHAIN_GROUP` and the matching entitlement, so `bun run install:dev`
    (release host, ad-hoc signed, registered through `SMAppService`) builds a login service that can't start today.
    `stage-office.sh` and `INSTALLING-THE-OFFICE.md` still mention `river/office-host`. A release host also gives an
-   office's key only to a server signed as `com.ellosoft.agentic-org.org-office-server` with the team's Developer
+   office's key only to a server signed as `com.ellosoft.agentic-org.org-server` with the team's Developer
    ID and the hardened runtime (the host itself is `com.ellosoft.agentic-org.org-office-host`), and with no
    `ORG_APP_TEAM_ID` compiled in it starts no server at all; the bundle's signing doesn't set those identifiers
    yet. **On the first signed bundle, check** that the release host admits its own hardened Developer ID server

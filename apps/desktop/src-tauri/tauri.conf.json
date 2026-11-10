@@ -67,7 +67,7 @@
       "minimumSystemVersion": "13.0",
       "files": {
         "MacOS/org-office-host": "office-bin/org-office-host",
-        "MacOS/org-office-server": "office-bin/org-office-server",
+        "MacOS/org-server": "office-bin/org-server",
         "Library/LaunchAgents/org.agentic.office-host.plist": "launch-agents/org.agentic.office-host.plist"
       }
     }

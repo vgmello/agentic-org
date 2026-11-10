@@ -1,5 +1,5 @@
 [package]
-name = "org-office-server"
+name = "org-server"
 description = "The office server: the daemon that holds an organization's office and serves org-proto."
 version.workspace = true
 edition.workspace = true
@@ -7,7 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [[bin]]
-name = "org-office-server"
+name = "org-server"
 path = "src/main.rs"
 
 [[test]]

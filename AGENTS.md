@@ -4,7 +4,7 @@
 | Area | Owner |
 | --- | --- |
 | `apps/desktop/` (target: `apps/org-ui/`) | the **app agent** (`app-frontend-dev`) |
-| `apps/org-office-server/` (target: `apps/org-server/`), planned `apps/org-gateway/`, `crates/org-office/`, `crates/org-client/`, and the SQL for every table in `store.rs` (messaging's included) | the **server agent** (`server-dev`) |
+| `apps/org-server/`, planned `apps/org-gateway/`, `crates/org-office/`, `crates/org-client/`, and the SQL for every table in `store.rs` (messaging's included) | the **server agent** (`server-dev`) |
 | `apps/org-office-host/` (the supervisor and login service), planned `apps/org-setup/`, `crates/org-sync/`, `crates/org-pki/`, `crates/org-git/`, `crates/org-github/`, `crates/org-supervise/`, `crates/org-runtime-claude/` | **River** (`ac-software-engineer-river`), Senior Backend Engineer |
 | `apps/org-agent/` (the CLI agents use), `crates/org-spool/`, and the messaging library (its crate name is set in ADR-0003) | **Remy** (`ac-software-engineer-remy`), Senior Backend Engineer, since 2026-11-08 (taking over from `agy-senior-dev`, who is out of runtime credits) |
 | the work-items library (its crate name is set in `docs/design/tasks-projects-docs.md`, coming), the agent runtime adapters `crates/org-runtime-codex/` and `crates/org-runtime-agy/`, and tooling in the agents repository (the inbox adapters) | the **codex agent** (`codex-dev`) |
@@ -17,7 +17,7 @@ Don't edit another owner's area. If you need a change there, message its owner.
 
 The product is named **Agentic Org**. The designs that are the reference for current work are in `docs/design/` (offices, teams, projects and GitHub), with decisions in `docs/adr/` and the UX specs in `docs/specs/`.
 
-The owner-requested [v1 project structure](docs/design/project-structure.md) defines the target names and domain-module/vertical-slice layout. Current source paths remain until implementation; owners above retain the same responsibilities after the rename. This documentation proposal does not move code.
+The owner-requested [v1 project structure](docs/design/project-structure.md) defines the target names and domain-module/vertical-slice layout. The worker rename to `apps/org-server` is implemented; the UI rename and domain moves remain pending. Owners above retain the same responsibilities after the renames.
 
 ## Rules
 1. **Read [`docs/architecture-rules.md`](docs/architecture-rules.md) first.** Follow the [v1 project structure](docs/design/project-structure.md): apps compose crates, policies own their required contracts, and dependencies on `org-proto` are intentional rather than mandatory for every crate. No source cycles. Logic lives in libraries, and binaries stay thin.

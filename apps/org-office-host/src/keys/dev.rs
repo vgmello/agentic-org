@@ -1,5 +1,5 @@
 //! The development key store, debug builds only: keys as owner-only files
-//! `<dir>/<office id>.key`, each 64 hex digits, the same format as `org-office-server`'s former
+//! `<dir>/<office id>.key`, each 64 hex digits, the same format as `org-server`'s former
 //! `dev-keys` store. So a debug host, and every test, never writes a real Keychain item.
 //! **Never** for real data: the files are plain text.
 
