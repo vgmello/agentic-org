@@ -39,13 +39,60 @@ const views: Record<string, wire.Reader<unknown>> = {
 	organization: wire.readOrganization, capabilities: wire.readCapabilities, snapshot: wire.readSnapshot
 };
 
-it('pins all 204 main cases and every landed gateway file', () => {
-	expect(readdirSync(root).filter((name) => /^gateway-.*\.json$/.test(name)).sort()).toEqual(Object.keys(counts).map((name) => `${name}.json`).sort());
-	for (const name of Object.keys(counts) as Name[]) {
-		expect(fixtures[name].schema_version).toBe(1);
-		expect(fixtures[name].cases).toHaveLength(counts[name]);
+function assertCoreCounts(data: Record<Name, Fixture>): void {
+	const revision = data['gateway-lookup-query'].contract_revision;
+	if (revision !== undefined && revision !== 1 && revision !== 2) {
+		throw new Error('Unsupported gateway fixture contract_revision');
 	}
-	expect(Object.values(counts).reduce((sum, count) => sum + count, 0)).toBe(204);
+	const pinned = revision === 2
+		? { counts: { ...counts, 'gateway-lookup-query': 19 }, total: 205 }
+		: { counts, total: 204 };
+	for (const name of Object.keys(counts) as Name[]) {
+		expect(data[name].schema_version, `${name} schema_version`).toBe(1);
+		expect(data[name].cases, `${name} main cases`).toHaveLength(pinned.counts[name]);
+	}
+	expect(Object.values(data).reduce((sum, fixture) => sum + fixture.cases.length, 0), 'core total').toBe(pinned.total);
+}
+
+it('pins core main cases and every landed gateway file', () => {
+	expect(readdirSync(root).filter((name) => /^gateway-.*\.json$/.test(name)).sort()).toEqual(Object.keys(counts).map((name) => `${name}.json`).sort());
+	assertCoreCounts(fixtures);
+});
+
+// Vary only manifest cardinality; canonical wire cases remain unchanged on disk.
+function revisionFixtures(revision: unknown, queryCount: number): Record<Name, Fixture> {
+	return {
+		...fixtures,
+		'gateway-lookup-query': {
+			...fixtures['gateway-lookup-query'], contract_revision: revision,
+			cases: Array.from({ length: queryCount }, () => fixtures['gateway-lookup-query'].cases[0])
+		}
+	};
+}
+describe('core fixture revision count gate', () => {
+	it.each([
+		['legacy', undefined, 18], ['revision 1', 1, 18], ['revision 2', 2, 19]
+	] as const)('accepts the fixed %s case set', (_, revision, queryCount) => {
+		expect(() => assertCoreCounts(revisionFixtures(revision, queryCount))).not.toThrow();
+	});
+	it.each([0, 3, '2', null])('refuses unsupported test revision %j', (revision) => {
+		expect(() => assertCoreCounts(revisionFixtures(revision, 18))).toThrow('Unsupported gateway fixture contract_revision');
+	});
+	it.each([[undefined, 19], [1, 19], [2, 18], [2, 20]] as const)(
+		'refuses revision %j with %i query cases', (revision, queryCount) => {
+			expect(() => assertCoreCounts(revisionFixtures(revision, queryCount))).toThrow('gateway-lookup-query main cases');
+		}
+	);
+	it('does not let another fixture compensate for a missing revision 2 query case', () => {
+		const data = revisionFixtures(2, 18);
+		data['gateway-views'] = { ...fixtures['gateway-views'], cases: [...fixtures['gateway-views'].cases, fixtures['gateway-views'].cases[0]] };
+		expect(() => assertCoreCounts(data)).toThrow('gateway-lookup-query main cases');
+	});
+	it('keeps schema_version pinned to 1 independently of contract_revision', () => {
+		const data = revisionFixtures(2, 19);
+		data['gateway-lookup-query'].schema_version = 2;
+		expect(() => assertCoreCounts(data)).toThrow('gateway-lookup-query schema_version');
+	});
 });
 for (const name of Object.keys(counts) as Name[]) describe(name, () => {
 	for (const c of fixtures[name].cases) it(c.name, () => {
