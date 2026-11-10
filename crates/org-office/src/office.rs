@@ -1,4 +1,5 @@
 use std::fs::{self, File, TryLockError};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -14,9 +15,10 @@ use org_proto::directory::{WhoParams, WhoResult};
 use org_proto::org::{CommandAccepted, OrgChangedData, OrgSnapshot, Position};
 use org_proto::ApiError;
 use org_sync::error::SyncError;
-use org_sync::organization::{OrgAttempt, OrgOutput, OrgStore};
+use org_sync::organization::{OrgAttempt, OrgOutput, OrgStore, ValidatedSnapshot, VerifiedPeer};
 
 use crate::store::org as org_db;
+use crate::store::org::{OrganizationSnapshotExport, OrganizationSnapshotManifest};
 use crate::store::{messages, status};
 use crate::store::{Opening, Schema, Store};
 use crate::time;
@@ -378,6 +380,36 @@ impl Office {
     /// The organization's structure as of the last log entry, from one consistent read.
     pub fn org_snapshot(&self) -> Result<OrgSnapshot, OfficeError> {
         self.org.read(org_db::snapshot)
+    }
+
+    /// Exports the bound HQ's organization tables with a one-time transport key.
+    pub fn export_replication_snapshot(
+        &self,
+        transport_key: &Key,
+        max_bytes: u64,
+    ) -> Result<OrganizationSnapshotExport, OfficeError> {
+        org_db::export_replication_snapshot(&self.org, transport_key, max_bytes)
+    }
+
+    /// Validates and stages one complete, bounded snapshot stream from the verified HQ.
+    /// For recovery, the caller authorizes staging only after showing the restore warning.
+    /// The staged result must still pass `org_sync::organization::install_snapshot`.
+    pub fn stage_replication_snapshot(
+        &self,
+        peer: &dyn VerifiedPeer,
+        manifest: &OrganizationSnapshotManifest,
+        transport_key: &Key,
+        input: impl Read,
+        max_bytes: u64,
+    ) -> Result<ValidatedSnapshot, SyncError> {
+        org_db::stage_replication_snapshot(
+            &self.org,
+            peer.identity(),
+            manifest,
+            transport_key,
+            input,
+            max_bytes,
+        )
     }
 
     /// `who`: the directory cards matching `params`, from one consistent read of the organization

@@ -16,10 +16,10 @@ use crate::store::sync::storage_error;
 use crate::store::Store;
 use crate::{time, ulid};
 
-use super::{apply_changes, json, Answer, KEEP_MS};
+use super::{apply_changes, json, snapshot, Answer, KEEP_MS};
 
 const CODEC: &str = "org.native.changes";
-const PROTOCOL: u32 = 1;
+pub(super) const PROTOCOL: u32 = 1;
 
 pub(super) fn create_tables(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     tx.execute_batch(
@@ -43,7 +43,8 @@ pub(super) fn create_tables(tx: &Transaction<'_>) -> rusqlite::Result<()> {
              codec TEXT NOT NULL, codec_version INTEGER NOT NULL, payload BLOB NOT NULL,
              PRIMARY KEY (epoch, seq)
          ) STRICT;",
-    )
+    )?;
+    snapshot::create_table(tx)
 }
 
 /// Enrollment initializes the pin and checkpoint. An unbound office has no federation
@@ -55,14 +56,29 @@ pub(crate) fn transact_replication(
     store.sync_write(move |db| attempt(&mut OrganizationTxn(db)))
 }
 
-struct OrganizationTxn<'a>(&'a Connection);
+pub(super) struct OrganizationTxn<'a>(pub(super) &'a Connection);
 
 fn epoch(value: i64) -> Result<Epoch, StoreError> {
     Epoch::new(u64::try_from(value).map_err(storage_error)?).map_err(storage_error)
 }
 
-fn int(value: u64) -> Result<i64, StoreError> {
+pub(super) fn int(value: u64) -> Result<i64, StoreError> {
     i64::try_from(value).map_err(storage_error)
+}
+
+pub(super) fn native_position(db: &Connection) -> Result<Option<org_proto::Position>, OfficeError> {
+    db.query_row(
+        "SELECT epoch, seq FROM org_replica WHERE singleton = 1",
+        [],
+        |row| {
+            Ok(org_proto::Position {
+                epoch: row.get::<_, i64>(0)? as u64,
+                seq: row.get::<_, i64>(1)? as u64,
+            })
+        },
+    )
+    .optional()
+    .map_err(OfficeError::storage)
 }
 
 impl OrgTxn for OrganizationTxn<'_> {
@@ -132,7 +148,7 @@ impl OrgTxn for OrganizationTxn<'_> {
     }
 
     fn supports_codec(&mut self, codec: &Codec) -> Result<bool, StoreError> {
-        Ok(codec.id() == CODEC && codec.version() == 1)
+        Ok(matches!(codec.id(), CODEC | snapshot::CODEC) && codec.version() == 1)
     }
 
     fn supports_protocol(&mut self, level: u32) -> Result<bool, StoreError> {
@@ -140,6 +156,9 @@ impl OrgTxn for OrganizationTxn<'_> {
     }
 
     fn apply_event(&mut self, event: &OrgEvent) -> Result<(), SyncError> {
+        if event.codec.id() != CODEC || event.codec.version() != 1 {
+            return Err(Refusal::IntegrityFailure.into());
+        }
         let record: NativeEvent =
             serde_json::from_slice(&event.payload).map_err(|_| Refusal::IntegrityFailure)?;
         record.apply(self.0, event.position)
@@ -165,11 +184,12 @@ impl OrgTxn for OrganizationTxn<'_> {
 
     fn install_snapshot(
         &mut self,
-        _snapshot: &ValidatedSnapshot,
-        _next: &OrgCheckpoint,
+        staged: &ValidatedSnapshot,
+        next: &OrgCheckpoint,
     ) -> Result<(), SyncError> {
-        // Only the event codec is enabled until receiver-key snapshot staging is wired.
-        Err(Refusal::UnsupportedVersion.into())
+        snapshot::install(self.0, staged, next)?;
+        self.set_authority(next)?;
+        Ok(())
     }
 
     fn set_authority(&mut self, next: &OrgCheckpoint) -> Result<(), StoreError> {
@@ -323,10 +343,15 @@ mod tests {
 
     fn replica() -> (TempDir, Office) {
         let dir = TempDir::new().unwrap();
+        let office = bound_office(&dir, "SAT");
+        (dir, office)
+    }
+
+    fn bound_office(dir: &TempDir, local_id: &'static str) -> Office {
         let office = Office::create(
-            dir.path().join("SAT"),
+            dir.path().join(local_id),
             &NewOffice {
-                office_id: "SAT".into(),
+                office_id: local_id.into(),
                 office_name: "Satellite".into(),
                 role: OfficeRole::Hq,
                 org_id: "ORG".into(),
@@ -336,11 +361,19 @@ mod tests {
         )
         .unwrap();
         // Simulate trusted enrollment at the already materialized genesis checkpoint.
-        office.org_store().run_sql_for_test(
-            "INSERT INTO org_replica VALUES (1, 'ORG', 'SAT', 'HQ', zeroblob(32),
+        office
+            .org_store()
+            .write(move |db| {
+                db.execute(
+                    "INSERT INTO org_replica VALUES (1, 'ORG', ?1, 'HQ', zeroblob(32),
                                             1, 1, zeroblob(32), 1, 0, NULL, 1)",
-        );
-        (dir, office)
+                    [local_id],
+                )
+                .map_err(OfficeError::storage)?;
+                Ok(((), None))
+            })
+            .unwrap();
+        office
     }
 
     fn event(seq: u64, previous: Digest, id: &str, name: &str) -> OrgEvent {
@@ -463,7 +496,8 @@ mod tests {
         let (dir, office) = replica();
         let original = office.org_snapshot().unwrap();
         office.org_store().run_sql_for_test(
-            "DROP TABLE org_replica_events; DROP TABLE org_replica; PRAGMA user_version = 1;",
+            "DROP TABLE org_snapshot_stage; DROP TABLE org_replica_events;
+             DROP TABLE org_replica; PRAGMA user_version = 1;",
         );
         drop(office);
 
@@ -475,6 +509,90 @@ mod tests {
         );
         assert!(matches!(
             organization::apply(&office, &Hq, event(2, Digest::ZERO, COMMAND, "first")).unwrap(),
+            OrgOutput::Ack {
+                duplicate: false,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn snapshot_staging_verifies_ciphertext_and_installs_only_the_org_projection() {
+        const MAX_BYTES: u64 = 1024 * 1024;
+        let (dir, satellite) = replica();
+        let hq = bound_office(&dir, "HQ");
+        let first = event(2, Digest::ZERO, COMMAND, "first");
+        let next = first.clone();
+        assert_eq!(
+            org_sync::organization::OrgStore::transact(
+                &hq,
+                Arc::new(move |txn| {
+                    organization::append_hq(txn, next.codec.clone(), Arc::clone(&next.payload))
+                })
+            )
+            .unwrap(),
+            OrgOutput::Published(first.clone()),
+        );
+        hq.org_store()
+            .run_sql_for_test("INSERT INTO meta VALUES ('sender_local', 'private')");
+        satellite
+            .local_store()
+            .run_sql_for_test("INSERT INTO meta VALUES ('outbox', 'pending')");
+        let transport_key = Key::from_bytes([9; 32]);
+        let exported = hq
+            .export_replication_snapshot(&transport_key, MAX_BYTES)
+            .unwrap();
+        let bytes = exported.ciphertext.as_slice();
+        assert!(!bytes.starts_with(b"SQLite format 3\0"));
+        assert!(matches!(
+            satellite.stage_replication_snapshot(
+                &Hq,
+                &exported.manifest,
+                &transport_key,
+                &bytes[..bytes.len() - 1],
+                MAX_BYTES,
+            ),
+            Err(SyncError::Refused(Refusal::IntegrityFailure))
+        ));
+        assert!(matches!(
+            satellite
+                .stage_replication_snapshot(&Hq, &exported.manifest, &key(), bytes, MAX_BYTES,),
+            Err(SyncError::Refused(Refusal::IntegrityFailure))
+        ));
+
+        let staged = satellite
+            .stage_replication_snapshot(&Hq, &exported.manifest, &transport_key, bytes, MAX_BYTES)
+            .unwrap();
+        drop(satellite);
+        let satellite = Office::open(dir.path().join("SAT"), key()).unwrap();
+        satellite.org_store().run_sql_for_test(
+            "CREATE TRIGGER fail_copy BEFORE INSERT ON teams
+             BEGIN SELECT RAISE(ABORT, 'injected failure'); END;",
+        );
+        assert!(organization::install_snapshot(&satellite, staged.clone()).is_err());
+        let old = satellite.org_snapshot().unwrap();
+        assert_eq!(old.position.seq, 1);
+        assert!(old.teams.is_empty());
+        satellite
+            .org_store()
+            .run_sql_for_test("DROP TRIGGER fail_copy;");
+        assert_eq!(
+            organization::install_snapshot(&satellite, staged).unwrap(),
+            OrgOutput::SnapshotInstalled
+        );
+        let installed = satellite.org_snapshot().unwrap();
+        assert_eq!(installed.position.seq, 2);
+        assert_eq!(installed.teams[0].name, "first");
+        assert_eq!(
+            satellite.local_store().meta("outbox").unwrap().as_deref(),
+            Some("pending")
+        );
+        assert_eq!(satellite.org_store().meta("sender_local").unwrap(), None);
+        assert!(!satellite.org_can_resume_from(old.position).unwrap());
+        assert!(satellite.org_can_resume_from(installed.position).unwrap());
+        let second = event(3, first.digest, SECOND, "second");
+        assert!(matches!(
+            organization::apply(&satellite, &Hq, second).unwrap(),
             OrgOutput::Ack {
                 duplicate: false,
                 ..

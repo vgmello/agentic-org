@@ -35,6 +35,9 @@ use crate::{time, ulid};
 
 mod replication;
 pub(crate) use replication::transact_replication;
+mod snapshot;
+pub(crate) use snapshot::{export_replication_snapshot, stage_replication_snapshot};
+pub use snapshot::{OrganizationSnapshotExport, OrganizationSnapshotManifest};
 
 /// The epoch of every entry until promotion exists (phase 4).
 const EPOCH: u64 = 1;
@@ -351,6 +354,9 @@ pub(crate) fn apply_changes(db: &Connection, changes: &[OrgChange]) -> Result<()
 
 /// The position of the last log entry, or `None` for an empty log.
 pub(crate) fn last_position(db: &Connection) -> Result<Option<Position>, OfficeError> {
+    if let Some(position) = replication::native_position(db)? {
+        return Ok(Some(position));
+    }
     db.query_row(
         "SELECT epoch, seq FROM events ORDER BY epoch DESC, seq DESC LIMIT 1",
         (),
@@ -579,6 +585,21 @@ fn committed(position: Position) -> CommandAccepted {
 /// that follow: `after` is a position this log has (same epoch, at least the genesis, no later
 /// than the head). Nothing is trimmed yet, so every earlier position of the epoch qualifies.
 pub(crate) fn can_resume_from(db: &Connection, after: Position) -> Result<bool, OfficeError> {
+    if let Some(head) = replication::native_position(db)? {
+        if after.epoch != head.epoch || after.seq > head.seq {
+            return Ok(false);
+        }
+        let first: Option<i64> = db
+            .query_row(
+                "SELECT min(seq) FROM events WHERE epoch = ?1",
+                [i64::try_from(after.epoch).map_err(OfficeError::storage)?],
+                |row| row.get(0),
+            )
+            .map_err(OfficeError::storage)?;
+        return Ok(
+            after == head || first.is_some_and(|seq| after.seq >= (seq as u64).saturating_sub(1))
+        );
+    }
     Ok(match last_position(db)? {
         Some(head) => after.epoch == head.epoch && (1..=head.seq).contains(&after.seq),
         None => false,

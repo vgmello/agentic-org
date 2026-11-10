@@ -1,0 +1,492 @@
+//! A snapshot is an encrypted, allowlisted organization projection. Install it inside
+//! the writer transaction that advances the cursor. Local office data lives elsewhere.
+
+use std::fs::{self, DirBuilder};
+use std::io::{self, Read, Write};
+use std::os::unix::fs::DirBuilderExt;
+use std::path::PathBuf;
+
+use org_proto::{Area, Member, Membership, Project, ProjectTeam, Team};
+use org_sync::error::{Refusal, StoreError, SyncError};
+use org_sync::organization::{OrgCheckpoint, OrgTxn, PeerIdentity, PeerRole, ValidatedSnapshot};
+use org_sync_proto::{Codec, Digest, OfficeId, OrgId, Position};
+use rusqlite::config::DbConfig;
+use rusqlite::types::{ToSqlOutput, ValueRef};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Transaction};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
+
+use super::replication::{int, OrganizationTxn, PROTOCOL};
+use super::{Answer, SCHEMA};
+use crate::error::OfficeError;
+use crate::key::Key;
+use crate::private_fs::private_file;
+use crate::store::{connect, sync::storage_error, Store};
+use crate::ulid;
+
+pub(super) const CODEC: &str = "org.native.snapshot";
+const ARTIFACT_SCHEMA: &str = "CREATE TABLE snapshot (body BLOB NOT NULL) STRICT";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OrganizationSnapshotManifest {
+    pub org_id: OrgId,
+    pub hq_office: OfficeId,
+    pub position: Position,
+    pub digest: Digest,
+    pub protocol_level: u32,
+    pub schema: i64,
+    pub ciphertext_bytes: u64,
+    pub ciphertext_digest: Digest,
+}
+
+/// The one-time key is supplied by the trusted transport. The artifact contains only ciphertext.
+pub struct OrganizationSnapshotExport {
+    pub manifest: OrganizationSnapshotManifest,
+    pub ciphertext: Vec<u8>,
+}
+
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new() -> io::Result<Self> {
+        let name = format!("agentic-org-snapshot-{}", ulid::generate()?);
+        let directory = std::env::temp_dir().join(name);
+        DirBuilder::new().mode(0o700).create(&directory)?;
+        Ok(Self(directory))
+    }
+
+    fn database(&self) -> PathBuf {
+        self.0.join("snapshot.db")
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct Header {
+    org_id: String,
+    hq_office: String,
+    epoch: u64,
+    sequence: u64,
+    digest: [u8; 32],
+    protocol: u32,
+    schema: i64,
+}
+
+impl From<&OrganizationSnapshotManifest> for Header {
+    fn from(manifest: &OrganizationSnapshotManifest) -> Self {
+        Self {
+            org_id: manifest.org_id.as_str().to_owned(),
+            hq_office: manifest.hq_office.as_str().to_owned(),
+            epoch: manifest.position.epoch.get(),
+            sequence: manifest.position.seq,
+            digest: *manifest.digest.as_bytes(),
+            protocol: manifest.protocol_level,
+            schema: manifest.schema,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum Cell {
+    Null,
+    Integer(i64),
+    Text(String),
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Projection {
+    header: Header,
+    rows: [Vec<Vec<Cell>>; TABLES.len()],
+}
+
+// Ordered to install the owning rows before their relationships. The list is an allowlist,
+// independent of both the sender's schema and unrelated local tables.
+const TABLES: [(&str, &str, &str); 7] = [
+    (
+        "members",
+        "id, handle_key, reports_to_member_id, body",
+        "?1, ?2, ?3, ?4",
+    ),
+    (
+        "teams",
+        "id, owner_team_id, name_key, lead_member_id, body",
+        "?1, ?2, ?3, ?4, ?5",
+    ),
+    ("projects", "id, body", "?1, ?2"),
+    ("areas", "id, project_id, body", "?1, ?2, ?3"),
+    (
+        "memberships",
+        "id, team_id, member_id, body",
+        "?1, ?2, ?3, ?4",
+    ),
+    (
+        "project_teams",
+        "id, project_id, team_id, body",
+        "?1, ?2, ?3, ?4",
+    ),
+    (
+        "commands",
+        "command_id, epoch, seq, expires_at, result",
+        "?1, ?2, ?3, ?4, ?5",
+    ),
+];
+
+pub(super) fn create_table(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(
+        "CREATE TABLE org_snapshot_stage (
+             singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+             stage_id TEXT NOT NULL, body BLOB NOT NULL
+         ) STRICT;",
+    )
+}
+
+fn bounded_rows(db: &Connection, header: Header, limit: u64) -> Result<Projection, OfficeError> {
+    let mut projection = Projection {
+        header,
+        rows: std::array::from_fn(|_| Vec::new()),
+    };
+    let mut remaining = limit;
+    for ((table, columns, _), output) in TABLES.into_iter().zip(&mut projection.rows) {
+        let mut query = db
+            .prepare(&format!("SELECT {columns} FROM {table}"))
+            .map_err(OfficeError::storage)?;
+        let width = query.column_count();
+        let mut rows = query.query([]).map_err(OfficeError::storage)?;
+        while let Some(row) = rows.next().map_err(OfficeError::storage)? {
+            let mut cells = Vec::with_capacity(width);
+            for column in 0..width {
+                let value = row.get_ref(column).map_err(OfficeError::storage)?;
+                let cost = match value {
+                    ValueRef::Text(text) => text.len() as u64,
+                    _ => 0,
+                };
+                remaining =
+                    remaining
+                        .checked_sub(cost.saturating_add(24))
+                        .ok_or(OfficeError::Invalid(
+                            "organization snapshot exceeds its byte limit",
+                        ))?;
+                cells.push(match value {
+                    ValueRef::Null => Cell::Null,
+                    ValueRef::Integer(value) => Cell::Integer(value),
+                    ValueRef::Text(value) => Cell::Text(
+                        std::str::from_utf8(value)
+                            .map_err(OfficeError::storage)?
+                            .to_owned(),
+                    ),
+                    _ => {
+                        return Err(OfficeError::Invalid(
+                            "organization snapshot has an invalid cell",
+                        ))
+                    }
+                });
+            }
+            output.push(cells);
+        }
+    }
+    Ok(projection)
+}
+
+fn as_office(error: StoreError) -> OfficeError {
+    OfficeError::storage(error)
+}
+
+pub(crate) fn export_replication_snapshot(
+    store: &Store,
+    transport_key: &Key,
+    max_bytes: u64,
+) -> Result<OrganizationSnapshotExport, OfficeError> {
+    let (mut manifest, projection) = store.read(|db| {
+        let tx = db.unchecked_transaction().map_err(OfficeError::storage)?;
+        let checkpoint = OrganizationTxn(&tx).checkpoint().map_err(as_office)?;
+        if checkpoint.local_office != checkpoint.hq_office || checkpoint.restore_pending {
+            return Err(OfficeError::Invalid(
+                "organization snapshot requires unfenced HQ authority",
+            ));
+        }
+        let manifest = OrganizationSnapshotManifest {
+            org_id: checkpoint.org_id,
+            hq_office: checkpoint.hq_office,
+            position: checkpoint.position,
+            digest: checkpoint.digest,
+            protocol_level: checkpoint.protocol_level,
+            schema: SCHEMA.version,
+            ciphertext_bytes: 0,
+            ciphertext_digest: Digest::ZERO,
+        };
+        let projection = bounded_rows(&tx, Header::from(&manifest), max_bytes)?;
+        Ok((manifest, projection))
+    })?;
+    let body = serde_json::to_vec(&projection).map_err(OfficeError::storage)?;
+    if body.len() as u64 > max_bytes {
+        return Err(OfficeError::Invalid(
+            "organization snapshot exceeds its byte limit",
+        ));
+    }
+
+    let scratch = Scratch::new().map_err(OfficeError::storage)?;
+    let path = scratch.database();
+    drop(private_file(&path).map_err(OfficeError::storage)?);
+    let mut db = connect(&path, transport_key, true, false)?;
+    let tx = db.transaction().map_err(OfficeError::storage)?;
+    tx.execute_batch(ARTIFACT_SCHEMA)
+        .map_err(OfficeError::storage)?;
+    tx.execute("INSERT INTO snapshot VALUES (?1)", [body])
+        .map_err(OfficeError::storage)?;
+    tx.commit().map_err(OfficeError::storage)?;
+    drop(db);
+
+    let length = fs::metadata(&path).map_err(OfficeError::storage)?.len();
+    if length > max_bytes {
+        return Err(OfficeError::Invalid(
+            "organization snapshot exceeds its byte limit",
+        ));
+    }
+    let ciphertext = fs::read(&path).map_err(OfficeError::storage)?;
+    manifest.ciphertext_bytes = length;
+    manifest.ciphertext_digest = Digest::from_bytes(Sha256::digest(&ciphertext).into());
+    Ok(OrganizationSnapshotExport {
+        manifest,
+        ciphertext,
+    })
+}
+
+pub(crate) fn stage_replication_snapshot(
+    store: &Store,
+    peer: PeerIdentity,
+    manifest: &OrganizationSnapshotManifest,
+    transport_key: &Key,
+    input: impl Read,
+    max_bytes: u64,
+) -> Result<ValidatedSnapshot, SyncError> {
+    if peer.role != PeerRole::Hq
+        || peer.org_id != manifest.org_id
+        || peer.office_id != manifest.hq_office
+    {
+        return Err(Refusal::NotAuthorized.into());
+    }
+    if manifest.schema != SCHEMA.version || manifest.protocol_level != PROTOCOL {
+        return Err(Refusal::UnsupportedVersion.into());
+    }
+    if manifest.ciphertext_bytes == 0 || manifest.ciphertext_bytes > max_bytes {
+        return Err(Refusal::QuotaExceeded.into());
+    }
+    let scratch = Scratch::new().map_err(storage_error)?;
+    let path = scratch.database();
+    let mut file = private_file(&path).map_err(storage_error)?;
+    let mut input = input.take(manifest.ciphertext_bytes.saturating_add(1));
+    let mut checksum = Sha256::new();
+    let mut bytes = 0;
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = input.read(&mut buffer).map_err(storage_error)?;
+        if read == 0 {
+            break;
+        }
+        bytes += read as u64;
+        if bytes > manifest.ciphertext_bytes {
+            return Err(Refusal::IntegrityFailure.into());
+        }
+        checksum.update(&buffer[..read]);
+        file.write_all(&buffer[..read]).map_err(storage_error)?;
+    }
+    drop(file);
+    if bytes != manifest.ciphertext_bytes
+        || Digest::from_bytes(checksum.finalize().into()) != manifest.ciphertext_digest
+    {
+        return Err(Refusal::IntegrityFailure.into());
+    }
+
+    let db = connect(&path, transport_key, false, false).map_err(|error| match error {
+        OfficeError::KeyMissing => SyncError::from(Refusal::IntegrityFailure),
+        error => storage_error(error).into(),
+    })?;
+    db.set_db_config(DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)
+        .map_err(storage_error)?;
+    db.execute_batch("PRAGMA trusted_schema = OFF; PRAGMA query_only = ON;")
+        .map_err(storage_error)?;
+    let schema_matches: bool = db
+        .query_row(
+            "SELECT count(*) = 1 AND min(type = 'table' AND name = 'snapshot' AND sql = ?1)
+         FROM sqlite_schema",
+            [ARTIFACT_SCHEMA],
+            |row| row.get(0),
+        )
+        .map_err(|_| Refusal::IntegrityFailure)?;
+    if !schema_matches {
+        return Err(Refusal::IntegrityFailure.into());
+    }
+    let body: Vec<u8> = db
+        .query_row(
+            "SELECT body FROM snapshot WHERE rowid = 1 AND length(body) <= ?1
+         AND (SELECT count(*) FROM snapshot) = 1",
+            [int(max_bytes.min(i64::MAX as u64))?],
+            |row| row.get(0),
+        )
+        .map_err(|_| Refusal::IntegrityFailure)?;
+    let projection = decode(&body)?;
+    if projection.header != Header::from(manifest) {
+        return Err(Refusal::IntegrityFailure.into());
+    }
+
+    let staged = ValidatedSnapshot {
+        org_id: manifest.org_id.clone(),
+        authority: manifest.position.epoch,
+        position: manifest.position,
+        digest: manifest.digest,
+        codec: Codec::new(CODEC, 1).map_err(storage_error)?,
+        staging_id: ulid::generate().map_err(storage_error)?,
+        protocol_level: manifest.protocol_level,
+    };
+    let id = staged.staging_id.clone();
+    let authority = staged.authority;
+    store.sync_write(move |db| {
+        let current = OrganizationTxn(db).checkpoint()?;
+        if current.org_id != peer.org_id || current.hq_office != peer.office_id
+            || current.highest_epoch != authority || current.local_office == current.hq_office
+        {
+            return Err(Refusal::NotAuthorized.into());
+        }
+        db.execute(
+            "INSERT INTO org_snapshot_stage VALUES (1, ?1, ?2)
+             ON CONFLICT(singleton) DO UPDATE SET stage_id = excluded.stage_id, body = excluded.body",
+            params![id, body],
+        ).map_err(storage_error)?;
+        Ok(())
+    })?;
+    Ok(staged)
+}
+
+fn decode(body: &[u8]) -> Result<Projection, Refusal> {
+    let value: Projection = serde_json::from_slice(body).map_err(|_| Refusal::IntegrityFailure)?;
+    for ((table, _, binds), rows) in TABLES.into_iter().zip(&value.rows) {
+        for row in rows {
+            if row.len() != binds.split(',').count() || !valid_row(table, row) {
+                return Err(Refusal::IntegrityFailure);
+            }
+        }
+    }
+    Ok(value)
+}
+
+fn valid_row(table: &str, row: &[Cell]) -> bool {
+    let Some(Cell::Text(id)) = row.first() else {
+        return false;
+    };
+    let Some(Cell::Text(body)) = row.last() else {
+        // Legacy operation rows predate the persisted result body.
+        return table == "commands" && matches!(row.last(), Some(Cell::Null));
+    };
+    match table {
+        "members" => serde_json::from_str::<Member>(body).is_ok_and(|member| {
+            member.id == *id
+                && matches_text(&row[1], super::handle_key(&member).as_deref())
+                && matches_text(&row[2], member.reports_to_member_id.as_deref())
+        }),
+        "teams" => serde_json::from_str::<Team>(body).is_ok_and(|team| {
+            team.id == *id
+                && matches_text(&row[1], team.owner_team_id.as_deref())
+                && matches_text(&row[2], Some(&crate::rules::name_key(&team.name)))
+                && matches_text(&row[3], team.lead_member_id.as_deref())
+        }),
+        "projects" => serde_json::from_str::<Project>(body).is_ok_and(|project| project.id == *id),
+        "areas" => serde_json::from_str::<Area>(body)
+            .is_ok_and(|area| area.id == *id && matches_text(&row[1], Some(&area.project_id))),
+        "memberships" => serde_json::from_str::<Membership>(body).is_ok_and(|membership| {
+            membership.id == *id
+                && matches_text(&row[1], Some(&membership.team_id))
+                && matches_text(&row[2], Some(&membership.member_id))
+        }),
+        "project_teams" => serde_json::from_str::<ProjectTeam>(body).is_ok_and(|link| {
+            link.id == *id
+                && matches_text(&row[1], Some(&link.project_id))
+                && matches_text(&row[2], Some(&link.team_id))
+        }),
+        "commands" => serde_json::from_str::<Answer>(body).is_ok(),
+        _ => false,
+    }
+}
+
+fn matches_text(cell: &Cell, expected: Option<&str>) -> bool {
+    match (cell, expected) {
+        (Cell::Null, None) => true,
+        (Cell::Text(actual), Some(expected)) => actual == expected,
+        _ => false,
+    }
+}
+
+pub(super) fn install(
+    db: &Connection,
+    staged: &ValidatedSnapshot,
+    next: &OrgCheckpoint,
+) -> Result<(), SyncError> {
+    if staged.codec.id() != CODEC || staged.codec.version() != 1 {
+        return Err(Refusal::UnsupportedVersion.into());
+    }
+    let body: Vec<u8> = db
+        .query_row(
+            "SELECT body FROM org_snapshot_stage WHERE stage_id = ?1",
+            [&staged.staging_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(storage_error)?
+        .ok_or(Refusal::InvalidInput)?;
+    let projection = decode(&body)?;
+    if projection.header
+        != (Header {
+            org_id: next.org_id.as_str().to_owned(),
+            hq_office: next.hq_office.as_str().to_owned(),
+            epoch: next.position.epoch.get(),
+            sequence: next.position.seq,
+            digest: *next.digest.as_bytes(),
+            protocol: next.protocol_level,
+            schema: SCHEMA.version,
+        })
+    {
+        return Err(Refusal::Divergence.into());
+    }
+
+    db.execute_batch("DELETE FROM org_replica_events; DELETE FROM events;")
+        .map_err(storage_error)?;
+    for (table, _, _) in TABLES.iter().rev() {
+        db.execute(&format!("DELETE FROM {table}"), [])
+            .map_err(storage_error)?;
+    }
+    for ((table, columns, binds), rows) in TABLES.into_iter().zip(projection.rows) {
+        let mut insert = db
+            .prepare(&format!("INSERT INTO {table} ({columns}) VALUES ({binds})"))
+            .map_err(storage_error)?;
+        for row in rows {
+            let values = row.iter().map(|value| {
+                ToSqlOutput::Borrowed(match value {
+                    Cell::Null => ValueRef::Null,
+                    Cell::Integer(value) => ValueRef::Integer(*value),
+                    Cell::Text(value) => ValueRef::Text(value.as_bytes()),
+                })
+            });
+            insert
+                .execute(params_from_iter(values))
+                .map_err(storage_error)?;
+        }
+    }
+    db.execute(
+        "UPDATE org_replica SET protocol_level = ?1",
+        [next.protocol_level],
+    )
+    .map_err(storage_error)?;
+    db.execute(
+        "DELETE FROM org_snapshot_stage WHERE stage_id = ?1",
+        [&staged.staging_id],
+    )
+    .map_err(storage_error)?;
+    Ok(())
+}
