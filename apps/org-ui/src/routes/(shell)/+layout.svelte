@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Sidebar from '$lib/components/Sidebar.svelte';
+	import MobileNavigation from '$lib/platform/shell/MobileNavigation.svelte';
 	import LiveBanner from '$lib/components/LiveBanner.svelte';
 	import { Toaster } from '$lib/components/ui/sonner';
 
@@ -13,6 +14,10 @@
 
 	let { data, children } = $props();
 	const organizationId = $derived(data.connection.organization.id);
+	let desktopNavigation = $state<HTMLDivElement | null>(null);
+	function focusDesktopNavigation() {
+		desktopNavigation?.querySelector<HTMLElement>('a[aria-current="page"]')?.focus();
+	}
 
 	// Loading the latest now would cancel a navigation in flight (the click would be lost), so wait for it to end: the page
 	// it goes to loads the latest itself, and the catch-up in live.ts asks again if that load is still behind. A navigation
@@ -97,13 +102,14 @@
 
 <!-- The app fills the window edge to edge. -->
 <div class="fixed inset-0 overflow-hidden bg-gray-800">
-	<div class="fixed inset-y-0 z-50 flex w-72 flex-col">
+	<div bind:this={desktopNavigation} class="fixed inset-y-0 z-50 hidden w-16 flex-col min-[640px]:flex min-[960px]:w-72">
 		<Sidebar connection={data.connection} />
 	</div>
-	<main aria-labelledby="shell-page-title" class="h-full overflow-y-auto pl-72">
+	<main aria-labelledby="shell-page-title" class="h-full overflow-y-auto min-[640px]:pl-16 min-[960px]:pl-72">
 		<!-- Persistent page heading. -->
-		<div class="sticky top-0 z-40 flex h-16 shrink-0 items-center border-b border-white/5 bg-gray-800 px-8">
-			<h1 id="shell-page-title" class="text-base/7 font-semibold text-white">{navFor(page.url.pathname)?.name}</h1>
+		<div data-shell-header class="sticky top-0 z-40 flex h-14 shrink-0 items-center gap-3 border-b border-white/5 bg-gray-800 px-4 min-[640px]:h-16 min-[640px]:px-8">
+			<MobileNavigation connection={data.connection} onWiden={focusDesktopNavigation} />
+			<h1 id="shell-page-title" tabindex="-1" class="min-w-0 text-base/7 font-semibold text-white focus:outline-none">{navFor(page.url.pathname)?.name}</h1>
 		</div>
 		{#if showPaused}<LiveBanner loadedAt={liveState.loadedAt[organizationId]} {retrying} onretry={retry} />{/if}
 		{@render children()}

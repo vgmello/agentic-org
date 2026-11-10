@@ -1,14 +1,23 @@
 <script lang="ts">
 	// Ported from the Tailwind Plus sidebar layout (licensed; allowed inside apps/org-ui only).
 	import { page } from '$app/state';
+	import { innerWidth } from 'svelte/reactivity/window';
+	import { Tooltip, mergeProps } from 'bits-ui';
 	import type { Connection } from '$lib/proto';
 	import Logo from './Logo.svelte';
 	import { icons } from './icons';
 	import { NAV, navFor } from '$lib/nav';
 
-	let { connection }: { connection: Connection } = $props();
+	let { connection, presentation = 'responsive', onNavigate }: {
+		connection: Connection;
+		presentation?: 'responsive' | 'drawer';
+		onNavigate?: (event: MouseEvent, href: string) => void;
+	} = $props();
 
 	const current = $derived(navFor(page.url.pathname));
+	const responsive = $derived(presentation === 'responsive');
+	const rail = $derived(responsive && (innerWidth.current ?? 960) >= 640 && (innerWidth.current ?? 960) < 960);
+	const switchLabel = $derived(`Switch organization (now ${connection.organization.name}, ${connection.office.name} office on ${connection.office.host})`);
 
 	const itemCurrent = 'group flex gap-x-3 rounded-md bg-white/5 p-2 text-sm/6 font-semibold text-white';
 	const itemDefault =
@@ -16,27 +25,46 @@
 	const focusRing = 'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-500';
 </script>
 
-<div class="flex grow flex-col gap-y-5 overflow-y-auto bg-black/10 px-6 ring-1 ring-white/5">
+<Tooltip.Provider delayDuration={150}>
+<div class="flex min-w-0 grow flex-col gap-y-5 overflow-y-auto bg-black/10 px-6 ring-1 ring-white/5 {responsive ? 'max-[960px]:px-2' : ''}">
 	<!-- Application identity. -->
-	<div class="relative flex h-24 shrink-0 items-center gap-x-3 pt-8">
+	<div class="relative flex h-24 shrink-0 items-center gap-x-3 pt-8 {responsive ? 'max-[960px]:hidden' : 'pr-12'}">
 		<Logo class="h-8 w-auto" />
 		<span class="truncate text-base/7 font-semibold text-white" title={connection.organization.name}>
 			{connection.organization.name}
 		</span>
 	</div>
+	{#if responsive}
+		<div class="hidden h-24 shrink-0 items-center pt-8 min-[640px]:max-[960px]:flex">
+			<Tooltip.Root disabled={!rail}>
+				<Tooltip.Trigger>
+					{#snippet child({ props })}
+						<a {...props} type={undefined} href="/welcome" aria-label={switchLabel} class="flex size-12 items-center justify-center rounded-md hover:bg-white/5 {focusRing}">
+							<Logo class="size-8" />
+						</a>
+					{/snippet}
+				</Tooltip.Trigger>
+				<Tooltip.Portal><Tooltip.Content role="tooltip" side="right" sideOffset={12} class="z-[100] max-w-xs rounded-md bg-gray-950 px-3 py-2 text-xs text-white shadow-lg wrap-break-word">{connection.organization.name} · Switch organization</Tooltip.Content></Tooltip.Portal>
+			</Tooltip.Root>
+		</div>
+	{/if}
 	<nav class="relative flex flex-1 flex-col" aria-label="Main">
 		<ul role="list" class="flex flex-1 flex-col gap-y-7">
 			<li>
-				<div class="text-xs/6 font-semibold text-gray-400">Navigation</div>
-				<ul role="list" class="-mx-2 mt-2 space-y-1">
+				<div class="text-xs/6 font-semibold text-gray-400 {responsive ? 'max-[960px]:sr-only' : ''}">Navigation</div>
+				<ul role="list" class="-mx-2 mt-2 space-y-1 {responsive ? 'max-[960px]:mx-0' : ''}">
 					{#each NAV as item (item.href)}
 						{@const active = current === item}
 						<li>
-							<a
-								href={item.href}
+							<Tooltip.Root disabled={!rail}>
+							<Tooltip.Trigger>
+							{#snippet child({ props })}
+							<a {...mergeProps(props, { onclick: (event: MouseEvent) => onNavigate?.(event, item.href) })}
+								type={undefined} href={item.href} aria-label={item.name}
 								aria-current={active ? 'page' : undefined}
-								class="{active ? itemCurrent : itemDefault} {focusRing}"
-							>
+								class="{active ? itemCurrent : itemDefault} {focusRing} {responsive ? 'max-[960px]:size-12 max-[960px]:items-center max-[960px]:justify-center max-[960px]:gap-x-0' : ''}">
+								<!-- Leave the icon unclipped so BUG-55 can attach a count badge here. -->
+								<span class="relative flex size-6 shrink-0 items-center justify-center">
 								<svg
 									viewBox="0 0 24 24"
 									fill="none"
@@ -47,17 +75,23 @@
 								>
 									<path d={icons[item.icon]} stroke-linecap="round" stroke-linejoin="round" />
 								</svg>
-								{item.name}
+								</span>
+								<span class={responsive ? 'max-[960px]:sr-only' : ''}>{item.name}</span>
 							</a>
+							{/snippet}
+							</Tooltip.Trigger>
+							<Tooltip.Portal><Tooltip.Content role="tooltip" side="right" sideOffset={12} class="z-[100] rounded-md bg-gray-950 px-3 py-2 text-xs text-white shadow-lg">{item.name}</Tooltip.Content></Tooltip.Portal>
+							</Tooltip.Root>
 						</li>
 					{/each}
 				</ul>
 			</li>
-			<li class="-mx-6 mt-auto">
+			<li class="-mx-6 mt-auto {responsive ? 'max-[960px]:hidden' : ''}">
 				<a
 					href="/welcome"
+					onclick={(event) => onNavigate?.(event, '/welcome')}
 					class="flex items-center gap-x-3 px-6 py-3 text-sm/6 hover:bg-white/5 {focusRing}"
-					aria-label="Switch organization (now {connection.organization.name}, {connection.office.name} office on {connection.office.host})"
+					aria-label={switchLabel}
 				>
 					<span class="min-w-0">
 						<span class="block truncate font-semibold text-white">{connection.office.host}</span>
@@ -68,3 +102,4 @@
 		</ul>
 	</nav>
 </div>
+</Tooltip.Provider>
