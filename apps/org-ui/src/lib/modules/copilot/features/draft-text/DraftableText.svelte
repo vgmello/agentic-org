@@ -216,7 +216,7 @@
 
 	{#if previous !== undefined && !open}
 		<p class="flex items-center gap-x-2 text-xs/5 text-gray-400" data-testid="draft-used">
-			Draft used.{#if clipped !== undefined} Shortened to fit the limit of {clipped} characters.{/if}
+			Draft used.{#if clipped !== undefined}{' '}Shortened to fit the limit of {clipped} characters.{/if}
 			<button type="button" class="inline-flex items-center gap-x-1 font-semibold text-indigo-300 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-indigo-400" onclick={undo} {disabled}>
 				<Undo class="size-3" aria-hidden="true" /> Undo
 			</button>
