@@ -2,6 +2,9 @@ import { defineConfig } from '@playwright/test';
 
 const port = Number(process.env.PW_PORT) || 4173;
 const productionPort = port + 1;
+// Run native WebKit pointer regressions with PW_WEBKIT=1 and --project=webkit.
+// The default suite continues to work with only Chromium installed.
+const webkit = process.env.PW_WEBKIT === '1';
 
 export default defineConfig({
 	testDir: 'e2e',
@@ -13,7 +16,13 @@ export default defineConfig({
 	use: { viewport: { width: 1440, height: 900 }, screenshot: 'on' },
 	projects: [
 		{ name: 'chromium', testIgnore: 'production-unavailable.spec.ts', use: { browserName: 'chromium', baseURL: `http://localhost:${port}` } },
-		{ name: 'production', testMatch: 'production-unavailable.spec.ts', use: { browserName: 'chromium', baseURL: `http://localhost:${productionPort}` } }
+		{ name: 'production', testMatch: 'production-unavailable.spec.ts', use: { browserName: 'chromium', baseURL: `http://localhost:${productionPort}` } },
+		...(webkit ? [{
+			name: 'webkit',
+			testMatch: 'offices.spec.ts',
+			grep: /BUG-27|BUG-24: pointer/,
+			use: { browserName: 'webkit' as const, baseURL: `http://localhost:${port}` }
+		}] : [])
 	],
 	webServer: [
 		// bun run test:e2e builds before either server starts.

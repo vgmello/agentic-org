@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { createProbe } from '$lib/offices/probe';
 	import { invalidate } from '$app/navigation';
 	import Plus from '@lucide/svelte/icons/plus';
@@ -9,7 +9,7 @@
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
 	import { officeApi } from '$lib/office/api';
-	import { agentsIn, applyStatusUpdate, displayStatusFor, isHq, orderOffices, rowLabel, secondaryText, statusInfo, unplacedAgents, whyForLabel, whyStopped, type LiveCheck } from '$lib/offices/model';
+	import { agentsIn, applyStatusUpdate, displayStatusFor, isHq, orderOffices, rowLabel, sampleRestartDeadlines, secondaryText, statusInfo, unplacedAgents, whyForLabel, whyStopped, type LiveCheck, type RestartDeadlineSample } from '$lib/offices/model';
 	import type { OfficeInfo } from '$lib/proto';
 	import type { Counts } from './+page';
 
@@ -100,8 +100,13 @@
 		if (next === 'up' && document.activeElement?.matches('[data-testid=retry-office]')) rowButton(here.id)?.focus();
 	});
 	const rowButton = (officeId: string) => document.querySelector<HTMLElement>(`[data-office="${officeId}"] button[aria-haspopup]`);
-	// The countdown in a stopped office's line moves no more often than every 10 s.
-	let now = $state(new Date());
+// A new deadline gets an immediate sample. Repeated reads of the same deadline don't advance the clock.
+let deadlineSamples = $state.raw<ReadonlyMap<string, RestartDeadlineSample>>(new Map());
+let countdownClock = $state(Date.now());
+// Capture the new deadline before rendering its visible and accessible text.
+$effect.pre(() => {
+	deadlineSamples = sampleRestartDeadlines(current, untrack(() => deadlineSamples), Date.now());
+});
 	onMount(() => {
 		// The host says when an office's status changes: show it now instead of at the next check.
 		let stopListening: (() => void) | undefined;
@@ -123,21 +128,26 @@
 			});
 		void probe.run('explicit');
 		const again = setInterval(() => void probe.run('background'), 30_000);
-		const tick = setInterval(() => (now = new Date()), 10_000);
+	const tick = setInterval(() => (countdownClock = Date.now()), 10_000);
 		return () => (clearInterval(again), clearInterval(tick), (leaving = true), stopListening?.());
 	});
-	// TODO (OFC-11): Check for updates (for unsupported_version) is not built. The statuses arrive from the host as they
-	// change; they are also re-listed on each check, in case an update was missed.
 	// Why a stopped office stopped: only for an office whose status is shown as reported by the host.
+const deadlineObservedAt = (office: OfficeInfo) => {
+	const sample = deadlineSamples.get(office.id);
+	return sample && sample.deadline === office.next_restart_at ? sample.observedAt : undefined;
+};
 	const labelWhyOf = (officeId: string) => {
 		const shown = statusOf(officeId);
 		const office = current.find((o) => o.id === officeId);
-		return office && (shown === 'offline' || shown === 'unavailable') ? whyForLabel(office, new Date()) : undefined;
+	return office && (shown === 'offline' || shown === 'unavailable')
+		? whyForLabel(office, new Date(deadlineObservedAt(office) ?? Date.now()))
+		: undefined;
 	};
 	const whyOf = (officeId: string) => {
 		const shown = statusOf(officeId);
 		const office = current.find((o) => o.id === officeId);
-		return office && (shown === 'offline' || shown === 'unavailable') ? whyStopped(office, now) : undefined;
+	if (!office || (shown !== 'offline' && shown !== 'unavailable')) return undefined;
+	return whyStopped(office, new Date(Math.max(countdownClock, deadlineObservedAt(office) ?? countdownClock)));
 	};
 	// Another organization's office is another thing to verify: don't carry the last answer over.
 	let lastOffice: string | undefined;
@@ -155,13 +165,23 @@
 	// The open sheet shows the latest data for its office, not the copy captured when it was clicked.
 	const detailsFor = $derived(current.find((o) => o.id === detailsId));
 	let detailsOpen = $state(false);
+	let detailsOpener: HTMLButtonElement | undefined;
 	$effect(() => {
 		if (detailsOpen && !detailsFor) detailsOpen = false; // the office went away: close its sheet
 	});
 
-	function open(id: string) {
+	function open(id: string, opener: HTMLButtonElement) {
+		detailsOpener = opener;
 		detailsId = id;
 		detailsOpen = true;
+	}
+
+	function restoreDetailsFocus(event: Event) {
+		const opener = detailsOpener;
+		detailsOpener = undefined;
+		if (!opener?.isConnected) return;
+		event.preventDefault();
+		opener.focus({ preventScroll: true });
 	}
 </script>
 
@@ -193,19 +213,19 @@
 	<ul class="divide-y divide-white/5 overflow-hidden rounded-xl bg-white/5 outline-1 -outline-offset-1 outline-white/10" aria-label="Offices">
 		{#each offices as office (office.id)}
 			{@const agents = snapshot ? agentsIn(snapshot, office.id).length : undefined}
-			<li data-testid="office-row" data-office={office.id} class="flex items-center gap-x-4 px-4 py-3">
+			<li data-testid="office-row" data-office={office.id} class="flex items-center gap-x-4 px-4 py-3 max-[640px]:flex-wrap max-[640px]:gap-y-2">
 				<span class="flex h-6 w-10 shrink-0 items-center justify-center rounded text-xs font-semibold {isHq(office) ? 'bg-indigo-500/20 text-indigo-200' : 'text-transparent'}" aria-hidden="true">
 					{isHq(office) ? 'HQ' : ''}
 				</span>
 				<button
 					type="button"
-					class="min-w-0 flex-1 text-left focus-visible:outline-2 focus-visible:outline-indigo-400"
+					class="min-w-0 flex-1 text-left focus-visible:outline-2 focus-visible:outline-indigo-400 max-[640px]:order-first max-[640px]:w-full max-[640px]:flex-none"
 					aria-label={rowLabel(office, agents, here.id === office.id, statusOf(office.id), labelWhyOf(office.id))}
 					aria-haspopup="dialog"
-					onclick={() => open(office.id)}
+					onclick={(event) => open(office.id, event.currentTarget)}
 				>
 					<span class="block truncate text-sm/6 font-semibold text-white" title={office.name}>{office.name}</span>
-					<span class="block truncate text-xs/5 text-gray-400" title={whyOf(office.id)}>{statusOf(office.id) === 'unreachable' ? "Can't reach this office" : (whyOf(office.id) ?? secondaryText(office) + (here.id === office.id ? " (you're here)" : ''))}</span>
+					<span class="block truncate text-xs/5 text-gray-400 max-[640px]:whitespace-normal max-[640px]:[overflow-wrap:anywhere]" title={whyOf(office.id)}>{statusOf(office.id) === 'unreachable' ? "Can't reach this office" : (whyOf(office.id) ?? secondaryText(office) + (here.id === office.id ? " (you're here)" : ''))}</span>
 				</button>
 				<!-- The button's label already says the status and the count: not read twice. -->
 				<span aria-hidden="true"><OfficeStatusBadge status={statusOf(office.id)} /></span>
@@ -256,7 +276,7 @@
 			<p id="place-reason" class="mt-2 text-xs/5 text-amber-100/80">Placing agents is available in a later release.</p>
 		</section>
 	{/if}
-	<p class="text-xs/5 text-gray-500">Shown from this Mac.</p>
+	<p class="text-xs/5 text-gray-400">Shown from this Mac.</p>
 </div>
 
-<OfficeDetailsSheet bind:open={detailsOpen} office={detailsFor} status={detailsFor ? statusOf(detailsFor.id) : 'status_unknown'} why={detailsFor ? whyOf(detailsFor.id) : undefined} {capabilities} onrestarted={refreshOffices} {snapshot} counting={!snapshot && !countError} {sample} here={detailsFor?.id === here.id} />
+<OfficeDetailsSheet bind:open={detailsOpen} office={detailsFor} status={detailsFor ? statusOf(detailsFor.id) : 'status_unknown'} why={detailsFor ? whyOf(detailsFor.id) : undefined} {capabilities} onrestarted={refreshOffices} onCloseAutoFocus={restoreDetailsFocus} {snapshot} counting={!snapshot && !countError} {sample} here={detailsFor?.id === here.id} />

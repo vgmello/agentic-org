@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { OfficeInfo, OfficeStatusReason } from '$lib/proto';
 import { sampleOrg } from '$lib/org/sample';
-import { agentsIn, applyStatusUpdate, copyDetails, displayStatus, displayStatusFor, isHere, orderOffices, roleInfo, rowLabel, secondaryText, statusIcon, statusInfo, unplacedAgents, restartAction, restartOutcome, whyForLabel, whyStopped } from './model';
+import { agentsIn, applyStatusUpdate, copyDetails, displayStatus, displayStatusFor, isHere, orderOffices, roleInfo, rowLabel, sampleRestartDeadlines, secondaryText, statusIcon, statusInfo, unplacedAgents, restartAction, restartOutcome, whyForLabel, whyStopped } from './model';
 
 const office = (id: string, name: string, over: Partial<OfficeInfo> = {}): OfficeInfo => ({
 	id,
@@ -142,7 +142,7 @@ describe('OFC-12 which office is verified', () => {
 
 describe('OFC-11..13 why an office stopped', () => {
 	const NOW = new Date('2026-11-08T12:00:00.000Z');
-	const stopped = (status_reason?: OfficeStatusReason, next_restart_at?: string, status: OfficeInfo['status'] = 'offline') => ({ status, status_reason, next_restart_at });
+	const stopped = (status_reason?: OfficeStatusReason, next_restart_at?: string, status: OfficeInfo['status'] = 'offline') => ({ host: 'hq-machine', status, status_reason, next_restart_at });
 
 	it('gives each reason its words, and "It isn’t running" when the host does not know why', () => {
 		expect(whyStopped(stopped('crashed'), NOW)).toBe('It stopped unexpectedly');
@@ -161,11 +161,22 @@ describe('OFC-11..13 why an office stopped', () => {
 		expect(whyStopped(stopped('crashed', 'soon'), NOW)).toBe('It stopped unexpectedly');
 	});
 
+	it('samples a second pending office without changing the first office’s countdown', () => {
+		const hq = { id: 'hq', ...stopped('crashed', '2026-11-08T12:00:45.000Z') };
+		const branch = { id: 'branch', ...stopped('crashed', '2026-11-08T12:00:57.000Z') };
+		const first = sampleRestartDeadlines([hq], new Map(), NOW.getTime());
+		const both = sampleRestartDeadlines([hq, branch], first, NOW.getTime() + 2_000);
+		expect(whyStopped(hq, new Date(both.get('hq')!.observedAt))).toContain('Restarting in 45 s');
+		expect(whyStopped(branch, new Date(both.get('branch')!.observedAt))).toContain('Restarting in 55 s');
+	});
+
 	it('has words for every reason, and a reason it does not know reads as unknown', () => {
 		const text = (r: string) => whyStopped(stopped(r as OfficeStatusReason, undefined, 'unavailable'), NOW);
 		expect(text('restarts_exhausted')).toBe("It kept stopping, so it won't restart on its own");
 		expect(text('storage_error')).toBe("It can't read or write its data on this Mac");
-		expect(text('unsupported_version')).toContain('Update or reinstall Agentic Org');
+		expect(text('unsupported_version')).toBe("The release components on hq-machine don't match. Run diagnostics and repair the selected instance there.");
+		expect(whyStopped({ ...stopped('unsupported_version'), host: 'This Mac' }, NOW))
+			.toBe("The release components on the office's machine don't match. Run diagnostics and repair the selected instance there.");
 		expect(text('invalid_request')).toBe("It couldn't start because of an internal error");
 		expect(text('in_use')).toContain('still in use');
 		for (const r of ['unknown', 'from_the_future', 'constructor', 'toString']) expect(text(r)).toBe("It stopped for a reason this version doesn't know");
@@ -197,7 +208,7 @@ describe('OFC-11..13 why an office stopped', () => {
 
 	it('only an office the host reports offline or unavailable has a reason line', () => {
 		for (const status of ['active', 'starting', 'pending', 'update_needed'] as const) expect(whyStopped(stopped('crashed', undefined, status), NOW)).toBeUndefined();
-		expect(whyStopped({ status: undefined, status_reason: 'crashed' }, NOW)).toBeUndefined();
+		expect(whyStopped({ ...stopped('crashed'), status: undefined }, NOW)).toBeUndefined();
 	});
 
 	it('copies the office, status, reason, time and app version, never a key', () => {
