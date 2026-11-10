@@ -145,12 +145,10 @@ impl Shared {
         });
     }
 
-    // Kernel shutdown can still be in progress after another thread sees a local
-    // write-closed state. Keep the complete close operation testable without timing.
+    // The callback lets the unit test hold shutdown in progress explicitly.
     fn close_with(&self, shutdown: impl FnOnce(&UnixStream)) {
-        // Only one thread owns transport shutdown and completion notifications. Another
-        // close may observe the socket locally write-closed while the first shutdown is
-        // still notifying its peer; it must not finish pending calls ahead of that owner.
+        // One owner completes shutdown before notifying waiting calls. The half-close
+        // test relies on that completion signal before its peer begins reading EOF.
         if self.closed.swap(true, Ordering::SeqCst) {
             return;
         }
@@ -959,9 +957,8 @@ mod tests {
             shutdown_started
                 .recv_timeout(Duration::from_secs(10))
                 .unwrap();
-            // This represents the writer seeing an already-closing local socket while
-            // the reader's shutdown has not yet delivered peer EOF. It must not finish
-            // the pending call on behalf of the thread still performing shutdown.
+            // Another close must not notify the waiting call while the owner's
+            // shutdown is still held in progress.
             shared.close_with(|_| {});
             let before_shutdown_completed = answer.try_recv();
             let before_peer_eof = peer.read(&mut [0u8; 1]);

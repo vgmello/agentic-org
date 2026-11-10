@@ -935,8 +935,10 @@ fn a_server_that_half_closes_while_a_request_is_being_written_wakes_the_caller_a
                 .recv_timeout(Duration::from_secs(10))
                 .unwrap();
             peer.stream.shutdown(std::net::Shutdown::Write).unwrap();
-            // Keep the writer backpressured until the caller has received Disconnected.
-            // A client that needs these reads to finish its write cannot pass this gate.
+            // Wait for Disconnected, so EOF is set before the peer starts reading.
+            // On macOS the old concurrent drain sometimes timed out in a blocked read
+            // with EOF already readable afterwards: an apparent missed wakeup. This
+            // ordering avoids waiting in read when EOF arrives.
             may_drain.recv_timeout(Duration::from_secs(10)).unwrap();
             let mut sink = [0u8; 64 * 1024];
             loop {
