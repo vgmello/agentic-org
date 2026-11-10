@@ -37,12 +37,13 @@ for (const width of [959, 720]) {
 		await expect(page.getByRole('link', { name: /^Switch organization/ }).locator('svg')).toBeVisible();
 		const office = nav.getByRole('link', { name: 'Offices', exact: true });
 		await office.hover();
-		await expect(page.getByRole('tooltip')).toHaveText('Offices');
+		await expect(page.getByRole('tooltip', { name: 'Offices', exact: true })).toHaveText('Offices');
 		await shot(page, `shell-rail-hover-${width}`);
 		await office.focus();
 		await page.keyboard.press('Tab');
 		await expect(nav.getByRole('link', { name: 'Settings', exact: true })).toBeFocused();
-		await expect(page.getByRole('tooltip')).toHaveText('Settings');
+		await expect(page.getByRole('tooltip', { name: 'Settings', exact: true })).toBeVisible();
+		await expect(page.getByRole('tooltip', { name: 'Offices', exact: true })).not.toBeVisible();
 		await shot(page, `shell-rail-focus-${width}`);
 	});
 }
@@ -65,7 +66,7 @@ for (const width of [639, 600, 320]) {
 		await menu.click();
 		const dialog = page.getByRole('dialog', { name: 'Main navigation', exact: true });
 		await expect(dialog).toBeVisible();
-		expect((await dialog.boundingBox())?.width).toBe(Math.min(288, width - 56));
+		await expect(dialog).toHaveCSS('width', `${Math.min(288, width - 56)}px`);
 		await expect(menu).toHaveAttribute('aria-expanded', 'true');
 		await expect(dialog).toHaveAttribute('id', (await menu.getAttribute('aria-controls'))!);
 		await expect(dialog.getByRole('link', { name: 'Offices', exact: true })).toBeFocused();
