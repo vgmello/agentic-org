@@ -2,7 +2,7 @@
 kind: spec
 title: "Dogfood run: fresh HQ, satellite and named instances"
 status: for-review
-revision: 4
+revision: 5
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-10"
@@ -15,7 +15,8 @@ builds_on: [server-installation-and-access-ux, our-org-in-the-app, offices-and-t
 
 **Revision 4 (2026-11-09):** replaces the old desktop/team-import walkthrough.
 The product has never been deployed. Start from fresh disposable instances, with
-no old HR/spool import or desktop migration. Run the real HTTP application and
+no old HR import or desktop migration. Fresh instances skip live Phase A cutover;
+its preservation contract is tested separately with disposable fixtures under §6. Run the real HTTP application and
 server; explicitly injected fakes support lower-level tests but do not satisfy
 this acceptance run. Commands in the linked design are proposed until implemented.
 
@@ -47,6 +48,8 @@ that any of these checks ran.
 | 1.3 | Repeat install/setup without a name | Same instance/office identity, root, endpoint and release pin; no duplicate process, enrollment or configuration reset | SRV-2, SRV-6 |
 | 1.4 | Stop the instance, repeat setup, then repeat while running | Start once when stopped; while running return status/URL without restarting it | SRV-6, SRV-15 |
 | 1.5 | Attempt unauthenticated and cross-origin mutation/stream access | Refuse without disclosing protected data; browser auth does not grant a local agent owner rights | SRV-7 |
+| 1.6 | Create a second HQ organization through the same listener as an instance admin; repeat as an organization owner without that right | One gateway listener routes both HQs; owner-only creation refused; host keys never reach gateway/CLI | SRV-24 |
+| 1.7 | Provision recovery material, interrupt protected delivery before acknowledgement, resume, and retain the encrypted package/code off HQ | Same CA/code on pending retry; no secret in status/logs; acknowledged delivery is not later redisplayed. Wrong-code/damaged-escrow fixture fails closed and correct code recovers the same CA identity | SRV-25 |
 
 ## 2. Named instances and setup failures
 
@@ -56,7 +59,9 @@ that any of these checks ran.
 | 2.2 | Repeat `lab` setup concurrently; try another name pointing to the same data root/alias | One persisted identity and service; duplicate storage writer refused before database access | SRV-4, SRV-6 |
 | 2.3 | Configure an occupied port | Actionable conflict; no silent endpoint change or corruption of another instance | SRV-4 |
 | 2.4 | Interrupt setup before/after office provisioning markers, then repeat | Resume recorded operation; no duplicate office, lost key or destructive discard of committed data | SRV-6 |
-| 2.5 | Run noninteractive setup with complete inputs, then missing input and unavailable secret provider | Same result as wizard when valid; predictable failures without prompts, secrets or dev-key fallback | SRV-5, SRV-14 |
+| 2.5 | Run noninteractive setup with complete inputs, then missing input and unavailable secret provider | Same result as wizard when valid; predictable failures without prompts, secrets or dev-key fallback | SRV-5, SRV-26 |
+| 2.6 | Use default/lab and a hostile dev server on the same host; copy/overwrite cookies and try read, mutation, stream, refresh/proof recovery and logout | No cross-origin/instance authority without the matching proof; proof never enters URL/log/redirect; valid paired sessions still work | SRV-23 |
+| 2.7 | Open eight HQ tabs under HTTP/1.1, issue commands, close the leader and change login session; repeat without worker/lock coordination | At most one shared stream per origin, command capacity retained, cursor-safe leadership change; fallback uses bounded short polling | SRV-27 |
 
 ## 3. Enroll and execute at a satellite
 
@@ -85,6 +90,8 @@ add a real checkout/commit/transfer run once that separate capability is support
 | 4.5 | Lose the HTTP response after a committed mutation; resend the same operation ID | Return the recorded result, one logical change; altered payload with same ID is refused | SRV-12 |
 | 4.6 | Slow the browser/event consumer and exceed queue limits | Bounded resource use; explicit reconnect/resync behavior; agents and durable writes continue | SRV-12, SRV-17 |
 | 4.7 | Reject/revoke an office identity; test an incompatible protocol range | No unauthorized reconnect or half-understood apply; actionable status and preserved local data | SRV-9, SRV-10 |
+| 4.8 | Disconnect satellite, Pause at HQ, restart/reconnect it; repeat with a later Resume before reconnect | HQ records paused status with stop pending; current version reconciles before work, office acknowledgement resolves stop, stale pause never overrides later Resume | SRV-28 |
+| 4.9 | Change a goal while the office is known offline; then lose a forwarded reply and retry/lookup with the same ID | First is unavailable with no saved/queued goal; uncertain forwarded outcome stays pending, resolves once, and preserves expected-version conflicts | EMP-3, SRV-28 |
 
 ## 5. Lifecycle and removal
 
@@ -92,12 +99,25 @@ add a real checkout/commit/transfer run once that separate capability is support
 | --- | --- | --- | --- |
 | 5.1 | Close all browser windows | Services and supervised agent work continue | SRV-8 |
 | 5.2 | Stop one instance during work, then restart | No new admission; acknowledged writes durable; owned children stopped/reaped; peer instance unaffected | SRV-15, SRV-17 |
-| 5.3 | Lose a required credential and try startup against existing data | Specific failure; no fresh key generated over existing databases; restore the test credential to recover | SRV-15 |
+| 5.3 | Lose a required credential and try startup against existing data | Specific fail-closed result; no fresh/replacement key, DB/identity change or dev-store fallback; restore the legitimate test credential and recover | SRV-15, SRV-26 |
 | 5.4 | Upgrade only `lab` to a matching test release and inject a failed readiness check | Default remains on its pin; complete helper/assets set; documented recoverable state, no unsafe binary-only schema rollback | SRV-16 |
 | 5.5 | Uninstall `lab` | Only its service removed; data retained; default and referenced release payloads remain usable | SRV-16 |
 | 5.6 | Explicitly delete the disposable `lab` data | Exact selected stopped instance removed; default data/credentials untouched | SRV-16 |
 
 ## 6. Source and feature acceptance
+
+Verify SRV-29/30 with forged home/clear_home inputs and direct pre-approval agent
+creation: no external path or unapproved member/home/binding is provisioned. Confirm
+the profile displays the launcher's actual managed path. Verify SRV-32 with mixed
+local protocol versions and setup build/staging: unsupported versions fail before
+dispatch and the staged agentic-org is the org-setup CLI, never the retired shell.
+
+Use disposable Phase A fixtures for SRV-31: unresolved asks/replies, expiry, read/
+defer/done state, interrupted import and repeated import. Preserve IDs and state,
+require the selected instance/office context, and prove managed agents reject
+spool/context fallback. Do not import, mutate or delete the team's actual live
+spool in this acceptance run. REC-1 remains separately gated recovery work; row
+1.7 verifies escrow material, not completed promotion/fencing.
 
 Verify SRV-22: retained browser code/package uses `apps/org-ui` / `org-ui`, and
 server code/Cargo package/worker executable uses `apps/org-server` / `org-server`.

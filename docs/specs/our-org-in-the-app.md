@@ -2,10 +2,10 @@
 kind: spec
 title: "Our own team in Agentic Org (dogfooding): bring in, see, hire, assign, move, deallocate (UX)"
 status: for-review
-revision: 18
+revision: 19
 owner: ac-product-designer-eden
 created: "2026-11-08"
-updated: "2026-11-09"
+updated: "2026-11-10"
 requested_by: owner
 reviewers: [ac-staff-engineer-ada, owner, app-frontend-dev, server-dev, ac-software-engineer-river, ac-software-engineer-remy, codex-dev]
 builds_on: [offices-and-teams-ux, work-items-ux]
@@ -47,7 +47,7 @@ Builds on `offices-and-teams-ux.md` rev 4, `work-items-ux.md` rev 5 and `desktop
 
 **Revision 6 (2026-11-08): aligned with ada's W7 model.** Item numbers in Activity follow `work-items-ux.md` rev 6 and carry the project key, since Activity spans projects (`ac-B-15`). No criteria changed.
 
-**Revision 5 (2026-11-08): follows org-proto on v1.** Offboarding or removing a member sends their reports to that member's own manager, or to the owner if they had none (not always to the owner). Pause stops a running session at once (agent-sessions). G2 uses `member.set_agent_status`. The survey notes what v1 has gained since.
+**Revision 5 (2026-11-08): follows org-proto on v1.** Offboarding or removing a member sends their reports to that member's own manager, or to the owner if they had none (not always to the owner). The historical local-desktop Pause stopped a running session at once; standalone §9 now distinguishes HQ status from pending office stop acknowledgement. G2 uses `member.set_agent_status`. The survey notes what v1 has gained since.
 
 **Revision 4 (2026-11-08): Remy is online.** The user started Remy, who owns messaging and `org-agent` (AGENTS.md on v1) since agy-senior-dev ran out of credits. §2 moves him to Agent tooling as its lead. Riley stays Offline.
 
@@ -71,7 +71,7 @@ Builds on `offices-and-teams-ux.md` rev 4, `work-items-ux.md` rev 5 and `desktop
 - **App:** create, open and list organizations work on a **mock** (`MockOffice`). Agents, Projects, Tasks, Activity and Settings are placeholders. The org chart is work in progress on sample data (app-frontend-dev's worktree).
 - **Office:** the server and host are stubs on `v1`. server-dev's store (local branch) has organizations only. Teams and members are a **contract only** (`org-proto`: `Member { id, kind, name, contact, owner, office_id, reports_to }`, `team.*`).
 - **Hiring has no design and no contract.** The teams design says agents "join through hiring (the HR flow, its own design)", and that design was never written. This spec writes the UX.
-- **Nothing imports an existing team.** The only planned import (ADR-0003 Phase B, `import-v1-old-spool`) brings the spool's messages, profiles, statuses and read/snooze state into HQ, not team members. Its spool is deleted a week after the move, so reading names from the spool (IMP-2, IMP-8) must happen in that window, or later from the profiles HQ imported.
+- **Nothing imports an existing team.** The only planned import (ADR-0003 Phase B, `import-v1-old-spool`) brings the spool's messages, profiles, statuses and read/snooze state into HQ, not team members. Live Phase A coordination state has the explicit cutover/retention contract in ADR-0003. Imported profiles/statuses remain historical provenance, never new members, managed homes or launch authority; retired IMP criteria do not authorize team import.
 - **An app `Member` can't describe our agents.** It has no role, title, focus, runtime, model, home folder or messaging id.
 - **Our roster is split across three sources** (below), and they disagree.
 
@@ -192,7 +192,15 @@ v1 §3.6 holds, with these changes for the office model:
 - **Review:** what will be created, as a dry run: the member (name, messaging name `ac-qa-engineer-cameron`), team, reports to, runtime and model, autonomy (Asks first, or the role's default for the owner to confirm, `processes-ux.md` §4a *(rev 16)*), office (its service machine/instance), home folder, the role file if it's new (a hire that needs a new role goes to the owner, even when an agent approves hires, `roles-ux.md` decision 4 *(rev 17)*), and "Cameron can be reached by everyone in <org>".
 - **Hiring:** in words (Creating Cameron's record… Setting up the home folder… Registering with messaging…). **Done:** "Cameron is hired and in App." **View session** (primary), Assign a task, View profile.
 - **Runtime not installed or signed out** (chosen in Suggestion): the Review warns "Codex isn't signed in on <office machine / instance>. Cameron is hired, but can't start until its administrator completes runtime setup there." **Hire anyway** works.
-- **Add agent record** provides direct authorized member creation with name, messaging name, runtime, role/title, team, reports-to and office. The office provisions any required home/configuration. It accepts no external home path and performs no old-team import or runtime takeover.
+- **Add agent record** (the standalone-v1 label for **Add an existing agent**) submits
+  the same HR lead proposal and approval workflow as Hire. It captures name,
+  messaging name, runtime, role/title, team, reports-to and office as proposal data.
+  Nothing is provisioned until an authorized manager with Can approve hires or the
+  owner approves under §7.1. Only then does the office materialize the member, managed
+  home/configuration and messaging binding. Direct HTTP/member-creation calls must
+  enforce that approved proposal; authorization alone is not a bypass. Initial
+  built-in HR/owner bootstrap during organization creation is the explicit exception.
+  No external home path, old-team import or runtime takeover is accepted.
 
 ### 7.1 Who approves a hire (rev 8, the user)
 
@@ -228,7 +236,7 @@ The owner can always approve or reject any proposal. Someone who requests a hire
 ## 9. Flow 6 · Deallocate: remove from team, pause, offboard
 
 - **Remove from team** (team ⋯ › member › Remove from App, or Edit teams): no confirmation when the agent has other teams. When it's the last one: "Remove Riley from App? Riley will be in Not in a team and won't work on any project. 2 open tasks stay assigned." · **Remove**.
-- **Pause** (quick view, profile ⋯): a dialog "Pause Remy? Remy won't be started or woken, and new tasks and messages wait until you resume. Remy stays in Agent tooling." If a session is running: "Remy's session is running and will stop now." (Pause stops at once, per ada's agent-sessions design.) The card then shows a **Paused** badge (gray `pause`), and the chart can hide paused agents (toolbar ☐ Show paused). **Resume** is one click.
+- **Pause** (quick view, profile ⋯): a dialog "Pause Remy? HQ will record Pause. Remy stays in Agent tooling; new work waits once the office applies the change." If a session is running: "The office will stop the session when it receives the change." After HQ commits, show **Paused · stop pending at office** until the office confirms; an offline office shows last-observed runtime/freshness, never "stopped now". Then show **Paused** with the confirmed stop outcome. The chart can hide paused agents (toolbar ☐ Show paused), while pending control status remains inspectable. **Resume** is one versioned, deduplicated action; a later Resume supersedes an undelivered Pause.
 - **Offboard…** (v1 §3.5 dialog, office model): it lists only what applies: "Remy leaves Agent tooling. 1 open task comes back unassigned for you to reassign. Nobody reports to Remy (or: "Riley, who reports to Remy, will report to ada, Remy's manager"). Remy's records stay in the HR workspace. The name stays reserved." · **Offboard Remy** (red). After it, Remy appears in Settings › Team › **Former members** with the date, read-only.
 - **States:** the agent is working right now (the dialog says so and offers to stop the session first) · offboarding fails partway (names what was done, **Try again**) · it was already changed elsewhere (the dialog refreshes, and nothing is applied twice).
 
@@ -258,7 +266,7 @@ The owner can always approve or reject any proposal. Someone who requests a hire
 - PROF-1 · Every agent's profile and quick view show its runtime, messaging name, office and status. A missing runtime reads "Runtime not set · Set runtime".
 - PROF-2 · *(rev 18)* View session opens authorized browser status/log inspection through HQ. Interactive takeover requires an explicit supported action on the owning office machine; v1 requires no native embedded terminal or runtime deep link.
 - PROF-3 · Chart cards show status as a dot and a word, with no runtime.
-- PROF-4 · *(rev 18)* Title, focus, model and runtime can be edited in Settings, with Changes take effect at the next session. Home/configuration paths are server-managed and displayed read-only; no path picker or relocation is offered.
+- PROF-4 · *(rev 18)* Title, focus, model and runtime can be edited in Settings, with Changes take effect at the next session. Home/configuration paths are server-managed and displayed read-only from the same office-resolved path used by the launcher; home/clear_home inputs are rejected, and no path picker or relocation is offered.
 
 **Activity (LIVE)**
 - LIVE-1 · *(rev 16)* Activity lists messages, status changes, tasks and bugs, team changes, git merges, sessions and decisions, newest first, filterable by team, member, project and kind; Status and Decisions rows are hidden by default.
@@ -274,7 +282,7 @@ The owner can always approve or reject any proposal. Someone who requests a hire
 - STAFF-1 · Hire's review shows team, reports to, runtime, model, office, home folder and messaging name before anything is created.
 - STAFF-2 · A hired agent appears in its team in the chart, highlighted, and in Activity ("Cameron was hired into App").
 - STAFF-3 · Choosing a runtime that isn't installed or signed in warns in Review, and Hire anyway still hires.
-- STAFF-4 · *(rev 8)* Add an existing agent creates an agent from name, messaging name, runtime, role and title *(rev 14: both, as the agent record needs)*, team and reports to. It goes through the HR lead's proposal and needs approval like any hire (§7.1, HRL-3).
+- STAFF-4 · *(standalone amendment)* Add agent record (formerly Add an existing agent) submits name, messaging name, runtime, role/title, team, reports-to and office through the HR lead proposal. Only approval under §7.1/HRL-3 permits member/home/messaging provisioning; direct API calls cannot bypass it.
 
 **Assign and move (MOVE)**
 - MOVE-1 · Move to team is one action: the agent never appears in Not in a team in between, and the toast offers Undo.
@@ -296,14 +304,14 @@ The owner can always approve or reject any proposal. Someone who requests a hire
 **HR lead (HRL)** *(new, rev 7)*
 - HRL-1 · Every organization has one built-in HR lead from its creation, with the reserved handle `hr`, and it can't be offboarded, deleted, renamed, put in a team, given reports or chosen as anyone's manager.
 - HRL-2 · *(rev 10)* The HR lead appears only as the chip beside the owner bar, in the Agents roster's Built-in group, and in Chat, where it's listed in DMs and in @ completion as "HR lead" (it can be messaged). It never appears on team cards, in Teams, People or Reporting lines, or in member, lead and manager pickers.
-- HRL-3 · *(rev 8)* Hire, Add an existing agent and Staff a team wake the HR lead (on call by default), and nothing is provisioned before the proposal is approved by the owner or by a manager with Can approve hires (§7.1).
+- HRL-3 · Hire, Add agent record (formerly Add an existing agent) and Staff a team wake the HR lead (on call by default), and nothing is provisioned before the proposal is approved by the owner or a manager with Can approve hires (§7.1). The creation endpoint checks the approval record, including for direct API callers.
 - HRL-4 · *(rev 8)* An agent's request to the HR lead becomes a hire proposal routed to its approver (§7.1), never an automatic hire.
 - HRL-5 · The owner can change the HR lead's runtime, model and run mode only, and its runs and cost show under "HR lead" in Insights.
 
 **Deallocate (DEAL)**
 - DEAL-1 · The UI never says "deallocate". It offers Remove from team, Pause, Offboard and Unassign, each with its own consequences.
 - DEAL-2 · Removing an agent from its last team confirms and says it will be in Not in a team.
-- DEAL-3 · A paused agent shows Paused on its card, isn't started or woken, its new messages and tasks wait, and Resume restores it in one click.
+- DEAL-3 · HQ acceptance shows Paused with stop pending at office until the owning office confirms, including while disconnected. The office applies current Pause before new work; messages/tasks wait once applied, and a later one-click Resume supersedes stale stop delivery. Never display a confirmed stopped session from HQ acceptance alone.
 - DEAL-4 · Offboard lists only the consequences that apply, brings open tasks back unassigned for the owner to reassign, makes anyone reporting to the agent report to the agent's own manager (or to the owner if it had none), and moves the agent to Former members, read-only (`member.offboard`, A37).
 - DEAL-5 · Show paused in the chart toolbar hides or shows paused agents, and is remembered.
 

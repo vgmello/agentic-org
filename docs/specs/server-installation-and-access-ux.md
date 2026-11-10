@@ -2,7 +2,7 @@
 kind: spec
 title: "Standalone server: installation, instances and browser access (UX)"
 status: for-review
-revision: 2
+revision: 3
 owner: ac-product-designer-eden
 created: "2026-11-09"
 updated: "2026-11-10"
@@ -77,7 +77,8 @@ For a new instance the wizard establishes, in order:
 2. **Create an organization (HQ)** or **Join an organization (satellite)** for its
    first office. An instance may later host more than one office. Each office's
    role is persisted independently.
-3. HQ owner access, listening addresses and browser TLS configuration; or the
+3. HQ instance-admin/owner access, gateway listening/TLS configuration, and protected
+   CA escrow/recovery-code provisioning with off-HQ retention acknowledgement; or the
    satellite invitation, destination identity and enrollment confirmation.
 4. Runtime selection, dependency checks and authentication readiness.
 5. Service registration, start and a summary with separate readiness states.
@@ -137,7 +138,7 @@ an offline office's control action as completed. Durable operations distinguish
 unknown outcomes remain visible. A retry of the same operation cannot duplicate it.
 
 On browser reconnect, reload a consistent snapshot or resume the event cursor.
-During the gap show **Updates paused**. A stale cursor triggers an explicit refresh.
+During the gap use LIVE-8 exactly: `Live updates paused. Showing what was loaded at <HH:MM>.`, or `Live updates paused.` if nothing has loaded, with Retry / Retrying…. A stale cursor triggers an explicit refresh.
 Only a durable server response warrants **Saved**. Unsaved browser text may remain
 in the open tab, with an honest unsaved label; v1 provides no background browser
 outbox or guarantee that closing the tab preserves drafts.
@@ -186,7 +187,7 @@ rules, which are distinct from uninstalling software on a machine.
 
 - SRV-1 · A supported macOS or Linux host installs and runs HQ without Tauri or frontend build tools. Its browser loads the bundled application through the server.
 - SRV-2 · A first setup without a name creates `default`; a repeated setup reuses its identity, data and port and starts at most one daemon.
-- SRV-3 · A named setup creates or selects that name. Two instances have disjoint data, credentials, sockets, services and listening endpoints.
+- SRV-3 · A named setup creates or selects that name. Two instances have disjoint data, credential authority, sockets, services and listening endpoints. Browser cookies may be delivered across same-host ports; instance/origin-bound session proofs isolate authority as required by SRV-23.
 - SRV-4 · Concurrent setup/start operations and aliased paths cannot open the same instance storage twice; conflicting ports produce an actionable error without changing saved addresses.
 - SRV-5 · Interactive and noninteractive setup reach the same configuration. Missing inputs fail predictably; pending approval is not reported as enrollment success; secrets do not appear in logs or command arguments.
 - SRV-6 · Repeating setup cannot silently upgrade, re-enroll, rotate identity, reset configuration or restart a healthy daemon. Interrupted setup resumes without duplicate offices.
@@ -208,7 +209,24 @@ rules, which are distinct from uninstalling software on a machine.
 
 - SRV-22 · The retained browser application's source/package is `apps/org-ui` / `org-ui`; the server application's source/Cargo package/worker executable is `apps/org-server` / `org-server`. Workspace, imports, tests, build, packaging and ownership references agree; the rename preserves the per-office worker and host credential boundaries.
 
+- SRV-23 · Default/lab and a hostile same-host port cannot authenticate, read, mutate, stream, refresh, recover a proof or logout another origin using a copied/overwritten cookie alone. Every protected path requires the valid instance/origin-bound cookie+proof pair; proofs never enter URLs/logs/redirects.
+- SRV-24 · Two HQ organizations share one instance gateway listener. The gateway has no office DB key/key entitlement; the host retains provisioning/private launch. Instance-admin creation succeeds; organization-owner-only, employee and office-certificate callers cannot create organizations.
+- SRV-25 · HQ creation idempotently provisions versioned encrypted CA escrow, protected one-time recovery-code delivery and off-HQ retention acknowledgement. A fixture recovers the same CA identity with the code and refuses wrong-code/damaged escrow; no code/usable CA key is replicated or logged. REC-1 remains an explicit production-recovery release decision.
+- SRV-26 · Release credential tests on both platforms refuse missing/wrong keys, unavailable/locked providers and development plaintext-store fallback. Existing databases/identity are unchanged, no replacement key is created, and restoring the legitimate credential allows recovery; gateway/CLI helpers cannot obtain raw office keys.
+- SRV-27 · Eight HQ tabs share at most one authenticated streaming fetch per browser origin, including across login/session changes, and commands still complete under HTTP/1.1. Leader loss reconnects by cursor; unsupported coordination uses bounded short polling and no per-tab long-lived stream.
+- SRV-28 · HQ durably accepts Pause for a disconnected satellite as paused status with stop pending. Reconnect/restart reconciles the latest version before new work; a later Resume is not overwritten by stale stop delivery. Known-offline new goals are rejected without a write/queue; uncertain forwarded replies follow EMP-3.
+- SRV-29 · All create/update home overrides, including home/clear_home, absolute paths and traversal, are rejected before filesystem access. Launch cwd derives from managed instance/office/member IDs and matches the read-only profile path under PROF-4.
+- SRV-30 · Add agent record follows STAFF-4/HRL-3: neither UI nor direct HTTP calls provision a member, home or messaging binding before approval. The built-in organization bootstrap exception is explicit.
+- SRV-31 · A fixture-based live Phase A cutover preserves unresolved asks/replies, deadlines and read/triage state across interruption/retry. Person-started CLI context selects explicit immutable instance/office identities; managed binding cannot fall back to spool or another office. Fresh organizations need no spool import.
+- SRV-32 · The first standalone local API negotiates version 2 and rejects unsupported peers before dispatch; version-1 statements remain historical/additive. HTTP/launch/sync version spaces are independent. New setup Cargo package org-setup is distinct, and the retired Tauri member cannot overwrite the staged agentic-org CLI artifact.
+
+
 ## 7. Decisions still requiring implementation evidence
+
+**REC-1 remains open:** a reviewed manual HQ-loss recovery/re-certification/fencing
+procedure and disaster-recovery evidence are required before production recovery
+claims. V1 still provisions CA escrow and its owner recovery code under SRV-25.
+See [review decisions](../design/standalone-v1-review-decisions.md).
 
 The server/installer must document the supported OS/architecture matrix, minimum
 versions and Linux service prerequisites. Production key custody on headless Linux

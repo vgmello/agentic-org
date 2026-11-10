@@ -217,7 +217,7 @@ Process files are docs written with W7's write path (office-made `docs/…` bran
 **Residual risk.** The handbook deny binds office-run agents only. Hand-run agents (no `run_mode`, no session token) and other same-user programs can still read `handbook.git` and forge hand-run agent identities (ADR-0003, M-A), but can't use lead powers over the rules, which need a trusted binding (decision 15), short of stealing a live token from another process's environment (`agent-sessions.md`, Security). The tampering check limits handbook writes; real isolation is v2.
 
 ## 6. The contract (additive)
-A new module, `crates/org-proto/src/process.rs`; `API_VERSION` stays 1. Any bound member reads organization, team and project processes. Private ones only their agent and the owner (A52, A69): for anyone else, another member's `process.effective`, `why` and `show` leave out its private layer and `last_read`, and `process.show { level: agent }` or `process.view { agent }` is `not_authorized`.
+A new module, `crates/org-proto/src/process.rs`. The historical sketch was additive under API_VERSION 1; the first standalone release uses local API_VERSION 2 under ADR-0001, with additive evolution within that version. Any bound member reads organization, team and project processes. Private ones only their agent and the owner (A52, A69): for anyone else, another member's `process.effective`, `why` and `show` leave out its private layer and `last_read`, and `process.show { level: agent }` or `process.view { agent }` is `not_authorized`.
 
 `For`: `current` (default) · `none` (O ⊕ G) · `project { project_id }` · `item { item }`.
 
@@ -248,7 +248,7 @@ A new module, `crates/org-proto/src/process.rs`; `API_VERSION` stays 1. Any boun
 **Organization data.** `OrgSnapshot.handbook: Option<ProjectRepo>` (`#[serde(default, skip_serializing_if = "Option::is_none")]`, no `path`), set by `OrgChange::HandbookSet { handbook }`. It changes `org-proto`'s tests, the desktop mock and `proto.ts` (not `#[non_exhaustive]`).
 
 ## 7. Where the code lives
-- **`org-process`** (new; owner TBD by ada): front matter, path → level and scope, `resolve`, the fingerprint, `render`, the checklist merge, `one_branch` (start check, guarded moves, own work from given shas), the write checks. Pure: no SQL, git, network or clock; no ports. Depends on `org-proto`, `org-docs` and `serde`: `Ce = 3`, `I ≈ 0.5`.
+- **`org-process`** (new; owner TBD by ada): front matter, path → level and scope, `resolve`, the fingerprint, `render`, the checklist merge, `one_branch` (start check, guarded moves, own work from given shas), the write checks. Pure: no SQL, git, network or clock; no ports. Depends on `org-proto`, `org-docs` and `serde`: `Ce = 2` for the proposed internal package graph, or 3 including `serde`; calculate I only after identifying consumers at the same level.
 - **`org-office`** (server-dev): the index, caches, project-wide items, last reads, records, exceptions, the calls and the checks inside the work write; one new stable-ward edge, to `org-process`.
 - **`org-office-server`** (server-dev): repo reads through `org-git`; the handbook at organization create.
 - **`org-git`** (River): W7's `DocRepo` API, the handbook's repository and merge, branch creation at a sha, and the §4.5 cleanup.

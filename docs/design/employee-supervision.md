@@ -91,6 +91,23 @@ and employee goals visibly. The supervisor repeats the goal, never resolves a
 semantic conflict or silently rewrites the assignment. Acceptance by the transport
 does not prove the agent read or understood it.
 
+### Goal command admission and offline behavior
+
+Choose **reject before admission** for a new goal change when its owning office is
+known to be unavailable: return `unavailable`, preserve the previous goal/version,
+and enqueue nothing. The browser keeps its unsaved draft and offers an explicit
+retry after reconnect. Once forwarded, a lost acknowledgement is an unknown outcome,
+not confirmed rejection: retain the operation ID/payload digest and Pending confirmation
+until office lookup/retry resolves it. The office durably stores the goal, actor,
+expected-version result and deduplication record atomically before acknowledging.
+An expired lookup window is explicit and never silently resubmits a fresh command.
+
+These are office-owned goal changes, distinct from HQ-authoritative Pause. HQ can
+commit paused organization status while runtime stop acknowledgement is pending;
+reconciliation applies current member state before new work. EMP-3 covers offline
+rejection, ambiguous replies, same-ID retry and conflict. No unbounded goal queue
+or new goal authority at a relaying satellite is implied.
+
 ## 2. Native harness definitions
 
 Keep one canonical employee identity/profile and process manifest; render native

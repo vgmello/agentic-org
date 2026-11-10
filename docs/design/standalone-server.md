@@ -19,7 +19,9 @@ source-to-target reorganization plan under the [architecture rules](../architect
 
 ```mermaid
 flowchart TD
-    Browser[Browser: static SvelteKit application] -->|HTTPS API and events| HQ[HQ API and office]
+    Browser[Browser: static SvelteKit application] -->|HTTPS API and events| Gateway[org-gateway: instance browser HTTP]
+    Gateway -->|Authorized local operations| HQ[org-server: HQ office]
+    Gateway -->|Restricted create/list operations| Instance
     HQ --> HQWork[HQ storage and local agent supervision]
     Sat[Satellite office] -->|Outbound authenticated duplex connection| HQ
     Sat --> SatWork[Satellite storage and local agent supervision]
@@ -27,6 +29,7 @@ flowchart TD
     CLI -->|Local authenticated protocol| Sat
     OS[launchd or systemd] --> Instance[Instance host supervisor]
     Instance --> HQ
+    Instance -->|Supervises| Gateway
     Setup[Setup and local lifecycle CLI] --> OS
 ```
 
@@ -95,6 +98,42 @@ to a private staging directory; reject path traversal and symlink redirection;
 publish a complete release atomically. A release pin selects host, worker, assets
 and `org-agent` together. The short bootstrap trusts a configured release signing
 key; a checksum downloaded from an unauthenticated source is not sufficient.
+
+### Browser listener and privilege boundary
+
+**Chosen topology:** one new `org-gateway` helper (`apps/org-gateway/`, planned)
+per instance terminates browser HTTP/TLS, serves `org-ui` assets and manages browser
+sessions/events for all authorized HQ organizations on that listener. It runs as
+a supervised child of `org-office-host`, separately from each `org-server` worker.
+An instance with no HQ has no public browser listener. Office enrollment/mTLS still
+terminates at its reviewed federation component, not this browser proxy.
+
+The gateway receives browser-session/TLS material and narrowly scoped host/office
+clients, never office database keys or the host's key-access entitlement. It does
+not open office databases. The host retains catalog locking, credential custody,
+worker provisioning and private launch. Typed local operations preserve actor,
+instance/organization scope, operation ID and expected versions; they are not an
+unrestricted JSON-to-host tunnel. Private peer admission and platform filesystem/
+process controls must enforce this separation within the stated same-UID limits.
+
+**Create organization** requires an authenticated **instance administrator**.
+Owning one organization alone grants no right to create another. Local protected
+setup establishes the first instance administrator and creates the first HQ;
+later browser creation enters through the gateway's restricted host operation.
+The host validates the admitted gateway capability and administrator grant, bound
+to the protected instance administrator identity and requested action (never a
+browser-supplied role flag), before provisioning, creates the key itself and returns an operation result, never a key.
+The same human may hold both roles, but office certificates and employee tokens
+grant neither. Tests cover two HQs on one listener and rejected owner-only creates.
+
+### Setup executable package identity
+
+Use Cargo package `org-setup` (`apps/org-setup/`, planned) for the setup/lifecycle
+binary provisionally named `agentic-org`. The inspected Tauri shell already uses
+Cargo package `agentic-org`. Keep the new package ID distinct, and remove the old
+Tauri workspace member before building/staging the new binary of the same name.
+Do not build both into the same output path or package a stale Tauri executable.
+This is a buildable source-change ordering requirement, not a compatibility layer.
 
 ## 3. Instance selection and storage
 
@@ -204,8 +243,20 @@ authorization checks; no unrestricted JSON-to-local-RPC tunnel. Remove Tauri
 invoke/listen paths and production mock selection when wiring each HTTP caller.
 Tests can inject explicit fakes. Mock reducers are not authoritative server rules.
 
-Use HTTP requests for reads/commands and an authenticated SSE stream for ordinary
-server-to-browser events. WebSocket support is justified only for a concrete duplex
+Use HTTP requests for reads/commands and a shared authenticated SSE connection for
+ordinary server-to-browser events. The browser transport coordinator owns at most
+one streaming fetch per browser origin across login/session changes, bound to the
+active instance/principal and multiplexing authorized
+organization feeds with separate cursors. Tabs subscribe through a SharedWorker;
+a Web Locks/BroadcastChannel leader is an acceptable tested fallback. Followers
+must not open their own streams. If shared coordination is unavailable, use bounded
+short polling with no long-lived connections. Do not assume HTTP/2 on loopback:
+HTTP/1.1's small per-origin connection pool must retain capacity for commands.
+Reauthentication/logout terminates the old stream, and leader loss uses cursor-based
+reconnect. Prove that eight tabs can issue commands and replace a closed leader.
+
+Use streaming `fetch` with credentials and the session-proof header described below;
+native EventSource cannot carry that header. Proofs never enter stream URLs. WebSocket support is justified only for a concrete duplex
 feature. Browser terminal takeover is not a general-purpose remote shell: v1 can
 keep takeover as an explicitly authorized local CLI operation on the office host,
 with browser status/log inspection and existing exclusive-session rules.
@@ -238,11 +289,33 @@ eventual outcome. Do not wrap each request in an unbounded `spawn_blocking` call
 Owner authentication replaces signed-desktop-client authorization. Bootstrap is
 local and protected: initialize owner credentials through setup, or use a short-lived,
 single-use exchange bound to the intended instance. Do not expose an unclaimed
-public admin interface or place a reusable owner token in a browser URL. Browser
-sessions use HttpOnly cookies, appropriate SameSite/Secure handling, expiry,
-revocation and CSRF/origin checks. Validate allowed Host headers to prevent DNS
-rebinding. No wildcard credentialed CORS. Local loopback access is authenticated
-too. Any development-origin exception is explicit and absent from releases.
+public admin interface or place a reusable owner token in a browser URL.
+
+**A cookie alone never authenticates a browser operation.** Cookies are scoped by
+host, not port ([RFC 6265 §8.5](https://www.rfc-editor.org/rfc/rfc6265#section-8.5));
+SameSite does not isolate `localhost` ports. Each login creates an opaque HttpOnly
+session cookie, with an instance-specific name, and an independent random 256-bit
+origin proof. The gateway validates the pair, bound to instance, principal and the
+configured browser origin (scheme/host/port), on every protected read, mutation,
+stream, refresh and logout. Cookie-only requests cannot obtain or rotate a proof.
+
+Credential/bootstrap verification returns the proof in a no-store response body.
+The UI stores it only in origin-scoped IndexedDB or memory, and sends it as
+`X-Org-Session-Proof` on same-origin fetches; it never enters a URL, cookie, log,
+or cross-origin redirect. A missing proof requires explicit reauthentication, not
+cookie-based recovery. Shared workers/tabs use the same origin-scoped session.
+Rotation/revocation covers both values; refresh requires the existing valid pair.
+Store/verifier details use maintained authentication/crypto libraries and receive
+security review before implementation ships.
+
+Use appropriate Secure/HttpOnly/SameSite cookie attributes, expiry, and CSRF/origin
+checks. Require HTTPS off loopback; an explicit loopback HTTP configuration still
+requires the pair. Validate saved Host/Origin including port, disallow wildcard
+credentialed CORS and cross-origin credential forwarding. Another port receiving
+or overwriting a cookie can cause reauthentication, but cannot gain authority
+without the origin proof. This does not claim protection from same-origin XSS or
+an OS user already able to read browser storage; those are separate threat limits.
+Default/lab and an unrelated same-host dev server are mandatory adversarial tests.
 
 Authenticate and authorize organization access at HQ on every request and stream.
 Office relay commands carry a trusted, validated actor/scope envelope; an office
@@ -285,6 +358,37 @@ Exact Linux secret-provider support and standalone macOS entitlements are releas
 gates, not claims verified by this documentation change. No new crypto protocol is
 invented here. Use maintained libraries and pin approved dependency versions.
 
+### CA escrow and the explicit recovery gate
+
+Creating an HQ organization in v1 creates its CA escrow and one owner recovery
+code as required by the offices design. Generate the high-entropy code server-side;
+use its reviewed Argon2id/encrypted-escrow format through maintained libraries.
+Persist only the encrypted CA package as replicated organization data; the recovery
+code and usable CA key never accompany it to a satellite. Record the escrow version
+and provisioning completion idempotently. Ordinary retries never rotate the code.
+
+Stage the pending delivery secret in the host's credential provider, with only an
+opaque delivery handle in the setup journal. Before owner acknowledgement, an
+interrupted protected delivery resumes the same code/escrow; it does not silently
+rotate a committed CA. On acknowledgement, erase the pending delivery secret and
+never expose the code through later status/read APIs. A lost already-acknowledged
+code requires the separately reviewed recovery/rotation policy, not cookie-only
+redisplay or an implicit setup reset.
+
+Setup delivers the code through this dedicated protected owner channel, distinct
+from status JSON/logs, and requires acknowledgement that the encrypted recovery
+package and code are retained off the HQ machine. Automation uses separate protected
+outputs. A fixture must recover the same CA public identity with the code and fail
+closed for a wrong code or damaged package. Escrow is not a backup of office DB
+keys, repository data or work records, and does not change device-bound key custody.
+
+**Open release decision REC-1:** the supported manual HQ-loss replacement,
+re-certification, highest-epoch/fencing and credential-restoration procedure still
+needs its own reviewed design and disaster-recovery evidence. Resolve it before
+claiming production v1 HQ-loss recovery. Creating escrow now preserves the required
+material; it does not establish a working promotion implementation. Automatic
+promotion remains deferred. See the [review decisions](standalone-v1-review-decisions.md).
+
 ## 7. Reuse of HQ and satellite semantics
 
 Retain the offices design's organization single writer, deterministic apply,
@@ -323,7 +427,7 @@ every employee. A browser connection is never the lifetime owner of this work.
 
 | Work | Result required before moving on |
 | --- | --- |
-| Inventory and contract amendment | Apply the deletion ledger, naming/reorganization plan and spec precedence; identify every production mock path and unsupported server operation |
+| Inventory and contract amendment | Apply the deletion ledger, naming/reorganization plan, API-version transition and spec precedence; identify every production mock path and unsupported server operation |
 | Instance/setup foundation | Identity/root locks, service lifecycle, platform key custody, matching release payloads and repeatable automation |
 | HTTP and frontend | Authenticated HQ API, asset routing, command outcomes, consistent snapshots/events and real frontend callers; remove Tauri paths in the same feature change |
 | Office networking | Reviewed sync/PKI contracts, enrollment, resume, ownership and failure behavior; existing design is not implemented evidence |

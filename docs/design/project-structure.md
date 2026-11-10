@@ -21,6 +21,8 @@ product scope, process/security boundaries, and deletion acceptance.
 | `apps/org-office-server/` | `apps/org-server/` | Rust server application/composition |
 | Cargo package and executable `org-office-server` | `org-server` | One office worker per process, including HQ or satellite role |
 | Rust application-library import `org_office_server` | `org_server` | Update affected test harnesses and other authorized callers during implementation |
+| New browser HTTP helper | `apps/org-gateway/`, package/binary `org-gateway` (planned) | One instance-scoped browser listener, no office-key custody |
+| Setup command implementation | `apps/org-setup/`, package `org-setup`, binary `agentic-org` (planned) | Distinct package ID from the old Tauri shell; remove that workspace member before staging the new same-named binary |
 
 The release/setup executable remains provisionally `agentic-org`, as described in
 the standalone design. It is distinct from the renamed `org-server` worker.
@@ -52,7 +54,7 @@ handler/repository/interface files.
 | Work | Task/bug transitions, checklists, numbering, idempotency, conflicts | Existing `org-work`, with office-owned implementations of its ports |
 | Messaging | Conversations, channels, membership, delivery and authorization rules | Existing `org-mailbox`, with office storage/session implementations |
 | Employees | Goals, desired state, health/recovery rules, internal-job budgets and checkpoints | Employee policy/state inside `org-office`; session coordination through the planned runtime integration |
-| Processes | Approved definitions, scope resolution, revisions, instruction delivery | Explicit process module in the office implementation; extract a crate only when a real boundary justifies it |
+| Processes | Approved definitions, scope resolution, revisions, instruction delivery | Planned pure `org-process` (using `org-docs` parsing); `org-office::processes` owns indexing, persistence, approvals and I/O integration, as specified in [processes.md](processes.md#7-where-the-code-lives) |
 | Instance lifecycle | Setup, catalogs, service registration, release pins, key custody | Host/platform implementation composed by applications |
 | Federation | Enrollment, replication, reconnect, ownership generations | Proposed sync/PKI components under their existing design ownership |
 
@@ -89,7 +91,7 @@ crates/
       features/
         resolve_effective.rs
         publish_revision.rs
-      policy.rs
+      policy.rs                      # Office integration; pure rules in org-process
     store/                           # Private SQLCipher/transaction adapters
     office.rs                        # Office lifecycle and public facade
 
@@ -117,6 +119,9 @@ crates/
   org-spool/                         # Explicitly retained offline CLI behavior
 
   # Planned components, absent from the inspected workspace:
+  org-process/                      # Pure process rules/resolution; see processes.md
+  org-docs/                         # Pure document/front-matter support
+  org-git/                          # Local Git adapter; needed v1 workflows
   org-office-sessions/               # Office session coordination
   org-supervise/                     # OS process ownership and cleanup
   org-runtime-claude/                # Harness adapters behind org-runtime
@@ -125,9 +130,13 @@ crates/
   org-sync/
   org-sync-proto/
   org-pki/
+  # Deferred v2 integration, not a standalone-v1 dependency:
+  org-github/
 
 apps/
-  org-server/                        # Server composition and transport adapters
+  org-server/                        # Per-office worker: domain/IPC/runtime composition
+  org-gateway/                       # Planned instance browser HTTP/TLS helper
+  org-setup/                         # Planned setup CLI; binary agentic-org adapters
   org-office-host/                   # Instance/worker supervision composition
   org-agent/                         # Small employee CLI
   org-ui/                            # Static browser application; see below
@@ -148,16 +157,20 @@ deduplication, outbox writes, and sequence allocation atomic as their designs re
 Source dependencies point from adapters/composition toward policies and contracts:
 
 ```text
-server application -> public use-case APIs / local client / selected adapters
+instance gateway -> typed authorized host/office client operations
+per-office server -> public use-case APIs / selected runtime and sync adapters
 office storage implementations -> work and messaging ports
 work and messaging -> their required protocol vocabulary
 session coordinator -> employee policy + runtime contracts
 harness adapters -> runtime contracts
 ```
 
-Choose HTTP listener composition according to the standalone design's instance/HQ
-routing. Keep endpoint code focused on principal authorization, decoding, invoking
-public operations, and mapping results. A small HTTP adapter crate remains an option
+The standalone design chooses one `org-gateway` process per instance for browser
+HTTP/TLS, routing all authorized HQ organizations on the same listener. The host
+keeps office keys/catalog provisioning; each `org-server` remains one office worker.
+Create organization requires instance-admin authority, not just organization
+ownership. Keep gateway endpoint code focused on principal authorization, decoding,
+typed public operations and result mapping; never return an office key to it. A small HTTP adapter crate remains an option
 when its dependency boundary or actual callers justify extraction. Do not depend on
 one runnable application's library from another to assemble the service.
 
@@ -202,7 +215,7 @@ A feature can contain its component, interaction state, API integration, validat
 feedback, and tests. Place shared domain UI types/state beside that domain's
 features. A simple route may remain self-contained when extraction adds no value.
 
-Retain the static SvelteKit adapter: HQ's Rust HTTP boundary serves assets, commands,
+Retain the static SvelteKit adapter: the instance's Rust `org-gateway` serves assets, commands,
 queries, authentication, and live events. Implement browser forms against that API;
 this profile does not introduce a Node backend or SvelteKit server actions. Browser
 state is a view of server authority, with loading/unavailable/error/freshness states.
@@ -263,17 +276,20 @@ package-level purpose. Avoid a generic shared/Common/Utils dumping ground.
    the single-main-session, takeover, and bounded reminder rules.
 6. The browser observes the command outcome and runtime delivery/freshness separately.
 
-Apply the specified queue/reject policy when the office is unreachable. Acceptance
-does not prove completion or that a model read the goal. Browser disconnection does
-not end durable work. Pause remains HQ-authoritative as the existing employee and
-session designs require; renaming/moving code does not transfer that authority.
+A new goal change to an office known to be offline is rejected before admission,
+with no goal write or queued update; keep the unsaved draft. A forwarded request
+with unknown outcome uses Pending confirmation and the same operation ID for lookup/
+retry, as [employee-supervision.md](employee-supervision.md#goal-command-admission-and-offline-behavior)
+specifies. Acceptance does not prove completion or that a model read the goal. Browser disconnection does
+not end durable work. Pause is a durable HQ status command even for an offline office, with runtime
+stop pending until acknowledged, as the employee and session designs require; renaming/moving code does not transfer that authority.
 
 ## 7. Source-to-target implementation sequence
 
 | Step | Source-to-target work | Verification |
 | --- | --- | --- |
 | 1. Contract/owner inventory | Map every moved public API, test fixture, transport caller, and baseline-only path; coordinate under AGENTS.md | Preserve documented behavior and acceptance IDs; identify unimplemented surfaces |
-| 2. Application naming | Rename retained browser sources to `apps/org-ui`; rename server app/package/binary to `apps/org-server` / `org-server` | Update Cargo workspace/lockfile, Rust imports, test helper paths/env references, frontend package/lockfile, build/release scripts, helper resolution/signing checks and documentation together |
+| 2. Application naming | Rename retained browser sources to `apps/org-ui`; rename server app/package/binary to `apps/org-server` / `org-server`; use distinct `org-setup` Cargo ID and remove Tauri workspace membership before building/staging its `agentic-org` binary | Update Cargo workspace/lockfile, Rust imports, test helper paths/env references, frontend package/lockfile, build/release scripts, helper resolution/signing checks and documentation together |
 | 3. Domain organization | Move organization/employee/process behavior into cohesive modules; group work and messaging use cases in their existing crates | Preserve public compatibility where retained, visibility, transactions, invariants, and acyclic source direction |
 | 4. Real feature integration | Implement each retained use case through its canonical Rust behavior, typed HTTP operation, Svelte feature, and meaningful tests | Replace production mock selection and Tauri callers in the same supported feature change; show explicit unavailable state for missing operations |
 | 5. Desktop deletion and packaging | Apply the removal inventory; delete Tauri-only sources/dependencies and regenerate lockfiles | Preserve host key custody, private worker launch, local agent IPC, licensed UI location, bounded resources, and complete release payloads |

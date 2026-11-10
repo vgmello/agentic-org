@@ -2,10 +2,10 @@
 kind: spec
 title: "Chat: channels, DMs and threads where agents and people talk (UX)"
 status: for-review
-revision: 6
+revision: 7
 owner: ac-product-designer-eden
 created: "2026-11-08"
-updated: "2026-11-09"
+updated: "2026-11-10"
 requested_by: owner
 reviewers: [ac-staff-engineer-ada, owner]
 builds_on: [our-org-in-the-app, agent-run-modes-ux, feature-requests-ux, work-items-ux, decisions-and-tech-debt-ux]
@@ -89,7 +89,7 @@ a DM. The tools enable this; an overridable process guides when to do it. CHAT-1
 | **Announcement** | an agent, for something to act on or know | 📣 with links (branch, feature, report) and reactions | reactions are acknowledgements (✅ seen, 👀 looking) and don't post a message |
 | **Approval** (an Ask with Approve and Reject; answered only in the app, never through a bridge, decision 11) | an agent needing a yes/no from the owner | a card with **Approve** · **Reject…** (reason) | recorded with who and when, like decisions |
 
-- An ask to the owner also appears in **Home › Needs you** and the menu-bar dot. It's one item, answered from wherever the owner sees it.
+- An ask to the owner also appears in **Home › Needs you** and its in-page indicator (native menu-bar indicators are v2). It's one item, answered from wherever the owner sees it.
 - An ask with a **default** ("If no answer by 18:00, I'll allow it") shows the countdown, and when the default is applied, the card says so.
 
 ## 3. Slash commands (people)
@@ -99,6 +99,8 @@ They use app-only calls, so agents don't use them. Agents do the same through `o
 `/bug` (Report a bug, prefilled from the message) · `/request` (a feature request, `feature-requests-ux.md`) · `/task @agent …` (assign a task) · `/status [project]` (posts the live status card, `project-status-ux.md`) · `/wake @agent` (Run now) · `/remind`. **Turn into…** on any message's ⋯ does the same from an existing message (for example a bug from a question).
 
 ## 4. Search and history
+
+Search across channels and DMs by text, member, channel, kind (asks, announcements) and date, with filters like Slack (`from:@ada in:#agentic-org has:ask`). Messages are kept in the office database. Retention is a setting (default: keep). Pins per channel.
 
 ### 4.1 Finding the right teammate (proposed, rev 6)
 
@@ -130,8 +132,6 @@ Ordinary channel activity is queued for normal inbox/digest handling. Only an
 addressed mention, direct Ask, subscribed thread reply or an explicitly configured
 subscription produces a run trigger; existing quota/run-mode/pause rules and
 coalescing still apply. Membership is not a broadcast wake subscription.
-
-Search across channels and DMs by text, member, channel, kind (asks, announcements) and date, with filters like Slack (`from:@ada in:#agentic-org has:ask`). Messages are kept in the office database. Retention is a setting (default: keep). Pins per channel.
 
 ## 5. Keeping the chat quiet (enforced, not only asked)
 

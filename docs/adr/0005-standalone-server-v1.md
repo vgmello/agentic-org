@@ -73,6 +73,35 @@ and the language-agnostic [architecture rules](../architecture-rules.md).
 The layout and renames are implementation requirements; this PR changes docs only.
 Baseline-source references retain their actual pre-rename paths.
 
+## Review clarifications (2026-11-10)
+
+- The planned instance-scoped `org-gateway` process terminates browser HTTP/TLS
+  separately from the key-custody host and per-office workers. The gateway holds no
+  office DB key. Create organization requires instance-admin authority; owning an
+  organization alone is insufficient.
+- Browser authority requires a session cookie plus an independently generated,
+  origin-scoped proof on every protected operation/stream/refresh; cookies alone
+  are insufficient because browsers do not isolate them by port. Browser tabs
+  share one authenticated streaming fetch or use bounded short polling.
+- First standalone local `org-proto` uses API_VERSION 2 for breaking retirements
+  and changed authority. Retained versions remain additive-only. HTTP `/api/v1`
+  and launch/sync versions are independent. `home`/`clear_home` mutations retire;
+  managed launch paths come only from instance/office/member identity.
+- Pause durably commits at HQ while a disconnected office's stop remains pending.
+  New goal changes to a known-offline office are rejected before admission; an
+  already-forwarded uncertain outcome remains Pending confirmation by operation ID.
+- Existing live Phase A messaging has a conditional, verified cutover; no old
+  desktop application import is required. HR approval still precedes provisioning.
+- V1 creation includes CA escrow/recovery-code provisioning and protected delivery.
+  REC-1 explicitly remains an open production-release decision for the reviewed
+  manual HQ-loss recovery/fencing procedure; automatic promotion remains deferred.
+- Use Cargo package `org-setup` for the new `agentic-org` CLI and retire the old
+  same-named Tauri workspace member before building/staging that binary.
+
+The [review decisions](../design/standalone-v1-review-decisions.md) map every review
+item to its clarification and acceptance evidence. These are documentation changes;
+their required security/platform/runtime checks have not run.
+
 ## Consequences
 
 Standalone service registration and production key custody need implementation on

@@ -23,8 +23,11 @@ not final destinations. Implementation must apply these mappings:
 | --- | --- |
 | Retained browser application in `apps/desktop/` | Move to `apps/org-ui/`; use frontend package name `org-ui`; retain the static SvelteKit build, assets, licensed UI and useful tests. Delete Tauri-only pieces under §1. |
 | `apps/org-office-server/`, Cargo package/binary `org-office-server` | Rename to `apps/org-server/` and `org-server`; update Rust application-library references to `org_server`. Preserve one worker per office and host key custody. |
+| New gateway/setup helpers | Add planned `apps/org-gateway` for browser HTTP outside key custody and `apps/org-setup` with distinct Cargo package ID. Remove the Tauri workspace member before building/staging the new `agentic-org` binary to avoid package/artifact collisions. |
 | Workspace and consumer references | Update Cargo members/paths/lockfile, frontend package/lockfile, test helper binary paths and environment references, build/release/signing checks, host helper resolution and documentation atomically with the source move. |
 | Ownership and licensing paths | Update AGENTS.md and links to the renamed applications. Keep the same owners and Tailwind Plus containment within the product UI; no standalone UI kit extraction. |
+| Managed home inputs | Retire `member.update_agent.home` / `clear_home` and other caller home overrides under API_VERSION 2; keep the response path read-only and derived from the launcher's managed instance/office/member path. Update callers and forged-path tests. |
+| Protocol transition | Advance local org-proto from 1 to 2 with host/worker/client/CLI consumers and fixtures; retained versions remain additive-only and unsupported peers fail before dispatch. |
 | Domain/feature organization | Group use cases inside their owning organization, work, messaging, employee and process modules; preserve public APIs, transaction boundaries and private SQL. See the project structure for the sequence. |
 
 The downloaded setup/release command remains provisionally `agentic-org`;
@@ -90,11 +93,11 @@ acceptance evidence; features deliberately deferred need an explicit spec change
 | --- | --- |
 | `apps/org-office-host/` | Retain catalog, supervision, backoff, locks, key custody and crash recovery. Replace bundle-relative resolution, fixed home, global service name, app-only peer admission and account-wide key cleanup with instance-scoped equivalents. |
 | `apps/org-office-host/src/app_auth.rs` and related code-signing checks | Retire signed-desktop authorization. Retain trusted helper admission and private key handoff. Standalone signed packaging and Linux credentials need real validation. |
-| `apps/org-office-server/` | Rename to `apps/org-server/` (Cargo package/binary `org-server`); retain per-office worker and durable message/domain dispatch. Add/compose HTTP and replication at explicit boundaries; reuse local IPC for agents. |
+| `apps/org-office-server/` | Rename to `apps/org-server/` (Cargo package/binary `org-server`); retain per-office worker and durable message/domain dispatch. Keep browser HTTP/TLS in the planned instance `org-gateway`; compose local IPC, runtime and replication at the explicit office boundary. |
 | `crates/org-office/` | Retain canonical rules, SQLCipher storage, one writer, transactional outbox/sequence allocation and private filesystem handling. |
 | `crates/org-client/`, `org-proto/`, `org-office-launch/` | Retain local agent/host/worker contracts where needed. Change instance discovery and browser principal authorization; remove unused app-only calls/types and tests in the same change. Versioning for the new release remains; old desktop callers need no bridge. |
 | `apps/org-agent/`, `crates/org-mailbox/` | Retain employee tooling and messaging semantics. Bind from injected instance/office/session identity; do not choose the wrong default instance from ambient HOME. Install the small helper from the pinned release. |
-| `crates/org-spool/` | Keep only its explicitly supported offline/person-started CLI behavior and tests. Office-managed agents cannot bypass binding through spool fallback. Legacy aliases/imports are not required by this pivot. |
+| `crates/org-spool/` | Keep only its explicitly supported offline/person-started CLI behavior and tests. Office-managed agents cannot bypass binding through spool fallback. Legacy aliases are not required; preserve live Phase A coordination through ADR-0003's conditional verified cutover before switching that team. |
 | `crates/org-runtime/`, `org-work/`, `org-copilot/` | Retain contracts/domain logic. Runtime adapters/session orchestration remain necessary; a static web server is not their implementation. |
 | Proposed `org-sync`, `org-sync-proto`, `org-pki` | Implement the approved office semantics; these crates are absent on the inspected branch. No existing replication implementation can be merely moved. |
 
@@ -136,7 +139,7 @@ Before considering the implementation complete:
 - Per-office locking, authenticated agent tooling, key custody, durability, bounded
   resource cleanup and meaningful domain tests survive the removal.
 - Named-instance setup, macOS/Linux packaging and the HQ/satellite walkthrough pass
-  [SRV-1 through SRV-22](../specs/server-installation-and-access-ux.md#6-acceptance-criteria).
+  [SRV-1 through SRV-32](../specs/server-installation-and-access-ux.md#6-acceptance-criteria).
 
 No source deletions, Cargo/Clippy checks or runtime acceptance passes are claimed by
 this documentation-only audit. The audit's evidence is the inspected source and

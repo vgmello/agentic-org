@@ -9,10 +9,14 @@ office-first messaging still apply. An office certificate is not owner authority
 
 The desktop-owned bridge token/start lifetime in §6.6 must become an explicitly
 authorized service-managed credential/start contract if bridges ship; it cannot
-depend on a Tauri window. Native deep links become normal HQ URLs. The old spool
-import/cutover rollout is historical and is not a migration prerequisite for this
-undeployed-product pivot. Retained offline/person-started spool behavior remains
-separate from office-managed agent authentication. See the
+depend on a Tauri window. Native deep links become normal HQ URLs. No desktop
+application/data migration is required. However, the team's live Phase A spool
+coordination state is retained under the cutover contract below; it must not be
+dropped when switching transports. Fresh organizations need no import. Retained
+person-started spool behavior remains separate from office-managed authentication.
+The first standalone local protocol advances to API_VERSION 2 under ADR-0001;
+historical statements that additive chat additions keep version 1 apply to that
+version only, not breaking removals or changed authority in the standalone pivot. See the
 [removal inventory](../design/standalone-server-removal-inventory.md).
 
 Status: **proposed** 2026-11-08. Author: `agy-senior-dev`. Owner of the messaging code since 2026-11-08: Remy (`ac-software-engineer-remy`), see §4.3.
@@ -200,6 +204,14 @@ To keep `inbox`, `notify`, `wait`, `read --next`, and UI thread views sub-millis
 ### 2. Local Delivery, Authentication & Authorization, Triage & Snooze, Directory & Presence, and CLI Surface (`org-agent`)
 
 #### 2.1 How `org-agent` Finds Its Office and Authenticates (`office.json`, `<handle>.sock`, `app_token`, and Call Authorization)
+
+**Standalone precedence:** managed launches use the injected instance/office/session
+binding and exact authenticated private socket from the trusted launch contract.
+Person-started calls require explicit instance/office selection or a saved immutable
+context under [the cutover contract](#live-phase-a-coordination-cutover-and-person-started-context).
+The single-home paths and sole-office auto-discovery in historical steps 1-3 below
+are pre-pivot behavior, not a standalone fallback. Browser authority is the gateway's
+scoped session contract, never an exported desktop app token.
 
 1. Each office on a Mac owns `<office_home>/offices/<office_id>/office.json` and, while running, listens on `<office_home>/run/<handle>.sock` (`org_proto::location::office_socket_path`).
 2. When an agent runs in an office, `ORG_OFFICE=<office_id>` and `ORG_AGENT=<member_id_or_handle>` identify its office and member identity. (amended 2026-11-08: agent sessions rev 3, ada: a handle, not a display name; see §2.6.)
@@ -600,8 +612,8 @@ Per [`teams-and-org-chart.md`](../design/teams-and-org-chart.md) ("Who agents ma
      - `org-office-server` drains `<office_home>/offices/<office_id>/spool/new/` through `crates/org-spool` on startup **before** accepting client connections, and re-scans every 5 seconds as a backstop.
      - **Non-blocking regular-file verification (`M4`):** Every entry in `spool/new/` must have a valid `<26-char ULID>.json` filename, is opened with `O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC`, and is immediately checked with `fstat`: the descriptor must satisfy `S_ISREG(st_mode)` (rejecting FIFOs, sockets, symlinks, and device nodes so startup ingest can never block on a named pipe) and `st_uid == geteuid()`, with size $\le 512\text{ KiB}$. Non-regular or oversized files are unlinked or moved to `spool/dead/` without reading.
      - (amended 2026-11-08: agent sessions rev 3, ada; rev 3.1) **Spool ingest accepts only active agents run by hand.** Office-run agents never spool (§2.1.4, M-A), and the spool is the one path that skips `msg.bind`. At ingest, the office resolves the spooled send's `from` at its applied org position. It ingests the send only if `from` is a member of kind agent with status `active` and no `run_mode`. Everything else is moved to `spool/dead/` and logged with its id and the reason, never its body: a person, `owner`, `office`, a run address (`run:<office id>/<run id>`), an office-run agent (any `run_mode`, `Unknown` included), an offboarded, paused or `Unknown`-status agent, and an id or handle that resolves to no member. So no process can forge a person's or the owner's message through the spool. Spooled sends from active hand-run agents are ingested as before (their accepted risk). The one-time `import-v1-old-spool` at cutover is a separate path, run by the owner. The check runs in `org-mailbox`'s ingest path through `MemberDirectory`, so `org-spool` still only reads files.
-     - **Time-bounded plaintext exception:** Spooled files exist on disk only while `org-office-server` is mid-restart and are ingested into SQLCipher-encrypted `office.db` and `unlink`ed immediately upon server startup (any corrupt file in `spool/dead/` is purged after 24 hours). Similarly, Phase A's `~/.agency/spool` directory (`0700`/`0600`) is a temporary pre-cutover spool that is imported into HQ's encrypted `office.db` at Phase B cutover and deleted after the 1-week rollback window.
-3. (amended 2026-11-09: cutover, ada) **The cutover is opt-in, and a send is refused until ingest exists.** While the office serves only `msg.bind`, `msg.send`, `msg.inbox`, `msg.read`, `msg.wait` and `who`, `org-agent` routes `send`, `inbox`, `read`, `wait` and `who` through an office only when one is named (`--office` or `ORG_OFFICE`). With none named it uses Phase A's `~/.agency/spool` exactly as before, even when the Mac has an office (item 3 of §2.1, finding the only `office.json`, takes effect once `reply`, `defer`, `done` and `notify` move to the office). Don't name the office on a working agent before then: those commands still use the local spool and can't see the office's messages. With an office named:
+     - **Time-bounded plaintext exception:** Spooled files exist on disk only while `org-office-server` is mid-restart and are ingested into SQLCipher-encrypted `office.db` and `unlink`ed immediately upon server startup (any corrupt file in `spool/dead/` is purged after 24 hours). Similarly, Phase A's `~/.agency/spool` directory (`0700`/`0600`) is a temporary pre-cutover spool that is imported into HQ's encrypted `office.db` at Phase B cutover and retained read-only for at least one week and until cutover verification plus owner acknowledgement. Never delete live Phase A coordination state automatically merely because that window elapsed; cleanup is explicit under the cutover contract below.
+3. (amended 2026-11-09: cutover, ada) **Historical interim Phase B behavior; standalone selection above supersedes sole-office discovery. The cutover is opt-in, and a send is refused until ingest exists.** While the office serves only `msg.bind`, `msg.send`, `msg.inbox`, `msg.read`, `msg.wait` and `who`, `org-agent` routes `send`, `inbox`, `read`, `wait` and `who` through an office only when one is named (`--office` or `ORG_OFFICE`). With none named it uses Phase A's `~/.agency/spool` exactly as before, even when the Mac has an office (item 3 of §2.1, finding the only `office.json`, takes effect once `reply`, `defer`, `done` and `notify` move to the office). Don't name the office on a working agent before then: those commands still use the local spool and can't see the office's messages. With an office named:
    - If it doesn't answer, `send` exits `5` and sends nothing until `org-office-server` drains `<office_home>/offices/<office_id>/spool/new/` (item 2 above). Writing the `SpooledSend` file is built behind one switch in `org-agent`, turned on when that ingest lands, so no message is reported queued that nothing would deliver, and no plaintext body waits on disk without an ingest to remove it.
    - If it doesn't answer, `inbox`, `read`, `wait` and `who` say so on stderr and show the local spool (exit `0`), instead of exiting `5`, for the cutover only.
    - An agent the office runs (`ORG_SESSION_TOKEN` set) never uses the local spool: every `org-agent` command that would open it exits `5`.
@@ -612,7 +624,7 @@ Per [`teams-and-org-chart.md`](../design/teams-and-org-chart.md) ("Who agents ma
 
 #### 4.1 `org-proto` Additions (`crates/org-proto`, owned by `ada`)
 
-`API_VERSION` remains `1` (all additions are additive). Because each `org-office-server` serves a single office (and therefore a single organization), calls on an office socket do **not** need an `org` parameter. Call-by-call authorization and row visibility are governed by the table in §2.1.4.
+The historical additive baseline used `API_VERSION = 1`; first standalone uses version 2 under ADR-0001. Additions remain additive within each version; breaking removals are not licensed under version 1. Because each `org-office-server` serves a single office (and therefore a single organization), calls on an office socket do **not** need an `org` parameter. Call-by-call authorization and row visibility are governed by the table in §2.1.4.
 
 - **Directory & Presence Calls (handled by `org-office` runtime):**
   - `who { member?: String, team?: String, kind?: MemberKind } → { members: Vec<DirectoryCard> }`
@@ -825,7 +837,7 @@ Accounting for ADR-0002's `PRAGMA synchronous = FULL` + `PRAGMA fullfsync = ON` 
 
 ### 6. Conversations, channels, threads and bridges (amended 2026-11-08: chat, proposed)
 
-Today every message addresses one recipient (`to_member_id`). Chat needs groups of members and threads inside them. This section extends the model additively: `API_VERSION` stays `1`, every new field is optional, and a client that does not know about conversations keeps working with direct messages. The UX is in [`chat-ux.md`](../specs/chat-ux.md) (CHAT-1..23; §6.8 adds the rev 6 behavior).
+Today every message addresses one recipient (`to_member_id`). Chat needs groups of members and threads inside them. This section originally extended version 1 additively with optional fields and direct-message compatibility. The first standalone release uses local API_VERSION 2 under ADR-0001; these chat additions remain additive within that negotiated version. The UX is in [`chat-ux.md`](../specs/chat-ux.md) (CHAT-1..23; §6.8 adds the rev 6 behavior).
 
 #### 6.1 Conversations and members (amended 2026-11-08: chat, proposed)
 
@@ -938,14 +950,40 @@ for the narrowly scoped agent calls below. Bridge bindings gain no new rights.
   Tool help documents syntax and access; an overridable process governs when to
   ask a channel and whether to move to DM. Final wire fields, join-policy values,
   and limits remain contract work for Remy/server-dev/ada. The standalone-v1
-  amendment removes any legacy spool/data migration prerequisite.
+  amendment removes desktop data migration, while the live Phase A coordination
+  cutover below preserves pending asks and read/triage history when that state exists.
 
-## Two-Phase Rollout & Migration (`Phase A` Spool CLI → `Phase B` Office Server)
+## Live Phase A coordination cutover and person-started context
 
-1. **Phase A (Immediate, Spool-Backed in `v1`):**
-   - Port the working `v1-old` spool and CLI into `crates/org-spool` and `apps/org-agent` (with `org-agent relay` + `org-relay` symlink), preserving the `~/.agency/spool` format so no running agent loses its inbox.
-   - Add `who`, `status`, `profile`, and message triage/snooze (`--priority`, `msg defer`, `msg done`, `msg notify`, `msg due`, `'U'`/`'N'` wake socket tags, `msg wait --urgent-only`, and snooze-aware `msg inbox`) backed by per-agent `flock`-protected metadata files (`inbox/<agent>/.meta.lock`, `triage.json`, `profile.json`, `status.json`) in `~/.agency/spool/inbox/<agent>/` so agents and all three runtime adapters (Claude Code, Codex, Antigravity) get the full workflow immediately.
-2. **Phase B (Office-First Server Cutover):**
-   - Implement `crates/org-mailbox` and the `store.rs` `MemberDirectory` + `MessageStore` tables in `org-office`, wire `who`, `status.set`, and `msg.*` in `org-proto` / `org-sync-proto` / `org-client` / `org-office-server`, and switch `apps/org-agent` from the spool transport to `org-client` (keeping `org-spool` as the offline fallback for `send`).
-   - Run `org-office-server import-v1-old-spool --office <hq_office_id> --from ~/.agency/spool` to import existing messages, profiles, statuses, and read/snooze states into HQ's `office.db` (deduplicated by ULID).
-   - Keep `~/.agency/spool` and `.v1-old` binaries for a 1-week rollback window, then delete the plaintext `~/.agency/spool` directory.
+This is a conditional cutover of the team's **active messaging transport**, not
+an import of an undeployed desktop application or a new team/member importer.
+Fresh disposable organizations have no Phase A state and skip it.
+
+1. Before redirecting a live Phase A producer, explicitly select the source spool,
+   target immutable instance and HQ office IDs. Pause/fence old producers, record
+   the import watermark and use an idempotent owner-authorized import operation
+   (proposed spelling: `org-server import-v1-old-spool --instance <name> --office <id> --from <path>`).
+2. Preserve message/reply ULIDs, ask correlations and original deadlines, unresolved
+   asks, read/unread, snooze/defer and done state. Expired asks remain expired and
+   import does not wake every historical recipient. Retries deduplicate by source
+   identity/watermark and item ID, with an inspectable result and failure report.
+3. Preserve legacy profiles/statuses as attributed history only. They do not create
+   members, bypass hire approval, select a managed home, or replace authoritative
+   role/run/pause state. Validate member mappings before redirecting producers.
+4. Verify counts, representative pending asks/replies and read/triage state through
+   the real target office, then explicitly switch the selected CLI context. Keep
+   the old spool read-only for at least the prior one-week rollback window and until
+   verification/owner acknowledgement. No automatic deletion of live state. A
+   fixture-based interrupted/repeated cutover is required before real team use.
+
+**Person-started CLI selection (proposed standalone contract):** use explicit
+`org-agent --instance <name> --office <id> ...` or a deliberately saved CLI context
+bound to those immutable IDs. With neither, fail with actionable context selection;
+do not discover an arbitrary office from cwd, HOME, or a different instance.
+Resolve credentials only for that chosen context and apply the existing caller
+rights. A stale, removed or inaccessible office is an error, not a fallback choice.
+Managed employees instead use their injected instance/office/session binding and
+reject conflicting manual selectors. They never fall back to spool on auth failure.
+Any retained hand-run offline spool mode is explicit and uses its existing restricted
+ingest rules. These commands are implementation requirements, not a claim that the
+installed Phase A CLI already accepts these flags.

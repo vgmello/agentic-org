@@ -2,10 +2,10 @@
 kind: spec
 title: "Offices, organizations and teams (UX)"
 status: for-review
-revision: 12
+revision: 13
 owner: ac-product-designer-eden
 created: "2026-11-08"
-updated: "2026-11-09"
+updated: "2026-11-10"
 requested_by: ac-staff-engineer-ada
 reviewers: [ac-staff-engineer-ada, owner]
 builds_on: []
@@ -82,7 +82,7 @@ Requested by ada for the user.
 4. **Locations identify the service machine or instance.** Support macOS and Linux; never label the browser machine as the executing office.
 5. **Services run without a browser.** Pending joins and agents needing attention appear in HQ Needs you; native background notifications are v2.
 6. **Enrollment uses target-machine setup:** validate invitation, confirm destination/execution consent, await HQ approval, synchronize and report readiness.
-7. **The invitation link is shown once.** HQ keeps only the public half of the invitation key, so the app can't show the link again. The screen says so, and "New link" replaces it (cancelling the old one).
+7. **The invitation is shown once.** HQ retains only its verifier/public material. The screen uses **Copy invitation** and **New invitation**; creating a replacement cancels the old invitation. Destination setup accepts the secret through protected input, not a desktop URL handler.
 8. **The check code identifies the joining request/key.** The CLI displays it on the joining machine; the owner verifies it through a trusted session to that machine. Do not treat terminal copy prevention as a security guarantee.
 9. **Check-code input is one text field**, not one box per character (screen readers, paste, password managers). Case, spaces and dashes are ignored.
 10. **Org chart** is one nav item with three pill tabs: **Teams | People | Reporting lines**. Offices has its own nav item (bottom group, above Settings).
@@ -119,7 +119,7 @@ Requested by ada for the user.
 
 | Need | Component |
 | --- | --- |
-| Menu-bar dropdown | **Native macOS menu** (tray menu), not a web popover: platform look, keyboard and VoiceOver for free |
+| Menu-bar dropdown (v2 only) | Deferred native macOS tray menu; v1 organization navigation and Needs you are in-page browser controls |
 | In-app switcher | Sidebar footer button + Tailwind Plus *Dropdown with dividers* |
 | Lists (organizations, offices, members) | *Stacked list* with a status *Badge with dot* (text always present) |
 | Forms (Add office, New team, Add person) | *Slide-over* (right, `max-w-md`) |
@@ -162,7 +162,7 @@ Status colors reuse the existing tokens: green = online, blue = starting, gray =
 The browser can open an organization when HQ can authenticate the owner and serve
 that organization's data. A stopped satellite does not make HQ's synchronized
 view unavailable. Its last-seen time and unavailable live controls remain visible.
-If HQ cannot be reached, an open page says Updates paused and marks cached data
+If HQ cannot be reached, an open page says Live updates paused and marks cached data
 stale. If HQ's storage/key is unavailable, show the specific reason and local
 diagnostic action. The browser cannot open OS Login Items or start a stopped daemon.
 Joining/approval/synchronization states belong to the target office and can be
@@ -220,7 +220,7 @@ versions and connectivity failures have distinct explanations and repair actions
 
 Same-machine office provisioning must still prove office identity. Display locations
 relative to HQ/the selected instance, never infer them from the browser's hostname.
-Status and snapshots carry freshness; a disconnected browser says Updates paused.
+Status and snapshots carry freshness; a disconnected browser says Live updates paused.
 See SRV-7 through SRV-12 for the network/authorization behavior.
 
 ## 6. Flow 3 · Offices and Add office
@@ -283,15 +283,16 @@ Triggers: the HQ Needs-you inbox and highlighted Offices row. Each opens this ac
  │                                                           │
  │ Type the check code shown on Studio Mac                   │
  │ [ K7QP 4MZT                 ]                             │
- │ Only type a code you can see on that computer's screen    │
- │ yourself. If someone sent you a code, decline.            │
+ │ Verify the code on the destination terminal or through   │
+ │ your trusted authenticated session to that machine.      │
+ │ Decline unsolicited or unverified relayed codes.         │
  │                                                           │
  │                       [Decline]   [Approve Studio Mac]    │
  └──────────────────────────────────────────────────────────┘
 ```
 
 - **Approve** is enabled once the code has 8 characters. Case, spaces and dashes are ignored. As in Crockford base32, a typed O counts as 0 and I or L as 1, so look-alikes never cause a mismatch. A U, or any other character that can't be in a code, is rejected as typed with the hint "Codes use digits and letters, without U".
-- **Wrong code:** "That code doesn't match Studio Mac's. Check its screen. 2 tries left." After 3 wrong codes the invitation is cancelled (A3, resolved): "Join declined after 3 wrong codes. The invitation is cancelled; create a new link to try again." The row becomes **Invitation cancelled** with **New link** and **Remove**.
+- **Wrong code:** "That code doesn't match Studio Mac's. Check its terminal or your trusted session. 2 tries left." After 3 wrong codes the invitation is cancelled (A3, resolved): "Join declined after 3 wrong codes. The invitation is cancelled; create a new invitation to try again." The row becomes **Invitation cancelled** with **New invitation** and **Remove**.
 - **Decline** asks once: "Decline Studio Mac? Its invitation is cancelled." · **Decline**.
 - **Approved:** the row moves to the office list as "Starting · copying records", then Online. Toast: "Studio Mac joined Lumen Labs."
 - **Two requests on one link** (shouldn't happen, but HQ may see a retry from a new address): both are listed. Approving one declines the rest.
@@ -305,9 +306,11 @@ Modal, red icon. "Remove Studio Mac from Lumen Labs? It can't sync again. Its 2 
 - in the Offices list's last row, **Place or offboard**, which opens a list of them, each with **Place…** (office picker, the agent profile's placement flow) and **Offboard…** (the HR flow);
 - in the org chart with an **Unplaced** tag, and under **Office: Unplaced** in the office filter.
 
+Connection-loss copy follows LIVE-8 exactly: `Live updates paused. Showing what was loaded at <HH:MM>.`, or `Live updates paused.` if nothing has loaded, with Retry / Retrying… and the last successful load time in 24-hour format.
+
 ### 6.5 HQ connectivity and office outboxes
 
-An open browser with a lost HQ connection shows Updates paused and stale data.
+An open browser with a lost HQ connection shows Live updates paused and stale data.
 It cannot save new organization changes until HQ acknowledges them. A satellite's
 local agents retain the existing command/message outboxes; HQ displays their
 Pending or Blocked outcomes when known. Retry/discard of a blocked office command
@@ -571,13 +574,13 @@ Two directions, same result:
 **Offices (OFC)**
 - OFC-1 · *(rev 12)* HQ lists pending joins, HQ and satellites, with names, locations, status and last-seen/sync information. Browser location does not alter the office classification.
 - OFC-2 · *(rev 12)* Adding an office on the same instance uses authenticated provisioning and office identity checks. It is idempotent and failures remain visible without duplicate offices.
-- OFC-3 · Add office › Another computer shows the link once, with Copy link and the "shown only once" warning; closing leaves an **Invited** row with Cancel invitation and New link.
-- OFC-4 · New link cancels the previous link after a confirmation.
+- OFC-3 · Add office › On another machine/instance shows the invitation once with Copy invitation, expiry and the shown-only-once warning; closing leaves an Invited row with Cancel invitation and New invitation. Destination CLI setup may be headless.
+- OFC-4 · New invitation cancels the previous invitation after confirmation. Approval requires the matching check code observed on the destination terminal or through a trusted authenticated session to that machine; an unsolicited relayed code is insufficient.
 - OFC-5 · *(rev 12)* A pending join appears in HQ Needs you and the Offices list and opens the approval dialog. Native notification/menu requirements are deferred to v2.
 - OFC-6 · *(rev 2)* Approve is enabled only when the typed code has 8 characters; case, spaces and dashes are ignored, and O, I and L are read as 0, 1 and 1; a wrong code shows the mismatch message with the tries left, and the third wrong code cancels the invitation.
 - OFC-7 · *(rev 12)* An authorized owner may add, approve or remove an office through HQ from any browser. Unauthorized clients cannot discover or invoke those actions.
 - OFC-8 · *(rev 2)* Remove office names the office, its agents (which become unplaced), their tasks and the offline case before removing.
-- OFC-9 · *(rev 12)* HQ shows an unreachable satellite with last-seen/sync state. A browser disconnected from HQ shows stale data and Updates paused; it does not become an offline satellite or claim drafts are saved. Office outbox outcomes are shown when HQ has them.
+- OFC-9 · *(rev 12)* HQ shows an unreachable satellite with last-seen/sync state. A browser disconnected from HQ shows stale data and Live updates paused; it does not become an offline satellite or claim drafts are saved. Office outbox outcomes are shown when HQ has them.
 - OFC-10 · *(new, rev 2)* After an office is removed, its agents show as Unplaced (Offices list, org chart tag, office filter), with Place… and Offboard… for each, and a needs-you item until every one is handled.
 - OFC-11 · *(rev 12)* Stopped/unavailable offices show the reason and an authorized remedy. An office restart is offered only when its owning instance can receive and perform it; starting a stopped daemon requires local lifecycle control.
 - OFC-12 · *(rev 12)* Office status arrives through the authenticated HQ HTTP/event contract with capability and freshness information. Missing or stale live status is Unknown, never stale Online.

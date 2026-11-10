@@ -2,10 +2,10 @@
 kind: spec
 title: "Employees: supervision, goals, harness identity and private delegates (UX)"
 status: for-review
-revision: 1
+revision: 2
 owner: owner
 created: "2026-11-09"
-updated: "2026-11-09"
+updated: "2026-11-10"
 requested_by: owner
 reviewers: [ac-staff-engineer-ada, ac-product-designer-eden, owner]
 builds_on: [agent-run-modes-ux, processes-ux, chat-ux, roles-ux, costs-and-insights-ux]
@@ -34,7 +34,12 @@ For standalone v1, these views and controls use the authenticated HQ web applica
 defined in [server installation and access](server-installation-and-access-ux.md).
 Supervision runs at the owning office and survives a browser disconnect. Server
 paths are read-only in the UI; an unavailable satellite shows stale status and a
-pending or failed command, never an unconfirmed successful goal change or stop.
+specific command outcome, never an unconfirmed successful goal change or stop.
+New goal changes to an office known to be unreachable are rejected as unavailable
+before admission; the saved goal remains unchanged. A forwarded request with an
+unknown outcome stays Pending confirmation and is resolved by the same operation ID.
+Pause is different: HQ commits durable paused status while an offline office's
+runtime stop remains visibly pending until acknowledged.
 
 ## 0. Decisions (proposed)
 
@@ -151,7 +156,7 @@ No fresh-self job receives the main transcript merely because it shares a person
 
 - EMP-1 · Every office-managed employee has a deterministic supervisor record independent of a model conversation; asleep and paused employees consume no monitoring model turns. Person-started sessions show the supervision limitation.
 - EMP-2 · Health distinguishes a known wait from unresponsiveness. A silent long tool run is not killed merely for producing no tokens; recovery has explicit deadlines and a bounded retry budget.
-- EMP-3 · Setting a goal records actor and version and delivers it at start, resume, wake, recovery and supported context reset. Pending delivery is visible; retries are deduplicated. Paused agents remain paused.
+- EMP-3 · An admitted goal change records actor/version and delivers at start, resume, wake, recovery and supported context reset. A new request to an office known to be offline is unavailable with no goal write or queued change; an already-forwarded unknown outcome stays Pending confirmation and lookup/retry uses the same ID. Test reconnect, duplicate submission and expected-version conflict; pending delivery is visible and paused agents remain paused.
 - EMP-4 · Every supported employee harness receives a generated replica file and verified native registration/selection. A missing or wrong definition is an explicit preflight failure, never silent general-purpose fallback.
 - EMP-5 · A fresh-self delegate has the employee's persona and required guidance but no inherited transcript by default; its work remains attributed to its owning employee.
 - EMP-6 · An employee can create, inspect, revise and use its private specialists without creating members or editing another employee's definitions; the owner can inspect them.

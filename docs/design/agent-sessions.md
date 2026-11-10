@@ -97,6 +97,21 @@ decisions 2, 4, 6, 8 and the checkpoint/stop paths: one live **main** session pe
 employee remains, with bounded owned internal jobs as a tracked exception. Native
 spawning stays disabled until the new per-runtime capability checks pass.
 
+### Managed home contract (standalone v1)
+
+Resolve every home launch from the configured instance root and stable office/member
+IDs. Preflight validates the actual resolved path and filesystem identity against
+the fixed denies; stale profile metadata, symlinks and caller input cannot redirect
+it. Return this effective path as read-only `AgentProfile.home` with office/freshness
+context, so PROF-4 displays the same home the launcher uses.
+
+Retire `member.update_agent`'s caller-settable `home` and `clear_home`, and refuse
+home overrides in all create/update inputs before filesystem access. The first
+standalone local protocol is API_VERSION 2 under ADR-0001; remove/update affected
+callers and fixtures together. Historical or imported profile paths are provenance
+only, never launch authority. Test forged absolute paths, traversal, `clear_home`,
+stale placement, and symlink redirection without creating an external directory.
+
 ## Decisions
 1. **Headless-first.** The office drives every agent as a child process over the runtime's structured JSON-lines protocol:
    - **Claude Code:** `claude -p --input-format stream-json --output-format stream-json --verbose`, one long-lived process per session.
@@ -126,7 +141,7 @@ spawning stays disabled until the new per-runtime capability checks pass.
 
    **Transcripts are plaintext.** Each runtime writes its transcript unencrypted in its own store, outside ADR-0002's encrypted `office.db`. That's accepted for phase 1 as a stated exception to ADR-0002's encryption at rest, and the user is told (U-S3). ADR-0002 gets a matching note (plan step D1).
 4. **Sessions and workspaces.** An agent has:
-   - a **home session** for triggers that aren't about a task (messages, schedules, owner pings). Its cwd is the agent's home, `profile.home`.
+   - a **home session** for triggers that aren't about a task (messages, schedules, owner pings). Its cwd is the office-resolved managed home for the current instance/office/member IDs. `profile.home` is a read-only display projection, never a launch-path input.
      - **The home must be outside `<office home>`** (inside it, the only writable roots are a task session's own worktree and the literal `work.git` commit paths; see "Security"), it can't be a git repository's root (see "Security", fixed denies), and it can't be the user's `$HOME` or contain any of the user-config paths under "Security" (fixed denies). HQ can't check that (it doesn't know the office's paths), so the agent's office refuses to run such an agent, and the agent shows as Needs you with the reason.
    - **one task session per task.** Its cwd is that task's worktree (see "Git in worktrees"). The agent's home is added **read-only**, for its memory:
      - Claude: `--add-dir <home>`, with the permission policy denying writes there.
@@ -357,11 +372,25 @@ spawning stays disabled until the new per-runtime capability checks pass.
   - A missed run runs once, and says so (RUN-8).
   - Three failed wakes in a row go to the owner's Needs you (RUN-9).
 - **Pause is the one "stopped" state** (DEAL-3). It's `AgentProfile.status = paused`, the flag `org-proto` already has.
-  - **Standalone-v1 Pause:** the browser sends an authenticated, authorized `agent.stop` operation to HQ, which routes it to the owning office with the caller's scope, operation ID and expected state/version. A new live-stop request to an offline office is rejected as unavailable; an unreachable HQ cannot accept a browser request. If a previously accepted request loses its response or connection, show **Pending confirmation** until lookup/retry with the same ID resolves it. HQ acceptance is not proof that the runtime stopped: show the office's observed stop outcome and its freshness separately from the desired paused status.
-  - Once it accepts the authorized operation, the owning office stops the main run and its internal jobs within the bounded stop/checkpoint policy, stops schedules and wakes, and submits `member.set_agent_status { paused }` through its existing outbox with the original authorized actor and version. A relaying office certificate is never owner authority. The local stop can finish after the HQ connection drops; its outcome and the org status update reconcile on reconnect.
-    - If that command hits `conflict` (the member changed meanwhile), the office re-reads the member. It submits again **only if the status is still the one it saw when it paused** (the conflicting change touched something else). If the status changed (already paused, resumed by a later Resume, or offboarded), the office applies that status instead and doesn't retry. So a retry never overrides a later Resume, and a pause is never lost to an unrelated change.
-    - When the office applies a `paused` status that was set elsewhere (another app, another office), it does the same: it stops the live run, the schedule and wakes.
-  - Offline per-employee Pause through a local CLI is not promised by this v1 contract. An authorized local administrator can use the server lifecycle CLI to stop the instance while HQ is unavailable; that stops local processes, but does not set an employee's durable organization status to Paused.
+  - **Standalone-v1 Pause is a durable HQ organization command**, using the existing
+    `member.set_agent_status { paused }` authority with caller scope, operation ID
+    and expected member version. HQ commits the paused state and its deduplicated
+    outcome even when the employee's office is disconnected. It reports **Paused ·
+    stop pending at office** until that office acknowledges the stop; it never
+    reports an observed stopped runtime merely from HQ acceptance.
+  - On receipt of the authoritative paused state, the owning office stops schedules,
+    wakes, the main run and owned jobs under the bounded stop/checkpoint policy.
+    After reconnect or restart it applies current organization state before admitting
+    new work. A later Resume/offboard version supersedes an old pause: never replay a
+    stale stop after a later Resume. Preserve the actor/version and report stop failure
+    separately from the desired state. No office originates a replacement paused
+    status or retries a mutation that could overwrite a later authoritative change.
+  - The HTTP `agent.stop`/Pause control maps to that HQ command; its wire contract
+    distinguishes durable status from office stop acknowledgement. An unreachable HQ
+    cannot acknowledge a new browser mutation. An authorized local administrator
+    may stop the local instance using the lifecycle CLI while HQ is down; this safety
+    shutdown does not forge an organization Pause. That is the explicit browser-v1
+    replacement for the old local desktop control, not an offline browser promise.
   - While paused, messages and tasks still queue, **without waking** the agent. `agent.wake` is refused with `unavailable` (reason `paused`).
   - Resume is `member.set_agent_status { active }` from the app. When the office applies it, it wakes the agent again by its run mode (the mode itself never changed).
   - `agent.wake` never changes the run mode. Waking an on-call agent doesn't make it always on.
@@ -614,11 +643,12 @@ Paths are relative to `<office home>`. "Denied" means reads and writes, from Bas
 A home session has no writable root inside `<office home>` at all, since the home must be outside it. A one-off without a project works in the user's temp directory.
 
 ## Contract (org-proto, additive)
+The additive sketches below apply within their negotiated protocol version. ADR-0001 defines the first standalone API_VERSION 2 transition for retired fields/calls and changed authorization/control semantics; the inspected source still declares version 1. HTTP `/api/v1` and the private launch protocol have independent versions.
 **Authorization (standalone v1):** the human controls below require an authenticated, authorized principal through HQ; the browser receives no `app_token`. HQ preserves the actor, scope and operation identity when routing to the owning office. Agent-bound connections are refused unless a specific reviewed contract grants a narrowly scoped operation; an office certificate grants no human powers. ADR-0003 §2.1 and its standalone amendment retain per-call role and owner checks. Tests must refuse unauthorized browser, agent and relay callers. **Org commands** (`member.*`, `team.*`, `project.*` and the rest) from agents remain refused unless a row in that authorization table allows one.
 - **Sessions:** where a call takes `session`, it's `"home"` or `{ "task_id": "…" }`.
 - **Agents:**
   - `agent.wake { member_id, session?, prompt? }` → `{ run_id }` (the live run's id when the wake is merged). `session` defaults to `home`.
-  - `agent.stop { member_id }`: Pause (see "Run modes")
+  - `agent.stop { member_id }`: Pause via the durable HQ status command and separate office stop acknowledgement (see "Run modes"); the HTTP envelope supplies operation ID and expected member version. This is part of the API_VERSION 2 standalone transition, not an unversioned reinterpretation of a v1 live RPC.
   - `agent.interrupt { member_id }`
   - `agent.send { member_id, session?, text, urgent? }`: the owner talks to an agent directly. `session` defaults to `home`.
   - `permission_policy.get { member_id }`, `permission_policy.set { member_id, policy, expected_version }`. `set` refuses an allow rule for a tool that always escalates (`invalid_request`, reason `escalating_tool`) and one whose absolute path pattern reaches managed state (reason `managed_state`); see decision 7.

@@ -14,7 +14,7 @@ The architecture MUST optimize for:
 
 These rules apply whenever creating, modifying, moving, or refactoring modules, packages, services, bounded contexts, domains, workflows, components, or abstractions.
 
-These rules are architectural guardrails, not absolute enforcement gates. Use judgment, explain significant trade-offs, and do not block implementation solely because a numeric threshold is exceeded. Numeric thresholds do not automatically require a separate approval step.
+These rules are architectural guardrails, not absolute enforcement gates. Use judgment, explain significant trade-offs, and do not block implementation solely because a numeric threshold is exceeded.
 
 Apply these rules using native .NET/C#, Rust, or TypeScript/Svelte constructs. Agentic Org's Rust/static-SvelteKit profile, target names, folder layout, shared-code examples, and reorganization sequence are in [project structure](design/project-structure.md), under [ADR-0005](adr/0005-standalone-server-v1.md).
 
@@ -143,7 +143,7 @@ Use these thresholds as architectural guardrails:
 
 - New modules SHOULD target `Ce <= 5`.
 - `Ce > 7` MUST be architecturally justified.
-- `Ce > 10` MUST trigger a design assessment before adding additional dependencies. This assessment does not automatically require human approval.
+- `Ce > 10` MUST trigger a design review before adding additional dependencies. Use the repository's existing design/merge review process; this amendment does not waive it or create a separate permission workflow.
 - Composition roots and orchestration boundaries may legitimately have more dependencies; calibrate counts to their role and the repository's counting convention.
 - Do NOT introduce dependencies merely for convenience.
 - Before adding a new dependency, determine whether the behavior can instead be achieved through:
@@ -678,7 +678,7 @@ The agent MUST explicitly mention the architectural consequence before implement
 
 Where practical, the agent MUST propose a lower-coupling or more composable alternative.
 
-Also check measurement scope, public API ownership, runtime failure/consistency obligations, browser/server boundaries, and shared state lifetime. Revise designs that create prohibited source cycles. These checks guide implementation judgment and do not automatically require a separate approval step.
+Also check measurement scope, public API ownership, runtime failure/consistency obligations, browser/server boundaries, and shared state lifetime. Revise designs that create prohibited source cycles. These checks guide implementation judgment and preserve the repository's existing design and merge review requirements.
 
 ---
 

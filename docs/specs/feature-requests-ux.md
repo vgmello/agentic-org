@@ -2,10 +2,10 @@
 kind: spec
 title: "Capture requests and route them to whoever should scope them (UX)"
 status: for-review
-revision: 4
+revision: 5
 owner: ac-product-designer-eden
 created: "2026-11-08"
-updated: "2026-11-09"
+updated: "2026-11-10"
 requested_by: owner
 reviewers: [ac-staff-engineer-ada, owner]
 builds_on: [work-items-ux, decisions-and-tech-debt-ux, agent-run-modes-ux]
@@ -45,7 +45,7 @@ Extends `work-items-ux.md` (Work, tasks), `decisions-and-tech-debt-ux.md` (specs
 ## 1. Flow 1 · Capture
 
 ```
- ┌ New request ──────────────────────────────────────────────── ⌥⌘N ─┐
+ ┌ New request ─────────────────────────────────────────────────────┐
  │ Let me capture feature requests with a shortcut and route them to   │
  │ whoever should scope them…                                           │
  │                                                                      │

@@ -2,10 +2,10 @@
 kind: spec
 title: "How agents run: always on, on call, scheduled, one-off (UX)"
 status: for-review
-revision: 7
+revision: 8
 owner: ac-product-designer-eden
 created: "2026-11-08"
-updated: "2026-11-09"
+updated: "2026-11-10"
 requested_by: owner
 reviewers: [ac-staff-engineer-ada, owner]
 builds_on: [our-org-in-the-app, costs-and-insights-ux]
@@ -92,7 +92,7 @@ At hire (Review step) and in profile › Settings › **How it runs** (a slide-o
 | Called while running | Queued for the session handling it and delivered at its next turn boundary (ada's per-session routing). No second session. |
 | A scheduled run is due while it's already running (a long run) | That run is skipped and noted on the Runs tab: "Skipped 14:30: still running from 14:00". |
 | A run fails to start (runtime missing, signed out, trust) | The run shows **Failed** with the reason and a fix. A missing or signed-out runtime raises Needs you **at once** (nothing will work until it's fixed). Other failures do so after 3 failed wakes in a row: "HR lead can't wake up: Codex isn't signed in" with the fix and **Run now** to retry. Messages keep waiting. |
-| Paused agent (DEAL-3) | Pausing stops schedules and calls. Messages wait. The card says "Paused" (not Asleep), and Resume restores the mode. |
+| Paused agent (DEAL-3) | HQ durably records Paused; show stop pending at office until acknowledged. Applying Pause stops schedules/wakes and holds messages; current Resume restores the mode. An offline runtime is not shown as stopped merely from HQ acceptance. |
 | The Mac is asleep or the office is stopped at a scheduled time | The run happens when the office is back, once (missed runs don't pile up): "Ran at 09:12 instead of 08:00 (the Mac was asleep)". |
 | Hit Max run time | The session is asked to wrap up (guidance "Time's up: record where you are"), then stopped after 1 min, and the run is marked. |
 | An Always-on agent's session stops | Restarted after 10 s, with backoff. After 3 restarts in 10 min: Needs you "ada keeps stopping" with the last error. |
@@ -113,7 +113,7 @@ My recommended modes (U19, approved): **HR lead (built-in, `our-org-in-the-app.m
 - RUN-7 · The schedule builder uses plain words and presets, shows the next 3 run times, and never asks for cron.
 - RUN-8 · Missed scheduled runs (Mac asleep, office stopped) run once when the office is back and say so. A run due while the previous one is running is skipped and noted.
 - RUN-9 · *(rev 2)* A missing or signed-out runtime raises a Needs you item at once with the fix. Other failures do so after three failed wakes in a row. Waiting messages are kept.
-- RUN-10 · Pausing an agent stops its schedule and wakes, and Resume restores its mode.
+- RUN-10 · HQ durably accepts Pause with pending office stop if disconnected; the office applies current state before admitting schedules/wakes and acknowledges stopping. Resume restores the mode without stale Pause delivery overriding it (DEAL-3, SRV-28).
 - RUN-11 · The wake-up guidance is shown and editable in How it runs, per agent, and every wake starts with it.
 - RUN-12 · *(rev 2)* One-off agents can be started from a job (review, task). They show as "<role> (one-off R-n)", never appear in the org chart (they aren't members), and their result, cost and duration are attached to the job.
 - RUN-13 · How it runs shows the agent's recent runs and cost, and explains that on-call and scheduled agents only cost while they run.

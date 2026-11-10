@@ -23,7 +23,9 @@ application, Cargo package and worker executable are **org-server** at
 ```text
 apps/
   org-ui/             Svelte 5 + TypeScript, static SvelteKit 2 application
-  org-server/         Rust server composition and transport
+  org-server/         Per-office worker composition and local transport
+  org-gateway/        Planned instance browser HTTP/TLS helper
+  org-setup/          Planned setup/lifecycle CLI (binary agentic-org)
   org-office-host/    Instance and office-process supervision
   org-agent/          Small employee CLI
 crates/               Cohesive libraries; domain modules contain feature slices
