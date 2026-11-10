@@ -21,7 +21,9 @@ use org_sync::organization::{
 use org_sync_proto::{Digest, Epoch, OfficeId, OrgId};
 
 use crate::store::org as org_db;
-use crate::store::org::{OrganizationSnapshotExport, OrganizationSnapshotManifest};
+use crate::store::org::{
+    OrganizationSnapshotExport, OrganizationSnapshotManifest, SnapshotStageMode,
+};
 use crate::store::{messages, status};
 use crate::store::{Opening, Schema, Store};
 use crate::time;
@@ -458,7 +460,7 @@ impl Office {
     }
 
     /// Validates and stages one complete, bounded snapshot stream from the verified HQ.
-    /// For recovery, the caller authorizes staging only after showing the restore warning.
+    /// Recovery requires the caller to show the warning for the accepted authority first.
     /// The staged result must still pass `org_sync::organization::install_snapshot`.
     pub fn stage_replication_snapshot(
         &self,
@@ -467,6 +469,7 @@ impl Office {
         transport_key: &Key,
         input: impl Read,
         max_bytes: u64,
+        mode: SnapshotStageMode,
     ) -> Result<ValidatedSnapshot, SyncError> {
         org_db::stage_replication_snapshot(
             &self.org,
@@ -475,6 +478,7 @@ impl Office {
             transport_key,
             input,
             max_bytes,
+            mode,
         )
     }
 

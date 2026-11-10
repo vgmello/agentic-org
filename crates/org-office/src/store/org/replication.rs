@@ -549,7 +549,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::{Key, NewOffice, Office, OfficeRole};
+    use crate::{Key, NewOffice, Office, OfficeRole, SnapshotStageMode};
 
     const COMMAND: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
     const SECOND: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
@@ -798,6 +798,7 @@ mod tests {
                 &transport_key,
                 &bytes[..bytes.len() - 1],
                 MAX_BYTES,
+                SnapshotStageMode::Normal,
             ),
             Err(SyncError::Refused(Refusal::IntegrityFailure))
         ));
@@ -808,12 +809,20 @@ mod tests {
                 &Key::from_bytes([4; 32]),
                 bytes,
                 MAX_BYTES,
+                SnapshotStageMode::Normal,
             ),
             Err(SyncError::Refused(Refusal::IntegrityFailure))
         ));
 
         let staged = satellite
-            .stage_replication_snapshot(&Hq, &exported.manifest, &transport_key, bytes, MAX_BYTES)
+            .stage_replication_snapshot(
+                &Hq,
+                &exported.manifest,
+                &transport_key,
+                bytes,
+                MAX_BYTES,
+                SnapshotStageMode::Normal,
+            )
             .unwrap();
         drop(satellite);
         let satellite = Office::open(dir.path().join("SAT"), key()).unwrap();
@@ -855,6 +864,7 @@ mod tests {
     #[test]
     fn accepting_a_higher_authority_persists_the_fence_and_rejects_stale_sessions() {
         use org_sync::organization::{AuthorityRecord, AuthorityVerifier};
+        const MAX_BYTES: u64 = 1024 * 1024;
 
         struct VerifiedSignature;
         impl AuthorityVerifier for VerifiedSignature {
@@ -865,22 +875,30 @@ mod tests {
 
         let (dir, satellite) = replica();
         let old = satellite.replication_checkpoint().unwrap();
+        let hq = new_office(&dir, "HQ");
+        hq.bind_replication_hq(old.ca, MAX_BYTES).unwrap();
+        let source = hq.replication_checkpoint().unwrap();
         let next = Epoch::new(2).unwrap();
-        let restored_digest = Digest::from_bytes([42; 32]);
-        let output = organization::accept_authority(
-            &satellite,
-            AuthorityRecord {
-                org_id: old.org_id.clone(),
-                hq_office: old.hq_office.clone(),
-                ca: old.ca,
-                epoch: next,
-                restored_position: old.position,
-                restored_digest,
-                signature: Arc::from([1]),
-            },
-            Arc::new(VerifiedSignature),
-        )
-        .unwrap();
+        let restored_digest = source.digest;
+        let record = AuthorityRecord {
+            org_id: old.org_id.clone(),
+            hq_office: old.hq_office.clone(),
+            ca: old.ca,
+            epoch: next,
+            restored_position: source.position,
+            restored_digest,
+            signature: Arc::from([1]),
+        };
+        assert_eq!(
+            organization::accept_authority(&hq, record.clone(), Arc::new(VerifiedSignature))
+                .unwrap(),
+            OrgOutput::AuthorityAccepted {
+                snapshot_required: false
+            }
+        );
+        let output =
+            organization::accept_authority(&satellite, record, Arc::new(VerifiedSignature))
+                .unwrap();
         assert_eq!(
             output,
             OrgOutput::AuthorityAccepted {
@@ -898,6 +916,61 @@ mod tests {
             organization::apply(&satellite, &Hq, event(2, old.digest, COMMAND, "stale")),
             Err(SyncError::Refused(Refusal::NotAuthorized))
         ));
+
+        struct RestoredHq(Epoch);
+        impl VerifiedPeer for RestoredHq {
+            fn identity(&self) -> PeerIdentity {
+                PeerIdentity {
+                    authority: self.0,
+                    ..Hq.identity()
+                }
+            }
+        }
+        let transport_key = Key::from_bytes([8; 32]);
+        let exported = hq
+            .export_replication_snapshot(&transport_key, MAX_BYTES)
+            .unwrap();
+        let stage = |mode| {
+            satellite.stage_replication_snapshot(
+                &RestoredHq(next),
+                &exported.manifest,
+                &transport_key,
+                exported.ciphertext.as_slice(),
+                MAX_BYTES,
+                mode,
+            )
+        };
+        assert!(matches!(
+            stage(SnapshotStageMode::Normal),
+            Err(SyncError::Refused(Refusal::RestorePending))
+        ));
+        assert!(matches!(
+            stage(SnapshotStageMode::RecoveryWarningShown {
+                authority: next,
+                restored_digest: Digest::ZERO
+            }),
+            Err(SyncError::Refused(Refusal::RestorePending))
+        ));
+        let staged = stage(SnapshotStageMode::RecoveryWarningShown {
+            authority: next,
+            restored_digest,
+        })
+        .unwrap();
+        assert_eq!(
+            organization::install_snapshot(&satellite, staged).unwrap(),
+            OrgOutput::SnapshotInstalled
+        );
+        let installed = satellite.replication_checkpoint().unwrap();
+        assert_eq!(
+            installed.position,
+            Position {
+                epoch: next,
+                seq: 0
+            }
+        );
+        assert_eq!(installed.digest, restored_digest);
+        assert_eq!(installed.pending_restore_base, None);
+        assert!(!installed.restore_pending);
     }
 
     #[test]

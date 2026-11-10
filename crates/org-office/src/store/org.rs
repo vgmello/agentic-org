@@ -40,7 +40,7 @@ pub(crate) use replication::{
 };
 mod snapshot;
 pub(crate) use snapshot::{export_replication_snapshot, stage_replication_snapshot};
-pub use snapshot::{OrganizationSnapshotExport, OrganizationSnapshotManifest};
+pub use snapshot::{OrganizationSnapshotExport, OrganizationSnapshotManifest, SnapshotStageMode};
 
 /// The epoch of every entry until promotion exists (phase 4).
 const EPOCH: u64 = 1;

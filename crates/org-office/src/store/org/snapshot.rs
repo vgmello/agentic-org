@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use org_proto::{Area, Member, Membership, Project, ProjectTeam, Team};
 use org_sync::error::{Refusal, StoreError, SyncError};
 use org_sync::organization::{OrgCheckpoint, OrgTxn, PeerIdentity, PeerRole, ValidatedSnapshot};
-use org_sync_proto::{Codec, Digest, OfficeId, OrgId, Position};
+use org_sync_proto::{Codec, Digest, Epoch, OfficeId, OrgId, Position};
 use rusqlite::config::DbConfig;
 use rusqlite::types::{ToSqlOutput, ValueRef};
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Transaction};
@@ -43,6 +43,16 @@ pub struct OrganizationSnapshotManifest {
 pub struct OrganizationSnapshotExport {
     pub manifest: OrganizationSnapshotManifest,
     pub ciphertext: Vec<u8>,
+}
+
+/// Local staging authorization supplied by the worker, never decoded from the peer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SnapshotStageMode {
+    Normal,
+    RecoveryWarningShown {
+        authority: Epoch,
+        restored_digest: Digest,
+    },
 }
 
 struct Scratch(PathBuf);
@@ -294,6 +304,7 @@ pub(crate) fn stage_replication_snapshot(
     transport_key: &Key,
     input: impl Read,
     max_bytes: u64,
+    mode: SnapshotStageMode,
 ) -> Result<ValidatedSnapshot, SyncError> {
     if peer.role != PeerRole::Hq
         || peer.org_id != manifest.org_id
@@ -312,9 +323,7 @@ pub(crate) fn stage_replication_snapshot(
         return Err(Refusal::InvalidInput.into());
     }
     let checkpoint = super::replication::replication_checkpoint(store)?;
-    if !authorized_stage(&checkpoint, &peer) {
-        return Err(Refusal::NotAuthorized.into());
-    }
+    check_stage(&checkpoint, &peer, mode)?;
     let scratch = Scratch::new().map_err(storage_error)?;
     let path = scratch.database();
     let mut file = private_file(&path).map_err(storage_error)?;
@@ -385,9 +394,7 @@ pub(crate) fn stage_replication_snapshot(
     let id = staged.staging_id.clone();
     store.sync_write(move |db| {
         let current = OrganizationTxn(db).checkpoint()?;
-        if !authorized_stage(&current, &peer) {
-            return Err(Refusal::NotAuthorized.into());
-        }
+        check_stage(&current, &peer, mode)?;
         db.execute(
             "INSERT INTO org_snapshot_stage VALUES (1, ?1, ?2)
              ON CONFLICT(singleton) DO UPDATE SET stage_id = excluded.stage_id, body = excluded.body",
@@ -398,11 +405,33 @@ pub(crate) fn stage_replication_snapshot(
     Ok(staged)
 }
 
-fn authorized_stage(current: &OrgCheckpoint, peer: &PeerIdentity) -> bool {
-    current.org_id == peer.org_id
-        && current.hq_office == peer.office_id
-        && current.highest_epoch == peer.authority
-        && current.local_office != current.hq_office
+fn check_stage(
+    current: &OrgCheckpoint,
+    peer: &PeerIdentity,
+    mode: SnapshotStageMode,
+) -> Result<(), Refusal> {
+    if current.org_id != peer.org_id
+        || current.hq_office != peer.office_id
+        || current.highest_epoch != peer.authority
+        || current.local_office == current.hq_office
+    {
+        return Err(Refusal::NotAuthorized);
+    }
+    match (current.restore_pending, mode) {
+        (false, SnapshotStageMode::Normal) => Ok(()),
+        (
+            true,
+            SnapshotStageMode::RecoveryWarningShown {
+                authority,
+                restored_digest,
+            },
+        ) if current.highest_epoch == authority
+            && current.pending_restore_base == Some(restored_digest) =>
+        {
+            Ok(())
+        }
+        _ => Err(Refusal::RestorePending),
+    }
 }
 
 fn decode(body: &[u8]) -> Result<Projection, Refusal> {
