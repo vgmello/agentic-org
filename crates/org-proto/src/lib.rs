@@ -42,7 +42,7 @@
 //! Each method is a type implementing [`Call`] (its name, params and result), and each event
 //! a type implementing [`EventKind`]. Clients and servers build and read envelopes through
 //! them, so method names and payload shapes live in one place. The app will keep a
-//! TypeScript mirror (`apps/desktop/src/lib/proto.ts`) in step by hand for now.
+//! TypeScript mirror (`apps/org-ui/src/lib/proto.ts`) in step by hand for now.
 //!
 //! Agent messaging on an office server (ADR-0003) is in [`msg`]; the organization directory
 //! (`who`), status lines (`status.set`) and presence are in [`directory`].

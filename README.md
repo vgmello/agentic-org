@@ -37,7 +37,19 @@ docs/
 Follow the [architecture rules](docs/architecture-rules.md) and
 [proposed project structure](docs/design/project-structure.md) for domain/feature
 organization, shared code ownership, and the source-to-target implementation plan.
-These names/layout are proposed implementation work; this PR changes docs only.
+The UI and worker renames are implemented. The remaining target layout is planned;
+the browser still uses the retained transports until HTTP integration lands.
+
+Run the UI checks from `apps/org-ui`:
+
+```sh
+cd apps/org-ui
+bun install --frozen-lockfile
+bun run check
+bun run test
+bun run build
+bun run test:e2e
+```
 
 ## Inspected source layout (pre-pivot)
 

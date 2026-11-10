@@ -1,5 +1,5 @@
 <script lang="ts">
-	// Ported from the Tailwind Plus sidebar layout (licensed; allowed inside apps/desktop only).
+	// Ported from the Tailwind Plus sidebar layout (licensed; allowed inside apps/org-ui only).
 	import { page } from '$app/state';
 	import type { Connection } from '$lib/proto';
 	import Logo from './Logo.svelte';

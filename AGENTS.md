@@ -3,7 +3,7 @@
 ## Who owns what
 | Area | Owner |
 | --- | --- |
-| `apps/desktop/` (target: `apps/org-ui/`) | the **app agent** (`app-frontend-dev`) |
+| `apps/org-ui/` | the **app agent** (`app-frontend-dev`) |
 | `apps/org-server/`, planned `apps/org-gateway/`, `crates/org-office/`, `crates/org-client/`, and the SQL for every table in `store.rs` (messaging's included) | the **server agent** (`server-dev`) |
 | `apps/org-office-host/` (the supervisor and login service), planned `apps/org-setup/`, `crates/org-sync/`, `crates/org-pki/`, `crates/org-git/`, `crates/org-github/`, `crates/org-supervise/`, `crates/org-runtime-claude/` | **River** (`ac-software-engineer-river`), Senior Backend Engineer |
 | `apps/org-agent/` (the CLI agents use), `crates/org-spool/`, and the messaging library (its crate name is set in ADR-0003) | **Remy** (`ac-software-engineer-remy`), Senior Backend Engineer, since 2026-11-08 (taking over from `agy-senior-dev`, who is out of runtime credits) |
@@ -17,7 +17,7 @@ Don't edit another owner's area. If you need a change there, message its owner.
 
 The product is named **Agentic Org**. The designs that are the reference for current work are in `docs/design/` (offices, teams, projects and GitHub), with decisions in `docs/adr/` and the UX specs in `docs/specs/`.
 
-The owner-requested [v1 project structure](docs/design/project-structure.md) defines the target names and domain-module/vertical-slice layout. The worker rename to `apps/org-server` is implemented; the UI rename and domain moves remain pending. Owners above retain the same responsibilities after the renames.
+The owner-requested [v1 project structure](docs/design/project-structure.md) defines the target names and domain-module/vertical-slice layout. The worker and UI renames to `apps/org-server` and `apps/org-ui` are implemented; domain moves remain pending. Owners above retain the same responsibilities after the renames.
 
 ## Rules
 1. **Read [`docs/architecture-rules.md`](docs/architecture-rules.md) first.** Follow the [v1 project structure](docs/design/project-structure.md): apps compose crates, policies own their required contracts, and dependencies on `org-proto` are intentional rather than mandatory for every crate. No source cycles. Logic lives in libraries, and binaries stay thin.
@@ -63,4 +63,4 @@ org-agent status "<what you're on>"               # your status line
 Check your inbox at the start of every turn and after every step. ada is `ac-staff-engineer-ada`. Keep messages short, with the result or the question first.
 
 ## Tailwind Plus (licensed UI)
-The app's look uses Tailwind Plus components, which the licence allows in our open-source end product. **Allowed:** using or modifying them (including converting them to Svelte) **inside the product UI application (`apps/desktop` today; `apps/org-ui` after the approved source rename)**. **Not allowed:** publishing them separately (a shared UI kit or component package, a template or starter, a Figma kit), or building a website-builder or admin-panel product from them. Never move them into `crates/` or a standalone package.
+The app's look uses Tailwind Plus components, which the licence allows in our open-source end product. **Allowed:** using or modifying them (including converting them to Svelte) **inside the product UI application (`apps/org-ui`)**. **Not allowed:** publishing them separately (a shared UI kit or component package, a template or starter, a Figma kit), or building a website-builder or admin-panel product from them. Never move them into `crates/` or a standalone package.
