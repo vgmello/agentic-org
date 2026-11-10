@@ -176,7 +176,7 @@
 	{#if canWrite}
 		<div class="relative">
 			{#if popup}
-				<ul id="composer-popup-{resetKey}" role="listbox" aria-label={popup === 'mention' ? 'Mention' : 'Commands'} class="absolute bottom-full z-20 mb-1 max-h-56 w-72 overflow-y-auto rounded-md bg-gray-900 py-1 shadow-lg ring-1 ring-white/10" data-testid="composer-popup">
+				<ul id="composer-popup-{resetKey}" role="listbox" aria-label={popup === 'mention' ? 'Mention' : 'Commands'} class="absolute bottom-full z-20 mb-1 max-h-56 w-72 max-w-full overflow-y-auto rounded-md bg-gray-900 py-1 shadow-lg ring-1 ring-white/10" data-testid="composer-popup">
 					{#if popup === 'mention'}
 						{#each mentions as o, i (o.handle)}
 							<li id="composer-opt-{resetKey}-{i}" role="option" aria-selected={i === picked % mentions.length}>
@@ -214,7 +214,7 @@
 				oninput={() => { error = undefined; unknownCommand = false; track(); }}
 				onclick={track}
 				onkeyup={(e) => (e.key.startsWith('Arrow') && popup ? undefined : track())}
-				class="w-full resize-none rounded-md bg-gray-800 max-[640px]:max-h-32 [@media(max-height:32rem)]:max-h-32 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:outline-indigo-400"
+				class="w-full resize-none rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:outline-indigo-400"
 				data-testid="composer"
 			></textarea>
 		</div>
@@ -242,3 +242,11 @@
 		</div>
 	{/if}
 </div>
+
+<style>
+	@media (width < 640px), (height <= 32rem) {
+		textarea {
+			max-block-size: min(128px, calc(100dvh - var(--chat-header-height, 4rem)));
+		}
+	}
+</style>

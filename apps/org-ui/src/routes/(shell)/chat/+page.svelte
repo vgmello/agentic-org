@@ -102,9 +102,10 @@
 		const rect = target.getBoundingClientRect();
 		const x = rect.x + rect.width / 2;
 		const inset = Math.min(1, rect.height / 2);
-		if (![rect.top + inset, rect.bottom - inset].every((y) => target.contains(document.elementFromPoint(x, y)))) {
-			target.scrollIntoView({ block: 'center', inline: 'nearest' });
-		}
+		const scrollMargin = Number.parseFloat(getComputedStyle(target).scrollMarginBlockStart) || 0;
+		const clippedByViewport = rect.top < scrollMargin || rect.bottom > innerHeight;
+		const covered = ![rect.top + inset, rect.bottom - inset].every((y) => target.contains(document.elementFromPoint(x, y)));
+		if (clippedByViewport || covered) target.scrollIntoView({ block: 'center', inline: 'nearest' });
 	}
 	function focusVisible(target: HTMLElement | null | undefined) {
 		if (!target?.isConnected) return;
@@ -507,7 +508,7 @@
 {/snippet}
 
 <!-- At high zoom, keep a readable message area and let the shell scroll vertically. -->
-<div bind:this={chatEl} onfocusin={revealChatFocus} class="relative flex h-[calc(100dvh-4rem)] min-h-0 min-w-0 max-[640px]:h-[calc(100dvh-3.5rem)] max-[640px]:min-h-[28rem]">
+<div bind:this={chatEl} onfocusin={revealChatFocus} class="chat-frame relative flex min-h-0 min-w-0">
 	{#if loadError}
 		<p class="m-8 text-sm/6 text-red-400" role="alert">{loadError}</p>
 	{:else if !chatState || !bar}
@@ -551,7 +552,7 @@
 				<p class="border-b border-white/10 bg-amber-400/10 px-5 py-2 text-sm/6 text-amber-100" data-testid="office-down">Read-only from the last copy. The office isn't running.</p>
 			{/if}
 
-			<div bind:this={listEl} data-focus-scope class="min-h-16 flex-1 overflow-y-auto px-3 py-3" data-testid="message-list" tabindex="-1" role="region" aria-label="Messages">
+			<div bind:this={listEl} data-focus-scope class="min-h-16 flex-1 overflow-y-auto px-3 py-3 max-[640px]:px-[8px]" data-testid="message-list" tabindex="-1" role="region" aria-label="Messages">
 				{#if searching}
 					<div class="px-2 pb-3">
 						<p class="text-sm/6 text-gray-300" data-testid="search-count">{results.length} {results.length === 1 ? 'result' : 'results'}</p>
@@ -670,3 +671,20 @@
 <ChannelDialog bind:this={channelDialog} returnFocus={sidebarDialogMode ? finishSidebarDialog : undefined} bind:open={channelOpen} mode={channelMode} members={ctx.members} initialName={channelMode === 'rename' ? (conversation?.name ?? '') : ''} initialMembers={channelMode === 'members' ? (conversation?.members ?? []) : []} onsubmit={channelSubmit} />
 <NewMessageDialog bind:this={dmDialog} returnFocus={sidebarDialogMode ? finishSidebarDialog : undefined} bind:open={dmOpen} members={ctx.members} onsubmit={dmSubmit} />
 <CommandDialog bind:open={commandOpen} form={command} ondone={(message) => toast.success(message)} />
+
+<style>
+	.chat-frame {
+		--chat-header-height: 4rem;
+		height: calc(100dvh - var(--chat-header-height));
+	}
+	@media (width < 640px) {
+		.chat-frame { --chat-header-height: 3.5rem; }
+	}
+	@media (width < 640px), (height <= 320px) {
+		.chat-frame { min-height: 28rem; }
+		/* Include the sticky shell header when scrolling brings focus into view. */
+		.chat-frame :global(:focus) {
+			scroll-margin-block-start: var(--chat-header-height);
+		}
+	}
+</style>

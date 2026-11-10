@@ -71,7 +71,7 @@
 	}
 </script>
 
-<div data-ask-id={message.id} class="rounded-lg border {done ? 'border-white/10 bg-white/[0.03]' : isAsk ? 'border-amber-400/40 bg-amber-400/5' : 'border-indigo-400/30 bg-indigo-400/5'} p-4 max-[640px]:p-3" data-testid={isAsk ? 'ask-card' : 'handoff-card'} data-answered={done ? 'true' : 'false'}>
+<div data-ask-id={message.id} class="rounded-lg border {done ? 'border-white/10 bg-white/[0.03]' : isAsk ? 'border-amber-400/40 bg-amber-400/5' : 'border-indigo-400/30 bg-indigo-400/5'} p-4 max-[640px]:px-[8px] max-[640px]:py-3" data-testid={isAsk ? 'ask-card' : 'handoff-card'} data-answered={done ? 'true' : 'false'}>
 	<p class="text-xs/5 font-semibold {isAsk ? 'text-amber-200' : 'text-indigo-200'}">
 		{#if isAsk}{message.approval ? '✅ Approval' : '❓ Ask'}: {nameOf(ctx, message.from)} asks {to}{:else}🔁 Hand-off: {nameOf(ctx, message.from)} → {to}{/if}
 		{#if where}<span class="font-normal text-gray-400">{' · in ' + where}</span>{/if}
