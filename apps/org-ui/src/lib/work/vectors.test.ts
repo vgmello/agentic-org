@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import vectors from '../../../test-vectors/work-commands.json';
+import vectors from '../../../../../crates/org-work/test-vectors/work-commands.json';
 import { applyWork, emptyWork, itemOf, type WorkCall, type WorkContext, type WorkState } from './engine';
 
 // The same cases run against the Rust mock office (src-tauri/src/work_engine.rs): the two engines must agree.
@@ -27,6 +27,9 @@ function subset(have: unknown, want: unknown, path = ''): string | undefined {
 }
 
 describe('work-commands.json (shared with the Rust mock office)', () => {
+	it('preserves every legacy work scenario', () => {
+		expect(vectors.cases).toHaveLength(29);
+	});
 	for (const c of vectors.cases as { name: string; steps: Step[] }[]) {
 		it(c.name, () => {
 			let state: WorkState = emptyWork();
