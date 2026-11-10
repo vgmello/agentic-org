@@ -40,6 +40,36 @@ describe('one operation intent', () => {
 		expect(JSON.stringify(operation)).not.toContain(auth.proof);
 	});
 
+	it('D-GW3: identical same-ID handles coalesce only within themselves and leave replay to the worker', async () => {
+		const s = setup();
+		const prepare = () => s.client.prepare({ kind: 'org', method: 'team.rename', scope, params: { command_id: id, expected_version: 4, name: 'QA' }, decode });
+		s.transport.submit.mockResolvedValue({ operationId: id, status: 'completed', result: { saved: true } });
+		const first = prepare();
+		const second = prepare();
+		expect(await first.submit()).toEqual(await second.submit());
+		expect(s.transport.submit).toHaveBeenCalledTimes(2);
+		expect(s.transport.submit.mock.calls[0]).toEqual(s.transport.submit.mock.calls[1]);
+		expect(s.newId).not.toHaveBeenCalled();
+	});
+
+	it.each(['params', 'account'] as const)('D-GW3: same-ID handles with different %s preserve the worker conflict', async (different) => {
+		const s = setup();
+		const first = s.client.prepare({ kind: 'org', method: 'team.rename', scope, params: { command_id: id, expected_version: 4, name: 'QA' }, decode });
+		s.transport.submit.mockResolvedValueOnce({ operationId: id, status: 'completed', result: { saved: true } });
+		await first.submit();
+		const nextScope = different === 'account' ? { ...scope, accountId: 'another-account' } : scope;
+		s.authenticate({ ...nextScope, proof: 'current-proof' });
+		const second = s.client.prepare({ kind: 'org', method: 'team.rename', scope: nextScope, params: { command_id: id, expected_version: 4, name: different === 'params' ? 'Other' : 'QA' }, decode });
+		// The worker is authoritative. B1-02's shared vectors own the HTTP 409 representation.
+		s.transport.submit.mockResolvedValueOnce({ operationId: id, status: 'rejected', error: { code: 'operation_reused', message: 'Earlier attempt differs' } });
+		expect(await second.submit()).toMatchObject({ status: 'rejected', error: { code: 'operation_reused', category: 'conflict' } });
+		await second.submit();
+		expect(s.transport.submit).toHaveBeenCalledTimes(2);
+		expect(s.transport.submit.mock.calls[1][0].scope).toEqual(nextScope);
+		expect(s.transport.submit.mock.calls[1][0].id).toBe(id);
+		expect(s.newId).not.toHaveBeenCalled();
+	});
+
 	it('resolves a lost response by the same ID, keeps missing unresolved and stops on expiry', async () => {
 		const s = setup();
 		s.transport.submit.mockRejectedValueOnce(new Error('lost after commit'));
