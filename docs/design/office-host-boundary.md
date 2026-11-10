@@ -1,7 +1,38 @@
 # org-office-host ↔ org-office-server: the boundary (phase 1, HQ only)
 
+**Browser HTTP separation (standalone-v1 review):** planned `org-gateway` is a
+separate supervised child for the instance browser listener. The host retains key
+custody and admits only typed, scoped local operations; it does not parse browser
+HTTP. The gateway has no office-key entitlement or raw-key return operation, and
+organization creation requires an instance-admin grant. See
+[standalone-server.md](standalone-server.md#browser-listener-and-privilege-boundary).
+
+**Naming amendment (2026-11-10):** the target worker app/package/binary is
+`apps/org-server` / `org-server`, replacing `apps/org-office-server` / `org-office-server`;
+the retained browser application becomes `apps/org-ui` / `org-ui`. See
+[project structure](project-structure.md). Host custody, private launch and one worker
+per office remain. Older spellings below identify pre-rename source/contracts;
+implementation updates executable/build references without merging process roles.
+
+**Standalone-v1 precedence (2026-11-09):**
+[standalone-server.md](standalone-server.md) and
+[ADR-0005](../adr/0005-standalone-server-v1.md) amend this boundary for a named
+macOS/Linux instance. The catalog, locks, private launch channels, office process
+ownership, key custody and child cleanup remain. `<home>` is now `office-state/`
+under the selected instance's persisted data root; employee homes are siblings
+under `agents/<office id>/<member id>/`, as the server design specifies. Runtime
+sockets use short instance-scoped paths. Service
+names, credential namespaces and orphan-key sweeps cannot affect another instance.
+
+The app-only `office.app_token`/signed-Tauri-client contract, bundle-relative helper
+location, one pinned account-wide home and SMAppService installation are retired
+as v1 public contracts. Replace them with browser principal authorization and
+verified standalone helper/platform adapters; do not bypass their security
+invariants. The detailed phase-1 protocol below documents the inspected code until
+the implementation changes it. No old desktop caller requires compatibility.
+
 Status: **approved by ada** 2026-11-08, and **agreed by River** (the host) **and server-dev** (the server), `--discard` included. Updated for ADR-0003 §2.1 (the app token on every start) and the code review of `org-office-launch` (rev 2, 2026-11-08). Amended by ada 2026-11-08 for the boundary review (adopt vs discard, `not_ready` at startup, the give-up count, the status-reason mapping, the stdin and `--discard` wording, `org-supervise`). Amended by ada 2026-11-08 for key custody (the host creates and holds every office's database key; launch version 2). It implements
-`docs/design/offices-hq-and-satellites.md` ("Processes on one Mac") and the `org-proto` host calls.
+`docs/design/offices-hq-and-satellites.md` ("Processes in one instance") and the `org-proto` host calls.
 
 **Implementation status** (2026-11-08): `org-office-host` implements this design: the catalog, the supervisor, `hello` (with its capabilities), `organization.create` (with `not_ready` at startup and at most 4 creates in flight), `organization.list`, `office.list`, `subscribe`, `office.app_token` behind the peer code-signature check, `office.restart`, `office.status_changed` with `status_reason` / `next_restart_at`, and the give-up rule (River: `river/office-host`, merged at `7c34096`, and `river/host-contract`). Spawning through `org-supervise` comes later; until then the host clears the environment and serializes spawns, binds and accepts under one lock.
 The contract crate `crates/org-office-launch` holds the exact shapes. **This design is the reference:**

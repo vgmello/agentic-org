@@ -2,10 +2,10 @@
 kind: spec
 title: "Chat: channels, DMs and threads where agents and people talk (UX)"
 status: for-review
-revision: 5
+revision: 7
 owner: ac-product-designer-eden
 created: "2026-11-08"
-updated: "2026-11-08"
+updated: "2026-11-10"
 requested_by: owner
 reviewers: [ac-staff-engineer-ada, owner]
 builds_on: [our-org-in-the-app, agent-run-modes-ux, feature-requests-ux, work-items-ux, decisions-and-tech-debt-ux]
@@ -27,11 +27,16 @@ Extends `our-org-in-the-app.md` (Activity, the owner reads messages, A17), `agen
 
 **Revision 2 (2026-11-08): review fixes and ada's C1–C3.** Chat uses ADR-0003's words: an **Ask** is ADR-0003's `request` kind (urgent, blocking), hand-offs are `handoff`, and there's no "request" message kind (feature requests are a different object). What an agent can read is defined (decision 10). Bridges never act as the owner (decision 11). Slash commands are for people (they use app-only calls). Mentions complete to handles. The channel and thread model needs an ADR-0003 amendment before W19 (A43). CHAT-16 and CHAT-17 added.
 
+**Revision 6 (2026-11-09): owner-requested channel discovery and agent participation.**
+Extends existing channels, not a second messaging system: agents can discover/join
+eligible channels, ask the team when the right person is unknown, and continue in
+a DM. The tools enable this; an overridable process guides when to do it. CHAT-19..23.
+
 ## 0. Decisions
 
 1. **Chat is a first-class place in the app** (nav item **Chat**, second after Home), laid out like Slack: a sidebar of channels and DMs, a conversation in the middle, and a thread or profile on the right.
 2. **The chat is for conversations, not output.** Agents post only:
-   - **questions** to people or other agents (an *ask*, which can block until answered),
+   - **questions** to people or other agents (a directed *Ask*, which can block until answered, or an undirected, nonblocking channel **Question**, rev 6),
    - **hand-offs** to another agent or a person,
    - **replies** when they're addressed (mentioned, in a DM or in their thread),
    - **announcements that someone must act on or know**: a feature delivered, a branch ready for review, blocked, a status report.
@@ -84,7 +89,7 @@ Extends `our-org-in-the-app.md` (Activity, the owner reads messages, A17), `agen
 | **Announcement** | an agent, for something to act on or know | 📣 with links (branch, feature, report) and reactions | reactions are acknowledgements (✅ seen, 👀 looking) and don't post a message |
 | **Approval** (an Ask with Approve and Reject; answered only in the app, never through a bridge, decision 11) | an agent needing a yes/no from the owner | a card with **Approve** · **Reject…** (reason) | recorded with who and when, like decisions |
 
-- An ask to the owner also appears in **Home › Needs you** and the menu-bar dot. It's one item, answered from wherever the owner sees it.
+- An ask to the owner also appears in **Home › Needs you** and its in-page indicator (native menu-bar indicators are v2). It's one item, answered from wherever the owner sees it.
 - An ask with a **default** ("If no answer by 18:00, I'll allow it") shows the countdown, and when the default is applied, the card says so.
 
 ## 3. Slash commands (people)
@@ -97,9 +102,40 @@ They use app-only calls, so agents don't use them. Agents do the same through `o
 
 Search across channels and DMs by text, member, channel, kind (asks, announcements) and date, with filters like Slack (`from:@ada in:#agentic-org has:ask`). Messages are kept in the office database. Retention is a setting (default: keep). Pins per channel.
 
+### 4.1 Finding the right teammate (proposed, rev 6)
+
+**Browse channels** shows eligible channels with purpose, team/project, membership
+and **Join** or **Request invitation**. An agent has the same discovery/join path
+through `org-agent`, within its rights. Restricted non-member channels are not
+listed or searchable. The directory exposes authorized metadata, not message bodies.
+Automatic team/project channels keep their existing membership sync; leaving one
+requires changing the underlying membership, not a bypass through Chat.
+
+An overridable **Channel questions and follow-up** process guides an agent to look
+for the relevant team/project channel, join if permitted, ask a concise question
+when it doesn't know who can help, and reply in the thread. This question needs no
+named recipient. It is distinct from a directed blocking Ask (`request`); a team
+question never creates an approval or blocks/wakes every member by default.
+
+When someone offers to help, the agent may open a DM through `org-agent` and
+continue there, linking the channel question where both parties can read it. No
+automatic transcript copying: the agent chooses what context to share under its
+process and access rights. “Take to DM” preserves the thread; posting a brief
+resolution back is process guidance, not a coded routing decision.
+
+Opening a DM is permitted under the same recipient rules as today's direct sends;
+this extends the app-only `dm.open` classification for authorized agent callers.
+Internal delegates have no separate channel membership or DM identity: any allowed
+communication is attributed to the owning employee under its restricted grant.
+
+Ordinary channel activity is queued for normal inbox/digest handling. Only an
+addressed mention, direct Ask, subscribed thread reply or an explicitly configured
+subscription produces a run trigger; existing quota/run-mode/pause rules and
+coalescing still apply. Membership is not a broadcast wake subscription.
+
 ## 5. Keeping the chat quiet (enforced, not only asked)
 
-- **Agents post through `org-agent msg`** with an ADR-0003 kind: `request` (shown as **Ask**: urgent and blocking), `handoff`, `announcement` or `reply` (ada, A44). Feature requests (REQ-n) are a different object and never a message kind. A plain post that isn't a reply, an ask or a hand-off is accepted only as an announcement, which needs a reason chosen from a short list (delivered, ready for review, blocked, report, decision needed).
+- **Agents post through `org-agent msg`** with an ADR-0003 kind: `request` (shown as **Ask**: urgent and blocking), `handoff`, `announcement`, `reply`, or *(rev 6)* channel-only `question` (shown as **Question**: undirected and nonblocking; ADR-0003 §6.8). Feature requests (REQ-n) are a different object and never a message kind. Other plain posts are accepted only as announcements, which need a reason chosen from a short list (delivered, ready for review, blocked, report, decision needed).
 - **Guidance** (`decisions-and-tech-debt-ux.md` §6.2) adds the moment **Posting to chat**: "Post only what someone must answer, act on or know. Put details in the task or doc and link it."
 - **Limits:** at most 1 announcement per agent per channel per 15 minutes by default. Extra posts are folded into a thread under the last one ("server-dev posted 3 more updates").
 - **Mute and digest:** the owner can mute an agent in a channel or set it to a daily digest. Muted messages still reach Activity.
@@ -122,7 +158,7 @@ Settings › Chat › **Bridges**: connect a channel to Slack, Microsoft Teams o
 - CHAT-1 · Chat has a sidebar with Needs you, Mentions, Threads, channels and DMs, and a conversation view with threads, like Slack.
 - CHAT-2 · #general, one channel per project and one per team exist automatically, with members kept in sync, and people can add channels and invite members.
 - CHAT-3 · DMs work with any agent, person or group of up to 8, and show each member's status.
-- CHAT-4 · Agents' messages are only asks, hand-offs, replies and announcements. Tool output, logs and routine progress never appear in Chat.
+- CHAT-4 · *(rev 6)* Agents' messages are directed Asks, hand-offs, replies, announcements and nonblocking channel Questions (§4.1). Tool output, logs and routine progress never appear in Chat.
 - CHAT-5 · An ask shows as a card with its options and Reply. Answering it in Chat unblocks the agent, clears Needs you and marks it answered by whom.
 - CHAT-6 · An ask with a default shows its deadline and, when the default is applied, says so.
 - CHAT-7 · Messaging an asleep agent wakes it and says so, and a typing indicator shows while it works.
@@ -138,11 +174,17 @@ Settings › Chat › **Bridges**: connect a channel to Slack, Microsoft Teams o
 - CHAT-17 · *(rev 2)* A bridged message is posted as the bridged person, never as the owner, and the owner's asks and approvals can't be answered from a bridge (read-only there, with Open in Agentic Org).
 - CHAT-18 · *(new, rev 5)* A hand-off shows **Accept** only to its recipient (or to the owner when it's handed to the owner). Once accepted, the card reads "Accepted by <name> · <time>" with no buttons for everyone. A DM with a person shows their status as a word, never only a dot.
 
+- CHAT-19 · *(new, rev 6)* Agents can list authorized channel metadata and join/leave eligible manual channels through `org-agent`; restricted channels require invitation and stay undiscoverable to unauthorized agents. Automatic channels keep membership sync and cannot be edited through join/leave.
+- CHAT-20 · *(new, rev 6)* A channel member can ask an undirected team question in a thread without knowing a recipient. It is nonblocking and does not create per-member approval/Ask cards; directed Asks retain their existing lifecycle.
+- CHAT-21 · *(new, rev 6)* An agent can open a permitted DM with a respondent and link the readable source question, without copying channel history or changing recipients' access. Channel-vs-DM choice and follow-up are driven by an overridable process.
+- CHAT-22 · *(new, rev 6)* A channel message is stored once with per-member read/triage state. Ordinary posts do not wake every member; addressed/subscribed triggers are coalesced and respect run modes, pause and quota. Delegates have no separate membership or message identity.
+- CHAT-23 · *(new, rev 6)* Leaving a manual channel immediately ends new delivery and queued wake eligibility; existing already-read-by-id history follows ADR-0003 §6.4. Rejoining cannot resurrect an expired Ask or silently restore a previous subscription.
+
 ## 9. Open questions
 
 **For ada (architecture)**
 - ~~A42~~ · *Resolved (ada):* the source of truth is the **office's messaging** (Rust, ADR-0003 extended). The app UI is ours (Svelte), and agents keep using `org-agent` (no Node in an agent's path). Chat SDK runs as an optional **bridge**, `org-chat-bridge`, a Node process supervised by the office, with a custom Agentic Org adapter over office messaging. It carries (a) the Slack, Teams and Discord bridges and (b) Chat SDK's card and approval semantics, mapped to our ask cards and approvals. The office works fully without it. ada puts this to the user as the recommendation.
-- ~~A43~~ · *Resolved (ada):* channels and threads extend ADR-0003. A conversation has a kind (`dm` | `group_dm` | `channel`) and members. Channels are org data (HQ commands `channel.create|rename|archive`, plus auto channels for #general, each project and each team, with members synced). Messages carry `conversation_id` and `thread_root_id`. Today's direct messages map onto DMs. **It needs an ADR-0003 amendment (Remy drafts, ada approves) before W19 is built**, since ADR-0003 today addresses one recipient per message.
+- ~~A43~~ · *Resolved (ada):* channels/threads extend ADR-0003 §6 (proposed on this branch). Rev 6 adds discover/join/leave, undirected questions, authorized agent DM opening and bounded wake semantics in §6.8; final contract/storage shapes still need the existing messaging/contract owners' review before W19 implementation.
 - ~~A44~~ · *Resolved (ada):* the office enforces message kinds (ADR-0003's `request`, shown as Ask, plus `handoff`, `announcement` and `reply`), the announcement reason and the rate limit (1 per 15 min per agent per channel, extras folded into a thread). Mute and digest are per-viewer office data. Plan row W19.
 
 **For the user**

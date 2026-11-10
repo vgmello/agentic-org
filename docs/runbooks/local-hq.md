@@ -1,5 +1,20 @@
 # Runbook: a real HQ office on this Mac (debug build)
 
+**Naming amendment (2026-11-10):** standalone v1 renames the server app/package/binary
+from `apps/org-office-server` / `org-office-server` to `apps/org-server` / `org-server`,
+and the retained browser UI to `apps/org-ui` / `org-ui`. The legacy debug commands
+below describe the inspected source. Follow [project structure](../design/project-structure.md)
+for implementation; this docs PR does not rename source or change process boundaries.
+
+**V1 direction changed 2026-11-09:** the target is a standalone Rust server
+on macOS/Linux serving the browser application from HQ. Tauri is deferred to v2.
+See the [server design](../design/standalone-server.md) and [deletion inventory](../design/standalone-server-removal-inventory.md).
+This documentation change specifies the pivot; the source described below is the
+inspected pre-pivot implementation. Its Tauri/bundle commands are historical
+development instructions, not installation instructions for the new v1. Do not
+claim the new CLI, HTTP server or remote sync exists until implemented. No migration
+of the undeployed desktop app or its data is required.
+
 Status: draft (River, 2026-11-08), for ada's switchover from the mock to the real `org-office-host` and an HQ
 `org-office-server`, from **debug builds**, and an end-to-end check. Nothing here is signed or bundled. Each claim
 not checked against a run is marked "(unverified: …)".

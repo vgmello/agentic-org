@@ -1,5 +1,24 @@
 # Design: offices, HQ and satellites
 
+**Naming amendment (2026-11-10):** the target worker app/package/binary is
+`apps/org-server` / `org-server`, replacing `apps/org-office-server` / `org-office-server`;
+the retained browser application becomes `apps/org-ui` / `org-ui`. See
+[project structure](project-structure.md). Host custody, private launch and one worker
+per office remain. Older spellings below identify pre-rename source/contracts;
+implementation updates executable/build references without merging process roles.
+
+**Amendment 2026-11-09: standalone v1.**
+[ADR-0005](../adr/0005-standalone-server-v1.md) and
+[standalone-server.md](standalone-server.md) replace desktop access, installation
+and the old release sequencing. HQ serves the browser; each named macOS/Linux
+instance supervises its offices. Remote enrollment and synchronization are required
+v1 work, not capabilities already present in code. Organization/work ownership,
+events, outboxes, snapshots and the outbound satellite topology below are retained.
+There is no migration from the undeployed desktop app.
+The server design's instance layout supersedes account-wide paths: `<home>` is
+the instance's `office-state/` subtree, and all employee homes and runtime paths
+are provisioned and scoped to that same instance.
+
 Status: **approved by the user** 2026-11-08 (decisions at the end); later amendments by ada (2026-11-08: adopting a stored create; the launch pipe, ephemeral `app_token`, name reservation, the dev-build fallback, the host-crash trade-off, structural launch stdio, `--discard`, where the app-only rule for org commands is enforced, phase 2 enrollment proof left open; key custody). To be recorded as an ADR. It settles the model, the rules and the phases. Wire formats and byte-level protocol details are written in each phase's own design before it's built. Owner: ada. Its decisions become an ADR, which amends ADR-0001 and ADR-0002, and the messaging ADR (0003, still a proposal).
 
 ## In one paragraph
@@ -15,9 +34,9 @@ An organization has offices. **The first office is HQ**. It holds the organizati
 - **Work data** (tasks and messages, which change constantly) is **office-first**. See the next section.
 - **Runtime summaries** (e.g. "3 agents running") are not logged. Each office sends HQ passing status updates over its connection. HQ keeps the latest one per office in memory and forwards them to the other offices, so the app can show the whole organization without growing the log or forcing a full flush per status change.
 - **Office runtime** is owned by each office and never copied: running sessions, live status, the scheduler's run queue, caches. (Tasks themselves are work data and do sync.)
-- **The app always talks to an office on its own Mac.** It prefers that organization's HQ if HQ runs here. A Mac with only a satellite reads from it and sends changes through it. "Open organization" in the app means joining an existing organization by enrolling a new satellite on this Mac (see Provisioning).
+- **The browser talks to HQ over authenticated HTTP.** It needs no local office. Setup provisions an HQ or enrolls a satellite through the CLI; opening an organization in a browser does not enroll its machine.
 
-## Processes on one Mac
+## Processes in one instance
 The boundary between the host and an office server (who writes what on disk, the pipe protocol, what the host does with each failure) is in [`office-host-boundary.md`](office-host-boundary.md).
 
 - **One office = one process**: `org-office-server --office <office-id>` for an existing office (a new one starts with `--create` alone, and an unfinished one is removed with `--discard <office-id>`, see below). It owns `<home>/offices/<office-id>/`:
@@ -32,7 +51,7 @@ The boundary between the host and an office server (who writes what on disk, the
   Keeping them apart means replacing the copy (a snapshot) never touches the office's own data.
 - **Keys** (amended 2026-11-08: key custody): **`org-office-host` creates and holds every office's key.** It makes the key for a create, before the office's first `--create`, and keeps it in the Data Protection keychain (service `org.agentic.office-key`, account = the office id, in the signed host's access group, this Mac only; debug builds and tests use a dev-keys file store). It sends the key to the server on the first pipe line of every create, start and discard. The server never creates, stores, loads or deletes a key, and never touches the Keychain. Why: a same-user process could stop the host and run the signed `org-office-server` itself with its own app token, and a Keychain item owned by the server would trust it. With the host holding the keys, a server started by anyone else gets no key and can't open `org.db`. The details are in [`office-host-boundary.md`](office-host-boundary.md) ("Key custody").
 - **An office lock:** the server takes an exclusive `flock` on its folder at start. Two processes can never write one office.
-- **`org-office-host` is the one login service.** macOS lets an app register a fixed set of login programs, not a variable number, so one supervisor covers them all.
+- **The instance host is one service per named instance.** Standalone setup registers it with the platform service manager. Each instance has its own root, credentials, sockets, service identity and release pin; no Tauri bundle is required.
   - It starts one `org-office-server` per office folder on this Mac that has a valid `office.json`, and restarts a crashed one with backoff. It looks only at folders named by a plain office id.
   - **A folder without an `office.json` is an unfinished create.** The host never starts it, and doesn't delete it itself: it runs `org-office-server --discard <office-id>`, with the office's key on the first line, or none if the host holds none (amended 2026-11-08: key custody). That server takes the office lock and refuses a folder that holds `office.json` or databases with a committed organization. It deletes the folder only when no database file exists, or when it opens them with that key and they hold no committed organization. A database it can't open or check (the key doesn't open it, or the host sent none) means it refuses too (`storage_error`). On any refusal the host logs it and leaves the folder and its key, so a real office is never destroyed automatically. The server never deletes a key: the host deletes that office's key item only after the server reports "discarded". `org-agent`'s scan ignores an unfinished folder too (ADR-0003 §2.1).
   - **A folder with an unreadable or invalid `office.json`** is left alone and logged: the host neither starts it nor runs `--discard`. **A folder whose `office.json` names another office id** is never started: the host moves it to `offices/.refused/<id>`, `<id>` being the folder's name.
@@ -97,15 +116,15 @@ Agents run on their office's machine and talk only to that office, through the l
 - **HQ keeps all work data**, and each satellite keeps what concerns its agents and projects (decision 3).
 
 ## How organization changes flow
-1. A client (the app; an agent only where ADR-0003's table allows) asks its local office for an organization change: a **command**, e.g. "create project X in team Y". The command carries:
+1. A browser asks HQ, or an agent asks its local office only where ADR-0003's table allows, for an organization change: a **command**, e.g. "create project X in team Y". The command carries:
    - a client-made **command id**
    - **client-made ids (ULIDs) for anything it creates**, so a later command, even one still queued, can refer to it
    - when it edits something, the **version it last saw**
 2. **The office passes it to HQ.** At HQ itself this is a function call. A satellite forwards it over its connection to HQ.
-   - **The receiving office enforces who may send it:** the office the client is bound to. An org command from a connection that isn't the app's is refused there with `not_authorized`, unless a row of ADR-0003's call-by-call table allows it. Today every org command is app-only (teams design).
-   - HQ accepts org commands only from its own office's connections, checked as above (today, the local app's), or from enrolled offices relaying them (mTLS from phase 3). Never from an arbitrary client socket.
-   - **Open for phase 2:** how a local satellite proves it's enrolled. Same-user socket permissions aren't enough here, because agents run as the same user.
-   - A relaying satellite has already enforced the app-only rule on its side.
+   - **Enforce actor authorization at the boundary.** HQ authenticates browser owners/people; a local office authenticates employee/session calls and only relays permitted operations. The relay envelope preserves validated actor and scope.
+   - HQ accepts authorized local operations or scoped relays from enrolled offices. An arbitrary socket, same UID or office certificate never grants owner permissions.
+   - Local satellites must prove office identity using the same enrollment trust model or a reviewed equivalent private capability; same-user socket permissions alone are insufficient.
+   - A relaying satellite enforces employee permissions before forwarding; HQ validates the trusted relay scope before accepting it.
 3. **HQ validates the command** against its current state. If it's valid, HQ commits the **result as an event**, fully resolved: the timestamps and normalised names it chose, plus the client's ids. The event is appended to the log at position **(epoch, seq)**, carrying the command id.
    - A command whose expected version is stale is **rejected** (`conflict`), not applied over newer data.
    - **Rejections are events too.** So the `command id → result` table is part of the copied data, and a retried or replayed command gets the same answer at any office, including after a promotion, for results that office had received.
@@ -141,53 +160,57 @@ Agents run on their office's machine and talk only to that office, through the l
   - So updating any office, in any order, never stops the others. A new feature switches on once every office has updated, and the app can show which offices are holding it back.
 
 ## Provisioning a satellite
-1. In the app, the owner adds an office: a name, plus local or remote.
-2. HQ adds a `pending` registry entry.
-   - **Local** (a second office on this Mac, phase 2): the host has the office created directly: it starts a new office server with `--create` and passes it its details through the pipe, never on the command line (the `org-office-launch` protocol, as for HQ). No link, TLS, certificate or approval is involved: trust rests on both offices running as the same macOS user. Steps 3–4 don't apply, and the satellite goes straight to step 5.
-   - **Remote** (phase 3): HQ makes a **one-time invitation link** (see "The invitation link" below).
-3. **Remote:** the owner copies the link to the other machine and pastes it into Agentic Org at "Open organization" (recommended), or opens it, which pre-fills the same screen.
-4. **Remote: the satellite makes its own key pair** and keeps the private key in its Keychain. It sends HQ a certificate request together with its **proof of the invitation** (see "The invitation link"). The invitation secret itself never crosses the network.
-   - HQ checks the proof, waits for the owner's approval, signs a client certificate with the organization's CA, and marks the invitation used.
-   - **Certificates say who and what they are** (from phase 3): office id, role, and client or server use.
-     - A satellite's certificate is client-only.
-     - The satellite pins HQ's office id and accepts only a server certificate with role HQ for that id. So no satellite can pose as HQ.
-   - Certificates last one year and renew automatically over the authenticated connection.
-5. HQ sends a snapshot, the stream starts, and the entry becomes `active`.
-6. **Removing an office** revokes its certificate (the revocation list is copied data), so it can't sync again. HQ reclaims its tasks (see Reclaim), and its agents become **unplaced**: the owner places each one in another office, or offboards it. An offline machine keeps whatever copy it already had until it next connects, when it's told to delete it. HQ can't force that.
 
-## The invitation link
-*(The user, 2026-11-08: a link that HQ generates, which the owner copies and opens on the other machine. This section's details are **proposed**, awaiting the user's confirmation.)*
-- **Shape:** `agenticorg://join#<token>`.
-  - Agentic Org registers the `agenticorg` URL scheme. Opening the link opens Agentic Org at **Open organization → Join with a link** (the other path there opens an organization this Mac already has), with the details **filled in, never joined automatically**. The owner sees the organization's name and HQ's address and must confirm, so a hostile link can't quietly enroll a Mac into someone else's organization.
-    - The confirmation says plainly that **joining lets that organization run its agents on this Mac**: until v2, agents run as you, so they can read and change your files, use your apps and network, and act on your behalf. Only join organizations you own.
-    - It flags a name that matches an organization this Mac already knows under a different id.
-  - The token is in the fragment (after `#`), so it isn't sent to a server if the link passes through a browser, and the app never logs it. A browser may still keep it in history, so **pasting it into the app is the recommended way**.
-  - The same token can be pasted into the app as text.
-- **The token** is versioned and base64url-encoded. It holds:
-  - the organization's name and id
-  - the new office's id and name
-  - HQ's office id
-  - HQ's current addresses, e.g. `hq-mac.local:7443` and its LAN IP (decision 6: direct network access only)
-  - the fingerprint of the organization's CA
-  - the expiry: 24 hours by default, shorter if the owner chooses
-  - a **one-time invitation key**: the private half of an Ed25519 key pair made for this invitation alone
+1. The owner creates an invitation through the authenticated HQ web application.
+   HQ reserves the office identity and a pending registry entry.
+2. On the target machine, standalone setup selects a named instance and joins the
+   organization. It displays the organization and pinned HQ identity before the
+   owner confirms that the office may run agents there. Automation supplies that
+   intent explicitly; opening a browser does not enroll anything.
+3. The satellite persists its own private key and pending request, verifies HQ's
+   identity and proves possession of the invitation. The invitation's secret is
+   not logged or put in argv. The private invitation key is never sent to HQ.
+4. The owner approves the joining key at HQ using the existing check-code flow,
+   from any authorized browser. Approval certifies exactly the request's key;
+   certificate identity includes office ID, role and client/server purpose. A
+   satellite certificate is client-only and cannot impersonate HQ.
+5. HQ sends the snapshot, the satellite applies it and resumes the streams. The
+   office becomes active only after the required initial synchronization completes.
+6. Later restarts use the enrolled identity and saved positions. Certificates
+   retain the original proposed one-year lifetime and authenticated renewal.
+   Removal revokes the certificate and applies the existing reclaim/unplaced-agent
+   rules. HQ cannot remotely erase a disconnected machine's retained copy.
 
-  Anyone who sees the link can read these, including the organization's name and HQ's network address. Treat the link like a password.
-- **How it's protected.** This follows the standard for invite links: the link is the key until it's used, cancelled or expired, so the protection comes from limiting what it can do and checking who uses it.
-  - **HQ keeps only the public half** of the invitation key, in its encrypted `office.db`. A leaked HQ database can't be used to join.
-  - **The secret never crosses the network.** The joining office connects with TLS, pins HQ by **HQ's office id and the CA fingerprint** from the link, and signs the TLS session's exporter value (channel binding, RFC 9266) with the invitation key. Someone watching the network learns nothing, and a fake HQ can't reuse the proof.
-  - **The owner approves every join at HQ, by typing a check code.**
-    - The joining machine shows a short code, derived from **the invitation id and its public key**, so it stays the same if the connection restarts. It's 8 characters from an alphabet without look-alike letters (Crockford base32), shown as two groups of four. The proof itself is still bound to the TLS session (above).
-    - HQ shows the joining machine's name and IP, and the owner **types that code** at HQ to approve, rather than just clicking. A thief holding a stolen link can't produce a code the owner sees on their own machine.
-    - Rejecting a join cancels the invitation, and so do **three wrong codes** in a row.
-    - In phase 3, adding an office and approving a join happen in the app on **HQ's Mac**.
-  - **Single use, short expiry, cancellable:** the owner can cancel a pending invitation in the app. Failed attempts are rate-limited per source address, without using up the invitation.
-  - **The joining office makes its own key pair first.** Its certificate request travels in the same TLS session as the proof, and the check code covers that request's public key. So what the owner approves is exactly the key that gets certified (Provisioning step 4).
-- **"Internally encrypted", honestly:** everything the joiner needs travels in the link, so encrypting the token with a key in that same link would add nothing, and signing it wouldn't help either, because the joiner gets the checking key from the same link. The link's integrity rests on how the owner sends it: a private message, not a public channel. The real protections are the one-time key that never crosses the wire, the pinned HQ identity, and the owner's check-code approval.
-- **Local joins** (a second office on the same Mac, phase 2) don't use the link or TLS. The host creates the office directly, and trust rests on both running as the same macOS user (socket permissions). That covers creating the office. How its connection to HQ proves it's the enrolled office, and not an agent running as the same user, is open for phase 2 (see "How organization changes flow").
-- **When HQ's address changes** (a laptop on another network): HQ records its current addresses as a registry event, so every satellite learns them.
-  - A satellite that can't reach HQ tries every address it knows, then looks for HQ on the local network (Bonjour) by HQ's office id.
-  - Failing that, the owner types the new address on that machine. That's safe, because HQ is pinned by identity, not by address.
+Local offices use the same office-identity model or a reviewed private-capability
+equivalent. Same UID is not enrollment proof. A local setup may orchestrate consent
+directly but cannot bypass office identity validation.
+
+## The invitation and connection
+
+The invitation details remain a protocol proposal requiring implementation review.
+Retain the versioned token containing organization/office identity, HQ addresses,
+CA fingerprint, expiry and a one-time invitation key. HQ stores the public half.
+The satellite pins HQ's office ID and CA identity, then signs the TLS exporter
+with the invitation key; the certificate request travels in that same connection.
+The check code covers invitation ID and the joining public key. It remains stable
+across reconnects of the same pending request. The proposed code is 8 Crockford
+base32 characters, displayed as two groups of four; three wrong approvals cancel
+the invitation. Invitations expire (24 hours by default), are cancellable and
+single-use, with rate-limited failures. Claim/certificate issuance must be atomic
+and recoverable by the same request ID after a lost response.
+
+The CLI accepts an invitation through protected stdin/file input rather than
+requiring an `agenticorg://` desktop handler. HQ offers a copyable enrollment
+instruction; the token remains secret and may disclose organization/address metadata.
+Owner approval and the destination machine's execution consent are distinct.
+Noninteractive setup can report pending approval without claiming success.
+
+Each satellite keeps one outbound full-duplex connection to HQ. Browser HTTPS and
+office authentication are configured separately: TLS-exporter proof must terminate
+at the verifier, not at an unaware reverse proxy. Direct reachability is required;
+there is no new relay service. HQ can advertise changed addresses, but its pinned
+identity remains the trust anchor. A disconnected satellite can accept an explicit
+new address from its administrator without accepting a different HQ identity.
 
 ## When things are unreachable
 - **A satellite can't reach HQ:**
@@ -198,12 +221,19 @@ Agents run on their office's machine and talk only to that office, through the l
 - **Messages between agents** (ADR-0003, proposed):
   - A message between two agents **in the same office** is delivered by that office directly, even with HQ unreachable.
   - A message to an agent **in another office** goes through HQ, which delivers it to the recipient's office. While HQ is unreachable it waits in the sender office's **message queue**, which is separate from the command outbox, so a blocked command never holds messages back.
-- **The app on a Mac with only a satellite:**
-  - A task created in the app is still created **at HQ**: the satellite relays it there, and queues it in its command outbox while HQ is unreachable (the one work change that travels there). It shows as pending until HQ confirms it. The create carries a client-made task id and change id, so a retry can't create it twice. HQ always returns the create's result to the relaying office (as change-request results go back to the requester), and keeps that result for 30 days even after it hands the task over, so a retried create gets its original answer, so the satellite knows the outcome even when the task is handed to another office it doesn't follow.
-  - Changes to person-owned tasks (owned by HQ) are change requests, queued while HQ is unreachable, like any other.
+- **The browser when HQ is unavailable:** HQ's application cannot be reached.
+  An already open page shows lost connection and labels its data stale; it does
+  not become a satellite or promise a durable offline edit queue. Office-local
+  agents continue under the existing outbox and work-ownership rules. A browser
+  command is saved only after HQ durably acknowledges it.
+
 - **"Backup", honestly:** satellites follow HQ immediately, so a deletion or bad change reaches them too, and a local satellite shares HQ's disk. Satellites protect against losing HQ's machine, not against mistakes. Real backups (point-in-time snapshots) are a separate feature.
 
 ## Losing HQ: promotion (phase 4, designed in full before it's built)
+These are recovery design requirements, not an implemented promotion protocol.
+REC-1 in the standalone design keeps the manual replacement/fencing procedure an
+explicit release decision; v1 CA escrow provisioning does not resolve it.
+
 If HQ is gone for good, the owner can **promote** a satellite to HQ. It's a deliberate act in the app, never automatic. Promotion is the hardest part of this design, so here are the requirements its own design must meet, not a finished protocol:
 - **A signed epoch record.** Promotion starts a new epoch. The owner authorizes it, and it produces a record naming the new HQ's **office id** and address, and the last position it holds. Satellites re-pin to that office id.
   - Promotion issues the new HQ a **server certificate** (role HQ, its office id, the new epoch).
@@ -214,7 +244,7 @@ If HQ is gone for good, the owner can **promote** a satellite to HQ. It's a deli
   - **An office the record can't reach**, including the old HQ while it's asleep or offline, has to be told on its own machine. Until then it can keep following the old HQ, so the design must say plainly that a split is possible until every office has heard.
 - **Certificates also carry the epoch** (role and office id are there from phase 3). An office rejects any HQ below the highest epoch it knows. A former HQ that learns of a higher epoch becomes read-only and re-joins as a satellite with a fresh snapshot.
 - **The organization's CA key never sits usable on a satellite.** It's escrowed, encrypted under a **recovery code the owner keeps**, and unlocked only to promote.
-  - The code is generated by the app (at least 128 bits, shown once) and stretched with a memory-hard key derivation (Argon2id).
+  - The code is generated by the server (at least 128 bits, shown once through a protected owner channel) and stretched with a memory-hard key derivation (Argon2id).
   - So a stolen Mac's copy can't be brute-forced. A satellite or a stolen Mac can then neither impersonate HQ nor re-certify itself.
 - **Revocations are part of the copied data**, so every office refuses a removed office's certificate.
 - **Dedup across promotion** works for every result the promoted office had received, because command results, rejections included, are copied data. Results only the old HQ had are lost, as above.
@@ -222,7 +252,12 @@ If HQ is gone for good, the owner can **promote** a satellite to HQ. It's a deli
   - The new HQ held only part of the work data, so **each office republishes the current records it owns**, and their earlier changes, from the new HQ's per-origin positions. To make that possible, each origin keeps its own change log for the retention period.
   - Dedup by (origin, seq) makes repeats safe.
   - Work data that only the old HQ held (its own tasks and messages) may be lost. The warning before promoting says so, and the reclaim rule above applies to the old HQ's tasks.
-- **The escrowed CA key** is created in phase 3, together with the owner's recovery code, as copied data, so organizations created then can be promoted later.
+- **V1 creates the escrowed CA key and owner recovery code at organization creation.**
+  Encrypted escrow is copied organization data; the usable CA key and code are not.
+  Setup provides protected one-time delivery, off-HQ retention acknowledgement and
+  idempotent retry as specified in [standalone-server.md](standalone-server.md#ca-escrow-and-the-explicit-recovery-gate).
+  REC-1 explicitly gates the supported manual HQ-loss recovery/fencing procedure;
+  this escrow requirement does not claim promotion is already implemented.
 
 ## Where the code lives (architecture rules)
 - **`org-sync`** (new library): the **replication logic**, independent of storage and transport:
@@ -241,20 +276,28 @@ If HQ is gone for good, the owner can **promote** a satellite to HQ. It's a deli
   - **server-dev** owns `org-office` (incl. `store.rs` and its implementations of the storage and apply traits) and `org-office-server`.
   - `org-sync-proto` and `org-office-launch` are contracts, so ada owns them and reviews changes, like `org-proto`. River writes `org-office-launch`'s first version.
 
-## Phases
-1. **Now: HQ only.** Create organization = start a new HQ office.
-   - HQ stores organization data as events + log + current state from the start. Commands and results are versioned and the log has positions, so later phases add satellites on top. Schema changes will still need migrations, as always.
-   - Introduce `org-office-host` with one office.
-2. **A local satellite** on the same Mac: provisioning, the stream, snapshots, versions and the outbox, without networking. Authentication between two local offices rests on both running as the same macOS user (socket permissions). Certificates come in phase 3. How a local satellite's connection proves it's enrolled is open (see "How organization changes flow").
-3. **Remote satellites:** TCP + TLS, the organization's CA and its escrow with the owner's recovery code, invitation links, direct network access to HQ (decision 6).
-4. **Promotion:** epochs, re-joining a former HQ, and CA escrow in use.
+## Implementation scope after the standalone-v1 pivot
+
+1. Instance setup, macOS/Linux service and credential adapters, and per-office
+   lifecycle/storage invariants.
+2. Authenticated HQ HTTP API and static frontend, removing the desktop transport.
+3. Local and remote satellite identity, enrollment, snapshots, outboxes, resume,
+   relay and version negotiation, plus CA escrow/recovery-code creation and protected
+   owner delivery during HQ setup. These are required for new v1 acceptance.
+4. Automatic promotion remains deferred. REC-1 requires a separately reviewed manual
+   HQ-loss recovery/fencing procedure before claiming production recovery support;
+   retaining escrow in v1 is mandatory even while that procedure is unresolved.
+
+These are dependency-ordered implementation steps, not a migration of a deployed
+desktop release. The original phase-2/phase-3 labels elsewhere are historical
+references; remote satellites are no longer outside v1.
 
 ## What this changes in earlier decisions
 - **ADR-0001:**
   - An office belongs to an organization.
   - `org-office-server` runs one office, and `org-office-host` is the login service.
   - Offices keep running when the app quits (ADR-0001), but they run under the host: a host crash or restart stops every office on this Mac (and agents' messaging) until the host restarts them, and rotates all app tokens. This is the phase-1 trade-off.
-  - The app talks to an office on its own Mac, and its menu lists organizations, each with its offices.
+  - The web application talks to HQ; the CLI manages named instances and enrollment (ADR-0005).
 - **ADR-0002:**
   - **Each office has its own two databases:** `org.db`, the organization data or its copy, and `office.db`, its own data. They share one key, kept under the office id. (amended 2026-11-08: key custody) The host creates and holds it, in the Data Protection keychain on this Mac only, and sends it on the launch pipe; the server never stores one.
   - A key is created only for a create, by the host. The host never makes one for an existing office: a key item it doesn't have is `key_missing`, set by the host without starting the server, and a key that doesn't open the databases is `key_missing` (fatal), a `failed` code on the launch pipe.
@@ -275,10 +318,10 @@ If HQ is gone for good, the owner can **promote** a satellite to HQ. It's a deli
 2. **While HQ is unreachable,** satellites queue organization changes, as designed.
 3. **Work-data copies:** HQ keeps every task and message, and each satellite keeps what concerns its own agents and projects.
 4. **Project files are git repositories, connected to GitHub first.** See `projects-git-github.md`. The earlier "git service at HQ" idea is replaced: GitHub hosts the repositories, and each office clones from it.
-5. **Remote setup:** an invitation link that HQ generates, copied and opened on the other machine (see "The invitation link").
-6. **Reaching HQ:** direct network access only. There's no relay service for now. HQ's addresses travel in the link and the registry.
+5. **Remote setup (standalone amendment):** HQ generates a one-time invitation, copied with **Copy invitation** and supplied through the destination CLI's protected setup input. The owner verifies its check code on the destination terminal or through a trusted authenticated session to that machine, then approves through HQ (see "The invitation and connection").
+6. **Reaching HQ:** direct network access only. There's no relay service for now. HQ's addresses travel in the invitation and the registry.
 7. **Satellites don't listen.** They connect out to HQ and keep a full-duplex connection open. **HQ is the relay:** anything between satellites goes through HQ.
 8. **All offices are the owner's.** There are no permissions between offices for now. Permissions between employees of different offices may come later and stay an open topic.
-9. *(Assumption, not a decision yet)* Every Mac that opens an organization is a full satellite. A lighter "connect without a copy" mode can come later.
+9. **Superseded 2026-11-09:** a browser client does not become a satellite. Explicit setup/enrollment creates an office.
 10. **Task ownership:** the assignee's office. A task can be created anywhere (in the app, at HQ; by an agent, at its office) and is handed to the assignee's office.
 11. **One recovery code per organization**, kept by the owner.

@@ -16,6 +16,87 @@ These rules apply whenever creating, modifying, moving, or refactoring modules, 
 
 These rules are architectural guardrails, not absolute enforcement gates. Use judgment, explain significant trade-offs, and do not block implementation solely because a numeric threshold is exceeded.
 
+Apply these rules using native .NET/C#, Rust, or TypeScript/Svelte constructs. Agentic Org's Rust/static-SvelteKit profile, target names, folder layout, shared-code examples, and reorganization sequence are in [project structure](design/project-structure.md), under [ADR-0005](adr/0005-standalone-server-v1.md).
+
+---
+
+# Language and Framework Independence
+
+An architectural component may be a cohesive function, module, package, struct,
+record, enum, class, UI feature, service, or public API. Choose the smallest
+construct that expresses its responsibility and boundary clearly.
+
+| Concern | .NET / C# | Rust | TypeScript / Svelte |
+| --- | --- | --- | --- |
+| Organization | Feature folders, namespaces, projects | Modules, crates, workspace packages | Feature directories, modules, packages, routes |
+| Contracts | Interfaces, delegates, public APIs | Traits, function signatures, public APIs | Interfaces, function types, exports, component props |
+| Encapsulation | Access modifiers, assembly boundaries | Private items, restricted visibility, public exports | Module exports, package entry points, component APIs |
+| Composition | Parameters, delegates, constructor injection | Parameters, structs, generics, enums, closures, trait objects | Parameters, objects, factories, props, callbacks, snippets |
+| Wiring | Composition roots, framework registration | Explicit construction and application wiring | Explicit construction and scoped framework integration |
+
+Folders and namespaces do not enforce boundaries by themselves. Use visibility,
+exports, suitable tooling, and review. Translate architectural intent into native
+constructs rather than copying another ecosystem's machinery.
+
+# Domain Modules Containing Vertical Slices
+
+Prefer `application -> domain module -> feature/use case` for business behavior.
+
+- Choose modules from cohesive business capabilities, workflows, invariants,
+  terminology, and ownership. A database table alone does not define a domain.
+- Keep each slice's specific validation, orchestration, persistence operations,
+  response mapping, and behavior tests close together.
+- Keep shared domain types, policies, and invariants with their owning module.
+- Give modules deliberate public APIs and keep implementation details private.
+- Scale structure to complexity. A simple slice may remain one function/file.
+- Choose crate, project, package, service, database, and deployment boundaries
+  separately. A feature does not require its own package.
+- An end-to-end slice is one delivery responsibility across relevant UI, contracts,
+  backend behavior, and verification. Preserve browser/server/service boundaries.
+- Group feature-specific UI components, state, validation, and API integration by
+  domain/use case. Align frontend/backend terminology while allowing different
+  internal structures. Preserve framework routing conventions.
+- Keep reusable visual primitives and design tokens in a shared UI foundation.
+- Apply these boundaries incrementally while preserving behavior.
+
+# Shared Code and Ownership
+
+Place shared behavior at the narrowest scope that owns its meaning:
+
+1. Feature-specific policy stays inside the feature.
+2. Rules shared by one domain's features stay inside that domain module.
+3. A cross-domain capability has a clear owner and a small public API.
+4. Domain-independent primitives use a focused module or an established library.
+   Extract a package when that boundary provides practical value.
+
+Share behavior when consumers require the same semantics and compatible evolution.
+Similar syntax alone does not establish a shared concept. Small duplication can
+remain until ownership and common semantics are clear.
+
+Keep upload widgets separate from file policy and storage. Keep application-specific
+hash canonicalization/versioning with the contract it implements; reuse an
+established hashing library where appropriate. Preserve UI licensing restrictions.
+
+# Applying the Metrics While Writing Code
+
+Estimate coupling before a change and as implementation takes shape. Select a
+consistent architectural level: logical domain modules, projects/crates/packages,
+libraries, or services. A logical module can be inside one project/crate. A class,
+file, or UI component is not automatically a separately counted unit. Internal
+dependencies still need cohesion and encapsulation review.
+
+For each affected unit, identify direct dependencies and consumers, note edges
+added by the change, and run the change-time check below. Count distinct units
+once regardless of imported symbols or calls. Do not count transitive dependencies
+as direct Ce. State whether framework/third-party dependencies are included.
+
+Distinguish source/package dependencies, logical module contracts, and runtime
+service communication. Do not combine them into one unexplained score or compare
+values measured at different levels. Dependency inversion can improve source
+direction while preserving a necessary runtime interaction.
+
+Rough estimates are sufficient. Avoid false precision and metric-driven splits.
+
 ---
 
 # Coupling and Dependency Management
@@ -34,6 +115,9 @@ Where:
 
 - `I = 0` means maximally stable.
 - `I = 1` means maximally unstable.
+- When `Ca + Ce = 0`, report I as undefined or not applicable.
+
+This stability is structural resistance to change due to dependents. It does not directly measure change frequency, implementation volatility, quality, or runtime reliability. Measure all values in the same explicitly selected graph.
 
 Do NOT interpret a high or low instability value as inherently good or bad.
 
@@ -49,8 +133,8 @@ Use these thresholds as architectural guardrails:
 
 |   Ce | Guidance                                                   |
 | ---: | ---------------------------------------------------------- |
-|  0–2 | Excellent autonomy                                         |
-|  3–5 | Healthy                                                    |
+|  0–2 | Limited outgoing coupling                                         |
+|  3–5 | Usually manageable                                                    |
 |  6–7 | Review the design                                          |
 | 8–10 | Architectural warning                                      |
 |  >10 | Refactoring or decomposition SHOULD normally be considered |
@@ -59,7 +143,8 @@ Use these thresholds as architectural guardrails:
 
 - New modules SHOULD target `Ce <= 5`.
 - `Ce > 7` MUST be architecturally justified.
-- `Ce > 10` MUST trigger a design review before adding additional dependencies.
+- `Ce > 10` MUST trigger a design review before adding additional dependencies. Use the repository's existing design/merge review process; this amendment does not waive it or create a separate permission workflow.
+- Composition roots and orchestration boundaries may legitimately have more dependencies; calibrate counts to their role and the repository's counting convention.
 - Do NOT introduce dependencies merely for convenience.
 - Before adding a new dependency, determine whether the behavior can instead be achieved through:
   - an existing abstraction,
@@ -153,7 +238,9 @@ Do not flag insignificant differences such as:
 
 `0.42 -> 0.47`
 
-The purpose is to detect meaningful architectural inversions, not minor numerical differences.
+The purpose is to detect meaningful architectural inversions, not minor numerical differences. The formula is a review heuristic in a consistently measured source/module graph, not proof of a defect. Also inspect actual volatility and responsibilities.
+
+The illustrative dependency chain does not mandate horizontal project layers. Apply the principle within domain modules containing vertical slices.
 
 ---
 
@@ -167,7 +254,7 @@ Prefer:
 
 `Stable Core -> Abstraction <- Volatile Implementation`
 
-The abstraction SHOULD normally be owned by the component that requires the capability.
+The abstraction SHOULD normally be owned by the component that requires the capability. It may be a trait, interface, function type, callback, or another small API. Keep it with the application/domain module that owns the requirement; pure domain logic need not own infrastructure contracts merely because it is central. Composition code selects implementations.
 
 Example:
 
@@ -177,9 +264,9 @@ Bad:
 
 Preferred:
 
-`Orders.Domain -> IPaymentGateway`
+`Orders.Domain -> PaymentGateway`
 
-`StripeAdapter -> IPaymentGateway`
+`StripeAdapter -> PaymentGateway`
 
 Implementation details MUST point toward abstractions rather than forcing abstractions to depend on implementation details.
 
@@ -275,6 +362,8 @@ over:
 
 The component that owns the behavior SHOULD also own the rules and invariants associated with that behavior.
 
+A functional transition such as `cancel_order(order, reason) -> Result<UpdatedOrder, Error>` is equally valid. Plain records, DTOs, immutable values, and read models remain appropriate for data transfer and representation. A behavioral boundary need not be a class.
+
 Avoid designs where callers must understand implementation details in order to correctly manipulate a component.
 
 Prefer:
@@ -319,7 +408,7 @@ Example:
 
 Preferred:
 
-`PaymentWorkflow -> IPaymentProcessor`
+`PaymentWorkflow -> PaymentProcessor`
 
 Possible implementations:
 
@@ -329,7 +418,7 @@ Possible implementations:
 
 The consumer should depend on the capability it needs rather than on a specific implementation.
 
-Swapping one valid implementation for another SHOULD require minimal or no changes to consuming code.
+Swapping one valid implementation for another SHOULD require minimal or no changes to consuming code. Preserve required errors, ordering, cancellation, consistency, and operational guarantees; matching a type signature alone is insufficient.
 
 Examples of behavior that commonly benefits from replaceability include:
 
@@ -402,7 +491,7 @@ over deep inheritance hierarchies where practical.
 
 Dependencies MUST be visible and intentional.
 
-Prefer constructor or explicit parameter dependencies where appropriate.
+Prefer explicit construction, function parameters, application wiring, or component props/callbacks as appropriate to the language.
 
 Avoid hidden dependencies through:
 
@@ -415,20 +504,23 @@ Avoid hidden dependencies through:
 
 A component's required collaborators SHOULD be discoverable from its public construction or invocation model.
 
+Framework DI, request contexts, Svelte context, and lifecycle hooks are acceptable when scope and ownership are explicit. Keep request/user-specific server state isolated to its request or an appropriate external store.
+
 ---
 
 # Circular Dependencies
 
-Circular dependencies are prohibited.
+Cycles between declared source dependency boundaries are prohibited.
 
 There MUST be no new circular dependencies between:
 
 - domains,
 - bounded contexts,
-- services,
 - modules,
-- packages,
+- projects/crates/packages,
 - architectural layers.
+
+Evaluate runtime interactions separately. Request/response traffic or event exchange does not automatically imply a source cycle. Circular waits, synchronous service call cycles, and uncontrolled event feedback require correction.
 
 If implementing a change would introduce a cycle:
 
@@ -470,7 +562,9 @@ Do NOT reference another domain's internal:
 - internal DTOs,
 - internal modules.
 
-A domain MUST NOT require knowledge of another domain's internal implementation.
+A domain MUST NOT require knowledge of another domain's internal implementation. Public domain values may cross a boundary when ownership and compatibility obligations are intentional.
+
+Choose in-process APIs, commands, HTTP, events, or messaging according to the workflow and deployment model. Messaging adds delivery, ordering, consistency, and failure obligations; do not introduce it merely to lower a coupling metric.
 
 Every new cross-domain dependency MUST be treated as an architectural decision.
 
@@ -553,7 +647,7 @@ A shared component MUST represent a meaningful shared concept, not merely be a c
 
 # Change-Time Architecture Check
 
-Before implementing a change that introduces a new dependency or architectural relationship, evaluate:
+Before implementing a change that introduces a new dependency or architectural relationship, use the estimates from [Applying the Metrics While Writing Code](#applying-the-metrics-while-writing-code) and evaluate:
 
 1. Does this dependency increase Ce?
 2. Does it create a new cross-domain dependency?
@@ -580,38 +674,51 @@ If the proposed change creates:
 - `Ce > 7`,
 - or a new cross-domain dependency,
 
-Claude MUST explicitly mention the architectural consequence before implementing it.
+The agent MUST explicitly mention the architectural consequence before implementing it.
 
-Where practical, Claude MUST propose a lower-coupling or more composable alternative.
+Where practical, the agent MUST propose a lower-coupling or more composable alternative.
+
+Also check measurement scope, public API ownership, runtime failure/consistency obligations, browser/server boundaries, and shared state lifetime. Revise designs that create prohibited source cycles. These checks guide implementation judgment and preserve the repository's existing design and merge review requirements.
 
 ---
 
 # Expected Instability by Component Role
 
-Use these values as rough expectations, not hard limits:
+Use contextual expectations rather than universal numeric target ranges:
 
-| Component Type                | Typical I |
-| ----------------------------- | --------: |
-| Core/shared contracts         |   0.0–0.2 |
-| Platform primitives           |   0.0–0.3 |
-| Core domain components        |   0.1–0.4 |
-| Business/domain services      |   0.2–0.6 |
-| Application services          |   0.4–0.7 |
-| Integration/adapters          |   0.6–0.9 |
-| Orchestration/BFF/API Gateway |   0.7–1.0 |
-| UI/frontend                   |   0.8–1.0 |
+| Role | Interpretation |
+| --- | --- |
+| Shared contracts/primitives | Often many consumers and few dependencies |
+| Domain modules | Depends on capability scope and ownership |
+| Feature handlers/workflows | May coordinate several capabilities |
+| Provider adapters | Depend on application contracts and provider libraries |
+| Composition roots | Intentionally know concrete implementations |
+| UI routes/entry points | Often many outgoing edges and few consumers |
+| Shared UI primitives | May have many consumers and require compatibility care |
 
-Do NOT attempt to force every component toward low instability.
+Not all frontend code has high I, and not all domain code has low I. Assess
+observed dependencies, responsibilities, and implementation volatility together.
 
-Highly volatile edge components may correctly have `I` close to `1`.
+---
 
-Highly reused foundational components should generally trend toward `I` close to `0`.
+# Frontend and Server Boundaries
+
+- Keep feature behavior close to its components and state.
+- Keep visual primitives independent of unrelated business domains.
+- Give shared state a clear owner, lifetime, and public API.
+- Use Svelte derived state for computations and effects for external synchronization.
+- Keep secrets and privileged operations in server-only code.
+- Enforce authorization and authoritative validation at the owning backend boundary.
+- Use client validation for feedback while retaining server enforcement.
+- Validate untrusted inputs; TypeScript types alone do not validate network data.
+- Define serialization/error contracts across C#, Rust, and TypeScript boundaries.
+- Follow the application's chosen SSR/static deployment model.
 
 ---
 
 # Architecture Smells
 
-Claude SHOULD actively identify these patterns during implementation and review:
+The agent SHOULD actively identify these patterns during implementation and review:
 
 - excessive Ce,
 - unexpected high Ca,
