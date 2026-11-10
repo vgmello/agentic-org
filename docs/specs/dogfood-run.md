@@ -111,7 +111,9 @@ Office**, projects **Dogfood Desktop** and **Dogfood Server**, and agents **Dogf
 Lead 1**, **Dogfood QA 1**, **Dogfood QA 2** and **Dogfood QA 3**. Place every
 throwaway agent at HQ's office, on the harness chosen in §0. Note each agent's
 messaging name when it's hired. Never offboard, pause or move the 3.4 employee here.
-Hire every throwaway agent with **How it runs: Always on**, so between turns it
+Both no-op tasks (3a.10, 3a.12) say in their description "Dogfood run: leave
+this in To do. Don't start it until told.", so an Always on agent doesn't start or
+finish them before 3a.13 and 3b.4 need them in To do. Hire every throwaway agent with **How it runs: Always on**, so between turns it
 shows **Idle** (an On call agent shows Asleep instead). Roles are free text in
 v1.0 (role files come later, `roles-ux.md`), so no proposal here is classed as
 needing a new role, and APPR-2's new-role routing isn't exercised.
@@ -231,9 +233,12 @@ with notes**, **Fail**, **Blocked** or **N/A**.
 
 **Live-update allowance.** The live timings in §3a and §3b are 2 seconds, without
 a reload (`our-org-in-the-app.md` decision 8, LIVE-2, LIVE-6). Time each change
-from when it shows in the browser that made it (HQ has recorded it) to when it
-shows in the second browser, so a slow but correct operation, such as a hire,
-isn't counted as a slow live update. Up to 4 seconds is **Pass with
+from when HQ has recorded it to when it shows in the second browser, so a slow
+but correct operation, such as a hire, isn't counted as a slow live update. HQ
+has recorded it when it shows in the browser that made it (a change made in the
+browser), when the `org-agent` command returns (a change an agent makes, such as
+a message, a hire request or approval, or a task move), or when the agent's turn
+starts or ends in its own session view (a status change). Up to 4 seconds is **Pass with
 notes**. Over 4 seconds, or a change that shows only after a reload, is a Fail.
 The allowance covers timing only, never a missing, wrong or duplicated change.
 
