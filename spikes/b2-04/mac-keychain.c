@@ -7,6 +7,7 @@
 int main(int argc, char **argv) {
     if (argc != 2) return 2;
     CFStringRef service = CFStringCreateWithCString(NULL, argv[1], kCFStringEncodingUTF8);
+    if (service == NULL) return 3;
     const unsigned char dummy[32] = {42};
     CFDataRef data = CFDataCreate(NULL, dummy, sizeof(dummy));
     const void *keys[] = {kSecClass, kSecAttrService, kSecAttrAccount,

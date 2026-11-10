@@ -1,3 +1,4 @@
+# NEVER MERGE: disposable B2-04 evidence branch, not production CI.
 name: B2-04 platform probes
 on:
   push:
@@ -18,7 +19,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
       - name: Record native environment
@@ -37,9 +38,9 @@ jobs:
         run: cargo test --locked -p org-office-server 2>&1 | tee spikes/b2-04/evidence/worker-tests.log
       - name: Admission and real worker probes
         run: |
-          timeout 20s python3 spikes/b2-04/linux-exec.py | tee spikes/b2-04/evidence/exec.log
-          timeout 80s python3 spikes/b2-04/linux-worker.py | tee spikes/b2-04/evidence/worker.log
-          timeout 60s python3 spikes/b2-04/linux-host-baseline.py | tee spikes/b2-04/evidence/host-baseline.log
+          timeout 20s python3 -I spikes/b2-04/linux-exec.py | tee spikes/b2-04/evidence/exec.log
+          timeout 80s python3 -I spikes/b2-04/linux-worker.py | tee spikes/b2-04/evidence/worker.log
+          timeout 60s python3 -I spikes/b2-04/linux-host-baseline.py | tee spikes/b2-04/evidence/host-baseline.log
       - name: Unprivileged unattended encrypted credentials
         run: |
           sudo systemctl start systemd-creds.socket
@@ -47,7 +48,7 @@ jobs:
           probe_uid=$(id -u)
           sudo loginctl enable-linger "$(id -un)"
           sudo systemctl start "user@$probe_uid.service"
-          env XDG_RUNTIME_DIR="/run/user/$probe_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$probe_uid/bus" python3 spikes/b2-04/linux-credentials.py | tee spikes/b2-04/evidence/credentials.log
+          env XDG_RUNTIME_DIR="/run/user/$probe_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$probe_uid/bus" python3 -I spikes/b2-04/linux-credentials.py | tee spikes/b2-04/evidence/credentials.log
       - name: SQLCipher system and static crypto comparison
         run: |
           cargo fmt --manifest-path spikes/b2-04/crypto/Cargo.toml -- --check
@@ -55,7 +56,7 @@ jobs:
           cargo clippy --manifest-path spikes/b2-04/crypto/Cargo.toml --all-targets --features vendored -- -D warnings 2>&1 | tee spikes/b2-04/evidence/crypto-clippy.log
       - name: Preserve probe evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: b2-04-linux-x86-64-evidence
           path: spikes/b2-04/evidence/

@@ -9,6 +9,9 @@ import signal
 import tempfile
 import time
 
+if not __debug__:
+    raise SystemExit("probe assertions must be enabled")
+
 libc = ctypes.CDLL(None, use_errno=True)
 binary = Path(__file__).parent / "linux-bin/org-office-server"
 image = binary.read_bytes()
@@ -24,14 +27,17 @@ def launch(args, home, first, wanted):
     reader, out = os.pipe2(os.O_CLOEXEC)
     pid = os.fork()
     if pid == 0:
-        os.dup2(inp, 0); os.dup2(out, 1)
-        null = os.open("/dev/null", os.O_WRONLY)
-        os.dup2(null, 2)
-        os.closerange(3, executable)
-        os.closerange(executable + 1, 65536)
-        os.chdir("/")
-        assert libc.ptrace(0, 0, None, None) == 0
-        os.execve(executable, [str(binary), *args], {"ORG_OFFICE_HOME": str(home)})
+        try:
+            os.dup2(inp, 0); os.dup2(out, 1)
+            null = os.open("/dev/null", os.O_WRONLY)
+            os.dup2(null, 2)
+            os.closerange(3, executable)
+            os.closerange(executable + 1, 65536)
+            os.chdir("/")
+            assert libc.ptrace(0, 0, None, None) == 0
+            os.execve(executable, [str(binary), *args], {"ORG_OFFICE_HOME": str(home)})
+        finally:
+            os._exit(127)
     os.close(inp); os.close(out)
     seen = []
     try:

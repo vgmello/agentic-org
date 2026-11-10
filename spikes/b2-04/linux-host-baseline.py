@@ -7,6 +7,9 @@ import subprocess
 import tempfile
 import time
 
+if not __debug__:
+    raise SystemExit("probe assertions must be enabled")
+
 binary = Path(__file__).parent / "linux-bin/org-office-host"
 worker = binary.with_name("org-office-server")
 with tempfile.TemporaryDirectory(prefix="shb204-") as tmp:

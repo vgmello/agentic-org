@@ -17,8 +17,9 @@ comes from the fixture itself; this does **not** validate a signed release manif
 create/reopen a temporary encrypted office and stop/reap it when its private
 control pipe closes. `linux-host-baseline.py` reproduces the current host's
 macOS-only spawn refusal. These probes do not implement `org-supervise` or Linux
-host support. Production uses private inherited channels and a verified release
-manifest, with sandbox and process lifecycle review still required.
+host support. The v2 fixture uses private inherited pipes; X-02 rev 4 proposes a
+common post-admission rendezvous for launch v3, without inherited authority.
+That handoff, release-manifest trust, sandboxing and lifecycle still need review/tests.
 
 The marker executable is built from `exec-fixture.c`; system utilities may
 intentionally reject invocation from a memfd (Ubuntu's coreutils did so).
@@ -36,8 +37,9 @@ mount namespaces hide or replace the provider key without changing the machine's
 real key; decryption must fail without changing the ciphertext, and recover with
 the legitimate provider. It also
 shows that the same UID can decrypt the credential: v1 accepts that threat limit.
-It needs passwordless sudo for the different-UID and synthetic null-envelope
-negative controls; production does not inherit this testing requirement.
+It needs passwordless sudo for the different-UID, isolated provider and synthetic
+null-envelope controls. Positive controls verify nobody's own decrypt path and
+root's --uid path. Production does not inherit this testing requirement.
 
 The credential format needs systemd 256 for `--user`; explicit `--refuse-null`
 needs systemd 259. This exact probe therefore requires 259. The workflow initializes
@@ -56,7 +58,8 @@ lines arise from the wrong-key control and contain no credentials.
 
 ## macOS helper
 
-`mac-keychain.c` uses only a unique synthetic service/access group. Ad hoc code
+`run-macos.sh` records compile/sign/run commands for `mac-keychain.c`, which uses
+only a unique synthetic service/access group. Ad hoc code
 without the entitlement gets `errSecMissingEntitlement`; code claiming an
 unauthorized restricted entitlement can be terminated by macOS. No Developer ID
 identity or provisioning profile was available for production acceptance.
@@ -71,3 +74,7 @@ The workflow uploads logs as `b2-04-linux-x86-64-evidence`, including environmen
 builds, worker tests, each probe and the linkage comparison. Its token is read-only
 and checkout does not persist credentials. Local ARM64 Fedora CoreOS results and
 the final O-4 decision note live in Sage's agent knowledge/workspace folders.
+
+The manual Linux entrypoint refuses to make service/provider changes unless
+`B204_DISPOSABLE_VM=1`. Run Python probes with `python3 -I`; each also refuses
+optimized execution so its assertions cannot silently disappear.
