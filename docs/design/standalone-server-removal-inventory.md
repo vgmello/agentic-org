@@ -72,6 +72,90 @@ frontend directory would discard the browser application we intend to keep.
 | `apps/desktop/src/routes/`, `src/lib/components/`, `src/app.css`, `svelte.config.js`, `static/` | Retain and move the actual web application to `apps/org-ui/`, including its static adapter and styling. Change onboarding/navigation to HQ login and authorized organizations; remove desktop-only/import controls. Keep Tailwind Plus within this product directory. |
 | `apps/desktop/test-vectors/`, frontend unit/e2e tests | Retain domain and UI behavior tests. Replace Tauri/mock-only integration assumptions with real HTTP fixtures; delete tests for explicitly retired features. |
 
+### 2.1 B1-03 shell audit and deletion handoff
+
+Audited against `v1` at `0a83d76` (2026-11-10), then integrated with F1-01 at
+`a0748a0`. Relative source paths below now live under `apps/org-ui`; historical
+`apps/desktop` references retain their audit provenance. This audit does not implement the gateway, projects/areas or runtime,
+and does not delete the shell. B1-10 remains the owner of project/area commands.
+
+| File | Observed behavior and disposition |
+| --- | --- |
+| `src-tauri/src/org_engine.rs` | Delete the mock reducer after preserving the cases. Team creation/rename/move/lead/delete, memberships/titles, people/agents, reporting, offboarding and project-team links already have canonical rules in `org-office::rules`. The new canonical reader exercises 148 of the 252 shared scenarios, including errors, version checks and refusal atomicity. Only one exercised scenario has an explicit resulting-state assertion (removal of a project-team link); the other 35 scenarios with `after` assertions are preserved in the B1-10 deferred set. Do not transplant the mock's FNV fingerprint, 1,000-answer cache, JSON-file upgrade or cloned-state commit mechanism: the real office already owns transactional log/dedup/storage behavior. |
+| `src-tauri/src/org_engine/projects.rs` | Preserve the exact project/area cases for B1-10. Missing canonical behavior includes project key derivation/reservations, case-insensitive names, project metadata/archive, General areas, area name/team/lead validation and reconciliation after membership, offboarding, team deletion or project-team removal. Do not transplant fabricated repository paths or pretend repository creation occurred. The canonical command/write ports do not implement this model yet. |
+| `src-tauri/src/org_agent_rules.rs` | Delete the duplicate validators. `org-office::rules::decide` already enforces trimmed/control-free bounded profile text, handle uniqueness/reservations, known runtimes, schedule/run-mode consistency and offboard restrictions. Its runtime-alias checks are stricter than the mock's literal-name check and stay authoritative. Legacy caller-supplied `home` validation is not a new standalone capability: X-02/B1-07 retire home overrides under protocol v2 and report managed paths read-only. |
+| `src-tauri/src/org_command.rs` | Delete the app-local tagged enum and dispatch mirror. Reuse typed `org-proto` contracts and canonical request parsers at the authorized gateway/worker boundary. Merely having a wire call type does not mean the worker implements it. |
+| `src-tauri/src/work_engine.rs` | Delete the mock engine after the canonical vector reader is preserved. `org-work` already owns task/bug transitions, text/ID checks, project/team/recipient checks, checklist guards, fix-link edge rules, numbering, idempotency and time figures through its transaction/read ports. The canonical implementation additionally enforces caller authority, ULID age, durable refusals, per-field conflicts and versioned waiting events; do not replace those with the mock's loose IDs, whole-record version checks or answer cache. See the explicit work-vector differences below. Paged snapshot/list integration belongs to B1-11. |
+| `src-tauri/src/org_mock.rs` | Keep invented seed data only as test fixtures. The preserved `org-office/test-vectors/organization.json` is checked against both the legacy Rust seed and the TypeScript seed. Canonical rules do not depend on an application library. |
+| `src-tauri/src/mock.rs` | Delete the mock office/runtime. Organization-name vectors already live in `org-proto/test-vectors/organization-names.json` and are exercised by protocol tests. Keep the explicit distinction between test data and unavailable production capabilities. |
+| `src-tauri/src/lib.rs` | Delete invoke handlers, Tauri emitters, startup locks/epochs and desktop restart-on-error orchestration. Preserve canonical payload shapes separately from app-local `CommandError.source`, `OrgView.sample` and `Connection` wrappers. A browser read must never install/start a service. Unknown mutation outcomes must remain unknown until looked up using the same operation ID. |
+| `src-tauri/src/office.rs` | Delete the desktop `OfficeConnection`/login-service seam and setup-only errors (`not_installed`, `needs_approval`, `turned_off`). Preserve typed operations, read-only status checks and an explicit `unavailable` result when an area is not implemented; no production mock fallback. |
+| `src-tauri/src/real.rs` | Re-home typed host/office calls, scope checks, bounded reconnect and outcome handling in B1-05/B1-06/B1-08/B1-09. Preserve the error/retry distinctions below. Retire app-token binding, code-signature desktop admission, account-wide discovery and automatic login-service installation. Gateway authority comes from X-02, never browser credentials masquerading as a desktop token. |
+| `src-tauri/src/org_feed.rs` | Reproduce snapshot-position-to-subscription continuity on the same authenticated worker channel; on disconnect or `snapshot_required`, reconnect, reauthorize, take a new snapshot and resume from its position. Emit baseline after subscription succeeds, and liveness loss once rather than on every failed retry. Unknown/malformed event payloads do not terminate the stream. Retain stop responsiveness and retry-during-connect handling. |
+| `src-tauri/src/status_feed.rs` | Reproduce the ordering `hello/capability -> subscribe -> office.list` on one channel, followed by changes; a list taken before subscribing can lose an update. Reconnect starts with a fresh list. Do not subscribe to a host lacking the capability or start the host from this listener. |
+| `src-tauri/src/pacing.rs` | Reproduce bounded reconnect pauses `1, 2, 4, 8, 16, 30, 30...` seconds. Reset before the next wait only after a connection lasted at least 10 seconds; an immediately closed subscription must not create a one-second retry loop. Check stop at most every 250 ms; Retry shortens remaining delay to one second, never zero. |
+| `src-tauri/src/connections.rs` | Delete local desktop connection discovery and `connections.json` persistence. Browser organization selection is a preference; authorized organization/office discovery comes from the server. Do not carry filesystem endpoints or cached desktop authority into browser state. |
+| `src-tauri/src/stdio.rs` | Delete only shell startup wiring. Preserve existing host/worker descriptor hygiene (`org-server::fdswap` and host spawning); no change to control-pipe ownership is needed by this audit. |
+| `src/lib/org/live.ts` and `load.ts` | Retain UI-side ordering/coalescing when transport changes: compare `(epoch, seq)`, keep one reload in flight per organization, catch up after a burst, accept the newly loaded baseline after restore and stop retrying a reload that made no progress. Coalescing is here, not in the Rust feed modules. F1-06 must coordinate one shared browser stream across tabs rather than one stream per shell organization. |
+| `test-vectors/org-commands.json` | Moved intact to `crates/org-office/test-vectors/org-commands.json`. Canonical reader: `org-office/src/rules/vectors.rs`; legacy Rust and TypeScript readers now use the same domain-owned file. See `deferred-org-commands.json` for every case not yet supported canonically. |
+| `test-vectors/work-commands.json` | Moved to `crates/org-work/test-vectors/work-commands.json`. Canonical reader: `org-work/src/tests/vectors.rs`, through `WorkService`/real read construction with disposable in-memory ports. Preserve all 29 legacy scenarios and identify deliberate canonical differences explicitly; do not silently substitute actual results or current versions. |
+| `test-vectors/command-shapes.json` | Keep as a legacy desktop-wrapper fixture until F1-03 removes those wrappers. Canonical `ApiError`, `OfficeInfo`, `Organization`, `OrgSnapshot` and `CommandAccepted` payloads are separately retained in `crates/org-proto/test-vectors/office-wire-shapes.json`, checked by Rust serialization and TypeScript tests. `source`, `sample`, and the connection-pair wrapper are retired rather than promoted into the new HTTP contract. |
+
+**Explicit organization gaps.** `org-office/test-vectors/deferred-org-commands.json`
+lists all 104 deferred cases by name: 97 need an unimplemented project/area command
+in setup or execution; seven more require area-state/reconciliation support in
+otherwise supported commands. The canonical reader covers every other case, checks
+the total and exact manifest membership, verifies deferred methods are unavailable
+and checks area writes are refused without mutation. Once B1-10 supports a missing
+capability these sentinels fail, requiring its positive cases to be enabled. The
+original positive expectations remain in the shared fixture and in the legacy
+mock runners until those runners are retired; no deferred case is claimed as a
+working real-server feature. Missing capabilities remain explicitly unavailable.
+
+**Work-vector differences.** Short legacy change/link aliases have explicit fixed
+ULID inputs in each affected step's `canonical.call`, preserving equality for
+retry tests and leaving blank/unknown IDs invalid. No runtime ID or version
+substitution occurs. Each override has a contract reason; legacy calls and
+expectations remain unchanged. The canonical library's versioned waiting
+events, omitted default wire fields and documented error precedence must be
+asserted explicitly rather than changing production behavior to match the mock.
+Task `reopen_count` is not the bug reopen counter in the canonical contract.
+Adding/removing a fix link changes the task; the bug's `fixed_by` is a read model,
+not an invented extra versioned bug update. Preserve those distinctions in both
+the vector runner and B1-11 gateway integration.
+
+**`real.rs` error and retry disposition.** Preserve the behavior, not desktop text
+that tells a browser to manipulate local installation:
+
+| Existing result | Meaning to retain in gateway/client integration |
+| --- | --- |
+| Office `ApiError` | Pass through the typed domain refusal unchanged; authorization/validation stays server-owned. |
+| `not_ready` before admission | Bounded backoff is safe only when the server guarantees nothing ran. After the deadline, show unavailable/starting; do not restart a healthy host. |
+| Too-large request before send | Validation/size refusal, not an unknown committed mutation. The gateway contract chooses its typed code. |
+| Wrong version, unreachable office, invalid endpoint, malformed response | Explicit unavailable/update/protocol failure; never substitute mock data or infer success. |
+| Mutation timeout/disconnect/I/O after possible send | Preserve unknown outcome and the same command/change ID for lookup/retry. `create_organization` was deliberately sent once; `org_command` retained its `command_id`. Do not convert uncertain outcomes to a fresh operation. |
+| Lost cached connection | Evict only the exact failed `Arc<Client>`; another caller may already have replaced it. Drop outside the cache lock. Reconnect/re-resolve scope once, with bounded resource use. |
+| Starting/offline/pending/unavailable/update-needed status | Show the reason/freshness and avoid futile calls; a remembered status may be refreshed once. Status is not authorization and must not choose an office belonging to another organization. |
+| Restart conflict (already starting) | Idempotent acknowledgement, not an instruction to restart the host again. Keep permission/capability failures distinct. |
+
+**Tests to reproduce when the gateway/stream replaces the shell.** Keep the
+`org_feed` tests for snapshot-position subscription, unknown events, reconnect,
+`snapshot_required`, immediate-close backoff, one liveness transition, stop,
+bounded Retry and Retry-during-connect. Keep the five `status_feed` cases for
+list/event ordering, unreadable events, reconnect, missing capability and stop;
+keep all three pacer cases. The `real.rs` tests also cover create-once after a lost
+reply, no timeout resend, one failed-connection replacement, cross-organization
+office refusal, malformed office IDs, unavailable reasons and fail-closed binding.
+Retire installation-specific tests with their implementation; replace app binding
+tests with X-02 principal/channel admission tests. This is a B1-08/F1-06 handoff,
+not a claim that an HTTP listener or shared browser stream already exists.
+
+F1-03 may remove shell implementation after these independent crate readers and
+fixture references land and its production callers switch to the HTTP seam or
+explicit unavailable states. It must keep domain-owned fixtures/readers, the
+canonical wire payload gate and the documented future test obligations. No
+Tauri-only type or mock library becomes a dependency of a canonical crate.
+
 ## 3. Production mock audit
 
 The following are observed at the base commit, not implementation guesses:
