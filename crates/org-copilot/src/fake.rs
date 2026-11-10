@@ -22,9 +22,15 @@ pub enum Reply {
     /// Never answer, like a hung adapter whose child doesn't die: block until
     /// [`FakeRuntime::release`], whatever the cancel token says.
     Hang,
+    /// Block until [`FakeRuntime::release`], then answer with the text: a run that is still going
+    /// for exactly as long as the test needs, with no sleep to outlast.
+    Held(String),
     /// Never answer until cancelled, like a well-behaved adapter that kills its child at the
     /// deadline: then fail with [`RuntimeError::TimedOut`].
     HangUntilCancelled,
+    /// Block until cancelled, then answer with the text anyway: an answer that provably arrives
+    /// after the deadline, with no race against the clock.
+    AfterCancel(String),
 }
 
 /// Plays its replies in order. With none left, a run fails with [`RuntimeError::Failed`].
@@ -77,14 +83,29 @@ impl FakeRuntime {
         self.cancelled.load(Ordering::SeqCst)
     }
 
-    /// Let every [`Reply::Hang`] run go (so a test doesn't leave threads behind).
+    /// Let every [`Reply::Hang`] and [`Reply::Held`] run go (so a test doesn't leave threads
+    /// behind).
     pub fn release(&self) {
         self.released.store(true, Ordering::SeqCst);
     }
 
-    /// How many runs have started (a run counts from the moment it is called).
+    /// How many runs have started (a run counts once it has taken its reply, before it waits).
     pub fn started(&self) -> usize {
         self.started.load(Ordering::SeqCst)
+    }
+
+    fn wait_for_release(&self) {
+        while !self.released.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// Block until the run's token is set, and count it in [`FakeRuntime::cancelled`].
+    fn wait_for_cancel(&self, cancel: &CancelToken) {
+        while !cancel.is_cancelled() {
+            thread::sleep(Duration::from_millis(5));
+        }
+        self.cancelled.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -98,12 +119,14 @@ impl CopilotRuntime for FakeRuntime {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(request.prompt.clone());
-        self.started.fetch_add(1, Ordering::SeqCst);
         let reply = self
             .replies
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .pop_front();
+        // Counted after the reply is taken, so a test that sees a run started knows which reply
+        // it has.
+        self.started.fetch_add(1, Ordering::SeqCst);
         let text = match reply {
             None | Some(Reply::Error(RuntimeError::Failed)) => return Err(RuntimeError::Failed),
             Some(Reply::Error(e)) => return Err(e),
@@ -117,17 +140,20 @@ impl CopilotRuntime for FakeRuntime {
                 return Err(RuntimeError::Failed);
             }
             Some(Reply::Hang) => {
-                while !self.released.load(Ordering::SeqCst) {
-                    thread::sleep(Duration::from_millis(5));
-                }
+                self.wait_for_release();
                 return Err(RuntimeError::Failed);
             }
+            Some(Reply::Held(text)) => {
+                self.wait_for_release();
+                text
+            }
             Some(Reply::HangUntilCancelled) => {
-                while !cancel.is_cancelled() {
-                    thread::sleep(Duration::from_millis(5));
-                }
-                self.cancelled.fetch_add(1, Ordering::SeqCst);
+                self.wait_for_cancel(cancel);
                 return Err(RuntimeError::TimedOut);
+            }
+            Some(Reply::AfterCancel(text)) => {
+                self.wait_for_cancel(cancel);
+                text
             }
         };
         Ok(RunOutput {

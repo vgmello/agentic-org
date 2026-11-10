@@ -253,7 +253,7 @@ A new module, `crates/org-proto/src/process.rs`. The historical sketch was addit
 - **`org-server`** (server-dev): repo reads through `org-git`; the handbook at organization create.
 - **`org-git`** (River): W7's `DocRepo` API, the handbook's repository and merge, branch creation at a sha, and the §4.5 cleanup.
 - **`org-agent`** (Remy): the PROC-8 commands (Appendix B), `task allow-second-branch`, the `one_branch_open` exit code.
-- **`apps/desktop`** (app-frontend-dev): the Processes views, the profile tab, Allow once…, Mark merged…, the work state.
+- **`apps/org-ui`** (app-frontend-dev): the Processes views, the profile tab, Allow once…, Mark merged…, the work state.
 
 One new library, three stable-ward dependencies, no cycle.
 

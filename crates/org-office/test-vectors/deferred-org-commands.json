@@ -1,0 +1,723 @@
+{
+  "comment": "Exact preserved cases awaiting B1-10. The canonical runner checks missing methods fail closed and refuses unlisted coverage gaps; the legacy Rust/TypeScript mock runners continue to assert their original expectations.",
+  "cases": [
+    {
+      "name": "project.create: makes the project, its General area and the links in one command, with a derived key",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: a taken key gets a digit",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: a reserved key gets a digit",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: a name without a letter first is prefixed with p",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: a chosen key is kept",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: a missing team",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: a bad key",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: a reserved key",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: a repeated team",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: a relative repository path",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: a blank name",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: a blank General name",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: a taken project id",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: a taken key",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: a name taken ignoring case",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: a missing team beats a blank name",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.update: renames and describes, and the version goes up",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.update"
+      ]
+    },
+    {
+      "name": "project.update: a description can be cleared",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.update"
+      ]
+    },
+    {
+      "name": "project.update: nothing to change",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.update"
+      ]
+    },
+    {
+      "name": "project.update: a value and its clear",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.update"
+      ]
+    },
+    {
+      "name": "project.update: a missing project",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.update"
+      ]
+    },
+    {
+      "name": "project.update: a blank name beats a stale version",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.update"
+      ]
+    },
+    {
+      "name": "project.update: a stale version",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.update"
+      ]
+    },
+    {
+      "name": "project.update: a name taken ignoring case",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.update"
+      ]
+    },
+    {
+      "name": "project.archive: archives and unarchives",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.archive"
+      ]
+    },
+    {
+      "name": "project.archive: a stale version",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.archive"
+      ]
+    },
+    {
+      "name": "project.archive: a missing project",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.archive"
+      ]
+    },
+    {
+      "name": "area.create: in a project with teams the area names its team",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.create"
+      ]
+    },
+    {
+      "name": "area.create: with a lead who is in the team",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.create"
+      ]
+    },
+    {
+      "name": "area.create: a project with no team takes no team",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.create"
+      ]
+    },
+    {
+      "name": "area.create: a missing project",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.create"
+      ]
+    },
+    {
+      "name": "area.create: a missing team",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.create"
+      ]
+    },
+    {
+      "name": "area.create: a team that is not the project's",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.create"
+      ]
+    },
+    {
+      "name": "area.create: no team when the project has teams",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.create"
+      ]
+    },
+    {
+      "name": "area.create: a blank name",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.create"
+      ]
+    },
+    {
+      "name": "area.create: a lead who is not in the team",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.create"
+      ]
+    },
+    {
+      "name": "area.create: the owner as lead",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.create"
+      ]
+    },
+    {
+      "name": "area.create: a taken name, ignoring case",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.create"
+      ]
+    },
+    {
+      "name": "area.create: a taken id",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.create"
+      ]
+    },
+    {
+      "name": "area.rename: renames and bumps the version",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.rename"
+      ]
+    },
+    {
+      "name": "area.rename: a stale version",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.rename"
+      ]
+    },
+    {
+      "name": "area.rename: a taken name in the project",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.create",
+        "area.rename"
+      ]
+    },
+    {
+      "name": "area.rename: a blank name",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.rename"
+      ]
+    },
+    {
+      "name": "area.rename: a missing area",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.rename"
+      ]
+    },
+    {
+      "name": "area.set_team: moves an area to another of the project's teams and drops a lead who is not in it",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.create",
+        "area.rename",
+        "area.set_team"
+      ]
+    },
+    {
+      "name": "area.set_team: a lead who is in the new team stays",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.create",
+        "area.set_team"
+      ]
+    },
+    {
+      "name": "area.set_team: a team that is not the project's",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.set_team"
+      ]
+    },
+    {
+      "name": "area.set_team: no team while the project has teams",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.set_team"
+      ]
+    },
+    {
+      "name": "area.set_team: a stale version",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.set_team"
+      ]
+    },
+    {
+      "name": "area.set_lead: sets and clears the lead",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.set_lead"
+      ]
+    },
+    {
+      "name": "area.set_lead: the owner",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.set_lead"
+      ]
+    },
+    {
+      "name": "area.set_lead: not in the team",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.set_lead"
+      ]
+    },
+    {
+      "name": "area.set_lead: an area with no team has no lead",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.set_lead"
+      ]
+    },
+    {
+      "name": "area.set_lead: the owner beats a stale version",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.set_lead"
+      ]
+    },
+    {
+      "name": "area.set_lead: a stale version",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.set_lead"
+      ]
+    },
+    {
+      "name": "a lead who leaves the team stops leading the area",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.set_lead"
+      ]
+    },
+    {
+      "name": "a lead who is offboarded or removed stops leading",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.set_lead"
+      ]
+    },
+    {
+      "name": "project.remove_team: the leaving team's areas go to the chosen team",
+      "reason": "B1-10: area state/reconciliation not implemented",
+      "unavailable_methods": []
+    },
+    {
+      "name": "project.remove_team: the chosen team is required when the project keeps others",
+      "reason": "B1-10: area state/reconciliation not implemented",
+      "unavailable_methods": []
+    },
+    {
+      "name": "project.remove_team: the chosen team must be a remaining team",
+      "reason": "B1-10: area state/reconciliation not implemented",
+      "unavailable_methods": []
+    },
+    {
+      "name": "project.remove_team: the last team leaves its areas without a team",
+      "reason": "B1-10: area state/reconciliation not implemented",
+      "unavailable_methods": []
+    },
+    {
+      "name": "project.remove_team: a target is refused when the last team leaves",
+      "reason": "B1-10: area state/reconciliation not implemented",
+      "unavailable_methods": []
+    },
+    {
+      "name": "team.delete: leaves the areas it owned without a team",
+      "reason": "B1-10: area state/reconciliation not implemented",
+      "unavailable_methods": []
+    },
+    {
+      "name": "area.create: a name over 40 characters",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.create"
+      ]
+    },
+    {
+      "name": "area.create: a name of 40 characters",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.create"
+      ]
+    },
+    {
+      "name": "area.rename: a name over 40 characters",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.rename"
+      ]
+    },
+    {
+      "name": "project.create: a General name over 40 characters",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: a blank link id in teams",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: a blank team id in teams",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: a link id used twice",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: a description over 1000 characters",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: a description with a control character",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: a blank branch",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: an absolute existing repository",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: a repository path with a control character",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.update: a description over 1000 characters",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.update"
+      ]
+    },
+    {
+      "name": "project.remove_team: a lead who is not in the team taking over stops leading, in the same change",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.create"
+      ]
+    },
+    {
+      "name": "project.remove_team: a lead who is in the team taking over keeps leading",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.create"
+      ]
+    },
+    {
+      "name": "member.offboard: an agent who leaves stops leading an area",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.set_lead"
+      ]
+    },
+    {
+      "name": "member.move: a lead who moves to another team stops leading the old team's area",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.set_lead"
+      ]
+    },
+    {
+      "name": "team.delete: the areas it owned lose the team and the lead, once",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.set_lead"
+      ]
+    },
+    {
+      "name": "project.create: a new local repository is resolved by HQ",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: a description and a branch are kept",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.archive: unarchiving removes the flag",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.archive"
+      ]
+    },
+    {
+      "name": "area.create: an offboarded lead",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.create"
+      ]
+    },
+    {
+      "name": "area.set_team: a missing team",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.set_team"
+      ]
+    },
+    {
+      "name": "area.set_team: a missing area",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.set_team"
+      ]
+    },
+    {
+      "name": "area.set_lead: a missing area",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.set_lead"
+      ]
+    },
+    {
+      "name": "area.set_lead: a missing member",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.set_lead"
+      ]
+    },
+    {
+      "name": "area.set_lead: an offboarded lead",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "area.set_lead"
+      ]
+    },
+    {
+      "name": "project.remove_team: a target is ignored for a team that owns no area when others remain",
+      "reason": "B1-10: area state/reconciliation not implemented",
+      "unavailable_methods": []
+    },
+    {
+      "name": "project.create: the key from 'Billing' is bil",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: the key from 'Q' is qx",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: the key from '9' is p9",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: the key from 'Exc' is exc2",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: a task/ branch",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: a docs/ branch in other capitals",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: a merged/ branch under refs/heads/",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: an archive/ branch under heads/",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: a branch that only looks like a reserved one",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.create: an ordinary branch",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.create"
+      ]
+    },
+    {
+      "name": "project.update: a task/ branch",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.update"
+      ]
+    },
+    {
+      "name": "project.update: a heads/docs/ branch",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.update"
+      ]
+    },
+    {
+      "name": "project.update: an ordinary branch",
+      "reason": "B1-10: project/area command not implemented",
+      "unavailable_methods": [
+        "project.update"
+      ]
+    }
+  ]
+}
