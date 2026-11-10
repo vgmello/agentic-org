@@ -10,7 +10,7 @@
 //! Each entity is stored as the contract's own JSON (`org_proto::org`) in a `body` column, beside
 //! the few plain columns a query or a uniqueness rule needs, so there is no mapping layer between
 //! the wire type and the row to get wrong. The rules (`crate::rules`) read through [`OrgSql`] as an
-//! [`OrgView`] and write through it as an [`OrgWrite`], inside the writer's savepoint, so a
+//! [`OrgView`] and write through [`OrgWriteSql`] as an [`OrgWrite`], inside the writer's savepoint, so a
 //! command sees the effects of the one before it.
 //!
 //! The log (`events`) stores the changes of one command per entry, verbatim, at the next
@@ -85,13 +85,8 @@ pub(crate) const SCHEMA: Schema = Schema {
     },
 };
 
-/// The rules' view of the organization and their way to write it, over the writer's connection
-/// (or a reader's, for reads). A write is an upsert by id that NEVER replaces another row: a
-/// clash on a sibling name, a handle or a (team, member) pair is a constraint error (a panic
-/// here, so the request's savepoint rolls back), not a quiet deletion. The traits have no error
-/// channel: a failing query panics with a
-/// fixed text, which the writer reports as a storage failure of that one request and a reader
-/// surfaces as an error.
+/// The rules' read view over the current transaction. `OrgView` has no error channel, so a
+/// failing query panics and is reported as a storage failure at the transaction boundary.
 pub(crate) struct OrgSql<'a>(pub(crate) &'a Connection);
 
 fn sql<T>(result: rusqlite::Result<T>) -> T {
@@ -226,9 +221,37 @@ impl OrgView for OrgSql<'_> {
     }
 }
 
-impl OrgWrite for OrgSql<'_> {
+/// The domain's mechanical apply writes through `OrgWrite`, which has no error return.
+/// Retain the SQLite result so the caller can fail the transaction with the original cause.
+struct OrgWriteSql<'a> {
+    db: &'a Connection,
+    error: Option<rusqlite::Error>,
+}
+
+impl<'a> OrgWriteSql<'a> {
+    fn new(db: &'a Connection) -> Self {
+        Self { db, error: None }
+    }
+
+    fn write_result(&mut self, result: rusqlite::Result<usize>) {
+        if self.error.is_none() {
+            self.error = result.err();
+        }
+    }
+
+    fn check_write(&mut self) -> Result<(), OfficeError> {
+        match self.error.take() {
+            Some(error) => Err(OfficeError::storage(error)),
+            None => Ok(()),
+        }
+    }
+}
+
+// Upsert by id. A conflicting name, handle or membership returns the constraint error
+// and lets the writer roll back, preserving the other row.
+impl OrgWrite for OrgWriteSql<'_> {
     fn put_team(&mut self, team: &Team) {
-        sql(self.0.execute(
+        self.write_result(self.db.execute(
             "INSERT INTO teams (id, owner_team_id, name_key, lead_member_id, body)
              VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT (id) DO UPDATE SET owner_team_id = excluded.owner_team_id,
@@ -244,10 +267,10 @@ impl OrgWrite for OrgSql<'_> {
         ));
     }
     fn delete_team(&mut self, id: &str) {
-        sql(self.0.execute("DELETE FROM teams WHERE id = ?1", [id]));
+        self.write_result(self.db.execute("DELETE FROM teams WHERE id = ?1", [id]));
     }
     fn put_member(&mut self, member: &Member) {
-        sql(self.0.execute(
+        self.write_result(self.db.execute(
             "INSERT INTO members (id, handle_key, reports_to_member_id, body)
              VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT (id) DO UPDATE SET handle_key = excluded.handle_key,
@@ -261,10 +284,10 @@ impl OrgWrite for OrgSql<'_> {
         ));
     }
     fn delete_member(&mut self, id: &str) {
-        sql(self.0.execute("DELETE FROM members WHERE id = ?1", [id]));
+        self.write_result(self.db.execute("DELETE FROM members WHERE id = ?1", [id]));
     }
     fn put_membership(&mut self, membership: &Membership) {
-        sql(self.0.execute(
+        self.write_result(self.db.execute(
             "INSERT INTO memberships (id, team_id, member_id, body)
              VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT (id) DO UPDATE SET team_id = excluded.team_id,
@@ -278,12 +301,13 @@ impl OrgWrite for OrgSql<'_> {
         ));
     }
     fn delete_membership(&mut self, id: &str) {
-        sql(self
-            .0
-            .execute("DELETE FROM memberships WHERE id = ?1", [id]));
+        self.write_result(
+            self.db
+                .execute("DELETE FROM memberships WHERE id = ?1", [id]),
+        );
     }
     fn put_project_team(&mut self, project_team: &ProjectTeam) {
-        sql(self.0.execute(
+        self.write_result(self.db.execute(
             "INSERT INTO project_teams (id, project_id, team_id, body)
              VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT (id) DO UPDATE SET project_id = excluded.project_id,
@@ -297,19 +321,21 @@ impl OrgWrite for OrgSql<'_> {
         ));
     }
     fn delete_project_team(&mut self, id: &str) {
-        sql(self
-            .0
-            .execute("DELETE FROM project_teams WHERE id = ?1", [id]));
+        self.write_result(
+            self.db
+                .execute("DELETE FROM project_teams WHERE id = ?1", [id]),
+        );
     }
 }
 
 /// Applies `changes` in order. A change this build does not know is an error, so the caller's
 /// savepoint rolls back whatever was written before it.
 pub(crate) fn apply_changes(db: &Connection, changes: &[OrgChange]) -> Result<(), OfficeError> {
-    let mut state = OrgSql(db);
+    let mut state = OrgWriteSql::new(db);
     for change in changes {
         rules::apply(&mut state, change)
             .map_err(|_| OfficeError::Invalid("a change this build does not know"))?;
+        state.check_write()?;
     }
     Ok(())
 }
@@ -609,9 +635,10 @@ pub(crate) fn seed_for_test(
         "DELETE FROM memberships; DELETE FROM teams; DELETE FROM members; DELETE FROM events;",
     )
     .map_err(OfficeError::storage)?;
-    let mut state = OrgSql(db);
+    let mut state = OrgWriteSql::new(db);
     for member in members {
         state.put_member(member);
+        state.check_write()?;
     }
     db.execute(
         "INSERT INTO events (epoch, seq, kind, command_id, at, body)
@@ -1196,15 +1223,16 @@ mod tests {
             .all(|m| m.id != id(21) && m.id != id(25)));
     }
 
-    fn put_fails(store: &Store, put: impl FnOnce(&mut OrgSql<'_>) + Send + 'static) -> bool {
-        let mut put = Some(put);
-        store
-            .write(move |db| {
-                let put = put.take().expect("runs once");
-                put(&mut OrgSql(db));
-                Ok(((), None))
-            })
-            .is_err()
+    fn put_for_test(
+        store: &Store,
+        put: impl Fn(&mut OrgWriteSql<'_>) + Send + 'static,
+    ) -> Result<(), OfficeError> {
+        store.write(move |db| {
+            let mut state = OrgWriteSql::new(db);
+            put(&mut state);
+            state.check_write()?;
+            Ok(((), None))
+        })
     }
 
     fn team(id: &str, name: &str, owner: Option<&str>) -> Team {
@@ -1218,17 +1246,40 @@ mod tests {
     }
 
     #[test]
-    fn the_database_backs_up_the_sibling_name_and_handle_rules_and_never_deletes_to_do_it() {
+    fn organization_apply_preserves_the_sqlite_error_and_rolls_back_earlier_changes() {
+        use std::error::Error;
+
         let (_dir, store) = store();
-        store
+        let error = store
             .write(|db| {
-                let mut state = OrgSql(db);
-                state.put_team(&team("a", "X", None));
+                apply_changes(
+                    db,
+                    &[
+                        OrgChange::TeamUpserted {
+                            team: team("one", "Same name", None),
+                        },
+                        OrgChange::TeamUpserted {
+                            team: team("two", "SAME NAME", None),
+                        },
+                    ],
+                )?;
                 Ok(((), None))
             })
-            .unwrap();
+            .unwrap_err();
+        assert!(matches!(
+            error.source().and_then(|source| source.downcast_ref()),
+            Some(rusqlite::Error::SqliteFailure(failure, _))
+                if failure.code == rusqlite::ErrorCode::ConstraintViolation
+        ));
+        assert!(store.read(snapshot).unwrap().teams.is_empty());
+    }
+
+    #[test]
+    fn the_database_backs_up_the_sibling_name_and_handle_rules_and_never_deletes_to_do_it() {
+        let (_dir, store) = store();
+        put_for_test(&store, |s| s.put_team(&team("a", "X", None))).unwrap();
         // The same name (any case) among the top-level teams: a constraint error, and `a` stays.
-        assert!(put_fails(&store, |s| s.put_team(&team("b", "x", None))));
+        assert!(put_for_test(&store, |s| s.put_team(&team("b", "x", None))).is_err());
         let after = store.read(snapshot).unwrap();
         assert_eq!(
             after
@@ -1239,12 +1290,7 @@ mod tests {
             ["a"]
         );
         // Updating a team in place is fine.
-        store
-            .write(|db| {
-                OrgSql(db).put_team(&team("a", "X", None));
-                Ok(((), None))
-            })
-            .unwrap();
+        put_for_test(&store, |s| s.put_team(&team("a", "X", None))).unwrap();
         // Two members with one handle: the second write fails and the first member stays.
         let person = |id: &str, name: &str| Member {
             id: id.into(),
@@ -1258,17 +1304,10 @@ mod tests {
             created_at: None,
             version: 1,
         };
-        store
-            .write({
-                let first = person("m1", "Ann");
-                move |db| {
-                    OrgSql(db).put_member(&first);
-                    Ok(((), None))
-                }
-            })
-            .unwrap();
+        let first = person("m1", "Ann");
+        put_for_test(&store, move |s| s.put_member(&first)).unwrap();
         let second = person("m2", "ANN");
-        assert!(put_fails(&store, move |s| s.put_member(&second)));
+        assert!(put_for_test(&store, move |s| s.put_member(&second)).is_err());
         let ids: Vec<String> = store
             .read(snapshot)
             .unwrap()
@@ -1288,19 +1327,8 @@ mod tests {
             title_in_team: None,
             version: 1,
         };
-        store
-            .write(move |db| {
-                OrgSql(db).put_membership(&membership("ms1"));
-                Ok(((), None))
-            })
-            .unwrap();
-        assert!(put_fails(&store, move |s| s.put_membership(&Membership {
-            id: "ms2".into(),
-            team_id: "a".into(),
-            member_id: "m1".into(),
-            title_in_team: None,
-            version: 1,
-        })));
+        put_for_test(&store, move |s| s.put_membership(&membership("ms1"))).unwrap();
+        assert!(put_for_test(&store, move |s| s.put_membership(&membership("ms2"))).is_err());
         assert_eq!(store.read(snapshot).unwrap().memberships.len(), 1);
     }
 
