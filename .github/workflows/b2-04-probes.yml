@@ -1,0 +1,58 @@
+name: B2-04 platform probes
+on:
+  push:
+    branches: [sage/b2-04-probes]
+permissions:
+  contents: read
+concurrency:
+  group: b2-04-probes
+  cancel-in-progress: true
+jobs:
+  linux-x86-64:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Record native environment
+        run: |
+          mkdir -p spikes/b2-04/evidence spikes/b2-04/linux-bin
+          test "$(uname -m)" = x86_64
+          { uname -a; cat /etc/os-release; systemd-creds --version; getconf GNU_LIBC_VERSION; } | tee spikes/b2-04/evidence/environment.log
+          rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
+      - name: Build unchanged host and worker
+        run: |
+          cargo build --locked -p org-office-host -p org-office-server 2>&1 | tee spikes/b2-04/evidence/build.log
+          cp target/debug/org-office-host target/debug/org-office-server spikes/b2-04/linux-bin/
+          ldd spikes/b2-04/linux-bin/org-office-server | tee spikes/b2-04/evidence/worker-ldd.log
+      - name: Worker regression tests
+        run: cargo test --locked -p org-office-server 2>&1 | tee spikes/b2-04/evidence/worker-tests.log
+      - name: Admission and real worker probes
+        run: |
+          timeout 20s python3 spikes/b2-04/linux-exec.py | tee spikes/b2-04/evidence/exec.log
+          timeout 80s python3 spikes/b2-04/linux-worker.py | tee spikes/b2-04/evidence/worker.log
+          timeout 60s python3 spikes/b2-04/linux-host-baseline.py | tee spikes/b2-04/evidence/host-baseline.log
+      - name: Unprivileged unattended encrypted credentials
+        run: |
+          sudo systemctl start systemd-creds.socket
+          sudo systemd-creds setup
+          probe_uid=$(id -u)
+          sudo loginctl enable-linger "$(id -un)"
+          sudo systemctl start "user@$probe_uid.service"
+          env XDG_RUNTIME_DIR="/run/user/$probe_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$probe_uid/bus" python3 spikes/b2-04/linux-credentials.py | tee spikes/b2-04/evidence/credentials.log
+      - name: SQLCipher system and static crypto comparison
+        run: sh spikes/b2-04/build-crypto.sh 2>&1 | tee spikes/b2-04/evidence/crypto.log
+      - name: Preserve probe evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: b2-04-linux-x86-64-evidence
+          path: spikes/b2-04/evidence/
+          retention-days: 14

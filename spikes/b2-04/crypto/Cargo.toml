@@ -1,0 +1,12 @@
+[package]
+name = "sage-b204-sqlcipher"
+version = "0.0.0"
+edition = "2024"
+
+[features]
+vendored = ["rusqlite/bundled-sqlcipher-vendored-openssl"]
+
+[dependencies]
+rusqlite = { version = "=0.41.1", features = ["bundled-sqlcipher"] }
+
+[workspace]
