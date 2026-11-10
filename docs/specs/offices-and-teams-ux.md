@@ -36,7 +36,7 @@ validation, Creating…, Starting, ready, failed with Try again, and a lost resp
 resolved by looking up the same operation (`create-organization.md`). New §5b,
 **Who can do what**, from the owner's decision O-1. Decision 17. Glossary: Account,
 Instance admin and Recovery code. §10 points to the recovery-code screens in
-`server-installation-and-access-ux.md` §4a. Open questions A91 and A92.
+`server-installation-and-access-ux.md` §4a. Open questions A91, A92 and A95.
 **Criteria added:** OFC-14 to OFC-25. No existing criterion changed.
 
 **Revision 11 (2026-11-09): the menu has New request.** The menu-bar menu gains **New request… ⌥⌘N** and, while captures wait for the office, "n requests waiting to send" (`feature-requests-ux.md` §1.1). No criteria changed here; see RQS-1, RQS-17.
@@ -304,15 +304,20 @@ creates it owns it. The mechanics are in `docs/design/create-organization.md`.
 | Checking (the response was lost) | "Checking whether Side Project was created…" with a spinner. The browser looks up the same attempt; it never sends a new one while the outcome is unknown. |
 | Session ended | The sign-in-again dialog (`server-installation-and-access-ux.md` §4a.4). The form keeps its text. After signing in, press **Create organization** again. |
 
-**Failure reasons** (the alert's words):
+**Failure reasons** (the alert's words). `organization.create` fails only when
+nothing was stored. An organization that was stored but whose office didn't start
+is **Created, then stopped** (above), never a failure, so Try again can't hit
+"already exists" (`create-organization.md`; `org-proto` `calls.rs`).
 
-| Reason | Copy |
+| Wire error | Copy |
 | --- | --- |
-| Key store unavailable | "Side Project wasn't created: HQ couldn't get a key for it from this instance's key store. On <HQ machine>, run `agentic-org doctor`, then try again." |
-| HQ stored nothing | Only when HQ confirms nothing was stored: "Side Project wasn't created. Try again. If it keeps happening, run `agentic-org doctor` on <HQ machine>." An organization that was stored but whose office didn't start is **Created, then stopped** (above), never a failure, so Try again can't hit "already exists" (`create-organization.md`; `org-proto` `calls.rs`). |
-| Storage error | "Side Project wasn't created: HQ couldn't write its data on <HQ machine>. Run `agentic-org doctor` there, then try again." |
-| Not an instance admin | "Only an instance admin can create organizations." No Try again. The switcher item goes away. |
-| Any other reason | "Side Project wasn't created. Try again." |
+| `invalid_name` | The matching inline name message (above). |
+| `already_exists` | "There's already an organization called Side Project on this HQ. Choose another name." (OFC-17) |
+| `storage_error` | "Side Project wasn't created: HQ couldn't write its data on <HQ machine>. Run `agentic-org doctor` there, then try again." |
+| `not_ready` | "HQ is still starting. Try again in a moment." **Try again** |
+| `unavailable` | "Several organizations are being created right now. Try again in a moment." **Try again** |
+| Not an instance admin (refused by the gateway, A95) | "Only an instance admin can create organizations." No Try again. The switcher item goes away. |
+| Any other error | "Side Project wasn't created. Try again." |
 
 Whether a recovery package that can't be created fails the create is A89; if it
 does, its copy is "Side Project wasn't created: its recovery material couldn't be
@@ -793,7 +798,8 @@ Two directions, same result:
 - A7 · Remove office: I've made it HQ-only, like Add office and approval. Confirm, or should it work from any office while HQ is reachable?
 - A8 · Is there a limit on how many people an organization can add, or on a person's name length? I've assumed the team-name rules (1–64 characters).
 - A9 · Does the agent's `delivery_failed` notice carry the name the agent used, so PEOPLE-7 can say "Couldn't reach "Sam"" and prefill Add person?
-- A91 · *(rev 14)* The name rules follow `org-proto` (64 characters, no control, invisible or direction-changing characters, duplicates compared case-insensitively). Open: does HQ trim spaces before comparing, and is the duplicate check per HQ instance or per account?
+- A91 · *(rev 14)* The name rules follow `org-proto` (trimmed, 64 characters, no control, invisible or direction-changing characters, duplicates compared case-insensitively on the trimmed name). Open: is the duplicate check per HQ instance or per account?
+- A95 · *(rev 14)* Which error does the gateway return when an account without the admin grant calls Create organization, and does a key-store failure during create surface as `storage_error` or something else?
 - A92 · *(rev 14)* How long can a create attempt be looked up after a lost response, and what does HQ answer once it's too old?
 - A86, A89 and A93 in `server-installation-and-access-ux.md` §4a.9 also affect §5a and §5b: whether the admin grant alone opens an organization, whether a failed recovery package fails the create, and the HQ machine's name in copy.
 

@@ -20,7 +20,7 @@ built on the owner's decisions O-1 (accounts) and O-2 (recovery-code delivery):
 who can sign in, the setup transcript for the first account, the sign-in page
 and its errors, session end and signing in again, sign out, what opens after
 sign-in, and the recovery-code states in the browser and the CLI, with their
-accessibility. Open questions A80 to A90, A93 and A94 for ada (§4a.9). §4 points to
+accessibility. Open questions A80 to A90, A93 and A94 for ada (A91, A92 and A95 are in offices) (§4a.9). §4 points to
 §4a. **Criteria added:** SIGN-1 to SIGN-29, RCV-1 to RCV-17. No existing
 criterion changed.
 
@@ -92,7 +92,7 @@ For a new instance the wizard establishes, in order:
    role is persisted independently.
 3. HQ instance-admin/owner access, gateway listening/TLS configuration, and protected
    CA escrow/recovery-code provisioning (collecting the code and acknowledging its
-   off-HQ retention happens after HQ is ready, and can be deferred: §4a.6); or the
+   off-HQ retention happens after HQ is ready, and can be deferred: §4a.2, A94); or the
    satellite invitation, destination identity and enrollment confirmation.
 4. Runtime selection, dependency checks and authentication readiness.
 5. Service registration, start and a summary with separate readiness states.
@@ -233,7 +233,7 @@ Recovery code for Lumen Labs
 It's shown once, here on the HQ machine, and never in the browser.
 Collect it now? [Y/n]: n
 Not collected. It's waiting on this machine. Collect it later with:
-  agentic-org recovery-code collect --org "Lumen Labs"
+  agentic-org recovery-code collect --org 'Lumen Labs'
 Recovering an organization after losing the HQ machine isn't supported yet.
 
 Open http://127.0.0.1:<port> in a browser and sign in as alex.
@@ -324,7 +324,7 @@ they sign in. It shows no organization data.
 | Signing in | **Signing in…**, disabled. Both fields are read-only. |
 | Empty field | No request is sent. Under the field: "Enter your username." or "Enter your password." Focus moves to the first empty field. |
 | Wrong username or password | "That username and password don't match. Try again." The same words for both cases. Password is cleared, Username kept, focus moves to Password. |
-| Too many attempts, with a retry time | "Too many sign-in attempts. Try again in 5 minutes." **Sign in** stays disabled until then. The minutes round up and update once a minute. |
+| Too many attempts, with a retry time | "Too many sign-in attempts. Try again in <n> minutes." ("1 minute" when one is left.) **Sign in** stays disabled until then. The minutes round up and update once a minute. |
 | Too many attempts, no retry time | "Too many sign-in attempts. Wait a few minutes, then try again." Limits are A82. |
 | HQ unreachable | "Can't reach HQ. Check that the instance is running on the HQ machine (`agentic-org status`), then try again." **Try again**. Both fields are kept. |
 | HQ error | "HQ couldn't sign you in because of a problem on the HQ machine. Try again. If it keeps happening, run `agentic-org doctor` there." **Try again**. |
@@ -357,7 +357,7 @@ data, a private window) counts as an ended session.
  │ Your session ended. Sign in again to carry on.      │
  │ Text you haven't saved stays on this page.          │
  │                                                     │
- │ Signed in as alex                                   │
+ │ Account: alex                                       │
  │ Password                                            │
  │ [                                      ] [ Show ]   │
  │                                                     │
@@ -439,8 +439,11 @@ the encrypted package, and the host keeps the code until it is collected with
 first one from setup, and each one created in the browser. **The code never
 passes through the gateway or the browser.** It shows only its state.
 
-The notice, every Recovery row state and the collect command end with this
-sentence (the table below leaves it out for space): "Recovering an organization after losing the
+The notice, every Recovery row state, setup's recovery block and every collect
+outcome that reports the code's state (collected, waiting, being prepared,
+couldn't be prepared, not recorded) end with this sentence; the browser table
+below leaves it out for space, and input errors (no `--org`, an unknown
+organization, a group that doesn't match, no interactive terminal) don't need it: "Recovering an organization after losing the
 HQ machine isn't supported yet." (REC-1, §7.)
 
 **States in the browser.** Only the organization's owner sees them.
@@ -448,7 +451,7 @@ HQ machine isn't supported yet." (REC-1, §7.)
 | State | Settings › Organization, Recovery row | Notice at the top of the organization's pages | Needs you |
 | --- | --- | --- | --- |
 | Being prepared (the package is still being created) | "Recovery code: being prepared. This takes a moment." | None | None |
-| Waiting to be collected | "Recovery code: waiting to be collected on the HQ machine. Run `agentic-org recovery-code collect --org "<organization>"` on <HQ machine>." **Copy command** | The notice below | "Collect the recovery code for <organization> on <HQ machine>." Opens the Recovery row. |
+| Waiting to be collected | "Recovery code: waiting to be collected on the HQ machine. Run `agentic-org recovery-code collect --org '<organization>'` on <HQ machine>." **Copy command** (the name is shell-quoted: single quotes, with an embedded `'` written `'\''`, so names with `"`, `$` or backticks paste safely) | The notice below | "Collect the recovery code for <organization> on <HQ machine>." Opens the Recovery row. |
 | Collected | "Recovery code collected on <date>." | None | None (the item clears) |
 | Couldn't be prepared | "Recovery code: couldn't be prepared. <reason>. On <HQ machine>, run `agentic-org doctor`." **Copy command** | "Recovery material for <organization> couldn't be prepared. See Settings › Organization." | "Recovery material for <organization> couldn't be prepared." |
 | Status unknown (HQ didn't say) | "Recovery code: status unknown." Never shown as collected. | None | None |
@@ -469,7 +472,7 @@ gone once collected):
 ```
  ┃ ⚠ Collect the recovery code for Lumen Labs
  ┃   It's waiting on the HQ machine and is never shown in the browser.
- ┃   On hq-mac, run:  agentic-org recovery-code collect --org "Lumen Labs"
+ ┃   On hq-mac, run:  agentic-org recovery-code collect --org 'Lumen Labs'
  ┃   Then store it and the recovery package away from that machine.
  ┃   Recovering an organization after losing the HQ machine isn't supported yet.
  ┃                                                            [Copy command]
@@ -478,7 +481,7 @@ gone once collected):
 **Collecting it on the HQ machine:**
 
 ```
-$ agentic-org recovery-code collect --org "Lumen Labs"
+$ agentic-org recovery-code collect --org 'Lumen Labs'
 Recovery code for Lumen Labs (instance default)
 
 You'll see this code once. With the recovery package, it's what will
@@ -507,7 +510,7 @@ Recovering an organization after losing the HQ machine isn't supported yet.
 | Typed group doesn't match | "That isn't the last group of the code. Check what you stored, then type it again." Asks again. | — |
 | Anything but `yes` at the last prompt | "Not recorded. Run this command again once the code and the recovery package are stored away from this machine. Recovering an organization after losing the HQ machine isn't supported yet." The code stays waiting. | Error |
 | Interrupted before `yes` (Ctrl-C, closed terminal) | "Not recorded. The code is still waiting; run this command again to see it. Recovering an organization after losing the HQ machine isn't supported yet." Running it again shows the **same** code. | Error |
-| Already collected | "The recovery code for Lumen Labs was collected on 10 Nov 2026. It can't be shown again. Recovering after losing the HQ machine isn't supported yet." No code. | Error |
+| Already collected | "The recovery code for Lumen Labs was collected on 10 Nov 2026. It can't be shown again. Recovering an organization after losing the HQ machine isn't supported yet." No code. | Error |
 | Still being prepared | "Recovery material for Lumen Labs is still being prepared. Try again in a minute. Recovering an organization after losing the HQ machine isn't supported yet." | Error |
 | Couldn't be prepared | "Recovery material for Lumen Labs couldn't be prepared: <reason>. Run agentic-org doctor. Recovering an organization after losing the HQ machine isn't supported yet." | Error |
 | No `--org`, one organization on the instance | Collects that organization's code. | — |
@@ -529,7 +532,7 @@ Recovering an organization after losing the HQ machine isn't supported yet.
   label.
 - **Focus order** on the sign-in page: the error area (when shown), Username,
   Password, Show, Sign in, then the help text. In the sign-in-again dialog:
-  Password, Show, Sign in, Not now, Sign in as someone else. The dialog traps
+  Password, Show, Sign in as someone else, Not now, Sign in (the visual order). The dialog traps
   focus while open and returns focus to where it was when it closes.
 - **Errors.** A field's error sits under it, is linked with `aria-describedby`,
   and sets `aria-invalid`. The wrong-password message is linked to both fields.
@@ -698,7 +701,7 @@ rules, which are distinct from uninstalling software on a machine.
 - RCV-13 · Interactive setup offers to collect the code at its end; answering n leaves it waiting and prints the collect command.
 - RCV-14 · An organization created in the browser starts as being prepared, then waiting, and is collected with `--org` naming it.
 - RCV-15 · The collect command run without an interactive terminal prints no code.
-- RCV-16 · Setup's recovery block, the notice, the Recovery row and every collect command outcome each say that recovering after losing the HQ machine isn't supported yet.
+- RCV-16 · Setup's recovery block, the notice, every Recovery row state and every collect outcome that reports the code's state (collected, waiting, being prepared, couldn't be prepared, not recorded) each say that recovering after losing the HQ machine isn't supported yet.
 - RCV-17 · CLI output for setup, account and recovery commands carries no meaning by colour alone, and writes no colour codes with `NO_COLOR` set or when output isn't a terminal.
 
 
