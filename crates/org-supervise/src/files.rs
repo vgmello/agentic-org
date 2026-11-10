@@ -26,12 +26,28 @@ fn directory(parent: &OwnedFd, name: &OsStr, create: bool) -> io::Result<OwnedFd
             }
         }
     }
-    open_directory(parent, &name, created)
+    open_directory(
+        parent,
+        &name,
+        if created {
+            DirectoryUse::Created
+        } else if create {
+            DirectoryUse::Existing
+        } else {
+            DirectoryUse::Traverse
+        },
+    )
 }
 
-// Pin and validate the inode before any permission repair. Keeping this step separate
-// lets tests reproduce substitution between mkdir and open without production test hooks.
-fn open_directory(parent: &OwnedFd, name: &CString, created: bool) -> io::Result<OwnedFd> {
+enum DirectoryUse {
+    Traverse,
+    Existing,
+    Created,
+}
+
+// mkdir does not return an inode handle: even a pinned directory may have been substituted
+// before open. Never chmod a directory. Validate the new-path inode's owner/mode instead.
+fn open_directory(parent: &OwnedFd, name: &CString, usage: DirectoryUse) -> io::Result<OwnedFd> {
     // SAFETY: openat is confined to this component; O_NOFOLLOW rejects a symlink and
     // O_DIRECTORY rejects a replacement that isn't a directory.
     let fd = unsafe {
@@ -43,17 +59,31 @@ fn open_directory(parent: &OwnedFd, name: &CString, created: bool) -> io::Result
     };
     if fd < 0 {
         let error = io::Error::last_os_error();
-        if created && error.kind() == io::ErrorKind::PermissionDenied {
-            return Err(io::Error::new(error.kind(), "new planned directory cannot be pinned securely; use a umask preserving owner-read access"));
+        if matches!(usage, DirectoryUse::Created) && error.kind() == io::ErrorKind::PermissionDenied
+        {
+            return Err(io::Error::new(error.kind(), "new planned directory cannot be pinned securely; use a umask preserving owner permissions"));
         }
         return Err(error);
     }
     // SAFETY: newly opened descriptor, already verified as a non-symlink directory.
     let fd = unsafe { OwnedFd::from_raw_fd(fd) };
-    if created {
-        // SAFETY: only the pinned directory inode, never a replaceable pathname/hardlink.
-        if unsafe { libc::fchmod(fd.as_raw_fd(), 0o700) } != 0 {
+    if !matches!(usage, DirectoryUse::Traverse) {
+        let mut info = std::mem::MaybeUninit::<libc::stat>::uninit();
+        // SAFETY: owned directory descriptor and correctly sized output slot.
+        if unsafe { libc::fstat(fd.as_raw_fd(), info.as_mut_ptr()) } != 0 {
             return Err(io::Error::last_os_error());
+        }
+        // SAFETY: successful fstat initialized the complete stat record.
+        let info = unsafe { info.assume_init() };
+        // SAFETY: credential query only; preparation already refuses euid0.
+        if info.st_uid != unsafe { libc::geteuid() } {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "planned directory must be owned by the current user",
+            ));
+        }
+        if matches!(usage, DirectoryUse::Created) && info.st_mode & 0o7777 != 0o700 {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "new planned directory must already have mode 0700; check owner-masking umask or concurrent replacement"));
         }
     }
     Ok(fd)
@@ -187,7 +217,39 @@ mod tests {
         })
         .join()
         .unwrap();
-        assert!(open_directory(&parent, &CString::new("new").unwrap(), true).is_err());
+        assert!(open_directory(
+            &parent,
+            &CString::new("new").unwrap(),
+            DirectoryUse::Created
+        )
+        .is_err());
         assert_eq!(std::fs::metadata(target).unwrap().mode() & 0o777, 0o600);
+    }
+
+    #[test]
+    fn concurrent_directory_substitution_keeps_existing_permissions() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("existing");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o750)).unwrap();
+        let name = temp.path().join("new");
+        std::fs::create_dir(&name).unwrap();
+        let parent = root(&temp.path().canonicalize().unwrap()).unwrap();
+        std::thread::spawn(move || {
+            std::fs::remove_dir(&name).unwrap();
+            std::fs::rename(target, name).unwrap();
+        })
+        .join()
+        .unwrap();
+        let result = open_directory(
+            &parent,
+            &CString::new("new").unwrap(),
+            DirectoryUse::Created,
+        );
+        assert_eq!(
+            std::fs::metadata(temp.path().join("new")).unwrap().mode() & 0o777,
+            0o750
+        );
+        assert!(result.is_err());
     }
 }

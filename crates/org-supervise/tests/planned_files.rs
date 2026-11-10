@@ -210,13 +210,16 @@ fn restrictive_umask_child() {
     });
     launch.files.push(file("new/deep/config", b"settings"));
     let result = prepare(&root, launch, &context(&root));
-    if mask & 0o400 != 0 {
-        // Ada's v1.0 decision: never repair an unpinnable directory by pathname.
+    if mask & 0o700 != 0 {
+        // Ada's v1.0 decision: never chmod a directory whose creation provenance is unknown.
         let error = result.err().expect("extreme umask must fail closed");
         assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
-        assert!(error.to_string().contains("umask preserving owner-read"));
+        assert!(error.to_string().contains("umask"));
         assert!(!root.join("new/deep/config").exists());
-        assert_eq!(fs::metadata(root.join("new")).unwrap().mode() & 0o777, 0);
+        assert_eq!(
+            fs::metadata(root.join("new")).unwrap().mode() & 0o777,
+            0o700 & !(mask as u32)
+        );
         assert_eq!(
             fs::metadata(root.join("existing")).unwrap().mode() & 0o777,
             0o750
@@ -243,7 +246,7 @@ fn restrictive_umask_child() {
 fn planned_modes_or_explicit_refusal_under_restrictive_umask() {
     use org_supervise::{PreparedSpawn, SpawnSpec};
     use std::time::{Duration, Instant};
-    for mask in [0o022, 0o077, 0o100, 0o700, 0o777] {
+    for mask in [0o002, 0o022, 0o027, 0o077, 0o100, 0o700, 0o777] {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
         fs::create_dir(root.join("existing")).unwrap();
