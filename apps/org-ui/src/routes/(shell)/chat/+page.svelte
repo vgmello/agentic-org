@@ -343,7 +343,7 @@
 				<p class="border-b border-white/10 bg-amber-400/10 px-5 py-2 text-sm/6 text-amber-100" data-testid="office-down">Read-only from the last copy. The office isn't running.</p>
 			{/if}
 
-			<div bind:this={listEl} class="min-h-0 flex-1 overflow-y-auto px-3 py-3" data-testid="message-list">
+			<div bind:this={listEl} class="min-h-0 flex-1 overflow-y-auto px-3 py-3" data-testid="message-list" role="log" aria-label="Messages" aria-live="polite" aria-relevant="additions text">
 				{#if searching}
 					<div class="px-2 pb-3">
 						<p class="text-sm/6 text-gray-300" data-testid="search-count">{results.length} {results.length === 1 ? 'result' : 'results'}</p>

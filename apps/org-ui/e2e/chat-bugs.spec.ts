@@ -55,3 +55,25 @@ test('CHAT-5/6 BUG-41: stopped office keeps asks and approvals read-only everywh
  for (const card of await asks.all()) await expect(card.getByRole('button')).toHaveCount(0);
  await shot(page, 'chat-offline-conversation');
 });
+
+test('CHAT-7/8 BUG-42: incoming conversation and thread replies are in polite message logs', async ({page}) => {
+ await open(page);
+ await go(page, 'Inês Duarte');
+ const log = page.getByRole('log', { name:'Messages', exact:true });
+ await expect(log).toHaveAttribute('aria-live','polite');
+ const composer = page.getByTestId('composer');
+ await composer.fill('Could you help?');
+ await composer.press('Control+Enter');
+ await expect(log).toContainText('Sample reply');
+ await expect(composer).toBeFocused();
+ await shot(page, 'chat-announced-reply');
+ await go(page, 'release-v1');
+ await page.getByTestId('replies-link').first().click();
+ const thread = page.getByTestId('thread-panel');
+ const replies = thread.getByRole('log', {name:'Thread messages'});
+ await expect(replies).toHaveAttribute('aria-live','polite');
+ await thread.getByTestId('composer').fill('An accessible thread reply');
+ await thread.getByTestId('composer').press('Control+Enter');
+ await expect(replies).toContainText('An accessible thread reply');
+ await shot(page, 'chat-announced-thread-reply');
+});
