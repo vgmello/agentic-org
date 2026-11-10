@@ -1,0 +1,121 @@
+# The checks of AGENTS.md rule 3, on every pushed branch. The team merges into `v1` without pull
+# requests, so a branch is ready only with a green run for its exact commit.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  # Manual runs work only once this file is on the repo's default branch (today `main`, not `v1`).
+  workflow_dispatch:
+
+# No `concurrency` block: cancelling a branch's run on a newer push would leave the earlier commit
+# without a green run, and the reviewer gives a verdict on an exact commit.
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # macos-15: macOS arm64. ubuntu-26.04: Linux x86-64.
+        os: [macos-15, ubuntu-26.04]
+        include:
+          - os: ubuntu-26.04
+            # The Tauri shell (package `agentic-org`, apps/desktop/src-tauri) is macOS only:
+            # excluded on Linux until F1-03 deletes src-tauri.
+            clippy-flags: --exclude agentic-org
+            # org-office-host still builds and passes clippy on Linux, but its tests can't start a
+            # worker there yet: tests excluded until B2-06 (Linux host bring-up).
+            test-flags: --exclude agentic-org --exclude org-office-host
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The runner's rustup installs the channel and components pinned in rust-toolchain.toml.
+      - name: Install Rust
+        run: |
+          rustup toolchain install --no-self-update
+          rustc --version
+          cargo --version
+
+      # Caches are saved only on v1, so branches don't churn the repo's cache quota. Branches restore
+      # only their own and the default branch's caches, so making v1 the default branch would warm them.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/v1' }}
+
+      - name: cargo fmt --check
+        if: runner.os == 'Linux'
+        run: cargo fmt --check
+
+      # No frontend build needed: in a debug build the Tauri shell uses devUrl, not frontendDist.
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets ${{ matrix.clippy-flags }} -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace ${{ matrix.test-flags }}
+
+  # The UI checks run in a browser against the app's own code and fakes, with no Tauri and nothing
+  # platform-specific, so they run on Linux only, on purpose. Node comes from the runner image
+  # (svelte-check, vite and playwright run under it); pin it with actions/setup-node if image updates bite.
+  ui:
+    name: ui
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    env:
+      UI_DIR: apps/desktop
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.4
+
+      - name: bun install
+        working-directory: ${{ env.UI_DIR }}
+        run: bun install --frozen-lockfile
+
+      - name: Type check
+        working-directory: ${{ env.UI_DIR }}
+        run: bun run check
+
+      - name: Unit tests
+        working-directory: ${{ env.UI_DIR }}
+        run: bun run test
+
+      - name: Build
+        working-directory: ${{ env.UI_DIR }}
+        run: bun run build
+
+      - name: Install Playwright Chromium
+        working-directory: ${{ env.UI_DIR }}
+        run: bunx playwright install --with-deps chromium
+
+      # playwright.config.ts sets no reporter, so add the HTML report here for the failure artifact.
+      - name: UI tests (Playwright)
+        working-directory: ${{ env.UI_DIR }}
+        env:
+          PLAYWRIGHT_HTML_OPEN: never
+        run: bun run test:e2e --reporter=line,html
+
+      - name: Upload the Playwright report
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-report-${{ github.run_attempt }}
+          path: |
+            ${{ env.UI_DIR }}/playwright-report/
+            ${{ env.UI_DIR }}/test-results/
+          retention-days: 14
+          if-no-files-found: ignore
