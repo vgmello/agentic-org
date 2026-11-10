@@ -1,7 +1,8 @@
 # Gateway HTTP API v1
 
-Initial wire `api_version: 1`, `contract_revision: 1`. Design revision 2, agreed
-2026-11-10 by Rowan (technical lead) and ada. This publishes types and shared
+Wire `api_version: 1`, `contract_revision: 2`. The core follows design revision 2;
+the organization mutation codec in §9 follows Rowan's approved design revision 3.
+Both were agreed 2026-11-10 by Rowan (technical lead) and ada. This publishes types and shared
 conformance fixtures before the gateway implementation; it does not advertise
 runtime availability. Basis: `standalone-server.md` §5–6 and approved X-02 rev13
 (see `office-host-boundary.md` §3 for its agents-repository location).
@@ -11,11 +12,13 @@ runtime availability. Basis: `standalone-server.md` §5–6 and approved X-02 re
 Publish the first `/api/v1` contract before gateway implementation (B1-05/06).
 Cover version/capabilities, browser authentication, instance/organization/office
 status, operation outcomes/lookup, and multiplexed feeds. Later typed domain
-operations extend it before their screens connect. This is not a JSON-RPC tunnel.
+operations extend it before their screens connect. Section 9 adds their codec;
+HTTP composition and enablement remain separate. This is not a JSON-RPC tunnel.
 
 Approved placement: `org_proto::gateway` owns transport-neutral browser wire DTOs;
-`crates/org-proto/test-vectors/v2/gateway-*.json` owns shared examples and negative
-cases. `org-host-control` remains private to host/gateway/setup; no browser import
+`crates/org-proto/test-vectors/v2/gateway-*.json` owns the core shared examples;
+`test-vectors/v2/gateway/` owns organization mutation and encoding-guard vectors.
+`org-host-control` remains private to host/gateway/setup; no browser import
 of host-control methods or secrets. `org-proto` versions, launch v3, host-control
 v1 and HTTP `/api/v1` remain independent version spaces.
 
@@ -35,7 +38,7 @@ SPA HTML. Unknown operations do not forward to a local socket.
 
 | Method/path | Body/result | Access and source |
 | --- | --- | --- |
-| GET `/api/v1/version` | `{api_version:1, contract_revision:1}` | Public, constant protocol metadata only; no instance/organization/account information |
+| GET `/api/v1/version` | `{api_version:1, contract_revision:2}` | Public, constant protocol metadata only; no instance/organization/account information |
 | POST `/api/v1/session/sign-in` | `{login,password}` → session view plus proof | Host `account.verify`; configured-origin validation, bounded limits |
 | GET `/api/v1/session` | session view, excluding proof | Existing cookie/proof pair; never recover a proof from cookie alone |
 | POST `/api/v1/session/refresh` | `{}` → session view plus rotated proof | Existing pair; host `session.renew`; rotate both browser values atomically |
@@ -214,7 +217,9 @@ fresh ID automatically. Transport/client failure can synthesize unknown locally.
 
 Lookup returns accepted/completed/rejected, or an error `not_found`/`expired`.
 A literal stored `outcome:"unknown"` is invalid: uncertainty is not a durable
-record. This differs from the literal domain error code `"unknown"` below.
+record. Rust refuses to serialize that client-only unresolved lookup state, even
+when it was inferred by decoding a stored rejection's literal error code
+`"unknown"`. This differs from emitting a stored `outcome:"unknown"` record.
 In-window not_found remains unresolved if dispatch may have happened; it never
 means an automatic fresh-ID retry. `queued` is deferred to X-05, per X-02 §4.2.
 Worker `committed` maps to completed; worker stored rejected maps to rejected;
@@ -231,6 +236,11 @@ outside the window. Org/work existing 29-day admission / 30-day retention rules
 remain; host journal is 30 days, same ULID skew/age rules. New ops must state their
 window. Same account after new sign-in can lookup/replay; another account or
 different payload gets `operation_reused`, not an overwritten result.
+
+`CancelResultState` excludes `in_progress`; `GatewayError::create_in_progress`
+constructs its conflict body with the original ID. Lookup queries also have private
+fields: construct them through checked decoding or `LookupQuery::from_fields`,
+then read the IDs through accessors.
 
 Rowan `01M72VD8TD7AAC5MSFV3XVDVDA` freezes a flat lookup record:
 `{operation_id,kind,outcome,result?|error?,state?}`. Only organization.create has
@@ -280,13 +290,15 @@ internal path. The JSON domain code is authoritative; HTTP is classification:
 
 Preserve public domain codes plus X-02's new codes; `rate_limited` belongs only
 to `org_proto::gateway`. Legacy `not_bound` is not browser vocabulary (Rowan
-`01M72VD8S19CZZES5PBG2X3SNQ`): an unexpected worker response is logged as an
+`01M72VD8S19CZZES5PBG2X3SNQ`): an unexpected worker error is logged as an
 internal invariant failure and translated to rejected `unavailable` (503), a
 confirmed pre-execution refusal. The JSON outcome is authoritative, never HTTP status
 alone. A domain `unknown` code always becomes outcome unknown. A confirmed
 pre-dispatch timeout can be rejected503; possible dispatch always means unknown504.
 Retries of `not_ready` are bounded and safe only when non-admission is confirmed.
 Offline restart/create and arbitrary domain operations are never queued silently.
+For organization mutations, §9 overrides the old unexpected-result fallback:
+an undecodable or possibly committed result is unknown504, not rejected503.
 
 ## 6. Stream and short poll
 
@@ -334,7 +346,7 @@ Concrete queue/frame/poll limits are B1-05/08 choices before shipping, not unlim
 
 ## 7. Capabilities and rollout
 
-Protected capability view: `{api_version:1,contract_revision:1,instance_id,
+Protected capability view: `{api_version:1,contract_revision:2,instance_id,
 operations:[{name,scope,available,reason?}],feeds:[...]}`. Names are the typed
 operation names (`organization.create`, `office.restart`, `org.snapshot`, ...)
 and feed names, not executable strings accepted by an arbitrary dispatch endpoint.
@@ -393,3 +405,95 @@ Architecture: existing Ca of org-proto makes changes additive and narrow; no
 host-control/public coupling and no new crates/dependencies. Shared wire types
 reference existing org/domain DTOs intentionally; domain policy never imports HTTP
 transport behavior. Gateway composition routes to typed host/client capabilities.
+
+## 9. Organization mutation codec (wire revision 2)
+
+This extends the core with Layer A from Rowan's approved mutation-route design
+(agents repository commit `7b560c0` plus his session/grant clarifications).
+`org_proto::gateway::org_mutations` contains strict DTOs, an explicit native-call
+mapping and a pure reply classifier. It adds no router, dispatcher, grant service,
+worker rules or operation enablement. Native socket `API_VERSION` stays unchanged.
+The browser client still accepts core revision 1; these new capabilities need
+revision 2 and their published availability.
+
+Every path below is POST under `/api/v1/organizations/{org}`. The production HTTP
+composition owns the fixed path-to-`OrgOperation` table; it must never rewrite a
+browser string into a native method. Entity IDs stay in params.
+
+| Path suffix | Native call |
+| --- | --- |
+| `/teams/create` | `team.create` |
+| `/teams/rename` | `team.rename` |
+| `/teams/move` | `team.move` |
+| `/teams/set-lead` | `team.set_lead` |
+| `/teams/delete` | `team.delete` |
+| `/teams/add-member` | `team.add_member` |
+| `/teams/remove-member` | `team.remove_member` |
+| `/teams/set-title` | `team.set_title` |
+| `/members/move` | `member.move` |
+| `/members/add-person` | `member.add_person` |
+| `/members/update-person` | `member.update_person` |
+| `/members/remove` | `member.remove` |
+| `/members/set-reports-to` | `member.set_reports_to` |
+| `/projects/add-team` | `project.add_team` |
+| `/projects/remove-team` | `project.remove_team` |
+
+The composition first selects the route and validates the cookie/proof pair.
+`OrgOperation::decode` then checks organization scope against the route's org and
+session instance, rejects unknown fields and positional records, and reconstructs
+a typed native request with `command_id = operation_id`. The numeric native RPC
+ID is separate transport correlation. All eleven versioned operations use the
+same `ExpectedVersion` type: nonnegative integral JSON values at most 2^53 - 1.
+No business ID-shape, name, cycle, ownership or other domain checks are added.
+
+Each optional string accepts absent/null as None and omits that native field.
+`clear_contact` defaults to false (omitted in native JSON), preserves true, and
+refuses null. Contact together with clear_contact decodes successfully: its
+refusal belongs to the worker. A validated `OrgMutation` keeps its scope and
+identity private and elides business values in Debug.
+
+The classifier consumes a correlated native reply with a numeric native ID:
+
+- Committed with a position becomes completed200 with exactly `result:{}`.
+  The position is an invariant check, never a published resume token.
+- Committed without a position, queued/unknown status, an undecodable reply or
+  no answer after possible dispatch becomes unknown504. It never becomes
+  accepted202 or rejected503. Safe issue tags let the composition log invariants
+  without retaining a native payload.
+- Confirmed domain refusals retain their public code/message and the §5 class.
+  Literal error code unknown remains unknown504. Unexpected native errors,
+  including not_bound and unknown native refusal names, become sanitized
+  unavailable503 with an invariant issue. Native errors cannot supply gateway
+  session, cancellation or identity hints. Rate limiting is gateway-owned.
+- Native not_authorized returns `NeedsAuthorizationRecheck` outside the
+  serializable browser outcome type. B1-06 checks host-session liveness. For a
+  live session it renews once and redispatches once with the same operation ID,
+  regardless of the old grant's expiry. A fresh worker refusal becomes403.
+  Renewal refusal never redispatches: host-confirmed session end becomes401,
+  a live unlinked organization becomes404, and other failures become503.
+  A refusal code alone never proves that the host session ended.
+
+All fifteen operations remain unavailable until their Layer B routing, captured
+native-dispatch, production gating and session/authorization tests pass. Three
+also retain domain/product gates: member.remove needs the history/people-only
+owner decision; project.add_team and project.remove_team need B1-10's area
+reconciliation. Per-account ownership informs capability display only; the
+worker enforces authorization. A disabled operation must be refused503 before
+native dispatch even when a client ignores its capability.
+
+Layer A vectors live in `test-vectors/v2/gateway/`: 16 mapping cases, 233 strict
+input/optional cases and 27 reply cases, plus one core outbound-encoding guard.
+Each case is tagged Rust or Rust+TS; native reply classification is Rust-only,
+while its browser JSON and mapping paths/envelopes are shared with Jules's
+reader/URL builder. The Rust reader does not claim HTTP-path routing coverage.
+The original eleven core files remain separate; the lookup-query fixture's
+explicit contract_revision2 selects nineteen cases (205 core cases total).
+Rust's revision constant and pinned public metadata advance together.
+
+B1-05/06 owns Layer B: unknown paths and unsupported methods get JSON404; auth,
+scope, strict decode and production enablement precede captured dispatch. It
+must exercise all mappings, unknown params on every path, all three production
+gates, host-session/grant renewal, hidden-scope404, and unchanged operation IDs
+on conflict/replay. No capability may be enabled solely because Layer A passes.
+A worker not_found does not itself mean access was lost; an authoritative
+snapshot refresh returning404 confirms that separately.

@@ -56,7 +56,7 @@ fn check_typed_response<T: DeserializeOwned + Serialize>(case: &Value) {
 fn public_version_has_only_constant_protocol_metadata() {
     assert_eq!(
         serde_json::to_value(Version::default()).unwrap(),
-        json!({"api_version":1,"contract_revision":1})
+        json!({"api_version":1,"contract_revision":2})
     );
 }
 
@@ -154,12 +154,28 @@ fn shared_lookups_distinguish_final_abandonment_from_unresolved_and_expired() {
                     "{}",
                     case["name"]
                 );
-                assert_eq!(
-                    serde_json::to_value(record).unwrap(),
-                    case["expect"]["normalized"],
-                    "{}",
-                    case["name"]
-                );
+                // A client can infer unresolved from a stored rejection with literal code
+                // unknown. That client state must never be serialized back into a ledger.
+                let normalized = match &record {
+                    OperationLookup::Outcome {
+                        kind,
+                        state,
+                        outcome: MutationOutcome::Unknown { operation_id },
+                    } => {
+                        assert!(serde_json::to_value(&record).is_err());
+                        let mut view = json!({
+                            "kind": kind,
+                            "operation_id": operation_id,
+                            "outcome": "unknown",
+                        });
+                        if let Some(state) = state {
+                            view["state"] = json!(state);
+                        }
+                        view
+                    }
+                    _ => serde_json::to_value(&record).unwrap(),
+                };
+                assert_eq!(normalized, case["expect"]["normalized"], "{}", case["name"]);
             }
             Ok(ReadResponse::Error(error)) => {
                 assert_eq!(
@@ -688,7 +704,7 @@ fn shared_create_and_restart_projections_match_lookup_bytes_and_reject_private_f
 fn shared_lookup_query_fields_are_strict_and_bound_to_the_session_instance() {
     let vectors = fixture(
         include_str!("../../test-vectors/v2/gateway-lookup-query.json"),
-        18,
+        19,
     );
     for case in vectors["cases"].as_array().unwrap() {
         let kind: OperationKind = serde_json::from_value(case["kind"].clone()).unwrap();
