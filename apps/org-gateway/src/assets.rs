@@ -3,6 +3,9 @@
 use std::collections::BTreeMap;
 
 use hyper::body::Bytes;
+use hyper::header::HeaderValue;
+
+use crate::csp;
 
 pub const MAX_BUILD_BYTES: usize = 64 * 1024 * 1024;
 const MAX_BUILD_FILES: usize = 4096;
@@ -16,12 +19,22 @@ pub enum BuildError {
     DuplicateKey,
     MissingEntry,
     InvalidEntry,
+    InvalidHtml,
+    MissingInlineScript,
+    InlineEventHandler,
+    JavascriptUrl,
+    CspMetaTag,
+    InvalidPolicy,
 }
 
-/// Loaded build files. The serving preparation step must still validate HTML and
-/// compute the reviewed CSP before any of these bytes can be served.
+struct BuildFile {
+    bytes: Bytes,
+    html_policy: Option<HeaderValue>,
+}
+
+/// Loaded build files and their validated HTML policies.
 pub struct BuildFiles {
-    files: BTreeMap<String, Bytes>,
+    files: BTreeMap<String, BuildFile>,
     total_bytes: usize,
 }
 
@@ -52,13 +65,30 @@ impl BuildFiles {
                 .checked_add(bytes.len())
                 .filter(|total| *total <= max_bytes)
                 .ok_or(BuildError::TooLarge)?;
-            if loaded.insert(key, Bytes::from(bytes)).is_some() {
+            let html_policy = if is_html(&key) {
+                let error = if key == "index.html" {
+                    BuildError::InvalidEntry
+                } else {
+                    BuildError::InvalidHtml
+                };
+                let html = std::str::from_utf8(&bytes).map_err(|_| error)?;
+                if html.is_empty() {
+                    return Err(error);
+                }
+                Some(csp::html_policy(html)?)
+            } else {
+                None
+            };
+            let file = BuildFile {
+                bytes: Bytes::from(bytes),
+                html_policy,
+            };
+            if loaded.insert(key, file).is_some() {
                 return Err(BuildError::DuplicateKey);
             }
         }
-        let entry = loaded.get("index.html").ok_or(BuildError::MissingEntry)?;
-        if entry.is_empty() || std::str::from_utf8(entry).is_err() {
-            return Err(BuildError::InvalidEntry);
+        if !loaded.contains_key("index.html") {
+            return Err(BuildError::MissingEntry);
         }
         Ok(Self {
             files: loaded,
@@ -67,16 +97,37 @@ impl BuildFiles {
     }
 
     pub fn file(&self, key: &str) -> Option<&Bytes> {
-        self.files.get(key)
+        self.files.get(key).map(|file| &file.bytes)
     }
 
     pub fn files(&self) -> impl Iterator<Item = (&str, &Bytes)> {
-        self.files.iter().map(|(key, bytes)| (key.as_str(), bytes))
+        self.files
+            .iter()
+            .map(|(key, file)| (key.as_str(), &file.bytes))
     }
 
     pub fn total_bytes(&self) -> usize {
         self.total_bytes
     }
+
+    /// The startup-computed policy for one loaded file and the listener's transport mode.
+    pub fn content_security_policy(&self, key: &str, https: bool) -> Option<HeaderValue> {
+        match self.files.get(key)?.html_policy.as_ref() {
+            Some(policy) if https => {
+                let mut value = policy.as_bytes().to_vec();
+                value.extend_from_slice(b"; upgrade-insecure-requests");
+                Some(HeaderValue::from_bytes(&value).expect("appended a fixed ASCII directive"))
+            }
+            Some(policy) => Some(policy.clone()),
+            None => Some(csp::non_html_policy()),
+        }
+    }
+}
+
+fn is_html(key: &str) -> bool {
+    key.rsplit_once('.').is_some_and(|(_, extension)| {
+        extension.eq_ignore_ascii_case("html") || extension.eq_ignore_ascii_case("htm")
+    })
 }
 
 fn valid_key(key: &str) -> bool {
@@ -95,7 +146,38 @@ mod tests {
     use super::*;
 
     fn entry() -> (String, Vec<u8>) {
-        ("index.html".into(), b"<html>BUILD_A</html>".to_vec())
+        (
+            "index.html".into(),
+            b"<html><script>BUILD_A</script></html>".to_vec(),
+        )
+    }
+
+    #[test]
+    fn every_html_file_is_validated_and_https_adds_only_its_html_directive() {
+        assert!(matches!(
+            BuildFiles::from_files([
+                entry(),
+                (
+                    "other.HTM".into(),
+                    b"<html>no inline bootstrap</html>".to_vec()
+                ),
+            ]),
+            Err(BuildError::MissingInlineScript)
+        ));
+        let files = BuildFiles::from_files([entry(), ("style.css".into(), vec![])]).unwrap();
+        let http = files.content_security_policy("index.html", false).unwrap();
+        let https = files.content_security_policy("index.html", true).unwrap();
+        assert_eq!(
+            https.to_str().unwrap(),
+            format!("{}; upgrade-insecure-requests", http.to_str().unwrap())
+        );
+        assert_eq!(
+            files.content_security_policy("style.css", true),
+            files.content_security_policy("style.css", false)
+        );
+        assert!(files
+            .content_security_policy("missing.html", false)
+            .is_none());
     }
 
     #[test]
