@@ -4,9 +4,9 @@
 	import CircleX from '@lucide/svelte/icons/circle-x';
 	import PowerOff from '@lucide/svelte/icons/power-off';
 	import Lock from '@lucide/svelte/icons/lock';
-	import ProcessBadges from '$lib/components/ProcessBadges.svelte';
+	import ProcessBadges from '$lib/modules/processes/components/ProcessBadges.svelte';
 	import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '$lib/components/ui/sheet';
-	import type { Entry, Layer, ProcessDoc, TurnedOff } from '$lib/processes/types';
+	import type { Entry, Layer, ProcessDoc, TurnedOff } from '$lib/modules/processes/types';
 
 	/** One process: its text, its facts and "why": the layers that had its key and what happened to each (PROC-8). */
 	let { open = $bindable(false), entry, off }: { open: boolean; entry?: Entry; off?: TurnedOff } = $props();
