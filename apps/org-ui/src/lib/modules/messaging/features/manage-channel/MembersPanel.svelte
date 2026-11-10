@@ -11,6 +11,7 @@
 		conversation,
 		ctx,
 		chatState,
+		officeRunning = true,
 		projectName,
 		onclose,
 		onmute,
@@ -22,6 +23,7 @@
 		conversation: Conversation;
 		ctx: ChatContext;
 		chatState: ChatState;
+		officeRunning?: boolean;
 		/** What an automatic channel follows, in words: "the Atlas project". */
 		projectName: (c: Conversation) => string | undefined;
 		onclose: () => void;
@@ -60,7 +62,7 @@
 					</div>
 					{#if m.kind === 'agent' && conversation.kind !== 'dm'}
 						<label class="sr-only" for="mute-{m.id}">How you hear from {m.name} here</label>
-						<select id="mute-{m.id}" class="rounded-md bg-gray-900 px-2 py-1 text-xs/5 text-white outline-1 -outline-offset-1 outline-white/10" value={muteOf(chatState, conversation.id, m.id)} onchange={(e) => onmute(m.id, e.currentTarget.value as MuteMode)} data-testid="mute-select">
+						<select disabled={!officeRunning} id="mute-{m.id}" class="rounded-md bg-gray-900 disabled:opacity-50 px-2 py-1 text-xs/5 text-white outline-1 -outline-offset-1 outline-white/10" value={muteOf(chatState, conversation.id, m.id)} onchange={(e) => onmute(m.id, e.currentTarget.value as MuteMode)} data-testid="mute-select">
 							{#each MODES as o (o.id)}<option value={o.id}>{o.label}</option>{/each}
 						</select>
 					{/if}

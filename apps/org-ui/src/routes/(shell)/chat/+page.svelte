@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, tick, untrack } from 'svelte';
 	import { page } from '$app/state';
-	import { goto } from '$app/navigation';
+	import { beforeNavigate, goto } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
 	import Search from '@lucide/svelte/icons/search';
 	import Users from '@lucide/svelte/icons/users';
@@ -93,6 +93,7 @@
 	};
 	const followsWords = (c: Conversation) => (c.auto?.type === 'general' ? 'the organization' : c.auto?.type === 'project' ? `the ${projectOf(c) ?? 'project'} project` : c.auto?.type === 'team' ? `the ${snapshot.teams.find((t) => c.auto?.type === 'team' && t.id === c.auto.team_id)?.name ?? ''} team` : undefined);
 	const subtitle = $derived(conversation ? `${conversation.members.length} ${conversation.members.length === 1 ? 'member' : 'members'}${conversation.auto ? ` · follows ${followsWords(conversation)}` : ''}` : '');
+	const viewTitle = $derived(searching ? 'Search' : view.type === 'needs' ? 'Needs you' : view.type === 'mentions' ? 'Mentions' : view.type === 'threads' ? 'Threads' : conversation ? titleOf(conversation, ctx, ctx.owner) : 'Chat');
 
 	async function load() {
 		try {
@@ -246,8 +247,8 @@
 	}
 
 	/** The composer's text: a slash command opens its form, anything else is sent (CHAT-9). */
-	async function submit(text: string, options: { alsoInChannel: boolean; attachments: string[] }, c: Conversation, thread?: string): Promise<boolean> {
-		const slash = parseSlash(text);
+	async function submit(text: string, options: { alsoInChannel: boolean; attachments: string[]; asMessage?: boolean }, c: Conversation, thread?: string): Promise<boolean> {
+		const slash = options.asMessage ? undefined : parseSlash(text);
 		if (slash) {
 			if (!slash.ok) {
 				toast.error(slash.message);
@@ -255,14 +256,14 @@
 			}
 			return openForm(commandForm(slash, env));
 		}
-		pending.push({ key: ++keys, change_id: newId(), conversation_id: c.id, thread_root_id: thread, also_in_channel: thread && options.alsoInChannel ? true : undefined, body: text, attachments: options.attachments, status: 'sending' });
+		pending.push({ key: ++keys, change_id: newId(), conversation_id: c.id, thread_root_id: thread, also_in_channel: thread && options.alsoInChannel ? true : undefined, body: text.trim(), attachments: options.attachments, status: 'sending' });
 		// The reactive copy: changing it redraws the row.
 		void deliver(pending[pending.length - 1]);
 		return true;
 	}
-	async function deliver(p: Pending, retry = false) {
+	async function deliver(p: Pending, retry = false, retryButton?: HTMLElement) {
 		const origin = retry ? document.activeElement : null;
-		const log = origin?.closest('[role="log"]');
+		const log = (retryButton ?? origin)?.closest('[role="log"]');
 		const place = focusPlace();
 		let deliveredId: string | undefined;
 		p.status = 'sending';
@@ -280,9 +281,9 @@
 
 	// ---- message actions -----------------------------------------------------------------------
 
-	const react = (m: ChatMessage, reaction: Reaction) => void act({ method: 'chat.react', message_id: m.id, reaction });
-	const pin = (m: ChatMessage) => void act({ method: 'chat.pin', message_id: m.id });
-	const muteIn = (conversation_id: string, member_id: string, mode: MuteMode) => void act({ method: 'chat.mute', conversation_id, member_id, mode }, mode === 'none' ? `${nameOf(ctx, member_id)} is back.` : mode === 'muted' ? `${nameOf(ctx, member_id)} is muted here. Their messages still reach Activity.` : `${nameOf(ctx, member_id)} is on a daily digest here.`);
+	const react = (m: ChatMessage, reaction: Reaction) => { if (officeRunning) void act({ method: 'chat.react', message_id: m.id, reaction }); };
+	const pin = (m: ChatMessage) => { if (officeRunning) void act({ method: 'chat.pin', message_id: m.id }); };
+	const muteIn = (conversation_id: string, member_id: string, mode: MuteMode) => { if (officeRunning) void act({ method: 'chat.mute', conversation_id, member_id, mode }, mode === 'none' ? `${nameOf(ctx, member_id)} is back.` : mode === 'muted' ? `${nameOf(ctx, member_id)} is muted here. Their messages still reach Activity.` : `${nameOf(ctx, member_id)} is on a daily digest here.`); };
 	const mute = (m: ChatMessage, mode: MuteMode) => muteIn(m.conversation_id, m.from, mode);
 	const turn = (m: ChatMessage, into: 'bug' | 'request' | 'task') => openForm(turnForm(into, m, env));
 	// Restore only focus lost by this update; never pull it from a control the owner moved to.
@@ -290,7 +291,17 @@
 	async function restoreFocus(origin: Element | null, place: string, target: () => HTMLElement | null) {
 		await tick();
 		if (!origin || place !== focusPlace() || (document.activeElement !== document.body && document.activeElement !== origin)) return;
-		(target() ?? listEl)?.focus({ preventScroll: true });
+		const next = target() ?? listEl;
+		if (!next) return;
+		// Generic rows become focusable only for this intentional return, so pointer clicks never acquire row focus.
+		const temporary = next.tabIndex < 0 && !next.hasAttribute('tabindex');
+		if (temporary) next.tabIndex = -1;
+		next.focus({ preventScroll: true });
+		if (temporary) {
+			const clear = () => { if (next.getAttribute('tabindex') === '-1') next.removeAttribute('tabindex'); };
+			if (document.activeElement === next) next.addEventListener('blur', clear, { once: true });
+			else clear();
+		}
 	}
 	async function answer(m: ChatMessage, a: { option_id?: string; text?: string }) {
 		if (!officeRunning) throw new Error("The office isn't running. Restart it from Offices.");
@@ -328,6 +339,16 @@
 	let channelMode = $state<'create' | 'rename' | 'members'>('create');
 	let channelOpen = $state(false);
 	let dmOpen = $state(false);
+	let channelDialog = $state<{ dismiss: () => void } | undefined>();
+	let dmDialog = $state<{ dismiss: () => void } | undefined>();
+	beforeNavigate((navigation) => {
+		if (navigation.type !== 'popstate' || (!channelOpen && !dmOpen && !commandOpen)) return;
+		// Back dismisses the modal first; the next Back leaves the conversation.
+		navigation.cancel();
+		if (channelOpen) channelDialog?.dismiss();
+		if (dmOpen) dmDialog?.dismiss();
+		commandOpen = false;
+	});
 	const openChannelDialog = (mode: typeof channelMode) => ((channelMode = mode), (channelOpen = true));
 
 	async function channelSubmit(r: { name: string; members: string[] }) {
@@ -356,12 +377,15 @@
 
 <svelte:window onkeydown={(event) => {
 	if (event.key === 'Escape' && !event.defaultPrevented && threadRoot && !channelOpen && !dmOpen && !commandOpen) {
+		const field = event.target;
+		const textField = field instanceof HTMLTextAreaElement || (field instanceof HTMLInputElement && /^(text|search|email|url|tel|password|number)$/.test(field.type));
+		if (event.isComposing || (textField && field.value !== '')) return;
 		event.preventDefault();
 		closeThread();
 	}
 }} />
 
-<svelte:head><title>Chat · Agentic Org</title></svelte:head>
+<svelte:head><title>{viewTitle} · Chat · Agentic Org</title></svelte:head>
 
 {#snippet rowFor(m: ChatMessage, extra: { where?: string; open?: boolean } = {})}
 	<MessageRow message={m} {ctx} chatState={chatState!} {now} readOnly={bridgePreview} {officeRunning} where={extra.where} onreact={react} onthread={openThread} onturn={turn} onmute={mute} onpin={pin} onanswer={answer} onaccept={accept} onopen={extra.open ? openMessage : undefined} />
@@ -369,7 +393,7 @@
 
 {#snippet undeliveredRows(items: Pending[], inThread = false)}
 	{#each items as p (p.key)}
-		<MessageRow message={pendingMessage(p)} {ctx} chatState={chatState!} {now} {inThread} {officeRunning} delivery={{ status: p.status, error: p.error }} onretry={() => void deliver(p, true)} ondismiss={() => (pending = pending.filter((x) => x.key !== p.key))} />
+		<MessageRow message={pendingMessage(p)} {ctx} chatState={chatState!} {now} {inThread} {officeRunning} delivery={{ status: p.status, error: p.error }} onretry={(button) => void deliver(p, true, button)} ondismiss={() => (pending = pending.filter((x) => x.key !== p.key))} />
 	{/each}
 {/snippet}
 
@@ -385,7 +409,7 @@
 			<div class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-3">
 				<div class="min-w-0">
 					<h2 class="truncate text-base/7 font-semibold text-white" data-testid="conversation-title">
-						{#if searching}Search{:else if view.type === 'needs'}Needs you{:else if view.type === 'mentions'}Mentions{:else if view.type === 'threads'}Threads{:else if conversation}{titleOf(conversation, ctx, ctx.owner)}{/if}
+						{viewTitle}
 					</h2>
 					{#if conversation && !searching}<p class="text-xs/5 text-gray-400">{subtitle}{#if conversation.archived}{' · Archived'}{/if}</p>{/if}
 				</div>
@@ -516,11 +540,11 @@
 				{#snippet undelivered()}{@render undeliveredRows(pending.filter((p) => p.thread_root_id === root.id), true)}{/snippet}
 			</ThreadPanel>
 		{:else if showMembers && conversation}
-			<MembersPanel {conversation} {ctx} {chatState} projectName={followsWords} onclose={() => (showMembers = false)} onmute={(id, mode) => muteIn(conversation.id, id, mode)} onrename={() => openChannelDialog('rename')} onaddpeople={() => openChannelDialog('members')} onremove={(id) => void act({ method: 'channel.remove_member', id: conversation.id, member_id: id })} onarchive={() => void act({ method: 'channel.archive', id: conversation.id }, `#${conversation.name} is archived.`)} />
+			<MembersPanel {conversation} {ctx} {chatState} {officeRunning} projectName={followsWords} onclose={() => (showMembers = false)} onmute={(id, mode) => muteIn(conversation.id, id, mode)} onrename={() => openChannelDialog('rename')} onaddpeople={() => openChannelDialog('members')} onremove={(id) => void act({ method: 'channel.remove_member', id: conversation.id, member_id: id })} onarchive={() => void act({ method: 'channel.archive', id: conversation.id }, `#${conversation.name} is archived.`)} />
 		{/if}
 	{/if}
 </div>
 
-<ChannelDialog bind:open={channelOpen} mode={channelMode} members={ctx.members} initialName={channelMode === 'rename' ? (conversation?.name ?? '') : ''} initialMembers={channelMode === 'members' ? (conversation?.members ?? []) : []} onsubmit={channelSubmit} />
-<NewMessageDialog bind:open={dmOpen} members={ctx.members} onsubmit={dmSubmit} />
+<ChannelDialog bind:this={channelDialog} bind:open={channelOpen} mode={channelMode} members={ctx.members} initialName={channelMode === 'rename' ? (conversation?.name ?? '') : ''} initialMembers={channelMode === 'members' ? (conversation?.members ?? []) : []} onsubmit={channelSubmit} />
+<NewMessageDialog bind:this={dmDialog} bind:open={dmOpen} members={ctx.members} onsubmit={dmSubmit} />
 <CommandDialog bind:open={commandOpen} form={command} ondone={(message) => toast.success(message)} />
