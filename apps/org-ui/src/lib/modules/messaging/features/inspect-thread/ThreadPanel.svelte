@@ -59,12 +59,12 @@
 	}
 </script>
 
-<aside data-chat-panel class="absolute inset-y-0 right-0 {sidebarInline ? 'left-64' : 'left-0'} z-30 flex h-full min-w-0 shrink-0 flex-col shadow-xl max-[640px]:overflow-y-auto xl:static xl:w-96 xl:shadow-none border-l border-white/10 bg-gray-800" aria-label="Thread" data-testid="thread-panel">
+<aside data-chat-panel class="absolute inset-y-0 right-0 {sidebarInline ? 'left-64' : 'left-0'} z-30 flex h-full min-w-0 shrink-0 flex-col overflow-y-auto shadow-xl xl:static xl:w-96 xl:shadow-none border-l border-white/10 bg-gray-800" aria-label="Thread" data-testid="thread-panel">
 	<div class="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
 		<h2 class="min-w-0 text-sm/6 font-semibold break-words text-white">Thread <span class="font-normal text-gray-400">in {title}</span></h2>
 		<Button type="button" variant="ghost" size="icon-sm" class="scroll-mt-16" aria-label="Close thread" bind:ref={closeButton} onclick={onclose}><X aria-hidden="true" /></Button>
 	</div>
-	<div class="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 py-3 max-[640px]:min-h-16" role="log" data-focus-scope aria-label="Thread messages" aria-live="polite" aria-relevant="additions text">
+	<div class="min-h-16 flex-1 space-y-1 overflow-y-auto px-2 py-3" role="log" data-focus-scope aria-label="Thread messages" aria-live="polite" aria-relevant="additions text">
 		<MessageRow message={root} {ctx} {chatState} {now} {readOnly} {officeRunning} inThread {onreact} {onturn} {onmute} {onpin} {onanswer} {onaccept} />
 		<p class="px-2 pt-2 text-xs/5 text-gray-400" data-testid="thread-count">{replies.length} {replies.length === 1 ? 'reply' : 'replies'}</p>
 		{#each replies as r (r.id)}

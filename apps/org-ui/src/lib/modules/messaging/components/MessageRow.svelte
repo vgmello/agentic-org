@@ -94,7 +94,7 @@
 
 		{#if message.attachments?.length}
 			<ul class="mt-1 flex flex-wrap gap-1.5" aria-label="Attachments">
-				{#each message.attachments as a (a)}<li class="rounded bg-white/10 px-2 py-0.5 text-xs/5 text-gray-200">📎 {a}</li>{/each}
+				{#each message.attachments as a (a)}<li class="max-w-full rounded bg-white/10 px-2 py-0.5 text-xs/5 text-gray-200 [overflow-wrap:anywhere]">📎 {a}</li>{/each}
 			</ul>
 		{/if}
 

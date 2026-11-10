@@ -24,7 +24,7 @@ const chatNav = (page: Page) => page.getByRole('navigation', { name: 'Chat', exa
 function visibleBelowHeader(element: Element) {
 	const r = element.getBoundingClientRect();
 	const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
-	return r.y >= 56 && r.bottom <= innerHeight && !!hit && element.contains(hit);
+	return r.y >= (document.querySelector('[data-shell-header]')?.getBoundingClientRect().bottom ?? 0) && r.bottom <= innerHeight && !!hit && element.contains(hit);
 }
 
 for (const [width, height, inline] of [[959, 720, true], [960, 720, false], [720, 450, false], [639, 720, false], [600, 720, false], [320, 256, false]] as const) {
@@ -152,7 +152,7 @@ for (const panel of ['thread', 'members'] as const) {
 			await expect.poll(() => focused.evaluate((element) => {
 				const r = element.getBoundingClientRect();
 				const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
-				return { visible: r.y >= 56 && r.bottom <= innerHeight && !!hit && element.contains(hit), top: r.y, bottom: r.bottom, control: element.getAttribute('aria-label') ?? element.textContent?.trim() };
+				return { visible: r.y >= (document.querySelector('[data-shell-header]')?.getBoundingClientRect().bottom ?? 0) && r.bottom <= innerHeight && !!hit && element.contains(hit), top: r.y, bottom: r.bottom, control: element.getAttribute('aria-label') ?? element.textContent?.trim() };
 			})).toMatchObject({ visible: true });
 		}
 		if (panel === 'thread') {
@@ -168,8 +168,8 @@ for (const panel of ['thread', 'members'] as const) {
 	});
 }
 
-async function openShortThread(page: Page) {
-	await open(page, 320, 256, 'c-release-v1');
+async function openShortThread(page: Page, width = 320) {
+	await open(page, width, 256, 'c-release-v1');
 	const opener = page.getByTestId('replies-link').first();
 	await opener.scrollIntoViewIfNeeded(); await opener.press('Enter');
 	const thread = page.getByTestId('thread-panel');
@@ -216,4 +216,50 @@ test('CHAT-14 BUG-49: a long attachment name fits without sideways scrolling at 
 	await expect.poll(() => attached.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0);
 	await attached.getByRole('button', { name: `Remove ${name}`, exact: true }).scrollIntoViewIfNeeded();
 	await shot(page, 'chat-narrow-320-long-attachment');
+});
+
+test('CHAT-1/14 BUG-49: reverse Tab keeps the Conversation composer and message actions visible at 320×256', async ({ page, browserName }) => {
+	await open(page, 320, 256, 'c-release-v1');
+	const conversation = page.getByRole('region', { name: 'Conversation', exact: true });
+	const composer = conversation.getByTestId('composer');
+	await composer.fill(multiline);
+	const attach = conversation.getByRole('button', { name: 'Attach', exact: true });
+	await attach.focus(); await attach.press('Shift+Tab');
+	await expect(composer).toBeFocused();
+	await expect.poll(() => composer.evaluate(visibleBelowHeader)).toBe(true);
+	// WebKit on macOS uses Option+Tab to include buttons in keyboard traversal.
+	await composer.press(browserName === 'webkit' && process.platform === 'darwin' ? 'Alt+Shift+Tab' : 'Shift+Tab');
+	const messageAction = conversation.getByTestId('message-list').locator('button:focus');
+	await expect(messageAction).toBeFocused();
+	await expect.poll(() => messageAction.evaluate(visibleBelowHeader)).toBe(true);
+	await shot(page, 'chat-narrow-320-conversation-reverse-tab');
+});
+
+for (const width of [640, 960]) {
+	test(`CHAT-8/14 BUG-49: the thread log and composer remain usable at ${width}×256`, async ({ page }) => {
+		const thread = await openShortThread(page, width);
+		const composer = thread.getByTestId('composer');
+		await composer.fill(multiline);
+		const attach = thread.getByRole('button', { name: 'Attach', exact: true });
+		await attach.focus(); await attach.press('Shift+Tab');
+		await expect(composer).toBeFocused();
+		await expect.poll(() => composer.evaluate(visibleBelowHeader)).toBe(true);
+		await expect.poll(async () => (await thread.getByRole('log').boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(48);
+		await noSidewaysScroll(page);
+		await shot(page, `chat-narrow-${width}-short-thread`);
+	});
+}
+
+test('CHAT-14 BUG-49: a sent long attachment stays within the thread log at 320px', async ({ page }) => {
+	const thread = await openShortThread(page);
+	const name = `${'x'.repeat(220)}.txt`;
+	await thread.getByTestId('composer').fill('A reply with an attachment');
+	await thread.getByLabel('Attach files').setInputFiles(fixtureFile(name));
+	await thread.getByRole('button', { name: /^Send/ }).click();
+	const log = thread.getByRole('log', { name: 'Thread messages', exact: true });
+	const sent = log.getByRole('list', { name: 'Attachments', exact: true }).getByText(name, { exact: false });
+	await expect(sent).toBeVisible();
+	await expect.poll(() => log.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0);
+	await sent.scrollIntoViewIfNeeded();
+	await shot(page, 'chat-narrow-320-sent-long-attachment');
 });
