@@ -47,6 +47,9 @@ sessions exist. "Staff a team" is dropped from §2a and HRL-3: no spec defines i
 flow. **Criteria rewritten (same ID):** STAFF-4, HRL-3, APPR-2, APPR-4, APPR-8
 *(rev 21)*. **New:** STAFF-5, STAFF-6, STAFF-7, HRL-6, HRL-7, HRL-8, APPR-9,
 APPR-10. Open questions A97 and A98.
+*(Review of 02316bb)* STAFF-4 now also checks that, once role files exist, Add
+agent record offers only existing roles and can't be submitted with another;
+new STAFF-8 checks that a hire never waits for running agents (§7).
 
 **Revision 20 (2026-11-10):** the success test names the sections of the
 [dogfood run](dogfood-run.md) (rev 7) that check each of its items. No criteria
@@ -338,10 +341,11 @@ The owner can always approve or reject any proposal. Someone who requests a hire
 - STAFF-1 · Hire's review shows team, reports to, runtime, model, office, home folder and messaging name before anything is created.
 - STAFF-2 · A hired agent appears in its team in the chart, highlighted, and in Activity ("Cameron was hired into App").
 - STAFF-3 · Choosing a runtime that isn't installed or signed in warns in Review, and Hire anyway still hires.
-- STAFF-4 · *(rev 21)* Add agent record (formerly Add an existing agent) submits name, messaging name, runtime, role/title, team, reports-to and office as a hire proposal built from those fields, the same whether or not the HR lead can run (it never drafts or changes them), with the same approval as Hire. Only approval under §7.1/HRL-3 permits member/home/messaging provisioning; direct API calls cannot bypass it.
+- STAFF-4 · *(rev 21; rewritten, review of 02316bb)* Add agent record (formerly Add an existing agent) submits name, messaging name, runtime, role/title, team, reports-to and office as a hire proposal built from those fields, the same whether or not the HR lead can run (it never drafts or changes them), with the same approval as Hire. Only approval under §7.1/HRL-3 permits member/home/messaging provisioning; direct API calls cannot bypass it. Once role files exist, its role field lists only existing roles, with "No role fits? Use Hire to request a new one." linking to Hire; a record with a role that isn't in the list can't be submitted, and no Add agent record proposal reaches the owner as "Waiting for you: new role".
 - STAFF-5 · *(new, rev 21)* When the HR lead can't run, Hire's Describe field is disabled with the reason, and **Fill in the details yourself** opens Suggestion as a form: role, title, name and focus empty and marked Your choice needed, team, reports to and runtime at their defaults, and no HR's reason line. Next is disabled until every field has a value and says what's missing. A draft that stops, or a wake over 60 s, offers the same choice. The hire then goes through Review and approval like any other.
 - STAFF-6 · *(new, rev 21)* When the office can't check whether the chosen runtime is installed and signed in on the instance, Review says so and Hire anyway still hires.
 - STAFF-7 · *(new, rev 21)* Hire's Review leaves out rows for features that don't exist yet (autonomy, the role file, How it runs, the estimated cost) rather than showing them empty or estimated, and Done makes View profile primary, with no View session, until the office runs agent sessions.
+- STAFF-8 · *(new, rev 21, review of 02316bb)* A hire (Hire or Add agent record) on an office whose instance has running agent sessions, an Always-on one included, goes from Hiring to Done with no "Waiting for agents to stop" state or Cancel, and no running agent is stopped mid-turn for it: the owning office relaunches only its own affected sessions, each between turns.
 
 **Assign and move (MOVE)**
 - MOVE-1 · Move to team is one action: the agent never appears in Not in a team in between, and the toast offers Undo.
