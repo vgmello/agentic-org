@@ -157,14 +157,14 @@ Tauri-only type or mock library becomes a dependency of a canonical crate.
 
 ## 3. Production mock audit
 
-The following are observed at the base commit, not implementation guesses:
+The following records the original mock audit; paths track subsequent module moves:
 
 | Area | Observed wiring | Required v1 result |
 | --- | --- | --- |
 | Office | `src/lib/office/api.ts` chooses `createMockOffice` outside Tauri | Real HTTP bootstrap/status/organization APIs; test-only injection |
 | Organization | `src/lib/org/api.ts` selects a Tauri implementation or browser mock | Authenticated snapshot/command/feed APIs with existing version checks |
 | Work | `src/lib/work/index.ts` selects browser mock or shell path; comments say the real office work surface is pending | Audit and implement each advertised task/bug/request operation; API outage never becomes sample work |
-| Chat | `src/lib/chat/index.ts` always exports `createMockChat` | Real conversation/message operations or an explicit unavailable feature state; no fabricated reply |
+| Chat | `src/lib/modules/messaging/legacy-api.ts` constructs `chatApi` with `createMockChat`; the public module index stays free of construction | Real conversation/message operations or an explicit unavailable feature state; no fabricated reply |
 | Processes | `src/lib/modules/processes/world.ts` builds `sampleWorld` | Connect production views to real process documents when supported; keep samples only in fixtures |
 | Copilot and other staged features | Explicit mock modules exist; no complete backend audit is claimed here | Inventory consumers during implementation; report unsupported capabilities instead of making sample results look real |
 
