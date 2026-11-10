@@ -151,7 +151,15 @@ org-server --discard <id>    # remove an unfinished office, then exit (the host 
 >   non-secret reference).
 >
 > Pending in X-02 §12 Q9, not yet in its §5: the office temp handle on the first line, the `joined`
-> event, and moving the watchdog's `child`/`child_gone` lines (below) off stdout.
+> event, moving the watchdog's `child`/`child_gone` lines (below) off stdout, and a `layout_changed`
+> record that asks workers to refresh sandbox policies.
+>
+> **Until then:** a satellite create is refused (below); office-run sessions don't launch, because they need
+> the office temp handle (fail closed, the agent shows Needs you, no fallback temp directory); hires
+> still allocate their temp handles in `office.db` but create no temp folder (agent-sessions, `TMPDIR`);
+> the watchdog's `child`/`child_gone` lines stay on stdout under v2;
+> setup- and host-made layout changes are deferred while affected sessions run (agent-sessions,
+> "Standalone-v1 managed state and grants").
 >
 > **A satellite `create` needs launch v3.** Until v3 lands, the v2 protocol below is the contract,
 > and it refuses `role: satellite` (the `create` bullets below).
@@ -179,8 +187,9 @@ org-server --discard <id>    # remove an unfinished office, then exit (the host 
   written. The server uses only the key on its first line: it never creates, stores, loads or deletes
   a key, and never touches the Keychain. It wipes every copy after it first opens the databases,
   except the one its store keeps for its reader pool (in memory only, zeroed on drop, never logged).
-- v1 creates only HQ offices; any other role is refused. (Amended 2026-11-10: satellite creates come
-  with launch v3, see "Pending: launch v3" in §3; launch v2 keeps refusing them.)
+- Launch v2 creates only HQ offices; any other role is refused. (Amended 2026-11-10: satellite creates come
+  with launch v3, see "Pending: launch v3" in §3; launch v2 keeps refusing them. A satellite create
+  skips the organization-name check below, see the offices design, "Provisioning a satellite".)
 The host has already checked the name, its uniqueness (ignoring case) among this Mac's organizations,
 and that the office id's 12-character handle is unique (ignoring case). The server checks the name again
 with the same rule (one implementation, see 6). Lines after the first are ignored; an unknown op on the

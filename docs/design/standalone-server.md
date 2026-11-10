@@ -202,14 +202,16 @@ with `office.join` on `host.sock` and poll its status (`awaiting_approval` for
 non-interactive setup). `office.join` is gated by the signed `agentic-org` peer and
 the destination consent setup captured, plus an administrator session when the
 instance has accounts. On a satellite-only instance the service host creates its
-account registry database (X-02 §6.3) at its first start, with the op journal and
-no accounts (X-02 §12, Q9).
+account registry database (X-02 §6.3; a draft, see the launch v3 note in office-host-boundary.md §3) at its first start, with the op journal and
+no accounts (X-02 §12 Q9).
 The satellite worker generates and keeps the TLS identity key; see the offices design. Each irreversible identity/provisioning step has a durable operation
 ID and completion marker before another invocation may advance it. The satellite
 worker persists its TLS identity key, request and invitation key in its `office.db`,
 and writes `office.json` (`state: pending`), before sending the request; after an ambiguous reply query that
 request's outcome rather than minting a second office. Resume the same pending
-approval after restart. An explicit mode/config change on existing state is refused
+approval after restart. If setup re-runs `office.join` for its own pending office, gets
+`already_exists`, and the status read shows that `office_id` as a pending join, it shows the existing request and check code (JOIN-6) instead of
+failing. An explicit mode/config change on existing state is refused
 with instructions; setup does not silently convert roles.
 
 Interactive and automated input feed the same validation layer. Noninteractive

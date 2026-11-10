@@ -180,10 +180,10 @@ Agents run on their office's machine and talk only to that office, through the l
      that already has accounts, `office.join` also needs an instance-administrator
      session, like Add office (standalone §2). `office.join`, `office.remove_pending`
      and the invitation as a secret type are an open point for X-02's next revision
-     (X-02 §12, Q9). The host creates
+     (X-02 §12 Q9; a draft, see the launch v3 note in office-host-boundary.md §3). The host creates
      the pending office and starts the worker with launch **v3** `create` (role satellite).
      The first line carries only the invitation's non-secret reference; the
-     invitation secret goes over the verified rendezvous (X-02 §5.4), never in argv,
+     invitation secret goes over the verified rendezvous (X-02 §5.4; a draft, see the launch v3 note in office-host-boundary.md §3), never in argv,
      the first line or a log. The host keeps it only in memory until `office.json`
      exists.
    - **Checks.** `office.join` refuses, with `already_exists` (JOIN-8), an `office_id`
@@ -205,7 +205,7 @@ Agents run on their office's machine and talk only to that office, through the l
      its rendezvous connection (and `joined` once approval and the initial
      synchronization complete); the host shows a pending join as `starting` with
      `join_pending` (office-host-boundary §4) and these details in the instance status read,
-     which `host.sock` serves without a session (X-02 §6.2) and which setup polls.
+     which `host.sock` serves without a session (X-02 §6.2; a draft, see the launch v3 note in office-host-boundary.md §3) and which setup polls.
    - **Terminal states.** An expired, cancelled (three wrong codes cancel the
      invitation, below) or rejected request is written to `office.json` as that state, the invitation key
      is erased, and the worker exits cleanly. The host stops restarting it and
