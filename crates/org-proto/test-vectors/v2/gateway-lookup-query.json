@@ -385,6 +385,26 @@
         "parse_valid": false,
         "http_status": 400
       }
+    },
+    {
+      "name": "identical repeated query key is still refused",
+      "kind": "host",
+      "fields": [
+        [
+          "instance_id",
+          "01M72N8MG00000000000000001"
+        ],
+        [
+          "instance_id",
+          "01M72N8MG00000000000000001"
+        ]
+      ],
+      "session_instance": "01M72N8MG00000000000000001",
+      "expect": {
+        "valid": false,
+        "parse_valid": false,
+        "http_status": 400
+      }
     }
   ],
   "visibility": {
@@ -412,5 +432,6 @@
       }
     },
     "http_status": 404
-  }
+  },
+  "contract_revision": 2
 }

@@ -1,0 +1,713 @@
+{
+  "schema_version": 1,
+  "contract_revision": 2,
+  "cases": [
+    {
+      "name": "committed publishes empty result only",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "result": {
+          "status": "committed",
+          "position": {
+            "epoch": 1,
+            "seq": 2
+          }
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "completed",
+          "operation_id": "01M72N8MG00000000000000006",
+          "result": {}
+        },
+        "http_status": 200,
+        "issue": null,
+        "final": true
+      }
+    },
+    {
+      "name": "committed without position remains unknown",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "result": {
+          "status": "committed"
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "unknown",
+          "operation_id": "01M72N8MG00000000000000006"
+        },
+        "http_status": 504,
+        "issue": "committed_without_position",
+        "final": false
+      }
+    },
+    {
+      "name": "queued is never durable accepted at HQ",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "result": {
+          "status": "queued",
+          "position": {
+            "epoch": 1,
+            "seq": 2
+          }
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "unknown",
+          "operation_id": "01M72N8MG00000000000000006"
+        },
+        "http_status": 504,
+        "issue": "queued",
+        "final": false
+      }
+    },
+    {
+      "name": "future command status remains unknown",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "result": {
+          "status": "future_commit"
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "unknown",
+          "operation_id": "01M72N8MG00000000000000006"
+        },
+        "http_status": 504,
+        "issue": "unknown_status",
+        "final": false
+      }
+    },
+    {
+      "name": "undecodable result remains unknown",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "result": {
+          "different": "shape"
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "unknown",
+          "operation_id": "01M72N8MG00000000000000006"
+        },
+        "http_status": 504,
+        "issue": "undecodable",
+        "final": false
+      }
+    },
+    {
+      "name": "no answer after possible dispatch",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": false,
+      "native_reply": null,
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "unknown",
+          "operation_id": "01M72N8MG00000000000000006"
+        },
+        "http_status": 504,
+        "issue": "no_answer",
+        "final": false
+      }
+    },
+    {
+      "name": "null native reply is malformed",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": null,
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "unknown",
+          "operation_id": "01M72N8MG00000000000000006"
+        },
+        "http_status": 504,
+        "issue": "undecodable",
+        "final": false
+      }
+    },
+    {
+      "name": "non-numeric native correlation ID is malformed",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": "42",
+        "result": {
+          "status": "committed",
+          "position": {
+            "epoch": 1,
+            "seq": 2
+          }
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "unknown",
+          "operation_id": "01M72N8MG00000000000000006"
+        },
+        "http_status": 504,
+        "issue": "undecodable",
+        "final": false
+      }
+    },
+    {
+      "name": "both payload keys are malformed even with null error",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "result": {
+          "status": "committed",
+          "position": {
+            "epoch": 1,
+            "seq": 2
+          }
+        },
+        "error": null
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "unknown",
+          "operation_id": "01M72N8MG00000000000000006"
+        },
+        "http_status": 504,
+        "issue": "undecodable",
+        "final": false
+      }
+    },
+    {
+      "name": "positional result is malformed",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "result": [
+          "committed",
+          {
+            "epoch": 1,
+            "seq": 2
+          }
+        ]
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "unknown",
+          "operation_id": "01M72N8MG00000000000000006"
+        },
+        "http_status": 504,
+        "issue": "undecodable",
+        "final": false
+      }
+    },
+    {
+      "name": "unknown domain code is unresolved",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "unknown",
+          "message": "opaque"
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "unknown",
+          "operation_id": "01M72N8MG00000000000000006"
+        },
+        "http_status": 504,
+        "issue": "unknown_error_code",
+        "final": false
+      }
+    },
+    {
+      "name": "cycle native refusal",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "cycle",
+          "message": "The worker refused this operation."
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "rejected",
+          "operation_id": "01M72N8MG00000000000000006",
+          "error": {
+            "code": "cycle",
+            "message": "The worker refused this operation."
+          }
+        },
+        "http_status": 400,
+        "issue": null,
+        "final": true
+      }
+    },
+    {
+      "name": "owner_protected native refusal",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "owner_protected",
+          "message": "The worker refused this operation."
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "rejected",
+          "operation_id": "01M72N8MG00000000000000006",
+          "error": {
+            "code": "owner_protected",
+            "message": "The worker refused this operation."
+          }
+        },
+        "http_status": 400,
+        "issue": null,
+        "final": true
+      }
+    },
+    {
+      "name": "not_empty native refusal",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "not_empty",
+          "message": "The worker refused this operation."
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "rejected",
+          "operation_id": "01M72N8MG00000000000000006",
+          "error": {
+            "code": "not_empty",
+            "message": "The worker refused this operation."
+          }
+        },
+        "http_status": 400,
+        "issue": null,
+        "final": true
+      }
+    },
+    {
+      "name": "clock_skew native refusal",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "clock_skew",
+          "message": "The worker refused this operation."
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "rejected",
+          "operation_id": "01M72N8MG00000000000000006",
+          "error": {
+            "code": "clock_skew",
+            "message": "The worker refused this operation."
+          }
+        },
+        "http_status": 400,
+        "issue": null,
+        "final": true
+      }
+    },
+    {
+      "name": "not_found native refusal",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "not_found",
+          "message": "The worker refused this operation."
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "rejected",
+          "operation_id": "01M72N8MG00000000000000006",
+          "error": {
+            "code": "not_found",
+            "message": "The worker refused this operation."
+          }
+        },
+        "http_status": 404,
+        "issue": null,
+        "final": true
+      }
+    },
+    {
+      "name": "conflict native refusal",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "conflict",
+          "message": "The worker refused this operation."
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "rejected",
+          "operation_id": "01M72N8MG00000000000000006",
+          "error": {
+            "code": "conflict",
+            "message": "The worker refused this operation."
+          }
+        },
+        "http_status": 409,
+        "issue": null,
+        "final": true
+      }
+    },
+    {
+      "name": "already_exists native refusal",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "already_exists",
+          "message": "The worker refused this operation."
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "rejected",
+          "operation_id": "01M72N8MG00000000000000006",
+          "error": {
+            "code": "already_exists",
+            "message": "The worker refused this operation."
+          }
+        },
+        "http_status": 409,
+        "issue": null,
+        "final": true
+      }
+    },
+    {
+      "name": "operation_reused native refusal",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "operation_reused",
+          "message": "The worker refused this operation."
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "rejected",
+          "operation_id": "01M72N8MG00000000000000006",
+          "error": {
+            "code": "operation_reused",
+            "message": "The worker refused this operation."
+          }
+        },
+        "http_status": 409,
+        "issue": null,
+        "final": true
+      }
+    },
+    {
+      "name": "expired native refusal",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "expired",
+          "message": "The worker refused this operation."
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "rejected",
+          "operation_id": "01M72N8MG00000000000000006",
+          "error": {
+            "code": "expired",
+            "message": "The worker refused this operation."
+          }
+        },
+        "http_status": 410,
+        "issue": null,
+        "final": true
+      }
+    },
+    {
+      "name": "unavailable native refusal",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "unavailable",
+          "message": "The worker refused this operation."
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "rejected",
+          "operation_id": "01M72N8MG00000000000000006",
+          "error": {
+            "code": "unavailable",
+            "message": "The worker refused this operation."
+          }
+        },
+        "http_status": 503,
+        "issue": null,
+        "final": true
+      }
+    },
+    {
+      "name": "not_bound is a sanitized confirmed refusal",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "not_bound",
+          "message": "PRIVATE_NATIVE_MARKER"
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "rejected",
+          "operation_id": "01M72N8MG00000000000000006",
+          "error": {
+            "code": "unavailable",
+            "message": "The office could not accept this operation."
+          }
+        },
+        "http_status": 503,
+        "issue": "unexpected_refusal",
+        "final": true
+      }
+    },
+    {
+      "name": "future_worker_refusal is a sanitized confirmed refusal",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "future_worker_refusal",
+          "message": "PRIVATE_NATIVE_MARKER"
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "rejected",
+          "operation_id": "01M72N8MG00000000000000006",
+          "error": {
+            "code": "unavailable",
+            "message": "The office could not accept this operation."
+          }
+        },
+        "http_status": 503,
+        "issue": "unexpected_refusal",
+        "final": true
+      }
+    },
+    {
+      "name": "unknown_method is a sanitized confirmed refusal",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "unknown_method",
+          "message": "PRIVATE_NATIVE_MARKER"
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "rejected",
+          "operation_id": "01M72N8MG00000000000000006",
+          "error": {
+            "code": "unavailable",
+            "message": "The office could not accept this operation."
+          }
+        },
+        "http_status": 503,
+        "issue": "unexpected_refusal",
+        "final": true
+      }
+    },
+    {
+      "name": "rate_limited is a sanitized confirmed refusal",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "rate_limited",
+          "message": "PRIVATE_NATIVE_MARKER"
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "rejected",
+          "operation_id": "01M72N8MG00000000000000006",
+          "error": {
+            "code": "unavailable",
+            "message": "The office could not accept this operation."
+          }
+        },
+        "http_status": 503,
+        "issue": "unexpected_refusal",
+        "final": true
+      }
+    },
+    {
+      "name": "worker cannot add session or cancellation identity hints",
+      "reader": "Rust+TS",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "conflict",
+          "message": "Conflict.",
+          "operation_id": "01M72N8MG00000000000000007",
+          "state": "in_progress",
+          "session_reason": "revoked"
+        }
+      },
+      "expect": {
+        "classification": "outcome",
+        "wire": {
+          "outcome": "rejected",
+          "operation_id": "01M72N8MG00000000000000006",
+          "error": {
+            "code": "conflict",
+            "message": "Conflict."
+          }
+        },
+        "http_status": 409,
+        "issue": null,
+        "final": true
+      }
+    },
+    {
+      "name": "worker authorization refusal requires authority recheck",
+      "reader": "Rust",
+      "native_reader": "Rust",
+      "operation_id": "01M72N8MG00000000000000006",
+      "native_present": true,
+      "native_reply": {
+        "id": 42,
+        "error": {
+          "code": "not_authorized",
+          "message": "Refused."
+        }
+      },
+      "expect": {
+        "classification": "needs_authorization_recheck",
+        "http_status": null
+      }
+    }
+  ]
+}

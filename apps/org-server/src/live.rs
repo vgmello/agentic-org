@@ -161,6 +161,9 @@ impl MessageEvents for LiveEvents {
         match event {
             MessageEvent::Received(data) => self.publish_live(Live::Received(data)),
             MessageEvent::StateChanged(data) => self.publish_live(Live::StateChanged(data)),
+            // The durable notice already reaches the feed through Received. This
+            // adapter does not forward the additional delivery-failed notification.
+            MessageEvent::DeliveryFailed(_) => {}
         }
     }
 }

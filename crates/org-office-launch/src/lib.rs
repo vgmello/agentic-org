@@ -24,9 +24,13 @@
 //! org-server --office <id>       # serve an existing office
 //! org-server --discard <id>      # remove an unfinished office (no office.json), then exit
 //! ```
-//! - The host makes `<home>`, `<home>/offices/` and `<home>/run/` (owner-only) and sets
+//! - The host makes `<home>` and `<home>/offices/` (owner-only) and sets
 //!   `ORG_OFFICE_HOME` ([`org_proto::location::OFFICE_HOME_ENV`]) on the child, so both use the
-//!   same office home.
+//!   same office home. In launch v2 it also supplies an absolute `ORG_OFFICE_RUNTIME_DIR`
+//!   ([`org_proto::location::OFFICE_RUNTIME_DIR_ENV`]) for the private socket directory,
+//!   independently of the data root. The legacy host supplies `<home>/run/` explicitly.
+//!   Release workers require this value. Only debug workers fall back to `<home>/run/`
+//!   when it is absent; an empty or relative override is refused without fallback.
 //! - **stdin is the control pipe from the host.** Its first line matches the flag
 //!   ([`FirstLine`]): a [`HostMessage::Create`] with `--create`, a [`HostMessage::Start`] with
 //!   `--office`, a [`HostMessage::Discard`] with `--discard`. A server whose first line is
@@ -74,8 +78,10 @@
 //!   ([`org_proto::frame`]). Use [`read_host_message`], [`write_host_message`] (or
 //!   [`write_host_line`], which borrows the secrets), [`read_server_event`] and
 //!   [`write_server_event`].
-//! - The server listens on [`org_proto::location::office_socket_path`]; the host computes the
-//!   same path and only cross-checks [`ServerEvent::Ready`]'s `socket`.
+//! - The server listens on [`org_proto::location::office_socket_in`] using the selected
+//!   runtime directory; the host computes the same path and only cross-checks
+//!   [`ServerEvent::Ready`]'s `socket`. [`org_proto::location::office_socket_path`] remains
+//!   the helper for the legacy `<home>/run/` layout.
 //!
 //! ## An office's folder
 //! `<home>/offices/<office-id>/` ([`office_dir`]), made by the server (owner-only) on
