@@ -43,6 +43,12 @@ describe('resolved production imports', () => {
 	])('SRV-18: rejects a resolved aliased dynamic fake at its future location %s', async (path) => {
 		await expect(fixture('error', true, path)).rejects.toThrow(path);
 	});
+	it.each(['src/lib/api.spec.tsx', 'src/lib/api.test.jsx', 'src/lib/widget.spec.svelte', 'src/lib/state.spec.svelte.ts', 'src/lib/state.test.svelte.js'])(
+		'SRV-18: rejects resolved test modules with supported extension at %s', async (path) => {
+			await expect(fixture('error', true, path)).rejects.toThrow('Production fake/sample imports');
+		}
+	);
+
 	it.each(['node_modules/provider/index.js', '.svelte-kit/generated/entry.js'])(
 		'allows framework and dependency modules at %s', async (path) => {
 			expect((await fixture('report', true, path)).join('\n')).not.toContain('Production fake/sample imports');

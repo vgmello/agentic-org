@@ -3,7 +3,7 @@ import type { Plugin } from 'vite';
 /** Temporary mixed factory roots from the removal inventory; retire entries as fakes leave them. */
 const mixedFactories = /\/(?:org|organization|work|chat|messaging)\/api\.[cm]?[jt]s$/;
 const fixtureModule = /\/(?:__mocks__|mocks?|fakes?|samples?|fixtures?|testkit|testing)(?:[A-Z./-]|$)/;
-const testModule = /\.(?:test|spec)\.[cm]?[jt]s$/;
+const testModule = /\.(?:test|spec)\.(?:[cm]?[jt]sx?|svelte(?:\.[jt]s)?)$/;
 const fakeCall = /\b(?:createMock[\w$]*|inTauri)\s*\(/;
 
 /** Report the resolved build graph, including aliases/dynamic imports. No dev/test runtime toggle. */

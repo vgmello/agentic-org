@@ -82,6 +82,14 @@ describe('same-origin JSON boundary (test paths, no production routes)', () => {
 			expect(send).not.toHaveBeenCalled();
 		}
 	);
+	it.each(['/api/v1/teams/\t../other', '/api/v1/teams/\n../other', '/api/v1/teams/\r./one', '/api/v1/team name'])(
+		'D-GW1: refuses paths the URL parser would normalize before dispatch: %j', async (path) => {
+			const { send, http } = setup();
+			await expect(http({ ...request, path })).rejects.toBeInstanceOf(NotDispatchedError);
+			expect(send).not.toHaveBeenCalled();
+		}
+	);
+
 	it.each(['SECRET\u0100', 'SECRET\r\n'])('refuses unsafe header proof without echoing it: %j', async (unsafeProof) => {
 		const { send, http } = setup();
 		const error = await http({ ...request, proof: unsafeProof }).catch((error: unknown) => error);
