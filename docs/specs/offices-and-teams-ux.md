@@ -43,7 +43,9 @@ and the details sheet.** From the Principal Product Designer's decision of
   focus kept on the button, and clears when the office's status or reason
   changes; a refusal as `unavailable` shows the reason row, not the host's raw
   message (§3.3).
-- **The countdown** never overstates the time left (§3.3).
+- **The countdown** never overstates the time left: it rounds down to a 10 s
+  step, updates on those boundaries, and reads "Restarting shortly" under 10 s
+  (§3.3, §6.1).
 - **The details sheet** has one Close control, and closing it returns focus to
   whatever opened it (§6.1).
 - §6.1's footer copy, "Shown from HQ. Statuses include last-seen information.",
@@ -294,7 +296,7 @@ inspected through setup/status or HQ when reachable.
 
 Shown as the Stopped row's secondary text and at the top of its details, with the fix as a button. The office's status updates live (`office.status_changed`), and a status that isn't live is never shown: the row reads "Status unknown" instead. A host whose `hello` doesn't list the capability `office.status_changed` (A50) counts as not live, so its offices show "Status unknown"; a current host that sends no event simply has nothing new *(rev 9)*.
 
-**Countdown** *(rev 8)*: whenever `next_restart_at` is present, whatever the reason, the copy ends with "Restarting in N s" (N from `next_restart_at`; for `in_use` the row's own "Trying again in N s"). The host sends it only while the office is `offline` with a restart pending. The visible countdown updates no more often than every 10 s; the screen-reader label doesn't tick (§6.1). *(rev 16)* The countdown never overstates the time left: N is rounded down, and it's correct from its first frame, including right after a status push.
+**Countdown** *(rev 8)*: whenever `next_restart_at` is present, whatever the reason, the copy ends with "Restarting in N s" (N from `next_restart_at`; for `in_use` the row's own "Trying again in N s"). The host sends it only while the office is `offline` with a restart pending. The screen-reader label doesn't tick (§6.1). *(rev 16)* The visible countdown never overstates the time left: it shows the remaining time rounded **down** to a 10 s step ("Restarting in 40 s" while 40 to 49 s remain), and updates on those 10 s boundaries. Under 10 s it reads "Restarting shortly" (for `in_use`, "Trying again shortly"). It's correct from its first frame, including right after a status push.
 
 | `status_reason` | Copy (secondary text) | Action |
 | --- | --- | --- |
@@ -844,7 +846,7 @@ setup again with the invitation.
 - **Version holding back a feature:** when HQ can't raise the organization level, a quiet note above the list: "Build box runs an older version of Agentic Org, so new features wait until it updates." It links to the row.
 - **Empty is impossible** (HQ always exists). With HQ alone, a one-line hint under the list: "Add an office to run agents on another machine, or to keep a copy of the records there."
 - **Loading:** skeleton rows. **Live:** statuses update in place; a row that changes status doesn't move.
-- **Row label for screen readers** *(rev 6, rev 8, OFC-13)*: "Main office, HQ, HQ instance, Online, 6 agents. Opens details." For Stopped it adds the reason, with a restart in a form that doesn't tick: "…, Stopped: it stopped unexpectedly, restarting shortly, …", or "restarting at 10:42" when the restart is a minute or more away. The visible countdown updates no more often than every 10 s. A status change confirmed by its owning instance is announced through a polite live region ("Office 2 stopped: it stopped unexpectedly", "Office 2 is online"). *(rev 16)* The label doesn't claim "(you're here)" unless the host says so.
+- **Row label for screen readers** *(rev 6, rev 8, OFC-13)*: "Main office, HQ, HQ instance, Online, 6 agents. Opens details." For Stopped it adds the reason, with a restart in a form that doesn't tick: "…, Stopped: it stopped unexpectedly, restarting shortly, …", or "restarting at 10:42" when the restart is a minute or more away. The visible countdown shows the remaining time rounded down to a 10 s step and updates on those boundaries, with "Restarting shortly" under 10 s (§3.3) *(rev 16)*. A status change confirmed by its owning instance is announced through a polite live region ("Office 2 stopped: it stopped unexpectedly", "Office 2 is online"). *(rev 16)* The label doesn't claim "(you're here)" unless the host says so.
 - **Footer** *(rev 16, OFC-48)*: "Shown from HQ. Statuses include last-seen information."
 - **Historical build note** *(rev 6; not the standalone-v1 acceptance target)*: **Add office** is shown disabled with "Available in a later release." While the data is invented, a **Sample data** badge says so. A status the app can't confirm shows as **Unknown** (§3.1), never as healthy.
 - **HQ-only actions:** Add office, Review and approve and Remove office are available to an authorized owner through HQ from any browser. Add office › **On this instance** is offered only to an owner who is also an instance admin (§6.2) *(rev 15)*. Unauthorized sessions cannot invoke or discover privileged operations.
@@ -1275,7 +1277,7 @@ Two directions, same result:
 - OFC-43 · *(new, rev 16)* An office whose reason is `unsupported_version` shows no restart button.
 - OFC-44 · *(new, rev 16)* While a restart runs, the restart button stays focusable (`aria-disabled` plus `aria-busy`), and the busy state is announced.
 - OFC-45 · *(new, rev 16)* A refused restart shows its reason in an alert with focus kept on the restart button, and the message clears when the office's status or reason changes. A restart refused as `unavailable` shows the reason row, not the host's raw message.
-- OFC-46 · *(new, rev 16)* The restart countdown never overstates the time left: it rounds down, and it's correct from its first frame, including right after a status push.
+- OFC-46 · *(new, rev 16)* The visible restart countdown shows the remaining time rounded down to a 10 s step ("Restarting in 40 s" while 40 to 49 s remain) and updates on those 10 s boundaries, so it never overstates the time left; under 10 s it reads "Restarting shortly". It's correct from its first frame, including right after a status push, and the screen-reader label doesn't tick.
 - OFC-47 · *(new, rev 16)* The office details sheet has one Close control, and closing it returns focus to whatever opened it.
 - OFC-48 · *(new, rev 16)* The Offices list's footer reads "Shown from HQ. Statuses include last-seen information."
 

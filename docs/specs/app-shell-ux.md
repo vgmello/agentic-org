@@ -28,7 +28,8 @@ with its follow-ups. Breakpoints are **viewport widths in CSS px**.
 
 **Revision 1 (2026-11-10): new spec.** Navigation by viewport width (full nav,
 icon rail, top bar with a nav drawer), the 320 px rule (WCAG 1.4.10), the
-unavailable pages' copy, page titles and landmarks. **New:** SHELL-1 to SHELL-27.
+unavailable pages' copy, page titles, landmarks, and Back with a modal open.
+**New:** SHELL-1 to SHELL-28.
 
 ## 1. Navigation by viewport width
 
@@ -86,7 +87,8 @@ The full nav, as today.
   drawer and return focus to **Menu**. This holds however the drawer was opened
   (mouse or keyboard), in every browser engine.
 - **Choosing an item** closes the drawer and moves focus to the new page's `h1`.
-- **Back** with the drawer open closes it and moves focus to the new page's `h1`.
+- **Back** with the drawer open closes the drawer only, doesn't navigate, and
+  returns focus to **Menu** (§6).
 
 ### 1.4 Badges
 
@@ -159,7 +161,14 @@ sample data (`server-installation-and-access-ux.md` SRV-18). Exact copy:
   client-side navigation.
 - The nav is a **`navigation` landmark named "Main"**.
 
-## 6. UX acceptance criteria (SHELL)
+## 6. Back with a modal open
+
+One rule for every modal: a dialog, a sheet, the nav drawer (§1.3) or Chat's
+Conversations overlay (`chat-ux.md` §1.1). **Back with any modal open closes the
+modal only.** It doesn't navigate, and focus returns to the control that opened
+the modal.
+
+## 7. UX acceptance criteria (SHELL)
 
 **Navigation**
 - SHELL-1 · *(new, rev 1)* At a viewport 960 px wide or wider, the full nav shows.
@@ -172,7 +181,7 @@ sample data (`server-installation-and-access-ux.md` SRV-18). Exact copy:
 - SHELL-8 · *(new, rev 1)* Opening the drawer moves focus to the current page's item, and focus is trapped in the drawer while it's open.
 - SHELL-9 · *(new, rev 1)* Esc, the scrim or Close close the drawer and return focus to Menu, whether the drawer was opened by mouse or keyboard, in every browser engine.
 - SHELL-10 · *(new, rev 1)* Choosing an item in the drawer closes it and moves focus to the new page's `h1`.
-- SHELL-11 · *(new, rev 1)* Back with the drawer open closes it and moves focus to the new page's `h1`.
+- SHELL-11 · *(new, rev 1)* Back with the drawer open closes the drawer only, doesn't navigate, and returns focus to Menu (SHELL-28).
 - SHELL-12 · *(new, rev 1)* A nav item that supplies a badge (an optional count) shows it in both the rail and the full nav. There's no global badge in v1.0.
 - SHELL-13 · *(new, rev 1)* The shell is tested at viewport widths 959, 720 (200% zoom of 1440), 639, 600 and 320 (400% zoom of 1280) px.
 
@@ -196,6 +205,9 @@ sample data (`server-installation-and-access-ux.md` SRV-18). Exact copy:
 - SHELL-26 · *(new, rev 1)* Each page has exactly one `main` landmark, named by the page's `h1`, and it's kept across client-side navigation.
 - SHELL-27 · *(new, rev 1)* The nav is a `navigation` landmark named "Main".
 
-## 7. Open questions
+**Back with a modal open**
+- SHELL-28 · *(new, rev 1)* Back with any modal open (a dialog, a sheet, the nav drawer or Chat's Conversations overlay) closes the modal only, doesn't navigate, and returns focus to the control that opened it.
+
+## 8. Open questions
 
 None open.

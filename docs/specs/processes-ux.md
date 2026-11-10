@@ -19,15 +19,16 @@ Builds on `decisions-and-tech-debt-ux.md` (docs in the repo, templates, agent gu
 
 **Revision 6 (2026-11-10): v1.0 scope, Back and narrow widths.** From the
 Principal Product Designer's decision of 2026-11-10 on narrow widths and its
-follow-ups. In v1.0, Processes is read-only: its actions come in F2-12, Wave A
-(R1–R3) and Wave B (R4, R5), after v1.0, and their criteria are marked
-*(after v1.0, F2-12)* with their text unchanged (§2, §5). Choosing a place with
-the **Show** control is a history entry: the URL carries the place, Back and
-Forward move between the places viewed, reload keeps it, and the title follows
-`app-shell-ux.md` §4. Below 640 px the heading block stacks above the Show
+follow-ups. In v1.0, Processes is read-only. PROC-11, 13, 15, 19 and 20–26
+come in F2-12 (Wave A: R1–R3, Wave B: R4, R5) and are marked
+*(after v1.0, F2-12)* with their text unchanged; so do the action parts of
+PROC-1, 9, 10 and 16 (§2, §5). The **Show** select picks the place, and the
+heading and title name it. Choosing a place is a history entry: the URL carries
+the place, Back and Forward move between the places viewed, reload keeps it, and
+the title follows `app-shell-ux.md` §4. Below 640 px the heading block stacks above the Show
 control. **Marked after v1.0 (text unchanged):** PROC-11, PROC-13, PROC-15,
 PROC-19, PROC-20 to PROC-26. **Criteria rewritten (same ID):** none. **New:**
-PROC-31 to PROC-33.
+PROC-31 to PROC-34.
 
 **Revision 5 (2026-11-09): owner-requested behavior and context clarification.**
 Processes guide delegation and specialist creation; tools expose mechanics.
@@ -93,7 +94,7 @@ checklist:                           # optional; added to the project's default 
 
 ## 2. Flow 1 · Processes in the app
 
-**Scope in v1.0** *(rev 6)*: Processes is **read-only**. Its actions (new process or template, review and diff, fix, rename, approvals, agent drafts, and the team, project and agent tabs) come in **F2-12**, Wave A (R1–R3) and Wave B (R4, R5), after v1.0. In §5, PROC-11, PROC-13, PROC-15, PROC-19 and PROC-20 to PROC-26 are marked *(after v1.0, F2-12)*.
+**Scope in v1.0** *(rev 6)*: In v1.0, Processes is read-only. The criteria marked *(after v1.0, F2-12)* come in F2-12 (Wave A: R1–R3, Wave B: R4, R5). So do the action parts of PROC-1, 9, 10 and 16 (new process, template, review and diff, Fix, Rename, and Processes tabs on teams, projects and agents); their read-only parts are in v1.0.
 
 **Where:** a **Processes** item in the main navigation, its own item *(rev 4, U25: processes are enforced and approved, not just read, and "Knowledge" already names an agent profile tab)*, a **Processes** tab on each team and in each project's Docs, and a **Processes** tab on each agent's profile.
 
@@ -113,8 +114,9 @@ checklist:                           # optional; added to the project's default 
 - **What this agent follows** (agent profile › Processes): the effective set for its current work, each with its source and the last version it read ("Read v3 at 09:12"), plus private additions and any conflict. With no current work *(rev 2)*: "No current work. Showing the organization's processes and its own. Team and project processes apply when it starts a task."
 - **New process:** the process template (`docs/.templates/process.md` in the project's repository for a project process; `.templates/process.md` in the handbook for organization, team and private ones) *(rev 2)*, with the level preset to where you started.
 - **States:** no processes yet ("Write down how your agents work. Start with how changes get reviewed and merged." with **Use the review-and-merge template**) · a change waiting to merge ("Waiting to merge · v4 proposed by ada") · a conflict (multi-team, decision 6) · a sealed override refused (*rev 4:* "Platform's version of Security basics isn't applied: the organization sealed it. You can add a process instead.") · a conflict line led by the process name (*rev 4:* "Code review: Design and Web disagree. The organization's version applies until the project decides.") · *(rev 2)* loading (skeleton rows) · the handbook repo unreachable ("Can't reach the handbook. Showing the last copy from <time>.", with the organization and team rows from that copy) · a process file with invalid front matter (*rev 4:* "Design handoff: details not recognized (overridable).", naming the field, with **Fix**, as DEC-7; the body still renders, and the process is left out of effective sets until it's fixed) · two files with the same key at one level and scope ("Two processes use the key `review-and-merge` in Checkout. Neither applies until one is renamed." with **Rename…**, as DEC-7; both rows show it, and both are left out of effective sets until one is renamed).
-- **Choosing a place and Back** *(rev 6)*: choosing a place with the **Show** control ("Show processes for") is a history entry, and the URL carries the place. Back and Forward move between the places viewed, and reload keeps the place. The title follows `app-shell-ux.md` §4: "<Place> · Processes · Agentic Org".
-- **Narrow widths** *(rev 6, `app-shell-ux.md` §2)*: below 640 px, the heading block stacks above the Show control, so no text column is under 200 px.
+- **The Show select** *(rev 6)*: "Show" lists **Organization**, then each team, project and agent, with option labels like "Organization", "Web (team)", "Atlas (project)" and "Noor Haddad (agent)". The page heading is "Processes · <label>", and the title is "<label> · Processes · Agentic Org" (`app-shell-ux.md` §4).
+- **Choosing a place and Back** *(rev 6)*: choosing a place with the Show select is a history entry, and the URL carries the place. Back and Forward move between the places viewed, and reload keeps the place.
+- **Narrow widths** *(rev 6, `app-shell-ux.md` §2)*: below 640 px, the heading block stacks above the Show select, so no text column is under 200 px.
 - **Accessibility** *(rev 2)*: level badges (Organization · Team · Project · Agent) and kinds (override, addition, sealed, turned off) are a word plus an icon, never color alone. The drift row's ⚠ comes with the text "Parent changed" and has an accessible name ("Parent changed: Organization is now v2"). The side-by-side diff has a **Changes only** list view for screen readers, and is keyboard navigable (next and previous change).
 
 ## 3. Flow 2 · How an agent reads its processes
@@ -187,9 +189,10 @@ checklist:                           # optional; added to the project's default 
 - PROC-28 · *(new, rev 5)* Applicable processes and concise `org-agent` command help reach main and delegate instructions as separate inputs. Standards such as stack/cloud conventions are discoverable and retrieved when needed, with source/version references; their bodies are not automatically loaded into every prompt.
 - PROC-29 · *(new, rev 5)* Fresh sessions, fresh-self delegates and observed context resets receive current effective guidance or explicit pinned-body retrieval instructions. A prior employee-level read acknowledgement never substitutes for delivery to the new context; unchanged resumes avoid repeated full-text injection.
 - PROC-30 · *(new, rev 5)* Process delivery stays within 24 KiB and the runtime's remaining verified instruction allowance. Deferred bodies are named and retrievable and never marked delivered. Overflow is visible with a remedy; if the minimum guidance/retrieval bootstrap cannot fit, launch fails explicitly. No rule is truncated mid-entry or silently replaced by a generated summary.
-- PROC-31 · *(new, rev 6)* Choosing a place with the Show control is a history entry and the URL carries the place: Back and Forward move between the places viewed, and reload keeps the place.
-- PROC-32 · *(new, rev 6)* The Processes page's title is "<Place> · Processes · Agentic Org" (`app-shell-ux.md` §4).
-- PROC-33 · *(new, rev 6)* Below 640 px, the heading block stacks above the Show control, so no text column is under 200 px.
+- PROC-31 · *(new, rev 6)* Choosing a place with the Show select is a history entry and the URL carries the place: Back and Forward move between the places viewed, and reload keeps the place.
+- PROC-32 · *(new, rev 6)* The Processes page's heading is "Processes · <label>" and its title is "<label> · Processes · Agentic Org" (`app-shell-ux.md` §4), where <label> is the chosen Show option.
+- PROC-33 · *(new, rev 6)* Below 640 px, the heading block stacks above the Show select, so no text column is under 200 px.
+- PROC-34 · *(new, rev 6)* The Show select lists Organization, then each team, project and agent, with option labels like "Organization", "Web (team)", "Atlas (project)" and "Noor Haddad (agent)".
 
 ## 6. Questions
 
