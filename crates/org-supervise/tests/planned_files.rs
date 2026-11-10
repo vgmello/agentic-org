@@ -190,3 +190,110 @@ fn failed_replacement_removes_its_temporary_file_and_workspace_location_works() 
     prepare(&root, launch, &context(&root)).unwrap();
     assert_eq!(fs::read(root.join("workspace-config")).unwrap(), b"valid");
 }
+
+#[test]
+fn restrictive_umask_child() {
+    let Ok(mask) = std::env::var("ORG_TEST_UMASK") else {
+        return;
+    };
+    let root = std::env::current_dir().unwrap();
+    // SAFETY: only this isolated helper's process-wide umask changes; the main test runner
+    // never changes its umask while other tests/threads create files.
+    unsafe {
+        libc::umask(mask.parse().unwrap());
+    }
+    let mut launch = plan(&root);
+    launch.dirs.push(PlannedDir {
+        location: FileLocation::RuntimeDir,
+        rel_path: RelPath::try_from("existing").unwrap(),
+    });
+    launch.dirs.push(PlannedDir {
+        location: FileLocation::RuntimeDir,
+        rel_path: RelPath::try_from("new/deep").unwrap(),
+    });
+    launch.files.push(file("new/deep/config", b"settings"));
+    prepare(&root, launch, &context(&root)).unwrap();
+    for name in ["new", "new/deep"] {
+        assert_eq!(fs::metadata(root.join(name)).unwrap().mode() & 0o777, 0o700);
+    }
+    assert_eq!(
+        fs::metadata(root.join("new/deep/config")).unwrap().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(
+        fs::metadata(root.join("existing")).unwrap().mode() & 0o777,
+        0o750
+    );
+}
+
+#[test]
+fn planned_modes_survive_restrictive_umask_without_changing_existing_dirs() {
+    use org_supervise::{PreparedSpawn, SpawnSpec};
+    use std::io::Read;
+    use std::time::{Duration, Instant};
+    for mask in [0o100, 0o700, 0o777] {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        fs::create_dir(root.join("existing")).unwrap();
+        fs::set_permissions(root.join("existing"), fs::Permissions::from_mode(0o750)).unwrap();
+        let env = Environment::new(
+            SearchPath::new(
+                Path::new("/usr/bin"),
+                "/bin".as_ref(),
+                std::slice::from_ref(&root),
+            )
+            .unwrap(),
+            &[],
+        )
+        .unwrap()
+        .with_context(&[("ORG_TEST_UMASK".into(), mask.to_string().into())])
+        .unwrap();
+        let spec = SpawnSpec {
+            program: std::env::current_exe().unwrap(),
+            args: vec![
+                "--exact".into(),
+                "restrictive_umask_child".into(),
+                "--nocapture".into(),
+                "--test-threads=1".into(),
+            ],
+            cwd: root.clone(),
+            environment: env,
+        };
+        let mut child = PreparedSpawn::new(
+            spec,
+            SessionMark::new(
+                temp.path()
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace(['.', '_'], "-"),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .record_mark(|_| Ok(()))
+        .unwrap()
+        .spawn()
+        .unwrap()
+        .record_identity(|_| Ok(()))
+        .unwrap();
+        child.stdin.close().unwrap();
+        let out = std::thread::spawn(move || {
+            let mut text = String::new();
+            child.stdout.read_to_string(&mut text).unwrap();
+            text
+        });
+        let err = std::thread::spawn(move || {
+            let mut text = String::new();
+            child.stderr.read_to_string(&mut text).unwrap();
+            text
+        });
+        let status = child
+            .child
+            .wait_until(Instant::now() + Duration::from_secs(10))
+            .unwrap()
+            .unwrap();
+        let (out, err) = (out.join().unwrap(), err.join().unwrap());
+        assert!(status.success(), "umask {mask:o}: {out}\n{err}");
+    }
+}

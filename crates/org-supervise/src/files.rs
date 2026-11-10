@@ -14,16 +14,38 @@ fn c(name: &OsStr) -> io::Result<CString> {
 
 fn directory(parent: &OwnedFd, name: &OsStr, create: bool) -> io::Result<OwnedFd> {
     let name = c(name)?;
+    let mut created = false;
     if create {
         // SAFETY: valid directory descriptor and literal child name; no symlink traversal.
-        if unsafe { libc::mkdirat(parent.as_raw_fd(), name.as_ptr(), 0o700) } != 0 {
+        if unsafe { libc::mkdirat(parent.as_raw_fd(), name.as_ptr(), 0o700) } == 0 {
+            created = true;
+        } else {
             let e = io::Error::last_os_error();
             if e.kind() != io::ErrorKind::AlreadyExists {
                 return Err(e);
             }
         }
     }
-    // SAFETY: openat is confined to this component; O_NOFOLLOW rejects a symlink.
+    if created {
+        // Restore the specified mode even if umask created a mode-000 directory, which
+        // cannot be opened for reading yet. Never follow a substituted symlink. Existing
+        // directories (EEXIST above) keep their permissions. GNU libc 2.34 implements the
+        // no-follow operation with a pinned O_PATH descriptor when the kernel needs it.
+        // SAFETY: owned parent, literal child name, and explicit no-follow flag.
+        if unsafe {
+            libc::fchmodat(
+                parent.as_raw_fd(),
+                name.as_ptr(),
+                0o700,
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        } != 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    // SAFETY: openat is confined to this component; O_NOFOLLOW rejects a symlink and
+    // O_DIRECTORY rejects a replacement that isn't a directory.
     let fd = unsafe {
         libc::openat(
             parent.as_raw_fd(),
