@@ -2,13 +2,13 @@
 kind: spec
 title: "Processes: how agents work, written down and inherited (UX)"
 status: for-review
-revision: 5
+revision: 6
 owner: ac-product-designer-eden
 created: "2026-11-08"
-updated: "2026-11-09"
+updated: "2026-11-10"
 requested_by: ac-staff-engineer-ada
 reviewers: [ac-staff-engineer-ada, owner]
-builds_on: [decisions-and-tech-debt-ux, retrospectives-ux, work-items-ux, our-org-in-the-app, offices-and-teams-ux, agent-run-modes-ux]
+builds_on: [decisions-and-tech-debt-ux, retrospectives-ux, work-items-ux, our-org-in-the-app, offices-and-teams-ux, agent-run-modes-ux, app-shell-ux]
 ---
 
 # Spec · Processes: how agents work, written down and inherited (UX)
@@ -16,6 +16,18 @@ builds_on: [decisions-and-tech-debt-ux, retrospectives-ux, work-items-ux, our-or
 Builds on `decisions-and-tech-debt-ux.md` (docs in the repo, templates, agent guidance §6.2), `retrospectives-ux.md` (action items), `work-items-ux.md` (checklists §9.1), `our-org-in-the-app.md` (agents, teams, the HR lead), `offices-and-teams-ux.md` (nested teams §7.5, shared projects §7.9) and `agent-run-modes-ux.md` (start and wake).
 
 ## Changelog
+
+**Revision 6 (2026-11-10): v1.0 scope, Back and narrow widths.** From the
+Principal Product Designer's decision of 2026-11-10 on narrow widths and its
+follow-ups. In v1.0, Processes is read-only: its actions come in F2-12, Wave A
+(R1–R3) and Wave B (R4, R5), after v1.0, and their criteria are marked
+*(after v1.0, F2-12)* with their text unchanged (§2, §5). Choosing a place with
+the **Show** control is a history entry: the URL carries the place, Back and
+Forward move between the places viewed, reload keeps it, and the title follows
+`app-shell-ux.md` §4. Below 640 px the heading block stacks above the Show
+control. **Marked after v1.0 (text unchanged):** PROC-11, PROC-13, PROC-15,
+PROC-19, PROC-20 to PROC-26. **Criteria rewritten (same ID):** none. **New:**
+PROC-31 to PROC-33.
 
 **Revision 5 (2026-11-09): owner-requested behavior and context clarification.**
 Processes guide delegation and specialist creation; tools expose mechanics.
@@ -81,6 +93,8 @@ checklist:                           # optional; added to the project's default 
 
 ## 2. Flow 1 · Processes in the app
 
+**Scope in v1.0** *(rev 6)*: Processes is **read-only**. Its actions (new process or template, review and diff, fix, rename, approvals, agent drafts, and the team, project and agent tabs) come in **F2-12**, Wave A (R1–R3) and Wave B (R4, R5), after v1.0. In §5, PROC-11, PROC-13, PROC-15, PROC-19 and PROC-20 to PROC-26 are marked *(after v1.0, F2-12)*.
+
 **Where:** a **Processes** item in the main navigation, its own item *(rev 4, U25: processes are enforced and approved, not just read, and "Knowledge" already names an agent profile tab)*, a **Processes** tab on each team and in each project's Docs, and a **Processes** tab on each agent's profile.
 
 ```
@@ -99,6 +113,8 @@ checklist:                           # optional; added to the project's default 
 - **What this agent follows** (agent profile › Processes): the effective set for its current work, each with its source and the last version it read ("Read v3 at 09:12"), plus private additions and any conflict. With no current work *(rev 2)*: "No current work. Showing the organization's processes and its own. Team and project processes apply when it starts a task."
 - **New process:** the process template (`docs/.templates/process.md` in the project's repository for a project process; `.templates/process.md` in the handbook for organization, team and private ones) *(rev 2)*, with the level preset to where you started.
 - **States:** no processes yet ("Write down how your agents work. Start with how changes get reviewed and merged." with **Use the review-and-merge template**) · a change waiting to merge ("Waiting to merge · v4 proposed by ada") · a conflict (multi-team, decision 6) · a sealed override refused (*rev 4:* "Platform's version of Security basics isn't applied: the organization sealed it. You can add a process instead.") · a conflict line led by the process name (*rev 4:* "Code review: Design and Web disagree. The organization's version applies until the project decides.") · *(rev 2)* loading (skeleton rows) · the handbook repo unreachable ("Can't reach the handbook. Showing the last copy from <time>.", with the organization and team rows from that copy) · a process file with invalid front matter (*rev 4:* "Design handoff: details not recognized (overridable).", naming the field, with **Fix**, as DEC-7; the body still renders, and the process is left out of effective sets until it's fixed) · two files with the same key at one level and scope ("Two processes use the key `review-and-merge` in Checkout. Neither applies until one is renamed." with **Rename…**, as DEC-7; both rows show it, and both are left out of effective sets until one is renamed).
+- **Choosing a place and Back** *(rev 6)*: choosing a place with the **Show** control ("Show processes for") is a history entry, and the URL carries the place. Back and Forward move between the places viewed, and reload keeps the place. The title follows `app-shell-ux.md` §4: "<Place> · Processes · Agentic Org".
+- **Narrow widths** *(rev 6, `app-shell-ux.md` §2)*: below 640 px, the heading block stacks above the Show control, so no text column is under 200 px.
 - **Accessibility** *(rev 2)*: level badges (Organization · Team · Project · Agent) and kinds (override, addition, sealed, turned off) are a word plus an icon, never color alone. The drift row's ⚠ comes with the text "Parent changed" and has an accessible name ("Parent changed: Organization is now v2"). The side-by-side diff has a **Changes only** list view for screen readers, and is keyboard navigable (next and previous change).
 
 ## 3. Flow 2 · How an agent reads its processes
@@ -150,27 +166,30 @@ checklist:                           # optional; added to the project's default 
 - PROC-8 · *(rev 2)* `org-agent process list|show|why|ack`, `process new|override|off|edit|rename|keep|take-parent` (opening a docs or handbook branch for the level's approver), `process list --level` with the drift, clash and invalid flags, `process new --private` and `process approve|reject <doc id>` work with the same words as the app.
 - PROC-9 · *(rev 2: also in the CLI, PROC-8)* The inheritance view shows each process's source level, version and kind (override, addition, sealed, off), and a drift warning with a diff when an overridden parent changes.
 - PROC-10 · *(rev 2)* An agent's profile shows the processes it follows for its current work and the version it last read, or, with no current work, "No current work" and the organization's and its private processes.
-- PROC-11 · *(rev 4)* A process change needs approval by its level's owner and bumps the version on merge. No one approves their own process change or grants **Allow once…** for their own task; it goes to another approver at that level or to the owner. The owner is the exception and approves their own. Otherwise the app disables the action with "Another approver or the owner must approve this.", and the CLI refuses with `not_authorized` and the same text. Organization processes are approved by the owner, or by a lead the owner flags Can approve processes for ordinary changes; organization-level changes that seal or unseal, turn off an enforced rule, or touch the autonomy processes or the critical list stay with the owner.
+- PROC-11 · *(after v1.0, F2-12)* *(rev 4)* A process change needs approval by its level's owner and bumps the version on merge. No one approves their own process change or grants **Allow once…** for their own task; it goes to another approver at that level or to the owner. The owner is the exception and approves their own. Otherwise the app disables the action with "Another approver or the owner must approve this.", and the CLI refuses with `not_authorized` and the same text. Organization processes are approved by the owner, or by a lead the owner flags Can approve processes for ordinary changes; organization-level changes that seal or unseal, turn off an enforced rule, or touch the autonomy processes or the critical list stay with the owner.
 - PROC-12 · *(rev 2)* A process's `moments` feed the guidance moments: each prompt is shown after that moment's guidance text, and only while the moment is On (`decisions-and-tech-debt-ux.md` §6.2). A new task gets the project's default checklist (`work-items-ux.md` §9.1) plus the `checklist` steps of the project's processes (organization ⊕ team chain ⊕ project, without private processes; a later assignment doesn't change it), process steps after the project's, with duplicates by text merged and required winning.
-- PROC-13 · A retro action item of kind Process proposes a diff to a process file.
+- PROC-13 · *(after v1.0, F2-12)* A retro action item of kind Process proposes a diff to a process file.
 - PROC-14 · *(rev 4)* The rule is on unless the computed effective set of the project of the task being started has a turning-off of one-open-branch (sealed by default; only possible after the owner unseals it) approved by someone other than its author. It stays on when the set can't be computed (even if the agent works from the last copy), or when the process is missing, clashed or invalid. While it's on, starting new work while the agent's task branch (`task/<ref>-<slug>`, not a docs or handbook branch) is unmerged is refused (`one_branch_open`) with the branch and its stage (no stage until the merge flow reports stages, ada's design A63), and a project lead (any of the project's teams' leads) or the owner can grant a one-time exception with a reason, recorded on the task: with **Allow once…** on the refusal in the app (a reason is required), or `org-agent task allow-second-branch <task> --reason "…"` in the CLI. The refusal shows in the project's leads' and the owner's Needs you with **Allow once…**, or in the inbox of a lead who is an agent (decision 11).
-- PROC-15 · *(rev 3)* An agent's work state shows its open branch and stage on the quick view, roster and task page; until the merge flow reports stages, it shows Open or Merged.
+- PROC-15 · *(after v1.0, F2-12)* *(rev 3)* An agent's work state shows its open branch and stage on the quick view, roster and task page; until the merge flow reports stages, it shows Open or Merged.
 - PROC-16 · *(new, rev 2; rev 4)* The Processes views show skeleton rows while loading, "Can't reach the handbook. Showing the last copy from <time>." when the handbook repo is unreachable, and "<name>: details not recognized (<field>)." with Fix *(rev 4)*, for a process file with invalid front matter, including a `level` or `scope` that doesn't match where the file lives *(rev 3)*.
 - PROC-17 · *(new, rev 2)* If an agent's effective set can't be computed when it starts a task or wakes, the agent gets "Couldn't load your processes; using the last set from <time>", and the owner sees a warning in Needs you if it lasts over an hour. With no earlier set (its first start), the agent gets "Couldn't load your processes, and there's no earlier copy." and the owner is warned at once.
 - PROC-18 · *(new, rev 2)* Level badges and kinds (override, addition, sealed, turned off) are shown as words plus icons, never color alone. The drift ⚠ comes with the text "Parent changed" and an accessible name. The side-by-side diff has a "Changes only" list view for screen readers and can be navigated by keyboard (next and previous change).
-- PROC-19 · *(new, rev 2; rev 4)* Only the agent's task branch blocks starting new work; its open docs and handbook branches are listed separately in its work state, aren't limited (U28), and one open for over a day shows to its lead.
-- PROC-20 · *(new, rev 4)* Each agent has an autonomy level, Asks first (default) or Full autonomy, that only the owner sets (agent Settings, Hire's Review). A role's default is shown in Review and confirmed by the owner; a hire an agent approves starts at Asks first, and a role default of Full autonomy becomes a Needs you item for the owner. No agent can set it. A change is an Activity row; on takes effect at the next session, off at the next start or wake.
-- PROC-21 · *(new, rev 4)* The roster and quick view show "Full autonomy" as a word plus an icon.
-- PROC-22 · *(new, rev 4)* Two sealed organization processes ship with every organization: `asks-first` for agents at Asks first and `decide-and-escalate` for agents at Full autonomy, with the steps in §4a; only the owner can change them.
-- PROC-23 · *(new, rev 4)* A consult is a subagent inside the agent's own run (its cost counts toward that run); a runtime without subagents escalates instead.
-- PROC-24 · *(new, rev 4)* Settings › Autonomy holds the critical list (default: security, data loss, money or spend, irreversible or one-way, legal, product scope or priority), editable by the owner; teams and projects can add items, only the owner removes them. A critical decision always goes to the owner.
-- PROC-25 · *(new, rev 4)* An escalation shows in the owner's Needs you (or an agent lead's inbox, for a no-consensus question) with the question, what it blocks, the options with one marked Recommended, the peer's view and Reply; the answer goes back to the agent, and the item shows waiting, answered or withdrawn.
-- PROC-26 · *(new, rev 4)* Decisions are recorded on the task (decision, options, the consult's view, reversible or one-way) and as Activity rows of kind Decisions, hidden by default and shown with the Decisions filter; Full autonomy never lets an agent approve hires, its own changes or Allow once, or pass a spending guardrail.
+- PROC-19 · *(after v1.0, F2-12)* *(new, rev 2; rev 4)* Only the agent's task branch blocks starting new work; its open docs and handbook branches are listed separately in its work state, aren't limited (U28), and one open for over a day shows to its lead.
+- PROC-20 · *(after v1.0, F2-12)* *(new, rev 4)* Each agent has an autonomy level, Asks first (default) or Full autonomy, that only the owner sets (agent Settings, Hire's Review). A role's default is shown in Review and confirmed by the owner; a hire an agent approves starts at Asks first, and a role default of Full autonomy becomes a Needs you item for the owner. No agent can set it. A change is an Activity row; on takes effect at the next session, off at the next start or wake.
+- PROC-21 · *(after v1.0, F2-12)* *(new, rev 4)* The roster and quick view show "Full autonomy" as a word plus an icon.
+- PROC-22 · *(after v1.0, F2-12)* *(new, rev 4)* Two sealed organization processes ship with every organization: `asks-first` for agents at Asks first and `decide-and-escalate` for agents at Full autonomy, with the steps in §4a; only the owner can change them.
+- PROC-23 · *(after v1.0, F2-12)* *(new, rev 4)* A consult is a subagent inside the agent's own run (its cost counts toward that run); a runtime without subagents escalates instead.
+- PROC-24 · *(after v1.0, F2-12)* *(new, rev 4)* Settings › Autonomy holds the critical list (default: security, data loss, money or spend, irreversible or one-way, legal, product scope or priority), editable by the owner; teams and projects can add items, only the owner removes them. A critical decision always goes to the owner.
+- PROC-25 · *(after v1.0, F2-12)* *(new, rev 4)* An escalation shows in the owner's Needs you (or an agent lead's inbox, for a no-consensus question) with the question, what it blocks, the options with one marked Recommended, the peer's view and Reply; the answer goes back to the agent, and the item shows waiting, answered or withdrawn.
+- PROC-26 · *(after v1.0, F2-12)* *(new, rev 4)* Decisions are recorded on the task (decision, options, the consult's view, reversible or one-way) and as Activity rows of kind Decisions, hidden by default and shown with the Decisions filter; Full autonomy never lets an agent approve hires, its own changes or Allow once, or pass a spending guardrail.
 
 - PROC-27 · *(new, rev 5)* Overridable Markdown defaults guide delegation/consultation, private specialist creation, memory hygiene and channel questions/follow-up. Agents choose how to use the tools; edits follow normal process approvals. Limits and permissions are enforced in code and cannot be widened by a process.
 - PROC-28 · *(new, rev 5)* Applicable processes and concise `org-agent` command help reach main and delegate instructions as separate inputs. Standards such as stack/cloud conventions are discoverable and retrieved when needed, with source/version references; their bodies are not automatically loaded into every prompt.
 - PROC-29 · *(new, rev 5)* Fresh sessions, fresh-self delegates and observed context resets receive current effective guidance or explicit pinned-body retrieval instructions. A prior employee-level read acknowledgement never substitutes for delivery to the new context; unchanged resumes avoid repeated full-text injection.
 - PROC-30 · *(new, rev 5)* Process delivery stays within 24 KiB and the runtime's remaining verified instruction allowance. Deferred bodies are named and retrievable and never marked delivered. Overflow is visible with a remedy; if the minimum guidance/retrieval bootstrap cannot fit, launch fails explicitly. No rule is truncated mid-entry or silently replaced by a generated summary.
+- PROC-31 · *(new, rev 6)* Choosing a place with the Show control is a history entry and the URL carries the place: Back and Forward move between the places viewed, and reload keeps the place.
+- PROC-32 · *(new, rev 6)* The Processes page's title is "<Place> · Processes · Agentic Org" (`app-shell-ux.md` §4).
+- PROC-33 · *(new, rev 6)* Below 640 px, the heading block stacks above the Show control, so no text column is under 200 px.
 
 ## 6. Questions
 

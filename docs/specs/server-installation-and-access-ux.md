@@ -2,7 +2,7 @@
 kind: spec
 title: "Standalone server: installation, instances and browser access (UX)"
 status: for-review
-revision: 5
+revision: 6
 owner: ac-product-designer-eden
 created: "2026-11-09"
 updated: "2026-11-10"
@@ -14,6 +14,17 @@ builds_on: [offices-and-teams-ux, agent-run-modes-ux, employee-supervision-ux, p
 # Spec · Standalone server: installation, instances and browser access
 
 ## Changelog
+
+**Revision 6 (2026-11-10): "You no longer own" after Not now, and the
+unavailable pages.** From the Principal Product Designer's decision of
+2026-11-10 on narrow widths and its follow-ups:
+- §4a.5 item 1: the organization list shows "You no longer own
+  <organization>." when the session ended while that page was open, whether the
+  "Sign in again" dialog was open or the user had chosen Not now and its bar was
+  showing. Before, only the open dialog counted.
+- Criterion SRV-18 points to `app-shell-ux.md` §3 for the unavailable pages' copy.
+
+**Criteria rewritten (same ID):** SRV-18 *(rev 6)*. **New:** none.
 
 **Revision 5 (2026-11-10): recovery release, setup without a local session, and
 instance isolation.** From Rowan's X-02 (`org-proto` v2, rev 13, approved by
@@ -851,10 +862,10 @@ page:
 
 1. The page the user was trying to open, if it is a page of this HQ. Any other
    return target is ignored. A page of an organization the account can't open
-   is ignored too, and the organization list opens instead. When the "Sign in
-   again" dialog was open over that page, the list shows "You no longer own
-   <organization>." above it, with the name the page was showing (§4a.4)
-   *(review of 0802754)*.
+   is ignored too, and the organization list opens instead. When the session
+   ended while that page was open (the dialog, or its bar after Not now), the
+   list shows "You no longer own <organization>." above it, with the name the
+   page was showing (§4a.4) *(review of 0802754; rev 6)*.
 2. Otherwise the last authorized organization, or the organization list (OPEN-1).
 3. An account with no organizations sees:
    - Instance admin: "No organizations yet. Create one to get started."
@@ -1296,7 +1307,7 @@ rules, which are distinct from uninstalling software on a machine.
 - SRV-15 · `start`, `stop`, `status`, `logs`, `doctor`, `upgrade` and `uninstall` operate on the selected instance. Service manager or credential-unlock limitations are surfaced explicitly.
 - SRV-16 · Upgrading or uninstalling one instance cannot replace a running peer's helpers, remove a referenced release, delete peer data or sweep peer credentials.
 - SRV-17 · Shutdown drains acknowledged writes and reaps owned descendants within documented deadlines. Restart reconciles recorded work; browser disconnect does not cancel durable work.
-- SRV-18 · Production browser paths use the HTTP API, with an explicit unavailable state for missing features. Missing Tauri globals or API failure never select sample data.
+- SRV-18 · *(rev 6)* Production browser paths use the HTTP API, with an explicit unavailable state for missing features. Missing Tauri globals or API failure never select sample data. The unavailable pages' copy is in `app-shell-ux.md` §3 (SHELL-18 to SHELL-21).
 - SRV-19 · The v1 build, runtime and acceptance suite require no Tauri packages, desktop command bridge, tray, native notification or global shortcut.
 - SRV-20 · The implementation deletes superseded paths without preserving old desktop contracts or importing undeployed app data. Domain rules, storage durability, office identity and supervision invariants remain covered.
 - SRV-21 · A fresh HQ and satellite complete the cross-platform walkthrough in [dogfood-run.md](dogfood-run.md), including disconnect/reconnect and a real agent. Mock-only success is insufficient.

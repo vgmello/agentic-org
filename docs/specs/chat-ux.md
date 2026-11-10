@@ -2,13 +2,13 @@
 kind: spec
 title: "Chat: channels, DMs and threads where agents and people talk (UX)"
 status: for-review
-revision: 8
+revision: 9
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-10"
 requested_by: owner
 reviewers: [ac-staff-engineer-ada, owner]
-builds_on: [our-org-in-the-app, agent-run-modes-ux, feature-requests-ux, work-items-ux, decisions-and-tech-debt-ux]
+builds_on: [our-org-in-the-app, agent-run-modes-ux, feature-requests-ux, work-items-ux, decisions-and-tech-debt-ux, app-shell-ux]
 ---
 
 # Spec · Chat: channels, DMs and threads where agents and people talk (UX)
@@ -18,6 +18,8 @@ Extends `our-org-in-the-app.md` (Activity, the owner reads messages, A17), `agen
 ## The request (the user, 2026-11-08)
 
 > A chat, using chat-sdk.dev, where **agents talk to agents and I can talk to them too, like Slack**: channels, DMs and so on. Agents **don't output everything**: only their questions and their interactions with people, the responses that require interaction. That's what goes in the chat.
+
+**Revision 9 (2026-11-10): narrow widths, titles, thread drafts, slash-command matching and the office not running.** From the Principal Product Designer's decision of 2026-11-10 on narrow widths (BUG-49) and its follow-ups. Below 768 px of chat content the conversation list becomes an overlay opened from **Conversations**; Thread and Members are full width below 640 px (§1.1). Each place has its own title and URL, so Back, Forward, reload and deep links work (§1.2, `app-shell-ux.md` §4). Closing a thread keeps its unsent text while the page stays loaded (§1.3). Slash commands match regardless of case, a command token is defined, an unknown one offers **Send as message**, and paths and punctuation send as plain text (§3). With the office not running, every action that writes is disabled (§7). **Criteria rewritten (same ID):** none. **New:** CHAT-24 to CHAT-34.
 
 **Revision 8 (2026-11-10): the HR lead when it can't run (O-7).** A DM to the HR lead or an `@hr` mention says it can't run and points to Hire and Add agent record (§7, `our-org-in-the-app.md` HRL-8). No criteria changed.
 
@@ -82,6 +84,39 @@ a DM. The tools enable this; an overridable process guides when to do it. CHAT-1
 - **Message:** avatar · name · time · text (Markdown, rendered with the v1 safety rules) · reactions · "↳ n replies" · a kind marker when it isn't plain: ❓ ask · 📣 announcement · 🔁 hand-off. Item numbers (`ac-T-17`, `ac-B-15`, `REQ-14`, `ADR-0004`) become chips.
 - **Composer:** text, `@` mentions (typed by display name and completed to the member's handle; `@here` for a channel's members), `/` commands (§3), attachments, ⌘Enter to send (Enter for a new line, configurable).
 
+### 1.1 Narrow widths *(rev 9)*
+
+Widths follow `app-shell-ux.md` §2 (the 320 px rule). The chat **content area** is the area right of the app nav.
+
+- **Content 768 px and wider:** the conversation list is inline, 256 px wide.
+- **Content narrower than 768 px:** the conversation list becomes a **256 px overlay**, capped at the available width.
+  - It opens from a **"Conversations"** button left of the conversation title. When something needs the owner, the button's accessible name adds the count ("Conversations, 2 need you"), and it shows the same amber badge as the list.
+  - **Opening** is modal: the list overlays the conversation from the left, and focus moves to the selected conversation's item.
+  - **Choosing a conversation** closes the overlay and moves focus to that conversation's heading.
+  - **Esc, Close or the scrim** close it and return focus to the Conversations button.
+- **Thread and Members** overlay the conversation below a **1280 px viewport**, as now, and take the **full width below 640 px**.
+
+### 1.2 Titles and history *(rev 9)*
+
+Titles follow `app-shell-ux.md` §4.
+
+| Place | Title |
+| --- | --- |
+| A channel | "#<channel> · Chat · Agentic Org" |
+| A DM | "<person or agent name> · Chat · Agentic Org" |
+| Needs you | "Needs you · Chat · Agentic Org" |
+| Mentions, Threads, Search | "Mentions · Chat · Agentic Org", "Threads · Chat · Agentic Org", "Search · Chat · Agentic Org" |
+
+- **The URL carries the place**, so Back, Forward, reload and deep links work.
+- **Back with a dialog open** closes the dialog first.
+
+### 1.3 Thread drafts *(rev 9)*
+
+- **Closing a thread keeps what you typed and didn't send**: the thread's reply, and each ask's Reply and Reject text, per thread, while the page stays loaded. That includes leaving Chat for another area and coming back.
+- **Reopening the thread** restores the text with the cursor at the end. **Sending** clears it. There's no Discard dialog.
+- Keeping drafts across a reload or a closed tab is F2-08, not part of this rule in v1.0.
+- **Escape** in a text field that has text doesn't close the thread. Escape anywhere else closes it, and the draft is kept.
+
 ## 2. Asks, hand-offs and announcements
 
 | Kind | Who | Shown as | What answering does |
@@ -99,6 +134,12 @@ a DM. The tools enable this; an overridable process guides when to do it. CHAT-1
 They use app-only calls, so agents don't use them. Agents do the same through `org-agent` (a hand-off or a message).
 
 `/bug` (Report a bug, prefilled from the message) · `/request` (a feature request, `feature-requests-ux.md`) · `/task @agent …` (assign a task) · `/status [project]` (posts the live status card, `project-status-ux.md`) · `/wake @agent` (Run now) · `/remind`. **Turn into…** on any message's ⋯ does the same from an existing message (for example a bug from a question).
+
+**Matching** *(rev 9)*:
+- **Command names match regardless of case** (`/BUG` is `/bug`).
+- **A command token** is a leading `/` followed by letters, digits and hyphens, then whitespace or the end of the text.
+- **A standalone token that isn't a command** (for example `/nope`, or `/tmp is full again`) isn't sent: the text stays in the composer with "No command /<word>." and a **Send as message** action, which posts it as plain text. A near miss adds " Did you mean /<cmd>?" ("No command /bgu. Did you mean /bug?").
+- **Sent normally, as plain text:** text with leading whitespace (" /bug"), a path, where the token is followed by "/" ("/etc/hosts is missing"), a token followed by punctuation ("/tmp, again" or "/tmp."), and a bare "/".
 
 ## 4. Search and history
 
@@ -149,7 +190,7 @@ Settings › Chat › **Bridges**: connect a channel to Slack, Microsoft Teams o
 
 ## 7. States
 
-- **Office not running:** read-only from the last copy, and the composer says "The office isn't running. Restart it from Offices."
+- **Office not running:** read-only from the last copy, and the composer says "The office isn't running. Restart it from Offices." *(rev 9)* Read-only means **every action that writes is disabled**, not only the composer and asks: reactions, pin, mute, channel management (Remove, Add people, Rename, Archive) and Add channel too. The banner gives the reason, so the disabled controls don't repeat it.
 - **Can't reach HQ** (later phases): messages in the same office deliver at once. Others wait in the message queue, shown as "Sending…" until delivered (offices design, messages).
 - **The HR lead can't run** *(rev 8, `our-org-in-the-app.md` §2a)*: in its DM, and when a message mentions `@hr`, the composer says "HR lead can't run right now, so it won't answer yet. To hire, use Hire or Add agent record." instead of "HR lead is asleep". The message still sends and waits for it (HRL-8).
 - **Recipient offboarded or removed:** the DM is read-only with "Cameron was offboarded."
@@ -182,6 +223,18 @@ Settings › Chat › **Bridges**: connect a channel to Slack, Microsoft Teams o
 - CHAT-21 · *(new, rev 6)* An agent can open a permitted DM with a respondent and link the readable source question, without copying channel history or changing recipients' access. Channel-vs-DM choice and follow-up are driven by an overridable process.
 - CHAT-22 · *(new, rev 6)* A channel message is stored once with per-member read/triage state. Ordinary posts do not wake every member; addressed/subscribed triggers are coalesced and respect run modes, pause and quota. Delegates have no separate membership or message identity.
 - CHAT-23 · *(new, rev 6)* Leaving a manual channel immediately ends new delivery and queued wake eligibility; existing already-read-by-id history follows ADR-0003 §6.4. Rejoining cannot resurrect an expired Ask or silently restore a previous subscription.
+
+- CHAT-24 · *(new, rev 9)* Slash command names match regardless of case, and a command token is a leading `/` followed by letters, digits and hyphens, then whitespace or the end of the text.
+- CHAT-25 · *(new, rev 9)* A standalone token that isn't a command stays in the composer with "No command /<word>." and Send as message, which posts the text as plain text; a near miss adds " Did you mean /<cmd>?".
+- CHAT-26 · *(new, rev 9)* Text with leading whitespace, a path (the token followed by "/", as in "/etc/hosts …"), a token followed by punctuation ("/tmp," or "/tmp.") and a bare "/" are sent normally as plain text.
+- CHAT-27 · *(new, rev 9)* Closing a thread keeps its unsent reply and each ask's Reply and Reject text, per thread, while the page stays loaded, including after leaving Chat for another area and coming back. Reopening the thread restores the text with the cursor at the end, sending clears it, and there's no Discard dialog.
+- CHAT-28 · *(new, rev 9)* Escape in a text field that has text doesn't close the thread; Escape elsewhere closes it and keeps the draft.
+- CHAT-29 · *(new, rev 9)* When the chat content area (right of the app nav) is narrower than 768 px, the conversation list is a 256 px overlay, capped at the available width, opened from a "Conversations" button left of the conversation title. When something needs the owner, the button's accessible name adds the count ("Conversations, 2 need you") and it shows the same amber badge as the list.
+- CHAT-30 · *(new, rev 9)* Opening the conversation overlay is modal and moves focus to the selected conversation's item. Choosing a conversation closes it and moves focus to that conversation's heading; Esc, Close or the scrim close it and return focus to the Conversations button.
+- CHAT-31 · *(new, rev 9)* Thread and Members overlay the conversation below a 1280 px viewport, and take the full width below 640 px.
+- CHAT-32 · *(new, rev 9)* Chat's titles are "#<channel> · Chat · Agentic Org", "<person or agent name> · Chat · Agentic Org", and "Needs you · Chat · Agentic Org" (likewise Mentions, Threads and Search).
+- CHAT-33 · *(new, rev 9)* The URL carries the place, so Back, Forward, reload and deep links open it; Back with a dialog open closes the dialog first.
+- CHAT-34 · *(new, rev 9)* With the office not running, every action that writes is disabled: the composer, asks, reactions, pin, mute, channel management (Remove, Add people, Rename, Archive) and Add channel. The banner gives the reason, and the disabled controls don't repeat it.
 
 ## 9. Open questions
 

@@ -2,7 +2,7 @@
 kind: spec
 title: "Offices, organizations and teams (UX)"
 status: for-review
-revision: 15
+revision: 16
 owner: ac-product-designer-eden
 created: "2026-11-08"
 updated: "2026-11-10"
@@ -28,6 +28,28 @@ Requested by ada for the user.
 **What it changes in my earlier work:** it replaces, for the office model, `desktop-app-v1.md` (in Eden's notes, not in this repository) §2.5 (workspace switcher), §3.2 (department and reporting-line chart) and §7.1 (Machines). Revision 5 of that spec folds this in. Acceptance-criterion IDs here are stable: changed criteria are rewritten under the same ID, retired IDs are never reused.
 
 ## Changelog
+
+**Revision 16 (2026-11-10): repair instructions, restart states, the countdown
+and the details sheet.** From the Principal Product Designer's decision of
+2026-11-10 on narrow widths and its follow-ups:
+- **`unsupported_version`:** the repair instructions' toggle, copy and Copy
+  command, naming the office's host; "the office's machine" for the legacy host
+  "This Mac"; no invented instance name, and never "this Mac" for the office's
+  machine. No restart button in this state (§3.3).
+- **The office row's screen-reader label** says "(you're here)" only when the
+  host says so (§6.1).
+- **Restart busy and refusal:** the restart button stays focusable while busy
+  and the busy state is announced; a refusal shows its reason in an alert with
+  focus kept on the button, and clears when the office's status or reason
+  changes; a refusal as `unavailable` shows the reason row, not the host's raw
+  message (§3.3).
+- **The countdown** never overstates the time left (§3.3).
+- **The details sheet** has one Close control, and closing it returns focus to
+  whatever opened it (§6.1).
+- §6.1's footer copy, "Shown from HQ. Statuses include last-seen information.",
+  was already there; it now has a criterion.
+
+**Criteria rewritten (same ID):** none. **New:** OFC-39 to OFC-48.
 
 **Revision 15 (2026-11-10): offices on this instance, joins that end, and waiting
 for running agents.** From Rowan's PR #5 design fixes (merged at 1059d88) and his
@@ -272,7 +294,7 @@ inspected through setup/status or HQ when reachable.
 
 Shown as the Stopped row's secondary text and at the top of its details, with the fix as a button. The office's status updates live (`office.status_changed`), and a status that isn't live is never shown: the row reads "Status unknown" instead. A host whose `hello` doesn't list the capability `office.status_changed` (A50) counts as not live, so its offices show "Status unknown"; a current host that sends no event simply has nothing new *(rev 9)*.
 
-**Countdown** *(rev 8)*: whenever `next_restart_at` is present, whatever the reason, the copy ends with "Restarting in N s" (N from `next_restart_at`; for `in_use` the row's own "Trying again in N s"). The host sends it only while the office is `offline` with a restart pending. The visible countdown updates no more often than every 10 s; the screen-reader label doesn't tick (§6.1).
+**Countdown** *(rev 8)*: whenever `next_restart_at` is present, whatever the reason, the copy ends with "Restarting in N s" (N from `next_restart_at`; for `in_use` the row's own "Trying again in N s"). The host sends it only while the office is `offline` with a restart pending. The visible countdown updates no more often than every 10 s; the screen-reader label doesn't tick (§6.1). *(rev 16)* The countdown never overstates the time left: N is rounded down, and it's correct from its first frame, including right after a status push.
 
 | `status_reason` | Copy (secondary text) | Action |
 | --- | --- | --- |
@@ -289,6 +311,31 @@ Shown as the Stopped row's secondary text and at the top of its details, with th
 | `unknown` (a reason this version doesn't know, from a newer host) | "It stopped for a reason this version doesn't know" | **Restart office** · Copy details |
 | No `status_reason` (the host doesn't know why) *(rev 8)* | "It isn't running" | **Restart office** · Copy details |
 
+- **Show local CLI repair instructions** *(rev 16)*, for `unsupported_version`:
+  - The toggle reads **Show local CLI repair instructions**, and **Hide repair
+    instructions** while they're shown. It has `aria-expanded` and
+    `aria-controls` (pointing at the section), and focus stays on the toggle.
+  - The section reads:
+
+    ```
+     On studio-mac, run:
+       agentic-org doctor                                   [Copy command]
+     It checks the Agentic Org instance on that machine and says what to repair.
+     Follow its steps there. This page updates on its own when the office is back.
+     If studio-mac runs more than one instance, add --name <instance>.
+    ```
+
+    "On <host>, run:", then `agentic-org doctor` in a code block with **Copy
+    command**, which changes to **Copied**. Then "It checks the Agentic Org
+    instance on that machine and says what to repair. Follow its steps there.
+    This page updates on its own when the office is back." Then "If <host> runs
+    more than one instance, add `--name <instance>`."
+  - **<host>** is the office's host name. When the host is the legacy value "This
+    Mac", both the reason ("<office machine / instance>" in the table) and the
+    steps say "the office's machine" instead.
+  - Never invent an instance name, and never say "this Mac" for the office's
+    machine: the browser may be on another device.
+  - The restart button doesn't show in this state.
 - **Remove…** *(rev 15)*, for a join that ended, appears only in the joining instance's own view. It can't remove the join from a page: the join lives only on its own instance, and only its CLI removes it. It opens a small dialog:
 
   ```
@@ -300,6 +347,8 @@ Shown as the Stopped row's secondary text and at the top of its details, with th
 
   The command has the office's full ID and, when the instance isn't `default`, `--name <instance>`. The row goes away once the office is removed there (§5c). To try again, the owner sends a new invitation (§6.2).
 - **Restart office** submits an authorized HQ operation, routed to the owning instance's `office.restart` capability. It is available only while that instance can receive it; otherwise show its local CLI repair instructions. While it runs: "Restarting…" with a spinner, then the live status. `office.restart` covers Restart office, Try again and Start office (ada). The contract refuses a restart only for `unsupported_version`, `invalid_request` and the `join_*` reasons, so only those rows go without it; every other reason, and a missing one, offers it *(rev 8, rev 15)*. A host whose `hello` doesn't list the capability `office.restart` (A50) gets no restart button on any row (Restart office, Try again, Start office), and the row shows "Update Agentic Org to restart offices from here" instead, as for `unknown_method` *(rev 9)*.
+- **While a restart runs** *(rev 16)*, the restart button stays focusable (`aria-disabled` plus `aria-busy`), and the busy state ("Restarting…") is announced.
+- **A refusal** *(rev 16)* shows its reason in an alert, and focus stays on the restart button. The refusal message clears when the office's status or reason changes.
 - **What `office.restart` answers, and what the app does** *(rev 8)*. The row always shows the office's `status_reason`, not the call's error code.
   - Accepted: keep the spinner until the live status arrives.
   - `conflict` (the office is already starting or running, e.g. a double click or the host's own countdown got there first): no error. Keep the spinner until the live status arrives (Starting, then Online).
@@ -307,7 +356,7 @@ Shown as the Stopped row's secondary text and at the top of its details, with th
   - `not_found` (the office is gone): refresh the list.
   - `not_authorized`: an error in plain words, "You can't restart this office from here." · Copy details.
   - `not_ready` (the host is still starting): retry once. The host may already hold the call for up to 30 s before it answers, so the app's request timeout must be longer than 30 s. If the retry answers `not_ready` too: "The office host is still starting. Try again in a moment." and the button comes back.
-  - `unavailable` (the office's reason is `unsupported_version`, `invalid_request` or a `join_*` reason; it can arrive if the reason changed after the row was drawn): show that reason's row from the table, which has no restart button, so the row can't offer Restart office again *(rev 15)*.
+  - `unavailable` (the office's reason is `unsupported_version`, `invalid_request` or a `join_*` reason; it can arrive if the reason changed after the row was drawn): show that reason's row from the table, which has no restart button, so the row can't offer Restart office again *(rev 15)*. *(rev 16)* It shows the reason row, never the host's raw message.
 - **Copy details** copies the office name, id, status, reason, the time and the app version. It never includes keys or tokens.
 
 ## 4. Native menu (deferred to v2)
@@ -791,11 +840,12 @@ setup again with the invitation.
 ```
 
 - Order: join requests, HQ, offices on the HQ instance, other offices A–Z, invitations, then unplaced agents.
-- **A row opens a slide-over** with a description list: name (**Rename**), role (HQ / Office), where (the service machine/instance, with last-seen address where appropriate), status, last seen, sync ("Up to date" or "Catching up: 34 changes"), Agentic Org version, agents placed here, projects it follows. Actions: **Rename** · **Remove office…** (not on HQ) · later, **Make this HQ…** (phase 4, hidden until then).
+- **A row opens a slide-over** (the details sheet) with a description list: name (**Rename**), role (HQ / Office), where (the service machine/instance, with last-seen address where appropriate), status, last seen, sync ("Up to date" or "Catching up: 34 changes"), Agentic Org version, agents placed here, projects it follows. Actions: **Rename** · **Remove office…** (not on HQ) · later, **Make this HQ…** (phase 4, hidden until then). *(rev 16)* The sheet has one Close control, and closing it returns focus to whatever opened it.
 - **Version holding back a feature:** when HQ can't raise the organization level, a quiet note above the list: "Build box runs an older version of Agentic Org, so new features wait until it updates." It links to the row.
 - **Empty is impossible** (HQ always exists). With HQ alone, a one-line hint under the list: "Add an office to run agents on another machine, or to keep a copy of the records there."
 - **Loading:** skeleton rows. **Live:** statuses update in place; a row that changes status doesn't move.
-- **Row label for screen readers** *(rev 6, rev 8, OFC-13)*: "Main office, HQ, HQ instance, Online, 6 agents. Opens details." For Stopped it adds the reason, with a restart in a form that doesn't tick: "…, Stopped: it stopped unexpectedly, restarting shortly, …", or "restarting at 10:42" when the restart is a minute or more away. The visible countdown updates no more often than every 10 s. A status change confirmed by its owning instance is announced through a polite live region ("Office 2 stopped: it stopped unexpectedly", "Office 2 is online").
+- **Row label for screen readers** *(rev 6, rev 8, OFC-13)*: "Main office, HQ, HQ instance, Online, 6 agents. Opens details." For Stopped it adds the reason, with a restart in a form that doesn't tick: "…, Stopped: it stopped unexpectedly, restarting shortly, …", or "restarting at 10:42" when the restart is a minute or more away. The visible countdown updates no more often than every 10 s. A status change confirmed by its owning instance is announced through a polite live region ("Office 2 stopped: it stopped unexpectedly", "Office 2 is online"). *(rev 16)* The label doesn't claim "(you're here)" unless the host says so.
+- **Footer** *(rev 16, OFC-48)*: "Shown from HQ. Statuses include last-seen information."
 - **Historical build note** *(rev 6; not the standalone-v1 acceptance target)*: **Add office** is shown disabled with "Available in a later release." While the data is invented, a **Sample data** badge says so. A status the app can't confirm shows as **Unknown** (§3.1), never as healthy.
 - **HQ-only actions:** Add office, Review and approve and Remove office are available to an authorized owner through HQ from any browser. Add office › **On this instance** is offered only to an owner who is also an instance admin (§6.2) *(rev 15)*. Unauthorized sessions cannot invoke or discover privileged operations.
 
@@ -1216,6 +1266,18 @@ Two directions, same result:
 - OFC-36 · *(new, rev 15, A101)* After its panel is closed, a waiting organization shows in the switcher as "<name> · Waiting for <n> agents to stop", can't be opened, and reopens the panel in its Waiting state when chosen.
 - OFC-37 · *(new, rev 15, A101; rewritten, review of 02316bb)* A waiting Add office shows in the Offices list only as a pending row with "Waiting for <n> agents to stop" and Cancel, with no status dot or other action; choosing it reopens the form in its Waiting state with the agents and their Pause, and it becomes the office once it's added.
 - OFC-38 · *(new, rev 15, A101; rewritten, review of 0802754)* A wait for running agents has no time limit, and `agentic-org doctor` on that machine lists each waiting create, Add office and join with its number of agents and a count for each organization ("2 in Lumen Labs, 1 in Other Org"), naming no agent.
+
+**Repair, restart and details (OFC)** *(new, rev 16, §3.3, §6.1)*
+- OFC-39 · *(new, rev 16)* For `unsupported_version`, the toggle reads "Show local CLI repair instructions", then "Hide repair instructions" while they're shown, with `aria-expanded` and `aria-controls`, and focus stays on the toggle.
+- OFC-40 · *(new, rev 16)* The repair instructions show "On <host>, run:", then `agentic-org doctor` in a code block with Copy command, which changes to Copied; then "It checks the Agentic Org instance on that machine and says what to repair. Follow its steps there. This page updates on its own when the office is back."; then "If <host> runs more than one instance, add `--name <instance>`."
+- OFC-41 · *(new, rev 16)* <host> is the office's host name; when the host is the legacy value "This Mac", the reason and the steps both say "the office's machine". The copy never invents an instance name and never says "this Mac" for the office's machine.
+- OFC-42 · *(new, rev 16)* The office row's screen-reader label doesn't claim "(you're here)" unless the host says so.
+- OFC-43 · *(new, rev 16)* An office whose reason is `unsupported_version` shows no restart button.
+- OFC-44 · *(new, rev 16)* While a restart runs, the restart button stays focusable (`aria-disabled` plus `aria-busy`), and the busy state is announced.
+- OFC-45 · *(new, rev 16)* A refused restart shows its reason in an alert with focus kept on the restart button, and the message clears when the office's status or reason changes. A restart refused as `unavailable` shows the reason row, not the host's raw message.
+- OFC-46 · *(new, rev 16)* The restart countdown never overstates the time left: it rounds down, and it's correct from its first frame, including right after a status push.
+- OFC-47 · *(new, rev 16)* The office details sheet has one Close control, and closing it returns focus to whatever opened it.
+- OFC-48 · *(new, rev 16)* The Offices list's footer reads "Shown from HQ. Statuses include last-seen information."
 
 **Org chart: Teams (TEAM)**
 - TEAM-1 · *(rev 2)* The Teams view draws the ownership tree from the organization root; each card shows its name, the lead or "No lead", an Agents row and a People row with avatars and counts, its sub-team count and its projects.
