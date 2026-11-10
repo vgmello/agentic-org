@@ -20,6 +20,8 @@ macOS-only spawn refusal. These probes do not implement `org-supervise` or Linux
 host support. Production uses private inherited channels and a verified release
 manifest, with sandbox and process lifecycle review still required.
 
+The marker executable is built from `exec-fixture.c`; system utilities may
+intentionally reject invocation from a memfd (Ubuntu's coreutils did so).
 The primitive API floor is Linux 3.19 for execveat (memfd is Linux 3.17).
 The probe uses Python/glibc fexecve and requires procfs/ptrace for its observations.
 Executable memfds must be permitted by the unit/kernel policy. These API floors
@@ -29,7 +31,10 @@ are not a supported-distribution claim.
 
 `linux-credentials.py` runs as an unprivileged user with a systemd user manager.
 It tests a host-key encrypted, user-scoped synthetic credential, separate service
-starts, and wrong-name/different-UID/missing/corrupt/null-envelope refusal. It also
+starts, and wrong-name/different-UID/missing/corrupt/null-envelope refusal. Isolated
+mount namespaces hide or replace the provider key without changing the machine's
+real key; decryption must fail without changing the ciphertext, and recover with
+the legitimate provider. It also
 shows that the same UID can decrypt the credential: v1 accepts that threat limit.
 It needs passwordless sudo for the different-UID and synthetic null-envelope
 negative controls; production does not inherit this testing requirement.

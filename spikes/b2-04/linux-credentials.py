@@ -42,6 +42,21 @@ with tempfile.TemporaryDirectory(prefix="sage-b204-creds-") as tmp:
     print("PASS corrupted credential refused")
     assert decrypt(root / "missing.cred").returncode != 0
     print("PASS missing credential refused")
+    saved_blob = blob.read_bytes()
+    for mode in ["missing", "wrong"]:
+        isolated = root / f"provider-{mode}"
+        isolated.mkdir()
+        command = 'mount --bind "$1" /var/lib/systemd && if [ "$4" = wrong ]; then systemd-creds setup || exit; fi; exec systemd-creds decrypt --uid="$2" --refuse-null --name=dbkey "$3" -'
+        outcome = run(["sudo", "-n", "unshare", "--mount", "--propagation", "private", "sh", "-ec", command, "sh", str(isolated), str(os.getuid()), str(blob), mode])
+        diagnostic = outcome.stderr.decode().strip()
+        print(mode, "provider rc=", outcome.returncode, "diagnostic=", diagnostic)
+        assert outcome.returncode != 0
+        assert "unshare:" not in diagnostic and "mount:" not in diagnostic, "provider test did not execute"
+        if mode == "missing":
+            assert not (isolated / "credential.secret").exists(), "decrypt created replacement provider key"
+        assert blob.read_bytes() == saved_blob
+        assert decrypt(blob).stdout == secret
+        print(f"PASS {mode} provider fails closed, unchanged credential recovers with legitimate provider")
     null_blob = root / "null.cred"
     null_result = run(["sudo", "-n", "systemd-creds", "encrypt", "--with-key=null", "--name=dbkey", "-", str(null_blob)], input=secret)
     assert null_result.returncode == 0, null_result.stderr

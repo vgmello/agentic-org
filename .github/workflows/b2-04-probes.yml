@@ -31,6 +31,7 @@ jobs:
         run: |
           cargo build --locked -p org-office-host -p org-office-server 2>&1 | tee spikes/b2-04/evidence/build.log
           cp target/debug/org-office-host target/debug/org-office-server spikes/b2-04/linux-bin/
+          cc -Wall -Wextra -Werror spikes/b2-04/exec-fixture.c -o spikes/b2-04/linux-bin/exec-fixture
           ldd spikes/b2-04/linux-bin/org-office-server | tee spikes/b2-04/evidence/worker-ldd.log
       - name: Worker regression tests
         run: cargo test --locked -p org-office-server 2>&1 | tee spikes/b2-04/evidence/worker-tests.log
@@ -48,7 +49,10 @@ jobs:
           sudo systemctl start "user@$probe_uid.service"
           env XDG_RUNTIME_DIR="/run/user/$probe_uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$probe_uid/bus" python3 spikes/b2-04/linux-credentials.py | tee spikes/b2-04/evidence/credentials.log
       - name: SQLCipher system and static crypto comparison
-        run: sh spikes/b2-04/build-crypto.sh 2>&1 | tee spikes/b2-04/evidence/crypto.log
+        run: |
+          cargo fmt --manifest-path spikes/b2-04/crypto/Cargo.toml -- --check
+          sh spikes/b2-04/build-crypto.sh 2>&1 | tee spikes/b2-04/evidence/crypto.log
+          cargo clippy --manifest-path spikes/b2-04/crypto/Cargo.toml --all-targets --features vendored -- -D warnings 2>&1 | tee spikes/b2-04/evidence/crypto-clippy.log
       - name: Preserve probe evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

@@ -13,7 +13,7 @@ import time
 libc = ctypes.CDLL(None, use_errno=True)
 scratch = tempfile.TemporaryDirectory(prefix="sage-b204-exec-")
 marker = Path(scratch.name) / "ran"
-worker = Path(sys.argv[1] if len(sys.argv)>1 else "/usr/bin/touch")
+worker = Path(sys.argv[1]) if len(sys.argv)>1 else Path(__file__).parent / "linux-bin/exec-fixture"
 args = sys.argv[2:] if len(sys.argv)>1 else [str(marker)]
 image = worker.read_bytes()
 expected = hashlib.sha256(image).digest()  # Stands in for reviewed signed manifest.
