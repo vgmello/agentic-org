@@ -15,6 +15,7 @@ cargo build --locked -p org-office-host -p org-office-server 2>&1 | tee "$spike_
 cp "$CARGO_TARGET_DIR/debug/org-office-host" "$CARGO_TARGET_DIR/debug/org-office-server" "$spike_dir/linux-bin/"
 cc -Wall -Wextra -Werror "$spike_dir/exec-fixture.c" -o "$spike_dir/linux-bin/exec-fixture"
 cargo test --locked -p org-office-server 2>&1 | tee "$spike_dir/evidence/worker-tests.log"
+timeout 45s python3 -I "$spike_dir/check-probe-controls.py" | tee "$spike_dir/evidence/probe-controls.log"
 timeout 20s python3 -I "$spike_dir/linux-exec.py" | tee "$spike_dir/evidence/exec.log"
 timeout 80s python3 -I "$spike_dir/linux-worker.py" | tee "$spike_dir/evidence/worker.log"
 timeout 60s python3 -I "$spike_dir/linux-host-baseline.py" | tee "$spike_dir/evidence/host-baseline.log"

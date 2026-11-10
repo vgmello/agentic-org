@@ -38,6 +38,7 @@ jobs:
         run: cargo test --locked -p org-office-server 2>&1 | tee spikes/b2-04/evidence/worker-tests.log
       - name: Admission and real worker probes
         run: |
+          timeout 45s python3 -I spikes/b2-04/check-probe-controls.py | tee spikes/b2-04/evidence/probe-controls.log
           timeout 20s python3 -I spikes/b2-04/linux-exec.py | tee spikes/b2-04/evidence/exec.log
           timeout 80s python3 -I spikes/b2-04/linux-worker.py | tee spikes/b2-04/evidence/worker.log
           timeout 60s python3 -I spikes/b2-04/linux-host-baseline.py | tee spikes/b2-04/evidence/host-baseline.log

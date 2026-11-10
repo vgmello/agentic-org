@@ -49,10 +49,11 @@ def launch(candidate, trusted_digest, marker):
         admitted = hashlib.sha256(actual.read_bytes()).digest() == trusted_digest
         if not admitted:
             os.kill(pid, signal.SIGKILL)
-            _, status = os.waitpid(pid, 0)
+            reaped, status = os.waitpid(pid, 0)
             pid = -1
             assert os.WIFSIGNALED(status) and os.WTERMSIG(status) == signal.SIGKILL
             assert not marker.exists()
+            print(f"rejected child pid={reaped} signal=SIGKILL launch_message_bytes={authority_sent}")
             return False, authority_sent
         assert (os.stat(actual).st_dev, os.stat(actual).st_ino) == (os.fstat(fd).st_dev, os.fstat(fd).st_ino)
         os.kill(pid, signal.SIGCONT)
