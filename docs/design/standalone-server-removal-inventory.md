@@ -78,6 +78,16 @@ Audited against `v1` at `0a83d76` (2026-11-10), then integrated with F1-01 at
 `apps/desktop` references retain their audit provenance. This audit does not implement the gateway, projects/areas or runtime,
 and does not delete the shell. B1-10 remains the owner of project/area commands.
 
+**F1-03 (done, 2026-11-10).** `apps/org-ui/src-tauri` and its workspace
+membership are removed, including the shell implementation, Rust seed and legacy
+Rust vector runners. The desktop-wrapper `test-vectors/command-shapes.json` and
+`src/lib/office/shapes.test.ts` are retired. The rows below preserve the audit baseline
+and future gateway obligations; they do not claim those shell files still exist.
+Domain-owned JSON fixtures and canonical Rust readers remain in `org-office`,
+`org-work` and `org-proto`. The TypeScript seed/parity readers remain with test
+fakes, and `src/lib/office/wire-shapes.test.ts` preserves the independent canonical
+payload gate. Production uses explicit unavailable defaults until real adapters land.
+
 | File | Observed behavior and disposition |
 | --- | --- |
 | `src-tauri/src/org_engine.rs` | Delete the mock reducer after preserving the cases. Team creation/rename/move/lead/delete, memberships/titles, people/agents, reporting, offboarding and project-team links already have canonical rules in `org-office::rules`. The new canonical reader exercises 148 of the 252 shared scenarios, including errors, version checks and refusal atomicity. Only one exercised scenario has an explicit resulting-state assertion (removal of a project-team link); the other 35 scenarios with `after` assertions are preserved in the B1-10 deferred set. Do not transplant the mock's FNV fingerprint, 1,000-answer cache, JSON-file upgrade or cloned-state commit mechanism: the real office already owns transactional log/dedup/storage behavior. |
@@ -107,9 +117,9 @@ otherwise supported commands. The canonical reader covers every other case, chec
 the total and exact manifest membership, verifies deferred methods are unavailable
 and checks area writes are refused without mutation. Once B1-10 supports a missing
 capability these sentinels fail, requiring its positive cases to be enabled. The
-original positive expectations remain in the shared fixture and in the legacy
-mock runners until those runners are retired; no deferred case is claimed as a
-working real-server feature. Missing capabilities remain explicitly unavailable.
+original positive expectations remain in the shared fixture and retained
+TypeScript parity runner; the legacy Rust shell runner was retired in F1-03. No
+deferred case is claimed as a working real-server feature. Missing capabilities remain explicitly unavailable.
 
 **Work-vector differences.** Short legacy change/link aliases have explicit fixed
 ULID inputs in each affected step's `canonical.call`, preserving equality for
@@ -149,10 +159,10 @@ Retire installation-specific tests with their implementation; replace app bindin
 tests with X-02 principal/channel admission tests. This is a B1-08/F1-06 handoff,
 not a claim that an HTTP listener or shared browser stream already exists.
 
-F1-03 may remove shell implementation after these independent crate readers and
-fixture references land and its production callers switch to the HTTP seam or
-explicit unavailable states. It must keep domain-owned fixtures/readers, the
-canonical wire payload gate and the documented future test obligations. No
+F1-03 removed the shell after the independent crate readers and fixture
+references landed. Its production callers now use explicit unavailable states.
+Domain-owned fixtures/readers, the canonical wire payload gate and the documented
+future gateway test obligations remain. No
 Tauri-only type or mock library becomes a dependency of a canonical crate.
 
 ## 3. Production mock audit
