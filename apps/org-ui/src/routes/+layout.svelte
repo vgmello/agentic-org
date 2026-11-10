@@ -12,7 +12,7 @@
 	});
 </script>
 
-{#if capability.available}
+{#if capability.available || page.status === 404}
 	{@render children()}
 {:else}
 	<Unavailable message={capability.message} />

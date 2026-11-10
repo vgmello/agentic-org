@@ -10,6 +10,8 @@ test('SRV-18: every unserved production area is unavailable, without sample data
 	for (const path of ['/', '/welcome', '/create', ...areas.map((area) => `/${area}`), '/projects/a-project']) {
 		await visit(page, path);
 		await expect(page.getByTestId('area-unavailable')).toBeVisible();
+		await expect(page.getByRole('main')).toHaveCount(1);
+		await expect(page.locator('main main')).toHaveCount(0);
 		await expect(page.getByRole('status')).toHaveText('This area is not available yet.');
 		await expect(page.getByText('Sample data', { exact: true })).toHaveCount(0);
 		await expect(page.locator('[data-tauri-drag-region]')).toHaveCount(0);
@@ -39,6 +41,8 @@ test('SRV-18: the production unavailable gate preserves unknown-route errors', a
 	await visit(page, '/no-such-area');
 	await expect(page.getByRole('heading', { name: 'Something went wrong' })).toBeVisible();
 	await expect(page.getByText('404', { exact: true })).toBeVisible();
+	await expect(page.getByRole('main')).toHaveCount(1);
+	await expect(page.locator('main main')).toHaveCount(0);
 	await expect(page.getByTestId('area-unavailable')).toHaveCount(0);
 	await page.getByRole('link', { name: 'Back to the start' }).click();
 	await expect(page.getByTestId('area-unavailable')).toBeVisible();

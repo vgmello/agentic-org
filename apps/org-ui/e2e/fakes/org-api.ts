@@ -1,4 +1,5 @@
-export * from '../../src/lib/org/api';
+export type { OrgApi, MockStorage } from '../../src/lib/org/api';
+export { createMockOrg } from '../../src/lib/org/api';
 import { createMockOrg } from '../../src/lib/org/api';
 import { officeApi } from '$lib/office/api';
 

@@ -11,7 +11,8 @@ type HeldRefresh = {
 async function holdFirstRefresh(page: Page, stoppedSnapshot = false) {
 	await page.evaluate(async (stoppedSnapshot) => {
 		// The same dev module instance used by the route. No production hook is added.
-		const modulePath = '/src/lib/office/api.ts';
+		// Use the same test-owned singleton as compiled UI imports.
+		const modulePath = '/e2e/fakes/office-api.ts';
 		const { officeApi } = await import(modulePath);
 		const peek = officeApi.peekOrganizations.bind(officeApi);
 		const connection = (await officeApi.connections()).at(-1)!;

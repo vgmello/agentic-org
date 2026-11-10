@@ -1,4 +1,5 @@
-export * from '../../src/lib/work/index';
+export { workSender } from '../../src/lib/work/index';
+export type { WorkDraft } from '../../src/lib/work/index';
 import { workSender } from '../../src/lib/work/index';
 import { createMockWork } from '../../src/lib/work/api';
 import { orgApi } from '$lib/org/api';
