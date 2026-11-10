@@ -78,6 +78,10 @@ fn canonical_step(legacy: &Value) -> Value {
                             matches!(field.as_str(), "change_id" | "link_id" | "fixes" | "expected_version"),
                             "a canonical override must not replace the operation or its business input: {field}"
                         );
+                        let original = legacy["call"]
+                            .get(field)
+                            .unwrap_or_else(|| panic!("override adds absent call field {field}"));
+                        assert_ne!(original, fixed, "no-op call override of {field}");
                         if field == "fixes" {
                             let original = step["call"][field].as_array().unwrap();
                             let mapped = fixed.as_array().unwrap();
@@ -92,7 +96,38 @@ fn canonical_step(legacy: &Value) -> Value {
                         step["call"][field] = fixed.clone();
                     }
                 }
-                "items" | "expect" | "error" | "reads" => step[key] = value.clone(),
+                "items" | "expect" | "error" => {
+                    let original = legacy
+                        .get(key)
+                        .unwrap_or_else(|| panic!("override adds absent expectation {key}"));
+                    assert_ne!(original, value, "no-op expectation override of {key}");
+                    match key.as_str() {
+                        "error" => assert!(
+                            original.is_string() && value.is_string(),
+                            "an error override may change the code, never refusal into acceptance"
+                        ),
+                        "items" => assert!(original.is_array() && value.is_array()),
+                        "expect" => assert!(original.is_object() && value.is_object()),
+                        _ => unreachable!(),
+                    }
+                    step[key] = value.clone();
+                }
+                "reads" => {
+                    // Additional read-model assertions supplement the existing outcome;
+                    // they cannot replace it or remove its expected items/refusal.
+                    let reads = value.as_array().unwrap();
+                    assert!(!reads.is_empty());
+                    assert_ne!(legacy.get(key), Some(value), "no-op reads override");
+                    for read in reads {
+                        assert!(read["id"].is_string() && read["expect"].is_object());
+                        assert!(read
+                            .as_object()
+                            .unwrap()
+                            .keys()
+                            .all(|key| matches!(key.as_str(), "id" | "expect")));
+                    }
+                    step[key] = value.clone();
+                }
                 other => panic!("unknown canonical override {other}"),
             }
         }

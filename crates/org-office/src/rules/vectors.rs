@@ -154,11 +154,11 @@ fn shared_organization_cases_use_the_office_rules() {
             let value = state_json(&state);
             for check in case["after"].as_array().into_iter().flatten() {
                 let list = check["in"].as_str().unwrap();
-                let found = value[list]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .find(|x| x["id"] == check["id"]);
+                let Some(entities) = value[list].as_array() else {
+                    failures.push(format!("{name}: after-check list {list} is not modeled"));
+                    continue;
+                };
+                let found = entities.iter().find(|x| x["id"] == check["id"]);
                 if check["absent"] == true {
                     assert!(found.is_none(), "{name}: {check}");
                 } else if let Some(found) = found {
