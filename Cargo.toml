@@ -15,6 +15,7 @@ members = [
   "apps/org-server",
   "apps/org-office-host",
   "apps/org-agent",
+  "apps/org-gateway",
 ]
 # Root checks cover every retained server, CLI and domain member.
 default-members = [
@@ -32,6 +33,7 @@ default-members = [
   "apps/org-server",
   "apps/org-office-host",
   "apps/org-agent",
+  "apps/org-gateway",
 ]
 
 [workspace.package]
@@ -49,6 +51,14 @@ rusqlite = { version = "=0.41.1", features = ["bundled-sqlcipher"] }
 tempfile = "=3.27.0"
 sha2 = "=0.10.9"
 libc = "=0.2.191"
+# Browser gateway stack (ada D-B45); deliberately no HTTP/2 or HTTP client.
+tokio = { version = "=1.54.1", default-features = false, features = ["rt-multi-thread", "net", "time", "sync", "io-util"] }
+hyper = { version = "=1.12.0", default-features = false, features = ["server", "http1"] }
+hyper-util = { version = "=0.1.21", default-features = false, features = ["tokio"] }
+http-body-util = { version = "=0.1.5", default-features = false }
+tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring", "tls12"] }
+scraper = { version = "=0.29.0", default-features = false }
+base64 = { version = "=0.23.1", default-features = false, features = ["std"] }
 # The host's retained code-signature checks and Data Protection keychain
 # (`OSX_10_15`, `kSecUseDataProtectionKeychain`), where it keeps office database keys.
 security-framework = { version = "=3.7.0", features = ["OSX_10_15"] }
