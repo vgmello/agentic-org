@@ -281,9 +281,9 @@
 
 	// ---- message actions -----------------------------------------------------------------------
 
-	const react = (m: ChatMessage, reaction: Reaction) => void act({ method: 'chat.react', message_id: m.id, reaction });
-	const pin = (m: ChatMessage) => void act({ method: 'chat.pin', message_id: m.id });
-	const muteIn = (conversation_id: string, member_id: string, mode: MuteMode) => void act({ method: 'chat.mute', conversation_id, member_id, mode }, mode === 'none' ? `${nameOf(ctx, member_id)} is back.` : mode === 'muted' ? `${nameOf(ctx, member_id)} is muted here. Their messages still reach Activity.` : `${nameOf(ctx, member_id)} is on a daily digest here.`);
+	const react = (m: ChatMessage, reaction: Reaction) => { if (officeRunning) void act({ method: 'chat.react', message_id: m.id, reaction }); };
+	const pin = (m: ChatMessage) => { if (officeRunning) void act({ method: 'chat.pin', message_id: m.id }); };
+	const muteIn = (conversation_id: string, member_id: string, mode: MuteMode) => { if (officeRunning) void act({ method: 'chat.mute', conversation_id, member_id, mode }, mode === 'none' ? `${nameOf(ctx, member_id)} is back.` : mode === 'muted' ? `${nameOf(ctx, member_id)} is muted here. Their messages still reach Activity.` : `${nameOf(ctx, member_id)} is on a daily digest here.`); };
 	const mute = (m: ChatMessage, mode: MuteMode) => muteIn(m.conversation_id, m.from, mode);
 	const turn = (m: ChatMessage, into: 'bug' | 'request' | 'task') => openForm(turnForm(into, m, env));
 	// Restore only focus lost by this update; never pull it from a control the owner moved to.
@@ -536,7 +536,7 @@
 				{#snippet undelivered()}{@render undeliveredRows(pending.filter((p) => p.thread_root_id === root.id), true)}{/snippet}
 			</ThreadPanel>
 		{:else if showMembers && conversation}
-			<MembersPanel {conversation} {ctx} {chatState} projectName={followsWords} onclose={() => (showMembers = false)} onmute={(id, mode) => muteIn(conversation.id, id, mode)} onrename={() => openChannelDialog('rename')} onaddpeople={() => openChannelDialog('members')} onremove={(id) => void act({ method: 'channel.remove_member', id: conversation.id, member_id: id })} onarchive={() => void act({ method: 'channel.archive', id: conversation.id }, `#${conversation.name} is archived.`)} />
+			<MembersPanel {conversation} {ctx} {chatState} {officeRunning} projectName={followsWords} onclose={() => (showMembers = false)} onmute={(id, mode) => muteIn(conversation.id, id, mode)} onrename={() => openChannelDialog('rename')} onaddpeople={() => openChannelDialog('members')} onremove={(id) => void act({ method: 'channel.remove_member', id: conversation.id, member_id: id })} onarchive={() => void act({ method: 'channel.archive', id: conversation.id }, `#${conversation.name} is archived.`)} />
 		{/if}
 	{/if}
 </div>

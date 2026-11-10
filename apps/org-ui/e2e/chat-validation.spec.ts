@@ -168,3 +168,61 @@ for (const target of ['message', 'ask'] as const) {
 		await shot(page, `chat-pointer-${target}-no-stuck-focus`);
 	});
 }
+
+
+for (const place of ['conversation', 'thread'] as const) {
+	test(`CHAT-8/11 BUG-58: a stopped office disables reaction, pin and mute in the ${place}`, async ({ page }) => {
+		await open(page, '?chat=offline'); await go(page, 'general');
+		let row = page.getByTestId('message').filter({ hasText: 'Ready for review: create-org' });
+		if (place === 'thread') {
+			await row.getByTestId('replies-link').click();
+			row = page.getByTestId('thread-panel').getByTestId('message').filter({ hasText: 'Ready for review: create-org' });
+		}
+		await row.hover();
+		await expect(row.getByRole('button', { name: 'React Seen', exact: true })).toBeDisabled();
+		await expect(row.getByRole('button', { name: 'Seen, 1', exact: true })).toBeDisabled();
+		await row.getByRole('button', { name: 'More actions', exact: true }).click();
+		await expect(page.getByRole('menuitem', { name: 'Pin to the conversation', exact: true })).toBeDisabled();
+		await expect(page.getByRole('menuitem', { name: 'Mute Sam Okafor here', exact: true })).toBeDisabled();
+		await expect(page.getByRole('menuitem', { name: 'Daily digest from Sam Okafor', exact: true })).toBeDisabled();
+		await shot(page, `chat-stopped-${place}-actions`);
+	});
+}
+
+test('CHAT-11 BUG-58: stopped-office member mute controls are disabled and guard programmatic events', async ({ page }) => {
+	await open(page, '?chat=offline'); await go(page, 'general');
+	await page.evaluate(async () => {
+		const path = '/src/lib/modules/messaging/legacy-api.ts';
+		const { chatApi } = await import(path);
+		const command = chatApi.command.bind(chatApi);
+		(window as unknown as { chatMutations: string[] }).chatMutations = [];
+		chatApi.command = async (id: string, call: { method: string }) => {
+			if (['chat.react', 'chat.pin', 'chat.mute'].includes(call.method)) (window as unknown as { chatMutations: string[] }).chatMutations.push(call.method);
+			return command(id, call);
+		};
+	});
+	const row = page.getByTestId('message').filter({ hasText: 'Ready for review: create-org' });
+	await row.getByRole('button', { name: 'React Seen', exact: true }).dispatchEvent('click');
+	await page.getByRole('button', { name: 'Members', exact: true }).click();
+	const select = page.getByTestId('members-panel').getByLabel('How you hear from Sam Okafor here');
+	await expect(select).toBeDisabled();
+	await select.evaluate((element) => { (element as HTMLSelectElement).value = 'muted'; element.dispatchEvent(new Event('change', { bubbles: true })); });
+	expect(await page.evaluate(() => (window as unknown as { chatMutations: string[] }).chatMutations)).toEqual([]);
+	await expect(page.getByText("The office didn't answer.", { exact: true })).toHaveCount(0);
+	await shot(page, 'chat-stopped-members-mute-disabled');
+});
+
+test('CHAT-11 BUG-58: a running office still accepts reactions, pins and mute changes', async ({ page }) => {
+	await open(page); await go(page, 'general');
+	const row = page.getByTestId('message').filter({ hasText: 'Ready for review: create-org' });
+	await row.hover(); await row.getByRole('button', { name: 'React Seen', exact: true }).click();
+	await expect(row.getByRole('button', { name: 'Seen, 2', exact: true })).toHaveAttribute('aria-pressed', 'true');
+	await row.getByRole('button', { name: 'More actions', exact: true }).click();
+	await page.getByRole('menuitem', { name: 'Pin to the conversation', exact: true }).click();
+	await expect(row).toContainText('Pinned');
+	await page.getByRole('button', { name: 'Members', exact: true }).click();
+	const select = page.getByTestId('members-panel').getByLabel('How you hear from Sam Okafor here');
+	await expect(select).toBeEnabled();
+	await select.selectOption('digest'); await expect(select).toHaveValue('digest');
+	await shot(page, 'chat-running-actions-still-enabled');
+});
