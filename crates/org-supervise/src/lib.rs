@@ -4,7 +4,8 @@
 //! The caller persists the mark before spawning and the identity before obtaining stdin.
 //! It owns and drains stdout/stderr throughout the child's life; this crate never reads them.
 //! Exit observation never reaps. Dropping the owner kills its group and reaps only that child.
-//! Cleanup/reaping is explicit after exit. Orphan discovery and PTYs are later deliveries.
+//! Cleanup/reaping is explicit after exit. Recovery policy is in [`recovery`]; its native
+//! discovery adapters and PTYs are later deliveries. Existing owned-stop paths do not scan.
 //! Real harnesses whose tools detach require that discovery before use.
 //!
 //! All processes in the embedding program must preserve child ownership: never install
@@ -23,6 +24,7 @@ mod cleanup;
 mod environment;
 mod files;
 mod platform;
+pub mod recovery;
 pub mod runtime;
 mod spawn;
 mod stop;

@@ -498,6 +498,22 @@ fn probe_context_is_refused_and_abandoned_preparation_cleans_only_its_fresh_dire
     let real = root.path().canonicalize().unwrap();
     std::fs::write(real.join("keep"), b"keep").unwrap();
     let mode = org_supervise::runtime::ProbeMode::Conversation;
+    // Sharing the namespace classifier must not broaden the caller's precise
+    // Git allowlist or expose the recorded-spawn path's internal mark.
+    for name in [
+        "GIT_CONFIG_SYSTEM",
+        "GIT_CONFIG_KEY_x",
+        "GIT_CONFIG_VALUE_",
+        "GH_CONFIG_OTHER",
+        "ORG_SESSION_MARK",
+    ] {
+        assert!(
+            environment(&real)
+                .with_context(&[(name.into(), "refused".into())])
+                .is_err(),
+            "{name}"
+        );
+    }
     for name in [
         "ORG_AGENT",
         "ORG_SESSION_TOKEN",

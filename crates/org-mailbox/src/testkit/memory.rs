@@ -1,14 +1,16 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use org_proto::msg::{
-    HeaderPage, MessageHeader, MessageLifecycleState as State, KIND_DELIVERY_FAILED, OFFICE_SENDER,
+    HeaderPage, MessageHeader, MessageLifecycleState as State, NotifyReason, KIND_DELIVERY_FAILED,
+    OFFICE_SENDER,
 };
 use org_proto::{Member, MemberKind, Position, OWNER_HANDLE};
 
 use crate::{
-    parse_utc, CommitMessageOutcome, HeaderQuery, HeaderScope, MemberDirectory, MessageStore,
-    NewStoredMessage, PeekUnreadOutcome, StoreError, StoredMessage,
+    parse_utc, past_deadline, CommitMessageOutcome, HeaderQuery, HeaderScope, LocalStateTransition,
+    MemberDirectory, MessageStore, NewStoredMessage, NotifyCandidate, PeekUnreadOutcome,
+    SnoozeDeadline, StoreError, StoredMessage, TriageStore, MAX_EXPIRED_IDS,
 };
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -80,10 +82,15 @@ impl MemberDirectory for InMemoryDirectory {
 struct Data {
     sequence: u64,
     rows: BTreeMap<String, StoredMessage>,
+    /// Ids ever snoozed (`triaged_at` set): never swept again.
+    triaged: BTreeSet<String>,
 }
 
-/// An in-memory office.db message store: the delivery port only (slice 1). Clones share
-/// the same rows. One counter allocates both `local_seq` and a local `origin_seq`.
+/// An in-memory office.db message store: the delivery and triage ports. Clones share
+/// the same rows. One counter allocates both `local_seq` and a local `origin_seq`. It keeps
+/// no `msg_state.reason` (no port reads it back) and no work log, and doesn't model the
+/// state row's sync metadata ([`TriageStore::update_state_local`]: its owner office, origin
+/// incarnation, org position and local edit sequence).
 #[derive(Clone, Default)]
 pub struct InMemoryStore(Arc<Mutex<Data>>);
 
@@ -127,6 +134,18 @@ impl MessageStore for InMemoryStore {
                     inserted: false,
                 });
             }
+        }
+        // One `delivery_failed` per request, as org-office's unique index on `reply_to` for
+        // that kind has it: a second one under another id is refused and writes nothing.
+        let header = &new.message.header;
+        if header.kind == KIND_DELIVERY_FAILED
+            && header.reply_to.is_some()
+            && data.rows.values().any(|stored| {
+                let existing = &stored.message.header;
+                existing.kind == KIND_DELIVERY_FAILED && existing.reply_to == header.reply_to
+            })
+        {
+            return Err(StoreError::AlreadyExists);
         }
         let sequence = data
             .sequence
@@ -217,6 +236,7 @@ impl MessageStore for InMemoryStore {
             .iter()
             .filter(|stored| expired(&stored.message.header, now))
             .map(|stored| stored.message.header.id.clone())
+            .take(MAX_EXPIRED_IDS)
             .collect();
         let message = matching
             .into_iter()
@@ -303,6 +323,149 @@ impl MessageStore for InMemoryStore {
     }
 }
 
+impl TriageStore for InMemoryStore {
+    fn update_state_local(
+        &self,
+        change: LocalStateTransition,
+    ) -> Result<MessageHeader, StoreError> {
+        let mut data = lock(&self.0);
+        let header = &mut data
+            .rows
+            .get_mut(&change.id)
+            .filter(|stored| stored.message.header.to_member_id == change.to_member_id)
+            .ok_or(StoreError::NotFound)?
+            .message
+            .header;
+        let open_states = matches!(header.state, State::Unread | State::Read | State::Snoozed);
+        match (header.state, change.state) {
+            (_, State::Snoozed) if open_states => {
+                if change.snoozed_until.is_some() == change.snooze_after_task {
+                    return Err(StoreError::InvalidTransition);
+                }
+                header.state = State::Snoozed;
+                header.read_at = None;
+                header.snoozed_until = change.snoozed_until;
+                header.snooze_after_task = change.snooze_after_task;
+                header.snooze_note = change.reason;
+                header.triage_gen += 1;
+            }
+            (State::Done, State::Done)
+            | (State::Read, State::Read)
+            | (State::Expired, State::Expired) => {}
+            (State::Unread | State::Read | State::Snoozed, State::Done)
+            | (State::Unread | State::Snoozed, State::Read | State::Expired) => {
+                if change.state == State::Read {
+                    header.read_at = Some(change.now_utc);
+                }
+                header.state = change.state;
+                clear_snooze(header);
+            }
+            // The flag is set only on an unread message: never reopen a read one for it.
+            (State::Read, State::Unread) if change.expired_waiting_person => {
+                return Err(StoreError::InvalidTransition)
+            }
+            (State::Read | State::Unread, State::Unread) => {
+                header.state = State::Unread;
+                header.read_at = None;
+                header.expired_waiting_person |= change.expired_waiting_person;
+            }
+            _ => return Err(StoreError::InvalidTransition),
+        }
+        let header = header.clone();
+        if change.state == State::Snoozed {
+            data.triaged.insert(change.id);
+        }
+        Ok(header)
+    }
+
+    fn check_notify(
+        &self,
+        member: &str,
+        after_task: bool,
+        urgent_only: bool,
+        sweep_before: &str,
+        now: &str,
+    ) -> Result<Vec<NotifyCandidate>, StoreError> {
+        let mut data = lock(&self.0);
+        let Data { rows, triaged, .. } = &mut *data;
+        let now = parse_utc(now);
+        let sweep_before = parse_utc(sweep_before);
+        let mut candidates = Vec::new();
+        for stored in rows.values_mut() {
+            let header = &mut stored.message.header;
+            if header.to_member_id != member {
+                continue;
+            }
+            let reason = if header.state == State::Snoozed {
+                // An unreadable `snoozed_until` is released as due rather than stranded, as
+                // the port's contract has it. An unreadable `now` releases every time snooze
+                // too: that part is this store's own choice.
+                let due = header.snoozed_until.as_deref().is_some_and(|until| {
+                    match (parse_utc(until), now) {
+                        (Some(until), Some(now)) => until <= now,
+                        _ => true,
+                    }
+                });
+                let reason = if due {
+                    NotifyReason::Due
+                } else if after_task && header.snooze_after_task {
+                    NotifyReason::AfterTask
+                } else {
+                    continue;
+                };
+                header.state = State::Unread;
+                header.triage_gen += 1;
+                clear_snooze(header);
+                reason
+            } else if open(header) {
+                if after_task || header.urgent {
+                    NotifyReason::New
+                } else if !triaged.contains(&header.id)
+                    && matches!(
+                        (parse_utc(&header.created_at), sweep_before),
+                        (Some(created), Some(before)) if created < before
+                    )
+                {
+                    NotifyReason::Sweep
+                } else {
+                    continue;
+                }
+            } else {
+                continue;
+            };
+            if !urgent_only || header.urgent {
+                candidates.push(NotifyCandidate {
+                    header: header.clone(),
+                    reason,
+                });
+            }
+        }
+        Ok(candidates)
+    }
+
+    fn list_active_snooze_deadlines(&self) -> Result<Vec<SnoozeDeadline>, StoreError> {
+        Ok(lock(&self.0)
+            .rows
+            .values()
+            .map(|stored| &stored.message.header)
+            .filter(|header| header.state == State::Snoozed)
+            .filter_map(|header| {
+                Some(SnoozeDeadline {
+                    at_utc: header.snoozed_until.clone()?,
+                    to_member_id: header.to_member_id.clone(),
+                    id: header.id.clone(),
+                })
+            })
+            .collect())
+    }
+}
+
+fn clear_snooze(header: &mut MessageHeader) {
+    header.snoozed_until = None;
+    header.snooze_after_task = false;
+    header.snooze_note = None;
+}
+
 fn snoozed(header: &MessageHeader) -> bool {
     header.state == State::Snoozed || header.snoozed_until.is_some() || header.snooze_after_task
 }
@@ -311,18 +474,14 @@ fn open(header: &MessageHeader) -> bool {
     header.state == State::Unread && !snoozed(header)
 }
 
-/// Past its deadline plus the bounded skew grace (a quarter of the ttl, at most 2 s).
+/// Past its deadline plus the bounded skew grace ([`past_deadline`]), unless it's a person's
+/// ask flagged `expired_waiting_person`. An unreadable `now` counts a deadline as passed.
 fn expired(header: &MessageHeader, now: &str) -> bool {
-    if header.expired_waiting_person {
-        return false;
-    }
-    let Some(expires_at) = header.expires_at.as_deref() else {
-        return false;
-    };
-    let (Some(deadline), Some(now)) = (parse_utc(expires_at), parse_utc(now)) else {
-        return true;
-    };
-    now >= deadline.saturating_add((header.ttl_ms.unwrap_or(0) / 4).min(2000))
+    !header.expired_waiting_person
+        && match parse_utc(now) {
+            Some(now) => past_deadline(header, now),
+            None => header.expires_at.is_some(),
+        }
 }
 
 #[cfg(test)]
@@ -338,6 +497,10 @@ mod conformance {
     }
 
     crate::mailbox_conformance_tests!(open);
+
+    mod triage {
+        crate::triage_conformance_tests!(super::open);
+    }
 
     /// A retry by exact recipient id still returns the first result after the recipient
     /// left the directory; by handle it must resolve again, so it is `unknown_recipient`.

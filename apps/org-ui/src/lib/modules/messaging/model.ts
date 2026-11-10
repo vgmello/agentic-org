@@ -290,7 +290,7 @@ export const SLASH_COMMANDS: { name: SlashName; usage: string; help: string }[] 
 	{ name: 'remind', usage: '/remind [in 30m] [what]', help: 'Remind you about this conversation' }
 ];
 
-export type Slash = { ok: true; name: SlashName; args: string; handle?: string; rest: string } | { ok: false; message: string };
+export type Slash = { ok: true; name: SlashName; args: string; handle?: string; rest: string } | { ok: false; message: string; unknown?: true };
 
 /** Edit distance, for catching a mistyped command. */
 function editDistance(a: string, b: string): number {
@@ -307,16 +307,17 @@ function editDistance(a: string, b: string): number {
 	return row[b.length];
 }
 
-/** A message that starts with `/` is a command for people. `undefined` when it is not one (an unknown `/word` is plain text). */
+/** A leading standalone `/word` is a command for people. Unknown words need correction or explicit literal sending; leading whitespace and paths are plain text. */
 export function parseSlash(text: string): Slash | undefined {
-	const m = /^\/([a-z]+)(?:\s+([\s\S]*))?$/.exec(text.trimStart());
+	const m = /^\/([a-z0-9-]+)(?:\s+([\s\S]*))?$/i.exec(text);
 	if (!m) return undefined;
-	const cmd = SLASH_COMMANDS.find((c) => c.name === m[1]);
+	const name = m[1].toLowerCase();
+	const cmd = SLASH_COMMANDS.find((c) => c.name === name);
 	if (!cmd) {
 		// A leading /word is a command; keep unknown commands in the composer for correction.
 		const sorted = (t: string) => [...t].sort().join('');
-		const near = SLASH_COMMANDS.find((c) => editDistance(c.name, m[1]) <= 1 || sorted(c.name) === sorted(m[1]));
-		return near ? { ok: false, message: `There is no /${m[1]} command. Did you mean /${near.name}?` } : { ok: false, message: `No command /${m[1]}.` };
+		const near = SLASH_COMMANDS.find((c) => editDistance(c.name, name) <= 1 || sorted(c.name) === sorted(name));
+		return { ok: false, unknown: true, message: `No command /${m[1]}.${near ? ` Did you mean /${near.name}?` : ''}` };
 	}
 	const args = (m[2] ?? '').trim();
 	const who = /^@([\w-]+)\s*([\s\S]*)$/.exec(args);
@@ -327,8 +328,8 @@ export function parseSlash(text: string): Slash | undefined {
 
 /** Matches for a half-typed command: `/b` lists `/bug`. */
 export const slashSuggestions = (text: string) => {
-	const m = /^\/([a-z]*)$/.exec(text);
-	return m ? SLASH_COMMANDS.filter((c) => c.name.startsWith(m[1])) : [];
+	const m = /^\/([a-z]*)$/i.exec(text);
+	return m ? SLASH_COMMANDS.filter((c) => c.name.startsWith(m[1].toLowerCase())) : [];
 };
 
 /** "in 30m", "in 2h", "in 1d" to milliseconds. */
