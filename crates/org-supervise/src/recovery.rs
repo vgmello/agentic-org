@@ -21,7 +21,7 @@ mod startup;
 
 pub(crate) use scan::fixed_point;
 pub use scan::{ScanFailure, ScanPass, ScanPort, ScanRequest};
-pub use startup::{recover_startup, RecoveryBatch, RecoveryGone};
+pub use startup::{recover_record, recover_startup, RecoveryBatch, RecoveryGone};
 
 use std::collections::BTreeSet;
 use std::io;
@@ -181,6 +181,9 @@ pub trait RecoveryRecords {
     type Key;
     /// Read pending records. Read failure aborts before any process operation.
     fn pending(&mut self) -> io::Result<Vec<(Self::Key, RecoveryRecord)>>;
+    /// Read one current record and its full saved inventory under the caller's
+    /// cleanup lock. None means the record is missing, never that its processes exited.
+    fn load(&mut self, key: &Self::Key, deadline: Instant) -> io::Result<Option<RecoveryRecord>>;
 }
 
 /// Consumer-owned durable write-ahead inventory port. Slice 4a implements only a fake;
@@ -194,6 +197,7 @@ pub trait RecoveryRecords {
 /// impl RecoveryRecords for OfficeStore {
 ///     type Key = u64;
 ///     fn pending(&mut self) -> io::Result<Vec<(u64, RecoveryRecord)>> { unimplemented!() }
+///     fn load(&mut self, _: &u64, _: Instant) -> io::Result<Option<RecoveryRecord>> { unimplemented!() }
 /// }
 /// impl RecoveryCheckpoint for OfficeStore {
 ///     fn checkpoint(&mut self, _: &u64, _: &str, _: &[CheckpointTarget], _: Instant)
@@ -203,7 +207,8 @@ pub trait RecoveryRecords {
 pub trait RecoveryCheckpoint: RecoveryRecords {
     /// Atomically and durably union this cumulative inventory into the existing
     /// matching key/mark, before returning success. Retain all earlier entries until
-    /// the row is retired with Gone. Refuse a stale key/mark, overflow or deadline.
+    /// the row is retired with Gone. Refuse a stale key/mark or an inventory that
+    /// omits any existing saved entry, overflow or deadline.
     /// Never create/replace/release a row, release a lock, or change its generation.
     /// Pending reads must restore the union after a crash. An ambiguous write error
     /// permits no signal; retry by reloading the durable record.

@@ -96,7 +96,9 @@ No changes to `org-runtime` or adoption by the host are part of this delivery.
 
 `recovery::recover_startup` reads a consumer-owned `RecoveryRecords` port and uses
 `RecoveryCheckpoint` for durable target inventory. It never retires a storage row,
-writes SQL or releases a session lock. The caller excludes
+writes SQL or releases a session lock. A live cleanup worker whose probe handle
+is gone calls `recovery::recover_record` by key; each attempt reads only that row
+and its current saved inventory, then uses the same policy as startup. The caller excludes
 concurrent spawning with the same mark. A mark-only record covers a crash before
 identity persistence. A matching recorded leader receives TERM and up to five
 seconds to exit; captured surviving descendants are checked/killed individually.

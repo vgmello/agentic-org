@@ -204,6 +204,43 @@ pub fn recover_startup<R: RecoveryCheckpoint>(
     recover_with_scan(records, ops, &mut super::scan::MarkedScan, deadline)
 }
 
+/// Recover one existing row from a live cleanup worker after its handle is gone.
+/// Reload the durable inventory every call; do not sweep other pending records.
+/// The caller holds the record's cleanup lock through recovery and outcome commit,
+/// and must bind the returned mark before retiring the row. The same checked process
+/// policy and final-empty proof used at startup apply here.
+pub fn recover_record<R: RecoveryCheckpoint>(
+    records: &mut R,
+    key: &R::Key,
+    ops: &mut dyn RecoveryProcesses,
+    deadline: Instant,
+) -> Result<RecoveryGone, ScanFailure> {
+    let before_scan = |error| ScanFailure {
+        error,
+        report: RecoveryReport::default(),
+    };
+    check_deadline(ops, deadline).map_err(before_scan)?;
+    let record = records
+        .load(key, deadline)
+        .map_err(before_scan)?
+        .ok_or_else(|| {
+            before_scan(io::Error::new(
+                io::ErrorKind::NotFound,
+                "recovery record missing",
+            ))
+        })?;
+    let context = checked_context(ops).map_err(before_scan)?;
+    recover_loaded(
+        records,
+        key,
+        record,
+        &context,
+        ops,
+        &mut super::scan::MarkedScan,
+        deadline,
+    )
+}
+
 pub(super) fn recover_with_scan<R: RecoveryCheckpoint>(
     records: &mut R,
     ops: &mut dyn RecoveryProcesses,
@@ -217,49 +254,54 @@ pub(super) fn recover_with_scan<R: RecoveryCheckpoint>(
         unresolved: vec![],
     };
     for (key, record) in pending {
-        let mut report = RecoveryReport::default();
-        let mut inventory = Journal::new(records, &key, &record);
-        let leader = stop_recorded(
-            &record,
-            &context,
-            ops,
-            deadline,
-            &mut report,
-            &mut inventory,
-        );
-        if leader.is_err() {
-            inventory.refuse_signals();
-        }
-        let scan_result = fixed_point(
-            record.mark(),
-            None,
-            record.tool_sessions(),
-            ops,
-            scan,
-            deadline,
-            &mut inventory,
-        );
-        let failure = match scan_result {
-            Ok(scan_report) => {
-                report.append(scan_report);
-                leader.err()
-            }
-            Err(failure) => {
-                report.append(failure.report);
-                leader.err().or(Some(failure.error))
-            }
-        };
-        if let Some(error) = failure {
-            batch.unresolved.push((key, ScanFailure { error, report }));
-        } else {
-            batch.gone.push((
-                key,
-                RecoveryGone {
-                    mark: record.mark,
-                    report,
-                },
-            ));
+        match recover_loaded(records, &key, record, &context, ops, scan, deadline) {
+            Ok(gone) => batch.gone.push((key, gone)),
+            Err(failure) => batch.unresolved.push((key, failure)),
         }
     }
     Ok(batch)
+}
+
+fn recover_loaded<R: RecoveryCheckpoint>(
+    records: &mut R,
+    key: &R::Key,
+    record: RecoveryRecord,
+    context: &RecoveryContext,
+    ops: &mut dyn RecoveryProcesses,
+    scan: &mut dyn ScanPort,
+    deadline: Instant,
+) -> Result<RecoveryGone, ScanFailure> {
+    let mut report = RecoveryReport::default();
+    let mut inventory = Journal::new(records, key, &record);
+    let leader = stop_recorded(&record, context, ops, deadline, &mut report, &mut inventory);
+    if leader.is_err() {
+        inventory.refuse_signals();
+    }
+    let scan_result = fixed_point(
+        record.mark(),
+        None,
+        record.tool_sessions(),
+        ops,
+        scan,
+        deadline,
+        &mut inventory,
+    );
+    let failure = match scan_result {
+        Ok(scan_report) => {
+            report.append(scan_report);
+            leader.err()
+        }
+        Err(failure) => {
+            report.append(failure.report);
+            leader.err().or(Some(failure.error))
+        }
+    };
+    if let Some(error) = failure {
+        Err(ScanFailure { error, report })
+    } else {
+        Ok(RecoveryGone {
+            mark: record.mark,
+            report,
+        })
+    }
 }

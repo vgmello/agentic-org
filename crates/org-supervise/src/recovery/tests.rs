@@ -51,6 +51,8 @@ fn record(leader: bool) -> RecoveryRecord {
 struct Records {
     rows: Vec<(u32, RecoveryRecord)>,
     fail: bool,
+    load_failure: bool,
+    loaded: Vec<u32>,
     checkpoint_failure: bool,
     checkpoint_failure_at: Option<usize>,
     checkpoints: usize,
@@ -64,6 +66,17 @@ impl RecoveryRecords for Records {
         } else {
             Ok(self.rows.clone())
         }
+    }
+    fn load(&mut self, key: &u32, _: Instant) -> io::Result<Option<RecoveryRecord>> {
+        self.loaded.push(*key);
+        if self.load_failure {
+            return Err(io::Error::other("single-record read failed"));
+        }
+        Ok(self
+            .rows
+            .iter()
+            .find(|(id, _)| id == key)
+            .map(|(_, row)| row.clone()))
     }
 }
 impl RecoveryCheckpoint for Records {
@@ -84,10 +97,12 @@ impl RecoveryCheckpoint for Records {
             .iter_mut()
             .find(|(id, row)| id == key && row.mark() == mark)
             .ok_or_else(|| io::Error::other("stale recovery key/mark"))?;
-        assert!(
-            row.1.inventory.iter().all(|old| inventory.contains(old)),
-            "inventory shrank"
-        );
+        if !row.1.inventory.iter().all(|old| inventory.contains(old)) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "stale recovery inventory",
+            ));
+        }
         row.1.inventory = inventory.to_vec();
         *self.committed.borrow_mut() = inventory.to_vec();
         Ok(())
@@ -1328,4 +1343,55 @@ fn recovery_unreadable_identity_cannot_hide_reported_cycle() {
     assert!(batch.gone.is_empty());
     assert!(ops.signals().is_empty());
     assert_eq!(store.checkpoints, 0);
+}
+
+#[test]
+fn recovery_live_worker_reloads_only_one_record_across_retries() {
+    let mut store = records(false);
+    store.fail = true; // the startup pending sweep is unavailable to a live cleanup worker
+    store.rows.push((
+        8,
+        RecoveryRecord::new("other".into(), None, vec![]).unwrap(),
+    ));
+    let mut ops = Processes::new(vec![
+        marked(200),
+        process(201, 200, MarkEvidence::Absent),
+        process(300, 1, MarkEvidence::Present("other".into())),
+    ]);
+    ops.checkpoint_checks = Some(store.committed.clone());
+    ops.signal_failure = Some(201);
+    let deadline = ops.deadline();
+    assert!(recover_record(&mut store, &7, &mut ops, deadline).is_err());
+    assert_eq!(store.rows[0].1.inventory().len(), 2);
+    ops.signal_failure = None;
+    let deadline = ops.deadline();
+    let gone = recover_record(&mut store, &7, &mut ops, deadline).unwrap();
+    assert_eq!(gone.mark(), MARK);
+    assert_eq!(store.loaded, [7, 7]);
+    assert_eq!(ops.live.iter().map(|p| p.pid).collect::<Vec<_>>(), [300]);
+    assert_eq!(store.rows.len(), 2);
+    assert!(store.rows[1].1.inventory().is_empty());
+}
+
+#[test]
+fn recovery_live_worker_missing_or_unreadable_record_cannot_authorize_signals() {
+    for read_failure in [false, true] {
+        let mut store = records(false);
+        store.load_failure = read_failure;
+        let mut ops = Processes::new(vec![marked(200)]);
+        let deadline = ops.deadline();
+        let key = if read_failure { 7 } else { 8 };
+        let failure = recover_record(&mut store, &key, &mut ops, deadline).unwrap_err();
+        assert_eq!(
+            failure.error.kind(),
+            if read_failure {
+                io::ErrorKind::Other
+            } else {
+                io::ErrorKind::NotFound
+            }
+        );
+        assert_eq!(store.loaded, [key]);
+        assert_eq!(store.checkpoints, 0);
+        assert!(ops.actions.is_empty());
+    }
 }
