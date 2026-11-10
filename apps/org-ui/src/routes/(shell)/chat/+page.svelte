@@ -359,9 +359,20 @@
 		if (dmOpen) dmDialog?.dismiss();
 		commandOpen = false;
 	});
-	const openChannelDialog = (mode: typeof channelMode) => ((channelMode = mode), (channelOpen = true));
+	function openChannelDialog(mode: typeof channelMode) {
+		if (!officeRunning) return;
+		channelMode = mode;
+		channelOpen = true;
+	}
+	function openDmDialog() {
+		if (officeRunning) dmOpen = true;
+	}
+	function requireRunningOffice() {
+		if (!officeRunning) throw new Error("The office isn't running. Restart it from Offices.");
+	}
 
 	async function channelSubmit(r: { name: string; members: string[] }) {
+		requireRunningOffice();
 		if (channelMode === 'create') {
 			const accepted = await send({ method: 'channel.create', name: r.name, members: r.members });
 			await load();
@@ -376,6 +387,7 @@
 		}
 	}
 	async function dmSubmit(ids: string[]) {
+		requireRunningOffice();
 		const accepted = await send({ method: 'dm.open', members: ids });
 		await load();
 		if (accepted.conversation_id) select({ type: 'conversation', id: accepted.conversation_id });
@@ -413,7 +425,7 @@
 	{:else if !chatState || !bar}
 		<p class="m-8 text-sm/6 text-gray-400" role="status">Loading chat…</p>
 	{:else}
-		<ChatSidebar {bar} {view} {ctx} onselect={select} onnewchannel={() => openChannelDialog('create')} onnewmessage={() => (dmOpen = true)} />
+		<ChatSidebar {bar} {view} {ctx} {officeRunning} onselect={select} onnewchannel={() => openChannelDialog('create')} onnewmessage={openDmDialog} />
 
 		<section class="flex min-w-0 flex-1 flex-col" aria-label="Conversation">
 			<div class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-3">
@@ -550,7 +562,7 @@
 				{#snippet undelivered()}{@render undeliveredRows(pending.filter((p) => p.thread_root_id === root.id), true)}{/snippet}
 			</ThreadPanel>
 		{:else if showMembers && conversation}
-			<MembersPanel {conversation} {ctx} {chatState} {officeRunning} projectName={followsWords} onclose={() => (showMembers = false)} onmute={(id, mode) => muteIn(conversation.id, id, mode)} onrename={() => openChannelDialog('rename')} onaddpeople={() => openChannelDialog('members')} onremove={(id) => void act({ method: 'channel.remove_member', id: conversation.id, member_id: id })} onarchive={() => void act({ method: 'channel.archive', id: conversation.id }, `#${conversation.name} is archived.`)} />
+			<MembersPanel {conversation} {ctx} {chatState} {officeRunning} projectName={followsWords} onclose={() => (showMembers = false)} onmute={(id, mode) => muteIn(conversation.id, id, mode)} onrename={() => openChannelDialog('rename')} onaddpeople={() => openChannelDialog('members')} onremove={(id) => { if (officeRunning) void act({ method: 'channel.remove_member', id: conversation.id, member_id: id }); }} onarchive={() => { if (officeRunning) void act({ method: 'channel.archive', id: conversation.id }, `#${conversation.name} is archived.`); }} />
 		{/if}
 	{/if}
 </div>

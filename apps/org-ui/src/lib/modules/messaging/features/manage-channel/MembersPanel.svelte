@@ -67,16 +67,16 @@
 						</select>
 					{/if}
 					{#if editable && !m.owner}
-						<Button type="button" variant="ghost" size="xs" aria-label="Remove {m.name} from the channel" onclick={() => onremove(m.id)}>Remove</Button>
+						<Button type="button" variant="ghost" size="xs" disabled={!officeRunning} aria-label="Remove {m.name} from the channel" onclick={() => onremove(m.id)}>Remove</Button>
 					{/if}
 				</li>
 			{/each}
 		</ul>
 		{#if editable}
 			<div class="flex flex-wrap gap-2">
-				<Button type="button" size="sm" variant="outline" onclick={onaddpeople}>Add people…</Button>
-				<Button type="button" size="sm" variant="outline" onclick={onrename}>Rename…</Button>
-				<Button type="button" size="sm" variant="outline" onclick={onarchive}>Archive</Button>
+				<Button type="button" size="sm" variant="outline" disabled={!officeRunning} onclick={onaddpeople}>Add people…</Button>
+				<Button type="button" size="sm" variant="outline" disabled={!officeRunning} onclick={onrename}>Rename…</Button>
+				<Button type="button" size="sm" variant="outline" disabled={!officeRunning} onclick={onarchive}>Archive</Button>
 			</div>
 		{/if}
 		<p class="text-xs/5 text-gray-400">Muting keeps an agent's messages out of this conversation. They still reach Activity.</p>
