@@ -1,0 +1,12 @@
+[package]
+name = "org-host-control"
+description = "The private contract between org-office-host and its two other parties, org-gateway (the control connection) and agentic-org (host.sock): sessions, grants, host operations and the gateway's rendezvous lines."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+org-proto = { path = "../org-proto" }
+serde.workspace = true
+serde_json.workspace = true

@@ -234,6 +234,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "org-host-control"
+version = "0.0.0"
+dependencies = [
+ "org-proto",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "org-mailbox"
 version = "0.0.0"
 dependencies = [

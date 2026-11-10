@@ -1,0 +1,59 @@
+//! The secret newtypes of this contract (X-02 §6.5). Each wraps `org-proto`'s [`SecretText`]: it
+//! decodes straight from the JSON string, its `Debug` is redacted, it isn't `Clone`, and its bytes
+//! are zeroed on drop. Decode errors never quote the value. As for every secret here, copies in
+//! serde's and the transport's buffers survive; see `org_proto`'s `AppToken` docs.
+
+use org_proto::gateway::SecretText;
+use serde::{Deserialize, Serialize};
+
+macro_rules! secret_text {
+    ($(#[$doc:meta])* $name:ident) => {
+        $(#[$doc])*
+        #[derive(Serialize, Deserialize)]
+        #[serde(transparent)]
+        pub struct $name(SecretText);
+
+        impl $name {
+            /// Wrap a non-empty secret.
+            pub fn new(text: String) -> Result<Self, &'static str> {
+                SecretText::new(text).map($name)
+            }
+
+            /// The secret, for the one use it has. Never log or format it.
+            pub fn expose(&self) -> &str {
+                self.0.expose()
+            }
+        }
+
+        impl std::fmt::Debug for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(concat!(stringify!($name), "(<redacted>)"))
+            }
+        }
+    };
+}
+
+secret_text!(
+    /// A password, as typed: `account.verify`, `account.set_password` and
+    /// `account.reset_password`. The host hashes it with Argon2id and keeps nothing else.
+    Password
+);
+
+secret_text!(
+    /// A sign-in session's handle: an opaque 256-bit value the host issues from
+    /// `account.verify`, and the only way a host op names its actor. Distinct from the
+    /// non-secret `session_id` that grants and revocations carry.
+    SessionHandle
+);
+
+secret_text!(
+    /// The TLS private key (PEM), in `tls.fetch`'s result and `tls.set`'s params. The host keeps it
+    /// in its credential provider, never on disk in the clear.
+    TlsPrivateKey
+);
+
+secret_text!(
+    /// An organization's recovery code (X-02 §6.4), in `recovery.release`'s result: shown once,
+    /// printed only to a TTY, never in JSON status output or logs.
+    RecoveryCode
+);

@@ -1,0 +1,150 @@
+{
+  "schema_version": 1,
+  "comment": "X-02 §6.3: the host's op journal compares a request with the stored op by fingerprint (SHA-256 of method || 0x00 || the params without session and operation_id) and by account. Same operation_id, fingerprint and account: replay. Same operation_id with another fingerprint or account: operation_reused. fingerprint_input is the exact bytes hashed, as UTF-8. A secret (account.create's password) is never part of the fingerprint.",
+  "cases": [
+    {
+      "name": "the same op after a new sign-in by the same account replays",
+      "method": "organization.create",
+      "stored": {
+        "account": "01M72N8MG00000000000000A01",
+        "params": {
+          "session": "session-handle-one",
+          "operation_id": "01M72N8MG00000000000000H01",
+          "name": "Platform"
+        }
+      },
+      "retry": {
+        "account": "01M72N8MG00000000000000A01",
+        "params": {
+          "session": "session-handle-two",
+          "operation_id": "01M72N8MG00000000000000H01",
+          "name": "Platform"
+        }
+      },
+      "fingerprint_input": "organization.create\u0000{\"name\":\"Platform\"}",
+      "expect": "replay"
+    },
+    {
+      "name": "the same op id from another account is reused",
+      "method": "organization.create",
+      "stored": {
+        "account": "01M72N8MG00000000000000A01",
+        "params": {
+          "session": "session-handle-one",
+          "operation_id": "01M72N8MG00000000000000H01",
+          "name": "Platform"
+        }
+      },
+      "retry": {
+        "account": "01M72N8MG00000000000000A02",
+        "params": {
+          "session": "session-handle-three",
+          "operation_id": "01M72N8MG00000000000000H01",
+          "name": "Platform"
+        }
+      },
+      "fingerprint_input": "organization.create\u0000{\"name\":\"Platform\"}",
+      "expect": "operation_reused"
+    },
+    {
+      "name": "the same op id with other params is reused",
+      "method": "organization.create",
+      "stored": {
+        "account": "01M72N8MG00000000000000A01",
+        "params": {
+          "session": "session-handle-one",
+          "operation_id": "01M72N8MG00000000000000H01",
+          "name": "Platform"
+        }
+      },
+      "retry": {
+        "account": "01M72N8MG00000000000000A01",
+        "params": {
+          "session": "session-handle-one",
+          "operation_id": "01M72N8MG00000000000000H01",
+          "name": "Platforms"
+        }
+      },
+      "fingerprint_input": "organization.create\u0000{\"name\":\"Platform\"}",
+      "expect": "operation_reused"
+    },
+    {
+      "name": "an office restart after a new sign-in replays",
+      "method": "office.restart",
+      "stored": {
+        "account": "01M72N8MG00000000000000A01",
+        "params": {
+          "session": "session-handle-one",
+          "operation_id": "01M72N8MG00000000000000H02",
+          "office_id": "01M72N8MG00000000000000F01"
+        }
+      },
+      "retry": {
+        "account": "01M72N8MG00000000000000A01",
+        "params": {
+          "session": "session-handle-two",
+          "operation_id": "01M72N8MG00000000000000H02",
+          "office_id": "01M72N8MG00000000000000F01"
+        }
+      },
+      "fingerprint_input": "office.restart\u0000{\"office_id\":\"01M72N8MG00000000000000F01\"}",
+      "expect": "replay"
+    },
+    {
+      "name": "an account create retried with another password is the same op, and the password isn't fingerprinted",
+      "method": "account.create",
+      "stored": {
+        "account": "01M72N8MG00000000000000A01",
+        "params": {
+          "session": "session-handle-one",
+          "operation_id": "01M72N8MG00000000000000H07",
+          "login": "sam",
+          "password": "first-password",
+          "admin": false,
+          "owner_of": "01M72N8MG00000000000000G01"
+        }
+      },
+      "retry": {
+        "account": "01M72N8MG00000000000000A01",
+        "params": {
+          "session": "session-handle-two",
+          "operation_id": "01M72N8MG00000000000000H07",
+          "login": "sam",
+          "password": "second-password",
+          "admin": false,
+          "owner_of": "01M72N8MG00000000000000G01"
+        }
+      },
+      "fingerprint_input": "account.create\u0000{\"login\":\"sam\",\"admin\":false,\"owner_of\":\"01M72N8MG00000000000000G01\"}",
+      "expect": "replay"
+    },
+    {
+      "name": "an account create for another organization is reused",
+      "method": "account.create",
+      "stored": {
+        "account": "01M72N8MG00000000000000A01",
+        "params": {
+          "session": "session-handle-one",
+          "operation_id": "01M72N8MG00000000000000H07",
+          "login": "sam",
+          "password": "first-password",
+          "admin": false,
+          "owner_of": "01M72N8MG00000000000000G01"
+        }
+      },
+      "retry": {
+        "account": "01M72N8MG00000000000000A01",
+        "params": {
+          "session": "session-handle-one",
+          "operation_id": "01M72N8MG00000000000000H07",
+          "login": "sam",
+          "password": "first-password",
+          "admin": false,
+          "owner_of": "01M72N8MG00000000000000G02"
+        }
+      },
+      "fingerprint_input": "account.create\u0000{\"login\":\"sam\",\"admin\":false,\"owner_of\":\"01M72N8MG00000000000000G01\"}",
+      "expect": "operation_reused"
+    }
+  ]
+}
