@@ -59,7 +59,7 @@ pub(crate) struct Ingest {
 }
 
 impl Ingest {
-    /// Complete startup ingest synchronously, before the server accepts connections or Ready.
+    /// Run one bounded startup pass before accepting connections or Ready.
     pub(crate) fn start(folder: &Path, mailbox: Arc<Mailbox>) -> std::io::Result<Self> {
         let mut drainer = office_ingest::Drain::default();
         pass(&mut drainer, folder, &mailbox)?;
@@ -163,6 +163,58 @@ mod tests {
     }
 
     #[test]
+    fn busy_startup_lock_defers_ingest_until_a_later_pass() {
+        let (dir, mailbox, store) = setup(members());
+        let send = send();
+        let path = place(dir.path(), &send);
+        let lock = fs::File::open(dir.path().join("spool/.meta.lock")).unwrap();
+        lock.lock().unwrap();
+        let ingest = Ingest::start(dir.path(), mailbox.clone()).unwrap();
+        assert!(path.exists());
+        assert!(store.get_message(&send.id).unwrap().is_none());
+        lock.unlock().unwrap();
+        pass(&mut office_ingest::Drain::default(), dir.path(), &mailbox).unwrap();
+        assert!(!path.exists());
+        drop(ingest);
+    }
+
+    #[test]
+    fn startup_runs_one_budget_and_poll_resumes_the_backlog() {
+        let (dir, mailbox, store) = setup(members());
+        office_ingest::Drain::default()
+            .drain(dir.path(), |_, _| panic!("empty"), |_| {})
+            .unwrap();
+        let mut ids = Vec::new();
+        for _ in 0..140 {
+            let mut send = send();
+            send.id = org_spool::generate_ulid();
+            let path = dir
+                .path()
+                .join("spool/new")
+                .join(format!("{}.json", send.id));
+            fs::write(&path, serde_json::to_vec(&send).unwrap()).unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+            ids.push(send.id);
+        }
+        let ingest = Ingest::start(dir.path(), mailbox).unwrap();
+        assert_eq!(
+            ids.iter()
+                .filter(|id| store.get_message(id).unwrap().is_some())
+                .count(),
+            128
+        );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while fs::read_dir(dir.path().join("spool/new")).unwrap().count() != 0 {
+            assert!(Instant::now() < deadline, "poll did not resume backlog");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(ids
+            .iter()
+            .all(|id| store.get_message(id).unwrap().is_some()));
+        drop(ingest);
+    }
+
+    #[test]
     fn startup_and_running_ingest_and_shutdown() {
         let (dir, mailbox, store) = setup(members());
         let first = send();
@@ -262,7 +314,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_envelopes_are_dead_and_transient_routing_stays_new() {
+    fn invalid_envelopes_and_cross_office_routing_are_refused() {
         let (dir, mailbox, store) = setup(members());
         let base = serde_json::to_value(send()).unwrap();
         let mut rejected = 0;
@@ -305,9 +357,11 @@ mod tests {
         far.to = FAR_HANDLE.into();
         let path = place(dir.path(), &far);
         pass(&mut office_ingest::Drain::default(), dir.path(), &mailbox).unwrap();
-        assert!(
-            path.exists(),
-            "routing unavailability must remain retryable"
+        assert!(!path.exists(), "cross-office routing must be refused");
+        assert!(store.get_message(&far.id).unwrap().is_none());
+        assert_eq!(
+            fs::read_dir(dir.path().join("spool/dead")).unwrap().count(),
+            rejected + 2
         );
     }
 }

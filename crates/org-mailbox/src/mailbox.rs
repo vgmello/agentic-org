@@ -10,7 +10,6 @@ use org_proto::msg::{
 };
 use org_proto::{ulid_time_ms, AgentStatus, Member, MemberKind, Position};
 
-#[path = "ingest.rs"]
 mod ingest;
 
 use crate::waiters::{WaitOutcome, WaiterRegistry};

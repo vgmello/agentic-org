@@ -15,7 +15,7 @@
 use std::fmt;
 use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::io::{self, Read, Write};
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -272,12 +272,19 @@ fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        // A link fails if `to` exists. Once it's in place the send will be ingested, so a staged
-        // name that won't go is no error (it holds the same content).
-        fs::hard_link(from, to)?;
-        let _ = fs::remove_file(from);
-        Ok(())
+        link_then_unlink(from, to, |path| fs::remove_file(path))
     }
+}
+
+// Kept platform-independent so the unlink failure is exercised on macOS too.
+#[cfg(any(test, not(target_os = "macos")))]
+fn link_then_unlink(
+    from: &Path,
+    to: &Path,
+    unlink: impl FnOnce(&Path) -> io::Result<()>,
+) -> io::Result<()> {
+    fs::hard_link(from, to)?;
+    unlink(from)
 }
 
 /// The office's ingest applies every `msg.send` rule to a spooled send (`SpooledSend`), plus
@@ -375,7 +382,7 @@ fn real_dir(path: &Path) -> Result<bool, SpoolSendError> {
 }
 
 /// Makes `dir` (`0700`) if it's missing; refuses anything there that isn't a real folder of
-/// this user, and makes it owner-only.
+/// this user with exactly 0700 permissions, matching the office's policy.
 fn owner_only_dir(dir: &Path) -> Result<(), SpoolSendError> {
     match DirBuilder::new().mode(0o700).create(dir) {
         Ok(()) => {}
@@ -383,11 +390,11 @@ fn owner_only_dir(dir: &Path) -> Result<(), SpoolSendError> {
         Err(e) => return Err(e.into()),
     }
     let metadata = fs::symlink_metadata(dir)?;
-    if !metadata.file_type().is_dir() || metadata.uid() != effective_uid() {
+    if !metadata.file_type().is_dir()
+        || metadata.uid() != effective_uid()
+        || metadata.mode() & 0o7777 != 0o700
+    {
         return Err(SpoolSendError::NotAFolder(dir.to_path_buf()));
-    }
-    if metadata.permissions().mode() & 0o077 != 0 {
-        fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
     }
     Ok(())
 }
@@ -556,6 +563,34 @@ mod tests {
     }
 
     const MSG: &str = "01MSG0000000000000000000A1";
+
+    #[test]
+    fn publisher_requires_the_same_exact_directory_mode_as_ingest() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("spool");
+        fs::create_dir(&path).unwrap();
+        for mode in [0o500, 0o300, 0o750, 0o1700] {
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+            assert!(matches!(
+                owner_only_dir(&path),
+                Err(SpoolSendError::NotAFolder(_))
+            ));
+        }
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        owner_only_dir(&path).unwrap();
+    }
+
+    #[test]
+    fn linked_publication_reports_a_failed_staged_unlink() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let from = dir.path().join("staged");
+        let to = dir.path().join("placed");
+        fs::write(&from, b"private").unwrap();
+        let error = link_then_unlink(&from, &to, |_| Err(io::ErrorKind::PermissionDenied.into()))
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(fs::metadata(to).unwrap().nlink(), 2);
+    }
 
     #[test]
     fn a_spooled_send_lands_in_the_offices_spool_owner_only() {

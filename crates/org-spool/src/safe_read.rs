@@ -99,6 +99,16 @@ pub(crate) fn office_file_policy(meta: &fs::Metadata, uid: u32) -> Result<(), &'
 }
 
 fn read_checked(path: &Path, max: usize, office: bool, uid: u32) -> io::Result<SpoolFile> {
+    read_checked_before_open(path, max, office, uid, || {})
+}
+
+fn read_checked_before_open(
+    path: &Path,
+    max: usize,
+    office: bool,
+    uid: u32,
+    before_open: impl FnOnce(),
+) -> io::Result<SpoolFile> {
     let before = if office {
         let meta = match fs::symlink_metadata(path) {
             Ok(meta) => meta,
@@ -113,6 +123,7 @@ fn read_checked(path: &Path, max: usize, office: bool, uid: u32) -> io::Result<S
         None
     };
 
+    before_open();
     let file = match OpenOptions::new()
         .read(true)
         .custom_flags(flags::O_NOFOLLOW | flags::O_NONBLOCK | flags::O_CLOEXEC)
@@ -284,6 +295,48 @@ mod tests {
 mod office_tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn replacement_between_lstat_and_open_is_rejected() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("file");
+        fs::write(&path, b"original").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let uid = fs::metadata(&path).unwrap().uid();
+        let error = read_checked_before_open(&path, 512, true, uid, || {
+            fs::rename(&path, dir.path().join("original")).unwrap();
+            fs::write(&path, b"replacement").unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        })
+        .unwrap_err();
+        assert_eq!(error.to_string(), "spool entry changed");
+    }
+
+    #[test]
+    fn fifo_at_open_is_nonblocking_even_without_lstat() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("fifo");
+        let c = CString::new(path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: a NUL-terminated temporary path.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker_path = path.clone();
+        let worker = std::thread::spawn(move || {
+            tx.send(read_spool_file(&worker_path, 512)).unwrap();
+        });
+        let result = rx.recv_timeout(std::time::Duration::from_secs(2));
+        if result.is_err() {
+            // Release a regressed blocking open so the test also terminates on failure.
+            let _ = OpenOptions::new()
+                .write(true)
+                .custom_flags(flags::O_NONBLOCK)
+                .open(&path);
+        }
+        worker.join().unwrap();
+        assert!(matches!(result.unwrap().unwrap(), SpoolFile::Rejected(_)));
+    }
 
     #[test]
     fn wrong_owner_is_refused_even_with_safe_mode_and_type() {

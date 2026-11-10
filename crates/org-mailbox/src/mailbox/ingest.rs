@@ -1,6 +1,6 @@
 //! The unauthenticated offline path, isolated from live connection operations.
-use super::{address, Mailbox};
-use crate::{format_utc, MailboxError};
+use super::{address, send_result, Mailbox};
+use crate::{content_hash, format_utc, MailboxError};
 use org_proto::msg::{MsgSendParams, SendResult, SpooledSend, SPOOL_VERSION};
 use org_proto::{AgentStatus, MemberKind};
 
@@ -12,6 +12,43 @@ impl Mailbox {
             return Err(MailboxError::InvalidRequest);
         }
         let from = address(&send.from)?.ok_or(MailboxError::NotAuthorized)?;
+        // A durable identical replay is a no-op even if the sender was paused or
+        // removed after commit. Handles must still resolve to the original identity.
+        if let Some(stored) = self.store.get_message(&send.id)? {
+            let header = &stored.message.header;
+            let same_sender = from == header.from_member_id
+                || self
+                    .directory
+                    .resolve_member(from)?
+                    .is_some_and(|(m, _)| m.id == header.from_member_id);
+            if !same_sender {
+                return Err(MailboxError::AlreadyExists);
+            }
+            let to = address(&send.to)?.ok_or(MailboxError::UnknownRecipient)?;
+            let to_id = if to == header.to_member_id {
+                header.to_member_id.clone()
+            } else {
+                self.directory
+                    .resolve_member(to)?
+                    .ok_or(MailboxError::UnknownRecipient)?
+                    .0
+                    .id
+            };
+            let hash = content_hash(
+                &to_id,
+                &send.kind,
+                send.priority,
+                send.subject.as_deref(),
+                send.reply_to.as_deref(),
+                &send.body,
+                &send.meta,
+            )?;
+            return if hash == stored.content_hash {
+                Ok(send_result(&stored))
+            } else {
+                Err(MailboxError::AlreadyExists)
+            };
+        }
         if from.starts_with("run:") || from.eq_ignore_ascii_case(org_proto::OWNER_HANDLE) {
             return Err(MailboxError::NotAuthorized);
         }
@@ -26,6 +63,16 @@ impl Mailbox {
             })
         {
             return Err(MailboxError::NotAuthorized);
+        }
+        let to = address(&send.to)?.ok_or(MailboxError::UnknownRecipient)?;
+        let (recipient, _) = self
+            .directory
+            .resolve_member(to)?
+            .ok_or(MailboxError::UnknownRecipient)?;
+        // Offline ingest cannot route to another office. Keep this permanent refusal
+        // distinct from a storage failure; live send's Unavailable remains unchanged.
+        if !self.owns_inbox(&recipient) {
+            return Err(MailboxError::UnknownRecipient);
         }
         let created =
             crate::time::parse_utc(&send.created_at).ok_or(MailboxError::InvalidRequest)?;
@@ -95,6 +142,69 @@ mod tests {
             events.clone(),
         ));
         (mailbox, store, events, clock)
+    }
+
+    #[test]
+    fn cross_office_is_a_permanent_refusal_before_send() {
+        let (mailbox, store, events, _) = setup();
+        let mut far = send();
+        far.to = FAR_HANDLE.into();
+        assert_eq!(
+            mailbox.ingest_spooled(far.clone()),
+            Err(MailboxError::UnknownRecipient)
+        );
+        assert!(store.get_message(&far.id).unwrap().is_none());
+        assert!(events.received().is_empty());
+    }
+
+    #[test]
+    fn replay_after_sender_pause_is_a_noop_but_conflicts_are_refused() {
+        let (mailbox, store, events, clock) = setup();
+        let original = send();
+        let result = mailbox.ingest_spooled(original.clone()).unwrap();
+        let mut roster = members();
+        roster
+            .iter_mut()
+            .find(|m| m.id == ADA_ID)
+            .unwrap()
+            .agent
+            .as_mut()
+            .unwrap()
+            .status = AgentStatus::Paused;
+        let mailbox = Mailbox::new(
+            Arc::new(store),
+            Arc::new(InMemoryDirectory::new(roster, POSITION)),
+            OfficeIdentity {
+                office_id: OFFICE_ID.into(),
+                incarnation: INCARNATION.into(),
+                is_hq: true,
+            },
+            clock,
+            events.clone(),
+        );
+        assert_eq!(mailbox.ingest_spooled(original.clone()).unwrap(), result);
+        assert_eq!(
+            events.received().as_slice(),
+            std::slice::from_ref(&original.id)
+        );
+        let mut conflict = original.clone();
+        conflict.body.push('!');
+        assert_eq!(
+            mailbox.ingest_spooled(conflict),
+            Err(MailboxError::AlreadyExists)
+        );
+        let mut wrong_from = original.clone();
+        wrong_from.from = SHADOW_ID.into();
+        assert_eq!(
+            mailbox.ingest_spooled(wrong_from),
+            Err(MailboxError::AlreadyExists)
+        );
+        let mut new = original;
+        new.id = msg_id(2);
+        assert_eq!(
+            mailbox.ingest_spooled(new),
+            Err(MailboxError::NotAuthorized)
+        );
     }
 
     #[test]
