@@ -7,6 +7,7 @@
 
 pub mod assets;
 pub mod blocking;
+pub mod body;
 mod origin;
 pub mod path;
 pub mod tls;
