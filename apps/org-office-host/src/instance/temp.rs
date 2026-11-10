@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::directory::Directory;
 use super::Error;
@@ -26,16 +26,20 @@ pub(super) fn validate_base(base: &Directory) -> Result<(), Error> {
     }
     #[cfg(target_os = "linux")]
     base.require_disk()?;
+    check_budget(&environment_base(base.path()))
+}
+
+fn environment_base(base: &Path) -> PathBuf {
     #[cfg(target_os = "macos")]
-    let environment_path = if let Ok(suffix) = base.path().strip_prefix("/private/var") {
+    if let Ok(suffix) = base.strip_prefix("/private/var") {
         // The session environment uses DARWIN_USER_TEMP_DIR's /var spelling.
         // Registry/denies retain the canonical /private/var spelling.
-        Path::new("/var").join(suffix)
-    } else {
-        base.path().to_owned()
-    };
-    #[cfg(not(target_os = "macos"))]
-    let environment_path = base.path().to_owned();
+        return Path::new("/var").join(suffix);
+    }
+    base.to_owned()
+}
+
+fn check_budget(environment_path: &Path) -> Result<(), Error> {
     if environment_path
         .join("ao/aaa/aaa/aaaaa/aaa")
         .as_os_str()
@@ -89,6 +93,26 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
+    #[test]
+    fn session_budget_accepts_exactly_71_bytes_and_refuses_72() {
+        assert!(check_budget(Path::new(&format!("/{}", "a".repeat(49)))).is_ok());
+        assert!(check_budget(Path::new(&format!("/{}", "a".repeat(50)))).is_err());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn darwin_environment_uses_var_without_changing_registry_paths() {
+        let canonical = Path::new("/private/var/folders/example/T");
+        assert_eq!(
+            environment_base(canonical),
+            Path::new("/var/folders/example/T")
+        );
+        assert_eq!(canonical, Path::new("/private/var/folders/example/T"));
+        assert_eq!(
+            environment_base(Path::new("/private/various/base")),
+            Path::new("/private/various/base")
+        );
+    }
     fn private_temp() -> tempfile::TempDir {
         let temporary = tempfile::tempdir().unwrap();
         std::fs::set_permissions(temporary.path(), std::fs::Permissions::from_mode(0o700)).unwrap();

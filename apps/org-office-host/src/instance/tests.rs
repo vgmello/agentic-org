@@ -15,13 +15,23 @@ impl Fixture {
         // Canonicalize only this test-owned OS temporary base, before composing owned paths.
         #[cfg(target_os = "macos")]
         let temporary = tempfile::tempdir_in("/private/tmp").unwrap();
-        #[cfg(not(target_os = "macos"))]
-        let temporary = tempfile::tempdir().unwrap();
+        #[cfg(target_os = "linux")]
+        let temporary =
+            {
+                let base = std::env::var_os("ORG_INSTANCE_TEST_DISK_BASE")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("/var/tmp"));
+                tempfile::tempdir_in(&base).unwrap_or_else(|error|
+                panic!("disk fixture base {} unavailable: {error}; set ORG_INSTANCE_TEST_DISK_BASE",
+                       base.display()))
+            };
         let base = temporary.path().canonicalize().unwrap();
         let user_temp = base.join("temp");
         fs::create_dir(&user_temp).unwrap();
         fs::set_permissions(&user_temp, fs::Permissions::from_mode(0o700)).unwrap();
-        let registry = Registry::open(&base.join("locator"), &user_temp).unwrap();
+        let registry = Registry::open(&base.join("locator"), &user_temp).unwrap_or_else(|error|
+            panic!("instance fixture needs a short disk-backed base at {}: {error}; set ORG_INSTANCE_TEST_DISK_BASE",
+                   base.display()));
         Self {
             temporary,
             registry,
@@ -114,10 +124,97 @@ fn same_root_cannot_be_reserved_under_another_name() {
     let locator = fs::read(fixture.locator()).unwrap();
     assert!(matches!(
         fixture.registry.reserve(Some("lab"), first.root()),
-        Err(Error::Conflict(_))
+        Err(Error::ReservedRoot { .. })
     ));
     assert_eq!(fs::read(first.root().join(CONFIG)).unwrap(), original);
     assert_eq!(fs::read(fixture.locator()).unwrap(), locator);
+}
+
+#[test]
+fn an_unavailable_other_instance_does_not_block_default_or_release_its_reservations() {
+    for replaced in [false, true] {
+        let fixture = Fixture::new();
+        let default = fixture.reserve("default");
+        let id = default.id().to_owned();
+        drop(default);
+        let lab = fixture.reserve("lab");
+        drop(lab);
+        let lab_path = fixture.root("lab");
+        let moved = fixture.root("moved-lab");
+        fs::rename(&lab_path, &moved).unwrap();
+        if replaced {
+            fs::create_dir(&lab_path).unwrap();
+            fs::set_permissions(&lab_path, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let reopened = fixture
+            .registry
+            .reserve(None, &fixture.root("default"))
+            .unwrap_or_else(|error| panic!("unrelated lab must not block default: {error}"));
+        assert_eq!(reopened.id(), id);
+        assert!(fixture
+            .registry
+            .reserve(Some("takeover"), &lab_path)
+            .is_err());
+        assert!(fixture.registry.reserve(Some("takeover"), &moved).is_err());
+        let error = match fixture.registry.reserve(Some("lab"), &lab_path) {
+            Err(error) => error.to_string(),
+            Ok(_) => panic!("changed lab root must not be adopted"),
+        };
+        assert!(
+            error.contains("lab") && error.contains(lab_path.to_str().unwrap()),
+            "{error}"
+        );
+        assert!(!error.contains("repair its reservation; repair"), "{error}");
+        assert!(error.contains("agentic-org instance rebind lab"), "{error}");
+    }
+}
+
+#[test]
+fn every_control_symlink_is_refused_without_changing_its_valid_target() {
+    for control in ["instance.json", "instances.json", "registry.lock"] {
+        let fixture = Fixture::new();
+        let instance = fixture.reserve("lab");
+        drop(instance);
+        fixture.reserve("lab").verify().unwrap();
+        let path = if control == CONFIG {
+            fixture.root("lab").join(control)
+        } else {
+            fixture.root("locator").join(control)
+        };
+        let target = fixture.root("target");
+        let before = fs::read(&path).unwrap();
+        fs::rename(&path, &target).unwrap();
+        let inode = fs::metadata(&target).unwrap().ino();
+        symlink(&target, &path).unwrap();
+        assert!(
+            fixture
+                .registry
+                .reserve(Some("lab"), &fixture.root("lab"))
+                .is_err(),
+            "{control}"
+        );
+        assert_eq!(fs::read(&target).unwrap(), before, "{control}");
+        assert_eq!(fs::metadata(&target).unwrap().ino(), inode);
+    }
+}
+
+#[test]
+fn an_empty_locator_still_refuses_a_changed_user_temp_base_with_its_own_diagnostic() {
+    let fixture = Fixture::new();
+    let locator = Locator {
+        version: 1,
+        user_temp: fixture.root("different"),
+        entries: Vec::new(),
+    };
+    let lock = fixture.registry.directory.lock_file(LOCK).unwrap();
+    fixture.registry.save(&locator, &lock).unwrap();
+    drop(lock);
+    let message = match fixture.registry.restore_temp_folders() {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("changed user temp base accepted"),
+    };
+    assert!(message.contains("user temp base"), "{message}");
+    assert!(!message.contains("version or entry count"), "{message}");
 }
 
 #[test]

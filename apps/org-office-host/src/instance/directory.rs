@@ -115,6 +115,10 @@ impl Directory {
     pub(super) fn open(path: &Path, create: bool) -> Result<Self, Error> {
         let path = absolute(path)?;
         let file = Self::walk(&path, create)?;
+        Self::from_file(file, path)
+    }
+
+    fn from_file(file: File, path: PathBuf) -> Result<Self, Error> {
         let metadata = file.metadata()?;
         if metadata.uid() != effective_user() || metadata.mode() & 0o7777 != 0o700 {
             return Err(Error::Unsafe(
@@ -144,9 +148,11 @@ impl Directory {
             if create_final && index + 1 == parts.len() {
                 // SAFETY: the parent fd and NUL-terminated component are valid.
                 let result = unsafe { libc::mkdirat(directory.as_raw_fd(), name.as_ptr(), 0o700) };
-                if result != 0 && io::Error::last_os_error().kind() != io::ErrorKind::AlreadyExists
-                {
-                    return Err(io::Error::last_os_error().into());
+                if result != 0 {
+                    let error = io::Error::last_os_error();
+                    if error.kind() != io::ErrorKind::AlreadyExists {
+                        return Err(error.into());
+                    }
                 }
                 if result == 0 {
                     directory.sync_all()?;
@@ -171,6 +177,42 @@ impl Directory {
         self.identity
     }
 
+    pub(super) fn duplicate_unlocked(&self) -> Result<Self, Error> {
+        if self.locked {
+            return Err(Error::Invalid("cannot duplicate a root lock owner"));
+        }
+        self.verify()?;
+        Self::from_file(self.file.try_clone()?, self.path.clone())
+    }
+
+    pub(super) fn child(&self, name: &str, create: bool) -> Result<Self, Error> {
+        self.verify()?;
+        let component = leaf(name)?;
+        if create {
+            // SAFETY: the verified parent fd and checked leaf are valid.
+            if unsafe { libc::mkdirat(self.file.as_raw_fd(), component.as_ptr(), 0o700) } != 0 {
+                let error = io::Error::last_os_error();
+                if error.kind() != io::ErrorKind::AlreadyExists {
+                    return Err(error.into());
+                }
+            } else {
+                self.file.sync_all()?;
+            }
+        }
+        // SAFETY: this opens only a directory relative to the verified retained parent.
+        let file = from_fd(unsafe {
+            libc::openat(
+                self.file.as_raw_fd(),
+                component.as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            )
+        })?;
+        let child = Self::from_file(file, self.path.join(name))?;
+        self.verify()?;
+        child.verify()?;
+        Ok(child)
+    }
+
     /// Claim a fresh directory. Existing names, including symlinks, are never adopted.
     pub(super) fn claim_child(&self, name: &str) -> Result<Option<Self>, Error> {
         self.verify()?;
@@ -185,7 +227,7 @@ impl Directory {
             };
         }
         self.file.sync_all()?;
-        Ok(Some(Self::open(&self.path.join(name), false)?))
+        Ok(Some(self.child(name, false)?))
     }
 
     #[cfg(target_os = "linux")]
@@ -198,7 +240,7 @@ impl Directory {
             return Err(io::Error::last_os_error().into());
         }
         // SAFETY: fstatfs succeeded.
-        let kind = unsafe { stats.assume_init() }.f_type as u64;
+        let kind = unsafe { stats.assume_init() }.f_type as u32 as u64;
         if matches!(kind, 0x01021994 | 0x858458f6 | 0x958458f6) {
             return Err(Error::Unsafe("user temp base must be disk-backed"));
         }
@@ -228,8 +270,42 @@ impl Directory {
     }
 
     pub(super) fn verify_file(&self, name: &str, held: &File) -> Result<(), Error> {
-        let current = self.open_file(name, libc::O_RDONLY)?;
-        if Identity::of(&current)? != Identity::of(held)? {
+        let name = leaf(name)?;
+        let mut current = std::mem::MaybeUninit::<libc::stat>::uninit();
+        // SAFETY: the retained dirfd, valid leaf and writable stat output are live.
+        if unsafe {
+            libc::fstatat(
+                self.file.as_raw_fd(),
+                name.as_ptr(),
+                current.as_mut_ptr(),
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        } != 0
+        {
+            return Err(io::Error::last_os_error().into());
+        }
+        // SAFETY: fstatat initialized the output.
+        let current = unsafe { current.assume_init() };
+        if current.st_mode & libc::S_IFMT != libc::S_IFREG
+            || current.st_uid != effective_user()
+            || current.st_mode & 0o7777 != 0o600
+            || current.st_nlink != 1
+        {
+            return Err(Error::Unsafe(
+                "control entry must be regular, private, owned and singly linked",
+            ));
+        }
+        #[cfg(target_os = "macos")]
+        let identity = Identity {
+            device: current.st_dev as u64,
+            inode: current.st_ino,
+        };
+        #[cfg(target_os = "linux")]
+        let identity = Identity {
+            device: current.st_dev,
+            inode: current.st_ino,
+        };
+        if identity != Identity::of(held)? {
             return Err(Error::Unsafe("control file was replaced"));
         }
         self.verify()
@@ -358,9 +434,13 @@ impl Directory {
 
     /// Compare ancestor inodes, including case aliases and mount aliases.
     pub(super) fn contains_path(&self, path: &Path) -> Result<bool, Error> {
+        Self::has_ancestor(path, self.identity)
+    }
+
+    pub(super) fn has_ancestor(path: &Path, identity: Identity) -> Result<bool, Error> {
         for ancestor in path.ancestors() {
             match Self::walk(ancestor, false) {
-                Ok(file) if Identity::of(&file)? == self.identity => return Ok(true),
+                Ok(file) if Identity::of(&file)? == identity => return Ok(true),
                 Ok(_) => {}
                 Err(Error::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
                 Err(error) => return Err(error),
@@ -455,5 +535,18 @@ mod tests {
             assert!(parent.read(name, 10).is_err(), "{name:?}");
         }
         assert!(parent.is_empty().unwrap());
+    }
+
+    #[test]
+    fn verifying_a_held_lock_refuses_a_symlink_back_to_the_same_inode() {
+        use std::os::unix::fs::symlink;
+        let temporary = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(temporary.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let path = temporary.path().canonicalize().unwrap();
+        let directory = Directory::open(&path, false).unwrap();
+        let held = directory.lock_file("registry.lock").unwrap();
+        std::fs::rename(path.join("registry.lock"), path.join("original")).unwrap();
+        symlink(path.join("original"), path.join("registry.lock")).unwrap();
+        assert!(directory.verify_file("registry.lock", &held).is_err());
     }
 }

@@ -3,6 +3,7 @@
 //! Callers supply resolved absolute paths. There is no environment discovery, socket
 //! selection, credential access or public host API here. A reservation owns the actual
 //! root's inode lock until dropped. The locator's on-disk representation stays private.
+//! NFS is unsupported: its emulation of flock does not provide these descriptor lifetimes.
 
 mod directory;
 pub(crate) mod registry;
@@ -17,6 +18,8 @@ pub(crate) enum Error {
     Invalid(&'static str),
     Unsafe(&'static str),
     Conflict(&'static str),
+    RootUnavailable { name: String, path: PathBuf },
+    ReservedRoot { name: String, path: PathBuf },
     Busy(PathBuf),
     Io(io::Error),
 }
@@ -27,6 +30,12 @@ impl fmt::Display for Error {
             Self::Invalid(why) => write!(f, "invalid instance selection: {why}"),
             Self::Unsafe(why) => write!(f, "unsafe instance state: {why}; repair before retrying"),
             Self::Conflict(why) => write!(f, "instance conflict: {why}; use its registered root"),
+            Self::RootUnavailable { name, path } => write!(f,
+                "instance {name} root {} is unavailable or changed; repair with agentic-org instance rebind {name}",
+                path.display()),
+            Self::ReservedRoot { name, path } => write!(f,
+                "instance {name} reserves root {}; choose a disjoint root or repair that registration",
+                path.display()),
             Self::Busy(path) => write!(f, "instance state is already locked: {}", path.display()),
             Self::Io(error) => write!(f, "instance filesystem: {error}"),
         }
@@ -49,7 +58,7 @@ impl From<io::Error> for Error {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(transparent)]
+#[serde(try_from = "String", into = "String")]
 pub(crate) struct Name(String);
 
 impl Name {
@@ -70,5 +79,18 @@ impl Name {
 
     pub(crate) fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl TryFrom<String> for Name {
+    type Error = Error;
+    fn try_from(value: String) -> Result<Self, Error> {
+        Self::parse(Some(&value))
+    }
+}
+
+impl From<Name> for String {
+    fn from(value: Name) -> String {
+        value.0
     }
 }

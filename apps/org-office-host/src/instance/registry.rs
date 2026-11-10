@@ -181,8 +181,9 @@ impl Instance {
 
     fn instance_temp(&self) -> Result<Directory, Error> {
         self.user_temp.verify()?;
-        Directory::open(&self.user_temp.path().join("ao"), false)?;
-        Directory::open(&self.binding.temp_folder, false)
+        self.user_temp
+            .child("ao", false)?
+            .child(&self.binding.temp_handle, false)
     }
 
     /// Allocates once under this instance; callers backfill every catalog office before launch.
@@ -193,7 +194,7 @@ impl Instance {
         let mut config = self.config()?;
         let parent = self.instance_temp()?;
         if let Some(handle) = config.office_temp_handles.get(office) {
-            let directory = Directory::open(&parent.path().join(handle), true)?;
+            let directory = parent.child(handle, true)?;
             return Ok(directory.path().to_owned());
         }
         let (handle, directory) = temp::allocate(
@@ -235,10 +236,10 @@ impl Registry {
         let lock = self.directory.lock_file(LOCK)?;
         let locator = self.load()?;
         self.user_temp.verify()?;
-        let parent = Directory::open(&self.user_temp.path().join("ao"), true)?;
+        let parent = self.user_temp.child("ao", true)?;
         let mut paths = Vec::new();
         for entry in locator.entries {
-            let directory = Directory::open(&parent.path().join(entry.binding.temp_handle), true)?;
+            let directory = parent.child(&entry.binding.temp_handle, true)?;
             paths.push(directory.path().to_owned());
         }
         self.directory.verify_file(LOCK, &lock)?;
@@ -256,8 +257,10 @@ impl Registry {
         self.user_temp.verify()?;
         let registry_lock = self.directory.lock_file(LOCK)?;
         let mut locator = self.load()?;
-        self.check_roots(&locator, &name, &path)?;
-        let mut root = Directory::open(&path, true)?;
+        let mut root = match self.check_roots(&locator, &name, &path)? {
+            Some(root) => root,
+            None => Directory::open(&path, true)?,
+        };
         root.lock_root()?;
         root.verify()?;
 
@@ -286,7 +289,7 @@ impl Registry {
                         "generated instance ID is already reserved; retry",
                     ));
                 }
-                let temp_parent = Directory::open(&self.user_temp.path().join("ao"), true)?;
+                let temp_parent = self.user_temp.child("ao", true)?;
                 let (temp_handle, temp_folder) = temp::allocate(
                     &temp_parent,
                     locator
@@ -321,11 +324,13 @@ impl Registry {
                 entries: Vec::new(),
             },
         };
-        if locator.version != 1
-            || locator.entries.len() > MAX_INSTANCES
-            || locator.user_temp != self.user_temp.path()
-        {
+        if locator.version != 1 || locator.entries.len() > MAX_INSTANCES {
             return Err(Error::Unsafe("unsupported locator version or entry count"));
+        }
+        if locator.user_temp != self.user_temp.path() {
+            return Err(Error::Unsafe(
+                "user temp base differs from the locator's recorded base",
+            ));
         }
         for (index, entry) in locator.entries.iter().enumerate() {
             entry.binding.validate()?;
@@ -354,12 +359,29 @@ impl Registry {
         Ok(locator)
     }
 
-    fn check_roots(&self, locator: &Locator, name: &Name, path: &Path) -> Result<(), Error> {
+    fn check_roots(
+        &self,
+        locator: &Locator,
+        name: &Name,
+        path: &Path,
+    ) -> Result<Option<Directory>, Error> {
         // Probe an existing root without modifying it; a missing final component is fine.
         let candidate = match Directory::open(path, false) {
             Ok(root) => Some(root),
             Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(error) => return Err(error),
+            Err(error) => {
+                if let Some(entry) = locator
+                    .entries
+                    .iter()
+                    .find(|entry| &entry.binding.name == name && entry.binding.root == path)
+                {
+                    return Err(Error::RootUnavailable {
+                        name: name.as_str().to_owned(),
+                        path: entry.binding.root.clone(),
+                    });
+                }
+                return Err(error);
+            }
         };
         if self.directory.contains_path(path)?
             || match &candidate {
@@ -382,28 +404,41 @@ impl Registry {
             ));
         }
         for entry in &locator.entries {
-            let existing = Directory::open(&entry.binding.root, false)?;
-            if existing.identity() != entry.binding.identity {
-                return Err(Error::Unsafe(
-                    "registered root was replaced; repair its reservation",
-                ));
-            }
             if &entry.binding.name == name {
-                if existing.path() != path
-                    || candidate.as_ref().map(Directory::identity) != Some(existing.identity())
-                {
+                if entry.binding.root != path {
                     return Err(Error::Conflict("name is already bound to another root"));
                 }
-            } else if existing.contains_path(path)?
+                if candidate.as_ref().map(Directory::identity) != Some(entry.binding.identity) {
+                    return Err(Error::RootUnavailable {
+                        name: name.as_str().to_owned(),
+                        path: entry.binding.root.clone(),
+                    });
+                }
+                continue;
+            }
+            // Unavailable peers retain their path and known identity, but do not
+            // prevent unrelated instances from starting. Never adopt their moved inode.
+            let existing = Directory::open(&entry.binding.root, false)
+                .ok()
+                .filter(|root| root.identity() == entry.binding.identity);
+            let lexical = paths_overlap(path, &entry.binding.root, existing.is_none());
+            if lexical
+                || Directory::has_ancestor(path, entry.binding.identity)?
                 || match &candidate {
-                    Some(root) => root.contains_path(existing.path())?,
+                    Some(root) => match &existing {
+                        Some(existing) => root.contains_path(existing.path())?,
+                        None => false,
+                    },
                     None => false,
                 }
             {
-                return Err(Error::Conflict("instance roots must not alias or overlap"));
+                return Err(Error::ReservedRoot {
+                    name: entry.binding.name.as_str().to_owned(),
+                    path: entry.binding.root.clone(),
+                });
             }
         }
-        Ok(())
+        Ok(candidate)
     }
 
     fn finish(
@@ -435,12 +470,13 @@ impl Registry {
         }
         self.directory.verify_file(LOCK, lock)?;
         self.user_temp.verify()?;
-        Directory::open(&self.user_temp.path().join("ao"), true)?;
-        Directory::open(&expected.binding.temp_folder, true)?;
+        self.user_temp
+            .child("ao", true)?
+            .child(&expected.binding.temp_handle, true)?;
         let instance = Instance {
             root,
             binding: expected.binding,
-            user_temp: Directory::open(self.user_temp.path(), false)?,
+            user_temp: self.user_temp.duplicate_unlocked()?,
         };
         instance.verify()?;
         Ok(instance)
@@ -450,6 +486,18 @@ impl Registry {
         self.directory.verify_file(LOCK, lock)?;
         self.directory.publish(REGISTRY, &encode(locator)?, true)
     }
+}
+
+fn paths_overlap(a: &Path, b: &Path, unavailable: bool) -> bool {
+    #[cfg(target_os = "macos")]
+    if unavailable {
+        // Conservatively reserve case aliases of unavailable paths on macOS.
+        let a = a.to_string_lossy().to_lowercase();
+        let b = b.to_string_lossy().to_lowercase();
+        return Path::new(&a).starts_with(&b) || Path::new(&b).starts_with(&a);
+    }
+    let _ = unavailable;
+    a.starts_with(b) || b.starts_with(a)
 }
 
 #[cfg(test)]
