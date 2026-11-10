@@ -1,0 +1,329 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "reserved creation is accepted",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "host",
+          "state": "reserved",
+          "outcome": "accepted"
+        }
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "host",
+          "state": "reserved",
+          "outcome": "accepted"
+        },
+        "final": false
+      }
+    },
+    {
+      "name": "linked creation completed",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "host",
+          "state": "linked",
+          "outcome": "completed",
+          "result": {
+            "organization_id": "org-1"
+          }
+        }
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "host",
+          "state": "linked",
+          "outcome": "completed",
+          "result": {
+            "organization_id": "org-1"
+          }
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "abandoned creation is final without outcome",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "host",
+          "state": "abandoned"
+        }
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "host",
+          "state": "abandoned"
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "stored invalid_name refusal",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "host",
+          "outcome": "rejected",
+          "error": {
+            "code": "invalid_name",
+            "message": "Invalid name."
+          }
+        }
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "host",
+          "outcome": "rejected",
+          "error": {
+            "code": "invalid_name",
+            "message": "Invalid name."
+          }
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "office.restart completed without create state",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "host",
+          "outcome": "completed",
+          "result": {
+            "status": "completed",
+            "office_id": "office-1"
+          }
+        }
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "host",
+          "outcome": "completed",
+          "result": {
+            "status": "completed",
+            "office_id": "office-1"
+          }
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "operation reuse never replaces identity",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "host",
+          "outcome": "rejected",
+          "error": {
+            "code": "operation_reused",
+            "message": "Operation already used."
+          }
+        }
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "host",
+          "outcome": "rejected",
+          "error": {
+            "code": "operation_reused",
+            "message": "Operation already used."
+          }
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "org stored committed outcome",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "org",
+          "outcome": "completed",
+          "result": {}
+        }
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "org",
+          "outcome": "completed",
+          "result": {}
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "work stored committed outcome",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "work",
+          "outcome": "completed",
+          "result": {}
+        }
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "work",
+          "outcome": "completed",
+          "result": {}
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "msg stored committed outcome",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "msg",
+          "outcome": "completed",
+          "result": {}
+        }
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "msg",
+          "outcome": "completed",
+          "result": {}
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "abandoned cannot claim completion",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "host",
+          "state": "abandoned",
+          "outcome": "completed",
+          "result": {}
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "reserved cannot claim completion",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "host",
+          "state": "reserved",
+          "outcome": "completed",
+          "result": {}
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "linked cannot still be accepted",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "host",
+          "state": "linked",
+          "outcome": "accepted"
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "work has no host journal state",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "work",
+          "state": "linked",
+          "outcome": "completed",
+          "result": {}
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "lookup requires namespace",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "completed",
+          "result": {}
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "accepted host lookup requires create state",
+      "wire": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "kind": "host",
+          "outcome": "accepted"
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "lookup itself not_found",
+      "wire": {
+        "error": {
+          "code": "not_found",
+          "message": "Cannot resolve."
+        }
+      },
+      "expect": {
+        "valid": true,
+        "http_status": 404,
+        "resolution": "unresolved"
+      }
+    },
+    {
+      "name": "lookup itself expired",
+      "wire": {
+        "error": {
+          "code": "expired",
+          "message": "Cannot resolve."
+        }
+      },
+      "expect": {
+        "valid": true,
+        "http_status": 410,
+        "resolution": "expired"
+      }
+    }
+  ]
+}

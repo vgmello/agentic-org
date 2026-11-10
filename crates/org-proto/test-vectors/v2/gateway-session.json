@@ -1,0 +1,181 @@
+{
+  "schema_version": 1,
+  "comment": "All credentials here are fixed PUBLIC test values, never real sessions.",
+  "cases": [
+    {
+      "name": "sign-in uses protected password body",
+      "category": "sign_in",
+      "wire": {
+        "login": "alex",
+        "password": "PUBLIC FIXTURE PASSWORD"
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "name": "successful sign-in or refresh returns proof",
+      "category": "established",
+      "wire": {
+        "result": {
+          "instance_id": "01M72N8MG00000000000000001",
+          "account": {
+            "id": "01M72N8MG00000000000000002",
+            "login": "alex"
+          },
+          "admin": true,
+          "organizations": [
+            {
+              "org_id": "01M72N8MG00000000000000003",
+              "member_id": "01M72N8MG00000000000000004",
+              "office_ids": [
+                "01M72N8MG00000000000000005"
+              ]
+            }
+          ],
+          "server_time_ms": 1794312000000,
+          "absolute_expires_at": "2026-11-11T00:00:00.000Z",
+          "idle_expires_at": "2026-11-10T12:30:00.000Z",
+          "proof": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        }
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "name": "session read never returns proof",
+      "category": "session",
+      "wire": {
+        "result": {
+          "instance_id": "01M72N8MG00000000000000001",
+          "account": {
+            "id": "01M72N8MG00000000000000002",
+            "login": "alex"
+          },
+          "admin": true,
+          "organizations": [
+            {
+              "org_id": "01M72N8MG00000000000000003",
+              "member_id": "01M72N8MG00000000000000004",
+              "office_ids": [
+                "01M72N8MG00000000000000005"
+              ]
+            }
+          ],
+          "server_time_ms": 1794312000000,
+          "absolute_expires_at": "2026-11-11T00:00:00.000Z",
+          "idle_expires_at": "2026-11-10T12:30:00.000Z"
+        }
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "name": "cookie-only or missing proof is a safe auth error",
+      "category": "session",
+      "wire": {
+        "error": {
+          "code": "not_authorized",
+          "message": "Sign in again.",
+          "session_reason": "session_ended"
+        }
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "name": "trusted restart reason is distinct",
+      "category": "session",
+      "wire": {
+        "error": {
+          "code": "not_authorized",
+          "message": "Sign in again.",
+          "session_reason": "hq_restarted"
+        }
+      },
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "name": "proof cannot be recovered from session view",
+      "category": "established",
+      "wire": {
+        "result": {
+          "instance_id": "01M72N8MG00000000000000001",
+          "account": {
+            "id": "01M72N8MG00000000000000002",
+            "login": "alex"
+          },
+          "admin": true,
+          "organizations": [
+            {
+              "org_id": "01M72N8MG00000000000000003",
+              "member_id": "01M72N8MG00000000000000004",
+              "office_ids": [
+                "01M72N8MG00000000000000005"
+              ]
+            }
+          ],
+          "server_time_ms": 1794312000000,
+          "absolute_expires_at": "2026-11-11T00:00:00.000Z",
+          "idle_expires_at": "2026-11-10T12:30:00.000Z"
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "proof wrong shape is invalid",
+      "category": "established",
+      "wire": {
+        "result": {
+          "instance_id": "01M72N8MG00000000000000001",
+          "account": {
+            "id": "01M72N8MG00000000000000002",
+            "login": "alex"
+          },
+          "admin": true,
+          "organizations": [
+            {
+              "org_id": "01M72N8MG00000000000000003",
+              "member_id": "01M72N8MG00000000000000004",
+              "office_ids": [
+                "01M72N8MG00000000000000005"
+              ]
+            }
+          ],
+          "server_time_ms": 1794312000000,
+          "absolute_expires_at": "2026-11-11T00:00:00.000Z",
+          "idle_expires_at": "2026-11-10T12:30:00.000Z",
+          "proof": "wrong"
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "non-string credential is invalid without echo",
+      "category": "sign_in",
+      "wire": {
+        "login": "alex",
+        "password": 3141592653589793
+      },
+      "expect": {
+        "valid": false
+      }
+    }
+  ],
+  "clock": {
+    "browser_time_ms": 1794311995000,
+    "server_time_ms": 1794312000000,
+    "expected_offset_ms": 5000,
+    "operation_id": "01M72N8MG00000000000000006"
+  },
+  "proof_header": "X-Org-Session-Proof"
+}

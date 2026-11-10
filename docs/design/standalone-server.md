@@ -250,6 +250,10 @@ instance's directory or shared release.
 
 ## 5. HTTP and browser contract
 
+The initial typed `/api/v1` surface and shared conformance fixtures are specified
+in [gateway-api-v1.md](gateway-api-v1.md). Contract publication precedes endpoint
+implementation; availability is advertised only when the real operation is wired.
+
 Serve static assets and `/api/v1/` from the same HQ origin. Hashed assets can be
 cached; the entry document is revalidated. SPA fallback applies only to browser
 navigation routes, never missing API paths, stream routes or assets. Static file

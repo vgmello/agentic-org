@@ -1,0 +1,472 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "version canonical view",
+      "category": "version",
+      "wire": {
+        "result": {
+          "api_version": 1,
+          "contract_revision": 1
+        }
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "result": {
+            "api_version": 1,
+            "contract_revision": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "instance canonical view",
+      "category": "instance",
+      "wire": {
+        "result": {
+          "instance_id": "01M72N8MG00000000000000001",
+          "name": "default",
+          "server_version": "0.1.0",
+          "gateway_status": "ok",
+          "listen_scheme": "https",
+          "tls": "ok",
+          "server_time_ms": 1794312000000
+        }
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "result": {
+            "instance_id": "01M72N8MG00000000000000001",
+            "name": "default",
+            "server_version": "0.1.0",
+            "gateway_status": "ok",
+            "listen_scheme": "https",
+            "tls": "ok",
+            "server_time_ms": 1794312000000
+          }
+        }
+      }
+    },
+    {
+      "name": "office canonical view",
+      "category": "office",
+      "wire": {
+        "result": {
+          "id": "01M72N8MG00000000000000005",
+          "organization_id": "01M72N8MG00000000000000003",
+          "name": "HQ",
+          "role": "hq",
+          "host": "HQ machine",
+          "status": "active"
+        }
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "result": {
+            "id": "01M72N8MG00000000000000005",
+            "organization_id": "01M72N8MG00000000000000003",
+            "name": "HQ",
+            "role": "hq",
+            "host": "HQ machine",
+            "status": "active"
+          }
+        }
+      }
+    },
+    {
+      "name": "organization canonical view",
+      "category": "organization",
+      "wire": {
+        "result": {
+          "id": "01M72N8MG00000000000000003",
+          "name": "Acme",
+          "created_at": "2026-11-10T12:00:00.000Z",
+          "offices": [
+            {
+              "id": "01M72N8MG00000000000000005",
+              "organization_id": "01M72N8MG00000000000000003",
+              "name": "HQ",
+              "role": "hq",
+              "host": "HQ machine",
+              "status": "active"
+            }
+          ],
+          "recovery": "pending"
+        }
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "result": {
+            "id": "01M72N8MG00000000000000003",
+            "name": "Acme",
+            "created_at": "2026-11-10T12:00:00.000Z",
+            "offices": [
+              {
+                "id": "01M72N8MG00000000000000005",
+                "organization_id": "01M72N8MG00000000000000003",
+                "name": "HQ",
+                "role": "hq",
+                "host": "HQ machine",
+                "status": "active"
+              }
+            ],
+            "recovery": "pending"
+          }
+        }
+      }
+    },
+    {
+      "name": "capabilities canonical view",
+      "category": "capabilities",
+      "wire": {
+        "result": {
+          "api_version": 1,
+          "contract_revision": 1,
+          "instance_id": "01M72N8MG00000000000000001",
+          "operations": [
+            {
+              "name": "org.snapshot",
+              "scope": {
+                "kind": "organization",
+                "instance_id": "01M72N8MG00000000000000001",
+                "org_id": "01M72N8MG00000000000000003"
+              },
+              "available": true
+            },
+            {
+              "name": "project.create",
+              "scope": {
+                "kind": "organization",
+                "instance_id": "01M72N8MG00000000000000001",
+                "org_id": "01M72N8MG00000000000000003"
+              },
+              "available": false,
+              "reason": "unavailable"
+            },
+            {
+              "name": "future.operation",
+              "scope": {
+                "kind": "instance",
+                "instance_id": "01M72N8MG00000000000000001"
+              },
+              "available": true
+            }
+          ],
+          "feeds": [
+            {
+              "name": "organization",
+              "scope": {
+                "kind": "organization",
+                "instance_id": "01M72N8MG00000000000000001",
+                "org_id": "01M72N8MG00000000000000003"
+              },
+              "available": true
+            }
+          ]
+        }
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "result": {
+            "api_version": 1,
+            "contract_revision": 1,
+            "instance_id": "01M72N8MG00000000000000001",
+            "operations": [
+              {
+                "name": "org.snapshot",
+                "scope": {
+                  "kind": "organization",
+                  "instance_id": "01M72N8MG00000000000000001",
+                  "org_id": "01M72N8MG00000000000000003"
+                },
+                "available": true
+              },
+              {
+                "name": "project.create",
+                "scope": {
+                  "kind": "organization",
+                  "instance_id": "01M72N8MG00000000000000001",
+                  "org_id": "01M72N8MG00000000000000003"
+                },
+                "available": false,
+                "reason": "unavailable"
+              },
+              {
+                "name": "future.operation",
+                "scope": {
+                  "kind": "instance",
+                  "instance_id": "01M72N8MG00000000000000001"
+                },
+                "available": true
+              }
+            ],
+            "feeds": [
+              {
+                "name": "organization",
+                "scope": {
+                  "kind": "organization",
+                  "instance_id": "01M72N8MG00000000000000001",
+                  "org_id": "01M72N8MG00000000000000003"
+                },
+                "available": true
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "snapshot canonical view",
+      "category": "snapshot",
+      "wire": {
+        "result": {
+          "snapshot": {
+            "position": {
+              "epoch": 1,
+              "seq": 4
+            },
+            "teams": [],
+            "members": [],
+            "memberships": [],
+            "projects": [],
+            "project_teams": [],
+            "areas": []
+          },
+          "resume_cursor": "fixture-org-position-4"
+        }
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "result": {
+            "snapshot": {
+              "position": {
+                "epoch": 1,
+                "seq": 4
+              },
+              "teams": [],
+              "members": [],
+              "memberships": [],
+              "projects": [],
+              "project_teams": [],
+              "areas": []
+            },
+            "resume_cursor": "fixture-org-position-4"
+          }
+        }
+      }
+    },
+    {
+      "name": "future enum and additive field are safe",
+      "category": "instance",
+      "wire": {
+        "result": {
+          "instance_id": "01M72N8MG00000000000000001",
+          "name": "default",
+          "server_version": "0.1.0",
+          "gateway_status": "future_status",
+          "listen_scheme": "https",
+          "tls": "ok",
+          "server_time_ms": 1794312000000,
+          "future_field": true
+        }
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "result": {
+            "instance_id": "01M72N8MG00000000000000001",
+            "name": "default",
+            "server_version": "0.1.0",
+            "gateway_status": "unknown",
+            "listen_scheme": "https",
+            "tls": "ok",
+            "server_time_ms": 1794312000000
+          }
+        }
+      }
+    },
+    {
+      "name": "server time refuses fractional",
+      "category": "instance",
+      "wire": {
+        "result": {
+          "instance_id": "01M72N8MG00000000000000001",
+          "name": "default",
+          "server_version": "0.1.0",
+          "gateway_status": "ok",
+          "listen_scheme": "https",
+          "tls": "ok",
+          "server_time_ms": 1.5
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "server time refuses negative",
+      "category": "instance",
+      "wire": {
+        "result": {
+          "instance_id": "01M72N8MG00000000000000001",
+          "name": "default",
+          "server_version": "0.1.0",
+          "gateway_status": "ok",
+          "listen_scheme": "https",
+          "tls": "ok",
+          "server_time_ms": -1
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "server time refuses unsafe",
+      "category": "instance",
+      "wire": {
+        "result": {
+          "instance_id": "01M72N8MG00000000000000001",
+          "name": "default",
+          "server_version": "0.1.0",
+          "gateway_status": "ok",
+          "listen_scheme": "https",
+          "tls": "ok",
+          "server_time_ms": 9007199254740992
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "server time refuses string",
+      "category": "instance",
+      "wire": {
+        "result": {
+          "instance_id": "01M72N8MG00000000000000001",
+          "name": "default",
+          "server_version": "0.1.0",
+          "gateway_status": "ok",
+          "listen_scheme": "https",
+          "tls": "ok",
+          "server_time_ms": "1794312000000"
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "no RFC3339 clock alias",
+      "category": "instance",
+      "wire": {
+        "result": {
+          "instance_id": "01M72N8MG00000000000000001",
+          "name": "default",
+          "server_version": "0.1.0",
+          "gateway_status": "ok",
+          "listen_scheme": "https",
+          "tls": "ok",
+          "server_time": "2026-11-10T12:00:00Z"
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "read envelope cannot have both payloads",
+      "category": "instance",
+      "wire": {
+        "result": {
+          "instance_id": "01M72N8MG00000000000000001",
+          "name": "default",
+          "server_version": "0.1.0",
+          "gateway_status": "ok",
+          "listen_scheme": "https",
+          "tls": "ok",
+          "server_time_ms": 1794312000000
+        },
+        "error": {
+          "code": "not_found",
+          "message": "Missing."
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "read result is an object",
+      "category": "instance",
+      "wire": {
+        "result": [
+          "01M72N8MG00000000000000001",
+          "default",
+          "0.1.0",
+          "ok",
+          "https",
+          "ok",
+          1794312000000
+        ]
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "missing resume cursor",
+      "category": "snapshot",
+      "wire": {
+        "result": {
+          "snapshot": {
+            "position": {
+              "epoch": 1,
+              "seq": 4
+            },
+            "teams": [],
+            "members": [],
+            "memberships": [],
+            "projects": [],
+            "project_teams": [],
+            "areas": []
+          }
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "empty resume cursor",
+      "category": "snapshot",
+      "wire": {
+        "result": {
+          "snapshot": {
+            "position": {
+              "epoch": 1,
+              "seq": 4
+            },
+            "teams": [],
+            "members": [],
+            "memberships": [],
+            "projects": [],
+            "project_teams": [],
+            "areas": []
+          },
+          "resume_cursor": ""
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    }
+  ]
+}

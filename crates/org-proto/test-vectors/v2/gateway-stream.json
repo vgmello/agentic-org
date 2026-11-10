@@ -1,0 +1,455 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "ready frame 0",
+      "wire": {
+        "type": "ready",
+        "subscriptions": [
+          {
+            "scope": {
+              "kind": "organization",
+              "instance_id": "01M72N8MG00000000000000001",
+              "org_id": "01M72N8MG00000000000000003"
+            },
+            "feed": "organization",
+            "cursor": "fixture-org-position-4"
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "type": "ready",
+          "subscriptions": [
+            {
+              "scope": {
+                "kind": "organization",
+                "instance_id": "01M72N8MG00000000000000001",
+                "org_id": "01M72N8MG00000000000000003"
+              },
+              "feed": "organization",
+              "cursor": "fixture-org-position-4"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "change frame 1",
+      "wire": {
+        "type": "change",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "feed": "organization",
+        "cursor": "fixture-org-position-5",
+        "event": "org.changed",
+        "data": {
+          "organization_id": "01M72N8MG00000000000000003",
+          "position": {
+            "epoch": 1,
+            "seq": 5
+          }
+        }
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "type": "change",
+          "scope": {
+            "kind": "organization",
+            "instance_id": "01M72N8MG00000000000000001",
+            "org_id": "01M72N8MG00000000000000003"
+          },
+          "feed": "organization",
+          "cursor": "fixture-org-position-5",
+          "event": "org.changed",
+          "data": {
+            "organization_id": "01M72N8MG00000000000000003",
+            "position": {
+              "epoch": 1,
+              "seq": 5
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "change frame 2",
+      "wire": {
+        "type": "change",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "feed": "organization",
+        "cursor": "fixture-org-position-6",
+        "event": "org.changed",
+        "data": {
+          "organization_id": "01M72N8MG00000000000000003",
+          "position": {
+            "epoch": 1,
+            "seq": 6
+          }
+        }
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "type": "change",
+          "scope": {
+            "kind": "organization",
+            "instance_id": "01M72N8MG00000000000000001",
+            "org_id": "01M72N8MG00000000000000003"
+          },
+          "feed": "organization",
+          "cursor": "fixture-org-position-6",
+          "event": "org.changed",
+          "data": {
+            "organization_id": "01M72N8MG00000000000000003",
+            "position": {
+              "epoch": 1,
+              "seq": 6
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "heartbeat frame 3",
+      "wire": {
+        "type": "heartbeat",
+        "server_time_ms": 1794312000000
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "type": "heartbeat",
+          "server_time_ms": 1794312000000
+        }
+      }
+    },
+    {
+      "name": "resync frame 4",
+      "wire": {
+        "type": "resync",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "feed": "organization",
+        "reason": "snapshot_required"
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "type": "resync",
+          "scope": {
+            "kind": "organization",
+            "instance_id": "01M72N8MG00000000000000001",
+            "org_id": "01M72N8MG00000000000000003"
+          },
+          "feed": "organization",
+          "reason": "snapshot_required"
+        }
+      }
+    },
+    {
+      "name": "resync frame 5",
+      "wire": {
+        "type": "resync",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "feed": "organization",
+        "reason": "slow_consumer"
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "type": "resync",
+          "scope": {
+            "kind": "organization",
+            "instance_id": "01M72N8MG00000000000000001",
+            "org_id": "01M72N8MG00000000000000003"
+          },
+          "feed": "organization",
+          "reason": "slow_consumer"
+        }
+      }
+    },
+    {
+      "name": "session_ended frame 6",
+      "wire": {
+        "type": "session_ended",
+        "reason": "session_ended"
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "type": "session_ended",
+          "reason": "session_ended"
+        }
+      }
+    },
+    {
+      "name": "unavailable frame 7",
+      "wire": {
+        "type": "unavailable",
+        "scope": {
+          "kind": "office",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003",
+          "office_id": "01M72N8MG00000000000000005"
+        },
+        "feed": "work",
+        "error": {
+          "code": "unavailable",
+          "message": "Office offline."
+        }
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "type": "unavailable",
+          "scope": {
+            "kind": "office",
+            "instance_id": "01M72N8MG00000000000000001",
+            "org_id": "01M72N8MG00000000000000003",
+            "office_id": "01M72N8MG00000000000000005"
+          },
+          "feed": "work",
+          "error": {
+            "code": "unavailable",
+            "message": "Office offline."
+          }
+        }
+      }
+    },
+    {
+      "name": "future frame is explicitly unsupported",
+      "wire": {
+        "type": "future_frame",
+        "future": true
+      },
+      "expect": {
+        "valid": true,
+        "normalized": {
+          "type": "unsupported"
+        }
+      }
+    },
+    {
+      "name": "heartbeat has no string time alias",
+      "wire": {
+        "type": "heartbeat",
+        "server_time": "2026-11-10T12:00:00Z"
+      },
+      "expect": {
+        "valid": false
+      }
+    }
+  ],
+  "trace": {
+    "snapshot": {
+      "snapshot": {
+        "position": {
+          "epoch": 1,
+          "seq": 4
+        },
+        "teams": [],
+        "members": [],
+        "memberships": [],
+        "projects": [],
+        "project_teams": [],
+        "areas": []
+      },
+      "resume_cursor": "fixture-org-position-4"
+    },
+    "subscribe": {
+      "subscriptions": [
+        {
+          "scope": {
+            "kind": "organization",
+            "instance_id": "01M72N8MG00000000000000001",
+            "org_id": "01M72N8MG00000000000000003"
+          },
+          "feed": "organization",
+          "cursor": "fixture-org-position-4"
+        }
+      ]
+    },
+    "updates": [
+      {
+        "type": "change",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "feed": "organization",
+        "cursor": "fixture-org-position-5",
+        "event": "org.changed",
+        "data": {
+          "organization_id": "01M72N8MG00000000000000003",
+          "position": {
+            "epoch": 1,
+            "seq": 5
+          }
+        }
+      },
+      {
+        "type": "change",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "feed": "organization",
+        "cursor": "fixture-org-position-6",
+        "event": "org.changed",
+        "data": {
+          "organization_id": "01M72N8MG00000000000000003",
+          "position": {
+            "epoch": 1,
+            "seq": 6
+          }
+        }
+      }
+    ],
+    "reconnect": {
+      "subscriptions": [
+        {
+          "scope": {
+            "kind": "organization",
+            "instance_id": "01M72N8MG00000000000000001",
+            "org_id": "01M72N8MG00000000000000003"
+          },
+          "feed": "organization",
+          "cursor": "fixture-org-position-6"
+        }
+      ]
+    },
+    "resync": {
+      "type": "resync",
+      "scope": {
+        "kind": "organization",
+        "instance_id": "01M72N8MG00000000000000001",
+        "org_id": "01M72N8MG00000000000000003"
+      },
+      "feed": "organization",
+      "reason": "snapshot_required"
+    },
+    "expect": {
+      "positions": [
+        5,
+        6
+      ],
+      "last_cursor": "fixture-org-position-6"
+    }
+  },
+  "poll": {
+    "frames": [
+      {
+        "type": "ready",
+        "subscriptions": [
+          {
+            "scope": {
+              "kind": "organization",
+              "instance_id": "01M72N8MG00000000000000001",
+              "org_id": "01M72N8MG00000000000000003"
+            },
+            "feed": "organization",
+            "cursor": "fixture-org-position-4"
+          }
+        ]
+      },
+      {
+        "type": "change",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "feed": "organization",
+        "cursor": "fixture-org-position-5",
+        "event": "org.changed",
+        "data": {
+          "organization_id": "01M72N8MG00000000000000003",
+          "position": {
+            "epoch": 1,
+            "seq": 5
+          }
+        }
+      },
+      {
+        "type": "change",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "feed": "organization",
+        "cursor": "fixture-org-position-6",
+        "event": "org.changed",
+        "data": {
+          "organization_id": "01M72N8MG00000000000000003",
+          "position": {
+            "epoch": 1,
+            "seq": 6
+          }
+        }
+      },
+      {
+        "type": "heartbeat",
+        "server_time_ms": 1794312000000
+      },
+      {
+        "type": "resync",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "feed": "organization",
+        "reason": "snapshot_required"
+      },
+      {
+        "type": "resync",
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "feed": "organization",
+        "reason": "slow_consumer"
+      },
+      {
+        "type": "session_ended",
+        "reason": "session_ended"
+      },
+      {
+        "type": "unavailable",
+        "scope": {
+          "kind": "office",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003",
+          "office_id": "01M72N8MG00000000000000005"
+        },
+        "feed": "work",
+        "error": {
+          "code": "unavailable",
+          "message": "Office offline."
+        }
+      }
+    ],
+    "retry_after_ms": 1000
+  }
+}
