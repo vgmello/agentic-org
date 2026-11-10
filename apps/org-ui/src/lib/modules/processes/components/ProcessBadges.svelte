@@ -11,8 +11,8 @@
 </script>
 
 <script lang="ts">
-	import { placeLabel } from '$lib/processes/present';
-	import type { Level } from '$lib/processes/types';
+	import { placeLabel } from '$lib/modules/processes/present';
+	import type { Level } from '$lib/modules/processes/types';
 
 	// A level is a word with an icon: "Team Web v2", never an icon and a name alone (PROC-18).
 	let { level, scopeName, version }: { level: Level; scopeName?: string; version?: number } = $props();
