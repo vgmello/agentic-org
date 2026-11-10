@@ -1,7 +1,8 @@
 <script lang="ts">
 	import Paperclip from '@lucide/svelte/icons/paperclip';
 	import SendHorizontal from '@lucide/svelte/icons/send-horizontal';
-	import { untrack } from 'svelte';
+	import { tick, untrack } from 'svelte';
+	import type { DraftText } from '../../drafts/store';
 	import { Button } from '$lib/components/ui/button';
 	import type { ChatContext } from '$lib/modules/messaging/engine';
 	import { applyMention, mentionAt, mentionOptions, parseSlash, slashSuggestions } from '$lib/modules/messaging/model';
@@ -18,6 +19,7 @@
 		conversation,
 		ctx,
 		resetKey,
+		draft,
 		alsoIn,
 		onsend
 	}: {
@@ -28,6 +30,7 @@
 		ctx: ChatContext;
 		/** A draft is kept per key (a conversation or a thread). */
 		resetKey: string;
+		draft?: DraftText;
 		/** A thread: the channel a reply can also be sent to. */
 		alsoIn?: string;
 		/** Resolves `false` when the message was not sent, so the text stays in the box. */
@@ -46,6 +49,7 @@
 	let files = $state<HTMLInputElement | undefined>();
 	let enterSends = $state(false);
 	let lastKey = '';
+	let lastDraft: DraftText | undefined;
 	let error = $state<string | undefined>();
 	let unknownCommand = $state(false);
 
@@ -63,13 +67,16 @@
 		}
 	};
 
-	// Keep a draft per conversation or thread.
+	// Conversation drafts live here. Thread drafts are supplied by the retained shell.
 	$effect(() => {
 		const key = resetKey;
+		const nextDraft = draft;
 		untrack(() => {
-			if (lastKey) drafts[lastKey] = text;
+			if (lastKey && !lastDraft) drafts[lastKey] = text;
 			lastKey = key;
-			text = drafts[key] ?? '';
+			lastDraft = nextDraft;
+			text = nextDraft ? nextDraft.read() : drafts[key] ?? '';
+			if (nextDraft && text) void restoreCaret(nextDraft, text);
 			attachments = [];
 			alsoInChannel = false;
 			dismissed = false;
@@ -77,6 +84,13 @@
 			unknownCommand = false;
 		});
 	});
+
+	async function restoreCaret(restored: DraftText, value: string) {
+		await tick();
+		if (draft !== restored || text !== value || !box) return;
+		caret = value.length;
+		box.setSelectionRange(caret, caret);
+	}
 
 	const at = $derived(mentionAt(text, caret));
 	const mentions = $derived(at && !dismissed ? mentionOptions(ctx, conversation, at.query) : []);
@@ -87,6 +101,7 @@
 		if (!at) return;
 		const next = applyMention(text, at, caret, handle);
 		text = next.text;
+		draft?.write(text);
 		queueMicrotask(() => {
 			box?.focus();
 			box?.setSelectionRange(next.caret, next.caret);
@@ -96,6 +111,7 @@
 	}
 	function pickSlash(name: string) {
 		text = `/${name} `;
+		draft?.write(text);
 		queueMicrotask(() => {
 			box?.focus();
 			box?.setSelectionRange(text.length, text.length);
@@ -121,18 +137,21 @@
 		unknownCommand = false;
 		busy = true;
 		const key = resetKey;
+		const sendingDraft = draft;
+		const clearDraft = sendingDraft?.clearOnSuccess();
+		const submittedText = text;
 		try {
-			if ((await onsend(text, { alsoInChannel, attachments, asMessage })) === false) return;
-			// The draft that was sent is gone, but only where it was written: the owner may have moved on while it went.
-			drafts[key] = '';
-			if (key === resetKey) {
+			if ((await onsend(submittedText, { alsoInChannel, attachments, asMessage })) === false) return;
+			if (clearDraft) clearDraft();
+			else drafts[key] = '';
+			if (key === resetKey && sendingDraft === draft && text === submittedText) {
 				text = '';
 				attachments = [];
 				alsoInChannel = false;
 			}
 		} finally {
 			busy = false;
-			queueMicrotask(() => box?.focus());
+			queueMicrotask(() => { if (key === resetKey && sendingDraft === draft) box?.focus(); });
 		}
 	}
 
@@ -211,7 +230,7 @@
 				maxlength={CHAT_LIMITS.bodyMax}
 				disabled={busy}
 				{onkeydown}
-				oninput={() => { error = undefined; unknownCommand = false; track(); }}
+				oninput={(event) => { draft?.write(event.currentTarget.value); error = undefined; unknownCommand = false; track(); }}
 				onclick={track}
 				onkeyup={(e) => (e.key.startsWith('Arrow') && popup ? undefined : track())}
 				class="w-full resize-none rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:outline-indigo-400"

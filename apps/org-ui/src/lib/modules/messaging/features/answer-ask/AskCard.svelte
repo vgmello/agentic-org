@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
+	import type { DraftText } from '../../drafts/store';
 	import { Button } from '$lib/components/ui/button';
 	import type { ChatContext } from '$lib/modules/messaging/engine';
 	import { acceptedWords, answerWords, appOnly, deadlineWords, nameOf, waitingFor } from '$lib/modules/messaging/model';
@@ -18,6 +19,7 @@
 		readOnly = false,
 		officeRunning = true,
 		where,
+		draft,
 		onanswer,
 		onaccept,
 		onreplyinthread
@@ -29,6 +31,7 @@
 		officeRunning?: boolean;
 		/** Shown on cards outside their conversation (Needs you, Mentions): "in #atlas". */
 		where?: string;
+		draft?: DraftText;
 		onanswer: (answer: { option_id?: string; text?: string }) => Promise<void> | void;
 		onaccept: () => Promise<void> | void;
 		onreplyinthread?: () => void;
@@ -38,6 +41,7 @@
 	let replying = $state(false);
 	let rejecting = $state(false);
 	let text = $state('');
+	let replyBox = $state<HTMLTextAreaElement>();
 	let busy = $state(false);
 	let error = $state<string | undefined>();
 
@@ -51,15 +55,36 @@
 	// owner included, can only reply (CHAT-18).
 	const canAccept = $derived(message.addressed_to === ctx.actor);
 
+	$effect.pre(() => {
+		const current = draft;
+		if (!current) return;
+		text = current.read();
+		replying = rejecting = false;
+	});
+	$effect(() => {
+		const element = replyBox;
+		if (!element || !draft) return;
+		const end = untrack(() => text.length);
+		element.setSelectionRange(end, end);
+	});
+	$effect(() => {
+		if (done) draft?.write('');
+	});
+
 	async function go(run: () => Promise<void> | void) {
 		if (!officeRunning || busy) return;
 		const origin = document.activeElement;
+		const answeringDraft = draft;
+		const clearDraft = answeringDraft?.clearOnSuccess();
 		busy = true;
 		error = undefined;
 		try {
 			await run();
-			replying = rejecting = false;
-			text = '';
+			clearDraft?.();
+			if (answeringDraft === draft) {
+				replying = rejecting = false;
+				text = '';
+			}
 		} catch (e) {
 			error = (e as { message?: string }).message ?? 'That did not go through.';
 		} finally {
@@ -111,7 +136,7 @@
 		{#if replying || rejecting}
 			<form class="mt-2 flex flex-wrap items-start gap-2" onsubmit={(e) => (e.preventDefault(), go(() => onanswer(rejecting ? { option_id: 'reject', text } : { text })))}>
 				<label class="sr-only" for="ask-text-{message.id}">{rejecting ? 'Why do you reject it?' : 'Your reply'}</label>
-				<textarea id="ask-text-{message.id}" bind:value={text} rows="2" maxlength={20000} disabled={busy} placeholder={rejecting ? 'Why do you reject it?' : 'Your reply'} class="min-w-0 flex-1 rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400"></textarea>
+				<textarea id="ask-text-{message.id}" bind:this={replyBox} bind:value={text} oninput={(event) => draft?.write(event.currentTarget.value)} rows="2" maxlength={20000} disabled={busy} placeholder={rejecting ? 'Why do you reject it?' : 'Your reply'} class="min-w-0 flex-1 rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400"></textarea>
 				<Button type="submit" size="sm" disabled={busy || text.trim() === ''}>{rejecting ? 'Reject' : 'Send reply'}</Button>
 			</form>
 		{/if}

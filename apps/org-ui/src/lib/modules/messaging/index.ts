@@ -28,3 +28,4 @@ export {
 	type ChatView
 } from './model';
 export type { ChatCall, ChatMessage, ChatSnapshot, Conversation, MuteMode, Reaction } from './types';
+export { provideDraftStore, useDraftStore } from './drafts/context';
