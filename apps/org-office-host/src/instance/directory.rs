@@ -136,6 +136,10 @@ impl Directory {
 
     fn walk(path: &Path, create_final: bool) -> Result<File, Error> {
         let mut directory = File::open("/")?;
+        #[cfg(target_os = "linux")]
+        require_case_sensitive(&directory, Path::new("/"))?;
+        #[cfg(target_os = "linux")]
+        let mut traversed = PathBuf::from("/");
         let parts: Vec<_> = path
             .components()
             .filter_map(|c| match c {
@@ -166,6 +170,11 @@ impl Directory {
                     libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
                 )
             })?;
+            #[cfg(target_os = "linux")]
+            {
+                traversed.push(parts[index]);
+                require_case_sensitive(&directory, &traversed)?;
+            }
         }
         Ok(directory)
     }
@@ -458,6 +467,107 @@ impl Directory {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn require_case_sensitive(file: &File, path: &Path) -> Result<(), Error> {
+    let mut stats = std::mem::MaybeUninit::<libc::statfs>::uninit();
+    // SAFETY: the retained directory descriptor and writable output are valid.
+    if unsafe { libc::fstatfs(file.as_raw_fd(), stats.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error().into());
+    }
+    // SAFETY: fstatfs initialized stats on success.
+    let kind = unsafe { stats.assume_init() }.f_type as u32 as u64;
+    if kind == 0x5846_5342 {
+        check_xfs_geometry(path, xfs_geometry_flags(file))?;
+    }
+    check_linux_directory(path, kind, || {
+        let mut flags: libc::c_int = 0;
+        // SAFETY: FS_IOC_GETFLAGS writes to the valid flags pointer for this directory.
+        if unsafe { libc::ioctl(file.as_raw_fd(), libc::FS_IOC_GETFLAGS, &mut flags) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(flags)
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn check_linux_directory(
+    path: &Path,
+    kind: u64,
+    flags: impl FnOnce() -> io::Result<libc::c_int>,
+) -> Result<(), Error> {
+    // Never infer sensitivity from an unknown filesystem's lack of an ioctl.
+    if !matches!(
+        kind,
+        0xEF53 | 0x5846_5342 | 0x9123_683E | 0xF2F5_2010 | 0x794C_7630
+    ) {
+        return Err(Error::UnsupportedFilesystem {
+            path: path.to_owned(),
+            kind,
+        });
+    }
+    let flags = match flags() {
+        Err(error) if matches!(error.raw_os_error(), Some(libc::ENOTTY | libc::EOPNOTSUPP)) => 0,
+        result => result?,
+    };
+    reject_casefold(path, flags)
+}
+
+#[cfg(target_os = "linux")]
+fn reject_casefold(path: &Path, flags: libc::c_int) -> Result<(), Error> {
+    // Linux UAPI include/uapi/linux/fs.h: FS_CASEFOLD_FL.
+    if flags & 0x4000_0000 != 0 {
+        return Err(Error::CaseInsensitive(path.to_owned()));
+    }
+    Ok(())
+}
+
+// Linux fs/xfs/libxfs/xfs_fs.h, xfs_fsop_geom. The v5 UAPI is 256 bytes;
+// newer geometry fields occupy the reserved tail, which this adapter never reads.
+#[cfg(target_os = "linux")]
+#[repr(C)]
+struct XfsGeometry {
+    dimensions: [u32; 8],
+    blocks: [u64; 4],
+    uuid: [u8; 16],
+    stripe: [u32; 2],
+    version: i32,
+    flags: u32,
+    sectors: [u32; 4],
+    health: [u32; 2],
+    reserved: [u64; 17],
+}
+
+#[cfg(target_os = "linux")]
+const _: () = {
+    assert!(std::mem::size_of::<XfsGeometry>() == 256);
+    assert!(std::mem::offset_of!(XfsGeometry, flags) == 92);
+};
+
+#[cfg(target_os = "linux")]
+fn xfs_geometry_flags(file: &File) -> io::Result<u32> {
+    let mut geometry = std::mem::MaybeUninit::<XfsGeometry>::zeroed();
+    let request = libc::_IOR::<XfsGeometry>(u32::from(b'X'), 126);
+    // SAFETY: request encodes this UAPI buffer's size; the descriptor and buffer are live.
+    if unsafe { libc::ioctl(file.as_raw_fd(), request, geometry.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: successful FSGEOMETRY initialized the zeroed UAPI output.
+    Ok(unsafe { geometry.assume_init() }.flags)
+}
+
+#[cfg(target_os = "linux")]
+fn check_xfs_geometry(path: &Path, flags: io::Result<u32>) -> Result<(), Error> {
+    let flags = flags.map_err(|source| Error::XfsProbe {
+        path: path.to_owned(),
+        source,
+    })?;
+    // XFS_FSOP_GEOM_FLAGS_DIRV2CI: legacy ASCII case-insensitive lookups.
+    if flags & (1 << 12) != 0 {
+        return Err(Error::CaseInsensitive(path.to_owned()));
+    }
+    Ok(())
+}
+
 fn lock(file: &File, path: &Path) -> Result<(), Error> {
     match file.try_lock() {
         Ok(()) => Ok(()),
@@ -541,6 +651,95 @@ pub(super) fn paths_overlap(a: &Path, b: &Path, unavailable: bool) -> bool {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn disk_validation_refuses_a_real_memory_filesystem() {
+        let temporary = tempfile::tempdir_in("/dev/shm").unwrap();
+        std::fs::set_permissions(temporary.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let path = temporary.path().canonicalize().unwrap();
+        let directory = Directory::from_file(File::open(&path).unwrap(), path).unwrap();
+        assert!(matches!(
+            directory.require_disk(),
+            Err(Error::Unsafe("user temp base must be disk-backed"))
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn casefold_refusal_names_the_unsupported_component() {
+        let path = Path::new("/disk/folded-parent");
+        for flags in [0x4000_0000, 0x4008_0000] {
+            let error = check_linux_directory(path, 0xEF53, || Ok(flags)).unwrap_err();
+            assert!(matches!(&error, Error::CaseInsensitive(component) if component == path));
+            let diagnostic = error.to_string();
+            assert!(diagnostic.contains("/disk/folded-parent"));
+            assert!(diagnostic.contains("case-insensitive directories aren't supported on Linux"));
+        }
+        check_linux_directory(path, 0xEF53, || Ok(0)).unwrap();
+        check_linux_directory(path, 0xEF53, || Ok(0x0008_0000)).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_filesystem_support_is_explicit_and_ioctl_errors_fail_closed() {
+        let path = Path::new("/disk/instance");
+        for kind in [0xEF53, 0x5846_5342, 0x9123_683E, 0xF2F5_2010, 0x794C_7630] {
+            check_linux_directory(path, kind, || Ok(0)).unwrap();
+            for errno in [libc::ENOTTY, libc::EOPNOTSUPP] {
+                check_linux_directory(path, kind, || Err(io::Error::from_raw_os_error(errno)))
+                    .unwrap();
+            }
+            assert!(matches!(
+                check_linux_directory(path, kind, || Err(io::Error::from_raw_os_error(
+                    libc::EACCES
+                ))),
+                Err(Error::Io(_))
+            ));
+        }
+        for kind in [
+            0,
+            0x4d44,
+            0x2011_BAB0,
+            0xff53_4d42,
+            0x6969,
+            0x6573_5546,
+            0x5346_544e,
+            0x0102_1994,
+            0x2FC1_2FC1,
+            u64::MAX,
+        ] {
+            let error = check_linux_directory(path, kind, || {
+                panic!("unsupported type must not query flags")
+            })
+            .unwrap_err();
+            assert!(
+                matches!(&error, Error::UnsupportedFilesystem { path: reported, kind: reported_kind } if reported == path && *reported_kind == kind)
+            );
+            assert!(error.to_string().contains(&format!("type {kind:#x}")));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn xfs_requires_successful_geometry_without_ascii_casefolding() {
+        let path = Path::new("/disk/xfs");
+        for flags in [1 << 12, (1 << 12) | (1 << 15)] {
+            assert!(
+                matches!(check_xfs_geometry(path, Ok(flags)), Err(Error::CaseInsensitive(component)) if component == path)
+            );
+        }
+        check_xfs_geometry(path, Ok(0)).unwrap();
+        check_xfs_geometry(path, Ok(1 << 15)).unwrap();
+        for errno in [libc::ENOTTY, libc::EOPNOTSUPP, libc::EACCES, libc::EIO] {
+            let error =
+                check_xfs_geometry(path, Err(io::Error::from_raw_os_error(errno))).unwrap_err();
+            assert!(
+                matches!(&error, Error::XfsProbe { path: reported, source } if reported == path && source.raw_os_error() == Some(errno))
+            );
+            assert!(error.to_string().contains("/disk/xfs"));
+        }
+    }
 
     #[test]
     fn concurrent_lock_file_creation_never_loses_the_existing_entry() {

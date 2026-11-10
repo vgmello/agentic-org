@@ -4,6 +4,9 @@
 //! selection, credential access or public host API here. A reservation owns the actual
 //! root's inode lock until dropped. The locator's on-disk representation stays private.
 //! NFS is unsupported: its emulation of flock does not provide these descriptor lifetimes.
+//! Linux casefold directories (ext4/f2fs) are unsupported and refused along the root path.
+//! Linux accepts case-sensitive ext4, XFS, btrfs, f2fs and overlayfs paths only;
+//! XFS geometry must positively exclude ASCII-CI. ZFS is unsupported in v1.
 
 mod directory;
 pub(crate) mod registry;
@@ -18,8 +21,26 @@ pub(crate) enum Error {
     Invalid(&'static str),
     Unsafe(&'static str),
     Conflict(&'static str),
-    RootUnavailable { name: String, path: PathBuf },
-    ReservedRoot { name: String, path: PathBuf },
+    RootUnavailable {
+        name: String,
+        path: PathBuf,
+    },
+    ReservedRoot {
+        name: String,
+        path: PathBuf,
+    },
+    #[cfg(target_os = "linux")]
+    CaseInsensitive(PathBuf),
+    #[cfg(target_os = "linux")]
+    UnsupportedFilesystem {
+        path: PathBuf,
+        kind: u64,
+    },
+    #[cfg(target_os = "linux")]
+    XfsProbe {
+        path: PathBuf,
+        source: io::Error,
+    },
     Busy(PathBuf),
     Io(io::Error),
 }
@@ -37,6 +58,17 @@ impl fmt::Display for Error {
                 "instance {name} reserves root {}; choose a disjoint root or repair that registration",
                 path.display()),
             Self::Busy(path) => write!(f, "instance state is already locked: {}", path.display()),
+            #[cfg(target_os = "linux")]
+            Self::CaseInsensitive(path) => write!(f,
+                "instance path {} uses a case-insensitive directory; case-insensitive directories aren't supported on Linux",
+                path.display()),
+            #[cfg(target_os = "linux")]
+            Self::UnsupportedFilesystem { path, kind } => write!(f,
+                "unsupported filesystem for the instance root at {} (type {kind:#x}); Linux requires a case-sensitive local filesystem",
+                path.display()),
+            #[cfg(target_os = "linux")]
+            Self::XfsProbe { path, source } => write!(f,
+                "cannot establish XFS case sensitivity for instance path {}: {source}", path.display()),
             Self::Io(error) => write!(f, "instance filesystem: {error}"),
         }
     }
@@ -46,6 +78,8 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(error) => Some(error),
+            #[cfg(target_os = "linux")]
+            Self::XfsProbe { source, .. } => Some(source),
             _ => None,
         }
     }

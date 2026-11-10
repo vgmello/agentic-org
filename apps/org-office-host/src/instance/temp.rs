@@ -166,10 +166,12 @@ mod tests {
     fn a_private_memory_backed_temp_base_is_refused() {
         let temporary = tempfile::tempdir_in("/dev/shm").unwrap();
         std::fs::set_permissions(temporary.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
-        let base = Directory::open(&temporary.path().canonicalize().unwrap(), false).unwrap();
         assert!(matches!(
-            validate_base(&base),
-            Err(Error::Unsafe("user temp base must be disk-backed"))
+            Directory::open(&temporary.path().canonicalize().unwrap(), false),
+            Err(Error::UnsupportedFilesystem {
+                kind: 0x0102_1994,
+                ..
+            })
         ));
     }
 }

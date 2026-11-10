@@ -369,6 +369,14 @@ impl Registry {
         let candidate = match Directory::open(path, false) {
             Ok(root) => Some(root),
             Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => None,
+            #[cfg(target_os = "linux")]
+            Err(
+                error @ (Error::CaseInsensitive(_)
+                | Error::UnsupportedFilesystem { .. }
+                | Error::XfsProbe { .. }),
+            ) => {
+                return Err(error);
+            }
             Err(error) => {
                 if let Some(entry) = locator
                     .entries
