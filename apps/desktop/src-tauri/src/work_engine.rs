@@ -1,5 +1,5 @@
 //! The mock office's work-item rules for tasks and checklists (ada's W7 design §1.10, §2, §4.4, §4.7), the Rust twin of
-//! `src/lib/work/engine.ts`: both run the cases in `test-vectors/work-commands.json`. It stands in for the office until
+//! `src/lib/work/engine.ts`: both run the cases in `crates/org-work/test-vectors/work-commands.json`. It stands in for the office until
 //! `org_proto::work` exists. Calls and answers are JSON in the contract's shapes; errors carry the contract's codes.
 //! Bugs, requests, links and comments are not here.
 
@@ -1500,8 +1500,10 @@ mod tests {
     /// The cases shared with the TypeScript mock (`src/lib/work/vectors.test.ts`): both engines must agree.
     #[test]
     fn the_shared_cases_agree_with_the_typescript_engine() {
-        let vectors: Value =
-            serde_json::from_str(include_str!("../../test-vectors/work-commands.json")).unwrap();
+        let vectors: Value = serde_json::from_str(include_str!(
+            "../../../../crates/org-work/test-vectors/work-commands.json"
+        ))
+        .unwrap();
         let cases = vectors["cases"].as_array().unwrap();
         assert_eq!(
             cases.len(),
@@ -1536,8 +1538,10 @@ mod tests {
 
     #[test]
     fn done_tasks_are_listed_only_since_the_cutoff() {
-        let vectors: Value =
-            serde_json::from_str(include_str!("../../test-vectors/work-commands.json")).unwrap();
+        let vectors: Value = serde_json::from_str(include_str!(
+            "../../../../crates/org-work/test-vectors/work-commands.json"
+        ))
+        .unwrap();
         let mut state = new_state();
         let at = |now: &str| ctx_of(&vectors["context"], Some(now));
         let id = "01JC0000000000000000000001";

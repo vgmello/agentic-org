@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import vectors from '../../../test-vectors/org-commands.json';
+import vectors from '../../../../../crates/org-office/test-vectors/org-commands.json';
+import seed from '../../../../../crates/org-office/test-vectors/organization.json';
 import type { AppError } from '$lib/proto';
 import type { OrgCommand } from './commands';
 import { applyCommand, type Ctx } from './reducer';
@@ -12,6 +13,9 @@ const ctx: Ctx = { now: '2026-11-08T12:00:00.000Z', offices: ['office-1'] };
 const cmd = (step: Step, n: number): OrgCommand => ({ method: step.method, params: { command_id: `01ARZ3NDEKTSV4RRFFQ69G5F${String(n).padStart(2, '0')}`, ...step.params } }) as OrgCommand;
 
 describe('shared organization command cases', () => {
+	it('uses the same initial organization as the canonical Rust rules', () => {
+		expect(sampleOrg('office-1')).toEqual(seed);
+	});
 	it.each(vectors.cases as { name: string; setup?: unknown[]; command: unknown; expect: string; after?: unknown[] }[])('$name', ({ setup, command, expect: outcome, after }) => {
 		let s = sampleOrg('office-1');
 		(setup ?? []).forEach((step, i) => (s = applyCommand(s, cmd(step as Step, i), ctx)));
