@@ -89,9 +89,14 @@ fn entropy(bytes: &mut [u8; 32]) -> io::Result<()> {
     {
         let mut offset = 0;
         while offset < bytes.len() {
-            // SAFETY: this is the remaining initialized writable slice; flags 0 require kernel entropy.
+            // SAFETY: this is the remaining initialized writable slice. Refuse an
+            // uninitialized entropy pool instead of blocking past the recovery deadline.
             let count = unsafe {
-                libc::getrandom(bytes[offset..].as_mut_ptr().cast(), bytes.len() - offset, 0)
+                libc::getrandom(
+                    bytes[offset..].as_mut_ptr().cast(),
+                    bytes.len() - offset,
+                    libc::GRND_NONBLOCK,
+                )
             };
             if count < 0 {
                 let error = io::Error::last_os_error();
