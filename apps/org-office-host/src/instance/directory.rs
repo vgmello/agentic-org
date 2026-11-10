@@ -262,7 +262,15 @@ impl Directory {
     }
 
     pub(super) fn lock_file(&self, name: &str) -> Result<FileLock, Error> {
-        let file = self.open_file(name, libc::O_RDWR | libc::O_CREAT)?;
+        // Darwin can return ENOENT for racing O_CREAT|O_NOFOLLOW opens even
+        // though the other creator published the file. Claim exclusively, then
+        // open an existing entry without creation; all validation still applies.
+        let file = match self.open_file(name, libc::O_RDWR | libc::O_CREAT | libc::O_EXCL) {
+            Err(Error::Io(error)) if error.kind() == io::ErrorKind::AlreadyExists => {
+                self.open_file(name, libc::O_RDWR)?
+            }
+            result => result?,
+        };
         lock(&file, &self.path.join(name))?;
         let held = FileLock(file);
         self.verify_file(name, &held)?;
@@ -533,6 +541,38 @@ pub(super) fn paths_overlap(a: &Path, b: &Path, unavailable: bool) -> bool {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn concurrent_lock_file_creation_never_loses_the_existing_entry() {
+        let temporary = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(temporary.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let root = Directory::open(&temporary.path().canonicalize().unwrap(), false).unwrap();
+        let directories: Vec<_> = (0..128)
+            .map(|index| root.child(&index.to_string(), true).unwrap())
+            .collect();
+        let barrier = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            let run = || {
+                let mut results = Vec::new();
+                for directory in &directories {
+                    barrier.wait();
+                    results.push(directory.lock_file("registry.lock").map(drop));
+                    barrier.wait();
+                }
+                results
+            };
+            let first = scope.spawn(run);
+            let second = scope.spawn(run);
+            for result in first
+                .join()
+                .unwrap()
+                .into_iter()
+                .chain(second.join().unwrap())
+            {
+                assert!(matches!(result, Ok(()) | Err(Error::Busy(_))), "{result:?}");
+            }
+        });
+    }
 
     #[test]
     fn dropping_lock_owners_unlocks_even_while_a_duplicate_fd_survives() {
