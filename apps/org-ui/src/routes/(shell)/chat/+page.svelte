@@ -356,6 +356,9 @@
 
 <svelte:window onkeydown={(event) => {
 	if (event.key === 'Escape' && !event.defaultPrevented && threadRoot && !channelOpen && !dmOpen && !commandOpen) {
+		const field = event.target;
+		const textField = field instanceof HTMLTextAreaElement || (field instanceof HTMLInputElement && /^(text|search|email|url|tel|password|number)$/.test(field.type));
+		if (event.isComposing || (textField && field.value !== '')) return;
 		event.preventDefault();
 		closeThread();
 	}
