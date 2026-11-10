@@ -223,7 +223,7 @@ fn assert_drop_kills_group() {
     let spawned = prepare(
         &root,
         "/bin/sh".into(),
-        vec!["-c".into(), "sleep 8 & echo $!; wait".into()],
+        vec!["-c".into(), "trap '' TERM; sleep 8 & echo $!; wait".into()],
         environment(&root),
     )
     .record_mark(|_| Ok(()))
@@ -261,9 +261,22 @@ fn assert_drop_kills_group() {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         #[cfg(target_os = "linux")]
-        // SAFETY: the isolated subreaper owns this adopted grandchild after leader Drop.
-        unsafe {
-            libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG);
+        {
+            let mut status = 0;
+            // SAFETY: the isolated subreaper owns this adopted, unreaped grandchild.
+            let rc = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+            if rc == pid {
+                assert!(libc::WIFSIGNALED(status));
+                assert_eq!(libc::WTERMSIG(status), libc::SIGKILL);
+                break; // reaping ends ownership; never probe or signal a reused PID
+            }
+            if rc == -1 {
+                assert_eq!(
+                    io::Error::last_os_error().kind(),
+                    io::ErrorKind::Interrupted
+                );
+                continue;
+            }
         }
         // SAFETY: signal0 only probes the fixture pid; it cannot signal a reused identity.
         if unsafe { libc::kill(pid, 0) } == -1 {
