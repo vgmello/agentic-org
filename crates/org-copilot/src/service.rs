@@ -313,10 +313,16 @@ impl<R: CopilotRuntime> Copilot<R> {
     /// [`CancelToken`] is set and `timeout` is the answer; the worker is left to wind down, and
     /// counts against `max_concurrent_runs` until it does. The caller's slot is free as soon as
     /// this returns.
+    ///
+    /// The deadline is fixed before the worker starts, and the worker stamps when the adapter
+    /// returned, so an answer that came at or after the deadline is `timeout` however late this
+    /// thread got to look (see [`settle`]).
     fn run_with_deadline(&self, run: RunRequest) -> Result<RunOutput, CopilotError> {
         let flight = InFlight::start(&self.in_flight, self.limits.max_concurrent_runs)
             .ok_or(CopilotError::Overloaded)?;
         let timeout = self.limits.timeout;
+        // `None` when the timeout is too long to add to the clock: then there is no deadline.
+        let deadline = Instant::now().checked_add(timeout);
         let cancel = CancelToken::new();
         let (done, answer) = mpsc::channel();
         let runtime = Arc::clone(&self.runtime);
@@ -325,24 +331,14 @@ impl<R: CopilotRuntime> Copilot<R> {
             .name("copilot-run".into())
             .spawn(move || {
                 let _flight = flight;
+                let result = runtime.run(&run, &worker_cancel);
+                let at = Instant::now();
                 // The receiver may be gone (we gave up): then the answer is thrown away.
-                let _ = done.send(runtime.run(&run, &worker_cancel));
+                let _ = done.send(Finished { result, at });
             })
             .map_err(|_| CopilotError::Failed(FailReason::Runtime))?;
-        match answer.recv_timeout(timeout) {
-            Ok(Ok(output)) => Ok(output),
-            Ok(Err(RuntimeError::TimedOut)) => Err(CopilotError::Timeout),
-            Ok(Err(RuntimeError::NotSetUp)) => Err(CopilotError::Unavailable),
-            Ok(Err(RuntimeError::Failed)) => Err(CopilotError::Failed(FailReason::Runtime)),
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                cancel.cancel();
-                Err(CopilotError::Timeout)
-            }
-            // The worker ended without an answer: the adapter panicked.
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                Err(CopilotError::Failed(FailReason::Runtime))
-            }
-        }
+        let wait = deadline.map_or(timeout, |d| d.saturating_duration_since(Instant::now()));
+        settle(answer.recv_timeout(wait), deadline, &cancel)
     }
 
     fn check_input(
@@ -390,5 +386,43 @@ impl<R: CopilotRuntime> Copilot<R> {
             return Err(Invalid(InvalidReason::LooksLikeSecret));
         }
         Ok(())
+    }
+}
+
+/// What a worker sends back: the adapter's result, and when the adapter returned it.
+pub(crate) struct Finished {
+    pub(crate) result: Result<RunOutput, RuntimeError>,
+    pub(crate) at: Instant,
+}
+
+/// Turn what the worker sent by the deadline (or its silence) into the call's result. On `timeout`
+/// the run's [`CancelToken`] is set.
+///
+/// The clock decides, not the channel: `recv_timeout` hands over an answer that is already
+/// queued even after its own deadline has passed (it looks at the queue before the clock, so a
+/// waiting thread that was descheduled past the deadline, or was slow to start waiting, still gets
+/// it). So a result the adapter returned at or after `deadline` is `timeout`, like one that never
+/// came, whether it is an answer or a failure.
+pub(crate) fn settle(
+    received: Result<Finished, mpsc::RecvTimeoutError>,
+    deadline: Option<Instant>,
+    cancel: &CancelToken,
+) -> Result<RunOutput, CopilotError> {
+    let result = match received {
+        Ok(finished) if deadline.is_none_or(|d| finished.at < d) => finished.result,
+        Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) => {
+            cancel.cancel();
+            return Err(CopilotError::Timeout);
+        }
+        // The worker ended without an answer: the adapter panicked.
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            return Err(CopilotError::Failed(FailReason::Runtime));
+        }
+    };
+    match result {
+        Ok(output) => Ok(output),
+        Err(RuntimeError::TimedOut) => Err(CopilotError::Timeout),
+        Err(RuntimeError::NotSetUp) => Err(CopilotError::Unavailable),
+        Err(RuntimeError::Failed) => Err(CopilotError::Failed(FailReason::Runtime)),
     }
 }
