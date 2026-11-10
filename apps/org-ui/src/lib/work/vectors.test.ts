@@ -27,6 +27,9 @@ function subset(have: unknown, want: unknown, path = ''): string | undefined {
 }
 
 describe('work-commands.json (shared with the Rust mock office)', () => {
+	it('preserves every legacy work scenario', () => {
+		expect(vectors.cases).toHaveLength(29);
+	});
 	for (const c of vectors.cases as { name: string; steps: Step[] }[]) {
 		it(c.name, () => {
 			let state: WorkState = emptyWork();

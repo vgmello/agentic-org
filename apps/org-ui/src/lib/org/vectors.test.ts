@@ -13,6 +13,9 @@ const ctx: Ctx = { now: '2026-11-08T12:00:00.000Z', offices: ['office-1'] };
 const cmd = (step: Step, n: number): OrgCommand => ({ method: step.method, params: { command_id: `01ARZ3NDEKTSV4RRFFQ69G5F${String(n).padStart(2, '0')}`, ...step.params } }) as OrgCommand;
 
 describe('shared organization command cases', () => {
+	it('preserves every legacy organization scenario', () => {
+		expect(vectors.cases).toHaveLength(252);
+	});
 	it('uses the same initial organization as the canonical Rust rules', () => {
 		expect(sampleOrg('office-1')).toEqual(seed);
 	});
