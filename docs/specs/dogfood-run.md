@@ -5,7 +5,7 @@ status: for-review
 revision: 4
 owner: ac-product-designer-eden
 created: "2026-11-08"
-updated: "2026-11-09"
+updated: "2026-11-10"
 requested_by: owner
 reviewers: [ac-staff-engineer-ada, owner]
 builds_on: [server-installation-and-access-ux, our-org-in-the-app, offices-and-teams-ux, work-items-ux, agent-run-modes-ux]
@@ -98,6 +98,13 @@ add a real checkout/commit/transfer run once that separate capability is support
 | 5.6 | Explicitly delete the disposable `lab` data | Exact selected stopped instance removed; default data/credentials untouched | SRV-16 |
 
 ## 6. Source and feature acceptance
+
+Verify SRV-22: retained browser code/package uses `apps/org-ui` / `org-ui`, and
+server code/Cargo package/worker executable uses `apps/org-server` / `org-server`.
+Check workspace, imports, test helpers, release/signing resolution and ownership
+references against the [project structure](../design/project-structure.md). Verify
+domain/feature moves preserve private SQL, transactions, public boundaries and
+licensed UI containment before treating the reorganization as complete.
 
 Verify no Tauri build/runtime dependency, native capture/menu, old-team import or
 production mock fallback remains. Exercise the retained roster, team, hiring,

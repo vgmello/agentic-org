@@ -9,6 +9,12 @@ development instructions, not installation instructions for the new v1. Do not
 claim the new CLI, HTTP server or remote sync exists until implemented. No migration
 of the undeployed desktop app or its data is required.
 
+**Target naming:** retain the browser UI as `apps/org-ui` (package `org-ui`) and
+rename the worker app/package/binary to `apps/org-server` / `org-server`. See the
+[proposed project structure](../../docs/design/project-structure.md). This file's
+current source paths and desktop commands are pre-pivot evidence; the docs PR
+performs no directory moves. Licensed UI stays inside the renamed UI application.
+
 What `apps/desktop` is built with, why, and what is still undecided. Versions are pinned exactly in `package.json` and `src-tauri/Cargo.toml`.
 
 ## Decided

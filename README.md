@@ -14,9 +14,34 @@ The same proposal includes [employee supervision and native delegates](docs/spec
 [channel questions and DM follow-up](docs/specs/chat-ux.md). Their runtime behavior
 belongs to the offices; the browser accesses it through HQ.
 
+## Proposed v1 layout
+
+The browser application is **org-ui** at `apps/org-ui/`. The Rust server
+application, Cargo package and worker executable are **org-server** at
+`apps/org-server/`. The host still supervises one worker per office.
+
+```text
+apps/
+  org-ui/             Svelte 5 + TypeScript, static SvelteKit 2 application
+  org-server/         Rust server composition and transport
+  org-office-host/    Instance and office-process supervision
+  org-agent/          Small employee CLI
+crates/               Cohesive libraries; domain modules contain feature slices
+docs/
+  architecture-rules.md
+  design/project-structure.md
+```
+
+Follow the [architecture rules](docs/architecture-rules.md) and
+[proposed project structure](docs/design/project-structure.md) for domain/feature
+organization, shared code ownership, and the source-to-target implementation plan.
+These names/layout are proposed implementation work; this PR changes docs only.
+
+## Inspected source layout (pre-pivot)
+
 A macOS desktop app for running an AI organization: its teams, projects and agents (AI employees) and the work they do. The app is a **client**. Each organization runs on one or more **office servers**, the nodes where agents actually work. Agents talk to their office through a tiny CLI.
 
-## Layout
+### Historical layout
 
 ```
 crates/                         libraries only
@@ -46,7 +71,7 @@ apps/org-agent        ─▶ org-proto   (planned)
 ```
 The office server is also the agents' message hub (ADR-0001, decision 4): `org-agent` will talk to it over the local socket in `org-proto`. A messaging ADR, to be written before that is built, sets the details, including what happens while the server is down.
 
-## Build
+## Historical development commands
 
 ```
 cargo check --workspace          # Rust crates and servers

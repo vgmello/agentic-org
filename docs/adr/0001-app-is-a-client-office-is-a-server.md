@@ -3,7 +3,9 @@
 **Amended 2026-11-09 by the owner's standalone-v1 decision:**
 [ADR-0005](0005-standalone-server-v1.md) replaces the desktop packaging, local-app
 access and Tauri transport below. V1 is a macOS/Linux server with HQ browser access;
-Tauri is v2. This is an undeployed-product pivot with no old-app migration or
+Tauri is v2. The owner's naming amendment targets `apps/org-ui` for the browser
+application and `apps/org-server` / `org-server` for the per-office worker;
+see [project structure](../design/project-structure.md). This is an undeployed-product pivot with no old-app migration or
 compatibility requirement. The office/domain/storage model remains applicable.
 
 Status: **accepted** 2026-11-08 (the user); **amended** the same day for the office model in [`offices-hq-and-satellites.md`](../design/offices-hq-and-satellites.md) (approved by the user). Owner: ada. This starts the new `v1`. It carries forward the agreed parts of the earlier design (kept on branch `v1-old`) and replaces the parts that conflict.

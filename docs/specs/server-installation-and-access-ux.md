@@ -2,10 +2,10 @@
 kind: spec
 title: "Standalone server: installation, instances and browser access (UX)"
 status: for-review
-revision: 1
+revision: 2
 owner: ac-product-designer-eden
 created: "2026-11-09"
-updated: "2026-11-09"
+updated: "2026-11-10"
 requested_by: owner
 reviewers: [ac-staff-engineer-ada, owner, app-frontend-dev, server-dev, ac-software-engineer-river, ac-software-engineer-remy]
 builds_on: [offices-and-teams-ux, agent-run-modes-ux, employee-supervision-ux, processes-ux, chat-ux]
@@ -33,6 +33,13 @@ the decision is [ADR-0005](../adr/0005-standalone-server-v1.md), and the
 [removal inventory](../design/standalone-server-removal-inventory.md) names the
 existing code to delete, retain or replace. CLI spelling below is proposed,
 not a claim that these commands exist on the inspected branch.
+
+The owner's naming amendment uses `org-ui` / `apps/org-ui/` for the browser
+application and `org-server` / `apps/org-server/` for the Rust worker app, package,
+and binary. See [project structure](../design/project-structure.md) for the proposed
+folder layout and reorganization guidelines. The setup/release command remains
+provisionally `agentic-org`; office roles and the per-office process model remain.
+These source renames are implementation acceptance, not changes performed by this PR.
 
 ## 1. Install once; select an instance
 
@@ -198,6 +205,8 @@ rules, which are distinct from uninstalling software on a machine.
 - SRV-19 · The v1 build, runtime and acceptance suite require no Tauri packages, desktop command bridge, tray, native notification or global shortcut.
 - SRV-20 · The implementation deletes superseded paths without preserving old desktop contracts or importing undeployed app data. Domain rules, storage durability, office identity and supervision invariants remain covered.
 - SRV-21 · A fresh HQ and satellite complete the cross-platform walkthrough in [dogfood-run.md](dogfood-run.md), including disconnect/reconnect and a real agent. Mock-only success is insufficient.
+
+- SRV-22 · The retained browser application's source/package is `apps/org-ui` / `org-ui`; the server application's source/Cargo package/worker executable is `apps/org-server` / `org-server`. Workspace, imports, tests, build, packaging and ownership references agree; the rename preserves the per-office worker and host credential boundaries.
 
 ## 7. Decisions still requiring implementation evidence
 

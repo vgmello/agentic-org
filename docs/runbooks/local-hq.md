@@ -1,5 +1,11 @@
 # Runbook: a real HQ office on this Mac (debug build)
 
+**Naming amendment (2026-11-10):** standalone v1 renames the server app/package/binary
+from `apps/org-office-server` / `org-office-server` to `apps/org-server` / `org-server`,
+and the retained browser UI to `apps/org-ui` / `org-ui`. The legacy debug commands
+below describe the inspected source. Follow [project structure](../design/project-structure.md)
+for implementation; this docs PR does not rename source or change process boundaries.
+
 **V1 direction changed 2026-11-09:** the target is a standalone Rust server
 on macOS/Linux serving the browser application from HQ. Tauri is deferred to v2.
 See the [server design](../design/standalone-server.md) and [deletion inventory](../design/standalone-server-removal-inventory.md).

@@ -9,6 +9,12 @@ development instructions, not installation instructions for the new v1. Do not
 claim the new CLI, HTTP server or remote sync exists until implemented. No migration
 of the undeployed desktop app or its data is required.
 
+**Target naming:** retain the browser UI as `apps/org-ui` (package `org-ui`) and
+rename the worker app/package/binary to `apps/org-server` / `org-server`. See the
+[proposed project structure](../../docs/design/project-structure.md). This file's
+current source paths and desktop commands are pre-pivot evidence; the docs PR
+performs no directory moves. Licensed UI stays inside the renamed UI application.
+
 The desktop app: **Tauri 2 + SvelteKit 2 (static SPA) + Svelte 5 + Tailwind v4**, managed with **bun**. It is a *client*: it reaches an office server only through its Rust shell (`src-tauri`) and never reads an office's storage directly.
 
 See [TECH-STACK.md](TECH-STACK.md) for the stack, how to run it and what is still undecided.

@@ -1,5 +1,12 @@
 # Design: offices, HQ and satellites
 
+**Naming amendment (2026-11-10):** the target worker app/package/binary is
+`apps/org-server` / `org-server`, replacing `apps/org-office-server` / `org-office-server`;
+the retained browser application becomes `apps/org-ui` / `org-ui`. See
+[project structure](project-structure.md). Host custody, private launch and one worker
+per office remain. Older spellings below identify pre-rename source/contracts;
+implementation updates executable/build references without merging process roles.
+
 **Amendment 2026-11-09: standalone v1.**
 [ADR-0005](../adr/0005-standalone-server-v1.md) and
 [standalone-server.md](standalone-server.md) replace desktop access, installation

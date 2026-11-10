@@ -49,6 +49,30 @@ still require implementation.
    tests and security invariants. Installers/tests never erase user data merely
    because this is an undeployed product.
 
+## Component names and organization (owner amendment 2026-11-10)
+
+Rename the retained browser application from `apps/desktop/` to `apps/org-ui/`
+and use `org-ui` as its frontend package name. Delete the Tauri-only shell under
+the existing removal inventory; retain the actual browser application and licensed
+UI within its renamed product directory.
+
+Rename `apps/org-office-server/` to `apps/org-server/`, its Cargo package and
+worker executable to `org-server`, and affected Rust library imports to
+`org_server`. Update workspace/lockfiles, test helpers, build/release/signing
+references, host helper resolution, and ownership documentation with the source
+rename. No legacy desktop naming alias is required for this undeployed product.
+
+The setup/release executable remains provisionally `agentic-org`. The host,
+private worker launch, per-office processes, key custody, and HQ/satellite roles
+retain their boundaries. Names do not merge these processes or rename all
+office-related domain concepts.
+
+Use domain modules containing vertical slices inside meaningful package
+boundaries, as specified in [project structure](../design/project-structure.md)
+and the language-agnostic [architecture rules](../architecture-rules.md).
+The layout and renames are implementation requirements; this PR changes docs only.
+Baseline-source references retain their actual pre-rename paths.
+
 ## Consequences
 
 Standalone service registration and production key custody need implementation on

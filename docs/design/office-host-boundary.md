@@ -1,5 +1,12 @@
 # org-office-host ↔ org-office-server: the boundary (phase 1, HQ only)
 
+**Naming amendment (2026-11-10):** the target worker app/package/binary is
+`apps/org-server` / `org-server`, replacing `apps/org-office-server` / `org-office-server`;
+the retained browser application becomes `apps/org-ui` / `org-ui`. See
+[project structure](project-structure.md). Host custody, private launch and one worker
+per office remain. Older spellings below identify pre-rename source/contracts;
+implementation updates executable/build references without merging process roles.
+
 **Standalone-v1 precedence (2026-11-09):**
 [standalone-server.md](standalone-server.md) and
 [ADR-0005](../adr/0005-standalone-server-v1.md) amend this boundary for a named

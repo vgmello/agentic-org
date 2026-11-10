@@ -12,6 +12,26 @@ been deployed: delete superseded code directly, with no old-app compatibility or
 data-migration workstream. Keep commits buildable by updating affected callers in
 the same change. Git history is sufficient to recover the old shell for reference.
 
+## 0. Rename retained applications and reorganize by domain
+
+The owner-requested [project structure](project-structure.md) and
+[architecture rules](../architecture-rules.md) define the target layout.
+Paths in the source-audit tables below are deliberately the existing paths,
+not final destinations. Implementation must apply these mappings:
+
+| Inspected name/path | Target and required follow-through |
+| --- | --- |
+| Retained browser application in `apps/desktop/` | Move to `apps/org-ui/`; use frontend package name `org-ui`; retain the static SvelteKit build, assets, licensed UI and useful tests. Delete Tauri-only pieces under §1. |
+| `apps/org-office-server/`, Cargo package/binary `org-office-server` | Rename to `apps/org-server/` and `org-server`; update Rust application-library references to `org_server`. Preserve one worker per office and host key custody. |
+| Workspace and consumer references | Update Cargo members/paths/lockfile, frontend package/lockfile, test helper binary paths and environment references, build/release/signing checks, host helper resolution and documentation atomically with the source move. |
+| Ownership and licensing paths | Update AGENTS.md and links to the renamed applications. Keep the same owners and Tailwind Plus containment within the product UI; no standalone UI kit extraction. |
+| Domain/feature organization | Group use cases inside their owning organization, work, messaging, employee and process modules; preserve public APIs, transaction boundaries and private SQL. See the project structure for the sequence. |
+
+The downloaded setup/release command remains provisionally `agentic-org`;
+`org-office-host`, `org-office-launch`, and office identities are not renamed
+by this decision. No directories, packages, executables, or lockfiles are moved
+by this documentation PR.
+
 ## 1. Delete desktop-only implementation
 
 | Existing path or surface | Disposition and affected callers |
@@ -44,7 +64,7 @@ frontend directory would discard the browser application we intend to keep.
 | `apps/desktop/src-tauri/src/stdio.rs` | Delete shell-only startup use. Preserve equivalent descriptor hygiene in host/office process spawning; do not delete the office's control-pipe fd protections. |
 | `apps/desktop/src/lib/office/api.ts`, `org/api.ts`, `work/index.ts` | Remove `inTauri()` selection and automatic browser mocks. Separate test factories from production HTTP exports and update every consumer. Remove login-item operations from the browser interface. |
 | `apps/desktop/src/lib/proto.ts`, `proto-work.ts` | Retain supported domain shapes; update HTTP envelope, authentication/error and command/event types. Delete app-specific `LoginState`/bridge-only fields once no caller remains. |
-| `apps/desktop/src/routes/`, `src/lib/components/`, `src/app.css`, `svelte.config.js`, `static/` | Retain the actual web application, static adapter and styling. Change onboarding/navigation to HQ login and authorized organizations; remove desktop-only/import controls. Keep Tailwind Plus within this product directory. |
+| `apps/desktop/src/routes/`, `src/lib/components/`, `src/app.css`, `svelte.config.js`, `static/` | Retain and move the actual web application to `apps/org-ui/`, including its static adapter and styling. Change onboarding/navigation to HQ login and authorized organizations; remove desktop-only/import controls. Keep Tailwind Plus within this product directory. |
 | `apps/desktop/test-vectors/`, frontend unit/e2e tests | Retain domain and UI behavior tests. Replace Tauri/mock-only integration assumptions with real HTTP fixtures; delete tests for explicitly retired features. |
 
 ## 3. Production mock audit
@@ -70,7 +90,7 @@ acceptance evidence; features deliberately deferred need an explicit spec change
 | --- | --- |
 | `apps/org-office-host/` | Retain catalog, supervision, backoff, locks, key custody and crash recovery. Replace bundle-relative resolution, fixed home, global service name, app-only peer admission and account-wide key cleanup with instance-scoped equivalents. |
 | `apps/org-office-host/src/app_auth.rs` and related code-signing checks | Retire signed-desktop authorization. Retain trusted helper admission and private key handoff. Standalone signed packaging and Linux credentials need real validation. |
-| `apps/org-office-server/` | Retain per-office worker and durable message/domain dispatch. Add/compose HTTP and replication at explicit boundaries; reuse local IPC for agents. |
+| `apps/org-office-server/` | Rename to `apps/org-server/` (Cargo package/binary `org-server`); retain per-office worker and durable message/domain dispatch. Add/compose HTTP and replication at explicit boundaries; reuse local IPC for agents. |
 | `crates/org-office/` | Retain canonical rules, SQLCipher storage, one writer, transactional outbox/sequence allocation and private filesystem handling. |
 | `crates/org-client/`, `org-proto/`, `org-office-launch/` | Retain local agent/host/worker contracts where needed. Change instance discovery and browser principal authorization; remove unused app-only calls/types and tests in the same change. Versioning for the new release remains; old desktop callers need no bridge. |
 | `apps/org-agent/`, `crates/org-mailbox/` | Retain employee tooling and messaging semantics. Bind from injected instance/office/session identity; do not choose the wrong default instance from ambient HOME. Install the small helper from the pinned release. |
@@ -98,6 +118,13 @@ acceptance evidence; features deliberately deferred need an explicit spec change
 
 Before considering the implementation complete:
 
+- Retained browser sources/package use `apps/org-ui` / `org-ui`; server sources,
+  Cargo package, worker executable and Rust imports use `apps/org-server`,
+  `org-server` and `org_server`. Workspace, test, build and packaging references
+  agree. Historical audit references are clearly labeled.
+- The domain-module/vertical-slice reorganization follows the public boundaries
+  and shared-code rules in [project structure](project-structure.md).
+
 - The Rust workspace and frontend dependency graph contain no Tauri member or
   package. Browser production imports contain no `@tauri-apps/*`, `invoke`, native
   event listener, Tauri-global test or desktop-only service operation.
@@ -109,7 +136,7 @@ Before considering the implementation complete:
 - Per-office locking, authenticated agent tooling, key custody, durability, bounded
   resource cleanup and meaningful domain tests survive the removal.
 - Named-instance setup, macOS/Linux packaging and the HQ/satellite walkthrough pass
-  [SRV-1 through SRV-21](../specs/server-installation-and-access-ux.md#6-acceptance-criteria).
+  [SRV-1 through SRV-22](../specs/server-installation-and-access-ux.md#6-acceptance-criteria).
 
 No source deletions, Cargo/Clippy checks or runtime acceptance passes are claimed by
 this documentation-only audit. The audit's evidence is the inspected source and

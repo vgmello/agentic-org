@@ -11,6 +11,9 @@ and [ADR-0005](../adr/0005-standalone-server-v1.md). The
 audit. This is a direct pivot of an undeployed application: remove the superseded
 paths rather than maintaining a desktop compatibility layer or importing old data.
 Implementation ordering below describes dependencies, not a migration rollout.
+The owner-requested [project structure](project-structure.md) adds target application
+names, domain modules containing vertical slices, shared-code placement, and a
+source-to-target reorganization plan under the [architecture rules](../architecture-rules.md).
 
 ## 1. Architecture and evidence
 
@@ -70,11 +73,21 @@ agent turn or downloading dependencies inside normal daemon startup.
 The server implementation may use a small HTTP adapter crate (Axum/Tokio is a
 candidate, not an existing dependency). Libraries own behavior; binaries compose
 them. Do not link one app's library from another app to assemble the release.
-Extract shared behavior into a crate only where a real second caller needs it.
+Extract shared behavior into a crate when a real second caller or a meaningful
+dependency/visibility boundary justifies it.
 Embedding a built executable as a release payload is packaging, not an app-to-app
-Rust dependency. Keep Tailwind Plus UI sources within `apps/desktop`, as required
-by AGENTS.md; that directory can hold the browser application after `src-tauri`
-is removed. A rename is unnecessary for this pivot.
+Rust dependency. Rename the retained browser application to `apps/org-ui/` with
+frontend package name `org-ui`, and the Rust server app to `apps/org-server/`
+with Cargo package/executable `org-server` (Rust library import `org_server`).
+Delete the Tauri-only shell according to the inventory. Keep licensed Tailwind Plus
+sources inside the renamed product UI application and update AGENTS.md's path
+references with implementation; its license restrictions remain in force.
+
+This renames the worker, not the office model: `org-office-host` still supervises
+one worker per office with the existing private launch/key boundaries. The
+user-facing setup/release executable above remains provisionally `agentic-org`.
+The [project structure](project-structure.md) distinguishes current audited paths
+from target names and lists affected workspace, tests, build and packaging references.
 
 The first release must verify download authenticity, executable signatures where
 applicable, checksums of embedded helpers and architecture compatibility. Extract
@@ -310,7 +323,7 @@ every employee. A browser connection is never the lifetime owner of this work.
 
 | Work | Result required before moving on |
 | --- | --- |
-| Inventory and contract amendment | Apply the deletion ledger and spec precedence; identify every production mock path and unsupported server operation |
+| Inventory and contract amendment | Apply the deletion ledger, naming/reorganization plan and spec precedence; identify every production mock path and unsupported server operation |
 | Instance/setup foundation | Identity/root locks, service lifecycle, platform key custody, matching release payloads and repeatable automation |
 | HTTP and frontend | Authenticated HQ API, asset routing, command outcomes, consistent snapshots/events and real frontend callers; remove Tauri paths in the same feature change |
 | Office networking | Reviewed sync/PKI contracts, enrollment, resume, ownership and failure behavior; existing design is not implemented evidence |
