@@ -305,7 +305,7 @@
 	<MessageRow message={m} {ctx} chatState={chatState!} {now} readOnly={bridgePreview} where={extra.where} onreact={react} onthread={openThread} onturn={turn} onmute={mute} onpin={pin} onanswer={answer} onaccept={accept} onopen={extra.open ? openMessage : undefined} />
 {/snippet}
 
-<div class="flex h-[calc(100dvh-4rem)] min-h-0">
+<div class="relative flex h-[calc(100dvh-4rem)] min-h-0">
 	{#if loadError}
 		<p class="m-8 text-sm/6 text-red-400" role="alert">{loadError}</p>
 	{:else if !chatState || !bar}
@@ -321,15 +321,15 @@
 					</h2>
 					{#if conversation && !searching}<p class="text-xs/5 text-gray-400">{subtitle}{#if conversation.archived}{' · Archived'}{/if}</p>{/if}
 				</div>
-				<div class="flex flex-wrap items-center gap-2">
+				<div class="flex max-w-full flex-wrap items-center gap-2">
 					<Badge variant="secondary" data-testid="sample-data-note">Sample data</Badge>
 					{#if conversation && !searching}
 						<Button type="button" variant="outline" size="sm" aria-pressed={showMembers} onclick={() => ((showMembers = !showMembers), (threadRoot = undefined))}><Users aria-hidden="true" /> Members</Button>
 					{/if}
-					<div class="relative">
+					<div class="relative min-w-0 max-w-full">
 						<Search class="pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 text-gray-400" aria-hidden="true" />
 						<label class="sr-only" for="chat-search">Search chat</label>
-						<input id="chat-search" type="search" bind:value={query} placeholder="Search · from:@ada in:#atlas has:ask" class="w-56 rounded-md bg-gray-800 py-1.5 pr-3 pl-8 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:outline-indigo-400" data-testid="chat-search" />
+						<input id="chat-search" type="search" bind:value={query} placeholder="Search · from:@ada in:#atlas has:ask" class="w-56 max-w-full rounded-md bg-gray-800 py-1.5 pr-3 pl-8 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:outline-indigo-400" data-testid="chat-search" />
 					</div>
 				</div>
 			</div>

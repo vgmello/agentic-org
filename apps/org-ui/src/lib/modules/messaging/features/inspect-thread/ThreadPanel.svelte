@@ -48,7 +48,7 @@
 	const title = $derived(titleOf(conversation, ctx, ctx.owner));
 </script>
 
-<aside class="flex h-full w-96 shrink-0 flex-col border-l border-white/10 bg-gray-800" aria-label="Thread" data-testid="thread-panel">
+<aside class="absolute inset-y-0 right-0 z-30 flex h-full w-96 max-w-full shrink-0 flex-col shadow-xl xl:static xl:shadow-none border-l border-white/10 bg-gray-800" aria-label="Thread" data-testid="thread-panel">
 	<div class="flex items-center justify-between border-b border-white/10 px-4 py-3">
 		<h2 class="text-sm/6 font-semibold text-white">Thread <span class="font-normal text-gray-400">in {title}</span></h2>
 		<Button type="button" variant="ghost" size="icon-sm" aria-label="Close thread" onclick={onclose}><X aria-hidden="true" /></Button>
