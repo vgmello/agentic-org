@@ -15,7 +15,7 @@ use org_proto::org::{
 };
 use org_proto::{ApiError, ErrorCode};
 
-use crate::rules::{is_offboarded, name_key};
+use super::policy::{is_offboarded, name_key};
 use crate::time;
 
 /// What the office knows about one member right now. Runtime data, never in the organization's

@@ -1,5 +1,9 @@
 //! The organization's rules: what a command may do, and what it becomes.
 //!
+//! This is the stable public compatibility API and command dispatcher. Organization
+//! owns the shared member/structure contracts and policies; employees consumes them
+//! for agent use cases. The dispatcher composes both without a reverse domain dependency.
+//!
 //! This is the domain half of the organization data (teams, members, memberships and the teams
 //! working on a project; see `docs/design/teams-and-org-chart.md`). It has no storage in it.
 //!
@@ -26,10 +30,8 @@
 //! are the contract's: see "Limits every command shares" in `org_proto::org`. `check_id` and
 //! `check_text` apply them.
 
-mod apply;
 mod command;
 mod decide;
-mod view;
 
 #[cfg(test)]
 pub(crate) mod memory;
@@ -38,14 +40,6 @@ mod tests;
 #[cfg(test)]
 mod vectors;
 
-pub use apply::{apply, UnknownChange};
+pub use crate::organization::{apply, name_key, owner_bootstrap, OrgView, OrgWrite, UnknownChange};
 pub use command::OrgCommand;
-pub(crate) use decide::is_offboarded;
-pub use decide::{decide, name_key, owner_bootstrap};
-pub use view::{OrgView, OrgWrite};
-
-use org_proto::{ApiError, ErrorCode};
-
-pub(crate) fn fail(code: ErrorCode, message: &str) -> ApiError {
-    ApiError::new(code, message)
-}
+pub use decide::decide;

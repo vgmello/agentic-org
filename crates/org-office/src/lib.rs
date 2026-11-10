@@ -11,7 +11,9 @@
 //! organization's rules (`rules`) speak the wire contract's types (`org_proto::org`), because
 //! a satellite replays the very changes HQ logged.
 
-pub mod directory;
+mod employees;
+mod organization;
+pub use organization::directory;
 mod error;
 mod key;
 mod messaging;
