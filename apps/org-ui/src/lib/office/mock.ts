@@ -1,15 +1,11 @@
-import type { AppError, Connection, HelloResult, LoginState, OfficeInfo, Organization, StatusUpdate } from '$lib/proto';
+import type { AppError, Connection, HelloResult, OfficeInfo, Organization, StatusUpdate } from '$lib/proto';
 import { validateName } from '$lib/name';
 import type { OfficeApi } from './api';
 
-/**
- * A scripted office for running the UI in a plain browser. Add `?mock=<scenario>` to the URL to
- * force a failure: not_installed, needs_approval, unreachable, storage_error. It mirrors the
- * Rust mock (`src-tauri/src/mock.rs`), which does the same inside the Tauri shell.
- */
-export type Scenario = 'healthy' | 'not_installed' | 'needs_approval' | 'turned_off' | 'unreachable' | 'storage_error';
+/** Scripted office used only by tests; never selected by ordinary dev or release. */
+export type Scenario = 'healthy' | 'unreachable' | 'storage_error';
 
-const SCENARIOS: Scenario[] = ['not_installed', 'needs_approval', 'turned_off', 'unreachable', 'storage_error'];
+const SCENARIOS: Scenario[] = ['unreachable', 'storage_error'];
 const STORAGE_KEY = 'agentic-org.mock.connections';
 const ORGANIZATIONS_KEY = 'agentic-org.mock.organizations';
 
@@ -80,9 +76,6 @@ export function createMockOffice({
 	// Who listens to status updates. With `testHook`, a browser test pushes one with `window.__mockOfficeStatus(update)`.
 	const listeners = new Set<(update: StatusUpdate) => void>();
 	if (testHook && typeof window !== 'undefined') (window as unknown as { __mockOfficeStatus: (update: StatusUpdate) => void }).__mockOfficeStatus = (update) => listeners.forEach((l) => l(update));
-	// What macOS would say about the host's login service in each scenario.
-	let login: LoginState =
-		scenario === 'needs_approval' ? 'requires_approval' : scenario === 'not_installed' ? 'not_found' : scenario === 'turned_off' ? 'not_registered' : 'enabled';
 	// Oldest first, like the Rust store.
 	const load = (): Connection[] => {
 		try {
@@ -114,29 +107,8 @@ export function createMockOffice({
 		async connections() {
 			return load();
 		},
-		async loginItem() {
-			return login;
-		},
-		async setLoginItem(enabled) {
-			// A copy without the service can't turn it on; one waiting for approval stays waiting until it is allowed.
-			if (login === 'not_found') fail({ source: 'app', code: 'login_item', message: "This build doesn't include the office service." });
-			if (!enabled) login = 'not_registered';
-			else if (login === 'not_registered') login = scenario === 'needs_approval' ? 'requires_approval' : 'enabled';
-			return login;
-		},
-		async openLoginSettings() {},
 		async ensureRunning(): Promise<HelloResult> {
 			await wait(delayMs);
-			if (scenario === 'not_installed')
-				fail({ source: 'setup', code: 'not_installed', message: "The office server isn't installed on this Mac." });
-			if (scenario === 'turned_off' && login === 'not_registered')
-				fail({ source: 'setup', code: 'turned_off', message: 'The office is off. Turn it on to start your office on this Mac.' });
-			if (scenario === 'needs_approval')
-				fail({
-					source: 'setup',
-					code: 'needs_approval',
-					message: 'Allow Agentic Org to run in the background in System Settings, then try again.'
-				});
 			if (scenario === 'unreachable')
 				fail({ source: 'setup', code: 'unreachable', message: "The office server started but isn't answering." });
 			connected = true;
@@ -172,7 +144,7 @@ export function createMockOffice({
 		async ping(): Promise<HelloResult> {
 			await wait(delayMs / 3);
 			if (!connected) fail({ source: 'app', code: 'not_connected', message: "The office isn't running yet." });
-			if (scenario === 'not_installed' || scenario === 'needs_approval' || scenario === 'unreachable' || (scenario === 'turned_off' && login === 'not_registered'))
+			if (scenario === 'unreachable')
 				fail({ source: 'setup', code: 'unreachable', message: "The office isn't answering." });
 			return HELLO;
 		},

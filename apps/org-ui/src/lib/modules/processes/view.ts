@@ -4,7 +4,7 @@
 import { resolve } from './resolve';
 import { branchRule, type RuleState } from './rules';
 import type { AgentRef, ProcessWorld } from './world';
-import type { EffectiveSet, ProjectRef } from './types';
+import type { EffectiveSet, Layer, ProjectRef } from './types';
 
 export type Place = { kind: 'organization' } | { kind: 'team'; id: string } | { kind: 'project'; key: string } | { kind: 'agent'; id: string };
 
@@ -41,6 +41,17 @@ export function knownPlace(world: ProcessWorld, place: Place): { place: Place; m
 /** The one open branch rule's line: on unless an approved turning-off is in force, also when its process is missing, clashed or invalid. */
 const ruleOf = (set: EffectiveSet, project: string): { rule: RuleState } => ({ rule: branchRule(set, project) });
 
+// The resolver keeps stable agent ids; the screen names that source from its own read model.
+function nameAgentSources(set: EffectiveSet, agent: AgentRef | undefined): EffectiveSet {
+	if (!agent) return set;
+	const layers = (chain: Layer[]) => chain.map((layer) => (layer.level === 'agent' && layer.doc.location.scope === agent.id ? { ...layer, scopeName: agent.name } : layer));
+	return {
+		...set,
+		entries: set.entries.map((entry) => ({ ...entry, ...(entry.source === 'agent' && entry.doc.location.scope === agent.id ? { scopeName: agent.name } : {}), chain: layers(entry.chain) })),
+		turnedOff: set.turnedOff.map((off) => ({ ...off, ...(off.level === 'agent' && off.doc.location.scope === agent.id ? { scopeName: agent.name } : {}), chain: layers(off.chain) }))
+	};
+}
+
 export function viewOf(world: ProcessWorld, place: Place): PlaceView {
 	const base = { docs: world.docs, teams: world.teams };
 	if (place.kind === 'team') {
@@ -57,7 +68,7 @@ export function viewOf(world: ProcessWorld, place: Place): PlaceView {
 	if (place.kind === 'agent') {
 		const agent = world.agents.find((a) => a.id === place.id);
 		const project = agent?.workingOn ? world.projects.find((p) => p.key === agent.workingOn) : undefined;
-		const set = resolve({ ...base, ...(project ? { project, approval: world.approval(project) } : {}), agentId: place.id });
+		const set = nameAgentSources(resolve({ ...base, ...(project ? { project, approval: world.approval(project) } : {}), agentId: place.id }), agent);
 		return {
 			title: `Processes · ${agent?.name ?? 'Agent'} (agent)`,
 			subtitle: project ? `What ${agent?.name} follows for its current work in ${project.name}.` : `No current work. Showing the organization's processes and its own. Team and project processes apply when it starts a task.`,

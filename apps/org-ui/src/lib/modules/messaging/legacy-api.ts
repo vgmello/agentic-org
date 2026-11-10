@@ -11,8 +11,8 @@ import { createMockChat } from './api';
 import type { ChatAccepted, ChatCall } from './types';
 
 /**
- * The chat API the Chat screen uses. Today the browser mock in every build: the office does not serve chat yet, and
- * the Rust shell has nothing to call. When it does, this picks the Tauri implementation like `workApi` does.
+ * Legacy browser composition retained for the per-feature factory cutover. The production shell
+ * keeps this unserved area unavailable; the gateway adapter will replace this factory separately.
  */
 export const chatApi = createMockChat(orgApi);
 

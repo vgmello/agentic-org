@@ -1,10 +1,9 @@
-import { inTauri, officeApi } from '$lib/office/api';
 import type { ApiErrorCode, AppError, CommandAccepted, OrgFeedNotice, OrgSnapshot, OrgView } from '$lib/proto';
 import { ready, type OrgCommand, type OrgCommandInput } from './commands';
 import { normalizeKinds } from './model';
 import { applyCommand, badId } from './reducer';
 import { emptyOrg, sampleOrg } from './sample';
-import { tauriOrg } from './tauri';
+import { unavailableCall } from '$lib/platform/unavailable-api';
 
 /** What the org chart needs from an office: `org.snapshot`, and the commands that change the structure. */
 export interface OrgApi {
@@ -84,9 +83,8 @@ function fingerprint(command: OrgCommand): string | undefined {
 }
 
 /**
- * A mock office's organization, for a plain browser (`bun run dev`, tests): the Tauri app asks the Rust
- * shell, whose mock office applies the same rules (`src-tauri/src/org_engine.rs`; the two are tested against
- * the same cases). Changes are kept in the browser's storage so they survive a reload. `?org=empty` in the
+ * A test-owned office organization using the canonical shared command vectors. Changes are kept
+ * in injected storage (or the test browser storage) so tests can exercise reloads. `?org=empty` in the
  * URL shows an organization with only its owner, which lives in memory for the page's session instead.
  * Always sample data.
  */
@@ -204,28 +202,11 @@ export function createMockOrg(
 	return api;
 }
 
-const wantsEmpty = () => typeof location !== 'undefined' && new URLSearchParams(location.search).get('org') === 'empty';
-
-/**
- * `?org=fails` makes reading the structure fail, `?org=fails_once` only the first time (so Retry can be shown to
- * work), `?org=slow` makes it take a moment: to show how a screen copes.
- */
-let failedOnce = false;
-const wantsFailure = () => {
-	if (typeof location === 'undefined') return false;
-	const mode = new URLSearchParams(location.search).get('org');
-	if (mode === 'fails_once') return !failedOnce && (failedOnce = true);
-	return mode === 'fails';
-};
-const wantsSlow = () => (typeof location !== 'undefined' && new URLSearchParams(location.search).get('org') === 'slow' ? 2500 : 0);
-
-export const orgApi: OrgApi = inTauri()
-	? tauriOrg
-	: createMockOrg(
-			async (organizationId) => {
-				const connection = (await officeApi.connections()).find((c) => c.organization.id === organizationId);
-				if (!connection) throw refusal('not_found', "That organization isn't here.");
-				return connection.office.id;
-			},
-			{ empty: wantsEmpty, fails: wantsFailure, delayMs: wantsSlow }
-		);
+/** Production never falls back to a browser reducer when the gateway is absent. */
+export const orgApi: OrgApi = Object.freeze({
+	view: unavailableCall,
+	command: unavailableCall,
+	onFeed: unavailableCall,
+	retryFeed: unavailableCall,
+	feedLive: unavailableCall
+});

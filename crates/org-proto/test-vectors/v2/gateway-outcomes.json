@@ -1,0 +1,705 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "durable acceptance is pending",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "accepted"
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": true,
+        "variant": "accepted",
+        "http_status": 202,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "accepted"
+        },
+        "final": false
+      }
+    },
+    {
+      "name": "completed carries the committed result",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "completed",
+        "result": {}
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": true,
+        "variant": "completed",
+        "http_status": 200,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "completed",
+          "result": {}
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "confirmed refusal: conflict",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected",
+        "error": {
+          "code": "conflict",
+          "message": "Refused."
+        }
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": true,
+        "variant": "rejected",
+        "http_status": 409,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "conflict",
+            "message": "Refused."
+          }
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "confirmed refusal: operation_reused",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected",
+        "error": {
+          "code": "operation_reused",
+          "message": "Refused."
+        }
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": true,
+        "variant": "rejected",
+        "http_status": 409,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "operation_reused",
+            "message": "Refused."
+          }
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "confirmed refusal: snapshot_required",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected",
+        "error": {
+          "code": "snapshot_required",
+          "message": "Refused."
+        }
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": true,
+        "variant": "rejected",
+        "http_status": 409,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "snapshot_required",
+            "message": "Refused."
+          }
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "confirmed refusal: clock_skew",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected",
+        "error": {
+          "code": "clock_skew",
+          "message": "Refused."
+        }
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": true,
+        "variant": "rejected",
+        "http_status": 400,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "clock_skew",
+            "message": "Refused."
+          }
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "confirmed refusal: unknown_recipient",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected",
+        "error": {
+          "code": "unknown_recipient",
+          "message": "Refused."
+        }
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": true,
+        "variant": "rejected",
+        "http_status": 400,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "unknown_recipient",
+            "message": "Refused."
+          }
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "confirmed refusal: expired",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected",
+        "error": {
+          "code": "expired",
+          "message": "Refused."
+        }
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": true,
+        "variant": "rejected",
+        "http_status": 410,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "expired",
+            "message": "Refused."
+          }
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "confirmed refusal: unsupported_version",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected",
+        "error": {
+          "code": "unsupported_version",
+          "message": "Refused."
+        }
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": true,
+        "variant": "rejected",
+        "http_status": 426,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "unsupported_version",
+            "message": "Refused."
+          }
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "confirmed refusal: too_large",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected",
+        "error": {
+          "code": "too_large",
+          "message": "Refused."
+        }
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": true,
+        "variant": "rejected",
+        "http_status": 413,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "too_large",
+            "message": "Refused."
+          }
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "confirmed refusal: unavailable",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected",
+        "error": {
+          "code": "unavailable",
+          "message": "Refused."
+        }
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": true,
+        "variant": "rejected",
+        "http_status": 503,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "unavailable",
+            "message": "Refused."
+          }
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "confirmed refusal: not_ready",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected",
+        "error": {
+          "code": "not_ready",
+          "message": "Refused."
+        }
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": true,
+        "variant": "rejected",
+        "http_status": 503,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "not_ready",
+            "message": "Refused."
+          }
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "confirmed refusal: storage_error",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected",
+        "error": {
+          "code": "storage_error",
+          "message": "Refused."
+        }
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": true,
+        "variant": "rejected",
+        "http_status": 503,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "storage_error",
+            "message": "Refused."
+          }
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "confirmed refusal: timeout",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected",
+        "error": {
+          "code": "timeout",
+          "message": "Refused."
+        }
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": true,
+        "variant": "rejected",
+        "http_status": 503,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "timeout",
+            "message": "Refused."
+          }
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "rate limit is pre-dispatch with retry delay",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected",
+        "error": {
+          "code": "rate_limited",
+          "message": "Try later.",
+          "retry_after_ms": 60000
+        }
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": true,
+        "variant": "rejected",
+        "http_status": 429,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "rate_limited",
+            "message": "Try later.",
+            "retry_after_ms": 60000
+          }
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "missing proof or cookie-only refusal",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected",
+        "error": {
+          "code": "not_authorized",
+          "message": "Sign in again.",
+          "session_reason": "session_ended"
+        }
+      },
+      "authenticated": false,
+      "expect": {
+        "valid": true,
+        "variant": "rejected",
+        "http_status": 401,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "not_authorized",
+            "message": "Sign in again.",
+            "session_reason": "session_ended"
+          }
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "visible resource write denied",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected",
+        "error": {
+          "code": "not_authorized",
+          "message": "Not allowed."
+        }
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": true,
+        "variant": "rejected",
+        "http_status": 403,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "not_authorized",
+            "message": "Not allowed."
+          }
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "possible dispatch timeout stays unknown",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "unknown"
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": true,
+        "variant": "unknown",
+        "http_status": 504,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "unknown"
+        },
+        "final": false
+      }
+    },
+    {
+      "name": "unknown domain code stays unresolved",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected",
+        "error": {
+          "code": "unknown",
+          "message": "Unknown."
+        }
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": true,
+        "variant": "unknown",
+        "http_status": 504,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "unknown"
+        },
+        "final": false
+      }
+    },
+    {
+      "name": "unrecognized refusal code stays rejected and final",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected",
+        "error": {
+          "code": "future_code",
+          "message": "Unknown."
+        }
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": true,
+        "variant": "rejected",
+        "http_status": null,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "future_code",
+            "message": "Unknown."
+          }
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "future outcome is explicitly unsupported",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "future_outcome",
+        "result": {
+          "future": true
+        }
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": true,
+        "variant": "unsupported",
+        "http_status": null,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "unsupported"
+        },
+        "final": true
+      }
+    },
+    {
+      "name": "accepted cannot carry result",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "accepted",
+        "result": {}
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "accepted cannot carry even null error",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "accepted",
+        "error": null
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "completed needs result",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "completed"
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "completed cannot carry both payloads",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "completed",
+        "result": {},
+        "error": null
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "completed result must be object",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "completed",
+        "result": []
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "completed null is no object",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "completed",
+        "result": null
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "rejected needs error",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected"
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "rejected error must be object",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected",
+        "error": []
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "unknown has no success payload",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "unknown",
+        "result": {}
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "operation ID has one canonical spelling",
+      "wire": {
+        "operation_id": "01m72n8mg00000000000000006",
+        "outcome": "accepted"
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "empty envelope",
+      "wire": {},
+      "authenticated": true,
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "positional arrays are not HTTP envelopes",
+      "wire": [
+        "01M72N8MG00000000000000006",
+        "accepted"
+      ],
+      "authenticated": true,
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "rate limit needs a retry delay",
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected",
+        "error": {
+          "code": "rate_limited",
+          "message": "Try later."
+        }
+      },
+      "expect": {
+        "valid": false
+      }
+    },
+    {
+      "name": "worker not_bound is internal unavailable refusal",
+      "native_error": {
+        "code": "not_bound",
+        "message": "Do not forward binding detail."
+      },
+      "wire": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected",
+        "error": {
+          "code": "unavailable",
+          "message": "This operation is unavailable."
+        }
+      },
+      "authenticated": true,
+      "expect": {
+        "valid": true,
+        "variant": "rejected",
+        "http_status": 503,
+        "normalized": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "unavailable",
+            "message": "This operation is unavailable."
+          }
+        },
+        "final": true
+      }
+    }
+  ]
+}

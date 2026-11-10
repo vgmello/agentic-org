@@ -38,7 +38,7 @@ describe('loadOrganizations', () => {
 		expect(listing.kind === 'ready' && listing.current).toBe('sample-globex');
 	});
 
-	it.each(['not_installed', 'needs_approval', 'unreachable'] as const)('a %s office is a failed listing', async (scenario) => {
+	it.each(['unreachable'] as const)('a %s office is a failed listing', async (scenario) => {
 		const listing = await loadOrganizations(mock(scenario));
 		expect(listing.kind === 'failed' && listing.error.code).toBe(scenario);
 	});

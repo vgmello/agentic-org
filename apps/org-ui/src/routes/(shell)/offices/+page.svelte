@@ -18,7 +18,7 @@
 	// The offices as the host last listed them; until it has, the ones saved with the connection.
 	let reported = $state<OfficeInfo[] | undefined>();
 	let reportedFor = '';
-	// A peek started before a newer status push must not replace that push.
+	// A peek started before a newer refresh or status push must not replace its result.
 	let statusRevision = 0;
 	$effect(() => {
 		if (reportedFor !== data.connection.organization.id) {
@@ -74,7 +74,7 @@
 	 */
 	async function refreshOffices() {
 		const id = data.connection.organization.id;
-		const revision = statusRevision;
+		const revision = ++statusRevision;
 		try {
 			const found = (await officeApi.peekOrganizations()).find((o) => o.id === id);
 			if (found && id === data.connection.organization.id && revision === statusRevision) reported = found.offices;

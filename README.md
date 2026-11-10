@@ -37,8 +37,10 @@ docs/
 Follow the [architecture rules](docs/architecture-rules.md) and
 [proposed project structure](docs/design/project-structure.md) for domain/feature
 organization, shared code ownership, and the source-to-target implementation plan.
-The UI and worker renames are implemented. The remaining target layout is planned;
-the browser still uses the retained transports until HTTP integration lands.
+The UI and worker renames and Tauri-shell removal are implemented. The remaining
+target layout is planned. Browser areas without a gateway adapter show unavailable
+in both ordinary development and release; test fakes require explicit test composition.
+The historical shell commands below no longer run against this tree.
 
 Run the UI checks from `apps/org-ui`:
 
