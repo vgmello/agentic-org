@@ -306,3 +306,58 @@ fn planned_modes_or_explicit_refusal_under_restrictive_umask() {
         assert!(status.success(), "umask {mask:o}: {out}\n{err}");
     }
 }
+
+#[test]
+fn runtime_mapper_rejects_injection_and_duplicate_switches_before_writes() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    for name in [
+        "HOME",
+        "ORG_SESSION_TOKEN",
+        "GIT_CONFIG_COUNT",
+        "DYLD_INSERT_LIBRARIES",
+        "LD_PRELOAD",
+        "NODE_OPTIONS",
+        "BASH_ENV",
+        "ENV",
+        "PYTHONSTARTUP",
+        "CLAUDE_CODE_BAD",
+    ] {
+        let mut launch = plan(&root);
+        launch.env_add.push((
+            org_runtime::EnvName::try_from(name).unwrap(),
+            "secret".into(),
+        ));
+        launch.files.push(file("must-not-exist", b"settings"));
+        assert!(prepare(&root, launch, &context(&root)).is_err(), "{name}");
+        assert!(!root.join("must-not-exist").exists());
+    }
+    for second in ["false", "true"] {
+        let mut launch = plan(&root);
+        launch.env_add = vec![
+            (
+                org_runtime::EnvName::try_from("ENABLE_TOOL_SEARCH").unwrap(),
+                "false".into(),
+            ),
+            (
+                org_runtime::EnvName::try_from("ENABLE_TOOL_SEARCH").unwrap(),
+                second.into(),
+            ),
+        ];
+        assert!(prepare(&root, launch, &context(&root)).is_err());
+    }
+    let mut launch = plan(&root);
+    launch.env_add = [
+        "DISABLE_AUTOUPDATER",
+        "ENABLE_TOOL_SEARCH",
+        "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS",
+    ]
+    .map(|name| {
+        (
+            org_runtime::EnvName::try_from(name).unwrap(),
+            "false".into(),
+        )
+    })
+    .into();
+    prepare(&root, launch, &context(&root)).unwrap();
+}

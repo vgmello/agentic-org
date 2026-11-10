@@ -514,7 +514,7 @@ fn refuses_an_automatic_child_reaper() {
 }
 
 #[test]
-fn rejects_setid_binaries_and_environment_injection_or_collisions() {
+fn rejects_setid_binaries_and_redacts_context_secrets() {
     let root = tempfile::tempdir().unwrap();
     let binary = root.path().join("setid");
     std::fs::copy("/bin/sh", &binary).unwrap();
@@ -529,28 +529,6 @@ fn rejects_setid_binaries_and_environment_injection_or_collisions() {
         mark()
     )
     .is_err());
-    for name in [
-        "HOME",
-        "ORG_SESSION_TOKEN",
-        "GIT_CONFIG_COUNT",
-        "DYLD_INSERT_LIBRARIES",
-        "LD_PRELOAD",
-        "NODE_OPTIONS",
-        "BASH_ENV",
-        "ENV",
-        "PYTHONSTARTUP",
-        "CLAUDE_CODE_BAD",
-    ] {
-        assert!(environment(root.path())
-            .with_runtime_additions(&[(name.into(), "secret".into())])
-            .is_err());
-    }
-    assert!(environment(root.path())
-        .with_runtime_additions(&[
-            ("ENABLE_TOOL_SEARCH".into(), "false".into()),
-            ("ENABLE_TOOL_SEARCH".into(), "true".into())
-        ])
-        .is_err());
     let env = environment(root.path())
         .with_context(&[("ORG_SESSION_TOKEN".into(), "very-secret".into())])
         .unwrap();

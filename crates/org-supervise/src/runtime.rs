@@ -11,6 +11,13 @@ use org_runtime::{
 
 use crate::{files, unsupported, Environment, PreparedSpawn, SessionMark, SpawnSpec};
 
+// Runtime-policy names belong at this mapping boundary, never in generic Environment.
+const REVIEWED_ENV_SWITCHES: &[&str] = &[
+    "DISABLE_AUTOUPDATER",
+    "ENABLE_TOOL_SEARCH",
+    "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS",
+];
+
 /// The runtime-only lifecycle metadata, retained for the pump/stop layer.
 pub struct Lifecycle {
     /// Graceful-stop instructions, not executed by preparation or minimal ownership Drop.
@@ -70,7 +77,7 @@ pub fn prepare(
         .into_iter()
         .map(|(name, value)| (name.as_str().into(), value.into()))
         .collect::<Vec<_>>();
-    let environment = environment.with_runtime_additions(&additions)?;
+    let environment = environment.with_additions(&additions, REVIEWED_ENV_SWITCHES)?;
     let spec = SpawnSpec {
         program,
         args: args.into_iter().map(Into::into).collect(),

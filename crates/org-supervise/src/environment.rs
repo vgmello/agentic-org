@@ -99,21 +99,14 @@ impl Environment {
         Ok(self)
     }
 
-    /// Add reviewed adapter switches. Any collision, injection name or unreviewed switch
-    /// is an error, including a collision whose value happens to be equal.
-    pub fn with_runtime_additions(
+    /// Apply the mapper-owned policy; collisions are errors even for equal values.
+    pub(crate) fn with_additions(
         mut self,
         additions: &[(OsString, OsString)],
+        allowed: &[&str],
     ) -> io::Result<Self> {
         for (name, value) in additions {
-            if !matches!(
-                name.to_str(),
-                Some(
-                    "DISABLE_AUTOUPDATER"
-                        | "ENABLE_TOOL_SEARCH"
-                        | "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"
-                )
-            ) {
+            if !name.to_str().is_some_and(|name| allowed.contains(&name)) {
                 return Err(invalid("unreviewed runtime environment switch"));
             }
             self.insert(name.clone(), value.clone())?;
