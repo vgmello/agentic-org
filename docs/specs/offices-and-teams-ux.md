@@ -8,7 +8,7 @@ created: "2026-11-08"
 updated: "2026-11-10"
 requested_by: ac-staff-engineer-ada
 reviewers: [ac-staff-engineer-ada, owner]
-builds_on: [server-installation-and-access-ux]
+builds_on: []
 ---
 
 # Spec · Offices, organizations and teams (UX)
@@ -278,11 +278,15 @@ creates it owns it. The mechanics are in `docs/design/create-organization.md`.
 ```
 
 - **Name:** required, trimmed. The form has no other field and no folder picker.
-  - Empty: "Enter a name."
-  - Too long: "Use 64 characters or fewer." (assumed, A91)
-  - Control characters: "Names can't contain special control characters."
+  - Empty: "Give the organization a name."
+  - Too long: "Use 64 characters or fewer."
+  - Control characters: "The name can't contain control characters."
+  - Invisible or direction-changing characters: "The name can't contain invisible or
+    direction-changing characters."
+  - These are the same messages HQ returns (`crates/org-proto/src/name.rs`), so the
+    pre-check and HQ never disagree.
   - Already used, from HQ: "There's already an organization called Side Project
-    on this HQ. Choose another name." (A91 says how names are compared.)
+    on this HQ. Choose another name." (names are compared ignoring case, as HQ does).
   - **Create organization** stays enabled; pressing it with an invalid name shows
     the error and sends nothing.
 - The note names the HQ instance that will store it and the HQ machine (A93), and
@@ -789,7 +793,7 @@ Two directions, same result:
 - A7 · Remove office: I've made it HQ-only, like Add office and approval. Confirm, or should it work from any office while HQ is reachable?
 - A8 · Is there a limit on how many people an organization can add, or on a person's name length? I've assumed the team-name rules (1–64 characters).
 - A9 · Does the agent's `delivery_failed` notice carry the name the agent used, so PEOPLE-7 can say "Couldn't reach "Sam"" and prefill Add person?
-- A91 · *(rev 14)* Organization name rules for Create organization (§5a): the length, the characters allowed, and how HQ normalizes names to find duplicates. I've assumed 1–64 characters, trimmed, no control characters, and duplicates compared ignoring case.
+- A91 · *(rev 14)* The name rules follow `org-proto` (64 characters, no control, invisible or direction-changing characters, duplicates compared case-insensitively). Open: does HQ trim spaces before comparing, and is the duplicate check per HQ instance or per account?
 - A92 · *(rev 14)* How long can a create attempt be looked up after a lost response, and what does HQ answer once it's too old?
 - A86, A89 and A93 in `server-installation-and-access-ux.md` §4a.9 also affect §5a and §5b: whether the admin grant alone opens an organization, whether a failed recovery package fails the create, and the HQ machine's name in copy.
 

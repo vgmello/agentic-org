@@ -91,7 +91,8 @@ For a new instance the wizard establishes, in order:
    first office. An instance may later host more than one office. Each office's
    role is persisted independently.
 3. HQ instance-admin/owner access, gateway listening/TLS configuration, and protected
-   CA escrow/recovery-code provisioning with off-HQ retention acknowledgement; or the
+   CA escrow/recovery-code provisioning (collecting the code and acknowledging its
+   off-HQ retention happens after HQ is ready, and can be deferred: §4a.6); or the
    satellite invitation, destination identity and enrollment confirmation.
 4. Runtime selection, dependency checks and authentication readiness.
 5. Service registration, start and a summary with separate readiness states.
@@ -295,9 +296,9 @@ they sign in. It shows no organization data.
  │  [                 Sign in                      ]   │
  │                                                     │
  │  Forgot your password? On the HQ machine, run       │
- │  agentic-org account password <username>            │
+ │  agentic-org --name <instance> account password ... │
  │  Need an account? Accounts are added on the HQ      │
- │  machine with agentic-org account add               │
+ │  machine: agentic-org --name <instance> account add │
  └────────────────────────────────────────────────────┘
 ```
 
@@ -334,9 +335,10 @@ error. The table covers a page that loaded and then can't reach HQ.
 
 ### 4a.4 Session end, signing in again, and sign out
 
-**When a session ends.** It expires (A83), the account signs out in another tab
-of this HQ, the account's password is changed (A85), or HQ restarts: the gateway
-ends every session when its listener stops. A missing session proof (cleared site
+**When a session ends.** It expires (A83), the account's password is changed (A85), or HQ
+restarts, if the gateway ends sessions when its listener stops (the plan's
+starting point; not yet decided in `standalone-server.md` §6, A84). Signing out
+in another tab is different: every tab goes to the sign-in page (Sign out, below). A missing session proof (cleared site
 data, a private window) counts as an ended session.
 
 **In an open page, the user signs in again where they are:**
@@ -396,8 +398,8 @@ page:
  └────────────────────────┘
 ```
 
-- With text that isn't saved on the page, it asks first: "Sign out? Text you
-  haven't saved on this page will be lost." **Stay** · **Sign out**.
+- With text that isn't saved in any open tab of this HQ, it asks first: "Sign out? Text you
+  haven't saved in any open tab of this HQ will be lost." **Stay** · **Sign out**.
 - Sign out ends this browser's session at HQ. Every open tab of this HQ goes to
   the sign-in page with "You signed out." The browser's Back button doesn't show
   organization data again.
@@ -424,7 +426,8 @@ the encrypted package, and the host keeps the code until it is collected with
 first one from setup, and each one created in the browser. **The browser never
 shows the code.** It shows only its state.
 
-Every surface below says plainly: "Recovering an organization after losing the
+The notice, every Recovery row state and the collect command end with this
+sentence (the table below leaves it out for space): "Recovering an organization after losing the
 HQ machine isn't supported yet." (REC-1, §7.)
 
 **States in the browser.** Only the organization's owner sees them.
@@ -454,7 +457,9 @@ gone once collected):
  ┃ ⚠ Collect the recovery code for Lumen Labs
  ┃   It's waiting on the HQ machine and is never shown in the browser.
  ┃   On hq-mac, run:  agentic-org recovery-code collect --org "Lumen Labs"
- ┃   Then store it away from that machine.                    [Copy command]
+ ┃   Then store it and the recovery package away from that machine.
+ ┃   Recovering an organization after losing the HQ machine isn't supported yet.
+ ┃                                                            [Copy command]
 ```
 
 **Collecting it on the HQ machine:**
@@ -477,15 +482,17 @@ Press Enter to show the code.
 Recovery code: <the code, in groups separated by dashes, A90>
 
 To confirm you stored it, type the last group of the code: 9FXM
-Is the code stored away from this machine? Type yes to confirm: yes
+Are the code and the encrypted recovery package stored away from this machine?
+Type yes to confirm: yes
 
 Recorded on 10 Nov 2026 at 14:02. This code won't be shown again.
+Recovering an organization after losing the HQ machine isn't supported yet.
 ```
 
 | Case | CLI output | Exit |
 | --- | --- | --- |
 | Typed group doesn't match | "That isn't the last group of the code. Check what you stored, then type it again." Asks again. | — |
-| Anything but `yes` at the last prompt | "Not recorded. Run this command again once the code is stored away from this machine." The code stays waiting. | Error |
+| Anything but `yes` at the last prompt | "Not recorded. Run this command again once the code and the recovery package are stored away from this machine." The code stays waiting. | Error |
 | Interrupted before `yes` (Ctrl-C, closed terminal) | "Not recorded. The code is still waiting; run this command again to see it." Running it again shows the **same** code. | Error |
 | Already collected | "The recovery code for Lumen Labs was collected on 10 Nov 2026. It can't be shown again. Recovering after losing the HQ machine isn't supported yet." No code. | Error |
 | Still being prepared | "Recovery material for Lumen Labs is still being prepared. Try again in a minute." | Error |
@@ -543,8 +550,9 @@ the recovery code in the browser, and recovering after losing HQ (REC-1).
 - A83 · Session lifetime: idle and absolute expiry, whether activity extends it,
   and whether an idle expiry should also hide what the page shows (§4a.4 keeps
   the page visible).
-- A84 · When HQ refuses a request because the session ended, does it say why
-  (expired, signed out, HQ restarted, password changed)? Without a reason the
+- A84 · Does an HQ restart end every session (the plan's starting point for B1-06),
+  or do sessions survive it? When HQ refuses a request because the session ended,
+  does it say why (expired, signed out, HQ restarted, password changed)? Without a reason the
   page uses the generic copy. Is that reason safe to show before sign-in?
 - A85 · Does `account password` end that account's open sessions?
 - A86 · Can `account add` give the admin grant? Can a second account be linked
@@ -644,9 +652,9 @@ rules, which are distinct from uninstalling software on a machine.
 - SIGN-14 · With two tabs of the same HQ showing the dialog, signing in in one closes the dialog in the other.
 - SIGN-15 · Not now closes the dialog and shows "You're signed out. Text you haven't saved is still here…" with Sign in; the page sends no changes while signed out.
 - SIGN-16 · Sign in as someone else asks before discarding text that isn't saved, then opens the sign-in page.
-- SIGN-17 · After HQ restarts, an open page first shows LIVE-8's paused line, then the dialog. When HQ reports the restart as the reason, the dialog reads "HQ restarted, so you were signed out."; otherwise it shows the generic copy.
+- SIGN-17 · When an HQ restart ends the session (A84), an open page first shows LIVE-8's paused line, then the dialog. When HQ reports the restart as the reason, the dialog reads "HQ restarted, so you were signed out."; otherwise it shows the generic copy.
 - SIGN-18 · The account menu in the top bar shows "Signed in as <username>", "Instance admin" only for an account with the grant, and Sign out. It has no password or account form.
-- SIGN-19 · Sign out with text that isn't saved asks "Sign out? Text you haven't saved on this page will be lost." first. Stay keeps the page.
+- SIGN-19 · Sign out with text that isn't saved asks "Sign out? Text you haven't saved in any open tab of this HQ will be lost." first. Stay keeps the page.
 - SIGN-20 · Sign out ends the session at HQ: every open tab of that HQ shows the sign-in page with "You signed out.", Back shows no organization data, and a session in another browser still works.
 - SIGN-21 · First setup asks for a username and the password twice, without echoing it. Different entries show "The passwords don't match. Enter them again." and ask again; a password under the rule shows the rule.
 - SIGN-22 · First setup creates one account that is an instance admin and owns the first organization, and ends by printing the browser address and username. Its output, logs and JSON status never contain the password.
