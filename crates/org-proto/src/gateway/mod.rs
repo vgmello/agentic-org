@@ -7,6 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod org_mutations;
 mod outcome;
 mod session;
 mod stream;
@@ -25,13 +26,14 @@ pub use stream::{
     Subscription, SubscriptionCursor,
 };
 pub use views::{
-    CancelResult, CancelState, Capabilities, Capability, GatewayStatus, InstanceView, ListenScheme,
-    OfficeRestartResult, OfficeView, OrganizationView, RecoveryState, SessionReason, TlsStatus,
+    CancelResult, CancelResultState, CancelState, Capabilities, Capability, GatewayStatus,
+    InstanceView, ListenScheme, OfficeRestartResult, OfficeView, OrganizationView, RecoveryState,
+    SessionReason, TlsStatus,
 };
 
 /// HTTP API and contract revision. Revisions are additive; breaking changes need a new API.
 pub const API_VERSION: u32 = 1;
-pub const CONTRACT_REVISION: u32 = 1;
+pub const CONTRACT_REVISION: u32 = 2;
 pub const SESSION_PROOF_HEADER: &str = "X-Org-Session-Proof";
 
 /// Maximum integer represented exactly by JavaScript. Times are Unix milliseconds, not strings.
@@ -240,14 +242,19 @@ impl<'de> Deserialize<'de> for ResponseScope {
 
 /// Already-decoded lookup query fields. The HTTP adapter must retain repeated query keys
 /// and pass them through `from_fields`, rather than collapsing them into a map first.
+///
+/// ```compile_fail
+/// use org_proto::gateway::LookupQuery;
+/// let _ = LookupQuery { instance_id: "../outside".into(), org_id: None, office_id: None };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "LookupQueryFields")]
 pub struct LookupQuery {
-    pub instance_id: String,
+    instance_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub org_id: Option<String>,
+    org_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub office_id: Option<String>,
+    office_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -278,6 +285,16 @@ impl TryFrom<LookupQueryFields> for LookupQuery {
 }
 
 impl LookupQuery {
+    pub fn instance_id(&self) -> &str {
+        &self.instance_id
+    }
+    pub fn org_id(&self) -> Option<&str> {
+        self.org_id.as_deref()
+    }
+    pub fn office_id(&self) -> Option<&str> {
+        self.office_id.as_deref()
+    }
+
     pub fn from_fields<K: AsRef<str>, V: AsRef<str>>(
         fields: impl IntoIterator<Item = (K, V)>,
     ) -> Result<Self, GatewayError> {
@@ -455,5 +472,7 @@ pub const OPERATIONS: &[Operation] = &[
     },
 ];
 
+#[cfg(test)]
+mod hardening_tests;
 #[cfg(test)]
 mod tests;

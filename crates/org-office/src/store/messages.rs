@@ -677,6 +677,7 @@ pub(crate) fn peek_next_unread(
         .iter()
         .filter(|stored| expired(&stored.message.header, now))
         .map(|stored| stored.message.header.id.clone())
+        .take(org_mailbox::MAX_EXPIRED_IDS)
         .collect();
     let first = open
         .into_iter()
