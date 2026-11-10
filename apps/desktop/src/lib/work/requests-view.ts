@@ -277,6 +277,9 @@ export function atName(text: string, snapshot: OrgSnapshot): AtName | undefined 
 /** What the handle in `@handle` is replaced by when a match is chosen: the messaging name, which is always unique. */
 export const handleFor = (m: Member): string => m.agent?.messaging_name ?? slugOf(m.name);
 
+/** The words without the `@handle` that routed them (and the colon or comma after it): "fix the build time", not "@sam: fix the build time". */
+export const withoutHandle = (text: string): string => text.replace(/^(\s*)@(?!@)[\p{L}\p{N}_-]*[:,;.]?\s*/u, '$1').trimStart();
+
 /** The words with their `@token` at the start replaced by `@handle`. */
 export const withHandle = (text: string, m: Member): string => text.replace(AT, (_, space: string) => `${space}@${handleFor(m)}`);
 
@@ -306,25 +309,30 @@ export function similarFrom(found: WorkItemSummary[][], limit = 2): WorkItemSumm
 // ---- the queue's filters and search (§2) -------------------------------------------------------------------------------
 
 export interface RequestFilter {
-	/** Open: what is still going (not approved, declined or merged). */
+	/** Open (the default, like a to-do list): what is still going, not approved, declined or merged. */
 	state: 'all' | 'open';
-	/** Who scopes it: a member id, `none` for not routed, or any. */
+	/** Anyone (empty), `none` (not routed), `scoped:<member id>` or `raised:<member id>`. */
 	who: string;
 	/** A project id, `none` for no project, or any. */
 	project: string;
 	query: string;
 }
 
-export const NO_FILTER: RequestFilter = { state: 'all', who: '', project: '', query: '' };
+/** The filters as the queue opens: Open, nothing else. */
+export const NO_FILTER: RequestFilter = { state: 'open', who: '', project: '', query: '' };
 
-export const filterActive = (f: RequestFilter): boolean => f.state !== 'all' || f.who !== '' || f.project !== '' || f.query.trim() !== '';
+/** Whether the queue is narrowed by who, project or words (not by the state, which only changes what it opens on). */
+export const narrowed = (f: RequestFilter): boolean => f.who !== '' || f.project !== '' || f.query.trim() !== '';
+
+/** Whether anything differs from how the queue opens. */
+export const filterActive = (f: RequestFilter): boolean => f.state !== NO_FILTER.state || f.who !== '' || f.project !== '' || f.query.trim() !== '';
 
 /** The requests that pass the filters: the words of the search must all be in the title or the reference. */
 export function filterRequests(items: WorkItemSummary[], f: RequestFilter): WorkItemSummary[] {
 	const terms = f.query.toLowerCase().split(/\s+/).filter(Boolean);
 	return items.filter((i) => {
 		if (f.state === 'open' && !OPEN_STATUSES.includes(i.status)) return false;
-		if (f.who === 'none' ? !!i.assignee_id : f.who !== '' && i.assignee_id !== f.who) return false;
+		if (f.who === 'none' ? !!i.assignee_id : f.who.startsWith('scoped:') ? i.assignee_id !== f.who.slice(7) : f.who.startsWith('raised:') ? i.created_by !== f.who.slice(7) : false) return false;
 		if (f.project === 'none' ? !!i.project_id : f.project !== '' && i.project_id !== f.project) return false;
 		const hay = `${requestRef(i)} ${i.title}`.toLowerCase();
 		return terms.every((t) => hay.includes(t));

@@ -11,7 +11,7 @@
 	import { REQUEST_LIMITS, WORK_LIMITS } from '$lib/proto';
 	import type { WorkDraft } from '$lib/work';
 	import { nameOf } from '$lib/work/people';
-	import { atName, handleFor, KIND_WORD, requestRef, similarFrom, similarKeywords, suggestScopers, withHandle } from '$lib/work/requests-view';
+	import { atName, handleFor, KIND_WORD, requestRef, similarFrom, similarKeywords, suggestScopers, withHandle, withoutHandle } from '$lib/work/requests-view';
 	import type { Member } from '$lib/proto';
 
 	/**
@@ -123,7 +123,9 @@
 		const m = snapshot.members.find((x) => x.id === scoperId);
 		return m?.kind === 'agent' && m.agent?.status === 'paused' ? `${m.name} is paused and won't pick this up. Choose someone else or Just save.` : undefined;
 	});
-	const textError = $derived(touched && text.trim() === '' ? 'Write what you need.' : undefined);
+	/** The words as they are saved: without the @handle when that is what routes it (decision 5). */
+	const words = $derived(atMember && scoperId === atMember.id ? withoutHandle(text) : text);
+	const textError = $derived(touched && words.trim() === '' ? (atMember && text.trim() !== '' ? `Write what you need after @${at?.kind === 'exact' ? at.token : ''}.` : 'Write what you need.') : undefined);
 	const sendLabel = $derived(confirmed && warning ? 'Send anyway' : scoperId ? `Send to ${nameOf(snapshot, scoperId)}` : 'Save');
 
 	/** Whether closing now should ask first: words typed, nothing in flight. */
@@ -140,6 +142,35 @@
 		else if (wantClose()) open = false;
 	}
 	const back = () => ((asking = false), queueMicrotask(() => field?.focus()));
+
+	// The agents a half-typed @handle could be: ↑↓ move, Enter or Tab pick, Esc closes the list (and not the panel).
+	let activeAt = $state(0);
+	let atClosed = $state(false);
+	$effect(() => {
+		void (at?.kind === 'partial' ? at.token : undefined);
+		activeAt = 0;
+		atClosed = false;
+	});
+	const completions = $derived(at?.kind === 'partial' && !atClosed ? at.matches : []);
+	function onKey(e: KeyboardEvent) {
+		if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+			e.preventDefault();
+			void submit(true);
+			return;
+		}
+		if (completions.length === 0 || e.shiftKey || e.altKey || e.metaKey || e.ctrlKey) return;
+		if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+			e.preventDefault();
+			activeAt = (activeAt + (e.key === 'ArrowDown' ? 1 : completions.length - 1)) % completions.length;
+		} else if (e.key === 'Enter' || e.key === 'Tab') {
+			e.preventDefault();
+			complete(completions[Math.min(activeAt, completions.length - 1)]);
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			e.stopPropagation();
+			atClosed = true;
+		}
+	}
 
 	function complete(m: Member) {
 		text = withHandle(text, m);
@@ -168,11 +199,11 @@
 	/** The words go to the member as an ordinary message, not as a request (RQS-4). */
 	async function sendAsMessage() {
 		touched = true;
-		if (busy || !message || !scoperId || text.trim() === '') return;
+		if (busy || !message || !scoperId || words.trim() === '') return;
 		busy = true;
 		error = undefined;
 		try {
-			await message(scoperId, text);
+			await message(scoperId, words);
 			const to = nameOf(snapshot, scoperId);
 			text = '';
 			open = false;
@@ -186,7 +217,7 @@
 
 	async function submit(route: boolean) {
 		touched = true;
-		if (busy || text.trim() === '') return;
+		if (busy || words.trim() === '') return;
 		if (route && warning && !confirmed) {
 			confirmed = true;
 			return;
@@ -199,7 +230,7 @@
 			const accepted = await send({
 				method: 'request.create',
 				item_id: newId(),
-				text,
+				text: route || !atMember ? words : text,
 				request_kind: kind,
 				project_id: projectId || undefined,
 				scoper_id: to,
@@ -236,16 +267,21 @@
 					maxlength={REQUEST_LIMITS.text * 2}
 					disabled={busy}
 					aria-invalid={textError ? true : undefined}
-					onkeydown={(e) => (e.metaKey || e.ctrlKey) && e.key === 'Enter' && (e.preventDefault(), void submit(true))}
+					onkeydown={onKey}
+					aria-controls={completions.length > 0 ? 'at-list' : undefined}
+					aria-activedescendant={completions.length > 0 ? `at-opt-${Math.min(activeAt, completions.length - 1)}` : undefined}
 					class="field-sizing-content max-h-72 min-h-28 w-full rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400"
 				></textarea>
 				{#if textError}<p class="text-sm/6 text-red-400" role="alert">{textError}</p>{/if}
-				{#if at?.kind === 'partial'}
-					<ul class="flex flex-wrap gap-2" aria-label="Agents you could mean" data-testid="at-matches">
-						{#each at.matches as m (m.id)}
-							<li><button type="button" class="rounded-md bg-white/5 px-2 py-1 text-sm/6 text-gray-200 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400" onclick={() => complete(m)}>{m.name} <span class="text-gray-400">@{handleFor(m)}</span></button></li>
+				{#if completions.length > 0}
+					<ul id="at-list" role="listbox" aria-label="Agents you could mean" class="flex flex-wrap gap-2" data-testid="at-matches">
+						{#each completions as m, i (m.id)}
+							<li id="at-opt-{i}" role="option" aria-selected={i === Math.min(activeAt, completions.length - 1)}>
+								<button type="button" tabindex="-1" class="rounded-md px-2 py-1 text-sm/6 text-gray-200 hover:bg-white/10 {i === Math.min(activeAt, completions.length - 1) ? 'bg-white/15 outline-2 outline-indigo-400' : 'bg-white/5'}" onmousedown={(e) => e.preventDefault()} onclick={() => complete(m)}>{m.name} <span class="text-gray-400">@{handleFor(m)}</span></button>
+							</li>
 						{/each}
 					</ul>
+					<p class="text-xs/5 text-gray-400">↑↓ to choose, Enter or Tab to pick, Esc to close the list.</p>
 				{/if}
 				{#if similar.length > 0}
 					<ul class="space-y-1 rounded-md bg-white/5 px-3 py-2 text-sm/6" aria-label="Similar requests" data-testid="similar">

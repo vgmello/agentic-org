@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Member, OrgSnapshot, WorkEvent, WorkItemSummary } from '$lib/proto';
-import { activityLines, ageWord, atName, filterActive, filterRequests, handleFor, NO_FILTER, similarFrom, similarKeywords, withHandle, estimateWords, groupOf, groupRequests, nextAction, requestRef, requestsNeedingYou, stateWords, suggestScopers } from './requests-view';
+import { activityLines, ageWord, atName, filterActive, filterRequests, handleFor, narrowed, NO_FILTER, similarFrom, similarKeywords, withHandle, withoutHandle, estimateWords, groupOf, groupRequests, nextAction, requestRef, requestsNeedingYou, stateWords, suggestScopers } from './requests-view';
 
 const member = (id: string, name: string, title: string, extra: Partial<Member['agent']> = {}, kind: Member['kind'] = 'agent'): Member => ({
 	id,
@@ -291,23 +291,27 @@ describe('RQS-13 similar requests', () => {
 
 describe('RQS-7 the queue filters', () => {
 	const items = [
-		req('new', { id: 'a', number: 1, title: 'Dark mode', project_id: 'p1' }),
-		req('routed', { id: 'b', number: 2, title: 'Weekly digest', assignee_id: 'eden' }),
-		req('scoped', { id: 'c', number: 3, title: 'Costs per project', assignee_id: 'eden', project_id: 'p1' }),
-		req('approved', { id: 'd', number: 4, title: 'Checklists', assignee_id: 'ada' })
+		req('new', { id: 'a', number: 1, title: 'Dark mode', project_id: 'p1', created_by: 'owner' }),
+		req('routed', { id: 'b', number: 2, title: 'Weekly digest', assignee_id: 'eden', created_by: 'ada' }),
+		req('scoped', { id: 'c', number: 3, title: 'Costs per project', assignee_id: 'eden', project_id: 'p1', created_by: 'owner' }),
+		req('approved', { id: 'd', number: 4, title: 'Checklists', assignee_id: 'ada', created_by: 'eden' })
 	];
 	const ids = (f: Partial<typeof NO_FILTER>) => filterRequests(items, { ...NO_FILTER, ...f }).map((i) => i.id);
 
-	it('shows everything with no filter, and only what is still going when Open', () => {
-		expect(ids({})).toEqual(['a', 'b', 'c', 'd']);
-		expect(ids({ state: 'open' })).toEqual(['a', 'b', 'c']);
+	it('opens on what is still going, like a to-do list, and All shows what ended too', () => {
+		expect(NO_FILTER.state).toBe('open');
+		expect(ids({})).toEqual(['a', 'b', 'c']);
+		expect(ids({ state: 'all' })).toEqual(['a', 'b', 'c', 'd']);
 	});
 
-	it('filters by who scopes it (or nobody) and by project (or none)', () => {
-		expect(ids({ who: 'eden' })).toEqual(['b', 'c']);
-		expect(ids({ who: 'none' })).toEqual(['a']);
-		expect(ids({ project: 'p1' })).toEqual(['a', 'c']);
-		expect(ids({ project: 'none' })).toEqual(['b', 'd']);
+	it('filters by who scopes it, nobody, or who raised it, and by project (or none)', () => {
+		const all = { state: 'all' as const };
+		expect(ids({ ...all, who: 'scoped:eden' })).toEqual(['b', 'c']);
+		expect(ids({ ...all, who: 'none' })).toEqual(['a']);
+		expect(ids({ ...all, who: 'raised:owner' })).toEqual(['a', 'c']);
+		expect(ids({ ...all, who: 'raised:eden' })).toEqual(['d']);
+		expect(ids({ ...all, project: 'p1' })).toEqual(['a', 'c']);
+		expect(ids({ ...all, project: 'none' })).toEqual(['b', 'd']);
 	});
 
 	it('searches the title and the reference, every word must match, without case', () => {
@@ -315,10 +319,20 @@ describe('RQS-7 the queue filters', () => {
 		expect(ids({ query: 'req-2' })).toEqual(['b']);
 		expect(ids({ query: 'digest weekly' })).toEqual(['b']);
 		expect(ids({ query: 'digest costs' })).toEqual([]);
-		expect(ids({ query: '   ' })).toEqual(['a', 'b', 'c', 'd']);
+		expect(ids({ query: '   ' })).toEqual(['a', 'b', 'c']);
 	});
 
-	it('knows when a filter is on', () => {
-		expect([filterActive(NO_FILTER), filterActive({ ...NO_FILTER, state: 'open' }), filterActive({ ...NO_FILTER, who: 'x' }), filterActive({ ...NO_FILTER, query: ' a ' }), filterActive({ ...NO_FILTER, query: '  ' })]).toEqual([false, true, true, true, false]);
+	it('is narrowed by who, project or words, not by the state alone', () => {
+		expect([narrowed(NO_FILTER), narrowed({ ...NO_FILTER, state: 'all' }), narrowed({ ...NO_FILTER, who: 'none' }), narrowed({ ...NO_FILTER, project: 'p' }), narrowed({ ...NO_FILTER, query: 'x' })]).toEqual([false, false, true, true, true]);
+	});
+
+	it('knows when a filter is on: anything that differs from how the queue opens', () => {
+		expect([filterActive(NO_FILTER), filterActive({ ...NO_FILTER, state: 'all' }), filterActive({ ...NO_FILTER, who: 'scoped:x' }), filterActive({ ...NO_FILTER, query: ' a ' }), filterActive({ ...NO_FILTER, query: '  ' })]).toEqual([false, true, true, true, false]);
+	});
+});
+
+describe('RQS-4 the words without the handle that routed them', () => {
+	it('drops the @handle at the start and the punctuation after it, and nothing else', () => {
+		expect([withoutHandle('@sam fix the build time'), withoutHandle('  @sam: fix it'), withoutHandle('@sam, fix it @ada'), withoutHandle('@Éden.  Costs'), withoutHandle('ask @sam later'), withoutHandle('@sam'), withoutHandle('@@sam x')]).toEqual(['fix the build time', 'fix it', 'fix it @ada', 'Costs', 'ask @sam later', '', '@@sam x']);
 	});
 });

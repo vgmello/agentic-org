@@ -184,6 +184,9 @@ test('RQS-10: asking for changes sends it back to the agent with the note; decli
 	await expect(sheet.getByTestId('decline-reason')).toHaveText('Declined: Out of scope for now');
 	await expect(sheet.getByTestId('request-actions')).toHaveCount(0);
 	await page.keyboard.press('Escape');
+	// The queue opens on what is still going; All shows what ended.
+	await expect(page.locator('[data-group=closed]')).toHaveCount(0);
+	await page.getByLabel('State').selectOption('all');
 	await page.locator('[data-group=closed]').locator('summary').click();
 	await expect(page.locator('[data-group=closed]')).toContainText('Declined');
 });
@@ -435,7 +438,7 @@ test('RQS-7: the queue can be filtered by state, who scopes it and project, and 
 	await expect(page.getByTestId('no-request-match')).toBeVisible();
 	await page.getByTestId('no-request-match').getByRole('button', { name: 'Clear the filters' }).click();
 	await expect(rows).toHaveCount(3);
-	await page.getByLabel('State').selectOption('open');
+	await page.getByLabel('State').selectOption('all');
 	await expect(rows).toHaveCount(3);
 });
 
@@ -470,7 +473,8 @@ test('RQS-4: an @name to an agent the rule also suggests is the person\'s route 
 	await expect(dialog.getByRole('button', { name: /^Send to Pax Moreau/ })).toBeVisible();
 	await dialog.getByRole('button', { name: /^Send to Pax Moreau/ }).click();
 	await expect(dialog).toBeHidden();
-	await page.getByRole('button', { name: /^@pax: please/ }).click();
+	// The saved words drop the @name that routed them.
+	await page.getByRole('button', { name: 'please look at this' }).click();
 	const sheet = page.getByRole('dialog');
 	await expect(sheet.getByTestId('request-state')).toContainText('Sent to Pax Moreau');
 	await expect(sheet.getByTestId('route-reason')).toHaveCount(0); // not the rule's reason, and not called the rule's
@@ -502,8 +506,65 @@ test('RQS-7: a search whose only match has ended opens the group it is in', asyn
 	await sheet.getByRole('button', { name: 'Create 2 tasks' }).click();
 	await page.keyboard.press('Escape');
 	await capture(page, 'Another one', { button: /^Just save$/ });
+	await expect(page.locator('[data-group=approved]')).toHaveCount(0); // Open hides what ended
+	await page.getByLabel('State').selectOption('all');
 	await expect(page.locator('[data-group=approved]')).toHaveJSProperty('open', false);
 	await page.getByLabel('Search requests').fill('costs');
 	await expect(page.locator('[data-group=approved]')).toHaveJSProperty('open', true);
 	await expect(page.locator('[data-group=approved]').getByTestId('request-row')).toBeVisible();
+});
+
+test('RQS-4: the handle list works from the keyboard, and the saved words drop the @handle that routed them', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	const words = dialog.getByLabel('What do you need?');
+	await words.fill('@');
+	const options = dialog.getByTestId('at-matches').getByRole('option');
+	await expect(options.first()).toHaveAttribute('aria-selected', 'true');
+	await words.press('ArrowDown');
+	await expect(options.nth(1)).toHaveAttribute('aria-selected', 'true');
+	await words.press('ArrowUp');
+	await expect(options.first()).toHaveAttribute('aria-selected', 'true');
+	// Esc closes the list, not the panel.
+	await words.press('Escape');
+	await expect(dialog.getByTestId('at-matches')).toHaveCount(0);
+	await expect(dialog).toBeVisible();
+	// Typing again brings it back; Enter picks the highlighted one.
+	await words.fill('@sa');
+	await expect(options).toHaveCount(1);
+	await words.press('Enter');
+	await expect(words).toHaveValue(/^@\S+$/);
+	await expect(dialog.getByTestId('by-at')).toBeVisible();
+	await words.pressSequentially(' fix the build time');
+	await dialog.getByRole('button', { name: 'Send to Sam Okafor' }).click();
+	await expect(dialog).toBeHidden();
+	await expect(page.getByRole('button', { name: 'fix the build time', exact: true })).toBeVisible();
+	await page.getByRole('button', { name: 'fix the build time', exact: true }).click();
+	await expect(page.getByRole('dialog').getByTestId('request-words')).toHaveText('fix the build time');
+});
+
+test('RQS-4: words that are only an @handle ask for words, and an @name later in the text is just words', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await page.getByTestId('new-request').click();
+	const dialog = page.getByRole('dialog', { name: 'New request' });
+	const words = dialog.getByLabel('What do you need?');
+	await words.fill('@sam');
+	await dialog.getByRole('button', { name: 'Send to Sam Okafor' }).click();
+	await expect(dialog.getByText('Write what you need after @sam.')).toBeVisible();
+	await words.fill('ask @sam later');
+	await expect(dialog.getByTestId('by-at')).toHaveCount(0);
+	await expect(dialog.getByTestId('by-rule')).toBeVisible();
+});
+
+test('RQS-7: the queue can be filtered to what one person raised, and opens on Open', async ({ page }) => {
+	await open(page);
+	await queue(page);
+	await capture(page, 'Mine to keep', { button: /^Just save$/ });
+	await expect(page.getByLabel('State')).toHaveValue('open');
+	await expect(page.getByLabel('Who scopes it').locator('option', { hasText: 'Raised by me' })).toHaveCount(1);
+	await page.getByLabel('Who scopes it').selectOption({ label: 'Raised by me' });
+	await expect(page.getByTestId('request-row')).toHaveCount(1);
 });
