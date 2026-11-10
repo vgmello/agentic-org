@@ -53,7 +53,7 @@ crates/                         libraries only
   org-spool/                    an agent's local queue (its role beside the message hub: see the messaging ADR, to come)
 apps/                           things you run or ship
   desktop/                      Agentic Org, the app (Tauri 2 + SvelteKit)
-  org-office-server/            one office's server (one process per office)
+  org-server/                   one office's server (one process per office)
   org-office-host/              the host: the one macOS login service, which runs the office servers (to come)
   org-agent/                    the CLI agents use (messages now; tasks and queues later)
 docs/
@@ -67,7 +67,7 @@ Dependencies point one way, and apps depend on crates, never the reverse:
 
 ```
 apps/desktop          ─▶ org-client ─▶ org-proto
-apps/org-office-server ─▶ org-office ─▶ org-proto
+apps/org-server        ─▶ org-office ─▶ org-proto
 apps/org-agent        ─▶ org-spool
 apps/org-agent        ─▶ org-proto   (planned)
 ```

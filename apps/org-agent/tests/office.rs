@@ -2,8 +2,8 @@
 //! through the office, and `send` falls back to the local spool when the office is down.
 //!
 //! The server is the real one: this test binary, started with `ORG_AGENT_TEST_OFFICE_SERVER`
-//! set, runs exactly what `org-office-server`'s `main` runs (its library). It is driven the way
-//! the host drives it (`apps/org-office-server/tests/launch.rs`): the office's database key is a
+//! set, runs exactly what `org-server`'s `main` runs (its library). It is driven the way
+//! the host drives it (`apps/org-server/tests/launch.rs`): the office's database key is a
 //! fixed test key on the launch line, so no Keychain is involved. Every home is a temporary
 //! folder: the office home (`ORG_OFFICE_HOME`) and the agents' `HOME` and `ORG_HOME` (their
 //! spool), so nothing here can reach `~/.agency` or a real office.
@@ -172,18 +172,18 @@ impl TestArgs {
     }
 }
 
-/// The office server, exactly as `org-office-server`'s `main` runs it.
+/// The office server, exactly as `org-server`'s `main` runs it.
 fn serve() -> ! {
-    let control = match org_office_server::fdswap::take_control_pipe() {
+    let control = match org_server::fdswap::take_control_pipe() {
         Ok(control) => control,
         Err(error) => {
-            eprintln!("org-office-server: cannot set up its descriptors: {error}");
+            eprintln!("org-server: cannot set up its descriptors: {error}");
             std::process::exit(1);
         }
     };
-    org_office_server::install_panic_hook();
+    org_server::install_panic_hook();
     let args: Vec<String> = std::env::args().skip(1).collect();
-    std::process::exit(org_office_server::run(&args, control));
+    std::process::exit(org_server::run(&args, control));
 }
 
 /// A temporary office home and agents' home, under /tmp (socket paths are short).

@@ -10,7 +10,7 @@ members = [
   "crates/org-copilot",
   "crates/org-work",
   "crates/org-runtime",
-  "apps/org-office-server",
+  "apps/org-server",
   "apps/org-office-host",
   "apps/org-agent",
   "apps/desktop/src-tauri",
@@ -27,7 +27,7 @@ default-members = [
   "crates/org-copilot",
   "crates/org-work",
   "crates/org-runtime",
-  "apps/org-office-server",
+  "apps/org-server",
   "apps/org-office-host",
   "apps/org-agent",
 ]

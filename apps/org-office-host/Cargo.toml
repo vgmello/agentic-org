@@ -1,6 +1,6 @@
 [package]
 name = "org-office-host"
-description = "The host: the per-user login service that supervises one org-office-server per office, creates organizations and tells clients where offices are."
+description = "The host: the per-user login service that supervises one org-server per office, creates organizations and tells clients where offices are."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

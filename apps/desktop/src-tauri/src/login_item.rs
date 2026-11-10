@@ -272,10 +272,7 @@ mod tests {
             format!("launch-agents/{PLIST_NAME}")
         );
         assert_eq!(files["MacOS/org-office-host"], "office-bin/org-office-host");
-        assert_eq!(
-            files["MacOS/org-office-server"],
-            "office-bin/org-office-server"
-        );
+        assert_eq!(files["MacOS/org-server"], "office-bin/org-server");
         assert!(std::path::Path::new(&format!("launch-agents/{PLIST_NAME}")).exists());
     }
 

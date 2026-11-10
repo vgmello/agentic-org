@@ -1,6 +1,6 @@
 //! `org-client` against a fake server written directly on `org_proto::frame`, so each side
 //! of the protocol is tested without the other. (Tests against the real server live in
-//! `apps/org-office-server`, which may depend on this crate; the reverse may not.)
+//! `apps/org-server`, which may depend on this crate; the reverse may not.)
 
 use std::io::{BufReader, ErrorKind};
 use std::os::unix::net::{UnixListener, UnixStream};

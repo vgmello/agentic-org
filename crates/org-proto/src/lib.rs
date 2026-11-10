@@ -8,7 +8,7 @@
 //!   `organization.created` and `office.status_changed`).
 //!   Its `hello` lists in `capabilities` the optional calls and events it implements
 //!   ([`capability`]), so a client checks before relying on one.
-//! - **An office server** (`org-office-server`), one process per office. An organization's
+//! - **An office server** (`org-server`), one process per office. An organization's
 //!   first office is its HQ. It answers `hello` with its identity, the organization's calls
 //!   ([`org`]: teams, members, projects and areas), the work calls ([`work`]: tasks and their
 //!   checklists, links, comments and activity), and later agent messaging.

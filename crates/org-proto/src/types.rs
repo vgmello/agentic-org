@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 /// uniqueness by [`crate::OrganizationName::key`].
 pub const ORGANIZATION_NAME_MAX_CHARS: usize = 64;
 
-/// An office: a node of one organization, run by its own `org-office-server` process.
+/// An office: a node of one organization, run by its own `org-server` process.
 /// The organization's first office is its HQ (see `docs/design/offices-hq-and-satellites.md`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OfficeInfo {

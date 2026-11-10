@@ -1,6 +1,6 @@
 //! # org-office-launch: how the host starts an office server
 //!
-//! The private contract between `org-office-host` (the login service) and `org-office-server` (one
+//! The private contract between `org-office-host` (the login service) and `org-server` (one
 //! process per office). The app never uses it. `org-agent` uses only [`OfficeFile`], to read
 //! `office.json` (never by hand: the type checks the version, the ids, the names and `created_at`).
 //! The app and `org-agent` speak `org-proto` to the servers. See
@@ -20,9 +20,9 @@
 //!
 //! ## Starting a server
 //! ```text
-//! org-office-server --create            # create a new office from the create message, then serve it
-//! org-office-server --office <id>       # serve an existing office
-//! org-office-server --discard <id>      # remove an unfinished office (no office.json), then exit
+//! org-server --create            # create a new office from the create message, then serve it
+//! org-server --office <id>       # serve an existing office
+//! org-server --discard <id>      # remove an unfinished office (no office.json), then exit
 //! ```
 //! - The host makes `<home>`, `<home>/offices/` and `<home>/run/` (owner-only) and sets
 //!   `ORG_OFFICE_HOME` ([`org_proto::location::OFFICE_HOME_ENV`]) on the child, so both use the

@@ -93,7 +93,7 @@ impl ChangeSignal {
     }
 }
 
-/// An office: ONE folder, `<home>/offices/<office-id>/`, served by one `org-office-server`.
+/// An office: ONE folder, `<home>/offices/<office-id>/`, served by one `org-server`.
 ///
 /// ```text
 /// office.lock    exclusive flock, taken before anything else is looked at (single owner)
@@ -264,7 +264,7 @@ impl Office {
         })
     }
 
-    /// Removes an UNFINISHED create (`org-office-server --discard`): the folder a failed create
+    /// Removes an UNFINISHED create (`org-server --discard`): the folder a failed create
     /// may have left. The key is the host's and is not touched here. When the folder exists it
     /// takes its lock (a missing folder takes none and makes none), and **refuses** anything
     /// that could be a real office, so one is never destroyed automatically:
