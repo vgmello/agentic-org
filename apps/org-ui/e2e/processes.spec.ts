@@ -28,6 +28,7 @@ test('PROC-9: a team’s override that drifted says Parent changed, with the ver
 	await expect(review.getByTestId('kind')).toContainText('Override of code-review@1');
 	await expect(review.getByTestId('drift')).toContainText('Parent changed: Organization is now v2');
 	await expect(row(page, 'incident-response').getByTestId('kind')).toContainText('Addition');
+	await shot(page, 'processes-team-drift');
 });
 
 test('PROC-4/PROC-3/PROC-6: a project shows what it turned off, a sealed refusal and the shared project’s conflict', async ({ page }) => {
@@ -61,7 +62,7 @@ test('PROC-8: a process opens with its text and why: every layer and what happen
 	await expect(layers.nth(1)).toContainText('Team Web v2'); // a level is a word with its name, not just an icon
 	await expect(layers.nth(1)).toContainText('Applies');
 	await expect(sheet.getByText('As the organization says, plus a screenshot of any UI change.')).toBeVisible();
-	await shot(page, 'processes-why');
+	await shot(page, 'processes-why', { context: sheet });
 });
 
 test('PROC-10: an agent’s page says what it follows and the version it last read, or that it has no current work', async ({ page }) => {
@@ -79,11 +80,19 @@ test('PROC-16: loading shows skeleton rows; an unreachable handbook says so with
 	await page.getByLabel('Organization name').fill('Acme');
 	await page.getByRole('button', { name: 'Create organization' }).click();
 	await expect(page).toHaveURL(/\/agents$/);
+	// Hold the sample load so the loading screenshot cannot race its 250 ms timer.
+	await page.clock.install({ time: new Date('2026-11-10T12:00:00Z') });
+	await page.clock.pauseAt(new Date('2026-11-10T12:00:01Z'));
 	await page.goto('/processes?handbook=down');
 	await expect(page.getByTestId('processes-loading')).toBeVisible();
+	await shot(page, 'processes-loading', { settle: false });
+	await page.clock.runFor(300);
+	await page.clock.resume();
 	await expect(page.getByTestId('handbook-down')).toContainText("Can't reach the handbook. Showing the last copy from");
+	await shot(page, 'processes-handbook-down');
 	await visit(page, '/processes?processes=empty');
 	await expect(page.getByTestId('no-processes')).toContainText('Write down how your agents work. Start with how changes get reviewed and merged.');
+	await shot(page, 'processes-empty');
 });
 
 test('PROC-18: a level or a kind is a word with an icon, and the place can be chosen from the screen', async ({ page }) => {
@@ -123,4 +132,5 @@ test('PROC-8: a turned-off process opens with its why chain too', async ({ page 
 	await expect(sheet.getByTestId('off-why')).toContainText('Turned off for Atlas: we report daily.');
 	await expect(sheet.getByTestId('why-layer')).toHaveCount(2);
 	await expect(sheet.getByTestId('why-layer').nth(1)).toContainText('Turned off');
+	await shot(page, 'processes-turned-off-why', { context: sheet });
 });
