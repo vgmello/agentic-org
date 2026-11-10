@@ -5,7 +5,7 @@
 	import { composerState, repliesTo, titleOf } from '$lib/modules/messaging/model';
 	import type { ChatMessage, ChatState, Conversation, MuteMode, Reaction } from '$lib/modules/messaging/types';
 	import Composer from '$lib/modules/messaging/features/send-message/Composer.svelte';
-	import MessageRow from '$lib/modules/messaging/features/send-message/MessageRow.svelte';
+	import MessageRow from '../../components/MessageRow.svelte';
 
 	/** A thread on the right (CHAT-8): the message, its replies, and a box that can also send to the channel. */
 	let {

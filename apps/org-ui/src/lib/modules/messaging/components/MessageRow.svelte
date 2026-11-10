@@ -3,12 +3,12 @@
 	import MessageSquareReply from '@lucide/svelte/icons/message-square-reply';
 	import { Button } from '$lib/components/ui/button';
 	import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '$lib/components/ui/dropdown-menu';
-	import type { ChatContext } from '$lib/modules/messaging/engine';
-	import { clockTime, collapse, foldedWords, KIND_MARK, KIND_WORD, muteOf, nameOf, repliesTo } from '$lib/modules/messaging/model';
-	import { REASON_LABEL, REACTIONS, type ChatMessage, type ChatState, type MuteMode, type Reaction } from '$lib/modules/messaging/types';
-	import AskCard from '$lib/modules/messaging/features/answer-ask/AskCard.svelte';
-	import Avatar from '$lib/modules/messaging/components/Avatar.svelte';
-	import Rich from '$lib/modules/messaging/features/send-message/Rich.svelte';
+	import type { ChatContext } from '../engine';
+	import { clockTime, collapse, foldedWords, KIND_MARK, KIND_WORD, muteOf, nameOf, repliesTo } from '../model';
+	import { REASON_LABEL, REACTIONS, type ChatMessage, type ChatState, type MuteMode, type Reaction } from '../types';
+	import AskCard from '../features/answer-ask/AskCard.svelte';
+	import Avatar from './Avatar.svelte';
+	import Rich from './Rich.svelte';
 
 	/** One message in a conversation, a thread, a search result or a list (CHAT-14). */
 	let {
